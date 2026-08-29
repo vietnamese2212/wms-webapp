@@ -92,6 +92,7 @@ const INB_WINDOW_DEFAULT = 2
 const PACK_MAX_DEFAULT = 10
 // mirror DASHBOARD_CACHE_SECONDS_DEFAULT của BE (utils/settings.ts)
 const DASH_CACHE_DEFAULT = 300
+const MON_CACHE_DEFAULT = 30    // mirror MONITOR_CACHE_SECONDS_DEFAULT của BE
 function numRec<T extends Record<string, number>>(v: unknown, def: T): T {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return { ...def }
   const o = v as Record<string, unknown>
@@ -285,6 +286,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
   const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
   const dashRow  = settings.find(s => s.key === 'dashboard_cache_seconds')
+  const monRow   = settings.find(s => s.key === 'monitor_cache_seconds')
   const orgRow   = settings.find(s => s.key === 'org_profile')
   const holRow   = settings.find(s => s.key === 'vn_holidays')
   const stdRow   = settings.find(s => s.key === 'standard_work_hours')
@@ -299,6 +301,8 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   // 0 là giá trị HỢP LỆ (tắt cache) nên phải kiểm kiểu, không dùng `> 0` như các cờ khác
   const srvDash  = typeof dashRow?.value === 'number' && dashRow.value >= 0 && dashRow.value <= 3600
     ? dashRow.value : DASH_CACHE_DEFAULT
+  const srvMon   = typeof monRow?.value === 'number' && monRow.value >= 0 && monRow.value <= 3600
+    ? monRow.value : MON_CACHE_DEFAULT
   const srvOrg   = parseOrg(orgRow?.value)
   const srvHol   = parseHolidays(holRow?.value)
   // giờ công chuẩn: mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT của BE
@@ -318,6 +322,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftInb,   setDraftInb]   = useState(String(srvInb))
   const [draftPack,  setDraftPack]  = useState(String(srvPack))
   const [draftDash,  setDraftDash]  = useState(String(srvDash))
+  const [draftMon,   setDraftMon]   = useState(String(srvMon))
   const orgToDraft = (o: OrgProfileValue): OrgProfileDraft => ({
     contact_email: o.contact_email, nmsx_alias: aliasToStr(o.nmsx_alias),
     l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
@@ -347,10 +352,11 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const inbDirty   = draftInb !== String(srvInb)
   const packDirty  = draftPack !== String(srvPack)
   const dashDirty  = draftDash !== String(srvDash)
+  const monDirty   = draftMon !== String(srvMon)
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
   const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
   const stdDirty   = draftStd !== String(srvStd)
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || orgDirty || holDirty || stdDirty
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty
 
   async function applyChanges() {
     setErr('')
@@ -383,6 +389,12 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       const n = Number(draftDash)
       if (!Number.isInteger(n) || n < 0 || n > 3600) return setErr('Dashboard: tuổi số liệu 0–3600 giây (0 = tắt cache).')
       dash = n
+    }
+    let mon: number | null = null
+    if (monDirty) {
+      const n = Number(draftMon)
+      if (!Number.isInteger(n) || n < 0 || n > 3600) return setErr('Giám sát: tuổi số liệu 0–3600 giây (0 = tắt cache).')
+      mon = n
     }
     let org: OrgProfileValue | null = null
     if (orgDirty) {
@@ -417,6 +429,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
       if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
       if (dash !== null) await save({ key: 'dashboard_cache_seconds', value: dash })
+      if (mon !== null)  await save({ key: 'monitor_cache_seconds', value: mon })
       if (std)        await save({ key: 'standard_work_hours', value: std })
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
@@ -512,6 +525,16 @@ function SystemTab({ canManage }: { canManage: boolean }) {
             <SettingField label="Tuổi số liệu tối đa"
               tip="Số liệu trang chủ là tổng hợp toàn công ty (quét cả tồn kho + chuyến xuất) nên rất nặng khi nhiều người cùng mở. App dùng lại kết quả trong khoảng thời gian này thay vì tính lại mỗi lần. Đặt 0 = luôn tính sống (chậm khi đông người dùng).">
               <div className="w-24"><SettingNum unit="giây" value={draftDash} onChange={setDraftDash} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Giám sát vận hành + Slotting: 2 màn DUY NHẤT còn gãy dưới tải (đo 29/08, diễn tập 100
+              người ở Ba Vì + Bàu Bàng — 500 vì quá hạn tính, trong khi mọi màn khác chịu được 28
+              người). Giám sát vận hành lại mở thường trực trên TV nên vừa là nạn nhân vừa là NGUỒN tải. */}
+          <SettingGroup readOnly={!canManage} title="Màn giám sát" meta={monRow}>
+            <SettingField label="Tuổi số liệu tối đa"
+              tip="Áp cho Giám sát vận hành và Tối ưu vị trí (Slotting) — hai màn tổng hợp nặng nhất. App dùng lại kết quả trong khoảng thời gian này thay vì tính lại mỗi lần mở, nên nhiều người xem cùng lúc cũng chỉ tính một lần. Đặt 0 = luôn tính sống (hai màn này sẽ báo lỗi khi đông người).">
+              <div className="w-24"><SettingNum unit="giây" value={draftMon} onChange={setDraftMon} /></div>
             </SettingField>
           </SettingGroup>
 

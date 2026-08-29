@@ -83,6 +83,19 @@ export const parseDashboardCacheSeconds = (raw: unknown) => int(raw, 0, 3600)
 export const getDashboardCacheSeconds = () =>
   readSetting('dashboard_cache_seconds', DASHBOARD_CACHE_SECONDS_DEFAULT, parseDashboardCacheSeconds)
 
+// ── monitor_cache_seconds — TUỔI TỐI ĐA số liệu 2 màn GIÁM SÁT (29/08) ────────
+// Giám sát vận hành + Slotting là 2 endpoint DUY NHẤT còn gãy dưới tải (đo 29/08, diễn tập 100
+// người ở Ba Vì + Bàu Bàng): 500 vì statement timeout, trong khi mọi màn khác chịu được 28 người.
+// Đã loại trừ round-trip (1–3/màn) và sức máy DB (chạy thẳng pg: 1,0s và 1,7s ở 8 người) — và
+// production có pg_settings GIỐNG HỆT staging nên ngưỡng đo được chính là ngưỡng thật.
+// Mặc định 30 giây, CỐ Ý ngắn: Giám sát vận hành mở thường trực trên màn TV nên nó vừa là nạn
+// nhân vừa là NGUỒN tải; 30 giây đủ gộp cơn dồn mà người đứng xem bảng không nhận ra. Đặt 0 =
+// TẮT cache, tính sống mỗi lần như trước.
+export const MONITOR_CACHE_SECONDS_DEFAULT = 30
+export const parseMonitorCacheSeconds = (raw: unknown) => int(raw, 0, 3600)
+export const getMonitorCacheSeconds = () =>
+  readSetting('monitor_cache_seconds', MONITOR_CACHE_SECONDS_DEFAULT, parseMonitorCacheSeconds)
+
 // ── packing_max_materials_per_run — số mã tối đa trên 1 trang sổ đóng gói ──────
 export const PACKING_MAX_MATERIALS_DEFAULT = 10
 export const parsePackingMaxMaterials = (raw: unknown) => int(raw, 1, 50)

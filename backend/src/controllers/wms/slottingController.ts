@@ -3,12 +3,13 @@ import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
 import { zoneAccepts, zonesOverlap, eligibleRankedZones, bandOfIndex, type Band } from '../../utils/slottingBands'
 import { invalidatePutawayZones } from '../../services/putawayContext'
+import { getMonitorCacheSeconds } from '../../utils/settings'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -63,11 +64,19 @@ interface StatsLocation { id: string; location_code: string; sub_code: string | 
 interface Stats { total_picks: number; materials: StatsMaterial[]; placement: StatsPlacement[]; zones: StatsZone[]; locations: StatsLocation[] }
 
 async function fetchStats(warehouseId: string, categories: string[] | null, days: number): Promise<{ stats?: Stats; notReady?: boolean; error?: string }> {
-  const { data, error } = await supabase.rpc('slotting_stats', {
+  const args = {
     p_warehouse_id: warehouseId,
     p_categories: categories && categories.length > 0 ? categories : null,
     p_days: days,
-  })
+  }
+  // CACHE (29/08): engine ABC quét lượt nhặt 30 ngày — 1 trong 3 endpoint duy nhất còn trả 500
+  // (statement timeout) khi đông người, đo trong diễn tập 100 người dùng. Phân tích lịch sử 30
+  // ngày thì không ai cần từng giây, nên cache là đổi rẻ nhất. Bản _cached chống cả giẫm đạp
+  // (N người cùng miss → CHỈ MỘT tính). Tuổi tối đa = cờ `monitor_cache_seconds`, 0 = tắt.
+  const ttl = await getMonitorCacheSeconds()
+  let { data, error } = await supabase.rpc('slotting_stats_cached', { ...args, p_ttl_seconds: ttl })
+  // Nhánh dự phòng cửa sổ triển khai (20260829 chưa apply) — đường cũ KHÔNG cache, nguyên vẹn.
+  if (error?.code === 'PGRST202') ({ data, error } = await supabase.rpc('slotting_stats', args))
   if (error) {
     if (error.code === 'PGRST202' || /slotting_stats/i.test(error.message)) return { notReady: true }
     return { error: error.message }
@@ -150,6 +159,10 @@ export async function getSlotting(req: Request, res: Response) {
 
     const { stats, notReady, error } = await fetchStats(warehouseId, effCats.length > 0 ? effCats : null, days)
     if (notReady) return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260717_slotting + 20260718_slotting_v2 (RPC slotting_stats)')
+    // Quá hạn tính khi đông người truy vấn KHÔNG phải lỗi app — trả 503 kèm câu hướng dẫn thay vì
+    // 500 "Lỗi hệ thống" (đo 29/08: 67 dòng error_logs của riêng màn này trong 3 giờ chạy tải,
+    // đủ để rule cảnh báo "lỗi BE 24h" kêu oan).
+    if (error && isQueryTimeout({ message: error })) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     if (error || !stats) return fail(res, 500, 'DB_ERROR', error ?? 'RPC không trả dữ liệu')
 
     const materials = enrichMaterials(stats)

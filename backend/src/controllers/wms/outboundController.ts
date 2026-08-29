@@ -6033,6 +6033,18 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // Kho QTY → ép no-QR hiệu lực (xuất tay qua pool dùng chung như mã no_qr_tracking)
     const gdoMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode
     const isSpecial = effectiveNoQr((item.material as any)?.no_qr_tracking, gdoMode)
+
+    // ── CỬA NÀY CHỈ DÀNH CHO HÀNG KHÔNG TEM ────────────────────────────────────
+    // Với hàng CÓ tem, đường ghi nhận xuất là QUÉT. Nhánh dưới của hàm này ghi thẳng
+    // `cartons_scanned = ctn` mà KHÔNG đụng tồn và KHÔNG đụng vết quét ⇒ gọi trên hàng có tem sẽ
+    // làm bộ đếm của dòng hàng lệch khỏi vết quét thật VÀ lệch khỏi tồn đã trừ — đúng thứ bất biến
+    // "bộ đếm = Σ vết quét" mà bộ QA đang gác. FE vốn chỉ hiện nút này cho hàng không tem
+    // (`no_qr_tracking === true`), nên chặn ở đây là khớp FE, không cắt việc của ai.
+    // Phát hiện 29/08 khi diễn tập 100 người: BE không hề gác, gọi thẳng API là desync được.
+    if (!isSpecial) {
+      return fail(res, 400, 'QR_ITEM_MANUAL_FORBIDDEN',
+        'Mặt hàng này theo dõi bằng tem QR — ghi nhận xuất bằng cách QUÉT. Muốn sửa số đã ghi thì xóa lượt quét tương ứng.')
+    }
     const specialMatCode: string | null = isSpecial ? ((item.material as any)?.material_code ?? item.material_code_raw ?? null) : null
 
     // Chỉ COMPLETED khi nhập đủ kế hoạch — thiếu thì IN_PROGRESS (giống hàng QR).
@@ -6156,6 +6168,10 @@ export async function getScanLog(req: Request, res: Response) {
     ;({ data, error } = await supabase.rpc('get_outbound_scan_log', rpcParams))
   }
 
+  // Quá hạn tính khi đông người cùng truy vấn KHÔNG phải lỗi app: 503 kèm câu người dùng LÀM ĐƯỢC
+  // gì đó (thu hẹp khoảng ngày / chọn 1 kho), thay vì 500 "Lỗi hệ thống" — mà 500 rác còn làm rule
+  // cảnh báo "lỗi BE 24h" kêu oan (đo 29/08: 35 dòng error_logs của riêng màn này trong 3 giờ).
+  if (error && isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
   const first = (data as any[])?.[0]

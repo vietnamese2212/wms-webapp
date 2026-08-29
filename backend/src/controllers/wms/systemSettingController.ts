@@ -7,6 +7,7 @@ import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
   parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays, parseReceiptRating,
   parseDashboardCacheSeconds,
+  parseMonitorCacheSeconds,
   parseStandardWorkHours,
 } from '../../utils/settings'
 
@@ -136,6 +137,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   dashboard_cache_seconds: {
     validate: v => parseDashboardCacheSeconds(v) !== null,
     hint: 'số giây 0–3600 (0 = tắt cache, tính sống mỗi lần mở trang chủ)',
+  },
+  monitor_cache_seconds: {
+    validate: v => parseMonitorCacheSeconds(v) !== null,
+    hint: 'số giây 0–3600 cho Giám sát vận hành + Slotting (0 = tắt cache, tính sống mỗi lần)',
   },
   standard_work_hours: {
     validate: v => parseStandardWorkHours(v) !== null,

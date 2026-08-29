@@ -205,8 +205,16 @@ export async function teardownGdo(id, status) {
   const cur = d.j?.data
   if (!cur) return false
   if (cur.status !== 'PENDING') {
-    for (const it of (cur.delivery_orders ?? []).flatMap(x => x.items))
-      await api(`/wms/outbound/${id}/items/${it.id}/manual-complete`, 'POST', { cartons: 0 })
+    // Gỡ theo ĐÚNG đường người dùng thật đi (siết 29/08: `manual-complete` chỉ còn nhận hàng KHÔNG
+    // tem — trên hàng có tem nó ghi thẳng bộ đếm mà không đụng tồn/vết quét = tự tay làm lệch dữ
+    // liệu). Nên: hàng CÓ tem thì XÓA từng lượt quét (đường này hoàn tồn đúng), hàng KHÔNG tem thì
+    // ghi số tay về 0 (đường này trả pool đúng).
+    for (const it of (cur.delivery_orders ?? []).flatMap(x => x.items)) {
+      for (const sc of (it.scan_entries ?? []))
+        await api(`/wms/outbound/${id}/items/${it.id}/scans/${sc.id}`, 'DELETE')
+      if (Number(it.cartons_scanned) > 0)
+        await api(`/wms/outbound/${id}/items/${it.id}/manual-complete`, 'POST', { cartons: 0 })
+    }
     const us = await api(`/wms/outbound/${id}/unstart`, 'POST')
     if (us.s !== 200) return false
   }

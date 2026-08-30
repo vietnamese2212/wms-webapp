@@ -40,6 +40,7 @@ const steps = [
   ['32-booking-sequence.mjs'],    // STT chuẩn bị theo booking: oracle tự tính (khung giờ, giờ đặt) + số dồn khi hủy + dãy riêng chiều + validate ngày (24/08)
   ['33-loose-settings.mjs'],      // nhặt lẻ theo KHO+LOẠI: mặc định=hành vi cũ · OFF ép 0 · PM01=ALL toàn bộ (POSM vào Nhặt lẻ) · trần thùng biên · validator (24/08)
   ['34-service-level.mjs'],       // fill rate/OTIF: mức đã hạ KHÔNG cộng lặp khi 1 mã nằm ở 2 NPP + % làm tròn ở nguồn (30/08)
+  ['35-scope-empty.mjs'],         // cấm tài khoản "ASSIGNED mà 0 kho / 0 loại hàng" — mảng phạm vi rỗng bị đọc là KHÔNG GIỚI HẠN (30/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

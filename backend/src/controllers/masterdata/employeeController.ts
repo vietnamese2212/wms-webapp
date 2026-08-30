@@ -343,7 +343,7 @@ export async function createEmployee(req: Request, res: Response) {
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
     // Tài khoản mới cũng phải có kho ngay từ đầu — xem emptyScopeError. `warehouse_ids` mặc định `[]`
     // nên nếu không chặn ở đây thì "tạo tài khoản rồi gán kho sau" chính là đường sinh ra kẽ hở.
-    if (await emptyScopeError(res, '', warehouse_scope ?? 'ASSIGNED', warehouse_ids)) return
+    if (await emptyScopeError(res, '', warehouse_scope ?? 'ASSIGNED', warehouse_ids, allowed_categories)) return
     if (await badWarehouseError(res, warehouse_ids)) return
 
     // ── ỦY QUYỀN CÓ RÀO CHẮN (delegation, không leo thang) ──────────────────────
@@ -456,9 +456,12 @@ export async function createEmployee(req: Request, res: Response) {
 async function badWarehouseError(res: Response, ids: string[] | undefined): Promise<boolean> {
   if (!ids?.length) return false
   const uniq = [...new Set(ids)]
-  const { data, error } = await supabase.from('Warehouse').select('id').in('id', uniq)
-  if (error) { fail(res, error.message); return true }
-  const found = new Set(((data ?? []) as { id: string }[]).map(w => w.id))
+  // Chunk 300: một đơn vị có hàng trăm kho NPP, mà `.in()` nằm trên URL của PostgREST (trần ~300 id
+  // uuid) và response bị cap 1.000 dòng. Thiếu chunk thì id cuối danh sách bị coi là "không tồn tại"
+  // — tức chặn OAN đúng lúc người ta gán nhiều kho nhất.
+  const rows = await fetchAllByIdChunks(uniq, chunk =>
+    supabase.from('Warehouse').select('id').in('id', chunk).order('id'))
+  const found = new Set((rows as { id: string }[]).map(w => w.id))
   const missing = uniq.filter(id => !found.has(id))
   if (missing.length === 0) return false
   fail(res, `Kho không tồn tại: ${missing.join(', ')}`, 400)
@@ -467,14 +470,24 @@ async function badWarehouseError(res: Response, ids: string[] | undefined): Prom
 
 async function emptyScopeError(
   res: Response, empId: string, nextScope: string | undefined, nextWhIds: string[] | undefined,
+  nextCats?: string[] | undefined,
 ): Promise<boolean> {
-  if (nextScope === undefined && nextWhIds === undefined) return false
+  if (nextScope === undefined && nextWhIds === undefined && nextCats === undefined) return false
   let scope = nextScope
   if (scope === undefined) {
     const { data } = await supabase.from('Employee').select('warehouse_scope').eq('id', empId).maybeSingle()
     scope = (data as { warehouse_scope: string | null } | null)?.warehouse_scope ?? 'ASSIGNED'
   }
-  if (scope === 'NATIONAL') return false          // toàn quốc thì không cần gán kho
+  if (scope === 'NATIONAL') return false          // toàn quốc thì không cần gán kho/loại
+  // TRỤC LOẠI HÀNG y hệt trục kho: `scopeCategoriesOf` cũng đọc mảng rỗng là "không giới hạn".
+  // Lúc TẠO thì BE tự điền CẢ danh mục nên rỗng không xuất hiện, nhưng form Sửa cho phép BỎ TICK
+  // HẾT ⇒ lưu `[]` ⇒ nhìn thấy MỌI loại. Đo thật 30/08: tài khoản bỏ tick hết thấy FG01+FG02,
+  // người được cấp đúng FG01 chỉ thấy FG01.
+  if (nextCats !== undefined && nextCats.length === 0) {
+    fail(res, 'Tài khoản theo phạm vi kho được gán thì phải chọn ÍT NHẤT 1 loại hàng — '
+      + 'bỏ tick hết là tài khoản đọc được MỌI loại hàng', 422)
+    return true
+  }
   let count = nextWhIds?.length
   if (count === undefined) {
     const { data } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', empId)
@@ -506,7 +519,7 @@ export async function updateEmployee(req: Request, res: Response) {
       ncc_id?: string | null; is_driver?: boolean; manager_id?: string | null
     }
 
-    if (await emptyScopeError(res, id, warehouse_scope, warehouse_ids)) return
+    if (await emptyScopeError(res, id, warehouse_scope, warehouse_ids, allowed_categories)) return
     if (await badWarehouseError(res, warehouse_ids)) return
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null

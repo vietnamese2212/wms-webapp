@@ -272,6 +272,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     setCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
   }
 
+  const noWarehousePicked = scope === 'ASSIGNED' && warehouseIds.length === 0
+  // Bỏ tick HẾT loại hàng cũng bị BE từ chối (422) vì mảng rỗng bị đọc là "không giới hạn" —
+  // tức tài khoản đọc được MỌI loại. Chỉ áp khi SỬA: lúc tạo mà để trống thì BE tự điền cả danh mục.
+  const noCategoryPicked = isEdit && scope === 'ASSIGNED' && categories.length === 0
+
   function handleSubmit() {
     const payload: Record<string, unknown> = {
       name,
@@ -377,7 +382,13 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       title={isEdit ? 'Sửa nhân viên' : 'Thêm nhân viên'}
       footer={<>
         <Button variant="outline" onClick={onClose}>Huỷ</Button>
-        <Button onClick={handleSubmit} disabled={isPending || !showRestOfForm || !name || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
+        {/* Phạm vi "kho được gán" mà không gán kho nào thì BE từ chối (422) — tài khoản đó vừa không
+            thao tác được gì, vừa đọc được dữ liệu của mọi kho. Chặn ngay tại nút để người quản trị
+            biết phải làm gì, thay vì bấm Lưu rồi mới nhận banner đỏ. */}
+        <Button onClick={handleSubmit}
+          title={noWarehousePicked ? 'Chọn ít nhất 1 kho cho phạm vi "Kho được chỉ định"'
+               : noCategoryPicked ? 'Chọn ít nhất 1 loại hàng' : undefined}
+          disabled={isPending || !showRestOfForm || !name || noWarehousePicked || noCategoryPicked || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
           {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
         </Button>
       </>}
@@ -481,7 +492,14 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
               <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
                 <div className="space-y-1">
-                  <Label className="text-xs">Loại hàng được phép</Label>
+                  <Label className="text-xs">
+                    Loại hàng được phép{scope === 'ASSIGNED' && <span className="text-red-500"> *</span>}
+                  </Label>
+                  {noCategoryPicked && (
+                    <p className="text-[11px] text-red-600">
+                      Phải chọn ít nhất 1 loại — bỏ tick hết là tài khoản đọc được MỌI loại hàng.
+                    </p>
+                  )}
                   <div className="flex gap-2 flex-wrap">
                     {categoryOptions.map(cat => (
                       <button key={cat} type="button" onClick={() => toggleCategory(cat)}
@@ -510,7 +528,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
                 {scope === 'ASSIGNED' && (
                   <div className="space-y-1">
-                    <Label className="text-xs">Kho được phép</Label>
+                    <Label className="text-xs">Kho được phép <span className="text-red-500">*</span></Label>
                     <WarehouseMultiSelect
                       warehouses={warehouses as { id: string; code: string; name: string }[]}
                       selected={warehouseIds}
@@ -518,6 +536,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                       dropUp
                       showTags
                     />
+                    {noWarehousePicked && (
+                      <p className="text-[11px] text-red-600">
+                        Phải chọn ít nhất 1 kho — để trống thì tài khoản vừa không thao tác được, vừa đọc được dữ liệu của mọi kho.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

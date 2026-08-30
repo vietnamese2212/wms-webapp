@@ -76,6 +76,13 @@ try {
     check('[5] bị từ chối thì kho cũ GIỮ NGUYÊN (không xoá dở rồi mới báo lỗi)',
       rows.length === 1, `còn ${rows.length} kho`)
   }
+  // [4b] TRỤC LOẠI HÀNG y hệt: `scopeCategoriesOf` cũng đọc mảng rỗng là "không giới hạn". Lúc TẠO
+  // thì BE tự điền cả danh mục nên rỗng không xuất hiện, nhưng form Sửa cho phép BỎ TICK HẾT.
+  // Đo 30/08: tài khoản bỏ tick hết thấy FG01+FG02, người được cấp đúng FG01 chỉ thấy FG01.
+  if (empId) {
+    const r = await api(`/masterdata/employees/${empId}`, 'PATCH', { allowed_categories: [] })
+    check('[4b] SỬA bỏ tick HẾT loại hàng → 422', r.s === 422, `HTTP ${r.s}`)
+  }
   // [6] NATIONAL thì không cần gán kho — không được chặn oan
   {
     const r = await api('/masterdata/employees', 'POST', {

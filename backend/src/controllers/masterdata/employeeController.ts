@@ -341,6 +341,9 @@ export async function createEmployee(req: Request, res: Response) {
     }
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
+    // Tài khoản mới cũng phải có kho ngay từ đầu — xem emptyScopeError. `warehouse_ids` mặc định `[]`
+    // nên nếu không chặn ở đây thì "tạo tài khoản rồi gán kho sau" chính là đường sinh ra kẽ hở.
+    if (await emptyScopeError(res, '', warehouse_scope ?? 'ASSIGNED', warehouse_ids)) return
 
     // ── ỦY QUYỀN CÓ RÀO CHẮN (delegation, không leo thang) ──────────────────────
     // Quản lý đơn vị (có user_admin.create) TẠO ĐƯỢC tài khoản, nhưng KHÔNG được vượt
@@ -424,6 +427,43 @@ export async function createEmployee(req: Request, res: Response) {
 
 // ─── Update ───────────────────────────────────────────────────────────────────
 
+/**
+ * CHẶN trạng thái "phạm vi ASSIGNED nhưng KHÔNG kho nào" — trạng thái này VÔ NGHĨA về nghiệp vụ
+ * (người đó không làm được gì) và NGUY HIỂM về kỹ thuật: app đọc mảng kho rỗng theo HAI cách trái
+ * ngược nhau — `[]` giữ nguyên ⇒ chặn sạch (Tồn kho ghi, Nhập, Xuất), nhưng `ids.length ? ids : null`
+ * ⇒ null ⇒ **KHÔNG giới hạn** (Tổng quan, Truy xuất lô, Chi phí kho, facet Tồn kho, dồn/tách pallet).
+ * Đo thật 30/08 trên staging: tài khoản chưa gán kho nào nhìn thấy ĐÚNG BẰNG superadmin ở 5 màn.
+ *
+ * Vá 15 chỗ đọc thì chắc chắn sót (chính lượt quét tay này đã sót 2 chỗ so với đo thực tế) — nên
+ * chặn ở CỬA GHI để trạng thái đó không tồn tại; khi ấy hai cách đọc cho cùng một đáp án.
+ * Cùng triết lý với loại hàng: `allowed_categories` bỏ trống thì tự điền CẢ danh mục (dòng ~378),
+ * cũng là để mảng rỗng không bao giờ xuất hiện.
+ *
+ * Trả true nghĩa là ĐÃ gửi lỗi cho client, caller phải dừng.
+ * @param nextScope   phạm vi SAU khi ghi; undefined = không đổi (đọc lại từ DB)
+ * @param nextWhIds   danh sách kho SAU khi ghi; undefined = không đổi (đếm lại từ DB)
+ */
+async function emptyScopeError(
+  res: Response, empId: string, nextScope: string | undefined, nextWhIds: string[] | undefined,
+): Promise<boolean> {
+  if (nextScope === undefined && nextWhIds === undefined) return false
+  let scope = nextScope
+  if (scope === undefined) {
+    const { data } = await supabase.from('Employee').select('warehouse_scope').eq('id', empId).maybeSingle()
+    scope = (data as { warehouse_scope: string | null } | null)?.warehouse_scope ?? 'ASSIGNED'
+  }
+  if (scope === 'NATIONAL') return false          // toàn quốc thì không cần gán kho
+  let count = nextWhIds?.length
+  if (count === undefined) {
+    const { data } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', empId)
+    count = (data ?? []).length
+  }
+  if (count > 0) return false
+  fail(res, 'Tài khoản theo phạm vi kho được gán thì phải gán ÍT NHẤT 1 kho — '
+    + 'để trống là tài khoản vừa không thao tác được, vừa đọc được dữ liệu của mọi kho', 422)
+  return true
+}
+
 export async function updateEmployee(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được sửa hồ sơ nhân viên', 403)
@@ -443,6 +483,8 @@ export async function updateEmployee(req: Request, res: Response) {
       is_active?: boolean
       ncc_id?: string | null; is_driver?: boolean; manager_id?: string | null
     }
+
+    if (await emptyScopeError(res, id, warehouse_scope, warehouse_ids)) return
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
     // (quyền nằm trên JobTitle, không phải Employee — không đụng module_permissions ở đây)
@@ -618,6 +660,7 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được sửa phạm vi kho', 403)
     const { id } = req.params
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
+    if (await emptyScopeError(res, id, undefined, warehouse_ids)) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)

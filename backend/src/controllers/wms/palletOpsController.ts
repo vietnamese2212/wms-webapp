@@ -38,7 +38,9 @@ const WH_SELECT = 'warehouse_id, location:Location!location_id(warehouse_id)'
 function guardEntryWh(req: Request, res: Response, whId: string | null): boolean {
   if (req.user?.warehouse_scope === 'NATIONAL') return true
   const scope = req.user?.warehouse_ids ?? []
-  if (scope.length === 0) return true
+  // KHÔNG có ngoại lệ "chưa gán kho thì cho qua": đó là đường cho tài khoản chưa gán kho DỒN/TÁCH
+  // pallet của mọi kho, trong khi cùng tình huống đó Tồn kho lại chặn sạch (guardEntriesScope).
+  // Trạng thái này nay bị chặn từ cửa ghi hồ sơ nhân sự (emptyScopeError), đây là lớp thứ hai.
   if (!whId || !scope.includes(whId)) {
     fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác pallet của kho này', 403)
     return false

@@ -344,6 +344,7 @@ export async function createEmployee(req: Request, res: Response) {
     // Tài khoản mới cũng phải có kho ngay từ đầu — xem emptyScopeError. `warehouse_ids` mặc định `[]`
     // nên nếu không chặn ở đây thì "tạo tài khoản rồi gán kho sau" chính là đường sinh ra kẽ hở.
     if (await emptyScopeError(res, '', warehouse_scope ?? 'ASSIGNED', warehouse_ids)) return
+    if (await badWarehouseError(res, warehouse_ids)) return
 
     // ── ỦY QUYỀN CÓ RÀO CHẮN (delegation, không leo thang) ──────────────────────
     // Quản lý đơn vị (có user_admin.create) TẠO ĐƯỢC tài khoản, nhưng KHÔNG được vượt
@@ -412,12 +413,14 @@ export async function createEmployee(req: Request, res: Response) {
     if (error) return fail(res, error.message)
 
     if (warehouse_ids.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await supabase.from('UserWarehouseAccess').insert(
+      // KHÔNG nuốt lỗi: ghi kho hỏng mà vẫn trả 201 là đẻ ra tài khoản 0 kho — trạng thái mà
+      // emptyScopeError vừa cấm ở ngay đầu hàm này.
+      const { error: waErr } = await supabase.from('UserWarehouseAccess').insert(
         warehouse_ids.map(wid => ({
           id: randomUUID(), employee_id: empId, warehouse_id: wid,
         }))
       )
+      if (waErr) return fail(res, `Tạo tài khoản xong nhưng KHÔNG gán được kho: ${waErr.message}`, 500)
     }
 
     const rows = await fetchFull({ ids: [empId] })
@@ -443,6 +446,25 @@ export async function createEmployee(req: Request, res: Response) {
  * @param nextScope   phạm vi SAU khi ghi; undefined = không đổi (đọc lại từ DB)
  * @param nextWhIds   danh sách kho SAU khi ghi; undefined = không đổi (đếm lại từ DB)
  */
+/**
+ * Kho gán phải CÓ THẬT. Không kiểm thì `emptyScopeError` bị vô hiệu hoàn toàn: nó đếm ĐỘ DÀI mảng,
+ * nên gửi một id kho không tồn tại là qua cửa — rồi lệnh ghi `UserWarehouseAccess` hỏng vì khoá
+ * ngoại và (trước bản vá này) bị NUỐT, để lại đúng tài khoản 0 kho mà chốt chặn sinh ra để ngăn.
+ * Đo thật 30/08: gửi id toàn số 0 → HTTP 201, tài khoản có 0 kho.
+ * Kiểm TRƯỚC khi ghi để không tạo ra bản ghi dở dang.
+ */
+async function badWarehouseError(res: Response, ids: string[] | undefined): Promise<boolean> {
+  if (!ids?.length) return false
+  const uniq = [...new Set(ids)]
+  const { data, error } = await supabase.from('Warehouse').select('id').in('id', uniq)
+  if (error) { fail(res, error.message); return true }
+  const found = new Set(((data ?? []) as { id: string }[]).map(w => w.id))
+  const missing = uniq.filter(id => !found.has(id))
+  if (missing.length === 0) return false
+  fail(res, `Kho không tồn tại: ${missing.join(', ')}`, 400)
+  return true
+}
+
 async function emptyScopeError(
   res: Response, empId: string, nextScope: string | undefined, nextWhIds: string[] | undefined,
 ): Promise<boolean> {
@@ -485,6 +507,7 @@ export async function updateEmployee(req: Request, res: Response) {
     }
 
     if (await emptyScopeError(res, id, warehouse_scope, warehouse_ids)) return
+    if (await badWarehouseError(res, warehouse_ids)) return
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
     // (quyền nằm trên JobTitle, không phải Employee — không đụng module_permissions ở đây)
@@ -512,10 +535,11 @@ export async function updateEmployee(req: Request, res: Response) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
       if (warehouse_ids.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('UserWarehouseAccess').insert(
+        // Xoá xong mà ghi lại hỏng = tài khoản mất sạch kho ÂM THẦM → phải báo, không nuốt.
+        const { error: waErr } = await supabase.from('UserWarehouseAccess').insert(
           warehouse_ids.map(wid => ({ id: randomUUID(), employee_id: id, warehouse_id: wid }))
         )
+        if (waErr) return fail(res, `Không gán lại được kho cho tài khoản: ${waErr.message}`, 500)
       }
     }
 
@@ -661,14 +685,16 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     const { id } = req.params
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
     if (await emptyScopeError(res, id, undefined, warehouse_ids)) return
+    if (await badWarehouseError(res, warehouse_ids)) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
     if (warehouse_ids.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await supabase.from('UserWarehouseAccess').insert(
+      // Như updateEmployee: đã xoá phạm vi cũ, ghi lại hỏng mà im lặng = mất sạch kho âm thầm.
+      const { error: waErr } = await supabase.from('UserWarehouseAccess').insert(
         warehouse_ids.map(wid => ({ id: randomUUID(), employee_id: id, warehouse_id: wid }))
       )
+      if (waErr) return fail(res, `Không đặt được phạm vi kho: ${waErr.message}`, 500)
     }
 
     const rows = await fetchFull({ ids: [id] })

@@ -132,7 +132,41 @@ function countColWidthMismatch(roots, sampleOut) {
 }
 
 // ── Các luật — mỗi luật là 1 phép đếm thuần văn bản, KHÔNG heuristics mờ (mờ = báo oan = bị tắt) ──
+/**
+ * `round(<biểu thức>, n) / <mẫu số>` — LÀM TRÒN TỬ SỐ RỒI MỚI CHIA.
+ * Đặt lệch một dấu ngoặc là phép làm tròn mất tác dụng hoàn toàn: tử số thường đã là số nguyên nên
+ * `round(…, 1)` không đổi gì, rồi chia xong ra 16-18 chữ số thập phân. Bắt được 30/08 ở 5 ô phần
+ * trăm của `service_level` (2/3 chuyến đúng hạn trả `66.6666666666666667` thay vì `66.7`).
+ * Giao diện che được bằng `.toFixed(1)` nên lỗi sống rất lâu — phải bắt ở NGUỒN.
+ * Khớp ngoặc thật (không phải regex thuần) để `round(a / b, 3)` — chia BÊN TRONG, hoàn toàn đúng —
+ * không bị báo oan.
+ */
+function roundBeforeDivide(line) {
+  if (/^\s*--/.test(line)) return false             // dòng chú thích: bản vá cần TRÍCH lại dạng sai để giải thích
+  for (let i = line.search(/\bround\s*\(/i); i >= 0;) {
+    let d = 0, j = line.indexOf('(', i)
+    for (; j < line.length; j++) {
+      if (line[j] === '(') d++
+      else if (line[j] === ')' && --d === 0) break
+    }
+    if (d !== 0) return false                       // ngoặc vắt sang dòng khác — bỏ qua, không đoán
+    if (/^\s*\//.test(line.slice(j + 1))) return true
+    const rest = line.slice(j + 1)
+    const k = rest.search(/\bround\s*\(/i)
+    i = k < 0 ? -1 : j + 1 + k
+  }
+  return false
+}
+
 const RULES = [
+  // Baseline 5 = 5 dòng trong `20260828d_service_level.sql`. File migration ĐÃ APPLY là lịch sử,
+  // không sửa lại — bản vá nằm ở `20260830_service_level_fix.sql`. Ratchet gác code MỚI: viết thêm
+  // một chỗ nữa là 6 → CI đỏ.
+  {
+    key: 'sql_round_before_divide',
+    label: 'làm tròn TỬ SỐ rồi mới chia — round(x, n) / y khiến phép làm tròn vô tác dụng (ý định là round(x / y, n))',
+    count: (s) => countMatches(['backend/migrations'], ['.sql'], roundBeforeDivide, s),
+  },
   // `booked_count` là CACHE và DB KHÔNG có trigger nào — xoá dòng xe mà quên `recount_slot` là khung
   // giờ kẹt "Đầy" vĩnh viễn (đo thật 04/08). Mọi chỗ xoá mới PHẢI đi qua `deleteVehicleSlotsAndRecount`.
   // Baseline = 2: bookingGuards (chính helper) + vehicleSlotController.deleteVehicleSlot (đã recount tại chỗ).

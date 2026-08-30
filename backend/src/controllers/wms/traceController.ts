@@ -25,11 +25,25 @@ const KINDS = ['pallet', 'material', 'batch', 'npp', 'trip', 'plate'] as const
 type Kind = typeof KINDS[number]
 const isKind = (v: string): v is Kind => (KINDS as readonly string[]).includes(v)
 
-/** 'YYYY-MM-DD' hoặc rỗng → null. Ngày rác trả undefined để báo 400 thay vì để Postgres ném 22007. */
+/**
+ * 'YYYY-MM-DD' hoặc rỗng → null. Ngày rác trả undefined để báo 400 thay vì để Postgres ném 22007.
+ *
+ * ⚠️ Kiểm DẠNG thôi là chưa đủ — `2026-13-45` khớp regex nhưng xuống Postgres là **22008
+ * "date/time field value out of range" ⇒ 500** (đo thật 30/08 bằng fuzz tham số). Đúng cái bẫy
+ * CLAUDE.md đã ghi và `warehouseCostController.monthOf` đã học, nhưng file này viết sau lại vấp
+ * lại. 500 rác vừa báo sai cho người dùng, vừa làm rule cảnh báo "lỗi BE 24h" kêu oan.
+ * Nên kiểm LỊCH thật: dựng Date theo UTC rồi soi có bị cuộn sang ngày khác không (31/02 → 03/03).
+ */
 function dayOf(v: unknown): string | null | undefined {
   const s = String(v ?? '').trim()
   if (!s) return null
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return undefined
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  if (y < 1900 || y > 2200 || mo < 1 || mo > 12 || d < 1 || d > 31) return undefined
+  const dt = new Date(Date.UTC(y, mo - 1, d))
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return undefined
+  return s
 }
 
 export async function lotTrace(req: Request, res: Response) {

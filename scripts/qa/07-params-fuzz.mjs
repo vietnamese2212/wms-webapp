@@ -96,6 +96,14 @@ const LIST_FUZZ = [
   `/wms/warehouse-costs?period=2026-08&items=&warehouse_id=&search=`,
   `/wms/dashboard/productivity?date_from=2026-13-01&date_to=2026-08-31`,
   `/wms/dashboard/productivity?date_from=2026-08-01&date_to=0000-00-00`,
+  // Cùng họ đó nhưng trên 5 MÀN CHÍNH — fuzz 30/08 cho thấy đều 500. Regex `^\d{4}-\d{2}-\d{2}$`
+  // là kiểm DẠNG chứ không kiểm LỊCH: 2026-02-31 khớp dạng, xuống Postgres nổ 22008. Nay chặn
+  // bằng lưới CHUNG trong app.ts (không rải guard từng controller rồi lại sót) + utils/dates.ts.
+  `/wms/outbound?date_from=2026-02-31&date_to=2026-08-31`,
+  `/wms/inbound-orders?date_from=2026-13-45&date_to=2026-08-31`,
+  `/hr/leaves?date_from=0000-00-00&date_to=2026-08-31&page=1&page_size=20`,
+  `/external/khvc?export_from=2026-02-31&export_to=2026-08-31`,
+  `/wms/loosepicking?date_from=2026-13-45&date_to=2026-08-31`,
 ]
 for (const path of LIST_FUZZ) {
   const r = await api(path)
@@ -135,10 +143,25 @@ const TRACE_FUZZ = [
   [`/wms/service-level?from=abc&to=2026-08-28`, 400],
   [`/wms/service-level?from=2026-08-01&to=2026-08-28`, 200],
   [`/wms/service-level?from=2026-08-01&to=2026-08-28&warehouse_id=undefined`, 400], // id rác → 400, không 22P02/500
+  // Ngày ĐÚNG DẠNG nhưng KHÔNG CÓ THẬT: regex chỉ kiểm dạng, Postgres nổ 22008 ⇒ 500 (fuzz 30/08)
+  [`/wms/trace?kind=material&value=510000084&prod_from=2026-13-45`, 400],
+  [`/wms/trace?kind=material&value=510000084&prod_to=2026-02-31`, 400],
+  [`/wms/service-level?from=0000-00-00&to=2026-08-31`, 400],
 ]
 for (const [path, want] of TRACE_FUZZ) {
   const r = await api(path)
   chk(r.s === want, `fuzz truy xuất ${path.replace('/wms/', '').slice(0, 60)}`, `HTTP ${r.s} (mong ${want})`)
+}
+
+// ── Ký tự đại diện LIKE không được lách rào "tiền tố ≥ 4 ký tự" (30/08) ──
+// `format(%L)` chống TIÊM SQL nhưng KHÔNG đụng tới ý nghĩa của '%' và '_' trong chính LIKE. Gõ
+// '%%%%' vừa đủ 4 ký tự và khớp MỌI mã pallet — đo trước khi vá: 55.768/55.770 pallet, 415KB,
+// 2,4s. Phải soi SỐ DÒNG chứ không chỉ mã trạng thái: cả hai bên đều trả 200.
+for (const val of ['%%%%', '____', '%_%_']) {
+  const r = await api(`/wms/trace?kind=pallet&value=${encodeURIComponent(val)}`)
+  const n = r.j?.data?.summary?.pallets ?? 0
+  chk(r.s === 200 && n === 0, `truy xuất lô: "${val}" là ký tự THẬT, không phải ký tự đại diện`,
+    `HTTP ${r.s} · ${n} pallet (phải 0 — nếu ra hàng chục nghìn là quét trọn kho)`)
 }
 
 // ── Tab Dịch vụ phải NGHE ô chọn Kho của Dashboard (28/08) ──

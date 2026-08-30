@@ -14,6 +14,7 @@ import { verifyToken } from './middlewares/auth'
 import { supabase } from './lib/supabase'
 import { recordServerError } from './utils/response'
 import { searchLooksLikeInjection } from './utils/search'
+import { isDay } from './utils/dates'
 
 dotenv.config()
 
@@ -96,13 +97,31 @@ app.get('/api/health', async (_req, res) => {
 // kêu oan — tức làm HỎNG chính cái tai mắt.
 // `search` đã có hàng rào riêng trong từng controller; đây là lưới CHUNG cho MỌI tham số ở MỌI
 // endpoint — hiện có lẫn viết sau — thay vì rải guard từng chỗ rồi lại sót.
+// ── Ngày ĐÚNG DẠNG nhưng KHÔNG CÓ THẬT → 400, đừng để thành 500 ──
+// Cùng một câu chuyện với lưới injection ở trên, nên đặt cạnh nhau. Kiểm bằng regex
+// `^\d{4}-\d{2}-\d{2}$` là kiểm DẠNG chứ không kiểm LỊCH: `2026-13-45` · `2026-02-31` ·
+// `0000-00-00` đều lọt xuống Postgres và nổ 22008 ⇒ 500. Fuzz 30/08: **5 màn chính** cùng vỡ —
+// Xuất kho · Nhập kho · Nghỉ phép · Kế hoạch xuất · Nhặt lẻ. Bài học này đã ghi 2 lần (gói fill
+// 05/08, chi phí kho 27/08) mà mỗi lần chỉ vá tại chỗ, nên chỗ viết sau vẫn vấp lại — lần này để
+// lưới CHUNG, phủ cả endpoint chưa viết.
+// CHỈ soi tham số MANG NGHĨA NGÀY (theo tên), không soi mọi tham số: một ô tìm kiếm tự do có thể
+// chứa chuỗi hình dạng ngày mà không phải ngày, chặn nó là báo oan.
+const DATE_PARAM = /(^|_)(date|dates|from|to)$/i
+const DAY_SHAPE = /^\d{4}-\d{2}-\d{2}$/
 app.use('/api', (req, res, next) => {
   for (const [key, raw] of Object.entries(req.query)) {
     for (const v of (Array.isArray(raw) ? raw : [raw])) {
-      if (typeof v === 'string' && searchLooksLikeInjection(v)) {
-        const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)   // không dội lại ký tự lạ của client
+      if (typeof v !== 'string') continue
+      const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)   // không dội lại ký tự lạ của client
+      if (searchLooksLikeInjection(v)) {
         return res.status(400).json({ success: false, error: { code: 'BAD_PARAM',
           message: `Giá trị của tham số "${safeKey}" chứa mẫu ký tự bị hệ thống bảo mật chặn.` } })
+      }
+      // Chỉ chặn thứ TRÔNG như ngày mà không phải ngày. Giá trị không có hình dạng ngày (rỗng,
+      // 'undefined', 'hôm nay'…) để nguyên cho controller xử theo luật riêng của nó.
+      if (DATE_PARAM.test(key) && DAY_SHAPE.test(v) && !isDay(v)) {
+        return res.status(400).json({ success: false, error: { code: 'BAD_DATE',
+          message: `Ngày ở tham số "${safeKey}" không có thật (${v}).` } })
       }
     }
   }

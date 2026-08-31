@@ -8,7 +8,7 @@ import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } 
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
-import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
 // Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
@@ -428,7 +428,8 @@ const mBool = (v: unknown): boolean | null => {
 export async function uploadExcel(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
     const { rows, missingRequired } = parseSheetByHeader(ws, M_FIELDS)   // map theo TÊN cột (chịu đảo cột)
     if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Mã hàng`, 400)

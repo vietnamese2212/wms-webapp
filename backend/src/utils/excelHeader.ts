@@ -7,6 +7,14 @@ import * as XLSX from 'xlsx'
 
 export type FieldDef = { key: string; label: string; aliases: string[]; required?: boolean }
 
+// File không phải Excel (ảnh/PDF/binary đội lốt .xlsx) → XLSX.read THROW; không đỡ là 500 thô
+// (upfuzz 31/08: PNG đội lốt .xlsx làm 6/7 cửa upload nổ 500). Mọi cửa upload đọc workbook qua đây:
+// hỏng → null để controller trả 400 sạch kèm BAD_EXCEL_MSG.
+export const BAD_EXCEL_MSG = 'File không đọc được như Excel (.xlsx) — kiểm tra lại định dạng file'
+export function readWorkbookSafe(buf: Buffer): XLSX.WorkBook | null {
+  try { return XLSX.read(buf, { type: 'buffer' }) } catch { return null }
+}
+
 // trim + lowercase + bỏ dấu tiếng Việt + gộp mọi ký tự không phải chữ/số thành 1 space
 // (loại '*', '()', '/', '-', '_'…) → "Thùng/Pallet *" và "cartons_per_pallet" cùng chuẩn hóa gọn.
 export const normHeader = (s: unknown): string =>

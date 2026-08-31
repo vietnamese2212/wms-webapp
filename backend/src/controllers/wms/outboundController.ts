@@ -26,7 +26,7 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
-import { expandMergedCells } from '../../utils/excelHeader'
+import { expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
 import { guardPutaway } from '../../services/putawayContext'
 
@@ -2993,7 +2993,8 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const { warehouse_id } = req.body as { warehouse_id?: string }
 
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
 
@@ -3684,7 +3685,8 @@ type ErpRawLine = {
 export async function uploadVl06o(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File VL06O trống hoặc không đúng định dạng', 400)
@@ -4227,7 +4229,8 @@ async function sweepOrphanDeliveries(doNos: string[]): Promise<number> {
 export async function uploadKhvc(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
     // Trải ô GỘP trước khi đọc: file điều vận hay gộp ô "Số xe" cho nhiều DO của cùng một xe, mà ô
     // gộp chỉ mang giá trị ở dòng đầu ⇒ các DO còn lại mất Số xe và bị bỏ ÂM THẦM ở vòng dưới.

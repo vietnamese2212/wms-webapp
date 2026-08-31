@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesAnyAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
-import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizeLocScan } from '../../utils/locationScan'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
@@ -765,7 +765,8 @@ type ExistingLoc = Record<string, unknown> & { id: string; location_code: string
 export async function uploadExcel(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 400, 'VALIDATION_ERROR', 'Không có file upload')
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, 400, 'VALIDATION_ERROR', BAD_EXCEL_MSG)
     const ws = wb.Sheets[wb.SheetNames[0]]
     const { rows, missingRequired } = parseSheetByHeader(ws, L_FIELDS)
     if (missingRequired.length)

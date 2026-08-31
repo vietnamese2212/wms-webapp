@@ -12,7 +12,7 @@ import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
-import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
@@ -1651,7 +1651,8 @@ function makeNccResolver(items: { id: string; code?: string | null; name?: strin
 export async function uploadExcel(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
     const { rows, missingRequired } = parseSheetByHeader(ws, INV_FIELDS)   // map theo TÊN cột (chịu đảo cột)
     if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Tồn kho`, 400)

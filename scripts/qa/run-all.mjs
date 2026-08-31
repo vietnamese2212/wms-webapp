@@ -43,6 +43,7 @@ const steps = [
   ['35-scope-empty.mjs'],         // cấm tài khoản "ASSIGNED mà 0 kho / 0 loại hàng" — mảng phạm vi rỗng bị đọc là KHÔNG GIỚI HẠN (30/08)
   ['36-update-partial.mjs'],      // PUT sửa đơn: body thiếu field không xoá trắng Kho/ĐVVT + PUT bị từ chối không ghi nửa header (31/08)
   ['37-bodyfuzz.mjs'],            // MỌI route write × body ác ({}, null, [], sai kiểu) + id không tồn tại → không bao giờ 5xx (31/08: 61 ca .single() coerce)
+  ['38-upload-fuzz.mjs'],         // MỌI cửa upload × file ác (rỗng/rác/PNG đội lốt/0 dòng/sai cột) → 400 sạch, 0 rác DB (31/08: PNG làm 6/7 cửa nổ 500)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

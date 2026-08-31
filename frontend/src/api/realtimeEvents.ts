@@ -85,6 +85,13 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WorkLayoutJobTitle:   [['hr-layout']],
   ShiftRestRule:        [['hr-shift-rules']],
   Attendance:           [['hr-attendance'], ['hr-attendance-matrix'], ['hr-att-report']],
+  // Chấm sao chuyến + Chi phí kho (user chốt 31/08 "2 mục này cần realtime"): kho nhận chấm sao
+  // → tab Dịch vụ + khối rating trên chuyến của người khác tự cập nhật; kế toán A chốt kỳ / sửa
+  // dòng chi phí → màn của kế toán B sáng ngay (trước đây phải F5). Policy SELECT: migration
+  // 20260831_realtime_costs_policy (thiếu policy = sự kiện chết CÂM).
+  receipt_ratings:      [['service-level'], ['receipt-rating']],
+  warehouse_costs:      [['warehouse-costs']],
+  warehouse_cost_locks: [['warehouse-costs']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>

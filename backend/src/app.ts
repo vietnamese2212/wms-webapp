@@ -117,6 +117,12 @@ app.use('/api', (req, res, next) => {
         return res.status(400).json({ success: false, error: { code: 'BAD_PARAM',
           message: `Giá trị của tham số "${safeKey}" chứa mẫu ký tự bị hệ thống bảo mật chặn.` } })
       }
+      // page/offset KHỔNG LỒ (bookmark cũ, bot): offset = page×limit tràn int4 của Postgres
+      // → 22003 → 500 thô ở 5 màn list (đo 31/08: page=1e9). Trang thật không bao giờ tới 1e6.
+      if ((key === 'page' || key === 'offset') && /^\d{7,}$/.test(v)) {
+        return res.status(400).json({ success: false, error: { code: 'BAD_PAGE',
+          message: `Tham số "${safeKey}" quá lớn (${v.slice(0, 12)}…) — trang không tồn tại.` } })
+      }
       // Chỉ chặn thứ TRÔNG như ngày mà không phải ngày. Giá trị không có hình dạng ngày (rỗng,
       // 'undefined', 'hôm nay'…) để nguyên cho controller xử theo luật riêng của nó.
       if (DATE_PARAM.test(key) && DAY_SHAPE.test(v) && !isDay(v)) {

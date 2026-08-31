@@ -44,6 +44,13 @@ for (const [path, label] of LOOKUP_EMPTY) {
 // Lưu ý ngữ nghĩa: filter rỗng = "không lọc" là HỢP LỆ (khác tra cứu) — chỉ cấm 500/quá trần.
 const d0 = '2026-07-01', d1 = '2026-07-29'
 const LIST_FUZZ = [
+  // page KHỔNG LỒ (bookmark cũ/bot): offset = page×limit tràn int4 Postgres → từng 500 thô
+  // ở 5 màn (31/08); nay lưới chung app.ts trả 400 BAD_PAGE — gác cả 5 màn từng dính
+  `/wms/outbound?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
+  `/wms/inbound-orders?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
+  `/wms/outbound/scan-log?page=1000000000&limit=50&from_date=${d0}&to_date=${d1}`,
+  `/wms/loosepicking?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
+  `/hr/leaves?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
   `/wms/inventory?page=1&limit=50&warehouse_ids=&categories=`,
   `/wms/inventory?page=1&limit=50&warehouse_ids=khong-phai-uuid`,
   `/wms/inventory?page=1&limit=50&search=${encodeURIComponent("';--")}`,

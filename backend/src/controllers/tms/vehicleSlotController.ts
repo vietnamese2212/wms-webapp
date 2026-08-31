@@ -112,7 +112,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
-      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).maybeSingle()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
@@ -409,7 +409,7 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
-      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).maybeSingle()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
@@ -482,7 +482,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
-      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).maybeSingle()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
     if (!['PENDING', 'BOOKED'].includes(existing.status as string)) return fail(res, 'Chỉ xoá được xe chưa thực hiện', 400)

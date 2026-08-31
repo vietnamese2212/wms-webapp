@@ -100,8 +100,9 @@ export async function updateTransportCompany(req: Request, res: Response) {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TransportCompany')
-      .update(updates).eq('id', id).select().single()
+      .update(updates).eq('id', id).select().maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy ĐVVT/NCC', 404)
 
     // Cascade is_active → tất cả xe → tất cả driver employee của ĐVVT
     if (is_active !== undefined) {

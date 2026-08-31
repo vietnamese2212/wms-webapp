@@ -238,8 +238,9 @@ export async function updateVehicle(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
-      .update(updates).eq('id', id).select('*').single()
+      .update(updates).eq('id', id).select('*').maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy xe', 404)
 
     // Cascade xuống driver employee (khóa theo plate + ncc cũ):
     // - đổi ĐVVT (ncc_id) → di chuyển driver theo xe (giữ tài khoản đăng nhập khớp ncc mới)

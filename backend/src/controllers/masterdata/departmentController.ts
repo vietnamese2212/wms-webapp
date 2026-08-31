@@ -73,8 +73,9 @@ export async function updateDepartment(req: Request, res: Response) {
       .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, is_carrier, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
       .select(DEPT_SELECT)
-      .single()
+      .maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy phòng ban', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -149,8 +150,9 @@ export async function setJobTitleParent(req: Request, res: Response) {
     if (in_chart !== undefined) upd.in_chart = in_chart
     const { data, error } = await supabase.from('JobTitle')
       .update(upd)
-      .eq('id', id).select(JT_SELECT).single()
+      .eq('id', id).select(JT_SELECT).maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -170,8 +172,9 @@ export async function updateJobTitle(req: Request, res: Response) {
       .update({ name, is_active, module_permissions, is_driver, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
       .select(JT_SELECT)
-      .single()
+      .maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

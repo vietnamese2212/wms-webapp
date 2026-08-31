@@ -17,10 +17,16 @@ function scopeWhIds(req: Request): string[] | null {
 }
 // Gác theo id: bản ghi phải thuộc kho trong phạm vi user (NATIONAL bỏ qua). Trả false + đã gửi 403 nếu chặn.
 async function guardGateScope(req: Request, res: Response, id: string): Promise<boolean> {
+  // Nạp bản ghi cho MỌI vai (kể cả admin) để id không tồn tại 404 ngay tại cửa — trước đây admin
+  // (scope null) đi thẳng xuống update().select().single() → 0 dòng → "Cannot coerce" 500 (bodyfuzz 31/08)
+  const { data } = await supabase.from('gate_registrations').select('warehouse_id').eq('id', id).maybeSingle()
+  if (!data) {
+    apiErr(res, 'NOT_FOUND', 'Không tìm thấy đăng ký cổng', 404)
+    return false
+  }
   const scope = scopeWhIds(req)
   if (scope === null) return true
-  const { data } = await supabase.from('gate_registrations').select('warehouse_id').eq('id', id).maybeSingle()
-  const whId = (data as { warehouse_id: string | null } | null)?.warehouse_id ?? null
+  const whId = (data as { warehouse_id: string | null }).warehouse_id ?? null
   if (!whId || !scope.includes(whId)) {
     apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể thao tác đăng ký cổng của kho này', 403)
     return false
@@ -639,7 +645,10 @@ export async function doCall(req: Request, res: Response) {
   const user = (req as Request & { user?: { name?: string } }).user
   const { custom_time } = req.body
   const now = new Date().toISOString()
-  const ts = custom_time ? new Date(custom_time).toISOString() : now
+  // custom_time rác ("abc") → RangeError nổ 500; kiểm hợp lệ trước, sai thì 400 sạch
+  const tsD = custom_time ? new Date(custom_time) : null
+  if (tsD && isNaN(tsD.getTime())) return apiErr(res, 'BAD_TIME', 'custom_time không phải thời gian hợp lệ', 400)
+  const ts = tsD ? tsD.toISOString() : now
 
   // Xe kết hợp: chân Xuất chỉ được "Gọi xe" khi chân Nhập đã "Ra" (COMPLETED) — tránh thao tác sớm
   const { data: regCall } = await supabase
@@ -671,7 +680,10 @@ export async function doEntry(req: Request, res: Response) {
   const user = (req as Request & { user?: { name?: string } }).user
   const { custom_time } = req.body
   const now = new Date().toISOString()
-  const ts = custom_time ? new Date(custom_time).toISOString() : now
+  // custom_time rác ("abc") → RangeError nổ 500; kiểm hợp lệ trước, sai thì 400 sạch
+  const tsD = custom_time ? new Date(custom_time) : null
+  if (tsD && isNaN(tsD.getTime())) return apiErr(res, 'BAD_TIME', 'custom_time không phải thời gian hợp lệ', 400)
+  const ts = tsD ? tsD.toISOString() : now
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
@@ -713,7 +725,10 @@ export async function doExit(req: Request, res: Response) {
   const user = (req as Request & { user?: { name?: string } }).user
   const { load_capacity, custom_time } = req.body
   const now = new Date().toISOString()
-  const ts = custom_time ? new Date(custom_time).toISOString() : now
+  // custom_time rác ("abc") → RangeError nổ 500; kiểm hợp lệ trước, sai thì 400 sạch
+  const tsD = custom_time ? new Date(custom_time) : null
+  if (tsD && isNaN(tsD.getTime())) return apiErr(res, 'BAD_TIME', 'custom_time không phải thời gian hợp lệ', 400)
+  const ts = tsD ? tsD.toISOString() : now
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')

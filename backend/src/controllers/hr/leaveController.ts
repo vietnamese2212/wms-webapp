@@ -327,8 +327,9 @@ export async function updateLeave(req: Request, res: Response) {
       updates.leave_type = leave_type
     }
     if (reason     !== undefined) updates.reason     = reason || null
-    const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).single()
+    const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy đơn nghỉ', 404)
 
     // Đơn đã DUYỆT mà đổi ngày → gỡ chấm công LEAVE ngày cũ rồi ghi lại ngày mới
     if (datesChanged && old?.status === 'APPROVED') {

@@ -101,8 +101,9 @@ export async function updateLayout(req: Request, res: Response) {
     if (name      !== undefined) updates.name      = name.trim()
     if (note      !== undefined) updates.note      = note || null
     if (is_active !== undefined) updates.is_active = is_active
-    const { data, error } = await supabase.from('WorkLayout').update(updates).eq('id', id).select(LAYOUT_SELECT).single()
+    const { data, error } = await supabase.from('WorkLayout').update(updates).eq('id', id).select(LAYOUT_SELECT).maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy layout', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

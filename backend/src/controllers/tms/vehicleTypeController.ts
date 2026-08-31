@@ -79,8 +79,9 @@ export async function updateVehicleType(req: Request, res: Response) {
     if (dimErr) return fail(res, dimErr, 400)
     if (is_pallet_truck !== undefined) updates.is_pallet_truck = Boolean(is_pallet_truck)
     const { data, error } = await supabase.from('VehicleType')
-      .update(updates).eq('id', id).select().single()
+      .update(updates).eq('id', id).select().maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy loại xe', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

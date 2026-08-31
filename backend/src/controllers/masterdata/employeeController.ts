@@ -697,6 +697,8 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được sửa phạm vi kho', 403)
     const { id } = req.params
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
+    // Body thiếu/sai kiểu → 400 sạch (bodyfuzz 31/08: {} làm .filter trên undefined nổ 500)
+    if (!Array.isArray(warehouse_ids)) return fail(res, 'warehouse_ids phải là MẢNG id kho', 400)
     if (await emptyScopeError(res, id, undefined, warehouse_ids)) return
     if (await badWarehouseError(res, warehouse_ids)) return
 

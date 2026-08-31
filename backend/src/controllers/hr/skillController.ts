@@ -126,8 +126,9 @@ export async function updateSkill(req: Request, res: Response) {
     if (shift_tag  !== undefined) updates.shift_tag  = shift_tag || null
     if (sort_order !== undefined) updates.sort_order = sort_order
     if (is_active  !== undefined) updates.is_active  = is_active
-    const { data, error } = await supabase.from('Skill').update(updates).eq('id', id).select(SKILL_SELECT).single()
+    const { data, error } = await supabase.from('Skill').update(updates).eq('id', id).select(SKILL_SELECT).maybeSingle()
     if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy kỹ năng', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

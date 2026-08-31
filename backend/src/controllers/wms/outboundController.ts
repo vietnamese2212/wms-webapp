@@ -1953,9 +1953,129 @@ export async function updateGDO(req: Request, res: Response) {
     const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
     const t = now()
-    const gdoUpdates: Record<string, unknown> = {
-      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvtName, updated_at: t,
+
+    // ══ VALIDATE HẾT trước — GHI sau (bug 31/08, DAYFLOW): bản cũ update header GDO/DO TRƯỚC rồi
+    // mới validate items, nên PUT bị TỪ CHỐI (400/422) vẫn đã ghi một nửa — đo thật: hạ SL dưới mức
+    // đã xuất trả 400 nhưng chuyến ĐANG XUẤT đã mất warehouse_id + dvvt (thành chuyến "ma" không
+    // thuộc kho nào trong khi tồn ĐÃ TRỪ). Mọi return fail từ đây tới mốc GHI phải đứng TRƯỚC mọi write.
+    const { data: dos } = await supabase.from('OutboundDelivery')
+      .select('id, distributor_name, delivery_code').eq('gdo_id', req.params.id)
+    const doList = dos ?? []
+    const isMultiDO = doList.length > 1
+
+    // Chuyến SAP: NPP/Số DO cũng là dữ liệu nguồn — đổi thì 422 chỉ đường, không ghi đè âm thầm
+    if (!isMultiDO && doList.length === 1 && gdoCur.origin === 'SAP') {
+      const d0 = doList[0] as { distributor_name?: string | null; delivery_code?: string | null }
+      const norm = (v: unknown) => String(v ?? '').trim()
+      if (customer_name !== undefined && norm(customer_name) !== norm(d0.distributor_name))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+      if ('delivery_code' in req.body && delivery_code !== undefined && norm(delivery_code) !== norm(d0.delivery_code))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Số DO tại đây, sửa ở tab DO SAP (Dữ liệu bên ngoài).')
     }
+
+    // Dòng item hiện có — nạp TRƯỚC để validate; phần GHI phía dưới dùng lại, không nạp lần 2.
+    type ExItemRow = { id: string; do_id: string; material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number; od_refs?: unknown[] | null; export_type?: string | null; material?: MatUnitsQ | null }
+    let existingItems: ExItemRow[] = []
+    const sapLinked = (ex: { od_refs?: unknown[] | null } | undefined | null) => ((ex?.od_refs as unknown[] | null)?.length ?? 0) > 0
+    const sapQtyLockError = (ex: { material_code_raw?: string | null }) =>
+      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không sửa số lượng tại đây. Sửa Số lượng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
+    const sapDeleteLockError = (ex: { material_code_raw?: string | null }) =>
+      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không xóa dòng tại đây. Xóa dòng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
+    const sapMaterialLockError = (ex: { material_code_raw?: string | null }) =>
+      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không đổi mã hàng tại đây. Sửa ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
+
+    if (items) {
+      // BASE UNIT: số item = SỐ BASE — mã có entry phải nguyên (validate trước khi đụng items)
+      const codes = [...new Set(items.map(i => i.material_code).filter(Boolean))]
+      const { data: umats } = codes.length
+        ? await supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', codes)
+        : { data: [] }
+      const uMap = new Map<string, MatUnitsQ>(((umats ?? []) as any[]).map(m => [m.material_code, m]))
+      const bErr = invalidItemQtyBase(items as any[], uMap)
+      if (bErr) return fail(res, bErr, 422)
+
+      const doIds = doList.map((d: any) => d.id as string)
+      const { data: exData } = doIds.length
+        ? await supabase.from('OutboundItem')
+            .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, export_type, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
+        : { data: [] }
+      existingItems = (exData ?? []) as unknown as ExItemRow[]
+
+      // Chuyến SAP: Loại xe (export_type) cũng từ Kế hoạch xuất — update ghi đè per-item nên phải chặn ở đây.
+      // So khớp BỎ DẤU + hoa/thường: FE canonical hóa ("xe container"→"Xe Container") nên so thô sẽ chặn oan.
+      if (gdoCur.origin === 'SAP' && export_type !== undefined) {
+        const laxEt = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+        const curEt = existingItems.find(i => i.export_type)?.export_type ?? ''
+        if (laxEt(export_type) !== laxEt(curEt))
+          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+      }
+
+      if (isMultiDO) {
+        const existingById = new Map<string, ExItemRow>(existingItems.map(i => [i.id, i]))
+        const requestedDbIds = new Set(items.filter(i => i.db_id).map(i => i.db_id as string))
+        // Không xóa item đã xuất + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
+        for (const [id, ex] of existingById) {
+          if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
+            return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
+          }
+          if (!requestedDbIds.has(id) && sapLinked(ex)) {
+            return fail(res, sapDeleteLockError(ex), 422)
+          }
+        }
+        // Số thùng < đã xuất + KHÓA sửa SL / đổi mã đơn gốc SAP
+        for (const item of items) {
+          if (!item.db_id) continue
+          const ex = existingById.get(item.db_id)
+          if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
+            return fail(res, `Số lượng "${ex.material_code_raw}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
+          }
+          if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
+            return fail(res, sapQtyLockError(ex), 422)
+          }
+          // Khóa ĐỔI MÃ HÀNG dòng gốc SAP (kể cả chưa quét) — giữ liên kết SAP↔WMS, tránh reconcile báo "đổi mã" oan
+          if (ex && sapLinked(ex) && ex.material_code_raw !== item.material_code) {
+            return fail(res, sapMaterialLockError(ex), 422)
+          }
+        }
+        // Dòng thêm mới phải chỉ định NPP hợp lệ — validate TRƯỚC (bản cũ kiểm giữa lúc ghi:
+        // fail ở đây là các update item khác ĐÃ chạy xong)
+        const doByNpp = new Set(doList.map((d: any) => String(d.distributor_name ?? '').trim()))
+        for (const item of items.filter(i => !i.db_id && i.material_code)) {
+          if (!doByNpp.has(String(item.npp ?? '').trim()))
+            return fail(res, `Dòng "${item.material_code}": chưa chọn NPP hợp lệ cho dòng thêm mới`, 400)
+        }
+      } else if (doList.length === 1) {
+        const existingByCode = new Map<string, ExItemRow>(existingItems.map(i => [String(i.material_code_raw), i]))
+        const newCodes = new Set(items.map(i => i.material_code))
+        // Không xóa item có scan + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
+        for (const [code, ex] of existingByCode) {
+          if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
+            return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
+          }
+          if (!newCodes.has(code) && sapLinked(ex)) {
+            return fail(res, sapDeleteLockError(ex), 422)
+          }
+        }
+        // Số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
+        for (const item of items) {
+          const ex = existingByCode.get(item.material_code)
+          if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
+            return fail(res, `Số lượng "${item.material_code}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
+          }
+          if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
+            return fail(res, sapQtyLockError(ex), 422)
+          }
+        }
+      }
+    }
+
+    // ══ HẾT VALIDATE — từ đây mới GHI ═══════════════════════════════════════════
+    // Header GDO: CHỈ ghi field CÓ MẶT trong body (bug 31/08: bản cũ ghi vô điều kiện
+    // `warehouse_id ?? null` + `dvvt: dvvtName` nên PUT chỉ-sửa-items xoá trắng Kho + ĐVVT).
+    const gdoUpdates: Record<string, unknown> = { updated_at: t }
+    if (delivery_date !== undefined) gdoUpdates.delivery_date = delivery_date
+    if ('warehouse_id' in req.body) gdoUpdates.warehouse_id = warehouse_id ?? null
+    if ('dvvt' in req.body) gdoUpdates.dvvt = dvvtName
     if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
     if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null
     if ('warehouse_type' in req.body) gdoUpdates.warehouse_type = warehouse_type ?? null
@@ -1964,42 +2084,20 @@ export async function updateGDO(req: Request, res: Response) {
       .update(gdoUpdates)
       .eq('id', req.params.id)
 
-    const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id, distributor_name, delivery_code').eq('gdo_id', req.params.id)
-    const doList = dos ?? []
-    const isMultiDO = doList.length > 1
-
     // Update customer_name / delivery_code chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
-    if (!isMultiDO && doList.length === 1) {
-      // Chuyến SAP: NPP/Số DO cũng là dữ liệu nguồn — đổi thì 422 chỉ đường, không ghi đè âm thầm
-      if (gdoCur.origin === 'SAP') {
-        const d0 = doList[0] as { distributor_name?: string | null; delivery_code?: string | null }
-        const norm = (v: unknown) => String(v ?? '').trim()
-        if (customer_name !== undefined && norm(customer_name) !== norm(d0.distributor_name))
-          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
-        if ('delivery_code' in req.body && delivery_code !== undefined && norm(delivery_code) !== norm(d0.delivery_code))
-          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Số DO tại đây, sửa ở tab DO SAP (Dữ liệu bên ngoài).')
-      } else {
-        const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
-        if ('delivery_code' in req.body && delivery_code !== undefined)
-          singleDOPatch.delivery_code = delivery_code.trim() || null
+    // — cũng chỉ ghi field có mặt trong body (cùng lớp bug xoá trắng ở trên)
+    if (!isMultiDO && doList.length === 1 && gdoCur.origin !== 'SAP') {
+      const singleDOPatch: Record<string, unknown> = { updated_at: t }
+      if (customer_name !== undefined) singleDOPatch.distributor_name = customer_name ?? null
+      if ('delivery_code' in req.body && delivery_code !== undefined)
+        singleDOPatch.delivery_code = delivery_code.trim() || null
+      if (Object.keys(singleDOPatch).length > 1) {
         await supabase.from('OutboundDelivery')
           .update(singleDOPatch).eq('id', doList[0].id)
       }
     }
 
     if (!items) return ok(res, await fetchGDOFull(req.params.id))
-
-    // BASE UNIT: số item = SỐ BASE — mã có entry phải nguyên (validate trước khi đụng items)
-    {
-      const codes = [...new Set(items.map(i => i.material_code).filter(Boolean))]
-      const { data: umats } = codes.length
-        ? await supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', codes)
-        : { data: [] }
-      const uMap = new Map<string, MatUnitsQ>(((umats ?? []) as any[]).map(m => [m.material_code, m]))
-      const bErr = invalidItemQtyBase(items as any[], uMap)
-      if (bErr) return fail(res, bErr, 422)
-    }
 
     // Nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — bỏ qua loose_picking client gửi (user chốt 22/07)
     const effWh = warehouse_id !== undefined ? (warehouse_id ?? null) : ((gdo as { warehouse_id?: string | null }).warehouse_id ?? null)
@@ -2009,67 +2107,15 @@ export async function updateGDO(req: Request, res: Response) {
       loosePalletRemainder(i.cartons_ordered, looseMats.get(i.material_code), effWh,
         upLoosePol.of(effWh, looseMats.get(i.material_code)?.category ?? null))
 
-    // Lấy tất cả items của GDO (across all DOs)
-    const doIds = doList.map((d: any) => d.id as string)
-    const { data: existingItems } = doIds.length
-      ? await supabase.from('OutboundItem')
-          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, export_type, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
-      : { data: [] }
-
-    // Chuyến SAP: Loại xe (export_type) cũng từ Kế hoạch xuất — update ghi đè per-item nên phải chặn ở đây.
-    // So khớp BỎ DẤU + hoa/thường: FE canonical hóa ("xe container"→"Xe Container") nên so thô sẽ chặn oan.
-    if (gdoCur.origin === 'SAP' && export_type !== undefined) {
-      const laxEt = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
-      const curEt = ((existingItems ?? []) as { export_type?: string | null }[]).find(i => i.export_type)?.export_type ?? ''
-      if (laxEt(export_type) !== laxEt(curEt))
-        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
-    }
-
-    // Đơn UPLOAD từ SAP (item có od_refs liên kết DO SAP) → KHÓA sửa số lượng ở form Xuất (user chốt 22/07):
-    // raw là nguồn sự thật — sửa ở đây sẽ lệch raw và bị engine đè lại khi SAP đổi. Sửa SL ở tab DO SAP.
-    // Đơn TAY (od_refs rỗng) sửa tự do như cũ. Các field khác (Batch/%Date/CS/ghi chú) vẫn sửa được.
-    const sapLinked = (ex: { od_refs?: unknown[] | null } | undefined | null) => ((ex?.od_refs as unknown[] | null)?.length ?? 0) > 0
-    const sapQtyLockError = (ex: { material_code_raw?: string | null }) =>
-      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không sửa số lượng tại đây. Sửa Số lượng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
-    const sapDeleteLockError = (ex: { material_code_raw?: string | null }) =>
-      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không xóa dòng tại đây. Xóa dòng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
-    const sapMaterialLockError = (ex: { material_code_raw?: string | null }) =>
-      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không đổi mã hàng tại đây. Sửa ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
+    // export_type là field CẤP BODY áp per-item: chỉ đè khi body có gửi (không thì PUT chỉ-sửa-items
+    // xoá trắng Loại xe của mọi dòng — cùng lớp bug 31/08)
+    const exportTypePatch = 'export_type' in req.body ? { export_type: export_type ?? null } : {}
 
     if (isMultiDO) {
-      // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất
-      const existingById = new Map<string, any>(
-        (existingItems ?? []).map((i: any) => [i.id as string, i])
-      )
+      // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất (đã validate ở trên)
+      const existingById = new Map<string, ExItemRow>(existingItems.map(i => [i.id, i]))
       const requestedDbIds = new Set(items.filter(i => i.db_id).map(i => i.db_id as string))
 
-      // Kiểm tra: không xóa item đã xuất + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
-      for (const [id, ex] of existingById) {
-        if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
-          return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
-        }
-        if (!requestedDbIds.has(id) && sapLinked(ex)) {
-          return fail(res, sapDeleteLockError(ex), 422)
-        }
-      }
-
-      // Kiểm tra số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
-      for (const item of items) {
-        if (!item.db_id) continue
-        const ex = existingById.get(item.db_id)
-        if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-          return fail(res, `Số lượng "${ex.material_code_raw}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
-        }
-        if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
-          return fail(res, sapQtyLockError(ex), 422)
-        }
-        // Khóa ĐỔI MÃ HÀNG dòng gốc SAP (kể cả chưa quét) — giữ liên kết SAP↔WMS, tránh reconcile báo "đổi mã" oan
-        if (ex && sapLinked(ex) && ex.material_code_raw !== item.material_code) {
-          return fail(res, sapMaterialLockError(ex), 422)
-        }
-      }
-
-      // Xóa items bị loại bỏ (chưa xuất)
       const toDeleteIds = [...existingById.keys()].filter(id => !requestedDbIds.has(id))
       if (toDeleteIds.length) {
         await deleteByIdsChunked('OutboundItem', toDeleteIds)
@@ -2098,7 +2144,7 @@ export async function updateGDO(req: Request, res: Response) {
             const ex = existingById.get(item.db_id!)!
             const scanned = Number(ex.cartons_scanned)
             const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t }
+            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, ...exportTypePatch, status: newStatus, updated_at: t }
             if (scanned === 0 && ex.material_code_raw !== item.material_code) {
               const matInfo = changedMatMap.get(item.material_code)
               fields.material_code_raw = item.material_code
@@ -2109,16 +2155,12 @@ export async function updateGDO(req: Request, res: Response) {
           })
       )
 
-      // Dòng THÊM MỚI (không db_id) ở đơn đa-NPP: gắn vào DO của NPP dòng đó chỉ định
+      // Dòng THÊM MỚI (không db_id) ở đơn đa-NPP: gắn vào DO của NPP dòng đó chỉ định (NPP đã validate)
       const newRows = items.filter(item => !item.db_id && item.material_code)
       if (newRows.length) {
         const doByNpp = new Map<string, string>(
           doList.map((d: any) => [String(d.distributor_name ?? '').trim(), d.id as string])
         )
-        for (const item of newRows) {
-          if (!doByNpp.has(String(item.npp ?? '').trim()))
-            return fail(res, `Dòng "${item.material_code}": chưa chọn NPP hợp lệ cho dòng thêm mới`, 400)
-        }
         const { data: newMats } = await supabase.from('Material')
           .select('id, material_code, category').in('material_code', newRows.map(i => i.material_code))
         const newMatMap = new Map((newMats ?? []).map((m: any) => [m.material_code as string, { id: m.id as string, category: m.category as string | null }]))
@@ -2141,40 +2183,17 @@ export async function updateGDO(req: Request, res: Response) {
         if (insErr) return fail(res, insErr.message)
       }
     } else {
-      // Single-DO: CRUD đầy đủ, match bằng material_code
+      // Single-DO: CRUD đầy đủ, match bằng material_code (đã validate ở trên)
       const doId = doList[0]?.id
       if (!doId) return ok(res, await fetchGDOFull(req.params.id))
 
-      const existingByCode = new Map<string, any>(
-        (existingItems ?? []).map((i: any) => [i.material_code_raw as string, i])
-      )
+      const existingByCode = new Map<string, ExItemRow>(existingItems.map(i => [String(i.material_code_raw), i]))
       const newCodes = new Set(items.map(i => i.material_code))
 
-      // Kiểm tra xóa item có scan + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
-      for (const [code, ex] of existingByCode) {
-        if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
-          return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
-        }
-        if (!newCodes.has(code) && sapLinked(ex)) {
-          return fail(res, sapDeleteLockError(ex), 422)
-        }
-      }
-
-      // Kiểm tra số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
-      for (const item of items) {
-        const ex = existingByCode.get(item.material_code)
-        if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-          return fail(res, `Số lượng "${item.material_code}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
-        }
-        if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
-          return fail(res, sapQtyLockError(ex), 422)
-        }
-      }
-
       // Xóa items bị loại bỏ
-      const toDeleteIds = (existingItems ?? [])
-        .filter((i: any) => !newCodes.has(i.material_code_raw as string))
-        .map((i: any) => i.id as string)
+      const toDeleteIds = existingItems
+        .filter(i => !newCodes.has(String(i.material_code_raw)))
+        .map(i => i.id)
       if (toDeleteIds.length) {
         await deleteByIdsChunked('OutboundItem', toDeleteIds)
       }
@@ -2196,7 +2215,7 @@ export async function updateGDO(req: Request, res: Response) {
         if (ex) {
           const scanned = Number(ex.cartons_scanned)
           const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
+          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, ...exportTypePatch, status: newStatus, updated_at: t } })
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null

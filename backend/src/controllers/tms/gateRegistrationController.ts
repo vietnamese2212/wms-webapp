@@ -533,6 +533,9 @@ export async function updateGateRegistration(req: Request, res: Response) {
     .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id')
     .eq('id', id)
     .single() as { data: GateRow | null }
+  // id không tồn tại → 404 ngay (admin không qua check scope phía dưới nên trước đây trôi
+  // xuống update().single() → "Cannot coerce" 500 — bodyfuzz 31/08)
+  if (!before) return apiErr(res, 'NOT_FOUND', 'Không tìm thấy đăng ký cổng', 404)
 
   // Phạm vi kho: bản ghi hiện tại phải thuộc kho được giao; KHÔNG cho chuyển sang kho ngoài phạm vi
   const uScope = scopeWhIds(req)

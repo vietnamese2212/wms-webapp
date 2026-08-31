@@ -92,6 +92,37 @@ try {
   await api(`/wms/outbound/${gdoId}`, 'PATCH', { status: 'IN_PROGRESS' })
   const fin = await api(`/wms/outbound/${gdoId}`, 'PATCH', { status: 'COMPLETED' })
   check('[4] Hoàn thành sau khi hạ SL = thực xuất (5 == 5)', fin.s === 200, `s=${fin.s} ${JSON.stringify(fin.j?.error ?? '')}`)
+
+  // [6] SỐ DO TRÙNG (user chốt 31/08 "Cảnh báo + xác nhận"): bấm đúp từng sinh 2 chuyến y hệt
+  // (dsub 31/08: 201/201) → nguy cơ trừ tồn ĐÔI. Nay: trùng (Số DO, ngày, kho, chưa hủy) → 409
+  // DUPLICATE_DO; gửi allow_duplicate_do=true (tách 1 DO lên 2 xe) → 201; ĐUA 2 lệnh cùng lúc
+  // không cờ → tối đa 1 chuyến sống (post-check tự rút bản thua).
+  const mkDup = (flag) => api('/wms/outbound', 'POST', {
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,
+    customer_name: 'QA-UPD NPP', delivery_code: TAGDC,
+    items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 1 }],
+    ...(flag ? { allow_duplicate_do: true } : {}),
+  })
+  const dup1 = await mkDup(false)
+  check('[6a] Tạo lại cùng Số DO (chuyến trên còn sống) → 409 DUPLICATE_DO',
+    dup1.s === 409 && dup1.j?.error?.code === 'DUPLICATE_DO', `s=${dup1.s} code=${dup1.j?.error?.code ?? ''}`)
+  if (dup1.j?.data?.id) await api(`/wms/outbound/${dup1.j.data.id}`, 'DELETE')   // bản LỖI trả 201 → tự dọn chuyến lỡ tạo
+  const dup2 = await mkDup(true)
+  const dup2Id = dup2.j?.data?.id
+  check('[6b] Tick xác nhận (allow_duplicate_do) → tạo được (tách 1 DO lên 2 xe)',
+    dup2.s === 201 && !!dup2Id, `s=${dup2.s}`)
+  if (dup2Id) await api(`/wms/outbound/${dup2Id}`, 'DELETE')
+  const RACE_DC = `${TAGDC}-R`
+  const mkRace = () => api('/wms/outbound', 'POST', {
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,
+    customer_name: 'QA-UPD NPP', delivery_code: RACE_DC,
+    items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 1 }],
+  })
+  const [ra, rb] = await Promise.all([mkRace(), mkRace()])
+  const raceRows = await restAll('OutboundDelivery', `select=id,gdo_id&delivery_code=eq.${RACE_DC}`)
+  check('[6c] ĐUA 2 lệnh cùng mili-giây không cờ → tối đa 1 chuyến sống (bên thua tự rút, 409)',
+    raceRows.length <= 1 && ra.s < 500 && rb.s < 500, `status=${ra.s}/${rb.s} · còn ${raceRows.length} DO`)
+  for (const rr of raceRows) if (rr.gdo_id) await api(`/wms/outbound/${rr.gdo_id}`, 'DELETE')
 } finally {
   if (gdoId) {
     const [g] = await restAll('GroupDeliveryOrder', `select=status&id=eq.${gdoId}`)

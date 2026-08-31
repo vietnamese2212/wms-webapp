@@ -1242,12 +1242,38 @@ async function loosePalletMats(codes: string[]): Promise<Map<string, MatPalletUn
   return new Map(((data ?? []) as (MatPalletUnits & { material_code: string })[]).map(m => [String(m.material_code), m]))
 }
 
+// SỐ DO TRÙNG khi tạo TAY (user chốt 31/08 "Cảnh báo + xác nhận"): bấm đúp / 2 người cùng nhập
+// từng sinh 2 chuyến y hệt (đo dsub 31/08: 201/201) → nguy cơ soạn hàng + trừ tồn ĐÔI cho một đơn.
+// Đã có chuyến CHƯA HỦY cùng (Số DO, ngày xuất, kho) → 409 DUPLICATE_DO; tách xe CHỦ ĐÍCH
+// ("1 DO đi 2 xe") thì client gửi allow_duplicate_do=true để vượt có chủ ý. Chỉ áp cửa tạo TAY
+// (createGDO + quick-export) — upload có luật gộp theo key riêng, KHÔNG đi qua đây.
+async function duplicateDoError(
+  deliveryCode: string | undefined, deliveryDate: string | undefined,
+  warehouseId: string | null | undefined, excludeGdoId?: string,
+): Promise<string | null> {
+  const dc = String(deliveryCode ?? '').trim()
+  if (!dc || !deliveryDate) return null
+  const { data } = await supabase.from('OutboundDelivery')
+    .select('gdo_id, gdo:GroupDeliveryOrder!gdo_id(id, group_code, status, delivery_date, warehouse_id)')
+    .eq('delivery_code', dc).limit(50)
+  type DupRow = { gdo_id: string; gdo: { id: string; group_code: string | null; status: string; delivery_date: string | null; warehouse_id: string | null } | null }
+  for (const row of ((data ?? []) as unknown as DupRow[])) {
+    const g = row.gdo
+    if (!g || g.status === 'CANCELLED') continue
+    if (excludeGdoId && g.id === excludeGdoId) continue
+    if (String(g.delivery_date ?? '') !== String(deliveryDate)) continue
+    if (String(g.warehouse_id ?? '') !== String(warehouseId ?? '')) continue
+    return `Số DO "${dc}" đã có chuyến ${g.group_code ?? ''} cùng ngày ở kho này. Nếu đúng là tách 1 DO lên 2 xe, tick ô xác nhận rồi lưu lại.`
+  }
+  return null
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items, allow_duplicate_do } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string
+      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; allow_duplicate_do?: boolean
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
@@ -1283,6 +1309,12 @@ export async function createGDO(req: Request, res: Response) {
     const whCode = (whData as { code?: string } | null)?.code ? String((whData as { code: string }).code) : 'XX'
     const prefix = `${whCode}_X_${ddmmyy}_`
 
+    // Số DO trùng (chưa hủy, cùng ngày+kho) → 409 chờ xác nhận; cờ allow_duplicate_do = tách xe chủ đích
+    if (!allow_duplicate_do) {
+      const dupErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null)
+      if (dupErr) return fail(res, 409, 'DUPLICATE_DO', dupErr)
+    }
+
     const gdoId = randomUUID()
     const actor = req.user?.name || null
     const ins = await insertGdoNextCode(prefix, {
@@ -1301,6 +1333,19 @@ export async function createGDO(req: Request, res: Response) {
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
     if (doErr) return fail(res, doErr.message)
+
+    // ĐÓNG CỬA SỔ ĐUA của check trên (2 lệnh Lưu bay lên CÙNG mili-giây đều qua pre-check —
+    // đo dsub 31/08): sau khi ghi DO, soi lại — vẫn còn chuyến khác trùng thì RÚT bản của mình
+    // (DO + GDO, items chưa ghi) và trả 409. Hai bên cùng rút → cả hai 409, user lưu lại là xong;
+    // không bao giờ còn chuyến đôi âm thầm.
+    if (!allow_duplicate_do) {
+      const raceErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null, gdoId)
+      if (raceErr) {
+        await supabase.from('OutboundDelivery').delete().eq('id', doId)
+        await supabase.from('GroupDeliveryOrder').delete().eq('id', gdoId)
+        return fail(res, 409, 'DUPLICATE_DO', raceErr)
+      }
+    }
 
     const looseMats = await loosePalletMats(allCodes)
     const loosePol = await looseConfigOf(warehouse_id ? [warehouse_id] : null)
@@ -1340,10 +1385,10 @@ export async function createGDO(req: Request, res: Response) {
 export async function quickExportGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, gate_registration_id, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, gate_registration_id, items, allow_duplicate_do } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; license_plate?: string
-      gate_registration_id?: string | null
+      gate_registration_id?: string | null; allow_duplicate_do?: boolean
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
@@ -1422,6 +1467,13 @@ export async function quickExportGDO(req: Request, res: Response) {
     if (short.length) {
       return fail(res, 400, 'INSUFFICIENT_STOCK',
         `Không đủ tồn: ${short.map(i => `${i.material_code} cần ${qtyLabel(Number(i.cartons_ordered), matMap.get(i.material_code))}, còn ${qtyLabel(availOf(i.material_code) ?? 0, matMap.get(i.material_code))}`).join(' · ')}`)
+    }
+
+    // Số DO trùng (chưa hủy, cùng ngày+kho) → 409 chờ xác nhận — Xuất luôn trừ tồn NGAY nên chuyến
+    // đôi ở cửa này nặng hơn cả cửa Lưu thường (user chốt 31/08 "Cảnh báo + xác nhận")
+    if (!allow_duplicate_do) {
+      const dupErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null)
+      if (dupErr) return fail(res, 409, 'DUPLICATE_DO', dupErr)
     }
 
     // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO, retry+jitter chống đụng số khi tạo đồng thời)

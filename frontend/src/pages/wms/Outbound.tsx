@@ -1456,6 +1456,7 @@ function GDOFormBody({
   onClose,
   quickAction,
   plateSlot,
+  errorExtra,
 }: {
   gdo?: GDO | null
   mode: 'create' | 'edit'
@@ -1474,6 +1475,7 @@ function GDOFormBody({
   onClose: () => void
   quickAction?: React.ReactNode   // nút "Tạo & Xuất luôn" — đặt cạnh nút Lưu (chỉ form tạo, kho QTY/NONE)
   plateSlot?: React.ReactNode      // ô Biển số xe — hiện trong header cạnh ĐVVT (chỉ kho QTY/NONE)
+  errorExtra?: React.ReactNode     // khối dưới banner lỗi (vd checkbox xác nhận Số DO trùng — 31/08)
 }) {
   const formUser = useAuthStore(s => s.user)
   const [pasteErr, setPasteErr] = useState('')
@@ -1796,7 +1798,10 @@ function GDOFormBody({
 
       {/* Error banner */}
       {error && (
-        <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700">{error}</div>
+        <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700">
+          {error}
+          {errorExtra}
+        </div>
       )}
       {pasteErr && (
         <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700 flex items-center justify-between gap-2">
@@ -2017,6 +2022,11 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const [exportType, setExportType]   = useState('')
   const [items, setItems]             = useState<ItemRow[]>(() => Array.from({ length: 20 }, makeItem))
   const [error, setError]             = useState('')
+  // Số DO trùng (user chốt 31/08 "Cảnh báo + xác nhận"): BE trả 409 DUPLICATE_DO → hiện checkbox
+  // xác nhận tách xe; tick rồi lưu lại thì gửi kèm allow_duplicate_do. Đổi Số DO là reset.
+  const [dupDoAsked, setDupDoAsked]   = useState(false)
+  const [allowDupDo, setAllowDupDo]   = useState(false)
+  useEffect(() => { setDupDoAsked(false); setAllowDupDo(false) }, [deliveryCode])
 
   const { mutate: createGDO, isPending } = useCreateGDO()
   const { mutate: quickExportGDO, isPending: quickPending } = useQuickExportGDO()
@@ -2083,13 +2093,15 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
       export_type: exportType,
       // loose_picking KHÔNG gửi — BE tự tính từ Tổng (pallet-remainder)
       items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined })),
+      allow_duplicate_do: allowDupDo || undefined,   // tick xác nhận tách xe mới gửi cờ
     }
     const handlers = {
       onSuccess: () => onClose(),
       onError: (e: unknown) => {
         // Rule cân chặn (WEIGH_REQUIRED): BE đã kèm hướng dẫn "Lưu đơn thường → nhờ duyệt trên chuyến"
-        const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn')
-        setError(msg)
+        const eobj = (e as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
+        if (eobj?.code === 'DUPLICATE_DO') setDupDoAsked(true)   // hiện checkbox xác nhận tách xe
+        setError(eobj?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn'))
       },
     }
     if (isQuick) quickExportGDO({ ...payload, license_plate: quickPlate.trim() }, handlers)
@@ -2110,6 +2122,12 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         exportType={exportType} setExportType={setExportType}
         items={items} setItems={setItems}
         error={error} isPending={isPending || quickPending}
+        errorExtra={dupDoAsked ? (
+          <label className="mt-1 flex items-center gap-1.5 font-medium cursor-pointer">
+            <input type="checkbox" checked={allowDupDo} onChange={e => setAllowDupDo(e.target.checked)} />
+            Tôi xác nhận tách 1 DO lên 2 xe — tạo thêm chuyến cùng Số DO này
+          </label>
+        ) : undefined}
         onSubmit={() => handleSubmit(false)} onClose={onClose}
         plateSlot={showQuick ? (
           <div className="space-y-1">

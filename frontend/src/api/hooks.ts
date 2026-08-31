@@ -2695,6 +2695,7 @@ type GDOFormPayload = {
   delivery_code?: string
   export_type: string
   items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string; npp?: string }>
+  allow_duplicate_do?: boolean   // Số DO trùng cùng ngày+kho: tick xác nhận tách xe mới gửi (31/08)
 }
 
 export type LookupItem = { id: string; value: string }

@@ -1,5 +1,5 @@
 import { useState, useEffect, Fragment } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare } from 'lucide-react'
@@ -488,7 +488,7 @@ export default function LoosePickingDetail() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  const { data: gdo, isLoading } = useGDO(id)
+  const { data: gdo, isLoading, isError } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [showOrderScan,   setShowOrderScan]   = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
   const [hdrOpen,         setHdrOpen]         = useState(false)   // mobile: popup thông tin đơn (thanh mảnh + nút Info)
@@ -515,6 +515,16 @@ export default function LoosePickingDetail() {
     if (gdo) update(gdo.id, gdo.status)
   }, [gdo?.status, gdo?.id])
 
+  // Deep-link cũ / chuyến đã xóa: 404 → gdo mãi undefined → trước đây SKELETON VĨNH VIỄN
+  // (trang "trắng" không thông báo, không lối về — đo 31/08). Báo tử tế + link quay lại.
+  if (isError || (!isLoading && !gdo)) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không tìm thấy chuyến — có thể đã bị xóa hoặc đường link đã cũ</p>
+        <Link to="/wms/loosepicking" className="text-xs text-sky-600 underline">← Về Nhặt lẻ</Link>
+      </div>
+    )
+  }
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">

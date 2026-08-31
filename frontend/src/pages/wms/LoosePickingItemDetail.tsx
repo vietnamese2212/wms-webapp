@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -357,7 +357,7 @@ export default function LoosePickingItemDetail() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const pctBands = usePctBands()
 
-  const { data: gdo, isLoading } = useGDO(gdoId)
+  const { data: gdo, isLoading, isError } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
   const { mutateAsync: manualLooseAsync } = useManualLooseItem()
@@ -453,6 +453,15 @@ export default function LoosePickingItemDetail() {
     setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
 
+  // Deep-link cũ / chuyến đã xóa: 404 → gdo mãi undefined → trước đây SKELETON VĨNH VIỄN (31/08)
+  if (isError || (!isLoading && !gdo)) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không tìm thấy chuyến — có thể đã bị xóa hoặc đường link đã cũ</p>
+        <Link to="/wms/loosepicking" className="text-xs text-sky-600 underline">← Về Nhặt lẻ</Link>
+      </div>
+    )
+  }
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">

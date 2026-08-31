@@ -42,5 +42,6 @@
   "wedge_always_enabled": 4,
   "filterbar_without_sheetbutton": 0,
   "scan_input_disabled_drops_focus": 0,
-  "upload_without_preflight": 0
+  "upload_without_preflight": 0,
+  "detail_blank_on_404": 0
 }

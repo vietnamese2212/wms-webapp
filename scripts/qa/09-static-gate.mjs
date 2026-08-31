@@ -458,6 +458,25 @@ const RULES = [
       (line) => /\.(post|put|patch)\(\s*[^,)]+,\s*null\s*[,)]/.test(line), s),
   },
   {
+    // Trang DETAIL (đọc :id từ URL) đỡ loading bằng `if (isLoading || !x)` mà KHÔNG đỡ isError:
+    // deep-link cũ / bản ghi đã xóa → 404 → data mãi undefined → SKELETON VĨNH VIỄN, không thông
+    // báo, không lối về (đo 31/08: 3 màn Nhặt lẻ/Item xuất trắng trang). Trang detail dùng
+    // useParams + guard kiểu đó PHẢI destructure isError và render khối "Không tìm thấy".
+    key: 'detail_blank_on_404',
+    label: 'trang detail có `if (isLoading || !…)` nhưng KHÔNG đỡ isError — id ma/deep-link cũ = skeleton vĩnh viễn',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        if (/useParams\s*[<(]/.test(src) && /if \(isLoading \|\| !/.test(src) && !/isError/.test(src)) {
+          n++
+          if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+        }
+      }
+      return n
+    },
+  },
+  {
     key: 'today_frozen_at_import',
     label: 'NGÀY HÔM NAY chốt bằng hằng module (tính 1 lần lúc mở app) — PDA/màn kho mở qua đêm sẽ dùng ngày HÔM QUA (min= chặn oan, filter "Hôm nay" sai). Khai dạng HÀM: const TODAY = () => …',
     // CHỈ bắt khai báo CẤP MODULE (không thụt lề) — khai trong thân component thì mỗi lần render

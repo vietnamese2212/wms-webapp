@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
 import { createPortal } from 'react-dom'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -479,7 +479,7 @@ export default function OutboundItemDetail() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const pctBands = usePctBands()
-  const { data: gdo, isLoading } = useGDO(gdoId)
+  const { data: gdo, isLoading, isError } = useGDO(gdoId)
   const pageCodeTypes = useScanCodeTypes(gdo?.warehouse_id)   // quét lại tem thùng của pallet đã lưu
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
@@ -578,6 +578,16 @@ export default function OutboundItemDetail() {
     })
   }, [sortedInv])
 
+  // Deep-link cũ / chuyến đã xóa: 404 → gdo mãi undefined → trước đây SKELETON VĨNH VIỄN
+  // (trang "trắng" không thông báo, không lối về — đo 31/08). Báo tử tế + link quay lại.
+  if (isError || (!isLoading && !gdo)) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không tìm thấy chuyến — có thể đã bị xóa hoặc đường link đã cũ</p>
+        <Link to="/wms/outbound" className="text-xs text-sky-600 underline">← Về Xuất kho</Link>
+      </div>
+    )
+  }
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">

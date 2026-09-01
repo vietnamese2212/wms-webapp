@@ -2307,28 +2307,61 @@ export function useLotTrace(p: {
   })
 }
 
-// ── ĐIỀU TRA TRUY VẾT THEO THÙNG (01/09) — khớp giờ in phun ↔ sổ đóng gói → hồ sơ lưu vết ──────
+// ── TRUY XUẤT THEO THÙNG (01/09 v2) — gợi ý sổ đóng gói ±3 ngày → chọn sổ → hành trình toàn cty ──
+export type TraceRun = {
+  id: string; run_date: string | null; shift: string | null; cycle: string | null
+  material_code: string | null; material_codes: string[] | null; machine_code: string | null
+  warehouse_id: string | null; warehouse_name: string | null
+  start_at: string | null; end_at: string | null
+  qty_total: number | null; pallet_count: number | null; status: string
+  opened_by_name: string | null
+}
 export type CartonMatch = {
-  pallet_code: string; material_code: string; machine_code: string | null
+  pallet_code: string; material_code: string | null; machine_code: string | null
   warehouse_id: string | null; qty_cartons: number | null
   prod_start_at: string | null; prod_end_at: string | null
   packed_by_name: string | null; status: string
-  run: { id: string; run_date: string | null; shift: string | null; cycle: string | null; status: string } | null
+  time_hit?: boolean
 }
+export type TraceInbound = {
+  pallet_code: string; import_date: string | null; warehouse_id: string | null
+  warehouse_name: string | null; cartons_imported: number | null
+  cartons_remaining: number | null; status: string; created_at: string
+}
+export type InvestigateTrace = TraceResult & { run?: TraceRun; inbound?: TraceInbound[] }
 export type InvestigateInput = {
-  carton_date: string; carton_time: string; material_code: string
-  machine_code?: string; cycle?: string
+  run_id: string; carton_date: string; carton_time: string
+  machine_code: string; cycle: string; material_code?: string
 }
-export type InvestigateResult = { matched: CartonMatch[]; trace: TraceResult | null }
+export type InvestigateResult = { run: TraceRun; matched: CartonMatch[]; trace: InvestigateTrace }
 export type TraceInvestigation = {
-  id: string; carton_at: string; material_code: string
+  id: string; run_id: string | null; carton_at: string; material_code: string | null
   machine_code: string | null; cycle: string | null
   note: string | null; result_note: string | null
   photos: string[]; matched: CartonMatch[]
   summary?: TraceResult['summary'] | null            // list: trace->summary
-  trace?: TraceResult | null                          // detail: full snapshot
+  run?: TraceRun | null                               // list: trace->run
+  trace?: InvestigateTrace | null                     // detail: full snapshot
   photo_urls?: { path: string; url: string }[]        // detail: signed URL 1h
   performed_by_name: string | null; created_at: string
+}
+export function useTraceRuns(p: { machine: string; cycle: string; date: string; material_code?: string }) {
+  const enough = !!p.machine.trim() && !!p.cycle.trim() && !!p.date
+  return useQuery<TraceRun[]>({
+    queryKey: ['trace-runs', p],
+    enabled: enough,
+    queryFn: () => apiClient.get('/wms/trace/runs', {
+      params: { machine: p.machine.trim(), cycle: p.cycle.trim(), date: p.date,
+        ...(p.material_code ? { material_code: p.material_code } : {}) },
+    }).then(r => r.data.data),
+  })
+}
+export function useTraceRunPallets(runId: string | null) {
+  return useQuery<{ run: TraceRun; pallets: CartonMatch[] }>({
+    queryKey: ['trace-runs', 'pallets', runId],
+    enabled: !!runId,
+    queryFn: () => apiClient.get(`/wms/trace/runs/${runId}`).then(r => r.data.data),
+  })
 }
 export function useInvestigatePreview() {
   return useMutation({

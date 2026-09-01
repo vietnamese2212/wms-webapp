@@ -1,12 +1,12 @@
-// GÓI TRACE-INVESTIGATE (tính năng 01/09 — điều tra truy vết theo THÙNG):
-// khiếu nại đến từ một thùng khách đang cầm (chỉ có chữ in phun) → nhập giờ + mã hàng (+ máy,
-// chu kỳ) → đối chiếu SỔ ĐÓNG GÓI (khoảng giờ thùng đầu→cuối của từng pallet) → pallet nghi vấn
-// → lot_trace(kind='codes') → HỒ SƠ lưu vết. User chốt: khớp ĐÚNG khoảng giờ, KHÔNG nới ±.
+// GÓI TRACE-INVESTIGATE (tính năng 01/09, v2 cùng ngày — TRUY XUẤT THEO THÙNG):
+// bắt buộc Ngày·Giờ·MÁY·CHU KỲ (mã hàng tùy chọn); tem pallet lệch được ±1–3 ngày so chữ in phun
+// → GỢI Ý SỔ ĐÓNG GÓI theo Máy+Chu kỳ cửa sổ ±3 ngày, user BUỘC CHỌN 1 sổ → hành trình TOÀN
+// CÔNG TY (lot_trace kind='codes' + lịch sử nhập mọi kho) → HỒ SƠ lưu vết.
 // Gói tự dựng trang sổ + dòng sổ riêng (tag SIMTRC) nên không phụ thuộc dữ liệu nền, tự dọn 0 sót.
 import { login, api, check, finish, restWrite, FIX } from './lib.mjs'
 import { randomUUID } from 'crypto'
 
-console.log('── GÓI TRACE-INVESTIGATE (điều tra theo thùng · hồ sơ truy vết) ──')
+console.log('── GÓI TRACE-INVESTIGATE (truy xuất theo thùng · chọn sổ · hành trình) ──')
 await login()
 
 const PAL = `SIMTRC_${Math.floor(Math.random() * 1e6)}`
@@ -29,51 +29,77 @@ try {
     created_at: NOW, updated_at: NOW,
   })
 
-  const GOOD = { carton_date: WIN.date, carton_time: '08:10', material_code: FIX.MAT_POOL, machine_code: 'QA1', cycle: '07' }
+  // [1] Gợi ý sổ: đúng ngày + chu kỳ dạng chuẩn ("07" ≡ "7") → thấy sổ, kèm tên kho SX
+  const r1 = await api(`/wms/trace/runs?machine=QA1&cycle=07&date=${WIN.date}`)
+  const hit1 = (r1.j?.data ?? []).find(r => r.id === RUN_ID)
+  check('[1] Tìm sổ theo Máy+Chu kỳ ("07"≡"7") đúng ngày → thấy sổ + tên kho SX',
+    r1.s === 200 && !!hit1 && !!hit1.warehouse_name, `s=${r1.s} wh=${hit1?.warehouse_name ?? ''}`)
 
-  // [1] Giờ trong cửa sổ + chu kỳ so DẠNG CHUẨN ("07" ≡ "7") → khớp đúng pallet của sổ
+  // [1b] Ngày in phun LỆCH +2 ngày so ngày sổ (tem lệch 1-3 ngày) → sổ VẪN được gợi ý (cửa sổ ±3)
+  const r1b = await api(`/wms/trace/runs?machine=QA1&cycle=7&date=2026-01-17`)
+  check('[1b] Ngày lệch +2 vẫn gợi ý được sổ (cửa sổ ±3 ngày)',
+    r1b.s === 200 && (r1b.j?.data ?? []).some(r => r.id === RUN_ID), `s=${r1b.s}`)
+
+  // [1c] Ngày lệch +4 → NGOÀI cửa sổ, không gợi ý
+  const r1c = await api(`/wms/trace/runs?machine=QA1&cycle=7&date=2026-01-19`)
+  check('[1c] Ngày lệch +4 → ngoài cửa sổ ±3, không gợi ý',
+    r1c.s === 200 && !(r1c.j?.data ?? []).some(r => r.id === RUN_ID), `s=${r1c.s}`)
+
+  // [2] Xem sổ trước khi chọn: pallet + giờ từng pallet
+  const r2 = await api(`/wms/trace/runs/${RUN_ID}`)
+  check('[2] Xem sổ → có pallet + giờ thùng đầu/cuối',
+    r2.s === 200 && (r2.j?.data?.pallets ?? []).some(p => p.pallet_code === PAL), `s=${r2.s}`)
+
+  // [3] Truy theo sổ ĐÃ CHỌN: giờ trong cửa sổ → pallet gắn ★ time_hit; giờ ngoài → hit=false nhưng
+  //     sổ vẫn truy được (kết quả theo SỔ user chọn, giờ chỉ để đánh dấu thùng nghi vấn)
+  const GOOD = { run_id: RUN_ID, carton_date: WIN.date, carton_time: '08:10', machine_code: 'QA1', cycle: '07' }
   const p1 = await api('/wms/trace/investigations/preview', 'POST', GOOD)
-  check('[1] Giờ 08:10 ∈ [08:00, 08:30] + chu kỳ "07"≡"7" → khớp pallet',
-    p1.s === 200 && (p1.j?.data?.matched ?? []).some(m => m.pallet_code === PAL),
-    `s=${p1.s} matched=${(p1.j?.data?.matched ?? []).map(m => m.pallet_code).join(',')}`)
+  const m1 = (p1.j?.data?.matched ?? []).find(m => m.pallet_code === PAL)
+  check('[3] Giờ 08:10 ∈ [08:00, 08:30] → pallet time_hit=★', p1.s === 200 && m1?.time_hit === true,
+    `s=${p1.s} hit=${m1?.time_hit}`)
+  const p2 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, carton_time: '09:45' })
+  const m2 = (p2.j?.data?.matched ?? []).find(m => m.pallet_code === PAL)
+  check('[3b] Giờ 09:45 ngoài cửa sổ → pallet vẫn thuộc sổ nhưng time_hit=false',
+    p2.s === 200 && m2?.time_hit === false, `s=${p2.s} hit=${m2?.time_hit}`)
 
-  // [2] Ngoài cửa sổ → 0 khớp (user chốt: khớp ĐÚNG khoảng, không nới ±)
-  const p2 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, carton_time: '08:45' })
-  check('[2] Giờ 08:45 ngoài cửa sổ → 0 pallet (không nới ±)',
-    p2.s === 200 && !(p2.j?.data?.matched ?? []).some(m => m.pallet_code === PAL), `s=${p2.s}`)
+  // [4] Input rác = 400 sạch: thiếu run_id / run_id rác / giờ rác / thiếu máy-chu kỳ / runs thiếu tham số
+  const b1 = await api('/wms/trace/investigations/preview', 'POST', { carton_date: WIN.date, carton_time: '08:10', machine_code: 'QA1', cycle: '7' })
+  const b2 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, run_id: 'undefined' })
+  const b3 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, carton_time: '99:99' })
+  const b4 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, machine_code: '', cycle: '' })
+  const b5 = await api('/wms/trace/runs?machine=QA1')
+  check('[4] Thiếu/rác run_id · giờ rác · thiếu máy/chu kỳ · runs thiếu tham số → 400 (không 500)',
+    b1.s === 400 && b2.s === 400 && b3.s === 400 && b4.s === 400 && b5.s === 400,
+    `s=${b1.s}/${b2.s}/${b3.s}/${b4.s}/${b5.s}`)
+  // [4b] run_id uuid ma → 404
+  const b6 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, run_id: '11111111-1111-1111-1111-111111111111' })
+  check('[4b] Sổ uuid ma → 404', b6.s === 404, `s=${b6.s}`)
 
-  // [3] Máy sai → 0 khớp
-  const p3 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, machine_code: 'ZZZ9' })
-  check('[3] Máy không đúng → 0 pallet',
-    p3.s === 200 && !(p3.j?.data?.matched ?? []).some(m => m.pallet_code === PAL), `s=${p3.s}`)
-
-  // [4] Input rác = 400 sạch (ngày sai lịch / giờ rác / body rỗng — không 500)
-  const b1 = await api('/wms/trace/investigations/preview', 'POST', { carton_date: '2026-13-45', carton_time: '08:10', material_code: 'X' })
-  const b2 = await api('/wms/trace/investigations/preview', 'POST', { carton_date: WIN.date, carton_time: '99:99', material_code: 'X' })
-  const b3 = await api('/wms/trace/investigations/preview', 'POST', {})
-  check('[4] Ngày rác / giờ rác / body rỗng → 400 (không 500)',
-    b1.s === 400 && b2.s === 400 && b3.s === 400, `s=${b1.s}/${b2.s}/${b3.s}`)
-
-  // [5] Tạo hồ sơ (kèm 1 ảnh PNG hợp lệ) → 201, đứng tên người thực hiện; list + detail thấy
+  // [5] Tạo hồ sơ (mã hàng BỎ TRỐNG — tùy chọn) kèm 1 ảnh PNG → 201; list + detail thấy; có run info
   const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
   const cr = await api('/wms/trace/investigations', 'POST', { ...GOOD, note: `${PAL} hồ sơ QA — tự dọn`, photos: [PNG] })
   invId = cr.j?.data?.id
-  check('[5] Tạo hồ sơ 201 + performed_by_name', cr.s === 201 && !!invId && !!cr.j?.data?.performed_by_name,
-    `s=${cr.s} by=${cr.j?.data?.performed_by_name ?? ''}`)
+  check('[5] Tạo hồ sơ 201 (mã hàng trống OK) + performed_by_name',
+    cr.s === 201 && !!invId && !!cr.j?.data?.performed_by_name, `s=${cr.s} by=${cr.j?.data?.performed_by_name ?? ''}`)
   const ls = await api(`/wms/trace/investigations?search=${PAL}`)
-  check('[5b] List tìm theo tag thấy hồ sơ', ls.s === 200 && (ls.j?.data?.rows ?? []).some(r => r.id === invId), `s=${ls.s}`)
+  const row = (ls.j?.data?.rows ?? []).find(r => r.id === invId)
+  check('[5b] List thấy hồ sơ + mang thông tin SỔ (trace->run)',
+    ls.s === 200 && !!row && row.run?.id === RUN_ID, `s=${ls.s} run=${row?.run?.id === RUN_ID}`)
   const dt = await api(`/wms/trace/investigations/${invId}`)
-  check('[5c] Detail có signed URL ảnh (bucket riêng tư)',
-    dt.s === 200 && (dt.j?.data?.photo_urls ?? []).length === 1, `s=${dt.s} urls=${dt.j?.data?.photo_urls?.length}`)
+  check('[5c] Detail có signed URL ảnh + lịch sử nhập (trace.inbound là mảng)',
+    dt.s === 200 && (dt.j?.data?.photo_urls ?? []).length === 1 && Array.isArray(dt.j?.data?.trace?.inbound),
+    `s=${dt.s} urls=${dt.j?.data?.photo_urls?.length} inbound=${Array.isArray(dt.j?.data?.trace?.inbound)}`)
 
-  // [6] Ảnh rác (không phải data URL ảnh) → 422, KHÔNG tạo hồ sơ mồ côi
+  // [6] Ảnh rác → 422, không tạo hồ sơ mồ côi
   const badImg = await api('/wms/trace/investigations', 'POST', { ...GOOD, note: `${PAL} rác`, photos: ['data:text/html;base64,PGI+'] })
   check('[6] Ảnh rác → 422 BAD_PHOTO', badImg.s === 422, `s=${badImg.s} code=${badImg.j?.error?.code ?? ''}`)
 
   // [7] :id rác → 400 · uuid ma → 404 (luật route :param, gói 07)
   const g1 = await api('/wms/trace/investigations/undefined')
   const g2 = await api('/wms/trace/investigations/11111111-1111-1111-1111-111111111111')
-  check('[7] :id rác 400 · uuid ma 404 (không 500)', g1.s === 400 && g2.s === 404, `s=${g1.s}/${g2.s}`)
+  const g3 = await api('/wms/trace/runs/undefined')
+  check('[7] :id rác 400 · uuid ma 404 (cả hồ sơ lẫn sổ)', g1.s === 400 && g2.s === 404 && g3.s === 400,
+    `s=${g1.s}/${g2.s}/${g3.s}`)
 } finally {
   // Dọn 0 sót: ảnh storage → hồ sơ → dòng sổ → trang sổ (ảnh trước, kẻo orphan trong bucket)
   if (invId) {

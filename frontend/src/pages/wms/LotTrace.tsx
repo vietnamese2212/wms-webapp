@@ -4,19 +4,18 @@
 //    và còn bao nhiêu nằm trong kho để thu hồi tại chỗ.
 //  · ngược (tìm theo NPP / Chuyến / Biển số): khách này đã nhận những lô nào.
 //
-// Hai khoảng ngày TÁCH BẠCH có chủ đích: "Ngày sản xuất" lọc lô, "Ngày giao" lọc chuyến. Gộp một
-// khoảng ngày cho cả hai nghĩa là cách chắc chắn làm người đọc hiểu sai kết quả thu hồi.
-//
-// ĐIỀU TRA THEO THÙNG (01/09, user chốt): khiếu nại đến từ MỘT THÙNG khách đang cầm — trên thùng
-// chỉ có chữ in phun (giờ phút, ngày SX), không có tem pallet. Tab "Điều tra theo thùng" nhập giờ
-// thùng + mã hàng (+ máy/chu kỳ nếu biết), đính kèm ảnh (AI đọc được giờ từ ảnh) → đối chiếu SỔ
-// ĐÓNG GÓI ra pallet nghi vấn → truy tiếp "đã giao khách nào" → LƯU HỒ SƠ đứng tên người điều tra.
-// User chốt: chỉ khớp ĐÚNG khoảng giờ thùng đầu→thùng cuối (không nới ±).
+// TRUY XUẤT THEO THÙNG (01/09, user chỉnh v2 cùng ngày): tab = BẢNG HỒ SƠ đã lưu; nút "Truy xuất
+// mới" mở FORM (FormSheet): bắt buộc Ngày · Giờ SX · Máy · Chu kỳ (mã hàng tùy chọn, ảnh + AI đọc
+// giờ). Tem pallet có thể lệch ±1–3 ngày so chữ in phun → form GỢI Ý SỔ ĐÓNG GÓI theo Máy + Chu kỳ
+// trong cửa sổ ±3 ngày, user xem từng sổ (pallet + giờ) rồi BUỘC CHỌN 1 sổ → kết quả = HÀNH TRÌNH
+// toàn công ty (SX kho nào → nhập → xuất → kho nhận → xuất tiếp → còn ở đâu) → Lưu vào bảng.
 import { useMemo, useRef, useState } from 'react'
-import { PackageSearch, Download, ImagePlus, Sparkles, X } from 'lucide-react'
+import { PackageSearch, Download, ImagePlus, Sparkles, X, Plus, Eye } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { FormSheet } from '@/components/shared/FormSheet'
+import { Button } from '@/components/ui/button'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -25,13 +24,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { saveWorkbook } from '@/utils/saveExcel'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { apiClient } from '@/api/client'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useLotTrace, useMaterials, useInvestigatePreview, useCreateInvestigation,
-  useTraceInvestigations, useTraceInvestigation,
-  type TraceKind, type TraceShipment, type TraceStock, type TraceResult,
-  type CartonMatch, type TraceInvestigation,
+  useTraceInvestigations, useTraceInvestigation, useTraceRuns, useTraceRunPallets,
+  type TraceKind, type TraceShipment, type TraceStock,
+  type CartonMatch, type TraceInvestigation, type TraceRun, type InvestigateTrace,
 } from '@/api/hooks'
-import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -48,8 +47,9 @@ const KINDS: { value: TraceKind; label: string; hint: string; reverse?: boolean 
 const num = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('vi-VN')
 const apiErrMsg = (e: unknown) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'thử lại'
+const ts = (s: string | null | undefined) => s ? `${formatTimestampDate(s, true)} ${formatTimestampTime(s)}` : '—'
 
-type Tab = 'trace' | 'investigate' | 'records'
+type Tab = 'trace' | 'carton'
 
 export default function LotTrace() {
   const user = useAuthStore(s => s.user)
@@ -76,13 +76,11 @@ export default function LotTrace() {
           <span className="flex-1" />
           <div className="flex items-center gap-1 flex-wrap">
             <TabBtn k="trace" label="Truy xuất lô" />
-            {canInvestigate && <TabBtn k="investigate" label="Điều tra theo thùng" />}
-            <TabBtn k="records" label="Hồ sơ truy vết" />
+            <TabBtn k="carton" label="Truy xuất theo thùng" />
           </div>
         </div>
         {tab === 'trace' && <TraceTab canExport={canExport} />}
-        {tab === 'investigate' && canInvestigate && <InvestigateTab />}
-        {tab === 'records' && <RecordsTab />}
+        {tab === 'carton' && <CartonTab canInvestigate={canInvestigate} />}
       </div>
     </div>
   )
@@ -106,12 +104,8 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   const filterDefs: FilterDef[] = useMemo(() => [
     { key: 'kind', label: 'Tìm theo', type: 'single', pinned: true, options: KINDS.map(k => ({ value: k.value, label: k.label })),
       value: f.kind, allLabel: undefined, onChange: v => setF({ kind: (v || 'pallet') as TraceKind }) },
-    // ⚠️ Nhãn phải KHÁC hẳn chip "Tìm theo" ở trên. Bản đầu để nhãn = tên kiểu tìm nên hai chip
-    // đọc gần giống nhau ("Tìm theo Mã pallet (tem)" vs "Mã pallet (tem)") — chính tôi gõ nhầm
-    // giá trị vào ô CHỌN KIỂU ngay lần thử đầu tiên.
     { key: 'value', label: 'Giá trị cần tìm', type: 'text', pinned: true,
       placeholder: kindDef.hint, value: f.value, onChange: v => setF({ value: v }) },
-    // Ngày SX chỉ có nghĩa khi truy TỪ LÔ; ngày giao chỉ có nghĩa khi truy TỪ KHÁCH — ẩn cái không dùng
     ...(kindDef.reverse ? [] : [{
       key: 'prod', label: 'Ngày sản xuất', type: 'daterange' as const,
       from: f.prodFrom, to: f.prodTo,
@@ -204,9 +198,104 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   )
 }
 
-/* ═══ TAB 2 — ĐIỀU TRA THEO THÙNG ═════════════════════════════════════════════════════════════ */
+/* ═══ TAB 2 — TRUY XUẤT THEO THÙNG (bảng hồ sơ + form Truy xuất mới) ══════════════════════════ */
 
 const todayVn = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+function CartonTab({ canInvestigate }: { canInvestigate: boolean }) {
+  const f = useWmsFilterStore(s => s.traceInv)
+  const setF = useWmsFilterStore(s => s.setTraceInv)
+  const q = useTraceInvestigations({ from: f.from, to: f.to, search: f.search, page: f.page })
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [formOpen, setFormOpen] = useState(false)
+
+  const rows = q.data?.rows ?? []
+  const total = q.data?.total ?? 0
+  const pageSize = q.data?.page_size ?? 50
+  const maxPage = Math.max(1, Math.ceil(total / pageSize))
+
+  const filterDefs: FilterDef[] = useMemo(() => [
+    { key: 'created', label: 'Ngày truy xuất', type: 'daterange', from: f.from, to: f.to,
+      onChange: (from, to) => setF({ from, to, page: 1 }) },
+    { key: 'search', label: 'Tìm', type: 'text', pinned: true,
+      placeholder: 'Mã hàng · người thực hiện · ghi chú', value: f.search,
+      onChange: v => setF({ search: v, page: 1 }) },
+  ], [f, setF])
+
+  const actions: ActionItem[] = canInvestigate ? [{
+    key: 'new', icon: Plus, label: 'Truy xuất mới', tip: 'Nhập giờ in phun trên thùng + máy + chu kỳ, chọn sổ đóng gói rồi truy hành trình',
+    onClick: () => setFormOpen(true), primary: true,
+  }] : []
+
+  return (
+    <>
+      <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 space-y-1">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] text-slate-500 hidden sm:inline">
+            mỗi dòng = một lần truy xuất từ thùng thực tế — bấm dòng để xem lại hành trình + ảnh
+          </span>
+          <span className="flex-1" />
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+            <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+            <ActionCluster items={actions} mobileInline />
+          </div>
+        </div>
+        <FilterBar defs={filterDefs} />
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {q.isLoading ? (
+          <div className="p-3 space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}</div>
+        ) : rows.length === 0 ? (
+          <div className="p-8 text-center text-xs text-slate-400">
+            Chưa có lượt truy xuất nào{canInvestigate ? ' — bấm "Truy xuất mới" để bắt đầu' : ''}.
+          </div>
+        ) : (
+          <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+            <TableHeader>
+              <TableRow>
+                {['Lúc truy xuất', 'Người thực hiện', 'Giờ trên thùng', 'Máy', 'Chu kỳ', 'Mã hàng', 'Sổ đóng gói', 'Kho SX', 'Pallet', 'Khách', 'SL giao', 'Ảnh', 'Bối cảnh', 'Kết luận']
+                  .map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map(r => (
+                <TableRow key={r.id} className="cursor-pointer hover:bg-sky-50/40" onClick={() => setOpenId(r.id)}>
+                  <TableCell className={TD}>{ts(r.created_at)}</TableCell>
+                  <TableCell className={TD}>{r.performed_by_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={TD}>{ts(r.carton_at)}</TableCell>
+                  <TableCell className={`${TD} font-mono`}>{r.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} font-mono`}>{r.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} font-mono font-semibold`}>{r.material_code ?? r.run?.material_code ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={TD}>{r.run?.run_date ? `${formatDate(r.run.run_date)} · ${r.run.shift ?? ''}` : <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={TD}>{r.run?.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} font-semibold tabular-nums`}>{r.matched?.length ?? 0}</TableCell>
+                  <TableCell className={`${TD} tabular-nums`}>{num(r.summary?.customers)}</TableCell>
+                  <TableCell className={`${TD} tabular-nums`}>{num(r.summary?.qty_shipped)}</TableCell>
+                  <TableCell className={`${TD} tabular-nums`}>{r.photos?.length ? r.photos.length : <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} max-w-[160px] truncate`}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} max-w-[160px] truncate`}>{r.result_note ?? <span className="text-slate-300">—</span>}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+      <div className="border-t bg-white px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-2 shrink-0">
+        <span>{total ? `${(f.page - 1) * pageSize + 1}–${Math.min(f.page * pageSize, total)} / ${total} lượt truy xuất` : '0 lượt truy xuất'}</span>
+        <span className="flex-1" />
+        <button disabled={f.page <= 1} onClick={() => setF({ page: f.page - 1 })}
+          className="px-1.5 py-0.5 rounded border border-slate-200 disabled:opacity-40">‹</button>
+        <span>trang {f.page}/{maxPage}</span>
+        <button disabled={f.page >= maxPage} onClick={() => setF({ page: f.page + 1 })}
+          className="px-1.5 py-0.5 rounded border border-slate-200 disabled:opacity-40">›</button>
+      </div>
+      <RecordSheet id={openId} onClose={() => setOpenId(null)} />
+      {formOpen && <InvestigateForm open={formOpen} onClose={() => setFormOpen(false)} />}
+    </>
+  )
+}
+
+/* ═══ FORM TRUY XUẤT MỚI (FormSheet — panel phải, header/thân/footer chuẩn) ═══════════════════ */
 
 // Ảnh khách gửi: nén 1600px JPEG 0.75 — đủ NÉT cho AI đọc chữ in phun, đủ nhẹ để lưu bằng chứng
 async function compressPhoto(file: File): Promise<string> {
@@ -233,41 +322,49 @@ async function compressPhoto(file: File): Promise<string> {
 const INPUT = 'h-8 w-full rounded-md border border-slate-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-sky-400'
 const LABEL = 'text-[10px] font-medium text-slate-500'
 
-function InvestigateTab() {
+function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [date, setDate] = useState(todayVn())
   const [time, setTime] = useState('')
+  const [machine, setMachine] = useState('')
+  const [cycle, setCycle] = useState('')
   const [matCode, setMatCode] = useState('')
   const [matTerm, setMatTerm] = useState('')
   const { data: mats = [], isFetching: matLoading } = useMaterials({ search: matTerm, limit: 50 })
-  const [machine, setMachine] = useState('')
-  const [cycle, setCycle] = useState('')
   const [note, setNote] = useState('')
   const [resultNote, setResultNote] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const [photoErr, setPhotoErr] = useState('')
   const [aiBusy, setAiBusy] = useState<number | null>(null)
   const [aiMsg, setAiMsg] = useState('')
-  const [savedId, setSavedId] = useState<string | null>(null)
+  const [runId, setRunId] = useState<string | null>(null)
+  const [viewRunId, setViewRunId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Gợi ý sổ SỐNG theo Máy + Chu kỳ + Ngày (±3 ngày, debounce khi đang gõ)
+  const dMachine = useDebouncedValue(machine, 300)
+  const dCycle = useDebouncedValue(cycle, 300)
+  const runsQ = useTraceRuns({ machine: dMachine, cycle: dCycle, date, material_code: matCode || undefined })
+  const runs = runsQ.data ?? []
+  const viewQ = useTraceRunPallets(viewRunId)
 
   const preview = useInvestigatePreview()
   const create = useCreateInvestigation()
-  const whs = (useScopedWarehouses().data ?? []) as { id: string; name?: string }[]
-  const whName = (id: string | null) => whs.find(w => w.id === id)?.name ?? id ?? '—'
 
-  const selectedMat = mats.find(m => m.material_code === matCode)
-  const ready = !!date && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(time) && !!matCode
+  const timeOk = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(time)
+  const baseOk = !!date && !!machine.trim() && !!cycle.trim()
   const input = {
-    carton_date: date, carton_time: time, material_code: matCode,
-    machine_code: machine.trim() || undefined, cycle: cycle.trim() || undefined,
+    run_id: runId ?? '', carton_date: date, carton_time: time,
+    machine_code: machine.trim(), cycle: cycle.trim(),
+    ...(matCode ? { material_code: matCode } : {}),
   }
+  const selectedMat = mats.find(m => m.material_code === matCode)
 
   async function onPickFiles(files: FileList | null) {
     if (!files?.length) return
     setPhotoErr('')
     try {
       const added: string[] = []
-      for (const f of Array.from(files).slice(0, 6 - photos.length)) added.push(await compressPhoto(f))
+      for (const fl of Array.from(files).slice(0, 6 - photos.length)) added.push(await compressPhoto(fl))
       setPhotos(p => [...p, ...added].slice(0, 6))
     } catch (e) { setPhotoErr((e as Error).message) }
     if (fileRef.current) fileRef.current.value = ''
@@ -287,195 +384,310 @@ function InvestigateTab() {
     } finally { setAiBusy(null) }
   }
 
-  function onPreview() {
-    setSavedId(null)
-    preview.mutate(input)
-  }
+  function onTrace() { if (runId && timeOk) preview.mutate(input) }
   function onSave() {
     create.mutate({ ...input, note: note.trim() || undefined, result_note: resultNote.trim() || undefined, photos },
-      { onSuccess: d => setSavedId(d.id) })
+      { onSuccess: () => onClose() })
   }
 
-  const r = preview.data
-  const matched = r?.matched ?? []
-  const trace = r?.trace ?? null
+  const r = preview.data ?? null
+  const canSave = !!r && !create.isPending
 
   return (
-    <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-      <div className="p-3 space-y-3">
+    <FormSheet
+      open={open} onClose={onClose}
+      title="Truy xuất theo thùng"
+      description="Nhập thông số in phun trên thùng → chọn đúng sổ đóng gói → xem hành trình rồi lưu hồ sơ"
+      widthClass="sm:max-w-4xl"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" disabled={!canSave} onClick={onSave}>
+          {create.isPending ? 'Đang lưu…' : 'Lưu hồ sơ truy xuất'}
+        </Button>
+      </>}
+    >
+      <div className="space-y-3">
+        {/* ── Thông tin trên thùng ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <div>
+            <p className={LABEL}>Ngày SX (in phun) *</p>
+            <input type="date" className={INPUT} value={date} onChange={e => { setDate(e.target.value); setRunId(null) }} />
+          </div>
+          <div>
+            <p className={LABEL}>Giờ SX (in phun) *</p>
+            <input type="time" step={1} className={INPUT} value={time} onChange={e => setTime(e.target.value)} />
+          </div>
+          <div>
+            <p className={LABEL}>Máy sản xuất *</p>
+            <input className={INPUT} placeholder="vd A · 103" value={machine} onChange={e => { setMachine(e.target.value); setRunId(null) }} />
+          </div>
+          <div>
+            <p className={LABEL}>Chu kỳ (của tháng) *</p>
+            <input className={INPUT} placeholder="vd 9" value={cycle} onChange={e => { setCycle(e.target.value); setRunId(null) }} />
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <p className={LABEL}>Mã hàng (tùy chọn)</p>
+            <SingleSelect
+              value={matCode} onChange={v => { setMatCode(v); setRunId(null) }}
+              serverSearch onSearchChange={setMatTerm} loading={matLoading}
+              selectedLabel={selectedMat ? `${selectedMat.material_code} ${selectedMat.short_name ?? ''}` : matCode || undefined}
+              searchPlaceholder="Tìm mã / tên hàng…" placeholder="Không bắt buộc"
+              triggerClassName="h-8"
+              options={mats.map(m => ({
+                value: m.material_code,
+                label: `${m.material_code} ${m.short_name ?? m.material_description ?? ''}`,
+              }))}
+            />
+          </div>
+        </div>
+
+        {/* ── Ảnh + AI đọc giờ ── */}
+        <div className="flex items-start gap-2 flex-wrap">
+          {photos.map((p, i) => (
+            <div key={i} className="relative group">
+              <img src={p} alt={`Ảnh ${i + 1}`} className="h-16 w-16 object-cover rounded border border-slate-200" />
+              <button onClick={() => setPhotos(ps => ps.filter((_, j) => j !== i))}
+                className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-slate-700 text-white flex items-center justify-center"
+                title="Bỏ ảnh"><X className="h-2.5 w-2.5" /></button>
+              <button onClick={() => onAiRead(i)} disabled={aiBusy !== null}
+                className="absolute bottom-0 inset-x-0 bg-sky-600/90 text-white text-[9px] py-0.5 rounded-b flex items-center justify-center gap-0.5 disabled:opacity-60"
+                title="AI đọc ngày + giờ in phun từ ảnh này">
+                <Sparkles className="h-2.5 w-2.5" /> {aiBusy === i ? 'Đọc…' : 'AI đọc'}
+              </button>
+            </div>
+          ))}
+          {photos.length < 6 && (
+            <button onClick={() => fileRef.current?.click()}
+              className="h-16 w-16 rounded border border-dashed border-slate-300 text-slate-400 flex flex-col items-center justify-center gap-0.5 hover:border-sky-400 hover:text-sky-500">
+              <ImagePlus className="h-4 w-4" /><span className="text-[9px]">Thêm ảnh</span>
+            </button>
+          )}
+          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e => void onPickFiles(e.target.files)} />
+        </div>
+        {photoErr && <p className="text-[10px] text-red-600">{photoErr}</p>}
+        {aiMsg && <p className="text-[10px] text-sky-700">{aiMsg}</p>}
+
+        {/* ── Gợi ý sổ đóng gói (±3 ngày quanh ngày in phun — tem có thể lệch ngày) ── */}
         <section className="rounded-lg border border-slate-200 overflow-hidden">
           <div className="flex items-center gap-1.5 bg-slate-100 border-b border-slate-200 px-2.5 py-1.5">
             <span className="h-3.5 w-1 rounded-full bg-sky-500 shrink-0" />
-            <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide">Thông tin trên thùng</p>
-            <p className="text-[10px] text-slate-400 ml-auto">giờ phút in phun + mã hàng — máy / chu kỳ giúp khớp chính xác hơn</p>
+            <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide">Chọn sổ đóng gói khớp điều kiện *</p>
+            <p className="text-[10px] text-slate-400 ml-auto normal-case">tìm theo Máy + Chu kỳ trong ±3 ngày (tem có thể lệch ngày so với in phun)</p>
           </div>
-          <div className="p-2.5 space-y-2.5">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              <div>
-                <p className={LABEL}>Ngày SX (trên thùng) *</p>
-                <input type="date" className={INPUT} value={date} onChange={e => setDate(e.target.value)} />
+          <div className="p-2">
+            {!baseOk ? (
+              <p className="text-[11px] text-slate-400 px-1 py-2">Nhập đủ Ngày · Máy · Chu kỳ để hiện gợi ý sổ.</p>
+            ) : runsQ.isLoading ? (
+              <div className="space-y-1.5 p-1">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-5 w-full" />)}</div>
+            ) : runsQ.isError ? (
+              <p className="text-[11px] text-red-600 px-1 py-2">Không tìm được sổ — {apiErrMsg(runsQ.error)}</p>
+            ) : runs.length === 0 ? (
+              <p className="text-[11px] text-amber-700 px-1 py-2">
+                Không có sổ đóng gói nào của máy "{machine}" · chu kỳ "{cycle}" trong ±3 ngày quanh {formatDate(date)}.
+                Kiểm lại máy/chu kỳ, hoặc sổ hôm đó chưa được ghi.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+                  <TableHeader>
+                    <TableRow>
+                      {['Chọn', 'Ngày sổ', 'Ca', 'Chu kỳ', 'Máy', 'Mã hàng', 'Kho SX', 'Giờ BĐ → KT', 'Pallet', 'SL (thùng)', 'Người mở', ''].map(h =>
+                        <TableHead key={h} className={TH}>{h}</TableHead>)}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {runs.map(run => (
+                      <TableRow key={run.id}
+                        className={`cursor-pointer ${runId === run.id ? 'bg-sky-50' : 'hover:bg-sky-50/40'}`}
+                        onClick={() => { setRunId(run.id); preview.reset() }}>
+                        <TableCell className={TD}>
+                          <input type="radio" checked={runId === run.id} readOnly className="accent-sky-600" />
+                        </TableCell>
+                        <TableCell className={TD}>{run.run_date ? formatDate(run.run_date) : '—'}</TableCell>
+                        <TableCell className={TD}>{run.shift ?? <span className="text-slate-300">—</span>}</TableCell>
+                        <TableCell className={`${TD} font-mono`}>{run.cycle ?? '—'}</TableCell>
+                        <TableCell className={`${TD} font-mono`}>{run.machine_code ?? '—'}</TableCell>
+                        <TableCell className={`${TD} font-mono`}>{(run.material_codes?.length ? run.material_codes.join(' · ') : run.material_code) ?? '—'}</TableCell>
+                        <TableCell className={TD}>{run.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                        <TableCell className={TD}>{run.start_at ? `${ts(run.start_at)} → ${run.end_at ? formatTimestampTime(run.end_at) : '…'}` : '—'}</TableCell>
+                        <TableCell className={`${TD} tabular-nums`}>{run.pallet_count != null ? num(run.pallet_count) : '—'}</TableCell>
+                        <TableCell className={`${TD} tabular-nums`}>{run.qty_total != null ? num(run.qty_total) : '—'}</TableCell>
+                        <TableCell className={TD}>{run.opened_by_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                        <TableCell className={TD}>
+                          <button onClick={e => { e.stopPropagation(); setViewRunId(viewRunId === run.id ? null : run.id) }}
+                            className="px-1.5 py-1 rounded text-sky-600 hover:bg-sky-50 flex items-center gap-1"
+                            title="Xem danh sách pallet + giờ của sổ này">
+                            <Eye className="h-3.5 w-3.5" /><span className="text-[10px]">{viewRunId === run.id ? 'Đóng' : 'Xem'}</span>
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-              <div>
-                <p className={LABEL}>Giờ in trên thùng *</p>
-                <input type="time" step={1} className={INPUT} value={time} onChange={e => setTime(e.target.value)} />
-              </div>
-              <div className="col-span-2 sm:col-span-1">
-                <p className={LABEL}>Mã hàng *</p>
-                <SingleSelect
-                  value={matCode} onChange={setMatCode}
-                  serverSearch onSearchChange={setMatTerm} loading={matLoading}
-                  selectedLabel={selectedMat ? `${selectedMat.material_code} ${selectedMat.short_name ?? ''}` : matCode || undefined}
-                  searchPlaceholder="Tìm mã / tên hàng…" placeholder="Chọn mã hàng"
-                  triggerClassName="h-8"
-                  options={mats.map(m => ({
-                    value: m.material_code,
-                    label: `${m.material_code} ${m.short_name ?? m.material_description ?? ''}`,
-                  }))}
-                />
-              </div>
-              <div>
-                <p className={LABEL}>Máy sản xuất</p>
-                <input className={INPUT} placeholder="vd A · 103" value={machine} onChange={e => setMachine(e.target.value)} />
-              </div>
-              <div>
-                <p className={LABEL}>Chu kỳ sản xuất</p>
-                <input className={INPUT} placeholder="vd 9" value={cycle} onChange={e => setCycle(e.target.value)} />
-              </div>
-            </div>
-
-            <div className="flex items-start gap-2 flex-wrap">
-              {photos.map((p, i) => (
-                <div key={i} className="relative group">
-                  <img src={p} alt={`Ảnh ${i + 1}`} className="h-20 w-20 object-cover rounded border border-slate-200" />
-                  <button onClick={() => setPhotos(ps => ps.filter((_, j) => j !== i))}
-                    className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-slate-700 text-white flex items-center justify-center"
-                    title="Bỏ ảnh"><X className="h-2.5 w-2.5" /></button>
-                  <button onClick={() => onAiRead(i)} disabled={aiBusy !== null}
-                    className="absolute bottom-0 inset-x-0 bg-sky-600/90 text-white text-[9px] py-0.5 rounded-b flex items-center justify-center gap-0.5 disabled:opacity-60"
-                    title="AI đọc ngày + giờ in phun từ ảnh này">
-                    <Sparkles className="h-2.5 w-2.5" /> {aiBusy === i ? 'Đang đọc…' : 'AI đọc giờ'}
-                  </button>
-                </div>
-              ))}
-              {photos.length < 6 && (
-                <button onClick={() => fileRef.current?.click()}
-                  className="h-20 w-20 rounded border border-dashed border-slate-300 text-slate-400 flex flex-col items-center justify-center gap-1 hover:border-sky-400 hover:text-sky-500">
-                  <ImagePlus className="h-4 w-4" /><span className="text-[9px]">Thêm ảnh</span>
-                </button>
-              )}
-              <input ref={fileRef} type="file" accept="image/*" multiple hidden
-                onChange={e => void onPickFiles(e.target.files)} />
-            </div>
-            {photoErr && <p className="text-[10px] text-red-600">{photoErr}</p>}
-            {aiMsg && <p className="text-[10px] text-sky-700">{aiMsg}</p>}
-
-            <div className="flex items-center gap-2">
-              <button onClick={onPreview} disabled={!ready || preview.isPending}
-                className="h-8 px-3 rounded-md bg-blue-600 text-white text-xs font-medium disabled:opacity-50">
-                {preview.isPending ? 'Đang đối chiếu…' : 'Đối chiếu sổ đóng gói'}
-              </button>
-              {!ready && <span className="text-[10px] text-slate-400">Cần đủ Ngày · Giờ (HH:MM) · Mã hàng</span>}
-            </div>
-            {preview.isError && (
-              <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">
-                Không đối chiếu được — {apiErrMsg(preview.error)}
+            )}
+            {viewRunId && (
+              <div className="mt-2 rounded border border-sky-200 bg-sky-50/40 p-2">
+                <p className="text-[10px] font-semibold text-slate-600 mb-1">
+                  Pallet của sổ {viewQ.data?.run?.run_date ? formatDate(viewQ.data.run.run_date) : ''} · {viewQ.data?.run?.warehouse_name ?? ''}
+                </p>
+                {viewQ.isLoading ? (
+                  <Skeleton className="h-10 w-full" />
+                ) : (
+                  <div className="overflow-x-auto"><MatchTable rows={viewQ.data?.pallets ?? []} /></div>
+                )}
               </div>
             )}
           </div>
         </section>
 
-        {r && matched.length === 0 && (
-          <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
-            Không có pallet nào trong sổ đóng gói chứa đúng giờ này (khớp ĐÚNG khoảng giờ thùng đầu →
-            thùng cuối). Kiểm lại giờ/ngày trên thùng, thử bỏ bớt Máy / Chu kỳ, hoặc trang sổ hôm đó
-            chưa được ghi.
+        <div className="flex items-center gap-2">
+          <button onClick={onTrace} disabled={!runId || !timeOk || preview.isPending}
+            className="h-8 px-3 rounded-md bg-blue-600 text-white text-xs font-medium disabled:opacity-50">
+            {preview.isPending ? 'Đang truy xuất…' : 'Truy xuất hành trình'}
+          </button>
+          {!runId && <span className="text-[10px] text-slate-400">Chọn 1 sổ đóng gói ở trên</span>}
+          {runId && !timeOk && <span className="text-[10px] text-slate-400">Nhập Giờ SX (HH:MM)</span>}
+        </div>
+        {preview.isError && (
+          <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+            Không truy xuất được — {apiErrMsg(preview.error)}
           </div>
         )}
 
-        {r && matched.length > 0 && (
+        {/* ── Kết quả ── */}
+        {r && (
           <>
-            <SectionBand title={`Pallet khớp sổ đóng gói (${matched.length})`} />
-            <MatchTable rows={matched} whName={whName} />
-            {trace && (
-              <>
-                <SummaryBand tiles={[
-                  { label: 'Pallet khớp', value: num(trace.summary.pallets), accent: true },
-                  { label: 'Lượt giao', value: num(trace.summary.shipments) },
-                  { label: 'Khách hàng', value: num(trace.summary.customers) },
-                  { label: 'Chuyến', value: num(trace.summary.trips) },
-                  { label: 'SL đã giao', value: num(trace.summary.qty_shipped) },
-                  { label: 'SL còn trong kho', value: num(trace.summary.qty_on_hand) },
-                ]} />
-                <SectionBand title={`Đã giao đi đâu (${num(trace.summary.shipments)})`} />
-                <ShipTable rows={trace.shipments} />
-                <SectionBand title={`Còn trong kho (${num(trace.summary.stock_rows)} dòng · ${num(trace.summary.qty_on_hand)})`} />
-                <StockTable rows={trace.stock} />
-              </>
-            )}
+            <SummaryBand tiles={[
+              { label: 'Pallet của sổ', value: num(r.trace?.summary?.pallets ?? r.matched.length), accent: true },
+              { label: 'Khớp giờ ★', value: num(r.matched.filter(m => m.time_hit).length) },
+              { label: 'Khách hàng', value: num(r.trace?.summary?.customers) },
+              { label: 'Chuyến', value: num(r.trace?.summary?.trips) },
+              { label: 'SL đã giao', value: num(r.trace?.summary?.qty_shipped) },
+              { label: 'Còn trong kho', value: num(r.trace?.summary?.qty_on_hand) },
+            ]} />
+            <SectionBand title={`Hành trình hàng hóa (${r.matched.length} pallet · ★ = chứa giờ in phun)`} />
+            <div className="overflow-x-auto"><JourneyTable matched={r.matched} trace={r.trace} /></div>
+            <SectionBand title={`Đã giao đi đâu (${num(r.trace?.summary?.shipments)})`} />
+            <div className="overflow-x-auto"><ShipTable rows={r.trace?.shipments ?? []} /></div>
+            <SectionBand title={`Còn trong kho (${num(r.trace?.summary?.stock_rows)} dòng · ${num(r.trace?.summary?.qty_on_hand)})`} />
+            <div className="overflow-x-auto"><StockTable rows={r.trace?.stock ?? []} /></div>
 
-            <section className="rounded-lg border border-slate-200 overflow-hidden">
-              <div className="flex items-center gap-1.5 bg-slate-100 border-b border-slate-200 px-2.5 py-1.5">
-                <span className="h-3.5 w-1 rounded-full bg-sky-500 shrink-0" />
-                <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide">Lưu hồ sơ truy vết</p>
-                <p className="text-[10px] text-slate-400 ml-auto">hồ sơ ghi người thực hiện + ảnh + kết quả tại thời điểm điều tra</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <div>
+                <p className={LABEL}>Bối cảnh (khiếu nại gì, ai báo…)</p>
+                <textarea className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs min-h-[52px]"
+                  value={note} onChange={e => setNote(e.target.value)} />
               </div>
-              <div className="p-2.5 space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <p className={LABEL}>Bối cảnh (khiếu nại gì, ai báo…)</p>
-                    <textarea className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs min-h-[52px]"
-                      value={note} onChange={e => setNote(e.target.value)} />
-                  </div>
-                  <div>
-                    <p className={LABEL}>Kết luận của người điều tra</p>
-                    <textarea className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs min-h-[52px]"
-                      value={resultNote} onChange={e => setResultNote(e.target.value)} />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={onSave} disabled={create.isPending || !!savedId}
-                    className="h-8 px-3 rounded-md bg-blue-600 text-white text-xs font-medium disabled:opacity-50">
-                    {create.isPending ? 'Đang lưu…' : savedId ? 'Đã lưu hồ sơ' : 'Lưu hồ sơ truy vết'}
-                  </button>
-                  {savedId && <span className="text-[11px] text-green-600">Đã lưu — xem lại ở tab "Hồ sơ truy vết".</span>}
-                </div>
-                {create.isError && (
-                  <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">
-                    Không lưu được — {apiErrMsg(create.error)}
-                  </div>
-                )}
+              <div>
+                <p className={LABEL}>Kết luận của người truy xuất</p>
+                <textarea className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs min-h-[52px]"
+                  value={resultNote} onChange={e => setResultNote(e.target.value)} />
               </div>
-            </section>
+            </div>
+            {create.isError && (
+              <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+                Không lưu được — {apiErrMsg(create.error)}
+              </div>
+            )}
           </>
         )}
       </div>
-    </div>
+    </FormSheet>
   )
 }
 
-function MatchTable({ rows, whName }: { rows: CartonMatch[]; whName: (id: string | null) => string }) {
+/* ═══ HÀNH TRÌNH — sinh ra ở đâu, đi qua những đâu, còn ở đâu (toàn công ty) ═══════════════════ */
+
+type JEvent = { t: number; when: string | null; label: string; place: string; qty: number | null }
+
+function buildJourney(matched: CartonMatch[], trace: InvestigateTrace | null | undefined): { pallet: string; hit: boolean; events: JEvent[] }[] {
+  const runWh = trace?.run?.warehouse_name ?? null
+  const inbound = trace?.inbound ?? []
+  const ships = trace?.shipments ?? []
+  const stock = trace?.stock ?? []
+  return matched.map(m => {
+    const events: JEvent[] = []
+    if (m.prod_start_at) events.push({
+      t: new Date(m.prod_start_at).getTime(), when: m.prod_start_at,
+      label: `Đóng gói (máy ${m.machine_code ?? '—'})`, place: runWh ?? m.warehouse_id ?? '—', qty: m.qty_cartons,
+    })
+    for (const i of inbound.filter(x => x.pallet_code === m.pallet_code)) events.push({
+      t: new Date(i.created_at).getTime(), when: i.created_at,
+      label: `Nhập kho${i.import_date ? ` (${formatDate(i.import_date)})` : ''}`,
+      place: i.warehouse_name ?? '—', qty: i.cartons_imported,
+    })
+    for (const sp of ships.filter(x => x.pallet_code === m.pallet_code)) events.push({
+      t: sp.scanned_at ? new Date(sp.scanned_at).getTime() : Number.MAX_SAFE_INTEGER - 1, when: sp.scanned_at,
+      label: `Xuất chuyến ${sp.group_code}${sp.delivery_date ? ` (${formatDate(sp.delivery_date)})` : ''}`,
+      place: `${sp.warehouse_name ?? '—'} → ${sp.distributor_name ?? '—'}`, qty: sp.cartons_scanned,
+    })
+    for (const st of stock.filter(x => x.pallet_code === m.pallet_code && Number(x.cartons_remaining) > 0)) events.push({
+      t: Number.MAX_SAFE_INTEGER, when: null,
+      label: 'ĐANG TỒN', place: `${st.warehouse_name ?? '—'}${st.location_code ? ` · ${st.location_code}` : ''}`,
+      qty: st.cartons_remaining,
+    })
+    events.sort((a, b) => a.t - b.t)
+    return { pallet: m.pallet_code, hit: !!m.time_hit, events }
+  })
+}
+
+function JourneyTable({ matched, trace }: { matched: CartonMatch[]; trace: InvestigateTrace | null | undefined }) {
+  const rows = buildJourney(matched, trace)
+  if (!rows.length) return <div className="px-3 py-4 text-[11px] text-slate-400">Sổ này chưa có pallet nào.</div>
   return (
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Mã pallet', 'Giờ thùng đầu → cuối', 'Ngày trang sổ', 'Ca', 'Chu kỳ', 'Máy', 'SL (thùng)', 'Kho', 'Người đóng gói']
-            .map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
+          {['Mã pallet', '★', 'Bước', 'Thời điểm', 'Sự kiện', 'Nơi', 'SL (thùng)'].map(h =>
+            <TableHead key={h} className={TH}>{h}</TableHead>)}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((p, pi) => (
+          p.events.length === 0 ? (
+            <TableRow key={p.pallet} className="bg-slate-50">
+              <TableCell className={`${TD} font-mono font-semibold`}>{p.pallet}</TableCell>
+              <TableCell className={TD}>{p.hit ? '★' : ''}</TableCell>
+              <TableCell className={TD} colSpan={5}><span className="text-slate-400">Chưa có dữ liệu nhập/xuất</span></TableCell>
+            </TableRow>
+          ) : p.events.map((e, i) => (
+            <TableRow key={`${p.pallet}-${i}`}
+              className={`${p.hit ? 'bg-amber-50/60' : pi % 2 ? 'bg-slate-50/60' : ''} ${i === 0 ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''}`}>
+              <TableCell className={`${TD} font-mono font-semibold`}>{i === 0 ? p.pallet : ''}</TableCell>
+              <TableCell className={`${TD} text-amber-600 font-semibold`}>{i === 0 && p.hit ? '★' : ''}</TableCell>
+              <TableCell className={`${TD} tabular-nums text-slate-400`}>{i + 1}</TableCell>
+              <TableCell className={TD}>{e.when ? ts(e.when) : <span className="text-slate-300">hiện tại</span>}</TableCell>
+              <TableCell className={`${TD} ${e.label === 'ĐANG TỒN' ? 'text-green-600 font-semibold' : ''}`}>{e.label}</TableCell>
+              <TableCell className={`${TD} max-w-[280px] truncate`}>{e.place}</TableCell>
+              <TableCell className={`${TD} font-semibold tabular-nums`}>{e.qty != null ? num(e.qty) : '—'}</TableCell>
+            </TableRow>
+          ))
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+function MatchTable({ rows }: { rows: CartonMatch[] }) {
+  if (!rows.length) return <div className="px-2 py-3 text-[11px] text-slate-400">Sổ này chưa có pallet nào.</div>
+  return (
+    <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+      <TableHeader>
+        <TableRow>
+          {['Mã pallet', 'Mã hàng', 'Giờ thùng đầu → cuối', 'SL (thùng)', 'Người đóng gói'].map(h =>
+            <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map(m => (
           <TableRow key={m.pallet_code} className="hover:bg-sky-50/40">
             <TableCell className={`${TD} font-mono font-semibold`}>{m.pallet_code}</TableCell>
+            <TableCell className={`${TD} font-mono`}>{m.material_code ?? <span className="text-slate-300">—</span>}</TableCell>
             <TableCell className={TD}>
-              {m.prod_start_at ? `${formatTimestampDate(m.prod_start_at, true)} ${formatTimestampTime(m.prod_start_at)}` : '—'}
-              {' → '}{m.prod_end_at ? formatTimestampTime(m.prod_end_at) : '—'}
+              {m.prod_start_at ? `${ts(m.prod_start_at)} → ${m.prod_end_at ? formatTimestampTime(m.prod_end_at) : '…'}` : '—'}
             </TableCell>
-            <TableCell className={TD}>{m.run?.run_date ? formatDate(m.run.run_date) : <span className="text-slate-300">—</span>}</TableCell>
-            <TableCell className={TD}>{m.run?.shift ?? <span className="text-slate-300">—</span>}</TableCell>
-            <TableCell className={`${TD} font-mono`}>{m.run?.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
-            <TableCell className={`${TD} font-mono`}>{m.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
             <TableCell className={`${TD} font-semibold tabular-nums`}>{m.qty_cartons != null ? num(m.qty_cartons) : '—'}</TableCell>
-            <TableCell className={TD}>{whName(m.warehouse_id)}</TableCell>
             <TableCell className={TD}>{m.packed_by_name ?? <span className="text-slate-300">—</span>}</TableCell>
           </TableRow>
         ))}
@@ -484,99 +696,18 @@ function MatchTable({ rows, whName }: { rows: CartonMatch[]; whName: (id: string
   )
 }
 
-/* ═══ TAB 3 — HỒ SƠ TRUY VẾT ══════════════════════════════════════════════════════════════════ */
-
-function RecordsTab() {
-  const f = useWmsFilterStore(s => s.traceInv)
-  const setF = useWmsFilterStore(s => s.setTraceInv)
-  const q = useTraceInvestigations({ from: f.from, to: f.to, search: f.search, page: f.page })
-  const [openId, setOpenId] = useState<string | null>(null)
-
-  const rows = q.data?.rows ?? []
-  const total = q.data?.total ?? 0
-  const pageSize = q.data?.page_size ?? 50
-  const maxPage = Math.max(1, Math.ceil(total / pageSize))
-
-  const filterDefs: FilterDef[] = useMemo(() => [
-    { key: 'created', label: 'Ngày tạo hồ sơ', type: 'daterange', from: f.from, to: f.to,
-      onChange: (from, to) => setF({ from, to, page: 1 }) },
-    { key: 'search', label: 'Tìm', type: 'text', pinned: true,
-      placeholder: 'Mã hàng · người thực hiện · ghi chú', value: f.search,
-      onChange: v => setF({ search: v, page: 1 }) },
-  ], [f, setF])
-
-  return (
-    <>
-      <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 space-y-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-slate-500">mỗi hồ sơ = một lần điều tra, ghi người thực hiện + ảnh + kết quả tại thời điểm đó</span>
-          <span className="flex-1" />
-          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-        </div>
-        <FilterBar defs={filterDefs} />
-      </div>
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        {q.isLoading ? (
-          <div className="p-3 space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}</div>
-        ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-400">
-            Chưa có hồ sơ truy vết nào — tạo từ tab "Điều tra theo thùng".
-          </div>
-        ) : (
-          <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
-            <TableHeader>
-              <TableRow>
-                {['Lúc tạo', 'Người thực hiện', 'Giờ thùng', 'Mã hàng', 'Máy', 'Chu kỳ', 'Pallet khớp', 'Khách', 'SL giao', 'Ảnh', 'Bối cảnh', 'Kết luận']
-                  .map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map(r => (
-                <TableRow key={r.id} className="cursor-pointer hover:bg-sky-50/40" onClick={() => setOpenId(r.id)}>
-                  <TableCell className={TD}>{formatTimestampDate(r.created_at, true)} {formatTimestampTime(r.created_at)}</TableCell>
-                  <TableCell className={TD}>{r.performed_by_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className={TD}>{formatTimestampDate(r.carton_at, true)} {formatTimestampTime(r.carton_at)}</TableCell>
-                  <TableCell className={`${TD} font-mono font-semibold`}>{r.material_code}</TableCell>
-                  <TableCell className={`${TD} font-mono`}>{r.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className={`${TD} font-mono`}>{r.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className={`${TD} font-semibold tabular-nums`}>{r.matched?.length ?? 0}</TableCell>
-                  <TableCell className={`${TD} tabular-nums`}>{num(r.summary?.customers)}</TableCell>
-                  <TableCell className={`${TD} tabular-nums`}>{num(r.summary?.qty_shipped)}</TableCell>
-                  <TableCell className={`${TD} tabular-nums`}>{r.photos?.length ? r.photos.length : <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className={`${TD} max-w-[180px] truncate`}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className={`${TD} max-w-[180px] truncate`}>{r.result_note ?? <span className="text-slate-300">—</span>}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </div>
-      <div className="border-t bg-white px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-2 shrink-0">
-        <span>{total ? `${(f.page - 1) * pageSize + 1}–${Math.min(f.page * pageSize, total)} / ${total} hồ sơ` : '0 hồ sơ'}</span>
-        <span className="flex-1" />
-        <button disabled={f.page <= 1} onClick={() => setF({ page: f.page - 1 })}
-          className="px-1.5 py-0.5 rounded border border-slate-200 disabled:opacity-40">‹</button>
-        <span>trang {f.page}/{maxPage}</span>
-        <button disabled={f.page >= maxPage} onClick={() => setF({ page: f.page + 1 })}
-          className="px-1.5 py-0.5 rounded border border-slate-200 disabled:opacity-40">›</button>
-      </div>
-      <RecordSheet id={openId} onClose={() => setOpenId(null)} />
-    </>
-  )
-}
+/* ═══ DETAIL HỒ SƠ (bấm dòng trong bảng) ══════════════════════════════════════════════════════ */
 
 function RecordSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
   const q = useTraceInvestigation(id)
-  const whs = (useScopedWarehouses().data ?? []) as { id: string; name?: string }[]
-  const whName = (wid: string | null) => whs.find(w => w.id === wid)?.name ?? wid ?? '—'
   const r = q.data
-  const trace = (r?.trace ?? null) as TraceResult | null
+  const trace = (r?.trace ?? null) as InvestigateTrace | null
   return (
     <Sheet open={!!id} onOpenChange={o => { if (!o) onClose() }}>
-      <SheetContent side="right" className="w-full sm:w-[720px] sm:max-w-[720px] p-0 flex flex-col">
+      <SheetContent side="right" className="w-full sm:w-[860px] sm:max-w-[860px] p-0 flex flex-col">
         <SheetHeader className="px-4 py-3 border-b shrink-0">
           <SheetTitle className="text-sm">
-            Hồ sơ truy vết {r ? `· ${r.material_code} · ${formatTimestampDate(r.carton_at, true)} ${formatTimestampTime(r.carton_at)}` : ''}
+            Hồ sơ truy xuất {r ? `· máy ${r.machine_code ?? '—'} · chu kỳ ${r.cycle ?? '—'} · ${ts(r.carton_at)}` : ''}
           </SheetTitle>
         </SheetHeader>
         <div className="flex-1 min-h-0 overflow-auto">
@@ -590,11 +721,11 @@ function RecordSheet({ id, onClose }: { id: string | null; onClose: () => void }
             <div className="p-3 space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <DRow k="Người thực hiện" v={r.performed_by_name ?? '—'} />
-                <DRow k="Lúc tạo" v={`${formatTimestampDate(r.created_at, true)} ${formatTimestampTime(r.created_at)}`} />
-                <DRow k="Giờ trên thùng" v={`${formatTimestampDate(r.carton_at, true)} ${formatTimestampTime(r.carton_at)}`} />
-                <DRow k="Mã hàng" v={r.material_code} mono />
-                <DRow k="Máy" v={r.machine_code ?? '—'} mono />
-                <DRow k="Chu kỳ" v={r.cycle ?? '—'} mono />
+                <DRow k="Lúc truy xuất" v={ts(r.created_at)} />
+                <DRow k="Giờ trên thùng" v={ts(r.carton_at)} />
+                <DRow k="Máy · Chu kỳ" v={`${r.machine_code ?? '—'} · ${r.cycle ?? '—'}`} mono />
+                <DRow k="Mã hàng" v={r.material_code ?? trace?.run?.material_code ?? '—'} mono />
+                <DRow k="Sổ đóng gói" v={trace?.run ? `${trace.run.run_date ? formatDate(trace.run.run_date) : '—'} · ${trace.run.shift ?? ''} · ${trace.run.warehouse_name ?? ''}` : '—'} />
               </div>
               {r.note && <DRow k="Bối cảnh" v={r.note} />}
               {r.result_note && <DRow k="Kết luận" v={r.result_note} />}
@@ -607,16 +738,21 @@ function RecordSheet({ id, onClose }: { id: string | null; onClose: () => void }
                   ))}
                 </div>
               )}
-              <SectionBand title={`Pallet khớp sổ đóng gói (${r.matched?.length ?? 0})`} />
-              <div className="overflow-x-auto"><MatchTable rows={r.matched ?? []} whName={whName} /></div>
-              {trace && (
-                <>
-                  <SectionBand title={`Đã giao đi đâu (${num(trace.summary?.shipments)})`} />
-                  <div className="overflow-x-auto"><ShipTable rows={trace.shipments ?? []} /></div>
-                  <SectionBand title={`Còn trong kho (${num(trace.summary?.stock_rows)} dòng)`} />
-                  <div className="overflow-x-auto"><StockTable rows={trace.stock ?? []} /></div>
-                </>
+              {trace?.summary && (
+                <SummaryBand tiles={[
+                  { label: 'Pallet của sổ', value: num(trace.summary.pallets ?? r.matched?.length), accent: true },
+                  { label: 'Khớp giờ ★', value: num((r.matched ?? []).filter(m => m.time_hit).length) },
+                  { label: 'Khách hàng', value: num(trace.summary.customers) },
+                  { label: 'SL đã giao', value: num(trace.summary.qty_shipped) },
+                  { label: 'Còn trong kho', value: num(trace.summary.qty_on_hand) },
+                ]} />
               )}
+              <SectionBand title={`Hành trình hàng hóa (${r.matched?.length ?? 0} pallet)`} />
+              <div className="overflow-x-auto"><JourneyTable matched={r.matched ?? []} trace={trace} /></div>
+              <SectionBand title="Đã giao đi đâu" />
+              <div className="overflow-x-auto"><ShipTable rows={trace?.shipments ?? []} /></div>
+              <SectionBand title="Còn trong kho" />
+              <div className="overflow-x-auto"><StockTable rows={trace?.stock ?? []} /></div>
             </div>
           ) : null}
         </div>

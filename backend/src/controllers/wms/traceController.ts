@@ -8,7 +8,7 @@ import type { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { maskServerMessage } from '../../utils/response'
-import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
+import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { isUuid } from '../../utils/ids'
 import { normCycleCode } from './packingController'
 
@@ -107,12 +107,14 @@ export async function serviceLevel(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// ─── ĐIỀU TRA TRUY VẾT THEO THÙNG (01/09, user chốt) ────────────────────────────────────────────
+// ─── TRUY XUẤT THEO THÙNG (01/09, user chốt — v2 cùng ngày) ─────────────────────────────────────
 // Khiếu nại đến từ MỘT THÙNG khách đang cầm — trên thùng chỉ có chữ in phun (giờ phút, ngày SX).
-// Nhập giờ thùng + mã hàng (+ máy, chu kỳ nếu biết) → đối chiếu SỔ ĐÓNG GÓI (packing_logs lưu
-// khoảng giờ SX thùng đầu→thùng cuối của TỪNG pallet) → pallet nghi vấn → truy "đã giao khách nào"
-// bằng chính RPC lot_trace (kind='codes'). Kết quả + ảnh + người thực hiện lưu thành HỒ SƠ.
-// User chốt: chỉ khớp ĐÚNG khoảng giờ (không nới ±) — không có pallet chứa giờ đó là trả rỗng.
+// Bắt buộc nhập: Ngày · Giờ SX · MÁY · CHU KỲ (mã hàng tùy chọn). Tem pallet có thể lệch ±1–3 ngày
+// so với chữ in phun (SX vắt qua đêm) nên KHÔNG bám cứng ngày: gợi ý SỔ ĐÓNG GÓI theo Máy + Chu kỳ
+// trong cửa sổ ±3 ngày, user XEM từng sổ (pallet + giờ) rồi BUỘC CHỌN 1 sổ → truy tiếp bằng
+// lot_trace(kind='codes') + lịch sử nhập MỌI KHO → HÀNH TRÌNH "sinh ra → đi qua đâu → còn ở đâu".
+// Truy xuất là việc TOÀN CÔNG TY (thu hồi): KHÔNG cắt theo scope kho/loại của người tra — quyền
+// traceability.investigate chính là cửa kiểm soát ai được nhìn toàn cảnh này.
 
 const TRACE_PHOTO_BUCKET = 'trace-photos'
 const TRACE_PHOTO_MAX_BYTES = 4 * 1024 * 1024
@@ -139,83 +141,162 @@ function cartonAtOf(dateRaw: unknown, timeRaw: unknown): string | undefined {
   return new Date(`${d}T${m[1]}:${m[2]}:${m[3] ?? '00'}+07:00`).toISOString()
 }
 
+/** Cộng/trừ N ngày trên chuỗi 'YYYY-MM-DD' (số học lịch thuần — không dính timezone). */
+function shiftDay(day: string, n: number): string {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
+
+type RunRow = {
+  id: string; run_date: string | null; shift: string | null; cycle: string | null
+  material_code: string | null; material_codes: string[] | null; machine_code: string | null
+  warehouse_id: string | null; start_at: string | null; end_at: string | null
+  qty_total: number | null; pallet_count: number | null; status: string
+  opened_by_name: string | null
+}
+const RUN_COLS = 'id, run_date, shift, cycle, material_code, material_codes, machine_code,'
+  + ' warehouse_id, start_at, end_at, qty_total, pallet_count, status, opened_by_name'
+
+/** Gắn tên kho cho các dòng mang warehouse_id (id là text, không FK — không embed được). */
+async function attachWarehouseNames<T extends { warehouse_id: string | null }>(
+  rows: T[],
+): Promise<(T & { warehouse_name: string | null })[]> {
+  const ids = [...new Set(rows.map(r => r.warehouse_id).filter((x): x is string => !!x))].slice(0, 300)
+  const names = new Map<string, string>()
+  if (ids.length) {
+    const { data } = await supabase.from('Warehouse').select('id, name').in('id', ids)
+    for (const w of (data ?? []) as { id: string; name: string }[]) names.set(w.id, w.name)
+  }
+  return rows.map(r => ({ ...r, warehouse_name: r.warehouse_id ? names.get(r.warehouse_id) ?? null : null }))
+}
+
+// GET /wms/trace/runs?machine=&cycle=&date=[&material_code=] — GỢI Ý SỔ ĐÓNG GÓI khớp điều kiện.
+// Cửa sổ ±3 ngày quanh ngày in phun (tem pallet lệch được 1–3 ngày); chu kỳ so dạng chuẩn
+// ("07" ≡ "7"); sổ gần ngày nhập nhất xếp lên đầu để user xem rồi tự chọn.
+export async function listCandidateRuns(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | undefined>
+    const machine = String(q.machine ?? '').trim()
+    const cycle = String(q.cycle ?? '').trim()
+    const date = dayOf(q.date)
+    if (!machine || !cycle || !date)
+      return fail(res, 'Cần đủ Máy · Chu kỳ · Ngày (YYYY-MM-DD)', 400, 'BAD_INPUT')
+    const material = String(q.material_code ?? '').trim().replace(/[,(){}]/g, '')
+    let qb = supabase.from('packing_runs')
+      .select(RUN_COLS)
+      .eq('machine_code', machine)
+      .gte('run_date', shiftDay(date, -3)).lte('run_date', shiftDay(date, 3))
+      .limit(50)
+    if (material) qb = qb.or(`material_code.eq.${material},material_codes.cs.{${material}}`)
+    const { data, error } = await qb
+    if (error) return fail(res, error.message)
+    const want = normCycleCode(cycle)
+    const anchor = new Date(`${date}T00:00:00Z`).getTime()
+    const rows = ((data ?? []) as unknown as RunRow[])
+      .filter(r => r.cycle != null && normCycleCode(String(r.cycle)) === want)
+      .sort((a, b) =>
+        Math.abs(new Date(`${a.run_date ?? date}T00:00:00Z`).getTime() - anchor)
+        - Math.abs(new Date(`${b.run_date ?? date}T00:00:00Z`).getTime() - anchor))
+    return ok(res, await attachWarehouseNames(rows))
+  } catch (e) { return fail(res, String(e)) }
+}
+
 type CartonMatchRow = {
-  pallet_code: string; material_code: string; machine_code: string | null
+  pallet_code: string; material_code: string | null; machine_code: string | null
   warehouse_id: string | null; qty_cartons: number | null
   prod_start_at: string | null; prod_end_at: string | null
   packed_by_name: string | null; status: string
-  run: { id: string; run_date: string | null; shift: string | null; cycle: string | null; status: string } | null
+  time_hit?: boolean
 }
 
-/** Khớp sổ đóng gói: pallet có [giờ thùng đầu, giờ thùng cuối] CHỨA đúng thời điểm nhập. */
-async function matchCarton(req: Request, p: {
-  carton_at: string; material_code: string; machine_code?: string; cycle?: string
-}): Promise<CartonMatchRow[] | string> {
-  let qb = supabase.from('packing_logs')
-    .select('pallet_code, material_code, machine_code, warehouse_id, qty_cartons, prod_start_at,'
-      + ' prod_end_at, packed_by_name, status, run:packing_runs(id, run_date, shift, cycle, status)')
-    .eq('material_code', p.material_code)
-    .neq('status', 'CANCELLED')
-    .lte('prod_start_at', p.carton_at)
-    .gte('prod_end_at', p.carton_at)
-    .order('prod_start_at')
-    .limit(200)
-  if (p.machine_code) qb = qb.eq('machine_code', p.machine_code)
-  const { data, error } = await qb
+async function runLogs(runId: string): Promise<CartonMatchRow[] | string> {
+  const { data, error } = await supabase.from('packing_logs')
+    .select('pallet_code, material_code, machine_code, warehouse_id, qty_cartons,'
+      + ' prod_start_at, prod_end_at, packed_by_name, status')
+    .eq('run_id', runId).neq('status', 'CANCELLED')
+    .order('prod_start_at').limit(500)
   if (error) return error.message
-  let rows = (data ?? []) as unknown as CartonMatchRow[]
-  // Chu kỳ so DẠNG CHUẨN ("055" ≡ "55") — không đẩy xuống filter PostgREST được nên lọc ở đây
-  if (p.cycle) {
-    const want = normCycleCode(p.cycle)
-    rows = rows.filter(r => r.run?.cycle != null && normCycleCode(String(r.run.cycle)) === want)
-  }
-  // Scope kho (null-inclusive) — tập khớp đã nhỏ nên lọc tại chỗ, không nhồi id vào URL
-  const whIds = scopeWhIds(req)
-  if (whIds !== null) rows = rows.filter(r => r.warehouse_id == null || whIds.includes(r.warehouse_id))
-  return rows
+  return (data ?? []) as unknown as CartonMatchRow[]
 }
 
-/** Guard scope loại hàng cho mã đang điều tra (null-inclusive như toàn app). */
-async function materialCategoryAllowed(req: Request, materialCode: string): Promise<boolean> {
-  const { data } = await supabase.from('Material')
-    .select('category').eq('material_code', materialCode).limit(1).maybeSingle()
-  return categoryAllowed(req, (data as { category?: string | null } | null)?.category ?? null)
+// GET /wms/trace/runs/:id — XEM 1 sổ ngay trong form trước khi chọn: trang sổ + pallet + giờ
+export async function getRunPallets(req: Request, res: Response) {
+  try {
+    const id = String(req.params.id ?? '')
+    if (!isUuid(id)) return fail(res, 'Mã sổ không hợp lệ', 400, 'BAD_ID')
+    const { data: run, error } = await supabase.from('packing_runs')
+      .select(RUN_COLS).eq('id', id).maybeSingle()
+    if (error) return fail(res, error.message)
+    if (!run) return fail(res, 'Không tìm thấy sổ đóng gói', 404, 'NOT_FOUND')
+    const pallets = await runLogs(id)
+    if (typeof pallets === 'string') return fail(res, pallets)
+    const [runNamed] = await attachWarehouseNames([run as unknown as RunRow])
+    return ok(res, { run: runNamed, pallets })
+  } catch (e) { return fail(res, String(e)) }
 }
 
 type InvestigateInput = {
-  carton_at: string; material_code: string; machine_code?: string; cycle?: string
+  run_id: string; carton_at: string; machine_code: string; cycle: string; material_code?: string
 }
 
 function parseInvestigateInput(req: Request): InvestigateInput | { err: string; code: string } {
   const b = req.body as Record<string, unknown>
+  const run_id = String(b.run_id ?? '').trim()
+  if (!isUuid(run_id)) return { err: 'Chưa chọn sổ đóng gói — xem gợi ý rồi chọn 1 sổ trước khi truy xuất', code: 'RUN_REQUIRED' }
   const carton_at = cartonAtOf(b.carton_date, b.carton_time)
   if (!carton_at) return { err: 'Cần ngày (YYYY-MM-DD) và giờ (HH:MM hoặc HH:MM:SS) in trên thùng', code: 'BAD_TIME' }
-  const material_code = String(b.material_code ?? '').trim()
-  if (!material_code) return { err: 'Thiếu mã hàng', code: 'BAD_MATERIAL' }
-  const machine_code = String(b.machine_code ?? '').trim() || undefined
-  const cycle = String(b.cycle ?? '').trim() || undefined
-  return { carton_at, material_code, machine_code, cycle }
+  const machine_code = String(b.machine_code ?? '').trim()
+  const cycle = String(b.cycle ?? '').trim()
+  if (!machine_code || !cycle) return { err: 'Máy và Chu kỳ là bắt buộc', code: 'BAD_INPUT' }
+  const material_code = String(b.material_code ?? '').trim() || undefined
+  return { run_id, carton_at, machine_code, cycle, material_code }
 }
 
 type InvErr = { err: string; code: string; status: number }
-type InvOk = { matched: CartonMatchRow[]; trace: unknown }
+type InvOk = { run: RunRow & { warehouse_name: string | null }; matched: CartonMatchRow[]; trace: Record<string, unknown> }
 
 async function runInvestigation(req: Request, input: InvestigateInput): Promise<InvErr | InvOk> {
-  if (!(await materialCategoryAllowed(req, input.material_code)))
-    return { err: 'Mã hàng ngoài phạm vi loại hàng được phân quyền', code: 'CATEGORY_OUT_OF_SCOPE', status: 403 }
-  const matched = await matchCarton(req, input)
-  if (typeof matched === 'string') return { err: matched, code: 'TRACE_ERROR', status: 500 }
-  let trace: unknown = null
-  if (matched.length) {
-    const codes = [...new Set(matched.map(r => r.pallet_code))]
+  const { data: runRaw, error: runErr } = await supabase.from('packing_runs')
+    .select(RUN_COLS).eq('id', input.run_id).maybeSingle()
+  if (runErr) return { err: runErr.message, code: 'TRACE_ERROR', status: 500 }
+  if (!runRaw) return { err: 'Không tìm thấy sổ đóng gói đã chọn', code: 'NOT_FOUND', status: 404 }
+  const [run] = await attachWarehouseNames([runRaw as unknown as RunRow])
+
+  let logs = await runLogs(input.run_id)
+  if (typeof logs === 'string') return { err: logs, code: 'TRACE_ERROR', status: 500 }
+  if (input.material_code) logs = logs.filter(l => l.material_code === input.material_code)
+
+  // Đánh dấu pallet CHỨA giờ in phun — thử cả ngày ±1 vì giờ ghi sổ có thể rơi sang ngày kề
+  const t0 = new Date(input.carton_at).getTime()
+  const matched: CartonMatchRow[] = logs.map(l => ({
+    ...l,
+    time_hit: [-1, 0, 1].some(k => {
+      const t = t0 + k * 86400_000
+      return l.prod_start_at != null && l.prod_end_at != null
+        && t >= new Date(l.prod_start_at).getTime() && t <= new Date(l.prod_end_at).getTime()
+    }),
+  }))
+
+  // Hành trình TOÀN CÔNG TY: lot_trace không cắt scope (pallet đi qua nhiều kho — cắt theo kho
+  // người tra là đứt khúc giữa hành trình) + lịch sử NHẬP mọi kho (kể cả dòng đã xuất hết).
+  const trace: Record<string, unknown> = { run }
+  const codes = [...new Set(matched.map(r => r.pallet_code))].slice(0, 200)
+  if (codes.length) {
     const { data, error } = await supabase.rpc('lot_trace', {
       p_kind: 'codes', p_value: '', p_codes: codes,
-      p_wh_ids: scopeWhIds(req), p_categories: scopeCategoriesOf(req), p_limit: 500,
+      p_wh_ids: null, p_categories: null, p_limit: 500,
     })
     if (error) return { err: error.message, code: 'TRACE_ERROR', status: 500 }
-    trace = data
+    Object.assign(trace, (data ?? {}) as Record<string, unknown>)
+    const { data: inb, error: inbErr } = await supabase.from('InventoryEntry')
+      .select('pallet_code, import_date, warehouse_id, cartons_imported, cartons_remaining, status, created_at')
+      .in('pallet_code', codes).order('created_at').limit(1000)
+    if (inbErr) return { err: inbErr.message, code: 'TRACE_ERROR', status: 500 }
+    trace.inbound = await attachWarehouseNames(
+      (inb ?? []) as { pallet_code: string; import_date: string | null; warehouse_id: string | null
+        cartons_imported: number | null; cartons_remaining: number | null; status: string; created_at: string }[])
   }
-  return { matched, trace }
+  return { run, matched, trace }
 }
 
 // POST /wms/trace/investigations/preview — chạy khớp + truy, KHÔNG ghi gì
@@ -257,8 +338,9 @@ export async function createInvestigation(req: Request, res: Response) {
 
     const now = new Date().toISOString()
     const row = {
-      id, carton_at: input.carton_at, material_code: input.material_code,
-      machine_code: input.machine_code ?? null, cycle: input.cycle ?? null,
+      id, run_id: input.run_id, carton_at: input.carton_at,
+      material_code: input.material_code ?? null,
+      machine_code: input.machine_code, cycle: input.cycle,
       note: String(b.note ?? '').trim() || null,
       result_note: String(b.result_note ?? '').trim() || null,
       photos: paths, matched: r.matched, trace: r.trace,
@@ -280,8 +362,8 @@ export async function listInvestigations(req: Request, res: Response) {
     const page = Math.max(1, Number(q.page) || 1)
     const pageSize = Math.min(100, Math.max(10, Number(q.page_size) || 50))
     let qb = supabase.from('trace_investigations')
-      .select('id, carton_at, material_code, machine_code, cycle, note, result_note, photos,'
-        + ' matched, summary:trace->summary, performed_by_name, created_at', { count: 'exact' })
+      .select('id, run_id, carton_at, material_code, machine_code, cycle, note, result_note, photos,'
+        + ' matched, summary:trace->summary, run:trace->run, performed_by_name, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1)
     if (from) qb = qb.gte('created_at', new Date(`${from}T00:00:00+07:00`).toISOString())

@@ -2288,27 +2288,34 @@ export type TraceResult = {
     qty_shipped: number; qty_on_hand: number; truncated: boolean
   }
 }
+// FILTER CHUẨN (user chốt 01/09 tối lần 3): mỗi tiêu chí một chip, điền ô nào lọc ô đó — 1 lời
+// gọi kind='fwd' (xuôi, tổ hợp trên tồn) hoặc 'rev' (ngược, tổ hợp trên đường giao).
+export type TraceDir = 'fwd' | 'rev'
 export function useLotTrace(p: {
-  kind: TraceKind; value: string
+  dir: TraceDir
+  pallet?: string; material?: string; batch?: string
+  cycle?: string; machine?: string; nmsx?: string
+  npp?: string; trip?: string; plate?: string
   prodFrom?: string; prodTo?: string; shipFrom?: string; shipTo?: string
-  cycle?: string; machine?: string; nmsx?: string   // kind='prod': thông số SX trên tem
 }) {
-  // Tiền tố quá ngắn quét ra gần cả kho — BE cũng chặn, đây chỉ là khỏi bắn request vô ích.
-  // prod: đủ điều kiện khi có khoảng Ngày SX + ít nhất 1 trong Chu kỳ/Máy/Kho SX.
-  const enough = p.kind === 'prod'
-    ? !!(p.prodFrom && p.prodTo && ((p.cycle ?? '').trim() || (p.machine ?? '').trim() || (p.nmsx ?? '').trim()))
-    : p.value.trim().length >= (p.kind === 'pallet' ? 4 : 2)
+  const t = (v?: string) => (v ?? '').trim()
+  // Có bất kỳ điều kiện nào của chiều đang chọn là tìm (tiền tố tem cần ≥4 ký tự — BE cũng chặn)
+  const enough = p.dir === 'fwd'
+    ? !!(t(p.pallet).length >= 4 || t(p.material) || t(p.batch) || t(p.cycle) || t(p.machine)
+         || t(p.nmsx) || p.prodFrom || p.prodTo)
+    : !!(t(p.npp) || t(p.trip) || t(p.plate) || p.shipFrom || p.shipTo)
+  const put = (k: string, v?: string) => (t(v) ? { [k]: t(v) } : {})
   return useQuery<TraceResult>({
     queryKey: ['lot-trace', p],
     enabled: enough,
     queryFn: () => apiClient.get('/wms/trace', {
       params: {
-        kind: p.kind, value: p.value.trim(),
+        kind: p.dir,
+        ...put('pallet', p.pallet), ...put('material', p.material), ...put('batch', p.batch),
+        ...put('cycle', p.cycle), ...put('machine', p.machine), ...put('nmsx', p.nmsx),
+        ...put('npp', p.npp), ...put('trip', p.trip), ...put('plate', p.plate),
         ...(p.prodFrom ? { prod_from: p.prodFrom } : {}), ...(p.prodTo ? { prod_to: p.prodTo } : {}),
         ...(p.shipFrom ? { ship_from: p.shipFrom } : {}), ...(p.shipTo ? { ship_to: p.shipTo } : {}),
-        ...(p.cycle?.trim() ? { cycle: p.cycle.trim() } : {}),
-        ...(p.machine?.trim() ? { machine: p.machine.trim() } : {}),
-        ...(p.nmsx?.trim() ? { nmsx: p.nmsx.trim() } : {}),
       },
     }).then(r => r.data.data),
   })
@@ -2353,10 +2360,14 @@ export type TraceInvestigation = {
   performed_by_name: string | null; created_at: string
 }
 /** Gợi ý "giá trị cần tìm" cho Truy xuất lô — DISTINCT trong RPC; material rỗng vẫn trả 50 mã đầu. */
-export function useTraceSuggest(kind: TraceKind, term: string) {
+// kind nhận thêm 3 kiểu gợi ý riêng cho dropdown thông số SX: 'cycle' | 'machine' | 'nmsx'
+// (danh mục nhỏ — chưa gõ gì vẫn gợi ý, như material); `on` để tắt query khi ô chưa hiện.
+export type TraceSuggestKind = TraceKind | 'cycle' | 'machine' | 'nmsx'
+export function useTraceSuggest(kind: TraceSuggestKind, term: string, on = true) {
+  const rich = kind === 'material' || kind === 'cycle' || kind === 'machine' || kind === 'nmsx'
   return useQuery<{ value: string; label: string }[]>({
     queryKey: ['trace-suggest', kind, term],
-    enabled: kind === 'material' || term.trim().length >= 1,
+    enabled: on && (rich || term.trim().length >= 1),
     staleTime: 60_000,
     queryFn: () => apiClient.get('/wms/trace/suggest', {
       params: { kind, ...(term.trim() ? { search: term.trim() } : {}) },

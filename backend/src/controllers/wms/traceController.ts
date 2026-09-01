@@ -23,10 +23,12 @@ function scopeWhIds(req: Request): string[] | null {
   return ids.length ? ids : null
 }
 
-// 'prod' (01/09 tối, user chốt "cái tôi cần là số chu kỳ, số máy, nhà máy sản xuất"): truy theo
-// thông số SX in trên tem V1 — đoạn 3 Chu kỳ · đoạn 4 Máy · đoạn 6 Kho SX ký hiệu. Bắt buộc
-// khoảng Ngày SX ≤ 31 ngày (RPC dựng tiền tố ddmmyy_ từng ngày để ăn index pallet_code).
-const KINDS = ['pallet', 'material', 'batch', 'prod', 'npp', 'trip', 'plate'] as const
+// 'fwd'/'rev' (01/09 tối, user chốt lần 3 "làm theo filter chuẩn"): mỗi tiêu chí là MỘT chip
+// filter riêng, điền ô nào lọc ô đó, tổ hợp AND trong một lời gọi — 'fwd' (xuôi) trên tồn:
+// tiền tố tem + mã hàng + mã lô + Chu kỳ/Máy/Kho SX (đoạn 3/4/6 tem V1, index biểu thức
+// idx_ie_tem_*) + khoảng Ngày SX; 'rev' (ngược) trên đường giao: NPP + Số xe + biển số + Ngày
+// giao. Kind cũ 1-giá-trị giữ cho bundle PWA cũ.
+const KINDS = ['fwd', 'rev', 'pallet', 'material', 'batch', 'prod', 'npp', 'trip', 'plate'] as const
 type Kind = typeof KINDS[number]
 const isKind = (v: string): v is Kind => (KINDS as readonly string[]).includes(v)
 
@@ -56,8 +58,9 @@ export async function lotTrace(req: Request, res: Response) {
     const q = req.query as Record<string, string | undefined>
     const kind = String(q.kind ?? '').trim()
     const value = String(q.value ?? '').trim()
+    const combined = kind === 'fwd' || kind === 'rev'
     if (!isKind(kind)) return fail(res, `Kiểu tìm không hợp lệ (${KINDS.join(' | ')})`, 400, 'BAD_KIND')
-    if (kind !== 'prod' && !value) return fail(res, 'Thiếu giá trị cần truy xuất', 400, 'BAD_VALUE')
+    if (!combined && kind !== 'prod' && !value) return fail(res, 'Thiếu giá trị cần truy xuất', 400, 'BAD_VALUE')
     // Tiền tố quá ngắn quét ra gần như cả kho — chặn sớm thay vì để người dùng chờ rồi nhận 2.000 dòng
     if (kind === 'pallet' && value.length < 4)
       return fail(res, 'Mã pallet cần ít nhất 4 ký tự (vd 190726 = ngày sản xuất)', 400, 'BAD_VALUE')
@@ -69,25 +72,28 @@ export async function lotTrace(req: Request, res: Response) {
     for (const [k, v] of Object.entries(dates))
       if (v === undefined) return fail(res, `Ngày không hợp lệ ở "${k}" (cần YYYY-MM-DD)`, 400, 'BAD_DATE')
 
-    // kind='prod' — thông số SX: BẮT BUỘC khoảng Ngày SX (≤31 ngày, mỗi ngày = 1 tiền tố tem)
-    // + ít nhất 1 trong Chu kỳ / Máy / Kho SX. Thiếu là 400 nói rõ, không âm thầm trả rỗng.
-    const cycle = String(q.cycle ?? '').trim().slice(0, 30)
-    const machine = String(q.machine ?? '').trim().slice(0, 30)
-    const nmsx = String(q.nmsx ?? '').trim().slice(0, 10)
-    if (kind === 'prod') {
-      if (!dates.prod_from || !dates.prod_to)
-        return fail(res, 'Cần chọn khoảng Ngày sản xuất (tem V1 mở đầu bằng ngày SX)', 400, 'BAD_RANGE')
-      const span = (Date.parse(dates.prod_to) - Date.parse(dates.prod_from)) / 86400000
-      if (span < 0) return fail(res, 'Ngày "đến" phải sau ngày "từ"', 400, 'BAD_RANGE')
-      if (span > 31) return fail(res, 'Khoảng Ngày sản xuất tối đa 31 ngày — thu hẹp lại', 400, 'BAD_RANGE')
-      if (!cycle && !machine && !nmsx)
-        return fail(res, 'Cần ít nhất một trong: Chu kỳ · Máy · Kho SX (ký hiệu)', 400, 'BAD_VALUE')
-    }
+    // Tổ hợp tiêu chí — KHÔNG GÌ BẮT BUỘC (user chốt "ra filter nào thì lấy cái đó"); chỉ chặn
+    // ca KHÔNG có điều kiện nào của chiều đó (không có gì để tìm).
+    const str = (k: string, max = 60) => String(q[k] ?? '').trim().slice(0, max)
+    const cycle = str('cycle', 30), machine = str('machine', 30), nmsx = str('nmsx', 10)
+    const pallet = str('pallet', 80), material = str('material', 40), batch = str('batch', 60)
+    const npp = str('npp', 80), trip = str('trip', 80), plate = str('plate', 20)
+    if (pallet && pallet.length < 4)
+      return fail(res, 'Tiền tố tem pallet cần ít nhất 4 ký tự (vd 190726 = ngày sản xuất)', 400, 'BAD_VALUE')
+    if (kind === 'fwd' && !pallet && !material && !batch && !cycle && !machine && !nmsx
+        && !dates.prod_from && !dates.prod_to)
+      return fail(res, 'Chọn ít nhất một điều kiện: Tem pallet · Mã hàng · Chu kỳ · Máy · Kho SX · khoảng Ngày SX', 400, 'BAD_VALUE')
+    if (kind === 'rev' && !npp && !trip && !plate && !dates.ship_from && !dates.ship_to)
+      return fail(res, 'Chọn ít nhất một điều kiện: NPP · Số xe · Biển số · khoảng Ngày giao', 400, 'BAD_VALUE')
+    if (kind === 'prod' && !cycle && !machine && !nmsx && !dates.prod_from && !dates.prod_to)
+      return fail(res, 'Chọn ít nhất một điều kiện: Chu kỳ · Máy · Kho SX · khoảng Ngày SX', 400, 'BAD_VALUE')
 
     const limit = Math.min(2000, Math.max(50, Number(q.limit) || 500))
     const { data, error } = await supabase.rpc('lot_trace', {
       p_kind: kind, p_value: value,
       p_cycle: cycle || null, p_machine: machine || null, p_nmsx: nmsx || null,
+      p_pallet: pallet || null, p_material: material || null, p_batch: batch || null,
+      p_npp: npp || null, p_trip: trip || null, p_plate: plate || null,
       p_prod_from: dates.prod_from, p_prod_to: dates.prod_to,
       p_ship_from: dates.ship_from, p_ship_to: dates.ship_to,
       p_wh_ids: scopeWhIds(req), p_categories: scopeCategoriesOf(req),
@@ -133,8 +139,11 @@ export async function traceSuggest(req: Request, res: Response) {
   try {
     const q = req.query as Record<string, string | undefined>
     const kind = String(q.kind ?? '').trim()
-    if (!isKind(kind)) return fail(res, `Kiểu gợi ý không hợp lệ (${KINDS.join(' | ')})`, 400, 'BAD_KIND')
-    if (kind === 'prod') return ok(res, [])   // prod nhập bằng 3 ô Chu kỳ/Máy/Kho SX, không có ô "giá trị"
+    // ngoài các kiểu tìm còn 3 kiểu gợi ý riêng cho dropdown thông số SX (cycle/machine/nmsx)
+    const SUGGEST_EXTRA = ['cycle', 'machine', 'nmsx']
+    if (!isKind(kind) && !SUGGEST_EXTRA.includes(kind))
+      return fail(res, `Kiểu gợi ý không hợp lệ (${[...KINDS, ...SUGGEST_EXTRA].join(' | ')})`, 400, 'BAD_KIND')
+    if (kind === 'prod') return ok(res, [])   // prod nhập bằng 3 dropdown Chu kỳ/Máy/Kho SX, không có ô "giá trị"
     const search = String(q.search ?? '').trim().slice(0, 100)
     const { data, error } = await supabase.rpc('trace_suggest', { p_kind: kind, p_search: search, p_limit: 50 })
     if (error) return fail(res, error.message)

@@ -121,28 +121,36 @@ try {
     && sg2.s === 400 && sg3.s === 200 && (sg3.j?.data ?? []).length === 0,
     `s=${sg1.s}/${sg2.s}/${sg3.s} tìm=${ieRow?.pallet_code ?? 'KHÔNG CÓ TỒN'} n=${sg1.j?.data?.length}`)
 
-  // [9] Truy theo THÔNG SỐ SX (kind=prod, 01/09 tối "cái tôi cần là số chu kỳ, số máy, nhà máy
-  //     sản xuất"): lấy 1 pallet V1 đủ 6 đoạn từ tồn kho, bóc ngày/chu kỳ/máy/nmsx rồi truy —
-  //     pallet mẫu phải có trong kết quả; chu kỳ đệm 0 ("0" + ck) vẫn khớp (so dạng chuẩn).
+  // [9] FILTER TỔ HỢP (kind=fwd/rev, 01/09 tối "làm theo filter chuẩn, ra filter nào lấy cái
+  //     đó"): lấy 1 pallet V1 đủ 6 đoạn từ tồn kho, bóc chu kỳ/máy/nmsx rồi truy KHÔNG ngày —
+  //     pallet mẫu phải có mặt (index biểu thức idx_ie_tem_*); chu kỳ đệm 0 vẫn khớp; tổ hợp
+  //     thêm tiền tố tem phải THU HẸP (AND) chứ không nới.
   const ie6 = (await restAll('InventoryEntry', 'select=pallet_code&pallet_code=like.*_*_*_*_*_*&order=pallet_code', 1000))
     .find(r => /^\d{6}(_[^_]+){5}$/.test(r.pallet_code))
   if (ie6) {
     const seg = ie6.pallet_code.split('_')
-    const iso = `20${seg[0].slice(4, 6)}-${seg[0].slice(2, 4)}-${seg[0].slice(0, 2)}`
-    const pr = await api(`/wms/trace?kind=prod&prod_from=${iso}&prod_to=${iso}` +
-      `&cycle=0${encodeURIComponent(seg[2])}&machine=${encodeURIComponent(seg[3])}&nmsx=${encodeURIComponent(seg[5].toLowerCase())}`)
-    const all = [...(pr.j?.data?.stock ?? []), ...(pr.j?.data?.shipments ?? [])]
-    check('[9] kind=prod: chu kỳ đệm 0 + nmsx thường → pallet mẫu có trong kết quả',
-      pr.s === 200 && (pr.j?.data?.summary?.pallets ?? 0) >= 1 && all.some(x => x.pallet_code === ie6.pallet_code),
-      `s=${pr.s} pallets=${pr.j?.data?.summary?.pallets} mẫu=${ie6.pallet_code}`)
+    const f1 = await api(`/wms/trace?kind=fwd&cycle=0${encodeURIComponent(seg[2])}` +
+      `&machine=${encodeURIComponent(seg[3])}&nmsx=${encodeURIComponent(seg[5].toLowerCase())}`)
+    const all = [...(f1.j?.data?.stock ?? []), ...(f1.j?.data?.shipments ?? [])]
+    const f2 = await api(`/wms/trace?kind=fwd&cycle=${encodeURIComponent(seg[2])}` +
+      `&machine=${encodeURIComponent(seg[3])}&pallet=${encodeURIComponent(seg[0] + '_' + seg[1])}`)
+    check('[9] kind=fwd KHÔNG ngày: chu kỳ đệm 0 + nmsx thường → mẫu có mặt; thêm tiền tố tem → thu hẹp',
+      f1.s === 200 && (f1.j?.data?.summary?.pallets ?? 0) >= 1 && all.some(x => x.pallet_code === ie6.pallet_code)
+      && f2.s === 200 && (f2.j?.data?.summary?.pallets ?? 0) >= 1
+      && (f2.j?.data?.summary?.pallets ?? 0) <= (f1.j?.data?.summary?.pallets ?? 0),
+      `s=${f1.s}/${f2.s} pallets=${f1.j?.data?.summary?.pallets}→${f2.j?.data?.summary?.pallets} mẫu=${ie6.pallet_code}`)
   } else {
-    check('[9] kind=prod (BỎ QUA — tồn kho không có pallet V1 đủ 6 đoạn)', true, 'skip')
+    check('[9] kind=fwd (BỎ QUA — tồn kho không có pallet V1 đủ 6 đoạn)', true, 'skip')
   }
-  const pv1 = await api('/wms/trace?kind=prod&cycle=9')                                        // thiếu khoảng Ngày SX
-  const pv2 = await api('/wms/trace?kind=prod&prod_from=2026-01-01&prod_to=2026-01-05')        // thiếu cả 3 thông số
-  const pv3 = await api('/wms/trace?kind=prod&prod_from=2026-01-01&prod_to=2026-03-01&cycle=9') // range > 31 ngày
-  check('[9b] kind=prod thiếu ngày / thiếu thông số / range >31 ngày → 400 nói rõ (không 500)',
+  const pv1 = await api('/wms/trace?kind=fwd')                       // không điều kiện nào
+  const pv2 = await api('/wms/trace?kind=rev')                       // không điều kiện nào (chiều ngược)
+  const pv3 = await api('/wms/trace?kind=fwd&pallet=19')             // tiền tố tem < 4 ký tự
+  check('[9b] fwd/rev không điều kiện · tiền tố tem <4 ký tự → 400 nói rõ (không 500)',
     pv1.s === 400 && pv2.s === 400 && pv3.s === 400, `s=${pv1.s}/${pv2.s}/${pv3.s}`)
+  // [9c] chiều ngược tổ hợp: NPP (ilike) + Ngày giao — 200 và shape đủ summary
+  const rv = await api('/wms/trace?kind=rev&npp=a&ship_from=2026-08-13&ship_to=2026-08-13')
+  check('[9c] kind=rev tổ hợp NPP+Ngày giao → 200 có summary', rv.s === 200 && typeof rv.j?.data?.summary?.pallets === 'number',
+    `s=${rv.s} pallets=${rv.j?.data?.summary?.pallets}`)
 
   // [7] :id rác → 400 · uuid ma → 404 (luật route :param, gói 07)
   const g1 = await api('/wms/trace/investigations/undefined')

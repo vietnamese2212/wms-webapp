@@ -370,10 +370,11 @@ interface TraceInvFilters {           // tab Hồ sơ truy vết (điều tra th
   from: string; to: string; search: string; page: number
 }
 interface LotTraceFilters {
-  kind: 'pallet' | 'material' | 'batch' | 'npp' | 'trip' | 'plate'
+  kind: 'pallet' | 'material' | 'batch' | 'prod' | 'npp' | 'trip' | 'plate'
   value: string
   prodFrom: string; prodTo: string
   shipFrom: string; shipTo: string
+  cycle: string; machine: string; nmsx: string   // kind='prod': thông số SX trên tem
 }
 interface WmsFilterState {
   lotTrace:          LotTraceFilters
@@ -464,7 +465,7 @@ function initialFilters() {
   return {
     dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '' },
     warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
-    lotTrace: { kind: 'pallet' as const, value: '', prodFrom: '', prodTo: '', shipFrom: '', shipTo: '' },
+    lotTrace: { kind: 'pallet' as const, value: '', prodFrom: '', prodTo: '', shipFrom: '', shipTo: '', cycle: '', machine: '', nmsx: '' },
     traceInv: { from: '', to: '', search: '', page: 1 },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {

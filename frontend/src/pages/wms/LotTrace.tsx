@@ -26,7 +26,7 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 import { apiClient } from '@/api/client'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
-  useLotTrace, useMaterials, useInvestigatePreview, useCreateInvestigation,
+  useLotTrace, useMaterials, useInvestigatePreview, useCreateInvestigation, useSystemSettings,
   useTraceInvestigations, useTraceInvestigation, useTraceRuns, useTraceRunPallets, useTraceSuggest,
   type TraceKind, type TraceShipment, type TraceStock,
   type CartonMatch, type TraceInvestigation, type TraceRun, type InvestigateTrace,
@@ -38,10 +38,16 @@ import { can, type ModulePermissions } from '@/config/permissions'
 // Nhãn + thuật ngữ ĐỒNG BỘ toàn app (user nhắc 01/09): tem pallet · Mã hàng · Chu kỳ · Máy ·
 // Kho SX (ký hiệu) — trùng từ vựng với Sổ đóng gói và tab Truy xuất theo thùng; định danh chuyến
 // gọi là "Số xe" đúng như cột trên màn Xuất kho.
-const KINDS: { value: TraceKind; label: string; hint: string; reverse?: boolean }[] = [
+// Chiều truy vết = SWITCH tường minh (user chốt 01/09 tối "mở cái switch giữa truy vết theo
+// chiều nào — khi đó sẽ có lựa chọn phù hợp"): XUÔI (từ lô hàng → đã giao đi đâu) và NGƯỢC
+// (từ khách hàng → đã nhận lô nào), mỗi chiều chỉ hiện các kiểu tìm của chiều đó.
+// 'Mã lô' là khái niệm tem V2 (chấm phẩy) — đơn vị dùng tem V1 thì cột batch luôn rỗng, hiện ra
+// chỉ gây hỏi "Số lô là gì" ⇒ chỉ hiện khi cờ label_format = semicolon (v2Only).
+const KINDS: { value: TraceKind; label: string; hint: string; reverse?: boolean; v2Only?: boolean }[] = [
   { value: 'pallet',   label: 'Tem pallet',       hint: 'Trọn mã hoặc TIỀN TỐ tem — gõ đến đâu khoanh đến đó (vd 190726 = mọi pallet SX 19/07/2026)' },
   { value: 'material', label: 'Mã hàng',          hint: 'Mã hàng đầy đủ, nên kèm khoảng Ngày sản xuất để khoanh lô' },
-  { value: 'batch',    label: 'Mã lô',            hint: 'Mã lô in trên tem chấm phẩy (vd TA260705A018)' },
+  { value: 'prod',     label: 'Chu kỳ + Máy (thông số SX)', hint: 'Nhập Chu kỳ / Máy / Kho SX (ký hiệu) đọc từ tem + khoảng Ngày SX (bắt buộc, ≤31 ngày)' },
+  { value: 'batch',    label: 'Mã lô',            hint: 'Mã lô in trên tem chấm phẩy (vd TA260705A018)', v2Only: true },
   { value: 'npp',      label: 'NPP / khách hàng', hint: 'Tên NPP, tìm gần đúng', reverse: true },
   { value: 'trip',     label: 'Chuyến xe (Số xe)', hint: 'Số xe trên màn Xuất kho (vd 20000016_X_140826_532)', reverse: true },
   { value: 'plate',    label: 'Biển số xe',        hint: 'Gõ kiểu nào cũng được — so trên dạng chuẩn', reverse: true },
@@ -95,10 +101,23 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   const f = useWmsFilterStore(s => s.lotTrace)
   const setF = useWmsFilterStore(s => s.setLotTrace)
   const kindDef = KINDS.find(k => k.value === f.kind) ?? KINDS[0]
+  const isRev = !!kindDef.reverse
+
+  // 'Mã lô' chỉ có nghĩa với tem V2 (chấm phẩy) — đọc cờ label_format để ẩn với đơn vị tem V1
+  const { data: sysSettings = [] } = useSystemSettings()
+  const isV2 = (sysSettings.find(x => x.key === 'label_format')?.value as string) === 'semicolon'
+  const visibleKinds = KINDS.filter(k => !!k.reverse === isRev && (!k.v2Only || isV2))
+
+  const switchDir = (rev: boolean) => {
+    if (rev === isRev) return
+    setF({ kind: rev ? 'npp' : 'pallet', value: '', cycle: '', machine: '', nmsx: '' })
+    setValTerm('')
+  }
 
   const q = useLotTrace({
     kind: f.kind, value: f.value,
     prodFrom: f.prodFrom, prodTo: f.prodTo, shipFrom: f.shipFrom, shipTo: f.shipTo,
+    cycle: f.cycle, machine: f.machine, nmsx: f.nmsx,
   })
   const s = q.data?.summary
   const shipments = q.data?.shipments ?? []
@@ -118,23 +137,38 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   }, [sugQ.data, f.kind, dTerm])
 
   const filterDefs: FilterDef[] = useMemo(() => [
-    { key: 'kind', label: 'Tìm theo', type: 'single', pinned: true, options: KINDS.map(k => ({ value: k.value, label: k.label })),
+    { key: 'kind', label: 'Tìm theo', type: 'single' as const, pinned: true,
+      options: visibleKinds.map(k => ({ value: k.value, label: k.label })),
       value: f.kind, allLabel: undefined,
-      onChange: v => { setF({ kind: (v || 'pallet') as TraceKind, value: '' }); setValTerm('') } },
-    { key: 'value', label: 'Giá trị cần tìm', type: 'single', pinned: true,
-      options: valueOpts, value: f.value, allLabel: undefined,
-      serverSearch: true, onSearchChange: setValTerm, loading: sugQ.isFetching,
-      selectedOpts: f.value ? [{ value: f.value, label: f.value }] : [],
-      onChange: v => setF({ value: v || '' }) },
-    ...(kindDef.reverse ? [] : [{
-      key: 'prod', label: 'Ngày sản xuất', type: 'daterange' as const,
+      onChange: (v: string) => {
+        setF({ kind: (v || (isRev ? 'npp' : 'pallet')) as TraceKind, value: '', cycle: '', machine: '', nmsx: '' })
+        setValTerm('')
+      } },
+    // prod: không có ô "giá trị" — nhập bằng 3 ô thông số đọc thẳng từ tem
+    ...(f.kind === 'prod' ? [
+      { key: 'cycle',   label: 'Chu kỳ', type: 'text' as const, pinned: true, value: f.cycle,
+        placeholder: 'vd 9', onChange: (v: string) => setF({ cycle: v }) },
+      { key: 'machine', label: 'Máy', type: 'text' as const, pinned: true, value: f.machine,
+        placeholder: 'vd 130', onChange: (v: string) => setF({ machine: v }) },
+      { key: 'nmsx',    label: 'Kho SX (ký hiệu)', type: 'text' as const, pinned: true, value: f.nmsx,
+        placeholder: 'vd B', onChange: (v: string) => setF({ nmsx: v }) },
+    ] : [
+      { key: 'value', label: 'Giá trị cần tìm', type: 'single' as const, pinned: true,
+        options: valueOpts, value: f.value, allLabel: undefined,
+        serverSearch: true as const, onSearchChange: setValTerm, loading: sugQ.isFetching,
+        selectedOpts: f.value ? [{ value: f.value, label: f.value }] : [],
+        onChange: (v: string) => setF({ value: v || '' }) },
+    ]),
+    ...(isRev ? [] : [{
+      key: 'prod', label: f.kind === 'prod' ? 'Ngày sản xuất (bắt buộc)' : 'Ngày sản xuất',
+      type: 'daterange' as const, pinned: f.kind === 'prod' ? true : undefined,
       from: f.prodFrom, to: f.prodTo,
       onChange: (from: string, to: string) => setF({ prodFrom: from, prodTo: to }),
     }]),
-    { key: 'ship', label: 'Ngày giao', type: 'daterange',
+    { key: 'ship', label: 'Ngày giao', type: 'daterange' as const,
       from: f.shipFrom, to: f.shipTo,
       onChange: (from: string, to: string) => setF({ shipFrom: from, shipTo: to }) },
-  ], [f, kindDef, setF, valueOpts, sugQ.isFetching])
+  ], [f, isRev, visibleKinds, setF, valueOpts, sugQ.isFetching])
 
   async function onExport() {
     const XLSX = await import('xlsx')
@@ -151,7 +185,8 @@ function TraceTab({ canExport }: { canExport: boolean }) {
       'Mã lô': r.batch, 'Ngày SX': r.production_date?.slice(0, 10) ?? '', 'HSD': r.expiry_date?.slice(0, 10) ?? '',
       'Còn lại': r.cartons_remaining, 'Trạng thái': r.status, 'Kho': r.warehouse_name, 'Vị trí': r.location_code,
     }))), 'ConTrongKho')
-    await saveWorkbook(wb, `Truy-xuat-${f.kind}-${f.value}.xlsx`)
+    const tag = f.kind === 'prod' ? [f.cycle, f.machine, f.nmsx].map(v => v.trim()).filter(Boolean).join('-') : f.value
+    await saveWorkbook(wb, `Truy-xuat-${f.kind}-${tag}.xlsx`)
   }
 
   const actions: ActionItem[] = canExport && (shipments.length || stock.length) ? [{
@@ -159,15 +194,26 @@ function TraceTab({ canExport }: { canExport: boolean }) {
     onClick: onExport, mobileHidden: true,
   }] : []
 
-  const searching = f.value.trim().length >= (f.kind === 'pallet' ? 4 : 2)
+  const searching = f.kind === 'prod'
+    ? !!(f.prodFrom && f.prodTo && (f.cycle.trim() || f.machine.trim() || f.nmsx.trim()))
+    : f.value.trim().length >= (f.kind === 'pallet' ? 4 : 2)
+
+  const DirBtn = ({ rev, label }: { rev: boolean; label: string }) => (
+    <button
+      onClick={() => switchDir(rev)}
+      className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+        isRev === rev ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+    >{label}</button>
+  )
 
   return (
     <>
       <div className="border-b bg-white px-3 py-1.5 sm:py-2 space-y-1 sm:space-y-1.5 shrink-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[11px] text-slate-500 hidden sm:inline">
-            {kindDef.reverse ? 'khách hàng → đã nhận lô nào' : 'lô hàng → đã giao đi đâu'}
-          </span>
+          <div className="flex items-center gap-1 flex-wrap">
+            <DirBtn rev={false} label="⬊ Xuôi: lô hàng → khách" />
+            <DirBtn rev={true}  label="⬈ Ngược: khách → lô hàng" />
+          </div>
           <span className="flex-1" />
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
             <FilterSheetButton defs={filterDefs} className="sm:hidden" />
@@ -200,7 +246,7 @@ function TraceTab({ canExport }: { canExport: boolean }) {
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {!searching ? (
-          <TraceGuide />
+          <TraceGuide kind={f.kind} isV2={isV2} />
         ) : q.isLoading ? (
           <div className="p-3 space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}</div>
         ) : (
@@ -219,12 +265,13 @@ function TraceTab({ canExport }: { canExport: boolean }) {
 /* ═══ Hướng dẫn dùng (hiện khi chưa nhập gì) — thuật ngữ đồng bộ toàn app ═════════════════════ */
 
 const GUIDE_ROWS = [
-  { k: 'Tem pallet',        q: 'Lô này đã giao cho ai, còn bao nhiêu trong kho?', ex: '190726_510000127_9_130_95005_B — hoặc chỉ 190726' },
-  { k: 'Mã hàng',           q: 'Mã hàng này (kèm khoảng Ngày SX) đã đi đâu?',     ex: '510000127 + Ngày sản xuất 19/07–20/07' },
-  { k: 'Mã lô',             q: 'Mã lô trên tem chấm phẩy đã đi đâu?',             ex: 'TA260705A018' },
-  { k: 'NPP / khách hàng',  q: 'Khách này đã NHẬN những lô nào?',                 ex: 'NPPPHUONGHOAN' },
-  { k: 'Chuyến xe (Số xe)', q: 'Chuyến xe này chở những lô nào?',                 ex: '20000016_X_140826_532' },
-  { k: 'Biển số xe',        q: 'Xe biển này đã chở những lô nào?',                ex: '61C29923' },
+  { k: 'Tem pallet',        dir: 'Xuôi',  q: 'Lô này đã giao cho ai, còn bao nhiêu trong kho?', ex: '190726_510000127_9_130_95005_B — hoặc chỉ 190726' },
+  { k: 'Mã hàng',           dir: 'Xuôi',  q: 'Mã hàng này (kèm khoảng Ngày SX) đã đi đâu?',     ex: '510000127 + Ngày sản xuất 19/07–20/07' },
+  { k: 'Chu kỳ + Máy (thông số SX)', dir: 'Xuôi', q: 'Chu kỳ / Máy / Kho SX này đã đi đâu? (bắt buộc khoảng Ngày SX ≤31 ngày)', ex: 'Chu kỳ 9 + Máy 130 + Kho SX B + Ngày SX 19/07–20/07' },
+  { k: 'Mã lô',             dir: 'Xuôi',  q: 'Mã lô trên tem chấm phẩy đã đi đâu?',             ex: 'TA260705A018', v2Only: true },
+  { k: 'NPP / khách hàng',  dir: 'Ngược', q: 'Khách này đã NHẬN những lô nào?',                 ex: 'NPPPHUONGHOAN' },
+  { k: 'Chuyến xe (Số xe)', dir: 'Ngược', q: 'Chuyến xe này chở những lô nào?',                 ex: '20000016_X_140826_532' },
+  { k: 'Biển số xe',        dir: 'Ngược', q: 'Xe biển này đã chở những lô nào?',                ex: '61C29923' },
 ]
 // Giải phẫu tem V1 — DÙNG ĐÚNG thuật ngữ của Sổ đóng gói / Truy xuất theo thùng
 const TEM_PARTS = [
@@ -232,24 +279,32 @@ const TEM_PARTS = [
   ['130', 'Máy'], ['95005', 'Số pallet'], ['B', 'Kho SX (ký hiệu)'],
 ]
 
-function TraceGuide() {
+function TraceGuide({ kind, isV2 }: { kind: TraceKind; isV2: boolean }) {
+  const rows = GUIDE_ROWS.filter(r => !('v2Only' in r && r.v2Only) || isV2)
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto space-y-4 text-xs">
+      {kind === 'prod' && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700">
+          Đang tìm theo <b>thông số SX</b>: cần chọn khoảng <b>Ngày sản xuất</b> (tối đa 31 ngày)
+          + ít nhất một trong <b>Chu kỳ · Máy · Kho SX (ký hiệu)</b>.
+        </div>
+      )}
       <p className="text-slate-600">
-        Chọn <b>Tìm theo</b> rồi nhập giá trị. Ba kiểu đầu truy <b>XUÔI</b> (từ lô hàng → đã giao
-        cho ai + còn bao nhiêu trong kho để thu hồi); ba kiểu sau truy <b>NGƯỢC</b> (từ khách /
-        chuyến / xe → đã nhận những lô nào).
+        Chọn <b>chiều truy vết</b> ở góc trái rồi chọn <b>Tìm theo</b>: chiều <b>XUÔI</b> đi từ
+        lô hàng → đã giao cho ai + còn bao nhiêu trong kho để thu hồi; chiều <b>NGƯỢC</b> đi từ
+        khách / chuyến / xe → đã nhận những lô nào.
       </p>
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
           <TableHeader>
             <TableRow>
-              {['Tìm theo', 'Trả lời câu hỏi', 'Ví dụ'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
+              {['Chiều', 'Tìm theo', 'Trả lời câu hỏi', 'Ví dụ'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {GUIDE_ROWS.map(r => (
+            {rows.map(r => (
               <TableRow key={r.k}>
+                <TableCell className={TD}>{r.dir}</TableCell>
                 <TableCell className={`${TD} font-semibold`}>{r.k}</TableCell>
                 <TableCell className={`${TD} !whitespace-normal`}>{r.q}</TableCell>
                 <TableCell className={`${TD} font-mono text-slate-500`}>{r.ex}</TableCell>

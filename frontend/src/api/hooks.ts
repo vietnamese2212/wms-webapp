@@ -2265,7 +2265,7 @@ export function useRateReceipt() {
 }
 
 // ── TRUY XUẤT LÔ (28/08) — 1 lời gọi trả cả "đã giao đi đâu" lẫn "còn trong kho" ───────────────
-export type TraceKind = 'pallet' | 'material' | 'batch' | 'npp' | 'trip' | 'plate'
+export type TraceKind = 'pallet' | 'material' | 'batch' | 'prod' | 'npp' | 'trip' | 'plate'
 export type TraceShipment = {
   pallet_code: string; cartons_scanned: number; scanned_at: string | null; pct_date: number | null
   production_date: string | null; expiry_date: string | null; batch: string | null
@@ -2291,9 +2291,13 @@ export type TraceResult = {
 export function useLotTrace(p: {
   kind: TraceKind; value: string
   prodFrom?: string; prodTo?: string; shipFrom?: string; shipTo?: string
+  cycle?: string; machine?: string; nmsx?: string   // kind='prod': thông số SX trên tem
 }) {
-  // Tiền tố quá ngắn quét ra gần cả kho — BE cũng chặn, đây chỉ là khỏi bắn request vô ích
-  const enough = p.value.trim().length >= (p.kind === 'pallet' ? 4 : 2)
+  // Tiền tố quá ngắn quét ra gần cả kho — BE cũng chặn, đây chỉ là khỏi bắn request vô ích.
+  // prod: đủ điều kiện khi có khoảng Ngày SX + ít nhất 1 trong Chu kỳ/Máy/Kho SX.
+  const enough = p.kind === 'prod'
+    ? !!(p.prodFrom && p.prodTo && ((p.cycle ?? '').trim() || (p.machine ?? '').trim() || (p.nmsx ?? '').trim()))
+    : p.value.trim().length >= (p.kind === 'pallet' ? 4 : 2)
   return useQuery<TraceResult>({
     queryKey: ['lot-trace', p],
     enabled: enough,
@@ -2302,6 +2306,9 @@ export function useLotTrace(p: {
         kind: p.kind, value: p.value.trim(),
         ...(p.prodFrom ? { prod_from: p.prodFrom } : {}), ...(p.prodTo ? { prod_to: p.prodTo } : {}),
         ...(p.shipFrom ? { ship_from: p.shipFrom } : {}), ...(p.shipTo ? { ship_to: p.shipTo } : {}),
+        ...(p.cycle?.trim() ? { cycle: p.cycle.trim() } : {}),
+        ...(p.machine?.trim() ? { machine: p.machine.trim() } : {}),
+        ...(p.nmsx?.trim() ? { nmsx: p.nmsx.trim() } : {}),
       },
     }).then(r => r.data.data),
   })

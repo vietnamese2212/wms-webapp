@@ -28,23 +28,26 @@ export function dedupOpts(opts: FBOpt[]): FBOpt[] {
 // khớp TỪ KHÓA HIỆN TẠI, nên giá trị đang chọn không khớp (hoặc mở lại app với filter đã nhớ)
 // sẽ mất nhãn → chip in giá trị thô (uuid) + bảng trống, user tưởng mất dữ liệu. Truyền nhãn
 // tra theo id (vd `useMaterialsByIds`); value là mã nghiệp vụ thì `v => ({ value: v, label: v })`.
-type FBMulti = { key: string; label: string; type: 'multi'; options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean } & (
+type FBServer = (
   | { serverSearch?: false; onSearchChange?: never; loading?: never; selectedOpts?: never }
   | { serverSearch: true; onSearchChange: (term: string) => void; loading?: boolean; selectedOpts: FBOpt[] }
 )
+type FBMulti  = { key: string; label: string; type: 'multi';  options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean } & FBServer
+// single cũng tìm-trên-server được (01/09 — ô "Giá trị cần tìm" Truy xuất lô): cùng hợp đồng với multi
+type FBSingle = { key: string; label: string; type: 'single'; options: FBOpt[]; value: string; onChange: (v: string) => void; allLabel?: string } & FBServer
 
 // pinned: chip LUÔN hiện trên bar kể cả khi trống (không rơi vào menu "+ Thêm lọc" khi xóa giá trị)
 export type FilterDef = (
   | FBMulti
-  | { key: string; label: string; type: 'single';    options: FBOpt[]; value: string; onChange: (v: string) => void; allLabel?: string }
+  | FBSingle
   | { key: string; label: string; type: 'date';      value: string; onChange: (v: string) => void }
   | { key: string; label: string; type: 'daterange'; from: string; to: string; onChange: (from: string, to: string) => void }
   | { key: string; label: string; type: 'text';      value: string; onChange: (v: string) => void; placeholder?: string }
 ) & { pinned?: boolean }
 
-// Nguồn option DUY NHẤT cho mọi chỗ đọc def.options của multi — serverSearch thì ghim
+// Nguồn option DUY NHẤT cho mọi chỗ đọc def.options của multi/single — serverSearch thì ghim
 // [đang chọn] lên đầu rồi mới tới kết quả tìm (dedup theo value, bản ghim thắng).
-function optsOf(def: FBMulti): FBOpt[] {
+function optsOf(def: FBMulti | FBSingle): FBOpt[] {
   return def.serverSearch ? dedupOpts([...def.selectedOpts, ...def.options]) : def.options
 }
 
@@ -74,7 +77,9 @@ function chipValue(def: FilterDef): string {
       return `${def.selected.length} mục`
     }
     case 'single': {
-      const o = def.options.find(o => o.value === def.value)
+      // serverSearch: options chỉ có kết quả theo TỪ KHÓA hiện tại — nhãn giá trị đang chọn
+      // phải tra qua optsOf (ghim selectedOpts), không thì chip in giá trị thô
+      const o = optsOf(def).find(o => o.value === def.value)
       return o?.label ?? def.value
     }
     case 'date': return fmtDate(def.value)
@@ -382,9 +387,18 @@ function FilterPopover({ def, onClose, fullWidth = false }: { def: FilterDef; on
 
 function SingleList({ def, onClose, fullWidth = false }: { def: Extract<FilterDef, { type: 'single' }>; onClose: () => void; fullWidth?: boolean }) {
   const [search, setSearch] = useState('')
-  const visible = search
-    ? def.options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
-    : def.options
+  const server = def.serverSearch ?? false
+  // Danh mục lớn: báo từ khóa lên cha sau 250ms để cha gọi API (không bắn mỗi phím 1 request)
+  const onSearchChange = def.onSearchChange
+  useEffect(() => {
+    if (!server || !onSearchChange) return
+    const t = setTimeout(() => onSearchChange(search), 250)
+    return () => clearTimeout(t)
+  }, [search, server, onSearchChange])
+  const baseOpts = optsOf(def)
+  const visible = search && !server
+    ? baseOpts.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+    : baseOpts
   const shell = fullWidth ? 'w-full max-h-72 border rounded-md' : 'shadow-lg min-w-[190px] max-h-64'
   const row   = fullWidth ? 'py-2.5 text-sm' : 'py-1.5 text-[11px]'
   return (
@@ -394,13 +408,20 @@ function SingleList({ def, onClose, fullWidth = false }: { def: Extract<FilterDe
           placeholder="Tìm…" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div className="overflow-y-auto flex-1">
-        <label onClick={() => { def.onChange(''); onClose() }}
-          className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
-          <Cbx checked={def.value === ''} />
-          <span className={`text-slate-500 font-medium ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>{def.allLabel ?? 'Tất cả'}</span>
-        </label>
-        {visible.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+        {/* serverSearch chỉ ẩn dòng "Tất cả" khi đang có giá trị chọn — vẫn cần một đường XÓA giá trị */}
+        {(!server || def.value !== '') && (
+          <label onClick={() => { def.onChange(''); onClose() }}
+            className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
+            <Cbx checked={def.value === ''} />
+            <span className={`text-slate-500 font-medium ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>
+              {server ? 'Bỏ chọn' : def.allLabel ?? 'Tất cả'}
+            </span>
+          </label>
+        )}
+        {def.loading ? (
+          <div className="px-3 py-2 text-xs text-slate-400 text-center">Đang tìm…</div>
+        ) : visible.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-slate-400 text-center">{server && !search ? 'Gõ để tìm…' : 'Không tìm thấy'}</div>
         ) : visible.map(o => (
           <label key={o.value} onClick={() => { def.onChange(o.value); onClose() }}
             className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer ${row}`}>

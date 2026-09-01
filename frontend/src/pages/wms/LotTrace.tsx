@@ -35,13 +35,16 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
+// Nhãn + thuật ngữ ĐỒNG BỘ toàn app (user nhắc 01/09): tem pallet · Mã hàng · Chu kỳ · Máy ·
+// Kho SX (ký hiệu) — trùng từ vựng với Sổ đóng gói và tab Truy xuất theo thùng; định danh chuyến
+// gọi là "Số xe" đúng như cột trên màn Xuất kho.
 const KINDS: { value: TraceKind; label: string; hint: string; reverse?: boolean }[] = [
-  { value: 'pallet',   label: 'Mã pallet (tem)', hint: 'Nhập trọn mã hoặc TIỀN TỐ — vd 190726 = sản xuất 19/07/2026' },
-  { value: 'material', label: 'Mã hàng',         hint: 'Mã hàng đầy đủ, nên kèm khoảng Ngày sản xuất' },
-  { value: 'batch',    label: 'Mã lô',           hint: 'Chỉ có với tem định dạng chấm phẩy (mã lô in trên tem)' },
+  { value: 'pallet',   label: 'Tem pallet',       hint: 'Trọn mã hoặc TIỀN TỐ tem — gõ đến đâu khoanh đến đó (vd 190726 = mọi pallet SX 19/07/2026)' },
+  { value: 'material', label: 'Mã hàng',          hint: 'Mã hàng đầy đủ, nên kèm khoảng Ngày sản xuất để khoanh lô' },
+  { value: 'batch',    label: 'Mã lô',            hint: 'Mã lô in trên tem chấm phẩy (vd TA260705A018)' },
   { value: 'npp',      label: 'NPP / khách hàng', hint: 'Tên NPP, tìm gần đúng', reverse: true },
-  { value: 'trip',     label: 'Chuyến (mã nhóm)', hint: 'Mã chuyến đầy đủ', reverse: true },
-  { value: 'plate',    label: 'Biển số xe',       hint: 'Gõ kiểu nào cũng được — so trên dạng chuẩn', reverse: true },
+  { value: 'trip',     label: 'Chuyến xe (Số xe)', hint: 'Số xe trên màn Xuất kho (vd 20000016_X_140826_532)', reverse: true },
+  { value: 'plate',    label: 'Biển số xe',        hint: 'Gõ kiểu nào cũng được — so trên dạng chuẩn', reverse: true },
 ]
 
 const num = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('vi-VN')
@@ -120,14 +123,14 @@ function TraceTab({ canExport }: { canExport: boolean }) {
     const XLSX = await import('xlsx')
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(shipments.map(r => ({
-      'Mã pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
+      'Tem pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
       'Mã lô': r.batch, 'Ngày SX': r.production_date?.slice(0, 10) ?? '', 'HSD': r.expiry_date?.slice(0, 10) ?? '',
-      'SL xuất': r.cartons_scanned, 'Ngày giao': r.delivery_date ?? '', 'Chuyến': r.group_code,
+      'SL xuất': r.cartons_scanned, 'Ngày giao': r.delivery_date ?? '', 'Số xe': r.group_code,
       'Biển số': r.license_plate, 'NPP / khách': r.distributor_name, 'Số DO': r.delivery_code,
       'Kho xuất': r.warehouse_name, 'Lúc quét': r.scanned_at ?? '',
     }))), 'DaGiao')
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(stock.map(r => ({
-      'Mã pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
+      'Tem pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
       'Mã lô': r.batch, 'Ngày SX': r.production_date?.slice(0, 10) ?? '', 'HSD': r.expiry_date?.slice(0, 10) ?? '',
       'Còn lại': r.cartons_remaining, 'Trạng thái': r.status, 'Kho': r.warehouse_name, 'Vị trí': r.location_code,
     }))), 'ConTrongKho')
@@ -180,9 +183,7 @@ function TraceTab({ canExport }: { canExport: boolean }) {
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {!searching ? (
-          <div className="p-8 text-center text-xs text-slate-400">
-            Chọn cách tìm rồi nhập giá trị — {kindDef.hint.toLowerCase()}.
-          </div>
+          <TraceGuide />
         ) : q.isLoading ? (
           <div className="p-3 space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}</div>
         ) : (
@@ -195,6 +196,67 @@ function TraceTab({ canExport }: { canExport: boolean }) {
         )}
       </div>
     </>
+  )
+}
+
+/* ═══ Hướng dẫn dùng (hiện khi chưa nhập gì) — thuật ngữ đồng bộ toàn app ═════════════════════ */
+
+const GUIDE_ROWS = [
+  { k: 'Tem pallet',        q: 'Lô này đã giao cho ai, còn bao nhiêu trong kho?', ex: '190726_510000127_9_130_95005_B — hoặc chỉ 190726' },
+  { k: 'Mã hàng',           q: 'Mã hàng này (kèm khoảng Ngày SX) đã đi đâu?',     ex: '510000127 + Ngày sản xuất 19/07–20/07' },
+  { k: 'Mã lô',             q: 'Mã lô trên tem chấm phẩy đã đi đâu?',             ex: 'TA260705A018' },
+  { k: 'NPP / khách hàng',  q: 'Khách này đã NHẬN những lô nào?',                 ex: 'NPPPHUONGHOAN' },
+  { k: 'Chuyến xe (Số xe)', q: 'Chuyến xe này chở những lô nào?',                 ex: '20000016_X_140826_532' },
+  { k: 'Biển số xe',        q: 'Xe biển này đã chở những lô nào?',                ex: '61C29923' },
+]
+// Giải phẫu tem V1 — DÙNG ĐÚNG thuật ngữ của Sổ đóng gói / Truy xuất theo thùng
+const TEM_PARTS = [
+  ['190726', 'Ngày SX (19/07/26)'], ['510000127', 'Mã hàng'], ['9', 'Chu kỳ'],
+  ['130', 'Máy'], ['95005', 'Số pallet'], ['B', 'Kho SX (ký hiệu)'],
+]
+
+function TraceGuide() {
+  return (
+    <div className="p-4 sm:p-6 max-w-3xl mx-auto space-y-4 text-xs">
+      <p className="text-slate-600">
+        Chọn <b>Tìm theo</b> rồi nhập giá trị. Ba kiểu đầu truy <b>XUÔI</b> (từ lô hàng → đã giao
+        cho ai + còn bao nhiêu trong kho để thu hồi); ba kiểu sau truy <b>NGƯỢC</b> (từ khách /
+        chuyến / xe → đã nhận những lô nào).
+      </p>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+          <TableHeader>
+            <TableRow>
+              {['Tìm theo', 'Trả lời câu hỏi', 'Ví dụ'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {GUIDE_ROWS.map(r => (
+              <TableRow key={r.k}>
+                <TableCell className={`${TD} font-semibold`}>{r.k}</TableCell>
+                <TableCell className={`${TD} !whitespace-normal`}>{r.q}</TableCell>
+                <TableCell className={`${TD} font-mono text-slate-500`}>{r.ex}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3 space-y-1.5">
+        <p className="font-semibold text-slate-700">Đọc tem pallet thế nào?</p>
+        <p className="font-mono text-[11px] text-slate-700 break-all">
+          {TEM_PARTS.map(([v], i) => (<span key={i}>{i > 0 && <span className="text-slate-300">_</span>}<span className="font-semibold">{v}</span></span>))}
+        </p>
+        <p className="text-slate-500 !whitespace-normal">
+          {TEM_PARTS.map(([v, label]) => `${v} = ${label}`).join(' · ')}
+        </p>
+        <p className="text-slate-500">
+          Tìm theo <b>tiền tố</b> nên khoanh dần được: gõ <span className="font-mono">190726</span> ra
+          mọi pallet SX ngày đó, thêm <span className="font-mono">190726_510000127</span> là khoanh
+          về một mã hàng. Nếu trên tay chỉ có <b>thùng</b> (không có tem pallet) → dùng tab
+          <b> Truy xuất theo thùng</b>: nhập Giờ SX + Máy + Chu kỳ để tìm qua sổ đóng gói.
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -648,7 +710,7 @@ function JourneyTable({ matched, trace }: { matched: CartonMatch[]; trace: Inves
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Mã pallet', '★', 'Bước', 'Thời điểm', 'Sự kiện', 'Nơi', 'SL (thùng)'].map(h =>
+          {['Tem pallet', '★', 'Bước', 'Thời điểm', 'Sự kiện', 'Nơi', 'SL (thùng)'].map(h =>
             <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>
@@ -684,7 +746,7 @@ function MatchTable({ rows }: { rows: CartonMatch[] }) {
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Mã pallet', 'Mã hàng', 'Giờ thùng đầu → cuối', 'SL (thùng)', 'Người đóng gói'].map(h =>
+          {['Tem pallet', 'Mã hàng', 'Giờ thùng đầu → cuối', 'SL (thùng)', 'Người đóng gói'].map(h =>
             <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>
@@ -799,7 +861,7 @@ function ShipTable({ rows }: { rows: TraceShipment[] }) {
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Mã pallet', 'Mã hàng', 'Tên hàng', 'Mã lô', 'Ngày SX', 'HSD', 'SL xuất', 'Ngày giao', 'Chuyến', 'Biển số', 'NPP / khách', 'Số DO', 'Kho xuất']
+          {['Tem pallet', 'Mã hàng', 'Tên hàng', 'Mã lô', 'Ngày SX', 'HSD', 'SL xuất', 'Ngày giao', 'Số xe', 'Biển số', 'NPP / khách', 'Số DO', 'Kho xuất']
             .map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>
@@ -832,7 +894,7 @@ function StockTable({ rows }: { rows: TraceStock[] }) {
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Mã pallet', 'Mã hàng', 'Tên hàng', 'Mã lô', 'Ngày SX', 'HSD', 'Còn lại', 'Trạng thái', 'Kho', 'Vị trí', 'Ngày nhập']
+          {['Tem pallet', 'Mã hàng', 'Tên hàng', 'Mã lô', 'Ngày SX', 'HSD', 'Còn lại', 'Trạng thái', 'Kho', 'Vị trí', 'Ngày nhập']
             .map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>

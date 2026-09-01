@@ -72,8 +72,9 @@ export const MODULES = {
   traceability: {
     page: 'Truy xuất lô',
     actions: {
-      view:   'Truy xuất lô 2 chiều — lô/mã hàng/ngày SX đã giao tới NPP nào, và NPP/chuyến/biển số đã nhận lô nào',
+      view:   'Truy xuất lô 2 chiều — lô/mã hàng/ngày SX đã giao tới NPP nào, và NPP/chuyến/biển số đã nhận lô nào (gồm xem Hồ sơ truy vết)',
       export: 'Xuất Excel kết quả truy xuất (hồ sơ thu hồi)',
+      investigate: 'Điều tra theo THÙNG — nhập giờ in phun + mã hàng, đối chiếu sổ đóng gói, tạo HỒ SƠ truy vết đứng tên mình (kèm ảnh)',
     },
   },
   loosepicking: {

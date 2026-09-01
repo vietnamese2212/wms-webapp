@@ -68,6 +68,12 @@ router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboar
 // Chỉ ĐỌC, nhưng là quyền RIÊNG: nó ghép tồn kho + xuất hàng + khách hàng vào một chỗ, rộng hơn
 // bất kỳ trang đơn lẻ nào — ai xem được Tồn kho không mặc nhiên được xem "hàng đã đi tới NPP nào".
 router.get   ('/trace',                         requirePerm('traceability', 'view'),          trace.lotTrace)
+// Điều tra theo THÙNG (01/09): khớp giờ in phun ↔ sổ đóng gói → truy khách đã nhận; hồ sơ lưu vết.
+// TẠO hồ sơ = quyền riêng investigate (đứng tên hồ sơ điều tra); XEM hồ sơ đi theo view.
+router.get   ('/trace/investigations',          requirePerm('traceability', 'view'),          trace.listInvestigations)
+router.get   ('/trace/investigations/:id',      requirePerm('traceability', 'view'),          trace.getInvestigation)
+router.post  ('/trace/investigations/preview',  requirePerm('traceability', 'investigate'),   trace.investigatePreview)
+router.post  ('/trace/investigations',          requirePerm('traceability', 'investigate'),   trace.createInvestigation)
 // Chất lượng phục vụ (giao đủ / đúng hạn / sao) — tab của trang Tổng quan, đi theo quyền Dashboard
 router.get   ('/service-level',                 requirePerm('dashboard', 'view'),             trace.serviceLevel)
 
@@ -275,7 +281,7 @@ router.get('/forklift-report',      requirePerm('forklift', 'view'),           f
 
 // ─── Sổ đóng gói điện tử (11/08) — /board đặt TRƯỚC route param nếu sau này có /:id ───
 // AI Vision đọc date/giờ thùng — cùng ngữ cảnh quét ghi sổ; lỗi/chưa cấu hình = 422 → FE rơi về OCR local
-router.post('/packing/vision-ocr',     requirePerm('packing', 'record'), vision.visionOcr)
+router.post('/packing/vision-ocr',     requireAnyPerm(['packing', 'record'], ['traceability', 'investigate']), vision.visionOcr)   // AI đọc giờ từ ảnh — dùng chung cho Sổ đóng gói + Điều tra truy vết
 router.get('/packing-logs/board',      requirePerm('packing', 'view'),   packing.getBoard)
 router.get('/packing-logs',            requirePerm('packing', 'view'),   packing.listLogs)
 router.post('/packing-logs/open',      requirePerm('packing', 'record'), packing.openLog)

@@ -366,6 +366,9 @@ interface WarehouseCostFilters {
   pageSize: number
 }
 /** Truy xuất lô — 2 khoảng ngày TÁCH BẠCH: ngày SX (truy từ lô) ≠ ngày giao (truy từ khách). */
+interface TraceInvFilters {           // tab Hồ sơ truy vết (điều tra theo thùng)
+  from: string; to: string; search: string; page: number
+}
 interface LotTraceFilters {
   kind: 'pallet' | 'material' | 'batch' | 'npp' | 'trip' | 'plate'
   value: string
@@ -374,6 +377,7 @@ interface LotTraceFilters {
 }
 interface WmsFilterState {
   lotTrace:          LotTraceFilters
+  traceInv:          TraceInvFilters
   warehouseCost:     WarehouseCostFilters
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
@@ -414,6 +418,7 @@ interface WmsFilterState {
   setDashboard:         (f: Partial<DashboardFilters>)         => void
   setWarehouseCost:     (f: Partial<WarehouseCostFilters>)     => void
   setLotTrace:          (f: Partial<LotTraceFilters>)          => void
+  setTraceInv:          (f: Partial<TraceInvFilters>)          => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
   setAttendanceMy:      (f: Partial<AttendanceMyFilters>)      => void
@@ -460,6 +465,7 @@ function initialFilters() {
     dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '' },
     warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
     lotTrace: { kind: 'pallet' as const, value: '', prodFrom: '', prodTo: '', shipFrom: '', shipTo: '' },
+    traceInv: { from: '', to: '', search: '', page: 1 },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),
@@ -532,6 +538,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setDashboard:        (f) => set(s => ({ dashboard:        { ...s.dashboard,        ...f } })),
       setWarehouseCost:    (f) => set(s => ({ warehouseCost:    { ...s.warehouseCost,    ...f } })),
       setLotTrace:         (f) => set(s => ({ lotTrace:         { ...s.lotTrace,         ...f } })),
+      setTraceInv:         (f) => set(s => ({ traceInv:         { ...s.traceInv,         ...f } })),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setOutboundPrepare:  (f) => set(s => ({ outboundPrepare:  { ...s.outboundPrepare,  ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),

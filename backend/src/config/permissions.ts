@@ -5,7 +5,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   scanlog:      ['view', 'export'],
   // Truy xuất lô (28/08): ghép tồn + xuất + khách hàng vào một màn — rộng hơn từng trang lẻ nên
   // là quyền riêng, không đi ké inventory.view/scanlog.view. Export tách theo luật 26/07.
-  traceability: ['view', 'export'],
+  traceability: ['view', 'export', 'investigate'],
   loosepicking: ['view', 'scan', 'complete', 'recalc'],
   stocktake:    ['view', 'scan', 'complete', 'export'],
   locations:    ['view', 'create', 'edit', 'delete', 'import', 'export', 'print_label'],

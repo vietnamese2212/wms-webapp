@@ -2307,6 +2307,62 @@ export function useLotTrace(p: {
   })
 }
 
+// ── ĐIỀU TRA TRUY VẾT THEO THÙNG (01/09) — khớp giờ in phun ↔ sổ đóng gói → hồ sơ lưu vết ──────
+export type CartonMatch = {
+  pallet_code: string; material_code: string; machine_code: string | null
+  warehouse_id: string | null; qty_cartons: number | null
+  prod_start_at: string | null; prod_end_at: string | null
+  packed_by_name: string | null; status: string
+  run: { id: string; run_date: string | null; shift: string | null; cycle: string | null; status: string } | null
+}
+export type InvestigateInput = {
+  carton_date: string; carton_time: string; material_code: string
+  machine_code?: string; cycle?: string
+}
+export type InvestigateResult = { matched: CartonMatch[]; trace: TraceResult | null }
+export type TraceInvestigation = {
+  id: string; carton_at: string; material_code: string
+  machine_code: string | null; cycle: string | null
+  note: string | null; result_note: string | null
+  photos: string[]; matched: CartonMatch[]
+  summary?: TraceResult['summary'] | null            // list: trace->summary
+  trace?: TraceResult | null                          // detail: full snapshot
+  photo_urls?: { path: string; url: string }[]        // detail: signed URL 1h
+  performed_by_name: string | null; created_at: string
+}
+export function useInvestigatePreview() {
+  return useMutation({
+    mutationFn: (p: InvestigateInput) =>
+      apiClient.post('/wms/trace/investigations/preview', p).then(r => r.data.data as InvestigateResult),
+  })
+}
+export function useCreateInvestigation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (p: InvestigateInput & { note?: string; result_note?: string; photos?: string[] }) =>
+      apiClient.post('/wms/trace/investigations', p).then(r => r.data.data as TraceInvestigation),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['trace-investigations'] }),
+  })
+}
+export function useTraceInvestigations(params: { from?: string; to?: string; search?: string; page: number }) {
+  return useQuery<{ rows: TraceInvestigation[]; total: number; page: number; page_size: number }>({
+    queryKey: ['trace-investigations', params],
+    queryFn: () => apiClient.get('/wms/trace/investigations', {
+      params: {
+        ...(params.from ? { from: params.from } : {}), ...(params.to ? { to: params.to } : {}),
+        ...(params.search ? { search: params.search } : {}), page: params.page,
+      },
+    }).then(r => r.data.data),
+  })
+}
+export function useTraceInvestigation(id: string | null) {
+  return useQuery<TraceInvestigation>({
+    queryKey: ['trace-investigations', 'detail', id],
+    enabled: !!id,
+    queryFn: () => apiClient.get(`/wms/trace/investigations/${id}`).then(r => r.data.data),
+  })
+}
+
 // ── PHIẾU chi phí = (Kho × Kỳ tháng) — mở phiếu ra để thêm/sửa các khoản trong đó ─────────────
 export type CostVoucher = {
   warehouse_id: string | null; warehouse_name: string

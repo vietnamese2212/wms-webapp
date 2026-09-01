@@ -90,6 +90,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // dòng chi phí → màn của kế toán B sáng ngay (trước đây phải F5). Policy SELECT: migration
   // 20260831_realtime_costs_policy (thiếu policy = sự kiện chết CÂM).
   receipt_ratings:      [['service-level'], ['receipt-rating']],
+  trace_investigations: [['trace-investigations']],
   warehouse_costs:      [['warehouse-costs']],
   warehouse_cost_locks: [['warehouse-costs']],
 }

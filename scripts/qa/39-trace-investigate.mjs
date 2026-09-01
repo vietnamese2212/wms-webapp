@@ -107,15 +107,19 @@ try {
   const badImg = await api('/wms/trace/investigations', 'POST', { ...GOOD, note: `${PAL} rác`, photos: ['data:text/html;base64,PGI+'] })
   check('[6] Ảnh rác → 422 BAD_PHOTO', badImg.s === 422, `s=${badImg.s} code=${badImg.j?.error?.code ?? ''}`)
 
-  // [8] Gợi ý "giá trị cần tìm" (dropdown tìm-trên-server, user chốt 01/09 tối): tem theo TIỀN TỐ
-  //     thấy pallet seed; kind rác → 400; kiểu quét bảng lớn mà không có từ khóa → mảng rỗng
-  const sg1 = await api(`/wms/trace/suggest?kind=pallet&search=SIMTRC`)
+  // [8] Gợi ý "giá trị cần tìm" (dropdown tìm-trên-server, user chốt 01/09 tối): nguồn tem =
+  //     TỒN KHO (InventoryEntry — pallet chỉ có trong sổ đóng gói CHƯA gợi ý được, đúng thiết kế);
+  //     kind rác → 400; kiểu quét bảng lớn mà không có từ khóa → mảng rỗng
+  const { restAll } = await import('./lib.mjs')
+  // maxRows=1000 = 1 trang duy nhất (restAll tự phân trang — không kẹp là quét cả bảng tồn)
+  const [ieRow] = await restAll('InventoryEntry', 'select=pallet_code&pallet_code=like.*_*&order=pallet_code', 1000)
+  const sg1 = await api(`/wms/trace/suggest?kind=pallet&search=${encodeURIComponent(ieRow?.pallet_code ?? '')}`)
   const sg2 = await api(`/wms/trace/suggest?kind=xxx&search=a`)
   const sg3 = await api(`/wms/trace/suggest?kind=npp`)
-  check('[8] Suggest: tiền tố tem thấy pallet · kind rác 400 · npp không từ khóa → rỗng',
-    sg1.s === 200 && (sg1.j?.data ?? []).some(o => o.value === PAL)
+  check('[8] Suggest: tem tồn kho tìm thấy chính nó · kind rác 400 · npp không từ khóa → rỗng',
+    sg1.s === 200 && (sg1.j?.data ?? []).some(o => o.value === ieRow?.pallet_code)
     && sg2.s === 400 && sg3.s === 200 && (sg3.j?.data ?? []).length === 0,
-    `s=${sg1.s}/${sg2.s}/${sg3.s} n=${sg1.j?.data?.length}`)
+    `s=${sg1.s}/${sg2.s}/${sg3.s} tìm=${ieRow?.pallet_code ?? 'KHÔNG CÓ TỒN'} n=${sg1.j?.data?.length}`)
 
   // [7] :id rác → 400 · uuid ma → 404 (luật route :param, gói 07)
   const g1 = await api('/wms/trace/investigations/undefined')

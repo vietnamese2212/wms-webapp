@@ -1598,6 +1598,8 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
             <Info label="Ngày sản xuất" value={formatDate(run.run_date)} />
             <Info label="Ca sản xuất" value={run.shift ?? '—'} />
             <Info label="Chu kỳ" value={run.cycle ?? '—'} />
+            {/* Máy nằm trong band thông tin, không chỉ trên title (user 01/09) — 1 trang = 1 máy */}
+            <Info label="Máy" value={<span className="font-mono font-semibold">{run.machine_code ?? '—'}</span>} />
             <Info label="Giờ bắt đầu" value={<span className="tabular-nums">{fmtDT(run.start_at)}</span>} />
             <Info label="Giờ kết thúc" value={<span className="tabular-nums">{run.end_at ? fmtDT(run.end_at) : (run.status === 'OPEN' ? `chưa bấm · mở ${elapsedOf(run.start_at)}` : '—')}</span>} />
             <Info label="Tổng sản lượng" value={

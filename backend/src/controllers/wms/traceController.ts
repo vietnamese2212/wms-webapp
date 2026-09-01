@@ -164,7 +164,7 @@ async function attachWarehouseNames<T extends { warehouse_id: string | null }>(
   const ids = [...new Set(rows.map(r => r.warehouse_id).filter((x): x is string => !!x))].slice(0, 300)
   const names = new Map<string, string>()
   if (ids.length) {
-    const { data } = await supabase.from('Warehouse').select('id, name').in('id', ids)
+    const { data } = await supabase.from('Warehouse').select('id, name').in('id', ids).limit(300)
     for (const w of (data ?? []) as { id: string; name: string }[]) names.set(w.id, w.name)
   }
   return rows.map(r => ({ ...r, warehouse_name: r.warehouse_id ? names.get(r.warehouse_id) ?? null : null }))

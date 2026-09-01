@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, dedupOpts, type FilterDef } from '@/components/shared/FilterBar'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -27,7 +27,7 @@ import { apiClient } from '@/api/client'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useLotTrace, useMaterials, useInvestigatePreview, useCreateInvestigation,
-  useTraceInvestigations, useTraceInvestigation, useTraceRuns, useTraceRunPallets,
+  useTraceInvestigations, useTraceInvestigation, useTraceRuns, useTraceRunPallets, useTraceSuggest,
   type TraceKind, type TraceShipment, type TraceStock,
   type CartonMatch, type TraceInvestigation, type TraceRun, type InvestigateTrace,
 } from '@/api/hooks'
@@ -104,11 +104,28 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   const shipments = q.data?.shipments ?? []
   const stock = q.data?.stock ?? []
 
+  // "Giá trị cần tìm" = ô chọn TÌM-TRÊN-SERVER theo chuẩn app (user chốt 01/09 tối — gõ tự do
+  // "tìm k ra đâu"): gợi ý DISTINCT từ RPC theo đúng kiểu tìm; kiểu tem giữ được sức mạnh TIỀN TỐ
+  // bằng dòng đầu "mọi pallet bắt đầu bằng …".
+  const [valTerm, setValTerm] = useState('')
+  const dTerm = useDebouncedValue(valTerm, 250)
+  const sugQ = useTraceSuggest(f.kind, dTerm)
+  const valueOpts = useMemo(() => {
+    const base = sugQ.data ?? []
+    if (f.kind === 'pallet' && dTerm.trim().length >= 4)
+      return dedupOpts([{ value: dTerm.trim(), label: `Tiền tố "${dTerm.trim()}" — mọi pallet bắt đầu bằng chuỗi này` }, ...base])
+    return base
+  }, [sugQ.data, f.kind, dTerm])
+
   const filterDefs: FilterDef[] = useMemo(() => [
     { key: 'kind', label: 'Tìm theo', type: 'single', pinned: true, options: KINDS.map(k => ({ value: k.value, label: k.label })),
-      value: f.kind, allLabel: undefined, onChange: v => setF({ kind: (v || 'pallet') as TraceKind }) },
-    { key: 'value', label: 'Giá trị cần tìm', type: 'text', pinned: true,
-      placeholder: kindDef.hint, value: f.value, onChange: v => setF({ value: v }) },
+      value: f.kind, allLabel: undefined,
+      onChange: v => { setF({ kind: (v || 'pallet') as TraceKind, value: '' }); setValTerm('') } },
+    { key: 'value', label: 'Giá trị cần tìm', type: 'single', pinned: true,
+      options: valueOpts, value: f.value, allLabel: undefined,
+      serverSearch: true, onSearchChange: setValTerm, loading: sugQ.isFetching,
+      selectedOpts: f.value ? [{ value: f.value, label: f.value }] : [],
+      onChange: v => setF({ value: v || '' }) },
     ...(kindDef.reverse ? [] : [{
       key: 'prod', label: 'Ngày sản xuất', type: 'daterange' as const,
       from: f.prodFrom, to: f.prodTo,
@@ -117,7 +134,7 @@ function TraceTab({ canExport }: { canExport: boolean }) {
     { key: 'ship', label: 'Ngày giao', type: 'daterange',
       from: f.shipFrom, to: f.shipTo,
       onChange: (from: string, to: string) => setF({ shipFrom: from, shipTo: to }) },
-  ], [f, kindDef, setF])
+  ], [f, kindDef, setF, valueOpts, sugQ.isFetching])
 
   async function onExport() {
     const XLSX = await import('xlsx')

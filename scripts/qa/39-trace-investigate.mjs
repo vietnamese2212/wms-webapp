@@ -107,6 +107,16 @@ try {
   const badImg = await api('/wms/trace/investigations', 'POST', { ...GOOD, note: `${PAL} rác`, photos: ['data:text/html;base64,PGI+'] })
   check('[6] Ảnh rác → 422 BAD_PHOTO', badImg.s === 422, `s=${badImg.s} code=${badImg.j?.error?.code ?? ''}`)
 
+  // [8] Gợi ý "giá trị cần tìm" (dropdown tìm-trên-server, user chốt 01/09 tối): tem theo TIỀN TỐ
+  //     thấy pallet seed; kind rác → 400; kiểu quét bảng lớn mà không có từ khóa → mảng rỗng
+  const sg1 = await api(`/wms/trace/suggest?kind=pallet&search=SIMTRC`)
+  const sg2 = await api(`/wms/trace/suggest?kind=xxx&search=a`)
+  const sg3 = await api(`/wms/trace/suggest?kind=npp`)
+  check('[8] Suggest: tiền tố tem thấy pallet · kind rác 400 · npp không từ khóa → rỗng',
+    sg1.s === 200 && (sg1.j?.data ?? []).some(o => o.value === PAL)
+    && sg2.s === 400 && sg3.s === 200 && (sg3.j?.data ?? []).length === 0,
+    `s=${sg1.s}/${sg2.s}/${sg3.s} n=${sg1.j?.data?.length}`)
+
   // [7] :id rác → 400 · uuid ma → 404 (luật route :param, gói 07)
   const g1 = await api('/wms/trace/investigations/undefined')
   const g2 = await api('/wms/trace/investigations/11111111-1111-1111-1111-111111111111')

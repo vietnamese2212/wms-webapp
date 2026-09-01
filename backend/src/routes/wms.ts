@@ -70,6 +70,7 @@ router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboar
 router.get   ('/trace',                         requirePerm('traceability', 'view'),          trace.lotTrace)
 // Điều tra theo THÙNG (01/09): khớp giờ in phun ↔ sổ đóng gói → truy khách đã nhận; hồ sơ lưu vết.
 // TẠO hồ sơ = quyền riêng investigate (đứng tên hồ sơ điều tra); XEM hồ sơ đi theo view.
+router.get   ('/trace/suggest',                 requirePerm('traceability', 'view'),          trace.traceSuggest)
 router.get   ('/trace/runs',                    requirePerm('traceability', 'investigate'),   trace.listCandidateRuns)
 router.get   ('/trace/runs/:id',                requirePerm('traceability', 'investigate'),   trace.getRunPallets)
 router.get   ('/trace/investigations',          requirePerm('traceability', 'view'),          trace.listInvestigations)

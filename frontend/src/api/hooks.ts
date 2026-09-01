@@ -2345,6 +2345,17 @@ export type TraceInvestigation = {
   photo_urls?: { path: string; url: string }[]        // detail: signed URL 1h
   performed_by_name: string | null; created_at: string
 }
+/** Gợi ý "giá trị cần tìm" cho Truy xuất lô — DISTINCT trong RPC; material rỗng vẫn trả 50 mã đầu. */
+export function useTraceSuggest(kind: TraceKind, term: string) {
+  return useQuery<{ value: string; label: string }[]>({
+    queryKey: ['trace-suggest', kind, term],
+    enabled: kind === 'material' || term.trim().length >= 1,
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/trace/suggest', {
+      params: { kind, ...(term.trim() ? { search: term.trim() } : {}) },
+    }).then(r => r.data.data),
+  })
+}
 export function useTraceRuns(p: { machine: string; cycle: string; date: string; material_code?: string; nmsx?: string }) {
   const enough = !!p.machine.trim() && !!p.cycle.trim() && !!p.date
   return useQuery<TraceRun[]>({

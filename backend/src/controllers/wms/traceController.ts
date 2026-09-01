@@ -107,6 +107,21 @@ export async function serviceLevel(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// GET /wms/trace/suggest?kind=&search= — GỢI Ý "giá trị cần tìm" cho ô chọn tìm-trên-server
+// (user chốt 01/09 tối: gõ tự do "tìm k ra đâu"). DISTINCT + LIMIT làm trong RPC trace_suggest
+// (PostgREST không DISTINCT được); các kiểu quét bảng giao dịch lớn đòi có từ khóa mới tìm.
+export async function traceSuggest(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | undefined>
+    const kind = String(q.kind ?? '').trim()
+    if (!isKind(kind)) return fail(res, `Kiểu gợi ý không hợp lệ (${KINDS.join(' | ')})`, 400, 'BAD_KIND')
+    const search = String(q.search ?? '').trim().slice(0, 100)
+    const { data, error } = await supabase.rpc('trace_suggest', { p_kind: kind, p_search: search, p_limit: 50 })
+    if (error) return fail(res, error.message)
+    return ok(res, data ?? [])
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── TRUY XUẤT THEO THÙNG (01/09, user chốt — v2 cùng ngày) ─────────────────────────────────────
 // Khiếu nại đến từ MỘT THÙNG khách đang cầm — trên thùng chỉ có chữ in phun (giờ phút, ngày SX).
 // Bắt buộc nhập: Ngày · Giờ SX · MÁY · CHU KỲ (mã hàng tùy chọn). Tem pallet có thể lệch ±1–3 ngày

@@ -89,7 +89,7 @@ export function Header() {
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white">
           <span className="text-xs font-bold">M</span>
         </div>
-        <span className="font-bold text-sm text-white">MAL SC</span>
+        <span className="font-bold text-sm text-white">Mal SupplyC</span>
       </Link>
 
       {/* Bối cảnh Kho / Loại kho toàn cục (kiểu Infor) — áp cho filter & form toàn app */}

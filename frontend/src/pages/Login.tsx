@@ -43,7 +43,7 @@ export default function Login() {
             <BarChart3 className="h-7 w-7" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold">MAL SC</h1>
+            <h1 className="text-2xl font-bold">Mal SupplyC</h1>
             <p className="text-sm text-muted-foreground">Supply Chain Management</p>
           </div>
         </div>

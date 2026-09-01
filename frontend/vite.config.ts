@@ -12,8 +12,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',   // deploy mới → SW tự cập nhật nền, không hỏi user
       manifest: {
-        name: 'WMS Supply Chain',
-        short_name: 'WMS',
+        name: 'Mal SupplyC',
+        short_name: 'Mal SupplyC',
         description: 'Hệ thống quản lý kho vận Supply Chain',
         theme_color: '#0f172a',
         background_color: '#ffffff',

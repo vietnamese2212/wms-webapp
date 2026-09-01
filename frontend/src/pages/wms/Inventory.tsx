@@ -34,6 +34,7 @@ import { PutawayOption, putawayBlocked, type PutawayLocRow } from '@/components/
 import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { InventoryStatusBadge, inventoryStatusInfo } from '@/lib/statusMaps'
+import { parseCodeFields } from '@/components/shared/palletLabel'
 import { PUTAWAY_OVERRIDE_REASONS } from '@/utils/putaway'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -1602,6 +1603,16 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const warehouseNm = e.location?.warehouse?.name ?? (e.warehouse_id ? warehouseMap[e.warehouse_id] : null) ?? '—'
   const loaiKho     = e.material?.category ?? '—'
 
+  // Thông số SX nằm NGAY TRÊN TEM (đoạn 3/4/5/6 tem V1) — cột DB chỉ được điền khi vào qua quét
+  // nhập; pallet vào bằng upload Excel/seed thì trống ⇒ bóc từ pallet_code làm fallback
+  // (parseCodeFields = helper tập trung, khớp qrParser BE). Hàng NCC: đoạn 4 là MÃ NCC chứ không
+  // phải máy → chỉ fallback "Máy" khi dòng không gắn NCC.
+  const tem     = parseCodeFields(e.pallet_code ?? '')
+  const cycle   = e.cycle || tem.cycle || ''
+  const machine = e.machine_code || (e.ncc ? '' : tem.machine)
+  const nmsx    = e.nmsx || tem.nmsx || ''
+  const seq     = e.pallet_sequence_no != null ? String(e.pallet_sequence_no) : tem.seq
+
   return (
     <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       {/* Header */}
@@ -1663,12 +1674,13 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
           )}
         </Section>
 
-        {/* Production */}
-        <Section title="Sản xuất">
-          <Row label="NMSX"    value={e.manufacturer?.code ?? '—'} mono />
-          <Row label="Chu kỳ" value={e.cycle ?? '—'} mono />
-          <Row label="Máy"    value={e.machine_code ?? '—'} mono />
-          <Row label="NMSX"   value={e.nmsx ?? '—'} mono />
+        {/* Production — thuật ngữ đồng bộ Truy xuất lô / Sổ đóng gói: Chu kỳ · Máy · Số pallet · Kho SX (ký hiệu) */}
+        <Section title="Sản xuất (thông số tem)">
+          {e.manufacturer && <Row label="NMSX" value={e.manufacturer.code} mono />}
+          <Row label="Kho SX (ký hiệu)" value={nmsx || '—'} mono />
+          <Row label="Chu kỳ"    value={cycle || '—'} mono />
+          <Row label="Máy"       value={machine || '—'} mono />
+          <Row label="Số pallet" value={seq || '—'} mono />
         </Section>
 
         {/* Import */}

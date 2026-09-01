@@ -2311,7 +2311,7 @@ export function useLotTrace(p: {
 export type TraceRun = {
   id: string; run_date: string | null; shift: string | null; cycle: string | null
   material_code: string | null; material_codes: string[] | null; machine_code: string | null
-  warehouse_id: string | null; warehouse_name: string | null
+  warehouse_id: string | null; warehouse_name: string | null; warehouse_nmsx: string | null
   start_at: string | null; end_at: string | null
   qty_total: number | null; pallet_count: number | null; status: string
   opened_by_name: string | null
@@ -2345,14 +2345,15 @@ export type TraceInvestigation = {
   photo_urls?: { path: string; url: string }[]        // detail: signed URL 1h
   performed_by_name: string | null; created_at: string
 }
-export function useTraceRuns(p: { machine: string; cycle: string; date: string; material_code?: string }) {
+export function useTraceRuns(p: { machine: string; cycle: string; date: string; material_code?: string; nmsx?: string }) {
   const enough = !!p.machine.trim() && !!p.cycle.trim() && !!p.date
   return useQuery<TraceRun[]>({
     queryKey: ['trace-runs', p],
     enabled: enough,
     queryFn: () => apiClient.get('/wms/trace/runs', {
       params: { machine: p.machine.trim(), cycle: p.cycle.trim(), date: p.date,
-        ...(p.material_code ? { material_code: p.material_code } : {}) },
+        ...(p.material_code ? { material_code: p.material_code } : {}),
+        ...(p.nmsx?.trim() ? { nmsx: p.nmsx.trim() } : {}) },
     }).then(r => r.data.data),
   })
 }

@@ -327,6 +327,7 @@ function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void
   const [time, setTime] = useState('')
   const [machine, setMachine] = useState('')
   const [cycle, setCycle] = useState('')
+  const [nmsx, setNmsx] = useState('')
   const [matCode, setMatCode] = useState('')
   const [matTerm, setMatTerm] = useState('')
   const { data: mats = [], isFetching: matLoading } = useMaterials({ search: matTerm, limit: 50 })
@@ -343,7 +344,8 @@ function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void
   // Gợi ý sổ SỐNG theo Máy + Chu kỳ + Ngày (±3 ngày, debounce khi đang gõ)
   const dMachine = useDebouncedValue(machine, 300)
   const dCycle = useDebouncedValue(cycle, 300)
-  const runsQ = useTraceRuns({ machine: dMachine, cycle: dCycle, date, material_code: matCode || undefined })
+  const dNmsx = useDebouncedValue(nmsx, 300)
+  const runsQ = useTraceRuns({ machine: dMachine, cycle: dCycle, date, material_code: matCode || undefined, nmsx: dNmsx || undefined })
   const runs = runsQ.data ?? []
   const viewQ = useTraceRunPallets(viewRunId)
 
@@ -408,7 +410,7 @@ function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void
     >
       <div className="space-y-3">
         {/* ── Thông tin trên thùng ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
           <div>
             <p className={LABEL}>Ngày SX (in phun) *</p>
             <input type="date" className={INPUT} value={date} onChange={e => { setDate(e.target.value); setRunId(null) }} />
@@ -424,6 +426,10 @@ function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void
           <div>
             <p className={LABEL}>Chu kỳ (của tháng) *</p>
             <input className={INPUT} placeholder="vd 9" value={cycle} onChange={e => { setCycle(e.target.value); setRunId(null) }} />
+          </div>
+          <div>
+            <p className={LABEL}>Kho SX (ký hiệu)</p>
+            <input className={INPUT} placeholder="vd B · D" value={nmsx} onChange={e => { setNmsx(e.target.value.toUpperCase()); setRunId(null) }} />
           </div>
           <div className="col-span-2 sm:col-span-1">
             <p className={LABEL}>Mã hàng (tùy chọn)</p>
@@ -508,7 +514,10 @@ function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void
                         <TableCell className={`${TD} font-mono`}>{run.cycle ?? '—'}</TableCell>
                         <TableCell className={`${TD} font-mono`}>{run.machine_code ?? '—'}</TableCell>
                         <TableCell className={`${TD} font-mono`}>{(run.material_codes?.length ? run.material_codes.join(' · ') : run.material_code) ?? '—'}</TableCell>
-                        <TableCell className={TD}>{run.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                        <TableCell className={TD}>
+                          {run.warehouse_name ?? <span className="text-slate-300">—</span>}
+                          {run.warehouse_nmsx && <span className="text-slate-400"> ({run.warehouse_nmsx})</span>}
+                        </TableCell>
                         <TableCell className={TD}>{run.start_at ? `${ts(run.start_at)} → ${run.end_at ? formatTimestampTime(run.end_at) : '…'}` : '—'}</TableCell>
                         <TableCell className={`${TD} tabular-nums`}>{run.pallet_count != null ? num(run.pallet_count) : '—'}</TableCell>
                         <TableCell className={`${TD} tabular-nums`}>{run.qty_total != null ? num(run.qty_total) : '—'}</TableCell>

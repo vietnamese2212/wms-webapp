@@ -45,6 +45,14 @@ try {
   check('[1c] Ngày lệch +4 → ngoài cửa sổ ±3, không gợi ý',
     r1c.s === 200 && !(r1c.j?.data ?? []).some(r => r.id === RUN_ID), `s=${r1c.s}`)
 
+  // [1d] Kho SX theo KÝ HIỆU NMSX (user bổ sung 01/09): B = Kho Ba Vì (WH_QR) thấy · D không thấy
+  const r1d = await api(`/wms/trace/runs?machine=QA1&cycle=7&date=${WIN.date}&nmsx=b`)
+  const r1e = await api(`/wms/trace/runs?machine=QA1&cycle=7&date=${WIN.date}&nmsx=D`)
+  check('[1d] Ký hiệu kho SX "b" (Ba Vì, so không phân hoa-thường) → thấy · "D" → không',
+    r1d.s === 200 && (r1d.j?.data ?? []).some(r => r.id === RUN_ID)
+    && r1e.s === 200 && !(r1e.j?.data ?? []).some(r => r.id === RUN_ID),
+    `s=${r1d.s}/${r1e.s}`)
+
   // [2] Xem sổ trước khi chọn: pallet + giờ từng pallet
   const r2 = await api(`/wms/trace/runs/${RUN_ID}`)
   check('[2] Xem sổ → có pallet + giờ thùng đầu/cuối',
@@ -61,6 +69,11 @@ try {
   const m2 = (p2.j?.data?.matched ?? []).find(m => m.pallet_code === PAL)
   check('[3b] Giờ 09:45 ngoài cửa sổ → pallet vẫn thuộc sổ nhưng time_hit=false',
     p2.s === 200 && m2?.time_hit === false, `s=${p2.s} hit=${m2?.time_hit}`)
+  // [3c] NGÀY nhập lệch +2 so sổ (tem lệch ngày) nhưng giờ đúng → vẫn ★ (đo thật 01/09: ±1 trượt)
+  const p3 = await api('/wms/trace/investigations/preview', 'POST', { ...GOOD, carton_date: '2026-01-17' })
+  const m3 = (p3.j?.data?.matched ?? []).find(m => m.pallet_code === PAL)
+  check('[3c] Ngày lệch +2, giờ đúng → time_hit vẫn ★ (dò ±3 ngày)',
+    p3.s === 200 && m3?.time_hit === true, `s=${p3.s} hit=${m3?.time_hit}`)
 
   // [4] Input rác = 400 sạch: thiếu run_id / run_id rác / giờ rác / thiếu máy-chu kỳ / runs thiếu tham số
   const b1 = await api('/wms/trace/investigations/preview', 'POST', { carton_date: WIN.date, carton_time: '08:10', machine_code: 'QA1', cycle: '7' })

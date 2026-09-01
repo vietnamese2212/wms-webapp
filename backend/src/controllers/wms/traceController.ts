@@ -157,17 +157,22 @@ type RunRow = {
 const RUN_COLS = 'id, run_date, shift, cycle, material_code, material_codes, machine_code,'
   + ' warehouse_id, start_at, end_at, qty_total, pallet_count, status, opened_by_name'
 
-/** Gắn tên kho cho các dòng mang warehouse_id (id là text, không FK — không embed được). */
+/** Gắn tên + ký hiệu NMSX (B, D…) của kho cho các dòng mang warehouse_id (id là text, không FK). */
 async function attachWarehouseNames<T extends { warehouse_id: string | null }>(
   rows: T[],
-): Promise<(T & { warehouse_name: string | null })[]> {
+): Promise<(T & { warehouse_name: string | null; warehouse_nmsx: string | null })[]> {
   const ids = [...new Set(rows.map(r => r.warehouse_id).filter((x): x is string => !!x))].slice(0, 300)
-  const names = new Map<string, string>()
+  const info = new Map<string, { name: string; nmsx: string | null }>()
   if (ids.length) {
-    const { data } = await supabase.from('Warehouse').select('id, name').in('id', ids).limit(300)
-    for (const w of (data ?? []) as { id: string; name: string }[]) names.set(w.id, w.name)
+    const { data } = await supabase.from('Warehouse').select('id, name, nmsx_code').in('id', ids).limit(300)
+    for (const w of (data ?? []) as { id: string; name: string; nmsx_code: string | null }[])
+      info.set(w.id, { name: w.name, nmsx: w.nmsx_code })
   }
-  return rows.map(r => ({ ...r, warehouse_name: r.warehouse_id ? names.get(r.warehouse_id) ?? null : null }))
+  return rows.map(r => ({
+    ...r,
+    warehouse_name: r.warehouse_id ? info.get(r.warehouse_id)?.name ?? null : null,
+    warehouse_nmsx: r.warehouse_id ? info.get(r.warehouse_id)?.nmsx ?? null : null,
+  }))
 }
 
 // GET /wms/trace/runs?machine=&cycle=&date=[&material_code=] — GỢI Ý SỔ ĐÓNG GÓI khớp điều kiện.
@@ -197,7 +202,11 @@ export async function listCandidateRuns(req: Request, res: Response) {
       .sort((a, b) =>
         Math.abs(new Date(`${a.run_date ?? date}T00:00:00Z`).getTime() - anchor)
         - Math.abs(new Date(`${b.run_date ?? date}T00:00:00Z`).getTime() - anchor))
-    return ok(res, await attachWarehouseNames(rows))
+    let named = await attachWarehouseNames(rows)
+    // Kho SX theo KÝ HIỆU NMSX trên tem (B, D… — Warehouse.nmsx_code), user bổ sung 01/09
+    const nmsx = String(q.nmsx ?? '').trim().toUpperCase()
+    if (nmsx) named = named.filter(r => (r.warehouse_nmsx ?? '').toUpperCase() === nmsx)
+    return ok(res, named)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -266,11 +275,12 @@ async function runInvestigation(req: Request, input: InvestigateInput): Promise<
   if (typeof logs === 'string') return { err: logs, code: 'TRACE_ERROR', status: 500 }
   if (input.material_code) logs = logs.filter(l => l.material_code === input.material_code)
 
-  // Đánh dấu pallet CHỨA giờ in phun — thử cả ngày ±1 vì giờ ghi sổ có thể rơi sang ngày kề
+  // Đánh dấu pallet CHỨA giờ in phun — thử ngày ±3 (cùng biên độ cửa sổ tìm sổ: tem/sổ lệch
+  // được tới 3 ngày so chữ in phun; đo thật 01/09 — ±1 làm ★ trượt khi user nhập ngày lệch +2)
   const t0 = new Date(input.carton_at).getTime()
   const matched: CartonMatchRow[] = logs.map(l => ({
     ...l,
-    time_hit: [-1, 0, 1].some(k => {
+    time_hit: [-3, -2, -1, 0, 1, 2, 3].some(k => {
       const t = t0 + k * 86400_000
       return l.prod_start_at != null && l.prod_end_at != null
         && t >= new Date(l.prod_start_at).getTime() && t <= new Date(l.prod_end_at).getTime()

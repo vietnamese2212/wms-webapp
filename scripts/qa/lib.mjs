@@ -42,6 +42,19 @@ export async function login() {
 // Vé realtime (JWT Supabase role=authenticated) có được cấp không — từ 02/09 realtime đi kênh Broadcast
 // RIÊNG TƯ nên thiếu vé (SUPABASE_JWT_SECRET chưa cấu hình) = realtime chết CÂM, không rơi về anon nữa.
 export function realtimeTokenIssued() { return !!realtimeToken }
+// Vé thô — CHỈ cho gói 40-exposure-live (đóng vai "người trong công ty cầm vé gọi thẳng Supabase").
+export function realtimeTokenValue() { return realtimeToken }
+// Anon key + URL Supabase như bundle FE đang phát ra (frontend/.env; CI có thể đưa qua env VITE_*).
+export function readFrontendEnv() {
+  const out = { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || '', VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY || '' }
+  try {
+    for (const line of readFileSync(join(ROOT, 'frontend', '.env'), 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*(VITE_[A-Z_]+)\s*=\s*"?([^"]*)"?\s*$/)
+      if (m && !out[m[1]]) out[m[1]] = m[2]
+    }
+  } catch { /* không có frontend/.env (CI) → gói 40 tự skip có hướng dẫn */ }
+  return out
+}
 export async function api(path, method = 'GET', body) {
   // BASE UNIT (đợt 2): mọi body write gắn cờ qty_semantics='base' (BE chặn 409 payload thiếu cờ);
   // số lượng trong test = BASE (mã test QA không có entry unit → giá trị như cũ).

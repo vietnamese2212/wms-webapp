@@ -208,6 +208,20 @@ for (const [table, label] of [
     !exp ? 'RPC rest_exposure chưa apply (migration 20260902b)'
       : ok ? 'soi relacl + pg_policies + pg_default_acl của schema public'
       : `quyền bảng ${privs.length} (vd ${privs.slice(0, 3).join(', ')}) · policy ${pols.length} (vd ${pols.slice(0, 3).join(', ')}) · default ACL ${dacl.length}`)
+
+  // 10c. HAI CỬA CÒN LẠI (20260902d — kiểm định độc lập sau pha 2): (a) publication `supabase_realtime`
+  //      phải RỖNG — còn bảng là anon subscribe postgres_changes vẫn nhận "bảng X vừa đổi" (payload rỗng
+  //      nhưng vẫn là tín hiệu, và Realtime decode WAL vô ích); (b) 0 hàm public (ngoài hàm extension)
+  //      gọi được bằng anon/authenticated — SECURITY INVOKER hôm nay chết ở SELECT, nhưng SECURITY DEFINER
+  //      tạo sau sẽ hở ngay vì Postgres mặc định cấp EXECUTE cho PUBLIC; (c) default EXECUTE toàn cục cho
+  //      PUBLIC phải TẮT để hàm mới không tự mở lại.
+  const pub = exp?.pub_tables, fx = exp?.func_execs, fdef = exp?.func_default_public_exec
+  const ok2 = Array.isArray(pub) && Array.isArray(fx) && pub.length === 0 && fx.length === 0 && fdef === false
+  check('Publication supabase_realtime RỖNG · 0 hàm public gọi được bằng anon/authenticated · hàm mới tự đóng',
+    ok2,
+    !exp || pub === undefined ? 'RPC rest_exposure chưa có pub_tables/func_execs (migration 20260902d)'
+      : ok2 ? 'soi pg_publication_tables + has_function_privilege + pg_default_acl(f)'
+      : `bảng trong publication ${pub?.length ?? '?'} · hàm gọi được ${fx?.length ?? '?'} (vd ${(fx ?? []).slice(0, 3).join(', ')}) · default EXECUTE cho PUBLIC=${fdef}`)
 }
 
 // 11. ĐỔI TÊN LOẠI KHO PHẢI PHỦ ĐỦ MỌI CỘT (chốt 15/08).

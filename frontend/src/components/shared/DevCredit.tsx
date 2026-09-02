@@ -69,7 +69,9 @@ export function DevCredit({ tone = 'light', className = '' }: { tone?: 'light' |
   const typed = FULL.slice(0, n)
   const base = tone === 'dark' ? 'text-slate-400' : 'text-muted-foreground'
   const link = tone === 'dark' ? 'text-sky-400' : 'text-sky-600'
-  const p = 'text-center text-[10px] leading-relaxed'
+  // Cỡ chữ theo chỗ đặt: sidebar/drawer hẹp → 10px; màn đăng nhập → 12px, CÙNG cỡ với dòng
+  // "Tài khoản do quản trị viên cấp" ngay trên nó (user 02/09: 2 dòng cạnh nhau mà 2 cỡ, nhìn như 2 font)
+  const p = `text-center leading-relaxed ${tone === 'dark' ? 'text-[10px]' : 'text-xs'}`
 
   return (
     <div

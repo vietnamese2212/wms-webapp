@@ -35,8 +35,10 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-900 dark:to-slate-800 p-4">
-      <div className="w-full max-w-sm space-y-6">
+    // min-h theo dvh (không phải 100vh) + khoảng cách vừa đủ: trên màn thấp/zoom 110% bản cũ cao hơn
+    // khung nhìn ⇒ dòng ghi công tác giả bị đẩy xuống dưới, phải cuộn mới thấy (user 02/09)
+    <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-900 dark:to-slate-800 px-4 py-3">
+      <div className="w-full max-w-sm space-y-4">
         {/* Brand */}
         <div className="flex flex-col items-center gap-3">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
@@ -101,10 +103,12 @@ export default function Login() {
           </CardContent>
         </Card>
 
-        <p className="text-center text-xs text-muted-foreground">
-          Tài khoản do quản trị viên cấp. Liên hệ admin nếu quên mật khẩu.
-        </p>
-        <DevCredit className="pt-1" />
+        <div className="space-y-1">
+          <p className="text-center text-xs text-muted-foreground">
+            Tài khoản do quản trị viên cấp. Liên hệ admin nếu quên mật khẩu.
+          </p>
+          <DevCredit />
+        </div>
       </div>
     </div>
   )

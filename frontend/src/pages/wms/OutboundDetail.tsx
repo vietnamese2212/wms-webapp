@@ -1992,8 +1992,10 @@ export default function OutboundDetail() {
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1">
 
           {/* Row 1: back + code + status + buttons — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
+          {/* Mobile: mã chuyến chiếm NGUYÊN hàng, cụm nút xuống hàng riêng — flex-1 (basis 0) không bao giờ
+              tự wrap nên mã từng bị ép còn vài px, bẻ dọc từng ký tự (user bắt 02/09) */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1 max-sm:w-full max-sm:flex-none">
               <button onClick={() => navigate('/wms/outbound')}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
                 <ArrowLeft className="h-4 w-4" />
@@ -2020,7 +2022,7 @@ export default function OutboundDetail() {
                 <Info className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 max-sm:w-full">
               <ActionCluster items={actionItems} />
             </div>
           </div>

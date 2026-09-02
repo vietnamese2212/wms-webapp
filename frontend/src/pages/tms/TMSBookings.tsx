@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, qtyLabel, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, CalendarCheck, ShieldX, FileSpreadsheet, X, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -4549,14 +4549,26 @@ export default function TMSBookings() {
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
+                    {/* User chốt 02/09: xe ĐÃ đặt khung giờ → icon lịch-đã-chốt MÀU ĐỎ (nhìn là biết, bấm vẫn
+                        sửa được); xe CHƯA đặt → icon xe nổi bật để mắt dồn vào việc còn phải làm. */}
                     {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot, order) && (
-                      <button
-                        onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
-                        className="text-blue-400 hover:text-blue-600 p-1 rounded"
-                        title="Đặt khung giờ"
-                      >
-                        <Truck className="h-3.5 w-3.5" />
-                      </button>
+                      vslot.status === 'BOOKED' ? (
+                        <button
+                          onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
+                          className="text-red-500 hover:text-red-700 p-1 rounded"
+                          title={`Đã đặt khung giờ${vslot.slot ? ` ${vslot.slot.time_from.slice(0, 5)}–${vslot.slot.time_to.slice(0, 5)}` : ''} — bấm để sửa`}
+                        >
+                          <CalendarCheck className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
+                          className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-1 rounded"
+                          title="Chưa đặt khung giờ — bấm để đặt"
+                        >
+                          <Truck className="h-4 w-4" />
+                        </button>
+                      )
                     )}
                   </TableCell>
 

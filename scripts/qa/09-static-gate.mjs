@@ -167,6 +167,19 @@ const RULES = [
     label: 'làm tròn TỬ SỐ rồi mới chia — round(x, n) / y khiến phép làm tròn vô tác dụng (ý định là round(x / y, n))',
     count: (s) => countMatches(['backend/migrations'], ['.sql'], roundBeforeDivide, s),
   },
+  // `format('… LIKE %L', <giá trị người dùng>)` — %L chống TIÊM SQL nhưng KHÔNG đụng tới '%' và '_'
+  // của chính LIKE: gõ '%%%%' là quét TRỌN kho, '_' (có khắp mã pallet V1) thành "1 ký tự bất kỳ" ⇒
+  // gom nhầm lô trong hồ sơ THU HỒI. Vá 30/08 (20260830b) rồi 01/09 viết lại lot_trace ĐÁNH RƠI
+  // escape — gói QA 07 đỏ lại trên CI đêm 01/09 (email báo lỗi tới user). Bug chết hai lần = ratchet:
+  // giá trị ghép vào LIKE/ILIKE phải qua `like_esc(...)` (hàm SQL, 20260902) hoặc biến `v_like`.
+  // Miễn: dòng chú thích; mẫu `to_char(…) || '_%'` (ký tự đại diện CÓ CHỦ ĐÍCH, không phải input).
+  // Baseline 14 = các file migration cũ (lịch sử, không sửa) — chỉ cấm TĂNG.
+  {
+    key: 'sql_like_unescaped',
+    label: "ghép giá trị vào LIKE/ILIKE qua format(%L) mà KHÔNG escape '%' '_' — phải dùng like_esc(...) / v_like (bug '%%%%' quét trọn kho, tái phát 01/09)",
+    count: (s) => countMatches(['backend/migrations'], ['.sql'],
+      l => /I?LIKE %L/.test(l) && !/^\s*--/.test(l) && !/like_esc\(|\bv_like\b|to_char\(/.test(l), s),
+  },
   // `booked_count` là CACHE và DB KHÔNG có trigger nào — xoá dòng xe mà quên `recount_slot` là khung
   // giờ kẹt "Đầy" vĩnh viễn (đo thật 04/08). Mọi chỗ xoá mới PHẢI đi qua `deleteVehicleSlotsAndRecount`.
   // Baseline = 2: bookingGuards (chính helper) + vehicleSlotController.deleteVehicleSlot (đã recount tại chỗ).

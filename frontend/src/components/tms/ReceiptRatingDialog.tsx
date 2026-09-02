@@ -36,8 +36,14 @@ export function StarRow({ value, onPick, size = 'md' }: {
   )
 }
 
-export function ReceiptRatingDialog({ orderId, open, onClose }: {
+/**
+ * `onSaved`: gọi SAU khi lưu sao xong (thay cho onClose) — dùng khi ô chấm sao đứng CHẶN trước bước
+ * Hoàn thành (user chốt 02/09 "hoàn thành đơn thì phải đánh sao luôn"). `onSkip`: có = hiện nút
+ * "Bỏ qua, hoàn thành" (chế độ optional); required thì không truyền → không bỏ qua được.
+ */
+export function ReceiptRatingDialog({ orderId, open, onClose, onSaved, onSkip }: {
   orderId: string; open: boolean; onClose: () => void
+  onSaved?: () => void; onSkip?: () => void
 }) {
   const { data } = useReceiptRating(open ? orderId : null)
   const rate = useRateReceipt()
@@ -63,7 +69,7 @@ export function ReceiptRatingDialog({ orderId, open, onClose }: {
     if (needReason && !reason) { setErr('Chấm từ 3 sao trở xuống phải chọn lý do'); return }
     try {
       await rate.mutateAsync({ orderId, stars, reason_code: reason || null, note: note.trim() || null })
-      onClose()
+      if (onSaved) onSaved(); else onClose()
     } catch (e) {
       setErr((e as { response?: { data?: { error?: { message?: string } } } })
         ?.response?.data?.error?.message ?? 'Lỗi lưu đánh giá')
@@ -74,9 +80,10 @@ export function ReceiptRatingDialog({ orderId, open, onClose }: {
     <Dialog open={open} onOpenChange={v => { if (!v && !rate.isPending) onClose() }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Đánh giá chuyến giao</DialogTitle>
+          <DialogTitle>{onSaved ? 'Chấm sao chuyến giao trước khi hoàn thành' : 'Đánh giá chuyến giao'}</DialogTitle>
           <p className="text-xs text-slate-500 mt-1">
             Kho nhận chấm chất lượng lô hàng vừa nhận — hàng, chứng từ, giờ xe.
+            {onSaved && !onSkip && <> Đơn vị đang <b>bắt buộc</b> chấm sao mới hoàn thành được phiếu nhận.</>}
             {data?.rating && <> Đã chấm bởi <b>{data.rating.rated_by_name ?? '—'}</b>, sửa lại được.</>}
           </p>
         </DialogHeader>
@@ -109,8 +116,12 @@ export function ReceiptRatingDialog({ orderId, open, onClose }: {
 
         <DialogFooter className="gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={rate.isPending}>Hủy</Button>
+          {onSkip && (
+            <Button variant="outline" size="sm" onClick={onSkip} disabled={rate.isPending}
+              title="Không chấm sao lần này, hoàn thành luôn">Bỏ qua, hoàn thành</Button>
+          )}
           <Button size="sm" onClick={save} disabled={rate.isPending}>
-            {rate.isPending ? 'Đang lưu…' : 'Lưu đánh giá'}
+            {rate.isPending ? 'Đang lưu…' : onSaved ? 'Chấm sao & hoàn thành' : 'Lưu đánh giá'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -2299,6 +2299,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [showUpdate, setShowUpdate]     = useState(false)
   const [confirmErr, setConfirmErr]     = useState('')
   const [showRate, setShowRate]         = useState(false)
+  // Việc "hoàn thành" đang chờ CHẤM SAO xong mới chạy (user chốt 02/09: bấm Hoàn thành là hiện ô
+  // chấm sao ngay, không để thành nút riêng ai nhớ mới bấm). null = ô chấm sao mở độc lập.
+  const [rateThen, setRateThen]         = useState<(() => void) | null>(null)
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
   const { mutateAsync: selfComplete,   isPending: selfCompleting } = useSelfCompleteTransfer()
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
@@ -2495,6 +2498,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   // MỘT nguồn từ BE: gộp "chuyến có người nhận tích nhận" + "mình có phải kho nhận không".
   // FE tự suy luận lại là chắc chắn có ngày lệch với luật của BE.
   const ratable = ratingQ.data?.can_rate !== false
+  // Cửa CHẶN trước mọi đường hoàn thành phiếu nhận: chưa chấm sao (và đơn vị không tắt) → mở ô chấm
+  // sao, lưu xong mới chạy việc hoàn thành; optional cho "Bỏ qua", required thì không. Đã chấm rồi
+  // (hoặc chuyến không thuộc diện chấm — SELF/khách ngoài) → chạy thẳng.
+  function withRating(run: () => void) {
+    if (ratable && ratingMode !== 'off' && !ratedStars) { setRateThen(() => run); setShowRate(true) }
+    else run()
+  }
 
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const headerActions: ActionItem[] = []
@@ -2628,7 +2638,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                 <Button variant="outline" size="sm" onClick={() => setCompleteConfirm(null)}>Hủy</Button>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white"
                   disabled={rowBusy === impId}
-                  onClick={() => { setCompleteConfirm(null); handleCompleteOne(impId) }}>
+                  onClick={() => { setCompleteConfirm(null); withRating(() => { void handleCompleteOne(impId) }) }}>
                   {rowBusy === impId ? 'Đang lưu…' : 'Hoàn thành'}
                 </Button>
               </DialogFooter>
@@ -2637,7 +2647,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
         )
       })()}
       {order && showRate && (
-        <ReceiptRatingDialog orderId={order.id} open={showRate} onClose={() => setShowRate(false)} />
+        <ReceiptRatingDialog orderId={order.id} open={showRate}
+          onClose={() => { setShowRate(false); setRateThen(null) }}
+          onSaved={rateThen ? () => { const run = rateThen; setShowRate(false); setRateThen(null); run() } : undefined}
+          onSkip={rateThen && ratingMode !== 'required' ? () => { const run = rateThen; setShowRate(false); setRateThen(null); run() } : undefined} />
       )}
       {bulkConfirm && (() => {
         const targets = activeImports.filter(ai => ai.status === 'OPEN')
@@ -2686,7 +2699,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               <DialogFooter className="gap-2">
                 <Button variant="outline" size="sm" disabled={bulkRunning} onClick={() => setBulkConfirm(false)}>Hủy</Button>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={bulkRunning}
-                  onClick={receiveAllPerPlan}>
+                  onClick={() => withRating(() => { void receiveAllPerPlan() })}>
                   {bulkRunning ? 'Đang nhận…' : `Nhận & hoàn thành ${targets.length} phiếu`}
                 </Button>
               </DialogFooter>

@@ -1,9 +1,12 @@
 // GÓI SMOKE — mỗi module chính 1 GET + chu trình CRUD Outbound (tạo → sửa → xóa, tự dọn).
-import { login, api, check, finish, FIX } from './lib.mjs'
+import { login, api, check, finish, FIX, realtimeTokenIssued } from './lib.mjs'
 
 console.log('── GÓI SMOKE ──')
 await login()
 check('Login admin', true)
+// Từ 02/09 realtime đi kênh Broadcast RIÊNG TƯ (đòi vé role=authenticated) — thiếu SUPABASE_JWT_SECRET
+// trên Vercel là vé null ⇒ realtime chết CÂM ở mọi màn (không còn rơi về anon như trước).
+check('Login cấp VÉ realtime (SUPABASE_JWT_SECRET đã cấu hình trên môi trường này)', realtimeTokenIssued())
 
 // GET các list chính (đủ 200 + shape data)
 const GETS = [

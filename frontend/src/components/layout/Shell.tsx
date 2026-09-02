@@ -64,8 +64,8 @@ export function Shell() {
     // Gắn vé realtime đã persist (nếu có) TRƯỚC khi mở kênh → reload app vẫn kết nối
     // realtime dưới RLS đóng-hẳn. refreshUser() ở trên sẽ tái cấp vé mới khi /me trả về.
     setRealtimeAuth(useAuthStore.getState().realtimeToken)
-    // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
-    connectRealtimeEvents()
+    // Mở 2 kênh Broadcast riêng tư (chung + cá nhân theo employee id) — xem realtimeEvents.ts
+    connectRealtimeEvents(useAuthStore.getState().user?.id)
 
     // Hàng đợi quét offline: hydrate từ IndexedDB + tự replay khi mạng về
     initScanQueue()

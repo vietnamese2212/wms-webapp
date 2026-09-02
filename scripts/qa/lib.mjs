@@ -28,6 +28,7 @@ export const FIX = {
 
 // ── App API ──
 let token = ''
+let realtimeToken = null
 export async function login() {
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -36,7 +37,11 @@ export async function login() {
   const j = await r.json()
   if (!j?.data?.token) throw new Error(`Login fail: ${r.status} ${JSON.stringify(j).slice(0, 200)}`)
   token = j.data.token
+  realtimeToken = j.data.realtime_token ?? null
 }
+// Vé realtime (JWT Supabase role=authenticated) có được cấp không — từ 02/09 realtime đi kênh Broadcast
+// RIÊNG TƯ nên thiếu vé (SUPABASE_JWT_SECRET chưa cấu hình) = realtime chết CÂM, không rơi về anon nữa.
+export function realtimeTokenIssued() { return !!realtimeToken }
 export async function api(path, method = 'GET', body) {
   // BASE UNIT (đợt 2): mọi body write gắn cờ qty_semantics='base' (BE chặn 409 payload thiếu cờ);
   // số lượng trong test = BASE (mã test QA không có entry unit → giá trị như cũ).

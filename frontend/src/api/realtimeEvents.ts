@@ -1,4 +1,4 @@
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabaseClient } from '@/lib/supabase'
 import { queryClient } from './queryClient'
 import type { DeliverySlot, TmsOrder } from '@/types'
@@ -95,25 +95,30 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   warehouse_cost_locks: [['warehouse-costs']],
 }
 
-type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>
+// Gói tin từ trigger DB `wms_notify_change` (migration 20260902b) — TỐI THIỂU có chủ đích: tên bảng +
+// loại thao tác, và CHỈ 2 bảng kèm dữ liệu dòng mà FE thật sự dùng. KHÔNG BAO GIỜ có cột nghiệp vụ:
+// kênh Broadcast này là thứ DUY NHẤT vai authenticated còn đọc được ở Supabase — từ 02/09 vé realtime
+// không mở được bảng nào qua PostgREST nữa (trước đó 64 policy USING(true) để nuôi postgres_changes
+// đã biến vé thành chìa khoá đọc trọn DB cho mọi tài khoản đăng nhập).
+interface ChangeMsg {
+  table: string
+  op: 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE'
+  row_id?: string                 // DeliverySlot · ProductionImport (trigger mức dòng)
+  booked_count?: number | null    // DeliverySlot UPDATE — patch cache khung giờ tức thì, không chờ refetch
+}
 
 // Patch DeliverySlot cache trực tiếp — cập nhật booked_count trong slot list VÀ trong
 // slot object embedded trong TmsOrder.vehicle_slots[].slot
-function patchSlotCache(payload: Payload) {
-  if (payload.eventType !== 'UPDATE') return
-  const updated = payload.new
-  if (!updated?.id) return
+function patchSlotCache(msg: ChangeMsg) {
+  if (msg.op !== 'UPDATE' || !msg.row_id || typeof msg.booked_count !== 'number') return
+  const id = msg.row_id, booked = msg.booked_count
 
   // 1. Patch tms-delivery-slots cache
   queryClient.setQueriesData<DeliverySlot[]>(
     { queryKey: ['tms-delivery-slots'] },
     (old) => {
       if (!Array.isArray(old)) return old
-      return old.map(s =>
-        s.id === updated.id
-          ? { ...s, booked_count: updated.booked_count as number }
-          : s
-      )
+      return old.map(s => (s.id === id ? { ...s, booked_count: booked } : s))
     }
   )
 
@@ -121,8 +126,8 @@ function patchSlotCache(payload: Payload) {
   const patchOrder = (o: TmsOrder): TmsOrder => ({
     ...o,
     vehicle_slots: o.vehicle_slots.map(vs =>
-      vs.slot_id === updated.id && vs.slot
-        ? { ...vs, slot: { ...vs.slot, booked_count: updated.booked_count as number } }
+      vs.slot_id === id && vs.slot
+        ? { ...vs, slot: { ...vs.slot, booked_count: booked } }
         : vs
     ),
   })
@@ -133,7 +138,16 @@ function patchSlotCache(payload: Payload) {
   )
 }
 
+// Hai kênh Broadcast RIÊNG TƯ (đòi vé role=authenticated — setRealtimeAuth phải chạy TRƯỚC connect):
+//  • `wms-db-changes`: mọi bảng — tín hiệu chung cho cả app.
+//  • `wms-user-<employee_id>`: riêng user_notifications của ĐÚNG người này — thông báo đích danh không
+//    làm hàng trăm máy khác cùng refetch, và không lộ ai-được-báo cho ai.
+const SHARED_TOPIC = 'wms-db-changes'
 let channel: RealtimeChannel | null = null
+let userChannel: RealtimeChannel | null = null
+let userTopic = ''
+// Đang tự đóng kênh (logout) — trạng thái CLOSED lúc đó KHÔNG phải đứt kết nối.
+let closing = false
 // Đã từng đứt realtime kể từ lần SUBSCRIBED gần nhất — để phân biệt "nối lần đầu"
 // với "nối LẠI sau đứt" (chỉ trường hợp sau mới cần invalidate toàn bộ).
 let hadRealtimeDisconnect = false
@@ -182,70 +196,89 @@ function coalescedInvalidate(key: string[]): void {
   }, COALESCE_MS))
 }
 
-export function connectRealtimeEvents(): void {
-  if (!supabaseClient || channel) return
+function onChange(msg: ChangeMsg): void {
+  if (!msg?.table) return
+  if (msg.table === 'DeliverySlot') patchSlotCache(msg)
 
-  channel = supabaseClient
-    .channel('wms-db-changes')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: '*' },
-      (payload) => {
-        if (payload.table === 'DeliverySlot') patchSlotCache(payload)
+  // Lịch sử quét: refetch throttle khi có quét xuất/nhặt lẻ thay đổi
+  if (msg.table === 'OutboundScanEntry') scheduleScanLogRefresh()
 
-        // Lịch sử quét: refetch throttle khi có quét xuất/nhặt lẻ thay đổi
-        if (payload.table === 'OutboundScanEntry') scheduleScanLogRefresh()
+  // Khi ProductionImport thay đổi (kể cả SQL-level delete), xóa localStorage
+  // list cache để tránh ghost record flash khi component mount lại.
+  if (msg.table === 'ProductionImport') {
+    try {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('wms:io:'))
+        .forEach(k => localStorage.removeItem(k))
+      if (msg.op === 'DELETE' && msg.row_id) localStorage.removeItem(`wms:io-detail:${msg.row_id}`)
+    } catch {}
+  }
 
-        // Khi ProductionImport thay đổi (kể cả SQL-level delete), xóa localStorage
-        // list cache để tránh ghost record flash khi component mount lại.
-        if (payload.table === 'ProductionImport') {
-          try {
-            Object.keys(localStorage)
-              .filter(k => k.startsWith('wms:io:'))
-              .forEach(k => localStorage.removeItem(k))
-            if (payload.eventType === 'DELETE') {
-              const deletedId = (payload.old as Record<string, unknown>)?.id as string | undefined
-              if (deletedId) localStorage.removeItem(`wms:io-detail:${deletedId}`)
-            }
-          } catch {}
-        }
+  // Invalidate để eventual consistency (background refetch sau patch)
+  const keys = TABLE_QUERY_MAP[msg.table]
+  if (!keys) return
 
-        // Invalidate để eventual consistency (background refetch sau patch)
-        const keys = TABLE_QUERY_MAP[payload.table]
-        if (!keys) return
+  // Trong window suppressTmsOrdersUntil (set bởi booking mutations), bỏ qua
+  // invalidation tms-orders — tránh intermediate state từ sequential DB writes.
+  // isMutating() bị loại khỏi check vì nó block cả gate mutations (same SPA).
+  const suppress = Date.now() < suppressTmsOrdersUntil
+  keys.forEach((k) => {
+    if (suppress && (k[0] === 'tms-orders-paged' || k[0] === 'tms-orders-summary')) return
+    coalescedInvalidate(k)
+  })
+}
 
-        // Trong window suppressTmsOrdersUntil (set bởi booking mutations), bỏ qua
-        // invalidation tms-orders — tránh intermediate state từ sequential DB writes.
-        // isMutating() bị loại khỏi check vì nó block cả gate mutations (same SPA).
-        const suppress = Date.now() < suppressTmsOrdersUntil
-        keys.forEach((k) => {
-          if (suppress && (k[0] === 'tms-orders-paged' || k[0] === 'tms-orders-summary')) return
-          coalescedInvalidate(k)
-        })
+function onStatus(label: string) {
+  return (status: string, err?: Error) => {
+    if (status === 'SUBSCRIBED') {
+      // Nối LẠI sau khi đứt (không phải lần subscribe đầu): mọi event trong lúc đứt
+      // đã mất vĩnh viễn → invalidate toàn bộ để list refetch, xóa dữ liệu stale.
+      if (hadRealtimeDisconnect) {
+        hadRealtimeDisconnect = false
+        console.info(`[realtime] ${label} reconnected — invalidating all queries (missed events)`)
+        queryClient.invalidateQueries()
+      } else {
+        console.info(`[realtime] ${label} connected`)
       }
-    )
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        // Nối LẠI sau khi đứt (không phải lần subscribe đầu): mọi event trong lúc đứt
-        // đã mất vĩnh viễn → invalidate toàn bộ để list refetch, xóa dữ liệu stale.
-        if (hadRealtimeDisconnect) {
-          hadRealtimeDisconnect = false
-          console.info('[realtime] reconnected — invalidating all queries (missed events)')
-          queryClient.invalidateQueries()
-        } else {
-          console.info('[realtime] connected — all tables live')
-        }
-      }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        hadRealtimeDisconnect = true
-        console.warn('[realtime] disconnected, retrying:', status)
-      }
-    })
+    }
+    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || (status === 'CLOSED' && !closing)) {
+      hadRealtimeDisconnect = true
+      // "Unauthorized" ở đây = thiếu vé (chưa setRealtimeAuth / SUPABASE_JWT_SECRET chưa cấu hình)
+      console.warn(`[realtime] ${label} disconnected, retrying:`, status, err?.message ?? '')
+    }
+  }
+}
+
+export function connectRealtimeEvents(employeeId?: string | null): void {
+  if (!supabaseClient) return
+  closing = false
+
+  if (!channel) {
+    channel = supabaseClient
+      .channel(SHARED_TOPIC, { config: { private: true } })
+      .on('broadcast', { event: 'db_change' }, ({ payload }) => onChange(payload as ChangeMsg))
+      .subscribe(onStatus('kênh chung'))
+  }
+
+  // Kênh cá nhân đi theo NGƯỜI ĐANG ĐĂNG NHẬP: đổi tài khoản trong cùng tab SPA → đổi kênh.
+  const topic = employeeId ? `wms-user-${employeeId}` : ''
+  if (userChannel && userTopic !== topic) {
+    supabaseClient.removeChannel(userChannel)
+    userChannel = null
+    userTopic = ''
+  }
+  if (topic && !userChannel) {
+    userTopic = topic
+    userChannel = supabaseClient
+      .channel(topic, { config: { private: true } })
+      .on('broadcast', { event: 'db_change' }, ({ payload }) => onChange(payload as ChangeMsg))
+      .subscribe(onStatus('kênh cá nhân'))
+  }
 }
 
 export function disconnectRealtimeEvents(): void {
-  if (channel && supabaseClient) {
-    supabaseClient.removeChannel(channel)
-    channel = null
-  }
+  if (!supabaseClient) return
+  closing = true
+  if (channel) { supabaseClient.removeChannel(channel); channel = null }
+  if (userChannel) { supabaseClient.removeChannel(userChannel); userChannel = null; userTopic = '' }
 }

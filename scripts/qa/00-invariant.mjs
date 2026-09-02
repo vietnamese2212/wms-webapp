@@ -170,14 +170,14 @@ for (const [table, label] of [
   const body = src.slice(src.indexOf('TABLE_QUERY_MAP'))
   const declared = [...body.matchAll(/^ {2}([A-Za-z_][A-Za-z0-9_]*):\s*\[/gm)].map(m => m[1])
   const ready = await restRpc('realtime_readiness')
-  const broken = declared.filter(t => {
-    const r = ready?.[t]
-    return !r || !r.in_pub || (r.rls && Number(r.sel_pol) === 0)
-  })
-  check('Bảng khai realtime trong code đều NHẬN được sự kiện (publication + policy đọc)',
+  // (02/09) Realtime = Broadcast từ trigger `trg_wms_notify` (migration 20260902b). Policy SELECT cho
+  // authenticated KHÔNG còn là điều kiện nhận sự kiện — ngược lại, còn policy đó là LỖ HỔNG (mục 10b).
+  const rpcOld = ready && Object.values(ready).length && !('has_trigger' in Object.values(ready)[0])
+  const broken = declared.filter(t => !ready?.[t]?.has_trigger)
+  check('Bảng khai realtime trong code đều có trigger phát tín hiệu (trg_wms_notify)',
     broken.length === 0,
     broken.length
-      ? `${broken.length} bảng câm: ${broken.slice(0, 4).map(t => `${t}(${!ready?.[t]?.in_pub ? 'ngoài publication' : 'thiếu policy đọc'})`).join(', ')}`
+      ? `${broken.length} bảng câm: ${broken.slice(0, 4).join(', ')}${rpcOld ? ' (RPC realtime_readiness chưa cập nhật — migration 20260902b)' : ''}`
       : `soi ${declared.length} bảng`)
 
   // MỌI bảng public phải BẬT RLS (cảnh báo Supabase 03/08: StocktakeLog + 10 bảng backup hở —
@@ -189,6 +189,25 @@ for (const [table, label] of [
     Array.isArray(rlsGaps)
       ? (rlsGaps.length ? `HỞ: ${rlsGaps.slice(0, 5).join(', ')}${rlsGaps.length > 5 ? '…' : ''}` : 'soi toàn schema public')
       : 'RPC rls_gap_tables chưa apply (migration 20260805c)')
+}
+
+// 10b. CỬA ĐỌC PostgREST PHẢI ĐÓNG với anon/authenticated/PUBLIC (chốt 02/09).
+//      Kiểm định trước chào bán: 64 policy `USING(true)` nuôi realtime cũ đã biến vé realtime (JWT
+//      role=authenticated, nằm trong localStorage của MỌI tài khoản) thành chìa khoá đọc trọn 58/73 bảng
+//      qua PostgREST — vòng qua requirePerm + cắt scope kho. Nay realtime đi Broadcast nên hai vai này
+//      KHÔNG ĐƯỢC có bất kỳ quyền bảng / policy / default ACL nào trong public. RPC rest_exposure()
+//      (migration 20260902b) trả 3 mảng; pha 2 (20260902c) đưa cả 3 về rỗng — và phải RỖNG MÃI.
+{
+  let exp = null
+  try { exp = await restRpc('rest_exposure') } catch { /* chưa apply migration → báo dưới */ }
+  const privs = exp?.table_privs, pols = exp?.policies, dacl = exp?.default_acl
+  const ok = Array.isArray(privs) && Array.isArray(pols) && Array.isArray(dacl)
+    && privs.length === 0 && pols.length === 0 && dacl.length === 0
+  check('Cửa đọc PostgREST đóng với anon/authenticated (0 quyền bảng · 0 policy · 0 default ACL)',
+    ok,
+    !exp ? 'RPC rest_exposure chưa apply (migration 20260902b)'
+      : ok ? 'soi relacl + pg_policies + pg_default_acl của schema public'
+      : `quyền bảng ${privs.length} (vd ${privs.slice(0, 3).join(', ')}) · policy ${pols.length} (vd ${pols.slice(0, 3).join(', ')}) · default ACL ${dacl.length}`)
 }
 
 // 11. ĐỔI TÊN LOẠI KHO PHẢI PHỦ ĐỦ MỌI CỘT (chốt 15/08).

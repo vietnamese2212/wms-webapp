@@ -189,6 +189,28 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       l => /from\('TmsVehicleSlot'\)[\s\S]*\.delete\(/.test(l), s),
   },
+  // Tab Hệ thống (WMSSettings): mỗi ô cấu hình là 1 state `draftX`, nút Lưu sáng theo `const dirty = …`.
+  // Thêm ô mới mà quên đưa `xDirty` vào dòng dirty ⇒ đổi riêng ô đó nút Lưu vẫn MỜ, người dùng
+  // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao). Không lỗi biên dịch, tsc xanh.
+  // Đếm số `draftX` không có `xDirty` trong dòng dirty. Baseline 0.
+  {
+    key: 'settings_draft_not_in_dirty',
+    label: 'WMSSettings: state draftX có ô nhập nhưng xDirty KHÔNG nằm trong `const dirty =` — nút Lưu mờ khi chỉ đổi ô đó',
+    count: (s) => {
+      const f = join(ROOT, 'frontend/src/pages/wms/WMSSettings.tsx')
+      const src = readFileSync(f, 'utf8')
+      const dirtyLine = (src.match(/const dirty\s*=\s*([^\n]+)/) || [])[1] || ''
+      let n = 0
+      for (const m of src.matchAll(/const \[(draft(\w+)),\s*setDraft\w+\]/g)) {
+        const low = m[2][0].toLowerCase() + m[2].slice(1)
+        if (!new RegExp(`\\b${low}Dirty\\b`).test(dirtyLine)) {
+          n++
+          if (s && s.length < 5) s.push(`frontend/src/pages/wms/WMSSettings.tsx — ${m[1]} thiếu ${low}Dirty trong const dirty`)
+        }
+      }
+      return n
+    },
+  },
   {
     key: 'col_defaults_length_mismatch',
     label: 'mảng cột và mảng độ rộng LỆCH số phần tử — cột lệch nhãn + cột cuối bóp về 0 (thêm cột phải thêm số)',

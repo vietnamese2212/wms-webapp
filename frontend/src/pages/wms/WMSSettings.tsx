@@ -331,13 +331,13 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
   const [draftStd, setDraftStd] = useState(String(srvStd))
   const [draftRate, setDraftRate] = useState<string>(srvRate)
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvRate])
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvMon, srvRate])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
-    setDraftStd(String(srvStd)); setDraftDash(String(srvDash)); setDraftRate(srvRate)
+    setDraftStd(String(srvStd)); setDraftDash(String(srvDash)); setDraftMon(String(srvMon)); setDraftRate(srvRate)
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -356,7 +356,10 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
   const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
   const stdDirty   = draftStd !== String(srvStd)
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty
+  const rateDirty  = draftRate !== srvRate
+  // Cờ nào có ô nhập thì PHẢI có mặt ở đây — thiếu là đổi riêng cờ đó nút Lưu vẫn mờ, người dùng
+  // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao bị bỏ quên).
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty
 
   async function applyChanges() {
     setErr('')
@@ -433,7 +436,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (std)        await save({ key: 'standard_work_hours', value: std })
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
-      if (draftRate !== srvRate) await save({ key: 'receipt_rating', value: { mode: draftRate } })
+      if (rateDirty)  await save({ key: 'receipt_rating', value: { mode: draftRate } })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }

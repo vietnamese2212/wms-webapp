@@ -1992,7 +1992,7 @@ export default function OutboundDetail() {
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1">
 
           {/* Row 1: back + code + status + buttons — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
-          <div className="flex items-center gap-x-2 gap-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button onClick={() => navigate('/wms/outbound')}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">

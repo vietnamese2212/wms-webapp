@@ -1,0 +1,10 @@
+{
+  "backend": {
+    "critical": 1,
+    "high": 1
+  },
+  "frontend": {
+    "critical": 0,
+    "high": 1
+  }
+}

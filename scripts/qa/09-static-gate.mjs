@@ -633,6 +633,14 @@ const RULES = [
            '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',
     count: (s) => countUploadsMissingPreflight(s),
   },
+  // Chính sách mật khẩu MỘT nguồn (utils/passwordPolicy BE + mirror FE). Trước 03/09 có 4 bản `length < 6|8` rải
+  // ở controller/form ⇒ "12345678" đặt được. Tự viết `password.length <` / `pwd.length <` ngoài file policy = đỏ.
+  {
+    key: 'password_rule_hand_rolled',
+    label: 'kiểm độ dài/độ mạnh mật khẩu tự viết (`*password*.length <`, `pwd.length <`) — phải gọi passwordError() của utils/passwordPolicy',
+    count: (s) => countMatches(['backend/src', 'frontend/src', 'backend/prisma'], ['.ts', '.tsx'],
+      (l, f) => !f.endsWith(`passwordPolicy.ts`) && /\b\w*(password|passwd|pwd)\w*\.length\s*<\s*\d/i.test(l), s),
+  },
 ]
 
 // Ô nhập của màn quét = `<Input ref={inputRef}` trong file có `useWedgeScanner`. Vi phạm khi khối

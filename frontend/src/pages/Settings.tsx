@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { toast } from '@/components/ui/use-toast'
 import { apiClient } from '@/api/client'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
+import { passwordError, PASSWORD_HINT } from '@/utils/passwordPolicy'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -42,7 +43,8 @@ export default function Settings() {
   async function handleChangePwd() {
     setPwdError('')
     setPwdOk(false)
-    if (newPwd.length < 6)  { setPwdError('Mật khẩu mới phải có ít nhất 6 ký tự'); return }
+    const policyErr = passwordError(newPwd, { email: user?.email, employee_code: user?.employee_code })
+    if (policyErr)          { setPwdError(policyErr); return }
     if (newPwd !== confPwd) { setPwdError('Xác nhận mật khẩu không khớp'); return }
     setPwdSaving(true)
     try {
@@ -145,7 +147,7 @@ export default function Settings() {
               <div className="space-y-1.5">
                 <Label className="text-xs">Mật khẩu mới</Label>
                 <Input type="password" value={newPwd} onChange={e => { setNewPwd(e.target.value); setPwdError(''); setPwdOk(false) }}
-                  placeholder="Tối thiểu 6 ký tự" autoComplete="new-password" />
+                  placeholder={PASSWORD_HINT} autoComplete="new-password" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Xác nhận mật khẩu mới</Label>

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { JWT_SECRET, type JwtPayload } from '../../middlewares/auth'
 import { ALL_PERMISSIONS } from '../../config/permissions'
+import { passwordError } from '../../utils/passwordPolicy'
 
 // 24h thay vì 7d: giảm cửa sổ token-bị-trộm-của-tài-khoản-đã-vô-hiệu-hóa gọi API trực tiếp
 // (từ ≤7 ngày xuống ≤1 ngày). FE refreshUser (5' + on-load) tái cấp token mới → phiên đang
@@ -225,16 +226,16 @@ export async function changePassword(req: Request, res: Response) {
 
     const { old_password, new_password } = req.body as { old_password?: string; new_password?: string }
     if (!old_password || !new_password) return fail(res, 'Thiếu thông tin', 400)
-    if (new_password.length < 8) return fail(res, 'Mật khẩu mới phải có ít nhất 8 ký tự', 400)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')
-      .select('id, password').eq('id', userId).limit(1)
+      .select('id, password, email, employee_code').eq('id', userId).limit(1)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const emp = (emps as any[])?.[0]
+    const emp = (emps as { id: string; password: string | null; email: string | null; employee_code: string }[] | null)?.[0]
     if (!emp)          return fail(res, 'Không tìm thấy tài khoản', 404)
     if (!emp.password) return fail(res, 'Tài khoản chưa có mật khẩu. Liên hệ quản trị viên.', 400)
+    // Chính sách mật khẩu tập trung (utils/passwordPolicy) — cần email/mã để chặn "mật khẩu chứa tên đăng nhập"
+    const policyErr = passwordError(new_password, { email: emp.email, employee_code: emp.employee_code })
+    if (policyErr) return fail(res, policyErr, 400)
 
     const valid = await bcrypt.compare(old_password, emp.password)
     if (!valid) return fail(res, 'Mật khẩu hiện tại không đúng', 401)

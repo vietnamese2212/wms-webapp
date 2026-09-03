@@ -1,10 +1,11 @@
 import { Request, Response } from 'express'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomInt } from 'crypto'
 import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeSearch } from '../../utils/search'
+import { passwordError } from '../../utils/passwordPolicy'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
@@ -108,18 +109,20 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   return allowed
 }
 
+// Mật khẩu tạm 12 ký tự (≥ PASSWORD_MIN của utils/passwordPolicy), nguồn ngẫu nhiên MẬT MÃ (randomInt) —
+// Math.random đoán được theo seed. Bỏ ký tự dễ nhầm khi đọc/ghi tay (0/O, 1/l/I).
 function generateTempPassword(): string {
   const upper  = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
   const lower  = 'abcdefghjkmnpqrstuvwxyz'
   const digits = '23456789'
   const pool   = upper + lower + digits
   const chars  = [
-    upper[Math.floor(Math.random() * upper.length)],
-    digits[Math.floor(Math.random() * digits.length)],
-    ...Array.from({ length: 6 }, () => pool[Math.floor(Math.random() * pool.length)]),
+    upper[randomInt(upper.length)],
+    digits[randomInt(digits.length)],
+    ...Array.from({ length: 10 }, () => pool[randomInt(pool.length)]),
   ]
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]]
   }
   return chars.join('')
@@ -284,7 +287,15 @@ export async function listEmployeesPaged(req: Request, res: Response) {
   const ids = pd.ids ?? []
   // fetchFull chỉ nạp ĐÚNG nhân sự của trang này (đã chunk 300 bên trong)
   const rows = ids.length ? await fetchFull({ ids, include_deleted: true }) : []
-  const byId = new Map(rows.map(r => [r.id, r]))
+  // Trạng thái KHOÁ đăng nhập (auth_attempts, 03/09) — 1 truy vấn cho cả trang (chunk 300 khoá), chỉ dòng đang khoá.
+  const acctKeys = rows.map(r => r.email).filter((e): e is string => !!e).map(e => `acct:${e.trim().toLowerCase()}`)
+  const nowIso = new Date().toISOString()
+  const locks = acctKeys.length ? await fetchAllByIdChunks(acctKeys, chunk => supabase.from('auth_attempts')
+    .select('key, locked_until').in('key', chunk).gt('locked_until', nowIso).order('key')) as { key: string; locked_until: string }[] : []
+  const lockByKey = new Map(locks.map(l => [l.key, l.locked_until]))
+  const byId = new Map(rows.map(r => [r.id, {
+    ...r, locked_until: r.email ? lockByKey.get(`acct:${r.email.trim().toLowerCase()}`) ?? null : null,
+  }]))
   return ok(res, {
     rows: ids.map(id => byId.get(id)).filter(Boolean),
     total: pd.total ?? 0, active: pd.active ?? 0, paused: pd.paused ?? 0, hidden: pd.hidden ?? 0,
@@ -603,17 +614,54 @@ export async function setPassword(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
-    const { password } = req.body as { password?: string }
-    if (!password || password.length < 8) return fail(res, 'Mật khẩu phải có ít nhất 8 ký tự', 400)
+    const { password } = req.body as { password?: unknown }
+    const { data: target } = await supabase.from('Employee').select('email, employee_code').eq('id', id).maybeSingle()
+    if (!target) return fail(res, 'Không tìm thấy nhân viên', 404)
+    const t = target as { email: string | null; employee_code: string }
+    // Chính sách mật khẩu tập trung (utils/passwordPolicy) — admin đặt cũng phải theo, không có "mật khẩu tạm 123456"
+    const policyErr = passwordError(password, { email: t.email, employee_code: t.employee_code })
+    if (policyErr) return fail(res, policyErr, 400)
 
-    const hash = await bcrypt.hash(password, 10)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hash = await bcrypt.hash(password as string, 10)
     const { error } = await supabase.from('Employee')
       .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return fail(res, error.message)
 
     return ok(res, { message: 'Đặt mật khẩu thành công' })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Mở khoá đăng nhập (03/09) ────────────────────────────────────────────────
+// Khoá 10 lần sai/15' nằm ở bảng auth_attempts (migration 20260903). Trước đây mở khoá = xoá dòng bằng tay
+// trong DB — không admin đơn vị nào làm được. Gỡ CẢ khoá `ip:` của những địa chỉ tài khoản này vừa đăng nhập
+// sai trong 15' (30 sai/15' theo IP): mở khoá tài khoản mà máy của người đó vẫn bị chặn thì như chưa mở.
+const AUTH_KEY_PREFIX = { acct: 'acct:', ip: 'ip:' }
+
+export async function unlockAccount(req: Request, res: Response) {
+  try {
+    if (await blockIfTargetSuperadmin(req, res)) return
+    if (await blockIfOutOfScope(req, res, req.params.id)) return
+    const { data: emp } = await supabase.from('Employee').select('id, email').eq('id', req.params.id).maybeSingle()
+    if (!emp) return fail(res, 'Không tìm thấy nhân viên', 404)
+    const email = String((emp as { email: string | null }).email ?? '').trim().toLowerCase()
+    if (!email) return fail(res, 'Nhân viên chưa có tên đăng nhập', 400)
+
+    const since = new Date(Date.now() - 15 * 60_000).toISOString()
+    const { data: evs } = await supabase.from('auth_login_events').select('ip')
+      .eq('email', email).eq('ok', false).gte('created_at', since).limit(50)
+    const ips = [...new Set(((evs ?? []) as { ip: string | null }[]).map(e => e.ip).filter((x): x is string => !!x))]
+    const keys = [`${AUTH_KEY_PREFIX.acct}${email}`, ...ips.map(ip => `${AUTH_KEY_PREFIX.ip}${ip}`)]
+    // ≤51 khoá (1 acct + ≤50 ip) — xoá theo lô cho khớp luật `.in()` qua chunk (DELETE cũng đi URL)
+    for (const chunk of [keys.slice(0, 300)]) {
+      const { error } = await supabase.from('auth_attempts').delete().in('key', chunk)
+      if (error) return fail(res, error.message)
+    }
+    // Vết: ai mở khoá cho ai (nhật ký đăng nhập là nơi kiểm tra chuỗi khoá/mở)
+    await supabase.from('auth_login_events').insert({
+      email, ip: String(req.ip ?? ''), ok: true, reason: `UNLOCKED_BY:${req.user?.sub ?? ''}`, employee_id: (emp as { id: string }).id,
+    })
+    return ok(res, { message: 'Đã mở khoá đăng nhập', keys_cleared: keys.length })
   } catch (e) { return fail(res, String(e)) }
 }
 

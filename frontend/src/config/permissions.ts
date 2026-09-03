@@ -121,6 +121,7 @@ export const MODULES = {
       create:       'Thêm tài khoản [Nhân viên]',
       edit:         'Sửa thông tin + gán kho truy cập [Nhân viên]',
       set_password: 'Đặt mật khẩu [Nhân viên]',
+      unlock:       'Mở khoá đăng nhập bị khoá do gõ sai mật khẩu nhiều lần [Nhân viên]',
       delete:       'Xóa / khôi phục [Nhân viên]',
       manage_roles: 'Sửa & phân quyền [Phòng ban · Chức danh]',
     },

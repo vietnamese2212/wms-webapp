@@ -100,6 +100,7 @@ router.post('/employees',           requirePerm('user_admin', 'create'), employe
 router.get('/employees/:id',        requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.getEmployee)
 router.patch('/employees/:id',              requirePerm('user_admin', 'edit'), employee.updateEmployee)
 router.patch('/employees/:id/set-password', requirePerm('user_admin', 'set_password'), employee.setPassword)
+router.delete('/employees/:id/lock',        requirePerm('user_admin', 'unlock'),       employee.unlockAccount)
 router.put('/employees/:id/warehouses',     requirePerm('user_admin', 'edit'), employee.setWarehouseAccess)
 router.patch('/employees/:id/manager',      requirePerm('user_admin', 'manage_roles'), employee.setManager)
 router.delete('/employees/:id',             requirePerm('user_admin', 'delete'), employee.deleteEmployee)

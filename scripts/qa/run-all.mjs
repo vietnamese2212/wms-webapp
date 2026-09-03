@@ -10,6 +10,7 @@ const withScale = process.argv.includes('--scale')
 const scaleN = process.argv[process.argv.indexOf('--scale') + 1]
 const steps = [
   ['09-static-gate.mjs'],         // cổng tĩnh ratchet (không cần server) — rẻ nhất, fail nhanh nhất
+  ['44-npm-audit.mjs'],           // lỗ hổng thư viện high/critical không được TĂNG so audit-baseline.json (03/09)
   ['00-invariant.mjs'],
   ['01-smoke.mjs'],
   ['02-race.mjs'],
@@ -48,6 +49,7 @@ const steps = [
   ['40-exposure-live.mjs'],       // ĐO SỐNG bằng anon key + vé realtime + token giả: REST/RPC/GraphQL/OpenAPI/Storage/Auth/Realtime phải KÍN (02/09)
   ['41-idor-scope.mjs'],          // cặp (chuyến, dòng hàng) lệch → 404 ở 8 route; tài khoản kho lẻ sửa kho khác / DO SAP plant khác / undo kho khác → 403 (02/09)
   ['42-auth-throttle.mjs'],       // dò mật khẩu: khoá theo TÀI KHOẢN ở DB sau 10 lần sai (xuyên instance), đúng-mà-đang-khoá vẫn 429, nhật ký đăng nhập đủ (03/09)
+  ['43-password-policy.mjs'],     // chính sách mật khẩu MỘT nguồn (admin đặt + tự đổi) + mở khoá đăng nhập qua API có vết + list trả locked_until (03/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

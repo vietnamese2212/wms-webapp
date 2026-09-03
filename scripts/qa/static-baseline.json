@@ -45,5 +45,6 @@
   "filterbar_without_sheetbutton": 0,
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
-  "detail_blank_on_404": 0
+  "detail_blank_on_404": 0,
+  "password_rule_hand_rolled": 0
 }

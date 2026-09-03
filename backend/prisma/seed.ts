@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcrypt'
+import { passwordError } from '../src/utils/passwordPolicy'
 
 const prisma = new PrismaClient()
 
@@ -204,7 +205,11 @@ async function main() {
   })
 
   // ─── EMPLOYEE ──────────────────────────────────────────────
-  const pw = await bcrypt.hash('123456', 10)
+  // Mật khẩu seed đọc từ ENV, KHÔNG hardcode/in ra (repo công khai — giá trị cũ "123456" từng nằm ở đây, 03/09).
+  const seedPw = process.env.SEED_PASSWORD
+  const seedPwErr = passwordError(seedPw)
+  if (!seedPw || seedPwErr) throw new Error(`Thiếu/yếu SEED_PASSWORD (đặt biến môi trường trước khi seed): ${seedPwErr ?? 'chưa khai'}`)
+  const pw = await bcrypt.hash(seedPw, 10)
 
   const emp_admin = await prisma.employee.create({
     data: { employee_code: 'EMP001', name: 'Nguyễn Văn Admin', role: 'ADMIN',
@@ -394,7 +399,7 @@ async function main() {
   console.log('   Locations       : 20')
   console.log('   Manufacturers   : 3  (A, B, 01)')
   console.log('   Materials       : 5')
-  console.log('   Employees       : 6  (password: 123456)')
+  console.log('   Employees       : 6  (mật khẩu = SEED_PASSWORD)')
   console.log('   Drivers         : 3')
   console.log('   Vehicles        : 3')
   console.log('   InventoryEntries: 6  (incl. stack_layer=2 demo)')

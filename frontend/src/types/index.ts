@@ -77,6 +77,7 @@ export interface EmployeeRecord {
   created_by?:        string | null
   updated_by?:        string | null
   deleted_at?:        string | null
+  locked_until?:      string | null   // đang bị khoá đăng nhập (gõ sai nhiều lần) tới thời điểm này — chỉ có ở list phân trang
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
   job_title?:         Pick<JobTitle, 'id' | 'name'> | null
   warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]

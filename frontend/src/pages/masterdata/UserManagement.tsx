@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify, Unlock } from 'lucide-react'
+import { passwordError, PASSWORD_HINT } from '@/utils/passwordPolicy'
+import { toast } from '@/components/ui/use-toast'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import { formatDateTime, normalizePhone } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -25,7 +27,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import {
   useDepartments, useJobTitles, useEmployeesPaged,
-  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
+  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useUnlockAccount, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
   useTransportCompanies, useTmsVehicles,
@@ -55,7 +57,8 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (password.length < 6) { setError('Mật khẩu phải có ít nhất 6 ký tự'); return }
+    const policyErr = passwordError(password, { email: emp.email, employee_code: emp.employee_code })
+    if (policyErr) { setError(policyErr); return }
     if (password !== confirm) { setError('Xác nhận mật khẩu không khớp'); return }
     setSaving(true)
     try {
@@ -93,7 +96,7 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
             <div className="space-y-1">
               <Label className="text-xs">Mật khẩu mới</Label>
               <Input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder="Tối thiểu 6 ký tự" autoComplete="new-password" />
+                placeholder={PASSWORD_HINT} autoComplete="new-password" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Xác nhận mật khẩu</Label>
@@ -900,7 +903,15 @@ export default function UserManagement() {
   const canCreateEmp = can(perms, 'user_admin', 'create')
   const canEditEmp   = can(perms, 'user_admin', 'edit')
   const canSetPwd    = can(perms, 'user_admin', 'set_password')
+  const canUnlock    = can(perms, 'user_admin', 'unlock')
   const canDeleteEmp = can(perms, 'user_admin', 'delete')
+  const { mutate: unlockAccount, isPending: unlocking } = useUnlockAccount()
+  // Khoá đăng nhập (gõ sai 10 lần/15') — chỉ tính khi locked_until còn ở tương lai
+  const isLocked = (emp: EmployeeRecord) => !!emp.locked_until && new Date(emp.locked_until).getTime() > Date.now()
+  const doUnlock = (emp: EmployeeRecord) => unlockAccount(emp.id, {
+    onSuccess: () => toast({ title: 'Đã mở khoá đăng nhập', description: `${emp.name} có thể đăng nhập lại ngay.`, variant: 'success' }),
+    onError: (err) => toast({ title: 'Không mở khoá được', description: (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err), variant: 'destructive' }),
+  })
   // Cấu trúc phòng ban/chức danh & phân quyền: chỉ Admin. Danh mục Vị trí/Skill: Admin hoặc người có
   // work_skill.manage cho chức danh CẤP DƯỚI mình (theo sơ đồ chức danh).
   const isAdminUser    = isAdmin(user)
@@ -1141,6 +1152,10 @@ export default function UserManagement() {
                           <TableCell className="px-2">
                             {isDeleted ? (
                               <Badge variant="secondary" className="text-[9px] text-amber-700 bg-amber-50">Đã ẩn</Badge>
+                            ) : isLocked(emp) ? (
+                              <StatusBadge tone="red" title={`Khoá đăng nhập do gõ sai mật khẩu nhiều lần — tự mở lúc ${formatDateTime(emp.locked_until as string)}`}>
+                                Khoá tới {formatDateTime(emp.locked_until as string).slice(-5)}
+                              </StatusBadge>
                             ) : (
                               <StatusBadge tone={emp.is_active ? 'green' : 'slate'}>
                                 {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
@@ -1159,6 +1174,14 @@ export default function UserManagement() {
                               )
                             ) : (
                               <div className="flex items-center gap-1">
+                                {canUnlock && isLocked(emp) && (
+                                  <button title="Mở khoá đăng nhập"
+                                    disabled={unlocking}
+                                    className="text-red-500 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
+                                    onClick={e => { e.stopPropagation(); doUnlock(emp) }}>
+                                    <Unlock className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                                 {canSetPwd && (
                                   <button title="Đặt mật khẩu"
                                     className="text-slate-400 hover:text-amber-500 transition-colors p-1"
@@ -1203,7 +1226,7 @@ export default function UserManagement() {
                 {/* Thao tác nhanh — khỏi phải kéo ngang bảng để thấy cột action */}
                 {(selectedEmp.deleted_at
                   ? canDeleteEmp
-                  : (canSetPwd || canEditEmp || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
+                  : (canSetPwd || canEditEmp || (canUnlock && isLocked(selectedEmp)) || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
                   <div className="border-b pb-2">
                     <ActionCluster className="justify-start" items={selectedEmp.deleted_at
                       ? (canDeleteEmp ? [{
@@ -1217,6 +1240,11 @@ export default function UserManagement() {
                             key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa thông tin nhân viên',
                             primary: true, variant: 'default',
                             onClick: () => { setEditingEmp(selectedEmp); setShowEmpDlg(true) },
+                          } satisfies ActionItem] : []),
+                          ...(canUnlock && isLocked(selectedEmp) ? [{
+                            key: 'unlock', icon: Unlock, label: 'Mở khoá', tip: 'Mở khoá đăng nhập (đang khoá do gõ sai mật khẩu nhiều lần)',
+                            primary: true, busy: unlocking, className: 'border-green-300 text-green-700 hover:bg-green-50',
+                            onClick: () => doUnlock(selectedEmp),
                           } satisfies ActionItem] : []),
                           ...(canSetPwd ? [{
                             key: 'password', icon: KeyRound, label: 'Mật khẩu', tip: 'Đặt mật khẩu đăng nhập mới',
@@ -1237,6 +1265,9 @@ export default function UserManagement() {
                 <div><span className="text-slate-400">Phòng ban:</span> <span className="font-medium">{selectedEmp.dept?.name ?? '—'}</span></div>
                 <div><span className="text-slate-400">Chức danh:</span> <span className="font-medium">{selectedEmp.job_title?.name ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedEmp.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                {isLocked(selectedEmp) && (
+                  <div className="text-red-600">Khoá đăng nhập tới {formatDateTime(selectedEmp.locked_until as string)} (gõ sai mật khẩu nhiều lần)</div>
+                )}
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
                   <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedEmp.created_by ?? '—'}</span></div>

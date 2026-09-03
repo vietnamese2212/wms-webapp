@@ -2731,6 +2731,15 @@ export function useDeleteEmployee() {
   })
 }
 
+// Mở khoá đăng nhập (khoá 10 lần sai/15') — bảng auth_attempts không có realtime nên invalidate tay
+export function useUnlockAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}/lock`).then(r => r.data.data as { message: string }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
+  })
+}
+
 export function useRestoreEmployee() {
   const qc = useQueryClient()
   return useMutation({

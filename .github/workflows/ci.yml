@@ -28,6 +28,8 @@ jobs:
           wait
       - name: Cổng tĩnh ratchet (as any / split(',') / timezone / nhãn quy đổi)
         run: node scripts/qa/09-static-gate.mjs
+      - name: Lỗ hổng thư viện (npm audit ratchet — high/critical không được tăng so audit-baseline.json)
+        run: node scripts/qa/44-npm-audit.mjs
       - name: tsc backend
         run: cd backend && npx tsc --noEmit
       - name: tsc + build frontend

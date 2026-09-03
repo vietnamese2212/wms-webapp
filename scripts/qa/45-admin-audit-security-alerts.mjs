@@ -28,7 +28,7 @@ async function clean() {
   }
   await restWrite('auth_attempts', 'DELETE', 'key=like.ip:*').catch(() => {})
   await restWrite('auth_login_events', 'DELETE', `ip=like.QAAUD-IP-*`).catch(() => {})
-  await restWrite('admin_audit_events', 'DELETE', `target_label=like.*${TAG}*`).catch(() => {})
+  await restWrite('admin_audit_events', 'DELETE', `target_label=ilike.*${TAG}*`).catch(() => {})
   await restWrite('admin_audit_events', 'DELETE', `target_id=eq.qa_${TAG.toLowerCase()}_setting`).catch(() => {})
   await restWrite('alert_events', 'DELETE', `dedup_key=like.ADMINIP*${QA_IP}`).catch(() => {})
 }
@@ -100,16 +100,16 @@ try {
 
   // ── (b) AUTH_LOCKOUT ──────────────────────────────────────────────────────────────────
   for (const em of emails) for (let i = 0; i < 11; i++) await rawLogin(em, 'sai-' + i)
-  const scan1 = await api('/wms/alerts/scan', 'POST', {})
+  const scan1 = await api('/wms/alerts/scan?fresh=1', 'POST', {})
   const lock = ((await api('/wms/alerts?status=open&rule=AUTH_LOCKOUT')).j?.data?.rows ?? []).filter(a => a.rule === 'AUTH_LOCKOUT')
   check('3 tài khoản bị khoá trong 1h → alert AUTH_LOCKOUT mở (WARNING, nêu số tài khoản)', scan1.s === 200 && lock.length === 1 && lock[0].severity === 'WARNING' && /3 tài khoản/.test(lock[0].title), lock[0]?.title ?? `scan=${scan1.s}`)
   // (a-tiếp) mở khoá qua API → ACCOUNT_UNLOCK
   const unlock = await api(`/masterdata/employees/${ids[2]}/lock`, 'DELETE')
-  check('Mở khoá → ACCOUNT_UNLOCK trong nhật ký', unlock.s === 200 && (await audit(`action=ACCOUNT_UNLOCK&search=${emails[2]}`)).length === 1, `http=${unlock.s}`)
+  check('Mở khoá → ACCOUNT_UNLOCK trong nhật ký', unlock.s === 200 && (await audit(`action=ACCOUNT_UNLOCK&search=${TAG.toLowerCase()}03`)).filter(r => r.target_id === ids[2]).length === 1, `http=${unlock.s}`)
   // xoá vết LOCKED → quét lại (chờ 20s throttle FORCE) → tự đóng
   for (const em of emails) await restWrite('auth_login_events', 'DELETE', `email=eq.${em}`)
   await new Promise(r => setTimeout(r, 21_000))
-  await api('/wms/alerts/scan', 'POST', {})
+  await api('/wms/alerts/scan?fresh=1', 'POST', {})
   const lockAfter = ((await api('/wms/alerts?status=open&rule=AUTH_LOCKOUT')).j?.data?.rows ?? []).filter(a => a.rule === 'AUTH_LOCKOUT')
   const lockResolved = await restAll('alert_events', `select=id,resolved_at&rule=eq.AUTH_LOCKOUT&order=updated_at.desc&limit=1`)
   check('Hết vết khoá → AUTH_LOCKOUT tự đóng (resolved_at)', lockAfter.length === 0 && !!lockResolved[0]?.resolved_at, `open=${lockAfter.length}`)
@@ -119,15 +119,15 @@ try {
   // Rule chỉ báo khi email ĐÃ CÓ lịch sử >24h (ngày đầu bật không báo oan) → chèn 1 lượt cũ 3 ngày từ IP khác trước
   await restWrite('auth_login_events', 'POST', '', [
     { email: String(me.email).toLowerCase(), ip: QA_IP_OLD, ok: true, reason: null, employee_id: me.id, created_at: new Date(Date.now() - 3 * 86400_000).toISOString() },
-    { email: String(me.email).toLowerCase(), ip: QA_IP, ok: true, reason: null, employee_id: me.id },
-  ])
+    { email: String(me.email).toLowerCase(), ip: QA_IP, ok: true, reason: null, employee_id: me.id, created_at: new Date().toISOString() },
+  ])   // PostgREST: các object trong 1 lô phải CÙNG bộ khoá
   await new Promise(r => setTimeout(r, 21_000))
-  await api('/wms/alerts/scan', 'POST', {})
+  await api('/wms/alerts/scan?fresh=1', 'POST', {})
   const ipAlert = ((await api('/wms/alerts?status=open&rule=ADMIN_NEW_IP')).j?.data?.rows ?? []).filter(a => a.rule === 'ADMIN_NEW_IP' && a.title.includes(QA_IP))
   check('Superadmin đăng nhập từ IP lạ → alert ADMIN_NEW_IP nêu email + IP', ipAlert.length === 1 && ipAlert[0].title.includes(String(me.email).toLowerCase()), ipAlert[0]?.title ?? 'không có')
   await restWrite('auth_login_events', 'DELETE', `ip=like.QAAUD-IP-*`)
   await new Promise(r => setTimeout(r, 21_000))
-  await api('/wms/alerts/scan', 'POST', {})
+  await api('/wms/alerts/scan?fresh=1', 'POST', {})
   const ipAfter = ((await api('/wms/alerts?status=open&rule=ADMIN_NEW_IP')).j?.data?.rows ?? []).filter(a => a.title.includes(QA_IP))
   check('Xoá vết IP lạ → ADMIN_NEW_IP tự đóng', ipAfter.length === 0)
   // dọn chức danh test (xoá cứng qua REST — không có route xoá)

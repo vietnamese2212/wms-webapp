@@ -20,6 +20,7 @@ async function clean() {
   await restWrite('auth_attempts', 'DELETE', `key=eq.acct:${EMAIL}`).catch(() => {})
   await restWrite('auth_attempts', 'DELETE', 'key=like.ip:*').catch(() => {})
   await restWrite('auth_login_events', 'DELETE', `email=eq.${EMAIL}`).catch(() => {})
+  await restWrite('admin_audit_events', 'DELETE', `target_label=ilike.*${TAG}*`).catch(() => {})   // vết PASSWORD_SET/ACCOUNT_UNLOCK của fixture
 }
 const rawLogin = async (email, pw) => {
   const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) })

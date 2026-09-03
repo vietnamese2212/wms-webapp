@@ -71,9 +71,11 @@ try {
   const jtId = jt.j?.data?.id
   const upd = await api(`/masterdata/job-titles/${jtId}`, 'PUT', { module_permissions: { inventory: ['view', 'adjust'], outbound: ['view'] } })
   const jtRows = await audit(`action=JOBTITLE_UPDATE&search=${TAG}`)
+  // jsonb KHÔNG giữ thứ tự khoá → so sánh sau khi sort khoá
+  const canon = o => JSON.stringify(Object.fromEntries(Object.entries(o ?? {}).sort()))
   check('ĐỔI QUYỀN chức danh → JOBTITLE_UPDATE với before/after module_permissions', upd.s === 200 && jtRows.length === 1
-    && JSON.stringify(jtRows[0].before?.module_permissions) === JSON.stringify({ inventory: ['view'] })
-    && JSON.stringify(jtRows[0].after?.module_permissions) === JSON.stringify({ inventory: ['view', 'adjust'], outbound: ['view'] }), JSON.stringify(jtRows[0]?.after ?? null).slice(0, 160))
+    && canon(jtRows[0].before?.module_permissions) === canon({ inventory: ['view'] })
+    && canon(jtRows[0].after?.module_permissions) === canon({ inventory: ['view', 'adjust'], outbound: ['view'] }), JSON.stringify(jtRows[0]?.after ?? null).slice(0, 160))
 
   // cờ hệ thống: đổi qua PUT rồi trả lại; kiểm dòng SETTING_UPDATE có before/after
   const cur = ((await api('/wms/settings')).j?.data ?? []).find(s => s.key === 'dashboard_cache_seconds')

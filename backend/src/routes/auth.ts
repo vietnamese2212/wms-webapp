@@ -8,10 +8,14 @@ const router = Router()
 // Chống brute-force: CHỈ đếm lần THẤT BẠI (skipSuccessfulRequests) → nhiều nhân sự cùng
 // một IP (kho chung đường mạng) đăng nhập ĐÚNG lúc đầu ca KHÔNG bị chặn; chỉ khóa khi có
 // nhiều lần SAI mật khẩu (đặc trưng dò mật khẩu tự động). App sau proxy Vercel → app.set('trust proxy').
-// 30 lần sai / 15 phút / IP → vượt trả 429.
+// 03/09: lớp CHÍNH chuyển xuống DB (RPC auth_throttle — acct 10 sai/15' + ip 30 sai/15', xuyên instance, admin mở
+// khoá được trong app). MemoryStore này chỉ còn là VAN XẢ CUỐI khi RPC hỏng / bão request: nới 30 → 200 vì
+// (a) nó đếm theo instance, KHÔNG có đường mở khoá (đo thật 03/09: bộ QA 42+43+45 = 55 lần sai cố ý trong 15'
+// từ 1 IP → mọi đăng nhập sau đó 429 suốt 15' dù DB đã được dọn), (b) cả kho đi chung 1 NAT IP, 30 lần gõ sai
+// của hàng trăm người đầu ca là chuyện thường — chặn cả kho mà admin bó tay là tệ hơn không chặn.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: 200,
   skipSuccessfulRequests: true,   // login/đổi MK THÀNH CÔNG (2xx) không tính vào hạn mức
   standardHeaders: true,
   legacyHeaders: false,

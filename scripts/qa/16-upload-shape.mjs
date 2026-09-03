@@ -9,7 +9,7 @@
 // LUẬT RÚT RA (đừng bỏ khi thêm phép kiểm mới): phép kiểm upload phải dựng SHEET như file thật
 // (kể cả `!merges`), và phép kiểm API phải gọi ĐÚNG payload client — không phải payload tối giản.
 import { randomUUID } from 'crypto'
-import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE } from './lib.mjs'
+import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE, cleanupTmsOrdersFor } from './lib.mjs'
 
 const XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default
   ?? await import('../../backend/node_modules/xlsx/xlsx.mjs')
@@ -34,6 +34,9 @@ const DOs = ['QAUP01', 'QAUP02', 'QAUP03', 'QAUP04', 'QAUP05']
 const TIMES = ['18:00:00', '18:30:00']
 
 async function cleanup() {
+  // Lệnh vận chuyển (tự sinh theo Số xe + TRF_*) đi TRƯỚC GDO (FK transfer_gdo_id) + đếm lại khung giờ — helper lib
+  const gsAll = await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${ALL_GC.join(',')})`)
+  await cleanupTmsOrdersFor(ALL_GC, gsAll.map(g => g.id))
   for (const gc of ALL_GC) {
     for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${gc}`)) {
       const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
@@ -42,10 +45,6 @@ async function cleanup() {
         await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`)
       }
       await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
-    }
-    for (const o of await restAll('TmsOrder', `select=id&order_code=eq.${gc}`)) {
-      await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`)
-      await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
     }
     await restWrite('outbound_events', 'DELETE', `group_code=eq.${gc}`).catch(() => {})
     await restWrite('khvc_lines', 'DELETE', `group_code=eq.${gc}`)

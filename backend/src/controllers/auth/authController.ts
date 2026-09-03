@@ -96,6 +96,26 @@ export async function login(req: Request, res: Response) {
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password)
       return fail(res, 'Email và mật khẩu là bắt buộc', 400)
 
+    // Chống dò mật khẩu XUYÊN instance + khoá theo TÀI KHOẢN + nhật ký (migration 20260903): bộ đếm ở DB, 2 khoá
+    // song song acct (10 sai/15') và ip (30 sai/15'), khoá 15'. RPC lỗi (chưa apply) → KHÔNG chặn đăng nhập
+    // (lớp MemoryStore của express-rate-limit vẫn còn), chỉ log — an toàn vận hành đặt trước.
+    const ipAddr = String(req.ip ?? '')
+    const emailKey = `acct:${email.trim().toLowerCase()}`
+    const throttle = async (event: 'check' | 'fail' | 'ok' | 'log', reason: string | null = null, employeeId: string | null = null) => {
+      const keys = event === 'ok' ? [emailKey] : [emailKey, `ip:${ipAddr}`]
+      const { data, error } = await supabase.rpc('auth_throttle', {
+        p_keys: keys, p_limits: [10, 30], p_event: event, p_window_seconds: 900, p_lock_seconds: 900,
+        p_email: email.trim().toLowerCase(), p_ip: ipAddr, p_reason: reason, p_employee_id: employeeId,
+      })
+      if (error) { console.error('[auth_throttle]', error.message); return { blocked: false, retry_after: 0 } }
+      return (data ?? { blocked: false, retry_after: 0 }) as { blocked: boolean; retry_after: number }
+    }
+    const pre = await throttle('check')
+    if (pre.blocked) {
+      await throttle('log', 'LOCKED')
+      return fail(res, 429, 'ACCOUNT_LOCKED', `Quá nhiều lần đăng nhập sai — tài khoản/địa chỉ đang tạm khoá, thử lại sau ${Math.max(1, Math.ceil(pre.retry_after / 60))} phút.`)
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps, error: lookupErr } = await supabase.from('Employee')
       .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id, is_superadmin')
@@ -118,10 +138,12 @@ export async function login(req: Request, res: Response) {
     // mật khẩu → chống enumeration. Mọi thất bại pre-auth trả cùng 1 message + 401.
     const valid = await bcrypt.compare(password, emp?.password || DUMMY_HASH)
     if (!emp || !emp.password || !valid) {
-      return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)
+      await throttle('fail', !emp ? 'NO_ACCOUNT' : !emp.password ? 'NO_PASSWORD' : 'BAD_PASSWORD')
+      return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)   // message y như cũ — không tiết lộ tài khoản có tồn tại
     }
     // Đã chứng minh biết đúng mật khẩu → giờ mới báo trạng thái tài khoản (an toàn tiết lộ)
-    if (!emp.is_active) return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 403)
+    if (!emp.is_active) { await throttle('log', 'INACTIVE', emp.id); return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 403) }
+    await throttle('ok', null, emp.id)
 
     // Run all 3 independent post-auth queries in parallel
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

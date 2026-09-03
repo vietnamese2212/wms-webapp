@@ -7,7 +7,7 @@
 //      · CẤM xóa kế hoạch của chuyến ĐANG XUẤT / ĐÃ HOÀN THÀNH
 // Dữ liệu test tự seed theo tag, tự dọn. usage: node scripts/qa/13-awaiting-sap.mjs
 import { randomUUID } from 'crypto'
-import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE } from './lib.mjs'
+import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE, cleanupTmsOrdersFor } from './lib.mjs'
 
 const t = () => new Date().toISOString()
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -34,6 +34,8 @@ const ALL_GC = [GC(1), GC(2), GC(3), GC(4), GC(5)]
 
 async function cleanup() {
   const gs = await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${ALL_GC.join(',')})`)
+  // Lệnh vận chuyển (tự sinh theo Số xe + lệnh chuyển kho TRF_*) phải đi TRƯỚC GDO (FK transfer_gdo_id) — helper lib
+  await cleanupTmsOrdersFor(ALL_GC, gs.map(g => g.id))
   for (const g of gs) {
     const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
     if (dos.length) {
@@ -43,11 +45,6 @@ async function cleanup() {
       await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`)
     }
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
-  }
-  // Lệnh vận chuyển TỰ SINH theo Số xe (03/08) — dọn kẻo để lại rác giữa các lượt chạy
-  for (const o of await restAll('TmsOrder', `select=id&order_code=in.(${ALL_GC.join(',')})`)) {
-    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
-    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
   }
   await restWrite('outbound_events', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`).catch(() => {})
   await restWrite('reconcile_tasks', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`).catch(() => {})

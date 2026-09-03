@@ -39,6 +39,7 @@ async function cleanup() {
     await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
   }
   await restWrite('outbound_events', 'DELETE', `group_code=like.${TAG}*`).catch(() => {})
+  if (created.gdo) await restWrite('receipt_ratings', 'DELETE', `gdo_id=eq.${created.gdo}`).catch(() => {})   // sao chấm ở [8c] (không FK → tự dọn)
   if (created.item) await restWrite('OutboundItem', 'DELETE', `id=eq.${created.item}`).catch(() => {})
   if (created.do) await restWrite('OutboundDelivery', 'DELETE', `id=eq.${created.do}`).catch(() => {})
   if (created.gdo) await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${created.gdo}`).catch(() => {})
@@ -203,6 +204,16 @@ try {
       r2.s === 409 && Number((await restAll('InventoryEntry',
         `select=cartons_imported&pallet_code=eq.${TAG}001&warehouse_id=eq.${FIX.WH_QTY.id}`))[0]?.cartons_imported) === QTY,
       `http=${r2.s} code=${r2.j?.error?.code}`)
+  }
+
+  // ── [8c] Chấm sao chuyến giao TRƯỚC khi hoàn thành phiếu ───────────────────
+  // Cờ receipt_rating (28/08): `required` chặn bước Hoàn thành bằng 422 RATING_REQUIRED khi chưa chấm — staging đang
+  // để `required` nên gói này đỏ oan từ 02/09 (tính năng đổi cửa ghi mà QA không cập nhật kèm). Admin (scope null)
+  // được chấm — đường sửa khi kho nhận chấm nhầm; cờ `off` → 400 RATING_OFF cũng coi là qua.
+  {
+    const rt = await api(`/tms/orders/${ord.id}/receipt-rating`, 'POST', { stars: 5 })
+    check('[8c] Kho nhận chấm sao chuyến giao trước khi hoàn thành (5★ → 200; cờ off → RATING_OFF)',
+      rt.s === 200 || rt.j?.error?.code === 'RATING_OFF', `http=${rt.s} code=${rt.j?.error?.code ?? ''} ${rt.j?.error?.message ?? ''}`)
   }
 
   // ── [9] Hoàn thành phiếu cuối → lệnh DONE + DELIVERED ──────────────────────

@@ -47,6 +47,7 @@ const steps = [
   ['39-trace-investigate.mjs'],   // Điều tra theo THÙNG (01/09): khớp ĐÚNG khoảng giờ sổ đóng gói + norm chu kỳ + hồ sơ/ảnh + 400 sạch
   ['40-exposure-live.mjs'],       // ĐO SỐNG bằng anon key + vé realtime + token giả: REST/RPC/GraphQL/OpenAPI/Storage/Auth/Realtime phải KÍN (02/09)
   ['41-idor-scope.mjs'],          // cặp (chuyến, dòng hàng) lệch → 404 ở 8 route; tài khoản kho lẻ sửa kho khác / DO SAP plant khác / undo kho khác → 403 (02/09)
+  ['42-auth-throttle.mjs'],       // dò mật khẩu: khoá theo TÀI KHOẢN ở DB sau 10 lần sai (xuyên instance), đúng-mà-đang-khoá vẫn 429, nhật ký đăng nhập đủ (03/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

@@ -252,3 +252,24 @@ export async function cleanupTagged() {
   }
   return total
 }
+
+// Dọn LỆNH VẬN CHUYỂN gắn với các Số xe / chuyến test — ĐÚNG THỨ TỰ FK và ĐÚNG SỐ ĐẾM. Bài học 02/09 (bộ dọn gói
+// 13/16 tự khoá cổng merge vĩnh viễn): (a) xoá GroupDeliveryOrder TRƯỚC TmsOrder → 23503 vì FK transfer_gdo_id;
+// (b) tìm lệnh bằng `order_code=in.(GC)` nên lệnh chuyển kho app tự sinh `TRF_<kho>_<GC>` không bao giờ khớp →
+// không bao giờ xoá được; (c) DELETE TmsVehicleSlot THÔ làm `booked_count` trôi → gói 00 đỏ ở lượt sau.
+// ⇒ Gọi hàm này TRƯỚC khi xoá GroupDeliveryOrder; slot đã đụng được đếm lại qua RPC recount_slot (row-lock).
+export async function cleanupTmsOrdersFor(groupCodes, gdoIds = []) {
+  const ors = groupCodes.map(gc => `order_code.like.*${gc}`)        // khớp cả `GC` lẫn `TRF_<kho>_GC`
+  if (gdoIds.length) ors.push(`transfer_gdo_id.in.(${gdoIds.join(',')})`)
+  if (!ors.length) return 0
+  const orders = await restAll('TmsOrder', `select=id&or=(${ors.join(',')})`)
+  const slots = new Set()
+  for (const o of orders) {
+    for (const vs of await restAll('TmsVehicleSlot', `select=slot_id&order_id=eq.${o.id}`)) if (vs.slot_id) slots.add(vs.slot_id)
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('inbound_plan_lines', 'DELETE', `tms_order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
+  }
+  for (const s of slots) await restRpc('recount_slot', { p_slot_id: s }).catch(() => {})
+  return orders.length
+}

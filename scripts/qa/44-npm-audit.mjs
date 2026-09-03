@@ -26,10 +26,14 @@ function audit(pkg) {
     if (process.env.GITHUB_ACTIONS) console.log(`::warning title=npm audit ${pkg} không đo được::${why.replace(/\n/g, ' ')}`)
     return { skip: `không đọc được kết quả npm audit — ${why}` }
   }
-  const v = j.metadata.vulnerabilities
-  const items = Object.entries(j.vulnerabilities ?? {}).filter(([, x]) => x.severity === 'high' || x.severity === 'critical')
+  // CHỈ đếm gói mang lỗ hổng GỐC (via có object advisory), KHÔNG đếm gói "bị lây" theo chuỗi phụ thuộc (via toàn chuỗi):
+  // npm 10 (runner GitHub, Node 20) lan severity lên cả gói cha (bcrypt ← node-pre-gyp ← tar), npm 11 (máy dev) thì không
+  // → cùng lockfile mà metadata.vulnerabilities khác nhau → CI đỏ 5 lần 03/09 dù không có lỗ hổng mới. Số gốc ổn định giữa các bản npm.
+  const roots = Object.entries(j.vulnerabilities ?? {}).filter(([, x]) => (x.via ?? []).some(v => typeof v === 'object'))
+  const cnt = sev => roots.filter(([, x]) => x.severity === sev).length
+  const items = roots.filter(([, x]) => x.severity === 'high' || x.severity === 'critical')
     .map(([name, x]) => `${x.severity} ${name}${x.isDirect ? ' (trực tiếp)' : ''}${x.fixAvailable === true ? ' — có bản vá không phá vỡ' : ''}`)
-  return { critical: v.critical, high: v.high, moderate: v.moderate, items }
+  return { critical: cnt('critical'), high: cnt('high'), moderate: cnt('moderate'), items }
 }
 
 let fails = 0, changed = false

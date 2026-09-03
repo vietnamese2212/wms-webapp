@@ -1,7 +1,7 @@
 {
   "backend": {
     "critical": 1,
-    "high": 1
+    "high": 0
   },
   "frontend": {
     "critical": 0,

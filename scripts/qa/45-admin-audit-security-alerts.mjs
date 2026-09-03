@@ -101,7 +101,7 @@ try {
   // ── (b) AUTH_LOCKOUT ──────────────────────────────────────────────────────────────────
   for (const em of emails) for (let i = 0; i < 11; i++) await rawLogin(em, 'sai-' + i)
   const scan1 = await api('/wms/alerts/scan', 'POST', {})
-  const lock = ((await api('/wms/alerts?status=open&rule=AUTH_LOCKOUT')).j?.data ?? []).filter(a => a.rule === 'AUTH_LOCKOUT')
+  const lock = ((await api('/wms/alerts?status=open&rule=AUTH_LOCKOUT')).j?.data?.rows ?? []).filter(a => a.rule === 'AUTH_LOCKOUT')
   check('3 tài khoản bị khoá trong 1h → alert AUTH_LOCKOUT mở (WARNING, nêu số tài khoản)', scan1.s === 200 && lock.length === 1 && lock[0].severity === 'WARNING' && /3 tài khoản/.test(lock[0].title), lock[0]?.title ?? `scan=${scan1.s}`)
   // (a-tiếp) mở khoá qua API → ACCOUNT_UNLOCK
   const unlock = await api(`/masterdata/employees/${ids[2]}/lock`, 'DELETE')
@@ -110,7 +110,7 @@ try {
   for (const em of emails) await restWrite('auth_login_events', 'DELETE', `email=eq.${em}`)
   await new Promise(r => setTimeout(r, 21_000))
   await api('/wms/alerts/scan', 'POST', {})
-  const lockAfter = ((await api('/wms/alerts?status=open&rule=AUTH_LOCKOUT')).j?.data ?? []).filter(a => a.rule === 'AUTH_LOCKOUT')
+  const lockAfter = ((await api('/wms/alerts?status=open&rule=AUTH_LOCKOUT')).j?.data?.rows ?? []).filter(a => a.rule === 'AUTH_LOCKOUT')
   const lockResolved = await restAll('alert_events', `select=id,resolved_at&rule=eq.AUTH_LOCKOUT&order=updated_at.desc&limit=1`)
   check('Hết vết khoá → AUTH_LOCKOUT tự đóng (resolved_at)', lockAfter.length === 0 && !!lockResolved[0]?.resolved_at, `open=${lockAfter.length}`)
 
@@ -123,12 +123,12 @@ try {
   ])
   await new Promise(r => setTimeout(r, 21_000))
   await api('/wms/alerts/scan', 'POST', {})
-  const ipAlert = ((await api('/wms/alerts?status=open&rule=ADMIN_NEW_IP')).j?.data ?? []).filter(a => a.rule === 'ADMIN_NEW_IP' && a.title.includes(QA_IP))
+  const ipAlert = ((await api('/wms/alerts?status=open&rule=ADMIN_NEW_IP')).j?.data?.rows ?? []).filter(a => a.rule === 'ADMIN_NEW_IP' && a.title.includes(QA_IP))
   check('Superadmin đăng nhập từ IP lạ → alert ADMIN_NEW_IP nêu email + IP', ipAlert.length === 1 && ipAlert[0].title.includes(String(me.email).toLowerCase()), ipAlert[0]?.title ?? 'không có')
   await restWrite('auth_login_events', 'DELETE', `ip=like.QAAUD-IP-*`)
   await new Promise(r => setTimeout(r, 21_000))
   await api('/wms/alerts/scan', 'POST', {})
-  const ipAfter = ((await api('/wms/alerts?status=open&rule=ADMIN_NEW_IP')).j?.data ?? []).filter(a => a.title.includes(QA_IP))
+  const ipAfter = ((await api('/wms/alerts?status=open&rule=ADMIN_NEW_IP')).j?.data?.rows ?? []).filter(a => a.title.includes(QA_IP))
   check('Xoá vết IP lạ → ADMIN_NEW_IP tự đóng', ipAfter.length === 0)
   // dọn chức danh test (xoá cứng qua REST — không có route xoá)
   if (jtId) await restWrite('JobTitle', 'DELETE', `id=eq.${jtId}`).catch(() => {})

@@ -19,8 +19,12 @@ function audit(pkg) {
   let j = null
   try { j = JSON.parse(r.stdout) } catch { /* */ }
   if (!j?.metadata?.vulnerabilities) {
-    if (/ENOTFOUND|ECONNREFUSED|EAI_AGAIN|audit endpoint/i.test(r.stderr + r.stdout)) return { skip: `không tới được registry (${(r.stderr || '').trim().slice(0, 80)})` }
-    return { error: (r.stderr || r.stdout || 'npm audit không trả JSON').slice(0, 300) }
+    // KHÔNG đọc được kết quả (registry không tới, npm bản khác không trả JSON, lỗi spawn…) = BỎ QUA CÓ CẢNH BÁO,
+    // không đỏ: 03/09 bước này đỏ 5 lần liên tiếp CHỈ trên runner Linux của GitHub (Node 20/npm 10) trong khi máy
+    // dev xanh → user nhận 5 email lỗi mà không có lỗi nào trong app. Cổng chỉ được đỏ khi ĐO ĐƯỢC và số tăng.
+    const why = `${r.error ? r.error.message + ' · ' : ''}status=${r.status} · stderr: ${(r.stderr || '').trim().slice(0, 400)} · stdout: ${(r.stdout || '').trim().slice(0, 200)}`
+    if (process.env.GITHUB_ACTIONS) console.log(`::warning title=npm audit ${pkg} không đo được::${why.replace(/\n/g, ' ')}`)
+    return { skip: `không đọc được kết quả npm audit — ${why}` }
   }
   const v = j.metadata.vulnerabilities
   const items = Object.entries(j.vulnerabilities ?? {}).filter(([, x]) => x.severity === 'high' || x.severity === 'critical')

@@ -439,6 +439,9 @@ export async function undoOp(req: Request, res: Response) {
     if (error) return fail(res, error.message, 500)
     if (!op) return fail(res, 'Không tìm thấy thao tác', 404)
     if (op.undone_at) return fail(res, 'Thao tác này đã được hoàn tác trước đó')
+    // Chống IDOR (kiểm định 02/09): hoàn tác cũng đụng tồn của kho ⇒ kho của thao tác phải thuộc phạm vi người
+    // bấm, y như 3 cửa thuận merge/ungroup/split (trước đây chỉ cửa thuận kiểm, cửa hoàn tác không).
+    if (!guardEntryWh(req, res, (op.warehouse_id as string | null) ?? null)) return
 
     // Hoàn tác = nghịch đảo của thao tác → đòi ĐÚNG quyền của loại op đó (route chỉ chặn
     // anyOf(merge|ungroup|split) — người chỉ có split không được undo op MERGE của người khác).

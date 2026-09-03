@@ -45,6 +45,27 @@ const STR_FIELDS = [
   'note_delivery', 'note_invoice', 'shipping_point', 'license_plate', 'source',
 ] as const
 
+// ─── Scope kho cho DO SAP (kiểm định 02/09: controller này từng KHÔNG có dấu vết scope, mà sửa raw ở đây dội xuống
+// đơn xuất — nguồn dẫn xuất của Xuất kho). Khoá nối = `Warehouse.sap_plant` ↔ `erp_outbound_orders.plant`.
+// NATIONAL/superadmin → null (không giới hạn). ASSIGNED → tập plant của các kho được gán. Dòng plant NULL vẫn qua
+// (quy ước null-inclusive của mọi lát cắt); riêng THÊM TAY thì phải khai plant thuộc phạm vi (không thì tài khoản
+// kho lẻ tạo được dòng "không nhà máy" rồi reconcile kéo vào đơn của kho khác).
+async function allowedPlants(req: Request): Promise<string[] | null> {
+  if (req.user?.is_superadmin === true || req.user?.warehouse_scope === 'NATIONAL') return null
+  const ids = req.user?.warehouse_ids ?? []
+  const out = new Set<string>()
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await supabase.from('Warehouse').select('sap_plant').in('id', ids.slice(i, i + 300)).not('sap_plant', 'is', null)
+    for (const w of (data ?? []) as { sap_plant: string | null }[]) if (w.sap_plant) out.add(String(w.sap_plant).trim().toUpperCase())
+  }
+  return [...out]
+}
+const plantAllowed = (plants: string[] | null, plant: unknown): boolean =>
+  plants === null || plant == null || plant === '' || plants.includes(String(plant).trim().toUpperCase())
+const plantOrFilter = (plants: string[]): string =>
+  plants.length ? `plant.is.null,plant.in.(${plants.map(p => JSON.stringify(p)).join(',')})` : 'plant.is.null'
+const PLANT_FORBIDDEN = 'Nhà máy (plant) ngoài phạm vi kho được phân quyền'
+
 function pickFields(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const f of STR_FIELDS) if (f in body) { const v = body[f]; out[f] = v == null || v === '' ? null : String(v).trim() }
@@ -160,6 +181,8 @@ export async function listDoSap(req: Request, res: Response) {
     if (batch)         query = query.ilike('batch', `%${safeFilterValue(batch)}%`)
     if (searchOr) query = query.or(searchOr)
     if (restrictOds) query = query.in('od_number', restrictOds)
+    const plants = await allowedPlants(req)
+    if (plants) query = query.or(plantOrFilter(plants))   // nhiều .or() = AND với nhau (mỗi or= là 1 điều kiện riêng)
     query = query.order('od_number', { ascending: true }).order('od_item', { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1)
 
@@ -229,11 +252,12 @@ export async function listDoSap(req: Request, res: Response) {
 }
 
 // GET /external/do-sap/facets — giá trị lọc (plant, source, ship_to) — gọn, lấy distinct từ trang đầu lớn
-export async function doSapFacets(_req: Request, res: Response) {
+export async function doSapFacets(req: Request, res: Response) {
   try {
     // Phân trang né cap-1000: .limit(5000) KHÔNG vượt cap PostgREST (~1000) → facet thiếu giá trị khi bảng >1000 dòng
     const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').order('id'))
-    const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].sort()
+    const allowed = await allowedPlants(req)
+    const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].filter(p => plantAllowed(allowed, p)).sort()
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()
     const shiptos = [...new Map((data ?? []).filter(r => r.ship_to_code).map(r => [r.ship_to_code, r.ship_to_name])).entries()]
       .map(([code, name]) => ({ code, name })).sort((a, b) => String(a.code).localeCompare(String(b.code)))
@@ -247,6 +271,10 @@ export async function createDoSap(req: Request, res: Response) {
     const body = req.body as Record<string, unknown>
     const fields = pickFields(body)
     if (!fields.od_number || !fields.od_item) return fail(res, 'Thiếu Delivery (DO) hoặc Item', 400)
+    {
+      const plants = await allowedPlants(req)
+      if (plants && (!fields.plant || !plantAllowed(plants, fields.plant))) return fail(res, PLANT_FORBIDDEN, 403)
+    }
     // Chặn trùng (od_number, od_item) — bảng có unique index
     const { data: dup } = await supabase.from('erp_outbound_orders').select('id')
       .eq('od_number', fields.od_number).eq('od_item', fields.od_item).maybeSingle()
@@ -265,6 +293,14 @@ export async function updateDoSap(req: Request, res: Response) {
   try {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
+    {
+      const plants = await allowedPlants(req)
+      if (plants) {
+        const { data: cur } = await supabase.from('erp_outbound_orders').select('plant').eq('id', req.params.id).maybeSingle()
+        if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
+        if (!plantAllowed(plants, cur.plant) || ('plant' in fields && !plantAllowed(plants, fields.plant))) return fail(res, PLANT_FORBIDDEN, 403)
+      }
+    }
     // BASE UNIT: sửa qty_base cho mã có entry → phải nguyên (lấy material_code từ body nếu đổi, ngược lại từ dòng hiện tại)
     if ('qty_base' in fields) {
       const { data: cur } = await supabase.from('erp_outbound_orders').select('material_code').eq('id', req.params.id).maybeSingle()
@@ -324,8 +360,9 @@ async function classifyDoSapDelete(rows: DelRow[]): Promise<{ deletable: DelRow[
 // DELETE /external/do-sap/:id (?check=1 = chỉ kiểm, không xóa)
 export async function deleteDoSap(req: Request, res: Response) {
   try {
-    const { data: row } = await supabase.from('erp_outbound_orders').select('od_number, od_item').eq('id', req.params.id).maybeSingle()
+    const { data: row } = await supabase.from('erp_outbound_orders').select('od_number, od_item, plant').eq('id', req.params.id).maybeSingle()
     if (!row) return fail(res, 'Không tìm thấy dòng', 404)
+    if (!plantAllowed(await allowedPlants(req), row.plant)) return fail(res, PLANT_FORBIDDEN, 403)
     const dr: DelRow = { id: req.params.id, od_number: String(row.od_number), od_item: String(row.od_item) }
     const { deletable, blocked } = await classifyDoSapDelete([dr])
     if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
@@ -343,10 +380,16 @@ export async function bulkDeleteDoSap(req: Request, res: Response) {
     const ids = (req.body as { ids?: string[] })?.ids ?? []
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
     const rows: DelRow[] = []
+    const plants = await allowedPlants(req)
+    let outside = 0
     for (let i = 0; i < ids.length; i += 300) {
-      const { data } = await supabase.from('erp_outbound_orders').select('id, od_number, od_item').in('id', ids.slice(i, i + 300))
-      for (const r of ((data ?? []) as DelRow[])) rows.push({ id: r.id, od_number: String(r.od_number), od_item: String(r.od_item) })
+      const { data } = await supabase.from('erp_outbound_orders').select('id, od_number, od_item, plant').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as (DelRow & { plant: string | null })[])) {
+        if (!plantAllowed(plants, r.plant)) { outside++; continue }
+        rows.push({ id: r.id, od_number: String(r.od_number), od_item: String(r.od_item) })
+      }
     }
+    if (outside) return fail(res, `${PLANT_FORBIDDEN} — ${outside} dòng đã chọn thuộc nhà máy ngoài phạm vi`, 403)
     const { deletable, blocked } = await classifyDoSapDelete(rows)
     const blockedOut = blocked.map(b => ({ od_number: b.od_number, od_item: b.od_item, reason: b.reason }))
     if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })

@@ -46,6 +46,7 @@ const steps = [
   ['38-upload-fuzz.mjs'],         // MỌI cửa upload × file ác (rỗng/rác/PNG đội lốt/0 dòng/sai cột) → 400 sạch, 0 rác DB (31/08: PNG làm 6/7 cửa nổ 500)
   ['39-trace-investigate.mjs'],   // Điều tra theo THÙNG (01/09): khớp ĐÚNG khoảng giờ sổ đóng gói + norm chu kỳ + hồ sơ/ảnh + 400 sạch
   ['40-exposure-live.mjs'],       // ĐO SỐNG bằng anon key + vé realtime + token giả: REST/RPC/GraphQL/OpenAPI/Storage/Auth/Realtime phải KÍN (02/09)
+  ['41-idor-scope.mjs'],          // cặp (chuyến, dòng hàng) lệch → 404 ở 8 route; tài khoản kho lẻ sửa kho khác / DO SAP plant khác / undo kho khác → 403 (02/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

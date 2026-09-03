@@ -223,8 +223,20 @@ export async function createWarehouse(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// Chống IDOR (kiểm định 02/09): route GHI theo :id kho phải kiểm kho ∈ phạm vi người gọi — không thì tài khoản
+// ASSIGNED có manage_warehouse tắt được rule cổng/cân, is_active, chiến thuật loại kho… của kho KHÁC. Đọc kho
+// vẫn hở chủ đích (Header + nhiều trang cross-module). Không có ngoại lệ "chưa gán kho thì cho qua" (cùng luật
+// guardEntryWh của Dồn/Tách + emptyScopeError của hồ sơ nhân sự).
+function guardWarehouseScope(req: Request, res: Response, warehouseId: string): boolean {
+  if (req.user?.is_superadmin === true || req.user?.warehouse_scope === 'NATIONAL') return true
+  if ((req.user?.warehouse_ids ?? []).includes(warehouseId)) return true
+  fail(res, 403, 'FORBIDDEN', 'Kho ngoài phạm vi được phân quyền')
+  return false
+}
+
 export async function updateWarehouse(req: Request, res: Response) {
   try {
+    if (!guardWarehouseScope(req, res, req.params.id)) return
     const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required, scan_code_types } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sap_plant !== undefined)             patch.sap_plant = normSapPlant(sap_plant)
@@ -340,6 +352,7 @@ export async function listWhTypeFlagOverrides(_req: Request, res: Response) {
 export async function putWarehouseTypeConfigs(req: Request, res: Response) {
   try {
     const whId = req.params.id
+    if (!guardWarehouseScope(req, res, whId)) return
     const items = req.body?.items
     if (!Array.isArray(items)) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu danh sách loại kho (items)')
 
@@ -446,6 +459,7 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
 export async function deleteWarehouse(req: Request, res: Response) {
   try {
     const id = req.params.id
+    if (!guardWarehouseScope(req, res, id)) return
 
     // Kiểm tra có location nào chưa (kể cả đã soft-delete)
     const [locRes, piRes] = await Promise.all([

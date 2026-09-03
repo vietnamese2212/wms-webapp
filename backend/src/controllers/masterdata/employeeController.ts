@@ -6,6 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeSearch } from '../../utils/search'
 import { passwordError } from '../../utils/passwordPolicy'
+import { logAdmin, diffFields, ADMIN_AUDIT_ACTIONS } from '../../services/adminAudit'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
@@ -435,6 +436,8 @@ export async function createEmployee(req: Request, res: Response) {
     }
 
     const rows = await fetchFull({ ids: [empId] })
+    await logAdmin(req, { action: 'EMPLOYEE_CREATE', target_type: 'Employee', target_id: empId, target_label: `${employee_code} · ${name}`,
+      after: { employee_code, name, email: email || null, job_title_id: job_title_id || null, warehouse_scope: warehouse_scope ?? 'ASSIGNED', warehouse_ids, allowed_categories: defaultCategories } })
     return ok(res, { ...rows[0], temp_password: tempPassword }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -549,6 +552,10 @@ export async function updateEmployee(req: Request, res: Response) {
     if (is_driver         !== undefined) updates.is_driver         = is_driver
     if (manager_id        !== undefined) updates.manager_id        = manager_id || null
 
+    // Bản TRƯỚC để ghi sổ quản trị (chỉ các cột có thể đổi ở đây + kho hiện gán)
+    const beforeRows = await fetchFull({ ids: [id], include_deleted: true })
+    const beforeRow = beforeRows[0] as (typeof beforeRows[number] & { warehouse_access?: { warehouse_id: string }[] }) | undefined
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('Employee')
       .update(updates)
@@ -568,6 +575,14 @@ export async function updateEmployee(req: Request, res: Response) {
     }
 
     const rows = await fetchFull({ ids: [id] })
+    if (beforeRow) {
+      const { updated_at: _u, updated_by: _b, ...changed } = updates
+      const d = diffFields(
+        { ...beforeRow, warehouse_ids: (beforeRow.warehouse_access ?? []).map(w => w.warehouse_id).sort() },
+        { ...changed, ...(warehouse_ids !== undefined ? { warehouse_ids: [...warehouse_ids].sort() } : {}) })
+      if (Object.keys(d.after).length)
+        await logAdmin(req, { action: 'EMPLOYEE_UPDATE', target_type: 'Employee', target_id: id, target_label: `${beforeRow.employee_code} · ${beforeRow.name}`, ...d })
+    }
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -603,6 +618,7 @@ export async function setManager(req: Request, res: Response) {
       .eq('id', id)
     if (error) return fail(res, error.message)
     const rows = await fetchFull({ ids: [id] })
+    await logAdmin(req, { action: 'MANAGER_SET', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id, after: { manager_id: mgr } })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -628,7 +644,35 @@ export async function setPassword(req: Request, res: Response) {
       .eq('id', id)
     if (error) return fail(res, error.message)
 
+    // Sổ quản trị: chỉ ghi SỰ KIỆN đặt mật khẩu, không bao giờ ghi giá trị
+    await logAdmin(req, { action: 'PASSWORD_SET', target_type: 'Employee', target_id: id, target_label: `${t.employee_code} · ${t.email ?? ''}` })
     return ok(res, { message: 'Đặt mật khẩu thành công' })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Nhật ký quản trị (03/09) — GET /masterdata/admin-audit?page&page_size&action&search&from&to ──
+// Đọc bảng admin_audit_events (services/adminAudit). Phân trang SERVER (range + count) — sổ lớn dần vô hạn.
+// `search` khớp actor_name / target_label / target_id (ilike, escape). from/to = ngày VN.
+export async function listAdminAudit(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | undefined>
+    const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+    const pageSize = Math.min(200, Math.max(1, parseInt(String(q.page_size ?? '50'), 10) || 50))
+    const action = q.action && (ADMIN_AUDIT_ACTIONS as readonly string[]).includes(q.action) ? q.action : null
+    if (q.action && !action) return fail(res, `Hành động không hợp lệ (hợp lệ: ${ADMIN_AUDIT_ACTIONS.join(', ')})`, 400)
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/
+    if ((q.from && !dateRe.test(q.from)) || (q.to && !dateRe.test(q.to))) return fail(res, 'from/to phải là YYYY-MM-DD', 400)
+
+    let sel = supabase.from('admin_audit_events')
+      .select('id, actor_id, actor_name, ip, action, target_type, target_id, target_label, before, after, created_at', { count: 'exact' })
+    if (action) sel = sel.eq('action', action)
+    if (q.from) sel = sel.gte('created_at', new Date(`${q.from}T00:00:00+07:00`).toISOString())
+    if (q.to)   sel = sel.lt('created_at', new Date(new Date(`${q.to}T00:00:00+07:00`).getTime() + 86400_000).toISOString())
+    if (q.search) { const s = safeSearch(q.search); sel = sel.or(`actor_name.ilike.%${s}%,target_label.ilike.%${s}%,target_id.ilike.%${s}%`) }
+    const from = (pageNum - 1) * pageSize
+    const { data, error, count } = await sel.order('created_at', { ascending: false }).range(from, from + pageSize - 1)
+    if (error) return fail(res, error.message)
+    return ok(res, { rows: data ?? [], total: count ?? 0, page: pageNum, page_size: pageSize, actions: ADMIN_AUDIT_ACTIONS })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -661,6 +705,7 @@ export async function unlockAccount(req: Request, res: Response) {
     await supabase.from('auth_login_events').insert({
       email, ip: String(req.ip ?? ''), ok: true, reason: `UNLOCKED_BY:${req.user?.sub ?? ''}`, employee_id: (emp as { id: string }).id,
     })
+    await logAdmin(req, { action: 'ACCOUNT_UNLOCK', target_type: 'Employee', target_id: (emp as { id: string }).id, target_label: email, after: { keys_cleared: keys.length } })
     return ok(res, { message: 'Đã mở khoá đăng nhập', keys_cleared: keys.length })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -691,6 +736,10 @@ export async function deleteEmployee(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
+    // Nhãn cho sổ quản trị lấy TRƯỚC khi xoá (xoá cứng xong thì không còn tên)
+    const { data: tgt } = await supabase.from('Employee').select('employee_code, name').eq('id', id).maybeSingle()
+    const label = tgt ? `${(tgt as { employee_code: string }).employee_code} · ${(tgt as { name: string }).name}` : id
+    const audit = (mode: 'soft' | 'hard') => logAdmin(req, { action: 'EMPLOYEE_DELETE', target_type: 'Employee', target_id: id, target_label: label, after: { deleted: mode } })
 
     const hasHistory = await employeeHasHistory(id)
     if (hasHistory) {
@@ -699,13 +748,14 @@ export async function deleteEmployee(req: Request, res: Response) {
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
       if (softErr) return fail(res, softErr.message)
+      await audit('soft')
       return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
     }
 
     // Không có lịch sử → hard delete (FK constraint thực như UserWarehouseAccess sẽ cascade)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: hardErr } = await supabase.from('Employee').delete().eq('id', id)
-    if (!hardErr) return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' })
+    if (!hardErr) { await audit('hard'); return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' }) }
 
     // Vẫn còn FK constraint DB-level khác (23503) → soft delete
     if (hardErr.code === '23503') {
@@ -714,6 +764,7 @@ export async function deleteEmployee(req: Request, res: Response) {
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
       if (softErr) return fail(res, softErr.message)
+      await audit('soft')
       return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
     }
 
@@ -734,6 +785,7 @@ export async function restoreEmployee(req: Request, res: Response) {
       .eq('id', id)
     if (error) return fail(res, error.message)
     const rows = await fetchFull({ ids: [id], include_deleted: true })
+    await logAdmin(req, { action: 'EMPLOYEE_RESTORE', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -750,6 +802,9 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     if (await emptyScopeError(res, id, undefined, warehouse_ids)) return
     if (await badWarehouseError(res, warehouse_ids)) return
 
+    const { data: beforeWa } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', id).limit(1000)
+    const beforeIds = ((beforeWa ?? []) as { warehouse_id: string }[]).map(w => w.warehouse_id).sort()
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
     if (warehouse_ids.length > 0) {
@@ -761,6 +816,10 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     }
 
     const rows = await fetchFull({ ids: [id] })
+    const afterIds = [...warehouse_ids].sort()
+    if (JSON.stringify(beforeIds) !== JSON.stringify(afterIds))
+      await logAdmin(req, { action: 'WAREHOUSE_ACCESS', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id,
+        before: { warehouse_ids: beforeIds }, after: { warehouse_ids: afterIds } })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }

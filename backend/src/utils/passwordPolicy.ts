@@ -31,6 +31,7 @@ export function passwordError(pw: unknown, ctx: { email?: string | null; employe
   if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return 'Mật khẩu phải có cả chữ và số'
   if (isRunOrRepeat(pw)) return 'Mật khẩu quá dễ đoán (chuỗi lặp hoặc liên tiếp)'
   const lower = pw.toLowerCase()
+  if (new Set(lower).size <= 3) return 'Mật khẩu quá ít ký tự khác nhau'   // aaaaaaaaa1 (QA 43 bắt 03/09)
   const root = lower.replace(/[^a-z]/g, '')
   if (COMMON_ROOTS.has(lower) || (root.length >= 4 && COMMON_ROOTS.has(root) && root.length >= pw.length - 5))
     return 'Mật khẩu nằm trong danh sách quá phổ biến'

@@ -19,6 +19,8 @@ description: BẮT BUỘC mở khi thêm/sửa route, bảng, RPC, form đăng n
 | **Đăng nhập / phiên** | Bộ đếm ở DB (RPC `auth_throttle`), không ở RAM lambda. Thông báo lỗi KHÔNG tiết lộ tài khoản có tồn tại. Khoá phải có đường MỞ trong app (`DELETE /employees/:id/lock`, quyền `user_admin.unlock`) — siết mà không có van = ngõ cụt | QA 42 · QA 43 mục [3] |
 | **Upload file** | Kiểm chữ ký file thật (PNG đội lốt .xlsx), preflight 2 pha, 400 sạch, 0 rác DB | QA 38 · ratchet `upload_without_preflight` |
 | **Thư viện mới** (`npm i`) | `node scripts/qa/44-npm-audit.mjs` — high/critical không được tăng so `audit-baseline.json`. Vá được thì `npm audit fix` rồi `--update-baseline` | QA 44 (CI job static) |
+| **Thao tác QUẢN TRỊ mới** (đổi quyền, phạm vi, tài khoản, cờ, khoá/API key) | Gọi `logAdmin(req, {action, target_type, target_id, target_label, before, after})` của `services/adminAudit.ts` ngay tại controller, `diffFields()` để chỉ lưu trường đổi; thêm action vào `ADMIN_AUDIT_ACTIONS` + nhãn FE `AUDIT_ACTION_LABEL` (UserManagement). KHÔNG ghi mật khẩu/API key thô | QA 45 (dòng đúng action/actor/before-after, 403 thiếu `user_admin.audit_log`) |
+| **Sự kiện bảo mật mới cần cảnh báo** | Thêm rule vào `alertScanner.ts` (ALERT_RULES + runner), `PREF_KEYS` pushService, nhãn FE (Alerts.tsx, NotificationBell, hooks AlertRule). Ngưỡng bảo mật CỐ Ý không cho cấu hình | QA 45 mục (b): mở → tự đóng |
 | **Lỗi 5xx** | `fail()`/`recordServerError('be', …, url)` có url — digest phải lần ra endpoint | kiểu (overload) · digest hằng ngày |
 | **Header / CORS** | Header tĩnh ở `vercel.json` (HSTS, nosniff, X-Frame-Options, Referrer-Policy, Permissions-Policy). API có helmet. CORS đọc ENV `CORS_ORIGINS`. CSP đầy đủ CHƯA bật (worker OCR/blob/ws) — bật phải qua Report-Only trước | đo bằng curl -I trên Preview |
 
@@ -26,13 +28,14 @@ description: BẮT BUỘC mở khi thêm/sửa route, bảng, RPC, form đăng n
 - PostgREST/GraphQL/Storage/Auth/Realtime với anon key + vé realtime + token giả: **0 bảng đọc được, 0 RPC gọi được, publication rỗng** (QA 40: 29 phép).
 - IDOR cặp id 8 route Xuất kho + undo Dồn/Tách + sửa Kho + DO SAP theo plant: **đóng** (QA 41: 25 phép).
 - Dò mật khẩu: khoá tài khoản 10 sai/15', IP 30 sai/15', nhật ký `auth_login_events` (QA 42: 7 phép).
-- Chính sách mật khẩu ≥10, chữ+số, không phổ biến/lặp/chứa tên đăng nhập; mở khoá trong app có vết (QA 43: 14 phép).
+- Chính sách mật khẩu ≥10, chữ+số, không phổ biến/lặp/chứa tên đăng nhập; mở khoá trong app có vết (QA 43: 13 phép).
+- Nhật ký quản trị `admin_audit_events` 18 điểm ghi + tab Nhật ký; cảnh báo bảo mật `AUTH_LOCKOUT` / `ADMIN_NEW_IP` (QA 45).
 - Thư viện: backend còn `tar` critical qua `@mapbox/node-pre-gyp` của bcrypt 5 (chỉ lúc CÀI, không chạy runtime — vá = lên bcrypt 6, việc riêng); frontend còn vite/esbuild/react-router chỉ vá ở MAJOR (dev-server + SSR, không chạm production bundle). Ghi trong baseline, không được tăng.
 
 ## 3. Còn MỞ — nói thẳng với IT, đừng giấu
 1. **Tài khoản quản trị hạ tầng** (GitHub/Vercel/Supabase) — 2FA + rà thành viên là việc của chủ dự án, không có code nào bù.
 2. **Token 24h không thu hồi được sớm** khi vô hiệu tài khoản (trong app bị đá ≤5' qua `/me`; gọi API thẳng vẫn được tới hết hạn). User chốt 03/09: KHÔNG làm (mỗi cách tốn 1 lượt DB/request, đụng nút thắt pool).
-3. **CSP đầy đủ** chưa bật. **Nhật ký quản trị** (đổi quyền/scope/API key) chưa rà đủ. **Cảnh báo bảo mật** (nhiều tài khoản bị khoá, admin login IP lạ) chưa có rule. **Pentest độc lập** chưa có.
+3. **CSP đầy đủ** chưa bật (bật qua Report-Only trước). **Pentest độc lập** chưa có (rẻ nhất: OWASP ZAP baseline lên Preview). **Hồ sơ bảo mật 1 trang** cho IT chưa viết.
 4. Backup/PITR phụ thuộc gói Supabase (free = backup ngày).
 
 ## 4. Khi user hỏi "còn rủi ro gì / cần làm gì thêm"

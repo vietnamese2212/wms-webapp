@@ -95,6 +95,8 @@ router.put('/job-titles/:id',       requirePerm('user_admin', 'manage_roles'), d
 router.patch('/job-titles/:id/parent', requirePerm('user_admin', 'manage_roles'), department.setJobTitleParent)
 
 // Employee (tài khoản người dùng + phân quyền)
+// Nhật ký quản trị — đặt TRƯỚC /employees/:id để không bị nuốt làm id
+router.get('/admin-audit',          requirePerm('user_admin', 'audit_log'), employee.listAdminAudit)
 router.get('/employees',            requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.listEmployees)
 router.post('/employees',           requirePerm('user_admin', 'create'), employee.createEmployee)
 router.get('/employees/:id',        requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.getEmployee)

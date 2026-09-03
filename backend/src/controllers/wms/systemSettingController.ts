@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
 import { syncVapidSubject } from '../../services/pushService'
+import { logAdmin } from '../../services/adminAudit'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
   parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays, parseReceiptRating,
@@ -212,6 +213,7 @@ export async function updateSetting(req: Request, res: Response) {
   if (!known) return fail(res, 400, 'UNKNOWN_SETTING', `Cờ "${key}" không có trong sổ cờ hệ thống`)
   if (!known.validate(value)) return fail(res, 400, 'INVALID_VALUE', `Giá trị không hợp lệ cho cờ "${key}" — cần ${known.hint}`)
 
+  const { data: before } = await supabase.from('SystemSetting').select('value').eq('key', key).maybeSingle()
   const { data, error } = await supabase.from('SystemSetting').upsert({
     key,
     value,
@@ -228,5 +230,9 @@ export async function updateSetting(req: Request, res: Response) {
     const email = (value as { contact_email?: unknown } | null)?.contact_email
     if (typeof email === 'string') await syncVapidSubject(email)
   }
+  // Sổ quản trị: cờ hệ thống đổi hành vi cả đơn vị (định dạng tem, ngưỡng cảnh báo, chấm sao…)
+  const oldVal = (before as { value?: unknown } | null)?.value ?? null
+  if (JSON.stringify(oldVal) !== JSON.stringify(value))
+    await logAdmin(req, { action: 'SETTING_UPDATE', target_type: 'SystemSetting', target_id: key, target_label: key, before: { value: oldVal }, after: { value } })
   return ok(res, data)
 }

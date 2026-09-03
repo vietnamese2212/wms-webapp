@@ -2731,6 +2731,28 @@ export function useDeleteEmployee() {
   })
 }
 
+// Nhật ký quản trị (03/09) — bảng admin_audit_events không realtime (bảng nội bộ) → poll 60s
+export type AdminAuditRow = {
+  id: string; actor_id: string | null; actor_name: string | null; ip: string | null
+  action: string; target_type: string; target_id: string | null; target_label: string | null
+  before: Record<string, unknown> | null; after: Record<string, unknown> | null; created_at: string
+}
+export type AdminAuditPage = { rows: AdminAuditRow[]; total: number; page: number; page_size: number; actions: string[] }
+export function useAdminAudit(params: { page: number; page_size: number; action?: string; search?: string; from?: string; to?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['admin-audit', params],
+    enabled,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+      const { data } = await apiClient.get('/masterdata/admin-audit', { params: q })
+      return data.data as AdminAuditPage
+    },
+  })
+}
+
 // Mở khoá đăng nhập (khoá 10 lần sai/15') — bảng auth_attempts không có realtime nên invalidate tay
 export function useUnlockAccount() {
   const qc = useQueryClient()
@@ -6225,7 +6247,7 @@ export function useForkliftReport(params: { from: string; to: string; warehouse_
 }
 
 // ─── Trung tâm cảnh báo (Đợt 2 roadmap 06/08) ─────────────────────────────────
-export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS'
+export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS' | 'PACKING_UNRECEIVED' | 'AUTH_LOCKOUT' | 'ADMIN_NEW_IP'
 export interface AlertRow {
   id: string; rule: AlertRule; severity: 'CRITICAL' | 'WARNING'
   warehouse_id: string | null; warehouse_name: string | null; category: string | null

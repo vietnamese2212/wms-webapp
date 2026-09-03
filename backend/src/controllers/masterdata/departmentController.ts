@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { logAdmin, diffFields } from '../../services/adminAudit'
 
 function isSuperadmin(req: Request): boolean {
   // Cờ is_superadmin trong token = cột Employee.is_superadmin (migration 20260813f) — không so tên
@@ -57,6 +58,8 @@ export async function createDepartment(req: Request, res: Response) {
       .select(DEPT_SELECT)
       .single()
     if (error) return fail(res, error.message)
+    const created = data as unknown as { id: string }
+    await logAdmin(req, { action: 'DEPARTMENT_CREATE', target_type: 'Department', target_id: created.id, target_label: `${code.toUpperCase()} · ${name}`, after: { name, code: code.toUpperCase(), allowed_modules, is_carrier: is_carrier === true } })
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -68,6 +71,7 @@ export async function updateDepartment(req: Request, res: Response) {
     const { name, code, allowed_modules, is_active, requires_scheduling, is_carrier } = req.body as {
       name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean; requires_scheduling?: boolean; is_carrier?: boolean
     }
+    const { data: before } = await supabase.from('Department').select(DEPT_SELECT).eq('id', id).maybeSingle()
     const { data, error } = await supabase
       .from('Department')
       .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, is_carrier, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
@@ -76,6 +80,11 @@ export async function updateDepartment(req: Request, res: Response) {
       .maybeSingle()
     if (error) return fail(res, error.message)
     if (!data) return fail(res, 'Không tìm thấy phòng ban', 404)
+    const d = diffFields(before as Record<string, unknown> | null, { name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, is_carrier })
+    if (Object.keys(d.after).length) {
+      const row = data as unknown as { code: string; name: string }
+      await logAdmin(req, { action: 'DEPARTMENT_UPDATE', target_type: 'Department', target_id: id, target_label: `${row.code} · ${row.name}`, ...d })
+    }
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -123,6 +132,9 @@ export async function createJobTitle(req: Request, res: Response) {
       .select(JT_SELECT)
       .single()
     if (error) return fail(res, error.message)
+    const created = data as unknown as { id: string }
+    await logAdmin(req, { action: 'JOBTITLE_CREATE', target_type: 'JobTitle', target_id: created.id, target_label: name,
+      after: { name, department_id, parent_id: parent_id || null, module_permissions: module_permissions ?? {} } })
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -148,11 +160,15 @@ export async function setJobTitleParent(req: Request, res: Response) {
     }
     const upd: Record<string, unknown> = { parent_id: parent, updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (in_chart !== undefined) upd.in_chart = in_chart
+    const { data: before } = await supabase.from('JobTitle').select('name, parent_id, in_chart').eq('id', id).maybeSingle()
     const { data, error } = await supabase.from('JobTitle')
       .update(upd)
       .eq('id', id).select(JT_SELECT).maybeSingle()
     if (error) return fail(res, error.message)
     if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
+    const d = diffFields(before as Record<string, unknown> | null, { parent_id: parent, in_chart })
+    if (Object.keys(d.after).length)
+      await logAdmin(req, { action: 'JOBTITLE_PARENT', target_type: 'JobTitle', target_id: id, target_label: (before as { name?: string } | null)?.name ?? id, ...d })
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -167,6 +183,7 @@ export async function updateJobTitle(req: Request, res: Response) {
     }
     const escErr = escalationError(req, module_permissions)
     if (escErr) return fail(res, escErr, 403)
+    const { data: before } = await supabase.from('JobTitle').select('name, is_active, module_permissions, is_driver').eq('id', id).maybeSingle()
     const { data, error } = await supabase
       .from('JobTitle')
       .update({ name, is_active, module_permissions, is_driver, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
@@ -175,6 +192,10 @@ export async function updateJobTitle(req: Request, res: Response) {
       .maybeSingle()
     if (error) return fail(res, error.message)
     if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
+    // Sổ quản trị: ĐỔI QUYỀN chức danh là thao tác IT hỏi đầu tiên ("ai cấp quyền này, khi nào?")
+    const d = diffFields(before as Record<string, unknown> | null, { name, is_active, module_permissions, is_driver })
+    if (Object.keys(d.after).length)
+      await logAdmin(req, { action: 'JOBTITLE_UPDATE', target_type: 'JobTitle', target_id: id, target_label: (before as { name?: string } | null)?.name ?? name ?? id, ...d })
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

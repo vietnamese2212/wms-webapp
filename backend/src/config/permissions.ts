@@ -10,7 +10,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   stocktake:    ['view', 'scan', 'complete', 'export'],
   locations:    ['view', 'create', 'edit', 'delete', 'import', 'export', 'print_label'],
   employees:    ['view'],
-  user_admin:   ['view', 'create', 'edit', 'set_password', 'unlock', 'delete', 'manage_roles'],
+  user_admin:   ['view', 'create', 'edit', 'set_password', 'unlock', 'delete', 'manage_roles', 'audit_log'],
   wms_settings: ['view', 'manage_warehouse', 'manage_type', 'manage_unit', 'manage_zone', 'manage_shift', 'manage_qa', 'manage_machine', 'manage_system'],
   tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt', 'export'],
   tms_vehicle_types: ['view', 'create', 'edit', 'delete'],

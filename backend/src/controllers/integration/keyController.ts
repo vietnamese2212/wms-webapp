@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { hashApiKey } from '../../middlewares/apiKey'
 import { encryptSecret, decryptSecret } from '../../utils/secretBox'
+import { logAdmin } from '../../services/adminAudit'
 
 // Quản lý API key — CHỈ superadmin (khóa cấp tài khoản, không phải quyền nghiệp vụ thường).
 const isSuper = (req: Request) => req.user?.is_superadmin === true
@@ -29,6 +30,8 @@ export async function createKey(req: Request, res: Response) {
     scopes: scopeList, is_active: true, created_at: now, updated_at: now, created_by: req.user?.name ?? null,
   })
   if (error) return fail(res, error.message, 500)
+  // Sổ quản trị: tên + scope + tiền tố — KHÔNG ghi key
+  await logAdmin(req, { action: 'APIKEY_CREATE', target_type: 'ApiKey', target_id: id, target_label: name.trim(), after: { scopes: scopeList, key_prefix: raw.slice(0, 12) } })
 
   return ok(res, {
     id, name: name.trim(), scopes: scopeList, key: raw,
@@ -58,15 +61,19 @@ export async function deleteKey(req: Request, res: Response) {
   if (row.is_active) return fail(res, 'Phải thu hồi key trước khi xóa', 400)
   const { error } = await supabase.from('ApiKey').delete().eq('id', req.params.id)
   if (error) return fail(res, error.message, 500)
+  await logAdmin(req, { action: 'APIKEY_DELETE', target_type: 'ApiKey', target_id: req.params.id })
   return ok(res, { id: req.params.id, deleted: true })
 }
 
 // PATCH /wms/integration-keys/:id/revoke — thu hồi (gọi API bằng key này lập tức 401).
 export async function revokeKey(req: Request, res: Response) {
   if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
+  const { data: k } = await supabase.from('ApiKey').select('name, key_prefix').eq('id', req.params.id).maybeSingle()
   const { error } = await supabase.from('ApiKey')
     .update({ is_active: false, updated_at: new Date().toISOString() })
     .eq('id', req.params.id)
   if (error) return fail(res, error.message, 500)
+  const kk = k as { name: string; key_prefix: string } | null
+  await logAdmin(req, { action: 'APIKEY_REVOKE', target_type: 'ApiKey', target_id: req.params.id, target_label: kk?.name ?? null, after: { key_prefix: kk?.key_prefix ?? null, is_active: false } })
   return ok(res, { id: req.params.id, revoked: true })
 }

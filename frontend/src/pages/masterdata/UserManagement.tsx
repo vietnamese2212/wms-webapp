@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify, Unlock } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify, Unlock, History } from 'lucide-react'
 import { passwordError, PASSWORD_HINT } from '@/utils/passwordPolicy'
 import { toast } from '@/components/ui/use-toast'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
@@ -18,7 +18,7 @@ import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Card }     from '@/components/ui/card'
 import { Badge }    from '@/components/ui/badge'
-import { StatusBadge } from '@/components/shared/StatusBadge'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -27,7 +27,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import {
   useDepartments, useJobTitles, useEmployeesPaged,
-  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useUnlockAccount, useWarehouses, useWarehouseTypes,
+  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useUnlockAccount, useAdminAudit, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
   useTransportCompanies, useTmsVehicles,
@@ -42,6 +42,20 @@ import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 
 // Màu badge Loại kho theo cờ per-loại (LookupValue.meta) — whTypeBadgeCls từ utils/cargoCategory
+
+// Nhãn hành động sổ quản trị (khớp ADMIN_AUDIT_ACTIONS ở backend/src/services/adminAudit.ts)
+const AUDIT_ACTION_LABEL: Record<string, string> = {
+  EMPLOYEE_CREATE: 'Tạo tài khoản', EMPLOYEE_UPDATE: 'Sửa hồ sơ', PASSWORD_SET: 'Đặt mật khẩu', ACCOUNT_UNLOCK: 'Mở khoá đăng nhập',
+  EMPLOYEE_DELETE: 'Xoá / ẩn tài khoản', EMPLOYEE_RESTORE: 'Khôi phục tài khoản', WAREHOUSE_ACCESS: 'Đổi phạm vi kho', MANAGER_SET: 'Đổi quản lý',
+  JOBTITLE_CREATE: 'Tạo chức danh', JOBTITLE_UPDATE: 'Sửa chức danh / QUYỀN', JOBTITLE_PARENT: 'Đổi cấp trên chức danh',
+  DEPARTMENT_CREATE: 'Tạo phòng ban', DEPARTMENT_UPDATE: 'Sửa phòng ban', SETTING_UPDATE: 'Đổi cờ hệ thống', VISION_CONFIG: 'Cấu hình AI Vision',
+  APIKEY_CREATE: 'Tạo API key', APIKEY_REVOKE: 'Thu hồi API key', APIKEY_DELETE: 'Xoá API key',
+}
+const AUDIT_ACTION_TONE = (a: string): BadgeTone =>
+  /PASSWORD|UNLOCK|APIKEY|JOBTITLE_UPDATE|WAREHOUSE_ACCESS/.test(a) ? 'red' : /CREATE|RESTORE/.test(a) ? 'green' : /DELETE/.test(a) ? 'slate' : 'sky'
+// Hiện jsonb gọn: {a: 1, b: [..]} → "a: 1 · b: [..]" (cắt 400 ký tự, tooltip có bản đầy đủ)
+const compactJson = (o: Record<string, unknown> | null | undefined): string =>
+  o && Object.keys(o).length ? Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ') : ''
 
 // ─── Set password dialog ──────────────────────────────────────────────────────
 
@@ -1016,6 +1030,21 @@ export default function UserManagement() {
       options: departments.map(d => ({ value: d.id, label: d.name })) },
   ]
 
+  // ── Tab Nhật ký quản trị (03/09) — ai đổi quyền / kho / mật khẩu / API key / cờ hệ thống ──
+  const canAudit = can(perms, 'user_admin', 'audit_log')
+  const AUDIT_PAGE_SIZE = ua.auditPageSize || 50
+  const { data: auditPage, isLoading: auditLoading, isError: auditError } = useAdminAudit(
+    { page: ua.auditPage, page_size: AUDIT_PAGE_SIZE, action: ua.auditAction, search: ua.auditSearch, from: ua.auditFrom, to: ua.auditTo }, canAudit)
+  const auditFilterDefs: FilterDef[] = [
+    { key: 'auditAction', label: 'Hành động', type: 'single', allLabel: 'Mọi hành động',
+      value: ua.auditAction, onChange: v => setUserAdmin({ auditAction: v, auditPage: 1 }),
+      options: (auditPage?.actions ?? Object.keys(AUDIT_ACTION_LABEL)).map(a => ({ value: a, label: AUDIT_ACTION_LABEL[a] ?? a })) },
+    { key: 'auditRange', label: 'Khoảng ngày', type: 'daterange', from: ua.auditFrom, to: ua.auditTo,
+      onChange: (from, to) => setUserAdmin({ auditFrom: from, auditTo: to, auditPage: 1 }) },
+  ]
+  const auditTotal = auditPage?.total ?? 0
+  const auditPages = Math.max(1, Math.ceil(auditTotal / AUDIT_PAGE_SIZE))
+
   return (
     // Full-width như các module chuẩn (bỏ max-w-7xl mx-auto — user 19/08 "fit màn hình")
     <div className="flex flex-col h-full p-2 sm:p-3 gap-1.5 w-full">
@@ -1036,6 +1065,11 @@ export default function UserManagement() {
             <TabsTrigger value="job-titles" className="gap-1.5">
               <Briefcase className="h-3.5 w-3.5" /> Chức danh
             </TabsTrigger>
+            {canAudit && (
+              <TabsTrigger value="audit" className="gap-1.5">
+                <History className="h-3.5 w-3.5" /> Nhật ký
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -1445,6 +1479,66 @@ export default function UserManagement() {
             )}
           </div>
         </TabsContent>
+
+        {/* ── Tab: Nhật ký quản trị (03/09) — ai đổi quyền / kho / mật khẩu / API key / cờ hệ thống ── */}
+        {canAudit && (
+          <TabsContent value="audit" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
+            <div className="shrink-0 flex gap-2 flex-wrap items-center">
+              <SearchInput value={ua.auditSearch} onChange={v => setUserAdmin({ auditSearch: v, auditPage: 1 })}
+                placeholder="Tìm người thao tác, đối tượng…" className="flex-1 min-w-[200px]" />
+              <FilterSheetButton defs={auditFilterDefs} className="sm:hidden" />
+              <FilterBar defs={auditFilterDefs} className="hidden sm:flex" />
+            </div>
+            <Card className="flex-1 min-h-0 flex flex-col">
+              {auditError ? (
+                <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">Không tải được nhật ký quản trị.</p>
+              ) : auditLoading && !auditPage ? (
+                <p className="p-6 text-center text-xs text-slate-400">Đang tải…</p>
+              ) : !auditPage?.rows.length ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <History className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có thao tác quản trị nào khớp bộ lọc</p>
+                </div>
+              ) : (
+                <div className="overflow-auto flex-1 min-h-0">
+                  <Table className="[&_td]:text-[10px] [&_th]:whitespace-nowrap">
+                    <TableHeader className="sticky top-0 bg-white z-10">
+                      <TableRow>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Lúc</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người thao tác</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Hành động</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Đối tượng</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trước</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Sau</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 hidden lg:table-cell">IP</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {auditPage.rows.map(r => (
+                        <TableRow key={r.id}>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap text-slate-600">{formatDateTime(r.created_at)}</TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap font-medium text-slate-800">{r.actor_name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                            <StatusBadge tone={AUDIT_ACTION_TONE(r.action)} title={r.action}>{AUDIT_ACTION_LABEL[r.action] ?? r.action}</StatusBadge>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 max-w-[220px] truncate" title={`${r.target_type} ${r.target_id ?? ''}`}>
+                            <span className="text-slate-400 mr-1">{r.target_type}</span>{r.target_label ?? r.target_id ?? '—'}
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 max-w-[260px] truncate text-slate-500" title={JSON.stringify(r.before ?? {}, null, 1)}>{compactJson(r.before) || '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 max-w-[260px] truncate text-slate-800" title={JSON.stringify(r.after ?? {}, null, 1)}>{compactJson(r.after) || '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap font-mono text-slate-400 hidden lg:table-cell">{r.ip ?? '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <PagerNav page={ua.auditPage} totalPages={auditPages} onPage={p => setUserAdmin({ auditPage: p })} />
+                </div>
+              )}
+              <ListFooter page={ua.auditPage} pageSize={AUDIT_PAGE_SIZE} total={auditTotal} unit="thao tác"
+                onPageSize={n => setUserAdmin({ auditPageSize: n, auditPage: 1 })} />
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
 
       {showEmpDlg && (

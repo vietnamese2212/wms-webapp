@@ -28,6 +28,8 @@ const PREF_LABEL: { key: string; label: string; desc: string }[] = [
   { key: 'WEIGH_DIFF', label: 'Lệch cân',            desc: 'Phiếu cân lệch KL tính vượt ngưỡng' },
   { key: 'BE_ERRORS',  label: 'Lỗi hệ thống',        desc: 'Backend có lỗi 5xx trong 24h' },
   { key: 'PACKING_UNRECEIVED', label: 'Sổ đóng gói — kho chưa nhận', desc: 'Pallet SX ghi sổ quá ngưỡng giờ mà kho chưa quét nhập' },
+  { key: 'AUTH_LOCKOUT', label: 'Bảo mật — nhiều tài khoản bị khoá', desc: 'Từ 3 tài khoản khác nhau bị khoá đăng nhập trong 1 giờ (dấu hiệu dò mật khẩu)' },
+  { key: 'ADMIN_NEW_IP', label: 'Bảo mật — admin đăng nhập IP mới', desc: 'Tài khoản quản trị đăng nhập từ địa chỉ IP chưa thấy trong 30 ngày' },
 ]
 const SEV_DOT: Record<string, string> = { CRITICAL: 'bg-red-500', WARNING: 'bg-amber-500' }
 

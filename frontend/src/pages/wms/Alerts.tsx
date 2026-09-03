@@ -28,8 +28,12 @@ const RULE_LABEL: Record<string, string> = {
   WEIGH_DIFF: 'Lệch cân',
   BE_ERRORS:  'Lỗi hệ thống',
   PACKING_UNRECEIVED: 'Sổ đóng gói — kho chưa nhận',
+  AUTH_LOCKOUT: 'Bảo mật — nhiều tài khoản bị khoá',
+  ADMIN_NEW_IP: 'Bảo mật — admin đăng nhập IP mới',
 }
 const RULE_BADGE: Record<string, string> = {
+  AUTH_LOCKOUT: 'bg-red-100 text-red-800',
+  ADMIN_NEW_IP: 'bg-red-100 text-red-800',
   EXPIRY:     'bg-amber-100 text-amber-800',
   GATE_DWELL: 'bg-sky-100 text-sky-700',
   TRIP_LATE:  'bg-violet-100 text-violet-700',

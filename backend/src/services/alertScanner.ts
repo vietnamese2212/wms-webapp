@@ -32,6 +32,10 @@ export const THRESHOLDS = {
   // Xe ĐÃ RA khỏi cổng: false = cảnh báo GATE_DWELL tự ẩn (hành vi gốc) · true = GIỮ LẠI cho người
   // vận hành xem rồi tự bấm "Đã biết" (user chốt 19/08 — có kho muốn truy cứu vì sao xe nằm lâu).
   GATE_KEEP_AFTER_EXIT: false,
+  // Bảo mật (03/09) — CỐ Ý không cho cấu hình: hạ ngưỡng nhầm là cảnh báo dò mật khẩu im lặng biến mất.
+  AUTH_LOCK_WARN: 3,     // ≥3 tài khoản KHÁC NHAU bị khoá trong 1 giờ → WARNING (dò mật khẩu rải)
+  AUTH_LOCK_CRIT: 10,    // ≥10 → CRITICAL
+  ADMIN_IP_MEMORY_DAYS: 30, // superadmin đăng nhập từ IP chưa thấy trong 30 ngày → WARNING
 }
 export type AlertThresholds = typeof THRESHOLDS
 
@@ -75,7 +79,7 @@ export function invalidateAlertThresholdsCache(): void { _thCache = null }
 
 // Sổ rule DUY NHẤT — alertController lấy danh sách filter từ đây (bug 13/08: RULES chép tay thiếu
 // PACKING_UNRECEIVED → filter rule mới bị lọc rớt âm thầm). Thêm rule mới = thêm vào mảng này.
-export const ALERT_RULES = ['EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED'] as const
+export const ALERT_RULES = ['EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED', 'AUTH_LOCKOUT', 'ADMIN_NEW_IP'] as const
 export type AlertRule = typeof ALERT_RULES[number]
 export interface AlertCandidate {
   rule: AlertRule
@@ -288,6 +292,63 @@ async function rulePackingUnreceived(TH: AlertThresholds): Promise<AlertCandidat
   }))
 }
 
+// ── R7: Nhiều tài khoản bị KHOÁ đăng nhập trong 1 giờ (dò mật khẩu rải nhiều tài khoản, 03/09) ──
+// Nguồn = auth_login_events reason='LOCKED' (migration 20260903). 1 tài khoản gõ sai là chuyện thường;
+// NHIỀU tài khoản khác nhau cùng bị khoá trong 1 giờ mới là dấu hiệu tấn công. Tự đóng khi hết cửa sổ 1h.
+async function ruleAuthLockout(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const since = new Date(Date.now() - 3600_000).toISOString()
+  const { data, error } = await supabase.from('auth_login_events')
+    .select('email, ip').eq('reason', 'LOCKED').gte('created_at', since).limit(1000)
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as { email: string | null; ip: string | null }[]
+  const accounts = new Set(rows.map(r => (r.email ?? '').toLowerCase()).filter(Boolean))
+  const ips = new Set(rows.map(r => r.ip).filter(Boolean))
+  if (accounts.size < TH.AUTH_LOCK_WARN) return []
+  return [{
+    rule: 'AUTH_LOCKOUT', dedup_key: `AUTHLOCK|${vnToday()}`,
+    severity: accounts.size >= TH.AUTH_LOCK_CRIT ? 'CRITICAL' : 'WARNING',
+    warehouse_id: null, category: null,
+    title: `${accounts.size} tài khoản bị khoá đăng nhập trong 1 giờ (${ips.size} địa chỉ IP)`,
+    detail: `Dấu hiệu dò mật khẩu: ${[...accounts].slice(0, 5).join(', ')}${accounts.size > 5 ? '…' : ''}. Kiểm tra Quản lý người dùng (badge Khoá), nhật ký auth_login_events; cân nhắc đổi mật khẩu các tài khoản này.`,
+    object_url: '/masterdata/users',
+  }]
+}
+
+// ── R8: Superadmin đăng nhập từ IP CHƯA TỪNG THẤY (03/09) ─────────────────────
+// Tài khoản toàn quyền đăng nhập thành công từ địa chỉ mới trong 24h qua mà 30 ngày trước đó chưa thấy
+// email đó đăng nhập từ IP đó. Cảnh báo per (email, ip), tự đóng sau 24h (đợt mới nếu IP lạ khác).
+async function ruleAdminNewIp(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const { data: admins, error: e0 } = await supabase.from('Employee').select('id, email').eq('is_superadmin', true).limit(100)
+  if (e0) throw new Error(e0.message)
+  const adminEmails = new Set(((admins ?? []) as { email: string | null }[]).map(a => (a.email ?? '').toLowerCase()).filter(Boolean))
+  if (!adminEmails.size) return []
+  const memory = new Date(Date.now() - TH.ADMIN_IP_MEMORY_DAYS * 86400_000).toISOString()
+  const recentCut = Date.now() - 24 * 3600_000
+  const { data, error } = await supabase.from('auth_login_events')
+    .select('email, ip, created_at').eq('ok', true).is('reason', null)
+    .in('email', [...adminEmails].slice(0, 100)).gte('created_at', memory)
+    .order('created_at').limit(5000)
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as { email: string; ip: string | null; created_at: string }[]
+  const known = new Set<string>()       // (email|ip) đã thấy TRƯỚC cửa sổ 24h
+  const hasHistory = new Set<string>()  // email có lịch sử >24h — ngày đầu bật (chưa có lịch sử) thì KHÔNG báo oan mọi IP
+  const fresh = new Map<string, { email: string; ip: string; at: string }>()
+  for (const r of rows) {
+    if (!r.ip) continue
+    const em = r.email.toLowerCase()
+    const k = `${em}|${r.ip}`
+    if (new Date(r.created_at).getTime() < recentCut) { known.add(k); hasHistory.add(em) }
+    else if (!known.has(k) && !fresh.has(k)) fresh.set(k, { email: em, ip: r.ip, at: r.created_at })
+  }
+  return [...fresh.entries()].filter(([k, f]) => !known.has(k) && hasHistory.has(f.email)).map(([k, f]) => ({
+    rule: 'ADMIN_NEW_IP' as const, dedup_key: `ADMINIP|${k}`, severity: 'WARNING' as const,
+    warehouse_id: null, category: null,
+    title: `Tài khoản quản trị ${f.email} đăng nhập từ IP mới ${f.ip}`,
+    detail: `Lúc ${new Date(f.at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} — IP này chưa thấy trong ${TH.ADMIN_IP_MEMORY_DAYS} ngày. Không phải bạn? Đổi mật khẩu admin ngay và soi nhật ký quản trị.`,
+    object_url: '/masterdata/users',
+  }))
+}
+
 // ── Đồng bộ vòng đời + push cảnh báo MỚI ─────────────────────────────────────
 const SCAN_INTERVAL_MS = 10 * 60_000
 const FORCE_INTERVAL_MS = 20_000   // nút "Quét lại" / QA — vẫn đủ chặn spam liên hồi
@@ -306,6 +367,7 @@ export async function runAlertScan(force = false): Promise<void> {
       ['TRIP_LATE', () => ruleTripLate(TH)], ['WEIGH_DIFF', () => ruleWeighDiff(TH)],
       ['BE_ERRORS', ruleBeErrors],
       ['PACKING_UNRECEIVED', () => rulePackingUnreceived(TH)],
+      ['AUTH_LOCKOUT', () => ruleAuthLockout(TH)], ['ADMIN_NEW_IP', () => ruleAdminNewIp(TH)],
     ]
     for (const [rule, fn] of runners) {
       try { found.push(...await fn()); okRules.push(rule) }

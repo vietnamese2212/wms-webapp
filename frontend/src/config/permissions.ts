@@ -124,6 +124,7 @@ export const MODULES = {
       unlock:       'Mở khoá đăng nhập bị khoá do gõ sai mật khẩu nhiều lần [Nhân viên]',
       delete:       'Xóa / khôi phục [Nhân viên]',
       manage_roles: 'Sửa & phân quyền [Phòng ban · Chức danh]',
+      audit_log:    'Xem tab Nhật ký quản trị (ai đổi quyền / kho / mật khẩu / API key / cờ hệ thống)',
     },
   },
   work_skill: {

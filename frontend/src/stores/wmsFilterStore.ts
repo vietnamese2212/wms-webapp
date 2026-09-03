@@ -215,6 +215,8 @@ interface UserAdminFilters {
   jtDept: string          // tab Chức danh: lọc theo phòng ban
   page: number
   pageSize: number
+  // tab Nhật ký quản trị (03/09)
+  auditAction: string; auditSearch: string; auditFrom: string; auditTo: string; auditPage: number; auditPageSize: number
 }
 interface AttendanceTeamFilters {
   view: 'matrix' | 'raw'
@@ -527,7 +529,8 @@ function initialFilters() {
     },
     tmsBookings: { search: '', dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const, page: 1, pageSize: 200 },
     tmsTransfer: { search: '', dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
-    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__', page: 1, pageSize: 100 },
+    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__', page: 1, pageSize: 100,
+      auditAction: '', auditSearch: '', auditFrom: '', auditTo: '', auditPage: 1, auditPageSize: 50 },
     attendanceTeam: { page: 1, pageSize: 100, view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },
     // Nghỉ phép mặc định = TỪ ĐẦU NĂM đến hôm nay. Trước đây để TRỐNG = kéo TOÀN BỘ lịch sử đơn

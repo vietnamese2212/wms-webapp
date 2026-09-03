@@ -190,7 +190,7 @@ export async function sendPushToPerm(
 
 // ── Cài đặt thông báo per user (nút chuông > tab Cài đặt — user chốt 06/08) ──
 // prefs jsonb key→bool, THIẾU KEY = BẬT. Cài đặt chỉ tắt CHUÔNG (push); feed/list vẫn đủ.
-export const PREF_KEYS = ['assign', 'reconcile', 'EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED'] as const
+export const PREF_KEYS = ['assign', 'reconcile', 'EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED', 'AUTH_LOCKOUT', 'ADMIN_NEW_IP'] as const
 export type PrefKey = typeof PREF_KEYS[number]
 
 /** Lọc danh sách nhân viên còn BẬT chuông cho trường hợp prefKey (thiếu dòng prefs = bật). */

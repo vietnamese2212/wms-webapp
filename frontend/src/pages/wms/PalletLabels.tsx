@@ -17,7 +17,7 @@ import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
 import { useWhTypeMetaMapFor, useIsNccAt } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
-import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import {
   useWarehouses, useMaterials, useMaterialsByCodes, useMaterialsByIds, useInventoryEntries, useInventoryFacets, type MaterialLite,
   useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
@@ -342,11 +342,17 @@ export default function PalletLabels() {
     if (nmsxMachineOpts.length && machine && !nmsxMachineOpts.some(o => o.value === machine)) setMachine('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nmsxMachineOpts])
-  // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho
+  // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho.
+  // BASE UNIT: định mức cartons_per_pallet = THÙNG VẬT LÝ → nhân units_per_carton ra BASE, y như màn
+  // quét nhập (InboundScanSheet). Cột PalletLabelPrint.qty là BASE — tab "In lại từ tồn kho" điền
+  // cartons_imported (base) và Sổ đóng gói kế thừa số này, nên điền thùng ở đây là trộn 2 đơn vị
+  // trong cùng một cột: tem của cùng một pallet in ra 2 số khác nhau tuỳ tab, và sổ đóng gói ghi
+  // sai 48 lần → cờ "lệch SL sổ ↔ kho" báo oan.
   useEffect(() => {
     if (!mat) return
     const eff = effCartonsPerPallet(mat, nmsxWarehouseId)
-    setQty(eff > 0 ? String(eff) : '')
+    const upc = hasEntry(mat as MatUnits) ? Number(mat.units_per_carton) : 1
+    setQty(eff > 0 ? String(eff * upc) : '')
   }, [mat, nmsxWarehouseId])
 
   // Tem V2: HSD tự tính = NSX + hạn dùng mã (shelf_life_days), user sửa tay thì ngừng đè
@@ -1345,7 +1351,7 @@ export default function PalletLabels() {
                                       </span>
                                       <span className="tabular-nums">{formatTimestampDate(ev.created_at, true)} {formatTimestampTime(ev.created_at)}</span>
                                       <span className="text-slate-500">· {ev.printed_by_name ?? '—'}</span>
-                                      {ev.qty != null && <span className="text-slate-400">· {ev.qty} thùng</span>}
+                                      {ev.qty != null && <span className="text-slate-400">· {qtyLabel(Number(ev.qty), g.mat)}</span>}
                                     </div>
                                   ))}
                                 </div>
@@ -1458,7 +1464,7 @@ export default function PalletLabels() {
                                 <label key={r.id} className="flex items-center gap-2 text-[10px] cursor-pointer hover:bg-slate-50 rounded px-1 py-0.5">
                                   {canReprint && <input type="checkbox" checked={histSelTems.has(r.id)} onChange={() => toggleHistTem(r.id)} />}
                                   <span className="font-mono font-semibold text-blue-600">{r.qr_code}</span>
-                                  {r.qty != null && <span className="text-slate-400">· {r.qty} thùng</span>}
+                                  {r.qty != null && <span className="text-slate-400">· {qtyLabel(Number(r.qty), matByCode.get(r.material_code ?? '') as MatUnits | undefined)}</span>}
                                 </label>
                               ))}
                             </div>

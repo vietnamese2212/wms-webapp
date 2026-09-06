@@ -2,6 +2,7 @@
 // (mở → quét pallet → Giờ kết thúc tính tổng → sửa/hủy) + gate "mở sổ trước mới quét"
 // + chống đua (unique 1-trang-mở per kho+mã+máy; 1-tem-1-dòng-sống) + luật giờ.
 // KHÔNG gửi ảnh trong QA (tránh residue storage) — đường ảnh/OCR verify tay trên Preview.
+import { randomUUID } from 'crypto'
 import { login, api, restAll, restWrite, check, finish, resolveFixtures, BASE, FIX } from './lib.mjs'
 
 const TAG = 'QAPACK'
@@ -23,6 +24,7 @@ async function cleanup() {
   await restWrite('packing_runs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})   // [16] giả lập kho nhận
   await restWrite('warehouse_machines', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})   // [19] danh mục máy
+  await restWrite('PalletLabelPrint', 'DELETE', `warehouse_id=eq.${WH}&printed_by_name=is.null`).catch(() => {})  // [17b] tem in giả lập
 }
 const openRun = (mat, machine, extra = {}) =>
   api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: mat, machine_code: machine, run_date: today, start_at: iso(7, 0), shift: 'Ca 1', cycle: '55', ...extra })
@@ -323,18 +325,40 @@ let runB = null
   if (yWin?.id) await api(`/wms/packing-runs/${yWin.id}/cancel`, 'POST', {})
 }
 
-// [17] SỐ THÙNG TỰ ĐIỀN THEO QUY CÁCH khi tem KHÔNG có lịch sử in (user 13/08 "số thùng phải
+// [17] SỐ LƯỢNG TỰ ĐIỀN THEO QUY CÁCH khi tem KHÔNG có lịch sử in (user 13/08 "số thùng phải
 // tự nhảy theo quy cách") — nguồn SPEC (không phải MANUAL); dùng mã THẬT có khai quy cách.
+//
+// ⚠️ CỘT qty_cartons LƯU SỐ BASE (như tem in PalletLabelPrint.qty và như mọi số lượng trong app).
+// Quy cách `cartons_per_pallet` là SỐ THÙNG ⇒ phải × units_per_carton. Bản đầu của chính phép kiểm
+// này đòi `qty_cartons === cartons_per_pallet` nên đã KHOÁ hành vi sai vào bộ QA: cùng một cột mang
+// 2 đơn vị tuỳ đường đi (tem in → 6.720 base · quy cách → 140 thùng), tổng sản lượng trang thành
+// phép cộng lẫn đơn vị và cờ "lệch SL sổ ↔ kho" báo oan pallet kho nhận ĐÚNG (đo thật 06/09).
 {
-  const mp = (await restAll('Material', `select=material_code,cartons_per_pallet&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
+  const mp = (await restAll('Material', `select=material_code,cartons_per_pallet,units_per_carton&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
   if (!mp?.cartons_per_pallet) console.log('ℹ️  bỏ qua [17] — mã fixture chưa khai quy cách thùng/pallet')
   else {
+    const upc = Number(mp.units_per_carton) > 0 ? Number(mp.units_per_carton) : 1
+    const specBase = Number(mp.cartons_per_pallet) * upc
     await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [FIX.MAT_POOL], machine_code: 'MQ', cycle: '55' })
     const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1, FIX.MAT_POOL) })
-    check('[17] Tem không có lịch sử in → Số thùng TỰ ĐIỀN theo quy cách (nguồn SPEC)',
-      r.s === 200 && Number(r.j?.data?.qty_cartons) === Number(mp.cartons_per_pallet) && r.j?.data?.qty_source === 'SPEC',
-      `http=${r.s} qty=${r.j?.data?.qty_cartons} src=${r.j?.data?.qty_source} spec=${mp.cartons_per_pallet}`)
-    if (r.j?.data?.id) await api(`/wms/packing-logs/${r.j.data.id}/cancel`, 'POST', {})
+    check('[17] Tem không có lịch sử in → SL tự điền theo quy cách, tính bằng BASE (nguồn SPEC)',
+      r.s === 200 && Number(r.j?.data?.qty_cartons) === specBase && r.j?.data?.qty_source === 'SPEC',
+      `http=${r.s} qty=${r.j?.data?.qty_cartons} src=${r.j?.data?.qty_source} · quy cách ${mp.cartons_per_pallet} thùng × ${upc} = ${specBase} base`)
+
+    // MỘT ĐƠN VỊ DUY NHẤT: pallet có tem in và pallet không có tem in phải ra CÙNG một con số.
+    const temLabel = tem(2, FIX.MAT_POOL)
+    await restWrite('PalletLabelPrint', 'POST', null, {
+      id: randomUUID(), qr_code: temLabel, material_code: FIX.MAT_POOL, machine: 'MQ',
+      qty: specBase, warehouse_id: WH, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).catch(() => {})
+    const rl = await api('/wms/packing-logs/open', 'POST', { qr_code: temLabel })
+    check('[17b] Pallet CÓ tem in và pallet KHÔNG tem in ghi sổ cùng một số (không lẫn thùng/base)',
+      rl.s === 200 && Number(rl.j?.data?.qty_cartons) === Number(r.j?.data?.qty_cartons),
+      `tem in=${rl.j?.data?.qty_cartons} (${rl.j?.data?.qty_source}) · quy cách=${r.j?.data?.qty_cartons} (${r.j?.data?.qty_source})`)
+
+    for (const id of [r.j?.data?.id, rl.j?.data?.id].filter(Boolean))
+      await api(`/wms/packing-logs/${id}/cancel`, 'POST', {})
+    await restWrite('PalletLabelPrint', 'DELETE', `qr_code=eq.${encodeURIComponent(temLabel)}`).catch(() => {})
     const mq = await restAll('packing_runs', `select=id&warehouse_id=eq.${WH}&machine_code=eq.MQ&status=eq.OPEN`)
     for (const rr of mq) await api(`/wms/packing-runs/${rr.id}/cancel`, 'POST', {})
   }

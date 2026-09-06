@@ -5123,8 +5123,10 @@ async function materialMismatchFail(
   res: Response, qr: string, palletMatId: string | null, itemMatId: string | null,
 ) {
   const ids = [palletMatId, itemMatId].filter(Boolean) as string[]
+  // .limit(2) khai RÕ: danh sách này luôn đúng 1–2 id (pallet + dòng hàng), không bao giờ là
+  // tập mở — nên không cần chunk/phân trang, và cổng tĩnh không phải đoán.
   const { data } = ids.length
-    ? await supabase.from('Material').select('id, material_code, short_name').in('id', ids)
+    ? await supabase.from('Material').select('id, material_code, short_name').in('id', ids).limit(2)
     : { data: [] as { id: string; material_code: string; short_name: string | null }[] }
   const by = new Map(((data ?? []) as { id: string; material_code: string; short_name: string | null }[])
     .map(m => [m.id, m]))

@@ -626,7 +626,7 @@ function InvestigateForm({ open, onClose }: { open: boolean; onClose: () => void
                 <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
                   <TableHeader>
                     <TableRow>
-                      {['Chọn', 'Ngày sổ', 'Ca', 'Chu kỳ', 'Máy', 'Mã hàng', 'Kho SX', 'Giờ BĐ → KT', 'Pallet', 'SL (thùng)', 'Người mở', ''].map(h =>
+                      {['Chọn', 'Ngày sổ', 'Ca', 'Chu kỳ', 'Máy', 'Mã hàng', 'Kho SX', 'Giờ BĐ → KT', 'Pallet', 'SL (quy đổi)', 'Người mở', ''].map(h =>
                         <TableHead key={h} className={TH}>{h}</TableHead>)}
                     </TableRow>
                   </TableHeader>
@@ -777,7 +777,7 @@ function JourneyTable({ matched, trace }: { matched: CartonMatch[]; trace: Inves
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Tem pallet', '★', 'Bước', 'Thời điểm', 'Sự kiện', 'Nơi', 'SL (thùng)'].map(h =>
+          {['Tem pallet', '★', 'Bước', 'Thời điểm', 'Sự kiện', 'Nơi', 'SL (quy đổi)'].map(h =>
             <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>
@@ -813,7 +813,7 @@ function MatchTable({ rows }: { rows: CartonMatch[] }) {
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Tem pallet', 'Mã hàng', 'Giờ thùng đầu → cuối', 'SL (thùng)', 'Người đóng gói'].map(h =>
+          {['Tem pallet', 'Mã hàng', 'Giờ thùng đầu → cuối', 'SL (quy đổi)', 'Người đóng gói'].map(h =>
             <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>

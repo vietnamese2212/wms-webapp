@@ -4293,6 +4293,9 @@ export interface ControlTowerResources {
 }
 export interface ControlTowerData {
   date: string
+  // Hệ thống nghẽn → BE trả số ĐÃ TÍNH lần trước thay vì báo lỗi (06/09). Màn hình phải NÓI RA.
+  stale?: boolean
+  computed_at?: string
   resources?: ControlTowerResources | null
   gate: { registered: number; called: number; inside: number; completed: number; inside_list: ControlTowerGateRow[] }
   outbound: { pending: number; in_progress: number; paused: number; completed: number; total: number

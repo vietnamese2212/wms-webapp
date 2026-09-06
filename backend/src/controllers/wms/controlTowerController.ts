@@ -70,7 +70,21 @@ export async function getControlTower(req: Request, res: Response) {
       // Quá hạn tính (nhiều người cùng truy vấn) KHÔNG phải lỗi app: trả 503 kèm câu người dùng
       // LÀM ĐƯỢC gì đó, thay vì 500 "Lỗi hệ thống". 500 rác còn làm rule cảnh báo "lỗi BE 24h"
       // kêu OAN — đo 29/08: 67 dòng error_logs của riêng màn này chỉ trong 3 giờ chạy tải.
-      if (isQueryTimeout(main.error)) return fail(res, QUERY_TIMEOUT_MSG, 503, 'QUERY_TIMEOUT')
+      // HẾT GIỜ TÍNH (hệ thống đang nghẽn) → ĐƯA SỐ CŨ thay vì bắt người dùng nhìn màn lỗi.
+      // Đo 06/09: dưới tải ghi 2 kho, người "đi tính" ôm khe pool 30s rồi 503, cache vẫn không
+      // được làm mới ⇒ người kế tiếp lại chịu y vậy — màn hình hỏng suốt cả ca cao điểm.
+      // Số cũ CÓ ÍCH (vài chục giây trước) miễn là NÓI THẲNG nó cũ: cờ `stale` + `computed_at`.
+      if (isQueryTimeout(main.error)) {
+        const { data: staleData } = await supabase.rpc('control_tower_stats_stale', argStats)
+        if (staleData) {
+          return ok(res, {
+            date: today,
+            ...(staleData as Record<string, unknown>),
+            resources: resources.error ? null : resources.data,
+          })
+        }
+        return fail(res, QUERY_TIMEOUT_MSG, 503, 'QUERY_TIMEOUT')
+      }
       return fail(res, main.error.message, 500, 'DB_ERROR')
     }
     return ok(res, {

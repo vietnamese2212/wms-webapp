@@ -717,6 +717,13 @@ export default function ControlTower() {
           <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-slate-500 border-l border-slate-200 dark:border-slate-700 pl-2">Facility Console</span>
           <span className="text-[11px] text-slate-500 dark:text-slate-400">{data ? formatDate(data.date) : ''}</span>
           <span className="text-[11px] font-mono text-sky-700 dark:text-sky-300 tabular-nums">{clock}</span>
+          {/* Hệ thống đang nghẽn → BE đưa số đã tính lần trước thay vì báo lỗi. Phải NÓI THẲNG là
+              số cũ kèm giờ chốt, giấu đi là để người xem tin nhầm số đang chạy thời gian thực. */}
+          {data?.stale && (
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 whitespace-nowrap">
+              Số liệu lúc {data.computed_at ? formatTimestampTime(data.computed_at) : '—'} · hệ thống đang bận
+            </span>
+          )}
           <span className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button onClick={enterTv}

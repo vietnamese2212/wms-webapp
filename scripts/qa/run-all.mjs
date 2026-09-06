@@ -51,6 +51,7 @@ const steps = [
   ['42-auth-throttle.mjs'],       // dò mật khẩu: khoá theo TÀI KHOẢN ở DB sau 10 lần sai (xuyên instance), đúng-mà-đang-khoá vẫn 429, nhật ký đăng nhập đủ (03/09)
   ['43-password-policy.mjs'],     // chính sách mật khẩu MỘT nguồn (admin đặt + tự đổi) + mở khoá đăng nhập qua API có vết + list trả locked_until (03/09)
   ['45-admin-audit-security-alerts.mjs'], // nhật ký quản trị (đổi quyền/kho/mật khẩu/cờ có vết before→after, 403 thiếu quyền) + rule AUTH_LOCKOUT/ADMIN_NEW_IP mở→tự đóng (03/09)
+  ['46-scan-rowlock.mjs'],        // quét xuất dưới KHOÁ DÒNG: 8 người/1 dòng hàng không vượt kế hoạch, 5 người/1 pallet chỉ 1 ăn; 2 thông báo nói đúng việc (06/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

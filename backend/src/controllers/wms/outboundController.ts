@@ -255,6 +255,14 @@ async function linkWeighTicket(ticketId: string | null, gdoId: string) {
 async function adjustInventoryAtomic(
   invId: string, deltaRemaining: number, deltaReserved: number,
 ): Promise<boolean> {
+  // Đường NHANH: khoá dòng trong DB (migration 20260906) — 1 lượt gọi, không thử lại, không ngủ.
+  // RPC chưa apply → rơi về vòng CAS bên dưới NGUYÊN VẸN (cửa sổ triển khai).
+  {
+    const { data, error } = await supabase.rpc('outbound_adjust_entry', {
+      p_entry_id: invId, p_delta_remaining: deltaRemaining, p_delta_reserved: deltaReserved, p_now: now(),
+    })
+    if (!error && data) return (data as { ok?: boolean }).ok === true
+  }
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
@@ -361,6 +369,18 @@ export async function looseHeldGdoIds(gdoIds: string[]): Promise<Set<string>> {
 // Trả: true=trừ xong · false=KHÔNG đủ tồn (đã bị thao tác khác lấy) · null=tranh chấp sau 5 lần.
 // Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
 async function consumeInventoryExact(invId: string, amount: number): Promise<boolean | null> {
+  // Đường NHANH: khoá dòng trong DB (migration 20260906). Ngữ nghĩa y hệt vòng CAS bên dưới:
+  // true = đã trừ · false = KHÔNG ĐỦ tồn · null = không tìm thấy dòng.
+  {
+    const { data, error } = await supabase.rpc('outbound_consume_exact', {
+      p_entry_id: invId, p_amount: amount, p_now: now(),
+    })
+    if (!error && data) {
+      const r = data as { ok?: boolean; missing?: boolean }
+      if (r.missing) return null
+      return r.ok === true ? true : false
+    }
+  }
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
@@ -421,7 +441,23 @@ async function addItemScanned(itemId: string, delta: number, statusOf: (total: n
  */
 async function claimItemQuota(
   itemId: string, want: number, ceiling: number, statusOf: (total: number) => string,
-): Promise<number | 'FULL' | null> {
+  completeWhenFull?: boolean,
+): Promise<{ grant: number; total: number | null } | 'FULL' | null> {
+  // Đường NHANH: khoá dòng trong DB (migration 20260906) — 1 lượt gọi thay cho đọc+CAS, và
+  // KHÔNG thử lại (người đến sau chờ trên khoá vài ms rồi đọc số mới nhất). Trả luôn TỔNG mới
+  // nên caller khỏi đọc lại lần nữa.
+  if (completeWhenFull != null) {
+    const { data, error } = await supabase.rpc('outbound_claim_quota', {
+      p_item_id: itemId, p_want: want, p_ceiling: ceiling,
+      p_complete_when_full: completeWhenFull, p_now: now(),
+    })
+    if (!error && data) {
+      const r = data as { grant?: number; total?: number; missing?: boolean }
+      if (r.missing) return null
+      if (Number(r.grant ?? 0) <= 0) return 'FULL'
+      return { grant: Number(r.grant), total: Number(r.total) }
+    }
+  }
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: it } = await supabase.from('OutboundItem')
       .select('cartons_scanned').eq('id', itemId).single()
@@ -433,7 +469,7 @@ async function claimItemQuota(
     const { data: applied } = await supabase.from('OutboundItem')
       .update({ cartons_scanned: next, status: statusOf(next), updated_at: now() })
       .eq('id', itemId).eq('cartons_scanned', cur).select('id')
-    if (applied?.length) return grant
+    if (applied?.length) return { grant, total: next }
     await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
   }
   return null
@@ -2373,7 +2409,10 @@ export async function patchGDO(req: Request, res: Response) {
           const { data: og } = await supabase.from('GroupDeliveryOrder').select('origin').eq('id', req.params.id).maybeSingle()
           const fixHint = (og as { origin?: string | null } | null)?.origin === 'SAP'
             ? 'Chuyến sinh từ SAP: sửa Số lượng DO ở tab DO SAP (Dữ liệu bên ngoài) → hệ thống dội xuống đơn (dòng đã quét sẽ vào "Cần xử lý" — bấm Áp SAP) → khớp rồi hoàn thành.'
-            : 'Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.'
+            // Câu này phải nói ĐỦ BA BƯỚC: đơn ĐANG XUẤT không sửa được (updateGDO chỉ nhận
+            // PENDING/PAUSED), nên bỏ bước "Tạm dừng" là đẩy người vận hành vào ngõ cụt —
+            // họ làm đúng lời hướng dẫn rồi nhận tiếp lỗi thứ hai (đo thật 06/09).
+            : 'Bấm "Tạm dừng" chuyến → sửa số lượng đơn xuống bằng thực xuất → "Tiếp tục" → Hoàn thành.'
           return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${qtyLabel(Number(e.cartons_scanned), e.material ?? null)}/${qtyLabel(Number(e.cartons_ordered), e.material ?? null)}). ${fixHint}`, 400)
         }
 
@@ -5071,6 +5110,32 @@ function dupScanQuery(itemId: string, qr: string, loose: boolean) {
   return q.limit(1).maybeSingle()
 }
 
+/**
+ * QUÉT NHẦM MÃ — thông báo phải nói MÃ HÀNG + TÊN, KHÔNG in id nội bộ.
+ *
+ * Bug thật (đo 06/09): hai nhánh quét xuất trả `pallet "904ac939-fbd6-…" không khớp với phiếu
+ * "a431693b-b5b0-…"` — người quét cầm máy PDA đọc hai dãy uuid thì không biết mình vừa lấy hàng
+ * gì và dòng hàng đang cần gì, trong khi màn NHẬP kho từ lâu đã nói tử tế
+ * (`QR có "510000084" (KUN STC Hương Cam …) nhưng phiếu nhập yêu cầu "510000364"`).
+ * Tra tên chỉ chạy trên ĐƯỜNG LỖI (hiếm) nên không thêm chi phí cho lượt quét bình thường.
+ */
+async function materialMismatchFail(
+  res: Response, qr: string, palletMatId: string | null, itemMatId: string | null,
+) {
+  const ids = [palletMatId, itemMatId].filter(Boolean) as string[]
+  const { data } = ids.length
+    ? await supabase.from('Material').select('id, material_code, short_name').in('id', ids)
+    : { data: [] as { id: string; material_code: string; short_name: string | null }[] }
+  const by = new Map(((data ?? []) as { id: string; material_code: string; short_name: string | null }[])
+    .map(m => [m.id, m]))
+  const label = (id: string | null): string => {
+    const m = id ? by.get(id) : null
+    if (!m) return 'mã không xác định'
+    return `"${m.material_code}"${m.short_name ? ` (${m.short_name})` : ''}`
+  }
+  return fail(res, `Quét nhầm mã hàng — tem "${qr}" là ${label(palletMatId)} nhưng dòng hàng đang cần ${label(itemMatId)}`, 400)
+}
+
 export async function checkScanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
@@ -5120,7 +5185,7 @@ export async function checkScanItem(req: Request, res: Response) {
     if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
 
     if (item.material_id && inv.material_id !== item.material_id) {
-      return fail(res, `Sai mã hàng — pallet không khớp với phiếu`, 400)
+      return await materialMismatchFail(res, qr, inv.material_id ?? null, item.material_id)
     }
 
     // Shelf-life của mã: cần cho CẢ kiểm %Date lẫn kiểm luân chuyển → nạp MỘT lần.
@@ -5265,7 +5330,7 @@ export async function scanItem(req: Request, res: Response) {
     }
 
     if (item.material_id && inv.material_id !== item.material_id) {
-      return fail(res, `Sai mã hàng — pallet "${inv.material_id}" không khớp với phiếu "${item.material_id}"`, 400)
+      return await materialMismatchFail(res, qr, inv.material_id ?? null, item.material_id)
     }
 
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
@@ -5305,10 +5370,13 @@ export async function scanItem(req: Request, res: Response) {
     const blockComplete = (unconfirmedLoose ?? []).length > 0
     const ordered = Number(item.cartons_ordered)
     const claimed = await claimItemQuota(itemId, wanted, ordered,
-      loose_picking_mode ? () => 'IN_PROGRESS' : n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS')
+      loose_picking_mode ? () => 'IN_PROGRESS' : n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS',
+      !loose_picking_mode && !blockComplete)
     if (claimed === 'FULL') return fail(res, 'Mặt hàng đã đủ số lượng — người khác vừa quét xong', 400)
     if (claimed === null)   return fail(res, 'Dòng hàng này đang có nhiều người cùng quét — thử lại', 409)
-    const to_take = claimed
+    const to_take = claimed.grant
+    // TỔNG mới do chính lượt đặt gạch chốt ra — khớp đúng con số vừa ghi vào DB, khỏi đọc lại.
+    const claimedTotal = claimed.total
     // Từ đây trở đi hạn mức đã là CỦA MÌNH: mọi đường thoát lỗi phải NHẢ lại, nếu không dòng hàng
     // sẽ kẹt "đã quét" số hàng chưa hề rời kệ.
     const releaseQuota = () => addItemScanned(itemId, -to_take, n => n >= ordered ? 'COMPLETED' : n > 0 ? 'IN_PROGRESS' : 'PENDING')
@@ -5430,7 +5498,7 @@ export async function scanItem(req: Request, res: Response) {
       }
       const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, 0, -to_take))
       if (moveErr) { await releaseQuota(); return fail(res, moveErr, 409) }
-      const cum = await currentItemScanned(itemId)
+      const cum = claimedTotal ?? await currentItemScanned(itemId)
       if (cum != null) new_scanned = cum
     } else {
       // Trừ tồn NGUYÊN TỬ chống đua + chống xuất-quá-tồn (trước đây ghi mù remaining=available-to_take
@@ -5447,7 +5515,7 @@ export async function scanItem(req: Request, res: Response) {
       if (moveErr) { await releaseQuota(); return fail(res, moveErr, 409) }
       // Tổng + trạng thái đã được chốt NGUYÊN TỬ lúc đặt gạch hạn mức; ở đây chỉ đọc lại con số
       // thật để trả về cho màn quét (người khác có thể vừa quét thêm dòng này).
-      const cum = await currentItemScanned(itemId)
+      const cum = claimedTotal ?? await currentItemScanned(itemId)
       if (cum != null) new_scanned = cum
       new_item_status = (new_scanned >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS'
     }

@@ -254,6 +254,23 @@ const RULES = [
     label: `nhãn ô tổng cross-mã ghi "Thùng tồn"/"Tổng thùng" — phải QTY_CONVERTED_LABEL "SL (quy đổi)". Baseline 2 = cột per-MÃ ở OutboundDetail/LoosePickingDetail (tách Thùng/Hộp đúng luật base-unit, KHÔNG phải bug — đừng "dọn")`,
     count: (s) => countMatches(['frontend/src'], ['.tsx'], l => /label:\s*['"](Thùng tồn|Tổng thùng)['"]/.test(l), s),
   },
+  // QUY CÁCH `cartons_per_pallet` LÀ SỐ **THÙNG** — mọi cột/biến số lượng trong app là **BASE**.
+  // Điền quy cách thẳng vào chỗ base mà quên × units_per_carton là lỗi ÂM THẦM (không exception,
+  // chỉ sai đúng bằng hệ số). Đo 06/09: Sổ đóng gói ghi 140 thay 6.720 với pallet không có tem in,
+  // tab Sinh tem ghi 140 còn tab In lại ghi 6.720 ⇒ cùng một cột hai đơn vị, tổng sản lượng trang
+  // thành phép cộng lẫn đơn vị và cờ "lệch SL sổ ↔ kho" báo oan pallet kho nhận ĐÚNG.
+  // Mẫu đúng: `InboundScanSheet` (× qtyFactor) · `inboundController.suggested_cartons` (× qtyFactorOf).
+  {
+    key: 'cpp_used_as_base_qty',
+    label: 'dùng quy cách `cartons_per_pallet` (THÙNG) làm số lượng BASE mà không × units_per_carton — ' +
+           'phải nhân hệ số tại rìa (qtyFactor/qtyFactorOf/upc) như InboundScanSheet',
+    // Chỉ bắt GÁN TRỰC TIẾP quy cách vào field mang nghĩa BASE — gán vào biến trung gian (`const cpp
+    // = effCartonsPerPallet(...)`) rồi nhân sau là hợp lệ, bắt cả nó thì ratchet báo oan và bị vô hiệu.
+    count: (s) => countMatches(['frontend/src', 'backend/src'], ['.ts', '.tsx'],
+      l => /\b(cartons_imported|cartons_override|qty_cartons|suggested_cartons)\s*:[^;]*\bcartons_per_pallet\b/.test(l)
+        && !/units_per_carton|qtyFactor|\bupc\b|qtyFromEntryBase/.test(l)
+        && !/^\s*(\/\/|\*)/.test(l), s),
+  },
   {
     key: 'thung_unit_on_aggregate_pages',
     label: 'nhãn đơn vị "thùng" trên TRANG TỔNG GỘP CROSS-MÃ (Dashboard/Giám sát vận hành/Báo cáo nhập/Slotting) — ' +

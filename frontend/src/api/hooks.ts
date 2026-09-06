@@ -1318,7 +1318,9 @@ export function useScanPallet() {
         qa_status_id:       null,
         qa_status:          null,
         stack_layer:        1,
-        cartons_imported:   previous?.material?.cartons_per_pallet ?? 0,
+        // BASE UNIT: quy cách là THÙNG → nhân units_per_carton ra base, không thì dòng tạm hiện
+        // số nhỏ hơn thật đúng bằng hệ số rồi tự nhảy khi server trả (người quét thấy số giật)
+        cartons_imported:   (previous?.material?.cartons_per_pallet ?? 0) * (Number(previous?.material?.units_per_carton) > 0 ? Number(previous?.material?.units_per_carton) : 1),
         production_date:    null,
         status:             'IN_STOCK',
         created_by_emp:     null,

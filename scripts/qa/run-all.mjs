@@ -53,6 +53,7 @@ const steps = [
   ['45-admin-audit-security-alerts.mjs'], // nhật ký quản trị (đổi quyền/kho/mật khẩu/cờ có vết before→after, 403 thiếu quyền) + rule AUTH_LOCKOUT/ADMIN_NEW_IP mở→tự đóng (03/09)
   ['46-scan-rowlock.mjs'],        // quét xuất dưới KHOÁ DÒNG: 8 người/1 dòng hàng không vượt kế hoạch, 5 người/1 pallet chỉ 1 ăn; 2 thông báo nói đúng việc (06/09)
   ['47-inventory-edits.mjs'],     // sửa trên tồn kho: đổi mã/vị trí/NCC/ngày SX/QA · điều chỉnh · kiểm kê 1 pallet · sửa-xoá pallet trong phiếu · tách/dồn — chặn chuyển sang KHO KHÁC, tồn đi theo số nhập, đếm "đã cập nhật" là số THẬT (06/09)
+  ['48-location-inbound-edits.mjs'], // vị trí kho (tạo/sửa/xoá, sức chứa không âm, quét tem khớp TRỌN mã, "ô này đang chứa gì", cờ hàng loạt) + phiếu nhập (quét trùng/khác mã, xoá nhiều pallet, hoàn thành/bỏ/huỷ) (06/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

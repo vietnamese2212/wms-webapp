@@ -573,6 +573,10 @@ export async function createLocation(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code hoặc row')
     const maxMat = parseLocationMaxMaterials(req.body.max_materials)
     if ('error' in maxMat) return fail(res, 400, 'VALIDATION_ERROR', maxMat.error)
+    // Sức chứa ÂM = tắt lá chắn quá tải (RPC chỉ kiểm khi > 0) — xem ghi chú ở updateLocation
+    if (max_pallets !== undefined && max_pallets !== null && max_pallets !== ''
+        && (!Number.isFinite(Number(max_pallets)) || Number(max_pallets) < 0))
+      return fail(res, 400, 'VALIDATION_ERROR', 'Sức chứa phải là số không âm (0 = không giới hạn)')
     const scope = scopeWhIds(req)
     if (scope !== null && !scope.includes(String(warehouse_id)))
       return fail(res, 403, 'FORBIDDEN', 'Không thể tạo vị trí ở kho ngoài phạm vi của bạn')
@@ -639,7 +643,15 @@ export async function updateLocation(req: Request, res: Response) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
-    if (max_pallets !== undefined)       patch.max_pallets       = Number(max_pallets)
+    // Sức chứa ÂM/không phải số: RPC move_pallets_to_location chỉ kiểm sức chứa khi `v_max > 0`,
+    // nên một ô để max_pallets = -3 là ô KHÔNG CÒN GIỚI HẠN — tắt lá chắn quá tải mà không ai thấy
+    // (đo 06/09: API nhận -3 và ghi thẳng vào DB).
+    if (max_pallets !== undefined) {
+      const n = Number(max_pallets)
+      if (!Number.isFinite(n) || n < 0)
+        return fail(res, 400, 'VALIDATION_ERROR', 'Sức chứa phải là số không âm (0 = không giới hạn)')
+      patch.max_pallets = n
+    }
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
     if (is_pick_face !== undefined)      patch.is_pick_face       = Boolean(is_pick_face)

@@ -64,6 +64,24 @@ export function recordServerError(source: 'be' | 'fe', message: string, status?:
 const GENERIC_5XX = 'Lỗi hệ thống, vui lòng thử lại'
 
 /**
+ * 503 = QUÁ TẢI / CHƯA SẴN SÀNG — tình huống **đã lường trước**, KHÔNG phải lỗi app
+ * (`QUERY_TIMEOUT` khi đông người cùng truy vấn · `NOT_READY` khi migration chưa apply ·
+ * `PUSH_UNAVAILABLE`). Mọi chỗ trả 503 đều tự soạn câu tiếng Việt cho người dùng — không có
+ * chỗ nào ném nguyên văn lỗi Supabase vào đây (ratchet `raw_error_in_soft_5xx` gác).
+ *
+ * VÌ SAO PHẢI TÁCH RA (đo 06/09): đợt 29/08 đổi 500 → 503 với HAI mục đích — (a) người dùng đọc
+ * được câu LÀM ĐƯỢC gì đó ("thu hẹp KHOẢNG NGÀY / chọn 1 Kho"), (b) cảnh báo "lỗi BE 24h" thôi
+ * kêu oan. **Cả hai đều KHÔNG đạt**: `fail`/`maskServerMessage` che mọi status ≥ 500 nên câu
+ * hướng dẫn chỉ nằm lại trong `error_logs`, người dùng vẫn thấy "Lỗi hệ thống"; và 503 vẫn được
+ * đếm vào digest (bằng chứng: 43 dòng 503 trong `error_logs` — Giám sát vận hành 20, Slotting 18,
+ * Vị trí 5 — mỗi dòng đủ để dựng cờ đỏ + email).
+ *
+ * Nay: 503 GIỮ NGUYÊN message của app, VẪN ghi `error_logs` để truy vết, nhưng digest và rule
+ * `BE_ERRORS` bỏ qua status 503 (xem `app.ts` /telemetry/digest và `alertScanner.ruleBeErrors`).
+ */
+export const isSoftStatus = (status: number): boolean => status === 503
+
+/**
  * Che message cho lỗi 5xx (log chi tiết server-side) — dùng cho các controller có helper `fail`
  * RIÊNG của mình.
  *
@@ -79,7 +97,7 @@ export function maskServerMessage(message: string, status: number, res?: Respons
   if (status < 500) return message
   console.error('[fail]', message)
   recordServerError('be', message, status, undefined, routeOf(res))
-  return GENERIC_5XX
+  return isSoftStatus(status) ? message : GENERIC_5XX
 }
 
 export function fail(res: Response, arg2: string | number, arg3?: string | number, arg4?: string): Response {
@@ -87,7 +105,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
     if (arg2 >= 500) {
       if (arg4) console.error('[fail]', arg3 ?? 'ERROR', arg4)
       recordServerError('be', arg4 ?? String(arg3 ?? 'ERROR'), arg2, typeof arg3 === 'string' ? arg3 : undefined, routeOf(res))
-      return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: GENERIC_5XX } })
+      return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: isSoftStatus(arg2) && arg4 ? arg4 : GENERIC_5XX } })
     }
     return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: arg4 ?? '' } })
   }
@@ -95,7 +113,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
   if (status >= 500) {
     console.error('[fail]', arg2)   // log chi tiết server-side
     recordServerError('be', arg2, status, undefined, routeOf(res))
-    return res.status(status).json({ success: false, error: { message: GENERIC_5XX } })
+    return res.status(status).json({ success: false, error: { message: isSoftStatus(status) ? arg2 : GENERIC_5XX } })
   }
   return res.status(status).json({ success: false, error: { message: arg2 } })
 }

@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
-import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
@@ -277,12 +277,20 @@ const IN_CHUNK = 300
 // UPDATE hàng loạt theo tập id: BẮT BUỘC chunk — filter `.in()` nằm trên URL nên >300 id (36 ký tự)
 // là vỡ (đo 27/07: 400 id đứt kết nối, 700 id → 400). Bulk chọn cả trang/cả kho vài nghìn pallet
 // trước đây ném lỗi toàn bộ. Trả message lỗi đầu tiên (lô trước đã ghi — vẫn hơn hỏng sạch).
+// ĐẾM THẬT SỐ DÒNG ĐÃ SỬA (chốt 06/09): trước đây các cửa bulk trả `updated: ids.length` — tức
+// ĐẾM SỐ Ý ĐỊNH, không phải kết quả. Gọi với id không tồn tại vẫn nhận 200 "đã cập nhật 1 pallet"
+// (đo thật ở bulk-qa · bulk-material · bulk-production-date). Người dùng tưởng đã sửa xong.
 async function updateEntriesByIds(ids: string[], patch: Record<string, unknown>): Promise<string | null> {
+  return (await updateEntriesCount(ids, patch)).error
+}
+async function updateEntriesCount(ids: string[], patch: Record<string, unknown>): Promise<{ error: string | null; updated: number }> {
+  let updated = 0
   for (const c of chunkArray(ids, IN_CHUNK)) {
-    const { error } = await supabase.from('InventoryEntry').update(patch).in('id', c)
-    if (error) return error.message
+    const { data, error } = await supabase.from('InventoryEntry').update(patch).in('id', c).select('id')
+    if (error) return { error: error.message, updated }
+    updated += (data ?? []).length
   }
-  return null
+  return { error: null, updated }
 }
 
 // Tổng cartons_remaining của 1 tập id (chunk 300 → tránh URL 414). Song song các lô.
@@ -529,6 +537,7 @@ export async function listInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
+  if (r.error && isQueryTimeout(r.error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0, total_pallets_in_stock: 0 })
 
@@ -559,6 +568,7 @@ export async function listInventory(req: Request, res: Response) {
       ])
       return ok(res, { entries: rows, total: allIds.length, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock })
     } catch (e) {
+      if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
       return fail(res, 500, 'DB_ERROR', (e as Error).message)
     }
   }
@@ -626,6 +636,11 @@ export async function listInventory(req: Request, res: Response) {
         total_cartons_remaining: 0, total_pallets_in_stock: Number(band0.total_pallets_in_stock) || 0,
       })
     }
+    // Quá hạn tính khi đông người cùng truy vấn KHÔNG phải lỗi app — 503 kèm câu người dùng LÀM
+    // ĐƯỢC gì đó, như scan-log/slotting/control-tower/locations đã làm từ 29/08. Trang Tồn kho bị
+    // BỎ SÓT trong đợt đó: đo 06/09 còn 6 dòng `statement timeout` trả 500 "Lỗi hệ thống" —
+    // vừa không chỉ được cách xử, vừa làm cảnh báo "lỗi BE 24h" kêu oan.
+    if (isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, 500, 'DB_ERROR', error.message)
   }
 
@@ -661,6 +676,7 @@ export async function summaryInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
+  if (r.error && isQueryTimeout(r.error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0, page: r.pageNum, limit: r.limitNum })
 
@@ -689,6 +705,7 @@ export async function summaryInventory(req: Request, res: Response) {
     p_offset:         r.offset,
     p_limit:          r.limitNum,
   })
+  if (error && isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
   type RpcGroup = MaterialShelfInfo & {
@@ -743,6 +760,7 @@ export async function exportInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
+  if (r.error && isQueryTimeout(r.error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [] })
 
@@ -752,6 +770,7 @@ export async function exportInventory(req: Request, res: Response) {
     const entries = await fetchAllInventory(sel, r.params, r.datePctIds)
     return ok(res, { entries })
   } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
 }
@@ -783,6 +802,7 @@ export async function listFacets(req: Request, res: Response) {
     if (error) throw error
     facetVals = (data ?? []) as { kind: string; val: string }[]
   } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
 
@@ -942,9 +962,9 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
-  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
-  return ok(res, { updated: ids.length })
+  const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
+  return ok(res, { updated: up.updated })
 }
 
 // Sửa NCC hàng loạt — gán/đổi NCC cho các pallet đã chọn (để áp HSD ngoại lệ theo NCC).
@@ -968,9 +988,9 @@ export async function bulkUpdateNcc(req: Request, res: Response) {
   }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
-  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
-  return ok(res, { updated: ids.length })
+  const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
+  return ok(res, { updated: up.updated })
 }
 
 export async function bulkTransferLocation(req: Request, res: Response) {
@@ -999,13 +1019,34 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   // Select đủ trường snapshot cho StocktakeLog (nhánh count_as_stocktake) — chụp TRƯỚC khi move
   // để còn biết vị trí CŨ; nhánh thường chỉ dùng 5 cột đầu, thừa vài cột không đáng kể.
   const moving = await fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
-    .select(`id, pallet_code, location_id, cartons_remaining, material_id, ncc_id, production_date,
+    .select(`id, pallet_code, location_id, warehouse_id, cartons_remaining, material_id, ncc_id, production_date,
       expiry_date, shelf_life_days,
       material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton),
-      location:Location!location_id(location_code)`)
+      location:Location!location_id(location_code, warehouse_id)`)
     .in('id', chunk))
   const { data: destLoc } = await supabase.from('Location')
     .select('warehouse_id, location_code, categories').eq('id', location_id).maybeSingle()
+
+  // HÀNG KHÔNG TỰ BAY SANG KHO KHÁC (chốt 06/09). Cửa này chỉ đổi `location_id`; RPC bên dưới
+  // KHÔNG đụng `warehouse_id` ⇒ chọn một ô của kho khác thì pallet nằm trên kệ kho B trong khi sổ
+  // vẫn ghi kho A: màn Tồn kho lọc kho A vẫn thấy nó, kho B không thấy, nhưng sức chứa ô của kho B
+  // đã bị ăn mất 1 chỗ (đo thật 06/09). Hàng chuyển giữa 2 kho phải đi ĐƯỜNG CHUYỂN KHO (chuyến
+  // xe → cổng → cân → kho nhận xác nhận), không phải một ô chọn trên màn Tồn kho.
+  // Null-inclusive: pallet/ô chưa khai kho thì không chặn (giữ nguyên hành vi cũ cho dữ liệu cũ).
+  {
+    const destWh = (destLoc as { warehouse_id?: string | null } | null)?.warehouse_id ?? null
+    type MovRow = { pallet_code: string; warehouse_id?: string | null; location?: { warehouse_id?: string | null } | null }
+    const crossing = destWh
+      ? (moving as unknown as MovRow[]).filter(e => {
+          const src = e.warehouse_id ?? e.location?.warehouse_id ?? null
+          return !!src && src !== destWh
+        })
+      : []
+    if (crossing.length)
+      return fail(res, 422, 'CROSS_WAREHOUSE',
+        `Vị trí đích thuộc KHO KHÁC với ${crossing.length} pallet đang chọn (vd ${crossing[0].pallet_code}). `
+        + 'Chuyển hàng giữa 2 kho phải đi qua lệnh Chuyển kho, không đổi vị trí trực tiếp.')
+  }
   const put = await guardPutawayBatch({
     warehouseId: (destLoc as { warehouse_id?: string | null } | null)?.warehouse_id ?? null,
     locationId:  location_id,
@@ -1088,7 +1129,9 @@ export async function bulkTransferLocation(req: Request, res: Response) {
             console.error('StocktakeLog (move) insert failed:', (e as Error).message)
           }
         }
-        return ok(res, { updated: ids.length, location_code: parts[1] ?? '', putaway_warning: put.warning, stocktake_logged: countAsStocktake })
+        // `moving` = các pallet THẬT SỰ tìm thấy theo ids (id lạ không nằm trong đây) — đếm ý định
+        // là nói dối người dùng, xem ghi chú ở `updateEntriesCount`.
+        return ok(res, { updated: (moving as unknown[]).length, location_code: parts[1] ?? '', putaway_warning: put.warning, stocktake_logged: countAsStocktake })
       }
     }
   }
@@ -1120,9 +1163,9 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
-  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
-  return ok(res, { updated: ids.length, material_code: mat.material_code })
+  const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
+  return ok(res, { updated: up.updated, material_code: mat.material_code })
 }
 
 // ─── Stocktake (kiểm kê / check vị trí) ──────────────────────
@@ -1551,9 +1594,9 @@ export async function bulkUpdateProductionDate(req: Request, res: Response) {
   const patch: Record<string, unknown> = { production_date, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
-  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
-  return ok(res, { updated: ids.length })
+  const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
+  return ok(res, { updated: up.updated })
 }
 
 export async function getInventoryEntry(req: Request, res: Response) {

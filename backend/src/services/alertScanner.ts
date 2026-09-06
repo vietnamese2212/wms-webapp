@@ -261,8 +261,11 @@ async function ruleWeighDiff(TH: AlertThresholds): Promise<AlertCandidate[]> {
 // ── R5: Lỗi hệ thống BE trong 24h ────────────────────────────────────────────
 async function ruleBeErrors(): Promise<AlertCandidate[]> {
   const since = new Date(Date.now() - 24 * 3600_000).toISOString()
+  // Bỏ 503 (quá tải / chưa sẵn sàng) — tình huống đã lường trước, không phải lỗi app.
+  // Cùng lý do và cùng câu lọc với /api/telemetry/digest (xem `isSoftStatus` utils/response.ts).
   const { count, error } = await supabase.from('error_logs')
     .select('id', { count: 'exact', head: true }).eq('source', 'be').gte('created_at', since)
+    .or('status.is.null,status.neq.503')
   if (error) throw new Error(error.message)
   if (!count) return []
   return [{

@@ -3,7 +3,7 @@
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { HAS_DB, restAll, restRpc, chunk, check, finish } from './lib.mjs'
+import { HAS_DB, BASE, restAll, restRpc, restWrite, chunk, check, finish } from './lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -338,6 +338,37 @@ for (const [table, label] of [
     check('Chi phí CHUNG không lọt vào tổng khi lọc 1 kho',
       Math.abs(got - own) < 1 && Number(j?.cost_shared ?? -1) === 0,
       `kỳ ${period}: RPC ${got.toLocaleString('vi-VN')} vs tiền riêng của kho ${own.toLocaleString('vi-VN')} · cost_shared=${j?.cost_shared}`)
+  }
+}
+
+// 16. CẢNH BÁO "LỖI HỆ THỐNG" KHÔNG ĐƯỢC ĐẾM 503 (chốt 06/09).
+//     Gốc: 29/08 đổi 500 → 503 cho tình huống ĐÃ LƯỜNG TRƯỚC (quá tải / chưa apply migration) với
+//     hai mục đích: người dùng đọc được câu làm-được-gì-đó, và cảnh báo thôi kêu oan. Cả hai đều
+//     KHÔNG đạt vì `fail`/`maskServerMessage` che MỌI status ≥ 500 và digest đếm MỌI dòng source=be
+//     — đo 06/09: 43 dòng 503 nằm trong error_logs (Giám sát vận hành 20 · Slotting 18 · Vị trí 5),
+//     mỗi dòng đủ dựng cờ đỏ + email cho một tình huống không ai phải sửa gì.
+//     Phép kiểm ĐẶT DÒNG THẬT vào error_logs rồi đọc digest: 503 không được làm tăng be_24h,
+//     nhưng 500 thì PHẢI tăng (nếu không thì bộ đếm hỏng chứ không phải đã lọc đúng).
+{
+  const digest = async () => {
+    const r = await fetch(`${BASE}/api/telemetry/digest`)
+    return (await r.json())?.be_24h ?? null
+  }
+  const before = await digest()
+  const tag = `QA-SUITE soft5xx ${Date.now()}`
+  let soft = null, hard = null
+  try {
+    ;[soft] = await restWrite('error_logs', 'POST', null,
+      { source: 'be', status: 503, code: 'QUERY_TIMEOUT', message: tag, url: 'QA-SUITE/soft' })
+    const afterSoft = await digest()
+    ;[hard] = await restWrite('error_logs', 'POST', null,
+      { source: 'be', status: 500, code: 'DB_ERROR', message: tag, url: 'QA-SUITE/hard' })
+    const afterHard = await digest()
+    check('Cảnh báo "lỗi hệ thống 24h" BỎ QUA 503 (quá tải) nhưng vẫn đếm 500',
+      before != null && afterSoft === before && afterHard === before + 1,
+      `be_24h: ${before} → +503: ${afterSoft} → +500: ${afterHard}`)
+  } finally {
+    for (const row of [soft, hard]) if (row?.id) await restWrite('error_logs', 'DELETE', `id=eq.${row.id}`).catch(() => {})
   }
 }
 

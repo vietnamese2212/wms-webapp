@@ -1805,7 +1805,12 @@ export async function updateEntry(req: Request, res: Response) {
 
     // BASE UNIT: cartons_imported từ FE = SỐ BASE — mã có entry phải là số nguyên
     if (cartons_imported !== undefined) {
-      const ie = qtyIntegerError(Number(cartons_imported), (entry as any).material as MatUnits)
+      // Số nhập ÂM / không phải số: đo 06/09 cửa này nhận thẳng `-5` và ghi vào DB (API trả 200).
+      // Pallet mang số nhập âm làm hỏng mọi phép cộng tồn phía sau mà không có lỗi nào nổi lên.
+      const n = Number(cartons_imported)
+      if (!Number.isFinite(n) || n < 0)
+        return fail(res, 422, 'VALIDATION_ERROR', 'Số lượng nhập phải là số không âm')
+      const ie = qtyIntegerError(n, (entry as any).material as MatUnits)
       if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
     }
 
@@ -1861,7 +1866,15 @@ export async function updateEntry(req: Request, res: Response) {
     if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const patch: Record<string, unknown> = { updated_at: nowTs, update_date: vnDate() }
-    if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
+    // SỬA SỐ NHẬP PHẢI KÉO THEO SỐ TỒN (đo 06/09): trước đây chỉ ghi `cartons_imported`, nên sửa
+    // 6.720 → 6.672 cho pallet CHƯA xuất lượt nào vẫn để tồn 6.720 ⇒ tồn LỚN HƠN số nhập, và số
+    // dôi ra đó không đến từ đâu cả (staging đang có 2 dòng đúng dạng này). An toàn vì ngay trên
+    // `checkInventoryUnchanged` đã bắt buộc pallet còn NGUYÊN (chưa xuất / chưa giữ chỗ / chưa
+    // điều chỉnh) ⇒ tại đây luôn có tồn = số nhập, sửa số nhập tức là sửa cả hai.
+    if (cartons_imported !== undefined) {
+      patch.cartons_imported = Number(cartons_imported)
+      patch.cartons_remaining = Number(cartons_imported)
+    }
     if (stack_layer      !== undefined) patch.stack_layer = Number(stack_layer)
 
     const { data: updated, error } = await supabase

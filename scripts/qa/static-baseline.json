@@ -11,6 +11,7 @@
   "tolocaledatestring_no_tz": 0,
   "band_label_thung_ton": 2,
   "cpp_used_as_base_qty": 0,
+  "raw_error_in_soft_5xx": 0,
   "thung_unit_on_aggregate_pages": 0,
   "gdo_category_exact_match": 50,
   "category_text_exact_match_ts": 0,

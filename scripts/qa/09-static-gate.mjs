@@ -271,6 +271,17 @@ const RULES = [
         && !/units_per_carton|qtyFactor|\bupc\b|qtyFromEntryBase/.test(l)
         && !/^\s*(\/\/|\*)/.test(l), s),
   },
+  // 503 = quá tải / chưa sẵn sàng. Từ 06/09 message của 503 ĐI THẲNG tới người dùng (không bị che
+  // như 500) — nhờ vậy câu "thu hẹp KHOẢNG NGÀY / chọn 1 Kho" mới tới nơi. Cái giá: nếu ai đó nhét
+  // message THÔ của Supabase vào một 503 thì tên bảng/cột/constraint lộ ra client. 26 chỗ trả 503
+  // hiện đều là chuỗi tự soạn — luật này giữ nguyên trạng đó.
+  {
+    key: 'raw_error_in_soft_5xx',
+    label: 'trả 503 kèm message THÔ của lỗi (err.message) — 503 KHÔNG bị che nên sẽ lộ schema; ' +
+           'hãy soạn câu tiếng Việt cho người dùng (mẫu QUERY_TIMEOUT_MSG)',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      l => /\b503\b/.test(l) && /\b(err|error|e)\d*\??\.message\b/.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
+  },
   {
     key: 'thung_unit_on_aggregate_pages',
     label: 'nhãn đơn vị "thùng" trên TRANG TỔNG GỘP CROSS-MÃ (Dashboard/Giám sát vận hành/Báo cáo nhập/Slotting) — ' +

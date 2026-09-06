@@ -68,11 +68,19 @@ app.post('/api/telemetry/client-error', (req, res) => {
 app.get('/api/telemetry/digest', async (_req, res) => {
   try {
     const since = new Date(Date.now() - 24 * 3600_000).toISOString()
-    const [be, fe] = await Promise.all([
-      supabase.from('error_logs').select('id', { count: 'exact', head: true }).eq('source', 'be').gte('created_at', since),
+    // 503 = quá tải / chưa sẵn sàng — tình huống ĐÃ LƯỜNG TRƯỚC (xem `isSoftStatus` trong
+    // utils/response.ts), KHÔNG đếm vào "lỗi hệ thống": đếm vào là mỗi lúc đông người cờ đỏ lại
+    // dựng lên + email, mà cờ kêu oan vài lần thì lần thật sẽ không ai còn nhìn.
+    // `or(status.is.null,...)` chứ không `neq`: SQL `status <> 503` cho NULL ⇒ loại oan dòng cũ
+    // chưa ghi status (staging đang có 7 dòng như vậy).
+    const [be, fe, soft] = await Promise.all([
+      supabase.from('error_logs').select('id', { count: 'exact', head: true })
+        .eq('source', 'be').gte('created_at', since).or('status.is.null,status.neq.503'),
       supabase.from('error_logs').select('id', { count: 'exact', head: true }).eq('source', 'fe').gte('created_at', since),
+      supabase.from('error_logs').select('id', { count: 'exact', head: true })
+        .eq('source', 'be').gte('created_at', since).eq('status', 503),
     ])
-    res.json({ be_24h: be.count ?? 0, fe_24h: fe.count ?? 0 })
+    res.json({ be_24h: be.count ?? 0, fe_24h: fe.count ?? 0, overload_24h: soft.count ?? 0 })
   } catch {
     res.json({ be_24h: null, fe_24h: null, note: 'error_logs chưa sẵn sàng' })
   }

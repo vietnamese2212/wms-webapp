@@ -17,13 +17,29 @@ export default function Login() {
   const [error,    setError]    = useState('')
   const { login } = useAuthStore()
   const navigate  = useNavigate()
-  // Ô mật khẩu có ký tự do CHÍNH người đang ngồi gõ/dán vào chưa? Trình duyệt tự điền mật khẩu đã lưu
-  // KHÔNG sinh keydown/paste — nên khi cờ này còn false mà bấm "Hiển thị" thì xoá ô trước: trên PC dùng
-  // chung ở kho, người sau bấm con mắt là đọc được mật khẩu người trước, không phải qua mật khẩu máy như
-  // khi mở trình quản lý mật khẩu của trình duyệt (user phát hiện 07/09). App vốn không lưu mật khẩu ở đâu.
-  const typedRef = useRef(false)
+  // Con mắt "Hiển thị" CHỈ được lộ ký tự do CHÍNH người đang ngồi gõ/dán vào (user phát hiện 07/09: trên PC
+  // dùng chung ở kho, Edge tự điền mật khẩu người đăng nhập trước, bấm con mắt là đọc được — không cần
+  // PIN như khi mở kho mật khẩu của Edge). App vốn không lưu mật khẩu ở đâu; nguồn là autofill, cửa lộ là nút.
+  //
+  // Bản vá đầu (xoá qua setPassword khi chưa gõ) KHÔNG đủ — kiểm thật trên Edge vẫn lộ: trình duyệt điền
+  // vào DOM mà React không hay (state vẫn ''), hoặc điền SAU cú bấm; xoá state rỗng thì DOM giữ nguyên mật
+  // khẩu và bị chuyển sang chữ. Nên luật chặt hơn:
+  //   · chưa gõ/dán gì → con mắt KHÔNG chuyển sang chữ, chỉ xoá thẳng DOM (autofill điền lại sau cũng vẫn là dấu chấm);
+  //   · phím/dán ĐẦU TIÊN vào ô đang có giá trị (= tự điền) → xoá giá trị đó trước, ô chỉ còn ký tự người này;
+  //   · người tự điền rồi bấm "Đăng nhập" không bị ảnh hưởng (không gõ = không xoá).
+  const pwdRef = useRef<HTMLInputElement>(null)
+  const [typed, setTyped] = useState(false)
+  function clearPwdField() {
+    if (pwdRef.current) pwdRef.current.value = ''   // xoá DOM thật, không tin state
+    setPassword('')
+  }
+  function markTyped() {
+    if (typed) return
+    if (pwdRef.current?.value) clearPwdField()
+    setTyped(true)
+  }
   function toggleShowPwd() {
-    if (!showPwd && !typedRef.current) setPassword('')
+    if (!typed) { clearPwdField(); return }
     setShowPwd((v) => !v)
   }
 
@@ -83,12 +99,13 @@ export default function Login() {
                 <div className="relative">
                   <Input
                     id="password"
-                    type={showPwd ? 'text' : 'password'}
+                    ref={pwdRef}
+                    type={showPwd && typed ? 'text' : 'password'}
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={() => { typedRef.current = true }}
-                    onPaste={() => { typedRef.current = true }}
+                    onKeyDown={markTyped}
+                    onPaste={markTyped}
                     required
                     autoComplete="current-password"
                     className="pr-10"
@@ -97,10 +114,11 @@ export default function Login() {
                     type="button"
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     onClick={toggleShowPwd}
-                    aria-label={showPwd ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                    aria-label={showPwd && typed ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                    title={typed ? undefined : 'Chỉ hiển thị được mật khẩu bạn tự gõ'}
                     tabIndex={-1}
                   >
-                    {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPwd && typed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </div>

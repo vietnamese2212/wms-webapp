@@ -779,6 +779,17 @@ export async function restoreEmployee(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
+    // "Khôi phục" chỉ được HOÀN TÁC MỘT LẦN XOÁ. Bản cũ update vô điều kiện nên nó cũng bật lại
+    // `is_active` của tài khoản bị KHOÁ (`is_active=false`, chưa từng xoá — thao tác kỷ luật/nghỉ
+    // việc, làm bằng quyền `user_admin.edit`). Người chỉ có quyền XOÁ mở lại được tài khoản mà
+    // người khác vừa khoá = leo thang quyền (đo 06/09, gói QA 49 phép [69]).
+    const { data: cur } = await supabase.from('Employee')
+      .select('id, deleted_at, employee_code, name').eq('id', id).maybeSingle()
+    if (!cur) return fail(res, 'Không tìm thấy nhân viên', 404)
+    if (!(cur as { deleted_at: string | null }).deleted_at) {
+      return fail(res, 'Tài khoản này chưa bị xoá nên không có gì để khôi phục. '
+        + 'Nếu tài khoản đang bị KHOÁ, hãy mở lại ở phần Sửa thông tin (cần quyền sửa nhân viên).', 400)
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('Employee')
       .update({ deleted_at: null, is_active: true, updated_at: new Date().toISOString() })

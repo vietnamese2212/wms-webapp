@@ -143,6 +143,31 @@ export async function deleteTransportCompany(req: Request, res: Response) {
     if (userNccId) return fail(res, 'Không có quyền xóa ĐVVT', 403)
     const { id } = req.params
 
+    // ── ĐẾM THAM CHIẾU TRƯỚC KHI ĐỘNG VÀO BẤT CỨ THỨ GÌ ────────────────────────
+    // Bản cũ xoá cứng tài khoản tài xế → xoá cứng xe → rồi mới DELETE công ty và ĐỂ POSTGRES
+    // báo khoá ngoại. Công ty còn được lệnh vận chuyển / kế hoạch nhập / tồn kho / phiếu nhập /
+    // nhân sự tham chiếu ⇒ bước cuối 23503 → 500 "Lỗi hệ thống", NHƯNG ĐỘI XE VÀ TÀI KHOẢN TÀI XẾ
+    // ĐÃ MẤT VĨNH VIỄN. Người dùng đọc "Lỗi hệ thống" thì hiểu là chưa có gì xảy ra — sai hoàn toàn.
+    // (đo 06/09, gói QA 50 phép [9]: xe còn 0/1 sau một lượt xoá thất bại.)
+    // Nay hỏi trước, từ chối tử tế, và chỉ xoá khi chắc chắn xoá được — như deleteVehicleType.
+    const [orders, planLines, entries, imports, staff] = await Promise.all([
+      supabase.from('TmsOrder').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('inbound_plan_lines').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('ProductionImport').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('Employee').select('id', { count: 'exact', head: true }).eq('ncc_id', id).eq('is_driver', false),
+    ])
+    const used: string[] = []
+    if (orders.count) used.push(`${orders.count} lệnh vận chuyển`)
+    if (planLines.count) used.push(`${planLines.count} dòng kế hoạch nhập`)
+    if (entries.count) used.push(`${entries.count} pallet tồn kho`)
+    if (imports.count) used.push(`${imports.count} phiếu nhập`)
+    if (staff.count) used.push(`${staff.count} nhân sự`)
+    if (used.length) {
+      return fail(res, `Không thể xóa: ĐVVT/NCC này đang được dùng bởi ${used.join(', ')}. `
+        + 'Hãy gỡ liên kết trước, hoặc đặt Tạm dừng để ẩn khỏi danh sách chọn.', 409)
+    }
+
     // Lấy tất cả xe của ĐVVT — phân trang (đội xe >1000 → xóa sót driver)
     const vehicles = await fetchAllRowsParallel(() =>
       supabase.from('Vehicle').select('license_plate').eq('ncc_id', id).order('id'))

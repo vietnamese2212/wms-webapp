@@ -62,6 +62,48 @@ function countScanIconDivergence(sampleOut) {
   return n
 }
 
+/**
+ * Trang chi tiết mở bằng id KHÔNG CÒN (link cũ / bản ghi vừa bị xoá) phải cho người dùng lối ra.
+ *
+ * Bắt khối `return` sớm có câu "không tìm thấy / đã bị xoá / link đã cũ" mà TRỌN khối không chứa
+ * `<Link` (mẫu chuẩn: câu tiếng Việt + `<Link to="/…">← Về …</Link>`). Chỉ soi `frontend/src/pages`
+ * — form/dialog báo lỗi tại chỗ thì đã có nút Đóng của chính nó, không phải ngõ cụt.
+ * `navigate(...)` trong cùng khối cũng được chấp nhận (trang tự quay về danh sách).
+ */
+function countDeadEndReturns(sampleOut) {
+  const MSG = /không tìm thấy|đã bị xóa|đã bị xoá|link đã cũ|không tồn tại/i
+  // CHỈ xét lối thoát sớm "không có bản ghi": `if (isError …) return` / `if (!order) return` …
+  // (không đụng dropdown "Không tìm thấy", banner lỗi trong form, hay nhánh xử lý ảnh).
+  // `return` phải TRẢ VỀ GIAO DIỆN ngay trên dòng guard (`return (` hoặc `return <div…>`) — đó mới
+  // là màn hình người dùng nhìn thấy; `if (!order) return` trần bên trong một hàm xử lý không tính.
+  const GUARD = /\bif\s*\([^)]*(isError|isNotFound|notFound|![A-Za-z_$]*(order|gdo|data|plan|sheet|entry|record|voucher|run|task)\b)[^)]*\)\s*return\s*(\(|<)/i
+  let n = 0
+  for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return
+      if (!GUARD.test(line)) return
+      // Khối = ĐÚNG câu trả về này: một dòng nếu JSX đóng ngay trên dòng đó, ngược lại gom tới khi
+      // ngoặc cân bằng (tối đa 14 dòng). Gom bừa 14 dòng sẽ lấn sang thân trang bên dưới — nơi
+      // gần như luôn có `navigate(` — và luật tự vô hiệu hoá chính nó (đo 06/09 khi nghiệm thu).
+      let block = line
+      if (!/<\/\w[^>]*>\s*$/.test(line)) {
+        let depth = 0
+        for (let k = i; k < Math.min(i + 14, lines.length); k++) {
+          if (k > i) block += '\n' + lines[k]
+          for (const c of lines[k]) { if (c === '(') depth++; else if (c === ')') depth-- }
+          if (k > i && depth <= 0) break
+        }
+      }
+      if (!MSG.test(block)) return
+      if (/<Link\b|navigate\s*\(|<a\s+href|to=["'`]\//.test(block)) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
+
 // Màn nào ĐỌC danh mục vị trí (bất kể để chọn hay để lọc) thì phải có nút quét tem vị trí.
 // Đếm theo FILE, không theo dòng: 1 file thiếu = 1 vi phạm, đủ để CI chặn mà không nhiễu.
 function countLocPickerWithoutScan(sampleOut) {
@@ -506,6 +548,17 @@ const RULES = [
     key: 'n_plus_1_supabase_in_map',
     label: 'gọi supabase TRONG .map(async …) không chia lô = N+1 round-trip (pool PostgREST ~10 khe → nghẽn cả app)',
     count: (s) => countNPlus1SupabaseInMap(s),
+  },
+  {
+    key: 'detail_dead_end_no_way_back',
+    label: 'trang chi tiết báo "không tìm thấy" mà KHÔNG có lối quay lại — người dùng kẹt giữa màn, chỉ còn nút Back trình duyệt',
+    // LỚP LỖI TÁI PHÁT. Vòng 31/08 bắt 3 trang chi tiết đứng SKELETON VĨNH VIỄN khi mở bằng id đã
+    // xoá (link cũ, bookmark, chuyến vừa bị dọn) — đã vá bằng mẫu "câu tiếng Việt + <Link> quay
+    // lại". Vòng 06/09 đo lại 8 trang: 6 trang theo mẫu, riêng Lệnh fill in mỗi dòng chữ giữa màn
+    // trắng, không đường nào đi tiếp. Luật văn xuôi không tự thi hành ⇒ đưa vào ratchet.
+    // Bắt: câu báo "không tìm thấy / đã bị xoá / link đã cũ" nằm trong khối `return (…)` sớm của
+    // trang mà TRỌN khối đó không có <Link…> nào. Chỉ soi thư mục pages (trang, không phải form).
+    count: (s) => countDeadEndReturns(s),
   },
   {
     // axios `post(url, null)` gửi CHUỖI JSON "null" kèm Content-Type: application/json, mà

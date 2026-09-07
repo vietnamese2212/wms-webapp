@@ -2498,8 +2498,12 @@ export async function unassignGDO(req: Request, res: Response) {
   try {
     if (!(await guardGdoScope(req, res, req.params.id))) return
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, started_at').eq('id', req.params.id).single()
-    if (!gdo?.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
+      .select('assigned_at, started_at').eq('id', req.params.id).maybeSingle()
+    // Chuyến không còn (đã xoá / link cũ) phải nói ĐÚNG lý do. Bản cũ nuốt lỗi `.single()` rồi rơi
+    // vào nhánh dưới, trả "Đơn chưa được giao đơn" — người dùng hiểu là chuyến vẫn còn và đi tìm
+    // nút giao đơn không tồn tại (đo 06/09, gói QA 52 phép [47]).
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến — có thể đã bị xoá', 404)
+    if (!gdo.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
     if (gdo?.started_at)   return fail(res, 'Cần gỡ bắt đầu trước khi gỡ giao đơn', 400)
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: null, assigned_by: null, status: 'PENDING', updated_at: now() })
@@ -2854,6 +2858,13 @@ export async function uncompleteGDO(req: Request, res: Response) {
 export async function getWarehouseEmployees(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as Record<string, string>
+    // PHẠM VI KHO: `warehouse_id` là tham số do người gọi tự đặt, không phải phạm vi của họ. Bản cũ
+    // lọc thẳng theo tham số đó ⇒ tài khoản chỉ được giao Kho Ba Vì đổi id trên đường dẫn là đọc
+    // được HỌ TÊN, MÃ NV, CHỨC DANH của nhân sự kho khác (đo 06/09, gói QA 52 phép [81]). Route này
+    // nuôi cả ô "Giao lệnh fill cho ai" lẫn ô chọn lái xe nâng bên Xuất kho.
+    const myWhs = scopeWhIds(req)                       // null = không giới hạn (superadmin/toàn quốc)
+    if (myWhs && warehouse_id && !myWhs.includes(warehouse_id))
+      return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     // Phân trang đủ (cap ~1000/response — nhân sự có thể >1000)
     const data = await fetchAllRowsParallel(() => {
       let q = supabase.from('Employee')
@@ -2861,6 +2872,7 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
         .eq('is_active', true)
         .order('name').order('id')
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      else if (myWhs) q = myWhs.length ? q.in('warehouse_id', myWhs) : q.eq('id', '__none__')
       return q
     })
     const emps = data as { id: string; name: string; employee_code: string; job_title_id: string | null }[]

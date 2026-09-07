@@ -12,7 +12,7 @@ import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
-import { parseSheetByHeader, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
@@ -1697,6 +1697,12 @@ export async function uploadExcel(req: Request, res: Response) {
     const wb = readWorkbookSafe(req.file.buffer)
     if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    // Ô GỘP phải được TRẢI trước khi đọc: file tồn kho thường gộp ô "Kho" (hoặc "Mã hàng") cho cả
+    // cụm pallet, mà ô gộp chỉ mang giá trị ở ô GÓC — các dòng dưới đọc ra rỗng và bị báo "thiếu
+    // kho". Vì upload tồn là all-or-nothing nên CẢ FILE bị từ chối, kể cả dòng đúng, trong khi người
+    // dùng nhìn file thấy ô kho rõ ràng có giá trị (đo 06/09, gói QA 52 phép [78]; cửa Chi phí kho
+    // đã gọi hàm này từ 27/08 và chạy đúng).
+    expandMergedCells(ws)
     const { rows, missingRequired } = parseSheetByHeader(ws, INV_FIELDS)   // map theo TÊN cột (chịu đảo cột)
     if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Tồn kho`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)

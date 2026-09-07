@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { isLeaveType, DEFAULT_LEAVE_TYPE, LEAVE_TYPE_VALUES } from '../../config/leaveTypes'
+import { isDay } from '../../utils/dates'
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[]; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -273,8 +274,17 @@ export async function createLeave(req: Request, res: Response) {
     }
     const empId = employee_id || u.sub
     if (!empId || !date_from || !date_to) return fail(res, 'employee_id, date_from, date_to là bắt buộc', 400)
+    // Ngày phải CÓ THẬT và đúng dạng. Bỏ kiểm thì '10-12-2026' (10/12 kiểu Việt) được Postgres đọc
+    // theo kiểu Mỹ và lưu ÊM thành 2026-10-12 — đơn nghỉ nhảy sang tháng khác, không lỗi, không
+    // cảnh báo (đo 06/09, gói QA 51 phép [11]).
+    for (const [k, v] of [['Từ ngày', date_from], ['Đến ngày', date_to]] as const)
+      if (!isDay(v)) return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07) và là ngày có thật`, 400)
     if (!(await guardLeaveTarget(req, res, empId))) return
     if (date_to < date_from) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
+    // Loại nghỉ lạ: đường SỬA đã trả 400, đường TẠO thì âm thầm đổi thành "nghỉ phép năm" ⇒ trừ
+    // nhầm quỹ phép. Hai cửa cùng một sổ phải nói cùng một luật (gói QA 51 phép [12]).
+    if (leave_type !== undefined && leave_type !== null && leave_type !== '' && !isLeaveType(leave_type))
+      return fail(res, `Loại nghỉ không hợp lệ (chỉ nhận: ${LEAVE_TYPE_VALUES.join(', ')})`, 400)
 
     const dup = await overlappingLeave(empId, date_from, date_to)
     if (dup) return fail(res, `Nhân viên đã có đơn nghỉ phép trùng/chồng ngày (${dup.date_from} → ${dup.date_to}). Không thể tạo trùng.`, 409)
@@ -305,6 +315,9 @@ export async function updateLeave(req: Request, res: Response) {
       date_from?: string; date_to?: string; leave_type?: string; reason?: string
     }
     const datesChanged = date_from !== undefined || date_to !== undefined
+    for (const [k, v] of [['Từ ngày', date_from], ['Đến ngày', date_to]] as const)
+      if (v !== undefined && !isDay(v))
+        return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07) và là ngày có thật`, 400)
     // old = trạng thái trước khi sửa (để đồng bộ lại chấm công nếu đơn đã DUYỆT đổi ngày)
     let old: { id: string; employee_id: string; date_from: string; date_to: string; status: string } | null = null
     if (datesChanged) {
@@ -312,6 +325,19 @@ export async function updateLeave(req: Request, res: Response) {
         .select('id, employee_id, date_from, date_to, status').eq('id', id).maybeSingle()
       if (!cur) return fail(res, 'Không tìm thấy đơn', 404)
       old = cur as { id: string; employee_id: string; date_from: string; date_to: string; status: string }
+      // ĐỔI NGÀY TRÊN ĐƠN ĐÃ DUYỆT = TỰ CẤP THÊM NGÀY NGHỈ. Bản cũ cho sửa xong vẫn giữ nguyên
+      // trạng thái ĐÃ DUYỆT và ghi thẳng chấm công theo ngày mới: người chỉ có quyền "xin nghỉ" nới
+      // đơn của chính mình từ 1 ngày lên 7 ngày mà không ai duyệt lại (đo 06/09, gói QA 51 [16b]).
+      // Muốn đổi ngày thì đơn phải quay về CHỜ DUYỆT để cấp trên xét lại — trừ người có quyền duyệt.
+      if (old.status === 'APPROVED') {
+        const u = userOf(req)
+        const mayApprove = u.is_superadmin === true
+          || (await canApprove(await approverContext(u.sub), old.employee_id, await loadParentMap(), false))
+        if (!mayApprove) {
+          return fail(res, 'Đơn đã được duyệt — không tự đổi ngày được. '
+            + 'Hãy nhờ người duyệt đơn sửa, hoặc huỷ đơn rồi tạo đơn mới cho khoảng ngày cần nghỉ.', 403)
+        }
+      }
       const nf = date_from ?? old.date_from, nt = date_to ?? old.date_to
       if (nt < nf) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
       const dup = await overlappingLeave(old.employee_id, nf, nt, id)

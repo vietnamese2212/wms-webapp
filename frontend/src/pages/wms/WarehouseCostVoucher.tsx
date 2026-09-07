@@ -16,7 +16,7 @@
 // thẳng từ file Excel đang mở. Mỗi dòng một lượt gọi API vừa chậm vừa để lại phiếu ghi DỞ khi mạng
 // rớt giữa chừng — ở đây một lần bấm là một lượt ghi (BE xoá/thêm/sửa theo lô trong `saveVoucher`).
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Wallet, Plus, Trash2, Save, Lock, Unlock, RotateCcw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -170,6 +170,18 @@ export default function WarehouseCostVoucher() {
       },
     } satisfies ActionItem] : []),
   ]
+
+  // Kho không còn / link cũ: BE trả 404 "Không tìm thấy kho". Bản cũ vẫn dựng TRỌN form (ô nhập,
+  // nút Thêm dòng, nút Lưu phiếu) bên dưới banner đỏ — người dùng gõ tiền xong bấm Lưu mới biết
+  // không lưu được. Không mở được phiếu thì đừng mời người ta điền (đo 06/09).
+  if (isError) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không mở được phiếu chi phí — {apiErr(error)}</p>
+        <Link to="/wms/warehouse-costs" className="text-xs text-sky-600 underline">← Về danh sách phiếu</Link>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full sm:p-3">

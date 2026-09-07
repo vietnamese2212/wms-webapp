@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { getStandardWorkHours } from '../../utils/settings'
+import { isDay } from '../../utils/dates'
 
 type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -42,6 +43,22 @@ async function scopedEmployeeIds(req: Request, warehouse_id?: string): Promise<{
   return { empIds: [...new Set(ids)] }
 }
 
+/**
+ * GHI công cho ai đó thì phải NHÌN THẤY người đó — cùng một phạm vi kho với đường đọc.
+ *
+ * Bản cũ chỉ gác đường ĐỌC (`scopedEmployeeIds`), còn ghi/xoá thì chỉ hỏi "có quyền attendance.edit
+ * không". Đo 06/09 (gói QA 51 phép [66]): tài khoản chỉ được giao kho Bluestar chấm công + 3 giờ
+ * tăng ca cho nhân viên Kho Ba Vì → ghi THÀNH CÔNG, nhưng đọc lại chính dòng vừa ghi thì thấy 0
+ * dòng (đường đọc có cắt phạm vi). Người ghi không nhìn thấy thứ mình vừa ghi = không ai phát hiện.
+ * Trả về câu từ chối, hoặc null nếu được phép.
+ */
+async function forbidOutOfScopeEmployee(req: Request, employeeId: string): Promise<string | null> {
+  const sc = await scopedEmployeeIds(req)
+  if (sc.empIds === null) return null                       // superadmin / toàn quốc
+  if (sc.empIds.includes(employeeId)) return null
+  return 'Nhân viên này ngoài phạm vi kho được giao — không chấm/sửa công cho người của kho khác'
+}
+
 // BẢNG CÔNG (ma trận NV × ngày) — TRANG = NGƯỜI, tổng tính trên toàn bộ bộ lọc.
 // Đo thật 28/07: trả cả bảng thì 3.000 NV × 28 ngày = 82.914 dòng = 44.665KB / 18,9s ⇒ vượt
 // trần 4,5MB response của Vercel từ khoảng ~290 NV. Nay chỉ trả công của NV TRÊN TRANG.
@@ -54,8 +71,10 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
     const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
     const sc = await scopedEmployeeIds(req, q.warehouse_id)
     if (sc.forbidden) return fail(res, sc.forbidden, 403)
+    for (const [k, v] of [['Từ ngày', q.date_from], ['Đến ngày', q.date_to]] as const)
+      if (v && !isDay(v)) return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07)`, 400)
 
-    const workDates = (parseListParam(q.work_dates) ?? []).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s))
+    const workDates = (parseListParam(q.work_dates) ?? []).filter(s => isDay(s))
     const { data, error } = await supabase.rpc('hr_attendance_matrix', {
       p_scope_ids:  sc.empIds,
       p_wh:         q.warehouse_id || null,
@@ -138,6 +157,10 @@ async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
 export async function listAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, date_from, date_to } = req.query as Record<string, string>
+    // Lọc bằng ngày viết sai ('hom-qua', '07/09/2026') không có HÌNH DẠNG ngày nên lưới chung ở
+    // app.ts bỏ qua, rồi Postgres nổ 22007 → 500 "Lỗi hệ thống" (đo 06/09, gói QA 51 phép [59]).
+    for (const [k, v] of [['Từ ngày', date_from], ['Đến ngày', date_to]] as const)
+      if (v && !isDay(v)) return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07)`, 400)
     // Cắt theo scope kho của user (bỏ trống filter Kho ≠ được xem cả công ty)
     const sc = await scopedEmployeeIds(req, warehouse_id)
     if (sc.forbidden) return fail(res, sc.forbidden, 403)
@@ -178,6 +201,10 @@ export async function upsertAttendance(req: Request, res: Response) {
     const empId = employee_id || u.sub
     if (!empId || !work_date || !kind) return fail(res, 'employee_id, work_date, kind là bắt buộc', 400)
     if (!KINDS.includes(kind)) return fail(res, 'kind không hợp lệ', 400)
+    // Ngày phải là ngày CÓ THẬT dạng YYYY-MM-DD. Bỏ kiểm thì chuỗi đi thẳng xuống Postgres, và
+    // Postgres đọc theo kiểu Mỹ: gõ '07-09-2026' (7/9 kiểu Việt) được LƯU ÊM thành 2026-07-09 —
+    // công ghi vào tháng 7. Không lỗi, không cảnh báo, chỉ sai (đo 06/09, gói QA 51 phép [58]).
+    if (!isDay(work_date)) return fail(res, 'Ngày công phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07) và là ngày có thật', 400)
 
     // ── Rule ngày ──
     const today = todayVN()
@@ -185,10 +212,19 @@ export async function upsertAttendance(req: Request, res: Response) {
     // chấm công ngày đã qua (hoặc của người khác) cần quyền sửa
     const isSelfToday = empId === u.sub && work_date === today
     if (!isSelfToday && !hasAttEdit(u)) return fail(res, 'Ngày đã qua hoặc của người khác — cần quyền "Sửa công" (attendance.edit)', 403)
+    const outOfScope = await forbidOutOfScopeEmployee(req, empId)
+    if (outOfScope) return fail(res, outOfScope, 403)
 
     // ── Rule loại công ──
     let ot = Number(ot_hours) || 0
     let early = Number(early_leave_hours) || 0
+    // Giờ ÂM lách được luật "chỉ OT hoặc về sớm" (ot=-3, early=4 lọt qua phép so `ot > 0 && early > 0`)
+    // rồi vào thẳng công thức lương: 1 ngày công thành 1 giờ (8 − 3 − 4). Trần 24 giờ chặn nốt ca
+    // gõ 1000 làm cột numeric(4,1) tràn → 500 (đo 06/09, gói QA 51 phép [56][57]).
+    if (!Number.isFinite(ot) || !Number.isFinite(early) || ot < 0 || early < 0)
+      return fail(res, 'Giờ tăng ca / về sớm phải là số không âm', 400)
+    if (ot > 24 || early > 24)
+      return fail(res, 'Giờ tăng ca / về sớm không thể vượt 24 giờ trong một ngày', 400)
     if (kind === 'LEAVE') { ot = 0; early = 0 }              // nghỉ phép: không OT/về sớm
     else if (ot > 0 && early > 0) return fail(res, 'Một ngày chỉ có OT hoặc về sớm, không có cả hai', 400)
 
@@ -230,6 +266,8 @@ export async function reportAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, date_from, date_to } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from, date_to là bắt buộc', 400)
+    for (const [k, v] of [['Từ ngày', date_from], ['Đến ngày', date_to]] as const)
+      if (!isDay(v)) return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07)`, 400)
     // Cắt theo scope kho của user (giống listAttendance — báo cáo cũng là dữ liệu nhân sự)
     const scRep = await scopedEmployeeIds(req, warehouse_id)
     if (scRep.forbidden) return fail(res, scRep.forbidden, 403)
@@ -271,10 +309,13 @@ export async function deleteAttendance(req: Request, res: Response) {
   try {
     const u = userOf(req)
     const { data: row } = await supabase.from('Attendance').select('employee_id, work_date').eq('id', req.params.id).maybeSingle()
-    if (row) {
+    if (!row) return fail(res, 'Không tìm thấy dòng chấm công', 404)
+    {
       const r = row as { employee_id: string; work_date: string }
       const isSelfToday = r.employee_id === u.sub && r.work_date === todayVN()
       if (!isSelfToday && !hasAttEdit(u)) return fail(res, 'Ngày đã qua hoặc của người khác — cần quyền "Sửa công"', 403)
+      const outOfScope = await forbidOutOfScopeEmployee(req, r.employee_id)
+      if (outOfScope) return fail(res, outOfScope, 403)
     }
     const { error } = await supabase.from('Attendance').delete().eq('id', req.params.id)
     if (error) return fail(res, error.message)

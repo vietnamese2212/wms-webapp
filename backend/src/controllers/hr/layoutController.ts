@@ -2,10 +2,42 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 const actorOf = (req: Request): string | null => (req as { user?: { name?: string } }).user?.name ?? null
 const now = () => new Date().toISOString()
 const LAYOUT_SELECT = 'id, warehouse_id, name, note, is_active, created_at, updated_at'
+
+/**
+ * PHẠM VI KHO cho mẫu bố trí nhân sự — luật dự án: "phân quyền kho nào thì CHỈ thấy dữ liệu kho đó".
+ *
+ * Cả file này (và assignmentController) trước đây KHÔNG đọc `warehouse_ids` một lần nào: route chỉ
+ * gác QUYỀN, không gác KHO. Đo sống 06/09 bằng tài khoản chỉ được giao kho Bluestar (gói QA 51 phép
+ * [63][64][65]): đọc được 3 mẫu bố trí của Kho Ba Vì, TẠO được mẫu mới cho Kho Ba Vì (201), và mở
+ * được phiếu phân công của kho đó kèm 7 tên nhân sự.
+ */
+export function hrScopeWhIds(req: Request): string[] | null {
+  const u = (req as { user?: { is_superadmin?: boolean; warehouse_scope?: string; warehouse_ids?: string[] } }).user
+  if (u?.is_superadmin === true || u?.warehouse_scope === 'NATIONAL') return null   // không giới hạn
+  return u?.warehouse_ids ?? []
+}
+const scopeWhIds = hrScopeWhIds
+export const HR_WH_DENY = 'Kho này ngoài phạm vi được giao — không xem/sửa được bố trí nhân sự của kho khác'
+const WH_DENY = HR_WH_DENY
+/** Kho có nằm trong phạm vi không (null = không giới hạn). */
+export function whInHrScope(req: Request, warehouseId: string | null | undefined): boolean {
+  const ids = scopeWhIds(req)
+  if (ids === null) return true
+  return !!warehouseId && ids.includes(warehouseId)
+}
+/** Lấy layout + gác phạm vi. Trả null nếu đã trả lời lỗi. */
+export async function layoutInScope(req: Request, res: Response, id: string): Promise<{ id: string; warehouse_id: string } | null> {
+  const { data } = await supabase.from('WorkLayout').select('id, warehouse_id').eq('id', id).maybeSingle()
+  if (!data) { fail(res, 'Không tìm thấy layout', 404); return null }
+  const row = data as { id: string; warehouse_id: string }
+  if (!whInHrScope(req, row.warehouse_id)) { fail(res, WH_DENY, 403); return null }
+  return row
+}
 
 // skill của layout, kèm tên skill + chức danh (phục vụ nhãn vị trí)
 export async function layoutSkillsDetailed(layout_id: string) {
@@ -26,11 +58,16 @@ export async function layoutSkillsDetailed(layout_id: string) {
 export async function listLayouts(req: Request, res: Response) {
   try {
     const { warehouse_id, include_inactive } = req.query as Record<string, string>
-    let q = supabase.from('WorkLayout').select(LAYOUT_SELECT).order('name')
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-    if (include_inactive !== 'true') q = q.eq('is_active', true)
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    const myWhs = scopeWhIds(req)
+    if (warehouse_id && !whInHrScope(req, warehouse_id)) return fail(res, WH_DENY, 403)
+    if (myWhs && !myWhs.length) return ok(res, [])
+    const data = await fetchAllRowsParallel(() => {
+      let q = supabase.from('WorkLayout').select(LAYOUT_SELECT).order('name').order('id')
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      else if (myWhs) q = q.in('warehouse_id', myWhs)
+      if (include_inactive !== 'true') q = q.eq('is_active', true)
+      return q
+    })
     const layouts = (data ?? []) as { id: string }[]
     if (!layouts.length) return ok(res, [])
     const { data: counts } = await supabase.from('WorkLayoutSkill').select('layout_id, required_count').in('layout_id', layouts.map(l => l.id))
@@ -55,6 +92,7 @@ export async function getLayout(req: Request, res: Response) {
     const { id } = req.params
     const { data: layout } = await supabase.from('WorkLayout').select(LAYOUT_SELECT).eq('id', id).maybeSingle()
     if (!layout) return fail(res, 'Không tìm thấy layout', 404)
+    if (!whInHrScope(req, (layout as { warehouse_id: string }).warehouse_id)) return fail(res, WH_DENY, 403)
     const skills = await layoutSkillsDetailed(id)
     const job_title_ids = await layoutJobTitleIds(id)
     return ok(res, { ...layout, skills, job_title_ids })
@@ -65,6 +103,7 @@ export async function getLayout(req: Request, res: Response) {
 export async function setLayoutJobTitles(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await layoutInScope(req, res, id))) return
     const { job_title_ids } = req.body as { job_title_ids?: string[] }
     await supabase.from('WorkLayoutJobTitle').delete().eq('layout_id', id)
     const ids = [...new Set((job_title_ids ?? []).filter(Boolean))]
@@ -83,6 +122,7 @@ export async function createLayout(req: Request, res: Response) {
   try {
     const { warehouse_id, name, note } = req.body as { warehouse_id?: string; name?: string; note?: string }
     if (!warehouse_id || !name?.trim()) return fail(res, 'warehouse_id và name là bắt buộc', 400)
+    if (!whInHrScope(req, warehouse_id)) return fail(res, WH_DENY, 403)
     const actor = actorOf(req)
     const { data, error } = await supabase.from('WorkLayout').insert({
       id: randomUUID(), warehouse_id, name: name.trim(), note: note || null, is_active: true,
@@ -96,6 +136,7 @@ export async function createLayout(req: Request, res: Response) {
 export async function updateLayout(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await layoutInScope(req, res, id))) return
     const { name, note, is_active } = req.body as { name?: string; note?: string; is_active?: boolean }
     const updates: Record<string, unknown> = { updated_at: now(), updated_by: actorOf(req) }
     if (name      !== undefined) updates.name      = name.trim()
@@ -111,6 +152,7 @@ export async function updateLayout(req: Request, res: Response) {
 export async function deleteLayout(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await layoutInScope(req, res, id))) return
     const { count } = await supabase.from('WorkAssignmentSheet').select('id', { count: 'exact', head: true }).eq('layout_id', id)
     if ((count ?? 0) > 0) {
       const { error } = await supabase.from('WorkLayout').update({ is_active: false, updated_at: now(), updated_by: actorOf(req) }).eq('id', id)
@@ -127,6 +169,9 @@ export async function deleteLayout(req: Request, res: Response) {
 export async function setLayoutSkills(req: Request, res: Response) {
   try {
     const { id } = req.params
+    // Kiểm mẫu CÓ THẬT + đúng phạm vi trước khi xoá-ghi-lại: bản cũ nhận id lạ rồi vấp khoá ngoại
+    // → 500 "Lỗi hệ thống" (đo 06/09, gói QA 51 phép [27]).
+    if (!(await layoutInScope(req, res, id))) return
     const { skills } = req.body as { skills?: { skill_id: string; required_count: number; sort_order?: number; note?: string }[] }
     await supabase.from('WorkLayoutSkill').delete().eq('layout_id', id)
     const valid = (skills ?? []).filter(s => s.skill_id && s.required_count > 0)

@@ -22,6 +22,7 @@ import { maskServerMessage } from '../../utils/response'
 import { parseSheetByHeader, expandMergedCells, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { parseVnNumber } from '../../utils/vnNumber'
 
 const ok = (res: Response, data: unknown) => res.json({ success: true, data })
 const fail = (res: Response, message: string, status = 500, code = 'COST_ERROR') =>
@@ -414,18 +415,13 @@ export async function saveVoucher(req: Request, res: Response) {
 // ── GHI: 1 dòng kê khai ───────────────────────────────────────────────────────────────────────
 type Body = { period?: string; warehouse_id?: string | null; cost_item?: string; amount?: number | string; note?: string | null }
 
-/** Số tiền: nhận cả "45.000.000" (VN) lẫn 45000000 — dùng chung cho form và upload. */
-function parseAmount(raw: unknown): number | null {
-  if (raw == null || String(raw).trim() === '') return null
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null
-  let s = String(raw).trim().replace(/\s/g, '').replace(/[₫đ]/gi, '')
-  const lastDot = s.lastIndexOf('.'), lastComma = s.lastIndexOf(',')
-  // Dấu đứng SAU CÙNG là dấu thập phân; dấu còn lại là phân cách nghìn → bỏ
-  if (lastComma > lastDot) s = s.replace(/\./g, '').replace(',', '.')
-  else s = s.replace(/,/g, '')
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
-}
+/**
+ * Số tiền: nhận cả "45.000.000" (VN) lẫn 45000000 — dùng chung cho form và upload.
+ * Đi qua `utils/vnNumber` (MỘT nguồn). Bản chép tay cũ so vị trí dấu cuối cùng nên "45.000.000"
+ * ra NaN (từ chối cả file kê khai) còn "1.234" ra 1,234 đồng — sai gấp 1.000 lần, ghi êm vào sổ.
+ */
+const parseAmount = (raw: unknown): number | null =>
+  raw == null || String(raw).trim() === '' ? null : parseVnNumber(raw)
 
 export async function createCost(req: Request, res: Response) {
   try {

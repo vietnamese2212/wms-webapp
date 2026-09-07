@@ -4,7 +4,7 @@
 // Đổi vị trí đến (fill.change_dest) · Hủy dòng/lệnh (fill.cancel). Quét (fill.execute) giới hạn lệnh này.
 // Bulk chạy SONG SONG per-dòng qua route PATCH/DELETE /fill/tasks/:id (chuẩn Promise.all).
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
@@ -156,7 +156,15 @@ export default function FillOrderDetail() {
   }
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải lệnh fill…</div>
-  if (!order) return <div className="p-8 text-center text-sm text-slate-400">Không tìm thấy lệnh fill</div>
+  // Lệnh đã hủy/dọn hoặc link cũ: phải nói RÕ lý do + có LỐI VỀ. Bản cũ chỉ in "Không tìm thấy
+  // lệnh fill" giữa màn trắng, không đường nào đi tiếp — người dùng kẹt, phải bấm Back trình duyệt
+  // (đo 06/09: 6/8 trang chi tiết đã theo mẫu này, riêng đây bị bỏ sót).
+  if (!order) return (
+    <div className="p-6 text-center space-y-2">
+      <p className="text-sm text-red-600">Không tìm thấy lệnh fill — có thể đã bị hủy hoặc đường link đã cũ</p>
+      <Link to="/wms/fill" className="text-xs text-sky-600 underline">← Về Fill hàng</Link>
+    </div>
+  )
 
   return (
     <div className="flex flex-col h-full sm:p-3">

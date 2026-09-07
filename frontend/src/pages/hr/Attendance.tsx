@@ -451,7 +451,13 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           // Xuất bảng công = dữ liệu nhân sự → dùng quyền attendance.report (đã có sẵn, đúng nghĩa "báo cáo"),
           // KHÔNG để ai xem được là xuất được (attendance.self_log có ở 10/19 chức danh).
           ...(can(perms, 'attendance', 'report') ? [{
-            key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
+            key: 'export', icon: Download, label: 'Xuất Excel',
+            // Nút bật/tắt theo SỐ DÒNG CÔNG, còn màn hình đếm theo SỐ NGƯỜI: khoảng ngày chưa ai
+            // chấm thì lưới vẫn hiện đủ người + "Lượt thiếu", mà nút lại mờ. Nói thẳng lý do thay
+            // vì để người dùng đoán (đo 06/09: 40 người trên màn, nút mờ, tooltip không giải thích).
+            tip: filtered.length
+              ? `Xuất Excel ${filtered.length.toLocaleString('vi-VN')} dòng chấm công trong khoảng lọc (dữ liệu thô, mỗi dòng = 1 người × 1 ngày)`
+              : 'Chưa có dòng chấm công nào trong khoảng lọc — không có gì để xuất. Lưới đang hiện danh sách người và lượt thiếu, nhưng file xuất chỉ gồm ngày đã chấm.',
             mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
             disabled: !filtered.length,
             onClick: exportExcel,

@@ -7,7 +7,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { isUuid } from '../../utils/ids'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
+import { deleteVehicleSlotsAndRecount, releaseSlotsOfOrders } from '../../utils/bookingGuards'
 
 // ─── Scope kho+loại (mirror TMS orderController) — KH nhập chuyển kho gắn 1 kho đích ──
 // NATIONAL → null (toàn quyền). Khác → chỉ các kho được gán cho user.
@@ -114,7 +114,8 @@ async function findOrCreateTmsOrder(
 }
 
 // ─── Helper: tính lại tổng TmsOrder từ plan lines (chỉ tính ACTIVE) ─────────
-async function recalcTmsOrder(tmsOrderId: string): Promise<void> {
+// `actor` = tên người thao tác, để RPC nhả khung giờ ghi đúng vết ai nhả.
+async function recalcTmsOrder(tmsOrderId: string, actor: string | null = null): Promise<void> {
   // Chỉ đếm ACTIVE lines — CANCELLED lines không tính vào kế hoạch
   const { data: activeLines } = await supabase
     .from('inbound_plan_lines')
@@ -143,6 +144,11 @@ async function recalcTmsOrder(tmsOrderId: string): Promise<void> {
       await supabase.from('TmsOrder')
         .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
         .eq('id', tmsOrderId)
+      // Lệnh đã huỷ thì PHẢI NHẢ khung giờ đang giữ. Bản cũ chỉ đổi trạng thái: dòng xe vẫn trỏ
+      // vào khung và vẫn tính một chỗ ⇒ khung cao điểm bị lệnh chết chiếm, xe thật không đặt được,
+      // mà màn hình không còn cho thao tác lên lệnh đã huỷ nên KHÔNG có đường nào nhả ra
+      // (đo 06/09, gói QA 50 phép [54]). Đường XOÁ dòng kế hoạch vốn đã dọn đúng.
+      await releaseSlotsOfOrders([tmsOrderId], actor)
     }
   }
 }

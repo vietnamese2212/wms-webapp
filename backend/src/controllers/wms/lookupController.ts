@@ -91,6 +91,13 @@ export async function updateLookup(req: Request, res: Response) {
 
   const { data: cur } = await supabase.from('LookupValue').select('type, value').eq('id', id).maybeSingle()
   if (!cur) return fail(res, 'Không tìm thấy giá trị danh mục', 404)
+  // CỬA NÀY LÀ CỦA LOẠI KHO. Bản cũ không lọc `type` nên quyền "Quản lý Loại kho" sửa/xoá được cả
+  // ĐƠN VỊ TÍNH — đi vòng qua quyền `manage_unit`, và tệ hơn: nó không viết HOA giá trị như tab
+  // ĐVT vẫn làm, nên mã hàng đang dùng đơn vị đó mất nhãn ngay (đo 06/09, gói QA 49 phép [44][45]).
+  // Đơn vị tính có cửa riêng `/wms/lookup-unit/*` với guard "đang được N mã hàng dùng".
+  if (cur.type === 'unit_of_measure') {
+    return fail(res, 'Đơn vị tính phải sửa ở tab Đơn vị tính (Cài đặt WMS) — cửa này dành cho Loại kho', 403)
+  }
 
   // Đổi TÊN loại kho = cascade RPC: tên đang lưu dạng text ở ~11 cột dữ liệu (Material/Location/
   // WarehouseZone/Employee.allowed_categories/SlotTemplate/DeliverySlot/TmsOrder/GDO/gate/
@@ -184,11 +191,28 @@ export async function updateUnit(req: Request, res: Response) {
   const { id } = req.params
   const { value, meta } = req.body as { value?: string; meta?: unknown }
   if (!value?.trim()) return fail(res, 'Mã ĐVT là bắt buộc')
-  const { data: cur } = await supabase.from('LookupValue').select('type').eq('id', id).maybeSingle()
+  const { data: cur } = await supabase.from('LookupValue').select('type, value, meta').eq('id', id).maybeSingle()
   if (!cur || cur.type !== 'unit_of_measure') return fail(res, 'Không tìm thấy đơn vị tính', 404)
   const code = value.trim().toUpperCase()
+  // ĐỔI TÊN đơn vị tính đang được mã hàng dùng: `Material.base_unit/entry_unit` lưu TEXT nên không
+  // có gì kéo theo — mã hàng trỏ vào một mã đơn vị không còn tồn tại và mất nhãn tiếng Việt. Xoá
+  // thì đã chặn (dưới), đổi tên thì chưa: cùng hậu quả mà chỉ một cửa có rào (gói QA 49 phép [38]).
+  if (code !== cur.value) {
+    const [b, e] = await Promise.all([
+      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('base_unit', cur.value),
+      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('entry_unit', cur.value),
+    ])
+    const total = (b.count ?? 0) + (e.count ?? 0)
+    if (total > 0) {
+      return fail(res, `ĐVT "${cur.value}" đang được ${total} mã hàng dùng — không đổi được MÃ. `
+        + 'Muốn đổi cách gọi thì sửa ô Tên hiển thị; đổi mã thì phải cập nhật các mã hàng đó trước.', 409)
+    }
+  }
+  // Không gửi `meta` thì GIỮ NGUYÊN vai trò + tên hiển thị đang có. Bản cũ ghi đè vô điều kiện nên
+  // mỗi lần sửa mã mà quên kèm meta là đơn vị mất vai trò (entry → both) và mất tên tiếng Việt.
+  const nextMeta = meta === undefined ? (cur as { meta?: unknown }).meta ?? null : sanitizeUnitMeta(meta)
   const { data, error } = await supabase.from('LookupValue')
-    .update({ value: code, meta: sanitizeUnitMeta(meta), updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+    .update({ value: code, meta: nextMeta, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
     .eq('id', id).select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by').single()
   if (error) {
     if (error.code === '23505') return fail(res, `"${code}" đã tồn tại`)
@@ -286,7 +310,13 @@ export async function deleteLookup(req: Request, res: Response) {
   const { id } = req.params
 
   const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
-  if (lk?.type === 'warehouse_type' && lk.value) {
+  if (!lk) return fail(res, 'Không tìm thấy giá trị danh mục', 404)
+  // Cùng lý do với updateLookup: đây là cửa Loại kho. Xoá ĐVT ở đây bỏ qua guard "đang được N mã
+  // hàng dùng" của tab ĐVT ⇒ mã hàng mất đơn vị gốc, đụng thẳng lõi số lượng (gói QA 49 phép [45]).
+  if (lk.type === 'unit_of_measure') {
+    return fail(res, 'Đơn vị tính phải xoá ở tab Đơn vị tính (Cài đặt WMS) — nơi có kiểm "đang được mã hàng nào dùng"', 403)
+  }
+  if (lk.type === 'warehouse_type' && lk.value) {
     const v = lk.value as string
     const { total, detail } = await warehouseTypeUsage(v)
     if (total > 0)

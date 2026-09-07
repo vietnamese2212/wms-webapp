@@ -319,6 +319,26 @@ let ORD1 = null, ORD2 = null, ORD3 = null
   check('[29] Tạo lệnh với hướng KHÔNG HỢP LỆ (không phải Nhập/Xuất) → báo rõ, không "Lỗi hệ thống"',
     r.s >= 400 && r.s < 500, `s=${r.s} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
 
+  // [29b] Vòng đời lệnh là danh sách ĐÓNG (user chốt 07/09: Chờ · Xong · Huỷ). Cùng lớp lỗi với
+  // trạng thái DÒNG XE ở phép [36]: nhận bừa một giá trị lạ thì bản ghi rơi ra ngoài mọi bộ lọc và
+  // báo cáo, mà không màn hình nào nói cho ai biết.
+  {
+    const truoc = (await restAll('TmsOrder', `select=status&id=eq.${ORD1.id}`))[0]
+    const rs = await A(`/tms/orders/${ORD1.id}`, 'PATCH', { status: 'XYZ' })
+    const sau = (await restAll('TmsOrder', `select=status&id=eq.${ORD1.id}`))[0]
+    check('[29b] Gửi trạng thái lệnh LẠ ("XYZ") → từ chối 4xx và GIỮ nguyên trạng thái cũ',
+      rs.s >= 400 && rs.s < 500 && sau?.status === truoc?.status,
+      `s=${rs.s} · trạng thái: ${truoc?.status} → ${sau?.status}`)
+  }
+  {
+    const rs = await A(`/tms/orders/${ORD1.id}`, 'PATCH', { status: 'CANCELLED' })
+    const sau = (await restAll('TmsOrder', `select=status&id=eq.${ORD1.id}`))[0]
+    const back = await A(`/tms/orders/${ORD1.id}`, 'PATCH', { status: 'PENDING' })
+    check('[29c] Ba trạng thái hợp lệ vẫn đặt được (Huỷ rồi trả về Chờ) — luật đóng không khoá nhầm việc thật',
+      rs.s === 200 && sau?.status === 'CANCELLED' && back.s === 200,
+      `huỷ s=${rs.s} · DB=${sau?.status} · trả lại s=${back.s}`)
+  }
+
   r = await A('/tms/orders/bulk', 'POST', {
     orders: [
       { order_code: `${T}-ORD-2`, date: D, warehouse_id: WH.id, direction: 'OUTBOUND', ncc_id: TC1.id },

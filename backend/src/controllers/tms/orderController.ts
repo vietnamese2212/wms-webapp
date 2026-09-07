@@ -15,6 +15,26 @@ import { getReceiptRatingCfg } from '../../utils/settings'
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
+/**
+ * VÒNG ĐỜI LỆNH VẬN CHUYỂN — danh sách ĐÓNG (user chốt 07/09: "Chờ · Xong · Huỷ").
+ *
+ * Trước đây `PATCH /tms/orders/:id` nhận `status` thô từ body: gọi thẳng API là ghi được giá trị
+ * bất kỳ, y như lỗi trạng thái DÒNG XE đã vá cùng ngày (giá trị lạ làm xe rơi khỏi phép đếm sức
+ * chứa và hỏng cả trang cài khung giờ của kho).
+ *
+ * Kèm một BẪY DI SẢN đã dọn cùng đợt: 3.173 lệnh cũ (17/07–17/08) mang `'COMPLETED'` trong khi
+ * code hiện tại ghi `'DONE'` — hai tên cho cùng một việc. Chưa gây lỗi vì chưa ai lọc theo chúng,
+ * nhưng báo cáo "lệnh đã hoàn thành" đầu tiên sẽ mất một nửa số liệu mà KHÔNG báo gì. Migration
+ * `20260907_tmsorder_status_enum.sql` chuẩn hoá về `DONE` + CHECK ở DB để không đẻ tên thứ ba.
+ */
+export const ORDER_STATUSES = ['PENDING', 'DONE', 'CANCELLED'] as const
+const isOrderStatus = (v: unknown): v is typeof ORDER_STATUSES[number] =>
+  typeof v === 'string' && (ORDER_STATUSES as readonly string[]).includes(v)
+
+export const ORDER_DIRECTIONS = ['INBOUND', 'OUTBOUND'] as const
+const isDirection = (v: unknown): v is typeof ORDER_DIRECTIONS[number] =>
+  typeof v === 'string' && (ORDER_DIRECTIONS as readonly string[]).includes(v)
+
 // Phân trang TUẦN TỰ cho 1 query bất kỳ — né cap ~1000 dòng/response của PostgREST.
 // `makeQuery`: hàm trả về query MỚI mỗi lần (đã .select + filter + .order ổn định), CHƯA .range. Throw nếu lỗi.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -439,7 +459,7 @@ export async function createOrder(req: Request, res: Response) {
     if (!direction)  return fail(res, 'direction là bắt buộc', 400)
     // Danh sách đóng — DB có ràng buộc riêng nên giá trị lạ vốn rơi xuống 23514 → "Lỗi hệ thống";
     // và mã lệnh tự sinh suy tiền tố từ chiều (X/N) nên chiều rác đẻ luôn mã lệnh vô nghĩa.
-    if (direction !== 'INBOUND' && direction !== 'OUTBOUND')
+    if (!isDirection(direction))
       return fail(res, 'Chiều không hợp lệ — chỉ nhận Nhập (INBOUND) hoặc Xuất (OUTBOUND)', 400, 'BAD_DIRECTION')
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
@@ -666,6 +686,11 @@ export async function updateOrder(req: Request, res: Response) {
     if (!(await guardOrderScope(req, res, id))) return
     if (warehouse_id !== undefined && !guardWhCreate(req, res, warehouse_id)) return
     if (warehouse_type !== undefined && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    // Vòng đời lệnh là danh sách ĐÓNG — xem chú thích ORDER_STATUSES ở đầu file
+    if (status !== undefined && !isOrderStatus(status))
+      return fail(res, `Trạng thái lệnh không hợp lệ (${ORDER_STATUSES.join(' | ')})`, 400, 'BAD_ORDER_STATUS')
+    if (direction !== undefined && direction !== null && !isDirection(direction))
+      return fail(res, 'Chiều không hợp lệ — chỉ nhận Nhập (INBOUND) hoặc Xuất (OUTBOUND)', 400, 'BAD_DIRECTION')
 
     // ĐỔI NGÀY chỉ cho đơn PENDING (mirror bulkUpdateOrderDate): đơn đã BOOKED/ARRIVED có TmsVehicleSlot
     // gắn DeliverySlot theo ngày cũ — đổi TmsOrder.date ở đây KHÔNG recount slot → booked_count lệch (xe ma).

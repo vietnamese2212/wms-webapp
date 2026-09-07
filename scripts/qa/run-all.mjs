@@ -57,6 +57,8 @@ const steps = [
   // 49–52 dựng từ BỀ MẶT ĐỌC TỪ CODE (389 route BE · 193 quyền · 50 trang), phủ 146 route mà 47 gói
   // trước KHÔNG gói nào chạm — bộ kiểm cũ lớn lên theo từng bug đã gặp nên xanh tuyệt đối vẫn để lọt
   // gần nửa ứng dụng (07/09). Vào cổng sau khi đã xanh trên Preview.
+  ['49-masterdata-catalog.mjs'],  // danh mục nền: mật khẩu, nhà máy, mã hàng (form ⇄ upload cùng luật), ca nhập/QA, khu vực, kho, nhân sự, phòng ban, chức danh (07/09)
+  ['50-tms-catalog-booking.mjs'], // vận tải: loại xe, ĐVVT/NCC, đội xe, khung giờ mẫu, lệnh vận chuyển, đặt/trả/thu hồi khung giờ xe (07/09)
   ['51-hr.mjs'],                  // nhân sự: vị trí/kỹ năng, nghỉ phép, chấm công, bố trí & phân công — phạm vi kho ở đường GHI, xếp tự động không tự mâu thuẫn (07/09)
   ['52-wms-ops.mjs'],             // vận hành kho: chi phí kho (số tiền kiểu VN, kỳ chốt), fill, slotting, kiểm kê luân phiên, cảnh báo (07/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)

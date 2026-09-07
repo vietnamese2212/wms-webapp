@@ -152,9 +152,15 @@ else {
   // kích trigger thật: PATCH no-op SystemSetting bằng service key (đường backend)
   const cur = await restAll('SystemSetting', 'select=key,value&key=eq.dashboard_cache_seconds', 5)
   if (cur[0]) await restWrite('SystemSetting', 'PATCH', 'key=eq.dashboard_cache_seconds', { value: cur[0].value })
-  await sleep(4000)
+  // Chờ tín hiệu thật TỚI KHI CÓ (tối đa 15s) thay vì ngủ cố định 4s: trong lượt run-all đầy đủ 07/09, 52 gói
+  // dội tải lên staging làm broadcast tới sau 4s → gói này đỏ oan ("A nhận 0 · C nhận 0"), chạy riêng lại xanh.
+  // Cổng chập chờn là cổng sẽ bị bỏ qua. Vẫn giữ tối thiểu 4s tổng để tin GIẢ (nếu lọt) có thời gian tới.
+  const realSignal = () => gotA.some(m => m?.table === 'SystemSetting' && m?.op === 'UPDATE')
+  const tw = Date.now()
+  while (Date.now() - tw < 15_000 && !realSignal()) await sleep(500)
+  if (Date.now() - tw < 4000) await sleep(4000 - (Date.now() - tw))
   check('Realtime: vé KHÔNG giả mạo được tín hiệu (máy khác không nhận tin giả)', !gotC.some(m => m?.qa_spoof) && !gotA.some(m => m?.qa_spoof))
-  check('Realtime: tín hiệu thật {table, op} tới kênh chung sau khi DB đổi', gotA.some(m => m?.table === 'SystemSetting' && m?.op === 'UPDATE'), `A nhận ${gotA.length} · C nhận ${gotC.length}`)
+  check('Realtime: tín hiệu thật {table, op} tới kênh chung sau khi DB đổi', realSignal(), `A nhận ${gotA.length} · C nhận ${gotC.length} · sau ${Date.now() - tw}ms`)
   check('Realtime: payload chỉ trường kỹ thuật', [...new Set([...gotA, ...gotC].flatMap(m => Object.keys(m ?? {})))].every(k => ['id', 'table', 'op', 'row_id', 'booked_count', 'qa_spoof'].includes(k)))
   check('Realtime: anon nhận 0 tin, postgres_changes nhận 0 sự kiện', gotB.length === 0 && gotPC.length === 0, `anon=${gotB.length} pc=${gotPC.length}`)
   for (const c of [A, B, C]) c.realtime.disconnect()

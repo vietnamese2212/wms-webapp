@@ -6,9 +6,12 @@ import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
+import { maskServerMessage } from '../../utils/response'
 
+// 5xx đi qua maskServerMessage như 7 controller có `fail` riêng khác: che message 500 (không lộ tên bảng/cột),
+// GIỮ message 503 (câu hướng dẫn thu hẹp bộ lọc), và ghi error_logs kèm route để digest đếm được ca quá tải.
 function apiErr(res: Response, code: string, message: string, status = 400) {
-  return res.status(status).json({ success: false, error: { code, message } })
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 
 // Phạm vi kho của user: null = NATIONAL (toàn bộ); mảng = chỉ các kho được gán
@@ -151,7 +154,7 @@ export async function getGateTree(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     return res.json({ success: true, data })
   } catch (e) {
-    if (isQueryTimeout(e)) return apiErr(res, 'RANGE_TOO_WIDE', QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return apiErr(res, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG, 503)   // quá hạn = quá tải (503), không phải lỗi đầu vào
     return apiErr(res, 'INTERNAL', String(e), 500)
   }
 }
@@ -187,7 +190,7 @@ export async function getGateLeaves(req: Request, res: Response) {
     const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
     return res.json({ success: true, data: { rows: ids.map(id => byId.get(id)).filter(Boolean), total: p.total ?? 0 } })
   } catch (e) {
-    if (isQueryTimeout(e)) return apiErr(res, 'RANGE_TOO_WIDE', QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return apiErr(res, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG, 503)   // quá hạn = quá tải (503), không phải lỗi đầu vào
     return apiErr(res, 'INTERNAL', String(e), 500)
   }
 }

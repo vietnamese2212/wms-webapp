@@ -258,7 +258,7 @@ export async function listOrders(req: Request, res: Response) {
     if (truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
     return ok(res, data)
   } catch (e) {
-    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, String(e))
   }
 }
@@ -386,7 +386,7 @@ export async function listOrdersSummary(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     return ok(res, data ?? {})
   } catch (e) {
-    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, String(e))
   }
 }
@@ -405,7 +405,7 @@ export async function listOrdersFacets(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     return ok(res, data ?? {})
   } catch (e) {
-    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, String(e))
   }
 }

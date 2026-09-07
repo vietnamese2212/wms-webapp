@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { supabase } from '../lib/supabase'
 import { getRetentionDays } from './settings'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG } from './pagination'
 
 export const ok = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ success: true, data })
@@ -169,6 +170,11 @@ export function fail(res: Response, arg2: string | number | PgLikeError, arg3?: 
   // Đối tượng lỗi Supabase/PostgREST: dịch mã lỗi thành câu người dùng hiểu; không dịch được thì
   // rơi về đúng đường cũ (5xx có che message).
   if (arg2 !== null && typeof arg2 === 'object') {
+    // Quá hạn truy vấn (57014) = QUÁ TẢI, không phải lỗi hệ thống: 503 + câu hướng dẫn thu hẹp bộ lọc,
+    // digest đếm vào overload_24h thay vì dựng cờ đỏ. Đo 07/09 (gói 06 readload): `fail(res, pageErr)` ở
+    // Nhặt lẻ trả 500 "canceling statement due to statement timeout" ×7 dưới 8 luồng ghi — dịch ở đây
+    // thì 150+ chỗ `fail(res, error)` cùng được, không phải vá từng controller.
+    if (isQueryTimeout(arg2)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     const mapped = pgUserError(arg2)
     if (mapped) {
       return res.status(mapped.status).json({ success: false, error: { code: arg2.code ?? 'ERROR', message: mapped.message } })

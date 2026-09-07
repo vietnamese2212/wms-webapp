@@ -834,7 +834,7 @@ export async function listGDOs(req: Request, res: Response) {
       ? (data ?? []).filter((g: { warehouse_type?: string | null }) => categoryAllowed(req, g.warehouse_type))
       : (data ?? [])
     return ok(res, await enrichGdos(scoped))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ── Enrich list chuyến (dùng chung mode cũ trả mảng + mode phân trang): bulk DO/item +
@@ -970,7 +970,7 @@ export async function listGDOsSummary(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('outbound_gdos_summary', gdoRpcParams(ctx))
     if (error) throw new Error(error.message)
     return ok(res, data)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ── Option filter (Loại xe / ĐVVT / NPP / Mã hàng / Loại kho / Tình trạng) — DISTINCT dưới DB ──
@@ -988,7 +988,7 @@ export async function listGDOsFacets(req: Request, res: Response) {
     })
     if (error) throw new Error(error.message)
     return ok(res, data)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Tra cứu chuyến xuất theo tem pallet ──────────────────────
@@ -1022,7 +1022,7 @@ export async function lookupPalletGdos(req: Request, res: Response) {
     }
     const gdoIds = [...new Set(dos.map(d => d.gdo_id).filter((v): v is string => !!v))]
     return ok(res, gdoIds)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get GDO detail ───────────────────────────────────────────
@@ -1040,7 +1040,7 @@ export async function getGDO(req: Request, res: Response) {
     const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
     const cartonPolicy = await warehouseCartonScanPolicy(r.warehouse_id, r.warehouse_type)
     return ok(res, { ...result, carton_scan_enabled: cartonPolicy.enabled, carton_scan_require_full: cartonPolicy.requireFull })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // PATCH /wms/outbound/scan-entries/:scanId/cartons — đính danh sách mã THÙNG vào 1 dòng scan pallet
@@ -1075,7 +1075,7 @@ export async function attachCartonScans(req: Request, res: Response) {
       .update({ carton_scans: clean, updated_at: now() }).eq('id', scanId)
     if (error) return fail(res, `Lỗi lưu mã thùng: ${error.message}`, 500)
     return ok(res, { id: scanId, carton_count: clean.length })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── DVVT trên phiếu xuất khớp 1 ĐVVT hoặc NCC (code/alias/tên) → chuẩn hoá về TÊN chính tắc ──
@@ -1420,7 +1420,7 @@ export async function createGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Tạo & Xuất luôn (quick-export — hàng không tem: mã no-QR / kho QTY) ──────
@@ -1625,7 +1625,7 @@ export async function quickExportGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── "Xuất luôn" trên GDO ĐÃ LƯU (kho QTY/NONE) — 1 bước: nhập biển số → tự Bắt đầu + ghi nhận mọi mã + Hoàn thành ──
@@ -1774,7 +1774,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     ])
     if ((winRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(gdoId, tEnd)
     return ok(res, await fetchGDOFull(gdoId))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Auto-create/SYNC TmsOrder khi GDO COMPLETED — theo cờ Xác nhận giao hàng ───
@@ -1985,7 +1985,7 @@ export async function deleteGDO(req: Request, res: Response) {
       .eq('gdo_id', req.params.id)
     await supabase.from('GroupDeliveryOrder').delete().eq('id', req.params.id)
     return ok(res, { success: true })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Update GDO (header + items, chỉ PENDING) ─────────────────
@@ -2328,7 +2328,7 @@ export async function updateGDO(req: Request, res: Response) {
     }
 
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Patch GDO (delivery_date / status / misc fields) ────────
@@ -2468,7 +2468,7 @@ export async function patchGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Assign GDO (Giao đơn) ────────────────────────────────────
@@ -2489,7 +2489,7 @@ export async function assignGDO(req: Request, res: Response) {
     if (error) return fail(res, error)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Unassign GDO (Gỡ giao đơn) ──────────────────────────────
@@ -2510,7 +2510,7 @@ export async function unassignGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
     if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Start GDO (Bắt đầu xuất kho) ────────────────────────────
@@ -2609,7 +2609,7 @@ export async function startGDO(req: Request, res: Response) {
     await linkWeighTicket(weighTicketId, req.params.id)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Duyệt bỏ qua TỪNG RULE — 2 tình huống, 2 action, 2 quyền riêng (user chốt 01/08:
@@ -2752,7 +2752,7 @@ export async function updateTransport(req: Request, res: Response) {
       await linkWeighTicket(utTicketId, req.params.id)
     }
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Unstart GDO (Gỡ bắt đầu) ────────────────────────────────
@@ -2807,7 +2807,7 @@ export async function unstartGDO(req: Request, res: Response) {
       .update({ gdo_id: null, matched_at: null, matched_by: null, updated_at: t })
       .eq('gdo_id', req.params.id).eq('matched_by', 'auto-start')
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Uncomplete GDO (Bỏ hoàn thành) ──────────────────────────
@@ -2850,7 +2850,7 @@ export async function uncompleteGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
     if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get warehouse employees (for forklift driver dropdown) ──
@@ -2887,7 +2887,7 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
       job_title: e.job_title_id ? jtMap.get(e.job_title_id) ?? null : null,
     }))
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Merge upload for PAUSED GDO ─────────────────────────────
@@ -3129,7 +3129,7 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
     return await processVehicleGroups(req, res, byVehicle, warehouse_id)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── CHUYẾN BẤT ĐỘNG: chờ dữ liệu SAP / kế hoạch đã bỏ (user chốt 03/08) ───────
@@ -4066,7 +4066,7 @@ export async function uploadVl06o(req: Request, res: Response) {
       reconcile, reconcile_error, ...(activated ? { activated } : {}),
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ── Reshape dòng Kế hoạch xuất → byVehicle (row-shape file gộp) — DÙNG CHUNG 2 đường:
@@ -4634,7 +4634,7 @@ export async function uploadKhvc(req: Request, res: Response) {
 
     // KHVC/SAP → nhặt lẻ auto theo pallet; preflightExtra = số liệu rủi ro tính ở trên (nếu đang kiểm trước)
     return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra, awaitingByGc, writeKhvcRaw, planFingerprints(khvcRows))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get available inventory for an item ─────────────────────
@@ -4686,7 +4686,7 @@ export async function getItemInventory(req: Request, res: Response) {
     if (!inScope(req, gdoRes.data?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (!itemRes.data) return fail(res, 'Không tìm thấy mặt hàng', 404)
     return ok(res, await fetchMaterialInventory(itemRes.data.material_id, gdoRes.data?.warehouse_id ?? null))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Cảnh báo thiếu tồn theo (kho, ngày giao) ─────────────────
@@ -4712,7 +4712,7 @@ export async function getOutboundShortages(req: Request, res: Response) {
       })
       .filter(r => r.level > 0)
     return ok(res, rows)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // Tồn theo mã hàng + kho (nút search tồn kho ở bảng chuẩn bị, không gắn item cụ thể)
@@ -4721,7 +4721,7 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
     const { material_id, warehouse_id } = req.query as Record<string, string>
     if (!material_id) return fail(res, 'material_id là bắt buộc', 400)
     return ok(res, await fetchMaterialInventory(material_id, warehouse_id || null))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Gợi ý vị trí lấy FEFO theo mã hàng (dùng chung: board Chuẩn bị hàng + cột "Vị trí lấy") ──
@@ -4948,7 +4948,7 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
     const whIds = gdo.warehouse_id ? [gdo.warehouse_id] : []
     const sugByMat = await rotationSuggestionsByMaterial(matIds, whIds, await rotationConfigOf(whIds))
     return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Bảng chuẩn bị hàng — gom ≥1 GDO, tính pallet CÒN PHẢI chuẩn bị + gợi ý vị trí FEFO ──
@@ -5049,7 +5049,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
       total_cartons: rows.reduce((s, r) => s + qtyEntryDecimal(r.cartons_remaining, r), 0),
       total_pallets: rows.reduce((s, r) => s + r.pallets_remaining, 0),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── STT chuẩn bị theo booking khung giờ (user chốt 24/08) ───
@@ -5078,7 +5078,7 @@ export async function getBookingSequence(req: Request, res: Response) {
     })
     if (error) throw error
     return ok(res, data ?? [])
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Check scan validity (no save) ───────────────────────────
@@ -5251,7 +5251,7 @@ export async function checkScanItem(req: Request, res: Response) {
         warehouse_id:       gdo?.warehouse_id ?? null,
       },
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Scan QR for an item ──────────────────────────────────────
@@ -5577,7 +5577,7 @@ export async function scanItem(req: Request, res: Response) {
       // NHẬP (im lặng): ở đây vị trí vừa được chọn ngay lượt này, chưa qua cửa duyệt nào.
       ...(putLeftoverWarn ? { putaway_warning: putLeftoverWarn } : {}),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Delete scan entry (hủy QR đã quét) ─────────────────────
@@ -5666,7 +5666,7 @@ export async function deleteScanEntry(req: Request, res: Response) {
     }
 
     return ok(res, { success: true })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Confirm loose picking entries for an item ────────────────
@@ -5758,7 +5758,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     }
 
     return ok(res, { confirmed: (claimed as any[]).length })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Lưu thủ công nhặt lẻ (hàng no-QR: POSM/Loscam) ───────────
@@ -5855,7 +5855,7 @@ export async function manualLooseItem(req: Request, res: Response) {
     if (delta !== 0) await addItemScanned(itemId, delta, n => n === 0 ? 'PENDING' : 'IN_PROGRESS')
 
     return ok(res, { scan_entry: { pallet_code: matCode, cartons_scanned: newQty } })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── List loose picking items (nhặt lẻ) ──────────────────────
@@ -6088,7 +6088,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     })
 
     return ok(res, { items: result, ...meta })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get stock for manual-complete dialog ─────────────────────
@@ -6128,7 +6128,7 @@ export async function getManualItemStock(req: Request, res: Response) {
       ...(date_pools ? { date_pools } : {}),
       has_pool:          rows.length > 0,                                   // có dòng tồn = được theo dõi
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Manual complete item ─────────────────────────────────────
@@ -6267,7 +6267,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     ])
 
     return ok(res, { success: true })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Scan log (lịch sử quét xuất kho) ───────────────────────────────────────

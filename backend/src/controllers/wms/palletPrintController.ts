@@ -125,7 +125,8 @@ export async function listPrintsPaged(req: Request, res: Response) {
   // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN, không phải
   // "Lỗi hệ thống". Quan sát thật dưới tải 24 luồng ghi: câu gom 29.279 tem chỉ mất 59ms lúc rảnh
   // nhưng vượt 8s khi tranh CPU ⇒ user cần biết "hãy thu hẹp khoảng ngày", không phải lỗi trắng.
-  if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error.message, 500)
+  if (error && isQueryTimeout(error)) return fail(res, QUERY_TIMEOUT_MSG, 503)   // quá hạn = quá tải, giữ câu hướng dẫn
+  if (error) return fail(res, error.message, 500)
   const pd = (data ?? {}) as { rows?: unknown[]; ids?: string[]; total?: number; total_rows?: number; new_n?: number; reprint_n?: number }
 
   // RPC trả THẲNG dòng (migration 20260728h) ⇒ 1 request PostgREST cho cả trang.

@@ -58,10 +58,10 @@ const groupC = Array.from({ length: 4 }, (_, k) => async () => {
   const gdo = c.j?.data
   if (!gdo?.id) { errs.push(`C${k}:create:${c.s}`); return }
   const q1 = await api(`/wms/outbound/${gdo.id}/quick-export`, 'POST', { license_plate: '88C-' + k })
-  if (q1.s !== 200) errs.push(`C${k}:qe1:${q1.s}`)
+  if (q1.s !== 200) errs.push(`C${k}:qe1:${q1.s}:${q1.j?.error?.code ?? ''}`)
   await api(`/wms/outbound/${gdo.id}/uncomplete`, 'POST')
   const q2 = await api(`/wms/outbound/${gdo.id}/quick-export`, 'POST', { license_plate: '88C-' + k })
-  if (q2.s !== 200) errs.push(`C${k}:qe2:${q2.s}`)
+  if (q2.s !== 200) errs.push(`C${k}:qe2:${q2.s}:${q2.j?.error?.code ?? ''}`)
   if (!(await teardownGdo(gdo.id, 'COMPLETED'))) errs.push(`C${k}:teardown`)
 })
 
@@ -85,10 +85,12 @@ const groupD = Array.from({ length: 3 }, (_, k) => async () => {
 // E. 6 "người xem" GET dồn dập trong lúc trên chạy
 const groupE = Array.from({ length: 6 }, (_, k) => async () => {
   for (let i = 0; i < 5; i++) {
-    const paths = ['/wms/outbound?date_from=' + FIX.EXEC_DATE + '&date_to=' + FIX.EXEC_DATE, '/wms/inbound-orders?limit=20',
+    // Nhập kho gọi ở chế độ PHÂN TRANG như FE (`?page=`): mode cũ không khoảng ngày nay bị chặn 400 RANGE_TOO_WIDE
+    // có chủ đích (2.187 phiếu trên staging) — gói này ngoài run-all nên lỗi thời mà không ai thấy (07/09).
+    const paths = ['/wms/outbound?date_from=' + FIX.EXEC_DATE + '&date_to=' + FIX.EXEC_DATE, '/wms/inbound-orders?page=1&limit=20',
       '/wms/inventory?limit=50', '/tms/orders?source_type=TRANSFER&date_from=2026-12-01', '/tms/gate-registrations']
     const r = await api(paths[(k + i) % paths.length])
-    if (r.s !== 200) errs.push(`E${k}.${i}:${r.s}`)
+    if (r.s !== 200) errs.push(`E${k}.${i}:${r.s}:${r.j?.error?.code ?? ''}`)   // kèm mã lỗi — chỉ số HTTP không nói được vì sao
   }
 })
 

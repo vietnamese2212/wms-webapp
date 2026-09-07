@@ -487,7 +487,7 @@ export async function listOrders(req: Request, res: Response) {
     }
 
     ok(res, await enrichOrders(filtered))
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ── Enrich list phiếu (dùng chung mode cũ trả mảng + mode phân trang): applyInboundMode +
@@ -584,7 +584,7 @@ export async function listOrdersSummary(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('inbound_orders_summary', await inboundRpcFilterParams(ctx))
     if (error) throw new Error(error.message)
     ok(res, data)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ── Option filter Material / Chu kỳ / Máy — DISTINCT dưới DB theo filter NỀN (kho/loại/ngày).
@@ -603,7 +603,7 @@ export async function listOrdersFacets(req: Request, res: Response) {
     })
     if (error) throw new Error(error.message)
     ok(res, data)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function createOrder(req: Request, res: Response) {
@@ -752,7 +752,7 @@ export async function createOrder(req: Request, res: Response) {
       order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } },
       ...(putWarn ? { putaway_warning: putWarn } : {}),   // kho chỉ CẢNH BÁO: vẫn tạo nhưng nói ra
     })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Get single order ────────────────────────────────────────
@@ -827,7 +827,7 @@ export async function getOrder(req: Request, res: Response) {
       _count: { inventory_entries: allEntries.length },
       from_gdo_delivery_codes: fromGdoDeliveryCodes,
     })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Update order header ─────────────────────────────────────
@@ -869,7 +869,7 @@ export async function updateOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Lịch sử vị trí ──────────────────────────────────────────
@@ -936,7 +936,7 @@ export async function setOrderLocation(req: Request, res: Response) {
     emitInboundChanged()
     // Kho chưa bật "bắt buộc" → vẫn lưu nhưng NÓI RA (FE hiện banner vàng), không im lặng
     ok(res, put.warning ? { ...withCount, putaway_warning: put.warning } : withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Complete order ──────────────────────────────────────────
@@ -1023,7 +1023,7 @@ export async function completeOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Uncomplete order (revert COMPLETED → OPEN) ───────────────
@@ -1066,7 +1066,7 @@ export async function uncompleteOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Cancel order ────────────────────────────────────────────
@@ -1125,7 +1125,7 @@ export async function cancelOrder(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: true })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Scan QR → create InventoryEntry ────────────────────────
@@ -1269,7 +1269,7 @@ export async function checkScanQR(req: Request, res: Response) {
         required:  !!putPrev.error,
       },
     })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function scanQR(req: Request, res: Response) {
@@ -1626,7 +1626,7 @@ export async function scanQR(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { entry, warnings })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Manual scan (POSM / Loscam) — no QR format, location optional ───────────
@@ -1779,7 +1779,7 @@ export async function scanManual(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { entry, warnings: [] })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Update a pallet entry ───────────────────────────────────
@@ -1884,7 +1884,7 @@ export async function updateEntry(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, updated)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Permission helper ───────────────────────────────────────
@@ -2021,7 +2021,7 @@ export async function removeEntry(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: true })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Bulk remove pallet entries ──────────────────────────────
@@ -2063,7 +2063,7 @@ export async function removeEntries(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: entries.length })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Gợi ý vị trí cất hàng: ĐÃ GỠ 14/08 ──────────────────────

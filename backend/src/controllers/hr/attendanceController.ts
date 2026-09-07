@@ -91,7 +91,7 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
     // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp, không
     // phải "Lỗi hệ thống". Bảng công là ma trận NGƯỜI × NGÀY nên kéo rộng khoảng ngày + nhiều người
     // cùng xem là chạm trần (quan sát thật dưới tải 24 luồng ghi ngày 28/07).
-    if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error)
+    if (error) return isQueryTimeout(error) ? fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG) : fail(res, error)
     const m = (data ?? {}) as {
       emp_ids?: string[]; employees?: unknown[]; rows?: unknown[]
       total?: number; roster_total?: number; missing_total?: number

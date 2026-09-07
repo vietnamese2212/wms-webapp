@@ -61,6 +61,7 @@ const steps = [
   ['50-tms-catalog-booking.mjs'], // vận tải: loại xe, ĐVVT/NCC, đội xe, khung giờ mẫu, lệnh vận chuyển, đặt/trả/thu hồi khung giờ xe (07/09)
   ['51-hr.mjs'],                  // nhân sự: vị trí/kỹ năng, nghỉ phép, chấm công, bố trí & phân công — phạm vi kho ở đường GHI, xếp tự động không tự mâu thuẫn (07/09)
   ['52-wms-ops.mjs'],             // vận hành kho: chi phí kho (số tiền kiểu VN, kỳ chốt), fill, slotting, kiểm kê luân phiên, cảnh báo (07/09)
+  ['53-untouched-routes.mjs'],    // 19 route cuối chưa ai chạm: cổng ERP (tự cấp khoá), sổ Dồn/Tách theo phạm vi kho, quét kiểm kho, xe nâng, xoá xe, lưới lỗi async (07/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

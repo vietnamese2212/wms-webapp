@@ -278,10 +278,14 @@ export async function deleteVehicle(req: Request, res: Response) {
 
     // Lấy thông tin xe trước khi xóa
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: vehicle } = await supabase.from('Vehicle')
-      .select('license_plate, ncc_id').eq('id', id).single()
-    const plate  = (vehicle as { license_plate: string; ncc_id: string } | null)?.license_plate ?? null
-    const nccId  = (vehicle as { license_plate: string; ncc_id: string } | null)?.ncc_id       ?? null
+    const { data: vehicle, error: findErr } = await supabase.from('Vehicle')
+      .select('license_plate, ncc_id').eq('id', id).maybeSingle()
+    if (findErr) return fail(res, findErr)
+    // Không có xe = 404. Trước đây xoá xe không tồn tại (hoặc xoá lần 2) vẫn trả `deleted:true` —
+    // "đã xoá" giả: 2 người cùng bấm xoá, người sau tưởng mình vừa xoá một chiếc xe khác (QA 53, 07/09)
+    if (!vehicle) return fail(res, 'Không tìm thấy xe — có thể đã bị xoá', 404)
+    const plate  = (vehicle as { license_plate: string; ncc_id: string }).license_plate ?? null
+    const nccId  = (vehicle as { license_plate: string; ncc_id: string }).ncc_id       ?? null
 
     // ĐVVT user: chỉ được xóa xe của mình
     if (userNccId && nccId && nccId !== userNccId)
@@ -298,8 +302,9 @@ export async function deleteVehicle(req: Request, res: Response) {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await supabase.from('Vehicle').delete().eq('id', id)
+    const { data: gone, error } = await supabase.from('Vehicle').delete().eq('id', id).select('id')
     if (error) return fail(res, error)
+    if (!gone?.length) return fail(res, 'Không tìm thấy xe — có thể vừa bị người khác xoá', 404)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

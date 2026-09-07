@@ -8,6 +8,8 @@ import { wrongFormatHint } from './systemSettingController'
 import { qtyLabel, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
+import { isDay } from '../../utils/dates'
+import { safeFilterValue } from '../../utils/search'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
@@ -362,15 +364,36 @@ const OPS_SELECT = 'id, type, source_codes, target_codes, detail, operated_by_na
 // không cờ ⇒ người dùng tưởng đã hết. Nâng trần không cứu (20.000 dòng ≈ 5,6MB > trần 4,5MB
 // của Vercel). Lọc Loại kho cũng phải xuống SQL — lọc ở client sau khi phân trang là lọc trên
 // ĐÚNG 1 TRANG (số dòng và ô tổng đều sai). Chi tiết: migration 20260728_pallet_ops_paged_rpc.sql
+// Phạm vi kho của người xem sổ: null = không giới hạn (NATIONAL), mảng = chỉ các kho được gán.
+// Đo 07/09 (gói QA 53): sổ Dồn/Tách là controller DUY NHẤT trong nhóm pallet-ops không đọc
+// `warehouse_ids` — 3 cửa ghi (dồn/tách/gỡ) + hoàn tác đều gác, riêng cửa ĐỌC thì tài khoản kho
+// Ba Vì xem trọn thao tác của kho Bluestar. Cùng mẫu "bất đối xứng đọc/ghi" đã gặp ở Chấm công.
+const opsScope = (req: Request): string[] | null =>
+  req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+
+// Ngày trên bộ lọc phải là ngày thật — `new Date('abc').toISOString()` ném RangeError → 500 "Lỗi hệ thống"
+const badDate = (q: Record<string, string | undefined>): string | null =>
+  (q.date_from && !isDay(q.date_from)) || (q.date_to && !isDay(q.date_to))
+    ? 'date_from/date_to phải theo định dạng YYYY-MM-DD' : null
+
 async function listOpsPaged(req: Request, res: Response) {
   const q = req.query as Record<string, string | undefined>
+  const dErr = badDate(q)
+  if (dErr) return fail(res, dErr)
+  const scope = opsScope(req)
+  let wh = q.warehouse_id || null
+  if (scope !== null) {
+    if (wh && !scope.includes(wh)) return fail(res, 'Ngoài phạm vi kho được giao', 403)
+    // RPC nhận MỘT kho; tài khoản gán nhiều kho phải chọn kho (trang này vốn bắt chọn kho trước khi xem)
+    if (!wh) { if (scope.length === 1) wh = scope[0]; else return fail(res, 'Chọn kho để xem sổ Dồn/Tách') }
+  }
   const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
   const pageSize = Math.min(1000, Math.max(1, parseInt(String(q.page_size ?? '200'), 10) || 200))
   const { data, error } = await supabase.rpc('pallet_ops_page', {
-    p_wh:       q.warehouse_id || null,
+    p_wh:       wh,
     p_type:     q.type || null,
     p_category: q.category || null,
-    p_search:   q.search?.trim() || null,
+    p_search:   q.search ? (safeFilterValue(q.search) || null) : null,
     p_from:     q.date_from ? new Date(`${q.date_from}T00:00:00+07:00`).toISOString() : null,
     p_to:       q.date_to   ? new Date(`${q.date_to}T23:59:59+07:00`).toISOString()   : null,
     p_offset:   (pageNum - 1) * pageSize,
@@ -397,17 +420,33 @@ async function listOpsPaged(req: Request, res: Response) {
 export async function listOps(req: Request, res: Response) {
   try {
     if (req.query.page) return await listOpsPaged(req, res)
-    const { search, type, warehouse_id, date_from, date_to, limit } = req.query as Record<string, string | undefined>
+    const query = req.query as Record<string, string | undefined>
+    const { search, type, warehouse_id, date_from, date_to, limit } = query
+    const dErr = badDate(query)
+    if (dErr) return fail(res, dErr)
+    // Phạm vi kho: chỉ kho được gán (null-inclusive — thao tác không ghi được kho vẫn hiện, theo quy ước chung)
+    const scope = opsScope(req)
+    let whs: string[] | null = warehouse_id ? [warehouse_id] : null
+    if (scope !== null) {
+      if (warehouse_id && !scope.includes(warehouse_id)) return fail(res, 'Ngoài phạm vi kho được giao', 403)
+      whs = warehouse_id ? [warehouse_id] : scope
+      if (!whs.length) return ok(res, [])
+    }
     // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
     const applyFilters = () => {
       let q = supabase.from('PalletOperation')
         .select(OPS_SELECT)
         .order('created_at', { ascending: false })
       if (type) q = q.eq('type', type)
-      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      if (whs) {
+        q = scope !== null
+          ? q.or(`warehouse_id.in.(${whs.map(w => JSON.stringify(w)).join(',')}),warehouse_id.is.null`)
+          : q.eq('warehouse_id', whs[0])
+      }
       if (search) {
-        const s = search.trim()
-        q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)
+        // Dấu nháy/phẩy/ngoặc trong từ khoá lọt vào chuỗi filter `.cs.{"…"}` = PostgREST không parse được → 500
+        const s = safeFilterValue(search)
+        if (s) q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)
       }
       if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
       if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())

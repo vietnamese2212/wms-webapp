@@ -15,6 +15,7 @@ import { supabase } from './lib/supabase'
 import { recordServerError } from './utils/response'
 import { searchLooksLikeInjection } from './utils/search'
 import { isDay } from './utils/dates'
+import { catchAsyncErrors } from './middlewares/asyncErrors'
 
 dotenv.config()
 
@@ -142,14 +143,31 @@ app.use('/api', (req, res, next) => {
   next()
 })
 
-app.use('/api/auth',       authRouter)
-app.use('/api/masterdata', verifyToken, masterdataRouter)
-app.use('/api/wms',        verifyToken, wmsRouter)
-app.use('/api/tms',        verifyToken, tmsRouter)
-app.use('/api/hr',         verifyToken, hrRouter)
-app.use('/api/external',   verifyToken, externalRouter)   // Dữ liệu bên ngoài (ERP/SAP)
-app.use('/api/notify',     verifyToken, notifyRouter)     // Web Push — thiết bị của chính user
+// Mọi router đi qua catchAsyncErrors: handler async ném lỗi → 500 JSON ngay, không treo tới 504
+// (xem middlewares/asyncErrors.ts — đo 07/09: body sai kiểu ở một route làm lambda treo 60s).
+app.use('/api/auth',       catchAsyncErrors(authRouter))
+app.use('/api/masterdata', verifyToken, catchAsyncErrors(masterdataRouter))
+app.use('/api/wms',        verifyToken, catchAsyncErrors(wmsRouter))
+app.use('/api/tms',        verifyToken, catchAsyncErrors(tmsRouter))
+app.use('/api/hr',         verifyToken, catchAsyncErrors(hrRouter))
+app.use('/api/external',   verifyToken, catchAsyncErrors(externalRouter))   // Dữ liệu bên ngoài (ERP/SAP)
+app.use('/api/notify',     verifyToken, catchAsyncErrors(notifyRouter))     // Web Push — thiết bị của chính user
 // Cổng tích hợp ERP: auth RIÊNG bằng API key (requireApiKey trong router), KHÔNG dùng verifyToken.
-app.use('/api/integration', integrationRouter)
+app.use('/api/integration', catchAsyncErrors(integrationRouter))
+
+// Lưới cuối: lỗi lọt tới đây = code chưa tự xử. Trả JSON đúng khuôn (không phải trang HTML mặc định
+// của Express), ghi `error_logs` kèm route để digest dựng cờ và người sửa lần ra chỗ. Body không
+// phải JSON (express.json từ chối) cũng rơi vào đây với status 400 — nói thẳng thay vì "Lỗi hệ thống".
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (res.headersSent) return
+  const e = (err ?? {}) as { status?: number; statusCode?: number; type?: string; message?: string }
+  const status = e.status ?? e.statusCode ?? 500
+  if (status >= 500)
+    recordServerError('be', `UNCAUGHT ${e.message ?? String(err)}`, status, 'UNCAUGHT', `${req.method} ${req.originalUrl}`.slice(0, 200))
+  const message = e.type === 'entity.parse.failed' ? 'Nội dung gửi lên không phải JSON hợp lệ'
+    : status >= 500 ? 'Lỗi hệ thống, vui lòng thử lại'
+    : (e.message ?? 'Yêu cầu không hợp lệ')
+  res.status(status).json({ success: false, error: { code: status >= 500 ? 'INTERNAL' : 'BAD_REQUEST', message } })
+})
 
 export default app

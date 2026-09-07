@@ -1171,8 +1171,10 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
 // ─── Stocktake (kiểm kê / check vị trí) ──────────────────────
 
 export async function stocktakeCheck(req: Request, res: Response) {
-  const { qr_code, warehouse_id } = req.body as { qr_code: string; warehouse_id?: string }
-  const palletCode = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
+  const { qr_code, warehouse_id } = req.body as { qr_code?: unknown; warehouse_id?: string }
+  // qr_code không phải chuỗi (số/object từ client lỗi) → `.trim()` ném TypeError; handler async không
+  // bắt = request treo tới 504 (đo 07/09, gói QA 53). Nay có lưới catchAsyncErrors, nhưng đây là 400, không phải 500.
+  const palletCode = normalizeQR(typeof qr_code === 'string' ? qr_code : '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
   if (!palletCode) return fail(res, 400, 'INVALID_INPUT', 'Thiếu mã pallet')
 
   // warehouse_id (tùy chọn — màn Chuyển vị trí BẮT BUỘC gửi, user chốt 20/08): 1 mã pallet có thể

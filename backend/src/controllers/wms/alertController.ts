@@ -1,7 +1,7 @@
 // TRUNG TÂM CẢNH BÁO — API list + ack (Đợt 2 roadmap 06/08). Quét nằm ở services/alertScanner.
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
-import { maskServerMessage } from '../../utils/response'
+import { maskServerMessage, pgUserError } from '../../utils/response'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
@@ -81,7 +81,8 @@ export async function ackAlert(req: Request, res: Response) {
     const { data, error } = await supabase.from('alert_events')
       .update({ ack_by: req.user?.name ?? null, ack_at: now(), updated_at: now() })
       .eq('id', req.params.id).is('resolved_at', null).select('id').maybeSingle()
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    // id sai dạng = 22P02 → 400 kèm câu người dùng đọc được, không phải "Lỗi hệ thống"
+    if (error) { const m = pgUserError(error); return fail(res, m?.status ?? 500, error.code ?? 'DB_ERROR', m?.message ?? error.message) }
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Cảnh báo không còn mở (đã tự đóng hoặc không tồn tại)')
     return ok(res, { acked: true })
   } catch (e) { return fail(res, 500, 'SERVER_ERROR', String(e)) }

@@ -69,10 +69,12 @@ export async function deleteKey(req: Request, res: Response) {
 export async function revokeKey(req: Request, res: Response) {
   if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
   const { data: k } = await supabase.from('ApiKey').select('name, key_prefix').eq('id', req.params.id).maybeSingle()
-  const { error } = await supabase.from('ApiKey')
+  const { data: gone, error } = await supabase.from('ApiKey')
     .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq('id', req.params.id)
-  if (error) return fail(res, error.message, 500)
+    .eq('id', req.params.id).select('id')
+  if (error) return fail(res, error)   // id sai dạng = 22P02 → 400, không phải "Lỗi hệ thống"
+  // Không có khoá nào bị thu hồi thì đừng ghi một dòng "đã thu hồi" vào nhật ký quản trị
+  if (!gone?.length) return fail(res, 'Không tìm thấy khoá API — có thể đã bị xoá', 404)
   const kk = k as { name: string; key_prefix: string } | null
   await logAdmin(req, { action: 'APIKEY_REVOKE', target_type: 'ApiKey', target_id: req.params.id, target_label: kk?.name ?? null, after: { key_prefix: kk?.key_prefix ?? null, is_active: false } })
   return ok(res, { id: req.params.id, revoked: true })

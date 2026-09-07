@@ -138,6 +138,12 @@ export default function Login() {
             Tài khoản do quản trị viên cấp. Liên hệ admin nếu quên mật khẩu.
           </p>
           <DevCredit />
+          {/* Số hiệu bản dựng — app là PWA nên máy người dùng có thể đang chạy bản CŨ dù server đã lên bản mới
+              (07/09: sửa nút Hiển thị mật khẩu 2 lần mà không ai biết chắc Edge đang chạy bản nào). Một dòng
+              này trả lời "anh đang ở bản nào" trong 1 giây thay vì đoán. */}
+          <p className="text-center text-[10px] text-muted-foreground/70 font-mono" title="Số hiệu bản dựng đang chạy trên máy này">
+            bản dựng {__BUILD_SHA__}
+          </p>
         </div>
       </div>
     </div>

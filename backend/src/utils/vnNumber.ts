@@ -19,8 +19,17 @@
  *   nhiều phẩy          → phẩy là nghìn (kiểu Mỹ)            `1,234,567` → 1234567
  *   đúng một phẩy       → phẩy là thập phân                  `12,5` → 12.5
  *   nhiều chấm          → chấm là nghìn                      `45.000.000` → 45000000
- *   đúng một chấm       → giữ nguyên (thập phân kiểu Mỹ)     `12.5` → 12.5
+ *   một chấm, sau nó ĐÚNG 3 chữ số → chấm là nghìn           `1.234` → 1234
+ *   một chấm, các dạng khác        → thập phân kiểu Mỹ       `12.5` → 12.5 · `1.2345` → 1.2345
+ *
+ * VÌ SAO PHẢI XÉT SỐ CHỮ SỐ (vòng nghiệm thu 07/09 — phép [2c] vẫn đỏ sau bản vá đầu): `"1.234"`
+ * là ca NHẬP NHẰNG thật, một dấu chấm đọc kiểu nào cũng ra số hợp lệ. Cái phân định là **dấu ngăn
+ * nghìn LUÔN nhóm đúng 3 chữ số**: `1.234` chỉ có thể là một nghìn hai trăm ba tư, còn `1.23` /
+ * `1.2345` thì chắc chắn là dấu thập phân. Ràng thêm phần đầu 1–3 chữ số và khác `0` để `0.123`
+ * (không ai viết vậy làm ngăn nghìn) vẫn là thập phân.
  */
+const THOUSAND_DOT = /^-?[1-9]\d{0,2}\.\d{3}$/
+
 export function parseVnNumber(val: unknown): number | null {
   if (val == null) return null
   if (typeof val === 'number') return Number.isFinite(val) ? val : null
@@ -32,6 +41,7 @@ export function parseVnNumber(val: unknown): number | null {
   else if (commas > 1) s = s.replace(/,/g, '')
   else if (commas === 1) s = s.replace(',', '.')
   else if (dots > 1) s = s.replace(/\./g, '')
+  else if (dots === 1 && THOUSAND_DOT.test(s)) s = s.replace('.', '')
   const n = Number(s)
   return Number.isFinite(n) ? n : null
 }

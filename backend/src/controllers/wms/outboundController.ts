@@ -1379,7 +1379,7 @@ export async function createGDO(req: Request, res: Response) {
       id: doId, gdo_id: gdoId, delivery_code: delivery_code?.trim() || null,
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
-    if (doErr) return fail(res, doErr.message)
+    if (doErr) return fail(res, doErr)
 
     // ĐÓNG CỬA SỔ ĐUA của check trên (2 lệnh Lưu bay lên CÙNG mili-giây đều qua pre-check —
     // đo dsub 31/08): sau khi ghi DO, soi lại — vẫn còn chuyến khác trùng thì RÚT bản của mình
@@ -1416,7 +1416,7 @@ export async function createGDO(req: Request, res: Response) {
       }
     })
     const { error: itemErr } = await supabase.from('OutboundItem').insert(itemsToInsert)
-    if (itemErr) return fail(res, itemErr.message)
+    if (itemErr) return fail(res, itemErr)
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
@@ -1551,7 +1551,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       id: doId, gdo_id: gdoId, delivery_code: delivery_code.trim(),
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: t,
     })
-    if (doErr) return fail(res, doErr.message)
+    if (doErr) return fail(res, doErr)
 
     const qxLooseMats = await loosePalletMats(allCodes)
     const qxLoosePol = await looseConfigOf([warehouse_id])
@@ -1572,7 +1572,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       status: 'PENDING', updated_at: t,
     }))
     const { error: itemErr } = await supabase.from('OutboundItem').insert(itemRows)
-    if (itemErr) return fail(res, itemErr.message)
+    if (itemErr) return fail(res, itemErr)
 
     // Ghi nhận từng mã: pool (CAS) + entry CHỈ cho mã no-QR hiệu lực — khớp quickExportExistingGDO/manualCompleteItem.
     // Kho NONE + mã thường: không theo dõi tồn → chỉ đánh item COMPLETED (không pool, không entry — trước đây
@@ -2279,7 +2279,7 @@ export async function updateGDO(req: Request, res: Response) {
           }
         })
         const { error: insErr } = await supabase.from('OutboundItem').insert(inserts)
-        if (insErr) return fail(res, insErr.message)
+        if (insErr) return fail(res, insErr)
       }
     } else {
       // Single-DO: CRUD đầy đủ, match bằng material_code (đã validate ở trên)
@@ -2462,7 +2462,7 @@ export async function patchGDO(req: Request, res: Response) {
     let upd = supabase.from('GroupDeliveryOrder').update(patch).eq('id', req.params.id)
     if (status === 'COMPLETED') upd = upd.neq('status', 'COMPLETED')
     const { data: updRows, error } = await upd.select('id')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     if (status === 'COMPLETED' && (updRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(req.params.id, t)
 
@@ -2486,7 +2486,7 @@ export async function assignGDO(req: Request, res: Response) {
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: now(), assigned_by: assigned_by ?? null, updated_at: now() })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
@@ -2508,7 +2508,7 @@ export async function unassignGDO(req: Request, res: Response) {
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: null, assigned_by: null, status: 'PENDING', updated_at: now() })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
@@ -2603,7 +2603,7 @@ export async function startGDO(req: Request, res: Response) {
         updated_at: now(),
       })
       .eq('id', req.params.id).is('started_at', null).select('id')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!startedRows || startedRows.length === 0)
       return fail(res, 'Chuyến vừa được người khác Bắt đầu — tải lại trang để xem trạng thái mới', 409)
     await linkWeighTicket(weighTicketId, req.params.id)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
@@ -2627,7 +2627,7 @@ export async function waiveWeighGDO(req: Request, res: Response) {
         weigh_waive_reason: String(reason ?? '').trim() || null, updated_at: now(),
       })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2645,7 +2645,7 @@ export async function waiveGateGDO(req: Request, res: Response) {
         gate_waive_reason: String(reason ?? '').trim() || null, updated_at: now(),
       })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2658,7 +2658,7 @@ export async function unwaiveGateGDO(req: Request, res: Response) {
     const { data, error } = await supabase.from('GroupDeliveryOrder')
       .update({ gate_waived_at: null, gate_waived_by: null, gate_waive_reason: null, updated_at: now() })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2671,7 +2671,7 @@ export async function unwaiveWeighGDO(req: Request, res: Response) {
     const { data, error } = await supabase.from('GroupDeliveryOrder')
       .update({ weigh_waived_at: null, weigh_waived_by: null, weigh_waive_reason: null, updated_at: now() })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2742,7 +2742,7 @@ export async function updateTransport(req: Request, res: Response) {
         updated_at: now(),
       })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (utPlateChanged) {
       // Biển đổi → phiếu cân auto của biển CŨ không còn thuộc chuyến này (match tay giữ nguyên)
       await supabase.from('WeighTicket')
@@ -2800,7 +2800,7 @@ export async function unstartGDO(req: Request, res: Response) {
         status: 'PENDING', updated_at: t,
       })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     // Gỡ phiếu cân đã gắn TỰ ĐỘNG lúc Bắt đầu (bug 01/08: phiếu kẹt với chuyến đã gỡ → xe bị chặn
     // OAN 422 khi start chuyến khác). Match TAY (người trạm cân chủ động gắn) giữ nguyên.
     await supabase.from('WeighTicket')
@@ -2848,7 +2848,7 @@ export async function uncompleteGDO(req: Request, res: Response) {
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, transfer_status: keepTransfer ? 'IN_TRANSIT' : null, updated_at: now() })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
@@ -3110,6 +3110,9 @@ export async function uploadExcel(req: Request, res: Response) {
     const wb = readWorkbookSafe(req.file.buffer)
     if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    // Ô GỘP: file KH xuất gộp ô "Số xe" cho nhiều DO của cùng một xe — không trải thì mọi DO trừ
+    // dòng đầu mất Số xe và bị vòng gom dưới đây bỏ ÂM THẦM (xem `expandMergedCells`).
+    expandMergedCells(ws)
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
 
     if (!rows.length) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
@@ -3802,6 +3805,7 @@ export async function uploadVl06o(req: Request, res: Response) {
     const wb = readWorkbookSafe(req.file.buffer)
     if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
+    expandMergedCells(ws)   // bản SAP xuất qua Excel hay gộp ô Delivery cho nhiều Item
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File VL06O trống hoặc không đúng định dạng', 400)
 
@@ -5874,7 +5878,7 @@ export async function getLoosePickingFacets(req: Request, res: Response) {
     p_from:         date || date_from || null,
     p_to:           date || date_to || null,
   })
-  if (error) return fail(res, error.message)
+  if (error) return fail(res, error)
   return ok(res, data ?? {})
 }
 
@@ -6008,7 +6012,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       p_offset:       (pageNum - 1) * pageSize,
       p_limit:        pageSize,
     })
-    if (pageErr) return fail(res, pageErr.message)
+    if (pageErr) return fail(res, pageErr)
     const pd = (pageData ?? {}) as {
       gdo_ids?: string[]; items?: unknown[]; total?: number; items_n?: number; pending_n?: number
       loose_total?: number; loose_done?: number

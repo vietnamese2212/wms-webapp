@@ -195,13 +195,17 @@ export async function updateZone(req: Request, res: Response) {
 export async function deleteZone(req: Request, res: Response) {
   const { id } = req.params
 
-  const { data: zone } = await supabase
+  // maybeSingle + trả 404 khi không có: bản cũ bỏ qua cả khối gác khi `zone` rỗng rồi vẫn DELETE,
+  // nên xoá khu vực KHÔNG CÓ THẬT trả về "thành công" (và id sai dạng thì rơi xuống 22P02 → 500).
+  const { data: zone, error: findErr } = await supabase
     .from('WarehouseZone')
     .select('code, warehouse_id, categories')
     .eq('id', id)
-    .single()
+    .maybeSingle()
+  if (findErr) return fail(res, 'Mã khu vực không hợp lệ — màn hình có thể chưa tải xong', 400)
+  if (!zone) return fail(res, 'Không tìm thấy khu vực — có thể đã bị xoá trước đó', 404)
 
-  if (zone) {
+  {
     const deleteActor = req.user
     if (deleteActor?.warehouse_scope === 'ASSIGNED') {
       const allowed: string[] = deleteActor.warehouse_ids ?? []

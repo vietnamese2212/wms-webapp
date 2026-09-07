@@ -68,7 +68,7 @@ export async function createTransportCompany(req: Request, res: Response) {
         created_by: actor, updated_by: actor,
       })
       .select().single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -101,7 +101,7 @@ export async function updateTransportCompany(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TransportCompany')
       .update(updates).eq('id', id).select().maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy ĐVVT/NCC', 404)
 
     // Cascade is_active → tất cả xe → tất cả driver employee của ĐVVT
@@ -190,8 +190,11 @@ export async function deleteTransportCompany(req: Request, res: Response) {
 
     // Hard-delete ĐVVT (Postgres sẽ trả lỗi FK nếu còn record tham chiếu)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await supabase.from('TransportCompany').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    const { data: gone, error } = await supabase.from('TransportCompany').delete().eq('id', id).select('id')
+    if (error) return fail(res, error)
+    // DELETE trên id không tồn tại là "thành công rỗng" — không kiểm thì app báo đã xoá một ĐVVT
+    // chưa từng có, còn ĐVVT thật thì vẫn nằm nguyên trong danh sách.
+    if (!gone?.length) return fail(res, 'Không tìm thấy ĐVVT/NCC — có thể đã bị xoá trước đó', 404)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

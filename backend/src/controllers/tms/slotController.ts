@@ -14,6 +14,9 @@ export async function listSlots(req: Request, res: Response) {
   try {
     const { date, warehouse_id, direction } = req.query as Record<string, string>
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
+    // Danh sách đóng — giá trị này được ghép vào biểu thức lọc bên dưới, không nhận chuỗi tự do
+    if (direction && direction !== 'INBOUND' && direction !== 'OUTBOUND')
+      return fail(res, 'Chiều không hợp lệ (INBOUND | OUTBOUND)', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = supabase.from('DeliverySlot')
@@ -22,10 +25,14 @@ export async function listSlots(req: Request, res: Response) {
       .eq('warehouse_id', warehouse_id)
       .order('time_from')
 
-    if (direction) q = q.eq('direction', direction)
+    // NULL-INCLUSIVE như mọi bộ cắt khác của app: khung giờ sinh từ mẫu KHÔNG mang chiều (không
+    // đường ghi nào điền `direction` — đo 07/09: 3.844/3.846 dòng NULL), nên `.eq()` trần làm bộ
+    // lọc Chiều trả RỖNG trong khi lịch vẫn đầy khung ⇒ người dùng đọc ra "kho chưa cấu hình giờ".
+    // Khung không khai chiều = dùng được cho cả nhập lẫn xuất.
+    if (direction) q = q.or(`direction.eq.${direction},direction.is.null`)
 
     const { data, error } = await q
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -99,7 +106,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: insErr } = await supabase.from('DeliverySlot').insert(rows)
-    if (insErr) return fail(res, insErr.message)
+    if (insErr) return fail(res, insErr)
 
     return ok(res, { created: rows.length, dates: validDates })
   } catch (e) { return fail(res, String(e)) }

@@ -226,13 +226,13 @@ export async function createPlanLine(req: Request, res: Response) {
       created_by: user?.name || null, updated_by: user?.name || null,
       created_at: now, updated_at: now,
     })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     await recalcTmsOrder(tmsOrderId)
 
     const { data, error: fe } = await supabase
       .from('inbound_plan_lines').select(LINE_SELECT).eq('id', id).single()
-    if (fe) return fail(res, fe.message)
+    if (fe) return fail(res, fe)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -368,7 +368,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
             for (const p of chunk) { groupMap.set(p.key, String(p.order.id)); slotsToInsert.push(p.slot) }
           } else if (error.code === '23505') {
             hadConflict = true   // nhóm trong chunk này để vòng sau re-fetch/tạo lại
-          } else return fail(res, error.message)
+          } else return fail(res, error)
         }
         if (hadConflict) await fetchGroupOrders()
       }
@@ -376,7 +376,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       if (unresolved.length) return fail(res, 'Đụng độ khi tạo lệnh (nhiều người cùng upload) — vui lòng bấm upload lại', 409)
       for (let i = 0; i < slotsToInsert.length; i += 500) {
         const { error } = await supabase.from('TmsVehicleSlot').insert(slotsToInsert.slice(i, i + 500))
-        if (error) return fail(res, error.message)
+        if (error) return fail(res, error)
       }
     }
 
@@ -471,7 +471,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
         updated_by: user?.name || null, updated_at: now,
       }))
       const { error } = await supabase.from('inbound_plan_lines').upsert(payload, { onConflict: 'id' })
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     // INSERT theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless.
     // Đua đa-user: unique index uq_inbound_plan_line_active_key bắn 23505 khi người khác vừa chèn
@@ -481,11 +481,11 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       const chunk = toInsert.slice(i, i + 500)
       const { error } = await supabase.from('inbound_plan_lines').insert(chunk)
       if (!error) continue
-      if (error.code !== '23505') return fail(res, error.message)
+      if (error.code !== '23505') return fail(res, error)
       for (const r of chunk) {
         const { error: e1 } = await supabase.from('inbound_plan_lines').insert(r)
         if (!e1) continue
-        if (e1.code !== '23505') return fail(res, e1.message)
+        if (e1.code !== '23505') return fail(res, e1)
         let wq = supabase.from('inbound_plan_lines').select('id')
           .eq('date', dOf(r.date)).eq('warehouse_id', r.warehouse_id)
           .eq('material_id', r.material_id as string).neq('status', 'CANCELLED')
@@ -495,7 +495,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
         const { error: e2 } = await supabase.from('inbound_plan_lines')
           .update({ planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, ...(r.po_number ? { po_number: r.po_number } : {}), updated_by: user?.name || null, updated_at: now })
           .eq('id', winner.id)
-        if (e2) return fail(res, e2.message)
+        if (e2) return fail(res, e2)
         raceUpdated++
       }
     }
@@ -526,7 +526,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
     })
     for (let i = 0; i < orderPatch.length; i += 500) {
       const { error } = await supabase.from('TmsOrder').upsert(orderPatch.slice(i, i + 500), { onConflict: 'id' })
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     const emptyIds = affectedOrderIds.filter(id => !sums.has(id))
     for (let i = 0; i < emptyIds.length; i += 300) {
@@ -600,7 +600,7 @@ export async function updatePlanLine(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('inbound_plan_lines').update(updates).eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Recalc cả 2 TmsOrder nếu có thay đổi nhóm
     if (existing.tms_order_id && existing.tms_order_id !== newTmsOrderId) {
@@ -610,7 +610,7 @@ export async function updatePlanLine(req: Request, res: Response) {
 
     const { data, error: fe } = await supabase
       .from('inbound_plan_lines').select(LINE_SELECT).eq('id', id).single()
-    if (fe) return fail(res, fe.message)
+    if (fe) return fail(res, fe)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -639,7 +639,7 @@ export async function deletePlanLine(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('inbound_plan_lines').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     if (existing.tms_order_id) {
       await recalcTmsOrder(existing.tms_order_id)
@@ -689,14 +689,14 @@ export async function cancelPlanLine(req: Request, res: Response) {
       updated_by: user?.name || null,
       updated_at: now,
     }).eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Recalc TmsOrder (loại line vừa hủy khỏi tổng); nếu 0 ACTIVE lines → TmsOrder CANCELLED
     if (existing.tms_order_id) await recalcTmsOrder(existing.tms_order_id)
 
     const { data, error: fe } = await supabase
       .from('inbound_plan_lines').select(LINE_SELECT).eq('id', id).single()
-    if (fe) return fail(res, fe.message)
+    if (fe) return fail(res, fe)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -801,17 +801,17 @@ export async function bulkCreateForOrder(req: Request, res: Response) {
       const { error: updErr } = await supabase.from('inbound_plan_lines')
         .update({ planned_boxes: u.planned_boxes, planned_pallets: u.planned_pallets, updated_by: user?.name ?? null, updated_at: now })
         .eq('id', u.id)
-      if (updErr) return fail(res, updErr.message)
+      if (updErr) return fail(res, updErr)
     }
     if (toInsert.length) {
       const { error: insErr } = await supabase.from('inbound_plan_lines').insert(toInsert)
-      if (insErr && insErr.code !== '23505') return fail(res, insErr.message)
+      if (insErr && insErr.code !== '23505') return fail(res, insErr)
       if (insErr) {
         // Đua: người khác vừa chèn cùng key (unique index) → từng dòng, đụng thì UPDATE đè
         for (const r of toInsert as { date: string; warehouse_id: string; ncc_id: string | null; material_id: string; planned_boxes: number; planned_pallets: number | null }[]) {
           const { error: e1 } = await supabase.from('inbound_plan_lines').insert(r)
           if (!e1) continue
-          if (e1.code !== '23505') return fail(res, e1.message)
+          if (e1.code !== '23505') return fail(res, e1)
           let wq = supabase.from('inbound_plan_lines').select('id')
             .eq('date', r.date).eq('warehouse_id', r.warehouse_id)
             .eq('material_id', r.material_id).neq('status', 'CANCELLED')
@@ -821,7 +821,7 @@ export async function bulkCreateForOrder(req: Request, res: Response) {
           const { error: e2 } = await supabase.from('inbound_plan_lines')
             .update({ planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, updated_by: user?.name ?? null, updated_at: now })
             .eq('id', winner.id)
-          if (e2) return fail(res, e2.message)
+          if (e2) return fail(res, e2)
         }
       }
     }

@@ -42,6 +42,21 @@ async function guardSlotWh(req: Request, res: Response, slotId: string): Promise
   return true
 }
 
+/**
+ * TRẠNG THÁI DÒNG XE — danh sách ĐÓNG, không nhận giá trị lạ (chốt 07/09).
+ *
+ * Sức chứa khung giờ được tính bằng ĐẾM SỐNG các dòng có `status IN ('BOOKED','ARRIVED','DONE')`
+ * (RPC `book_vehicle_slot` + `recount_slot`). Một dòng mang trạng thái ngoài danh sách vẫn GIỮ
+ * `slot_id` nhưng rơi khỏi phép đếm ⇒ khung giờ nhận quá sức chứa mà sổ đếm ghi 0, và bước "Lưu
+ * cụm khung giờ" của kho đó đổ 500 vì gỡ phải dòng nó tưởng không tồn tại.
+ * Đo thật 07/09 (gói QA 50 phép [36][43b]): gửi `status:"XYZ"` → DB lưu "XYZ", sổ đếm về 0 trong
+ * khi vẫn có 1 xe trỏ vào khung 22h, và cả trang Cài đặt khung giờ của kho hỏng theo.
+ * Danh sách này phải KHỚP `SLOT_STATUS_CFG` bên `frontend/src/pages/tms/TMSBookings.tsx`.
+ */
+export const VSLOT_STATUSES = ['PENDING', 'BOOKED', 'ARRIVED', 'DONE', 'CANCELLED'] as const
+const isVslotStatus = (v: unknown): v is typeof VSLOT_STATUSES[number] =>
+  typeof v === 'string' && (VSLOT_STATUSES as readonly string[]).includes(v)
+
 // Kế toán slot (booked_count + sức chứa) được xử lý NGUYÊN TỬ trong Postgres:
 //   • book_vehicle_slot(vslot, new_slot, plate, status, actor) — gán/đổi/nhả slot,
 //     kiểm sức chứa bằng ĐẾM SỐNG biển-số-distinct dưới row-lock (không tin booked_count),
@@ -95,7 +110,7 @@ export async function addVehicleSlot(req: Request, res: Response) {
       .insert({ id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: now, updated_at: now })
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -108,12 +123,16 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
     const now = new Date().toISOString()
+    // Chặn TRƯỚC mọi thứ khác: giá trị lạ lọt xuống DB là hỏng phép đếm sức chứa của cả kho
+    // (xem chú thích VSLOT_STATUSES) — và không có đường nào trong app sửa lại được.
+    if (status !== undefined && !isVslotStatus(status))
+      return fail(res, `Trạng thái xe không hợp lệ (${VSLOT_STATUSES.join(' | ')})`, 400, 'BAD_VSLOT_STATUS')
     if (!(await guardSlotWh(req, res, id))) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
       .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).maybeSingle()
-    if (fetchErr) return fail(res, fetchErr.message)
+    if (fetchErr) return fail(res, fetchErr)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     // Không cho thay đổi slot sau ARRIVED/DONE
@@ -240,7 +259,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         p_vslot_id: id, p_new_slot_id: newSlotId, p_plate: newPlate,
         p_status: finalStatus, p_actor: user?.name || null,
       })
-      if (rpcErr) return fail(res, rpcErr.message)
+      if (rpcErr) return fail(res, rpcErr)
       if (rpcRes === 'FULL')           return fail(res, 'Slot đã hết chỗ', 409)
       if (rpcRes === 'SLOT_NOT_FOUND') return fail(res, 'Slot không tồn tại', 404)
       if (rpcRes === 'NOT_FOUND')      return fail(res, 'Không tìm thấy vehicle slot', 404)
@@ -320,7 +339,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       .update(updates).eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Áp cùng slot+plate cho xe chính của các đơn chạy chung (cùng biển → recount không tăng số chỗ)
     if (newGroupId && orderIds.length > 0) {
@@ -410,7 +429,7 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
       .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).maybeSingle()
-    if (fetchErr) return fail(res, fetchErr.message)
+    if (fetchErr) return fail(res, fetchErr)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     if (!opts.skipTimeCheck && existing.slot_id) {
@@ -430,7 +449,7 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
     const { error: rpcErr } = await (supabase.rpc as any)('book_vehicle_slot', {
       p_vslot_id: id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: user?.name || null,
     })
-    if (rpcErr) return fail(res, rpcErr.message)
+    if (rpcErr) return fail(res, rpcErr)
 
     // Xử lý group consolidation: dòng này tách ra, các dòng còn lại giữ nguyên
     const groupId = existing.consolidation_group_id as string | null
@@ -466,7 +485,7 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
       .eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const oldPlate = existing.license_plate as string | null
     if (oldPlate) await relinkGatesByPlate(oldPlate, existing.order_id as string)
     return ok(res, data)
@@ -483,7 +502,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
       .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).maybeSingle()
-    if (fetchErr) return fail(res, fetchErr.message)
+    if (fetchErr) return fail(res, fetchErr)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
     if (!['PENDING', 'BOOKED'].includes(existing.status as string)) return fail(res, 'Chỉ xoá được xe chưa thực hiện', 400)
 
@@ -518,7 +537,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
     const oldSlotId = existing.slot_id as string | null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('TmsVehicleSlot').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Tính lại cache booked_count cho slot cũ sau khi xoá dòng
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

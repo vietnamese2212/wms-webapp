@@ -100,7 +100,69 @@ export function maskServerMessage(message: string, status: number, res?: Respons
   return isSoftStatus(status) ? message : GENERIC_5XX
 }
 
-export function fail(res: Response, arg2: string | number, arg3?: string | number, arg4?: string): Response {
+/**
+ * LỖI CỦA POSTGRES LÀ LỖI ĐẦU VÀO, KHÔNG PHẢI "LỖI HỆ THỐNG" (chốt 07/09).
+ *
+ * Gõ trùng mã, xoá thứ đang được nơi khác dùng, mở màn hình khi chưa có mã bản ghi — đó là việc
+ * NGƯỜI DÙNG làm sai hoặc màn hình chưa sẵn sàng, và app phải nói ra được điều đó. Bản cũ ném
+ * `error.message` của PostgREST vào `fail` ⇒ status mặc định 500 ⇒ người dùng đọc "Lỗi hệ thống,
+ * vui lòng thử lại" (thử lại bao nhiêu lần cũng vẫn thế), CÒN cảnh báo "lỗi BE 24h" thì kêu oan
+ * vì mỗi lượt lại ghi thêm một dòng vào `error_logs`.
+ *
+ * Đo thật 07/09 (gói QA 49·50·51): **34 ca** cùng khuôn này — 12 ca id rác trên đường dẫn của các
+ * bảng khoá UUID (22P02), 8 ca trùng mã (23505), phần còn lại là khoá ngoại/ràng buộc.
+ *
+ * VÌ SAO KHÔNG CHẶN Ở MIDDLEWARE THEO HÌNH DẠNG UUID (đã cân nhắc rồi bỏ): 48/82 bảng có cột `id`
+ * kiểu TEXT, và `JobTitle` có **14/19 id thật** dạng `jt-admin`, `jt-tk-tp`. Một lưới "id phải là
+ * UUID" đặt ở `/api` sẽ khoá đúng những chức danh đang chạy — chữa lỗi báo sai bằng một sự cố
+ * vận hành nặng hơn. Dịch mã lỗi ở đây thì không phải đoán bảng nào khoá kiểu gì.
+ */
+export type PgLikeError = { code?: string | null; message?: string; details?: string | null }
+
+const PG_MAP: Record<string, { status: number; message: string }> = {
+  // id/khoá sai định dạng — hay gặp nhất khi màn hình ghép `/${id}` lúc state chưa có
+  '22P02': { status: 400, message: 'Mã bản ghi không hợp lệ — màn hình có thể chưa tải xong, thử tải lại trang' },
+  '23505': { status: 409, message: 'Giá trị này đã tồn tại — kiểm tra lại mã/tên đang nhập' },
+  // 23503 đi HAI CHIỀU nên câu trả lời phải chọn theo `details` (xem pgUserError)
+  '23503': { status: 409, message: 'Liên kết dữ liệu không hợp lệ — bản ghi liên quan không tồn tại, hoặc đang được nơi khác sử dụng' },
+  '23514': { status: 400, message: 'Giá trị không hợp lệ theo ràng buộc của hệ thống' },
+  '23502': { status: 400, message: 'Thiếu thông tin bắt buộc' },
+  '22003': { status: 400, message: 'Số vượt quá giới hạn cho phép' },
+  '22007': { status: 400, message: 'Ngày/giờ không hợp lệ' },
+  '22008': { status: 400, message: 'Ngày/giờ nằm ngoài khoảng cho phép' },
+}
+
+/** Lỗi Postgres có nghĩa với người dùng không? Trả null nếu không (⇒ giữ nguyên đường 5xx cũ). */
+export function pgUserError(err: unknown): { status: number; message: string } | null {
+  const e = err as PgLikeError | null
+  const code = e?.code
+  if (typeof code !== 'string' || !PG_MAP[code]) return null
+  // Khoá ngoại vỡ theo hai chiều rất khác nhau với người dùng: "thứ tôi trỏ tới không có" (chọn
+  // cấp trên là chức danh đã bị xoá) ≠ "thứ tôi xoá đang bị người khác dùng". Postgres nói rõ chiều
+  // nào trong `details`, nên chọn đúng câu thay vì bắt người đọc tự đoán.
+  if (code === '23503') {
+    const d = String(e?.details ?? '')
+    if (/is not present in table/i.test(d))
+      return { status: 400, message: 'Giá trị tham chiếu không tồn tại — bản ghi được chọn có thể đã bị xoá, hãy tải lại trang' }
+    if (/is still referenced from/i.test(d))
+      return { status: 409, message: 'Bản ghi đang được nơi khác sử dụng — gỡ các liên kết rồi thử lại' }
+  }
+  return PG_MAP[code]
+}
+
+export function fail(res: Response, error: PgLikeError, status?: number): Response
+export function fail(res: Response, message: string, status?: number, code?: string): Response
+export function fail(res: Response, status: number, code: string, message: string): Response
+export function fail(res: Response, arg2: string | number | PgLikeError, arg3?: string | number, arg4?: string): Response {
+  // Đối tượng lỗi Supabase/PostgREST: dịch mã lỗi thành câu người dùng hiểu; không dịch được thì
+  // rơi về đúng đường cũ (5xx có che message).
+  if (arg2 !== null && typeof arg2 === 'object') {
+    const mapped = pgUserError(arg2)
+    if (mapped) {
+      return res.status(mapped.status).json({ success: false, error: { code: arg2.code ?? 'ERROR', message: mapped.message } })
+    }
+    return fail(res, arg2.message ?? 'ERROR', typeof arg3 === 'number' ? arg3 : 500)
+  }
   if (typeof arg2 === 'number') {
     if (arg2 >= 500) {
       if (arg4) console.error('[fail]', arg3 ?? 'ERROR', arg4)
@@ -115,5 +177,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
     recordServerError('be', arg2, status, undefined, routeOf(res))
     return res.status(status).json({ success: false, error: { message: isSoftStatus(status) ? arg2 : GENERIC_5XX } })
   }
-  return res.status(status).json({ success: false, error: { message: arg2 } })
+  // `fail(res, 'câu tiếng Việt', 400, 'MÃ_LỖI')` — mã lỗi được KHAI thì phải ĐI RA cùng response;
+  // bản cũ nuốt tham số thứ tư nên hơn 40 chỗ gọi tưởng mình đang trả mã mà client không hề nhận.
+  return res.status(status).json({ success: false, error: arg4 ? { code: arg4, message: arg2 } : { message: arg2 } })
 }

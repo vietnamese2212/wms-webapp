@@ -18,15 +18,21 @@ import type { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
-import { maskServerMessage } from '../../utils/response'
+import { maskServerMessage, pgUserError, type PgLikeError } from '../../utils/response'
 import { parseSheetByHeader, expandMergedCells, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseVnNumber } from '../../utils/vnNumber'
 
 const ok = (res: Response, data: unknown) => res.json({ success: true, data })
-const fail = (res: Response, message: string, status = 500, code = 'COST_ERROR') =>
-  res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
+// Nhận CẢ đối tượng lỗi Postgres — xem `pgUserError` (utils/response): trùng khoá kê khai, id sai
+// dạng… là lỗi ĐẦU VÀO, phải trả 4xx nói rõ, không phải "Lỗi hệ thống".
+const fail = (res: Response, message: string | PgLikeError, status = 500, code = 'COST_ERROR') => {
+  const mapped = typeof message === 'object' ? pgUserError(message) : null
+  if (mapped) return res.status(mapped.status).json({ success: false, error: { code: (message as PgLikeError).code ?? code, message: mapped.message } })
+  const msg = typeof message === 'string' ? message : (message.message ?? 'ERROR')
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(msg, status, res) } })
+}
 
 /** Kho user được phép đụng; null = không giới hạn (superadmin / NATIONAL). */
 function scopeWhIds(req: Request): string[] | null {
@@ -447,7 +453,7 @@ export async function createCost(req: Request, res: Response) {
     // nhân đôi) ⇒ chỉ đúng dòng đó, đừng đẻ dòng thứ hai.
     if (error?.code === '23505')
       return fail(res, 'Kỳ này kho này đã có khoản mục đó — mở dòng đang có ra sửa số tiền', 409, 'DUPLICATE')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { id: data?.id })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -491,7 +497,7 @@ export async function updateCost(req: Request, res: Response) {
     const { error } = await supabase.from('warehouse_costs').update(patch).eq('id', id)
     if (error?.code === '23505')
       return fail(res, 'Kỳ này kho này đã có khoản mục đó — sửa dòng đang có thay vì tạo trùng', 409, 'DUPLICATE')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -506,7 +512,7 @@ export async function deleteCost(req: Request, res: Response) {
     const g = writeGuard(row.warehouse_id, scopeWhIds(req), await lockedKeys(row.period), row.period)
     if (g) return fail(res, g.msg, g.status, g.code)
     const { error } = await supabase.from('warehouse_costs').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -538,7 +544,7 @@ export async function saveCostItem(req: Request, res: Response) {
           updated_at: now, updated_by: who,
         })
         .eq('type', 'cost_item').eq('value', b.code)
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       return ok(res, { code: b.code, label })
     }
 
@@ -553,7 +559,7 @@ export async function saveCostItem(req: Request, res: Response) {
       created_at: now, created_by: who, updated_at: now, updated_by: who,
     })
     if (error?.code === '23505') return fail(res, 'Khoản mục này đã có', 409, 'DUPLICATE')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { code, label })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -567,7 +573,7 @@ export async function deleteCostItem(req: Request, res: Response) {
     if ((count ?? 0) > 0)
       return fail(res, `Đang có ${count} dòng chi phí dùng khoản mục này — đổi TÊN thay vì xoá`, 409, 'IN_USE')
     const { error } = await supabase.from('LookupValue').delete().eq('type', 'cost_item').eq('value', code)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { code })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -611,7 +617,7 @@ export async function copyPreviousMonth(req: Request, res: Response) {
     }
     for (let i = 0; i < payload.length; i += 500) {
       const { error } = await supabase.from('warehouse_costs').insert(payload.slice(i, i + 500))
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     return ok(res, { period, from: prev, copied: payload.length, skipped_existing: skippedExisting, skipped_locked: skippedLocked })
   } catch (e) { return fail(res, String(e)) }
@@ -751,7 +757,7 @@ export async function uploadCostExcel(req: Request, res: Response) {
     }))
     for (let i = 0; i < payload.length; i += 500) {
       const { error } = await supabase.from('warehouse_costs').upsert(payload.slice(i, i + 500), { onConflict: 'id' })
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     return ok(res, { inserted: toInsert, updated: toUpdate, skipped: errors.length, errors })
   } catch (e) { return fail(res, String(e)) }
@@ -772,7 +778,7 @@ export async function setCostLock(req: Request, res: Response) {
       let q = supabase.from('warehouse_cost_locks').delete().eq('period', period)
       q = wid === null ? q.is('warehouse_id', null) : q.eq('warehouse_id', wid)
       const { error } = await q
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       return ok(res, { period, warehouse_id: wid, locked: false })
     }
     // Khoá dùng unique index có `coalesce(warehouse_id,'*')` nên KHÔNG upsert theo cột được
@@ -783,7 +789,7 @@ export async function setCostLock(req: Request, res: Response) {
       id: randomUUID(), warehouse_id: wid, period,
       locked_at: now, locked_by: userName(req), created_at: now, updated_at: now,
     })
-    if (error && error.code !== '23505') return fail(res, error.message)
+    if (error && error.code !== '23505') return fail(res, error)
     return ok(res, { period, warehouse_id: wid, locked: true })
   } catch (e) { return fail(res, String(e)) }
 }

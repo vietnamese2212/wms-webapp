@@ -283,7 +283,7 @@ export async function listEmployeesPaged(req: Request, res: Response) {
     p_offset:       (pageNum - 1) * pageSize,
     p_limit:        pageSize,
   })
-  if (error) return fail(res, error.message)
+  if (error) return fail(res, error)
   const pd = (data ?? {}) as { ids?: string[]; total?: number; active?: number; paused?: number; hidden?: number }
   const ids = pd.ids ?? []
   // fetchFull chỉ nạp ĐÚNG nhân sự của trang này (đã chunk 300 bên trong)
@@ -422,7 +422,7 @@ export async function createEmployee(req: Request, res: Response) {
       created_by: actor,
       updated_by: actor,
     })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     if (warehouse_ids.length > 0) {
       // KHÔNG nuốt lỗi: ghi kho hỏng mà vẫn trả 201 là đẻ ra tài khoản 0 kho — trạng thái mà
@@ -560,7 +560,7 @@ export async function updateEmployee(req: Request, res: Response) {
     const { error } = await supabase.from('Employee')
       .update(updates)
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     if (warehouse_ids !== undefined) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -616,7 +616,7 @@ export async function setManager(req: Request, res: Response) {
     const { error } = await supabase.from('Employee')
       .update({ manager_id: mgr, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const rows = await fetchFull({ ids: [id] })
     await logAdmin(req, { action: 'MANAGER_SET', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id, after: { manager_id: mgr } })
     return ok(res, rows[0])
@@ -642,7 +642,7 @@ export async function setPassword(req: Request, res: Response) {
     const { error } = await supabase.from('Employee')
       .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Sổ quản trị: chỉ ghi SỰ KIỆN đặt mật khẩu, không bao giờ ghi giá trị
     await logAdmin(req, { action: 'PASSWORD_SET', target_type: 'Employee', target_id: id, target_label: `${t.employee_code} · ${t.email ?? ''}` })
@@ -671,7 +671,7 @@ export async function listAdminAudit(req: Request, res: Response) {
     if (q.search) { const s = safeSearch(q.search); sel = sel.or(`actor_name.ilike.%${s}%,target_label.ilike.%${s}%,target_id.ilike.%${s}%`) }
     const from = (pageNum - 1) * pageSize
     const { data, error, count } = await sel.order('created_at', { ascending: false }).range(from, from + pageSize - 1)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { rows: data ?? [], total: count ?? 0, page: pageNum, page_size: pageSize, actions: ADMIN_AUDIT_ACTIONS })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -699,7 +699,7 @@ export async function unlockAccount(req: Request, res: Response) {
     // ≤51 khoá (1 acct + ≤50 ip) — xoá theo lô cho khớp luật `.in()` qua chunk (DELETE cũng đi URL)
     for (const chunk of [keys.slice(0, 300)]) {
       const { error } = await supabase.from('auth_attempts').delete().in('key', chunk)
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     // Vết: ai mở khoá cho ai (nhật ký đăng nhập là nơi kiểm tra chuỗi khoá/mở)
     await supabase.from('auth_login_events').insert({
@@ -738,7 +738,11 @@ export async function deleteEmployee(req: Request, res: Response) {
     const { id } = req.params
     // Nhãn cho sổ quản trị lấy TRƯỚC khi xoá (xoá cứng xong thì không còn tên)
     const { data: tgt } = await supabase.from('Employee').select('employee_code, name').eq('id', id).maybeSingle()
-    const label = tgt ? `${(tgt as { employee_code: string }).employee_code} · ${(tgt as { name: string }).name}` : id
+    // Không có người này thì không có gì để xoá — và tuyệt đối không ghi một dòng "đã xoá nhân sự"
+    // vào NHẬT KÝ QUẢN TRỊ cho một id không tồn tại (đo 07/09: sổ ghi 1 dòng cho id ma). Nhật ký là
+    // chứng cứ ai làm gì; bơm vào đó việc chưa từng xảy ra là làm hỏng đúng thứ dùng để tra cứu.
+    if (!tgt) return fail(res, 'Không tìm thấy nhân viên — có thể đã bị xoá trước đó', 404)
+    const label = `${(tgt as { employee_code: string }).employee_code} · ${(tgt as { name: string }).name}`
     const audit = (mode: 'soft' | 'hard') => logAdmin(req, { action: 'EMPLOYEE_DELETE', target_type: 'Employee', target_id: id, target_label: label, after: { deleted: mode } })
 
     const hasHistory = await employeeHasHistory(id)
@@ -747,7 +751,7 @@ export async function deleteEmployee(req: Request, res: Response) {
       const { error: softErr } = await supabase.from('Employee')
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
-      if (softErr) return fail(res, softErr.message)
+      if (softErr) return fail(res, softErr)
       await audit('soft')
       return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
     }
@@ -763,12 +767,12 @@ export async function deleteEmployee(req: Request, res: Response) {
       const { error: softErr } = await supabase.from('Employee')
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
-      if (softErr) return fail(res, softErr.message)
+      if (softErr) return fail(res, softErr)
       await audit('soft')
       return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
     }
 
-    return fail(res, hardErr.message)
+    return fail(res, hardErr)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -794,7 +798,7 @@ export async function restoreEmployee(req: Request, res: Response) {
     const { error } = await supabase.from('Employee')
       .update({ deleted_at: null, is_active: true, updated_at: new Date().toISOString() })
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const rows = await fetchFull({ ids: [id], include_deleted: true })
     await logAdmin(req, { action: 'EMPLOYEE_RESTORE', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id })
     return ok(res, rows[0])

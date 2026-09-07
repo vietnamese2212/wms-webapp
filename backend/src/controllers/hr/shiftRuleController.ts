@@ -8,7 +8,7 @@ const SEL = 'id, from_shift, to_shift'
 export async function listShiftRules(_req: Request, res: Response) {
   try {
     const { data, error } = await supabase.from('ShiftRestRule').select(SEL).order('from_shift').order('to_shift')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data ?? [])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -20,7 +20,7 @@ export async function createShiftRule(req: Request, res: Response) {
     if (from_shift === to_shift) return fail(res, 'Ca trước và ca sau không được trùng', 400)
     const { data, error } = await supabase.from('ShiftRestRule')
       .insert({ id: randomUUID(), from_shift, to_shift, created_at: new Date().toISOString() }).select(SEL).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -28,7 +28,7 @@ export async function createShiftRule(req: Request, res: Response) {
 export async function deleteShiftRule(req: Request, res: Response) {
   try {
     const { error } = await supabase.from('ShiftRestRule').delete().eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

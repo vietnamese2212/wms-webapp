@@ -203,7 +203,7 @@ export async function createVehicle(req: Request, res: Response) {
     const { data, error } = await supabase.from('Vehicle')
       .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, ...dims, created_at: now, updated_at: now })
       .select('*').single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const [merged] = await withRelations([data])
     return ok(res, merged, 201)
   } catch (e) { return fail(res, String(e)) }
@@ -239,7 +239,7 @@ export async function updateVehicle(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
       .update(updates).eq('id', id).select('*').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy xe', 404)
 
     // Cascade xuống driver employee (khóa theo plate + ncc cũ):
@@ -299,7 +299,7 @@ export async function deleteVehicle(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('Vehicle').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

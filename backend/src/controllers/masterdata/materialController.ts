@@ -8,7 +8,7 @@ import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } 
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
-import { parseSheetByHeader, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
 // Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
@@ -185,6 +185,45 @@ export async function getMaterial(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+/**
+ * HAI LÁ CHẮN CỦA CỬA UPLOAD, NAY DÙNG CHUNG CHO CẢ FORM (chốt 07/09).
+ *
+ * Cửa upload đã chặn loại hàng lạ từ 26/07 (`whTypeSet` trong `uploadExcel`), nhưng form Thêm/Sửa
+ * mã hàng thì không — gửi `category:"QA49-LOAI-MA"` là ghi thẳng vào DB (đo 07/09, gói QA 49 phép
+ * [16][24]). Loại mồ côi không nằm trong danh mục nên mọi bộ lọc/phân quyền theo Loại kho đều
+ * không thấy mã đó: mã tồn tại mà biến mất khỏi màn hình của mọi người.
+ * Cùng đợt: quy cách nhận SỐ ÂM (`cartons_per_pallet:-5`) — sức chứa âm thì phép đếm chỗ trống
+ * của vị trí kho tính ra số vô nghĩa.
+ * `categoryAllowed` (phạm vi của NGƯỜI DÙNG) và hàm này (giá trị CÓ THẬT trong danh mục) là hai
+ * câu hỏi khác nhau — phải hỏi cả hai.
+ */
+async function unknownCategoryError(category: unknown): Promise<string | null> {
+  const c = category == null ? '' : String(category).trim()
+  if (!c) return null
+  const { data } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+  const known = ((data ?? []) as { value: string }[]).map(r => String(r.value))
+  if (known.includes(c)) return null
+  return `Loại hàng "${c}" không có trong danh mục Loại kho (${known.join(', ') || 'danh mục đang trống'})`
+    + ' — khai ở Cài đặt WMS › Loại kho trước, đừng gõ tự do.'
+}
+
+// Trường quy cách nhận số ÂM ở cả form lẫn API; tên field giữ nguyên như body để câu lỗi chỉ đúng ô.
+const NON_NEGATIVE_FIELDS: Record<string, string> = {
+  weight_kg: 'Khối lượng', cartons_per_pallet: 'Thùng/Pallet', cartons_per_pallet_mn: 'Thùng/Pallet (MN)',
+  units_per_carton: 'Hộp/Thùng', pallet_per_ea: 'Pallet/EA', shelf_life_days: 'Hạn dùng (ngày)',
+  carton_length_mm: 'Dài thùng', carton_width_mm: 'Rộng thùng', carton_height_mm: 'Cao thùng',
+  max_stack_layers: 'Số lớp chồng tối đa',
+}
+function negativeNumberError(body: Record<string, unknown>): string | null {
+  for (const [key, label] of Object.entries(NON_NEGATIVE_FIELDS)) {
+    const raw = body[key]
+    if (raw === undefined || raw === null || raw === '') continue
+    const n = Number(raw)
+    if (Number.isFinite(n) && n < 0) return `${label} không được là số âm (đang nhận ${raw})`
+  }
+  return null
+}
+
 export async function createMaterial(req: Request, res: Response) {
   try {
     const {
@@ -200,6 +239,10 @@ export async function createMaterial(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
     // Scope Loại hàng: không tạo mã thuộc loại ngoài phạm vi (mã chưa gán loại → cho qua)
     if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    const catErr = await unknownCategoryError(category)
+    if (catErr) return fail(res, 400, 'VALIDATION_ERROR', catErr)
+    const negErr = negativeNumberError(req.body as Record<string, unknown>)
+    if (negErr) return fail(res, 400, 'VALIDATION_ERROR', negErr)
     // Entry unit đòi hệ số 1 Entry = N Base (dùng lại units_per_carton)
     if (entry_unit && !(Number(units_per_carton) > 0))
       return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô Hộp/thùng) phải > 0')
@@ -280,6 +323,12 @@ export async function updateMaterial(req: Request, res: Response) {
       if (!categoryAllowed(req, (curCat as { category: string | null } | null)?.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
       if (category !== undefined && !categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     }
+    if (category !== undefined) {
+      const catErr = await unknownCategoryError(category)
+      if (catErr) return fail(res, 400, 'VALIDATION_ERROR', catErr)
+    }
+    const negErr = negativeNumberError(req.body as Record<string, unknown>)
+    if (negErr) return fail(res, 400, 'VALIDATION_ERROR', negErr)
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
     if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {
@@ -431,6 +480,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const wb = readWorkbookSafe(req.file.buffer)
     if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    expandMergedCells(ws)   // file danh mục hay gộp ô Loại hàng/Nhóm cho cả cụm mã
     const { rows, missingRequired } = parseSheetByHeader(ws, M_FIELDS)   // map theo TÊN cột (chịu đảo cột)
     if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Mã hàng`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)

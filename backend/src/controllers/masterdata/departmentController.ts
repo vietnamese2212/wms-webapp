@@ -38,7 +38,7 @@ export async function listDepartments(_req: Request, res: Response) {
       .select(DEPT_SELECT)
       .eq('is_active', true)
       .order('name')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -57,7 +57,7 @@ export async function createDepartment(req: Request, res: Response) {
       .insert({ id: randomUUID(), name, code: code.toUpperCase(), allowed_modules, is_carrier: is_carrier === true, updated_at: new Date().toISOString(), created_by: actor, updated_by: actor })
       .select(DEPT_SELECT)
       .single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const created = data as unknown as { id: string }
     await logAdmin(req, { action: 'DEPARTMENT_CREATE', target_type: 'Department', target_id: created.id, target_label: `${code.toUpperCase()} · ${name}`, after: { name, code: code.toUpperCase(), allowed_modules, is_carrier: is_carrier === true } })
     return ok(res, data, 201)
@@ -78,7 +78,7 @@ export async function updateDepartment(req: Request, res: Response) {
       .eq('id', id)
       .select(DEPT_SELECT)
       .maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy phòng ban', 404)
     const d = diffFields(before as Record<string, unknown> | null, { name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, is_carrier })
     if (Object.keys(d.after).length) {
@@ -97,7 +97,7 @@ export async function listJobTitles(req: Request, res: Response) {
     let q = supabase.from('JobTitle').select(JT_SELECT).eq('is_active', true).order('name')
     if (department_id) q = q.eq('department_id', department_id)
     const { data, error } = await q
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -131,7 +131,7 @@ export async function createJobTitle(req: Request, res: Response) {
       })
       .select(JT_SELECT)
       .single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const created = data as unknown as { id: string }
     await logAdmin(req, { action: 'JOBTITLE_CREATE', target_type: 'JobTitle', target_id: created.id, target_label: name,
       after: { name, department_id, parent_id: parent_id || null, module_permissions: module_permissions ?? {} } })
@@ -164,7 +164,7 @@ export async function setJobTitleParent(req: Request, res: Response) {
     const { data, error } = await supabase.from('JobTitle')
       .update(upd)
       .eq('id', id).select(JT_SELECT).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
     const d = diffFields(before as Record<string, unknown> | null, { parent_id: parent, in_chart })
     if (Object.keys(d.after).length)
@@ -190,7 +190,7 @@ export async function updateJobTitle(req: Request, res: Response) {
       .eq('id', id)
       .select(JT_SELECT)
       .maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
     // Sổ quản trị: ĐỔI QUYỀN chức danh là thao tác IT hỏi đầu tiên ("ai cấp quyền này, khi nào?")
     const d = diffFields(before as Record<string, unknown> | null, { name, is_active, module_permissions, is_driver })

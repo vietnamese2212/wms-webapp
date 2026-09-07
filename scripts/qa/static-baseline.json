@@ -32,7 +32,6 @@
   "rotation_rule_hand_rolled": 1,
   "putaway_rule_hand_rolled": 0,
   "n_plus_1_supabase_in_map": 3,
-  "_note_unpaginated_in_query": "141 → 144 (07/09): 3 dòng lọc theo PHẠM VI KHO CỦA NGƯỜI DÙNG (Employee.warehouse_ids) khi vá lỗ hổng scope ở Bố trí nhân sự / Phân công / danh sách nhân sự. Đây là danh sách KHO (toàn hệ thống 153, thực tế 1-5 kho mỗi người) chứ không phải danh sách khoá dữ liệu — không chạm trần 300 id URL, không dính cap 1000. Cả 3 đều nằm trong fetchAllRowsParallel; luật đếm theo DÒNG nên vẫn tính.",
   "detail_dead_end_no_way_back": 0,
   "axios_post_null_body": 0,
   "detail_blank_on_404": 0,
@@ -50,5 +49,6 @@
   "filterbar_without_sheetbutton": 0,
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
-  "password_rule_hand_rolled": 0
+  "password_rule_hand_rolled": 0,
+  "upload_without_merge_expand": 0
 }

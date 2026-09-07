@@ -7,6 +7,11 @@
 # Secrets cần khai 1 lần (Settings → Secrets and variables → Actions):
 #   QA_DATABASE_URL  = SUPABASE_URL|SERVICE_ROLE_KEY của STAGING, nối bằng dấu | (2 giá trị 1 secret)
 #     (chỉ staging — TUYỆT ĐỐI không đặt key production vào đây)
+#   QA_ADMIN_EMAIL + QA_ADMIN_PASSWORD = tài khoản QA trên staging. Gộp cả hai vào MỘT ô cũng nhận:
+#     điền "email|mật khẩu" vào một trong hai ô, để ô kia TRỐNG (cùng lối với QA_DATABASE_URL).
+#     Thiếu cả hai ⇒ SKIP hẳn bước QA. KHÔNG login bằng tài khoản mặc định: mật khẩu sai là một lần
+#     ĐOÁN trên tài khoản admin thật, và auth_throttle khoá tài khoản sau 10 lần sai/15 phút — CI
+#     chạy mỗi push sẽ tự khoá admin staging (đo thật 06–07/09: 9 job đỏ liên tiếp cùng gốc này).
 # Gói race/scale KHÔNG chạy ở đây (có ghi dữ liệu — chạy tay/đêm, tránh đè giờ demo).
 name: ci
 on:
@@ -66,14 +71,32 @@ jobs:
             printf 'SUPABASE_URL=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$url" "$key" > backend/.env
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Dựng tài khoản QA (nhận 2 secret riêng HOẶC 1 ô gộp "email|mật khẩu")
+        id: qacred
+        env:
+          S_EMAIL: ${{ secrets.QA_ADMIN_EMAIL }}
+          S_PASS: ${{ secrets.QA_ADMIN_PASSWORD }}
+        run: |
+          email="$S_EMAIL"; pass="$S_PASS"
+          # Gộp 2 giá trị vào 1 ô: chỉ tách khi ô KIA trống (mật khẩu thật vẫn được chứa dấu |).
+          if [ -z "$pass" ] && [ "${email#*|}" != "$email" ]; then
+            pass="${email#*|}"; email="${email%%|*}"
+          elif [ -z "$email" ] && [ "${pass#*|}" != "$pass" ]; then
+            email="${pass%%|*}"; pass="${pass#*|}"
+          fi
+          if [ -z "$email" ] || [ -z "$pass" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Chưa khai tài khoản QA (QA_ADMIN_EMAIL + QA_ADMIN_PASSWORD, hoặc một ô 'email|mật khẩu') — BỎ QUA QA smoke. Cố tình không login bằng tài khoản mặc định: sai mật khẩu là một lần đoán trên tài khoản admin thật, 10 lần sai/15 phút là khoá."
+          else
+            # add-mask cho phần tách ra từ ô gộp (GitHub chỉ tự che nguyên chuỗi secret)
+            echo "::add-mask::$pass"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            { echo "QA_ADMIN_EMAIL=$email"; echo "QA_ADMIN_PASSWORD=$pass"; } >> "$GITHUB_ENV"
+          fi
       - name: "QA read-only: invariant + params-fuzz + perm-coverage"
-        if: steps.qaenv.outputs.skip == 'false'
+        if: steps.qaenv.outputs.skip == 'false' && steps.qacred.outputs.skip == 'false'
         env:
           QA_BASE_URL: ${{ env.PREVIEW_URL }}
-          # 2 secret tuỳ chọn — chưa khai thì lib.mjs dùng tài khoản test staging mặc định;
-          # sau khi đổi mật khẩu admin thì BẮT BUỘC khai (lib.mjs dùng ||, chuỗi rỗng vẫn fallback)
-          QA_ADMIN_EMAIL: ${{ secrets.QA_ADMIN_EMAIL }}
-          QA_ADMIN_PASSWORD: ${{ secrets.QA_ADMIN_PASSWORD }}
         run: |
           node scripts/qa/00-invariant.mjs
           node scripts/qa/07-params-fuzz.mjs

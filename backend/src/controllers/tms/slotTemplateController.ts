@@ -112,6 +112,27 @@ export async function listSlotTemplates(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+/**
+ * MỘT luật cho khung giờ mẫu, dùng chung CỬA LẺ và CỬA LƯỚI (chốt 07/09).
+ *
+ * Trước đây cửa lưới (`batchUpsertSlotTemplates`) kiểm giờ đầy đủ còn cửa lẻ (`createSlotTemplate`)
+ * thì không, nên gửi thẳng API tạo được khung "22:00 → 08:00" (đo 07/09, gói QA 50 phép [18]:
+ * s=201) — cùng một sổ mà hai cửa hai luật. Thứ trong tuần thì CẢ HAI đều bỏ qua, để DB chặn bằng
+ * `SlotTemplate_day_of_week_check` (1..6) ⇒ 23514 → "Lỗi hệ thống" thay vì nói rõ "chỉ T2..T7"
+ * (phép [19][20]).
+ * Trả null nếu hợp lệ, ngược lại trả câu tiếng Việt để controller `fail(…, 400)`.
+ */
+function slotShapeError(days: number[], time_from: string, time_to: string, max_vehicles: unknown): string | null {
+  const bad = days.filter(d => !Number.isInteger(d) || d < 1 || d > 6)
+  if (bad.length) return `Thứ không hợp lệ (${bad.join(', ')}) — chỉ nhận T2..T7, mã 1..6`
+  const f = (time_from || '').slice(0, 5), t = (time_to || '').slice(0, 5)
+  if (!/^\d{2}:\d{2}$/.test(f) || !/^\d{2}:\d{2}$/.test(t)) return 'Giờ phải theo dạng HH:MM'
+  if (f >= t) return `Giờ kết thúc phải sau giờ bắt đầu (${f}–${t})`
+  const mv = Number(max_vehicles)
+  if (!Number.isInteger(mv) || mv < 0) return 'Số xe tối đa phải là số nguyên ≥ 0 (đặt 0 để khóa khung giờ)'
+  return null
+}
+
 export async function createSlotTemplate(req: Request, res: Response) {
   try {
     const { warehouse_id, vehicle_type_id, cargo_type = 'ALL', days_of_week, time_from, time_to, max_vehicles } = req.body as {
@@ -120,6 +141,8 @@ export async function createSlotTemplate(req: Request, res: Response) {
     }
     if (!warehouse_id || !vehicle_type_id || !days_of_week?.length || !time_from || !time_to || !max_vehicles)
       return fail(res, 'Thiếu thông tin bắt buộc', 400)
+    const shapeErr = slotShapeError(days_of_week, time_from, time_to, max_vehicles)
+    if (shapeErr) return fail(res, shapeErr, 400)
     if (!guardWh(req, res, warehouse_id) || !guardCargo(req, res, cargo_type)) return
     const now = new Date().toISOString()
     const actor = req.user?.name || null
@@ -132,7 +155,7 @@ export async function createSlotTemplate(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('SlotTemplate')
       .insert(rows).select('*, vehicle_type:VehicleType(id, code, name)')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -159,7 +182,7 @@ export async function updateSlotTemplate(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('SlotTemplate')
       .update(updates).eq('id', id).select('*, vehicle_type:VehicleType(id, code, name)').single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     // Áp thay đổi (giờ/số xe/bật-tắt) xuống các ngày tương lai chưa booking
     if (data?.warehouse_id && data?.vehicle_type_id) await reapplyFutureSlots(data.warehouse_id, data.vehicle_type_id)
     return ok(res, data)
@@ -179,13 +202,19 @@ export async function deleteSlotTemplate(req: Request, res: Response) {
     // Tắt trước để reapply không sinh lại khung giờ này
     const { error: offErr } = await supabase.from('SlotTemplate')
       .update({ is_active: false, updated_at: now, updated_by: req.user?.name || null }).eq('id', id)
-    if (offErr) return fail(res, offErr.message)
+    if (offErr) return fail(res, offErr)
     // Gỡ slot ngày tương lai chưa booking + sinh lại từ template còn hoạt động
     await reapplyFutureSlots(tmpl.warehouse_id, tmpl.vehicle_type_id)
     // Xóa hẳn nếu không còn slot nào tham chiếu (slot quá khứ / đã booking thì giữ template ở trạng thái tắt)
     const { data: refd } = await supabase.from('DeliverySlot').select('id').eq('template_id', id).limit(1)
-    if (!refd?.length) { const { error } = await supabase.from('SlotTemplate').delete().eq('id', id); if (error) return fail(res, error.message) }
-    return ok(res, { message: 'Đã xóa' })
+    const hardDeleted = !refd?.length
+    if (hardDeleted) { const { error } = await supabase.from('SlotTemplate').delete().eq('id', id); if (error) return fail(res, error) }
+    // Nói ĐÚNG việc đã làm: lịch đã sinh còn dùng khung này thì bản ghi vẫn nằm đó ở trạng thái TẮT.
+    // Báo "Đã xóa" cho một dòng còn sống khiến người dùng đi tìm nó ở thùng rác — và tưởng dữ liệu
+    // mất trong khi khung giờ vẫn ràng buộc lịch cũ.
+    return ok(res, hardDeleted
+      ? { message: 'Đã xóa khung giờ mẫu', deleted: 'hard' }
+      : { message: 'Lịch đã sinh còn dùng khung này — đã TẮT thay vì xoá (giữ lịch cũ nguyên vẹn)', deleted: 'soft' })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -209,10 +238,8 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
     const seen = new Set<string>()
     for (const ts of time_slots) {
       const f = hhmm(ts.time_from), t = hhmm(ts.time_to)
-      const mv = Number(ts.max_vehicles)
-      if (!f || !t || !Number.isInteger(mv) || mv < 0)
-        return fail(res, 'Khung giờ không hợp lệ: cần giờ bắt đầu, kết thúc và số xe tối đa ≥ 0 (đặt 0 để khóa khung giờ)', 400)
-      if (f >= t) return fail(res, `Giờ kết thúc phải sau giờ bắt đầu (${f}–${t})`, 400)
+      const shapeErr = slotShapeError(days_of_week, ts.time_from, ts.time_to, ts.max_vehicles)
+      if (shapeErr) return fail(res, shapeErr, 400)
       if (seen.has(`${f}-${t}`)) return fail(res, `Khung giờ ${f}–${t} bị lặp trong biểu mẫu`, 400)
       seen.add(`${f}-${t}`)
     }
@@ -224,7 +251,7 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
     const { data: existing, error: exErr } = await supabase.from('SlotTemplate')
       .select('id, day_of_week, time_from, time_to')
       .eq('warehouse_id', warehouse_id).eq('vehicle_type_id', vehicle_type_id).eq('cargo_type', cargo_type)
-    if (exErr) return fail(res, exErr.message)
+    if (exErr) return fail(res, exErr)
     const existMap = new Map((existing ?? []).map((e: { id: string; day_of_week: number; time_from: string; time_to: string }) => [key(e.day_of_week, e.time_from, e.time_to), e.id]))
 
     const desired = new Set<string>()
@@ -242,7 +269,7 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
       })
     }
 
-    if (toInsert.length) { const { error } = await supabase.from('SlotTemplate').insert(toInsert); if (error) return fail(res, error.message) }
+    if (toInsert.length) { const { error } = await supabase.from('SlotTemplate').insert(toInsert); if (error) return fail(res, error) }
 
     // Cập nhật max + bật lại cho các dòng đã có nằm trong lưới
     let updated = 0
@@ -251,7 +278,7 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
       updated++
       const { error } = await supabase.from('SlotTemplate')
         .update({ max_vehicles: maxByKey.get(k), is_active: true, updated_at: now, updated_by: actor }).eq('id', exId)
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
 
     // Bỏ khỏi lưới → tắt trước (reapply không sinh lại)
@@ -259,7 +286,7 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
     if (removedIds.length) {
       const { error } = await supabase.from('SlotTemplate')
         .update({ is_active: false, updated_at: now, updated_by: actor }).in('id', removedIds)
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
 
     // Áp lưới mới xuống ngày tương lai chưa booking
@@ -272,7 +299,7 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
         .select('template_id').in('template_id', removedIds).order('id'))
       const refSet = new Set((refd ?? []).map((r: { template_id: string }) => r.template_id))
       const del = removedIds.filter(id => !refSet.has(id))
-      if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error.message) }
+      if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error) }
     }
 
     return ok(res, { inserted: toInsert.length, updated, removed: removedIds.length })
@@ -293,7 +320,7 @@ export async function deleteSlotTemplateCluster(req: Request, res: Response) {
     const { data: rows, error: exErr } = await supabase.from('SlotTemplate')
       .select('id')
       .eq('warehouse_id', warehouse_id).eq('vehicle_type_id', vehicle_type_id).eq('cargo_type', cargo_type)
-    if (exErr) return fail(res, exErr.message)
+    if (exErr) return fail(res, exErr)
     const ids = (rows ?? []).map((r: { id: string }) => r.id)
     if (!ids.length) return ok(res, { deleted: 0, deactivated: 0 })
 
@@ -301,7 +328,7 @@ export async function deleteSlotTemplateCluster(req: Request, res: Response) {
     const now = new Date().toISOString()
     const { error: offErr } = await supabase.from('SlotTemplate')
       .update({ is_active: false, updated_at: now, updated_by: req.user?.name || null }).in('id', ids)
-    if (offErr) return fail(res, offErr.message)
+    if (offErr) return fail(res, offErr)
 
     // Gỡ slot ngày tương lai chưa booking (ngày đã booking giữ nguyên)
     await reapplyFutureSlots(warehouse_id, vehicle_type_id)
@@ -311,7 +338,7 @@ export async function deleteSlotTemplateCluster(req: Request, res: Response) {
       .select('template_id').in('template_id', ids).order('id'))
     const refSet = new Set((refd ?? []).map((r: { template_id: string }) => r.template_id))
     const del = ids.filter(id => !refSet.has(id))
-    if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error.message) }
+    if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error) }
 
     return ok(res, { deleted: del.length, deactivated: ids.length - del.length })
   } catch (e) { return fail(res, String(e)) }

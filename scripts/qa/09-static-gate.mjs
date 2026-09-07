@@ -722,7 +722,35 @@ const RULES = [
     count: (s) => countMatches(['backend/src', 'frontend/src', 'backend/prisma'], ['.ts', '.tsx'],
       (l, f) => !f.endsWith(`passwordPolicy.ts`) && /\b\w*(password|passwd|pwd)\w*\.length\s*<\s*\d/i.test(l), s),
   },
+  // Ô GỘP trong file Excel: `sheet_to_json` đọc mọi ô của vùng gộp trừ ô trái-trên là RỖNG, nên dòng
+  // dưới mất giá trị và bị vòng parse bỏ ÂM THẦM (hoặc làm hỏng cả file khi cửa đó all-or-nothing).
+  // Luật có sẵn từ 27/08 (`expandMergedCells`) nhưng chỉ 2/6 cửa gọi — 07/09 phải đi vá 4 cửa còn
+  // lại. Cửa upload MỚI quên gọi = đỏ ngay, không chờ ai đó gửi file gộp ô rồi mới biết.
+  {
+    key: 'upload_without_merge_expand',
+    label: 'cửa upload Excel KHÔNG trải ô gộp — mọi chỗ đọc workbook phải gọi `expandMergedCells(ws)` trước khi parse (utils/excelHeader)',
+    count: (s) => countUploadsMissingMergeExpand(s),
+  },
 ]
+
+// Vi phạm = hàm có `readWorkbookSafe(`/`XLSX.read(` mà trong 40 dòng kế KHÔNG có `expandMergedCells`.
+// Cắt theo hàm (`export async function`) để không tính lây sang cửa upload kế bên trong cùng file.
+function countUploadsMissingMergeExpand(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    if (f.endsWith('excelHeader.ts')) continue   // chính nơi định nghĩa helper, không phải cửa upload
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/\b(readWorkbookSafe|XLSX\.read)\s*\(/.test(line)) return
+      const end = lines.findIndex((l, j) => j > i && /^(export )?(async )?function /.test(l))
+      const block = lines.slice(i, end > i ? Math.min(end, i + 40) : i + 40).join('\n')
+      if (/expandMergedCells\s*\(/.test(block)) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
 
 // Ô nhập của màn quét = `<Input ref={inputRef}` trong file có `useWedgeScanner`. Vi phạm khi khối
 // khai báo ô đó (8 dòng kế) có `disabled=` — `disabled` gỡ focus, súng chế độ IME hết đích chèn chữ.

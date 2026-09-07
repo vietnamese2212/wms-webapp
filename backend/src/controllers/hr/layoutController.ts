@@ -111,7 +111,7 @@ export async function setLayoutJobTitles(req: Request, res: Response) {
       const { error } = await supabase.from('WorkLayoutJobTitle').insert(
         ids.map(jt => ({ id: randomUUID(), layout_id: id, job_title_id: jt, created_at: now() }))
       )
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     await supabase.from('WorkLayout').update({ updated_at: now(), updated_by: actorOf(req) }).eq('id', id)
     return ok(res, { layout_id: id, count: ids.length })
@@ -128,7 +128,7 @@ export async function createLayout(req: Request, res: Response) {
       id: randomUUID(), warehouse_id, name: name.trim(), note: note || null, is_active: true,
       created_at: now(), updated_at: now(), created_by: actor, updated_by: actor,
     }).select(LAYOUT_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -143,7 +143,7 @@ export async function updateLayout(req: Request, res: Response) {
     if (note      !== undefined) updates.note      = note || null
     if (is_active !== undefined) updates.is_active = is_active
     const { data, error } = await supabase.from('WorkLayout').update(updates).eq('id', id).select(LAYOUT_SELECT).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy layout', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
@@ -156,11 +156,11 @@ export async function deleteLayout(req: Request, res: Response) {
     const { count } = await supabase.from('WorkAssignmentSheet').select('id', { count: 'exact', head: true }).eq('layout_id', id)
     if ((count ?? 0) > 0) {
       const { error } = await supabase.from('WorkLayout').update({ is_active: false, updated_at: now(), updated_by: actorOf(req) }).eq('id', id)
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       return ok(res, { deleted: 'soft', message: 'Layout đã dùng trong phiếu — đã ẩn' })
     }
     const { error } = await supabase.from('WorkLayout').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: 'hard' })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -180,7 +180,7 @@ export async function setLayoutSkills(req: Request, res: Response) {
         id: randomUUID(), layout_id: id, skill_id: s.skill_id, required_count: s.required_count,
         sort_order: s.sort_order ?? i, note: s.note || null, created_at: now(), updated_at: now(),
       })))
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     await supabase.from('WorkLayout').update({ updated_at: now(), updated_by: actorOf(req) }).eq('id', id)
     return ok(res, { layout_id: id, count: valid.length })

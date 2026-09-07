@@ -1605,7 +1605,7 @@ export async function getInventoryEntry(req: Request, res: Response) {
     .select(ENTRY_SELECT)
     .eq('id', id)
     .maybeSingle()
-  if (error) return fail(res, error.message)
+  if (error) return fail(res, error)
   if (!data)  return fail(res, 'Không tìm thấy pallet', 404)
   if (!(await guardEntryRead(req, res, id))) return   // chống IDOR: chỉ đọc pallet trong phạm vi kho+loại
   return ok(res, data)

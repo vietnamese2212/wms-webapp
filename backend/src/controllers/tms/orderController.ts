@@ -437,6 +437,10 @@ export async function createOrder(req: Request, res: Response) {
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
     if (!direction)  return fail(res, 'direction là bắt buộc', 400)
+    // Danh sách đóng — DB có ràng buộc riêng nên giá trị lạ vốn rơi xuống 23514 → "Lỗi hệ thống";
+    // và mã lệnh tự sinh suy tiền tố từ chiều (X/N) nên chiều rác đẻ luôn mã lệnh vô nghĩa.
+    if (direction !== 'INBOUND' && direction !== 'OUTBOUND')
+      return fail(res, 'Chiều không hợp lệ — chỉ nhận Nhập (INBOUND) hoặc Xuất (OUTBOUND)', 400, 'BAD_DIRECTION')
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
@@ -507,7 +511,7 @@ export async function createOrder(req: Request, res: Response) {
     }
     if (ordErr) {
       if (ordErr.code === '23505') return fail(res, `Mã đơn "${order_code}" đã tồn tại`, 409)
-      return fail(res, ordErr.message)
+      return fail(res, ordErr)
     }
 
     // Tạo 1 TmsVehicleSlot mặc định
@@ -520,7 +524,7 @@ export async function createOrder(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TmsOrder')
       .select(ORDER_SELECT).eq('id', orderId).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -609,7 +613,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         const raceDup = await findDupMessage()
         return fail(res, raceDup ?? 'Mã đơn bị trùng do có người khác vừa upload cùng lúc — kiểm tra rồi upload lại.', 409)
       }
-      return fail(res, insErr.message)
+      return fail(res, insErr)
     }
 
     // Tạo 1 TmsVehicleSlot mặc định cho mỗi order
@@ -700,7 +704,7 @@ export async function updateOrder(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TmsOrder')
       .update(updates).eq('id', id).select(ORDER_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -763,7 +767,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
         .in('id', ids.slice(i, i + 300))
         .eq('status', 'PENDING')
         .select('id')
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       updatedIds.push(...((data ?? []) as { id: string }[]).map(o => o.id))
     }
 
@@ -773,7 +777,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
       const { error: lineErr } = await supabase.from('inbound_plan_lines')
         .update({ date, updated_by: user?.name || null, updated_at: now })
         .in('tms_order_id', updatedIds.slice(i, i + 300))
-      if (lineErr) return fail(res, lineErr.message)
+      if (lineErr) return fail(res, lineErr)
     }
     return ok(res, { updated: updatedIds.length })
   } catch (e) { return fail(res, String(e)) }
@@ -797,7 +801,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       .select('material_id, planned_boxes, planned_pallets, material:Material!material_id(material_code, short_name, material_description, base_unit, entry_unit, units_per_carton)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
-    if (planErr) return fail(res, planErr.message)
+    if (planErr) return fail(res, planErr)
 
     // ProductionImport records cho order này (kèm no_qr + mode kho nhận để tính "no-QR hiệu lực")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -805,7 +809,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
-    if (actErr) return fail(res, actErr.message)
+    if (actErr) return fail(res, actErr)
 
     // Thực nhận theo material: mã no-QR hiệu lực (mã no_qr_tracking HOẶC kho nhận QTY) → posm_cartons
     // (pool dùng chung, import_order_id ≠ phiếu nên không khớp InventoryEntry theo phiếu); còn lại → cartons_imported.
@@ -1790,7 +1794,7 @@ export async function deleteOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('TmsOrder').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }
@@ -1901,7 +1905,7 @@ export async function rateTransferReceipt(req: Request, res: Response) {
     const { error } = existing
       ? await supabase.from('receipt_ratings').update(row).eq('id', (existing as { id: string }).id)
       : await supabase.from('receipt_ratings').insert({ id: randomUUID(), created_at: t, ...row })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { gdo_id: parties.gdoId, stars, reason_code: reason })
   } catch (e) { return fail(res, String(e)) }
 }

@@ -7,14 +7,20 @@
 import type { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { maskServerMessage } from '../../utils/response'
+import { maskServerMessage, pgUserError, type PgLikeError } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { isUuid } from '../../utils/ids'
 import { normCycleCode } from './packingController'
 
 const ok = (res: Response, data: unknown) => res.json({ success: true, data })
-const fail = (res: Response, message: string, status = 500, code = 'TRACE_ERROR') =>
-  res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
+// Nhận CẢ đối tượng lỗi Postgres: mã lỗi có nghĩa với người dùng (trùng khoá, id sai dạng…) được
+// dịch thành 4xx kèm câu tiếng Việt thay vì "Lỗi hệ thống" — xem `pgUserError` trong utils/response.
+const fail = (res: Response, message: string | PgLikeError, status = 500, code = 'TRACE_ERROR') => {
+  const mapped = typeof message === 'object' ? pgUserError(message) : null
+  if (mapped) return res.status(mapped.status).json({ success: false, error: { code: (message as PgLikeError).code ?? code, message: mapped.message } })
+  const msg = typeof message === 'string' ? message : (message.message ?? 'ERROR')
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(msg, status, res) } })
+}
 
 /** Kho user được phép xem; null = không giới hạn (superadmin / NATIONAL). */
 function scopeWhIds(req: Request): string[] | null {
@@ -99,7 +105,7 @@ export async function lotTrace(req: Request, res: Response) {
       p_wh_ids: scopeWhIds(req), p_categories: scopeCategoriesOf(req),
       p_limit: limit,
     })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data ?? {})
   } catch (e) { return fail(res, String(e)) }
 }
@@ -127,7 +133,7 @@ export async function serviceLevel(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('service_level', {
       p_from: from, p_to: to, p_wh_ids: wh ? [wh] : scope, p_limit: 20,
     })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data ?? {})
   } catch (e) { return fail(res, String(e)) }
 }
@@ -146,7 +152,7 @@ export async function traceSuggest(req: Request, res: Response) {
     if (kind === 'prod') return ok(res, [])   // prod nhập bằng 3 dropdown Chu kỳ/Máy/Kho SX, không có ô "giá trị"
     const search = String(q.search ?? '').trim().slice(0, 100)
     const { data, error } = await supabase.rpc('trace_suggest', { p_kind: kind, p_search: search, p_limit: 50 })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data ?? [])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -238,7 +244,7 @@ export async function listCandidateRuns(req: Request, res: Response) {
       .limit(50)
     if (material) qb = qb.or(`material_code.eq.${material},material_codes.cs.{${material}}`)
     const { data, error } = await qb
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const want = normCycleCode(cycle)
     const anchor = new Date(`${date}T00:00:00Z`).getTime()
     const rows = ((data ?? []) as unknown as RunRow[])
@@ -279,7 +285,7 @@ export async function getRunPallets(req: Request, res: Response) {
     if (!isUuid(id)) return fail(res, 'Mã sổ không hợp lệ', 400, 'BAD_ID')
     const { data: run, error } = await supabase.from('packing_runs')
       .select(RUN_COLS).eq('id', id).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!run) return fail(res, 'Không tìm thấy sổ đóng gói', 404, 'NOT_FOUND')
     const pallets = await runLogs(id)
     if (typeof pallets === 'string') return fail(res, pallets)
@@ -402,7 +408,7 @@ export async function createInvestigation(req: Request, res: Response) {
       created_at: now, updated_at: now,
     }
     const { data, error } = await supabase.from('trace_investigations').insert(row).select().single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return res.status(201).json({ success: true, data })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -426,7 +432,7 @@ export async function listInvestigations(req: Request, res: Response) {
     const search = String(q.search ?? '').trim().replace(/[,()]/g, ' ').trim()
     if (search) qb = qb.or(`material_code.ilike.%${search}%,performed_by_name.ilike.%${search}%,note.ilike.%${search}%`)
     const { data, count, error } = await qb
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { rows: data ?? [], total: count ?? 0, page, page_size: pageSize })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -438,7 +444,7 @@ export async function getInvestigation(req: Request, res: Response) {
     if (!isUuid(id)) return fail(res, 'Mã hồ sơ không hợp lệ', 400, 'BAD_ID')
     const { data, error } = await supabase.from('trace_investigations')
       .select('*').eq('id', id).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy hồ sơ', 404, 'NOT_FOUND')
     const paths = (data.photos ?? []) as string[]
     let photo_urls: { path: string; url: string }[] = []

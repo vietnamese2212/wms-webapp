@@ -109,7 +109,7 @@ export async function getSheet(req: Request, res: Response) {
     const { id } = req.params
     if (!(await sheetInScope(req, res, id))) return
     const { data: sheet, error } = await supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).eq('id', id).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
 
     const [{ data: demands }, { data: asgs }, skills] = await Promise.all([
@@ -181,7 +181,7 @@ export async function upsertSheet(req: Request, res: Response) {
         id: sheetId, work_date, warehouse_id, layout_id, status: 'DRAFT', note: note ?? null,
         created_at: now(), updated_at: now(), created_by: u.name || null, updated_by: u.name || null,
       })
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
 
     // demands: dùng demands truyền lên; nếu tạo mới mà không truyền → đổ từ layout
@@ -569,7 +569,7 @@ export async function publishSheet(req: Request, res: Response) {
     const { error } = await supabase.from('WorkAssignmentSheet').update({
       status, published_at: status === 'PUBLISHED' ? now() : null, updated_at: now(), updated_by: userOf(req).name || null,
     }).eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { id, status })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -579,7 +579,7 @@ export async function deleteSheet(req: Request, res: Response) {
     const { id } = req.params
     if (!(await sheetInScope(req, res, id))) return
     const { error } = await supabase.from('WorkAssignmentSheet').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

@@ -472,9 +472,12 @@ export async function deleteWarehouse(req: Request, res: Response) {
     const hasRefs = (locRes.count ?? 0) > 0 || (piRes.count ?? 0) > 0
 
     if (!hasRefs) {
-      // Không có dữ liệu liên quan → xóa vĩnh viễn
-      const { error } = await supabase.from('Warehouse').delete().eq('id', id)
+      // Không có dữ liệu liên quan → xóa vĩnh viễn. `.select()` để phân biệt "đã xoá" với "chẳng
+      // có gì để xoá": nhánh vô hiệu hoá bên dưới đã kiểm 404, nhánh này thì chưa nên kho KHÔNG CÓ
+      // THẬT vẫn nhận được thông báo xoá thành công.
+      const { data: gone, error } = await supabase.from('Warehouse').delete().eq('id', id).select('id')
       if (error) throw error
+      if (!gone?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho — có thể đã bị xoá trước đó')
       return ok(res, { deleted: true })
     } else {
       // Có location/phiếu nhập → vô hiệu hoá để giữ lịch sử

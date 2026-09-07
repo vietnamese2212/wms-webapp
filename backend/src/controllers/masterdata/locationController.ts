@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesAnyAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
-import { parseSheetByHeader, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizeLocScan } from '../../utils/locationScan'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
@@ -780,6 +780,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const wb = readWorkbookSafe(req.file.buffer)
     if (!wb) return fail(res, 400, 'VALIDATION_ERROR', BAD_EXCEL_MSG)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    expandMergedCells(ws)   // file dựng kho hay gộp ô Kho/Khu cho cả cụm vị trí
     const { rows, missingRequired } = parseSheetByHeader(ws, L_FIELDS)
     if (missingRequired.length)
       return fail(res, 400, 'VALIDATION_ERROR', `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Vị trí kho`)

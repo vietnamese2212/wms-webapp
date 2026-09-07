@@ -301,7 +301,7 @@ export async function createLeave(req: Request, res: Response) {
       created_at: now, updated_at: now,
       created_by: u.name || null, updated_by: u.name || null,
     }).select(LEAVE_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const [withEmp] = await attachEmployees([data as { employee_id: string }])
     return ok(res, withEmp, 201)
   } catch (e) { return fail(res, String(e)) }
@@ -354,7 +354,7 @@ export async function updateLeave(req: Request, res: Response) {
     }
     if (reason     !== undefined) updates.reason     = reason || null
     const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy đơn nghỉ', 404)
 
     // Đơn đã DUYỆT mà đổi ngày → gỡ chấm công LEAVE ngày cũ rồi ghi lại ngày mới
@@ -391,7 +391,7 @@ export async function decideLeave(req: Request, res: Response) {
       approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(), updated_by: u.name || null,
     }).eq('id', id).select(LEAVE_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Duyệt → tự ghi chấm công LEAVE; thu thập ngày bị ghi đè để cảnh báo.
     // Từ chối (kể cả gỡ duyệt một đơn từng APPROVED) → gỡ chấm công LEAVE đã tạo.
@@ -416,7 +416,7 @@ export async function deleteLeave(req: Request, res: Response) {
     const { data: cur } = await supabase.from('LeaveRequest')
       .select('id, employee_id, date_from, date_to, status').eq('id', id).maybeSingle()
     const { error } = await supabase.from('LeaveRequest').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const c = cur as { id: string; employee_id: string; date_from: string; date_to: string; status: string } | null
     if (c && c.status === 'APPROVED') await clearLeaveAttendance(c)
     return ok(res, { deleted: true })

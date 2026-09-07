@@ -78,7 +78,7 @@ export async function listSkills(req: Request, res: Response) {
     if (jtIds) q = q.in('job_title_id', jtIds.length ? jtIds : ['__none__'])
     if (include_inactive !== 'true') q = q.eq('is_active', true)
     const { data, error } = await q
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // gắn tên chức danh (phục vụ nhãn "Vị trí phân công" khi phân công)
     const skills = (data ?? []) as { job_title_id: string | null }[]
@@ -104,7 +104,7 @@ export async function createSkill(req: Request, res: Response) {
       shift_tag: shift_tag || null, sort_order: sort_order ?? 0, is_active: true,
       created_at: now, updated_at: now, created_by: actor, updated_by: actor,
     }).select(SKILL_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -127,7 +127,7 @@ export async function updateSkill(req: Request, res: Response) {
     if (sort_order !== undefined) updates.sort_order = sort_order
     if (is_active  !== undefined) updates.is_active  = is_active
     const { data, error } = await supabase.from('Skill').update(updates).eq('id', id).select(SKILL_SELECT).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy kỹ năng', 404)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
@@ -149,11 +149,11 @@ export async function deleteSkill(req: Request, res: Response) {
     if ((esCount ?? 0) > 0 || (dmCount ?? 0) > 0) {
       const { error } = await supabase.from('Skill')
         .update({ is_active: false, updated_at: new Date().toISOString(), updated_by: actorOf(req) }).eq('id', id)
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       return ok(res, { deleted: 'soft', message: 'Vị trí đang được sử dụng — đã ẩn' })
     }
     const { error } = await supabase.from('Skill').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: 'hard' })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -214,7 +214,7 @@ export async function setEmployeeSkills(req: Request, res: Response) {
       const { error } = await supabase.from('EmployeeSkill').insert(
         valid.map(s => ({ id: randomUUID(), employee_id: id, skill_id: s.skill_id, priority: s.priority, created_at: now, updated_at: now }))
       )
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
     return ok(res, { employee_id: id, count: valid.length })
   } catch (e) { return fail(res, String(e)) }

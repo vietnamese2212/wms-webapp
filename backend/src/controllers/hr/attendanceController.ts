@@ -91,7 +91,7 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
     // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp, không
     // phải "Lỗi hệ thống". Bảng công là ma trận NGƯỜI × NGÀY nên kéo rộng khoảng ngày + nhiều người
     // cùng xem là chạm trần (quan sát thật dưới tải 24 luồng ghi ngày 28/07).
-    if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error.message)
+    if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error)
     const m = (data ?? {}) as {
       emp_ids?: string[]; employees?: unknown[]; rows?: unknown[]
       total?: number; roster_total?: number; missing_total?: number
@@ -235,7 +235,7 @@ export async function upsertAttendance(req: Request, res: Response) {
     }
     if (existing) {
       const { data, error } = await supabase.from('Attendance').update(payload).eq('id', (existing as { id: string }).id).select(SEL).single()
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       const [r] = await attachEmp([data as { employee_id: string }])
       return ok(res, r)
     }
@@ -249,7 +249,7 @@ export async function upsertAttendance(req: Request, res: Response) {
         const { data: ex2 } = await supabase.from('Attendance').select('id').eq('employee_id', empId).eq('work_date', work_date).maybeSingle()
         if (ex2) {
           const { data, error } = await supabase.from('Attendance').update(payload).eq('id', (ex2 as { id: string }).id).select(SEL).single()
-          if (error) return fail(res, error.message)
+          if (error) return fail(res, error)
           const [r] = await attachEmp([data as { employee_id: string }])
           return ok(res, r)
         }
@@ -318,7 +318,7 @@ export async function deleteAttendance(req: Request, res: Response) {
       if (outOfScope) return fail(res, outOfScope, 403)
     }
     const { error } = await supabase.from('Attendance').delete().eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

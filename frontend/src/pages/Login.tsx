@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, BarChart3, Loader2 } from 'lucide-react'
+import { BarChart3, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,36 +12,15 @@ import type { AxiosError } from 'axios'
 export default function Login() {
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
-  const [showPwd,  setShowPwd]  = useState(false)
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const { login } = useAuthStore()
   const navigate  = useNavigate()
-  // Con mắt "Hiển thị" CHỈ được lộ ký tự do CHÍNH người đang ngồi gõ/dán vào (user phát hiện 07/09: trên PC
-  // dùng chung ở kho, Edge tự điền mật khẩu người đăng nhập trước, bấm con mắt là đọc được — không cần
-  // PIN như khi mở kho mật khẩu của Edge). App vốn không lưu mật khẩu ở đâu; nguồn là autofill, cửa lộ là nút.
-  //
-  // Bản vá đầu (xoá qua setPassword khi chưa gõ) KHÔNG đủ — kiểm thật trên Edge vẫn lộ: trình duyệt điền
-  // vào DOM mà React không hay (state vẫn ''), hoặc điền SAU cú bấm; xoá state rỗng thì DOM giữ nguyên mật
-  // khẩu và bị chuyển sang chữ. Nên luật chặt hơn:
-  //   · chưa gõ/dán gì → con mắt KHÔNG chuyển sang chữ, chỉ xoá thẳng DOM (autofill điền lại sau cũng vẫn là dấu chấm);
-  //   · phím/dán ĐẦU TIÊN vào ô đang có giá trị (= tự điền) → xoá giá trị đó trước, ô chỉ còn ký tự người này;
-  //   · người tự điền rồi bấm "Đăng nhập" không bị ảnh hưởng (không gõ = không xoá).
-  const pwdRef = useRef<HTMLInputElement>(null)
-  const [typed, setTyped] = useState(false)
-  function clearPwdField() {
-    if (pwdRef.current) pwdRef.current.value = ''   // xoá DOM thật, không tin state
-    setPassword('')
-  }
-  function markTyped() {
-    if (typed) return
-    if (pwdRef.current?.value) clearPwdField()
-    setTyped(true)
-  }
-  function toggleShowPwd() {
-    if (!typed) { clearPwdField(); return }
-    setShowPwd((v) => !v)
-  }
+  // KHÔNG có nút "Hiển thị mật khẩu" (user chốt 07/09). Lịch sử: trên PC dùng chung ở kho, Edge tự điền mật
+  // khẩu người đăng nhập trước và con mắt của app làm lộ nó không cần PIN. Đã thử hai lớp gác (chỉ lộ ký tự
+  // người đang gõ; tắt con mắt riêng của Edge bằng CSS) — người dùng thật vẫn thấy mật khẩu qua giao diện
+  // gợi ý của trình duyệt. Trang đăng nhập máy dùng chung không cần nút xem mật khẩu: không có nút = app
+  // không còn gì để lộ, hết phải đoán hành vi từng trình duyệt. App vốn không lưu mật khẩu ở đâu.
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -96,31 +75,15 @@ export default function Login() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Mật khẩu</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    ref={pwdRef}
-                    type={showPwd && typed ? 'text' : 'password'}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={markTyped}
-                    onPaste={markTyped}
-                    required
-                    autoComplete="current-password"
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={toggleShowPwd}
-                    aria-label={showPwd && typed ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
-                    title={typed ? undefined : 'Chỉ hiển thị được mật khẩu bạn tự gõ'}
-                    tabIndex={-1}
-                  >
-                    {showPwd && typed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
               </div>
               {error && (
                 <p className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">{error}</p>

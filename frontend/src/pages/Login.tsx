@@ -105,7 +105,7 @@ export default function Login() {
               (07/09: sửa nút Hiển thị mật khẩu 2 lần mà không ai biết chắc Edge đang chạy bản nào). Một dòng
               này trả lời "anh đang ở bản nào" trong 1 giây thay vì đoán. */}
           <p className="text-center text-[10px] text-muted-foreground/70 font-mono" title="Số hiệu bản dựng đang chạy trên máy này">
-            bản dựng {__BUILD_SHA__}
+            Version {__BUILD_SHA__}
           </p>
         </div>
       </div>

@@ -137,9 +137,13 @@ export async function updateLayout(req: Request, res: Response) {
   try {
     const { id } = req.params
     if (!(await layoutInScope(req, res, id))) return
-    const { name, note, is_active } = req.body as { name?: string; note?: string; is_active?: boolean }
+    const { name, note, is_active } = req.body as { name?: unknown; note?: string; is_active?: boolean }
     const updates: Record<string, unknown> = { updated_at: now(), updated_by: actorOf(req) }
-    if (name      !== undefined) updates.name      = name.trim()
+    // Tên không phải chuỗi → `.trim()` ném TypeError → 500; tên trắng → lưu layout không tên (QA 53, 07/09)
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) return fail(res, 'Tên layout không được để trống', 400)
+      updates.name = name.trim()
+    }
     if (note      !== undefined) updates.note      = note || null
     if (is_active !== undefined) updates.is_active = is_active
     const { data, error } = await supabase.from('WorkLayout').update(updates).eq('id', id).select(LAYOUT_SELECT).maybeSingle()

@@ -69,8 +69,11 @@ for (const f of testFiles) {
   const short = f.split(/[\\/]/).pop()
   // <hàm bất kỳ>('/path', 'METHOD') — KHÔNG chỉ `api(`: gói 50 gọi qua helper `A(path,'POST')` nên
   // bản đầu bỏ qua toàn bộ lời gọi GHI của nó và báo 26 route TMS "chưa chạm" dù chúng có test.
-  for (const m of src.matchAll(new RegExp("\\b[A-Za-z_$][\\w$]*\\(\\s*['\"`]" + PREFIX_RE + "[^'\"`]*['\"`]\\s*(?:,\\s*'([A-Z]+)')?", 'g'))) {
-    calls.push({ method: m[2] || 'GET', path: m[1], file: short })
+  // Không có method chữ hoa ngay sau path: helper tên `upload*` gửi multipart = POST; còn lại mặc định GET
+  // (`api(path)` không method = GET). Trước 07/09 mọi lời gọi thiếu method đều ghi GET nên 6 cửa upload đã
+  // có gói 38/49/52 phủ vẫn bị báo "chưa chạm" — thước báo THIẾU thì còn đỡ, nhưng thiếu oan 6/389 là 1,5%.
+  for (const m of src.matchAll(new RegExp("\\b([A-Za-z_$][\\w$]*)\\(\\s*['\"`]" + PREFIX_RE + "[^'\"`]*['\"`]\\s*(?:,\\s*'([A-Z]+)')?", 'g'))) {
+    calls.push({ method: m[3] || (/upload/i.test(m[1]) ? 'POST' : 'GET'), path: m[2], file: short })
   }
   // rawFetch('/path', { method: 'X' })  /  fetch(`${BASE}/api/path`, { method: 'X' })
   for (const m of src.matchAll(new RegExp("(?:rawFetch|fetch)\\(\\s*['\"`](?:\\$\\{BASE\\})?" + PREFIX_RE + "[^'\"`]*['\"`]\\s*,\\s*\\{[^}]*?method:\\s*'([A-Z]+)'", 'g'))) {
@@ -84,7 +87,9 @@ for (const f of testFiles) {
 const normSeg = s => s.replace(/\$\{[^}]*\}/g, '*').replace(/\?.*$/, '')
 function matches(route, call) {
   if (call.method !== '?' && call.method !== route.method) return false
-  if (call.method === '?' && route.method !== 'GET') return false
+  // literal trần không rõ method chỉ khớp GET — trừ route `…/upload*` (bản chất là POST multipart; gói 38 giữ
+  // danh sách cửa upload trong một mảng literal rồi bắn POST từng cái)
+  if (call.method === '?' && route.method !== 'GET' && !(route.method === 'POST' && /\/upload/.test(route.path))) return false
   const rs = route.path.split('/').filter(Boolean), cs = normSeg(call.path).split('/').filter(Boolean)
   if (rs.length !== cs.length) return false
   for (let i = 0; i < rs.length; i++) {

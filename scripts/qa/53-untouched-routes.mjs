@@ -44,6 +44,7 @@ async function wipe() {
   }
   await restWrite('JobTitle', 'DELETE', `name=like.${T}*`).catch(() => {})
   await restWrite('auth_login_events', 'DELETE', `email=like.${T.toLowerCase()}*`).catch(() => {})
+  await restWrite('WorkLayout', 'DELETE', `name=like.${T}*`).catch(() => {})
 }
 await wipe()
 
@@ -59,7 +60,7 @@ let scoped = null   // hàm gọi API bằng tài khoản kho lẻ
       module_permissions: {
         pallet_ops: ['view'], stocktake: ['view', 'scan'], inventory: ['view', 'export', 'move_location'],
         slotting: ['view'], forklift: ['view', 'manage_vehicle'], tms_plan: ['view'],
-        external_do_sap: ['view', 'delete'], tms_vehicles: ['view', 'delete'],
+        external_do_sap: ['view', 'delete'], tms_vehicles: ['view', 'delete'], work_assignment: ['view', 'manage_layout'],
       } }])
     await restWrite('Employee', 'POST', '', [{ id: eid, employee_code: `${T}01`, name: `${T} nv kho le`, email: `${T.toLowerCase()}01@test.local`,
       password: await bcrypt.hash(pw, 10), is_active: true, job_title_id: jid, warehouse_id: FIX.WH_QR.id, warehouse_scope: 'ASSIGNED', updated_at: now() }])
@@ -345,34 +346,35 @@ try {
     const ck = await api('/wms/integration-keys', 'POST', { name: `${T} key`, scopes: ['materials:read', 'inventory:read', 'inbound:read', 'outbound:read'] })
     const KEY = ck.j?.data?.key, KID = ck.j?.data?.id
     check('[14a] Cấp khoá API tạm (4 scope đọc) → 201 + trả khoá thô 1 lần', ck.s === 201 && typeof KEY === 'string' && KEY.startsWith('wms_'), `http=${ck.s} ${err(ck)}`)
+    // path viết ĐỦ `/integration/v1/…` (không ghép tiền tố trong hàm) để thước coverage-surface đọc được
     const erp = async (path, key = KEY) => {
-      const r = await fetch(`${BASE}/api/integration${path}`, { headers: key ? { 'X-API-Key': key } : {} })
+      const r = await fetch(`${BASE}/api${path}`, { headers: key ? { 'X-API-Key': key } : {} })
       let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
       return { s: r.status, j }
     }
     if (KEY) {
-      for (const [name, path] of [['materials', '/v1/materials'], ['inventory', '/v1/inventory'], ['inbound-receipts', '/v1/inbound-receipts'], ['outbound-orders', '/v1/outbound-orders']]) {
+      for (const [name, path] of [['materials', '/integration/v1/materials'], ['inventory', '/integration/v1/inventory'], ['inbound-receipts', '/integration/v1/inbound-receipts'], ['outbound-orders', '/integration/v1/outbound-orders']]) {
         const r = await erp(`${path}?limit=5`)
         const p = r.j?.paging
         check(`[14b] ERP kéo ${name} limit=5 → 200 + data ≤5 + paging{count,has_more,next_cursor}`, r.s === 200 && Array.isArray(r.j?.data) && r.j.data.length <= 5 && p && typeof p.has_more === 'boolean' && p.count === r.j.data.length, `http=${r.s} n=${r.j?.data?.length} has_more=${p?.has_more}`)
       }
-      let r = await erp('/v1/scan-entries?limit=5')
+      let r = await erp('/integration/v1/scan-entries?limit=5')
       check('[14c] Khoá KHÔNG có scope scans:read gọi scan-entries → 403 FORBIDDEN_SCOPE', r.s === 403 && r.j?.error?.code === 'FORBIDDEN_SCOPE', `http=${r.s} ${err(r)}`)
-      r = await erp('/v1/materials?limit=5', null)
+      r = await erp('/integration/v1/materials?limit=5', null)
       check('[14d] Không gửi khoá → 401', r.s === 401, `http=${r.s}`)
-      r = await erp('/v1/materials?limit=5', 'wms_khoa_rac')
+      r = await erp('/integration/v1/materials?limit=5', 'wms_khoa_rac')
       check('[14e] Khoá rác → 401', r.s === 401, `http=${r.s}`)
-      r = await erp('/v1/materials?updated_since=hom-qua')
+      r = await erp('/integration/v1/materials?updated_since=hom-qua')
       check('[14f] updated_since không phải ISO → 400', r.s === 400, `http=${r.s}`)
       const badCur = Buffer.from(JSON.stringify({ s: null, i: 'zzz-khong-phai-uuid' })).toString('base64url')
-      r = await erp(`/v1/inventory?limit=5&cursor=${badCur}`)
+      r = await erp(`/integration/v1/inventory?limit=5&cursor=${badCur}`)
       check('[14g] cursor mang id lạ → 200 rỗng hoặc 400, không "Lỗi hệ thống"', r.s === 200 || r.s === 400, `http=${r.s} ${err(r)}`)
-      r = await erp('/v1/materials?limit=5&cursor=%%%khong-phai-base64')
+      r = await erp('/integration/v1/materials?limit=5&cursor=%%%khong-phai-base64')
       check('[14h] cursor không giải mã được → bỏ qua cursor, 200', r.s === 200, `http=${r.s}`)
 
       // ĐI QUA 2 TRANG: id tăng dần, không trùng, không hở
-      const p1 = await erp('/v1/materials?limit=3')
-      const p2 = p1.j?.paging?.next_cursor ? await erp(`/v1/materials?limit=3&cursor=${encodeURIComponent(p1.j.paging.next_cursor)}`) : null
+      const p1 = await erp('/integration/v1/materials?limit=3')
+      const p2 = p1.j?.paging?.next_cursor ? await erp(`/integration/v1/materials?limit=3&cursor=${encodeURIComponent(p1.j.paging.next_cursor)}`) : null
       if (p2) {
         const ids1 = p1.j.data.map(x => x.id), ids2 = p2.j?.data?.map(x => x.id) ?? []
         const overlap = ids1.filter(i => ids2.includes(i)).length
@@ -382,12 +384,12 @@ try {
       // TRẦN 1.000: limit=1000 mà DB còn nhiều hơn thì has_more PHẢI true
       const dbTotal = (await restAll('InventoryEntry', 'select=id', 5000)).length
       if (dbTotal > 1000) {
-        const big = await erp('/v1/inventory?limit=1000')
+        const big = await erp('/integration/v1/inventory?limit=1000')
         check(`[14j] ERP kéo tồn limit=1000 (DB có ≥${dbTotal} dòng) → has_more=TRUE, không được báo hết dữ liệu`, big.s === 200 && big.j?.paging?.has_more === true, `http=${big.s} count=${big.j?.paging?.count} has_more=${big.j?.paging?.has_more}`)
       } else console.log(`  ⏭  DB chỉ có ${dbTotal} dòng tồn — không đo được trần 1.000`)
 
       const rv = await api(`/wms/integration-keys/${KID}/revoke`, 'PATCH', {})
-      r = await erp('/v1/materials?limit=1')
+      r = await erp('/integration/v1/materials?limit=1')
       check('[14k] Thu hồi khoá → gọi lại 401 ngay', rv.s === 200 && r.s === 401, `revoke=${rv.s} sau=${r.s}`)
       const dl = await api(`/wms/integration-keys/${KID}`, 'DELETE')
       check('[14l] Xoá hẳn khoá đã thu hồi → 200 + DB không còn', dl.s === 200 && (await restAll('ApiKey', `select=id&id=eq.${KID}`)).length === 0, `http=${dl.s}`)
@@ -416,6 +418,30 @@ try {
         r = await api(`/tms/vehicles/${randomUUID()}`, 'DELETE')
         check('[15d] Xoá xe không tồn tại → 404', r.s === 404, `http=${r.s}`)
       }
+    }
+  }
+  // ═══ [16] PUT /hr/layouts/:id — sửa layout bố trí nhân sự (gói 51 phủ POST/GET/DELETE + skills/job-titles, sót PUT chính) ═══
+  {
+    const cl = await api('/hr/layouts', 'POST', { warehouse_id: FIX.WH_QTY.id, name: `${T} layout kho Bluestar` })
+    const LID = cl.j?.data?.id
+    check('[16a] Dựng nền: tạo layout ở kho Bluestar', (cl.s === 201 || cl.s === 200) && !!LID, `http=${cl.s} ${err(cl)}`)
+    if (LID) {
+      let r = await api(`/hr/layouts/${LID}`, 'PUT', { name: `${T} layout đổi tên`, note: 'ghi chú QA53' })
+      check('[16b] Sửa tên + ghi chú → 200 + trả tên mới', r.s === 200 && r.j?.data?.name === `${T} layout đổi tên` && r.j?.data?.note === 'ghi chú QA53', `http=${r.s} ${err(r)} name=${r.j?.data?.name}`)
+      r = await api(`/hr/layouts/${LID}`, 'PUT', { name: 12345 })
+      check('[16c] Tên là SỐ → 400, không "Lỗi hệ thống"', r.s === 400, `http=${r.s} ${err(r)}`)
+      r = await api(`/hr/layouts/${LID}`, 'PUT', { name: '   ' })
+      check('[16d] Tên trắng → 400, không lưu layout không tên', r.s === 400, `http=${r.s} ${err(r)}`)
+      r = await api(`/hr/layouts/${LID}`, 'PUT', { is_active: false })
+      check('[16e] Ẩn layout (is_active=false) → 200', r.s === 200 && r.j?.data?.is_active === false, `http=${r.s} ${err(r)}`)
+      r = await api(`/hr/layouts/${randomUUID()}`, 'PUT', { name: 'x' })
+      check('[16f] Layout không tồn tại → 404', r.s === 404, `http=${r.s}`)
+      if (scoped) {
+        const sc = await scoped(`/hr/layouts/${LID}`, 'PUT', { name: `${T} sửa lậu` })
+        check('[16g] PHẠM VI: kho Ba Vì sửa layout kho Bluestar → 403', sc.s === 403, `http=${sc.s} ${err(sc)}`)
+      }
+      const d = await api(`/hr/layouts/${LID}`, 'DELETE')
+      check('[16h] Xoá layout nền → 200', d.s === 200, `http=${d.s}`)
     }
   }
 } finally {

@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS x_bak_tmsorder_status_20260907 AS
 SELECT id, status, completed_at, updated_at
 FROM "TmsOrder"
 WHERE status NOT IN ('PENDING', 'DONE', 'CANCELLED');
+-- Bảng public nào cũng bật RLS (gói QA 00 bất biến gác; anon/authenticated vốn không có GRANT nên đây là lớp
+-- thứ hai) — bản staging 07/09 quên dòng này, gói 00 đỏ ngay lượt chạy kế.
+ALTER TABLE x_bak_tmsorder_status_20260907 ENABLE ROW LEVEL SECURITY;
 
 -- 2) 'COMPLETED' (tên cũ) → 'DONE' (tên code đang dùng).
 UPDATE "TmsOrder" SET status = 'DONE'

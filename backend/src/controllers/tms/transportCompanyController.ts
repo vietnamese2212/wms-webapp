@@ -150,6 +150,14 @@ export async function deleteTransportCompany(req: Request, res: Response) {
     // ĐÃ MẤT VĨNH VIỄN. Người dùng đọc "Lỗi hệ thống" thì hiểu là chưa có gì xảy ra — sai hoàn toàn.
     // (đo 06/09, gói QA 50 phép [9]: xe còn 0/1 sau một lượt xoá thất bại.)
     // Nay hỏi trước, từ chối tử tế, và chỉ xoá khi chắc chắn xoá được — như deleteVehicleType.
+    // Kiểm id CÓ THẬT trước tiên. Không chỉ để trả 404 đúng: id sai dạng làm mọi câu đếm dưới đây
+    // ném 22P02 từ trong `fetchAllRowsParallel`, rơi vào `catch` và biến thành 500 "Lỗi hệ thống"
+    // (đo 07/09, gói QA 50 phép [64] — cửa duy nhất của nhóm này còn đỏ sau đợt vá).
+    const { data: cur, error: curErr } = await supabase.from('TransportCompany')
+      .select('id').eq('id', id).maybeSingle()
+    if (curErr) return fail(res, curErr)
+    if (!cur) return fail(res, 'Không tìm thấy ĐVVT/NCC — có thể đã bị xoá trước đó', 404)
+
     const [orders, planLines, entries, imports, staff] = await Promise.all([
       supabase.from('TmsOrder').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
       supabase.from('inbound_plan_lines').select('id', { count: 'exact', head: true }).eq('ncc_id', id),

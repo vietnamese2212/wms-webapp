@@ -257,16 +257,21 @@ const M1 = `${P}M1`, M2 = `${P}M2`, M3 = `${P}M3`
   r = await api('/masterdata/materials', 'POST', { material_code: M1, material_description: 'trùng' })
   check('[14] Thêm mã hàng TRÙNG MÃ → chặn 409', r.s === 409, `s=${r.s} ${r.j?.error?.code ?? ''}`)
 
-  // Cùng ô "Thùng/Pallet", cùng giá trị -5: file tải lên coi như ô trống (xem [22]) — form phải
-  // xử như nhau, chứ không được ghi thẳng số âm vào quy cách.
+  // M2 phải được dựng bằng payload HỢP LỆ. Bản đầu tạo M2 kèm luôn `cartons_per_pallet: -5` — tức
+  // dùng chính lời gọi mà phép kiểm mong đợi BỊ TỪ CHỐI để dựng dữ liệu nền cho các phép sau; vá
+  // xong app chặn đúng thì M2 không tồn tại và gói đổ ở [20]. Dựng nền và đo luật là hai việc.
   r = await api('/masterdata/materials', 'POST', {
     material_code: M2, material_description: `${P} Hàng B`, category: CAT,
-    base_unit: 'HOP', entry_unit: 'BT', units_per_carton: 6, cartons_per_pallet: -5,
+    base_unit: 'HOP', entry_unit: 'BT', units_per_carton: 6, cartons_per_pallet: 40,
   })
+  // Cùng ô "Thùng/Pallet", cùng giá trị -5: file tải lên coi như ô trống (xem [22]) — form phải
+  // xử như nhau, chứ không được ghi thẳng số âm vào quy cách.
+  const truocAm = await one('Material', `select=id,cartons_per_pallet&material_code=eq.${M2}`)
+  const rAm = await api(`/masterdata/materials/${truocAm?.id}`, 'PUT', { cartons_per_pallet: -5 })
   const b = await one('Material', `select=id,cartons_per_pallet&material_code=eq.${M2}`)
   check('[15] Khai quy cách "Thùng/Pallet" là SỐ ÂM (-5) trên form → phải bị chặn, không được lưu số âm',
-    r.s >= 400 || Number(b?.cartons_per_pallet ?? 0) >= 0,
-    `s=${r.s} · DB Thùng/Pallet = ${b?.cartons_per_pallet}`)
+    rAm.s >= 400 && Number(b?.cartons_per_pallet) === Number(truocAm?.cartons_per_pallet),
+    `s=${rAm.s} · DB Thùng/Pallet: ${truocAm?.cartons_per_pallet} → ${b?.cartons_per_pallet}`)
 
   const LOAI_MA = `${P}-LOAI-MA`
   r = await api('/masterdata/materials', 'POST', {

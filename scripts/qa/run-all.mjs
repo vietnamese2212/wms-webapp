@@ -54,6 +54,11 @@ const steps = [
   ['46-scan-rowlock.mjs'],        // quét xuất dưới KHOÁ DÒNG: 8 người/1 dòng hàng không vượt kế hoạch, 5 người/1 pallet chỉ 1 ăn; 2 thông báo nói đúng việc (06/09)
   ['47-inventory-edits.mjs'],     // sửa trên tồn kho: đổi mã/vị trí/NCC/ngày SX/QA · điều chỉnh · kiểm kê 1 pallet · sửa-xoá pallet trong phiếu · tách/dồn — chặn chuyển sang KHO KHÁC, tồn đi theo số nhập, đếm "đã cập nhật" là số THẬT (06/09)
   ['48-location-inbound-edits.mjs'], // vị trí kho (tạo/sửa/xoá, sức chứa không âm, quét tem khớp TRỌN mã, "ô này đang chứa gì", cờ hàng loạt) + phiếu nhập (quét trùng/khác mã, xoá nhiều pallet, hoàn thành/bỏ/huỷ) (06/09)
+  // 49–52 dựng từ BỀ MẶT ĐỌC TỪ CODE (389 route BE · 193 quyền · 50 trang), phủ 146 route mà 47 gói
+  // trước KHÔNG gói nào chạm — bộ kiểm cũ lớn lên theo từng bug đã gặp nên xanh tuyệt đối vẫn để lọt
+  // gần nửa ứng dụng (07/09). Vào cổng sau khi đã xanh trên Preview.
+  ['51-hr.mjs'],                  // nhân sự: vị trí/kỹ năng, nghỉ phép, chấm công, bố trí & phân công — phạm vi kho ở đường GHI, xếp tự động không tự mâu thuẫn (07/09)
+  ['52-wms-ops.mjs'],             // vận hành kho: chi phí kho (số tiền kiểu VN, kỳ chốt), fill, slotting, kiểm kê luân phiên, cảnh báo (07/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

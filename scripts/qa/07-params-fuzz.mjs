@@ -364,6 +364,9 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
 // `invalid input syntax for type uuid: "undefined"` nằm trong error_logs). Id sai là lỗi ĐẦU VÀO.
 // Quét TỰ ĐỘNG từ file routes để route :param THÊM SAU cũng bị soi — không chép tay danh sách.
 {
+  // ĐIỂM MÙ CỦA CHÍNH LƯỚI NÀY (phát hiện 07/09): bản đầu chỉ quét `router.get` — mọi PUT/PATCH/
+  // DELETE nằm ngoài tầm, mà đó mới đúng là chỗ 500 sống dai nhất (gói QA 50 bắt 12 ca liền: sửa/
+  // xoá loại xe, ĐVVT, xe, đặt/trả/thu hồi khung giờ). Lưới giăng một phía thì nửa nhà vẫn trống.
   const PREFIX = { wms: '/wms', masterdata: '/masterdata', tms: '/tms', hr: '/hr', external: '/external', notify: '/notify' }
   const RD = new URL('../../backend/src/routes/', import.meta.url)
   const found = []
@@ -371,18 +374,22 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
     const pre = PREFIX[f.replace('.ts', '')]
     if (!pre || !f.endsWith('.ts')) continue
     const src = readFileSync(new URL(f, RD), 'utf8')
-    for (const m of src.matchAll(/router\.get\(\s*'([^']*:[A-Za-z_]+[^']*)'/g)) found.push(pre + m[1])
+    for (const m of src.matchAll(/router\.(get|put|patch|delete)\(\s*'([^']*:[A-Za-z_]+[^']*)'/g))
+      found.push(`${m[1].toUpperCase()} ${pre}${m[2]}`)
   }
+  // POST cố tình KHÔNG quét: id rác trên POST thường là route tạo-con (`/:id/items`), gửi body rỗng
+  // vào đó đo cái khác chứ không đo id.
   const routes = [...new Set(found)]
   const offenders = []
   for (const r of routes) {
+    const [verb, path] = r.split(' ')
     for (const b of ['undefined', 'null', 'NaN', 'abc-not-uuid']) {
-      const res = await api(r.replace(/:[A-Za-z_]+/g, b))
+      const res = await api(path.replace(/:[A-Za-z_]+/g, b), verb, verb === 'GET' ? undefined : {})
       if (res.s >= 500) { offenders.push(`${r} (${b})`); break }
     }
   }
-  chk(offenders.length === 0, `id rác trên ${routes.length} route :param → không 5xx`,
-    offenders.length ? offenders.slice(0, 4).join(' | ') : 'tất cả 4xx sạch')
+  chk(offenders.length === 0, `id rác trên ${routes.length} route :param (GET/PUT/PATCH/DELETE) → không 5xx`,
+    offenders.length ? `${offenders.length} route: ` + offenders.slice(0, 4).join(' | ') : 'tất cả 4xx sạch')
 }
 
 // ── 7) Giá trị tham số kiểu SQL-injection → 400, KHÔNG 5xx (bug thật 21/08) ──

@@ -41,11 +41,17 @@ export async function reorderVehicleTypes(req: Request, res: Response) {
     if (err) return fail(res, err)
     // ĐẾM DÒNG THẬT SỰ SỬA, không đếm số id gửi lên: id đã bị người khác xoá vẫn "thành công rỗng",
     // nên bản cũ báo "đã sắp 3" trong khi chỉ 2 dòng đổi thứ tự — người dùng tin là xong rồi đóng màn.
+    // KHÔNG trả lỗi ở đây: các dòng còn sống ĐÃ được ghi ở trên, ném 409 lúc này là vừa ghi vừa báo
+    // hỏng. Thứ tự hiển thị cũng không phải chứng từ — cứ sắp phần còn thật và NÓI RÕ phần đã mất.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const reordered = results.reduce((n: number, r: any) => n + (r.data?.length ?? 0), 0)
-    if (reordered < ids.length)
-      return fail(res, `Chỉ sắp được ${reordered}/${ids.length} loại xe — ${ids.length - reordered} dòng không còn tồn tại, hãy tải lại trang`, 409)
-    return ok(res, { reordered })
+    return ok(res, {
+      reordered,
+      missing: ids.length - reordered,
+      ...(reordered < ids.length
+        ? { message: `Đã sắp ${reordered}/${ids.length} loại xe — ${ids.length - reordered} dòng không còn tồn tại, hãy tải lại trang` }
+        : {}),
+    })
   } catch (e) { return fail(res, String(e)) }
 }
 

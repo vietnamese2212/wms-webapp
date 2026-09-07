@@ -91,10 +91,13 @@ export async function ackAlert(req: Request, res: Response) {
 // DELETE /wms/alerts/:id/ack — bỏ đánh dấu (đưa lại vào list mặc định)
 export async function unackAlert(req: Request, res: Response) {
   try {
-    const { error } = await supabase.from('alert_events')
+    const { data, error } = await supabase.from('alert_events')
       .update({ ack_by: null, ack_at: null, updated_at: now() })
-      .eq('id', req.params.id)
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+      .eq('id', req.params.id).select('id')
+    // Cùng luật với ackAlert ngay trên: id sai dạng là lỗi ĐẦU VÀO (400), không phải lỗi hệ thống;
+    // và bỏ đánh dấu một cảnh báo không tồn tại thì phải nói không tìm thấy, đừng báo đã làm xong.
+    if (error) { const m = pgUserError(error); return fail(res, m?.status ?? 500, error.code ?? 'DB_ERROR', m?.message ?? error.message) }
+    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy cảnh báo — có thể đã tự đóng')
     return ok(res, { acked: false })
   } catch (e) { return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, BarChart3, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,15 @@ export default function Login() {
   const [error,    setError]    = useState('')
   const { login } = useAuthStore()
   const navigate  = useNavigate()
+  // Ô mật khẩu có ký tự do CHÍNH người đang ngồi gõ/dán vào chưa? Trình duyệt tự điền mật khẩu đã lưu
+  // KHÔNG sinh keydown/paste — nên khi cờ này còn false mà bấm "Hiển thị" thì xoá ô trước: trên PC dùng
+  // chung ở kho, người sau bấm con mắt là đọc được mật khẩu người trước, không phải qua mật khẩu máy như
+  // khi mở trình quản lý mật khẩu của trình duyệt (user phát hiện 07/09). App vốn không lưu mật khẩu ở đâu.
+  const typedRef = useRef(false)
+  function toggleShowPwd() {
+    if (!showPwd && !typedRef.current) setPassword('')
+    setShowPwd((v) => !v)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -78,6 +87,8 @@ export default function Login() {
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={() => { typedRef.current = true }}
+                    onPaste={() => { typedRef.current = true }}
                     required
                     autoComplete="current-password"
                     className="pr-10"
@@ -85,7 +96,8 @@ export default function Login() {
                   <button
                     type="button"
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPwd((v) => !v)}
+                    onClick={toggleShowPwd}
+                    aria-label={showPwd ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
                     tabIndex={-1}
                   >
                     {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

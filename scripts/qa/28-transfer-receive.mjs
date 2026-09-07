@@ -182,6 +182,36 @@ try {
       (r.s === 400 || r.s === 409) && n === 1, `http=${r.s} phiếu=${n}`)
   }
 
+  // ── [6b–6d] BA NHÁNH CHẶN của 3 route trước nay KHÔNG phép kiểm nào chạm (đo 07/09 bằng
+  // `surface.mjs`: 385/389 route đã phủ, đây là 3 trong 4 route trống — cả ba đều là đường GHI của
+  // luồng chuyển kho). Cố ý chỉ lấy nhánh CHẶN: chúng không đổi trạng thái nên chèn được vào giữa
+  // luồng mà không phá các phép sau ([7]–[11] phụ thuộc đúng trạng thái hiện tại).
+  {
+    // Huỷ xác nhận nhận hàng khi kho đích CÒN phiếu nhập đang hoạt động → phải chặn, nếu không
+    // lệnh quay về "đang giao" trong khi phiếu nhập vẫn treo ở kho đích = hai bên hiểu khác nhau.
+    const r = await api(`/tms/orders/${ord.id}/cancel-receipt`, 'POST', {})
+    const g = await gdoRow()
+    check('[6b] Huỷ xác nhận nhận hàng khi còn phiếu nhập đang mở → chặn 409 và GIỮ trạng thái Đang nhận',
+      r.s === 409 && g?.transfer_status === 'RECEIVING', `http=${r.s} · trạng thái=${g?.transfer_status}`)
+  }
+  {
+    // Thêm dòng nhận cho mã ĐÃ CÓ (không khai NSX) → 409; nếu không chặn thì kho đích nhận đôi
+    // cùng một mã và tồn phình lên gấp đôi.
+    const r = await api(`/tms/orders/${ord.id}/create-one-inbound`, 'POST', { material_id: created.mat })
+    const n = (await restAll('ProductionImport', `select=id&from_gdo_id=eq.${created.gdo}&status=neq.CANCELLED`)).length
+    check('[6c] Thêm dòng nhận cho mã ĐÃ có phiếu → chặn 409, không đẻ phiếu thứ hai',
+      r.s === 409 && n === 1, `http=${r.s} · số phiếu=${n}`)
+  }
+  {
+    // "Tài xế tự hoàn thành" chỉ dành cho chuyến mà kho nhận KHÔNG tích nhận (delivery_mode='SELF').
+    // Chuyến này đi đường nhận-quét, nên phải bị từ chối — nếu lọt thì chuyến đóng lại trong khi
+    // phiếu nhập ở kho đích còn dở dang.
+    const r = await api(`/tms/orders/${ord.id}/self-complete`, 'POST', {})
+    const g = await gdoRow()
+    check('[6d] Chuyến đi đường nhận-quét mà bấm "tài xế tự hoàn thành" → chặn 400, không tự đóng chuyến',
+      r.s === 400 && g?.transfer_status === 'RECEIVING', `http=${r.s} · trạng thái=${g?.transfer_status}`)
+  }
+
   // ── [7] Kho nguồn bỏ-hoàn-thành khi kho đích ĐANG NHẬN → 400 INBOUND_OPEN ──
   {
     const r = await api(`/wms/outbound/${created.gdo}/uncomplete`, 'POST')

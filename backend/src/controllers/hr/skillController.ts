@@ -197,18 +197,34 @@ export async function setEmployeeSkills(req: Request, res: Response) {
     const { skills } = req.body as { skills?: { skill_id: string; priority: number }[] }
 
     const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', id).maybeSingle()
-    const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
+    // Phân biệt "không có người này" với "người này chưa có chức danh": bản cũ trả cùng một câu
+    // "Nhân viên chưa có chức danh" cho cả hai, nên người dùng đi sửa hồ sơ của một nhân viên không
+    // tồn tại (gói QA 51 phép [7]).
+    if (!emp) return fail(res, 'Không tìm thấy nhân viên — có thể đã bị xoá, hãy tải lại trang', 404)
+    const jtId = (emp as { job_title_id: string | null }).job_title_id
     if (!jtId) return fail(res, 'Nhân viên chưa có chức danh', 400)
     // Giới hạn ngang: chỉ gán skill cho nhân viên trong phạm vi quản lý (chính mình + cấp dưới)
     const mgScope = await manageableJobTitleIds(req)
     if (mgScope !== null && !mgScope.has(jtId)) return fail(res, 'Ngoài phạm vi quản lý — không gán được skill nhân viên này', 403)
 
     const scopeJts = await scopeJobTitleIds(jtId)
-    const { data: scopeSkills } = await supabase.from('Skill').select('id').in('job_title_id', scopeJts)
-    const scopeIds = new Set((scopeSkills ?? []).map((s: { id: string }) => s.id))
+    const { data: scopeSkills } = await supabase.from('Skill').select('id, is_active').in('job_title_id', scopeJts)
+    const scopeRows = (scopeSkills ?? []) as { id: string; is_active: boolean | null }[]
+    const scopeIds = new Set(scopeRows.map(s => s.id))
+    // Vị trí đã ẨN thì màn hình chọn không hiện nữa — đường ghi phải theo cùng luật, nếu không thì
+    // gọi thẳng API vẫn gán được vị trí đã khai tử (gói QA 51 phép [4]). Vẫn XOÁ được dòng cũ của
+    // vị trí ẩn (scopeIds giữ nguyên cho bước delete) — ẩn vị trí không được khoá luôn đường dọn.
+    const assignableIds = new Set(scopeRows.filter(s => s.is_active !== false).map(s => s.id))
 
     if (scopeIds.size) await supabase.from('EmployeeSkill').delete().eq('employee_id', id).in('skill_id', [...scopeIds])
-    const valid = (skills ?? []).filter(s => scopeIds.has(s.skill_id) && s.priority > 0)
+    // Gửi trùng cùng một vị trí (bấm 2 lần / danh sách lặp) là ý muốn GÁN MỘT LẦN, không phải lỗi
+    // hệ thống — bản cũ để nguyên rồi vấp khoá trùng ở DB (phép [6]).
+    const seen = new Set<string>()
+    const valid = (skills ?? []).filter(s => {
+      if (!assignableIds.has(s.skill_id) || !(s.priority > 0) || seen.has(s.skill_id)) return false
+      seen.add(s.skill_id)
+      return true
+    })
     if (valid.length) {
       const now = new Date().toISOString()
       const { error } = await supabase.from('EmployeeSkill').insert(

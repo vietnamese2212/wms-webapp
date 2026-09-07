@@ -130,6 +130,7 @@ const PG_MAP: Record<string, { status: number; message: string }> = {
   '22003': { status: 400, message: 'Số vượt quá giới hạn cho phép' },
   '22007': { status: 400, message: 'Ngày/giờ không hợp lệ' },
   '22008': { status: 400, message: 'Ngày/giờ nằm ngoài khoảng cho phép' },
+  'PGRST116': { status: 404, message: 'Không tìm thấy bản ghi — có thể đã bị xoá, hãy tải lại trang' },
 }
 
 /** Lỗi Postgres có nghĩa với người dùng không? Trả null nếu không (⇒ giữ nguyên đường 5xx cũ). */
@@ -140,6 +141,17 @@ export function pgUserError(err: unknown): { status: number; message: string } |
   // Khoá ngoại vỡ theo hai chiều rất khác nhau với người dùng: "thứ tôi trỏ tới không có" (chọn
   // cấp trên là chức danh đã bị xoá) ≠ "thứ tôi xoá đang bị người khác dùng". Postgres nói rõ chiều
   // nào trong `details`, nên chọn đúng câu thay vì bắt người đọc tự đoán.
+  // PGRST116 = `.single()` không nhận đúng MỘT dòng. Hai nguyên nhân rất khác nhau:
+  //   0 dòng  → bản ghi không tồn tại (đã bị xoá, id sai) ⇒ 404, là chuyện bình thường của app;
+  //   >1 dòng → truy vấn thiếu điều kiện ⇒ lỗi THẬT của lập trình, giữ nguyên 500 để còn thấy mà sửa.
+  // Bản cũ nhập hai ca làm một và cùng ra "Lỗi hệ thống" (memory `checkapp-run-2026-08-31-fullsweep`
+  // đếm 61 ca cùng khuôn), nên duyệt một đơn nghỉ đã bị xoá cũng báo như app hỏng.
+  if (code === 'PGRST116') {
+    const d = `${e?.details ?? ''} ${e?.message ?? ''}`
+    return /\b0 rows?\b|contains 0 /i.test(d)
+      ? { status: 404, message: 'Không tìm thấy bản ghi — có thể đã bị xoá, hãy tải lại trang' }
+      : null
+  }
   if (code === '23503') {
     const d = String(e?.details ?? '')
     if (/is not present in table/i.test(d))

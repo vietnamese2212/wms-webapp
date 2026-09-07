@@ -281,9 +281,16 @@ export async function autoAssign(req: Request, res: Response) {
 
     // ── 4. Giữ các dòng xếp tay (is_manual) → khóa NV + giảm demand ──
     const { data: prevAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id, status, is_manual').eq('sheet_id', id)
-    const manualRows = ((prevAsg ?? []) as { employee_id: string; skill_id: string | null; status: string; is_manual: boolean }[])
-      .filter(a => a.is_manual && a.status === 'ASSIGNED' && a.skill_id)
-    const lockedEmp = new Set(manualRows.map(a => a.employee_id))
+    const prevRows = (prevAsg ?? []) as { employee_id: string; skill_id: string | null; status: string; is_manual: boolean }[]
+    const manualRows = prevRows.filter(a => a.is_manual && a.status === 'ASSIGNED' && a.skill_id)
+    // "Bỏ người này" (dòng thủ công UNASSIGNED) cũng là một QUYẾT ĐỊNH của người điều hành, y như
+    // xếp tay — bản cũ chỉ khoá người được xếp tay nên bước xếp tự động vẫn nhặt họ vào, để lại
+    // phiếu TỰ MÂU THUẪN: cùng một người vừa "bỏ" vừa "được xếp" (gói QA 51 phép [39]). Người đọc
+    // phiếu không có cách nào biết dòng nào mới là thật.
+    const lockedEmp = new Set([
+      ...manualRows.map(a => a.employee_id),
+      ...prevRows.filter(a => a.is_manual && a.status === 'UNASSIGNED').map(a => a.employee_id),
+    ])
     const remainingNeed = new Map<string, number>()
     for (const d of demandList) remainingNeed.set(d.skill_id, d.required_count)
     for (const a of manualRows) if (a.skill_id) remainingNeed.set(a.skill_id, (remainingNeed.get(a.skill_id) ?? 0) - 1)
@@ -367,7 +374,12 @@ export async function autoAssign(req: Request, res: Response) {
     const slotsOfSkill = new Map<string, string[]>()
     for (const [sid, n] of remainingNeed) if (n > 0) slotsOfSkill.set(sid, Array.from({ length: n }, (_, k) => `${sid}#${k}`))
     const skillOfSlot = (slot: string) => slot.slice(0, slot.lastIndexOf('#'))
-    const tagOfSlot = (slot: string) => shiftTagOf.get(skillOfSlot(slot)) ?? null
+    // Vị trí KHÔNG KHAI CA (`Skill.shift_tag` rỗng) vẫn là vị trí cần người. Bản cũ trả null ở đây,
+    // mà vòng ghép chỉ nhận slot có ca nằm trong `allow` ⇒ những vị trí đó KHÔNG BAO GIỜ được xếp:
+    // màn hình báo "thiếu người" trong khi người rảnh đủ kỹ năng vẫn đứng đó (gói QA 51 phép [36]).
+    // Cho nó một nhãn riêng để đi qua đúng bộ máy ghép, xếp ở tầng cuối cùng.
+    const NO_SHIFT = '__NOSHIFT__'
+    const tagOfSlot = (slot: string) => shiftTagOf.get(skillOfSlot(slot)) ?? NO_SHIFT
     // adjacency người → slot đủ điều kiện; trong 1 người: priority → (CA3 hôm qua: thiếu→ưu tiên CA3, đủ→ưu tiên CA2) → cân bằng từng-ca → thứ tự vị trí
     const adj = new Map<string, string[]>()
     for (const eid of people) {
@@ -395,7 +407,7 @@ export async function autoAssign(req: Request, res: Response) {
     const augment = (eid: string, seen: Set<string>, allow: Set<string>): boolean => {
       for (const slot of adj.get(eid) ?? []) {
         const tag = tagOfSlot(slot)
-        if (!tag || !allow.has(tag) || seen.has(slot)) continue
+        if (!allow.has(tag) || seen.has(slot)) continue
         seen.add(slot)
         const occ = slotMatch.get(slot)
         if (occ !== undefined && frozen.has(occ)) continue   // không bứng người đã chốt
@@ -407,6 +419,8 @@ export async function autoAssign(req: Request, res: Response) {
       { tags: ['CA1', 'CA2'], key: e => tagLoad(e, 'CA1') + tagLoad(e, 'CA2'), ca: true },
       { tags: ['CA3'],        key: e => tagLoad(e, 'CA3'),                     ca: true, isCA3: true },
       { tags: ['HC'],         key: e => hcLoad(e),                            ca: false },
+      // Tầng cuối: vị trí chưa khai ca — xếp sau khi mọi ca đã có người, bằng số người còn lại.
+      { tags: [NO_SHIFT],     key: () => 0,                                   ca: false },
     ]
     const allow = new Set<string>()
     for (const tier of TIERS) {
@@ -513,12 +527,20 @@ export async function assignOne(req: Request, res: Response) {
     if (!sh) return
     if (sh.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
 
-    const { data: existing } = await supabase.from('WorkAssignment').select('id, status')
-      .eq('sheet_id', id).eq('employee_id', employee_id).maybeSingle()
+    // KHÔNG dùng `.maybeSingle()` ở đây: một người CÓ THỂ giữ nhiều vị trí trong cùng một phiếu
+    // (đo staging 07/09: 11/79 dòng thuộc cặp (phiếu, người) có >1 dòng, do bước xếp tự động).
+    // Gặp 2 dòng thì `.maybeSingle()` trả data=null KÈM error — mà error không được đọc — nên nhánh
+    // dưới INSERT thêm dòng thứ ba: bấm "gán 1 vị trí" lại ĐẺ RA vị trí (gói QA 51 phép [40]).
+    const { data: rows } = await supabase.from('WorkAssignment').select('id, status, skill_id')
+      .eq('sheet_id', id).eq('employee_id', employee_id).order('created_at')
+    const list = (rows ?? []) as { id: string; status: string; skill_id: string | null }[]
+    // Ưu tiên đúng dòng của vị trí đang gán (thao tác lặp không đổi gì), sau đó mới tới dòng đầu —
+    // giữ nguyên ngữ nghĩa cũ "gán vị trí = ĐỔI chỗ của người này", không phải thêm chỗ.
+    const existing = list.find(r => (r.skill_id ?? null) === (skill_id || null)) ?? list[0] ?? null
     const status = skill_id ? 'ASSIGNED' : 'UNASSIGNED'
     if (existing) {
       // không cho ghi đè dòng nghỉ phép tự động
-      await supabase.from('WorkAssignment').update({ skill_id: skill_id || null, status, is_manual: true, updated_at: now() }).eq('id', (existing as { id: string }).id)
+      await supabase.from('WorkAssignment').update({ skill_id: skill_id || null, status, is_manual: true, updated_at: now() }).eq('id', existing.id)
     } else {
       await supabase.from('WorkAssignment').insert({
         id: randomUUID(), sheet_id: id, employee_id, skill_id: skill_id || null, status, is_manual: true, created_at: now(), updated_at: now(),

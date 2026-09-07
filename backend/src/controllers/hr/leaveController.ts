@@ -346,6 +346,14 @@ export async function updateLeave(req: Request, res: Response) {
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userOf(req).name || null }
     if (date_from  !== undefined) updates.date_from  = date_from
     if (date_to    !== undefined) updates.date_to    = date_to
+    // Đơn ĐÃ DUYỆT mà đổi khoảng ngày thì cái đã được duyệt không còn là cái đang có hiệu lực —
+    // dù người sửa CHÍNH LÀ người duyệt được. Đưa về CHỜ DUYỆT để có một lượt xét lại tường minh,
+    // thay vì đơn 1 ngày lặng lẽ thành đơn 7 ngày mà vẫn mang dấu "đã duyệt" (gói QA 51 phép [16]).
+    if (datesChanged && old?.status === 'APPROVED') {
+      updates.status = 'PENDING'
+      updates.approved_by = null
+      updates.approved_at = null
+    }
     if (leave_type !== undefined) {
       // Sổ loại nghỉ là DANH SÁCH ĐÓNG — gọi thẳng API không được ghi giá trị ngoài sổ
       if (!isLeaveType(leave_type))
@@ -357,11 +365,11 @@ export async function updateLeave(req: Request, res: Response) {
     if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy đơn nghỉ', 404)
 
-    // Đơn đã DUYỆT mà đổi ngày → gỡ chấm công LEAVE ngày cũ rồi ghi lại ngày mới
-    if (datesChanged && old?.status === 'APPROVED') {
-      await clearLeaveAttendance(old)
-      await applyLeaveAttendance(data as { id: string; employee_id: string; warehouse_id: string | null; date_from: string; date_to: string })
-    }
+    // Đơn đã DUYỆT mà đổi ngày → GỠ chấm công nghỉ của khoảng ngày cũ. KHÔNG ghi lại theo ngày mới:
+    // đơn vừa quay về CHỜ DUYỆT ở trên, mà công nghỉ là hệ quả của việc ĐƯỢC DUYỆT. Bản cũ ghi
+    // luôn ngày mới nên bảng công tự mọc thêm ngày nghỉ chưa ai duyệt (3 → 5 dòng, phép [16]).
+    // Lượt duyệt lại sẽ sinh công nghỉ theo khoảng ngày mới.
+    if (datesChanged && old?.status === 'APPROVED') await clearLeaveAttendance(old)
     const [withEmp] = await attachEmployees([data as { employee_id: string }])
     return ok(res, withEmp)
   } catch (e) { return fail(res, String(e)) }

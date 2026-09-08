@@ -16,7 +16,7 @@ import {
   getDashboardCacheSeconds, getStandardWorkHours, getPctDateBands, getKpiTargets, invalidateSettingsCache,
 } from '../../utils/settings'
 import {
-  KPI_DEFS, KPI_GROUPS, KPI_UNAVAILABLE, KPI_TARGETS_DEFAULT, kpiValue, evalRag, effectiveTarget,
+  KPI_DEFS, KPI_GROUPS, KPI_UNAVAILABLE, KPI_TARGETS_DEFAULT, KPI_EMPTY_HINT, kpiValue, evalRag, effectiveTarget,
   targetMapError, paramsError, parseKpiTargets,
   type KpiDef, type KpiTargets, type KpiTargetMap, type Rag, type TargetSource,
 } from '../../utils/kpiDefs'
@@ -115,7 +115,8 @@ function buildKpis(defs: KpiDef[], m: Record<string, NumDen>, days: number, targ
   })
 }
 const publicDef = (d: KpiDef) => ({ id: d.id, no: d.no, name: d.name, short: d.short, group: d.group, unit: d.unit, dir: d.dir,
-  kind: d.kind, decimals: d.decimals, defaults: d.defaults, formula: d.formula, note: d.note ?? null, snapshot: !!d.snapshot, cost: !!d.cost })
+  kind: d.kind, decimals: d.decimals, defaults: d.defaults, formula: d.formula, note: d.note ?? null, snapshot: !!d.snapshot, cost: !!d.cost,
+  empty_hint: KPI_EMPTY_HINT[d.id] ?? '' })
 
 /** Kiểm tham số chung của GET: kho trong phạm vi + tồn tại, khoảng ngày hợp lệ. Trả lỗi đã gửi (true) hoặc dữ liệu. */
 async function parseScope(req: Request, res: Response): Promise<{ whIds: string[] | null; sel: string; cats: string[] | null } | null> {
@@ -184,32 +185,61 @@ export async function getKpi(req: Request, res: Response) {
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
 }
 
-// GET /wms/kpi/trend?warehouse_id&months=12&end=YYYY-MM-DD — xu hướng theo tháng, chỉ KPI theo kỳ
-export async function getKpiTrend(req: Request, res: Response) {
+// GET /wms/kpi/series?warehouse_id&grain=day|week|month|year&date_from&date_to&compare=none|prev|yoy
+// CHUỖI theo chu kỳ cho biểu đồ đường (thực tế ↔ mục tiêu) — chỉ KPI theo kỳ (không snapshot). Một request:
+// RPC tự lặp từng kỳ (trần 60 kỳ, quá → 400 kèm hướng dẫn). `compare` = chuỗi kỳ so, dịch cùng cách với GET /kpi.
+type Grain = 'day' | 'week' | 'month' | 'year'
+type SeriesRow = { key: string; from: string; to: string; days: number; totals: Record<string, NumDen>; cost_shared: number }
+async function callSeries(args: Record<string, unknown>, ttl: number, grain: Grain, from: string, to: string): Promise<SeriesRow[]> {
+  const { data, error } = await supabase.rpc('warehouse_kpi_series', { ...args, p_grain: grain, p_from: from, p_to: to, p_ttl_seconds: ttl })
+  if (error) throw error
+  return (data ?? []) as SeriesRow[]
+}
+export async function getKpiSeries(req: Request, res: Response) {
   try {
-    const q = req.query as { months?: string; end?: string }
-    const months = Number(q.months ?? 12)
-    if (!Number.isInteger(months) || months < 2 || months > 24) return fail(res, 'months phải là số nguyên 2–24', 400, 'BAD_MONTHS')
-    const end = String(q.end ?? '').trim() || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-    if (!isDate(end)) return fail(res, 'end (YYYY-MM-DD) không hợp lệ', 400, 'BAD_DATE')
+    const q = req.query as { grain?: string; date_from?: string; date_to?: string; compare?: string }
+    const grain = String(q.grain ?? 'month').trim() as Grain
+    if (!['day', 'week', 'month', 'year'].includes(grain)) return fail(res, 'grain phải là day | week | month | year', 400, 'BAD_GRAIN')
+    const from = String(q.date_from ?? '').trim(), to = String(q.date_to ?? '').trim()
+    if (!isDate(from) || !isDate(to)) return fail(res, 'date_from, date_to (YYYY-MM-DD) là bắt buộc', 400, 'BAD_DATE')
+    if (from > to) return fail(res, 'Khoảng ngày không hợp lệ: "Từ" lớn hơn "Đến"', 400, 'BAD_RANGE')
+    const cmpRaw = String(q.compare ?? 'none').trim()
+    if (!['none', 'prev', 'yoy'].includes(cmpRaw)) return fail(res, 'compare phải là none | prev | yoy', 400, 'BAD_COMPARE')
+    // Trần kỳ kiểm TRƯỚC khi gọi DB — không để người dùng chờ tới timeout rồi mới biết
+    const days = dayCount(from, to)
+    const approxBuckets = grain === 'day' ? days : grain === 'week' ? Math.ceil(days / 7) + 1 : grain === 'month' ? Math.ceil(days / 28) + 1 : Math.ceil(days / 365) + 1
+    if (approxBuckets > 61) {
+      const unit = grain === 'day' ? 'ngày' : grain === 'week' ? 'tuần' : grain === 'month' ? 'tháng' : 'năm'
+      return fail(res, `Tối đa 60 ${unit} trên một biểu đồ (đang chọn ~${approxBuckets}) — thu hẹp khoảng hoặc đổi chu kỳ lớn hơn`, 400, 'TOO_MANY_BUCKETS')
+    }
     const sc = await parseScope(req, res)
     if (!sc) return
     const { targets, args, ttl } = await rpcArgs(sc.whIds, sc.cats)
-    const { data, error } = await supabase.rpc('warehouse_kpi_trend', { ...args, p_months: months, p_end: end, p_ttl_seconds: ttl })
-    if (error) return fail(res, error)
+    const cmp = compareRange(cmpRaw as CompareMode, from, to)
+    let cur: SeriesRow[], prev: SeriesRow[] | null
+    try {
+      ;[cur, prev] = await Promise.all([callSeries(args, ttl, grain, from, to), cmp ? callSeries(args, ttl, grain, cmp.from, cmp.to) : Promise.resolve(null)])
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e)
+      if (/TOO_MANY_BUCKETS/.test(msg)) return fail(res, 'Quá 60 kỳ trên một biểu đồ — thu hẹp khoảng hoặc đổi chu kỳ lớn hơn', 400, 'TOO_MANY_BUCKETS')
+      throw e
+    }
     const showCost = canSeeCost(req)
     const defs = KPI_DEFS.filter(d => !d.snapshot && (showCost || !d.cost))
-    const rows = (data ?? []) as Array<{ month: string; from: string; to: string; days: number; totals: Record<string, NumDen>; cost_shared: number }>
-    const series = rows.map(r => {
+    const toBuckets = (rows: SeriesRow[]) => rows.map(r => {
       const tot = totalsWithShared({ totals: r.totals ?? {}, cost_shared: Number(r.cost_shared ?? 0) } as RpcOut)
       const values: Record<string, number | null> = {}
       for (const d of defs) { const nd = tot[d.id] ?? { num: null, den: null }; values[d.id] = kpiValue(d, nd.num, nd.den, Number(r.days)) }
-      return { month: r.month, from: r.from, to: r.to, days: Number(r.days), values }
+      return { key: r.key, from: r.from, to: r.to, days: Number(r.days), values }
     })
     const whForTarget = sc.sel || null
     const targetsOut: Record<string, number[] | null> = {}
     for (const d of defs) targetsOut[d.id] = effectiveTarget(d, targets, whForTarget).t
-    return ok(res, { end, months, defs: defs.map(publicDef), targets: targetsOut, series })
+    return ok(res, {
+      grain, from, to, defs: defs.map(publicDef), targets: targetsOut,
+      buckets: toBuckets(cur),
+      compare: prev && cmp ? { mode: cmpRaw, from: cmp.from, to: cmp.to, buckets: toBuckets(prev) } : null,
+    })
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
 }
 

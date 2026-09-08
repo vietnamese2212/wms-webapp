@@ -67,7 +67,7 @@ router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboar
 // nếu thiếu warehouse_cost.view. Đặt MỤC TIÊU = quyền riêng `dashboard.kpi_target` (người đặt là quản
 // lý kho, không phải quản trị hệ thống — không đi ké wms_settings.manage_system).
 router.get('/kpi',          requirePerm('dashboard', 'view'),       kpi.getKpi)
-router.get('/kpi/trend',    requirePerm('dashboard', 'view'),       kpi.getKpiTrend)
+router.get('/kpi/series',   requirePerm('dashboard', 'view'),       kpi.getKpiSeries)
 router.get('/kpi/targets',  requirePerm('dashboard', 'view'),       kpi.getKpiTargets_)
 router.put('/kpi/targets',  requirePerm('dashboard', 'kpi_target'), kpi.putKpiTargets)
 

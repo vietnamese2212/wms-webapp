@@ -2248,6 +2248,7 @@ export type KpiDefPublic = {
   id: string; no: number; name: string; short: string; group: string; unit: string; dir: KpiDir
   kind: 'pct' | 'ratio' | 'doh' | 'turnover'; decimals: number; defaults: number[] | null
   formula: string; note: string | null; snapshot: boolean; cost: boolean
+  empty_hint: string      // thiếu dữ liệu thì cần cài đặt / thao tác gì để có
 }
 export type KpiValue = {
   id: string; value: number | null; num: number | null; den: number | null
@@ -2278,17 +2279,24 @@ export function useWarehouseKpi(p: { warehouseId?: string; from: string; to: str
     }).then(r => r.data.data),
   })
 }
-export type KpiTrend = {
-  end: string; months: number; defs: KpiDefPublic[]; targets: Record<string, number[] | null>
-  series: Array<{ month: string; from: string; to: string; days: number; values: Record<string, number | null> }>
+// Chuỗi theo chu kỳ ngày/tuần/tháng/năm cho biểu đồ đường thực tế ↔ mục tiêu (chỉ KPI theo kỳ)
+export type KpiGrain = 'day' | 'week' | 'month' | 'year'
+export type KpiBucket = { key: string; from: string; to: string; days: number; values: Record<string, number | null> }
+export type KpiSeries = {
+  grain: KpiGrain; from: string; to: string; defs: KpiDefPublic[]; targets: Record<string, number[] | null>
+  buckets: KpiBucket[]
+  compare: { mode: 'prev' | 'yoy'; from: string; to: string; buckets: KpiBucket[] } | null
 }
-export function useWarehouseKpiTrend(p: { warehouseId?: string; months: number }, enabled: boolean) {
-  return useQuery<KpiTrend>({
-    queryKey: ['warehouse-kpi-trend', p.warehouseId || 'all', p.months],
-    enabled,
+export function useWarehouseKpiSeries(p: { warehouseId?: string; grain: KpiGrain; from: string; to: string; compare: string }, enabled: boolean) {
+  return useQuery<KpiSeries>({
+    queryKey: ['warehouse-kpi-series', p.warehouseId || 'all', p.grain, p.from, p.to, p.compare || 'none'],
+    enabled: enabled && !!p.from && !!p.to,
     staleTime: 5 * 60_000,
-    queryFn: () => apiClient.get('/wms/kpi/trend', {
-      params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), months: p.months },
+    // Kỳ đổi thì giữ khung cũ mờ đi (không skeleton, không nhảy layout) — luật dataviz "refetch keeps the frame"
+    placeholderData: prev => prev,
+    queryFn: () => apiClient.get('/wms/kpi/series', {
+      params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), grain: p.grain, date_from: p.from, date_to: p.to,
+        ...(p.compare ? { compare: p.compare } : {}) },
     }).then(r => r.data.data),
   })
 }
@@ -2311,7 +2319,7 @@ export function useSaveKpiTargets() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['kpi-targets'] })
       qc.invalidateQueries({ queryKey: ['warehouse-kpi'] })
-      qc.invalidateQueries({ queryKey: ['warehouse-kpi-trend'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi-series'] })
     },
   })
 }

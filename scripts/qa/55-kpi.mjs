@@ -136,13 +136,35 @@ try {
   r = await api(q(`&warehouse_id=${WH}`))
   check('[3f] Lọc 1 kho → by_warehouse chỉ kho đó + target_scope = kho', r.s === 200 && (r.j?.data?.by_warehouse ?? []).every(w => w.warehouse_id === WH) && r.j?.data?.target_scope === WH, `n=${r.j?.data?.by_warehouse?.length}`)
 
-  // ═══ [4] Xu hướng tháng ═══
-  r = await api(`/wms/kpi/trend?months=3`)
-  const S = r.j?.data
-  check('[4a] trend months=3 → 200, 3 tháng tăng dần, mỗi tháng có values cho KPI theo kỳ', r.s === 200 && S?.series?.length === 3 && S.series.every((s, i, a) => !i || s.month > a[i - 1].month) && S.series.every(s => s.values && typeof s.values === 'object'),
-    `http=${r.s} n=${S?.series?.length} ${err(r)}`)
-  check('[4b] trend loại KPI ảnh chụp (snapshot) khỏi biểu đồ', r.s === 200 && (S?.defs ?? []).every(d => !d.snapshot) && (S?.defs ?? []).length > 0, `defs=${S?.defs?.length}`)
-  check('[4c] months=1 → 400 · months=30 → 400', (await api('/wms/kpi/trend?months=1')).s === 400 && (await api('/wms/kpi/trend?months=30')).s === 400)
+  check('[1j] Mọi KPI đo được có empty_hint (thiếu dữ liệu thì nói cần cài đặt gì)', (D?.defs ?? []).every(x => typeof x.empty_hint === 'string' && x.empty_hint.length > 20),
+    (D?.defs ?? []).filter(x => !x.empty_hint).map(x => x.id).join(','))
+
+  // ═══ [4] Chuỗi theo chu kỳ (biểu đồ đường thực tế ↔ mục tiêu) ═══
+  r = await api(`/wms/kpi/series?grain=month&date_from=${FROM}&date_to=${TO}`)
+  let S = r.j?.data
+  check('[4a] series grain=month trong 1 tháng → 200, 1 kỳ key YYYY-MM, values cho KPI theo kỳ', r.s === 200 && S?.grain === 'month' && S?.buckets?.length === 1 && /^\d{4}-\d{2}$/.test(S.buckets[0].key) && S.buckets[0].values && typeof S.buckets[0].values === 'object',
+    `http=${r.s} n=${S?.buckets?.length} key=${S?.buckets?.[0]?.key} ${err(r)}`)
+  check('[4b] series loại KPI ảnh chụp (snapshot) khỏi biểu đồ, có targets cho từng KPI', r.s === 200 && (S?.defs ?? []).every(x => !x.snapshot) && (S?.defs ?? []).length > 0 && S.defs.every(x => x.id in (S.targets ?? {})), `defs=${S?.defs?.length}`)
+  // ORACLE: giá trị 1 kỳ tháng của series = giá trị GET /kpi cùng khoảng (cùng một RPC, cùng công thức)
+  {
+    const kOtif = D?.kpis?.find(k => k.id === 'otif')
+    const sOtif = S?.buckets?.[0]?.values?.otif
+    check('[4c] ORACLE series(1 tháng).otif = GET kpi(cùng tháng).otif', (kOtif?.value == null && sOtif == null) || near(kOtif?.value, sOtif), `kpi=${kOtif?.value} series=${sOtif}`)
+  }
+  r = await api(`/wms/kpi/series?grain=week&date_from=${FROM}&date_to=${TO}`)
+  S = r.j?.data
+  check('[4d] grain=week → key YYYY-Www, kỳ thứ Hai→Chủ nhật (7 ngày), tăng dần', r.s === 200 && (S?.buckets ?? []).length >= 4 && S.buckets.every(b => /^\d{4}-W\d{2}$/.test(b.key) && b.days === 7) && S.buckets.every((b, i, a) => !i || b.key > a[i - 1].key),
+    `http=${r.s} n=${S?.buckets?.length} first=${S?.buckets?.[0]?.key}/${S?.buckets?.[0]?.from} ${err(r)}`)
+  r = await api(`/wms/kpi/series?grain=day&date_from=${FROM}&date_to=${TO}`)
+  check('[4e] grain=day cả tháng → số kỳ = số ngày', r.s === 200 && r.j?.data?.buckets?.length === days, `http=${r.s} n=${r.j?.data?.buckets?.length} days=${days} ${err(r)}`)
+  r = await api(`/wms/kpi/series?grain=year&date_from=2025-01-01&date_to=${TO}`)
+  check('[4f] grain=year → 2 kỳ 2025, 2026', r.s === 200 && r.j?.data?.buckets?.map(b => b.key).join(',') === `2025,${TO.slice(0, 4)}`, `http=${r.s} keys=${r.j?.data?.buckets?.map(b => b.key)}`)
+  r = await api(`/wms/kpi/series?grain=month&date_from=${FROM}&date_to=${TO}&compare=prev`)
+  check('[4g] series compare=prev → compare.buckets cùng số kỳ, khoảng dịch về trước', r.s === 200 && r.j?.data?.compare?.buckets?.length === 1 && r.j.data.compare.to < FROM, `http=${r.s} cmp=${r.j?.data?.compare?.from}→${r.j?.data?.compare?.to}`)
+  check('[4h] grain bậy → 400', (await api(`/wms/kpi/series?grain=quarter&date_from=${FROM}&date_to=${TO}`)).s === 400)
+  r = await api('/wms/kpi/series?grain=day&date_from=2026-01-01&date_to=2026-06-30')
+  check('[4i] Quá 60 kỳ (181 ngày theo ngày) → 400 TOO_MANY_BUCKETS có hướng dẫn, không chờ timeout', r.s === 400 && r.j?.error?.code === 'TOO_MANY_BUCKETS', `http=${r.s} ${err(r)}`)
+  check('[4j] series thiếu ngày → 400', (await api('/wms/kpi/series?grain=month')).s === 400)
 
   // ═══ [5] Mục tiêu 3 tầng: mặc định → công ty → riêng kho ═══
   r = await api('/wms/kpi/targets')

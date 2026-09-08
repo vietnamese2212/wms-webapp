@@ -31,7 +31,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   LookupValue:         [['lookup']],            // prefix khớp ['lookup','warehouse_type'] & ['lookup',type]
   ImportShift:         [['import-shifts']],
   QAStatus:            [['qa-statuses']],
-  SystemSetting:       [['system-settings'], ['warehouse-kpi'], ['warehouse-kpi-trend'], ['kpi-targets']],
+  SystemSetting:       [['system-settings'], ['warehouse-kpi'], ['warehouse-kpi-series'], ['kpi-targets']],
   VehicleType:         [['tms-vehicle-types']],
   SlotTemplate:        [['tms-slot-templates'], ['tms-vehicle-types-by-warehouse']],   // by-warehouse derive từ SlotTemplate
   TransportCompany:    [['tms-transport-companies'], ['tms-vehicles']],                // vehicle embed ncc

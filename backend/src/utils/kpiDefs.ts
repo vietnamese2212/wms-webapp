@@ -127,6 +127,41 @@ export const KPI_DEFS: KpiDef[] = [
 
 export const KPI_BY_ID: Record<string, KpiDef> = Object.fromEntries(KPI_DEFS.map(d => [d.id, d]))
 
+/**
+ * Khi KPI KHÔNG có dữ liệu: nói rõ thiếu gì và phải cài đặt / thao tác ở đâu để có số (user 08/09
+ * "biểu đồ nào thiếu dữ liệu thì ghi rõ hơn — ví dụ cần setting kho như thế nào"). Mỗi KPI đo được
+ * BẮT BUỘC có một dòng ở đây — gói QA 55 [1j] kiểm mọi def đều có empty_hint không rỗng.
+ */
+export const KPI_EMPTY_HINT: Record<string, string> = {
+  otif: 'Chưa có chuyến HOÀN THÀNH có ngày xuất trong kỳ — chuyến phải được bấm Hoàn thành ở trang Xuất kho.',
+  fill: 'Chưa có chuyến hoàn thành trong kỳ. Fill rate đọc số yêu cầu gốc của chuyến (vết hạ SL ghi từ 28/08).',
+  gate_dwell: 'Không xe nào ghi đủ giờ VÀO và RA cổng trong kỳ. Dùng Đăng ký cổng (menu Điều vận): bấm Vào khi xe tới, Ra khi xe rời; bật "Bắt buộc đăng ký cổng khi Bắt đầu" trong form Kho để mọi chuyến đều gắn cổng.',
+  loading: 'Chưa có chuyến vừa có Bắt đầu vừa có Hoàn thành trong kỳ (trang Xuất kho).',
+  dock_to_stock: 'Không có phiếu nhập gắn Đăng ký cổng trong kỳ. Khi tạo phiếu nhập hãy chọn đăng ký cổng của xe (Đăng ký cổng → chiều Nhập) để phiếu có mốc giờ xe đến.',
+  recv_acc: 'Không có phiếu nhập NCC / chuyển kho có số kế hoạch trong kỳ. Nạp Kế hoạch nhập (TMS Bookings › Kế hoạch) để phiếu có số kế hoạch so với thực nhận.',
+  unload_prod: 'Kỳ này chưa có chấm công (mẫu số) hoặc chưa có pallet nhập. Ghi công hằng ngày ở màn Chấm công.',
+  putaway_acc: 'Kho chưa bật kiểm quy tắc cất hàng: Cài đặt WMS › Kho › "Bắt buộc quy tắc cất hàng" + khai quy tắc; sau đó mỗi pallet nhập sẽ được kiểm.',
+  inv_acc: 'Chưa có dòng kiểm kê trong kỳ. Kiểm kê ở trang Kiểm kho (Check vị trí / Tổng hợp KK) thì mới có số sổ ↔ số thực.',
+  loc_acc: 'Chưa có dòng kiểm kê trong kỳ (trang Kiểm kho).',
+  cc_compl: 'Chưa có vị trí gắn cờ "Cần kiểm kê": trang Vị trí kho → chọn vị trí → cờ hàng loạt "Cần kiểm kê"; hoặc dùng tab Luân phiên ABC.',
+  fefo: 'Kho chưa khai Nguyên tắc luân chuyển: Cài đặt WMS › Kho › "Thứ tự lấy hàng" (FEFO/FIFO/LIFO). Khai xong, mỗi lượt quét xuất sẽ được đo.',
+  blocked: 'Không có pallet đang tồn trong phạm vi (hoặc bạn bị cắt Loại hàng).',
+  expiry_risk: 'Không có pallet đang tồn có NSX/HSD + shelf life. Khai shelf life ở Mã hàng để tính %Date.',
+  slow: 'Không có pallet đang tồn trong phạm vi.',
+  dead: 'Không có pallet đang tồn trong phạm vi.',
+  doh: 'Cần tấn xuất trong kỳ > 0 và mã hàng có khối lượng thùng (Mã hàng › KL/thùng).',
+  turnover: 'Cần tấn tồn > 0 và tấn xuất trong kỳ; mã hàng phải khai khối lượng thùng.',
+  util_zone: 'Chưa khu vực nào khai sức chứa: Cài đặt WMS › Khu vực › "Sức chứa (pallet)" cho từng khu.',
+  util_pos: 'Vị trí chưa khai sức chứa 1–1.000 pallet (trang Vị trí kho › sức chứa). Vị trí khai quá 1.000 coi là không giới hạn, bị loại.',
+  empty_loc: 'Kho chưa có vị trí đang hoạt động (trang Vị trí kho).',
+  overflow: 'Vị trí chưa khai sức chứa hoặc chưa có pallet ở vị trí có sức chứa.',
+  pick_prod: 'Kỳ này chưa có chấm công (mẫu số) — ghi công ở màn Chấm công; hoặc chưa có chuyến xuất.',
+  pick_lines: 'Kỳ này chưa có chấm công (mẫu số) — ghi công ở màn Chấm công.',
+  labor_prod: 'Kỳ này chưa có chấm công (mẫu số) hoặc mã hàng chưa khai khối lượng thùng (tử số).',
+  ot_rate: 'Kỳ này chưa có chấm công. Ghi công (ca + giờ tăng ca) ở màn Chấm công.',
+  cost_case: 'Kỳ này chưa khai chi phí kho (Tổng quan › Chi phí kho) hoặc không có thùng nhập/xuất.',
+}
+
 /** 16 KPI trong file CHƯA CÓ NGUỒN trong app — hiện ô trống trên tab kèm "cần bổ sung gì". */
 export const KPI_UNAVAILABLE: Array<{ no: number; name: string; group: KpiGroup; need: string }> = [
   { no: 3,  name: 'Order accuracy — đơn đúng SKU/SL/lô', group: 'delivery', need: 'Sổ sự cố sau xuất: ghi đơn bị báo sai mã / thiếu / sai lô (khách hoặc kho nhận báo)' },

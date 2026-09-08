@@ -129,6 +129,13 @@ BEGIN
 END $function$;
 
 -- ── 2. warehouse_kpi — 27 KPI, mỗi KPI {num, den} theo kho + tổng ────────────────────────────────
+-- Chữ ký cũ (bản áp 08/09 sáng, chưa có p_skip_snapshot) phải DROP trước: thêm tham số có DEFAULT mà
+-- giữ bản cũ = hai overload cùng khớp lời gọi 8 tham số → "function is not unique".
+DROP FUNCTION IF EXISTS public.warehouse_kpi(text[], text[], date, date, numeric, numeric, int, int);
+DROP FUNCTION IF EXISTS public.warehouse_kpi_cached(text[], text[], date, date, numeric, numeric, int, int, int);
+-- p_skip_snapshot = TRUE khi tính CHUỖI theo kỳ (ngày/tuần/tháng): các KPI ảnh chụp tồn (blocked, cận
+-- date, chậm, sức chứa…) cho mọi kỳ đều là số HIỆN TẠI nên không cần quét InventoryEntry mỗi kỳ —
+-- điều kiện `NOT p_skip_snapshot` đứng đầu WHERE thành One-Time Filter, Postgres bỏ hẳn nhánh quét.
 CREATE OR REPLACE FUNCTION public.warehouse_kpi(
   p_warehouse_ids text[] DEFAULT NULL,
   p_categories    text[] DEFAULT NULL,
@@ -137,7 +144,8 @@ CREATE OR REPLACE FUNCTION public.warehouse_kpi(
   p_std_hours     numeric DEFAULT 8,
   p_pct_low       numeric DEFAULT 30,
   p_slow_days     int     DEFAULT 90,
-  p_dead_days     int     DEFAULT 180
+  p_dead_days     int     DEFAULT 180,
+  p_skip_snapshot boolean DEFAULT false
 ) RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
@@ -146,12 +154,17 @@ AS $$
 DECLARE
   v_svc  jsonb;
   v_prod jsonb;
+  v_zone jsonb := '[]'::jsonb;
   v_out  jsonb;
   v_from_ts timestamptz := (p_from::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh');
   v_to_ts   timestamptz := ((p_to + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh');
 BEGIN
   v_svc  := service_level(p_from, p_to, p_warehouse_ids, 5);
   v_prod := warehouse_productivity(p_warehouse_ids, p_categories, p_from, p_to, p_std_hours);
+  IF NOT p_skip_snapshot THEN
+    SELECT coalesce(jsonb_agg(jsonb_build_object('wid', z.warehouse_id, 'used', z.used, 'cap', z.capacity)), '[]'::jsonb)
+      INTO v_zone FROM zone_capacity_rows(p_warehouse_ids, p_categories) z WHERE z.capacity > 0;
+  END IF;
 
   WITH wh AS (
     SELECT w.id, w.name FROM "Warehouse" w
@@ -262,7 +275,8 @@ BEGIN
       FROM "InventoryEntry" ie
       LEFT JOIN "Material" m ON m.id = ie.material_id
       LEFT JOIN "QAStatus" q ON q.id = ie.qa_status_id
-     WHERE ie.cartons_remaining > 0
+     WHERE NOT p_skip_snapshot
+       AND ie.cartons_remaining > 0
        AND ie.status IN ('IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING')
        AND (p_warehouse_ids IS NULL OR ie.warehouse_id = ANY(p_warehouse_ids))
        AND (p_categories IS NULL OR m.category IS NULL OR m.category = ANY(p_categories))
@@ -271,7 +285,8 @@ BEGIN
     SELECT ie.warehouse_id AS wid, ie.material_id, max(se.scanned_at)::date AS last_d
       FROM "OutboundScanEntry" se
       JOIN "InventoryEntry" ie ON ie.id = se.inventory_entry_id
-     WHERE se.scanned_at >= (current_date - p_dead_days)::timestamp
+     WHERE NOT p_skip_snapshot
+       AND se.scanned_at >= (current_date - p_dead_days)::timestamp
        AND (p_warehouse_ids IS NULL OR ie.warehouse_id = ANY(p_warehouse_ids))
      GROUP BY 1, 2
   ),
@@ -305,7 +320,8 @@ BEGIN
   used AS (
     SELECT ie.location_id, count(*) AS n
       FROM "InventoryEntry" ie
-     WHERE ie.cartons_remaining > 0 AND ie.status IN ('IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING')
+     WHERE NOT p_skip_snapshot
+       AND ie.cartons_remaining > 0 AND ie.status IN ('IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING')
        AND (p_warehouse_ids IS NULL OR ie.warehouse_id = ANY(p_warehouse_ids))
      GROUP BY 1
   ),
@@ -318,7 +334,8 @@ BEGIN
            CASE WHEN l.max_pallets BETWEEN 1 AND 1000 THEN l.max_pallets END AS cap,
            coalesce(u.n, 0) AS used
       FROM "Location" l LEFT JOIN used u ON u.location_id = l.id
-     WHERE l.is_active AND coalesce(l.kind, 'STORAGE') = 'STORAGE'
+     WHERE NOT p_skip_snapshot
+       AND l.is_active AND coalesce(l.kind, 'STORAGE') = 'STORAGE'
        AND (p_warehouse_ids IS NULL OR l.warehouse_id = ANY(p_warehouse_ids))
   ),
   loc AS (
@@ -332,9 +349,8 @@ BEGIN
       FROM locs GROUP BY 1
   ),
   zone AS (
-    SELECT z.warehouse_id AS wid, sum(z.used) AS used, sum(z.capacity) AS cap
-      FROM zone_capacity_rows(p_warehouse_ids, p_categories) z
-     WHERE z.capacity > 0 GROUP BY 1
+    SELECT x->>'wid' AS wid, sum((x->>'used')::numeric) AS used, sum((x->>'cap')::numeric) AS cap
+      FROM jsonb_array_elements(v_zone) x GROUP BY 1
   ),
   pick AS (
     SELECT g.warehouse_id AS wid,
@@ -438,7 +454,8 @@ CREATE OR REPLACE FUNCTION public.warehouse_kpi_cached(
   p_pct_low       numeric DEFAULT 30,
   p_slow_days     int     DEFAULT 90,
   p_dead_days     int     DEFAULT 180,
-  p_ttl_seconds   int     DEFAULT 300
+  p_ttl_seconds   int     DEFAULT 300,
+  p_skip_snapshot boolean DEFAULT false
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SET statement_timeout TO '30s'
@@ -446,18 +463,19 @@ AS $$
 DECLARE v_key text; v_hit jsonb; v_calc jsonb;
 BEGIN
   IF p_ttl_seconds IS NULL OR p_ttl_seconds <= 0 THEN
-    RETURN warehouse_kpi(p_warehouse_ids, p_categories, p_from, p_to, p_std_hours, p_pct_low, p_slow_days, p_dead_days);
+    RETURN warehouse_kpi(p_warehouse_ids, p_categories, p_from, p_to, p_std_hours, p_pct_low, p_slow_days, p_dead_days, p_skip_snapshot);
   END IF;
   v_key := 'kpi|' || md5(
        coalesce((SELECT string_agg(x, ',' ORDER BY x) FROM unnest(p_warehouse_ids) x), '*')
     || '|' || coalesce((SELECT string_agg(x, ',' ORDER BY x) FROM unnest(p_categories) x), '*')
     || '|' || coalesce(p_from::text, '*') || '|' || coalesce(p_to::text, '*')
     || '|' || coalesce(p_std_hours::text, '*') || '|' || coalesce(p_pct_low::text, '*')
-    || '|' || coalesce(p_slow_days::text, '*') || '|' || coalesce(p_dead_days::text, '*'));
+    || '|' || coalesce(p_slow_days::text, '*') || '|' || coalesce(p_dead_days::text, '*')
+    || '|' || CASE WHEN p_skip_snapshot THEN 's' ELSE 'f' END);
   SELECT payload INTO v_hit FROM public.dashboard_cache
    WHERE key = v_key AND computed_at > now() - make_interval(secs => p_ttl_seconds);
   IF v_hit IS NOT NULL THEN RETURN v_hit || jsonb_build_object('cached', true); END IF;
-  v_calc := warehouse_kpi(p_warehouse_ids, p_categories, p_from, p_to, p_std_hours, p_pct_low, p_slow_days, p_dead_days);
+  v_calc := warehouse_kpi(p_warehouse_ids, p_categories, p_from, p_to, p_std_hours, p_pct_low, p_slow_days, p_dead_days, p_skip_snapshot);
   INSERT INTO public.dashboard_cache(key, payload, computed_at) VALUES (v_key, v_calc, now())
   ON CONFLICT (key) DO UPDATE SET payload = excluded.payload, computed_at = excluded.computed_at;
   RETURN v_calc;
@@ -491,10 +509,62 @@ BEGIN
   FOR i IN REVERSE (v_n - 1)..0 LOOP
     v_from := (v_m0 - make_interval(months => i))::date;
     v_to   := least((v_from + interval '1 month - 1 day')::date, p_end);
-    v_one  := warehouse_kpi_cached(p_warehouse_ids, p_categories, v_from, v_to, p_std_hours, p_pct_low, p_slow_days, p_dead_days, p_ttl_seconds);
+    v_one  := warehouse_kpi_cached(p_warehouse_ids, p_categories, v_from, v_to, p_std_hours, p_pct_low, p_slow_days, p_dead_days, p_ttl_seconds, true);
     v_out  := v_out || jsonb_build_object('month', to_char(v_from, 'YYYY-MM'), 'from', v_from, 'to', v_to,
                                           'days', (v_to - v_from + 1), 'totals', v_one->'totals',
                                           'cost_shared', v_one->'cost_shared');
+  END LOOP;
+  RETURN v_out;
+END;
+$$;
+
+-- ── 5. CHUỖI THEO CHU KỲ ngày / tuần (ISO, thứ Hai) / tháng / năm — user chốt 08/09 chiều: "biểu đồ dạng
+--    line, 1 line target 1 line thực tế; chọn Ngày thì từ ngày, Tuần thì từ tuần tới tuần, Tháng, Năm".
+--    Một request; DB tự lặp từng kỳ qua bản _cached (kỳ đã QUA giữ cache ≥ 24h — số không đổi nữa; kỳ
+--    đang chạy theo TTL cờ dashboard_cache_seconds). Trần 60 kỳ: quá là RAISE 'TOO_MANY_BUCKETS' để BE
+--    trả 400 kèm hướng dẫn thu hẹp, không để người dùng chờ tới timeout. Chỉ TOTALS (biểu đồ đọc tổng).
+CREATE OR REPLACE FUNCTION public.warehouse_kpi_series(
+  p_warehouse_ids text[] DEFAULT NULL,
+  p_categories    text[] DEFAULT NULL,
+  p_grain         text    DEFAULT 'month',
+  p_from          date    DEFAULT NULL,
+  p_to            date    DEFAULT NULL,
+  p_std_hours     numeric DEFAULT 8,
+  p_pct_low       numeric DEFAULT 30,
+  p_slow_days     int     DEFAULT 90,
+  p_dead_days     int     DEFAULT 180,
+  p_ttl_seconds   int     DEFAULT 300
+) RETURNS jsonb
+LANGUAGE plpgsql
+SET statement_timeout TO '55s'
+AS $$
+DECLARE
+  v_step interval;
+  v_start date; v_end date; v_n int; v_key text; v_one jsonb; v_ttl int;
+  v_out jsonb := '[]'::jsonb;
+BEGIN
+  IF p_grain NOT IN ('day', 'week', 'month', 'year') THEN RAISE EXCEPTION 'BAD_GRAIN'; END IF;
+  IF p_from IS NULL OR p_to IS NULL OR p_to < p_from THEN RAISE EXCEPTION 'BAD_RANGE'; END IF;
+  v_step  := CASE p_grain WHEN 'day' THEN interval '1 day' WHEN 'week' THEN interval '7 days'
+                          WHEN 'month' THEN interval '1 month' ELSE interval '1 year' END;
+  v_start := CASE p_grain WHEN 'day' THEN p_from ELSE date_trunc(p_grain, p_from)::date END;
+  -- Số kỳ = số bước từ kỳ chứa p_from tới kỳ chứa p_to
+  v_n := CASE p_grain
+           WHEN 'day'   THEN (p_to - p_from) + 1
+           WHEN 'week'  THEN ((date_trunc('week', p_to)::date - v_start) / 7) + 1
+           WHEN 'month' THEN (extract(year FROM p_to) - extract(year FROM v_start)) * 12 + (extract(month FROM p_to) - extract(month FROM v_start)) + 1
+           ELSE (extract(year FROM p_to) - extract(year FROM v_start)) + 1 END;
+  IF v_n > 60 THEN RAISE EXCEPTION 'TOO_MANY_BUCKETS:%', v_n; END IF;
+
+  FOR i IN 0..(v_n - 1) LOOP
+    v_end := (v_start + v_step - interval '1 day')::date;
+    v_key := CASE p_grain WHEN 'day' THEN to_char(v_start, 'YYYY-MM-DD') WHEN 'week' THEN to_char(v_start, 'IYYY-"W"IW')
+                          WHEN 'month' THEN to_char(v_start, 'YYYY-MM') ELSE to_char(v_start, 'YYYY') END;
+    v_ttl := CASE WHEN v_end < current_date THEN greatest(coalesce(p_ttl_seconds, 300), 86400) ELSE p_ttl_seconds END;
+    v_one := warehouse_kpi_cached(p_warehouse_ids, p_categories, v_start, v_end, p_std_hours, p_pct_low, p_slow_days, p_dead_days, v_ttl, true);
+    v_out := v_out || jsonb_build_object('key', v_key, 'from', v_start, 'to', v_end, 'days', (v_end - v_start + 1),
+                                         'totals', v_one->'totals', 'cost_shared', v_one->'cost_shared');
+    v_start := (v_start + v_step)::date;
   END LOOP;
   RETURN v_out;
 END;

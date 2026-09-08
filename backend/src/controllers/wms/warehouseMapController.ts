@@ -100,13 +100,18 @@ export async function saveWarehouseMapFrame(req: Request, res: Response) {
       const k = `${x},${y}`
       if (!seen.has(k)) { seen.add(k); blocked.push([x, y]) }
     }
-    // Thu khung lại mà có vị trí đang nằm ngoài khung mới → 409, nêu ví dụ (đừng để ô "biến mất" khỏi bản vẽ)
-    const { data: outside, error: e0 } = await supabase.from('Location').select('location_code')
+    // Thu khung lại mà có vị trí đang nằm ngoài khung mới → 409, nêu ví dụ (đừng để ô "biến mất" khỏi bản vẽ).
+    // Kiểm theo MÉP PHẢI/DƯỚI của khối (neo + grid_w/grid_h), không chỉ ô neo: khối 23×12 neo cột 38 mà thu khung về 50
+    // thì neo vẫn trong khung nhưng khối tràn ra ngoài (soi 08/09). PostgREST không so cột + cột → lấy ứng viên
+    // (neo cách mép < 100 ô = grid_w/h tối đa) rồi lọc trong JS.
+    const { data: cand, error: e0 } = await supabase.from('Location').select('location_code, grid_x, grid_y, grid_w, grid_h')
       .eq('warehouse_id', wh.id).eq('is_active', true).not('grid_x', 'is', null)
-      .or(`grid_x.gte.${width},grid_y.gte.${height}`).limit(5)
+      .or(`grid_x.gte.${Math.max(0, width - 100)},grid_y.gte.${Math.max(0, height - 100)}`).limit(1000)
     if (e0) return fail(res, e0)
-    if (outside && outside.length) {
-      return fail(res, 409, 'LOCATIONS_OUTSIDE', `Có vị trí đang nằm ngoài khung mới (${(outside as { location_code: string }[]).map(o => o.location_code).join(', ')}…) — gỡ hoặc dời chúng trước khi thu khung`)
+    const outside = ((cand ?? []) as { location_code: string; grid_x: number; grid_y: number; grid_w: number | null; grid_h: number | null }[])
+      .filter(l => l.grid_x + (l.grid_w ?? 1) > width || l.grid_y + (l.grid_h ?? 1) > height)
+    if (outside.length) {
+      return fail(res, 409, 'LOCATIONS_OUTSIDE', `Có ${outside.length} vị trí đang nằm ngoài khung mới (${outside.slice(0, 5).map(o => o.location_code).join(', ')}${outside.length > 5 ? '…' : ''}) — gỡ hoặc dời chúng trước khi thu khung`)
     }
     const notes = typeof b.notes === 'string' ? b.notes.slice(0, 500) : null
     const now = new Date().toISOString()

@@ -121,6 +121,16 @@ try {
   check(`[3c] Chân kệ B khối 2×1 tại (${BX + 1},${BY}) → 200`, r.s === 200, `http=${r.s} ${err(r)}`)
   r = await asg([{ location_id: C[0].id, grid_x: BX + 2, grid_y: BY }])
   check('[3d] Chân kệ C đặt vào ô thứ 2 của khối B → 409', r.s === 409 && r.j?.error?.code === 'CELL_CONFLICT', `http=${r.s} ${err(r)}`)
+  // Thu khung phải kiểm MÉP khối (neo + grid_w), không chỉ ô neo: khối B neo BX+1 rộng 2 → khung rộng BX+2 lọt kiểm neo nhưng B tràn.
+  // Chỉ kết luận được khi không có vị trí khác đứng xa hơn mép mới (bản vẽ thật có → bỏ qua có ghi chú).
+  {
+    const wNew = BX + 2, hNew = FH
+    const others = L.filter(l => l.grid_x != null && l.id !== B[0].id && !touched.includes(l.id) && (l.grid_x + (l.grid_w ?? 1) > wNew || l.grid_y + (l.grid_h ?? 1) > hNew))
+    if (!others.length && priorMap) {
+      r = await api(`/wms/warehouse-map/${WH}`, 'PUT', { width: wNew, height: hNew, cell_m: mapRow?.cell_m ?? 1.2, blocked: (mapRow?.blocked ?? []).filter(([x, y]) => x < wNew && y < hNew) })
+      check(`[3d2] Thu khung về rộng ${wNew} (neo B trong, MÉP B tràn) → 409 LOCATIONS_OUTSIDE`, r.s === 409 && r.j?.error?.code === 'LOCATIONS_OUTSIDE', `http=${r.s} ${err(r)}`)
+    } else console.log(`  ⏭  [3d2] bỏ qua: ${!priorMap ? 'kho chưa có khung' : `${others.length} vị trí khác cũng vượt mép ${wNew}×${hNew}`} — không tách được luật mép khối`)
+  }
   r = await asg([{ location_id: C[0].id, grid_x: 999, grid_y: 999 }])
   check('[3e] Ngoài khung → 400 OUT_OF_BOUNDS (kho đã có khung)', r.s === 400 && (r.j?.error?.code === 'OUT_OF_BOUNDS' || r.j?.error?.code === 'VALIDATION_ERROR'), `http=${r.s} ${err(r)}`)
   r = await asg([{ location_id: C[0].id, grid_x: 4, grid_y: null }])

@@ -545,10 +545,13 @@ export default function WarehouseMap() {
     if (!draft) return
     setErr(null)
     const before = data?.map ? { width: data.map.width, height: data.map.height, cell_m: Number(data.map.cell_m), blocked: data.map.blocked ?? [] } : null
-    const next = { ...draft, blocked: [...draft.blocked] }
+    // Thu khung: ô tường rơi ra ngoài khung mới thì tự bỏ (chúng vốn không còn trên bản vẽ) — vị trí ngoài khung thì BE 409
+    const inside = draft.blocked.filter(([x, y]) => x < draft.width && y < draft.height)
+    const dropped = draft.blocked.length - inside.length
+    const next = { ...draft, blocked: inside }
     try {
       await saveFrame.mutateAsync(next)
-      toast({ title: 'Đã lưu khung bản vẽ' })
+      toast({ title: 'Đã lưu khung bản vẽ', description: dropped ? `Đã bỏ ${nf.format(dropped)} ô tường nằm ngoài khung mới` : undefined })
       if (before) pushHist({ label: 'Lưu khung', undo: () => saveFrame.mutateAsync(before), redo: () => saveFrame.mutateAsync(next) })
     } catch (e) { setErr(apiMsg(e)) }
   }

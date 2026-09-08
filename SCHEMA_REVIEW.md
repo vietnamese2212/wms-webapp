@@ -61,8 +61,19 @@ sub_name TEXT,        -- "Thành phẩm 1"
 sub_type TEXT,        -- "THANH_PHAM" | "NGUYEN_LIEU" | "BAN_THANH_PHAM"
 location_code TEXT UNIQUE,  -- "BV_TP1_1_T1" (auto-generated)
 row TEXT, shelf TEXT, max_pallets INT DEFAULT 1,
-is_active BOOL DEFAULT true, created_at, updated_at
+is_active BOOL DEFAULT true, created_at, updated_at,
+-- Sơ đồ kho (20260908, 20260908b): bản vẽ 2D — các TẦNG cùng chân kệ dùng CHUNG một ô lưới
+is_rack BOOL DEFAULT false, level_no INT (0..50, backfill từ đuôi shelf T1..T4; '' = 1),
+grid_x INT, grid_y INT (neo góc trên-trái, cả hai NULL = chưa đặt), grid_w INT DEFAULT 1, grid_h INT DEFAULT 1 (khối chiếm),
+kind TEXT DEFAULT 'STORAGE' CHECK IN (STORAGE, DOCK_IN, DOCK_OUT, DROP)  -- cửa/bãi/điểm đầu dãy cũng là Location
 ```
+
+### warehouse_maps (20260908 — khung bản vẽ theo kho, 1 dòng/kho)
+```sql
+warehouse_id TEXT PK FK Warehouse, width INT 5..400, height INT 5..400, cell_m NUMERIC(4,2) DEFAULT 1.2 (mét/ô),
+blocked JSONB [[x,y],…] (tường/cột), notes, created_at, updated_at, updated_by   -- RLS bật, realtime giữ (trg_wms_notify)
+```
+RPC: `warehouse_map_assign_cells(p_warehouse_id, p_items jsonb, p_actor)` → jsonb {ok, updated | error: NOT_IN_WAREHOUSE|OUT_OF_BOUNDS|HALF_COORD|TOO_MANY|CELL_CONFLICT+conflicts} — gán ô theo LÔ, all-or-nothing, kiểm giao hình chữ nhật giữa 2 chân kệ khác nhau · `warehouse_map_occupancy(p_warehouse_id)` → jsonb [{location_id, pallets, materials, qty_base, quarantine}].
 
 ### Manufacturer
 ```sql
@@ -155,6 +166,7 @@ created_at, updated_at
 
 | Ngày | Rev | Thay đổi |
 |---|---|---|
+| 2026-09-08 | — | **Sơ đồ kho bản một** (`20260908_warehouse_map`, `20260908b_warehouse_map_span`): `Location` + `is_rack/level_no/grid_x/grid_y/grid_w/grid_h/kind` (backfill tầng+kệ từ mã ô: Bàu Bàng 813 kệ, Ba Vì 220); bảng `warehouse_maps`; RPC `warehouse_map_assign_cells` (lô, 409 chỉ khi 2 CHÂN KỆ khác nhau giao nhau — các tầng cùng chân chung ô) + `warehouse_map_occupancy` (jsonb). Đã apply STAGING; production CHƯA. |
 | 2026-05-07 | 1–8 | Setup, Material fields, Location 2-table (bỏ SubWarehouse), Employee |
 | 2026-05-07 | 9 | ProductionImport + InventoryEntry refactor đầy đủ, WMS Inbound API |
 | 2026-05-08 | 10 | ImportShift, QAStatus, `pallet_sequence_no`, `qa_status_id`, `shift_id` |

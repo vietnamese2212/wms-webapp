@@ -26,6 +26,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   warehouse_cost:    ['view', 'edit', 'lock', 'manage_item'],
   alerts:            ['view', 'ack'],   // Trung tâm cảnh báo (06/08): view = xem + nhận push cảnh báo mới theo kho; ack riêng
   slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)
+  warehouse_map:     ['view', 'edit'],   // Sơ đồ kho (08/09): view = xem bản vẽ + tồn theo ô + tìm pallet + đường đi; edit = dựng khung / đặt vị trí / cửa-bãi / kệ-sàn
   fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)
   forklift:          ['view', 'check', 'delete_check', 'manage_vehicle', 'manage_item'],   // Xe nâng: ghi-sửa check ≠ xóa bản ghi (tách 05/08) / danh mục xe / danh mục hạng mục
   packing:           ['view', 'record', 'open_run', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): open_run = mở/đóng TRANG SỔ (lệnh) ≠ record = quét pallet; export riêng theo luật 26/07

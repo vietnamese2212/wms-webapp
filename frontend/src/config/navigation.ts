@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch,
+  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, Map as MapIcon,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -56,6 +56,8 @@ export const NAV_GROUPS: NavGroup[] = [
       // Quét tem pallet → chọn ô mới; quyền = inventory.move_location (không có module riêng)
       { to: '/wms/move-location', icon: Move,           label: 'Chuyển vị trí',     anyActions: [['inventory', 'move_location']] },
       { to: '/wms/slotting',      icon: Boxes,          label: 'Tối ưu vị trí',     module: 'slotting' },
+      // Bản vẽ 2D của kho (08/09) — không dùng chữ "Layout": Phân công đã có tab Layout = mẫu phân công nhân sự
+      { to: '/wms/warehouse-map', icon: MapIcon,        label: 'Sơ đồ kho',         module: 'warehouse_map' },
       { to: '/wms/forklift',      icon: Forklift,       label: 'Xe nâng',           module: 'forklift' },
       { to: '/wms/multi-scan',    icon: ScanIcon,       label: 'Quét loạt (test)',  adminOnly: true },
     ],

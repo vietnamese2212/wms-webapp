@@ -58,6 +58,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setFill({ warehouseId: wid, page: 1 })
     s.setStocktakeCycle({ warehouseId: wid })
     s.setSlotting({ warehouseId: wid })
+    s.setWarehouseMap({ warehouseId: wid })
     s.setScanLog({ warehouses: one(wid) })
     s.setOutbound({ warehouseId: wid, page: 1 })
     s.setInbound({ warehouseId: wid, page: 1 })

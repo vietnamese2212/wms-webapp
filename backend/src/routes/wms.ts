@@ -21,6 +21,7 @@ import * as dashboard from '../controllers/wms/dashboardController'
 import * as warehouseCost from '../controllers/wms/warehouseCostController'
 import * as trace from '../controllers/wms/traceController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
+import * as warehouseMap from '../controllers/wms/warehouseMapController'
 import * as integrationKeys from '../controllers/integration/keyController'
 import * as vision from '../controllers/integration/visionController'
 import { inboundEmitter } from '../lib/events'
@@ -237,6 +238,18 @@ router.patch('/slotting/plans/:id',                           requireAnyPerm(['s
 router.post('/slotting/plans/:id/scan-move',                  requirePerm('inventory', 'move_location'), slotting.scanMovePlanPallet)
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'delete'),   slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
+
+// ─── SƠ ĐỒ KHO (08/09) — bản vẽ 2D: khung lưới + vị trí/cửa/bãi đặt lên lưới; nền cho Directed Work ───
+// Mọi route đều có :warehouseId → controller kiểm phạm vi kho (403) + id rác/không có kho (404) trước khi làm gì.
+router.get('/warehouse-map/:warehouseId',                     requirePerm('warehouse_map', 'view'), warehouseMap.getWarehouseMap)
+router.get('/warehouse-map/:warehouseId/occupancy',           requirePerm('warehouse_map', 'view'), warehouseMap.getMapOccupancy)
+router.get('/warehouse-map/:warehouseId/find',                requirePerm('warehouse_map', 'view'), warehouseMap.findOnMap)
+router.put('/warehouse-map/:warehouseId',                     requirePerm('warehouse_map', 'edit'), warehouseMap.saveWarehouseMapFrame)
+router.patch('/warehouse-map/:warehouseId/cells',             requirePerm('warehouse_map', 'edit'), warehouseMap.assignCells)
+router.patch('/warehouse-map/:warehouseId/footprint',         requirePerm('warehouse_map', 'edit'), warehouseMap.setFootprintRack)
+router.post('/warehouse-map/:warehouseId/objects',            requirePerm('warehouse_map', 'edit'), warehouseMap.createMapObject)
+router.patch('/warehouse-map/:warehouseId/objects/:id',       requirePerm('warehouse_map', 'edit'), warehouseMap.renameMapObject)
+router.delete('/warehouse-map/:warehouseId/objects/:id',      requirePerm('warehouse_map', 'edit'), warehouseMap.deleteMapObject)
 
 // ─── FILL HÀNG phục vụ nhặt lẻ (04/08; v3 gom lệnh theo DATE 05/08) ─────────
 // Quét thực hiện GHI location_id, nhưng phạm vi bị chặn cứng ở BE: đúng mã + đúng DATE của dòng

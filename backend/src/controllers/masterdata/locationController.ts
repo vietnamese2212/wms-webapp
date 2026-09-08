@@ -192,6 +192,10 @@ export async function listLocations(req: Request, res: Response) {
         .select(view === 'lite' || byFlag ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
         .order('sub_code').order('row').order('shelf').order('id')
       if (ids) query = query.in('id', ids.slice(0, 300))   // cap 300 = trần id trên URL PostgREST
+      // Sơ đồ kho (08/09): cửa/bãi/điểm đầu dãy cũng là Location (kind ≠ STORAGE) — KHÔNG đưa vào
+      // ô chọn/gợi ý cất hàng (chúng không phải chỗ chứa). Ai cần thì hỏi ?kind= hoặc tra theo ids.
+      else if (!req.query.kind) query = query.eq('kind', 'STORAGE')
+      if (req.query.kind) query = query.eq('kind', String(req.query.kind))
       if (flagStk   !== null) query = query.eq('requires_stocktake', flagStk)
       if (flagPick  !== null) query = query.eq('is_pick_face', flagPick)
       if (flagNoIn  !== null) query = query.eq('slot_no_in', flagNoIn)

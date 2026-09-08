@@ -283,6 +283,13 @@ export const MODULES = {
       configure: 'Tab Cài đặt (hạng nhặt + luồng cửa khu)',
     },
   },
+  warehouse_map: {
+    page: 'Sơ đồ kho',
+    actions: {
+      view: 'Xem bản vẽ kho: tồn theo ô, tìm pallet/mã, đường đi từ cửa',
+      edit: 'Dựng khung lưới, đặt vị trí lên bản vẽ, cửa/bãi/điểm đầu dãy, đánh Kệ/Sàn',
+    },
+  },
   fill: {
     page: 'Fill hàng (nhặt lẻ)',
     actions: {

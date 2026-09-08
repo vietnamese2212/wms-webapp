@@ -166,15 +166,20 @@ export async function setFootprintRack(req: Request, res: Response) {
     if (!wh) return
     const b = (req.body ?? {}) as { location_ids?: unknown; is_rack?: unknown }
     const ids = Array.isArray(b.location_ids) ? b.location_ids.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 100) : []
-    if (!ids.length || ids.length > 100) return fail(res, 400, 'VALIDATION_ERROR', 'Cần 1 tới 100 vị trí')
+    // Chọn nhiều chân kệ rồi đánh Kệ/Sàn một lượt: 30 chân kệ × 4 tầng = 120 id → chia lô 100 (trần URL PostgREST ~300 uuid)
+    if (!ids.length || ids.length > 2000) return fail(res, 400, 'VALIDATION_ERROR', 'Cần 1 tới 2.000 vị trí')
     if (typeof b.is_rack !== 'boolean') return fail(res, 400, 'VALIDATION_ERROR', 'is_rack phải là true/false')
-    const { data, error } = await supabase.from('Location')
-      .update({ is_rack: b.is_rack, updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null })
-      .in('id', ids.slice(0, 100)).eq('warehouse_id', wh.id).eq('kind', 'STORAGE').select('id')
-    if (error) return fail(res, error)
+    const patch = { is_rack: b.is_rack, updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null }
+    let updated = 0
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await supabase.from('Location').update(patch)
+        .in('id', ids.slice(i, i + 100)).eq('warehouse_id', wh.id).eq('kind', 'STORAGE').select('id')
+      if (error) return fail(res, error)
+      updated += data?.length ?? 0
+    }
     // Kho khác / id lạ → không dòng nào đổi = 404 (không "đã cập nhật" giả — luật 07/09)
-    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không có vị trí nào của kho này khớp danh sách')
-    return ok(res, { updated: data.length })
+    if (!updated) return fail(res, 404, 'NOT_FOUND', 'Không có vị trí nào của kho này khớp danh sách')
+    return ok(res, { updated })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -200,8 +205,7 @@ export async function createMapObject(req: Request, res: Response) {
     const location_code = `${prefix}_${KIND_GROUP[kind]}_${slug}`
     const now = new Date().toISOString()
     const actor = req.user?.name ?? null
-    const row = {
-      id: randomUUID(), location_code, warehouse_id: wh.id,
+    const fields = {
       sub_code: KIND_GROUP[kind], sub_name: KIND_GROUP_NAME[kind], sub_type: null, categories: null,
       row: name, shelf: '', max_pallets: 0,            // 0 = không giới hạn (quy ước max_pallets)
       is_active: true, is_rack: false, level_no: 1, kind,
@@ -209,17 +213,29 @@ export async function createMapObject(req: Request, res: Response) {
       // nhánh danh sách (gói 26 [38b] bắt được: 16/15). Cửa/bãi đứng ngoài picker cất hàng nhờ `kind`
       // (listLocations mặc định chỉ STORAGE); đợt 1 xe hạ đặt pallet xuống DROP nên cửa ghi vào phải mở.
       slot_no_in: false, slot_no_out: false, is_pick_face: false,
-      created_at: now, updated_at: now, created_by: actor, updated_by: actor,
+      updated_at: now, updated_by: actor,
     }
-    const { error } = await supabase.from('Location').insert(row)
-    if (error) return fail(res, error)   // 23505 trùng mã → 409 "đã tồn tại" qua pgUserError
-    // Đặt lên lưới qua RPC (kiểm biên + trùng chân kệ). Trùng → gỡ dòng vừa tạo, trả 409.
+    // Gỡ cửa là gỡ MỀM (is_active=false, giữ mã) → tạo lại cùng tên = HỒI SINH dòng cũ (cùng id) thay vì
+    // 23505 trùng mã. Nhờ đó nút Hoàn tác trên trình vẽ trả lại đúng cửa vừa gỡ.
+    const { data: dead, error: eDead } = await supabase.from('Location').select('id')
+      .eq('warehouse_id', wh.id).eq('location_code', location_code).eq('is_active', false).neq('kind', 'STORAGE').maybeSingle()
+    if (eDead) return fail(res, eDead)
+    const row = { id: dead?.id ?? randomUUID(), location_code, warehouse_id: wh.id, ...fields, created_at: now, created_by: actor }
+    if (dead) {
+      const { error } = await supabase.from('Location').update(fields).eq('id', dead.id)
+      if (error) return fail(res, error)
+    } else {
+      const { error } = await supabase.from('Location').insert(row)
+      if (error) return fail(res, error)   // 23505 trùng mã → 409 "đã tồn tại" qua pgUserError
+    }
+    // Đặt lên lưới qua RPC (kiểm biên + trùng chân kệ). Trùng → trả dòng về trạng thái cũ, trả 409.
     const { data, error: e2 } = await supabase.rpc('warehouse_map_assign_cells', {
       p_warehouse_id: wh.id, p_items: [{ location_id: row.id, grid_x: gx, grid_y: gy, grid_w: gw, grid_h: gh }], p_actor: actor,
     })
     const r = (data ?? {}) as { ok?: boolean; error?: string; conflicts?: unknown[] }
     if (e2 || !r.ok) {
-      await supabase.from('Location').delete().eq('id', row.id)
+      if (dead) await supabase.from('Location').update({ is_active: false }).eq('id', dead.id)
+      else await supabase.from('Location').delete().eq('id', row.id)
       if (e2) return fail(res, e2)
       if (r.error === 'CELL_CONFLICT') return fail(res, 409, 'CELL_CONFLICT', 'Ô này đang có vị trí khác — chọn ô trống')
       if (r.error === 'OUT_OF_BOUNDS') return fail(res, 400, 'OUT_OF_BOUNDS', 'Ô nằm ngoài khung bản vẽ')

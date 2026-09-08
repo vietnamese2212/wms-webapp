@@ -126,6 +126,11 @@ try {
   check('[3k] Trả lại KỆ → 200', r.s === 200, `http=${r.s}`)
   r = await api(`/wms/warehouse-map/${WH}/footprint`, 'PATCH', { location_ids: ['khong-co'], is_rack: true })
   check('[3l] id không thuộc kho → 404 (không "đã cập nhật" giả)', r.s === 404, `http=${r.s} ${err(r)}`)
+  // Chọn nhiều chân kệ → đánh Kệ/Sàn một lượt: >100 id phải được chia lô, KHÔNG cắt âm thầm 100 dòng đầu
+  // (giá trị giữ nguyên is_rack=true nên dữ liệu demo không đổi)
+  const rackIds = L.filter(l => l.is_rack && l.kind === 'STORAGE').slice(0, 120).map(l => l.id)
+  r = await api(`/wms/warehouse-map/${WH}/footprint`, 'PATCH', { location_ids: rackIds, is_rack: true })
+  check('[3n] 120 id (chọn nhiều) → 200, updated = 120 (chia lô 100, không cắt)', r.s === 200 && r.j?.data?.updated === rackIds.length, `http=${r.s} updated=${r.j?.data?.updated} gửi=${rackIds.length}`)
 
   // ═══ [4] Cửa / bãi / điểm đầu dãy ═══
   r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_OUT', name: `${T} cua xuat`, grid_x: 10, grid_y: 10 })
@@ -186,6 +191,11 @@ try {
     check('[8b] Gỡ lần 2 → 404', r.s === 404, `http=${r.s}`)
     r = await api(`/wms/warehouse-map/${WH}`)
     check('[8c] Bản vẽ không còn cửa đã gỡ (is_active=false)', r.s === 200 && !(r.j?.data?.locations ?? []).some(l => l.id === createdObj.id), `http=${r.s}`)
+    // Hoàn tác "gỡ cửa" trên trình vẽ = tạo lại cùng tên → phải HỒI SINH dòng cũ (cùng id), không 409 trùng mã
+    r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_OUT', name: `${T} cua xuat`, grid_x: 10, grid_y: 10 })
+    check('[8d] Tạo lại cửa cùng tên sau khi gỡ → 201, CÙNG id (hồi sinh dòng mềm — nền của Hoàn tác)', r.s === 201 && r.j?.data?.id === createdObj.id && r.j?.data?.grid_x === 10, `http=${r.s} ${err(r)} id=${r.j?.data?.id === createdObj.id ? 'giữ' : 'ĐỔI'}`)
+    r = await api(`/wms/warehouse-map/${WH}/objects/${createdObj.id}`, 'DELETE')
+    check('[8e] Gỡ lại lần nữa → 200', r.s === 200, `http=${r.s} ${err(r)}`)
   }
 } finally {
   // ═══ DỌN: trả toạ độ 3 chân kệ về NULL, xoá cửa QA54, xoá khung nếu do gói tạo, xoá tài khoản ═══

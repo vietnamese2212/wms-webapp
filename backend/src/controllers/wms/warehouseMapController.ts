@@ -205,8 +205,10 @@ export async function createMapObject(req: Request, res: Response) {
       sub_code: KIND_GROUP[kind], sub_name: KIND_GROUP_NAME[kind], sub_type: null, categories: null,
       row: name, shelf: '', max_pallets: 0,            // 0 = không giới hạn (quy ước max_pallets)
       is_active: true, is_rack: false, level_no: 1, kind,
-      // Không đưa hàng vào bằng luật cất hàng (không phải ô chứa); vẫn cho lấy đi (DROP/bãi là nơi hàng đi qua)
-      slot_no_in: true, slot_no_out: false, is_pick_face: false,
+      // KHÔNG gắn slot_no_in: cờ đó nghĩa là "kho tạm cần dọn" cho Slotting và làm lệch số đếm cờ giữa hai
+      // nhánh danh sách (gói 26 [38b] bắt được: 16/15). Cửa/bãi đứng ngoài picker cất hàng nhờ `kind`
+      // (listLocations mặc định chỉ STORAGE); đợt 1 xe hạ đặt pallet xuống DROP nên cửa ghi vào phải mở.
+      slot_no_in: false, slot_no_out: false, is_pick_face: false,
       created_at: now, updated_at: now, created_by: actor, updated_by: actor,
     }
     const { error } = await supabase.from('Location').insert(row)

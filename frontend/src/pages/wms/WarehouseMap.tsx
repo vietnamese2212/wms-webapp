@@ -717,14 +717,8 @@ export default function WarehouseMap() {
         </div>
         <SummaryBand tiles={tiles} />
 
-        {err && (
-          <div className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
-            <span className="flex-1">{err}</span>
-            <button className="text-red-500 hover:text-red-700" onClick={() => setErr(null)} aria-label="Đóng"><X className="h-3.5 w-3.5" /></button>
-          </div>
-        )}
-
-        {/* Thân: [trình vẽ] · canvas · pane */}
+        {/* Thân: [trình vẽ] · canvas · pane. Banner lỗi NỔI trên canvas (không chen vào layout — chen vào là canvas tụt
+            xuống vài ô, cú bấm kế tiếp rơi sai ô đúng lúc người vẽ đang nhắm). */}
         <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
           {editing && draft && (
             <EditorPanel draft={draft} setDraft={setDraft} tool={tool} setTool={setTool}
@@ -734,6 +728,12 @@ export default function WarehouseMap() {
               onClearWalls={() => setBlocked([], `Xoá hết tường (${draft.blocked.length} ô)`)} />
           )}
           <div className="flex-1 min-h-[45vh] lg:min-h-0 relative bg-slate-100">
+            {err && (
+              <div className="absolute top-2 left-3 right-3 z-10 flex items-start gap-2 rounded-md border border-red-200 bg-red-50/95 px-3 py-2 text-[11px] text-red-700 shadow-sm">
+                <span className="flex-1">{err}</span>
+                <button className="text-red-500 hover:text-red-700" onClick={() => setErr(null)} aria-label="Đóng"><X className="h-3.5 w-3.5" /></button>
+              </div>
+            )}
             {mapQ.isLoading && <div className="absolute inset-0 grid place-items-center text-xs text-slate-400">Đang tải bản vẽ…</div>}
             {mapQ.isError && <div className="absolute inset-0 grid place-items-center text-xs text-red-600 px-4 text-center">{apiMsg(mapQ.error)}</div>}
             {noFrame && !editing && (

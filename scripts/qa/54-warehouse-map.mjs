@@ -36,13 +36,31 @@ await wipe()
 // Khung có sẵn? (giữ nguyên nếu có — chỉ xoá khung do gói này tạo)
 const priorMap = (await restAll('warehouse_maps', `select=warehouse_id&warehouse_id=eq.${WH}`)).length > 0
 
-// 3 chân kệ Ba Vì CHƯA đặt (grid_x null), mỗi chân ≥2 tầng, khác row nhau
-const locs = await restAll('Location', `select=id,location_code,sub_code,row,shelf,kind,level_no,grid_x&warehouse_id=eq.${WH}&is_active=is.true&kind=eq.STORAGE&grid_x=is.null&order=location_code&limit=400`)
+// 3 chân kệ Ba Vì mỗi chân ≥2 tầng, khác row. Ưu tiên chân CHƯA đặt; bản vẽ đang được người dùng vẽ thật (08/09) có thể
+// đã đặt gần hết → lấy cả chân đã đặt, GỠ TẠM rồi TRẢ LẠI đúng toạ độ cũ ở cuối (không xoá công của người vẽ).
+const locsAll = await restAll('Location', `select=id,location_code,sub_code,row,shelf,kind,level_no,grid_x,grid_y,grid_w,grid_h&warehouse_id=eq.${WH}&is_active=is.true&kind=eq.STORAGE&order=location_code&limit=1000`)
 const byFoot = new Map()
-for (const l of locs) { const k = `${l.sub_code}|${l.row}`; (byFoot.get(k) ?? byFoot.set(k, []).get(k)).push(l) }
-const feet = [...byFoot.values()].filter(a => a.length >= 2).slice(0, 3)
-check('[0] Fixture: ≥3 chân kệ Ba Vì có ≥2 tầng chưa đặt lên bản vẽ', feet.length === 3, `có ${feet.length}`)
-const touched = feet.flat().map(l => l.id)
+for (const l of locsAll) { const k = `${l.sub_code}|${l.row}`; (byFoot.get(k) ?? byFoot.set(k, []).get(k)).push(l) }
+const multi = [...byFoot.values()].filter(a => a.length >= 2)
+const feet = [...multi.filter(a => a.every(l => l.grid_x == null)), ...multi.filter(a => a.some(l => l.grid_x != null))].slice(0, 3)
+check('[0] Fixture: ≥3 chân kệ Ba Vì có ≥2 tầng (ưu tiên chưa đặt; đã đặt thì gỡ tạm, trả lại ở cuối)', feet.length === 3, `có ${feet.length} · gỡ tạm: ${feet.filter(a => a.some(l => l.grid_x != null)).length}`)
+const original = feet.flat().map(l => ({ location_id: l.id, grid_x: l.grid_x, grid_y: l.grid_y, grid_w: l.grid_w ?? 1, grid_h: l.grid_h ?? 1 }))
+const touched = original.map(o => o.location_id)
+// Vùng TRỐNG để đặt fixture: hàng thấp nhất trong khung có 6 ô liên tiếp chưa ai dùng (chân kệ, cửa, tường). Khung chưa có → 40×30 tạo ở [2c].
+const used = new Set()
+const mark = l => { for (let dx = 0; dx < (l.grid_w ?? 1); dx++) for (let dy = 0; dy < (l.grid_h ?? 1); dy++) used.add(`${l.grid_x + dx},${l.grid_y + dy}`) }
+for (const l of locsAll) if (l.grid_x != null) mark(l)
+for (const l of await restAll('Location', `select=grid_x,grid_y,grid_w,grid_h&warehouse_id=eq.${WH}&is_active=is.true&kind=neq.STORAGE&grid_x=not.is.null`)) mark(l)
+const mapRow = (await restAll('warehouse_maps', `select=width,height,blocked&warehouse_id=eq.${WH}`))[0]
+for (const [x, y] of mapRow?.blocked ?? []) used.add(`${x},${y}`)
+const FW = mapRow?.width ?? 40, FH = mapRow?.height ?? 30
+let BX = 0, BY = FH - 2
+outer: for (let y = FH - 2; y >= 0; y--) for (let x = 0; x + 6 <= FW; x++) {
+  let ok = true
+  for (let i = 0; i < 6; i++) if (used.has(`${x + i},${y}`)) { ok = false; break }
+  if (ok) { BX = x; BY = y; break outer }
+}
+console.log(`  vùng fixture trống: ô (${BX}..${BX + 5}, ${BY}) trong khung ${FW}×${FH}`)
 
 // Tài khoản PHẠM VI HẸP (kho Bluestar) có quyền warehouse_map.view → không được mở bản vẽ Ba Vì
 let scoped = null
@@ -70,6 +88,8 @@ let scoped = null
 
 let createdObj = null
 try {
+  // Gỡ tạm các chân kệ fixture đang có toạ độ (trả lại ở finally)
+  if (original.some(o => o.grid_x != null)) await api(`/wms/warehouse-map/${WH}/cells`, 'PATCH', { items: touched.map(id => ({ location_id: id, grid_x: null, grid_y: null })) })
   // ═══ [1] GET bản vẽ ═══
   let r = await api(`/wms/warehouse-map/${WH}`)
   check('[1a] GET bản vẽ kho Ba Vì → 200 + {warehouse, map, locations[]}', r.s === 200 && r.j?.data?.warehouse?.id === WH && Array.isArray(r.j?.data?.locations), `http=${r.s} n=${r.j?.data?.locations?.length}`)
@@ -93,14 +113,14 @@ try {
   // ═══ [3] Tầng chung ô · chân kệ khác chung ô = 409 ═══
   const [A, B, C] = feet
   const asg = items => api(`/wms/warehouse-map/${WH}/cells`, 'PATCH', { items })
-  r = await asg(A.map(l => ({ location_id: l.id, grid_x: 1, grid_y: 1 })))
-  check('[3a] Đặt cả các tầng chân kệ A vào ô (1,1) → 200, updated = số tầng', r.s === 200 && r.j?.data?.updated === A.length, `http=${r.s} ${err(r)} updated=${r.j?.data?.updated}`)
-  r = await asg([{ location_id: B[0].id, grid_x: 1, grid_y: 1 }])
-  check('[3b] Chân kệ B đè ô (1,1) → 409 CELL_CONFLICT nêu 2 mã', r.s === 409 && r.j?.error?.code === 'CELL_CONFLICT' && (r.j?.error?.message ?? '').includes(A[0].location_code), `http=${r.s} ${err(r)}`)
-  r = await asg([{ location_id: B[0].id, grid_x: 2, grid_y: 1, grid_w: 2, grid_h: 1 }])
-  check('[3c] Chân kệ B khối 2×1 tại (2,1) → 200', r.s === 200, `http=${r.s} ${err(r)}`)
-  r = await asg([{ location_id: C[0].id, grid_x: 3, grid_y: 1 }])
-  check('[3d] Chân kệ C tại (3,1) giao với khối B (2..3,1) → 409', r.s === 409 && r.j?.error?.code === 'CELL_CONFLICT', `http=${r.s} ${err(r)}`)
+  r = await asg(A.map(l => ({ location_id: l.id, grid_x: BX, grid_y: BY })))
+  check(`[3a] Đặt cả các tầng chân kệ A vào ô (${BX},${BY}) → 200, updated = số tầng`, r.s === 200 && r.j?.data?.updated === A.length, `http=${r.s} ${err(r)} updated=${r.j?.data?.updated}`)
+  r = await asg([{ location_id: B[0].id, grid_x: BX, grid_y: BY }])
+  check('[3b] Chân kệ B đè ô của A → 409 CELL_CONFLICT nêu 2 mã', r.s === 409 && r.j?.error?.code === 'CELL_CONFLICT' && (r.j?.error?.message ?? '').includes(A[0].location_code), `http=${r.s} ${err(r)}`)
+  r = await asg([{ location_id: B[0].id, grid_x: BX + 1, grid_y: BY, grid_w: 2, grid_h: 1 }])
+  check(`[3c] Chân kệ B khối 2×1 tại (${BX + 1},${BY}) → 200`, r.s === 200, `http=${r.s} ${err(r)}`)
+  r = await asg([{ location_id: C[0].id, grid_x: BX + 2, grid_y: BY }])
+  check('[3d] Chân kệ C đặt vào ô thứ 2 của khối B → 409', r.s === 409 && r.j?.error?.code === 'CELL_CONFLICT', `http=${r.s} ${err(r)}`)
   r = await asg([{ location_id: C[0].id, grid_x: 999, grid_y: 999 }])
   check('[3e] Ngoài khung → 400 OUT_OF_BOUNDS (kho đã có khung)', r.s === 400 && (r.j?.error?.code === 'OUT_OF_BOUNDS' || r.j?.error?.code === 'VALIDATION_ERROR'), `http=${r.s} ${err(r)}`)
   r = await asg([{ location_id: C[0].id, grid_x: 4, grid_y: null }])
@@ -133,10 +153,10 @@ try {
   check('[3n] 120 id (chọn nhiều) → 200, updated = 120 (chia lô 100, không cắt)', r.s === 200 && r.j?.data?.updated === rackIds.length, `http=${r.s} updated=${r.j?.data?.updated} gửi=${rackIds.length}`)
 
   // ═══ [4] Cửa / bãi / điểm đầu dãy ═══
-  r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_OUT', name: `${T} cua xuat`, grid_x: 10, grid_y: 10 })
-  check('[4a] Tạo cửa xuất tại ô trống → 201, kind=DOCK_OUT, có grid', r.s === 201 && r.j?.data?.kind === 'DOCK_OUT' && r.j?.data?.grid_x === 10, `http=${r.s} ${err(r)}`)
+  r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_OUT', name: `${T} cua xuat`, grid_x: BX + 4, grid_y: BY })
+  check('[4a] Tạo cửa xuất tại ô trống → 201, kind=DOCK_OUT, có grid', r.s === 201 && r.j?.data?.kind === 'DOCK_OUT' && r.j?.data?.grid_x === BX + 4, `http=${r.s} ${err(r)}`)
   createdObj = r.j?.data ?? null
-  r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DROP', name: `${T} dau day`, grid_x: 1, grid_y: 1 })
+  r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DROP', name: `${T} dau day`, grid_x: BX, grid_y: BY })
   check('[4b] Điểm đầu dãy đè lên ô kệ A → 409, KHÔNG để lại dòng rác', r.s === 409, `http=${r.s} ${err(r)}`)
   const rac = await restAll('Location', `select=id&location_code=like.*${T}DAUDAY*`)
   check('[4c] DB: không còn dòng điểm đầu dãy thất bại', rac.length === 0, `n=${rac.length}`)
@@ -159,7 +179,7 @@ try {
   r = await api(`/masterdata/locations?warehouse_id=${WH}&view=lite&limit=300&kind=DOCK_OUT`)
   check('[5b] ?kind=DOCK_OUT trả về cửa xuất', r.s === 200 && (r.j?.data ?? []).some(l => String(l.location_code).includes(T)), `http=${r.s} n=${r.j?.data?.length}`)
   r = await api(`/wms/warehouse-map/${WH}`)
-  check('[5c] GET bản vẽ có cửa xuất + chân kệ A tại (1,1)', r.s === 200 && (r.j?.data?.locations ?? []).some(l => l.kind === 'DOCK_OUT' && String(l.location_code).includes(T)) && (r.j?.data?.locations ?? []).some(l => l.id === A[0].id && l.grid_x === 1 && l.grid_y === 1), `http=${r.s}`)
+  check('[5c] GET bản vẽ có cửa xuất + chân kệ A tại ô fixture', r.s === 200 && (r.j?.data?.locations ?? []).some(l => l.kind === 'DOCK_OUT' && String(l.location_code).includes(T)) && (r.j?.data?.locations ?? []).some(l => l.id === A[0].id && l.grid_x === BX && l.grid_y === BY), `http=${r.s}`)
 
   // ═══ [6] Tồn theo ô · tìm ═══
   r = await api(`/wms/warehouse-map/${WH}/occupancy`)
@@ -192,18 +212,20 @@ try {
     r = await api(`/wms/warehouse-map/${WH}`)
     check('[8c] Bản vẽ không còn cửa đã gỡ (is_active=false)', r.s === 200 && !(r.j?.data?.locations ?? []).some(l => l.id === createdObj.id), `http=${r.s}`)
     // Hoàn tác "gỡ cửa" trên trình vẽ = tạo lại cùng tên → phải HỒI SINH dòng cũ (cùng id), không 409 trùng mã
-    r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_OUT', name: `${T} cua xuat`, grid_x: 10, grid_y: 10 })
-    check('[8d] Tạo lại cửa cùng tên sau khi gỡ → 201, CÙNG id (hồi sinh dòng mềm — nền của Hoàn tác)', r.s === 201 && r.j?.data?.id === createdObj.id && r.j?.data?.grid_x === 10, `http=${r.s} ${err(r)} id=${r.j?.data?.id === createdObj.id ? 'giữ' : 'ĐỔI'}`)
+    r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_OUT', name: `${T} cua xuat`, grid_x: BX + 4, grid_y: BY })
+    check('[8d] Tạo lại cửa cùng tên sau khi gỡ → 201, CÙNG id (hồi sinh dòng mềm — nền của Hoàn tác)', r.s === 201 && r.j?.data?.id === createdObj.id && r.j?.data?.grid_x === BX + 4, `http=${r.s} ${err(r)} id=${r.j?.data?.id === createdObj.id ? 'giữ' : 'ĐỔI'}`)
     r = await api(`/wms/warehouse-map/${WH}/objects/${createdObj.id}`, 'DELETE')
     check('[8e] Gỡ lại lần nữa → 200', r.s === 200, `http=${r.s} ${err(r)}`)
   }
 } finally {
-  // ═══ DỌN: trả toạ độ 3 chân kệ về NULL, xoá cửa QA54, xoá khung nếu do gói tạo, xoá tài khoản ═══
-  await api(`/wms/warehouse-map/${WH}/cells`, 'PATCH', { items: touched.map(id => ({ location_id: id, grid_x: null, grid_y: null })) }).catch(() => {})
+  // ═══ DỌN: trả 3 chân kệ về ĐÚNG toạ độ cũ (NULL nếu vốn chưa đặt), xoá cửa QA54 TRƯỚC (nhường ô), xoá khung nếu do gói tạo, xoá tài khoản ═══
   await wipe()
+  await api(`/wms/warehouse-map/${WH}/cells`, 'PATCH', { items: touched.map(id => ({ location_id: id, grid_x: null, grid_y: null })) }).catch(() => {})
+  await api(`/wms/warehouse-map/${WH}/cells`, 'PATCH', { items: original }).catch(() => {})
   if (!priorMap) await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
-  const left = await restAll('Location', `select=id&warehouse_id=eq.${WH}&grid_x=not.is.null&id=in.(${touched.join(',')})`)
-  check('[9] Dọn: 3 chân kệ về NULL toạ độ, 0 dòng QA54 sót', left.length === 0 && (await restAll('Location', `select=id&location_code=like.*${T}*`)).length === 0, `còn ${left.length}`)
+  const after = await restAll('Location', `select=id,grid_x,grid_y,grid_w,grid_h&id=in.(${touched.join(',')})`)
+  const lech = original.filter(o => { const a = after.find(x => x.id === o.location_id); return !a || a.grid_x !== o.grid_x || a.grid_y !== o.grid_y || (o.grid_x != null && (a.grid_w !== o.grid_w || a.grid_h !== o.grid_h)) })
+  check('[9] Dọn: 3 chân kệ về đúng toạ độ cũ, 0 dòng QA54 sót', lech.length === 0 && (await restAll('Location', `select=id&location_code=like.*${T}*`)).length === 0, `lệch ${lech.length}`)
 }
 
 finish('54-warehouse-map')

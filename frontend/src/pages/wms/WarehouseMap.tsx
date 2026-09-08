@@ -244,6 +244,11 @@ export default function WarehouseMap() {
   const selectedMany = useMemo(() => selKeys.map(k => fpByKey.get(k)).filter((f): f is Footprint => !!f), [selKeys, fpByKey])
   const selected = selectedMany.length === 1 ? selectedMany[0] : null
   const selKeySet = useMemo(() => new Set(selectedMany.map(f => f.key)), [selectedMany])
+  // Ô TƯỜNG cũng chọn được (bấm / Ctrl+bấm / quét khung) → kéo dời, Delete xoá — user 08/09 "tường không target được để kéo thả, xoá"
+  const [selWalls, setSelWalls] = useState<string[]>([])
+  const selWallSet = useMemo(() => new Set(selWalls.filter(k => blockedSet.has(k))), [selWalls, blockedSet])
+  const cellKey = (c: GridCell) => `${c.x},${c.y}`
+  const keyCell = (k: string): GridCell => { const [x, y] = k.split(',').map(Number); return { x, y } }
   const doors = useMemo(() => objects.filter(o => o.anchor && (o.kind === 'DOCK_OUT' || o.kind === 'DOCK_IN')), [objects])
   const [doorKey, setDoorKey] = useState<string>('')
   const door = (doorKey && fpByKey.get(doorKey)) || doors.find(d => d.kind === 'DOCK_OUT') || doors[0] || null
@@ -289,8 +294,9 @@ export default function WarehouseMap() {
     } finally { setHistBusy(false); bumpHist() }
   }
 
-  // Gán ô theo lô — ghi nhớ toạ độ CŨ của đúng các dòng bị đụng để hoàn tác
-  async function runAssign(items: CellAssign[], okMsg: string, label: string) {
+  // Gán ô theo lô — ghi nhớ toạ độ CŨ của đúng các dòng bị đụng để hoàn tác. `also` = thay đổi nháp cục bộ (tường) đi
+  // kèm cùng một bước (dời nhóm gồm cả chân kệ lẫn tường → một lần Ctrl+Z trả cả hai).
+  async function runAssign(items: CellAssign[], okMsg: string, label: string, also?: { apply: () => void; revert: () => void }) {
     setErr(null)
     const byId = new Map(locsRef.current.map(l => [l.id, l]))
     const before: CellAssign[] = items.map(i => {
@@ -299,8 +305,9 @@ export default function WarehouseMap() {
     })
     try {
       const r = await assign.mutateAsync(items)
+      also?.apply()
       toast({ title: okMsg, description: `${nf.format(r.updated)} dòng vị trí đã cập nhật` })
-      pushHist({ label, undo: () => assign.mutateAsync(before), redo: () => assign.mutateAsync(items) })
+      pushHist({ label, undo: () => assign.mutateAsync(before).then(() => also?.revert()), redo: () => assign.mutateAsync(items).then(() => also?.apply()) })
     } catch (e) { setErr(apiMsg(e)) }
   }
   const isFreeCell = (c: GridCell) => { const k = `${c.x},${c.y}`; return !cellOwner.has(k) && !blockedSet.has(k) }
@@ -323,17 +330,48 @@ export default function WarehouseMap() {
       storage.length === 1 ? `Gỡ ${storage[0].label}` : `Gỡ ${storage.length} chân kệ`)
     setSelKeys([])
   }
-  // Dời cả nhóm đang chọn (mũi tên) — RPC kiểm trùng với các chân kệ NGOÀI nhóm, trong nhóm dời cùng nhau nên không tự đè nhau
+  // Dời cả nhóm đang chọn (mũi tên / kéo chuột) — chân kệ qua RPC (kiểm trùng với chân kệ NGOÀI nhóm, trong nhóm dời cùng nhau
+  // nên không tự đè nhau); ô tường dời trong nháp (Lưu khung mới ghi). Một bước lịch sử cho cả hai.
   function moveSelected(dx: number, dy: number) {
     if (!frame) return
     const fs = selectedMany.filter(f => f.anchor)
-    if (!fs.length) return
+    const walls = [...selWallSet].map(keyCell)
+    if (!fs.length && !walls.length) return
     for (const f of fs) {
       const a = f.anchor as GridCell
       if (a.x + dx < 0 || a.y + dy < 0 || a.x + dx + f.w > frame.width || a.y + dy + f.h > frame.height) { setErr('Chạm mép khung — không dời được nhóm này'); return }
     }
+    const movingKeys = new Set(fs.map(f => f.key))
+    const shifted = walls.map(c => ({ x: c.x + dx, y: c.y + dy }))
+    for (const c of shifted) {
+      if (!inFrame(frame, c.x, c.y)) { setErr('Chạm mép khung — không dời được nhóm này'); return }
+      const o = cellOwner.get(cellKey(c))
+      if (o && !movingKeys.has(o.key)) { setErr(`Ô (${c.x}, ${c.y}) đang là ${o.label} — không đặt tường lên vị trí`); return }
+    }
+    const prevBlocked = draft?.blocked ?? []
+    const nextBlocked: [number, number][] = walls.length
+      ? [...prevBlocked.filter(([x, y]) => !selWallSet.has(`${x},${y}`)), ...shifted.map(c => [c.x, c.y] as [number, number])]
+      : prevBlocked
+    const applyWalls = () => { setDraft(dr => dr ? { ...dr, blocked: nextBlocked } : dr); setSelWalls(shifted.map(cellKey)) }
+    const revertWalls = () => { setDraft(dr => dr ? { ...dr, blocked: prevBlocked } : dr); setSelWalls(walls.map(cellKey)) }
+    const who = fs.length + walls.length === 1 ? (fs[0]?.label ?? 'ô tường') : `${fs.length ? `${fs.length} chân kệ` : ''}${fs.length && walls.length ? ' + ' : ''}${walls.length ? `${walls.length} ô tường` : ''}`
+    if (!fs.length) {
+      applyWalls()
+      pushHist({ label: `Dời ${who}`, undo: async () => revertWalls(), redo: async () => applyWalls() })
+      return
+    }
     const items = fs.flatMap(f => f.locs.map(l => ({ location_id: l.id, grid_x: (f.anchor as GridCell).x + dx, grid_y: (f.anchor as GridCell).y + dy, grid_w: f.w, grid_h: f.h })))
-    void runAssign(items, `Đã dời ${fs.length === 1 ? fs[0].label : `${fs.length} ô`}`, `Dời ${fs.length === 1 ? fs[0].label : `${fs.length} ô`}`)
+    void runAssign(items, `Đã dời ${who}`, `Dời ${who}`, walls.length ? { apply: applyWalls, revert: revertWalls } : undefined)
+  }
+  // Delete: gỡ chân kệ đang chọn (RPC) + xoá ô tường đang chọn (nháp)
+  function removeSelection() {
+    const walls = [...selWallSet]
+    if (walls.length) {
+      const cur = draft?.blocked ?? []
+      setBlocked(cur.filter(([x, y]) => !selWallSet.has(`${x},${y}`)), `Xoá tường ${walls.length} ô`)
+      setSelWalls([])
+    }
+    if (selectedMany.length) unplaceMany(selectedMany)
   }
   // Rải dãy: mỗi ô của vệt là ĐẦU một dãy; dãy kéo dài theo sức chứa, VUÔNG GÓC với vệt (vệt dọc → dãy ngang)
   function spreadLine(zone: string, a: GridCell, b: GridCell) {
@@ -520,8 +558,12 @@ export default function WarehouseMap() {
   function onCellClick(c: GridCell, mods: ClickMods) {
     const owner = cellOwner.get(`${c.x},${c.y}`)
     if (!editing || tool === 'select' || tool === 'pan') {
-      if (mods.ctrl) { if (owner) setSelKeys(s => s.includes(owner.key) ? s.filter(k => k !== owner.key) : [...s, owner.key]) }
-      else setSelKeys(owner ? [owner.key] : [])
+      const k = cellKey(c)
+      const isWall = !owner && blockedSet.has(k)
+      if (mods.ctrl) {
+        if (owner) setSelKeys(s => s.includes(owner.key) ? s.filter(x => x !== owner.key) : [...s, owner.key])
+        else if (isWall) setSelWalls(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
+      } else { setSelKeys(owner ? [owner.key] : []); setSelWalls(isWall ? [k] : []) }
       return
     }
     if (tool === 'place') {
@@ -557,16 +599,34 @@ export default function WarehouseMap() {
     if (next.length === cur.length) { setErr('Vệt không đi qua ô tường nào. Gỡ kéo vệt chỉ xoá tường; chân kệ thì bấm từng ô, hoặc chọn nhiều rồi Delete.'); return }
     setBlocked(next, `Xoá tường ${cur.length - next.length} ô`)
   }
+  // Đặt lẻ bằng KÉO KHUNG: vị trí nhận đúng hình khung vừa kéo (Kho 3 Lẻ 100 pallet = 4 ngang × 25 dọc — user 08/09 kèm ảnh)
+  function placeByRect(a: GridCell, b: GridCell) {
+    if (!frame) return
+    const f = placingKey ? fpByKey.get(placingKey) : null
+    if (!f) { setErr('Chọn một chân kệ ở danh sách "Chưa đặt" trước rồi kéo khung'); return }
+    const rect: Rect = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x) + 1, h: Math.abs(b.y - a.y) + 1 }
+    if (rect.w > 100 || rect.h > 100) { setErr('Khối tối đa 100 × 100 ô'); return }
+    const busyCells = rectCells(rect).filter(c => !isFreeCell(c))
+    if (busyCells.length) { setErr(`Khung đè lên ${busyCells.length} ô đã có (vị trí/tường) — kéo khung khác hoặc gỡ trước`); return }
+    const cap = capLen(f)
+    void runAssign(f.locs.map(l => ({ location_id: l.id, grid_x: rect.x, grid_y: rect.y, grid_w: rect.w, grid_h: rect.h })),
+      `Đã đặt ${f.label} khối ${rect.w}×${rect.h} ô${f.kind === 'STORAGE' && rect.w * rect.h < cap ? ` (${rect.w * rect.h}/${cap} chỗ pallet)` : ''}`, `Đặt ${f.label} ${rect.w}×${rect.h}`)
+    const next = unplaced.find(u => u.key !== f.key && u.sub_code === f.sub_code)
+    setPlacingKey(next?.key ?? null)
+  }
   function onLineDrag(a: GridCell, b: GridCell) {
     if (tool === 'wall') { paintWallLine(a, b); return }
     if (tool === 'erase') { eraseWallLine(a, b); return }
+    if (tool === 'place') { placeByRect(a, b); return }
     if (!lineZone) { setErr('Chọn khu cần rải ở bảng bên trái trước'); return }
     spreadLine(lineZone, a, b)
   }
   function onMarquee(a: GridCell, b: GridCell, additive: boolean) {
     const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y)
     const keys = placed.filter(f => f.anchor && f.anchor.x <= x1 && f.anchor.x + f.w - 1 >= x0 && f.anchor.y <= y1 && f.anchor.y + f.h - 1 >= y0).map(f => f.key)
+    const walls = (draft?.blocked ?? []).filter(([x, y]) => x >= x0 && x <= x1 && y >= y0 && y <= y1).map(([x, y]) => `${x},${y}`)
     setSelKeys(s => additive ? [...new Set([...s, ...keys])] : keys)
+    setSelWalls(s => additive ? [...new Set([...s, ...walls])] : walls)
   }
 
   // Phím tắt (bỏ qua khi đang gõ trong ô nhập hoặc đang mở sheet)
@@ -580,14 +640,15 @@ export default function WarehouseMap() {
     const k = e.key.toLowerCase()
     if (mod && k === 'z') { e.preventDefault(); if (editing && !busy) void runHist(e.shiftKey ? 'redo' : 'undo'); return }
     if (mod && k === 'y') { e.preventDefault(); if (editing && !busy) void runHist('redo'); return }
-    if (e.key === 'Escape') { setSelKeys([]); setTool('select'); setPlacingKey(null); setLineZone(null); return }
-    if (mod && k === 'a' && editing) { e.preventDefault(); setSelKeys(placed.map(f => f.key)); return }
+    if (e.key === 'Escape') { setSelKeys([]); setSelWalls([]); setTool('select'); setPlacingKey(null); setLineZone(null); return }
+    if (mod && k === 'a' && editing) { e.preventDefault(); setSelKeys(placed.map(f => f.key)); setSelWalls([...blockedSet]); return }
     if (!editing || busy) return
-    if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedMany.length) { e.preventDefault(); unplaceMany(selectedMany) } return }
+    const anySel = selectedMany.length > 0 || selWallSet.size > 0
+    if (e.key === 'Delete' || e.key === 'Backspace') { if (anySel) { e.preventDefault(); removeSelection() } return }
     const step = e.shiftKey ? 5 : 1
     const mv: Record<string, [number, number]> = { ArrowRight: [step, 0], ArrowLeft: [-step, 0], ArrowDown: [0, step], ArrowUp: [0, -step] }
     const m = mv[e.key]
-    if (m && selectedMany.length) { e.preventDefault(); moveSelected(m[0], m[1]) }
+    if (m && anySel) { e.preventDefault(); moveSelected(m[0], m[1]) }
   }
   useEffect(() => {
     const h = (e: KeyboardEvent) => keyRef.current(e)
@@ -600,7 +661,7 @@ export default function WarehouseMap() {
   // Bộ lọc
   const filterDefs: FilterDef[] = [
     { key: 'wh', label: 'Kho', type: 'single', value: effectiveWhId, pinned: true,
-      onChange: v => { setWM({ warehouseId: v, zones: [] }); setSelKeys([]) }, allLabel: '— Chọn kho',
+      onChange: v => { setWM({ warehouseId: v, zones: [] }); setSelKeys([]); setSelWalls([]) }, allLabel: '— Chọn kho',
       options: warehouses.map(w => ({ value: w.id, label: w.name })) },
     { key: 'zone', label: 'Khu', type: 'multi', selected: zones, onChange: (v: string[]) => setWM({ zones: v }),
       options: zoneList.map(z => ({ value: z, label: z })) },
@@ -689,12 +750,12 @@ export default function WarehouseMap() {
             )}
             {frame && mask && (data?.map || editing) && (
               <MapCanvas frame={frame} blocked={draft?.blocked ?? []} footprints={placed} zoneColor={zoneColor} zonesFilter={zones}
-                overlay={overlay} occByLoc={occByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} path={path} door={door}
+                overlay={overlay} occByLoc={occByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} selectedWalls={selWallSet} path={path} door={door}
                 tool={editing ? tool : 'select'} editing={editing} panHeld={spaceHeld} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee}
                 onMoveSelected={moveSelected} fitRef={fitRef} />
             )}
           </div>
-          <SidePane many={selectedMany} occByLoc={occByLoc} canEdit={canEdit && editing}
+          <SidePane many={selectedMany} wallCount={selWallSet.size} onDeleteWalls={removeSelection} occByLoc={occByLoc} canEdit={canEdit && editing}
             door={door} doors={doors} setDoorKey={setDoorKey} selDist={selDist} cellM={draft?.cell_m ?? 1.2} overlay={overlay}
             hits={findQ.data ?? []} locByIdLabel={(id) => data?.locations.find(l => l.id === id)} onPickHit={(locId) => { const f = footprints.find(x => x.locs.some(l => l.id === locId)); if (f) setSelKeys([f.key]) }}
             busy={busy} zoneColor={zoneColor} updatedAt={data?.map?.updated_at ?? null} updatedBy={data?.map?.updated_by ?? null} hasSavedFrame={hasSavedFrame}
@@ -781,7 +842,7 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
   const TOOLS: { t: Tool; icon: typeof MousePointer2; label: string; tip: string }[] = [
     { t: 'select', icon: MousePointer2, label: 'Chọn', tip: 'Bấm ô để xem cột tầng · Ctrl+bấm thêm/bớt · kéo trên ô trống = chọn vùng · kéo trên ô đang chọn = dời cả mảng' },
     { t: 'pan',    icon: Hand,          label: 'Rê', tip: 'Kéo để rê bản vẽ. Ở công cụ khác: giữ Space + kéo, hoặc chuột giữa / chuột phải; lăn để thu phóng' },
-    { t: 'place',  icon: Grid3x3,       label: 'Đặt lẻ', tip: 'Chọn chân kệ ở danh sách rồi bấm ô đầu trên bản vẽ' },
+    { t: 'place',  icon: Grid3x3,       label: 'Đặt lẻ', tip: 'Chọn chân kệ ở danh sách rồi BẤM ô đầu (khối theo sức chứa/N hàng) hoặc KÉO một khung (vị trí nhận đúng hình khung, vd 4×25)' },
     { t: 'line',   icon: Pencil,        label: 'Rải dãy', tip: 'Chọn khu rồi KÉO một vệt dọc lối đi: mỗi ô của vệt là đầu một dãy, dãy kéo dài theo sức chứa' },
     { t: 'wall',   icon: Brush,         label: 'Tường', tip: 'Bấm ô hoặc kéo một vệt để tô/xoá tường, cột (ô chắn) — nhớ Lưu khung' },
     { t: 'object', icon: DoorOpen,      label: 'Cửa/bãi', tip: 'Bấm ô trống để tạo cửa xuất, cửa nhập hoặc điểm đầu dãy' },
@@ -884,7 +945,7 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
 
 // ═══ Pane phải: cột tầng / nhóm đang chọn / cửa / kết quả tìm / chú giải ═══════════════════════════
 function SidePane(p: {
-  many: Footprint[]; occByLoc: Map<string, MapOccupancy>; canEdit: boolean
+  many: Footprint[]; wallCount: number; onDeleteWalls: () => void; occByLoc: Map<string, MapOccupancy>; canEdit: boolean
   door: Footprint | null; doors: Footprint[]; setDoorKey: (k: string) => void; selDist: number; cellM: number; overlay: Overlay
   hits: { location_id: string; pallet_code: string; material_code: string | null }[]
   locByIdLabel: (id: string) => MapLoc | undefined; onPickHit: (locId: string) => void
@@ -915,6 +976,14 @@ function SidePane(p: {
               options={p.doors.map(d => ({ value: d.key, label: d.label, sub: KIND_LABEL[d.kind] }))} />
           : <span className="text-slate-400">chưa có cửa xuất / nhập trên bản vẽ</span>}
       </div>
+
+      {p.wallCount > 0 && (
+        <div className="px-3 py-2 border-b flex items-center gap-2 text-[11px] bg-slate-50">
+          <span className="h-3 w-3 rounded-sm bg-slate-400 border-2 border-sky-600 shrink-0" />
+          <span className="flex-1"><b>{nf.format(p.wallCount)} ô tường</b> đang chọn{p.canEdit ? ' · kéo để dời · Delete để xoá' : ''}</span>
+          {p.canEdit && <Button size="sm" variant="ghost" className="h-6 text-[11px] text-red-600 px-1.5" disabled={p.busy} onClick={p.onDeleteWalls}><Trash2 className="h-3 w-3 mr-1" />Xoá</Button>}
+        </div>
+      )}
 
       {!f && !many && (
         <div className="p-3 space-y-3 text-[11px]">
@@ -1057,9 +1126,9 @@ function SidePane(p: {
 }
 
 // ═══ Canvas ═══════════════════════════════════════════════════════════════════════════════════════
-function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, tool, editing, panHeld, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
+function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, selectedWalls, path, door, tool, editing, panHeld, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
   frame: GridFrame; blocked: [number, number][]; footprints: Footprint[]; zoneColor: Map<string, string>; zonesFilter: string[]
-  overlay: Overlay; occByLoc: Map<string, MapOccupancy>; hitLocIds: Set<string>; selectedKeys: Set<string>; path: GridCell[]; door: Footprint | null
+  overlay: Overlay; occByLoc: Map<string, MapOccupancy>; hitLocIds: Set<string>; selectedKeys: Set<string>; selectedWalls: Set<string>; path: GridCell[]; door: Footprint | null
   tool: Tool; editing: boolean; panHeld: boolean
   onCellClick: (c: GridCell, mods: ClickMods) => void; onLineDrag: (a: GridCell, b: GridCell) => void; onMarquee: (a: GridCell, b: GridCell, additive: boolean) => void
   onMoveSelected: (dx: number, dy: number) => void
@@ -1076,7 +1145,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
   const [lineStart, setLineStart] = useState<GridCell | null>(null)       // vệt Rải dãy / Tường
   const [marqueeStart, setMarqueeStart] = useState<GridCell | null>(null) // kéo chọn vùng (Shift+kéo ở chế độ xem; kéo thường trên ô trống ở chế độ vẽ)
   const [dragMove, setDragMove] = useState<{ start: GridCell; cur: GridCell } | null>(null) // kéo mảng đang chọn theo chuột (chế độ vẽ)
-  const dragsLine = tool === 'line' || tool === 'wall' || tool === 'erase'
+  const dragsLine = tool === 'line' || tool === 'wall' || tool === 'erase' || tool === 'place'
   const ownerAt = useMemo(() => {
     const m = new Map<string, Footprint>()
     for (const f of footprints) for (const c of f.cells) m.set(`${c.x},${c.y}`, f)
@@ -1131,9 +1200,13 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       for (let y = 0; y <= frame.height; y++) { g.moveTo(px(0), py(y) + 0.5); g.lineTo(px(frame.width), py(y) + 0.5) }
       g.stroke()
     }
-    // tường
+    // tường (ô đang chọn: viền xanh)
     g.fillStyle = '#94a3b8'
     for (const [x, y] of blocked) if (inFrame(frame, x, y)) g.fillRect(px(x), py(y), s, s)
+    if (selectedWalls.size) {
+      g.strokeStyle = '#0284c7'; g.lineWidth = Math.max(1.5, s * 0.15)
+      for (const [x, y] of blocked) if (selectedWalls.has(`${x},${y}`)) g.strokeRect(px(x) + 1, py(y) + 1, s - 2, s - 2)
+    }
     // dấu × trong một ô pallet (như bản vẽ tay của kho)
     const cross = (x0: number, y0: number, color: string) => {
       const m = s * 0.3
@@ -1232,10 +1305,18 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
         g.fillStyle = 'rgba(2,132,199,0.3)'; g.fillRect(X, Y, W, H)
         g.strokeStyle = '#0284c7'; g.strokeRect(X + 0.5, Y + 0.5, W - 1, H - 1)
       }
+      for (const [x, y] of blocked) if (selectedWalls.has(`${x},${y}`)) { g.fillStyle = 'rgba(100,116,139,0.45)'; g.fillRect(px(x + dx), py(y + dy), s, s); g.strokeStyle = '#0284c7'; g.strokeRect(px(x + dx) + 0.5, py(y + dy) + 0.5, s - 1, s - 1) }
       g.setLineDash([])
     }
     // vệt đang kéo (rải dãy / tường) · khung chọn vùng · ô đang trỏ
-    if (lineStart && hover) {
+    if (lineStart && hover && tool === 'place') {
+      // Đặt lẻ kéo khung: xem trước KHỐI (không phải vệt) + kích thước
+      const x0 = Math.min(lineStart.x, hover.x), y0 = Math.min(lineStart.y, hover.y), w = Math.abs(hover.x - lineStart.x) + 1, h = Math.abs(hover.y - lineStart.y) + 1
+      g.fillStyle = 'rgba(2,132,199,0.3)'; g.fillRect(px(x0), py(y0), w * s, h * s)
+      g.strokeStyle = '#0284c7'; g.lineWidth = 1.5; g.setLineDash([4, 3]); g.strokeRect(px(x0) + 0.5, py(y0) + 0.5, w * s - 1, h * s - 1); g.setLineDash([])
+      g.fillStyle = '#0f172a'; g.font = '600 11px ui-sans-serif, system-ui'; g.textAlign = 'left'; g.textBaseline = 'bottom'
+      g.fillText(`${w}×${h} = ${w * h} ô`, px(x0) + 2, py(y0) - 2)
+    } else if (lineStart && hover) {
       g.fillStyle = tool === 'wall' ? 'rgba(100,116,139,0.45)' : tool === 'erase' ? 'rgba(239,68,68,0.35)' : 'rgba(2,132,199,0.35)'
       for (const c of lineCells(lineStart, hover)) g.fillRect(px(c.x), py(c.y), s, s)
     } else if (marqueeStart && hover) {
@@ -1246,7 +1327,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     } else if (hover && tool !== 'select') {
       g.strokeStyle = '#0ea5e9'; g.lineWidth = 2; g.strokeRect(px(hover.x) + 1, py(hover.y) + 1, s - 2, s - 2)
     }
-  }, [size, view, frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, hover, lineStart, marqueeStart, dragMove, tool])
+  }, [size, view, frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, selectedWalls, path, door, hover, lineStart, marqueeStart, dragMove, tool])
 
   // Tương tác. Chế độ XEM: kéo = rê bản vẽ, Shift+kéo = chọn vùng. Chế độ VẼ + công cụ Chọn: kéo trên ô trống = chọn vùng,
   // kéo trên ô ĐANG CHỌN = dời cả mảng theo chuột; rê bản vẽ bằng chuột giữa / chuột phải. Công cụ Rải dãy / Tường: kéo = vệt.
@@ -1268,7 +1349,8 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     if (dragsLine) setLineStart(cell)
     else if (tool === 'select' && editing) {
       const owner = ownerAt(cell)
-      if (owner && selectedKeys.has(owner.key) && !e.ctrlKey && !e.metaKey && !e.shiftKey) setDragMove({ start: cell, cur: cell })
+      const onSelected = owner ? selectedKeys.has(owner.key) : selectedWalls.has(`${cell.x},${cell.y}`)
+      if (onSelected && !e.ctrlKey && !e.metaKey && !e.shiftKey) setDragMove({ start: cell, cur: cell })
       else setMarqueeStart(cell)
     } else if (tool === 'select' && e.shiftKey) setMarqueeStart(cell)
   }

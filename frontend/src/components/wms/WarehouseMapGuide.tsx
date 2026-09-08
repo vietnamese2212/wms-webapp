@@ -80,7 +80,7 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
               <><b>Khung lưới</b>: nhập <b>Kho dài / Kho rộng</b> theo mét rồi bấm <b>Chia ô</b> (chia theo mét/ô), hoặc gõ thẳng số ô. Xong bấm <b>Lưu khung</b> trên thanh công cụ.</>,
               <><b>Tường</b>: chọn công cụ Tường, <b>bấm</b> một ô hoặc <b>kéo một vệt</b> để tô cột, tường, văn phòng kho. Xoá: kéo vệt bắt đầu trên tường, hoặc công cụ <b>Gỡ</b> kéo vệt qua tường, hoặc <b>Xoá hết tường</b> ở Khung lưới. Ô nhỏ khó nhắm thì lăn chuột phóng to trước. Tường thuộc khung → nhớ <b>Lưu khung</b>.</>,
               <><b>Rải dãy</b>: trong danh sách "Chưa đặt", bấm <b>Rải dãy</b> cạnh tên khu, rồi <b>kéo một vệt</b> trên bản vẽ dọc theo lối đi. Mỗi ô của vệt là đầu một dãy; dãy kéo dài theo sức chứa, <b>vuông góc với vệt</b> về phía đã chọn (mục 4). Còn dãy chưa đặt → kéo vệt tiếp.</>,
-              <><b>Đặt lẻ</b>: mở khu, bấm tên chân kệ, rồi bấm ô đầu trên bản vẽ. Đặt xong tự nhảy sang chân kệ kế tiếp cùng khu.</>,
+              <><b>Đặt lẻ</b>: mở khu, bấm tên chân kệ, rồi <b>bấm</b> ô đầu trên bản vẽ (khối theo sức chứa / N hàng) hoặc <b>kéo một khung</b> — vị trí nhận đúng hình khung vừa kéo (ví dụ Kho Lẻ 100 pallet vẽ 4 ngang × 25 dọc), có xem trước kích thước. Đặt xong tự nhảy sang chân kệ kế tiếp cùng khu.</>,
               <><b>Cửa/bãi</b>: chọn công cụ, bấm ô trống → chọn loại (Cửa / bãi xuất · Cửa / bãi nhập · Điểm đầu dãy), đặt tên, kích thước theo ô → <b>Tạo</b>. Kho có Cửa số 1 … 8 dọc mép thì tạo từng cửa.</>,
               <><b>Gợi ý đầu dãy</b>: sau khi rải, bấm để hệ thống đề xuất một điểm đầu dãy ở đầu mỗi dãy phía cửa xuất (nơi xe nâng hạ đặt pallet). Tick dòng muốn tạo, đổi tên nếu cần.</>,
               <><b>Kệ / Sàn</b>: bấm ô → pane → <b>Đánh là KỆ / SÀN</b> (đổi cả chân kệ). Hệ thống đã tự suy từ đuôi mã (T1 … T4 = kệ, không đuôi = sàn), chỉ sửa chỗ sai.</>,
@@ -104,7 +104,7 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
         {canEdit && (
           <Sec title="5 · Chọn nhiều, hoàn tác, phím tắt">
             <Rows rows={[
-              ['Chọn một ô', <>Bấm</>],
+              ['Chọn một ô', <>Bấm. <b>Ô tường cũng chọn được</b> như chân kệ (bấm / Ctrl+bấm / quét khung) → kéo để dời, <Kbd>Delete</Kbd> để xoá; pane hiện "N ô tường đang chọn".</>],
               ['Thêm / bớt vào nhóm', <><Kbd>Ctrl</Kbd> + bấm (Mac: <Kbd>⌘</Kbd>)</>],
               ['Quét chọn cả vùng', <>Ở công cụ <b>Chọn</b> (chế độ Chỉnh sửa): <b>kéo chuột trên ô trống</b> vẽ khung, mọi ô chạm khung được chọn. Giữ <Kbd>Ctrl</Kbd> khi thả để cộng vào nhóm đang chọn. Ở chế độ Xem dùng <Kbd>Shift</Kbd> + kéo.</>],
               ['Chọn tất cả đã đặt', <><Kbd>Ctrl</Kbd>+<Kbd>A</Kbd></>],

@@ -78,7 +78,7 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
             <Steps items={[
               <>Bấm <b>Chỉnh sửa</b> (kho chưa có bản vẽ thì bấm <b>Dựng bản vẽ</b>). Panel trình vẽ mở bên trái.</>,
               <><b>Khung lưới</b>: nhập <b>Kho dài / Kho rộng</b> theo mét rồi bấm <b>Chia ô</b> (chia theo mét/ô), hoặc gõ thẳng số ô. Xong bấm <b>Lưu khung</b> trên thanh công cụ.</>,
-              <><b>Tường</b>: chọn công cụ Tường, <b>bấm</b> một ô hoặc <b>kéo một vệt</b> để tô cột, tường, văn phòng kho. Bấm hay kéo lên tường có sẵn để xoá. Tường thuộc khung → nhớ <b>Lưu khung</b>.</>,
+              <><b>Tường</b>: chọn công cụ Tường, <b>bấm</b> một ô hoặc <b>kéo một vệt</b> để tô cột, tường, văn phòng kho. Xoá: kéo vệt bắt đầu trên tường, hoặc công cụ <b>Gỡ</b> kéo vệt qua tường, hoặc <b>Xoá hết tường</b> ở Khung lưới. Ô nhỏ khó nhắm thì lăn chuột phóng to trước. Tường thuộc khung → nhớ <b>Lưu khung</b>.</>,
               <><b>Rải dãy</b>: trong danh sách "Chưa đặt", bấm <b>Rải dãy</b> cạnh tên khu, rồi <b>kéo một vệt</b> trên bản vẽ dọc theo lối đi. Mỗi ô của vệt là đầu một dãy; dãy kéo dài theo sức chứa, <b>vuông góc với vệt</b> về phía đã chọn (mục 4). Còn dãy chưa đặt → kéo vệt tiếp.</>,
               <><b>Đặt lẻ</b>: mở khu, bấm tên chân kệ, rồi bấm ô đầu trên bản vẽ. Đặt xong tự nhảy sang chân kệ kế tiếp cùng khu.</>,
               <><b>Cửa/bãi</b>: chọn công cụ, bấm ô trống → chọn loại (Cửa / bãi xuất · Cửa / bãi nhập · Điểm đầu dãy), đặt tên, kích thước theo ô → <b>Tạo</b>. Kho có Cửa số 1 … 8 dọc mép thì tạo từng cửa.</>,
@@ -94,6 +94,7 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
             <Bullets items={[
               <>Mặc định <b>Theo sức chứa</b>: 1 ô = 1 pallet, chiều dài = sức chứa lớn nhất trong các tầng của chân kệ. Chạm mép khung hay ô đã có thì dãy bị <b>cắt ngắn</b> và thông báo nêu số dãy bị cắt.</>,
               <><b>Kéo dài về</b> → ← ↓ ↑: phía dãy kéo dài tính từ ô đầu. Khi rải, vệt dọc chỉ dùng → hoặc ←, vệt ngang chỉ dùng ↓ hoặc ↑ (hệ thống tự đổi nếu chọn lệch).</>,
+              <><b>Xếp thành N hàng</b>: vị trí GỘP lớn (ví dụ ô Lẻ cả cụm 100 pallet) không nên chạy một vệt 100 ô — đặt 10 hàng → khối 10 × 10, vẫn là một vị trí, không phải tách. Ô đã đặt rồi: bấm ô → pane → nút <b>Vuông</b> gợi ý khối gần vuông theo sức chứa → <b>Áp</b>.</>,
               <>Bỏ tick Theo sức chứa để đặt <b>khối cố định</b> rộng × cao (ô sàn xếp khối, ví dụ 4 × 8). Đặt xong vẫn đổi được: bấm ô → pane → <b>Khối</b> → <b>Áp</b>.</>,
               <>Sức chứa lấy từ trường <b>Số pallet tối đa</b> của vị trí (trang Vị trí kho). Để trống hoặc 0 → vẽ 1 ô; tối đa 100 ô một chiều.</>,
             ]} />
@@ -109,7 +110,7 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
               ['Chọn tất cả đã đặt', <><Kbd>Ctrl</Kbd>+<Kbd>A</Kbd></>],
               ['Bỏ chọn / thoát công cụ', <><Kbd>Esc</Kbd></>],
               ['Kéo mảng đang chọn', <><b>Kéo chuột trên một ô đang chọn</b> → cả mảng đi theo (bóng mờ xanh), thả xuống mới ghi. Hoặc <Kbd>←</Kbd> <Kbd>→</Kbd> <Kbd>↑</Kbd> <Kbd>↓</Kbd> dời 1 ô, <Kbd>Shift</Kbd> + mũi tên dời 5 ô. Chạm mép hoặc đè ô khác thì từ chối cả nhóm.</>],
-              ['Rê bản vẽ khi đang vẽ', <>Chuột <b>giữa</b> hoặc chuột <b>phải</b> kéo, lăn để thu phóng, nút <b>Vừa màn</b>. (Chế độ Xem: kéo trái = rê như cũ.)</>],
+              ['Rê bản vẽ khi đang vẽ', <>Công cụ <b>Rê</b> (bàn tay) rồi kéo, hoặc giữ <Kbd>Space</Kbd> + kéo ở bất kỳ công cụ nào, hoặc chuột <b>giữa</b> / chuột <b>phải</b> kéo. Lăn để thu phóng, nút <b>Vừa màn</b> về toàn cảnh. (Chế độ Xem: kéo trái = rê như cũ.)</>],
               ['Gỡ nhóm khỏi bản vẽ', <><Kbd>Delete</Kbd> — chân kệ về danh sách "Chưa đặt" (cửa / bãi gỡ từng cái).</>],
               ['Đánh KỆ / SÀN cả nhóm', <>Pane phải → nút <b>Đánh KỆ</b> / <b>Đánh SÀN</b>.</>],
               ['Hoàn tác / Làm lại', <><Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> / <Kbd>Ctrl</Kbd>+<Kbd>Y</Kbd> (hoặc <Kbd>Ctrl</Kbd>+<Kbd>Shift</Kbd>+<Kbd>Z</Kbd>), hay hai nút trên thanh công cụ. Nhớ 50 bước gần nhất; đổi kho thì xoá lịch sử.</>],

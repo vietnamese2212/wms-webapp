@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { Map as MapIcon, Pencil, Eye, Save, Maximize2, MousePointer2, Grid3x3, Brush, DoorOpen, Eraser, Sparkles, Trash2, X, Package, BookOpen, Undo2, Redo2 } from 'lucide-react'
+import { Map as MapIcon, Pencil, Eye, Save, Maximize2, MousePointer2, Hand, Grid3x3, Brush, DoorOpen, Eraser, Sparkles, Trash2, X, Package, BookOpen, Undo2, Redo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -63,7 +63,7 @@ interface Footprint {
   is_rack: boolean
   cells: GridCell[]
 }
-type Tool = 'select' | 'place' | 'line' | 'wall' | 'object' | 'erase'
+type Tool = 'select' | 'pan' | 'place' | 'line' | 'wall' | 'object' | 'erase'
 type Overlay = 'stock' | 'path' | 'none'
 type Dir = 'R' | 'L' | 'D' | 'U'
 interface Rect { x: number; y: number; w: number; h: number }
@@ -99,17 +99,31 @@ function rectCells(r: Rect): GridCell[] {
 function capLen(f: Footprint): number {
   return Math.min(100, Math.max(1, ...f.locs.map(l => (l.max_pallets > 0 ? l.max_pallets : 0))))
 }
-// Vệt pallet từ ô đầu theo hướng, dài tối đa `len`, dừng ở mép khung / ô không trống. null = chính ô đầu không trống.
-function stripFrom(head: GridCell, len: number, dir: Dir, frame: GridFrame, isFree: (c: GridCell) => boolean): Rect | null {
-  const v = DIR_VEC[dir]
-  let n = 0
-  for (; n < len; n++) {
-    const c = { x: head.x + v.x * n, y: head.y + v.y * n }
-    if (!inFrame(frame, c.x, c.y) || !isFree(c)) break
+// Khối pallet theo sức chứa từ ô đầu: kéo dài theo hướng `dir`, xếp thành `rows` hàng (hàng thứ 2.. nằm về phía
+// dưới/phải của ô đầu). 100 pallet · 1 hàng = vệt 100 ô; 100 pallet · 10 hàng = khối 10×10 (vị trí GỘP lớn, user 08/09:
+// "vị trí Lẻ cả cụm 100 pallet, không muốn tách, chạy một hàng dài không hợp lý"). Chạm mép / ô không trống → cắt
+// ngắn theo chiều dài; xếp nhiều hàng mà không vừa thì rơi về 1 hàng. null = chính ô đầu không trống.
+function blockFrom(head: GridCell, cap: number, dir: Dir, rows: number, frame: GridFrame, isFree: (c: GridCell) => boolean): Rect | null {
+  const v = DIR_VEC[dir], horiz = v.y === 0
+  const depth = Math.max(1, Math.min(rows, cap))
+  const rectOf = (n: number, d: number): Rect => {
+    const end = { x: head.x + v.x * (n - 1), y: head.y + v.y * (n - 1) }
+    const x0 = Math.min(head.x, end.x), y0 = Math.min(head.y, end.y)
+    return horiz ? { x: x0, y: y0, w: n, h: d } : { x: x0, y: y0, w: d, h: n }
   }
-  if (n === 0) return null
-  const end = { x: head.x + v.x * (n - 1), y: head.y + v.y * (n - 1) }
-  return { x: Math.min(head.x, end.x), y: Math.min(head.y, end.y), w: Math.abs(end.x - head.x) + 1, h: Math.abs(end.y - head.y) + 1 }
+  const ok = (r: Rect) => r.x >= 0 && r.y >= 0 && r.x + r.w <= frame.width && r.y + r.h <= frame.height && rectCells(r).every(isFree)
+  for (const d of depth > 1 ? [depth, 1] : [1]) {
+    const len = Math.ceil(cap / d)
+    let n = 0
+    while (n < len && ok(rectOf(n + 1, d))) n++
+    if (n > 0) return rectOf(n, d)
+  }
+  return null
+}
+// Khối gần vuông chứa đủ sức chứa (gợi ý cho pane "Khối")
+function squareFor(cap: number): { w: number; h: number } {
+  const w = Math.max(1, Math.ceil(Math.sqrt(cap)))
+  return { w, h: Math.max(1, Math.ceil(cap / w)) }
 }
 // Khối cố định w×h neo tại ô đầu — chỉ đặt khi trọn khối trống và nằm trong khung
 function blockAt(head: GridCell, w: number, h: number, frame: GridFrame, isFree: (c: GridCell) => boolean): Rect | null {
@@ -188,9 +202,11 @@ export default function WarehouseMap() {
   const [lineZone, setLineZone] = useState<string | null>(null)
   const [byCapacity, setByCapacity] = useState(true)
   const [dir, setDir] = useState<Dir>('R')
+  const [rows, setRows] = useState(1)      // xếp sức chứa thành N hàng (1 = vệt; 10 → 100 pallet = 10×10)
   const [span, setSpan] = useState({ w: 1, h: 1 })
   const [err, setErr] = useState<string | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [spaceHeld, setSpaceHeld] = useState(false)   // giữ Space = rê bản vẽ tạm (như trình vẽ)
 
   // Khung NHÁP khi sửa (kích thước + tường) — lưu một lần bằng nút Lưu khung. Chỉ đồng bộ lại từ máy chủ khi
   // BẢN ĐÃ LƯU đổi (đổi kho / người khác lưu), không theo mỗi refetch do đặt vị trí.
@@ -292,7 +308,7 @@ export default function WarehouseMap() {
     if (!frame) return
     const cap = capLen(f)
     const rect = f.kind === 'STORAGE' && !byCapacity ? blockAt(at, span.w, span.h, frame, isFreeCell)
-      : stripFrom(at, f.kind === 'STORAGE' ? cap : 1, dir, frame, isFreeCell)
+      : blockFrom(at, f.kind === 'STORAGE' ? cap : 1, dir, rows, frame, isFreeCell)
     if (!rect) { setErr(byCapacity ? 'Ô này không trống' : `Khối ${span.w}×${span.h} tại ô này chạm mép khung hoặc ô đã có — chọn ô khác hay đổi khối`); return }
     const cut = byCapacity && f.kind === 'STORAGE' && rect.w * rect.h < cap ? ` (cắt ngắn còn ${rect.w * rect.h}/${cap} ô — chạm mép hoặc ô đã có)` : ''
     void runAssign(f.locs.map(l => ({ location_id: l.id, grid_x: rect.x, grid_y: rect.y, grid_w: rect.w, grid_h: rect.h })), `Đã đặt ${f.label}${cut}`, `Đặt ${f.label}`)
@@ -336,7 +352,7 @@ export default function WarehouseMap() {
       if (gi >= group.length) break
       const f = group[gi]
       const cap = capLen(f)
-      const rect = byCapacity ? stripFrom(head, cap, d, frame, isFree) : blockAt(head, span.w, span.h, frame, isFree)
+      const rect = byCapacity ? blockFrom(head, cap, d, rows, frame, isFree) : blockAt(head, span.w, span.h, frame, isFree)
       if (!rect) continue                       // ô đầu không trống (hoặc khối không vừa) → thử ô kế tiếp trên vệt
       if (byCapacity && rect.w * rect.h < cap) cut++
       for (const c of rectCells(rect)) taken.add(`${c.x},${c.y}`)
@@ -503,7 +519,7 @@ export default function WarehouseMap() {
   const fitRef = useRef<() => void>(() => {})
   function onCellClick(c: GridCell, mods: ClickMods) {
     const owner = cellOwner.get(`${c.x},${c.y}`)
-    if (!editing || tool === 'select') {
+    if (!editing || tool === 'select' || tool === 'pan') {
       if (mods.ctrl) { if (owner) setSelKeys(s => s.includes(owner.key) ? s.filter(k => k !== owner.key) : [...s, owner.key]) }
       else setSelKeys(owner ? [owner.key] : [])
       return
@@ -533,8 +549,17 @@ export default function WarehouseMap() {
       if (blockedSet.has(`${c.x},${c.y}`)) toggleWall(c)
     }
   }
+  // Gỡ kéo vệt = xoá mọi ô tường trên vệt (ô 2 px khó nhắm từng ô — user 08/09 "không target được để xoá")
+  function eraseWallLine(a: GridCell, b: GridCell) {
+    const cur = draft?.blocked ?? []
+    const cells = lineCells(a, b)
+    const next = cur.filter(([x, y]) => !cells.some(c => c.x === x && c.y === y))
+    if (next.length === cur.length) { setErr('Vệt không đi qua ô tường nào. Gỡ kéo vệt chỉ xoá tường; chân kệ thì bấm từng ô, hoặc chọn nhiều rồi Delete.'); return }
+    setBlocked(next, `Xoá tường ${cur.length - next.length} ô`)
+  }
   function onLineDrag(a: GridCell, b: GridCell) {
     if (tool === 'wall') { paintWallLine(a, b); return }
+    if (tool === 'erase') { eraseWallLine(a, b); return }
     if (!lineZone) { setErr('Chọn khu cần rải ở bảng bên trái trước'); return }
     spreadLine(lineZone, a, b)
   }
@@ -550,6 +575,7 @@ export default function WarehouseMap() {
     const t = e.target as HTMLElement | null
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
     if (objSheet || dropSuggest || guideOpen) return
+    if (e.key === ' ' && editing && t && (t.tagName === 'BODY' || t.tagName === 'CANVAS')) { e.preventDefault(); setSpaceHeld(true); return }
     const mod = e.ctrlKey || e.metaKey
     const k = e.key.toLowerCase()
     if (mod && k === 'z') { e.preventDefault(); if (editing && !busy) void runHist(e.shiftKey ? 'redo' : 'undo'); return }
@@ -565,8 +591,10 @@ export default function WarehouseMap() {
   }
   useEffect(() => {
     const h = (e: KeyboardEvent) => keyRef.current(e)
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
+    const up = (e: KeyboardEvent) => { if (e.key === ' ') setSpaceHeld(false) }
+    const blur = () => setSpaceHeld(false)
+    window.addEventListener('keydown', h); window.addEventListener('keyup', up); window.addEventListener('blur', blur)
+    return () => { window.removeEventListener('keydown', h); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur) }
   }, [])
 
   // Bộ lọc
@@ -641,7 +669,8 @@ export default function WarehouseMap() {
             <EditorPanel draft={draft} setDraft={setDraft} tool={tool} setTool={setTool}
               unplaced={unplaced} placingKey={placingKey} setPlacingKey={setPlacingKey}
               lineZone={lineZone} setLineZone={setLineZone} span={span} setSpan={setSpan} zoneColor={zoneColor}
-              byCapacity={byCapacity} setByCapacity={setByCapacity} dir={dir} setDir={setDir} />
+              byCapacity={byCapacity} setByCapacity={setByCapacity} dir={dir} setDir={setDir} rows={rows} setRows={setRows}
+              onClearWalls={() => setBlocked([], `Xoá hết tường (${draft.blocked.length} ô)`)} />
           )}
           <div className="flex-1 min-h-[45vh] lg:min-h-0 relative bg-slate-100">
             {mapQ.isLoading && <div className="absolute inset-0 grid place-items-center text-xs text-slate-400">Đang tải bản vẽ…</div>}
@@ -661,7 +690,7 @@ export default function WarehouseMap() {
             {frame && mask && (data?.map || editing) && (
               <MapCanvas frame={frame} blocked={draft?.blocked ?? []} footprints={placed} zoneColor={zoneColor} zonesFilter={zones}
                 overlay={overlay} occByLoc={occByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} path={path} door={door}
-                tool={editing ? tool : 'select'} editing={editing} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee}
+                tool={editing ? tool : 'select'} editing={editing} panHeld={spaceHeld} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee}
                 onMoveSelected={moveSelected} fitRef={fitRef} />
             )}
           </div>
@@ -729,7 +758,7 @@ export default function WarehouseMap() {
 }
 
 // ═══ Trình vẽ (panel trái, chỉ desktop) ═════════════════════════════════════════════════════════
-function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, setPlacingKey, lineZone, setLineZone, span, setSpan, zoneColor, byCapacity, setByCapacity, dir, setDir }: {
+function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, setPlacingKey, lineZone, setLineZone, span, setSpan, zoneColor, byCapacity, setByCapacity, dir, setDir, rows, setRows, onClearWalls }: {
   draft: { width: number; height: number; cell_m: number; blocked: [number, number][] }
   setDraft: React.Dispatch<React.SetStateAction<{ width: number; height: number; cell_m: number; blocked: [number, number][] } | null>>
   tool: Tool; setTool: (t: Tool) => void
@@ -739,6 +768,8 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
   zoneColor: Map<string, string>
   byCapacity: boolean; setByCapacity: (v: boolean) => void
   dir: Dir; setDir: (d: Dir) => void
+  rows: number; setRows: (n: number) => void
+  onClearWalls: () => void
 }) {
   const [meters, setMeters] = useState<{ w: string; h: string }>({ w: '', h: '' })
   const groups = useMemo(() => {
@@ -748,12 +779,13 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
   }, [unplaced])
   const [openZone, setOpenZone] = useState<string | null>(null)
   const TOOLS: { t: Tool; icon: typeof MousePointer2; label: string; tip: string }[] = [
-    { t: 'select', icon: MousePointer2, label: 'Chọn', tip: 'Bấm ô để xem cột tầng · Ctrl+bấm thêm/bớt · kéo trên ô trống = chọn vùng · kéo trên ô đang chọn = dời cả mảng · chuột giữa/phải = rê bản vẽ' },
+    { t: 'select', icon: MousePointer2, label: 'Chọn', tip: 'Bấm ô để xem cột tầng · Ctrl+bấm thêm/bớt · kéo trên ô trống = chọn vùng · kéo trên ô đang chọn = dời cả mảng' },
+    { t: 'pan',    icon: Hand,          label: 'Rê', tip: 'Kéo để rê bản vẽ. Ở công cụ khác: giữ Space + kéo, hoặc chuột giữa / chuột phải; lăn để thu phóng' },
     { t: 'place',  icon: Grid3x3,       label: 'Đặt lẻ', tip: 'Chọn chân kệ ở danh sách rồi bấm ô đầu trên bản vẽ' },
     { t: 'line',   icon: Pencil,        label: 'Rải dãy', tip: 'Chọn khu rồi KÉO một vệt dọc lối đi: mỗi ô của vệt là đầu một dãy, dãy kéo dài theo sức chứa' },
     { t: 'wall',   icon: Brush,         label: 'Tường', tip: 'Bấm ô hoặc kéo một vệt để tô/xoá tường, cột (ô chắn) — nhớ Lưu khung' },
     { t: 'object', icon: DoorOpen,      label: 'Cửa/bãi', tip: 'Bấm ô trống để tạo cửa xuất, cửa nhập hoặc điểm đầu dãy' },
-    { t: 'erase',  icon: Eraser,        label: 'Gỡ', tip: 'Bấm ô để gỡ vị trí khỏi bản vẽ / xoá tường / gỡ cửa' },
+    { t: 'erase',  icon: Eraser,        label: 'Gỡ', tip: 'Bấm ô để gỡ vị trí khỏi bản vẽ / xoá tường / gỡ cửa · KÉO một vệt để xoá mọi ô tường trên vệt' },
   ]
   const placingLabel = placingKey ? unplaced.find(u => u.key === placingKey) : null
   return (
@@ -771,11 +803,14 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
           <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" disabled={!Number(meters.w) || !Number(meters.h)}
             onClick={() => setDraft(d => d ? { ...d, width: Math.min(400, Math.max(5, Math.ceil(Number(meters.w) / d.cell_m))), height: Math.min(400, Math.max(5, Math.ceil(Number(meters.h) / d.cell_m))) } : d)}>Chia ô</Button>
         </div>
-        <p className="text-[10px] text-slate-400">Tường đã tô: {draft.blocked.length} ô. Đổi khung xong bấm <b>Lưu khung</b> ở toolbar.</p>
+        <p className="text-[10px] text-slate-400 flex items-center gap-1.5 flex-wrap">
+          <span>Tường đã tô: {draft.blocked.length} ô. Đổi khung xong bấm <b>Lưu khung</b> ở toolbar.</span>
+          {draft.blocked.length > 0 && <button className="text-red-600 hover:underline" onClick={onClearWalls}>Xoá hết tường</button>}
+        </p>
       </div>
       <div className="p-2 border-b">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Công cụ</div>
-        <div className="grid grid-cols-3 gap-1">
+        <div className="grid grid-cols-4 gap-1">
           {TOOLS.map(({ t, icon: Icon, label, tip }) => (
             <button key={t} title={tip} onClick={() => setTool(t)}
               className={`flex flex-col items-center gap-0.5 rounded border px-1 py-1.5 text-[10px] ${tool === t ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
@@ -798,7 +833,13 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
                       className={`h-6 w-7 rounded border font-mono text-xs ${dir === d.d ? 'border-sky-500 bg-sky-600 text-white' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'}`}>{d.label}</button>
                   ))}
                 </div>
-                {tool === 'line' && <p className="text-slate-400">Vệt dọc → dãy nằm ngang (→/←) · vệt ngang → dãy nằm dọc (↓/↑).</p>}
+                <div className="flex items-center gap-1.5">
+                  <span>Xếp thành</span>
+                  <Input type="number" min={1} max={100} value={rows} onChange={e => setRows(Math.max(1, Math.min(100, Number(e.target.value) || 1)))} className="h-6 w-12 text-[10px] px-1" />
+                  <span>hàng</span>
+                  <span className="text-slate-400">{placingLabel ? (() => { const c = capLen(placingLabel), d = Math.min(rows, c); return `→ ${Math.ceil(c / d)}×${d} ô` })() : '(1 = một vệt · 10 hàng: 100 pallet = 10×10)'}</span>
+                </div>
+                {tool === 'line' && <p className="text-slate-400">Vệt dọc → dãy nằm ngang (→/←) · vệt ngang → dãy nằm dọc (↓/↑). Nhiều hàng thì hàng 2.. nằm phía dưới/phải ô đầu.</p>}
               </>
             ) : (
               <div className="flex items-center gap-1.5">
@@ -990,6 +1031,8 @@ function SidePane(p: {
                   <span>×</span>
                   <Input type="number" min={1} max={100} value={sizeDraft.h} onChange={e => setSizeDraft(s => s ? { ...s, h: Math.max(1, Number(e.target.value) || 1) } : s)} className="h-6 w-12 text-[10px] px-1" />
                   <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" disabled={p.busy || (sizeDraft.w === f.w && sizeDraft.h === f.h)} onClick={() => p.onResize(f, sizeDraft.w, sizeDraft.h)}>Áp</Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5 text-sky-700" title="Gợi ý khối gần vuông chứa đủ sức chứa (vị trí gộp lớn) — bấm Áp để ghi"
+                    onClick={() => setSizeDraft(squareFor(capOf([f])))}>Vuông</Button>
                   <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 text-red-600 ml-auto" disabled={p.busy} onClick={() => p.onUnplace([f])}><Trash2 className="h-3 w-3 mr-1" />Gỡ khỏi bản vẽ</Button>
                 </div>
               )}
@@ -1014,10 +1057,10 @@ function SidePane(p: {
 }
 
 // ═══ Canvas ═══════════════════════════════════════════════════════════════════════════════════════
-function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, tool, editing, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
+function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, tool, editing, panHeld, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
   frame: GridFrame; blocked: [number, number][]; footprints: Footprint[]; zoneColor: Map<string, string>; zonesFilter: string[]
   overlay: Overlay; occByLoc: Map<string, MapOccupancy>; hitLocIds: Set<string>; selectedKeys: Set<string>; path: GridCell[]; door: Footprint | null
-  tool: Tool; editing: boolean
+  tool: Tool; editing: boolean; panHeld: boolean
   onCellClick: (c: GridCell, mods: ClickMods) => void; onLineDrag: (a: GridCell, b: GridCell) => void; onMarquee: (a: GridCell, b: GridCell, additive: boolean) => void
   onMoveSelected: (dx: number, dy: number) => void
   fitRef: React.MutableRefObject<() => void>
@@ -1033,7 +1076,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
   const [lineStart, setLineStart] = useState<GridCell | null>(null)       // vệt Rải dãy / Tường
   const [marqueeStart, setMarqueeStart] = useState<GridCell | null>(null) // kéo chọn vùng (Shift+kéo ở chế độ xem; kéo thường trên ô trống ở chế độ vẽ)
   const [dragMove, setDragMove] = useState<{ start: GridCell; cur: GridCell } | null>(null) // kéo mảng đang chọn theo chuột (chế độ vẽ)
-  const dragsLine = tool === 'line' || tool === 'wall'
+  const dragsLine = tool === 'line' || tool === 'wall' || tool === 'erase'
   const ownerAt = useMemo(() => {
     const m = new Map<string, Footprint>()
     for (const f of footprints) for (const c of f.cells) m.set(`${c.x},${c.y}`, f)
@@ -1193,7 +1236,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     }
     // vệt đang kéo (rải dãy / tường) · khung chọn vùng · ô đang trỏ
     if (lineStart && hover) {
-      g.fillStyle = tool === 'wall' ? 'rgba(100,116,139,0.45)' : 'rgba(2,132,199,0.35)'
+      g.fillStyle = tool === 'wall' ? 'rgba(100,116,139,0.45)' : tool === 'erase' ? 'rgba(239,68,68,0.35)' : 'rgba(2,132,199,0.35)'
       for (const c of lineCells(lineStart, hover)) g.fillRect(px(c.x), py(c.y), s, s)
     } else if (marqueeStart && hover) {
       const x0 = Math.min(marqueeStart.x, hover.x), y0 = Math.min(marqueeStart.y, hover.y)
@@ -1219,7 +1262,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       return
     }
     const cell = toCell(e.clientX, e.clientY)
-    const panBtn = e.button === 1 || e.button === 2
+    const panBtn = e.button === 1 || e.button === 2 || panHeld || tool === 'pan'
     ptr.current = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, startCell: cell, pan: panBtn || (!editing && tool === 'select' && !e.shiftKey) }
     if (panBtn || !cell) return
     if (dragsLine) setLineStart(cell)
@@ -1272,33 +1315,41 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       onMarquee(marqueeStart, cell ?? hover ?? marqueeStart, mods.ctrl)
       return
     }
-    if (p.pan) return
+    if (p.pan) { if (!p.moved && cell && tool === 'pan') onCellClick(cell, mods); return }
     if (lineStart) {
-      if (tool === 'wall' && !p.moved) { if (cell) onCellClick(cell, mods) }   // tường: bấm = bật/tắt một ô
+      if (tool !== 'line' && !p.moved) { if (cell) onCellClick(cell, mods) }   // tường/gỡ: bấm = một ô, kéo = vệt
       else if (cell) onLineDrag(lineStart, cell)
       setLineStart(null)
       return
     }
     if (!p.moved && cell) onCellClick(cell, mods)
   }
-  function onWheel(e: React.WheelEvent) {
-    e.preventDefault()
+  // Lăn = thu phóng quanh con trỏ. Listener native non-passive (React gắn wheel dạng passive → preventDefault bị Chrome
+  // từ chối kèm lỗi console); preventDefault để trang không cuộn theo.
+  useEffect(() => {
     const el = canvasRef.current
     if (!el) return
-    const r = el.getBoundingClientRect()
-    const mx = e.clientX - r.left, my = e.clientY - r.top
-    setView(v => {
-      const ns = Math.max(2, Math.min(80, v.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
-      const k = ns / v.scale
-      return { scale: ns, ox: mx - (mx - v.ox) * k, oy: my - (my - v.oy) * k }
-    })
-  }
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const r = el.getBoundingClientRect()
+      const mx = e.clientX - r.left, my = e.clientY - r.top
+      setView(v => {
+        const ns = Math.max(2, Math.min(80, v.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+        const k = ns / v.scale
+        return { scale: ns, ox: mx - (mx - v.ox) * k, oy: my - (my - v.oy) * k }
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+  const panning = tool === 'pan' || panHeld || !editing
+  const cursor = dragMove ? 'cursor-grabbing' : panning ? 'cursor-grab active:cursor-grabbing' : tool === 'select' ? 'cursor-default' : 'cursor-crosshair'
 
   return (
     <div ref={wrapRef} className="absolute inset-0 overflow-hidden select-none touch-none">
-      <canvas ref={canvasRef} className={`block ${tool !== 'select' ? 'cursor-crosshair' : editing ? (dragMove ? 'cursor-grabbing' : 'cursor-default') : 'cursor-grab active:cursor-grabbing'}`}
+      <canvas ref={canvasRef} className={`block ${cursor}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
-        onPointerLeave={() => setHover(null)} onWheel={onWheel} onContextMenu={e => e.preventDefault()} />
+        onPointerLeave={() => setHover(null)} onContextMenu={e => e.preventDefault()} />
       {hover && (
         <div className="pointer-events-none absolute left-2 bottom-2 rounded bg-slate-900/80 px-2 py-0.5 text-[10px] font-mono text-white">
           ô ({hover.x}, {hover.y}) · {Math.round(view.scale)} px/ô

@@ -154,6 +154,9 @@ export type Rag = 'G' | 'Y' | 'R'
 export function kpiValue(def: KpiDef, num: number | null | undefined, den: number | null | undefined, days: number): number | null {
   const n = Number(num), d = Number(den)
   if (num == null || den == null || !Number.isFinite(n) || !Number.isFinite(d)) return null
+  // KPI tiền: kỳ CHƯA KHAI chi phí trả cost = 0 chứ không null → "0 đ/thùng" rồi ▲ so kỳ đọc như chi phí tăng vọt.
+  // Chưa khai = chưa có dữ liệu, không phải miễn phí.
+  if (def.cost && n <= 0) return null
   switch (def.kind) {
     case 'pct':      return d > 0 ? (100 * n) / d : null
     case 'ratio':    return d > 0 ? n / d : null

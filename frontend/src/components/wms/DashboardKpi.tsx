@@ -321,7 +321,7 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal }: {
             </button>
           )}
           <WarehouseSingleSelect warehouses={warehouses} value={scope} onChange={id => setScope(id || (canGlobal ? '' : warehouseId))}
-            placeholder="Riêng kho…" allLabel={canGlobal ? undefined : undefined} triggerClassName="h-8 w-52" />
+            placeholder="Riêng kho…" triggerClassName="h-8 w-52" />
           {scope && <span className="text-[11px] text-slate-500">Đang sửa mục tiêu RIÊNG của kho — "Theo công ty" = không ghi đè.</span>}
         </div>
 

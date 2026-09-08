@@ -661,7 +661,8 @@ export default function WarehouseMap() {
             {frame && mask && (data?.map || editing) && (
               <MapCanvas frame={frame} blocked={draft?.blocked ?? []} footprints={placed} zoneColor={zoneColor} zonesFilter={zones}
                 overlay={overlay} occByLoc={occByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} path={path} door={door}
-                tool={editing ? tool : 'select'} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee} fitRef={fitRef} />
+                tool={editing ? tool : 'select'} editing={editing} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee}
+                onMoveSelected={moveSelected} fitRef={fitRef} />
             )}
           </div>
           <SidePane many={selectedMany} occByLoc={occByLoc} canEdit={canEdit && editing}
@@ -747,7 +748,7 @@ function EditorPanel({ draft, setDraft, tool, setTool, unplaced, placingKey, set
   }, [unplaced])
   const [openZone, setOpenZone] = useState<string | null>(null)
   const TOOLS: { t: Tool; icon: typeof MousePointer2; label: string; tip: string }[] = [
-    { t: 'select', icon: MousePointer2, label: 'Chọn', tip: 'Bấm ô để xem cột tầng · Ctrl+bấm thêm/bớt · Shift+kéo chọn cả vùng' },
+    { t: 'select', icon: MousePointer2, label: 'Chọn', tip: 'Bấm ô để xem cột tầng · Ctrl+bấm thêm/bớt · kéo trên ô trống = chọn vùng · kéo trên ô đang chọn = dời cả mảng · chuột giữa/phải = rê bản vẽ' },
     { t: 'place',  icon: Grid3x3,       label: 'Đặt lẻ', tip: 'Chọn chân kệ ở danh sách rồi bấm ô đầu trên bản vẽ' },
     { t: 'line',   icon: Pencil,        label: 'Rải dãy', tip: 'Chọn khu rồi KÉO một vệt dọc lối đi: mỗi ô của vệt là đầu một dãy, dãy kéo dài theo sức chứa' },
     { t: 'wall',   icon: Brush,         label: 'Tường', tip: 'Bấm ô hoặc kéo một vệt để tô/xoá tường, cột (ô chắn) — nhớ Lưu khung' },
@@ -930,7 +931,7 @@ function SidePane(p: {
               </>
             )}
           </div>
-          {p.canEdit && <p className="text-slate-400">Mũi tên: dời 1 ô · Shift+mũi tên: dời 5 ô · Delete: gỡ · Esc: bỏ chọn · Ctrl+bấm: thêm/bớt · Shift+kéo: chọn vùng.</p>}
+          {p.canEdit && <p className="text-slate-400">Kéo mảng bằng chuột hoặc mũi tên (Shift = 5 ô) · Delete: gỡ · Esc: bỏ chọn · Ctrl+bấm: thêm/bớt · kéo trên ô trống: chọn vùng.</p>}
         </div>
       )}
 
@@ -992,7 +993,7 @@ function SidePane(p: {
                   <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 text-red-600 ml-auto" disabled={p.busy} onClick={() => p.onUnplace([f])}><Trash2 className="h-3 w-3 mr-1" />Gỡ khỏi bản vẽ</Button>
                 </div>
               )}
-              {p.canEdit && f.anchor && <p className="mt-1.5 text-slate-400">Mũi tên: dời 1 ô · Delete: gỡ · Ctrl+bấm ô khác: chọn thêm.</p>}
+              {p.canEdit && f.anchor && <p className="mt-1.5 text-slate-400">Kéo ô này bằng chuột hoặc mũi tên để dời · Delete: gỡ · Ctrl+bấm ô khác: chọn thêm.</p>}
             </div>
           )}
 
@@ -1013,10 +1014,12 @@ function SidePane(p: {
 }
 
 // ═══ Canvas ═══════════════════════════════════════════════════════════════════════════════════════
-function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, tool, onCellClick, onLineDrag, onMarquee, fitRef }: {
+function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, tool, editing, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
   frame: GridFrame; blocked: [number, number][]; footprints: Footprint[]; zoneColor: Map<string, string>; zonesFilter: string[]
   overlay: Overlay; occByLoc: Map<string, MapOccupancy>; hitLocIds: Set<string>; selectedKeys: Set<string>; path: GridCell[]; door: Footprint | null
-  tool: Tool; onCellClick: (c: GridCell, mods: ClickMods) => void; onLineDrag: (a: GridCell, b: GridCell) => void; onMarquee: (a: GridCell, b: GridCell, additive: boolean) => void
+  tool: Tool; editing: boolean
+  onCellClick: (c: GridCell, mods: ClickMods) => void; onLineDrag: (a: GridCell, b: GridCell) => void; onMarquee: (a: GridCell, b: GridCell, additive: boolean) => void
+  onMoveSelected: (dx: number, dy: number) => void
   fitRef: React.MutableRefObject<() => void>
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -1024,12 +1027,18 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
   const [size, setSize] = useState({ w: 300, h: 300 })
   const [view, setView] = useState({ scale: 12, ox: 8, oy: 8 })
   const viewRef = useRef(view); viewRef.current = view
-  const ptr = useRef<{ id: number; x: number; y: number; moved: boolean; startCell: GridCell | null } | null>(null)
+  const ptr = useRef<{ id: number; x: number; y: number; moved: boolean; startCell: GridCell | null; pan: boolean } | null>(null)
   const pinch = useRef<{ d: number; scale: number } | null>(null)
   const [hover, setHover] = useState<GridCell | null>(null)
   const [lineStart, setLineStart] = useState<GridCell | null>(null)       // vệt Rải dãy / Tường
-  const [marqueeStart, setMarqueeStart] = useState<GridCell | null>(null) // Shift+kéo chọn vùng
+  const [marqueeStart, setMarqueeStart] = useState<GridCell | null>(null) // kéo chọn vùng (Shift+kéo ở chế độ xem; kéo thường trên ô trống ở chế độ vẽ)
+  const [dragMove, setDragMove] = useState<{ start: GridCell; cur: GridCell } | null>(null) // kéo mảng đang chọn theo chuột (chế độ vẽ)
   const dragsLine = tool === 'line' || tool === 'wall'
+  const ownerAt = useMemo(() => {
+    const m = new Map<string, Footprint>()
+    for (const f of footprints) for (const c of f.cells) m.set(`${c.x},${c.y}`, f)
+    return (c: GridCell) => m.get(`${c.x},${c.y}`)
+  }, [footprints])
 
   useEffect(() => {
     const el = wrapRef.current
@@ -1170,6 +1179,18 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       g.fillStyle = '#0284c7'; g.beginPath(); g.arc(px(end.x) + s / 2, py(end.y) + s / 2, Math.max(3, s * 0.25), 0, Math.PI * 2); g.fill()
     }
     if (door?.anchor && overlay === 'path') { g.fillStyle = '#16a34a'; g.beginPath(); g.arc(px(door.anchor.x) + s / 2, py(door.anchor.y) + s / 2, Math.max(3, s * 0.3), 0, Math.PI * 2); g.fill() }
+    // bóng mờ của mảng đang kéo theo chuột (thả xuống mới ghi)
+    if (dragMove && (dragMove.cur.x !== dragMove.start.x || dragMove.cur.y !== dragMove.start.y)) {
+      const dx = dragMove.cur.x - dragMove.start.x, dy = dragMove.cur.y - dragMove.start.y
+      g.setLineDash([4, 3]); g.lineWidth = 1.5
+      for (const f of footprints) {
+        if (!f.anchor || !selectedKeys.has(f.key)) continue
+        const X = px(f.anchor.x + dx), Y = py(f.anchor.y + dy), W = f.w * s, H = f.h * s
+        g.fillStyle = 'rgba(2,132,199,0.3)'; g.fillRect(X, Y, W, H)
+        g.strokeStyle = '#0284c7'; g.strokeRect(X + 0.5, Y + 0.5, W - 1, H - 1)
+      }
+      g.setLineDash([])
+    }
     // vệt đang kéo (rải dãy / tường) · khung chọn vùng · ô đang trỏ
     if (lineStart && hover) {
       g.fillStyle = tool === 'wall' ? 'rgba(100,116,139,0.45)' : 'rgba(2,132,199,0.35)'
@@ -1182,9 +1203,11 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     } else if (hover && tool !== 'select') {
       g.strokeStyle = '#0ea5e9'; g.lineWidth = 2; g.strokeRect(px(hover.x) + 1, py(hover.y) + 1, s - 2, s - 2)
     }
-  }, [size, view, frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, hover, lineStart, marqueeStart, tool])
+  }, [size, view, frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, path, door, hover, lineStart, marqueeStart, dragMove, tool])
 
-  // Tương tác: kéo = pan (hoặc vệt rải dãy/tường, hoặc Shift+kéo = chọn vùng), bấm = chọn ô, lăn = zoom, hai ngón = zoom
+  // Tương tác. Chế độ XEM: kéo = rê bản vẽ, Shift+kéo = chọn vùng. Chế độ VẼ + công cụ Chọn: kéo trên ô trống = chọn vùng,
+  // kéo trên ô ĐANG CHỌN = dời cả mảng theo chuột; rê bản vẽ bằng chuột giữa / chuột phải. Công cụ Rải dãy / Tường: kéo = vệt.
+  // Bấm = chọn ô · lăn = zoom · hai ngón = zoom.
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   function onPointerDown(e: React.PointerEvent) {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId)
@@ -1196,9 +1219,15 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       return
     }
     const cell = toCell(e.clientX, e.clientY)
-    ptr.current = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, startCell: cell }
-    if (dragsLine && cell) setLineStart(cell)
-    else if (tool === 'select' && e.shiftKey && cell) setMarqueeStart(cell)
+    const panBtn = e.button === 1 || e.button === 2
+    ptr.current = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, startCell: cell, pan: panBtn || (!editing && tool === 'select' && !e.shiftKey) }
+    if (panBtn || !cell) return
+    if (dragsLine) setLineStart(cell)
+    else if (tool === 'select' && editing) {
+      const owner = ownerAt(cell)
+      if (owner && selectedKeys.has(owner.key) && !e.ctrlKey && !e.metaKey && !e.shiftKey) setDragMove({ start: cell, cur: cell })
+      else setMarqueeStart(cell)
+    } else if (tool === 'select' && e.shiftKey) setMarqueeStart(cell)
   }
   function onPointerMove(e: React.PointerEvent) {
     if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -1209,13 +1238,16 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       setView(v => ({ ...v, scale: ns }))
       return
     }
-    setHover(toCell(e.clientX, e.clientY))
+    const here = toCell(e.clientX, e.clientY)
+    setHover(here)
     const p = ptr.current
     if (!p || p.id !== e.pointerId || e.buttons === 0) return
     const dx = e.clientX - p.x, dy = e.clientY - p.y
     if (!p.moved && Math.hypot(dx, dy) < 4) return
     p.moved = true
+    if (dragMove) { if (here) setDragMove(d => d ? { ...d, cur: here } : d); return }
     if (lineStart || marqueeStart) return   // đang kéo vệt / khung chọn: không pan
+    if (!p.pan) return
     setView(v => ({ ...v, ox: v.ox + dx, oy: v.oy + dy })); p.x = e.clientX; p.y = e.clientY
   }
   function onPointerUp(e: React.PointerEvent) {
@@ -1226,11 +1258,21 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     ptr.current = null
     const cell = toCell(e.clientX, e.clientY)
     const mods: ClickMods = { ctrl: e.ctrlKey || e.metaKey }
-    if (marqueeStart) {
-      onMarquee(marqueeStart, cell ?? hover ?? marqueeStart, mods.ctrl)
-      setMarqueeStart(null)
+    if (dragMove) {
+      const end = cell ?? dragMove.cur
+      const dx = end.x - dragMove.start.x, dy = end.y - dragMove.start.y
+      setDragMove(null)
+      if (p.moved && (dx || dy)) onMoveSelected(dx, dy)
+      else if (!p.moved && cell) onCellClick(cell, mods)
       return
     }
+    if (marqueeStart) {
+      setMarqueeStart(null)
+      if (!p.moved) { if (cell) onCellClick(cell, mods); return }   // không kéo = bấm chọn thường
+      onMarquee(marqueeStart, cell ?? hover ?? marqueeStart, mods.ctrl)
+      return
+    }
+    if (p.pan) return
     if (lineStart) {
       if (tool === 'wall' && !p.moved) { if (cell) onCellClick(cell, mods) }   // tường: bấm = bật/tắt một ô
       else if (cell) onLineDrag(lineStart, cell)
@@ -1254,9 +1296,9 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
 
   return (
     <div ref={wrapRef} className="absolute inset-0 overflow-hidden select-none touch-none">
-      <canvas ref={canvasRef} className={`block ${tool === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
+      <canvas ref={canvasRef} className={`block ${tool !== 'select' ? 'cursor-crosshair' : editing ? (dragMove ? 'cursor-grabbing' : 'cursor-default') : 'cursor-grab active:cursor-grabbing'}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
-        onPointerLeave={() => setHover(null)} onWheel={onWheel} />
+        onPointerLeave={() => setHover(null)} onWheel={onWheel} onContextMenu={e => e.preventDefault()} />
       {hover && (
         <div className="pointer-events-none absolute left-2 bottom-2 rounded bg-slate-900/80 px-2 py-0.5 text-[10px] font-mono text-white">
           ô ({hover.x}, {hover.y}) · {Math.round(view.scale)} px/ô

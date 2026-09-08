@@ -105,10 +105,11 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
             <Rows rows={[
               ['Chọn một ô', <>Bấm</>],
               ['Thêm / bớt vào nhóm', <><Kbd>Ctrl</Kbd> + bấm (Mac: <Kbd>⌘</Kbd>)</>],
-              ['Chọn cả vùng', <><Kbd>Shift</Kbd> + kéo khung ở công cụ <b>Chọn</b>. Giữ thêm <Kbd>Ctrl</Kbd> để cộng vào nhóm đang chọn.</>],
+              ['Quét chọn cả vùng', <>Ở công cụ <b>Chọn</b> (chế độ Chỉnh sửa): <b>kéo chuột trên ô trống</b> vẽ khung, mọi ô chạm khung được chọn. Giữ <Kbd>Ctrl</Kbd> khi thả để cộng vào nhóm đang chọn. Ở chế độ Xem dùng <Kbd>Shift</Kbd> + kéo.</>],
               ['Chọn tất cả đã đặt', <><Kbd>Ctrl</Kbd>+<Kbd>A</Kbd></>],
               ['Bỏ chọn / thoát công cụ', <><Kbd>Esc</Kbd></>],
-              ['Dời nhóm đang chọn', <><Kbd>←</Kbd> <Kbd>→</Kbd> <Kbd>↑</Kbd> <Kbd>↓</Kbd> dời 1 ô · <Kbd>Shift</Kbd> + mũi tên dời 5 ô. Chạm mép hoặc đè ô khác thì từ chối cả nhóm.</>],
+              ['Kéo mảng đang chọn', <><b>Kéo chuột trên một ô đang chọn</b> → cả mảng đi theo (bóng mờ xanh), thả xuống mới ghi. Hoặc <Kbd>←</Kbd> <Kbd>→</Kbd> <Kbd>↑</Kbd> <Kbd>↓</Kbd> dời 1 ô, <Kbd>Shift</Kbd> + mũi tên dời 5 ô. Chạm mép hoặc đè ô khác thì từ chối cả nhóm.</>],
+              ['Rê bản vẽ khi đang vẽ', <>Chuột <b>giữa</b> hoặc chuột <b>phải</b> kéo, lăn để thu phóng, nút <b>Vừa màn</b>. (Chế độ Xem: kéo trái = rê như cũ.)</>],
               ['Gỡ nhóm khỏi bản vẽ', <><Kbd>Delete</Kbd> — chân kệ về danh sách "Chưa đặt" (cửa / bãi gỡ từng cái).</>],
               ['Đánh KỆ / SÀN cả nhóm', <>Pane phải → nút <b>Đánh KỆ</b> / <b>Đánh SÀN</b>.</>],
               ['Hoàn tác / Làm lại', <><Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> / <Kbd>Ctrl</Kbd>+<Kbd>Y</Kbd> (hoặc <Kbd>Ctrl</Kbd>+<Kbd>Shift</Kbd>+<Kbd>Z</Kbd>), hay hai nút trên thanh công cụ. Nhớ 50 bước gần nhất; đổi kho thì xoá lịch sử.</>],

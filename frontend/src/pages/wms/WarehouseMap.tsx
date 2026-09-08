@@ -1213,6 +1213,57 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       g.strokeStyle = color; g.lineWidth = Math.max(1, s * 0.06)
       g.beginPath(); g.moveTo(x0 + m, y0 + m); g.lineTo(x0 + s - m, y0 + s - m); g.moveTo(x0 + s - m, y0 + m); g.lineTo(x0 + m, y0 + s - m); g.stroke()
     }
+    // Xuống dòng theo từ trong bề rộng maxW, tối đa maxLines dòng; từ quá dài cắt theo ký tự; còn chữ chưa hiện → "…"
+    const wrapText = (text: string, maxW: number, maxLines: number): string[] => {
+      const fits = (t: string) => g.measureText(t).width <= maxW
+      const out: string[] = []
+      let cur = ''
+      for (const w of text.split(/\s+/).filter(Boolean)) {
+        if (out.length >= maxLines) break
+        const t = cur ? `${cur} ${w}` : w
+        if (fits(t)) { cur = t; continue }
+        if (cur) out.push(cur)
+        let piece = w
+        while (!fits(piece) && piece.length > 1 && out.length < maxLines) {
+          let k = piece.length
+          while (k > 1 && !fits(piece.slice(0, k))) k--
+          out.push(piece.slice(0, k)); piece = piece.slice(k)
+        }
+        cur = piece
+      }
+      if (cur && out.length < maxLines) out.push(cur)
+      if (out.join('').replace(/\s/g, '') !== text.replace(/\s/g, '') && out.length) {
+        let last = out[out.length - 1]
+        while (last.length > 1 && !fits(last + '…')) last = last.slice(0, -1)
+        out[out.length - 1] = last + '…'
+      }
+      return out
+    }
+    const drawLabel = (text: string, X: number, Y: number, W: number, H: number, color: string, bg: string | null, weight: number) => {
+      const vertical = H > W * 1.6 && W < 40          // vệt dọc hẹp → chữ chạy dọc
+      const bw = (vertical ? H : W) - 4, bh = (vertical ? W : H) - 2
+      if (bw < 8 || bh < 7) return
+      let fs = Math.min(13, Math.max(7, Math.floor(bh * 0.72)))
+      let lines: string[] = []
+      for (; fs >= 7; fs--) {
+        g.font = `${weight} ${fs}px ui-monospace, monospace`
+        lines = wrapText(text, bw, Math.max(1, Math.floor(bh / (fs * 1.15))))
+        if (lines.length && lines.every(l => g.measureText(l).width <= bw) && !lines[lines.length - 1].endsWith('…')) break
+      }
+      if (!lines.length) return
+      const lh = fs * 1.15
+      g.save()
+      g.translate(X + W / 2, Y + H / 2)
+      if (vertical) g.rotate(-Math.PI / 2)
+      g.textAlign = 'center'; g.textBaseline = 'middle'
+      if (bg) {
+        const tw = Math.max(...lines.map(l => g.measureText(l).width))
+        g.fillStyle = bg; g.fillRect(-tw / 2 - 2, -(lines.length * lh) / 2 - 1, tw + 4, lines.length * lh + 2)
+      }
+      g.fillStyle = color
+      lines.forEach((l, i) => g.fillText(l, 0, (i - (lines.length - 1) / 2) * lh))
+      g.restore()
+    }
     // vạch chia ô trong một khối nhiều ô
     const innerGrid = (X: number, Y: number, w: number, h: number, color: string) => {
       if (w * h <= 1) return
@@ -1261,21 +1312,11 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
         g.strokeRect(X + 0.5, Y + 0.5, W - 1, H - 1)
         if (overlay === 'stock' && hasQA) { g.strokeStyle = '#d97706'; g.lineWidth = 2; g.strokeRect(X + 1, Y + 1, W - 2, H - 2) }
       }
-      // nhãn
-      if (s >= 16 || (f.kind !== 'STORAGE' && s >= 10) || (f.w * s >= 40)) {
-        const fs = Math.max(8, Math.min(13, Math.min(W, H) * 0.42))
-        g.fillStyle = f.kind === 'STORAGE' ? '#0f172a' : '#ffffff'; g.font = `${f.kind === 'STORAGE' ? 500 : 600} ${fs}px ui-monospace, monospace`
-        g.textAlign = 'center'; g.textBaseline = 'middle'
-        const maxCh = Math.max(3, Math.floor(W / (fs * 0.6)))
-        const label = f.label.length > maxCh ? f.label.slice(0, maxCh) : f.label
-        if (f.kind === 'STORAGE' && overlay !== 'stock' || f.kind !== 'STORAGE') g.fillText(label, X + W / 2, Y + H / 2)
-        else {
-          // trên nền ô pallet: nhãn có đệm trắng mờ để đọc được
-          const tw = g.measureText(label).width
-          g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(X + W / 2 - tw / 2 - 2, Y + H / 2 - fs / 2 - 1, tw + 4, fs + 2)
-          g.fillStyle = '#0f172a'; g.fillText(label, X + W / 2, Y + H / 2)
-        }
+      // nhãn: xuống dòng theo từ + thu cỡ chữ tới khi vừa khối; khối cao-hẹp (vệt dọc) → xoay chữ dọc theo vệt (user 08/09: "cần wrap text để đủ chữ")
+      if (s >= 5) {
+        drawLabel(f.label, X, Y, W, H, f.kind === 'STORAGE' ? '#0f172a' : '#ffffff', f.kind === 'STORAGE' && overlay === 'stock' ? 'rgba(255,255,255,0.82)' : null, f.kind === 'STORAGE' ? 500 : 600)
         if (f.kind === 'STORAGE' && f.locs.length > 1 && s >= 22) {
+          const fs = Math.max(8, Math.min(13, Math.min(W, H) * 0.42))
           g.font = `600 ${Math.max(7, fs * 0.7)}px ui-sans-serif, system-ui`; g.fillStyle = '#475569'; g.textAlign = 'right'; g.textBaseline = 'bottom'
           g.fillText(`${f.locs.length}`, X + W - 2, Y + H - 1)
         }
@@ -1397,7 +1438,9 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       onMarquee(marqueeStart, cell ?? hover ?? marqueeStart, mods.ctrl)
       return
     }
-    if (p.pan) { if (!p.moved && cell && tool === 'pan') onCellClick(cell, mods); return }
+    // Nhánh rê (chế độ Xem kéo trái · công cụ Rê · Space · chuột giữa/phải): BẤM không kéo vẫn là chọn ô → mở cột tầng.
+    // Bản đầu chỉ cho công cụ Rê → chế độ Xem bấm không ra gì (user 08/09: "chế độ xem click không có detail").
+    if (p.pan) { if (!p.moved && cell && e.button === 0) onCellClick(cell, mods); return }
     if (lineStart) {
       if (tool !== 'line' && !p.moved) { if (cell) onCellClick(cell, mods) }   // tường/gỡ: bấm = một ô, kéo = vệt
       else if (cell) onLineDrag(lineStart, cell)

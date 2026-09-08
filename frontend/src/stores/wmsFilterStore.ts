@@ -268,6 +268,11 @@ interface DashboardFilters {
   // nhau, dùng chung một khoảng thì đổi bên này lại đổi luôn bên kia mà người dùng không ngờ.
   svcFrom: string
   svcTo: string
+  // Tab KPI (08/09): khoảng ngày riêng + chế độ so kỳ ('' | 'prev' | 'yoy') + nhóm KPI đang xem bảng theo kho
+  kpiFrom: string
+  kpiTo: string
+  kpiCompare: string
+  kpiGroup: string
 }
 // Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
 interface FillFilters {
@@ -481,7 +486,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 // và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
 function initialFilters() {
   return {
-    dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '' },
+    dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '', kpiFrom: '', kpiTo: '', kpiCompare: '', kpiGroup: '' },
     warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
     lotTrace: { ...LOT_TRACE_DEFAULT },
     traceInv: { from: '', to: '', search: '', page: 1 },

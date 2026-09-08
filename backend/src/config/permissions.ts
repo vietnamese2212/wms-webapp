@@ -19,7 +19,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   tms_vehicles:      ['view', 'create', 'edit', 'delete'],
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   weigh_station: ['view', 'match'],
-  dashboard:         ['view'],          // Trang Tổng quan (19/08 — trước đó mở cho mọi user; migration 20260819b backfill mọi chức danh)
+  dashboard:         ['view', 'kpi_target'],   // Trang Tổng quan (19/08); kpi_target = đặt mục tiêu G/Y/R tab KPI (08/09)
   control_tower:     ['view'],
   // Chi phí kho (27/08): TIỀN là dữ liệu nhạy cảm — tách hẳn khỏi `dashboard.view`, ai không có
   // `warehouse_cost.view` vẫn xem được tấn/công/tăng ca nhưng KHÔNG thấy ô nào có tiền.

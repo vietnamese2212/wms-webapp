@@ -10,6 +10,7 @@ import {
   parseDashboardCacheSeconds,
   parseMonitorCacheSeconds,
   parseStandardWorkHours,
+  parsePctDateBands,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -100,14 +101,8 @@ function isAlertThresholds(v: unknown): boolean {
   return true
 }
 
-function isPctDateBands(v: unknown): boolean {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
-  const o = v as Record<string, unknown>
-  if (Object.keys(o).some(k => k !== 'good' && k !== 'low')) return false
-  const good = o.good, low = o.low
-  if (typeof good !== 'number' || typeof low !== 'number' || !Number.isFinite(good) || !Number.isFinite(low)) return false
-  return low > 0 && low <= good && good <= 100
-}
+// Validator chuyển về utils/settings.ts (08/09) để tab KPI đọc cùng ngưỡng `low` — một nguồn.
+const isPctDateBands = (v: unknown): boolean => parsePctDateBands(v) !== null
 
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },

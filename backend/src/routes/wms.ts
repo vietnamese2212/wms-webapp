@@ -18,6 +18,7 @@ import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as packing from '../controllers/wms/packingController'
 import * as dashboard from '../controllers/wms/dashboardController'
+import * as kpi from '../controllers/wms/kpiController'
 import * as warehouseCost from '../controllers/wms/warehouseCostController'
 import * as trace from '../controllers/wms/traceController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
@@ -62,6 +63,13 @@ router.get('/dashboard', dashboard.getDashboard)
 // nằm trong diện "hở đọc" như tồn kho. Các khoá TIỀN trong payload bị controller cắt bỏ nếu
 // người gọi không có `warehouse_cost.view`.
 router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboard.getProductivity)
+// Tab KPI (08/09): 24 KPI đo được + so kỳ + xu hướng tháng — đi theo quyền Dashboard; khoá TIỀN bị cắt
+// nếu thiếu warehouse_cost.view. Đặt MỤC TIÊU = quyền riêng `dashboard.kpi_target` (người đặt là quản
+// lý kho, không phải quản trị hệ thống — không đi ké wms_settings.manage_system).
+router.get('/kpi',          requirePerm('dashboard', 'view'),       kpi.getKpi)
+router.get('/kpi/trend',    requirePerm('dashboard', 'view'),       kpi.getKpiTrend)
+router.get('/kpi/targets',  requirePerm('dashboard', 'view'),       kpi.getKpiTargets_)
+router.put('/kpi/targets',  requirePerm('dashboard', 'kpi_target'), kpi.putKpiTargets)
 
 // Chi phí kho — SỔ KÊ KHAI: 1 dòng = (Kho · Kỳ tháng · Khoản mục · Số tiền); mỗi việc 1 quyền riêng.
 // Route tĩnh (/items, /upload…) phải đứng TRƯỚC /:id, không thì 'items' bị nuốt làm id.

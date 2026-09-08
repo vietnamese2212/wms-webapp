@@ -7,6 +7,7 @@
 // MỘT NGUỒN cho cả 2 chiều: mặc định + validator khai ở đây, systemSettingController dùng chính
 // validator này cho PUT, consumer dùng getter — không có bản chép tay nào để lệch.
 import { supabase } from '../lib/supabase'
+import { KPI_TARGETS_DEFAULT, parseKpiTargets } from './kpiDefs'
 
 const TTL_MS = 30_000
 const cache = new Map<string, { at: number; value: unknown }>()
@@ -211,3 +212,23 @@ export function parseReceiptRating(raw: unknown): ReceiptRatingCfg | null {
     ? { mode: o.mode } : null
 }
 export const getReceiptRatingCfg = () => readSetting('receipt_rating', RECEIPT_RATING_DEFAULT, parseReceiptRating)
+
+// ── pct_date_bands — thang màu %Date toàn app (xanh > good, vàng > low, còn lại đỏ) ──
+// Cờ này có từ trước ở systemSettingController (validator `isPctDateBands`); getter đặt ở đây để tab
+// KPI dùng `low` làm ngưỡng "tồn cận date" — cùng con số người dùng đang thấy đỏ ở trang Tồn kho.
+export interface PctDateBands { good: number; low: number }
+export const PCT_DATE_BANDS_DEFAULT: PctDateBands = { good: 60, low: 30 }
+export function parsePctDateBands(raw: unknown): PctDateBands | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'good' && k !== 'low')) return null
+  const good = o.good, low = o.low
+  if (typeof good !== 'number' || typeof low !== 'number' || !Number.isFinite(good) || !Number.isFinite(low)) return null
+  return low > 0 && low <= good && good <= 100 ? { good, low } : null
+}
+export const getPctDateBands = () => readSetting('pct_date_bands', PCT_DATE_BANDS_DEFAULT, parsePctDateBands)
+
+// ── kpi_targets — MỤC TIÊU KPI tab KPI Dashboard (08/09) ────────────────────────
+// Ghi qua route riêng PUT /wms/kpi/targets (quyền `dashboard.kpi_target`), KHÔNG nằm trong sổ cờ của
+// systemSettingController (PUT /wms/settings/kpi_targets → UNKNOWN_SETTING). Định nghĩa + validator ở kpiDefs.ts.
+export const getKpiTargets = () => readSetting('kpi_targets', KPI_TARGETS_DEFAULT, parseKpiTargets)

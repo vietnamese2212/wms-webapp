@@ -63,6 +63,7 @@ const steps = [
   ['52-wms-ops.mjs'],             // vận hành kho: chi phí kho (số tiền kiểu VN, kỳ chốt), fill, slotting, kiểm kê luân phiên, cảnh báo (07/09)
   ['53-untouched-routes.mjs'],    // 19 route cuối chưa ai chạm: cổng ERP (tự cấp khoá), sổ Dồn/Tách theo phạm vi kho, quét kiểm kho, xe nâng, xoá xe, lưới lỗi async (07/09)
   ['54-warehouse-map.mjs'],       // Sơ đồ kho: tầng chung ô = đúng, 2 chân kệ chung ô = 409; id rác/kho khác/ngoài khung 4xx sạch; cửa/bãi không lọt picker cất hàng; phạm vi kho (08/09)
+  ['55-kpi.mjs'],                 // Tab KPI: oracle công thức từ {num,den} + tổng = Σ kho + đèn theo chiều tốt; mục tiêu 3 tầng mặc định→công ty→kho; so kỳ prev/yoy; xu hướng tháng; phạm vi kho + quyền kpi_target + cắt KPI tiền (08/09)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

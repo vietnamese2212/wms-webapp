@@ -243,7 +243,8 @@ export const MODULES = {
   dashboard: {
     page: 'Dashboard (Tổng quan)',
     actions: {
-      view: 'Xem trang Tổng quan hệ thống (tồn kho, sức chứa khu vực, hoạt động hôm nay, tab Năng suất)',
+      view: 'Xem trang Tổng quan hệ thống (tồn kho, sức chứa khu vực, hoạt động hôm nay, tab Năng suất / Dịch vụ / KPI)',
+      kpi_target: 'Đặt MỤC TIÊU (ngưỡng xanh / vàng / đỏ) cho các KPI ở tab KPI — mặc định toàn công ty hoặc riêng từng kho',
     },
   },
   warehouse_cost: {

@@ -2240,6 +2240,82 @@ export function useServiceLevel(p: { from: string; to: string; warehouseId?: str
   })
 }
 
+// ─── Tab KPI của Dashboard (08/09) — 24 KPI đo được từ "Warehouse KPI Master List" ───────────────
+// Định nghĩa KPI (tên, đơn vị, chiều tốt, công thức, ghi chú đo một phần) do BE trả trong `defs` —
+// FE KHÔNG có bản chép; đèn G/Y/R cũng do BE tính theo mục tiêu đã cấu hình.
+export type KpiDir = 'up' | 'down' | 'band'
+export type KpiDefPublic = {
+  id: string; no: number; name: string; short: string; group: string; unit: string; dir: KpiDir
+  kind: 'pct' | 'ratio' | 'doh' | 'turnover'; decimals: number; defaults: number[] | null
+  formula: string; note: string | null; snapshot: boolean; cost: boolean
+}
+export type KpiValue = {
+  id: string; value: number | null; num: number | null; den: number | null
+  rag: 'G' | 'Y' | 'R' | null; t: number[] | null; t_source: 'default' | 'global' | 'warehouse'; sub: string | null
+  prev: number | null; delta: number | null
+}
+export type KpiData = {
+  from: string; to: string; days: number
+  compare: { mode: 'prev' | 'yoy'; from: string; to: string; days: number } | null
+  pct_low: number; slow_days: number; dead_days: number
+  groups: Array<{ key: string; label: string }>
+  defs: KpiDefPublic[]
+  unavailable: Array<{ no: number; name: string; group: string; need: string }>
+  target_scope: string | null
+  kpis: KpiValue[]
+  by_warehouse: Array<{ warehouse_id: string; warehouse_name: string; kpis: KpiValue[] }>
+  notes: { lines_no_weight: number; loc_uncapped: number; warehouses_no_labor: number; categories_filtered: boolean
+    cost_shared: number; cost_hidden: boolean; cached: boolean }
+}
+export function useWarehouseKpi(p: { warehouseId?: string; from: string; to: string; compare: string }, enabled: boolean) {
+  return useQuery<KpiData>({
+    queryKey: ['warehouse-kpi', p.warehouseId || 'all', p.from, p.to, p.compare || 'none'],
+    enabled: enabled && !!p.from && !!p.to,     // chỉ gọi khi đang xem tab KPI
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/kpi', {
+      params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), date_from: p.from, date_to: p.to,
+        ...(p.compare ? { compare: p.compare } : {}) },
+    }).then(r => r.data.data),
+  })
+}
+export type KpiTrend = {
+  end: string; months: number; defs: KpiDefPublic[]; targets: Record<string, number[] | null>
+  series: Array<{ month: string; from: string; to: string; days: number; values: Record<string, number | null> }>
+}
+export function useWarehouseKpiTrend(p: { warehouseId?: string; months: number }, enabled: boolean) {
+  return useQuery<KpiTrend>({
+    queryKey: ['warehouse-kpi-trend', p.warehouseId || 'all', p.months],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: () => apiClient.get('/wms/kpi/trend', {
+      params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), months: p.months },
+    }).then(r => r.data.data),
+  })
+}
+export type KpiTargetMap = Record<string, number[] | null>
+export type KpiTargets = {
+  default: KpiTargetMap; by_warehouse: Record<string, KpiTargetMap>; params: { slow_days: number; dead_days: number }
+  defs: KpiDefPublic[]; groups: Array<{ key: string; label: string }>
+}
+export function useKpiTargets(enabled: boolean) {
+  return useQuery<KpiTargets>({
+    queryKey: ['kpi-targets'], enabled, staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/kpi/targets').then(r => r.data.data),
+  })
+}
+export function useSaveKpiTargets() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string | null; targets: KpiTargetMap; params?: { slow_days: number; dead_days: number } }) =>
+      apiClient.put('/wms/kpi/targets', body).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['kpi-targets'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi-trend'] })
+    },
+  })
+}
+
 // ── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) — kho nhận chấm lúc xác nhận đơn ─────────────────────────
 export type ReceiptRatingMode = 'off' | 'optional' | 'required'
 export type ReceiptRating = {

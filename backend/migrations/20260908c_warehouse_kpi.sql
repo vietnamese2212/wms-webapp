@@ -1,9 +1,9 @@
 -- 20260908c — TAB KPI trên Dashboard (user đưa "Warehouse KPI Master List" 40 KPI, 08/09/2026).
 --
--- Khảo sát nguồn (08/09): 24/40 KPI app ĐÃ CÓ CHỖ GHI dữ liệu (14 đủ + 10 phụ thuộc kỷ luật nhập
--- liệu/định nghĩa), 16 KPI chưa có nguồn — quy về 5 mảnh: giá vốn mã hàng · doanh thu theo kho/kỳ ·
--- sổ sự cố có mã lý do · giờ công theo công việc · thể tích vị trí (memory `kpi-master-list-gaps`).
--- Đợt này đưa 24 KPI lên; 16 KPI kia hiện ô trống trên UI kèm "cần bổ sung gì".
+-- Khảo sát nguồn (08/09): 27/40 KPI app ĐÃ CÓ CHỖ GHI dữ liệu (một số đo với ghi chú: phụ thuộc kỷ luật
+-- nhập liệu, hoặc tạm theo tấn/pallet/tổng giờ công), 13 KPI chưa có nguồn — quy về 5 mảnh: giá vốn mã
+-- hàng · doanh thu theo kho/kỳ · sổ sự cố có mã lý do · giờ công theo công việc · thể tích vị trí
+-- (memory `kpi-master-list-gaps`). Đợt này đưa 27 KPI lên; 13 KPI kia hiện ô trống trên UI kèm "cần bổ sung gì".
 --
 -- NGUYÊN TẮC MỘT NGUỒN: RPC `warehouse_kpi` KHÔNG tính lại công thức đã có — gọi lại `service_level`
 -- (OTIF/fill), `warehouse_productivity` (tấn/giờ công/tăng ca/chi phí) và `zone_capacity_rows` (sức
@@ -128,7 +128,7 @@ BEGIN
   RETURN v_out;
 END $function$;
 
--- ── 2. warehouse_kpi — 24 KPI, mỗi KPI {num, den} theo kho + tổng ────────────────────────────────
+-- ── 2. warehouse_kpi — 27 KPI, mỗi KPI {num, den} theo kho + tổng ────────────────────────────────
 CREATE OR REPLACE FUNCTION public.warehouse_kpi(
   p_warehouse_ids text[] DEFAULT NULL,
   p_categories    text[] DEFAULT NULL,

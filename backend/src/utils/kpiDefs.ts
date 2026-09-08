@@ -5,9 +5,9 @@
 // validator cho mục tiêu người dùng cấu hình (cờ SystemSetting `kpi_targets`). FE KHÔNG có bản chép —
 // GET /wms/kpi trả luôn `defs` để màn hình vẽ và form cấu hình đọc nhãn từ đây.
 //
-// 40 KPI = 24 đo được (14 đủ nguồn + 10 phụ thuộc kỷ luật nhập liệu → có `note`) + 16 CHƯA CÓ NGUỒN
-// (`KPI_UNAVAILABLE`, mỗi dòng nói rõ cần bổ sung gì — memory `kpi-master-list-gaps`). Đợt 08/09 user
-// chốt: 24 lên tab, 16 hiện ô trống kèm "cần bổ sung gì".
+// 40 KPI = 27 đo được (đủ nguồn hoặc đo được với ghi chú `note`: phụ thuộc kỷ luật nhập liệu / tạm theo tấn,
+// pallet, tổng giờ công) + 13 CHƯA CÓ NGUỒN (`KPI_UNAVAILABLE`, mỗi dòng nói rõ cần bổ sung gì — memory
+// `kpi-master-list-gaps`). Đợt 08/09 user chốt: KPI có nguồn lên tab, còn lại hiện ô trống kèm "cần bổ sung gì".
 
 export type KpiGroup = 'delivery' | 'inbound' | 'accuracy' | 'risk' | 'capacity' | 'labor'
 export const KPI_GROUPS: Array<{ key: KpiGroup; label: string }> = [
@@ -142,10 +142,11 @@ export const KPI_UNAVAILABLE: Array<{ no: number; name: string; group: KpiGroup;
   { no: 36, name: 'Damage rate', group: 'labor', need: 'Sổ hàng hư hỏng: mã, SL, khâu, lý do (điều chỉnh tồn hiện chỉ có ghi chú tự do)' },
   { no: 39, name: 'Warehouse cost / sales', group: 'labor', need: 'Doanh thu theo kho theo tháng (sổ kê khai như Chi phí kho, hoặc import SAP)' },
   { no: 40, name: 'Write-off / sales', group: 'labor', need: 'Giá vốn + lý do write-off + doanh thu' },
-  { no: 19, name: 'DOH theo GIÁ TRỊ', group: 'risk', need: 'Giá vốn mã hàng (đang tạm tính theo tấn)' },
-  { no: 20, name: 'Turnover theo GIÁ TRỊ', group: 'risk', need: 'Giá vốn mã hàng (đang tạm tính theo tấn)' },
-  { no: 21, name: 'Slow / non-moving theo GIÁ TRỊ', group: 'risk', need: 'Giá vốn mã hàng (đang tạm tính theo pallet)' },
 ]
+// Lưu ý đếm: 27 KPI đo được (trong đó DOH/Turnover tạm theo TẤN, Slow/Non-moving theo PALLET, 3 KPI năng suất theo
+// TỔNG giờ công — ghi chú nằm ngay trên def) + 13 chưa có nguồn = 40 dòng của file. Bản "theo giá trị" của các KPI
+// tạm tính KHÔNG liệt kê riêng ở đây (sẽ thành 43 > 40, người đọc tưởng file có thêm KPI) — mở khoá bằng mảnh
+// "giá vốn mã hàng" (memory kpi-master-list-gaps).
 
 // ── Giá trị & đèn ─────────────────────────────────────────────────────────────
 export type Rag = 'G' | 'Y' | 'R'

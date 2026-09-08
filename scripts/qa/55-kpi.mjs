@@ -70,8 +70,11 @@ try {
   const D = r.j?.data
   check('[1a] GET kpi → 200 + defs/kpis/unavailable/groups/by_warehouse/notes', r.s === 200 && Array.isArray(D?.defs) && Array.isArray(D?.kpis) && Array.isArray(D?.unavailable) && Array.isArray(D?.groups) && Array.isArray(D?.by_warehouse) && D?.notes,
     `http=${r.s} defs=${D?.defs?.length} kpis=${D?.kpis?.length} un=${D?.unavailable?.length}`)
-  check('[1b] 24 KPI đo được + ≥14 KPI chưa có nguồn nêu "cần gì" — đúng khảo sát 08/09', D?.defs?.length === 24 && D?.kpis?.length === 24 && D?.unavailable?.length >= 14 && D.unavailable.every(u => u.need && u.no),
-    `defs=${D?.defs?.length} unavailable=${D?.unavailable?.length}`)
+  // 27 đo được + 13 chưa có nguồn = ĐÚNG 40 dòng của file Master List; số thứ tự không được trùng giữa 2 danh sách
+  const nos = new Set([...(D?.defs ?? []).map(d => d.no), ...(D?.unavailable ?? []).map(u => u.no)])
+  check('[1b] 27 KPI đo được + 13 chưa có nguồn = 40 dòng file, số thứ tự không trùng, mỗi dòng thiếu nêu "cần gì"',
+    D?.defs?.length === 27 && D?.kpis?.length === 27 && D?.unavailable?.length === 13 && nos.size === 40 && D.unavailable.every(u => u.need && u.no),
+    `defs=${D?.defs?.length} unavailable=${D?.unavailable?.length} nos=${nos.size}`)
   check('[1c] 6 nhóm, mỗi def thuộc 1 nhóm hợp lệ', D?.groups?.length === 6 && D.defs.every(d => D.groups.some(g => g.key === d.group)))
   const defById = new Map((D?.defs ?? []).map(d => [d.id, d]))
   const bad = (D?.kpis ?? []).filter(k => {
@@ -93,7 +96,7 @@ try {
   const sumOtif = (D?.by_warehouse ?? []).reduce((a, w) => { const k = w.kpis.find(x => x.id === 'otif'); return a + Number(k?.den ?? 0) }, 0)
   const totOtif = Number(D?.kpis?.find(k => k.id === 'otif')?.den ?? 0)
   check('[1f] ORACLE tổng chuyến (mẫu số OTIF) = Σ các kho có số liệu', near(sumOtif, totOtif), `Σkho=${sumOtif} tổng=${totOtif}`)
-  check('[1g] Mọi dòng theo kho mang đủ 24 KPI cùng id', (D?.by_warehouse ?? []).every(w => w.kpis.length === 24), `kho=${D?.by_warehouse?.length}`)
+  check('[1g] Mọi dòng theo kho mang đủ KPI cùng id với tổng', (D?.by_warehouse ?? []).every(w => w.kpis.length === D.defs.length), `kho=${D?.by_warehouse?.length}`)
   // Đèn theo kho phải khớp evalRag của chính def (oracle đèn)
   const ragOf = (d, v, t) => {
     if (v == null || !t) return null

@@ -166,6 +166,7 @@ created_at, updated_at
 
 | Ngày | Rev | Thay đổi |
 |---|---|---|
+| 2026-09-08 | — | **Tab KPI Dashboard** (`20260908c_warehouse_kpi`): RPC `warehouse_kpi` (24 KPI {num,den} theo kho — GỌI LẠI `service_level`/`warehouse_productivity`/`zone_capacity_rows`, không chép công thức) + `warehouse_kpi_cached` (bảng `dashboard_cache`, khoá `kpi\|…`) + `warehouse_kpi_trend` (lặp tháng trong DB, 1 request); `service_level.by_warehouse` thêm 3 số đếm `on_time_trips/in_full_trips/otif_trips`. Không đổi bảng. Cờ SystemSetting mới `kpi_targets` (ghi qua PUT /wms/kpi/targets, không qua sổ cờ chung). Đã apply STAGING; production CHƯA. |
 | 2026-09-08 | — | **Sơ đồ kho bản một** (`20260908_warehouse_map`, `20260908b_warehouse_map_span`): `Location` + `is_rack/level_no/grid_x/grid_y/grid_w/grid_h/kind` (backfill tầng+kệ từ mã ô: Bàu Bàng 813 kệ, Ba Vì 220); bảng `warehouse_maps`; RPC `warehouse_map_assign_cells` (lô, 409 chỉ khi 2 CHÂN KỆ khác nhau giao nhau — các tầng cùng chân chung ô) + `warehouse_map_occupancy` (jsonb). Đã apply STAGING; production CHƯA. |
 | 2026-05-07 | 1–8 | Setup, Material fields, Location 2-table (bỏ SubWarehouse), Employee |
 | 2026-05-07 | 9 | ProductionImport + InventoryEntry refactor đầy đủ, WMS Inbound API |

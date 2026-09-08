@@ -105,11 +105,15 @@ try {
   check('[3e] Ngoài khung → 400 OUT_OF_BOUNDS (kho đã có khung)', r.s === 400 && (r.j?.error?.code === 'OUT_OF_BOUNDS' || r.j?.error?.code === 'VALIDATION_ERROR'), `http=${r.s} ${err(r)}`)
   r = await asg([{ location_id: C[0].id, grid_x: 4, grid_y: null }])
   check('[3f] Nửa toạ độ → 400', r.s === 400, `http=${r.s} ${err(r)}`)
-  const other = await restAll('Location', `select=id&warehouse_id=eq.${FIX.WH_QTY.id}&is_active=is.true&limit=1`)
+  // Kho khác BẤT KỲ có vị trí (Bluestar QTY không có ô nào — lấy kho nào có, vd Bàu Bàng)
+  const other = await restAll('Location', `select=id&warehouse_id=neq.${WH}&is_active=is.true&kind=eq.STORAGE&limit=1`)
+  check('[3g0] Fixture: có vị trí của kho khác để thử IDOR cặp id', other.length === 1)
   if (other.length) {
     r = await asg([{ location_id: other[0].id, grid_x: 4, grid_y: 4 }])
     check('[3g] Vị trí của KHO KHÁC ghép vào URL kho Ba Vì → 400 NOT_IN_WAREHOUSE (chống IDOR cặp id)', r.s === 400 && r.j?.error?.code === 'NOT_IN_WAREHOUSE', `http=${r.s} ${err(r)}`)
   }
+  r = await api(`/wms/warehouse-map/${WH}/objects/${encodeURIComponent("' or 1=1 --")}`, 'DELETE')
+  check('[3m] id cửa trông như injection trên đường dẫn → 400, không 5xx', r.s === 400, `http=${r.s} ${err(r)}`)
   r = await asg([{ location_id: 'id-rac', grid_x: 4, grid_y: 4 }])
   check('[3h] location_id rác → 400, không 5xx', r.s === 400, `http=${r.s} ${err(r)}`)
   // Đánh Kệ/Sàn cả chân kệ

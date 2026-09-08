@@ -32,7 +32,9 @@ type WhRow = { id: string; code: string; name: string; nmsx_code: string | null 
 // Phạm vi kho cho route có :warehouseId (mirror guardWarehouseScope của warehouseController).
 // Id rác → không có kho → 404 (Warehouse.id là TEXT nên không có chuyện 22P02 → 500).
 async function loadWarehouse(req: Request, res: Response, whId: string): Promise<WhRow | null> {
-  if (!whId || whId.length > 100) { fail(res, 400, 'BAD_ID', 'Mã kho không hợp lệ'); return null }
+  // Tham số trên ĐƯỜNG DẪN không đi qua middleware chặn injection của /api (chỉ soi query/body) — giá trị
+  // dạng `' or 1=1 --` đi thẳng xuống PostgREST làm WAF trả HTML → supabase-js lỗi lạ → 500 (gói 54 [1d] bắt được).
+  if (!whId || whId.length > 100 || searchLooksLikeInjection(whId)) { fail(res, 400, 'BAD_ID', 'Mã kho không hợp lệ'); return null }
   const { data, error } = await supabase.from('Warehouse').select('id, code, name, nmsx_code').eq('id', whId).maybeSingle()
   if (error) { fail(res, error); return null }
   if (!data) { fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho'); return null }
@@ -233,7 +235,7 @@ export async function renameMapObject(req: Request, res: Response) {
     const name = typeof req.body?.name === 'string' ? String(req.body.name).trim().slice(0, 60) : ''
     if (!name) return fail(res, 400, 'VALIDATION_ERROR', 'Cần tên mới')
     const id = String(req.params.id ?? '')
-    if (!id || id.length > 100) return fail(res, 400, 'BAD_ID', 'Id không hợp lệ')
+    if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Id không hợp lệ')
     const { data, error } = await supabase.from('Location')
       .update({ row: name, updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null })
       .eq('id', id).eq('warehouse_id', wh.id).neq('kind', 'STORAGE').select('id, row').maybeSingle()
@@ -249,7 +251,7 @@ export async function deleteMapObject(req: Request, res: Response) {
     const wh = await loadWarehouse(req, res, req.params.warehouseId)
     if (!wh) return
     const id = String(req.params.id ?? '')
-    if (!id || id.length > 100) return fail(res, 400, 'BAD_ID', 'Id không hợp lệ')
+    if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Id không hợp lệ')
     const { data: loc, error } = await supabase.from('Location').select('id, kind, location_code')
       .eq('id', id).eq('warehouse_id', wh.id).eq('is_active', true).maybeSingle()
     if (error) return fail(res, error)

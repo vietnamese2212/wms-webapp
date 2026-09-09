@@ -197,6 +197,25 @@ check('5d. Số xe đã có lệnh tay → NHẬN NUÔI (1 lệnh, đóng dấu 
   check('8g. API loại xe theo khung giờ nhận chuỗi ghép không lỗi', vr.s === 200 && Array.isArray(vr.j?.data), `http=${vr.s}`)
 }
 
+// ── 9. Ô "Hoàn thành" của SummaryBand phải ĐỌC ĐÚNG NGUỒN (lỗi 09/09) ────────
+// Ô này từng suy "đã xong" từ `TmsVehicleSlot.status='DONE'` — giá trị KHÔNG đường ghi nào trong app
+// đặt (đặt lịch chỉ ghi 'BOOKED') ⇒ tile đứng yên ở 0/N dù hàng nghìn lệnh đã xong, không lỗi không
+// cảnh báo. Nay đếm `TmsOrder.status='DONE'`, cùng đơn vị với mẫu số. Kiểm bằng cách SO HAI ĐƯỜNG
+// (RPC ↔ đếm thẳng trên bảng) thay vì so với một hằng số gõ tay — hằng số sẽ khoá luôn cả cái sai.
+{
+  const from = '2000-01-01', to = '2099-12-31'
+  const sum = await restRpc('tms_orders_summary', { p_date_from: from, p_date_to: to })
+  const allOrders = await restAll('TmsOrder', `select=id,status&date=gte.${from}&date=lte.${to}&source_type=neq.TRANSFER`)
+  const oracleDone = allOrders.filter(o => o.status === 'DONE').length
+  check('9a. Ô "Hoàn thành" = số LỆNH status=DONE (không suy từ trạng thái dòng xe)',
+    Number(sum?.done) === oracleDone, `rpc=${sum?.done} bảng=${oracleDone}`)
+  check('9b. Mẫu số ô tổng khớp số lệnh thật', Number(sum?.orders) === allOrders.length,
+    `rpc=${sum?.orders} bảng=${allOrders.length}`)
+  // Có dữ liệu thật thì ô này KHÔNG được là 0 — bắt đúng triệu chứng "báo cáo đứng yên ở 0"
+  check('9c. Có lệnh đã xong thì ô "Hoàn thành" > 0', oracleDone === 0 || Number(sum?.done) > 0,
+    `done=${sum?.done} trong ${allOrders.length} lệnh`)
+}
+
 // ── 6. Vết trong sổ lịch sử ──────────────────────────────────────────────────
 const evs = await restAll('outbound_events', `select=event_type&group_code=in.(${ALL_GC.join(',')})`)
 const types = new Set(evs.map(e => e.event_type))

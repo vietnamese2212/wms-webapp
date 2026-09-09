@@ -12,6 +12,9 @@ Nền tảng đã có: memory `directed-work-task-engine`, module `warehouse_map
 
 ---
 
+> **Tiến độ 09/09 (tối):** Đợt 1a ✅ (dev `a2c1956c` → `b9a419db`, QA 56 = 40/40, migration 20260910 + 20260910b áp staging) · Đợt 1b ✅ (dev `e1d4919e`) · Đợt 1c ⏳ chưa bắt đầu — lập plan chi tiết trước khi code.
+> Đổi so với plan: (i) cột Cửa ở Chuẩn bị hàng / Giám sát vận hành CHƯA làm (thẻ chuyến + ô cửa trên bản vẽ đã có); (ii) ratchet lấy tên `gdo_in_progress_written_directly` (baseline 8, đếm rộng cả dòng hàng); (iii) phát hiện + vá bug đua ngay trong đợt (RPC khoá đúng mà đếm sai tập).
+
 ## Đợt 1a — Cửa xuất có sức chứa xe (≈ 1 ngày)
 
 | # | Bước | Kiểm tra |

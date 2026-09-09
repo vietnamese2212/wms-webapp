@@ -273,3 +273,19 @@ export async function cleanupTmsOrdersFor(groupCodes, gdoIds = []) {
   for (const s of slots) await restRpc('recount_slot', { p_slot_id: s }).catch(() => {})
   return orders.length
 }
+
+// ── Cửa xuất có sức chứa xe (09/09) ──
+// Kho CÓ cửa xuất trên Sơ đồ kho ⇒ Bắt đầu chuyến phải gửi `dock_location_id` (422 DOCK_REQUIRED nếu thiếu).
+// Kho Ba Vì staging đã vẽ 5 cửa nên mọi gói dựng chuyến ở FIX.WH_QR phải gắn cửa. Trả: cửa đang có CÙNG biển
+// (không tốn suất) → cửa còn trống → cửa đầu (để BE báo DOCK_FULL rõ ràng thay vì DOCK_REQUIRED oan); kho không
+// vẽ cửa → undefined (hành vi cũ, body không có field).
+export async function freeDockFor(whId, plate) {
+  const r = await api(`/wms/outbound/docks?warehouse_id=${encodeURIComponent(whId)}`)
+  const docks = (r.j?.data ?? []).filter(d => d.kind === 'DOCK_OUT')
+  if (!docks.length) return undefined
+  const norm = String(plate ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const same = norm && docks.find(d => (d.vehicles ?? []).some(v => v.license_plate === norm))
+  if (same) return same.id
+  const free = docks.find(d => d.capacity == null || d.occupied < d.capacity)
+  return (free ?? docks[0]).id
+}

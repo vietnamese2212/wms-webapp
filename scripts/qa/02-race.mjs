@@ -1,6 +1,6 @@
 // GÓI RACE — đua đồng thời trên cùng tài nguyên, bất biến số liệu phải giữ.
 // Tự dọn về baseline khi xong. Kho: Bluestar (QTY, mã pool 510000306).
-import { login, api, check, finish, pool, teardownGdo, restAll, restWrite, resolveFixtures, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, teardownGdo, restAll, restWrite, resolveFixtures, FIX, freeDockFor } from './lib.mjs'
 import { randomUUID } from 'crypto'
 
 console.log('── GÓI RACE ──')
@@ -149,7 +149,8 @@ async function trfCount(gdoId) {
   })
   const gid = c4.j?.data?.id
   await api(`/wms/outbound/${gid}/assign`, 'POST', {})
-  await api(`/wms/outbound/${gid}/start`, 'POST', { license_plate: `${T4}XE1` })
+  // Ba Vì có cửa xuất trên Sơ đồ kho (09/09) → Bắt đầu phải gắn cửa
+  await api(`/wms/outbound/${gid}/start`, 'POST', { license_plate: `${T4}XE1`, dock_location_id: await freeDockFor(FIX.WH_QR.id, `${T4}XE1`) })
   const det = await api(`/wms/outbound/${gid}`)
   const it4 = (det.j?.data?.delivery_orders ?? []).flatMap(x => x.items ?? [])[0]
   const rs4 = await Promise.all(codes.map(code =>

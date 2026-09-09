@@ -11,7 +11,7 @@
 //   (d) Giám sát vận hành quá tải thì ĐƯA SỐ CŨ (kèm giờ chốt) chứ không báo lỗi — hàm đọc số cũ
 //       phải dựng ĐÚNG khoá cache mà hàm tính đã ghi, lệch khoá là hỏng âm thầm (luôn trả rỗng).
 // usage: node scripts/qa/46-scan-rowlock.mjs
-import { login, api, check, finish, pool, restAll, restWrite, restRpc, resolveFixtures, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, restAll, restWrite, restRpc, resolveFixtures, FIX, freeDockFor } from './lib.mjs'
 import { randomUUID } from 'crypto'
 
 const TAG = 'QARL'
@@ -121,7 +121,8 @@ try {
       created_at: nowIso(), updated_at: nowIso(),
     })
     created.weighs.push(wt.id)
-    const st = await api(`/wms/outbound/${gdo.id}/start`, 'POST', { license_plate: plate, gate_registration_id: gateId })
+    // Ba Vì có cửa xuất trên Sơ đồ kho (09/09) → Bắt đầu phải gắn cửa (4 chuyến ≤ 5 cửa; mỗi chuyến một cửa trống)
+    const st = await api(`/wms/outbound/${gdo.id}/start`, 'POST', { license_plate: plate, gate_registration_id: gateId, dock_location_id: await freeDockFor(WH.id, plate) })
     return { gdo, item: gdo.delivery_orders?.[0]?.items?.[0], started: st.s, plate }
   }
 

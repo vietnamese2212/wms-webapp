@@ -171,6 +171,45 @@ try {
   check('[4i] Quá 60 kỳ (181 ngày theo ngày) → 400 TOO_MANY_BUCKETS có hướng dẫn, không chờ timeout', r.s === 400 && r.j?.error?.code === 'TOO_MANY_BUCKETS', `http=${r.s} ${err(r)}`)
   check('[4j] series thiếu ngày → 400', (await api('/wms/kpi/series?grain=month')).s === 400)
 
+  // ORACLE HAI ĐƯỜNG cho kỳ ĐÃ QUA — bắt bản cache đứng yên khi dữ liệu về muộn.
+  // Vì sao cần: chuỗi giữ cache DÀI cho kỳ đã kết thúc (tính tươi 60 kỳ là quá hạn 55s). "Đã qua" KHÔNG
+  // đồng nghĩa "đã chốt": phiếu ghi bù ca đêm, chuyến hoàn thành hôm sau, sửa chấm công, khai chi phí
+  // tháng trước đều đổi số của kỳ cũ. Đo thật 09/09/2026: nạp trọn dữ liệu 01–09/09 xong, ô tổng cả
+  // khoảng đúng nhưng biểu đồ theo ngày chỉ có điểm ở 09/09 — 8 kỳ kia đọc bản tính lúc chưa có dữ liệu.
+  // [4c] KHÔNG bắt được vì chỉ soi kỳ HIỆN TẠI (TTL ngắn nên luôn tươi) — mù đúng chỗ lỗi sống.
+  {
+    const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10)
+    const dFrom = day(6), dTo = day(1)
+    // DOH và Vòng quay có TỬ SỐ là tồn HIỆN TẠI, mà chuỗi bỏ qua phần quét tồn (p_skip_snapshot) cho kịp
+    // 60 kỳ ⇒ hai KPI này rỗng ở MỌI kỳ, MỌI chu kỳ — biểu đồ đang chào ra thứ nó không vẽ được bao giờ.
+    // Đây là lỗi RIÊNG (chưa chốt cách xử: hoặc đánh dấu snapshot để rút khỏi biểu đồ, hoặc tính tồn MỘT
+    // LẦN cho cả chuỗi rồi dùng chung). Liệt kê ĐÍCH DANH để chỗ này không nuốt luôn lỗi mới.
+    const CHUA_VE_DUOC = ['doh', 'turnover']
+    const rs = await api(`/wms/kpi/series?grain=day&date_from=${dFrom}&date_to=${dTo}`)
+    const buckets = rs.j?.data?.buckets ?? []
+    const ids = (rs.j?.data?.defs ?? []).map(x => x.id)
+    const lech = [], ngoaiDuKien = []
+    let oCoSo = 0
+    for (const b of buckets) {
+      const one = await api(`/wms/kpi?date_from=${b.from}&date_to=${b.from}`)
+      const byId = new Map((one.j?.data?.kpis ?? []).map(k => [k.id, k.value]))
+      for (const id of ids) {
+        const a = b.values?.[id] ?? null, c = byId.get(id) ?? null
+        if (a != null) oCoSo++
+        if ((a == null) !== (c == null) || (a != null && !near(a, c))) {
+          ;(CHUA_VE_DUOC.includes(id) ? lech : ngoaiDuKien).push(`${b.key}.${id}: chuỗi=${a} gọi-lại=${c}`)
+        }
+      }
+    }
+    check('[4k] ORACLE kỳ ĐÃ QUA: chuỗi theo ngày = gọi lại từng ngày (cache kỳ cũ không được đứng yên khi dữ liệu về muộn)',
+      rs.s === 200 && buckets.length === 6 && ngoaiDuKien.length === 0,
+      `n_kỳ=${buckets.length} ô_có_số=${oCoSo} lệch_ngoài_dự_kiến=${ngoaiDuKien.slice(0, 3).join(' | ')}`)
+    // Nếu DOH/Vòng quay được vá thì check này đỏ để nhắc bỏ tên khỏi CHUA_VE_DUOC — không để danh sách miễn trừ sống mãi.
+    check('[4l] Danh sách KPI "chuỗi chưa vẽ được" vẫn ĐÚNG là doh + turnover (vá xong thì gỡ tên khỏi ngoại lệ)',
+      CHUA_VE_DUOC.every(id => !ids.includes(id) || buckets.some(b => b.values?.[id] == null)),
+      `còn rỗng: ${CHUA_VE_DUOC.filter(id => buckets.every(b => b.values?.[id] == null)).join(',') || '(không còn)'}`)
+  }
+
   // ═══ [5] Mục tiêu 3 tầng: mặc định → công ty → riêng kho ═══
   r = await api('/wms/kpi/targets')
   check('[5a] GET targets → 200 + default/by_warehouse/params/defs', r.s === 200 && r.j?.data?.default && r.j.data.by_warehouse && r.j.data.params && Array.isArray(r.j.data.defs), `http=${r.s}`)

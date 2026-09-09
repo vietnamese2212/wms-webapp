@@ -8,8 +8,8 @@
 //   · Mỗi KPI THEO KỲ = thẻ số + BIỂU ĐỒ ĐƯỜNG nhỏ (thực tế ↔ mục tiêu) + nút phóng to (dialog 80% màn hình:
 //     trục, tooltip, bảng số, chu kỳ riêng). KPI ẢNH CHỤP TỒN (không có "theo kỳ") = thanh mục tiêu.
 //   · Thiếu dữ liệu → nói rõ cần cài đặt / thao tác gì (empty_hint). Chưa có mục tiêu → nút "Đặt mục tiêu" ngay trên thẻ.
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Target, Warehouse, AlertTriangle, CircleDashed, Settings2, Maximize2, Table2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Target, Warehouse, AlertTriangle, CircleDashed, Settings2, Maximize2, Table2, Pencil } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -326,17 +326,22 @@ function KpiChartDialog({ def, warehouseId, init, onClose }: {
   )
 }
 
-// ── Form ĐẶT MỤC TIÊU — 2 tab (user chốt 09/09 sau khi bác bản "3 tầng" một màn):
-//   · "Mục tiêu dùng chung": kê khai THẲNG từng dòng (ô Đạt / Chú ý), không còn khái niệm "mặc định từ file";
-//     để trống cả hai ô = KPI không có mục tiêu (không sáng đèn). Kèm 2 tham số chung chậm / không luân chuyển.
-//   · "Chi tiết các kho": chọn kho rồi mới hiện danh sách; mỗi dòng chỉ "Theo mục tiêu chung" hay "Mục tiêu riêng"
-//     (ô điền sẵn mục tiêu chung để chỉnh). Mọi diễn giải nằm trong nút ⓘ như các form cấu hình khác.
-//   Số khởi tạo của bộ KPI (cột Target file) chỉ là giá trị điền sẵn khi chưa ai lưu tab chung — lưu một lần là thành của mình.
+// ── Form MỤC TIÊU — 2 tab, mặc định CHỈ XEM số đang có, mỗi tab MỘT nút "Sửa"
+//   (user chốt 09/09 vòng 2: "dữ liệu hiện có đã có, bấm vào tab nào thì có nút sửa và khi đó mới sửa và lưu";
+//    "đồng bộ thẳng hàng các giá trị chứ mỗi ô lại nằm 1 chỗ rất xấu"):
+//   · "Mục tiêu dùng chung": bảng Đạt / Cần chú ý cho cả bộ KPI + 2 tham số chậm / không luân chuyển.
+//   · "Chi tiết các kho": chọn kho mới hiện; cột "Áp dụng" nói dòng đó theo mục tiêu chung hay riêng kho.
+//   THẲNG CỘT = lưới cột CỐ ĐỊNH dùng chung cho tiêu đề và mọi dòng (GRID_COMMON / GRID_WH), số căn phải;
+//   đơn vị nằm ở dòng phụ dưới tên KPI, KHÔNG lặp sau từng ô (chính chỗ làm các ô lệch nhau ở bản trước).
 type SheetTab = 'common' | 'wh'
 type WhRowMode = 'common' | 'own'
 const needOf = (d: KpiDefPublic) => (d.dir === 'band' ? 3 : 2)
-const labelsOf = (d: KpiDefPublic) => d.dir === 'band' ? ['Từ (đạt)', 'Đến (đạt)', 'Tối đa (chú ý)'] : d.dir === 'up' ? ['Đạt ≥', 'Chú ý ≥'] : ['Đạt ≤', 'Chú ý ≤']
 const emptyVals = (d: KpiDefPublic) => Array<string>(needOf(d)).fill('')
+const OP: Record<string, string> = { up: '≥', down: '≤', band: '≤' }
+const numText = (x: number) => x.toLocaleString('vi-VN', { maximumFractionDigits: 3 })
+const GRID_COMMON = 'sm:grid sm:grid-cols-[minmax(0,1fr)_7.5rem_7.5rem] sm:items-center sm:gap-3'
+const GRID_WH = 'sm:grid sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_7rem] sm:items-center sm:gap-3'
+
 /** Chuỗi nhập → ngưỡng: trống cả = null (không đặt); điền một phần / không phải số = lỗi. */
 function parseVals(d: KpiDefPublic, v: string[]): { t: number[] | null } | { error: string } {
   const filled = v.filter(x => String(x).trim() !== '')
@@ -346,18 +351,55 @@ function parseVals(d: KpiDefPublic, v: string[]): { t: number[] | null } | { err
   if (nums.some(n => !Number.isFinite(n))) return { error: `${d.name}: ngưỡng phải là số` }
   return { t: nums }
 }
-function ThresholdInputs({ d, v, onChange, disabled }: { d: KpiDefPublic; v: string[]; onChange: (i: number, val: string) => void; disabled?: boolean }) {
+
+/** Tiêu đề cột — cùng lưới với dòng dữ liệu nên nhãn luôn đứng ngay trên đúng ô. */
+function TargetHead({ grid, scope }: { grid: string; scope?: boolean }) {
   return (
-    <div className="flex flex-wrap gap-2 shrink-0">
-      {labelsOf(d).map((lb, i) => (
-        <label key={lb} className="text-[10px] text-slate-600 flex items-center gap-1 whitespace-nowrap">{lb}
-          <Input type="number" step="any" value={v[i] ?? ''} disabled={disabled} onChange={e => onChange(i, e.target.value)} className="h-7 w-20 text-xs px-1.5" />
-          <span className="text-slate-400">{d.unit}</span>
-        </label>
-      ))}
+    <div className={`hidden ${grid} px-3 py-1.5 bg-slate-50 border-b border-slate-200 rounded-t text-[10px] font-medium uppercase tracking-wide text-slate-500`}>
+      <div>KPI</div>
+      {scope && <div>Áp dụng</div>}
+      <div className="text-right">Đạt</div>
+      <div className="text-right">Cần chú ý</div>
     </div>
   )
 }
+
+/** HAI ô giá trị (Đạt · Cần chú ý) — xem hay sửa đều nằm ĐÚNG hai cột đó. */
+function TargetCells({ d, t, v, onChange, muted }: {
+  d: KpiDefPublic; t?: number[] | null
+  v?: string[]; onChange?: (i: number, val: string) => void; muted?: boolean
+}) {
+  const box = 'flex items-center gap-1 justify-start sm:justify-end min-w-0'
+  const lab = (s: string) => <div className="text-[10px] text-slate-400 sm:hidden mb-0.5">{s}</div>
+  const op = <span className="text-slate-400 text-[11px] w-2.5 text-right shrink-0">{OP[d.dir]}</span>
+  if (v && onChange) {
+    const inp = (i: number, w: string) => (
+      <Input type="number" step="any" value={v[i] ?? ''} onChange={e => onChange(i, e.target.value)}
+        className={`h-7 ${w} text-xs px-1.5 text-right tabular-nums`} />
+    )
+    return (
+      <>
+        <div className="min-w-0">{lab('Đạt')}<div className={box}>
+          {d.dir === 'band'
+            ? <>{inp(0, 'w-full sm:w-[3rem]')}<span className="text-slate-400 text-[11px] shrink-0">–</span>{inp(1, 'w-full sm:w-[3rem]')}</>
+            : <>{op}{inp(0, 'w-full sm:w-[4.5rem]')}</>}
+        </div></div>
+        <div className="min-w-0">{lab('Cần chú ý')}<div className={box}>{op}{inp(d.dir === 'band' ? 2 : 1, 'w-full sm:w-[4.5rem]')}</div></div>
+      </>
+    )
+  }
+  const cls = `text-xs tabular-nums whitespace-nowrap ${muted ? 'text-slate-400' : 'text-slate-700 font-medium'}`
+  const cell = (label: string, txt: string | null) => (
+    <div className="min-w-0">{lab(label)}<div className={box}>{txt ? <span className={cls}>{txt}</span> : <span className="text-slate-300 text-xs">—</span>}</div></div>
+  )
+  return (
+    <>
+      {cell('Đạt', !t ? null : d.dir === 'band' ? `${numText(t[0])} – ${numText(t[1])}` : `${OP[d.dir]} ${numText(t[0])}`)}
+      {cell('Cần chú ý', !t ? null : `${OP[d.dir]} ${numText(d.dir === 'band' ? t[2] : t[1])}`)}
+    </>
+  )
+}
+
 function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, focusId }: {
   open: boolean; onClose: () => void; warehouseId: string
   warehouses: { id: string; code?: string; name: string }[]; canGlobal: boolean; focusId?: string | null
@@ -366,6 +408,7 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
   const save = useSaveKpiTargets()
   const [tab, setTab] = useState<SheetTab>('common')
   const [wh, setWh] = useState('')
+  const [editing, setEditing] = useState(false)
   const [common, setCommon] = useState<Record<string, string[]>>({})
   const [own, setOwn] = useState<Record<string, { mode: WhRowMode; v: string[] }>>({})
   const [slow, setSlow] = useState('90'); const [dead, setDead] = useState('180')
@@ -373,42 +416,49 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
   const [group, setGroup] = useState<string>('')
   const focusRef = useRef<HTMLDivElement>(null)
 
-  const defs = q.data?.defs ?? []
-  const groups = q.data?.groups ?? []
+  const data = q.data
+  const defs = data?.defs ?? []
+  const groups = data?.groups ?? []
   const shown = defs.filter(d => !group || d.group === group)
-  /** Mục tiêu chung ĐANG CÓ HIỆU LỰC của một KPI: bản đã lưu; chưa ai lưu thì là giá trị khởi tạo của bộ KPI. */
-  const commonOf = (d: KpiDefPublic): number[] | null => (q.data && d.id in q.data.default) ? q.data.default[d.id] : d.defaults
+  /** Mục tiêu chung ĐANG CÓ HIỆU LỰC: bản đã lưu; chưa ai lưu thì là giá trị khởi tạo của bộ KPI. */
+  const commonOf = (d: KpiDefPublic): number[] | null => (data && d.id in data.default) ? data.default[d.id] : d.defaults
+  /** Ghi đè của kho đang chọn (undefined = dòng đó theo mục tiêu chung). */
+  const ownOf = (d: KpiDefPublic): number[] | null | undefined => (wh && data?.by_warehouse[wh] && d.id in data.by_warehouse[wh]) ? data.by_warehouse[wh][d.id] : undefined
 
-  // Mở form: về tab phù hợp quyền; mở từ nút "Đặt mục tiêu" trên thẻ → nhảy tới nhóm của KPI đó
+  // Nạp lại giá trị từ máy chủ — dùng cả lúc mở form lẫn lúc bấm Huỷ giữa chừng
+  const loadCommon = useCallback(() => {
+    if (!data) return
+    const c: Record<string, string[]> = {}
+    for (const d of data.defs) { const t = (d.id in data.default) ? data.default[d.id] : d.defaults; c[d.id] = t ? t.map(String) : emptyVals(d) }
+    setCommon(c); setSlow(String(data.params.slow_days)); setDead(String(data.params.dead_days))
+  }, [data])
+  const loadOwn = useCallback(() => {
+    if (!data) return
+    const m: KpiTargetMap = wh ? (data.by_warehouse[wh] ?? {}) : {}
+    const o: Record<string, { mode: WhRowMode; v: string[] }> = {}
+    for (const d of data.defs) o[d.id] = d.id in m ? { mode: 'own', v: m[d.id] ? (m[d.id] as number[]).map(String) : emptyVals(d) } : { mode: 'common', v: [] }
+    setOwn(o)
+  }, [data, wh])
+  useEffect(() => { loadCommon() }, [loadCommon])
+  useEffect(() => { loadOwn() }, [loadOwn])
+
+  // Mở form: về tab hợp quyền. Mở từ nút "Đặt mục tiêu" trên thẻ = vào thẳng chế độ sửa đúng nhóm KPI đó.
   useEffect(() => {
     if (!open) return
-    setTab(canGlobal ? 'common' : 'wh'); setWh(canGlobal ? '' : warehouseId); setErr(null); setGroup('')
-  }, [open, canGlobal, warehouseId])
-  useEffect(() => { if (open && focusId && q.data) setGroup(q.data.defs.find(x => x.id === focusId)?.group ?? '') }, [open, focusId, q.data])
-  // Tab chung: điền sẵn mục tiêu chung đang hiệu lực
-  useEffect(() => {
-    if (!q.data) return
-    const c: Record<string, string[]> = {}
-    for (const d of q.data.defs) { const t = commonOf(d); c[d.id] = t ? t.map(String) : emptyVals(d) }
-    setCommon(c); setSlow(String(q.data.params.slow_days)); setDead(String(q.data.params.dead_days))
-  }, [q.data]) // eslint-disable-line react-hooks/exhaustive-deps
-  // Tab kho: đổi kho → nạp ghi đè của kho đó; KPI được nhảy tới mà chưa có riêng → mở sẵn "Mục tiêu riêng"
-  useEffect(() => {
-    if (!q.data) return
-    const m: KpiTargetMap = wh ? (q.data.by_warehouse[wh] ?? {}) : {}
-    const o: Record<string, { mode: WhRowMode; v: string[] }> = {}
-    for (const d of q.data.defs) o[d.id] = d.id in m ? { mode: 'own', v: m[d.id] ? (m[d.id] as number[]).map(String) : emptyVals(d) } : { mode: 'common', v: [] }
-    if (wh && focusId && !canGlobal && o[focusId]?.mode === 'common') {
-      const d = q.data.defs.find(x => x.id === focusId)
-      if (d) o[focusId] = { mode: 'own', v: (commonOf(d) ?? []).map(String) }
-    }
-    setOwn(o)
-  }, [q.data, wh, focusId, canGlobal]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (open && focusId) setTimeout(() => focusRef.current?.scrollIntoView({ block: 'center' }), 250) }, [open, focusId, q.data, tab, wh])
+    const t: SheetTab = canGlobal ? 'common' : 'wh'
+    setTab(t); setWh(canGlobal ? '' : warehouseId); setErr(null); setGroup('')
+    setEditing(!!focusId && (t === 'common' ? canGlobal : !!warehouseId))
+  }, [open, canGlobal, warehouseId, focusId])
+  useEffect(() => { if (open && focusId && data) setGroup(data.defs.find(x => x.id === focusId)?.group ?? '') }, [open, focusId, data])
+  useEffect(() => { if (open && focusId) setTimeout(() => focusRef.current?.scrollIntoView({ block: 'center' }), 250) }, [open, focusId, data, tab, wh])
 
   const setCommonVal = (id: string, i: number, val: string) => setCommon(c => { const v = [...(c[id] ?? [])]; v[i] = val; return { ...c, [id]: v } })
   const setOwnMode = (d: KpiDefPublic, mode: WhRowMode) => setOwn(o => ({ ...o, [d.id]: { mode, v: mode === 'own' ? (commonOf(d) ?? emptyVals(d)).map(String) : [] } }))
   const setOwnVal = (id: string, i: number, val: string) => setOwn(o => { const v = [...(o[id]?.v ?? [])]; v[i] = val; return { ...o, [id]: { mode: 'own', v } } })
+
+  const canEditTab = tab === 'common' ? canGlobal : !!wh
+  function goTab(k: SheetTab) { setTab(k); setEditing(false); setErr(null); loadCommon(); loadOwn() }
+  function cancelEdit() { setEditing(false); setErr(null); loadCommon(); loadOwn() }
 
   async function onSave() {
     setErr(null)
@@ -434,26 +484,26 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
       }
       body = { warehouse_id: wh, targets }
     }
-    try { await save.mutateAsync(body); onClose() }
+    // Lưu xong ở lại form và về chế độ xem để thấy ngay số vừa lưu
+    try { await save.mutateAsync(body); setEditing(false) }
     catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không lưu được mục tiêu — thử lại.') }
   }
 
-  const whName = warehouses.find(w => w.id === wh)?.name ?? ''
   const tabBtn = (k: SheetTab, label: string) => (
-    <button type="button" onClick={() => { setTab(k); setErr(null) }}
+    <button type="button" onClick={() => goTab(k)}
       className={`h-8 px-3 text-xs font-medium border-b-2 -mb-px ${tab === k ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{label}</button>
   )
   const commonTip = (
     <div className="space-y-1 text-left">
       <div><b>Mục tiêu dùng chung</b> áp cho mọi kho và mọi chu kỳ (ngày · tuần · tháng · năm). Kho nào có mục tiêu riêng (tab Chi tiết các kho) thì dùng mục tiêu riêng.</div>
       <div>KPI "cao hơn là tốt": <i>Đạt ≥ … · Chú ý ≥ …</i>, dưới nữa là Không đạt. "Thấp hơn là tốt": <i>Đạt ≤ … · Chú ý ≤ …</i>. KPI dải (sức chứa, DOH): <i>Từ – Đến (đạt) · Tối đa (chú ý)</i>.</div>
-      <div>Để trống cả hai ô = KPI đó không có mục tiêu, không sáng đèn.</div>
+      <div>Bấm <b>Sửa</b> để đổi; để trống cả hai ô = KPI đó không có mục tiêu, không sáng đèn.</div>
     </div>
   )
   const whTip = (
     <div className="space-y-1 text-left">
-      <div>Chọn kho để xem và đặt mục tiêu riêng. Mỗi KPI mặc định <b>Theo mục tiêu chung</b>; chọn <b>Mục tiêu riêng</b> khi kho này cần ngưỡng khác — ô điền sẵn mục tiêu chung để bạn chỉnh.</div>
-      <div>Mục tiêu riêng để trống cả hai ô = tắt đèn KPI đó ở kho này. Chuyển về "Theo mục tiêu chung" là bỏ ghi đè.</div>
+      <div>Chọn kho để xem mục tiêu đang áp cho kho đó. Cột <b>Áp dụng</b> nói dòng đó theo mục tiêu chung hay riêng kho.</div>
+      <div>Bấm <b>Sửa</b> rồi đổi dòng cần khác sang <b>Mục tiêu riêng</b> — ô điền sẵn mục tiêu chung để bạn chỉnh. Về "Theo mục tiêu chung" là bỏ ghi đè; mục tiêu riêng để trống cả hai ô = tắt đèn KPI đó ở kho này.</div>
     </div>
   )
   const paramsTip = 'Pallet nhập kho quá N ngày mà mã không xuất quá N ngày = hàng CHẬM luân chuyển; ngưỡng dài hơn = KHÔNG luân chuyển. Tham số chung cho mọi kho, nuôi 2 KPI Hàng chậm / Hàng không luân chuyển.'
@@ -461,38 +511,44 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
   return (
     <FormSheet open={open} onClose={onClose} title="Mục tiêu KPI" widthClass="sm:max-w-2xl"
       description="Ngưỡng đèn xanh / vàng cho từng KPI. Mục tiêu dùng chung áp mọi kho; kho nào cần khác thì đặt riêng."
-      footer={<>
-        <Button variant="outline" onClick={onClose} disabled={save.isPending}>Huỷ</Button>
-        <Button onClick={onSave} disabled={save.isPending || q.isLoading || (tab === 'common' && !canGlobal) || (tab === 'wh' && !wh)}>
-          {save.isPending ? 'Đang lưu…' : tab === 'common' ? 'Lưu mục tiêu chung' : `Lưu mục tiêu kho${whName ? ` ${whName}` : ''}`}
-        </Button>
-      </>}>
+      footer={editing ? (<>
+        <Button variant="outline" onClick={cancelEdit} disabled={save.isPending}>Huỷ</Button>
+        <Button onClick={onSave} disabled={save.isPending || q.isLoading}>{save.isPending ? 'Đang lưu…' : 'Lưu'}</Button>
+      </>) : <Button variant="outline" onClick={onClose}>Đóng</Button>}>
       <div className="space-y-3">
         <div className="flex items-center gap-1 border-b border-slate-200">
           {tabBtn('common', 'Mục tiêu dùng chung')}
           {tabBtn('wh', 'Chi tiết các kho')}
-          <InfoTip tip={tab === 'common' ? commonTip : whTip} className="ml-auto mr-1" />
+          <span className="flex-1" />
+          {!editing && canEditTab && (
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1 mb-1" onClick={() => { setErr(null); setEditing(true) }}>
+              <Pencil className="h-3.5 w-3.5" /> Sửa
+            </Button>
+          )}
+          <InfoTip tip={tab === 'common' ? commonTip : whTip} className="ml-1 mr-1" />
         </div>
 
         {tab === 'common' && (
           <>
             {!canGlobal && <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">Chỉ người có phạm vi toàn công ty mới sửa mục tiêu chung. Bạn đặt riêng cho kho của mình ở tab <b>Chi tiết các kho</b>.</div>}
             <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 grid grid-cols-2 gap-3">
-              <label className="text-xs text-slate-700 flex flex-col gap-1">
-                <span className="flex items-center gap-1">Ngưỡng hàng CHẬM luân chuyển (ngày) <InfoTip tip={paramsTip} /></span>
-                <Input type="number" min={7} max={730} value={slow} disabled={!canGlobal} onChange={e => setSlow(e.target.value)} className="h-8" />
-              </label>
-              <label className="text-xs text-slate-700 flex flex-col gap-1">
-                <span>Ngưỡng KHÔNG luân chuyển (ngày)</span>
-                <Input type="number" min={7} max={1460} value={dead} disabled={!canGlobal} onChange={e => setDead(e.target.value)} className="h-8" />
-              </label>
+              <div className="text-xs text-slate-700">
+                <div className="flex items-center gap-1 text-slate-600">Ngưỡng hàng CHẬM luân chuyển <InfoTip tip={paramsTip} /></div>
+                {editing ? <Input type="number" min={7} max={730} value={slow} onChange={e => setSlow(e.target.value)} className="h-8 mt-1" />
+                  : <div className="mt-0.5 font-medium tabular-nums">{slow} ngày</div>}
+              </div>
+              <div className="text-xs text-slate-700">
+                <div className="text-slate-600">Ngưỡng KHÔNG luân chuyển</div>
+                {editing ? <Input type="number" min={7} max={1460} value={dead} onChange={e => setDead(e.target.value)} className="h-8 mt-1" />
+                  : <div className="mt-0.5 font-medium tabular-nums">{dead} ngày</div>}
+              </div>
             </div>
           </>
         )}
         {tab === 'wh' && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-slate-600 shrink-0">Kho</span>
-            <WarehouseSingleSelect warehouses={warehouses} value={wh} onChange={id => { setWh(id); setErr(null) }} placeholder="Chọn kho…" triggerClassName="h-8 w-60" />
+            <WarehouseSingleSelect warehouses={warehouses} value={wh} onChange={id => { setWh(id); setEditing(false); setErr(null) }} placeholder="Chọn kho…" triggerClassName="h-8 w-60" />
             {!wh && <span className="text-[11px] text-slate-500">Chọn kho để xem mục tiêu của kho đó.</span>}
           </div>
         )}
@@ -507,40 +563,57 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
         {q.isLoading && <Skeleton className="h-40 w-full bg-slate-200" />}
 
         {tab === 'common' && !q.isLoading && (
-          <div className="divide-y divide-slate-100 border border-slate-200 rounded">
-            {shown.map(d => (
-              <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
-                className={`px-3 py-2 flex items-center gap-3 flex-wrap ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : ''}`}>
-                <div className="flex-1 min-w-[11rem]">
-                  <div className="text-xs font-medium text-slate-800 flex items-center gap-1">{d.name} <KpiInfoTip def={d} /></div>
-                  <div className="text-[10px] text-slate-500">{d.unit} · {DIR_HINT[d.dir]}</div>
+          <div className="border border-slate-200 rounded">
+            <TargetHead grid={GRID_COMMON} />
+            <div className="divide-y divide-slate-100">
+              {shown.map(d => (
+                <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
+                  className={`px-3 py-2 ${GRID_COMMON} ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : ''}`}>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-800 flex items-center gap-1"><span className="truncate">{d.name}</span> <KpiInfoTip def={d} /></div>
+                    <div className="text-[10px] text-slate-500">{d.unit} · {DIR_HINT[d.dir]}</div>
+                  </div>
+                  <div className="mt-1.5 grid grid-cols-2 gap-3 sm:mt-0 sm:contents">
+                    {editing
+                      ? <TargetCells d={d} v={common[d.id] ?? emptyVals(d)} onChange={(i, val) => setCommonVal(d.id, i, val)} />
+                      : <TargetCells d={d} t={commonOf(d)} />}
+                  </div>
                 </div>
-                <ThresholdInputs d={d} v={common[d.id] ?? emptyVals(d)} disabled={!canGlobal} onChange={(i, val) => setCommonVal(d.id, i, val)} />
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
         {tab === 'wh' && wh && !q.isLoading && (
-          <div className="divide-y divide-slate-100 border border-slate-200 rounded">
-            {shown.map(d => {
-              const r = own[d.id] ?? { mode: 'common' as WhRowMode, v: [] }
-              return (
-                <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
-                  className={`px-3 py-2 space-y-1.5 ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : r.mode === 'own' ? 'bg-amber-50/40' : ''}`}>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-slate-800 flex items-center gap-1">{d.name} <KpiInfoTip def={d} /></div>
-                      <div className="text-[10px] text-slate-500 truncate">Chung: {targetText(d, commonOf(d))}</div>
+          <div className="border border-slate-200 rounded">
+            <TargetHead grid={GRID_WH} scope />
+            <div className="divide-y divide-slate-100">
+              {shown.map(d => {
+                const r = own[d.id] ?? { mode: 'common' as WhRowMode, v: [] }
+                const isOwn = editing ? r.mode === 'own' : ownOf(d) !== undefined
+                return (
+                  <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
+                    className={`px-3 py-2 ${GRID_WH} ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : isOwn ? 'bg-amber-50/40' : ''}`}>
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-slate-800 flex items-center gap-1"><span className="truncate">{d.name}</span> <KpiInfoTip def={d} /></div>
+                      <div className="text-[10px] text-slate-500 truncate">{isOwn ? `Chung: ${targetText(d, commonOf(d))}` : `${d.unit} · ${DIR_HINT[d.dir]}`}</div>
                     </div>
-                    <select value={r.mode} onChange={e => setOwnMode(d, e.target.value as WhRowMode)} className="h-7 rounded border border-slate-200 bg-white text-[11px] px-1.5 shrink-0">
-                      <option value="common">Theo mục tiêu chung</option>
-                      <option value="own">Mục tiêu riêng</option>
-                    </select>
+                    <div className="mt-1.5 sm:mt-0">
+                      {editing
+                        ? <select value={r.mode} onChange={e => setOwnMode(d, e.target.value as WhRowMode)} className="h-7 w-full rounded border border-slate-200 bg-white text-[11px] px-1.5">
+                            <option value="common">Theo mục tiêu chung</option>
+                            <option value="own">Mục tiêu riêng</option>
+                          </select>
+                        : <StatusBadge tone={isOwn ? 'amber' : 'slate'} className="!text-[9px] !px-1.5">{isOwn ? 'Riêng kho' : 'Theo chung'}</StatusBadge>}
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-2 gap-3 sm:mt-0 sm:contents">
+                      {editing && r.mode === 'own'
+                        ? <TargetCells d={d} v={r.v} onChange={(i, val) => setOwnVal(d.id, i, val)} />
+                        : <TargetCells d={d} t={isOwn ? (ownOf(d) ?? null) : commonOf(d)} muted={!isOwn} />}
+                    </div>
                   </div>
-                  {r.mode === 'own' && <ThresholdInputs d={d} v={r.v} onChange={(i, val) => setOwnVal(d.id, i, val)} />}
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
         )}
       </div>

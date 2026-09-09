@@ -147,7 +147,7 @@ try {
   // tồn — che số liệu mà không để lại dấu vết nào. NSX/HSD/mã lô/QA vốn đã kế thừa, chỉ sót ngày nhập.
   {
     const CU = '2026-05-10'
-    const OLD = v1('907')
+    const OLD = v1('909')          // 901–908 đã dùng ở các mục khác của gói
     await mkPallet(OLD, 40, FIX.WH_QR.id, locA, { import_date: CU })
     const r = await api('/wms/pallet-ops/split', 'POST', {
       source_pallet_code: OLD, children: [{ qty: 15 }], warehouse_id: FIX.WH_QR.id,

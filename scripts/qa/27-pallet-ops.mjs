@@ -140,6 +140,28 @@ try {
       `http=${r.s} child=${childCode} remain=${r.j?.data?.source_remaining} sum=${sum}`)
   }
 
+  // ── [4b] TÁCH phải GIỮ ngày hàng vào kho của pallet gốc ───────────────────
+  // `import_date` = NGÀY HÀNG THỰC TẾ VÀO KHO (user chốt 09/09/2026). Tách là xử lý NỘI BỘ, không có
+  // hàng mới nào vào kho ⇒ pallet con giữ nguyên ngày của gốc. Trước đây đóng dấu hôm nay: pallet
+  // tồn 6 tháng chỉ cần tách một lần là "trẻ" lại và rơi khỏi Hàng chậm / Không luân chuyển / tuổi
+  // tồn — che số liệu mà không để lại dấu vết nào. NSX/HSD/mã lô/QA vốn đã kế thừa, chỉ sót ngày nhập.
+  {
+    const CU = '2026-05-10'
+    const OLD = v1('907')
+    await mkPallet(OLD, 40, FIX.WH_QR.id, locA, { import_date: CU })
+    const r = await api('/wms/pallet-ops/split', 'POST', {
+      source_pallet_code: OLD, children: [{ qty: 15 }], warehouse_id: FIX.WH_QR.id,
+    })
+    const childCode = r.j?.data?.children?.[0]?.pallet_code
+    if (childCode) allCodes.push(childCode)
+    const [child] = childCode ? await restAll('InventoryEntry',
+      `select=import_date,update_date&pallet_code=eq.${encodeURIComponent(childCode)}&warehouse_id=eq.${FIX.WH_QR.id}`) : []
+    const ngayCon = String(child?.import_date ?? '').slice(0, 10)
+    check('[4b] Tách pallet cũ: con GIỮ ngày hàng vào kho của gốc, không đóng dấu hôm nay',
+      r.s === 200 && ngayCon === CU,
+      `http=${r.s} gốc=${CU} con=${ngayCon || '(trống)'} hôm-nay=${vnDate()}`)
+  }
+
   // ── [5] Thiếu qty_semantics → 409 APP_OUTDATED (chặn bundle cũ) ────────────
   {
     // api() tự gắn qty_semantics — gọi fetch trần qua api() với body mảng? Không: gửi cờ SAI giá trị

@@ -179,7 +179,7 @@ export async function splitPallet(req: Request, res: Response) {
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
     const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, ncc_id, shelf_life_days, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
+      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, import_date, ncc_id, shelf_life_days, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
@@ -187,6 +187,9 @@ export async function splitPallet(req: Request, res: Response) {
     const source = sMatch[0]
     if (!source) return fail(res, (await wrongFormatHint(src)) ?? `Không tìm thấy pallet gốc "${src}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
     if (!guardEntryWh(req, res, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))) return
+
+    // Ngày hàng vào kho của pallet GỐC — pallet con kế thừa (xem chỗ dựng dòng con bên dưới)
+    const srcImportDate = (source as { import_date?: string | null }).import_date ?? null
 
     const remaining = Number(source.cartons_remaining ?? 0)
     const reserved = Number(source.cartons_reserved ?? 0)
@@ -303,8 +306,13 @@ export async function splitPallet(req: Request, res: Response) {
         status: 'IN_STOCK',
         created_by: req.user?.sub ?? null,
         updated_by: req.user?.sub ?? null,
-        import_date: vnDate(),
-        update_date: vnDate(),
+        // `import_date` = NGÀY HÀNG THỰC TẾ VÀO KHO (user chốt 09/09/2026), KHÔNG phải ngày thao tác.
+        // Tách pallet là xử lý NỘI BỘ — hàng đã nằm trong kho từ trước, không có gì mới vào. Đóng dấu
+        // hôm nay thì pallet tồn lâu chỉ cần tách một lần là "trẻ" lại và rơi khỏi Hàng chậm / Không
+        // luân chuyển / tuổi tồn — đúng kiểu che số liệu mà không ai thấy (NSX, HSD, mã lô, QA đã kế
+        // thừa sẵn từ pallet gốc ở trên; chỉ mỗi ngày nhập là bị đặt lại).
+        import_date: srcImportDate ?? vnDate(),
+        update_date: vnDate(),                     // ngày CHẠM gần nhất — đúng là hôm nay
         created_at: now,
         updated_at: now,
       }

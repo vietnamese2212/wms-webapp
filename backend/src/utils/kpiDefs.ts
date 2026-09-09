@@ -128,6 +128,41 @@ export const KPI_DEFS: KpiDef[] = [
 export const KPI_BY_ID: Record<string, KpiDef> = Object.fromEntries(KPI_DEFS.map(d => [d.id, d]))
 
 /**
+ * Ý NGHĨA của KPI — hiện trong nút ⓘ trên từng thẻ cùng cách tính (user 09/09 "thêm tooltip cách tính,
+ * diễn giải để người xem hiểu"). Viết cho quản lý kho đọc: KPI này nói điều gì, cao/thấp thì hiểu sao.
+ * Mỗi KPI đo được BẮT BUỘC có một dòng — gói QA 55 [1j] kiểm cùng lúc với empty_hint.
+ */
+export const KPI_MEANING: Record<string, string> = {
+  otif: 'Chỉ số số 1 của dịch vụ: khách nhận đúng ngày hẹn VÀ đủ hàng. Thấp thì hoặc trễ, hoặc thiếu — xem Fill rate và Thời gian xếp hàng để biết vì đâu.',
+  fill: 'Kho giao được bao nhiêu phần trăm số khách đặt. Nhu cầu gốc dựng lại từ vết hạ số lượng, nên dữ liệu trước 28/08 luôn 100%.',
+  gate_dwell: 'Xe đứng trong kho bao lâu từ lúc vào tới lúc ra cổng — đo độ thông thoáng của bãi và tốc độ xếp dỡ.',
+  loading: 'Từ lúc bấm Bắt đầu tới Hoàn thành chuyến — thời gian kho thực sự xếp hàng lên xe.',
+  dock_to_stock: 'Hàng về tới cổng bao lâu thì thành tồn xuất được. Dài là hàng nằm bãi chờ nhập.',
+  recv_acc: 'Bao nhiêu phần trăm phiếu nhận đúng số kế hoạch — lệch là nhà cung cấp giao sai hoặc kho đếm sai.',
+  unload_prod: 'Mỗi giờ công của cả kho xử lý được bao nhiêu pallet nhập — năng suất khâu nhập.',
+  putaway_acc: 'Cất pallet đúng chỗ theo quy tắc kho đặt ra (khu, loại hàng, trần mã). Sai chỗ là tìm hàng lâu và nhặt sai.',
+  inv_acc: 'Số trên hệ thống khớp số đếm thật tới đâu. Nền của mọi kế hoạch xuất — tồn sai thì hứa khách sai.',
+  loc_acc: 'Pallet nằm đúng vị trí hệ thống ghi. Sai vị trí là tìm hàng lâu, kiểm kê phải đổi chỗ.',
+  cc_compl: 'Kiểm kê luân phiên có làm đúng lịch không — vị trí gắn cờ cần kiểm đã được kiểm trong kỳ.',
+  fefo: 'Xuất hàng có lấy đúng thứ tự (hết date trước) không. Sai thứ tự để lại hàng cận date trong kho.',
+  blocked: 'Phần tồn không xuất được vì QA giữ hoặc cách ly — vốn nằm chết.',
+  expiry_risk: 'Phần tồn sắp hết date (dưới ngưỡng đỏ %Date của app) — cần xử lý trước khi thành hàng huỷ.',
+  slow: 'Pallet nằm lâu mà mã không có lượt xuất — hàng đang đọng. Ngưỡng ngày đặt trong form Mục tiêu.',
+  dead: 'Như hàng chậm nhưng ngưỡng dài hơn — gần như không còn bán được theo cách thường.',
+  doh: 'Tồn hiện tại đủ bán bao nhiêu ngày theo tốc độ xuất trong kỳ. Thấp quá là rủi ro hết hàng, cao quá là đọng vốn.',
+  turnover: 'Một năm tồn kho quay được bao nhiêu vòng — đảo ngược của DOH.',
+  util_zone: 'Khu đang dùng bao nhiêu phần trăm sức chứa đã khai. Quá đầy khó xếp, quá trống lãng phí.',
+  util_pos: 'Chỗ pallet thực có đang bị chiếm bao nhiêu phần trăm — đo theo từng vị trí có khai sức chứa.',
+  empty_loc: 'Còn bao nhiêu phần trăm vị trí trống để đón hàng mới.',
+  overflow: 'Pallet xếp vượt sức chứa vị trí — dấu hiệu chèn hàng, dữ liệu vị trí không còn tin được.',
+  pick_prod: 'Mỗi giờ công của cả kho xuất được bao nhiêu thùng quy đổi — năng suất khâu xuất.',
+  pick_lines: 'Mỗi giờ công xử lý được bao nhiêu dòng hàng — đo độ lẻ của đơn, khác với thùng/giờ.',
+  labor_prod: 'Mỗi giờ công luân chuyển được bao nhiêu tấn hàng, tính cả nhập và xuất.',
+  ot_rate: 'Giờ tăng ca chiếm bao nhiêu phần trăm giờ công — cao kéo dài là thiếu người hoặc kế hoạch lệch.',
+  cost_case: 'Một thùng đi qua kho tốn bao nhiêu tiền — chi phí kê khai ở Chi phí kho chia cho thùng nhập + xuất.',
+}
+
+/**
  * Khi KPI KHÔNG có dữ liệu: nói rõ thiếu gì và phải cài đặt / thao tác ở đâu để có số (user 08/09
  * "biểu đồ nào thiếu dữ liệu thì ghi rõ hơn — ví dụ cần setting kho như thế nào"). Mỗi KPI đo được
  * BẮT BUỘC có một dòng ở đây — gói QA 55 [1j] kiểm mọi def đều có empty_hint không rỗng.

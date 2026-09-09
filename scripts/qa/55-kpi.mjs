@@ -138,8 +138,9 @@ try {
   r = await api(q(`&warehouse_id=${WH}`))
   check('[3f] Lọc 1 kho → by_warehouse chỉ kho đó + target_scope = kho', r.s === 200 && (r.j?.data?.by_warehouse ?? []).every(w => w.warehouse_id === WH) && r.j?.data?.target_scope === WH, `n=${r.j?.data?.by_warehouse?.length}`)
 
-  check('[1j] Mọi KPI đo được có empty_hint (thiếu dữ liệu thì nói cần cài đặt gì)', (D?.defs ?? []).every(x => typeof x.empty_hint === 'string' && x.empty_hint.length > 20),
-    (D?.defs ?? []).filter(x => !x.empty_hint).map(x => x.id).join(','))
+  check('[1j] Mọi KPI đo được có empty_hint (thiếu dữ liệu thì nói cần cài đặt gì) + meaning (diễn giải trong nút ⓘ)',
+    (D?.defs ?? []).every(x => typeof x.empty_hint === 'string' && x.empty_hint.length > 20 && typeof x.meaning === 'string' && x.meaning.length > 20),
+    (D?.defs ?? []).filter(x => !x.empty_hint || !x.meaning).map(x => x.id).join(','))
 
   // ═══ [4] Chuỗi theo chu kỳ (biểu đồ đường thực tế ↔ mục tiêu) ═══
   r = await api(`/wms/kpi/series?grain=month&date_from=${FROM}&date_to=${TO}`)

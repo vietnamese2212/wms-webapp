@@ -9,13 +9,14 @@
 //     trục, tooltip, bảng số, chu kỳ riêng). KPI ẢNH CHỤP TỒN (không có "theo kỳ") = thanh mục tiêu.
 //   · Thiếu dữ liệu → nói rõ cần cài đặt / thao tác gì (empty_hint). Chưa có mục tiêu → nút "Đặt mục tiêu" ngay trên thẻ.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Target, Warehouse, AlertTriangle, Info, CircleDashed, Settings2, Maximize2, Table2 } from 'lucide-react'
+import { Target, Warehouse, AlertTriangle, CircleDashed, Settings2, Maximize2, Table2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { DashPanel, DASH_SK } from '@/components/wms/DashboardPanel'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import {
@@ -101,7 +102,23 @@ function targetText(def: KpiDefPublic, t: number[] | null): string {
 const targetShort = (def: KpiDefPublic, t: number[] | null) => !t ? 'chưa đặt mục tiêu'
   : `Mục tiêu ${def.dir === 'band' ? `${fmtNum(t[0], 2)}–${fmtThreshold(def, t[1])}` : `${def.dir === 'up' ? '≥' : '≤'} ${fmtThreshold(def, t[0])}`}`
 const DIR_HINT: Record<string, string> = { up: 'cao hơn là tốt', down: 'thấp hơn là tốt', band: 'nằm trong dải là tốt' }
-const SRC_LABEL: Record<string, string> = { warehouse: 'riêng kho', global: 'công ty', default: 'mặc định' }
+// Nguồn mục tiêu: "chung" (đặt ở tab Mục tiêu dùng chung; chưa ai đặt thì là giá trị khởi tạo của bộ KPI) hoặc "riêng kho"
+const SRC_LABEL: Record<string, string> = { warehouse: 'riêng kho', global: 'chung', default: 'chung' }
+
+/** Nút ⓘ trên thẻ: ý nghĩa + cách tính + chiều tốt + ghi chú đo một phần (user 09/09 "để người xem hiểu"). Nội dung MỘT nguồn = kpiDefs.ts (BE). */
+function KpiInfoTip({ def }: { def: KpiDefPublic }) {
+  return (
+    <InfoTip side="bottom" className="mt-px" tip={
+      <div className="space-y-1 text-left">
+        <div className="font-semibold">#{def.no} · {def.name}</div>
+        {def.meaning && <div>{def.meaning}</div>}
+        <div><b>Cách tính:</b> {def.formula}</div>
+        <div><b>Đọc số:</b> {DIR_HINT[def.dir]}{def.unit ? ` · đơn vị ${def.unit}` : ''}{def.snapshot ? ' · ảnh chụp tồn HIỆN TẠI, không theo kỳ' : ' · số lớn = cả khoảng đã chọn, đường = theo từng kỳ'}</div>
+        {def.note && <div className="text-amber-700 dark:text-amber-400"><b>Lưu ý:</b> {def.note}</div>}
+      </div>
+    } />
+  )
+}
 
 /** ▲▼ so kỳ: tô theo CHIỀU TỐT của KPI, không theo dấu. Dải (band) không có chiều → trung tính. */
 function Delta({ def, k }: { def: KpiDefPublic; k: KpiValue }) {
@@ -150,10 +167,10 @@ function KpiCard({ def, k, points, canTarget, onExpand, onSetTarget }: {
     <div className="relative rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 pl-3.5 pr-2 py-2 overflow-hidden flex flex-col">
       <span className={`absolute left-0 top-0 bottom-0 w-1 ${RAG_STRIPE[r]}`} />
       <div className="flex items-start gap-1">
-        <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-tight flex-1 min-w-0" title={`#${def.no} · ${def.formula}`}>
+        <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-tight flex-1 min-w-0">
           {def.name}{def.snapshot && <span className="ml-1 normal-case tracking-normal text-slate-400">· hiện tại</span>}
         </div>
-        {def.note && <Info className="h-3 w-3 text-amber-500 shrink-0 mt-px" aria-label={def.note} />}
+        <KpiInfoTip def={def} />
         {!def.snapshot && (
           <button type="button" onClick={onExpand} title="Phóng to biểu đồ" aria-label={`Phóng to ${def.name}`}
             className="h-5 w-5 -mt-0.5 -mr-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-white/5 flex items-center justify-center shrink-0">
@@ -230,8 +247,8 @@ function KpiChartDialog({ def, warehouseId, init, onClose }: {
         {def && (
           <>
             <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3 pr-10 shrink-0">
-              <DialogTitle className="text-base font-semibold text-slate-800 dark:text-slate-100">{def.name} <span className="text-slate-400 font-normal text-sm">· {def.unit} · {DIR_HINT[def.dir]}</span></DialogTitle>
-              <p className="text-xs text-slate-500 mt-0.5">{def.formula}{def.note ? ` · ${def.note}` : ''}</p>
+              <DialogTitle className="text-base font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">{def.name} <span className="text-slate-400 font-normal text-sm">· {def.unit} · {DIR_HINT[def.dir]}</span> <KpiInfoTip def={def} /></DialogTitle>
+              <p className="text-xs text-slate-500 mt-0.5">{def.meaning || def.formula}{def.note ? ` · ${def.note}` : ''}</p>
             </div>
             {/* Bộ lọc của biểu đồ — một hàng trên biểu đồ */}
             <div className="px-4 py-2 flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-700/60 shrink-0">
@@ -309,148 +326,223 @@ function KpiChartDialog({ def, warehouseId, init, onClose }: {
   )
 }
 
-// ── Form ĐẶT MỤC TIÊU — mặc định toàn công ty hoặc riêng 1 kho ────────────────────────────────
-type RowMode = 'inherit' | 'none' | 'set'
-type RowState = { mode: RowMode; v: string[] }
+// ── Form ĐẶT MỤC TIÊU — 2 tab (user chốt 09/09 sau khi bác bản "3 tầng" một màn):
+//   · "Mục tiêu dùng chung": kê khai THẲNG từng dòng (ô Đạt / Chú ý), không còn khái niệm "mặc định từ file";
+//     để trống cả hai ô = KPI không có mục tiêu (không sáng đèn). Kèm 2 tham số chung chậm / không luân chuyển.
+//   · "Chi tiết các kho": chọn kho rồi mới hiện danh sách; mỗi dòng chỉ "Theo mục tiêu chung" hay "Mục tiêu riêng"
+//     (ô điền sẵn mục tiêu chung để chỉnh). Mọi diễn giải nằm trong nút ⓘ như các form cấu hình khác.
+//   Số khởi tạo của bộ KPI (cột Target file) chỉ là giá trị điền sẵn khi chưa ai lưu tab chung — lưu một lần là thành của mình.
+type SheetTab = 'common' | 'wh'
+type WhRowMode = 'common' | 'own'
+const needOf = (d: KpiDefPublic) => (d.dir === 'band' ? 3 : 2)
+const labelsOf = (d: KpiDefPublic) => d.dir === 'band' ? ['Từ (đạt)', 'Đến (đạt)', 'Tối đa (chú ý)'] : d.dir === 'up' ? ['Đạt ≥', 'Chú ý ≥'] : ['Đạt ≤', 'Chú ý ≤']
+const emptyVals = (d: KpiDefPublic) => Array<string>(needOf(d)).fill('')
+/** Chuỗi nhập → ngưỡng: trống cả = null (không đặt); điền một phần / không phải số = lỗi. */
+function parseVals(d: KpiDefPublic, v: string[]): { t: number[] | null } | { error: string } {
+  const filled = v.filter(x => String(x).trim() !== '')
+  if (filled.length === 0) return { t: null }
+  if (filled.length !== needOf(d)) return { error: `${d.name}: nhập đủ ${needOf(d)} số hoặc để trống cả để không đặt mục tiêu` }
+  const nums = v.map(x => Number(String(x).replace(',', '.')))
+  if (nums.some(n => !Number.isFinite(n))) return { error: `${d.name}: ngưỡng phải là số` }
+  return { t: nums }
+}
+function ThresholdInputs({ d, v, onChange, disabled }: { d: KpiDefPublic; v: string[]; onChange: (i: number, val: string) => void; disabled?: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-2 shrink-0">
+      {labelsOf(d).map((lb, i) => (
+        <label key={lb} className="text-[10px] text-slate-600 flex items-center gap-1 whitespace-nowrap">{lb}
+          <Input type="number" step="any" value={v[i] ?? ''} disabled={disabled} onChange={e => onChange(i, e.target.value)} className="h-7 w-20 text-xs px-1.5" />
+          <span className="text-slate-400">{d.unit}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
 function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, focusId }: {
   open: boolean; onClose: () => void; warehouseId: string
   warehouses: { id: string; code?: string; name: string }[]; canGlobal: boolean; focusId?: string | null
 }) {
   const q = useKpiTargets(open)
   const save = useSaveKpiTargets()
-  const [scope, setScope] = useState<string>(canGlobal ? '' : warehouseId)
-  const [rows, setRows] = useState<Record<string, RowState>>({})
+  const [tab, setTab] = useState<SheetTab>('common')
+  const [wh, setWh] = useState('')
+  const [common, setCommon] = useState<Record<string, string[]>>({})
+  const [own, setOwn] = useState<Record<string, { mode: WhRowMode; v: string[] }>>({})
   const [slow, setSlow] = useState('90'); const [dead, setDead] = useState('180')
   const [err, setErr] = useState<string | null>(null)
   const [group, setGroup] = useState<string>('')
   const focusRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { if (open) setScope(canGlobal ? (warehouseId || '') : warehouseId) }, [open, warehouseId, canGlobal])
-  useEffect(() => {
-    if (!q.data) return
-    const m: KpiTargetMap = scope ? (q.data.by_warehouse[scope] ?? {}) : q.data.default
-    const next: Record<string, RowState> = {}
-    for (const d of q.data.defs) {
-      if (d.id in m) next[d.id] = m[d.id] === null ? { mode: 'none', v: [] } : { mode: 'set', v: (m[d.id] as number[]).map(String) }
-      else next[d.id] = { mode: 'inherit', v: [] }
-    }
-    // Mở từ nút "Đặt mục tiêu" trên thẻ: nhảy tới đúng KPI và mở sẵn ô nhập
-    if (focusId && next[focusId] && next[focusId].mode !== 'set') {
-      const d = q.data.defs.find(x => x.id === focusId)
-      if (d) next[focusId] = { mode: 'set', v: (d.defaults ?? Array(d.dir === 'band' ? 3 : 2).fill(0)).map(String) }
-      if (d) setGroup(d.group)
-    }
-    setRows(next); setErr(null)
-    setSlow(String(q.data.params.slow_days)); setDead(String(q.data.params.dead_days))
-  }, [q.data, scope, focusId])
-  useEffect(() => { if (open && focusId) setTimeout(() => focusRef.current?.scrollIntoView({ block: 'center' }), 200) }, [open, focusId, q.data])
-
   const defs = q.data?.defs ?? []
   const groups = q.data?.groups ?? []
   const shown = defs.filter(d => !group || d.group === group)
-  const need = (d: KpiDefPublic) => (d.dir === 'band' ? 3 : 2)
-  const labels = (d: KpiDefPublic) => d.dir === 'band' ? ['Từ (đạt)', 'Đến (đạt)', 'Tối đa (chú ý)'] : ['Đạt', 'Chú ý']
-  const inheritText = (d: KpiDefPublic) => {
-    if (scope) {
-      const g = q.data?.default?.[d.id]
-      if (g === null) return 'Theo công ty: không đặt'
-      if (g) return `Theo công ty: ${targetText(d, g)}`
+  /** Mục tiêu chung ĐANG CÓ HIỆU LỰC của một KPI: bản đã lưu; chưa ai lưu thì là giá trị khởi tạo của bộ KPI. */
+  const commonOf = (d: KpiDefPublic): number[] | null => (q.data && d.id in q.data.default) ? q.data.default[d.id] : d.defaults
+
+  // Mở form: về tab phù hợp quyền; mở từ nút "Đặt mục tiêu" trên thẻ → nhảy tới nhóm của KPI đó
+  useEffect(() => {
+    if (!open) return
+    setTab(canGlobal ? 'common' : 'wh'); setWh(canGlobal ? '' : warehouseId); setErr(null); setGroup('')
+  }, [open, canGlobal, warehouseId])
+  useEffect(() => { if (open && focusId && q.data) setGroup(q.data.defs.find(x => x.id === focusId)?.group ?? '') }, [open, focusId, q.data])
+  // Tab chung: điền sẵn mục tiêu chung đang hiệu lực
+  useEffect(() => {
+    if (!q.data) return
+    const c: Record<string, string[]> = {}
+    for (const d of q.data.defs) { const t = commonOf(d); c[d.id] = t ? t.map(String) : emptyVals(d) }
+    setCommon(c); setSlow(String(q.data.params.slow_days)); setDead(String(q.data.params.dead_days))
+  }, [q.data]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Tab kho: đổi kho → nạp ghi đè của kho đó; KPI được nhảy tới mà chưa có riêng → mở sẵn "Mục tiêu riêng"
+  useEffect(() => {
+    if (!q.data) return
+    const m: KpiTargetMap = wh ? (q.data.by_warehouse[wh] ?? {}) : {}
+    const o: Record<string, { mode: WhRowMode; v: string[] }> = {}
+    for (const d of q.data.defs) o[d.id] = d.id in m ? { mode: 'own', v: m[d.id] ? (m[d.id] as number[]).map(String) : emptyVals(d) } : { mode: 'common', v: [] }
+    if (wh && focusId && !canGlobal && o[focusId]?.mode === 'common') {
+      const d = q.data.defs.find(x => x.id === focusId)
+      if (d) o[focusId] = { mode: 'own', v: (commonOf(d) ?? []).map(String) }
     }
-    return d.defaults ? `Mặc định: ${targetText(d, d.defaults)}` : 'Chưa có mục tiêu — bộ KPI ghi "theo policy/baseline", hãy đặt riêng'
-  }
-  const setMode = (id: string, mode: RowMode, d: KpiDefPublic) => setRows(r => ({
-    ...r, [id]: { mode, v: mode === 'set' && r[id].v.length !== need(d) ? (d.defaults ?? Array(need(d)).fill(0)).map(String) : r[id].v },
-  }))
-  const setVal = (id: string, i: number, val: string) => setRows(r => { const v = [...r[id].v]; v[i] = val; return { ...r, [id]: { ...r[id], v } } })
+    setOwn(o)
+  }, [q.data, wh, focusId, canGlobal]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open && focusId) setTimeout(() => focusRef.current?.scrollIntoView({ block: 'center' }), 250) }, [open, focusId, q.data, tab, wh])
+
+  const setCommonVal = (id: string, i: number, val: string) => setCommon(c => { const v = [...(c[id] ?? [])]; v[i] = val; return { ...c, [id]: v } })
+  const setOwnMode = (d: KpiDefPublic, mode: WhRowMode) => setOwn(o => ({ ...o, [d.id]: { mode, v: mode === 'own' ? (commonOf(d) ?? emptyVals(d)).map(String) : [] } }))
+  const setOwnVal = (id: string, i: number, val: string) => setOwn(o => { const v = [...(o[id]?.v ?? [])]; v[i] = val; return { ...o, [id]: { mode: 'own', v } } })
 
   async function onSave() {
     setErr(null)
     const targets: KpiTargetMap = {}
-    for (const d of defs) {
-      const r = rows[d.id]; if (!r || r.mode === 'inherit') continue
-      if (r.mode === 'none') { targets[d.id] = null; continue }
-      const nums = r.v.map(x => Number(String(x).replace(',', '.')))
-      if (nums.length !== need(d) || nums.some(n => !Number.isFinite(n))) { setErr(`${d.name}: nhập đủ ${need(d)} số`); return }
-      targets[d.id] = nums
-    }
-    const body: { warehouse_id: string | null; targets: KpiTargetMap; params?: { slow_days: number; dead_days: number } } = { warehouse_id: scope || null, targets }
-    if (!scope) {
+    let body: { warehouse_id: string | null; targets: KpiTargetMap; params?: { slow_days: number; dead_days: number } }
+    if (tab === 'common') {
+      if (!canGlobal) return
+      for (const d of defs) {
+        const p = parseVals(d, common[d.id] ?? emptyVals(d))
+        if ('error' in p) { setErr(p.error); return }
+        targets[d.id] = p.t
+      }
       const s = Number(slow), dd = Number(dead)
       if (!Number.isInteger(s) || !Number.isInteger(dd)) { setErr('Ngưỡng chậm / không luân chuyển phải là số ngày nguyên'); return }
-      body.params = { slow_days: s, dead_days: dd }
+      body = { warehouse_id: null, targets, params: { slow_days: s, dead_days: dd } }
+    } else {
+      if (!wh) { setErr('Chọn kho trước khi lưu'); return }
+      for (const d of defs) {
+        const r = own[d.id]; if (!r || r.mode !== 'own') continue
+        const p = parseVals(d, r.v)
+        if ('error' in p) { setErr(p.error); return }
+        targets[d.id] = p.t
+      }
+      body = { warehouse_id: wh, targets }
     }
     try { await save.mutateAsync(body); onClose() }
     catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không lưu được mục tiêu — thử lại.') }
   }
 
+  const whName = warehouses.find(w => w.id === wh)?.name ?? ''
+  const tabBtn = (k: SheetTab, label: string) => (
+    <button type="button" onClick={() => { setTab(k); setErr(null) }}
+      className={`h-8 px-3 text-xs font-medium border-b-2 -mb-px ${tab === k ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{label}</button>
+  )
+  const commonTip = (
+    <div className="space-y-1 text-left">
+      <div><b>Mục tiêu dùng chung</b> áp cho mọi kho và mọi chu kỳ (ngày · tuần · tháng · năm). Kho nào có mục tiêu riêng (tab Chi tiết các kho) thì dùng mục tiêu riêng.</div>
+      <div>KPI "cao hơn là tốt": <i>Đạt ≥ … · Chú ý ≥ …</i>, dưới nữa là Không đạt. "Thấp hơn là tốt": <i>Đạt ≤ … · Chú ý ≤ …</i>. KPI dải (sức chứa, DOH): <i>Từ – Đến (đạt) · Tối đa (chú ý)</i>.</div>
+      <div>Để trống cả hai ô = KPI đó không có mục tiêu, không sáng đèn.</div>
+    </div>
+  )
+  const whTip = (
+    <div className="space-y-1 text-left">
+      <div>Chọn kho để xem và đặt mục tiêu riêng. Mỗi KPI mặc định <b>Theo mục tiêu chung</b>; chọn <b>Mục tiêu riêng</b> khi kho này cần ngưỡng khác — ô điền sẵn mục tiêu chung để bạn chỉnh.</div>
+      <div>Mục tiêu riêng để trống cả hai ô = tắt đèn KPI đó ở kho này. Chuyển về "Theo mục tiêu chung" là bỏ ghi đè.</div>
+    </div>
+  )
+  const paramsTip = 'Pallet nhập kho quá N ngày mà mã không xuất quá N ngày = hàng CHẬM luân chuyển; ngưỡng dài hơn = KHÔNG luân chuyển. Tham số chung cho mọi kho, nuôi 2 KPI Hàng chậm / Hàng không luân chuyển.'
+
   return (
     <FormSheet open={open} onClose={onClose} title="Mục tiêu KPI" widthClass="sm:max-w-2xl"
-      description="Ngưỡng đèn xanh / vàng cho từng KPI, áp cho mọi chu kỳ (ngày · tuần · tháng · năm). Ba tầng: riêng kho → công ty → mặc định."
+      description="Ngưỡng đèn xanh / vàng cho từng KPI. Mục tiêu dùng chung áp mọi kho; kho nào cần khác thì đặt riêng."
       footer={<>
         <Button variant="outline" onClick={onClose} disabled={save.isPending}>Huỷ</Button>
-        <Button onClick={onSave} disabled={save.isPending || q.isLoading}>{save.isPending ? 'Đang lưu…' : 'Lưu mục tiêu'}</Button>
+        <Button onClick={onSave} disabled={save.isPending || q.isLoading || (tab === 'common' && !canGlobal) || (tab === 'wh' && !wh)}>
+          {save.isPending ? 'Đang lưu…' : tab === 'common' ? 'Lưu mục tiêu chung' : `Lưu mục tiêu kho${whName ? ` ${whName}` : ''}`}
+        </Button>
       </>}>
       <div className="space-y-3">
-        {/* Mặc định lấy từ đâu — user 09/09 hỏi "khai mặc định như thế nào?" */}
-        <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-slate-700 space-y-1">
-          <div><b>Mặc định</b> = cột <i>Target / RAG</i> của file <i>Warehouse KPI Master List</i> (ví dụ OTIF ≥ 98% đạt, ≥ 96% chú ý). KPI file ghi "theo policy / baseline / budget" (DOH, vòng quay, dòng/giờ, tấn/giờ, chi phí/thùng) <b>chưa có mặc định</b> — dòng tô vàng bên dưới, cần bạn đặt.</div>
-          <div><b>Thứ tự áp dụng:</b> mục tiêu <b>riêng kho</b> (nếu kho đó đặt) → mục tiêu <b>công ty</b> (đặt ở phạm vi "Mặc định toàn công ty") → <b>mặc định bộ KPI</b>. "Theo mặc định / Theo công ty" = không ghi đè tầng trên; "Không đặt mục tiêu" = cố ý tắt đèn cho KPI đó.</div>
-          <div><b>Ngưỡng:</b> KPI "cao hơn là tốt" nhập <i>Đạt ≥ … · Chú ý ≥ …</i> (dưới nữa là Không đạt); "thấp hơn là tốt" nhập <i>Đạt ≤ … · Chú ý ≤ …</i>; KPI dải (sức chứa, DOH) nhập <i>Từ – Đến (đạt) · Tối đa (chú ý)</i>. Cùng một ngưỡng dùng cho mọi chu kỳ.</div>
+        <div className="flex items-center gap-1 border-b border-slate-200">
+          {tabBtn('common', 'Mục tiêu dùng chung')}
+          {tabBtn('wh', 'Chi tiết các kho')}
+          <InfoTip tip={tab === 'common' ? commonTip : whTip} className="ml-auto mr-1" />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-600 shrink-0">Phạm vi</span>
-          {canGlobal && (
-            <button type="button" onClick={() => setScope('')}
-              className={`h-8 px-3 rounded border text-xs font-medium ${!scope ? 'bg-sky-600 text-white border-sky-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Mặc định toàn công ty</button>
-          )}
-          <WarehouseSingleSelect warehouses={warehouses} value={scope} onChange={id => setScope(id || (canGlobal ? '' : warehouseId))} placeholder="Riêng kho…" triggerClassName="h-8 w-52" />
-          {scope && <span className="text-[11px] text-slate-500">Đang sửa mục tiêu RIÊNG của kho — "Theo công ty" = không ghi đè.</span>}
-        </div>
-        {!scope && (
-          <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 grid grid-cols-2 gap-3">
-            <label className="text-xs text-slate-700">Ngưỡng hàng CHẬM luân chuyển (ngày)<Input type="number" min={7} max={730} value={slow} onChange={e => setSlow(e.target.value)} className="h-8 mt-1" /></label>
-            <label className="text-xs text-slate-700">Ngưỡng KHÔNG luân chuyển (ngày)<Input type="number" min={7} max={1460} value={dead} onChange={e => setDead(e.target.value)} className="h-8 mt-1" /></label>
-            <div className="col-span-2 text-[10px] text-slate-500">Tham số chung cho mọi kho (pallet nhập quá N ngày và mã không xuất quá N ngày).</div>
+
+        {tab === 'common' && (
+          <>
+            {!canGlobal && <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">Chỉ người có phạm vi toàn công ty mới sửa mục tiêu chung. Bạn đặt riêng cho kho của mình ở tab <b>Chi tiết các kho</b>.</div>}
+            <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 grid grid-cols-2 gap-3">
+              <label className="text-xs text-slate-700 flex flex-col gap-1">
+                <span className="flex items-center gap-1">Ngưỡng hàng CHẬM luân chuyển (ngày) <InfoTip tip={paramsTip} /></span>
+                <Input type="number" min={7} max={730} value={slow} disabled={!canGlobal} onChange={e => setSlow(e.target.value)} className="h-8" />
+              </label>
+              <label className="text-xs text-slate-700 flex flex-col gap-1">
+                <span>Ngưỡng KHÔNG luân chuyển (ngày)</span>
+                <Input type="number" min={7} max={1460} value={dead} disabled={!canGlobal} onChange={e => setDead(e.target.value)} className="h-8" />
+              </label>
+            </div>
+          </>
+        )}
+        {tab === 'wh' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-600 shrink-0">Kho</span>
+            <WarehouseSingleSelect warehouses={warehouses} value={wh} onChange={id => { setWh(id); setErr(null) }} placeholder="Chọn kho…" triggerClassName="h-8 w-60" />
+            {!wh && <span className="text-[11px] text-slate-500">Chọn kho để xem mục tiêu của kho đó.</span>}
           </div>
         )}
-        <div className="flex items-center gap-1 flex-wrap">
-          <button type="button" onClick={() => setGroup('')} className={`h-6 px-2 rounded text-[10px] font-medium border ${!group ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>Tất cả</button>
-          {groups.map(g => <button key={g.key} type="button" onClick={() => setGroup(g.key)} className={`h-6 px-2 rounded text-[10px] font-medium border ${group === g.key ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>{g.label}</button>)}
-        </div>
+
+        {(tab === 'common' || wh) && (
+          <div className="flex items-center gap-1 flex-wrap">
+            <button type="button" onClick={() => setGroup('')} className={`h-6 px-2 rounded text-[10px] font-medium border ${!group ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>Tất cả</button>
+            {groups.map(g => <button key={g.key} type="button" onClick={() => setGroup(g.key)} className={`h-6 px-2 rounded text-[10px] font-medium border ${group === g.key ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>{g.label}</button>)}
+          </div>
+        )}
         {err && <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">{err}</div>}
         {q.isLoading && <Skeleton className="h-40 w-full bg-slate-200" />}
-        <div className="divide-y divide-slate-100 border border-slate-200 rounded">
-          {shown.map(d => {
-            const r = rows[d.id] ?? { mode: 'inherit', v: [] }
-            const noDefault = !d.defaults && r.mode !== 'set'
-            return (
+
+        {tab === 'common' && !q.isLoading && (
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded">
+            {shown.map(d => (
               <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
-                className={`px-3 py-2 space-y-1.5 ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : noDefault ? 'bg-amber-50/60' : ''}`}>
-                <div className="flex items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-slate-800">{d.name} <span className="text-slate-400 font-normal">· {d.unit} · {DIR_HINT[d.dir]}</span></div>
-                    <div className={`text-[10px] truncate ${noDefault ? 'text-amber-700' : 'text-slate-500'}`} title={d.formula}>{inheritText(d)}</div>
-                  </div>
-                  <select value={r.mode} onChange={e => setMode(d.id, e.target.value as RowMode, d)} className="h-7 rounded border border-slate-200 bg-white text-[11px] px-1.5 shrink-0">
-                    <option value="inherit">{scope ? 'Theo công ty' : 'Theo mặc định'}</option>
-                    <option value="set">Đặt riêng</option>
-                    <option value="none">Không đặt mục tiêu</option>
-                  </select>
+                className={`px-3 py-2 flex items-center gap-3 flex-wrap ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : ''}`}>
+                <div className="flex-1 min-w-[11rem]">
+                  <div className="text-xs font-medium text-slate-800 flex items-center gap-1">{d.name} <KpiInfoTip def={d} /></div>
+                  <div className="text-[10px] text-slate-500">{d.unit} · {DIR_HINT[d.dir]}</div>
                 </div>
-                {r.mode === 'set' && (
-                  <div className="flex flex-wrap gap-2">
-                    {labels(d).map((lb, i) => (
-                      <label key={lb} className="text-[10px] text-slate-600 flex items-center gap-1">{lb}
-                        <Input type="number" step="any" value={r.v[i] ?? ''} onChange={e => setVal(d.id, i, e.target.value)} className="h-7 w-24 text-xs" />
-                        <span className="text-slate-400">{d.unit}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
+                <ThresholdInputs d={d} v={common[d.id] ?? emptyVals(d)} disabled={!canGlobal} onChange={(i, val) => setCommonVal(d.id, i, val)} />
               </div>
-            )
-          })}
-        </div>
+            ))}
+          </div>
+        )}
+        {tab === 'wh' && wh && !q.isLoading && (
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded">
+            {shown.map(d => {
+              const r = own[d.id] ?? { mode: 'common' as WhRowMode, v: [] }
+              return (
+                <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
+                  className={`px-3 py-2 space-y-1.5 ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : r.mode === 'own' ? 'bg-amber-50/40' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-slate-800 flex items-center gap-1">{d.name} <KpiInfoTip def={d} /></div>
+                      <div className="text-[10px] text-slate-500 truncate">Chung: {targetText(d, commonOf(d))}</div>
+                    </div>
+                    <select value={r.mode} onChange={e => setOwnMode(d, e.target.value as WhRowMode)} className="h-7 rounded border border-slate-200 bg-white text-[11px] px-1.5 shrink-0">
+                      <option value="common">Theo mục tiêu chung</option>
+                      <option value="own">Mục tiêu riêng</option>
+                    </select>
+                  </div>
+                  {r.mode === 'own' && <ThresholdInputs d={d} v={r.v} onChange={(i, val) => setOwnVal(d.id, i, val)} />}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </FormSheet>
   )

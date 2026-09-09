@@ -2249,6 +2249,7 @@ export type KpiDefPublic = {
   kind: 'pct' | 'ratio' | 'doh' | 'turnover'; decimals: number; defaults: number[] | null
   formula: string; note: string | null; snapshot: boolean; cost: boolean
   empty_hint: string      // thiếu dữ liệu thì cần cài đặt / thao tác gì để có
+  meaning: string         // ý nghĩa KPI — hiện trong nút ⓘ trên thẻ cùng cách tính
 }
 export type KpiValue = {
   id: string; value: number | null; num: number | null; den: number | null

@@ -16,7 +16,7 @@ import {
   getDashboardCacheSeconds, getStandardWorkHours, getPctDateBands, getKpiTargets, invalidateSettingsCache,
 } from '../../utils/settings'
 import {
-  KPI_DEFS, KPI_GROUPS, KPI_UNAVAILABLE, KPI_TARGETS_DEFAULT, KPI_EMPTY_HINT, kpiValue, evalRag, effectiveTarget,
+  KPI_DEFS, KPI_GROUPS, KPI_UNAVAILABLE, KPI_TARGETS_DEFAULT, KPI_EMPTY_HINT, KPI_MEANING, kpiValue, evalRag, effectiveTarget,
   targetMapError, paramsError, parseKpiTargets,
   type KpiDef, type KpiTargets, type KpiTargetMap, type Rag, type TargetSource,
 } from '../../utils/kpiDefs'
@@ -116,7 +116,7 @@ function buildKpis(defs: KpiDef[], m: Record<string, NumDen>, days: number, targ
 }
 const publicDef = (d: KpiDef) => ({ id: d.id, no: d.no, name: d.name, short: d.short, group: d.group, unit: d.unit, dir: d.dir,
   kind: d.kind, decimals: d.decimals, defaults: d.defaults, formula: d.formula, note: d.note ?? null, snapshot: !!d.snapshot, cost: !!d.cost,
-  empty_hint: KPI_EMPTY_HINT[d.id] ?? '' })
+  empty_hint: KPI_EMPTY_HINT[d.id] ?? '', meaning: KPI_MEANING[d.id] ?? '' })
 
 /** Kiểm tham số chung của GET: kho trong phạm vi + tồn tại, khoảng ngày hợp lệ. Trả lỗi đã gửi (true) hoặc dữ liệu. */
 async function parseScope(req: Request, res: Response): Promise<{ whIds: string[] | null; sel: string; cats: string[] | null } | null> {

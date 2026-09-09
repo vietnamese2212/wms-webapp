@@ -15,7 +15,9 @@ import { Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export function InfoTip({ tip, side = 'bottom', className }: {
-  tip: ReactNode
+  /** Nội dung. Dạng HÀM khi bên trong có nút bấm — nhận sẵn `close` để tự đóng sau khi bấm
+   *  (vd "Sửa diễn giải" ở tab KPI: mở form xong phải đóng tooltip, không thì nó nổi đè lên form). */
+  tip: ReactNode | ((close: () => void) => ReactNode)
   side?: 'top' | 'right' | 'bottom' | 'left'
   className?: string
 }) {
@@ -42,7 +44,9 @@ export function InfoTip({ tip, side = 'bottom', className }: {
       </TooltipTrigger>
       {/* z-[210]: TooltipContent gốc z-[60] CHÌM DƯỚI overlay full-màn z-[120] (sơ đồ xếp xe 3D)
           — user 26/08 "info không hiện thông tin". Tooltip transient nên nổi trên tất cả là an toàn. */}
-      <TooltipContent side={side} className="z-[210] max-w-[280px] text-[11px] leading-snug">{tip}</TooltipContent>
+      <TooltipContent side={side} className="z-[210] max-w-[280px] text-[11px] leading-snug pointer-events-auto">
+        {typeof tip === 'function' ? tip(() => setOpen(false)) : tip}
+      </TooltipContent>
     </Tooltip>
   )
 }

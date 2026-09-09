@@ -162,6 +162,34 @@ export const KPI_MEANING: Record<string, string> = {
   cost_case: 'Một thùng đi qua kho tốn bao nhiêu tiền — chi phí kê khai ở Chi phí kho chia cho thùng nhập + xuất.',
 }
 
+// ── kpi_meanings — DIỄN GIẢI SỬA ĐƯỢC TRONG APP (user chốt 09/09: "phần diễn giải info này cần được
+// sửa trên app khi cần"). Cờ `kpi_meanings` ghi đè câu trong KPI_MEANING; bỏ dòng = về lại câu gốc.
+// Chỉ đụng phần Ý NGHĨA — "Cách tính" vẫn do code sinh vì nó mô tả đúng phép tính RPC đang chạy,
+// cho sửa tay là mở đường cho tài liệu nói một đằng máy tính một nẻo.
+export type KpiMeanings = Record<string, string>
+export const KPI_MEANINGS_DEFAULT: KpiMeanings = {}
+export const KPI_MEANING_MAX = 600
+
+export function meaningsError(m: unknown): string | null {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return 'diễn giải phải là object {kpi: "câu"}'
+  const o = m as Record<string, unknown>
+  if (Object.keys(o).length > KPI_DEFS.length) return 'quá nhiều dòng diễn giải'
+  for (const [id, v] of Object.entries(o)) {
+    const def = KPI_BY_ID[id]
+    if (!def) return `KPI "${id}" không có trong sổ`
+    if (typeof v !== 'string') return `${def.name}: diễn giải phải là chữ`
+    if (!v.trim()) return `${def.name}: để trống thì bỏ hẳn dòng đó (quay về câu mặc định), không lưu chuỗi rỗng`
+    if (v.length > KPI_MEANING_MAX) return `${def.name}: diễn giải tối đa ${KPI_MEANING_MAX} ký tự`
+  }
+  return null
+}
+/** Validator MỘT NGUỒN cho cả PUT lẫn getter (giá trị bậy trong DB → mặc định, không ném). */
+export function parseKpiMeanings(raw: unknown): KpiMeanings | null {
+  return meaningsError(raw) ? null : (raw as KpiMeanings)
+}
+/** Câu diễn giải CÓ HIỆU LỰC: bản sửa trong app → câu gốc trong sổ. */
+export const meaningOf = (id: string, m: KpiMeanings): string => m[id] ?? KPI_MEANING[id] ?? ''
+
 /**
  * Khi KPI KHÔNG có dữ liệu: nói rõ thiếu gì và phải cài đặt / thao tác ở đâu để có số (user 08/09
  * "biểu đồ nào thiếu dữ liệu thì ghi rõ hơn — ví dụ cần setting kho như thế nào"). Mỗi KPI đo được

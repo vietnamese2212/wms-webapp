@@ -9,7 +9,7 @@
 //     trục, tooltip, bảng số, chu kỳ riêng). KPI ẢNH CHỤP TỒN (không có "theo kỳ") = thanh mục tiêu.
 //   · Thiếu dữ liệu → nói rõ cần cài đặt / thao tác gì (empty_hint). Chưa có mục tiêu → nút "Đặt mục tiêu" ngay trên thẻ.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Target, Warehouse, AlertTriangle, CircleDashed, Settings2, Maximize2, Table2, Pencil } from 'lucide-react'
+import { Target, Warehouse, AlertTriangle, CircleDashed, Settings2, Maximize2, Table2, Pencil, BookOpen } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,7 +20,7 @@ import { InfoTip } from '@/components/shared/InfoTip'
 import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import {
-  useWarehouseKpi, useWarehouseKpiSeries, useKpiTargets, useSaveKpiTargets,
+  useWarehouseKpi, useWarehouseKpiSeries, useKpiTargets, useSaveKpiTargets, useKpiMeanings, useSaveKpiMeanings,
   type KpiDefPublic, type KpiValue, type KpiTargetMap, type KpiGrain, type KpiBucket,
 } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -105,18 +105,26 @@ const DIR_HINT: Record<string, string> = { up: 'cao hơn là tốt', down: 'th�
 // Nguồn mục tiêu: "chung" (đặt ở tab Mục tiêu dùng chung; chưa ai đặt thì là giá trị khởi tạo của bộ KPI) hoặc "riêng kho"
 const SRC_LABEL: Record<string, string> = { warehouse: 'riêng kho', global: 'chung', default: 'chung' }
 
-/** Nút ⓘ trên thẻ: ý nghĩa + cách tính + chiều tốt + ghi chú đo một phần (user 09/09 "để người xem hiểu"). Nội dung MỘT nguồn = kpiDefs.ts (BE). */
-function KpiInfoTip({ def }: { def: KpiDefPublic }) {
+/** Nút ⓘ trên thẻ: ý nghĩa + cách tính + chiều tốt + ghi chú đo một phần (user 09/09 "để người xem hiểu").
+ *  Câu ý nghĩa SỬA ĐƯỢC trong app (cờ `kpi_meanings`) — có quyền thì tooltip có luôn nút "Sửa diễn giải".
+ *  "Cách tính" thì không cho sửa: nó mô tả đúng phép tính RPC đang chạy. */
+function KpiInfoTip({ def, onEdit }: { def: KpiDefPublic; onEdit?: () => void }) {
   return (
-    <InfoTip side="bottom" className="mt-px" tip={
+    <InfoTip side="bottom" className="mt-px" tip={close => (
       <div className="space-y-1 text-left">
         <div className="font-semibold">#{def.no} · {def.name}</div>
         {def.meaning && <div>{def.meaning}</div>}
         <div><b>Cách tính:</b> {def.formula}</div>
         <div><b>Đọc số:</b> {DIR_HINT[def.dir]}{def.unit ? ` · đơn vị ${def.unit}` : ''}{def.snapshot ? ' · ảnh chụp tồn HIỆN TẠI, không theo kỳ' : ' · số lớn = cả khoảng đã chọn, đường = theo từng kỳ'}</div>
         {def.note && <div className="text-amber-700 dark:text-amber-400"><b>Lưu ý:</b> {def.note}</div>}
+        {onEdit && (
+          <button type="button" onClick={() => { close(); onEdit() }}
+            className="mt-0.5 inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 font-medium hover:underline underline-offset-2">
+            <Pencil className="h-3 w-3" /> Sửa diễn giải
+          </button>
+        )}
       </div>
-    } />
+    )} />
   )
 }
 
@@ -157,9 +165,9 @@ function seriesPoints(grain: KpiGrain, buckets: KpiBucket[] | undefined, prev: K
 }
 
 // ── Thẻ KPI ───────────────────────────────────────────────────────────────────────────────────
-function KpiCard({ def, k, points, canTarget, onExpand, onSetTarget }: {
+function KpiCard({ def, k, points, canTarget, onExpand, onSetTarget, onEditNote }: {
   def: KpiDefPublic; k: KpiValue; points: ChartPoint[] | null; canTarget: boolean
-  onExpand: () => void; onSetTarget: () => void
+  onExpand: () => void; onSetTarget: () => void; onEditNote?: () => void
 }) {
   const r = ragKey(k.rag)
   const noData = k.value == null
@@ -170,7 +178,7 @@ function KpiCard({ def, k, points, canTarget, onExpand, onSetTarget }: {
         <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-tight flex-1 min-w-0">
           {def.name}{def.snapshot && <span className="ml-1 normal-case tracking-normal text-slate-400">· hiện tại</span>}
         </div>
-        <KpiInfoTip def={def} />
+        <KpiInfoTip def={def} onEdit={onEditNote} />
         {!def.snapshot && (
           <button type="button" onClick={onExpand} title="Phóng to biểu đồ" aria-label={`Phóng to ${def.name}`}
             className="h-5 w-5 -mt-0.5 -mr-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-white/5 flex items-center justify-center shrink-0">
@@ -220,9 +228,9 @@ function UnavailableCard({ u }: { u: { no: number; name: string; need: string } 
 }
 
 // ── Dialog phóng to 80% ───────────────────────────────────────────────────────────────────────
-function KpiChartDialog({ def, warehouseId, init, onClose }: {
+function KpiChartDialog({ def, warehouseId, init, onClose, onEditNote }: {
   def: KpiDefPublic | null; warehouseId: string
-  init: { grain: KpiGrain; from: string; to: string; compare: string }; onClose: () => void
+  init: { grain: KpiGrain; from: string; to: string; compare: string }; onClose: () => void; onEditNote?: () => void
 }) {
   const [grain, setGrain] = useState<KpiGrain>(init.grain)
   const [range, setRange] = useState({ from: init.from, to: init.to })
@@ -247,7 +255,7 @@ function KpiChartDialog({ def, warehouseId, init, onClose }: {
         {def && (
           <>
             <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3 pr-10 shrink-0">
-              <DialogTitle className="text-base font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">{def.name} <span className="text-slate-400 font-normal text-sm">· {def.unit} · {DIR_HINT[def.dir]}</span> <KpiInfoTip def={def} /></DialogTitle>
+              <DialogTitle className="text-base font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">{def.name} <span className="text-slate-400 font-normal text-sm">· {def.unit} · {DIR_HINT[def.dir]}</span> <KpiInfoTip def={def} onEdit={onEditNote} /></DialogTitle>
               <p className="text-xs text-slate-500 mt-0.5">{def.meaning || def.formula}{def.note ? ` · ${def.note}` : ''}</p>
             </div>
             {/* Bộ lọc của biểu đồ — một hàng trên biểu đồ */}
@@ -621,6 +629,103 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
   )
 }
 
+// ── Form DIỄN GIẢI KPI — câu ý nghĩa trong nút ⓘ, SỬA ĐƯỢC TRONG APP (user chốt 09/09:
+//   "phần diễn giải info này cần được sửa trên app khi cần"). Cùng nếp với form Mục tiêu:
+//   mặc định chỉ xem, một nút "Sửa", Huỷ nạp lại từ máy chủ, Lưu xong về chế độ xem.
+//   Xoá trắng một ô = KPI đó quay lại câu gốc trong sổ (không lưu chuỗi rỗng).
+function KpiMeaningSheet({ open, onClose, canEdit, focusId }: {
+  open: boolean; onClose: () => void; canEdit: boolean; focusId?: string | null
+}) {
+  const q = useKpiMeanings(open)
+  const save = useSaveKpiMeanings()
+  const [editing, setEditing] = useState(false)
+  const [txt, setTxt] = useState<Record<string, string>>({})
+  const [group, setGroup] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const focusRef = useRef<HTMLDivElement>(null)
+
+  const rows = q.data?.defs ?? []
+  const groups = q.data?.groups ?? []
+  const shown = rows.filter(d => !group || d.group === group)
+
+  const load = useCallback(() => {
+    if (!q.data) return
+    setTxt(Object.fromEntries(q.data.defs.map(d => [d.id, d.meaning])))
+  }, [q.data])
+  useEffect(() => { load() }, [load])
+  useEffect(() => { if (open) { setEditing(!!focusId && canEdit); setErr(null); setGroup('') } }, [open, focusId, canEdit])
+  useEffect(() => { if (open && focusId) setTimeout(() => focusRef.current?.scrollIntoView({ block: 'center' }), 250) }, [open, focusId, q.data])
+
+  async function onSave() {
+    setErr(null)
+    const body: Record<string, string> = {}
+    for (const d of rows) {
+      const v = (txt[d.id] ?? '').trim()
+      if (!v || v === d.meaning_default) continue   // giống câu gốc → không lưu ghi đè
+      if (v.length > 600) { setErr(`${d.name}: diễn giải tối đa 600 ký tự`); return }
+      body[d.id] = v
+    }
+    try { await save.mutateAsync(body); setEditing(false) }
+    catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không lưu được diễn giải — thử lại.') }
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title="Diễn giải KPI" widthClass="sm:max-w-2xl"
+      description="Câu ý nghĩa hiện trong nút ⓘ trên từng ô KPI. Sửa cho hợp cách gọi của đơn vị mình."
+      footer={editing ? (<>
+        <Button variant="outline" onClick={() => { load(); setEditing(false); setErr(null) }} disabled={save.isPending}>Huỷ</Button>
+        <Button onClick={onSave} disabled={save.isPending || q.isLoading}>{save.isPending ? 'Đang lưu…' : 'Lưu'}</Button>
+      </>) : <Button variant="outline" onClick={onClose}>Đóng</Button>}>
+      <div className="space-y-3">
+        <div className="flex items-center gap-1 flex-wrap">
+          <button type="button" onClick={() => setGroup('')} className={`h-6 px-2 rounded text-[10px] font-medium border ${!group ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>Tất cả</button>
+          {groups.map(g => <button key={g.key} type="button" onClick={() => setGroup(g.key)} className={`h-6 px-2 rounded text-[10px] font-medium border ${group === g.key ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>{g.label}</button>)}
+          <span className="flex-1" />
+          {!editing && canEdit && (
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setErr(null); setEditing(true) }}>
+              <Pencil className="h-3.5 w-3.5" /> Sửa
+            </Button>
+          )}
+          <InfoTip className="ml-1" tip={
+            <div className="space-y-1 text-left">
+              <div>Câu này chỉ để NGƯỜI ĐỌC hiểu KPI, không đụng tới phép tính. Dòng "Cách tính" bên dưới mỗi ô là do hệ thống sinh từ công thức đang chạy nên không sửa được.</div>
+              <div>Xoá trắng một ô rồi Lưu = KPI đó quay lại câu gốc của hệ thống.</div>
+            </div>
+          } />
+        </div>
+        {!canEdit && <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">Bạn không có quyền sửa diễn giải KPI (cần quyền <b>Sửa diễn giải KPI</b> ở Dashboard).</div>}
+        {err && <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">{err}</div>}
+        {q.isLoading && <Skeleton className="h-40 w-full bg-slate-200" />}
+        <div className="divide-y divide-slate-100 border border-slate-200 rounded">
+          {shown.map(d => {
+            const cur = (txt[d.id] ?? '').trim()
+            const changed = editing ? cur !== d.meaning_default : d.custom
+            return (
+              <div key={d.id} ref={d.id === focusId ? focusRef : undefined}
+                className={`px-3 py-2 space-y-1 ${d.id === focusId ? 'bg-sky-50 ring-1 ring-inset ring-sky-300' : ''}`}>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs font-medium text-slate-800 flex-1 min-w-0 truncate">#{d.no} · {d.name}</div>
+                  {changed && <StatusBadge tone="amber" className="!text-[9px] !px-1.5 shrink-0">đã sửa</StatusBadge>}
+                  {editing && changed && (
+                    <button type="button" onClick={() => setTxt(t => ({ ...t, [d.id]: d.meaning_default }))}
+                      className="text-[10px] text-sky-600 hover:underline underline-offset-2 shrink-0">Về câu gốc</button>
+                  )}
+                </div>
+                {editing
+                  ? <textarea value={txt[d.id] ?? ''} onChange={e => setTxt(t => ({ ...t, [d.id]: e.target.value }))} rows={2} maxLength={600}
+                      placeholder={d.meaning_default || 'Nhập diễn giải…'}
+                      className="w-full rounded border border-slate-200 px-2 py-1 text-[11px] leading-snug text-slate-700 outline-none focus:border-sky-400 resize-y" />
+                  : <div className="text-[11px] leading-snug text-slate-600">{d.meaning || <span className="text-slate-300">chưa có diễn giải</span>}</div>}
+                <div className="text-[10px] text-slate-400 leading-snug"><b>Cách tính:</b> {d.formula}</div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </FormSheet>
+  )
+}
+
 // ── Đèn tổng bấm được = bộ lọc thẻ theo đèn (09/09) — khai ở module để không remount (ratchet component_defined_inside_component) ──
 type RagPick = '' | 'G' | 'Y' | 'R' | 'none'
 function RagPill({ k, tone, label, cur, onPick }: { k: RagPick; tone: BadgeTone; label: string; cur: RagPick; onPick: (v: RagPick) => void }) {
@@ -641,6 +746,7 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canTarget = can(perms, 'dashboard', 'kpi_target')
+  const canNote = can(perms, 'dashboard', 'kpi_note')
   const canGlobal = isAdmin(user) || user?.warehouse_scope === 'NATIONAL'
   const { data: scopedWhs = [] } = useScopedWarehouses(true)
 
@@ -656,6 +762,7 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
   const s = useWarehouseKpiSeries({ warehouseId, grain, from, to, compare: '' }, !tooMany)
   const d = q.data
   const [sheet, setSheet] = useState<{ open: boolean; focusId: string | null }>({ open: false, focusId: null })
+  const [note, setNote] = useState<{ open: boolean; focusId: string | null }>({ open: false, focusId: null })
   const [expanded, setExpanded] = useState<KpiDefPublic | null>(null)
   // Bấm thẳng vào đèn tổng để LỌC thẻ (09/09): '' = tất cả · G/Y/R · 'none' = chưa có dữ liệu / chưa mục tiêu
   const [ragFilter, setRagFilter] = useState<RagPick>('')
@@ -682,6 +789,11 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
         <span className="text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
           {formatDate(from)} – {formatDate(to)} · {dayCount(from, to)} ngày · {nBuckets} {grainWord}
         </span>
+        {canNote && (
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setNote({ open: true, focusId: null })}>
+            <BookOpen className="h-3.5 w-3.5" /> Diễn giải
+          </Button>
+        )}
         {canTarget && (
           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setSheet({ open: true, focusId: null })}>
             <Settings2 className="h-3.5 w-3.5" /> Mục tiêu
@@ -764,7 +876,8 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
                 const def = defById.get(k.id)!
                 return <KpiCard key={k.id} def={def} k={k} canTarget={canTarget}
                   points={def.snapshot ? null : (s.data ? seriesPoints(grain, s.data.buckets, s.data.compare?.buckets, def.id) : null)}
-                  onExpand={() => setExpanded(def)} onSetTarget={() => setSheet({ open: true, focusId: def.id })} />
+                  onExpand={() => setExpanded(def)} onSetTarget={() => setSheet({ open: true, focusId: def.id })}
+                  onEditNote={canNote ? () => setNote({ open: true, focusId: def.id }) : undefined} />
               })}
               {un.map(u => <UnavailableCard key={u.no} u={u} />)}
             </div>
@@ -816,11 +929,13 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
         </DashPanel>
       )}
 
-      <KpiChartDialog def={expanded} warehouseId={warehouseId} init={{ grain, from, to, compare: '' }} onClose={() => setExpanded(null)} />
+      <KpiChartDialog def={expanded} warehouseId={warehouseId} init={{ grain, from, to, compare: '' }} onClose={() => setExpanded(null)}
+        onEditNote={canNote && expanded ? () => setNote({ open: true, focusId: expanded.id }) : undefined} />
       {canTarget && (
         <KpiTargetSheet open={sheet.open} focusId={sheet.focusId} onClose={() => setSheet({ open: false, focusId: null })} warehouseId={warehouseId}
           warehouses={scopedWhs as { id: string; code?: string; name: string }[]} canGlobal={canGlobal} />
       )}
+      <KpiMeaningSheet open={note.open} focusId={note.focusId} canEdit={canNote} onClose={() => setNote({ open: false, focusId: null })} />
     </div>
   )
 }

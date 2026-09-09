@@ -42,6 +42,8 @@ async function wipe() {
 await wipe()
 const beforeRows = await restAll('SystemSetting', 'select=key,value,updated_by,updated_at&key=eq.kpi_targets')
 const before = beforeRows[0] ?? null
+const beforeMeanRows = await restAll('SystemSetting', 'select=key,value,updated_by,updated_at&key=eq.kpi_meanings')
+const beforeMean = beforeMeanRows[0] ?? null
 
 /** Tạo tài khoản ASSIGNED kho Bluestar với bộ quyền cho trước; trả hàm gọi API bằng token của nó (null nếu không có bcrypt). */
 async function scopedAccount(suffix, perms) {
@@ -222,6 +224,41 @@ try {
   check('[5l] Đổi mục tiêu có vết trong Nhật ký quản trị (SETTING_UPDATE · kpi_targets)', audit.length >= 1 && audit[0].action === 'SETTING_UPDATE', `n=${audit.length}`)
   check('[5m] Bảo toàn: mục tiêu công ty vừa lưu vẫn còn sau các PUT bậy', (await api('/wms/kpi/targets')).j?.data?.default?.otif?.[0] === 99)
 
+  // ═══ [5n] DIỄN GIẢI KPI sửa trong app (cờ kpi_meanings, 09/09) ═══
+  r = await api('/wms/kpi/meanings')
+  const M0 = r.j?.data
+  check('[5n] GET meanings → 200 + defs có meaning/meaning_default/custom cho đủ 27 KPI',
+    r.s === 200 && (M0?.defs ?? []).length === 27 && M0.defs.every(d => typeof d.meaning === 'string' && d.meaning.length > 20 && typeof d.meaning_default === 'string' && typeof d.custom === 'boolean'),
+    `http=${r.s} n=${M0?.defs?.length}`)
+  const MEAN = 'QA55 dien giai thu nghiem cho OTIF — cau nay do nguoi dung tu sua trong app.'
+  r = await api('/wms/kpi/meanings', 'PUT', { meanings: { otif: MEAN } })
+  check('[5o] PUT meanings → 200', r.s === 200, `http=${r.s} ${err(r)}`)
+  r = await api('/wms/kpi/meanings')
+  check('[5p] GET meanings: otif dùng câu MỚI, custom=true; KPI khác vẫn câu gốc',
+    r.j?.data?.defs?.find(d => d.id === 'otif')?.meaning === MEAN && r.j.data.defs.find(d => d.id === 'otif').custom === true
+    && r.j.data.defs.find(d => d.id === 'fill').custom === false && r.j.data.defs.find(d => d.id === 'fill').meaning.length > 20)
+  r = await api(q())
+  check('[5q] GET kpi: defs.meaning của otif LÀ CÂU ĐÃ SỬA (thẻ + nút ⓘ đọc cùng nguồn)',
+    r.j?.data?.defs?.find(d => d.id === 'otif')?.meaning === MEAN, `meaning=${String(r.j?.data?.defs?.find(d => d.id === 'otif')?.meaning).slice(0, 40)}`)
+  for (const [name, body] of [
+    ['KPI lạ', { meanings: { khong_co: 'abc' } }],
+    ['câu rỗng (phải bỏ hẳn dòng)', { meanings: { otif: '   ' } }],
+    ['câu không phải chữ', { meanings: { otif: 123 } }],
+    ['quá 600 ký tự', { meanings: { otif: 'x'.repeat(601) } }],
+    ['meanings là mảng', { meanings: ['a'] }],
+    ['thiếu meanings', {}],
+  ]) {
+    r = await api('/wms/kpi/meanings', 'PUT', body)
+    check(`[5r] PUT meanings bậy bị chặn 400: ${name}`, r.s === 400, `http=${r.s} ${err(r)}`)
+  }
+  r = await api('/wms/kpi/meanings', 'PUT', { meanings: {} })
+  const back = (await api('/wms/kpi/meanings')).j?.data?.defs?.find(d => d.id === 'otif')
+  check('[5s] Bỏ hết ghi đè → otif quay lại câu GỐC của hệ thống', r.s === 200 && back?.custom === false && back?.meaning === back?.meaning_default && back.meaning.length > 20)
+  r = await api('/wms/settings/kpi_meanings', 'PUT', { value: {} })
+  check('[5t] Đường chung PUT /wms/settings/kpi_meanings bị chặn (UNKNOWN_SETTING)', r.s === 400 && r.j?.error?.code === 'UNKNOWN_SETTING', `http=${r.s} ${err(r)}`)
+  const auditM = await restAll('admin_audit_events', `select=id,action,target_id&target_id=eq.kpi_meanings&order=created_at.desc&limit=2`)
+  check('[5u] Sửa diễn giải có vết Nhật ký quản trị (SETTING_UPDATE · kpi_meanings)', auditM.length >= 1 && auditM[0].action === 'SETTING_UPDATE', `n=${auditM.length}`)
+
   // ═══ [6] Phạm vi kho + quyền ═══
   const viewer = await scopedAccount('01', { dashboard: ['view'] })
   if (!viewer) console.log('  ⏭  không load được bcrypt của backend — bỏ qua phép kiểm PHẠM VI/QUYỀN')
@@ -234,6 +271,10 @@ try {
     check('[6b] Kho lẻ xin kho Ba Vì → 403', r.s === 403, `http=${r.s} ${err(r)}`)
     r = await viewer('/wms/kpi/targets', 'PUT', { warehouse_id: FIX.WH_QTY.id, targets: { otif: [95, 90] } })
     check('[6c] Không có dashboard.kpi_target → PUT 403', r.s === 403, `http=${r.s}`)
+    r = await viewer('/wms/kpi/meanings', 'PUT', { meanings: { otif: 'thu sua khong co quyen' } })
+    check('[6c2] Không có dashboard.kpi_note → PUT meanings 403', r.s === 403, `http=${r.s}`)
+    r = await viewer('/wms/kpi/meanings')
+    check('[6c3] Kho lẻ vẫn ĐỌC được diễn giải (dashboard.view)', r.s === 200 && (r.j?.data?.defs ?? []).length > 0, `http=${r.s}`)
     const setter = await scopedAccount('02', { dashboard: ['view', 'kpi_target'] })
     if (setter) {
       r = await setter('/wms/kpi/targets', 'PUT', { warehouse_id: null, targets: { otif: [95, 90] } })
@@ -245,6 +286,12 @@ try {
       r = await setter('/wms/kpi/targets')
       check('[6g] Kho lẻ GET targets chỉ thấy ghi đè của kho mình', r.s === 200 && Object.keys(r.j?.data?.by_warehouse ?? {}).every(kk => kk === FIX.WH_QTY.id), `keys=${Object.keys(r.j?.data?.by_warehouse ?? {}).length}`)
     }
+    const noter = await scopedAccount('03', { dashboard: ['view', 'kpi_note'] })
+    if (noter) {
+      r = await noter('/wms/kpi/meanings', 'PUT', { meanings: { otif: 'kho le sua dien giai chung' } })
+      check('[6h] Kho lẻ có kpi_note vẫn KHÔNG sửa được diễn giải (áp cho mọi kho) → 403 SCOPE_LIMITED',
+        r.s === 403 && r.j?.error?.code === 'SCOPE_LIMITED', `http=${r.s} ${err(r)}`)
+    }
   }
   // Không có token → 401
   const anon = await fetch(`${BASE}/api/wms/kpi?date_from=${FROM}&date_to=${TO}`)
@@ -253,9 +300,13 @@ try {
   // ═══ TRẢ LẠI cờ kpi_targets như trước + dọn tài khoản ═══
   if (before) await restWrite('SystemSetting', 'PATCH', 'key=eq.kpi_targets', { value: before.value, updated_by: before.updated_by, updated_at: before.updated_at }).catch(() => {})
   else await restWrite('SystemSetting', 'DELETE', 'key=eq.kpi_targets').catch(() => {})
+  if (beforeMean) await restWrite('SystemSetting', 'PATCH', 'key=eq.kpi_meanings', { value: beforeMean.value, updated_by: beforeMean.updated_by, updated_at: beforeMean.updated_at }).catch(() => {})
+  else await restWrite('SystemSetting', 'DELETE', 'key=eq.kpi_meanings').catch(() => {})
   await wipe()
   const after = await restAll('SystemSetting', 'select=value&key=eq.kpi_targets')
   check('[9] Dọn: cờ kpi_targets trả về đúng trạng thái trước khi chạy', before ? JSON.stringify(after[0]?.value) === JSON.stringify(before.value) : after.length === 0)
+  const afterMean = await restAll('SystemSetting', 'select=value&key=eq.kpi_meanings')
+  check('[9c] Dọn: cờ kpi_meanings trả về đúng trạng thái trước khi chạy', beforeMean ? JSON.stringify(afterMean[0]?.value) === JSON.stringify(beforeMean.value) : afterMean.length === 0)
   check('[9b] Dọn: 0 tài khoản QA55 còn lại', (await restAll('Employee', `select=id&employee_code=like.${T}*`)).length === 0)
 }
 finish('55-kpi')

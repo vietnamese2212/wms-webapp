@@ -70,6 +70,8 @@ router.get('/kpi',          requirePerm('dashboard', 'view'),       kpi.getKpi)
 router.get('/kpi/series',   requirePerm('dashboard', 'view'),       kpi.getKpiSeries)
 router.get('/kpi/targets',  requirePerm('dashboard', 'view'),       kpi.getKpiTargets_)
 router.put('/kpi/targets',  requirePerm('dashboard', 'kpi_target'), kpi.putKpiTargets)
+router.get('/kpi/meanings', requirePerm('dashboard', 'view'),       kpi.getKpiMeanings_)
+router.put('/kpi/meanings', requirePerm('dashboard', 'kpi_note'),   kpi.putKpiMeanings)
 
 // Chi phí kho — SỔ KÊ KHAI: 1 dòng = (Kho · Kỳ tháng · Khoản mục · Số tiền); mỗi việc 1 quyền riêng.
 // Route tĩnh (/items, /upload…) phải đứng TRƯỚC /:id, không thì 'items' bị nuốt làm id.

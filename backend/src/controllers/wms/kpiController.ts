@@ -13,12 +13,12 @@ import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { logAdmin } from '../../services/adminAudit'
 import {
-  getDashboardCacheSeconds, getStandardWorkHours, getPctDateBands, getKpiTargets, invalidateSettingsCache,
+  getDashboardCacheSeconds, getStandardWorkHours, getPctDateBands, getKpiTargets, getKpiMeanings, invalidateSettingsCache,
 } from '../../utils/settings'
 import {
   KPI_DEFS, KPI_GROUPS, KPI_UNAVAILABLE, KPI_TARGETS_DEFAULT, KPI_EMPTY_HINT, KPI_MEANING, kpiValue, evalRag, effectiveTarget,
-  targetMapError, paramsError, parseKpiTargets,
-  type KpiDef, type KpiTargets, type KpiTargetMap, type Rag, type TargetSource,
+  targetMapError, paramsError, parseKpiTargets, KPI_MEANINGS_DEFAULT, meaningsError, parseKpiMeanings, meaningOf,
+  type KpiDef, type KpiTargets, type KpiTargetMap, type KpiMeanings, type Rag, type TargetSource,
 } from '../../utils/kpiDefs'
 
 function scopeWhIds(req: Request): string[] | null {
@@ -114,9 +114,10 @@ function buildKpis(defs: KpiDef[], m: Record<string, NumDen>, days: number, targ
     }
   })
 }
-const publicDef = (d: KpiDef) => ({ id: d.id, no: d.no, name: d.name, short: d.short, group: d.group, unit: d.unit, dir: d.dir,
+// `meaning` = câu diễn giải ĐANG có hiệu lực (bản sửa trong app nếu có) — FE chỉ vẽ, không có bản chép.
+const publicDef = (m: KpiMeanings) => (d: KpiDef) => ({ id: d.id, no: d.no, name: d.name, short: d.short, group: d.group, unit: d.unit, dir: d.dir,
   kind: d.kind, decimals: d.decimals, defaults: d.defaults, formula: d.formula, note: d.note ?? null, snapshot: !!d.snapshot, cost: !!d.cost,
-  empty_hint: KPI_EMPTY_HINT[d.id] ?? '', meaning: KPI_MEANING[d.id] ?? '' })
+  empty_hint: KPI_EMPTY_HINT[d.id] ?? '', meaning: meaningOf(d.id, m) })
 
 /** Kiểm tham số chung của GET: kho trong phạm vi + tồn tại, khoảng ngày hợp lệ. Trả lỗi đã gửi (true) hoặc dữ liệu. */
 async function parseScope(req: Request, res: Response): Promise<{ whIds: string[] | null; sel: string; cats: string[] | null } | null> {
@@ -173,7 +174,7 @@ export async function getKpi(req: Request, res: Response) {
     return ok(res, {
       from, to, days, compare: cmp ? { mode: compare, ...cmp, days: Number(prev?.days ?? 0) } : null,
       pct_low: cur.pct_low, slow_days: cur.slow_days, dead_days: cur.dead_days,
-      groups: KPI_GROUPS, defs: defs.map(publicDef),
+      groups: KPI_GROUPS, defs: defs.map(publicDef(await getKpiMeanings())),
       unavailable: KPI_UNAVAILABLE,
       target_scope: whForTarget,
       kpis, by_warehouse,
@@ -237,7 +238,7 @@ export async function getKpiSeries(req: Request, res: Response) {
     const targetsOut: Record<string, number[] | null> = {}
     for (const d of defs) targetsOut[d.id] = effectiveTarget(d, targets, whForTarget).t
     return ok(res, {
-      grain, from, to, defs: defs.map(publicDef), targets: targetsOut,
+      grain, from, to, defs: defs.map(publicDef(await getKpiMeanings())), targets: targetsOut,
       buckets: toBuckets(cur),
       compare: prev && cmp ? { mode: cmpRaw, from: cmp.from, to: cmp.to, buckets: toBuckets(prev) } : null,
     })
@@ -251,7 +252,7 @@ export async function getKpiTargets_(req: Request, res: Response) {
     const scope = scopeWhIds(req)
     // Người bị giới hạn kho chỉ thấy ghi đè của kho mình
     const by_warehouse = scope ? Object.fromEntries(Object.entries(t.by_warehouse).filter(([k]) => scope.includes(k))) : t.by_warehouse
-    return ok(res, { ...t, by_warehouse, defs: KPI_DEFS.map(publicDef), groups: KPI_GROUPS })
+    return ok(res, { ...t, by_warehouse, defs: KPI_DEFS.map(publicDef(await getKpiMeanings())), groups: KPI_GROUPS })
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
 }
 
@@ -301,6 +302,45 @@ export async function putKpiTargets(req: Request, res: Response) {
     if (JSON.stringify(before) !== JSON.stringify(next))
       await logAdmin(req, { action: 'SETTING_UPDATE', target_type: 'SystemSetting', target_id: 'kpi_targets',
         target_label: wh ? `kpi_targets · kho ${wh}` : 'kpi_targets · mặc định', before: { value: before }, after: { value: next } })
+    return ok(res, next)
+  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
+}
+
+// GET /wms/kpi/meanings — form sửa DIỄN GIẢI đọc: câu đang dùng + câu gốc (để biết mình đã đổi gì)
+export async function getKpiMeanings_(_req: Request, res: Response) {
+  try {
+    const m = await getKpiMeanings()
+    return ok(res, {
+      meanings: m, groups: KPI_GROUPS,
+      defs: KPI_DEFS.map(d => ({
+        id: d.id, no: d.no, name: d.name, group: d.group, unit: d.unit, formula: d.formula,
+        meaning: meaningOf(d.id, m), meaning_default: KPI_MEANING[d.id] ?? '', custom: d.id in m,
+      })),
+    })
+  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
+}
+
+// PUT /wms/kpi/meanings — requirePerm dashboard.kpi_note · body { meanings: {kpi: "câu"} }
+// Thay TRỌN bộ ghi đè: KPI nào không có mặt = dùng lại câu gốc trong sổ.
+export async function putKpiMeanings(req: Request, res: Response) {
+  try {
+    // Diễn giải áp cho MỌI kho nên chỉ người phạm vi toàn công ty được sửa (cùng luật với mục tiêu chung)
+    if (scopeWhIds(req)) return fail(res, 'Chỉ người có phạm vi toàn công ty mới sửa diễn giải KPI', 403, 'SCOPE_LIMITED')
+    const body = (req.body ?? {}) as { meanings?: unknown }
+    const e = meaningsError(body.meanings)
+    if (e) return fail(res, e, 400, 'INVALID_MEANING')
+    const next = body.meanings as KpiMeanings
+
+    const { data: row } = await supabase.from('SystemSetting').select('value').eq('key', 'kpi_meanings').maybeSingle()
+    const before = parseKpiMeanings(row?.value) ?? KPI_MEANINGS_DEFAULT
+    const { error } = await supabase.from('SystemSetting').upsert({
+      key: 'kpi_meanings', value: next, updated_by: req.user?.name ?? null, updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' })
+    if (error) return fail(res, error)
+    invalidateSettingsCache()
+    if (JSON.stringify(before) !== JSON.stringify(next))
+      await logAdmin(req, { action: 'SETTING_UPDATE', target_type: 'SystemSetting', target_id: 'kpi_meanings',
+        target_label: 'kpi_meanings · diễn giải KPI', before: { value: before }, after: { value: next } })
     return ok(res, next)
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
 }

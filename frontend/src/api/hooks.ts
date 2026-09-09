@@ -2339,6 +2339,33 @@ export function useSaveKpiTargets() {
   })
 }
 
+// ── DIỄN GIẢI KPI (nút ⓘ) — sửa được trong app, lưu ở cờ `kpi_meanings` (09/09) ───────────────
+export type KpiMeaningRow = {
+  id: string; no: number; name: string; group: string; unit: string; formula: string
+  meaning: string; meaning_default: string; custom: boolean
+}
+export type KpiMeanings = {
+  meanings: Record<string, string>; defs: KpiMeaningRow[]; groups: Array<{ key: string; label: string }>
+}
+export function useKpiMeanings(enabled: boolean) {
+  return useQuery<KpiMeanings>({
+    queryKey: ['kpi-meanings'], enabled, staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/kpi/meanings').then(r => r.data.data),
+  })
+}
+export function useSaveKpiMeanings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (meanings: Record<string, string>) => apiClient.put('/wms/kpi/meanings', { meanings }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['kpi-meanings'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi'] })       // defs mang câu diễn giải → thẻ đọc lại
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi-series'] })
+      qc.invalidateQueries({ queryKey: ['kpi-targets'] })
+    },
+  })
+}
+
 // ── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) — kho nhận chấm lúc xác nhận đơn ─────────────────────────
 export type ReceiptRatingMode = 'off' | 'optional' | 'required'
 export type ReceiptRating = {

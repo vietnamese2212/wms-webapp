@@ -7,7 +7,7 @@
 // MỘT NGUỒN cho cả 2 chiều: mặc định + validator khai ở đây, systemSettingController dùng chính
 // validator này cho PUT, consumer dùng getter — không có bản chép tay nào để lệch.
 import { supabase } from '../lib/supabase'
-import { KPI_TARGETS_DEFAULT, parseKpiTargets } from './kpiDefs'
+import { KPI_TARGETS_DEFAULT, parseKpiTargets, KPI_MEANINGS_DEFAULT, parseKpiMeanings } from './kpiDefs'
 
 const TTL_MS = 30_000
 const cache = new Map<string, { at: number; value: unknown }>()
@@ -232,3 +232,7 @@ export const getPctDateBands = () => readSetting('pct_date_bands', PCT_DATE_BAND
 // Ghi qua route riêng PUT /wms/kpi/targets (quyền `dashboard.kpi_target`), KHÔNG nằm trong sổ cờ của
 // systemSettingController (PUT /wms/settings/kpi_targets → UNKNOWN_SETTING). Định nghĩa + validator ở kpiDefs.ts.
 export const getKpiTargets = () => readSetting('kpi_targets', KPI_TARGETS_DEFAULT, parseKpiTargets)
+
+// ── kpi_meanings — DIỄN GIẢI KPI sửa trong app (09/09). Cũng đi route riêng PUT /wms/kpi/meanings
+// (quyền `dashboard.kpi_note`), KHÔNG nằm trong sổ cờ chung. Định nghĩa + validator ở kpiDefs.ts.
+export const getKpiMeanings = () => readSetting('kpi_meanings', KPI_MEANINGS_DEFAULT, parseKpiMeanings)

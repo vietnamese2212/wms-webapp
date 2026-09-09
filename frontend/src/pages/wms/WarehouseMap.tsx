@@ -16,7 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { Map as MapIcon, Pencil, Eye, Save, Maximize2, MousePointer2, Hand, Grid3x3, Brush, DoorOpen, Eraser, Sparkles, Trash2, X, Package, BookOpen, Undo2, Redo2 } from 'lucide-react'
+import { Map as MapIcon, Pencil, Eye, Save, Maximize2, MousePointer2, Hand, Grid3x3, Brush, DoorOpen, Eraser, Sparkles, Trash2, X, Package, BookOpen, Undo2, Redo2, Box } from 'lucide-react'
+import { WarehouseMap3D } from '@/components/wms/WarehouseMap3D'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -163,6 +164,9 @@ export default function WarehouseMap() {
 
   const [editing, setEditing] = useState(false)
   useEffect(() => { if (!canEdit || !isLg) setEditing(false) }, [canEdit, isLg])
+  // Góc nhìn 3D CHỈ XEM (09/09): dựng từ cùng dữ liệu, chỉ desktop (PDA yếu WebGL); mở 3D là thoát trình vẽ
+  const [view3d, setView3d] = useState(false)
+  useEffect(() => { if (!isLg) setView3d(false) }, [isLg])
   const [tool, setTool] = useState<Tool>('select')
   const [placingKey, setPlacingKey] = useState<string | null>(null)
   const [lineZone, setLineZone] = useState<string | null>(null)
@@ -668,10 +672,15 @@ export default function WarehouseMap() {
   ]
 
   const actions: ActionItem[] = []
-  if (canEdit && isLg) actions.push({
+  if (canEdit && isLg && !view3d) actions.push({
     key: 'edit', icon: editing ? Eye : Pencil, label: editing ? 'Xem' : 'Chỉnh sửa', primary: true,
     tip: editing ? 'Thoát trình vẽ, về chế độ xem' : 'Mở trình vẽ: khung, rải dãy, tường, cửa/bãi',
     onClick: () => { setEditing(v => !v); setTool('select'); setPlacingKey(null); setLineZone(null) },
+  })
+  if (isLg && hasSavedFrame && !editing) actions.push({
+    key: '3d', icon: view3d ? MapIcon : Box, label: view3d ? '2D' : '3D',
+    tip: view3d ? 'Về bản vẽ 2D' : 'Góc nhìn 3D chỉ xem: kệ cao theo số tầng, pallet tô theo tầng, xe đang ở cửa — dựng từ chính bản vẽ này',
+    onClick: () => { setView3d(v => !v); setTool('select') },
   })
   if (editing) {
     actions.push({ key: 'undo', icon: Undo2, label: 'Hoàn tác', tip: hist.undo ? `Hoàn tác: ${hist.undo} (Ctrl+Z)` : 'Chưa có gì để hoàn tác (Ctrl+Z)', onClick: () => void runHist('undo'), disabled: !hist.undo || busy })
@@ -734,7 +743,12 @@ export default function WarehouseMap() {
                 </div>
               </div>
             )}
-            {frame && mask && (data?.map || editing) && (
+            {frame && view3d && data?.map && !editing && (
+              <WarehouseMap3D frame={frame} cellM={draft?.cell_m ?? 1.2} blocked={draft?.blocked ?? []} footprints={placed}
+                zoneColor={zoneColor} occByLoc={occByLoc} dockByLoc={dockByLoc} selectedKey={selected?.key ?? null}
+                onPick={f => { setSelKeys(f ? [f.key] : []); setSelWalls([]) }} className="absolute inset-0" />
+            )}
+            {frame && mask && (data?.map || editing) && !(view3d && !editing) && (
               <MapCanvas frame={frame} blocked={draft?.blocked ?? []} footprints={placed} zoneColor={zoneColor} zonesFilter={zones}
                 overlay={overlay} occByLoc={occByLoc} dockByLoc={dockByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} selectedWalls={selWallSet} path={path} door={door}
                 tool={editing ? tool : 'select'} editing={editing} panHeld={spaceHeld} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee}

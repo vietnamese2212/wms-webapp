@@ -11,12 +11,16 @@
 //   · các khối chi tiết giữ nguyên (hàng theo mã, chuyến đang soạn, xe trong cổng, nhịp giờ)
 // Realtime + refetch 60s. Chế độ TV = fullscreen chính console này (đồng hồ to).
 // Dữ liệu: RPC control_tower_stats + control_tower_resources (BE gộp 1 request).
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale, Users, Forklift, ShieldAlert } from 'lucide-react'
+import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale, Users, Forklift, ShieldAlert, Box } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
-import { useControlTower, useMaterials, useGateDwellThresholds, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip, type ControlTowerResources } from '@/api/hooks'
+import { useControlTower, useMaterials, useGateDwellThresholds, useWarehouseDocks, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip, type ControlTowerResources } from '@/api/hooks'
+import { useWarehouseMap, useWarehouseMapOccupancy } from '@/api/warehouseMap'
+import { WarehouseMap3D } from '@/components/wms/WarehouseMap3D'
+import { groupFootprints, zoneColorMap } from '@/utils/warehouseFootprint'
+import { naturalCompare } from '@/utils/warehouseGrid'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
@@ -677,6 +681,18 @@ export default function ControlTower() {
     window.addEventListener('resize', calc)
     return () => window.removeEventListener('resize', calc)
   }, [tv])
+  // SƠ ĐỒ KHO 3D trên màn TV (09/09, chỉ xem, tự xoay) — chỉ khi bộ lọc chọn ĐÚNG MỘT kho và kho có bản vẽ.
+  // Dựng từ cùng dữ liệu của trang Sơ đồ kho (GET map + tồn theo ô + xe ở cửa) — không có dữ liệu riêng.
+  const tvWhId = filters.warehouse_ids.length === 1 ? filters.warehouse_ids[0] : ''
+  const [tv3d, setTv3d] = useState(false)
+  const map3dOn = tv && tv3d && !!tvWhId
+  const mapQ = useWarehouseMap(map3dOn ? tvWhId : '')
+  const mapOccQ = useWarehouseMapOccupancy(tvWhId, map3dOn && !!mapQ.data?.map)
+  const docksQ = useWarehouseDocks(tvWhId, map3dOn)
+  const fps3d = useMemo(() => groupFootprints(mapQ.data?.locations ?? []).filter(f => f.anchor), [mapQ.data])
+  const zone3d = useMemo(() => zoneColorMap(fps3d, naturalCompare), [fps3d])
+  const occ3d = useMemo(() => new Map((mapOccQ.data ?? []).map(o => [o.location_id, o])), [mapOccQ.data])
+  const dock3d = useMemo(() => new Map((docksQ.data ?? []).map(d => [d.id, d])), [docksQ.data])
 
   const filterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'multi', searchable: true,
@@ -763,16 +779,34 @@ export default function ControlTower() {
               <span key={c} className="text-sm px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-200 border border-sky-500/40 max-w-[360px] truncate" title={c}>{c}</span>
             ))}
             <FilterSheetButton defs={filterDefs} />
+            {tvWhId && (
+              <button onClick={() => setTv3d(v => !v)} title={tv3d ? 'Về bảng số liệu' : 'Sơ đồ kho 3D của kho đang lọc (kệ cao theo tầng, pallet, xe ở cửa) — tự xoay'}
+                className={`h-9 px-3 rounded-md border text-sm font-medium flex items-center gap-1.5 ${tv3d ? 'border-sky-400 bg-sky-500/20 text-sky-200' : 'border-slate-600 text-slate-300 hover:bg-white/10'}`}>
+                <Box className="h-4 w-4" /> {tv3d ? 'Bảng số liệu' : 'Sơ đồ 3D'}
+              </button>
+            )}
             <span className="ml-auto text-5xl font-mono font-bold tabular-nums text-sky-300 leading-none">{clock}</span>
             <button onClick={exitTv} className="p-2 rounded-md hover:bg-white/10" title="Thoát chế độ TV">
               <X className="h-6 w-6" />
             </button>
           </div>
-          {/* Xem từ 3–5m: phóng nội dung theo BỀ RỘNG màn (TV 1920 → ~1,4×; laptop 1280 → 1×).
-              `zoom` giữ nguyên bố cục lưới, khác `transform: scale` là không phá luồng cuộn. */}
-          <div style={{ zoom: tvZoom }} className="flex-1">
-            <ConsoleBody data={data} now={now} tv />
-          </div>
+          {map3dOn ? (
+            mapQ.data?.map ? (
+              <WarehouseMap3D frame={{ width: mapQ.data.map.width, height: mapQ.data.map.height }} cellM={Number(mapQ.data.map.cell_m) || 1.2}
+                blocked={mapQ.data.map.blocked ?? []} footprints={fps3d} zoneColor={zone3d} occByLoc={occ3d} dockByLoc={dock3d}
+                autoRotate className="flex-1 min-h-0 rounded-lg overflow-hidden" />
+            ) : (
+              <p className="p-6 text-lg text-slate-300">
+                {mapQ.isLoading ? 'Đang tải bản vẽ…' : mapQ.isError ? 'Không mở được bản vẽ kho này (cần quyền Sơ đồ kho → Xem).' : 'Kho này chưa có bản vẽ ở Sơ đồ kho — dựng bản vẽ rồi mở lại.'}
+              </p>
+            )
+          ) : (
+            /* Xem từ 3–5m: phóng nội dung theo BỀ RỘNG màn (TV 1920 → ~1,4×; laptop 1280 → 1×).
+               `zoom` giữ nguyên bố cục lưới, khác `transform: scale` là không phá luồng cuộn. */
+            <div style={{ zoom: tvZoom }} className="flex-1">
+              <ConsoleBody data={data} now={now} tv />
+            </div>
+          )}
         </div>
       )}
     </div>

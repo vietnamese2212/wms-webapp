@@ -69,7 +69,9 @@ export function WarehouseMapGuide({ open, onClose, canEdit }: { open: boolean; o
             <>Bấm một ô → pane phải hiện <b>cột tầng</b> (tầng cao ở trên): mã vị trí, số pallet, số mã hàng, nhãn QA / nhặt lẻ. Nút <b>Tồn kho ở ô này</b> mở trang Tồn kho lọc đúng các mã vị trí đó.</>,
             <><b>Đi từ</b>: chọn cửa xuất phát → pane hiện "Từ Cửa xuất 1: 34 ô ≈ 41 m". Chọn lớp phủ <b>Đường đi từ cửa</b> để vẽ đường (nét đứt xanh, chấm xanh lá = cửa). "Không có lối đi" nghĩa là kệ hoặc tường chắn kín.</>,
             <><b>Tìm</b>: gõ tem pallet hoặc mã hàng vào ô tìm → ô chứa nháy viền đỏ, pane liệt kê ô và số pallet; bấm dòng để nhảy tới ô.</>,
-            <>Điện thoại / PDA chỉ xem, không vẽ.</>,
+            <><b>Cửa xuất</b>: ô cửa tô đậm khi có xe đang đậu, ghi <b>n/m xe</b>, viền đỏ khi đủ xe; bấm cửa → pane liệt kê biển số, mã chuyến, giờ vào cửa. Xe rời cửa khi chuyến Hoàn thành.</>,
+            <><b>3D</b> (máy tính): nút <b>3D</b> trên thanh công cụ dựng góc nhìn ba chiều từ chính bản vẽ này — kệ cao theo số tầng, mỗi tầng một lát (màu khu = trống, xanh = có pallet, xanh đậm = đầy, viền cam = QA giữ), cửa có xe hiện khối xe kèm biển số. Kéo để xoay, lăn để phóng, chuột phải để rê, bấm khối để xem cột tầng. 3D <b>chỉ xem</b>, mọi chỉnh sửa vẫn làm ở 2D. Màn TV của Giám sát vận hành có nút <b>Sơ đồ 3D</b> khi lọc đúng một kho.</>,
+            <>Điện thoại / PDA chỉ xem 2D, không vẽ, không 3D.</>,
           ]} />
         </Sec>
 

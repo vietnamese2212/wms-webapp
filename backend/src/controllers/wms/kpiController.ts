@@ -139,7 +139,8 @@ export async function getKpi(req: Request, res: Response) {
     if (!isDate(from) || !isDate(to)) return fail(res, 'date_from, date_to (YYYY-MM-DD) là bắt buộc', 400, 'BAD_DATE')
     if (from > to) return fail(res, 'Khoảng ngày không hợp lệ: "Từ ngày" lớn hơn "Đến ngày"', 400, 'BAD_RANGE')
     const days = dayCount(from, to)
-    if (days > 400) return fail(res, `Khoảng ngày tối đa 400 ngày (đang chọn ${days} ngày) — thu hẹp lại rồi thử lại`, 400, 'BAD_RANGE')
+    // Trần TRÒN 2 NĂM (user 09/09: 1/1 năm này → 31/12 năm sau = 731 ngày kể cả nhuận)
+    if (days > 731) return fail(res, `Khoảng ngày tối đa 2 năm (đang chọn ${days} ngày) — thu hẹp lại rồi thử lại`, 400, 'BAD_RANGE')
     const cmpRaw = String(q.compare ?? 'none').trim()
     if (!['none', 'prev', 'yoy'].includes(cmpRaw)) return fail(res, 'compare phải là none | prev | yoy', 400, 'BAD_COMPARE')
     const compare = cmpRaw as CompareMode

@@ -15,7 +15,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { DashPanel, DASH_SK } from '@/components/wms/DashboardPanel'
-import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -31,46 +30,19 @@ import { formatDate } from '@/utils/formatters'
 import { fmtNum } from '@/utils/productivity'
 import { KpiLineChart, KpiChartLegend, bucketLabel, fmtValue, ragOf, RAG_HEX, type ChartPoint } from '@/components/wms/KpiLineChart'
 
-// ── Ngày / tuần / tháng / năm ─────────────────────────────────────────────────────────────────
-// "Hôm nay" phải là HÀM (ratchet today_frozen_at_import)
-const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const pad2 = (n: number) => String(n).padStart(2, '0')
-function addDays(ymd: string, n: number): string { const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
-function monthStart(back: number): string {
-  const [y, m] = TODAY().split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1 - back, 1)).toISOString().slice(0, 10)
-}
-function monthEnd(ymd: string): string { const [y, m] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }
-const yearStart = (back = 0) => `${Number(TODAY().slice(0, 4)) - back}-01-01`
-/** Tuần ISO (thứ Hai đầu tuần, tuần 1 chứa ngày 4/1) */
-function isoWeekOf(ymd: string): { y: number; w: number } {
-  const d = new Date(`${ymd}T00:00:00Z`); const day = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - day)
-  const y0 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return { y: d.getUTCFullYear(), w: Math.ceil(((d.getTime() - y0.getTime()) / 86400000 + 1) / 7) }
-}
-function isoWeekMonday(y: number, w: number): string {
-  const jan4 = new Date(Date.UTC(y, 0, 4)); const day = jan4.getUTCDay() || 7
-  const mon = new Date(jan4); mon.setUTCDate(jan4.getUTCDate() - (day - 1) + (w - 1) * 7)
-  return mon.toISOString().slice(0, 10)
-}
-const toWeekInput = (ymd: string) => { const { y, w } = isoWeekOf(ymd); return `${y}-W${pad2(w)}` }
+// ── Ngày / tuần / tháng / năm — helper ở utils/kpiPeriods.ts (dùng chung với hook tách đoạn) ──
+import {
+  addDays, monthEnd, isoWeekMonday, toWeekInput, defaultRange, bucketStarts, dayCount, MAX_BUCKETS, GRAIN_LABEL,
+} from '@/utils/kpiPeriods'
 const GRAINS: Array<{ key: KpiGrain; label: string }> = [
   { key: 'day', label: 'Ngày' }, { key: 'week', label: 'Tuần' }, { key: 'month', label: 'Tháng' }, { key: 'year', label: 'Năm' },
 ]
-/** Khoảng mặc định khi đổi chu kỳ: 30 ngày · 12 tuần · 12 tháng · 3 năm (đều ≤ 60 kỳ) */
-function defaultRange(g: KpiGrain): { from: string; to: string } {
-  const t = TODAY()
-  if (g === 'day') return { from: addDays(t, -29), to: t }
-  if (g === 'week') { const { y, w } = isoWeekOf(t); return { from: addDays(isoWeekMonday(y, w), -7 * 11), to: t } }
-  if (g === 'month') return { from: monthStart(11), to: t }
-  return { from: yearStart(2), to: t }
-}
 const asGrain = (s: string): KpiGrain => (['day', 'week', 'month', 'year'].includes(s) ? s as KpiGrain : 'month')
 
-/** Ô Từ–Đến đổi kiểu theo chu kỳ (date / week / month / year) — luôn quy về ngày đầu và ngày cuối kỳ */
-function GrainRange({ grain, from, to, onChange, compact }: { grain: KpiGrain; from: string; to: string; onChange: (f: string, t: string) => void; compact?: boolean }) {
-  const cls = `h-7 text-[11px] ${compact ? 'w-[7.5rem]' : 'w-36'} px-1.5`
+/** Ô Từ–Đến đổi kiểu theo chu kỳ (date / week / month / year) — luôn quy về ngày đầu và ngày cuối kỳ.
+ *  Bề rộng ĐỦ cho nhãn dài của trình duyệt ("tháng 10 năm 2025", "Tuần 36, 2026") — user 09/09 báo ô tháng bị cắt. */
+function GrainRange({ grain, from, to, onChange }: { grain: KpiGrain; from: string; to: string; onChange: (f: string, t: string) => void }) {
+  const cls = 'h-7 text-[11px] w-40 min-w-[9.5rem] px-1.5'
   if (grain === 'day') return (
     <div className="flex items-center gap-1">
       <Input type="date" value={from} onChange={e => e.target.value && onChange(e.target.value, to < e.target.value ? e.target.value : to)} className={cls} />
@@ -94,9 +66,9 @@ function GrainRange({ grain, from, to, onChange, compact }: { grain: KpiGrain; f
   )
   return (
     <div className="flex items-center gap-1">
-      <Input type="number" min={2020} max={2100} value={from.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const f = `${y}-01-01`; onChange(f, to < f ? `${y}-12-31` : to) }} className={`h-7 text-[11px] w-20 px-1.5`} />
+      <Input type="number" min={2020} max={2100} value={from.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const f = `${y}-01-01`; onChange(f, to < f ? `${y}-12-31` : to) }} className="h-7 text-[11px] w-24 px-1.5" />
       <span className="text-slate-400 text-[11px]">→</span>
-      <Input type="number" min={2020} max={2100} value={to.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const t = `${y}-12-31`; onChange(from > t ? `${y}-01-01` : from, t) }} className={`h-7 text-[11px] w-20 px-1.5`} />
+      <Input type="number" min={2020} max={2100} value={to.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const t = `${y}-12-31`; onChange(from > t ? `${y}-01-01` : from, t) }} className="h-7 text-[11px] w-24 px-1.5" />
     </div>
   )
 }
@@ -240,7 +212,9 @@ function KpiChartDialog({ def, warehouseId, init, onClose }: {
   const [compare, setCompare] = useState(init.compare)
   const [showTable, setShowTable] = useState(false)
   useEffect(() => { setGrain(init.grain); setRange({ from: init.from, to: init.to }); setCompare(init.compare) }, [init.grain, init.from, init.to, init.compare, def?.id])
-  const q = useWarehouseKpiSeries({ warehouseId, grain, from: range.from, to: range.to, compare }, !!def)
+  const nB = bucketStarts(grain, range.from, range.to).length
+  const tooMany = nB > MAX_BUCKETS[grain]
+  const q = useWarehouseKpiSeries({ warehouseId, grain, from: range.from, to: range.to, compare }, !!def && !tooMany)
   const d = q.data
   const t = def ? (d?.targets?.[def.id] ?? null) : null
   const points = def && d ? seriesPoints(grain, d.buckets, d.compare?.buckets, def.id) : []
@@ -272,6 +246,7 @@ function KpiChartDialog({ def, warehouseId, init, onClose }: {
               <span className="text-[10px] text-slate-500 tabular-nums">{formatDate(range.from)} – {formatDate(range.to)} · {points.length} kỳ</span>
             </div>
             <div className="flex-1 min-h-0 overflow-auto px-4 py-3 space-y-3">
+              {tooMany && <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">Khoảng đang chọn là {nB} {GRAIN_LABEL[grain]} — tối đa {MAX_BUCKETS[grain]} {GRAIN_LABEL[grain]} trên một biểu đồ{grain === 'day' ? ' (dài hơn 3 tháng hãy đổi sang Tuần / Tháng)' : ' (tròn 2 năm)'}.</div>}
               {q.isError && <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600">{errMsg ?? 'Không tải được chuỗi KPI — thu hẹp khoảng hoặc đổi chu kỳ.'}</div>}
               {!q.data && q.isLoading && <Skeleton className={`h-64 w-full ${DASH_SK}`} />}
               {d && (
@@ -410,12 +385,18 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
 
   return (
     <FormSheet open={open} onClose={onClose} title="Mục tiêu KPI" widthClass="sm:max-w-2xl"
-      description="Ngưỡng đèn xanh / vàng cho từng KPI, áp cho mọi chu kỳ (ngày · tuần · tháng · năm). Kho không đặt riêng thì dùng mục tiêu công ty; công ty không đặt thì dùng mặc định của bộ KPI."
+      description="Ngưỡng đèn xanh / vàng cho từng KPI, áp cho mọi chu kỳ (ngày · tuần · tháng · năm). Ba tầng: riêng kho → công ty → mặc định."
       footer={<>
         <Button variant="outline" onClick={onClose} disabled={save.isPending}>Huỷ</Button>
         <Button onClick={onSave} disabled={save.isPending || q.isLoading}>{save.isPending ? 'Đang lưu…' : 'Lưu mục tiêu'}</Button>
       </>}>
       <div className="space-y-3">
+        {/* Mặc định lấy từ đâu — user 09/09 hỏi "khai mặc định như thế nào?" */}
+        <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-slate-700 space-y-1">
+          <div><b>Mặc định</b> = cột <i>Target / RAG</i> của file <i>Warehouse KPI Master List</i> (ví dụ OTIF ≥ 98% đạt, ≥ 96% chú ý). KPI file ghi "theo policy / baseline / budget" (DOH, vòng quay, dòng/giờ, tấn/giờ, chi phí/thùng) <b>chưa có mặc định</b> — dòng tô vàng bên dưới, cần bạn đặt.</div>
+          <div><b>Thứ tự áp dụng:</b> mục tiêu <b>riêng kho</b> (nếu kho đó đặt) → mục tiêu <b>công ty</b> (đặt ở phạm vi "Mặc định toàn công ty") → <b>mặc định bộ KPI</b>. "Theo mặc định / Theo công ty" = không ghi đè tầng trên; "Không đặt mục tiêu" = cố ý tắt đèn cho KPI đó.</div>
+          <div><b>Ngưỡng:</b> KPI "cao hơn là tốt" nhập <i>Đạt ≥ … · Chú ý ≥ …</i> (dưới nữa là Không đạt); "thấp hơn là tốt" nhập <i>Đạt ≤ … · Chú ý ≤ …</i>; KPI dải (sức chứa, DOH) nhập <i>Từ – Đến (đạt) · Tối đa (chú ý)</i>. Cùng một ngưỡng dùng cho mọi chu kỳ.</div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-slate-600 shrink-0">Phạm vi</span>
           {canGlobal && (
@@ -475,6 +456,19 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
   )
 }
 
+// ── Đèn tổng bấm được = bộ lọc thẻ theo đèn (09/09) — khai ở module để không remount (ratchet component_defined_inside_component) ──
+type RagPick = '' | 'G' | 'Y' | 'R' | 'none'
+function RagPill({ k, tone, label, cur, onPick }: { k: RagPick; tone: BadgeTone; label: string; cur: RagPick; onPick: (v: RagPick) => void }) {
+  const active = cur === k
+  return (
+    <button type="button" onClick={() => onPick(active ? '' : k)} aria-pressed={active}
+      title={active ? 'Bấm lại để bỏ lọc' : 'Bấm để chỉ hiện các KPI này'}
+      className={`rounded-full transition-shadow ${active ? 'ring-2 ring-sky-500 ring-offset-1' : cur ? 'opacity-50 hover:opacity-100' : 'hover:ring-1 hover:ring-slate-300'}`}>
+      <StatusBadge tone={tone}>{label}</StatusBadge>
+    </button>
+  )
+}
+
 // ── Tab chính ─────────────────────────────────────────────────────────────────────────────────
 export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
   const f = useWmsFilterStore(s => s.dashboard)
@@ -489,28 +483,17 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
   const dflt = defaultRange(grain)
   const from = f.kpiFrom || dflt.from
   const to = f.kpiTo || dflt.to
-  const compare = f.kpiCompare === 'prev' || f.kpiCompare === 'yoy' ? f.kpiCompare : ''
-  const q = useWarehouseKpi({ warehouseId, from, to, compare }, true)
-  const s = useWarehouseKpiSeries({ warehouseId, grain, from, to, compare }, true)
+  // Trần số kỳ theo chu kỳ (2 năm tròn theo tuần/tháng/năm; theo NGÀY chỉ 3 tháng — đọc 700 điểm không ai đọc được)
+  const nBuckets = bucketStarts(grain, from, to).length
+  const tooMany = nBuckets > MAX_BUCKETS[grain]
+  // 09/09 user: đã có Ngày–Tháng–Năm thì không cần chip Kỳ/So sánh trên thanh lọc — so kỳ chỉ còn trong dialog phóng to
+  const q = useWarehouseKpi({ warehouseId, from, to, compare: '' }, !tooMany)
+  const s = useWarehouseKpiSeries({ warehouseId, grain, from, to, compare: '' }, !tooMany)
   const d = q.data
   const [sheet, setSheet] = useState<{ open: boolean; focusId: string | null }>({ open: false, focusId: null })
   const [expanded, setExpanded] = useState<KpiDefPublic | null>(null)
-
-  const RANGES = [
-    { value: 'this', label: 'Tháng này', from: monthStart(0), to: TODAY() },
-    { value: 'prev', label: 'Tháng trước', from: monthStart(1), to: monthEnd(monthStart(1)) },
-    { value: '3m', label: '3 tháng gần nhất', from: monthStart(2), to: TODAY() },
-    { value: 'ytd', label: 'Năm nay', from: yearStart(), to: TODAY() },
-    { value: '12m', label: '12 tháng gần nhất', from: monthStart(11), to: TODAY() },
-  ]
-  const rangeValue = (f.kpiFrom || f.kpiTo) ? RANGES.find(r => r.from === from && r.to === to)?.value ?? '' : ''
-  const filterDefs: FilterDef[] = [
-    { key: 'period', label: 'Kỳ', type: 'single', pinned: true, options: RANGES, allLabel: 'Về mặc định theo chu kỳ', value: rangeValue,
-      onChange: v => { const r = RANGES.find(x => x.value === v); setDashboard(r ? { kpiFrom: r.from, kpiTo: r.to } : { kpiFrom: '', kpiTo: '' }) } },
-    { key: 'compare', label: 'So sánh', type: 'single', pinned: true, value: compare, allLabel: 'Không so sánh',
-      options: [{ value: 'prev', label: 'Kỳ liền trước' }, { value: 'yoy', label: 'Cùng kỳ năm trước' }],
-      onChange: v => setDashboard({ kpiCompare: v }) },
-  ]
+  // Bấm thẳng vào đèn tổng để LỌC thẻ (09/09): '' = tất cả · G/Y/R · 'none' = chưa có dữ liệu / chưa mục tiêu
+  const [ragFilter, setRagFilter] = useState<RagPick>('')
 
   const defById = useMemo(() => new Map((d?.defs ?? []).map(x => [x.id, x])), [d])
   const counts = useMemo(() => {
@@ -522,19 +505,17 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
   const tableDefs = (d?.defs ?? []).filter(x => x.group === tableGroup)
   const n = d?.notes
   const seriesErr = (s.error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+  const grainWord = GRAIN_LABEL[grain]
 
   return (
     <div className="space-y-3">
-      {/* MỘT hàng bộ lọc — chu kỳ · từ–đến theo chu kỳ · kỳ dựng sẵn · so sánh · mục tiêu */}
+      {/* MỘT hàng bộ lọc — chu kỳ · Từ–Đến theo chu kỳ · mục tiêu (không còn chip Kỳ / So sánh — user 09/09) */}
       <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2.5 py-1.5 flex flex-wrap items-center gap-2">
         <GrainPills value={grain} onChange={g => { const r = defaultRange(g); setDashboard({ kpiGrain: g, kpiFrom: r.from, kpiTo: r.to }) }} />
-        <GrainRange grain={grain} from={from} to={to} onChange={(a, b) => setDashboard({ kpiFrom: a, kpiTo: b })} compact />
-        <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-        <div className="hidden sm:block"><FilterBar defs={filterDefs} /></div>
+        <GrainRange grain={grain} from={from} to={to} onChange={(a, b) => setDashboard({ kpiFrom: a, kpiTo: b })} />
         <span className="flex-1 min-w-2" />
         <span className="text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
-          {formatDate(from)} – {formatDate(to)} · {d?.days ?? ''} ngày · {s.data?.buckets.length ?? '…'} {GRAINS.find(g => g.key === grain)?.label.toLowerCase()}
-          {d?.compare && <> · so {formatDate(d.compare.from)} – {formatDate(d.compare.to)}</>}
+          {formatDate(from)} – {formatDate(to)} · {dayCount(from, to)} ngày · {nBuckets} {grainWord}
         </span>
         {canTarget && (
           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setSheet({ open: true, focusId: null })}>
@@ -542,6 +523,14 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
           </Button>
         )}
       </div>
+      {tooMany && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400 flex flex-wrap items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span>Khoảng đang chọn là <b>{nBuckets} {grainWord}</b> — tối đa <b>{MAX_BUCKETS[grain]} {grainWord}</b> trên một biểu đồ{grain === 'day' ? ' (xem dài hơn 3 tháng hãy đổi sang Tuần hoặc Tháng)' : ' (tròn 2 năm)'}.</span>
+          <button type="button" className="text-sky-700 font-medium underline-offset-2 hover:underline"
+            onClick={() => { const r = defaultRange(grain); setDashboard({ kpiFrom: r.from, kpiTo: r.to }) }}>Về khoảng mặc định</button>
+        </div>
+      )}
 
       {q.isError && (
         <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
@@ -557,12 +546,17 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
       {d && (
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Target className="h-3.5 w-3.5 text-sky-500" />
-          <span className="text-slate-600 dark:text-slate-300"><b>{d.kpis.length}</b>/{d.kpis.length + d.unavailable.length} KPI đo được</span>
-          <StatusBadge tone="green">{counts.G} đạt</StatusBadge>
-          <StatusBadge tone="amber">{counts.Y} cần chú ý</StatusBadge>
-          <StatusBadge tone="red">{counts.R} không đạt</StatusBadge>
-          <StatusBadge tone="slate">{counts.none} chưa có dữ liệu / chưa đặt mục tiêu</StatusBadge>
-          <span className="text-slate-500">· số lớn = cả khoảng đã chọn · đường = theo từng {GRAINS.find(g => g.key === grain)?.label.toLowerCase()}</span>
+          <button type="button" onClick={() => setRagFilter('')} className={`text-slate-600 dark:text-slate-300 ${ragFilter ? 'underline underline-offset-2 hover:text-sky-700' : ''}`}
+            title={ragFilter ? 'Bấm để hiện lại tất cả' : ''}>
+            <b>{d.kpis.length}</b>/{d.kpis.length + d.unavailable.length} KPI đo được
+          </button>
+          <RagPill k="G" tone="green" label={`${counts.G} đạt`} cur={ragFilter} onPick={setRagFilter} />
+          <RagPill k="Y" tone="amber" label={`${counts.Y} cần chú ý`} cur={ragFilter} onPick={setRagFilter} />
+          <RagPill k="R" tone="red" label={`${counts.R} không đạt`} cur={ragFilter} onPick={setRagFilter} />
+          <RagPill k="none" tone="slate" label={`${counts.none} chưa có dữ liệu / chưa đặt mục tiêu`} cur={ragFilter} onPick={setRagFilter} />
+          {ragFilter
+            ? <span className="text-sky-700 dark:text-sky-400 font-medium">Đang lọc: {ragFilter === 'none' ? 'chưa có dữ liệu / chưa đặt mục tiêu' : RAG_LABEL[ragFilter].toLowerCase()} · <button type="button" className="underline underline-offset-2" onClick={() => setRagFilter('')}>bỏ lọc</button></span>
+            : <span className="text-slate-500">· bấm vào đèn để lọc · số lớn = cả khoảng đã chọn · đường = theo từng {grainWord}</span>}
         </div>
       )}
 
@@ -579,11 +573,27 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
         <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={`h-[132px] rounded-lg ${DASH_SK}`} />)}</div>
       )}
       {d && d.groups.map(g => {
-        const ks = d.kpis.filter(k => defById.get(k.id)?.group === g.key)
-        const un = d.unavailable.filter(u => u.group === g.key)
+        const all = d.kpis.filter(k => defById.get(k.id)?.group === g.key)
+        const ks = ragFilter ? all.filter(k => ragKey(k.rag) === ragFilter) : all
+        // KPI chưa có nguồn chỉ hiện khi không lọc hoặc lọc "chưa có dữ liệu"
+        const un = (!ragFilter || ragFilter === 'none') ? d.unavailable.filter(u => u.group === g.key) : []
         if (!ks.length && !un.length) return null
+        const gc = { G: 0, Y: 0, R: 0, none: 0 }
+        for (const k of all) gc[ragKey(k.rag) as keyof typeof gc]++
         return (
-          <DashPanel key={g.key} title={g.label} icon={Target} extra={<span className="text-[9px] text-slate-500">{ks.length} đo được{un.length ? ` · ${un.length} chưa có nguồn` : ''}</span>}>
+          <DashPanel key={g.key} title={g.label} icon={Target} extra={<>
+            {/* Tiêu đề nhóm phải đọc ra ngay: bao nhiêu đo được, đèn ra sao, bao nhiêu chưa có nguồn (user 09/09) */}
+            <span className="ml-1 flex items-center gap-1.5 flex-wrap">
+              <StatusBadge tone="sky" className="!text-[10px] font-semibold">{all.length} đo được</StatusBadge>
+              {gc.G > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400"><span className="h-2 w-2 rounded-full bg-emerald-500" />{gc.G} đạt</span>}
+              {gc.Y > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"><span className="h-2 w-2 rounded-full bg-amber-500" />{gc.Y} chú ý</span>}
+              {gc.R > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-700 dark:text-red-400"><span className="h-2 w-2 rounded-full bg-red-500" />{gc.R} không đạt</span>}
+              {gc.none > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500"><span className="h-2 w-2 rounded-full bg-slate-300" />{gc.none} chưa có số</span>}
+              {d.unavailable.filter(u => u.group === g.key).length > 0 && (
+                <StatusBadge tone="slate" className="!text-[10px] font-semibold border border-dashed border-slate-300">{d.unavailable.filter(u => u.group === g.key).length} chưa có nguồn</StatusBadge>
+              )}
+            </span>
+          </>}>
             <div className={`p-2 grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 ${s.isFetching && s.data ? 'opacity-90' : ''}`}>
               {ks.map(k => {
                 const def = defById.get(k.id)!
@@ -641,7 +651,7 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
         </DashPanel>
       )}
 
-      <KpiChartDialog def={expanded} warehouseId={warehouseId} init={{ grain, from, to, compare }} onClose={() => setExpanded(null)} />
+      <KpiChartDialog def={expanded} warehouseId={warehouseId} init={{ grain, from, to, compare: '' }} onClose={() => setExpanded(null)} />
       {canTarget && (
         <KpiTargetSheet open={sheet.open} focusId={sheet.focusId} onClose={() => setSheet({ open: false, focusId: null })} warehouseId={warehouseId}
           warehouses={scopedWhs as { id: string; code?: string; name: string }[]} canGlobal={canGlobal} />

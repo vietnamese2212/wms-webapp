@@ -2294,10 +2294,24 @@ export function useWarehouseKpiSeries(p: { warehouseId?: string; grain: KpiGrain
     staleTime: 5 * 60_000,
     // Kỳ đổi thì giữ khung cũ mờ đi (không skeleton, không nhảy layout) — luật dataviz "refetch keeps the frame"
     placeholderData: prev => prev,
-    queryFn: () => apiClient.get('/wms/kpi/series', {
-      params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), grain: p.grain, date_from: p.from, date_to: p.to,
-        ...(p.compare ? { compare: p.compare } : {}) },
-    }).then(r => r.data.data),
+    // BE nhận ≤ 60 kỳ / 1 request (timeout 60s của Vercel). Khoảng dài (2 năm theo tuần = 105 kỳ) → tách
+    // thành các đoạn ≤ 30 kỳ trùng ranh giới kỳ, gọi 2 đoạn song song rồi GHÉP — người dùng thấy một chuỗi liền.
+    queryFn: async () => {
+      const { chunkRanges } = await import('@/utils/kpiPeriods')
+      const segs = chunkRanges(p.grain, p.from, p.to, 30)
+      const fetchSeg = (s: { from: string; to: string }) => apiClient.get('/wms/kpi/series', {
+        params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), grain: p.grain, date_from: s.from, date_to: s.to,
+          ...(p.compare ? { compare: p.compare } : {}) },
+      }).then(r => r.data.data as KpiSeries)
+      const parts: KpiSeries[] = []
+      for (let i = 0; i < segs.length; i += 2) parts.push(...await Promise.all(segs.slice(i, i + 2).map(fetchSeg)))
+      const head = parts[0]
+      return {
+        ...head, from: p.from, to: p.to,
+        buckets: parts.flatMap(x => x.buckets),
+        compare: head.compare ? { ...head.compare, buckets: parts.flatMap(x => x.compare?.buckets ?? []) } : null,
+      }
+    },
   })
 }
 export type KpiTargetMap = Record<string, number[] | null>

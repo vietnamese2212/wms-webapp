@@ -128,7 +128,9 @@ try {
   // ═══ [3] Tham số bậy → 4xx sạch ═══
   check('[3a] thiếu ngày → 400', (await api('/wms/kpi')).s === 400)
   check('[3b] từ > đến → 400', (await api(`/wms/kpi?date_from=${TO}&date_to=${FROM}`)).s === 400)
-  check('[3c] > 400 ngày → 400 có hướng dẫn', (await api('/wms/kpi?date_from=2024-01-01&date_to=2026-01-01')).s === 400)
+  check('[3c] > 2 năm (912 ngày) → 400 có hướng dẫn', (await api('/wms/kpi?date_from=2024-01-01&date_to=2026-06-30')).s === 400)
+  r = await api(`/wms/kpi?date_from=${TO.slice(0, 4)}-01-01&date_to=${Number(TO.slice(0, 4)) + 1}-12-31`)
+  check('[3c2] TRÒN 2 NĂM (1/1 năm nay → 31/12 năm sau) → 200 (user 09/09)', r.s === 200 && r.j?.data?.days >= 730 && r.j?.data?.days <= 731, `http=${r.s} days=${r.j?.data?.days} ${err(r)}`)
   r = await api(q('&warehouse_id=khong-ton-tai'))
   check('[3d] warehouse_id rác → 400, không 500', r.s === 400, `http=${r.s} ${err(r)}`)
   r = await api(q(`&warehouse_id=${encodeURIComponent("' or 1=1 --")}`))

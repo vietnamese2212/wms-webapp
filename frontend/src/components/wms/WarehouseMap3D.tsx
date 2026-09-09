@@ -302,8 +302,11 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
     }
   }, [ready, p.frame.width, p.frame.height, p.cellM, p.blocked, p.footprints, p.zoneColor, p.occByLoc, p.dockByLoc, p.selectedKey])
 
+  // Khung gốc PHẢI là hộp có kích thước và đã định vị (caller truyền `absolute inset-0` hoặc `relative flex-1 min-h-0`).
+  // Bẫy đã dính 09/09: tự thêm `relative` vào className `absolute inset-0` → Tailwind cho `relative` thắng ⇒ hộp cao 0,
+  // canvas 0×0, 3D "trống" mà không lỗi nào.
   return (
-    <div className={`relative ${p.className ?? ''}`}>
+    <div className={p.className ?? 'relative h-full w-full'}>
       <div ref={mountRef} className="absolute inset-0" />
       {webglError && (
         <div className="absolute inset-0 grid place-items-center p-6 text-center text-xs text-red-600">Không dựng được 3D trên thiết bị này ({webglError}). Dùng bản vẽ 2D.</div>

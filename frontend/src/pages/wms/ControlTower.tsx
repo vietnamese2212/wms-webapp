@@ -794,7 +794,7 @@ export default function ControlTower() {
             mapQ.data?.map ? (
               <WarehouseMap3D frame={{ width: mapQ.data.map.width, height: mapQ.data.map.height }} cellM={Number(mapQ.data.map.cell_m) || 1.2}
                 blocked={mapQ.data.map.blocked ?? []} footprints={fps3d} zoneColor={zone3d} occByLoc={occ3d} dockByLoc={dock3d}
-                autoRotate className="flex-1 min-h-0 rounded-lg overflow-hidden" />
+                autoRotate className="relative flex-1 min-h-[60vh] rounded-lg overflow-hidden" />
             ) : (
               <p className="p-6 text-lg text-slate-300">
                 {mapQ.isLoading ? 'Đang tải bản vẽ…' : mapQ.isError ? 'Không mở được bản vẽ kho này (cần quyền Sơ đồ kho → Xem).' : 'Kho này chưa có bản vẽ ở Sơ đồ kho — dựng bản vẽ rồi mở lại.'}

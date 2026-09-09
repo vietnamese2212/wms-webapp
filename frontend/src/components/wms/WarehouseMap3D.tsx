@@ -290,14 +290,22 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       world.add(g)
     }
 
-    // Đặt camera lần đầu cho kho này (đổi kho → đặt lại; đổi dữ liệu → giữ góc người dùng đang xem)
+    // Đặt camera lần đầu cho kho này (đổi kho → đặt lại; đổi dữ liệu → giữ góc người dùng đang xem).
+    // Ngắm vào HỘP BAO của những gì đã vẽ (chân kệ + cửa + tường), không phải cả khung: Ba Vì khung 200×200 ô
+    // nhưng chỉ dùng ~100×110 → ngắm cả khung thì mô hình bé bằng bàn tay (chụp 09/09).
     const frameKey = `${p.frame.width}x${p.frame.height}@${cm}`
     if (framedRef.current !== frameKey) {
       framedRef.current = frameKey
-      const span = Math.max(W, D)
-      c.controls.target.set(W / 2, 0, D / 2)
-      c.camera.position.set(W / 2 + span * 0.55, span * 0.7, D / 2 + span * 0.85)
-      c.camera.near = 0.5; c.camera.far = span * 20; c.camera.updateProjectionMatrix()
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+      for (const f of p.footprints) if (f.anchor) { x0 = Math.min(x0, f.anchor.x); y0 = Math.min(y0, f.anchor.y); x1 = Math.max(x1, f.anchor.x + f.w); y1 = Math.max(y1, f.anchor.y + f.h) }
+      for (const [bx, by] of p.blocked) { x0 = Math.min(x0, bx); y0 = Math.min(y0, by); x1 = Math.max(x1, bx + 1); y1 = Math.max(y1, by + 1) }
+      if (!Number.isFinite(x0)) { x0 = 0; y0 = 0; x1 = p.frame.width; y1 = p.frame.height }
+      const bw = (x1 - x0) * cm, bd = (y1 - y0) * cm
+      const tx = x0 * cm + bw / 2, tz = y0 * cm + bd / 2
+      const span = Math.max(bw, bd, 10)
+      c.controls.target.set(tx, 0, tz)
+      c.camera.position.set(tx + span * 0.5, span * 0.65, tz + span * 0.8)
+      c.camera.near = 0.5; c.camera.far = Math.max(W, D) * 20; c.camera.updateProjectionMatrix()
       c.controls.update()
     }
   }, [ready, p.frame.width, p.frame.height, p.cellM, p.blocked, p.footprints, p.zoneColor, p.occByLoc, p.dockByLoc, p.selectedKey])

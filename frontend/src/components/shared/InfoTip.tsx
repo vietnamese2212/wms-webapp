@@ -44,6 +44,9 @@ export function InfoTip({ tip, side = 'bottom', className }: {
       </TooltipTrigger>
       {/* z-[210]: TooltipContent gốc z-[60] CHÌM DƯỚI overlay full-màn z-[120] (sơ đồ xếp xe 3D)
           — user 26/08 "info không hiện thông tin". Tooltip transient nên nổi trên tất cả là an toàn. */}
+      {/* ⚠️ Radix dựng THÊM một bản VisuallyHidden của nội dung này (mang role="tooltip") cho trình đọc
+          màn hình. Nút bên trong vì thế có 2 bản; bản BẤM ĐƯỢC là bản hiển thị, đứng TRƯỚC trong DOM —
+          kịch bản kiểm phải nhắm `.first()`, đừng lọc theo `[role="tooltip"] button` (trúng bản ẩn 1×1px). */}
       <TooltipContent side={side} className="z-[210] max-w-[280px] text-[11px] leading-snug pointer-events-auto">
         {typeof tip === 'function' ? tip(() => setOpen(false)) : tip}
       </TooltipContent>

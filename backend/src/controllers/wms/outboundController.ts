@@ -2704,9 +2704,13 @@ export async function startGDO(req: Request, res: Response) {
         updated_at: now(),
       })
       .eq('id', req.params.id).is('started_at', null).select('id')
-    if (error) return fail(res, error)
-    if (!startedRows || startedRows.length === 0)
+    if (error || !startedRows || startedRows.length === 0) {
+      // Thua CAS (người khác đã Bắt đầu) hoặc lỗi ghi → NHẢ suất cửa vừa giữ ở RPC (dòng PENDING gán cửa <2 phút
+      // đang được tính là chiếm suất — 20260910b). Chỉ nhả khi chuyến vẫn chưa started (của người thắng thì giữ).
+      if (dockId) await supabase.from('GroupDeliveryOrder').update({ dock_location_id: null, dock_assigned_at: null }).eq('id', req.params.id).is('started_at', null)
+      if (error) return fail(res, error)
       return fail(res, 'Chuyến vừa được người khác Bắt đầu — tải lại trang để xem trạng thái mới', 409)
+    }
     await linkWeighTicket(weighTicketId, req.params.id)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)

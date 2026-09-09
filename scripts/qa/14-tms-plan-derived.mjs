@@ -205,9 +205,12 @@ check('5d. Số xe đã có lệnh tay → NHẬN NUÔI (1 lệnh, đóng dấu 
 {
   const from = '2000-01-01', to = '2099-12-31'
   const sum = await restRpc('tms_orders_summary', { p_date_from: from, p_date_to: to })
-  const allOrders = await restAll('TmsOrder', `select=id,status&date=gte.${from}&date=lte.${to}&source_type=neq.TRANSFER`)
-  const oracleDone = allOrders.filter(o => o.status === 'DONE').length
-  check('9a. Ô "Hoàn thành" = số LỆNH status=DONE (không suy từ trạng thái dòng xe)',
+  const allOrders = await restAll('TmsOrder', `select=id,status,order_code&date=gte.${from}&date=lte.${to}&source_type=neq.TRANSFER`)
+  // "Xong" đi hai đường: lệnh tự mang DONE (nhập/chuyển kho đã nhận) HOẶC chuyến cùng Số xe đã COMPLETED
+  // (lệnh sinh từ Kế hoạch xuất giữ PENDING). Bỏ đường thứ hai là mọi xe của luồng KH xuất báo 0.
+  const doneCodes = new Set((await restAll('GroupDeliveryOrder', `select=group_code&status=eq.COMPLETED`)).map(g => g.group_code))
+  const oracleDone = allOrders.filter(o => o.status === 'DONE' || doneCodes.has(o.order_code)).length
+  check('9a. Ô "Hoàn thành" = lệnh DONE ∪ lệnh có chuyến đã hoàn thành (không suy từ trạng thái dòng xe)',
     Number(sum?.done) === oracleDone, `rpc=${sum?.done} bảng=${oracleDone}`)
   check('9b. Mẫu số ô tổng khớp số lệnh thật', Number(sum?.orders) === allOrders.length,
     `rpc=${sum?.orders} bảng=${allOrders.length}`)

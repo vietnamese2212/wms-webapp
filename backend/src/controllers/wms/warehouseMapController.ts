@@ -25,7 +25,7 @@ const KIND_GROUP: Record<GridKind, string> = { STORAGE: '', DOCK_OUT: 'CUAXUAT',
 const KIND_GROUP_NAME: Record<GridKind, string> = { STORAGE: '', DOCK_OUT: 'Cửa / bãi xuất', DOCK_IN: 'Cửa / bãi nhập', DROP: 'Điểm đầu dãy' }
 
 const MAP_LOC_COLS = 'id, location_code, sub_code, sub_name, row, shelf, kind, is_rack, level_no, grid_x, grid_y, grid_w, grid_h, ' +
-  'max_pallets, categories, is_pick_face, slot_no_in, slot_no_out, is_active'
+  'max_pallets, dock_capacity, categories, is_pick_face, slot_no_in, slot_no_out, is_active'
 
 type WhRow = { id: string; code: string; name: string; nmsx_code: string | null }
 
@@ -212,7 +212,9 @@ export async function createMapObject(req: Request, res: Response) {
     const actor = req.user?.name ?? null
     const fields = {
       sub_code: KIND_GROUP[kind], sub_name: KIND_GROUP_NAME[kind], sub_type: null, categories: null,
-      row: name, shelf: '', max_pallets: 0,            // 0 = không giới hạn (quy ước max_pallets)
+      row: name, shelf: '', max_pallets: 0,            // 0 = không giới hạn (quy ước max_pallets) — DROP: pallet chờ ở đầu dãy
+      // Cửa: mặc định 1 xe / cửa (user chốt 09/09 "cửa có tối đa xe"); sửa trong pane cửa. DROP không dùng cột này.
+      dock_capacity: kind === 'DROP' ? null : 1,
       is_active: true, is_rack: false, level_no: 1, kind,
       // KHÔNG gắn slot_no_in: cờ đó nghĩa là "kho tạm cần dọn" cho Slotting và làm lệch số đếm cờ giữa hai
       // nhánh danh sách (gói 26 [38b] bắt được: 16/15). Cửa/bãi đứng ngoài picker cất hàng nhờ `kind`
@@ -250,21 +252,39 @@ export async function createMapObject(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// PATCH /wms/warehouse-map/:warehouseId/objects/:id — đổi tên cửa/bãi/điểm hạ (dời ô thì dùng /cells)
+// PATCH /wms/warehouse-map/:warehouseId/objects/:id — sửa cửa/bãi/điểm hạ: tên · số xe tối đa (cửa) · pallet chờ (DROP)
+// body { name?, dock_capacity?: number|null, max_pallets?: number } — dời ô thì dùng /cells
 export async function renameMapObject(req: Request, res: Response) {
   try {
     const wh = await loadWarehouse(req, res, req.params.warehouseId)
     if (!wh) return
-    const name = typeof req.body?.name === 'string' ? String(req.body.name).trim().slice(0, 60) : ''
-    if (!name) return fail(res, 400, 'VALIDATION_ERROR', 'Cần tên mới')
+    const b = (req.body ?? {}) as Record<string, unknown>
     const id = String(req.params.id ?? '')
     if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Id không hợp lệ')
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null }
+    if (b.name !== undefined) {
+      const name = typeof b.name === 'string' ? b.name.trim().slice(0, 60) : ''
+      if (!name) return fail(res, 400, 'VALIDATION_ERROR', 'Cần tên mới')
+      patch.row = name
+    }
+    if (b.dock_capacity !== undefined) {
+      // NULL = không giới hạn; 1..50 (CHECK ở DB) — số rác/thập phân chặn ở đây cho lời báo rõ
+      const cap = b.dock_capacity === null || b.dock_capacity === '' ? null : toInt(b.dock_capacity)
+      if (cap !== null && (Number.isNaN(cap) || cap < 1 || cap > 50)) return fail(res, 400, 'VALIDATION_ERROR', 'Số xe tối đa phải là số nguyên 1–50, hoặc để trống = không giới hạn')
+      patch.dock_capacity = cap
+    }
+    if (b.max_pallets !== undefined) {
+      const mp = toInt(b.max_pallets)
+      if (mp === null || Number.isNaN(mp) || mp < 0 || mp > 1000) return fail(res, 400, 'VALIDATION_ERROR', 'Sức chứa pallet chờ phải là số nguyên 0–1000 (0 = không giới hạn)')
+      patch.max_pallets = mp
+    }
+    if (Object.keys(patch).length === 2) return fail(res, 400, 'VALIDATION_ERROR', 'Không có gì để sửa (name / dock_capacity / max_pallets)')
     const { data, error } = await supabase.from('Location')
-      .update({ row: name, updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null })
-      .eq('id', id).eq('warehouse_id', wh.id).neq('kind', 'STORAGE').select('id, row').maybeSingle()
+      .update(patch)
+      .eq('id', id).eq('warehouse_id', wh.id).neq('kind', 'STORAGE').select('id, row, kind, dock_capacity, max_pallets').maybeSingle()
     if (error) return fail(res, error)
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy cửa/bãi/điểm hạ này trong kho')
-    return ok(res, { id: data.id, name: data.row })
+    return ok(res, { id: data.id, name: data.row, kind: data.kind, dock_capacity: data.dock_capacity, max_pallets: data.max_pallets })
   } catch (e) { return fail(res, String(e)) }
 }
 

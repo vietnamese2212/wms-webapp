@@ -201,6 +201,17 @@ function roundBeforeDivide(line) {
 }
 
 const RULES = [
+  // Chuyến sang "Đang xuất" CHỈ qua startGDO / 2 đường Xuất luôn / uncomplete — vì startGDO là nơi duy nhất
+  // chấp hành 3 rule (cổng · cân · CỬA có sức chứa xe, 09/09). Viết thêm một chỗ `status: 'IN_PROGRESS'` là
+  // mở đường "Đang xuất" không qua rule nào (bug 01/08 PATCH status tự do đã bịt; ratchet gác không tái sinh).
+  // Baseline 8 (đều trong outboundController): 4 điểm CHUYẾN = quickExportGDO · quickExportExistingGDO · startGDO ·
+  // uncompleteGDO, + 4 điểm dòng hàng/DO đi kèm (item/DO status theo chuyến). Mẫu bắt rộng có chủ đích: thêm bất kỳ
+  // chỗ nào là phải giải thích trước khi nâng baseline.
+  {
+    key: 'gdo_in_progress_written_directly',
+    label: "ghi status:'IN_PROGRESS' ngoài 8 điểm đã biết — Bắt đầu chuyến phải đi qua startGDO (rule cổng/cân/cửa)",
+    count: (s) => countMatches(['backend/src'], ['.ts'], l => /status:\s*'IN_PROGRESS'/.test(l) && !/^\s*\/\//.test(l), s),
+  },
   // Baseline 5 = 5 dòng trong `20260828d_service_level.sql`. File migration ĐÃ APPLY là lịch sử,
   // không sửa lại — bản vá nằm ở `20260830_service_level_fix.sql`. Ratchet gác code MỚI: viết thêm
   // một chỗ nữa là 6 → CI đỏ.

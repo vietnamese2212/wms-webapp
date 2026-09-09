@@ -11,7 +11,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['stocktake-log'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages'], ['slotting-plan'], ['slotting-plans'], ['fill-demand'], ['fill-tasks'], ['warehouse-map-occupancy']],
   StocktakeLog:        [['stocktake-log'], ['move-log']],
   // warehouse-map: bản vẽ Sơ đồ kho đọc toạ độ/kệ/loại ô từ Location — người khác đặt ô là bản vẽ mình đổi theo
-  Location:            [['locations-real'], ['sub-groups'], ['dashboard'], ['fill-demand'], ['fill-pick-face-locations'], ['warehouse-map']],
+  Location:            [['locations-real'], ['sub-groups'], ['dashboard'], ['fill-demand'], ['fill-pick-face-locations'], ['warehouse-map'], ['outbound-docks']],
   warehouse_maps:      [['warehouse-map']],
   // Fill hàng: màn danh sách lệnh + chi tiết lệnh phải sáng ngay khi người khác quét/gán/hủy
   // (không F5); fill-demand vì dòng treo được trừ vào phần "thiếu" của mã đó.
@@ -47,7 +47,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
   // fill-demand: "Cần" của tab Đề xuất fill = đơn nhặt lẻ theo NGÀY XUẤT — đơn phát sinh/đổi ngày
   // phải làm số nhảy ngay với người đang mở tab (user chốt 05/08), không chờ F5.
-  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand']],
+  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand'], ['outbound-docks']],
   // list Xuất phân trang: tổng SummaryBand + phân bổ NPP tính từ DO/Item → đổi dòng hàng
   // phải refetch cả summary, không thì số đứng im cho tới lần poll sau.
   OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],

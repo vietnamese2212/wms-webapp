@@ -13,7 +13,7 @@ import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
-import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material } from '@/types'
+import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -4062,6 +4062,7 @@ export function useStartGDO() {
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
+      dock_location_id?: string | null   // cửa xuất (bắt buộc khi kho có cửa trên Sơ đồ kho — BE 422 DOCK_REQUIRED/DOCK_FULL)
       // 2 rule cổng/cân per kho: KHÔNG có cờ bỏ qua nào ở đây — miễn trừ duy nhất là duyệt
       // trước trên chuyến (useWaiveWeighGDO, quyền outbound.weigh_waive)
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
@@ -4075,6 +4076,33 @@ export function useStartGDO() {
     onSettled: (_, __, { id }) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo', id] })
+    },
+  })
+}
+
+// ── Cửa xuất có sức chứa xe (09/09) ──
+// Tình trạng cửa của kho: 1 RPC. Nuôi ô chọn cửa lúc Bắt đầu / Sửa xe và lớp phủ Cửa trên Sơ đồ kho.
+// Realtime: GroupDeliveryOrder + Location đổi → key 'outbound-docks' tự invalidate (realtimeEvents.ts).
+export function useWarehouseDocks(warehouseId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['outbound-docks', warehouseId],
+    enabled: !!warehouseId && enabled,
+    staleTime: 15_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/docks', { params: { warehouse_id: warehouseId } })
+      return data.data as DockStatus[]
+    },
+  })
+}
+export function useChangeDock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, dock_location_id }: { id: string; dock_location_id: string }) =>
+      apiClient.patch(`/wms/outbound/${id}/dock`, { dock_location_id }).then(r => r.data.data as GDO),
+    onSuccess: (data, { id }) => {
+      qc.setQueryData(['gdo', id], data)
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['outbound-docks'] })
     },
   })
 }

@@ -746,6 +746,11 @@ export interface GDO {
   // Liên kết chuyến xe ở Đăng ký cổng (1 chuyến = 1 lượt xe đã vào) — phục vụ báo cáo per-chuyến
   gate_registration_id?:  string | null
   gate_registration?:     { id: string; registration_number: number; date: string; license_plate: string | null; status: string; direction: string; entry_at?: string | null; exit_at?: string | null } | null
+  // CỬA XUẤT chuyến đậu (09/09, Directed Work đợt 1a): chọn lúc Bắt đầu khi kho có cửa trên Sơ đồ kho; cửa có
+  // số xe tối đa. Giữ lại sau Hoàn thành (báo cáo) — suất cửa tính theo status IN_PROGRESS/PAUSED.
+  dock_location_id?:      string | null
+  dock_assigned_at?:      string | null
+  dock?:                  { id: string; location_code: string; row: string | null; kind: string; dock_capacity: number | null } | null
   // Audit
   updated_at?:     string | null
   created_by?:     string | null
@@ -773,6 +778,15 @@ export interface GDO {
   awaiting_sap?:  boolean | null   // còn DO chưa có dữ liệu VL06O (tự tắt khi VL06O về)
   awaiting_dos?:  string[] | null  // DO đang chờ (hiện trong cảnh báo)
   plan_dropped?:  boolean | null   // Kế hoạch xuất không còn Số xe này (tự bật lại khi kế hoạch có lại)
+}
+
+// Tình trạng một cửa xuất/nhập của kho (RPC warehouse_docks_status) — ô chọn cửa lúc Bắt đầu + lớp phủ Cửa trên Sơ đồ kho
+export interface DockStatus {
+  id: string; location_code: string; name: string; kind: 'DOCK_OUT' | 'DOCK_IN'
+  capacity: number | null          // null = không giới hạn
+  occupied: number                 // số XE đang chiếm (cùng biển = 1 xe)
+  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null }[]
+  grid_x: number | null; grid_y: number | null
 }
 
 // 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP

@@ -16,7 +16,7 @@ import {
 import { resolveRotation, resolveLoosePolicy, type RotationConfig, type WhTypeConfigRow, type LoosePolicy } from '../../utils/putaway'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeFilterValue, safeSearch } from '../../utils/search'
+import { safeFilterValue, safeSearch, searchLooksLikeInjection } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
@@ -559,7 +559,7 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await supabase.from('GroupDeliveryOrder')
-    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
+    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at), dock:Location!dock_location_id(id,location_code,row,kind,dock_capacity)')
     .eq('id', id).single()
   if (error || !gdo) return null
 
@@ -2513,6 +2513,83 @@ export async function unassignGDO(req: Request, res: Response) {
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
+// ─── CỬA XUẤT có sức chứa xe (Directed Work đợt 1a, 09/09) ──────────────────
+// Cửa = Location kind DOCK_OUT trên Sơ đồ kho, `dock_capacity` = số xe tối đa (NULL = không giới hạn).
+// Chuyến ghi `dock_location_id`; suất cửa tính theo status IN_PROGRESS/PAUSED (nhả khi Hoàn thành / Huỷ /
+// bỏ Bắt đầu). Gán qua RPC gdo_assign_dock (khoá dòng cửa, đếm theo XE). Tình trạng cửa = RPC
+// warehouse_docks_status — 1 round-trip nuôi cả ô chọn lúc Bắt đầu lẫn lớp phủ trên bản vẽ.
+
+export type DockStatus = {
+  id: string; location_code: string; name: string; kind: 'DOCK_OUT' | 'DOCK_IN'
+  capacity: number | null; occupied: number
+  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null }[]
+  grid_x: number | null; grid_y: number | null
+}
+
+async function docksStatusOf(warehouseId: string | null | undefined): Promise<DockStatus[]> {
+  if (!warehouseId) return []
+  const { data, error } = await supabase.rpc('warehouse_docks_status', { p_warehouse_id: warehouseId })
+  if (error) throw error
+  return Array.isArray(data) ? (data as DockStatus[]) : []
+}
+
+// "Còn trống: Cửa Pallet 1 (0/1), Cửa SCA (0/1)" — người bấm biết đi đâu, không phải mở bản vẽ mới biết
+function dockFreeHint(docks: DockStatus[]): string {
+  const free = docks.filter(d => d.capacity == null || d.occupied < d.capacity)
+  if (!free.length) return 'Hiện KHÔNG còn cửa nào trống — chờ xe đang bốc Hoàn thành chuyến.'
+  return 'Còn trống: ' + free.map(d => `${d.name} (${d.occupied}/${d.capacity ?? '∞'})`).join(', ') + '.'
+}
+
+type AssignDockResult =
+  | { ok: true; occupied: number; capacity: number | null }
+  | { ok: false; status: number; code: string; message: string }
+async function assignDock(gdoId: string, dockId: string, plate: string | null, actor: string | null): Promise<AssignDockResult> {
+  const { data, error } = await supabase.rpc('gdo_assign_dock', { p_gdo_id: gdoId, p_dock_id: dockId, p_plate: plate, p_actor: actor })
+  if (error) throw error
+  const r = (data ?? {}) as { ok?: boolean; error?: string; occupied?: number; capacity?: number | null; plates?: string[]; dock_name?: string }
+  if (r.ok) return { ok: true, occupied: r.occupied ?? 0, capacity: r.capacity ?? null }
+  switch (r.error) {
+    case 'NOT_FOUND':       return { ok: false, status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy cửa này trên Sơ đồ kho (đã gỡ?)' }
+    case 'NOT_DOCK':        return { ok: false, status: 400, code: 'NOT_DOCK', message: 'Ô này không phải cửa xuất' }
+    case 'WRONG_WAREHOUSE': return { ok: false, status: 400, code: 'WRONG_WAREHOUSE', message: 'Cửa này thuộc kho khác, không phải kho của chuyến' }
+    case 'DOCK_FULL':       return { ok: false, status: 422, code: 'DOCK_FULL',
+      message: `${r.dock_name ?? 'Cửa'} đang đủ ${r.occupied}/${r.capacity} xe${(r.plates ?? []).length ? ` (${(r.plates ?? []).join(', ')})` : ''} — chờ xe đó Hoàn thành chuyến hoặc chọn cửa khác.` }
+    default:                return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Không gán được cửa' }
+  }
+}
+
+// GET /outbound/docks?warehouse_id= — tình trạng cửa xuất/nhập của kho (ô chọn lúc Bắt đầu, lớp phủ Cửa trên bản vẽ)
+export async function listDocks(req: Request, res: Response) {
+  try {
+    const whId = String(req.query.warehouse_id ?? '')
+    if (!whId || whId.length > 100 || searchLooksLikeInjection(whId)) return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã kho')
+    // PHẠM VI KHO: tham số do người gọi đặt — kho ngoài phạm vi thì 403 (không lộ biển số xe kho khác)
+    const myWhs = scopeWhIds(req)
+    if (myWhs && !myWhs.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    return ok(res, await docksStatusOf(whId))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// PATCH /outbound/:id/dock { dock_location_id } — đổi cửa giữa chuyến (cùng luật đếm xe như lúc Bắt đầu)
+export async function changeDockGDO(req: Request, res: Response) {
+  try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
+    const dockId = (req.body ?? {}).dock_location_id
+    if (typeof dockId !== 'string' || !dockId || dockId.length > 100 || searchLooksLikeInjection(dockId))
+      return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã cửa')
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('started_at, status, license_plate, dock_location_id').eq('id', req.params.id).maybeSingle()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến', 404)
+    const g = gdo as { started_at: string | null; status: string; license_plate: string | null; dock_location_id: string | null }
+    if (!g.started_at || !['IN_PROGRESS', 'PAUSED'].includes(g.status))
+      return fail(res, 'Chỉ đổi cửa cho chuyến ĐANG XUẤT (đã Bắt đầu, chưa Hoàn thành)', 400)
+    if (g.dock_location_id === dockId) return ok(res, await fetchGDOFull(req.params.id))
+    const r = await assignDock(req.params.id, dockId, normalizePlate(g.license_plate) ?? null, req.user?.name ?? null)
+    if (!r.ok) return fail(res, r.status, r.code, r.message)
+    return ok(res, await fetchGDOFull(req.params.id))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
 // ─── Start GDO (Bắt đầu xuất kho) ────────────────────────────
 
 export async function startGDO(req: Request, res: Response) {
@@ -2520,13 +2597,16 @@ export async function startGDO(req: Request, res: Response) {
     const {
       license_plate, container_number, exporter_name,
       loader_name, forklift_driver_id, forklift_driver_names,
-      gate_registration_id, allow_shared_gate,
+      gate_registration_id, allow_shared_gate, dock_location_id,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
+      dock_location_id?: string | null
     }
     if (!(await guardGdoScope(req, res, req.params.id))) return
+    if (dock_location_id != null && (typeof dock_location_id !== 'string' || dock_location_id.length > 100 || searchLooksLikeInjection(dock_location_id)))
+      return fail(res, 400, 'BAD_ID', 'Mã cửa không hợp lệ')
 
     // Khóa cứng 1 chuyến = 1 phiếu: nếu chuyến cổng đã gắn GDO khác → chặn, trừ khi user xác nhận đặc biệt (bốc thêm đơn cùng chuyến)
     if (gate_registration_id && !allow_shared_gate) {
@@ -2586,6 +2666,24 @@ export async function startGDO(req: Request, res: Response) {
       }
     }
 
+    // RULE 3 — CỬA XUẤT (Directed Work đợt 1a, user chốt 09/09): kho CÓ cửa xuất trên Sơ đồ kho ⇒ chuyến phải
+    // ghi đậu cửa nào; cửa có số xe tối đa, đầy thì xe sau chờ xe trước Hoàn thành. Kho chưa vẽ cửa = hành vi cũ,
+    // không cờ riêng (ai vẽ cửa đầu tiên cho kho là tự bật luật — đúng ý "kho có cửa thì mới bắt").
+    // Cặp nội bộ (Ba Vì → Chế biến) MIỄN: hàng đi xe nâng trong khuôn viên, không lên xe tải ở cửa.
+    // Đếm suất theo XE (cùng biển không tốn suất) — nằm trong RPC gdo_assign_dock (khoá dòng cửa).
+    let dockId: string | null = null
+    if (!isInternal) {
+      const whId = (cur as { warehouse_id?: string | null } | null)?.warehouse_id ?? null
+      const docks = await docksStatusOf(whId)
+      const outDocks = docks.filter(d => d.kind === 'DOCK_OUT')
+      if (outDocks.length) {
+        if (!dock_location_id) return fail(res, 422, 'DOCK_REQUIRED', `Kho này có ${outDocks.length} cửa xuất trên Sơ đồ kho — chọn cửa xe đang đậu. ${dockFreeHint(outDocks)}`)
+        const r = await assignDock(req.params.id, dock_location_id, normalizePlate(license_plate) ?? null, req.user?.name ?? null)
+        if (!r.ok) return fail(res, r.status, r.code, r.message + (r.code === 'DOCK_FULL' ? ` ${dockFreeHint(outDocks)}` : ''))
+        dockId = dock_location_id
+      }
+    }
+
     // CAS trên started_at: 2 người bấm Bắt đầu đồng thời → chỉ 1 người thắng, người sau 409
     // (không thì người sau đè biển số/phiếu cổng và có thể gắn 2 phiếu cân vào cùng chuyến)
     const { data: startedRows, error } = await supabase.from('GroupDeliveryOrder')
@@ -2598,6 +2696,9 @@ export async function startGDO(req: Request, res: Response) {
         forklift_driver_id:     forklift_driver_id     ?? null,
         forklift_driver_names:  forklift_driver_names  ?? null,
         gate_registration_id:   gate_registration_id   ?? null,
+        // Ghi lại cửa TRONG cùng câu CAS: hai người cùng bấm, RPC của cả hai đều có thể đã chạy — người
+        // thắng CAS mới là người quyết định cửa của chuyến (người thua không để lại cửa của mình trên dòng).
+        ...(dockId ? { dock_location_id: dockId, dock_assigned_at: now() } : {}),
         ...(autoAssign ? { assigned_at: now(), assigned_by: req.user?.name ?? null } : {}),
         status:     'IN_PROGRESS',
         updated_at: now(),
@@ -2797,6 +2898,7 @@ export async function unstartGDO(req: Request, res: Response) {
         exporter_name: null, loader_name: null,
         forklift_driver_id: null, forklift_driver_names: null,
         gate_registration_id: null,   // trả phiếu cổng — không thì chuyến đã gỡ vẫn "chiếm" phiếu (409 oan chuyến khác)
+        dock_location_id: null, dock_assigned_at: null,   // nhả cửa (suất cửa tính theo status, nhưng dòng PENDING không nên còn trỏ cửa)
         status: 'PENDING', updated_at: t,
       })
       .eq('id', req.params.id)

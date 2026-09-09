@@ -11,6 +11,7 @@ export interface MapLoc {
   kind: MapKind; is_rack: boolean; level_no: number | null
   grid_x: number | null; grid_y: number | null; grid_w: number; grid_h: number
   max_pallets: number; categories: string[] | null
+  dock_capacity: number | null      // cửa: số xe tối đa (null = không giới hạn); STORAGE/DROP: null
   is_pick_face: boolean | null; slot_no_in: boolean | null; slot_no_out: boolean | null; is_active: boolean
 }
 export interface MapFrame {
@@ -118,14 +119,17 @@ export function useCreateMapObject(whId: string) {
   })
 }
 
+// Sửa cửa/bãi/điểm hạ: tên · số xe tối đa (cửa, null = không giới hạn) · pallet chờ (DROP, 0 = không giới hạn)
 export function useRenameMapObject(whId: string) {
+  const qc = useQueryClient()
   const inv = useInvalidateMap(whId)
   return useMutation({
-    mutationFn: async (body: { id: string; name: string }) => {
-      const { data } = await apiClient.patch(`/wms/warehouse-map/${encodeURIComponent(whId)}/objects/${encodeURIComponent(body.id)}`, { name: body.name })
-      return data.data as { id: string; name: string }
+    mutationFn: async (body: { id: string; name?: string; dock_capacity?: number | null; max_pallets?: number }) => {
+      const { id, ...patch } = body
+      const { data } = await apiClient.patch(`/wms/warehouse-map/${encodeURIComponent(whId)}/objects/${encodeURIComponent(id)}`, patch)
+      return data.data as { id: string; name: string; kind: MapKind; dock_capacity: number | null; max_pallets: number }
     },
-    onSettled: inv,
+    onSettled: () => { inv(); qc.invalidateQueries({ queryKey: ['outbound-docks'] }) },
   })
 }
 

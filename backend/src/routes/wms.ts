@@ -343,6 +343,9 @@ router.get('/outbound/pallet-lookup',                         requirePerm('outbo
 router.get('/outbound/shortages',                             requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getOutboundShortages)
 router.get('/outbound/:id/events',                            requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), reconcile.listOutboundEvents)   // nút "Thông tin" — lịch sử thay đổi của chuyến
 router.get('/outbound/:id/pick-suggestions',                  requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGdoPickSuggestions)   // cột "Vị trí lấy" (FEFO) trang chi tiết
+// Cửa xuất có sức chứa xe (09/09): tình trạng cửa của kho nuôi ô chọn lúc Bắt đầu + lớp phủ Cửa trên Sơ đồ kho.
+// Đứng TRƯỚC `/outbound/:id` — không thì "docks" bị nuốt làm id chuyến.
+router.get('/outbound/docks',                                 requireAnyPerm(['outbound', 'start'], ['outbound', 'view'], ['warehouse_map', 'view']), outbound.listDocks)
 router.get('/outbound/:id',                                   requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGDO)
 router.put('/outbound/:id',                                   requirePerm('outbound', 'edit'), outbound.updateGDO)
 // PATCH nhận cả edit lẫn complete — controller kiểm chi tiết: đổi status=COMPLETED cần
@@ -352,6 +355,8 @@ router.delete('/outbound/:id',                                requirePerm('outbo
 router.post('/outbound/:id/assign',                           requirePerm('outbound', 'assign'), outbound.assignGDO)
 router.post('/outbound/:id/unassign',                         requirePerm('outbound', 'unassign'), outbound.unassignGDO)
 router.post('/outbound/:id/start',                            requirePerm('outbound', 'start'), outbound.startGDO)
+// Đổi cửa giữa chuyến (cửa xuất có sức chứa xe, 09/09) = sửa thông tin xe (outbound.edit)
+router.patch('/outbound/:id/dock',                            requirePerm('outbound', 'edit'), outbound.changeDockGDO)
 router.patch('/outbound/:id/transport',                       requirePerm('outbound', 'edit'), outbound.updateTransport)
 router.post('/outbound/:id/unstart',                          requirePerm('outbound', 'unstart'), outbound.unstartGDO)
 // Duyệt bỏ qua TỪNG RULE Bắt đầu (2 tình huống 2 action riêng — user chốt 01/08): mỗi rule 1 quyền, không đi ké start/edit

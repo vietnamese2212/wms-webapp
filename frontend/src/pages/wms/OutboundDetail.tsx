@@ -23,10 +23,11 @@ import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
-  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock,
   useWaiveWeighGDO, useUnwaiveWeighGDO, useWaiveGateGDO, useUnwaiveGateGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
@@ -47,7 +48,18 @@ import { LoadPlan3DDialog } from '@/components/wms/LoadPlan3DDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import type { OutboundItem, OutboundDelivery, GDO } from '@/types'
+import type { OutboundItem, OutboundDelivery, GDO, DockStatus } from '@/types'
+
+// ─── Cửa xuất có sức chứa xe (09/09) ───────────────────────────
+// Dòng phụ của một cửa trong ô chọn: "1/1 xe · ĐẦY (29S03092B)" — người bấm biết cửa nào còn trống mà không
+// phải mở Sơ đồ kho. Cùng biển số đang ở cửa thì KHÔNG tính đầy (một xe bốc nhiều đơn).
+function dockOptionOf(d: DockStatus, myPlate: string) {
+  const plates = d.vehicles.map(v => v.license_plate).filter((p): p is string => !!p)
+  const samePlate = !!myPlate && plates.includes(normalizeLicensePlate(myPlate) ?? '')
+  const full = d.capacity != null && d.occupied >= d.capacity && !samePlate
+  const who = plates.length ? ` (${plates.join(', ')})` : ''
+  return { value: d.id, label: d.name, sub: `${d.occupied}/${d.capacity ?? '∞'} xe${full ? ' · ĐẦY' : ''}${who}`, disabled: full }
+}
 
 // ─── Progress bar ──────────────────────────────────────────────
 
@@ -393,6 +405,13 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     return dest.parent_warehouse_id === gdo.warehouse_id || (src?.parent_warehouse_id ?? null) === dest.id
   })()
 
+  // RULE 3 — CỬA XUẤT (09/09): kho có cửa xuất trên Sơ đồ kho ⇒ phải chọn cửa xe đang đậu (BE 422 DOCK_REQUIRED /
+  // DOCK_FULL). Cặp nội bộ miễn (hàng đi xe nâng trong khuôn viên). Kho chưa vẽ cửa → ô này không hiện.
+  const { data: docks = [] } = useWarehouseDocks(gdo.warehouse_id, open)
+  const outDocks = (docks as DockStatus[]).filter(d => d.kind === 'DOCK_OUT')
+  const needDock = outDocks.length > 0 && !internalPair
+  const [dockId, setDockId] = useState('')
+
   // Resolved names for submission
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
   const exporterName = [user?.name, ...exporterNames]
@@ -407,6 +426,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         : 'Vui lòng chọn chuyến xe đã vào cổng — kho này yêu cầu xe phải có Đăng ký cổng')
       return
     }
+    if (needDock && !dockId) { setErr('Chọn cửa xuất xe đang đậu — kho này có cửa trên Sơ đồ kho'); setErrCode('DOCK_REQUIRED'); return }
     setErr(null); setErrCode(null)
     startGDO(
       {
@@ -419,6 +439,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         forklift_driver_names: forklifterNames || undefined,
         gate_registration_id: gateRegId || undefined,
         allow_shared_gate:    special || undefined,
+        dock_location_id:     needDock ? dockId : undefined,
       },
       {
         onSuccess: onClose,
@@ -473,6 +494,15 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
           )}
 
+          {needDock && (
+            <div className="space-y-1">
+              <Label className="text-xs">Cửa xuất xe đang đậu <span className="text-red-500">*</span></Label>
+              <SingleSelect searchable={outDocks.length > 6} value={dockId} onChange={setDockId} placeholder="Chọn cửa…"
+                options={outDocks.map(d => dockOptionOf(d, effectivePlate))} />
+              <p className="text-[11px] text-slate-500">Cửa đang đủ xe thì chờ xe đó Hoàn thành chuyến (cùng biển số bốc thêm đơn không tính thêm xe).</p>
+            </div>
+          )}
+
           {isContainer && (
             <div className="space-y-1">
               <Label className="text-xs">Số container</Label>
@@ -518,6 +548,9 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           )}
           {errCode === 'WEIGH_REQUIRED' && (
             <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân, không có xe…): người có quyền bấm <b>"Bỏ qua cân"</b> trên trang chuyến để duyệt, sau đó bấm Bắt đầu lại.</p>
+          )}
+          {errCode === 'DOCK_FULL' && (
+            <p className="text-[11px] text-amber-700">Cửa vừa chọn đã đủ xe: chọn cửa khác còn trống, hoặc chờ xe đang bốc ở cửa đó Hoàn thành chuyến.</p>
           )}
         </div>
     </FormSheet>
@@ -572,10 +605,21 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
-  function handleSubmit() {
+  // Đổi CỬA giữa chuyến (09/09): cùng luật đếm xe như lúc Bắt đầu — đi route riêng PATCH /dock TRƯỚC, đầy thì
+  // dừng ngay (không lưu nửa chừng thông tin xe rồi mới báo cửa đầy)
+  const { data: etDocks = [] } = useWarehouseDocks(gdo.warehouse_id, open)
+  const etOutDocks = (etDocks as DockStatus[]).filter(d => d.kind === 'DOCK_OUT')
+  const [etDockId, setEtDockId] = useState(gdo.dock_location_id ?? '')
+  const { mutateAsync: changeDock, isPending: dockPending } = useChangeDock()
+
+  async function handleSubmit() {
     // Chuyến đã duyệt bỏ qua cổng (giao lẻ/xe máy/NV nhận) → biển số TÙY CHỌN như lúc Bắt đầu
     if (!effectivePlate.trim() && !etGateWaived) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
     setErr(null)
+    if (etDockId && etDockId !== (gdo.dock_location_id ?? '')) {
+      try { await changeDock({ id: gdo.id, dock_location_id: etDockId }) }
+      catch (e) { setErr((e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Không đổi được cửa'); return }
+    }
     updateTransport(
       {
         id:                    gdo.id,
@@ -605,9 +649,9 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
       title="Sửa thông tin xe"
       widthClass="sm:max-w-lg"
       footer={<>
-        <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
-        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-          {isPending ? 'Đang lưu…' : 'Lưu'}
+        <Button variant="outline" size="sm" onClick={onClose} disabled={isPending || dockPending}>Hủy</Button>
+        <Button size="sm" onClick={() => void handleSubmit()} disabled={isPending || dockPending}>
+          {isPending || dockPending ? 'Đang lưu…' : 'Lưu'}
         </Button>
       </>}
     >
@@ -624,6 +668,14 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
 
           {special && !gateRegId && licPlate.trim() && (
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
+          )}
+
+          {(etOutDocks.length > 0 || gdo.dock) && (
+            <div className="space-y-1">
+              <Label className="text-xs">Cửa xuất xe đang đậu</Label>
+              <SingleSelect searchable={etOutDocks.length > 6} value={etDockId} onChange={setEtDockId} placeholder="Chọn cửa…"
+                options={etOutDocks.map(d => d.id === (gdo.dock_location_id ?? '') ? { ...dockOptionOf(d, effectivePlate), disabled: false } : dockOptionOf(d, effectivePlate))} />
+            </div>
           )}
 
           {(isContainer || containerNum) && (
@@ -1798,6 +1850,7 @@ export default function OutboundDetail() {
           <div className="flex items-start justify-between gap-1">
             <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
               <span><strong>Biển số:</strong> {gdo.license_plate ?? '—'}</span>
+              {gdo.dock && <span className="flex items-center gap-1"><DoorOpen className="h-3 w-3 text-slate-400" /><strong>Cửa:</strong> {gdo.dock.row ?? gdo.dock.location_code}</span>}
               {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
               {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
               {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}

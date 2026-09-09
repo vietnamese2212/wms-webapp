@@ -1,4 +1,5 @@
 {
+  "gdo_in_progress_written_directly": 8,
   "sql_round_before_divide": 5,
   "sql_like_unescaped": 14,
   "vslot_delete_without_recount": 2,

@@ -33,7 +33,9 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { toast } from '@/components/ui/use-toast'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, formatTimestampTime } from '@/utils/formatters'
+import { useWarehouseDocks } from '@/api/hooks'
+import type { DockStatus } from '@/types'
 import {
   useWarehouseMap, useWarehouseMapOccupancy, useWarehouseMapFind,
   useSaveMapFrame, useAssignCells, useSetFootprintRack, useCreateMapObject, useRenameMapObject, useDeleteMapObject,
@@ -189,6 +191,9 @@ export default function WarehouseMap() {
   const locsRef = useRef<MapLoc[]>([]); locsRef.current = data?.locations ?? []
   const occQ = useWarehouseMapOccupancy(effectiveWhId, !!data)
   const occByLoc = useMemo(() => new Map((occQ.data ?? []).map(o => [o.location_id, o])), [occQ.data])
+  // Xe đang ở cửa (09/09): 1 RPC, realtime theo GroupDeliveryOrder → ô cửa trên bản vẽ hiện "n/m xe", pane cửa liệt kê chuyến
+  const docksQ = useWarehouseDocks(effectiveWhId, !!data)
+  const dockByLoc = useMemo(() => new Map((docksQ.data ?? []).map(d => [d.id, d])), [docksQ.data])
 
   const [search, setSearch] = useState('')
   const searchDeb = useDebouncedValue(search, 300)
@@ -441,6 +446,23 @@ export default function WarehouseMap() {
     renameObj.mutateAsync({ id, name }).then(() => {
       toast({ title: 'Đã đổi tên' })
       pushHist({ label: `Đổi tên ${old} → ${name}`, undo: () => renameObj.mutateAsync({ id, name: old }), redo: () => renameObj.mutateAsync({ id, name }) })
+    }).catch(e => setErr(apiMsg(e)))
+  }
+  // Số xe tối đa của cửa (null = không giới hạn) / pallet chờ ở điểm đầu dãy (0 = không giới hạn) — có hoàn tác
+  function setDockCapacity(f: Footprint, cap: number | null) {
+    const id = f.locs[0].id, old = f.locs[0].dock_capacity ?? null
+    setErr(null)
+    renameObj.mutateAsync({ id, dock_capacity: cap }).then(() => {
+      toast({ title: `${f.label}: tối đa ${cap ?? 'không giới hạn'} xe` })
+      pushHist({ label: `Sức chứa xe ${f.label} → ${cap ?? '∞'}`, undo: () => renameObj.mutateAsync({ id, dock_capacity: old }), redo: () => renameObj.mutateAsync({ id, dock_capacity: cap }) })
+    }).catch(e => setErr(apiMsg(e)))
+  }
+  function setDropCapacity(f: Footprint, mp: number) {
+    const id = f.locs[0].id, old = f.locs[0].max_pallets
+    setErr(null)
+    renameObj.mutateAsync({ id, max_pallets: mp }).then(() => {
+      toast({ title: `${f.label}: chờ tối đa ${mp || 'không giới hạn'} pallet` })
+      pushHist({ label: `Pallet chờ ${f.label} → ${mp || '∞'}`, undo: () => renameObj.mutateAsync({ id, max_pallets: old }), redo: () => renameObj.mutateAsync({ id, max_pallets: mp }) })
     }).catch(e => setErr(apiMsg(e)))
   }
   // Gỡ cửa/bãi (mềm ở BE). Hoàn tác = tạo lại cùng tên tại cùng ô → BE hồi sinh dòng cũ.
@@ -753,7 +775,7 @@ export default function WarehouseMap() {
             )}
             {frame && mask && (data?.map || editing) && (
               <MapCanvas frame={frame} blocked={draft?.blocked ?? []} footprints={placed} zoneColor={zoneColor} zonesFilter={zones}
-                overlay={overlay} occByLoc={occByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} selectedWalls={selWallSet} path={path} door={door}
+                overlay={overlay} occByLoc={occByLoc} dockByLoc={dockByLoc} hitLocIds={hitLocIds} selectedKeys={selKeySet} selectedWalls={selWallSet} path={path} door={door}
                 tool={editing ? tool : 'select'} editing={editing} panHeld={spaceHeld} onCellClick={onCellClick} onLineDrag={onLineDrag} onMarquee={onMarquee}
                 onMoveSelected={moveSelected} fitRef={fitRef} />
             )}
@@ -768,6 +790,7 @@ export default function WarehouseMap() {
             onRename={renameObject}
             onDeleteObj={deleteObject}
             onViewStock={viewStock}
+            dockByLoc={dockByLoc} onSetDockCapacity={setDockCapacity} onSetDropCapacity={setDropCapacity}
           />
         </div>
       </div>
@@ -955,12 +978,18 @@ function SidePane(p: {
   busy: boolean; zoneColor: Map<string, string>; updatedAt: string | null; updatedBy: string | null; hasSavedFrame: boolean
   onToggleRack: (fs: Footprint[], v: boolean) => void; onResize: (f: Footprint, w: number, h: number) => void; onUnplace: (fs: Footprint[]) => void
   onRename: (f: Footprint, name: string) => void; onDeleteObj: (f: Footprint) => void; onViewStock: (fs: Footprint[]) => void
+  dockByLoc: Map<string, DockStatus>; onSetDockCapacity: (f: Footprint, cap: number | null) => void; onSetDropCapacity: (f: Footprint, mp: number) => void
 }) {
   const f = p.many.length === 1 ? p.many[0] : null
   const many = p.many.length > 1 ? p.many : null
   const [sizeDraft, setSizeDraft] = useState<{ w: number; h: number } | null>(null)
   const [nameDraft, setNameDraft] = useState<string>('')
-  useEffect(() => { setSizeDraft(f ? { w: f.w, h: f.h } : null); setNameDraft(f && f.kind !== 'STORAGE' ? f.label : '') }, [f])
+  const [capDraft, setCapDraft] = useState<string>('')   // '' = không giới hạn
+  useEffect(() => {
+    setSizeDraft(f ? { w: f.w, h: f.h } : null); setNameDraft(f && f.kind !== 'STORAGE' ? f.label : '')
+    setCapDraft(f && f.kind !== 'STORAGE' ? (f.kind === 'DROP' ? String(f.locs[0].max_pallets ?? 0) : (f.locs[0].dock_capacity == null ? '' : String(f.locs[0].dock_capacity))) : '')
+  }, [f])
+  const dock = f && (f.kind === 'DOCK_OUT' || f.kind === 'DOCK_IN') ? p.dockByLoc.get(f.locs[0].id) ?? null : null
   const palletsOf = (fs: Footprint[]) => fs.reduce((s, x) => s + x.locs.reduce((t, l) => t + (p.occByLoc.get(l.id)?.pallets ?? 0), 0), 0)
   const capOf = (fs: Footprint[]) => fs.reduce((s, x) => s + (x.kind === 'STORAGE' ? x.locs.reduce((t, l) => t + (l.max_pallets > 0 ? l.max_pallets : 1), 0) : 0), 0)
   const hitGroups = useMemo(() => {
@@ -1112,6 +1141,30 @@ function SidePane(p: {
             </div>
           )}
 
+          {/* CỬA: xe đang đậu (09/09) — ai cũng xem được; sức chứa xe sửa khi vẽ */}
+          {f.kind !== 'STORAGE' && f.kind !== 'DROP' && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-semibold text-slate-700">Xe đang ở cửa</span>
+                <span className={`tabular-nums ${dock && dock.capacity != null && dock.occupied >= dock.capacity ? 'font-semibold text-red-600' : 'text-slate-500'}`}>
+                  {dock ? `${dock.occupied}/${dock.capacity ?? '∞'} xe` : `—/${f.locs[0].dock_capacity ?? '∞'} xe`}
+                </span>
+              </div>
+              {dock && dock.vehicles.length > 0 ? (
+                <div className="rounded border border-slate-200 divide-y">
+                  {dock.vehicles.map(v => (
+                    <div key={v.gdo_id} className="flex items-center gap-2 px-2 py-1">
+                      <span className="font-mono font-semibold text-slate-800">{v.license_plate ?? '(không biển)'}</span>
+                      <span className="flex-1 font-mono text-slate-500 truncate" title={v.group_code}>{v.group_code}</span>
+                      <span className="text-slate-400 shrink-0">{v.dock_assigned_at ? `từ ${formatTimestampTime(v.dock_assigned_at)}` : ''}</span>
+                      {v.status === 'PAUSED' && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700">tạm dừng</span>}
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-slate-400">Chưa có xe nào — chuyến Bắt đầu ở kho này sẽ chọn cửa và hiện ở đây; xe rời cửa khi chuyến Hoàn thành.</p>}
+            </div>
+          )}
+
           {f.kind !== 'STORAGE' && p.canEdit && (
             <div className="space-y-1.5">
               <Label className="text-[10px]">Tên</Label>
@@ -1119,6 +1172,26 @@ function SidePane(p: {
                 <Input value={nameDraft} onChange={e => setNameDraft(e.target.value)} className="h-7 text-xs" />
                 <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={p.busy || !nameDraft.trim() || nameDraft.trim() === f.label} onClick={() => p.onRename(f, nameDraft.trim())}>Đổi</Button>
               </div>
+              {f.kind === 'DROP' ? (
+                <>
+                  <Label className="text-[10px]">Pallet chờ tối đa (0 = không giới hạn)</Label>
+                  <div className="flex gap-1.5">
+                    <Input type="number" min={0} max={1000} value={capDraft} onChange={e => setCapDraft(e.target.value)} className="h-7 text-xs w-24" />
+                    <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={p.busy || capDraft === '' || Number(capDraft) === (f.locs[0].max_pallets ?? 0)} onClick={() => p.onSetDropCapacity(f, Math.max(0, Math.floor(Number(capDraft) || 0)))}>Áp</Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Label className="text-[10px]">Số xe tối đa cùng lúc (trống = không giới hạn)</Label>
+                  <div className="flex gap-1.5">
+                    <Input type="number" min={1} max={50} value={capDraft} onChange={e => setCapDraft(e.target.value)} placeholder="∞" className="h-7 text-xs w-24" />
+                    <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                      disabled={p.busy || (capDraft === '' ? f.locs[0].dock_capacity == null : Number(capDraft) === f.locs[0].dock_capacity)}
+                      onClick={() => p.onSetDockCapacity(f, capDraft === '' ? null : Math.min(50, Math.max(1, Math.floor(Number(capDraft) || 1))))}>Áp</Button>
+                  </div>
+                  <p className="text-slate-400">Chuyến Bắt đầu ở kho có cửa phải chọn cửa; cửa đủ xe thì xe sau chờ xe trước Hoàn thành. Cùng biển số bốc thêm đơn không tính thêm xe.</p>
+                </>
+              )}
               <Button size="sm" variant="ghost" className="h-7 text-[11px] text-red-600" disabled={p.busy} onClick={() => p.onDeleteObj(f)}><Trash2 className="h-3.5 w-3.5 mr-1" />Gỡ {KIND_LABEL[f.kind].toLowerCase()}</Button>
             </div>
           )}
@@ -1129,9 +1202,9 @@ function SidePane(p: {
 }
 
 // ═══ Canvas ═══════════════════════════════════════════════════════════════════════════════════════
-function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, selectedWalls, path, door, tool, editing, panHeld, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
+function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, dockByLoc, hitLocIds, selectedKeys, selectedWalls, path, door, tool, editing, panHeld, onCellClick, onLineDrag, onMarquee, onMoveSelected, fitRef }: {
   frame: GridFrame; blocked: [number, number][]; footprints: Footprint[]; zoneColor: Map<string, string>; zonesFilter: string[]
-  overlay: Overlay; occByLoc: Map<string, MapOccupancy>; hitLocIds: Set<string>; selectedKeys: Set<string>; selectedWalls: Set<string>; path: GridCell[]; door: Footprint | null
+  overlay: Overlay; occByLoc: Map<string, MapOccupancy>; dockByLoc: Map<string, DockStatus>; hitLocIds: Set<string>; selectedKeys: Set<string>; selectedWalls: Set<string>; path: GridCell[]; door: Footprint | null
   tool: Tool; editing: boolean; panHeld: boolean
   onCellClick: (c: GridCell, mods: ClickMods) => void; onLineDrag: (a: GridCell, b: GridCell) => void; onMarquee: (a: GridCell, b: GridCell, additive: boolean) => void
   onMoveSelected: (dx: number, dy: number) => void
@@ -1284,8 +1357,16 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       g.globalAlpha = faded ? 0.25 : 1
       let hasQA = false
       if (f.kind !== 'STORAGE') {
-        g.fillStyle = KIND_COLOR[f.kind]; g.fillRect(X, Y, W, H)
-        g.strokeStyle = '#ffffff'; g.lineWidth = 0.75; g.strokeRect(X + 0.5, Y + 0.5, W - 1, H - 1)
+        // Cửa có xe đang đậu (09/09): tô đậm hơn, đủ xe = viền đỏ; số "n/m" ở góc dưới phải khi đủ to
+        const dk = dockByLoc.get(f.locs[0].id)
+        const full = !!dk && dk.capacity != null && dk.occupied >= dk.capacity
+        g.fillStyle = dk && dk.occupied > 0 ? (f.kind === 'DOCK_OUT' ? '#15803d' : '#1d4ed8') : KIND_COLOR[f.kind]; g.fillRect(X, Y, W, H)
+        g.strokeStyle = full ? '#ef4444' : '#ffffff'; g.lineWidth = full ? Math.max(2, s * 0.15) : 0.75; g.strokeRect(X + 0.5, Y + 0.5, W - 1, H - 1)
+        if (dk && s >= 9 && W >= 24) {
+          const fs = Math.max(8, Math.min(12, Math.min(W, H) * 0.35))
+          g.font = `700 ${fs}px ui-sans-serif, system-ui`; g.fillStyle = '#ffffff'; g.textAlign = 'right'; g.textBaseline = 'bottom'
+          g.fillText(`${dk.occupied}/${dk.capacity ?? '∞'} xe`, X + W - 3, Y + H - 2)
+        }
       } else {
         const zc = zoneColor.get(f.sub_code) ?? '#e2e8f0'
         let used = 0, cap = 0
@@ -1371,7 +1452,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     } else if (hover && tool !== 'select') {
       g.strokeStyle = '#0ea5e9'; g.lineWidth = 2; g.strokeRect(px(hover.x) + 1, py(hover.y) + 1, s - 2, s - 2)
     }
-  }, [size, view, frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, hitLocIds, selectedKeys, selectedWalls, path, door, hover, lineStart, marqueeStart, dragMove, tool])
+  }, [size, view, frame, blocked, footprints, zoneColor, zonesFilter, overlay, occByLoc, dockByLoc, hitLocIds, selectedKeys, selectedWalls, path, door, hover, lineStart, marqueeStart, dragMove, tool])
 
   // Tương tác. Chế độ XEM: kéo = rê bản vẽ, Shift+kéo = chọn vùng. Chế độ VẼ + công cụ Chọn: kéo trên ô trống = chọn vùng,
   // kéo trên ô ĐANG CHỌN = dời cả mảng theo chuột; rê bản vẽ bằng chuột giữa / chuột phải. Công cụ Rải dãy / Tường: kéo = vệt.

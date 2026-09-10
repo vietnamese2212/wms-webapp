@@ -22,8 +22,13 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
+import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
+
+/** Quy cách của mã trên dòng — để mọi số lượng hiện theo THÙNG chứ không phải số base thô. */
+const unitsOf = (r: DateRuleLine): MatUnits =>
+  ({ base_unit: r.base_unit, entry_unit: r.entry_unit, units_per_carton: r.units_per_carton })
 
 const COLS = [
   { id: 'pick', label: '',              w: 36 },
@@ -32,9 +37,9 @@ const COLS = [
   { id: 'npp',  label: 'NPP · Số DO',   w: 168 },
   { id: 'mat',  label: 'Mã hàng',       w: 92 },
   { id: 'name', label: 'Tên hàng',      w: 190 },
-  { id: 'qty',  label: 'Còn lấy',       w: 88, align: 'right' as const },
+  { id: 'qty',  label: 'Còn lấy',       w: 118, align: 'right' as const },
   { id: 'note', label: 'Ghi chú của CS', w: 200 },
-  { id: 'rule', label: '%Date lấy hàng', w: 150 },
+  { id: 'rule', label: '%Date lấy hàng', w: 170 },
 ]
 
 export default function DateRules() {
@@ -78,6 +83,7 @@ export default function DateRules() {
     material_name: r.material_name,
     trip_label: `${r.group_code ?? ''}${r.delivery_code ? ` · ${r.delivery_code}` : ''}`,
     remaining: r.remaining,
+    units: unitsOf(r),
     note: r.header_text,
     current: r.date_rule,
   }))
@@ -152,7 +158,8 @@ export default function DateRules() {
                 </TableCell></TableRow>
               )}
               {rows.map(r => {
-                const b = dateRuleLabel(r.date_rule)
+                const u = unitsOf(r)
+                const b = dateRuleLabel(r.date_rule, u)
                 return (
                   <TableRow key={r.item_id} className={picked.has(r.item_id) ? 'bg-sky-50' : ''}>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -169,7 +176,8 @@ export default function DateRules() {
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{r.material_code ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{r.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{nf(r.remaining)}</TableCell>
+                    {/* SL theo THÙNG (+ lẻ) — số base thô (13.440 hộp) không phải đơn vị kho dùng để nói chuyện */}
+                    <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{qtyLabel(r.remaining, u)}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">
                       {r.header_text
                         ? <span className="text-red-600 whitespace-pre-wrap break-words">{r.header_text}</span>

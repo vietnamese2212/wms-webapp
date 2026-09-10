@@ -472,7 +472,7 @@ try {
     const beforeIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
     await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 50 } })
     const afterIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
-    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&cancel_reason=eq.DATE_RULE_CHANGED`)).length
+    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length
     check('[15s] Đổi %Date khi đã có việc → việc CHƯA AI ĐỤNG bị bỏ và sắp lại (không giữ pallet sai date)',
       beforeIds.length > 0 && cancelled > 0 && JSON.stringify(beforeIds) !== JSON.stringify(afterIds),
       `trước=${beforeIds.length} sau=${afterIds.length} đã bỏ=${cancelled}`)

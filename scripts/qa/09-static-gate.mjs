@@ -963,6 +963,12 @@ let baseline = {}
 try { baseline = JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) } catch { /* lần đầu */ }
 
 console.log('── GÓI STATIC-GATE (ratchet) ──')
+// Chú thích cho GitHub Actions: luật nào ĐỎ phải hiện ngay trên trang lượt chạy + email, đừng bắt người
+// nhận email đăng nhập tải log mới biết (cùng lý do với finish() trong lib.mjs).
+const GH = process.env.GITHUB_ACTIONS === 'true'
+const ghEsc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+// title là THUỘC TÍNH của lệnh workflow — `:` và `,` là ký tự phân cách, phải mã hoá thêm
+const ghProp = (s) => ghEsc(s).replace(/:/g, '%3A').replace(/,/g, '%2C')
 let fail = 0
 const next = {}
 for (const r of RULES) {
@@ -976,6 +982,7 @@ for (const r of RULES) {
     fail++
     console.log(`  ❌ ${r.key}: ${n} > baseline ${base} — CODE MỚI VI PHẠM: ${r.label}`)
     samples.forEach(x => console.log(`       ${x}`))
+    if (GH) console.log(`::error title=${ghProp(`Cổng tĩnh: ${r.key}`)}::${ghEsc(`${n} > baseline ${base} — ${r.label}${samples.length ? ` | vd: ${samples.slice(0, 3).join(' ; ')}` : ''}`)}`)
   } else if (n < base) {
     console.log(`  📉 ${r.key}: ${n} < baseline ${base} — đã dọn bớt, chạy --update-baseline để KHOÁ thành quả`)
   } else {

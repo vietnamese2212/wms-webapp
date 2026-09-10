@@ -372,4 +372,7 @@ for (const [table, label] of [
   }
 }
 
-finish('INVARIANT')
+// retryOnFail: gói này đọc bất biến của TOÀN BỘ kho dữ liệu (mồ côi / bộ đếm / tồn), nên một bộ kiểm
+// khác đang chạy dở trên cùng DB staging làm nó thấy trạng thái lệch trong vài giây. Đo lại sau khi lắng
+// để phân loại ẢO/THẬT thay vì báo đỏ oan — xem finish() trong lib.mjs.
+finish('INVARIANT', { retryOnFail: true })

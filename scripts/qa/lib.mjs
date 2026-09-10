@@ -1,6 +1,7 @@
 // Hạ tầng chung bộ QA regression — KHÔNG dependency ngoài (Node 18+, fetch native).
 // API app qua Preview (dev) · soi DB staging qua PostgREST (key đọc từ backend/.env).
 import { readFileSync } from 'fs'
+import { spawnSync } from 'child_process'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -202,9 +203,50 @@ export function check(name, ok, detail = '') {
   results.push({ name, ok, detail })
   console.log(`  ${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
-export function finish(pack) {
+
+// CHÚ THÍCH LỖI CHO GITHUB ACTIONS — tên phép kiểm hỏng phải LÊN ĐƯỢC trang lượt chạy + email báo đỏ.
+// Vì sao (đo 10/09): job qa-smoke đỏ 19 lần trong 06–09/09 mà hồ sơ CÔNG KHAI của lượt chạy chỉ có đúng
+// một dòng "Process completed with exit code 1" — log đầy đủ đòi đăng nhập mới tải được. Người nhận email
+// biết ĐỎ mà không biết ĐỎ Ở ĐÂU, y hệt lớp lỗi "5xx không kèm url" mà CLAUDE.md đã cấm: chuông kêu nhưng
+// không ai lần ra chỗ phải sửa. Chú thích thì đọc được qua API công khai, không cần quyền.
+const GH = () => process.env.GITHUB_ACTIONS === 'true'
+const ghEsc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+const ghProp = (s) => ghEsc(s).replace(/:/g, '%3A').replace(/,/g, '%2C')
+const ANNOTATION_CAP = 8         // GitHub chỉ hiện ~10 chú thích mỗi mức cho mỗi bước
+function ghAnnotate(level, pack, text) {
+  if (GH()) console.log(`::${level} title=${ghProp(`QA ${pack}`)}::${ghEsc(text)}`)
+}
+
+/**
+ * @param {string} pack tên gói (in ra dòng tổng kết)
+ * @param {{ retryOnFail?: boolean }} [opts] retryOnFail = ĐO LẠI một lần sau khi lắng trước khi kết luận đỏ.
+ *   Chỉ bật cho gói kiểm BẤT BIẾN TOÀN DB (00-invariant): nó đọc trạng thái chung của cả kho dữ liệu, nên
+ *   một gói QA khác đang chạy dở ở máy khác (xoá chuyến xong chưa xoá DO…) làm nó thấy "bản ghi mồ côi"
+ *   trong vài giây. Đây đúng lớp "vi phạm ẢO" mà skill check-app yêu cầu phân loại bằng cách ĐO LẠI SAU KHI
+ *   LẮNG. Vi phạm THẬT không tự hết nên vẫn đỏ ở lần hai — cổng không bị nới.
+ */
+export function finish(pack, opts = {}) {
   const fail = results.filter(r => !r.ok)
   console.log(`\n[${pack}] ${results.length - fail.length}/${results.length} PASS${fail.length ? ` — ${fail.length} FAIL` : ''}`)
+
+  if (fail.length && opts.retryOnFail && process.env.QA_SETTLE_RETRY !== '1') {
+    const wait = Math.max(0, Number(process.env.QA_SETTLE_MS ?? 20000))
+    console.log(`\n[${pack}] ${fail.length} phép kiểm hỏng ở lần đo ĐẦU — chờ ${Math.round(wait / 1000)}s cho các lượt ghi đang chạy lắng rồi ĐO LẠI.`)
+    console.log(`[${pack}] (đụng độ thì tự hết; vi phạm THẬT vẫn hỏng ở lần hai)`)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait)
+    const r = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: 'inherit', env: { ...process.env, QA_SETTLE_RETRY: '1' },
+    })
+    if (r.status === 0) {
+      const names = fail.map(f => f.name).join(' · ')
+      console.log(`\n[${pack}] Lần đo hai SẠCH ⇒ ${fail.length} vi phạm lần đầu là ẢO (có lượt ghi chạy song song), không phải lỗi dữ liệu.`)
+      ghAnnotate('notice', pack, `${fail.length} vi phạm ở lần đo đầu TỰ HẾT khi đo lại sau ${Math.round(wait / 1000)}s — nhiều khả năng có bộ kiểm khác đang ghi vào cùng DB: ${names}`)
+    }
+    process.exit(r.status ?? 1)
+  }
+
+  for (const r of fail.slice(0, ANNOTATION_CAP)) ghAnnotate('error', pack, `${r.name}${r.detail ? ` — ${r.detail}` : ''}`)
+  if (fail.length > ANNOTATION_CAP) ghAnnotate('error', pack, `… và ${fail.length - ANNOTATION_CAP} phép kiểm hỏng nữa (xem log đầy đủ của bước này)`)
   process.exit(fail.length ? 1 : 0)
 }
 

@@ -468,17 +468,26 @@ try {
 
     // SỬA quy tắc SAU KHI đã sinh việc thì kế hoạch phải SẮP LẠI — việc cũ trỏ pallet theo mức date
     // CŨ mà vẫn ăn hết nhu cầu thì lần sửa này thành vô tác dụng (đo thật 10/09).
-    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 1 } })
-    const beforeIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
-    // Đếm DELTA quanh đúng lần PATCH này, không đếm TỔNG tích luỹ: dòng i3 bị đổi quy tắc nhiều lần
-    // trong khối này nên đếm tổng khiến phép kiểm phụ thuộc lịch sử — chập chờn, đã đỏ oan 1 lượt 10/09.
-    const cancel0 = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length
-    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 50 } })
-    const afterIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
-    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length - cancel0
+    // FIXTURE RIÊNG (pallet + chuyến + dòng của riêng phép kiểm này). Bản trước mượn dòng i3 dùng
+    // chung: lượt nào việc của nó ĐÃ BỊ HẠ bởi phép kiểm khác thì `resetUntouchedTasksOfItems` giữ
+    // nguyên — ĐÚNG THIẾT KẾ ("việc đã hạ/đã đưa ra GIỮ NGUYÊN") nhưng làm phép kiểm đỏ oan 2 lượt
+    // 10/09. Hai mức cũng phải luôn khả thi (1 % và 2 %), không đo tồn ở đây.
+    const pS = await mkPallet('RESET', 40, near.T1, dPlus(240), -30)
+    const tS = await mkTrip('TS')
+    const iS = await mkItem(tS.do, 40)
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [iS], rule: { kind: 'EXACT', value: pS.pallet_code } })
+    const rS = await startTrip(tS.gdo, { license_plate: '51C66666', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const p1 = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [iS], rule: { kind: 'MIN_PCT', value: 1 } })
+    const beforeIds = (await restAll('wms_tasks', `select=id,lowered_at,moved_at&item_id=eq.${iS}&status=eq.PENDING`))
+    const untouched = beforeIds.filter(t => !t.lowered_at && !t.moved_at)
+    const p2 = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [iS], rule: { kind: 'MIN_PCT', value: 2 } })
+    const afterIds = (await restAll('wms_tasks', `select=id&item_id=eq.${iS}&status=eq.PENDING`)).map(x => x.id).sort()
+    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${iS}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length
     check('[15s] Đổi %Date khi đã có việc → việc CHƯA AI ĐỤNG bị bỏ và sắp lại (không giữ pallet sai date)',
-      beforeIds.length > 0 && cancelled >= beforeIds.length && JSON.stringify(beforeIds) !== JSON.stringify(afterIds),
-      `trước=${beforeIds.length} sau=${afterIds.length} lần này bỏ=${cancelled}`)
+      rS.s === 200 && p1.s === 200 && p2.s === 200 && untouched.length > 0 && cancelled >= untouched.length
+      && JSON.stringify(beforeIds.map(t => t.id).sort()) !== JSON.stringify(afterIds),
+      `bắt đầu=${rS.s} chốt=${p1.s}/${p2.s} · trước=${beforeIds.length} (chưa ai đụng ${untouched.length}) sau=${afterIds.length} đã bỏ=${cancelled}`)
+    await api(`/wms/outbound/${tS.gdo}`, 'PATCH', { status: 'COMPLETED' })
 
     // Trả fixture về "chưa chốt" → nhả pallet cho các mục sau (T8 của [16] cần pallet để lập việc)
     await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: null })

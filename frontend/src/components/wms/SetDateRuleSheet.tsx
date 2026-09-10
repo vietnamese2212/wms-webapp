@@ -8,7 +8,7 @@
 //
 // Ba thứ user đòi có mặt trong màn này: (1) chốt được NHIỀU DÒNG một lần; (2) thấy GHI CHÚ CS
 // nguyên văn để khỏi thao tác nhầm; (3) xem được TỒN KHO của mã đó ngay tại chỗ để quyết định.
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { CalendarClock, Boxes, AlertTriangle } from 'lucide-react'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
@@ -185,8 +185,8 @@ export function SetDateRuleSheet(p: {
                 const st = settled ? stockOf.get(t.item_id) : undefined
                 const warn = stockWarning(r, st)
                 return (
-                  <>
-                    <tr key={t.item_id} className={`border-b last:border-0 align-top ${warn?.tone === 'bad' ? 'bg-red-50/60' : ''}`}>
+                  <Fragment key={t.item_id}>
+                    <tr className={`border-b last:border-0 align-top ${warn?.tone === 'bad' ? 'bg-red-50/60' : ''}`}>
                       <td className="px-2 py-1.5 text-[11px] whitespace-nowrap">
                         <button className="font-mono font-semibold text-sky-700 hover:underline flex items-center gap-1"
                           title="Xem tồn kho của mã này để quyết định"
@@ -221,7 +221,7 @@ export function SetDateRuleSheet(p: {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>

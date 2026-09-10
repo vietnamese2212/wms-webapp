@@ -54,7 +54,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // hay thủ kho quét thì hai màn còn lại phải đổi ngay, không chờ ai F5.
   wms_tasks:           [['directed-board'], ['gdo'], ['gdos']],
   OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],
-  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods'], ['fill-demand']],
+  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods'], ['fill-demand'], ['date-rule-lines']],
   OutboundScanEntry:   [['gdo'], ['gdos-paged'], ['outbound-summary'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
   reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.

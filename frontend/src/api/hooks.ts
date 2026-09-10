@@ -4211,6 +4211,9 @@ export function useSetItemsDateRule() {
       qc.invalidateQueries({ queryKey: ['gdo'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['outbound-prepare'] })
+      // Chính màn "Chốt %Date" — thiếu key này thì chốt xong bảng vẫn ghi "Chưa chốt" (đo trên
+      // Preview 10/09), người chốt tưởng mình bấm hụt và chốt lại lần nữa.
+      qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
     },
   })
 }

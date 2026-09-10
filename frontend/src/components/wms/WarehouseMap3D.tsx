@@ -50,7 +50,8 @@ const POST_W = 0.09        // trụ kệ
 const POST_EVERY = 2       // 1 trụ mỗi 2 chân pallet (~2,4 m — bước kệ thật)
 const PALLET_BASE_H = 0.15
 const PALLET_LOAD_H = 1.05
-const RACK_COLOR = '#f97316'          // cam — kệ ngoài kho thật
+const POST_COLOR = '#1d4ed8'          // TRỤ kệ xanh dương (user chốt 10/09) — đúng kiểu kệ trụ xanh thanh cam
+const BEAM_COLOR = '#f97316'          // THANH ĐỠ cam
 const DEFAULT_PALLET_COLOR = '#1d4ed8' // xanh Loscam (khớp DEFAULT_PALLET.baseColor của Xếp xe 3D)
 const LOAD_COLOR = '#d8c39a'          // kiện hàng trên pallet
 const LOAD_QA_COLOR = '#f59e0b'       // pallet bị QA giữ
@@ -454,8 +455,8 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       m.userData.instKeys = pieces.map(x => x.key ?? '')
       world.add(m)
     }
-    pushInstanced(posts, RACK_COLOR, false)
-    pushInstanced(beams, RACK_COLOR, false)
+    pushInstanced(posts, POST_COLOR, false)
+    pushInstanced(beams, BEAM_COLOR, false)
     pushInstanced(palletBases, palletColor, false)
     pushInstanced(palletLoads, LOAD_COLOR, true)
 
@@ -490,7 +491,7 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       )}
       {!ready && !webglError && <div className="absolute inset-0 grid place-items-center text-xs text-slate-400">Đang dựng 3D…</div>}
       <div className="absolute left-2 bottom-2 rounded bg-white/85 px-2 py-1 text-[10px] text-slate-600 shadow-sm pointer-events-none">
-        Kéo: xoay · Lăn: phóng · Chuột phải: rê · Bấm khối: cột tầng · Kệ cam · Mỗi khối = 1 pallet đang có hàng · Nền màu khu = chỗ trống · Cam = QA giữ · Đỏ = cửa đủ xe
+        Kéo: xoay · Lăn: phóng · Chuột phải: rê · Bấm khối: cột tầng · Kệ: trụ xanh thanh cam · Mỗi khối = 1 pallet đang có hàng · Nền màu khu = chỗ trống · Cam = QA giữ · Đỏ = cửa đủ xe
       </div>
     </div>
   )

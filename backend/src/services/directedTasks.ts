@@ -436,6 +436,24 @@ function matchesRule(c: Cand, mat: MaterialShelfInfo | null, rule: DateRule): bo
   return d(c.production_date) === v || d(c.expiry_date) === v || (c.batch ?? '') === v || c.pallet_code === v
 }
 
+/**
+ * ĐỔI QUY TẮC DATE THÌ VIỆC CHƯA AI ĐỤNG PHẢI BỎ rồi sắp lại. Đo 10/09: đổi ≥30 % → ≥90 % mà kế
+ * hoạch KHÔNG đổi — nhu cầu = đặt − đã quét − VIỆC CÒN TREO, việc treo cũ đã ăn hết nhu cầu nên
+ * không sinh thêm, còn bản thân chúng vẫn trỏ pallet sai date ⇒ sửa xong y như không sửa.
+ * CHỈ bỏ việc chưa có mốc nào — đã hạ / đã đưa ra là công người ta bỏ ra thật, giữ nguyên.
+ */
+export async function resetUntouchedTasksOfItems(itemIds: string[], actor: string | null): Promise<number> {
+  if (!itemIds.length) return 0
+  const ids: string[] = []
+  for (let i = 0; i < itemIds.length; i += CHUNK_IDS) {
+    const { data } = await supabase.from('wms_tasks')
+      .select('id').in('item_id', itemIds.slice(i, i + CHUNK_IDS))
+      .eq('status', 'PENDING').is('lowered_at', null).is('moved_at', null)
+    ids.push(...((data ?? []) as { id: string }[]).map(r => r.id))
+  }
+  return ids.length ? cancelTasks(ids, actor, 'DATE_RULE_CHANGED') : 0
+}
+
 // ─── CHỐT %DATE CÓ HÀNG ĐỂ LẤY KHÔNG (user chốt 10/09: "yêu cầu %date mà mã đó không còn thì phải
 // cảnh báo NGAY LÚC CHỌN và không cho chọn") ────────────────────────────────────────────────────
 // Không chép lại luật khớp date: gọi chính `matchesRule` mà lúc sinh việc dùng — nếu không, màn

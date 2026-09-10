@@ -466,8 +466,19 @@ try {
       r.s === 200 && Array.isArray(row?.parts) && row.parts.length === 2 && row.parts[0]?.ok === true && row.parts[1]?.ok === false && row?.ok === false,
       `http=${r.s} parts=${JSON.stringify(row?.parts)}`)
 
-    // Trả về quy tắc thường để các mục sau không bị lệch
+    // SỬA quy tắc SAU KHI đã sinh việc thì kế hoạch phải SẮP LẠI — việc cũ trỏ pallet theo mức date
+    // CŨ mà vẫn ăn hết nhu cầu thì lần sửa này thành vô tác dụng (đo thật 10/09).
     await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 1 } })
+    const beforeIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 50 } })
+    const afterIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
+    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&cancel_reason=eq.DATE_RULE_CHANGED`)).length
+    check('[15s] Đổi %Date khi đã có việc → việc CHƯA AI ĐỤNG bị bỏ và sắp lại (không giữ pallet sai date)',
+      beforeIds.length > 0 && cancelled > 0 && JSON.stringify(beforeIds) !== JSON.stringify(afterIds),
+      `trước=${beforeIds.length} sau=${afterIds.length} đã bỏ=${cancelled}`)
+
+    // Trả fixture về "chưa chốt" → nhả pallet cho các mục sau (T8 của [16] cần pallet để lập việc)
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: null })
 
     // SỔ LỊCH SỬ — user 10/09: "cần có info xem được lịch sử input, sửa"
     const ev = await restAll('outbound_events', `select=event_type,old_value,new_value,actor,material_code&event_type=in.(DATE_RULE_SET,DATE_RULE_CLEARED)&order=created_at.desc&limit=10`)
@@ -476,14 +487,14 @@ try {
       `dòng sổ=${ev.length} mới nhất=${JSON.stringify(ev[0] ?? null)}`)
 
     // MÀN CHỐT %DATE — mọi dòng của mọi chuyến trong khoảng ngày
-    const lines = await api(`/wms/outbound/date-rule-lines?date_from=${FIX.EXEC_DATE}&date_to=${FIX.EXEC_DATE}&page_size=500`)
-    const mine = (lines.d?.rows ?? []).filter(x => String(x.group_code ?? '').includes(TAG))
+    const lines = await api(`/wms/outbound/date-rule-lines?date_from=${vnDate()}&date_to=${vnDate()}&page_size=500`)
+    const mine = (lines.j?.data?.rows ?? []).filter(x => String(x.group_code ?? '').includes(T))
     check('[15q] Màn "Chốt %Date": thấy dòng hàng của MỌI chuyến trong ngày + ô tổng khớp số dòng',
-      lines.s === 200 && mine.length > 0 && Number(lines.d?.summary?.lines ?? -1) === Number(lines.d?.total ?? -2)
+      lines.s === 200 && mine.length > 0 && Number(lines.j?.data?.summary?.lines ?? -1) === Number(lines.j?.data?.total ?? -2)
       && mine.every(x => x.item_id && x.group_code && x.material_code),
-      `http=${lines.s} dòng của gói=${mine.length} tổng=${lines.d?.total} band=${JSON.stringify(lines.d?.summary)}`)
+      `http=${lines.s} dòng của gói=${mine.length} tổng=${lines.j?.data?.total} band=${JSON.stringify(lines.j?.data?.summary)}`)
 
-    const bad = await api(`/wms/outbound/date-rule-lines?date_from=${FIX.EXEC_DATE}&date_to=2027-12-31`)
+    const bad = await api(`/wms/outbound/date-rule-lines?date_from=${vnDate()}&date_to=2027-12-31`)
     check('[15r] Khoảng ngày quá rộng → 400 (kiểm ở BE TRƯỚC khi gọi DB)', bad.s === 400, `http=${bad.s}`)
   }
 

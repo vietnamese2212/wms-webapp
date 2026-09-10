@@ -31,7 +31,7 @@ import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, del
 import { guardPutaway } from '../../services/putawayContext'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
-  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, MAX_DATE_CHECK, MAX_RULE_PARTS,
+  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, MAX_DATE_CHECK, MAX_RULE_PARTS,
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 
@@ -5557,7 +5557,10 @@ export async function setItemsDateRule(req: Request, res: Response) {
       }))
 
     // Chuyến ĐANG XUẤT thì kế hoạch lấy hàng phải sắp lại ngay — chốt xong là việc hiện ra, không
-    // phải chờ ai bấm gì thêm (realtime đẩy bảng tự cập nhật).
+    // phải chờ ai bấm gì thêm (realtime đẩy bảng tự cập nhật). Bỏ việc CHƯA AI ĐỤNG của chính các
+    // dòng vừa đổi TRƯỚC khi sắp lại — không thì việc cũ (trỏ pallet theo mức date CŨ) vẫn ăn hết
+    // nhu cầu và lần sửa này thành vô tác dụng.
+    await resetUntouchedTasksOfItems(itemRows.map(r => r.id), req.user?.name ?? null)
     const gdoIds = [...new Set(itemRows.map(r => r.delivery?.gdo?.id).filter((x): x is string => !!x))]
     for (const g of gdoIds) await planGdoTasks(g, req.user?.name ?? null)
 

@@ -169,12 +169,49 @@ export function SetDateRuleSheet(p: {
           <Button size="sm" variant="outline" className="h-9 sm:h-8" onClick={applyAll}>Áp</Button>
         </div>
 
-        {/* Bảng dòng — mỗi dòng: mã · chuyến · SL · GHI CHÚ CS nguyên văn · ô chốt */}
-        {/* overflow-x-auto chứ KHÔNG overflow-hidden: ở 360px bảng rộng hơn màn, `hidden` sẽ CẮT
-            mất đúng hai cột quan trọng nhất — Ghi chú của CS và ô chốt (nơi hiện cảnh báo đỏ) —
-            mà không có cách nào kéo tới. Luật bảng của dự án: nội dung rộng thì cuộn NGANG trong
-            khung của chính nó, không ẩn cột. */}
-        <div className="rounded-lg border overflow-x-auto">
+        {/* ĐIỆN THOẠI: mỗi dòng một THẺ, không phải hàng bảng. Đo 360px: bảng rộng hơn màn nên hai
+            cột phải — Ghi chú của CS và ô chốt (nơi hiện cảnh báo đỏ) — nằm ngoài khung; cuộn ngang
+            thì đọc được nhưng người ta phải ĐOÁN là có thể kéo, mà đây là màn BẮT BUỘC đọc ghi chú
+            rồi mới quyết. Thẻ hiện đủ mọi trường, không giấu cột nào. */}
+        <div className="sm:hidden space-y-2">
+          {p.targets.map(t => {
+            const r = rules[t.item_id] ?? null
+            const st = settled ? stockOf.get(t.item_id) : undefined
+            const warn = stockWarning(r, st)
+            return (
+              <div key={t.item_id} className={`rounded-lg border p-2 space-y-1.5 ${warn?.tone === 'bad' ? 'border-red-300 bg-red-50/60' : ''}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <button className="font-mono font-semibold text-[12px] text-sky-700 flex items-center gap-1 min-w-0"
+                    onClick={() => setOpenStock(openStock === t.material_id ? null : (t.material_id ?? null))}>
+                    <Boxes className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{t.material_code ?? '—'}</span>
+                  </button>
+                  <span className="text-[12px] font-semibold tabular-nums shrink-0">{nf(t.remaining)}</span>
+                </div>
+                {t.material_name && <div className="text-[10px] text-slate-500">{t.material_name}</div>}
+                <div className="text-[10px] text-slate-500">Chuyến {t.trip_label ?? '—'}</div>
+                {t.note && (
+                  <div className="text-[11px] text-red-600 flex items-start gap-1">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0" />
+                    <span className="whitespace-pre-wrap break-words">{t.note}</span>
+                  </div>
+                )}
+                <RuleCell value={r} onChange={v => setOne(t.item_id, v)} />
+                {warn && (
+                  <div className={`text-[11px] flex items-start gap-1 ${warn.tone === 'bad' ? 'text-red-600 font-medium' : 'text-amber-600'}`}>
+                    <AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0" />
+                    <span className="whitespace-normal break-words">{warn.text}</span>
+                  </div>
+                )}
+                {openStock && openStock === t.material_id && (
+                  <div className="rounded-md bg-sky-50/60 p-1.5"><StockPanel materialId={t.material_id} warehouseId={p.warehouseId} /></div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Bảng dòng (từ sm trở lên) — mã · chuyến · SL · GHI CHÚ CS nguyên văn · ô chốt */}
+        <div className="hidden sm:block rounded-lg border overflow-x-auto">
           <table className="w-full min-w-[620px]">
             <thead>
               <tr className="bg-slate-50 border-b">

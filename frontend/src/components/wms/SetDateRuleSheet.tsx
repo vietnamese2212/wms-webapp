@@ -141,8 +141,11 @@ function stockWarning(
     }
   }
   if (noStock) return { tone: 'warn', text: 'Mã này chưa có tồn trong kho — chốt được nhưng chưa chia được hàng.' }
-  if (st.need_base > 0 && st.matched_base < st.need_base)
-    return { tone: 'warn', text: `Chỉ đủ ${qtyLabel(st.matched_base, units)}/${qtyLabel(st.need_base, units)} (${nf(st.matched_pallets)} pallet) đạt mức này.` }
+  // Mẫu số là SỐ ĐÃ KHAI, không phải cả dòng: chia 250/280 mà so với 280 thì lúc nào cũng kêu
+  // "chỉ đủ" dù kho thừa hàng — phần 30 chưa khai đã có câu nhắc riêng ngay dưới ô nhập.
+  const need = r.kind === 'SPLIT' ? (st.parts ?? []).reduce((s, x) => s + Number(x.qty_base || 0), 0) : st.need_base
+  if (need > 0 && st.matched_base < need)
+    return { tone: 'warn', text: `Chỉ đủ ${qtyLabel(st.matched_base, units)}/${qtyLabel(need, units)} (${nf(st.matched_pallets)} pallet) đạt mức này.` }
   return null
 }
 
@@ -255,7 +258,7 @@ export function SetDateRuleSheet(p: {
     <FormSheet
       open={p.open}
       onClose={p.onClose}
-      widthClass="sm:max-w-3xl"
+      widthClass="sm:max-w-5xl"
       title={<span className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-sky-600" />Chốt %Date lấy hàng</span>}
       description={
         <span className="text-[11px] text-slate-500">

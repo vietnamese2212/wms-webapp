@@ -11,7 +11,7 @@ import {
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
 import { ScanIcon } from '@/components/shared/ScanIcon'
-import { MODULES, type ModuleKey } from './permissions'
+import { MODULES, can, canAccess, canAccessAny, type ModuleKey } from './permissions'
 
 export interface NavItem {
   to: string
@@ -23,9 +23,21 @@ export interface NavItem {
   adminOnly?: boolean
 }
 
+// CẤP 2 (user chốt 10/09): nhóm lớn → NHÓM CHỨC NĂNG → trang. Menu Kho từng là một danh sách
+// phẳng 14 mục nên "Nhặt lẻ" và "Fill hàng" nằm ngang hàng với "Xuất kho" trong khi cả ba là một
+// việc. Chỉ gom ở nhóm nào ĐỦ ĐÔNG để phải gom — TMS/HR/Báo cáo giữ phẳng, thêm một lớp cho ba
+// mục là bắt người dùng bấm thêm một nhát để không được gì.
+export interface NavSection {
+  label: string
+  icon: ElementType
+  items: NavItem[]
+}
+export type NavEntry = NavItem | NavSection
+export const isSection = (e: NavEntry): e is NavSection => Array.isArray((e as NavSection).items)
+
 export interface NavGroup {
   label: string
-  items: NavItem[]
+  items: NavEntry[]
   operational?: boolean   // nhóm vận hành (ưu tiên trên mobile)
 }
 
@@ -34,6 +46,9 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Tổng quan',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard', module: 'dashboard' },
+      // Việc cần làm đứng ở Tổng quan (user chốt 10/09): đây là màn MỞ ĐẦU CA của xe nâng và thủ
+      // kho — bắt họ đi vào nhóm Kho rồi mới thấy việc của mình là đặt sai chỗ.
+      { to: '/wms/directed',      icon: ListChecks, label: 'Việc cần làm', module: 'directed_work' },
       { to: '/wms/control-tower', icon: Activity, label: 'Giám sát vận hành', module: 'control_tower' },
       // Kê khai chi phí kho (Kho × Tháng × Khoản mục) — nuôi ô "chi phí/tấn" ở tab Năng suất
       { to: '/wms/warehouse-costs', icon: Wallet, label: 'Chi phí kho', module: 'warehouse_cost' },
@@ -45,24 +60,43 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Kho (WMS)',
     operational: true,
     items: [
-      { to: '/wms/inbound',       icon: PackagePlus,    label: 'Nhập kho',          module: 'inbound' },
-      { to: '/wms/outbound',      icon: PackageMinus,   label: 'Xuất kho',          module: 'outbound' },
-      { to: '/wms/loosepicking',  icon: Scissors,       label: 'Nhặt lẻ',           module: 'loosepicking' },
-      { to: '/wms/fill',          icon: ArrowDownToLine, label: 'Fill hàng',        module: 'fill' },
-      { to: '/wms/pallet-ops',    icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' },
-      { to: '/wms/pallet-labels', icon: QrCode,         label: 'In tem pallet',     module: 'pallet_print' },
-      { to: '/wms/packing',       icon: NotebookPen,    label: 'Sổ đóng gói',       module: 'packing' },
-      { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Kiểm kê',           module: 'stocktake' },
-      // Quét tem pallet → chọn ô mới; quyền = inventory.move_location (không có module riêng)
-      { to: '/wms/move-location', icon: Move,           label: 'Chuyển vị trí',     anyActions: [['inventory', 'move_location']] },
-      { to: '/wms/slotting',      icon: Boxes,          label: 'Tối ưu vị trí',     module: 'slotting' },
-      // Bản vẽ 2D của kho (08/09) — không dùng chữ "Layout": Phân công đã có tab Layout = mẫu phân công nhân sự
-      { to: '/wms/warehouse-map', icon: MapIcon,        label: 'Sơ đồ kho',         module: 'warehouse_map' },
-      // 3 bảng việc theo vai (Directed Work 1c, 10/09) — xe nâng hạ · xe nâng chuyển · thủ kho
-      { to: '/wms/outbound/date-rules', icon: CalendarClock, label: 'Chốt %Date',    anyActions: [['outbound', 'set_date']] },
-      { to: '/wms/directed',      icon: ListChecks,     label: 'Việc cần làm',      module: 'directed_work' },
-      { to: '/wms/forklift',      icon: Forklift,       label: 'Xe nâng',           module: 'forklift' },
-      { to: '/wms/multi-scan',    icon: ScanIcon,       label: 'Quét loạt (test)',  adminOnly: true },
+      {
+        label: 'Xuất hàng', icon: PackageMinus,
+        items: [
+          { to: '/wms/outbound',           icon: PackageMinus,    label: 'Xuất kho',    module: 'outbound' },
+          { to: '/wms/outbound/date-rules', icon: CalendarClock,  label: 'Chốt %Date',  anyActions: [['outbound', 'set_date']] },
+          // Nhặt lẻ = một phần của XUẤT (cùng dòng đơn, cùng cửa quét) — đặt cạnh nhau cho đúng việc
+          { to: '/wms/loosepicking',       icon: Scissors,        label: 'Nhặt lẻ',     module: 'loosepicking' },
+          { to: '/wms/fill',               icon: ArrowDownToLine, label: 'Fill hàng',   module: 'fill' },
+        ],
+      },
+      {
+        label: 'Nhập hàng', icon: PackagePlus,
+        items: [
+          { to: '/wms/inbound', icon: PackagePlus, label: 'Nhập kho',    module: 'inbound' },
+          { to: '/wms/packing', icon: NotebookPen, label: 'Sổ đóng gói', module: 'packing' },
+        ],
+      },
+      {
+        label: 'Hàng trong kho', icon: Boxes,
+        items: [
+          { to: '/wms/pallet-ops',    icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' },
+          { to: '/wms/pallet-labels', icon: QrCode,         label: 'In tem pallet',     module: 'pallet_print' },
+          // Quét tem pallet → chọn ô mới; quyền = inventory.move_location (không có module riêng)
+          { to: '/wms/move-location', icon: Move,           label: 'Chuyển vị trí',     anyActions: [['inventory', 'move_location']] },
+          { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Kiểm kê',           module: 'stocktake' },
+        ],
+      },
+      {
+        label: 'Bố trí kho', icon: MapIcon,
+        items: [
+          // Bản vẽ 2D của kho (08/09) — không dùng chữ "Layout": Phân công đã có tab Layout = mẫu phân công nhân sự
+          { to: '/wms/warehouse-map', icon: MapIcon, label: 'Sơ đồ kho',     module: 'warehouse_map' },
+          { to: '/wms/slotting',      icon: Boxes,   label: 'Tối ưu vị trí', module: 'slotting' },
+        ],
+      },
+      { to: '/wms/forklift',   icon: Forklift, label: 'Xe nâng',          module: 'forklift' },
+      { to: '/wms/multi-scan', icon: ScanIcon, label: 'Quét loạt (test)', adminOnly: true },
     ],
   },
   {
@@ -111,6 +145,36 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ]
 
+// ─── Duyệt cây điều hướng — MỘT nguồn cho Sidebar + MobileNav ───────────────────
+// Trước 10/09 hai màn chép NGUYÊN bộ điều kiện ẩn/hiện; thêm cấp 2 mà vẫn để hai bản thì chỉ cần
+// sửa một bên là menu PC và menu điện thoại nói hai chuyện khác nhau.
+export const navItemsOf = (entry: NavEntry): NavItem[] => (isSection(entry) ? entry.items : [entry])
+/** Mọi trang trên menu, đã phẳng — dùng để dò mục đang active. */
+export const ALL_NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items.flatMap(navItemsOf))
+
+export type NavPerms = Parameters<typeof canAccess>[0]
+/** Điều kiện hiển thị MỘT trang (quyền / adminOnly / anyActions). */
+export function canSeeNavItem(item: NavItem, perms: NavPerms, admin: boolean): boolean {
+  if (item.adminOnly) return admin
+  if (item.anyActions?.some(([m, a]) => can(perms, m, a))) return true
+  // Item CHỈ khai anyActions (vd Chuyển vị trí = inventory.move_location): không khớp quyền thì ẨN
+  // — đừng rơi xuống nhánh "!module = hiện cho mọi người" bên dưới
+  if (item.anyActions && !item.modules && !item.module) return admin
+  if (item.modules) return admin || canAccessAny(perms, ...item.modules)
+  if (!item.module) return true
+  return admin || canAccess(perms, item.module)
+}
+/** Lọc cả cây: nhóm con rỗng thì bỏ hẳn (không để tiêu đề trống trên menu). */
+export function visibleEntries(entries: NavEntry[], perms: NavPerms, admin: boolean): NavEntry[] {
+  const out: NavEntry[] = []
+  for (const e of entries) {
+    if (!isSection(e)) { if (canSeeNavItem(e, perms, admin)) out.push(e); continue }
+    const kids = e.items.filter(i => canSeeNavItem(i, perms, admin))
+    if (kids.length) out.push({ ...e, items: kids })
+  }
+  return out
+}
+
 // ─── Trình phân quyền: gom module theo Trang → Tab, THỨ TỰ KHỚP SIDEBAR ──────────
 // Page xuất hiện theo đúng thứ tự module lần đầu gặp khi duyệt NAV_GROUPS (sidebar).
 // Module trong cùng page giữ thứ tự khai báo MODULES (tab con). Module không có trên
@@ -120,11 +184,9 @@ export const PERMISSION_PAGES: { page: string; modules: ModuleKey[] }[] = (() =>
   const orderedPages: string[] = []
   const seen = new Set<string>()
   const pushPage = (p: string) => { if (!seen.has(p)) { seen.add(p); orderedPages.push(p) } }
-  for (const g of NAV_GROUPS) {
-    for (const it of g.items) {
-      const mods = it.modules ?? (it.module ? [it.module] : [])
-      for (const m of mods) pushPage(MODULES[m].page)
-    }
+  for (const it of ALL_NAV_ITEMS) {
+    const mods = it.modules ?? (it.module ? [it.module] : [])
+    for (const m of mods) pushPage(MODULES[m].page)
   }
   // an toàn: page có trong MODULES nhưng không xuất hiện trên sidebar
   for (const k of Object.keys(MODULES) as ModuleKey[]) pushPage(MODULES[k].page)

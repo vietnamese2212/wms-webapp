@@ -124,6 +124,30 @@ function futureDateError(deliveryDate?: string | null): string | null {
   return `Đơn có Ngày xuất ${dd}/${m}/${y} (tương lai) — hôm nay chưa được quét/xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn (chuyến SAP: tab Kế hoạch xuất · chuyến thường: Sửa đơn/Chuyển ngày).`
 }
 
+// CHỐT %DATE TRƯỚC KHI LẤY HÀNG — CHỈ kho Hướng dẫn (user chốt 10/09).
+// Kho GUIDED chạy theo KẾ HOẠCH sinh từ %Date đã chốt: dòng chưa chốt thì KHÔNG có việc nào được
+// lập, nên ai lấy hàng lúc đó là lấy theo cảm tính — đúng thứ user sợ ("trong nghĩ là mặc định đi
+// làm, sau đó mới update thì sẽ là làm sai"). Trước 10/09 cửa quét chỉ soi `date_required` của
+// VL06O nên chốt tay hoàn toàn KHÔNG gác gì.
+// XUẤT và NHẶT LẺ là MỘT (user: "bản chất nó là 1"): cùng dòng `OutboundItem`, cùng kho hàng, chỉ
+// khác màn hình ⇒ chặn cả hai, đừng để nhặt lẻ thành cửa sau.
+// Kho Thủ công (`work_mode` khác GUIDED) giữ nguyên hành vi cũ — không bắt chốt.
+type DateRuleGateItem = { date_rule?: unknown; date_required?: number | null; material_code_raw?: string | null }
+function dateRuleGateError(
+  workMode: string | null | undefined, item: DateRuleGateItem, what: 'lấy hàng' | 'nhặt lẻ',
+): string | null {
+  if (workMode !== 'GUIDED') return null
+  if (item.date_rule != null) return null                       // đã chốt tay
+  if (Number(item.date_required ?? 0) > 0) return null           // mức kế thừa từ VL06O = đã có yêu cầu
+  const code = item.material_code_raw ? ` ${item.material_code_raw}` : ''
+  return `Dòng${code} CHƯA CHỐT %Date — kho chạy chế độ Hướng dẫn nên phải chốt trước khi ${what}. `
+    + `Vào menu "Chốt %Date" (hoặc nút Chốt %Date trên chuyến), chọn mức rồi làm tiếp — chốt xong kế hoạch tự sắp lại.`
+}
+// Chuyến nào cũng cần biết kho chạy chế độ nào ⇒ thêm nhúng này vào SELECT của các cửa lấy hàng.
+const GDO_WORK_MODE = 'warehouse:Warehouse!warehouse_id(work_mode)'
+const workModeOf = (gdo: unknown): string | null =>
+  ((gdo as { warehouse?: { work_mode?: string | null } | null } | null)?.warehouse?.work_mode) ?? null
+
 // CHUYẾN BẤT ĐỘNG (user chốt 03/08) — 2 lý do, cùng 1 hệ quả: chuyến hiện trên màn nhưng KHÔNG
 // thao tác được (chỉ xem + xem lịch sử). Chặn ở ĐÚNG các cửa THỰC THI như luật chặn xuất sớm,
 // KHÔNG chặn Hủy/Xóa/xem (phải cho dọn) và không chặn sửa ở NGUỒN (Kế hoạch xuất).
@@ -5690,7 +5714,7 @@ export async function checkScanItem(req: Request, res: Response) {
       { data: invList },
       { data: dupCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
       itemOfGdo(itemId, gdoId),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(id, location_code, warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
@@ -5712,6 +5736,10 @@ export async function checkScanItem(req: Request, res: Response) {
       if (futErr) return fail(res, 422, 'FUTURE_DATE', futErr)
     }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: chưa chốt %Date thì chưa được lấy hàng (xem dateRuleGateError). Báo ở BƯỚC XEM
+    // TRƯỚC luôn để người quét biết ngay trên màn, không phải bấm Lưu mới lộ.
+    { const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
@@ -5794,7 +5822,7 @@ export async function scanItem(req: Request, res: Response) {
       { data: dupCheck },
       { data: empCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
       itemOfGdo(itemId, gdoId),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
@@ -5820,6 +5848,9 @@ export async function scanItem(req: Request, res: Response) {
       if (futErr) return fail(res, 422, 'FUTURE_DATE', futErr)
     }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: chưa chốt %Date thì chưa được lấy hàng — cửa GHI, gác kể cả khi gọi thẳng API
+    { const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
@@ -6216,7 +6247,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
-        supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
+        supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
         itemOfGdo(itemId, gdoId),
         employee_id
           ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
@@ -6229,6 +6260,9 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     { const inertErr = inertError(gdo as GdoInertState | null)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: XÁC NHẬN nhặt lẻ là bước TRỪ TỒN THẬT ⇒ cũng phải có %Date đã chốt như xuất
+    { const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, 'nhặt lẻ')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     // SOẠN nhặt lẻ trước ngày = OK (chỉ giữ hàng/reserved), nhưng XÁC NHẬN = TRỪ TỒN THẬT = hàng rời kho
     // ⇒ phải đúng ngày xuất (probe 02/08: đây là đường lách FUTURE_DATE duy nhất còn trừ được tồn).
     const clFutErr = futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
@@ -6311,14 +6345,20 @@ export async function manualLooseItem(req: Request, res: Response) {
     if (cartons == null || !Number.isFinite(Number(cartons)) || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, warehouse_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode)`).eq('id', gdoId).single(),
-      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
+      supabase.from('GroupDeliveryOrder').select(`status, warehouse_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode, work_mode)`).eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     { const inertErr = inertError(gdo as GdoInertState | null)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: ghi số nhặt lẻ thủ công (hàng no-QR) cũng là lấy hàng ⇒ chốt %Date trước.
+    // Ghi số 0 = HOÀN lại phần đã soạn: luật là "chưa chốt thì chưa lấy", không phải "không sửa sai".
+    if (Number(cartons) > 0) {
+      const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, 'nhặt lẻ')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
+    }
 
     // BASE UNIT: cartons = SỐ BASE (nhặt lẻ đếm hộp nguyên) — mã có entry phải nguyên
     {
@@ -6707,8 +6747,8 @@ export async function manualCompleteItem(req: Request, res: Response) {
     }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, warehouse:Warehouse(inventory_mode)`).eq('id', gdoId).single(),
-      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, warehouse:Warehouse(inventory_mode, work_mode)`).eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
@@ -6722,10 +6762,16 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // Chặn xuất sớm CHỈ khi GHI THÊM. Sửa GIẢM / hoàn về 0 luôn cho phép — nếu không, chuyến lỡ bị
     // đẩy sang ngày tương lai sau khi đã ghi nhận sẽ KẸT: tồn đã trừ mà không đường nào trả lại
     // (probe 02/08 B2). Luật là "không xuất sớm", không phải "không sửa sai".
-    const mcFutErr = (cartons == null || Number(cartons) > Number(item.cartons_scanned))
+    const mcAdding = (cartons == null || Number(cartons) > Number(item.cartons_scanned))
+    const mcFutErr = mcAdding
       ? futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
       : null
     if (mcFutErr) return fail(res, 422, 'FUTURE_DATE', mcFutErr)
+    // Kho Hướng dẫn: cùng lý do — GHI THÊM là lấy hàng, sửa GIẢM/hoàn thì luôn cho
+    if (mcAdding) {
+      const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
+    }
 
     // BASE UNIT: cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
     if (cartons != null) {

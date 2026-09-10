@@ -1,11 +1,58 @@
-import { NavLink } from 'react-router-dom'
-import { Settings, BarChart3 } from 'lucide-react'
+import { useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { Settings, BarChart3, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { can, canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
-import { NAV_GROUPS } from '@/config/navigation'
+import { isAdmin, type ModulePermissions } from '@/config/permissions'
+import { NAV_GROUPS, isSection, visibleEntries, type NavItem, type NavSection } from '@/config/navigation'
 import { DevCredit } from '@/components/shared/DevCredit'
+
+/** Một trang trên drawer — dùng lại cho cả mục lẻ lẫn mục trong nhóm chức năng. */
+function MobileLink({ item, nested = false }: { item: NavItem; nested?: boolean }) {
+  const Icon = item.icon
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === '/'}
+      className={({ isActive }) =>
+        cn('relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
+          nested && 'py-2 pl-8 text-[13px]',
+          isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100')
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sky-400" />}
+          <Icon className={cn('shrink-0', nested ? 'h-3.5 w-3.5' : 'h-4 w-4', isActive && 'text-sky-300')} />
+          {item.label}
+        </>
+      )}
+    </NavLink>
+  )
+}
+
+/** Nhóm chức năng (cấp 2) — mở sẵn nhóm chứa trang đang xem. */
+function MobileSection({ section }: { section: NavSection }) {
+  const location = useLocation()
+  const hasActive = section.items.some(i =>
+    location.pathname === i.to || location.pathname.startsWith(i.to + '/'))
+  const [open, setOpen] = useState(hasActive)
+  const show = open || hasActive
+  const Icon = section.icon
+  return (
+    <div>
+      <button onClick={() => setOpen(!show)}
+        className={cn('flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
+          hasActive ? 'text-slate-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100')}>
+        <Icon className={cn('h-4 w-4 shrink-0', hasActive && 'text-sky-300')} />
+        <span className="flex-1 text-left truncate">{section.label}</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !show && '-rotate-90')} />
+      </button>
+      {show && <div className="space-y-0.5">{section.items.map(i => <MobileLink key={i.to} item={i} nested />)}</div>}
+    </div>
+  )
+}
 
 export function MobileNav() {
   const { user } = useAuthStore()
@@ -31,16 +78,8 @@ export function MobileNav() {
       {/* Nav — vận hành (WMS/TMS/HR) lên đầu, ngăn cách với nhóm phụ (Báo cáo/Cấu hình/Quản trị) */}
       <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-5">
         {NAV_GROUPS.map((group) => {
-          const visibleItems = group.items.filter(item => {
-            if (item.adminOnly) return admin
-            if (item.anyActions?.some(([m, a]) => can(modulePerms, m, a))) return true
-            // Item CHỈ khai anyActions: không khớp quyền thì ẨN (đừng rơi xuống "!module = hiện cho mọi người")
-            if (item.anyActions && !item.modules && !item.module) return admin
-            if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)
-            if (!item.module) return true
-            return admin || canAccess(modulePerms, item.module)
-          })
-          if (visibleItems.length === 0) return null
+          const entries = visibleEntries(group.items, modulePerms, admin)
+          if (entries.length === 0) return null
           const isFirstSecondary = group.label === firstSecondaryLabel
           return (
           <div key={group.label} className={cn(isFirstSecondary && 'border-t border-white/10 pt-4')}>
@@ -48,32 +87,9 @@ export function MobileNav() {
               {group.label}
             </p>
             <div className="space-y-0.5">
-              {visibleItems.map((item) => {
-                const Icon = item.icon
-                return (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.to === '/'}
-                    className={({ isActive }) =>
-                      cn(
-                        'relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-white/10 text-white'
-                          : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
-                      )
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sky-400" />}
-                        <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-sky-300')} />
-                        {item.label}
-                      </>
-                    )}
-                  </NavLink>
-                )
-              })}
+              {entries.map(e => isSection(e)
+                ? <MobileSection key={e.label} section={e} />
+                : <MobileLink key={e.to} item={e} />)}
             </div>
           </div>
           )

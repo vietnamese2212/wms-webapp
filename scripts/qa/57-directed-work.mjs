@@ -587,6 +587,46 @@ try {
     await api(`/wms/outbound/${t9.gdo}`, 'PATCH', { status: 'COMPLETED' }).catch(() => {})
   }
 
+  // ═══ [19] KHO HƯỚNG DẪN: CHƯA CHỐT %DATE THÌ CHƯA ĐƯỢC LẤY HÀNG (user chốt 10/09) ════════════
+  // Trước bản vá này, chốt tay KHÔNG gác gì ở cửa quét — cửa đó chỉ soi `date_required` của VL06O.
+  // Hệ quả: kho Hướng dẫn có dòng chưa chốt ⇒ 0 việc trên bảng, nhưng người quét vẫn xuất bình
+  // thường bằng pallet tự chọn — tức chỉ dẫn công việc bị đi vòng mà không ai biết.
+  // NHẶT LẺ đi CHUNG cửa quét (user: "bản chất nó là 1") nên gác luôn cả hai chiều.
+  {
+    const p19 = await mkPallet('DGATE', 40, locFloor, dPlus(300), -15)
+    const t19 = await mkTrip('T19')
+    const i19 = await mkItem(t19.do, 20)                      // KHÔNG chốt date_rule, không date_required
+    r = await startTrip(t19.gdo, { license_plate: '51C19191', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const scan19 = (body) => api(`/wms/outbound/${t19.gdo}/items/${i19}/scan`, 'POST',
+      { qr_code: p19.pallet_code, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP', ...body })
+    check('[19a0] Dựng được chuyến Hướng dẫn có dòng CHƯA chốt %Date', r.s === 200, `http=${r.s} ${err(r)}`)
+    r = await api(`/wms/outbound/${t19.gdo}/items/${i19}/check-scan`, 'POST', { qr_code: p19.pallet_code })
+    check('[19a] Xem trước lượt quét khi chưa chốt %Date → 422 DATE_RULE_REQUIRED (báo ngay trên màn, không đợi bấm Lưu)',
+      r.s === 422 && r.j?.error?.code === 'DATE_RULE_REQUIRED', `http=${r.s} ${err(r)}`)
+    r = await scan19({ cartons_override: 5 })
+    check('[19b] Quét XUẤT khi chưa chốt %Date → 422 (cửa ghi, gác kể cả gọi thẳng API)',
+      r.s === 422 && r.j?.error?.code === 'DATE_RULE_REQUIRED', `http=${r.s} ${err(r)}`)
+    r = await scan19({ cartons_override: 5, loose_picking_mode: true })
+    check('[19c] Quét NHẶT LẺ khi chưa chốt %Date → 422 (nhặt lẻ không phải cửa sau của xuất)',
+      r.s === 422 && r.j?.error?.code === 'DATE_RULE_REQUIRED', `http=${r.s} ${err(r)}`)
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i19], rule: { kind: 'FEFO' } })
+    r = await scan19({ cartons_override: 5 })
+    check('[19d] Chốt xong (FEFO) → quét được ngay, không phải làm gì thêm',
+      r.s === 200, `http=${r.s} ${err(r)}`)
+    // Kho THỦ CÔNG giữ nguyên hành vi cũ — luật này CHỈ áp cho kho Hướng dẫn, đừng khoá nhầm kho khác
+    const t19b = await mkTrip('T19B')
+    const i19b = await mkItem(t19b.do, 20)
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { work_mode: 'MANUAL', updated_at: nowIso() })
+    await startTrip(t19b.gdo, { license_plate: '51C19192', dock_location_id: dockA })
+    r = await api(`/wms/outbound/${t19b.gdo}/items/${i19b}/scan`, 'POST',
+      { qr_code: p19.pallet_code, qty_semantics: 'base', cartons_override: 5, leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[19e] Kho THỦ CÔNG: dòng chưa chốt %Date vẫn quét được (luật chỉ áp cho kho Hướng dẫn)',
+      r.s === 200, `http=${r.s} ${err(r)}`)
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { work_mode: 'GUIDED', updated_at: nowIso() })
+    await api(`/wms/outbound/${t19.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+    await api(`/wms/outbound/${t19b.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
   // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
   const t8 = await mkTrip('T8')
   const i8 = await mkItem(t8.do, 10)

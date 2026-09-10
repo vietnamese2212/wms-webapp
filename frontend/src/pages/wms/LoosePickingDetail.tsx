@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare } from 'lucide-react'
+import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare, CalendarClock } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -12,6 +12,9 @@ import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, 
 import { pctDateCls } from '@/utils/pctDateBands'
 import { scanRotationOf } from '@/utils/rotation'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
+// NHẶT LẺ = XUẤT, chỉ khác màn (user chốt 10/09 "bản chất nó là 1"): cùng dòng OutboundItem, cùng
+// kho hàng ⇒ dùng CHUNG badge + màn chốt %Date của trang chuyến, đừng dựng bản riêng cho màn này.
+import { SetDateRuleSheet, dateRuleLabel, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
@@ -21,7 +24,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
-import type { OutboundItem, OutboundDelivery } from '@/types'
+import type { OutboundItem, OutboundDelivery, DateRule } from '@/types'
 import { OutboundStatusBadge } from '@/lib/statusMaps'
 
 function ProgressBar({ scanned, target, compact = false }: { scanned: number; target: number; compact?: boolean }) {
@@ -232,6 +235,9 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
     { id: 'tong_b', label: 'Tổng hộp', w: 62, align: 'right' },
     { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
     ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
+    // Quy tắc ĐÃ CHỐT — cột LUÔN CÓ, y như bảng dòng hàng của chuyến: nhặt lẻ cũng bị chặn khi
+    // chưa chốt (kho Hướng dẫn) nên người nhặt phải thấy dòng nào còn thiếu
+    { id: 'daterule', label: '%Date lấy hàng', w: 118 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
     ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
     ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
@@ -375,6 +381,12 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       })()}
                     </TableCell>
                   )}
+                  {/* %Date đã chốt — badge dùng chung với trang chuyến (một nguồn nhãn) */}
+                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                    <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${dateRuleLabel(item.date_rule, item.material, item.date_required).cls}`}>
+                      {dateRuleLabel(item.date_rule, item.material, item.date_required).text}
+                    </span>
+                  </TableCell>
                   {hasBatchRequired && (
                     <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                       {item.batch_required
@@ -491,6 +503,7 @@ export default function LoosePickingDetail() {
   const { data: gdo, isLoading, isError } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [showOrderScan,   setShowOrderScan]   = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
+  const [showDateRule,    setShowDateRule]    = useState(false)   // chốt %Date cho chính các dòng nhặt lẻ
   const [hdrOpen,         setHdrOpen]         = useState(false)   // mobile: popup thông tin đơn (thanh mảnh + nút Info)
   const [pdaScan,         setPdaScan]         = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
 
@@ -559,8 +572,36 @@ export default function LoosePickingDetail() {
     }
   }
 
+  // Dòng nhặt lẻ để CHỐT %DATE — cùng khuôn với trang chuyến (kho Hướng dẫn CHẶN nhặt lẻ khi
+  // dòng chưa chốt, nên người nhặt lẻ phải chốt được ngay tại màn của mình)
+  const dateTargets: DateRuleTarget[] = allDOs.flatMap(d =>
+    (d.items ?? [])
+      .filter(i => i.loose_picking > 0 && Number(i.cartons_ordered ?? 0) > Number(i.cartons_scanned ?? 0))
+      .map(i => ({
+        item_id: i.id,
+        material_id: i.material_id ?? null,
+        material_code: i.material_code_raw ?? null,
+        material_name: i.material?.short_name ?? null,
+        trip_label: d.delivery_code ?? null,
+        remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
+        units: i.material ?? null,
+        note: i.header_text ?? null,
+        current: (i.date_rule as DateRule | null)
+          ?? (Number(i.date_required) > 0 ? ({ kind: 'MIN_PCT', value: Number(i.date_required) } as DateRule) : null),
+      })))
+  const nUnsetDate = dateTargets.filter(t => !t.current).length
+
   // ── Cụm action header (ActionCluster) — đồng bộ nút "Xem pallet" với OutboundDetail ──
   const actionItems: ActionItem[] = []
+  if (dateTargets.length > 0 && can(perms, 'outbound', 'set_date'))
+    actionItems.push({
+      key: 'date-rule', icon: CalendarClock, label: 'Chốt %Date',
+      tip: nUnsetDate > 0
+        ? `${nUnsetDate} dòng chưa chốt — kho Hướng dẫn chưa cho nhặt lẻ dòng chưa chốt`
+        : 'Sửa quy tắc lấy hàng theo date của từng dòng',
+      primary: nUnsetDate > 0,
+      onClick: () => setShowDateRule(true),
+    })
   // Quét QR cấp ĐƠN (user 19/07): quét tem pallet bất kỳ, tự nhận mã hàng — khỏi vào từng mã.
   // Rule chặn giữ nguyên (BE kiểm theo item): sai mã, không vượt số nhặt lẻ, tạm dừng…
   const hasLooseRemaining = allLooseItems.some(i =>
@@ -615,6 +656,8 @@ export default function LoosePickingDetail() {
         <GdoScanSheet gdo={gdo} mode="loose" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
       )}
+      <SetDateRuleSheet open={showDateRule} onClose={() => setShowDateRule(false)}
+        targets={dateTargets} warehouseId={gdo.warehouse_id ?? null} />
 
       {/* Mobile: popup thông tin đơn (desktop hiện inline) */}
       <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>

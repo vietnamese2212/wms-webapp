@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  ChevronLeft, ChevronRight, BarChart3,
+  ChevronLeft, ChevronRight, ChevronDown, BarChart3,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { prefetchPage } from '@/routes/lazyPages'
@@ -8,21 +9,20 @@ import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { can, canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
-import { NAV_GROUPS, type NavItem } from '@/config/navigation'
+import { isAdmin, type ModulePermissions } from '@/config/permissions'
+import { NAV_GROUPS, ALL_NAV_ITEMS, isSection, visibleEntries, type NavItem, type NavSection } from '@/config/navigation'
 import { DevCredit } from '@/components/shared/DevCredit'
 
-function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+/** Trang đang mở? (mục có đường dẫn là TIỀN TỐ của mục khác thì nhường mục sâu hơn) */
+function useIsActive(to: string): boolean {
   const location = useLocation()
-  const allItems = NAV_GROUPS.flatMap(g => g.items)
-  const isActive = item.to === '/'
-    ? location.pathname === '/'
-    : (location.pathname === item.to || location.pathname.startsWith(item.to + '/')) &&
-      !allItems.some(
-        other => other.to !== item.to &&
-          other.to.startsWith(item.to + '/') &&
-          location.pathname.startsWith(other.to)
-      )
+  if (to === '/') return location.pathname === '/'
+  return (location.pathname === to || location.pathname.startsWith(to + '/')) &&
+    !ALL_NAV_ITEMS.some(o => o.to !== to && o.to.startsWith(to + '/') && location.pathname.startsWith(o.to))
+}
+
+function NavItemComponent({ item, collapsed, nested = false }: { item: NavItem; collapsed: boolean; nested?: boolean }) {
+  const isActive = useIsActive(item.to)
   const Icon = item.icon
 
   const linkContent = (
@@ -35,13 +35,14 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
         isActive
           ? 'bg-white/10 text-white'
           : 'text-slate-400 hover:bg-white/5 hover:text-slate-100',
+        nested && !collapsed && 'py-1.5 pl-8 text-[13px]',
         collapsed && 'justify-center px-2'
       )}
     >
       {isActive && (
         <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sky-400" />
       )}
-      <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-4 w-4', isActive && 'text-sky-300')} />
+      <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : nested ? 'h-3.5 w-3.5' : 'h-4 w-4', isActive && 'text-sky-300')} />
       {!collapsed && <span className="truncate">{item.label}</span>}
     </NavLink>
   )
@@ -56,6 +57,36 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
   }
 
   return linkContent
+}
+
+/** Nhóm chức năng (cấp 2) — mở sẵn khi đang đứng trong nhóm, gập/mở nhớ theo phiên làm việc. */
+function NavSectionComponent({ section, collapsed }: { section: NavSection; collapsed: boolean }) {
+  const location = useLocation()
+  const hasActive = section.items.some(i =>
+    location.pathname === i.to || location.pathname.startsWith(i.to + '/'))
+  const [open, setOpen] = useState(hasActive)
+  const Icon = section.icon
+  // Rail thu gọn chỉ vừa ICON: hiện thẳng các trang, đừng bắt mở một cấp không nhìn thấy nhãn
+  if (collapsed) return <>{section.items.map(i => <NavItemComponent key={i.to} item={i} collapsed />)}</>
+  const show = open || hasActive
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!show)}
+        className={cn('flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+          hasActive ? 'text-slate-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100')}
+      >
+        <Icon className={cn('h-4 w-4 shrink-0', hasActive && 'text-sky-300')} />
+        <span className="truncate flex-1 text-left">{section.label}</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !show && '-rotate-90')} />
+      </button>
+      {show && (
+        <div className="space-y-0.5">
+          {section.items.map(i => <NavItemComponent key={i.to} item={i} collapsed={false} nested />)}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function Sidebar() {
@@ -95,17 +126,8 @@ export function Sidebar() {
         <ScrollArea className="flex-1 py-4">
           <nav className="space-y-5 px-2">
             {NAV_GROUPS.map((group) => {
-              const visibleItems = group.items.filter(item => {
-                if (item.adminOnly) return admin
-                if (item.anyActions?.some(([m, a]) => can(modulePerms, m, a))) return true
-                // Item CHỈ khai anyActions (vd Chuyển vị trí = inventory.move_location): không khớp
-                // quyền thì ẨN — đừng rơi xuống nhánh "!module = hiện cho mọi người" bên dưới
-                if (item.anyActions && !item.modules && !item.module) return admin
-                if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)
-                if (!item.module) return true
-                return admin || canAccess(modulePerms, item.module)
-              })
-              if (visibleItems.length === 0) return null
+              const entries = visibleEntries(group.items, modulePerms, admin)
+              if (entries.length === 0) return null
               return (
               <div key={group.label}>
                 {!sidebarCollapsed && (
@@ -115,9 +137,9 @@ export function Sidebar() {
                 )}
                 {sidebarCollapsed && <div className="mb-2 mx-2 border-t border-white/10" />}
                 <div className="space-y-0.5">
-                  {visibleItems.map((item) => (
-                    <NavItemComponent key={item.to} item={item} collapsed={sidebarCollapsed} />
-                  ))}
+                  {entries.map(e => isSection(e)
+                    ? <NavSectionComponent key={e.label} section={e} collapsed={sidebarCollapsed} />
+                    : <NavItemComponent key={e.to} item={e} collapsed={sidebarCollapsed} />)}
                 </div>
               </div>
               )

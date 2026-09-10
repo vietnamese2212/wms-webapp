@@ -496,6 +496,18 @@ const RULES = [
   // Overlay quét KEEP-MOUNTED (ẩn bằng CSS `${open ? '' : 'hidden'}`) mà <QRScanner> không truyền
   // `active={open}` = camera CHẠY NGẦM sau khi user đóng (đèn camera sáng, tốn pin, lo ngại riêng
   // tư — user bắt 05/08 ở màn quét Fill). Màn quét unmount khi đóng thì không cần active.
+  // TRẠNG THÁI VIỆC bị đổi từ 6 chỗ (Bắt đầu · quét · bỏ Bắt đầu · huỷ · hoàn thành · nút ✓ Xong).
+  // Mỗi chỗ một bản luật là ĐÚNG khuôn lỗi "4 bản chép tay" của luật luân chuyển (14/08) — nên mọi
+  // đường ghi phải đi qua services/directedTasks.ts. Baseline 0.
+  {
+    key: 'task_status_written_outside_service',
+    label: 'ghi/sửa `wms_tasks` NGOÀI services/directedTasks.ts — trạng thái việc phải có MỘT đường ghi',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /from\(\s*['"]wms_tasks['"]\s*\)/.test(line)
+        && /\.(update|insert|upsert|delete)\(/.test(line)
+        && !/services[\\/]directedTasks\.ts$/.test(file), s),
+  },
   {
     key: 'qrscanner_keepmounted_without_active',
     label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',

@@ -375,4 +375,36 @@ for (const [table, label] of [
 // retryOnFail: gói này đọc bất biến của TOÀN BỘ kho dữ liệu (mồ côi / bộ đếm / tồn), nên một bộ kiểm
 // khác đang chạy dở trên cùng DB staging làm nó thấy trạng thái lệch trong vài giây. Đo lại sau khi lắng
 // để phân loại ẢO/THẬT thay vì báo đỏ oan — xem finish() trong lib.mjs.
+// 17. VIỆC LẤY HÀNG KHÔNG ĐƯỢC TRỎ VÀO CHUYẾN ĐÃ ĐÓNG, KHÔNG ĐƯỢC VƯỢT NHU CẦU (chốt 10/09).
+//     Hai cách hỏng ÂM THẦM của bảng việc (Directed Work 1c): (a) chuyến đã Hoàn thành/Huỷ/bỏ Bắt
+//     đầu mà việc còn treo ⇒ xe nâng vẫn được chỉ đi lấy hàng cho một chuyến không còn tồn tại —
+//     không màn nào báo lỗi, chỉ có người đi vô ích; (b) Σ số lượng việc treo của một dòng vượt
+//     phần còn phải lấy ⇒ giữ chỗ pallet oan, chuyến khác thiếu hàng mà tồn vẫn còn.
+{
+  const tasks = await restAll('wms_tasks', 'select=id,gdo_id,item_id,qty_base&status=eq.PENDING')
+  const gdoIds = [...new Set(tasks.map(t => t.gdo_id))]
+  const aliveGdo = new Map()
+  for (const c of chunk(gdoIds))
+    for (const g of await restAll('GroupDeliveryOrder', `select=id,status,started_at&id=in.(${c.join(',')})`))
+      aliveGdo.set(g.id, g)
+  const orphanTasks = tasks.filter(t => {
+    const g = aliveGdo.get(t.gdo_id)
+    return !g || !g.started_at || !['IN_PROGRESS', 'PAUSED'].includes(g.status)
+  })
+  check('Không việc lấy hàng nào treo trên chuyến đã đóng / chưa Bắt đầu', orphanTasks.length === 0,
+    orphanTasks.length ? `${orphanTasks.length} việc, vd chuyến ${orphanTasks[0].gdo_id}` : `soi ${tasks.length} việc treo`)
+
+  const byItem = new Map()
+  for (const t of tasks) byItem.set(t.item_id, (byItem.get(t.item_id) ?? 0) + Number(t.qty_base))
+  const itemIds = [...byItem.keys()]
+  const over = []
+  for (const c of chunk(itemIds))
+    for (const i of await restAll('OutboundItem', `select=id,cartons_ordered,cartons_scanned&id=in.(${c.join(',')})`)) {
+      const left = Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0)
+      if ((byItem.get(i.id) ?? 0) > left) over.push(`${i.id}: việc ${byItem.get(i.id)} > còn lại ${left}`)
+    }
+  check('Σ số lượng việc treo của mỗi dòng hàng ≤ phần còn phải lấy', over.length === 0,
+    over.length ? over.slice(0, 3).join(' · ') : `soi ${itemIds.length} dòng có việc`)
+}
+
 finish('INVARIANT', { retryOnFail: true })

@@ -26,6 +26,14 @@ const dPlus = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.
 
 async function cleanup() {
   for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=like.${T}*`)) {
+    // Chuyến ĐÃ HOÀN THÀNH tự sinh lệnh chuyển kho, và `TmsOrder.transfer_gdo_id` KHÔNG có CASCADE
+    // ⇒ xoá chuyến bị chặn. Bản đầu của gói này nuốt lỗi bằng .catch() nên để lại kho rác và lượt
+    // chạy sau đỏ ngay ở fixture (23505 trùng mã kho). Gỡ liên kết trước, rồi mới xoá.
+    for (const o of await restAll('TmsOrder', `select=id&transfer_gdo_id=eq.${g.id}`)) {
+      await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+      await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+    }
+    await restWrite('ProductionImport', 'PATCH', `from_gdo_id=eq.${g.id}`, { from_gdo_id: null }).catch(() => {})
     await restWrite('wms_tasks', 'DELETE', `gdo_id=eq.${g.id}`).catch(() => {})
     for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)) {
       for (const it of await restAll('OutboundItem', `select=id&do_id=eq.${d.id}`))
@@ -36,6 +44,9 @@ async function cleanup() {
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`).catch(() => {})
   }
   for (const w of await restAll('Warehouse', `select=id&code=like.${T}*`)) {
+    // Chuyến Hoàn thành ⇒ tự sinh lệnh chuyển kho + DÒNG KẾ HOẠCH NHẬP ở kho đích; dòng đó trỏ
+    // `warehouse_id` (FK không CASCADE) nên còn nó là không xoá được kho — lượt sau đỏ ở fixture.
+    await restWrite('inbound_plan_lines', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
@@ -115,6 +126,9 @@ try {
   const pFar3 = await mkPallet('FAR_T3',  50, far.T3,  dPlus(30),  -300)
   const pNear1= await mkPallet('NEAR_T1', 50, near.T1, dPlus(200), -100)
   const pNear2= await mkPallet('NEAR_T2', 50, near.T2, dPlus(400), -20)
+  // Pallet RIÊNG cho phép kiểm "chỉ định đúng NSX" — không dùng chung với các phép trên, vì giữ chỗ
+  // mềm khiến pallet đã vào kế hoạch chuyến khác không còn được chia (đúng luật, nhưng làm hỏng phép kiểm)
+  const pExact = await mkPallet('EXACT', 50, locFloor, dPlus(500), -7)
   check('[0d] 4 pallet — FEFO cố ý NGƯỢC thứ tự vị trí (HSD ngắn nhất ở dãy xa, tầng cao)',
     !!pLow.id && !!pFar3.id && !!pNear1.id && !!pNear2.id)
 
@@ -187,12 +201,22 @@ try {
   check('[5a] Chốt FEFO cho dòng → 200, chuyến được sắp lại', r.s === 200 && r.j?.data?.trips_replanned === 1, `http=${r.s} ${err(r)}`)
   let tk = await tasksOf(t2.gdo)
   check('[5b] Có việc sau khi chốt', tk.length > 0, `${tk.length} việc`)
-  // ORACLE: tự tính lại thứ tự đúng theo HSD từ dữ liệu thô, không đọc lại của app
-  const expFefo = [pLow, pFar3, pNear1].map(p => p.pallet_code)
-  const gotOrder = tk.map(t => t.pallet_code)
-  check('[5c] ORACLE FEFO: lấy đúng thứ tự HSD ngắn→dài, KHÔNG theo mã ô hay khoảng cách',
-    JSON.stringify(gotOrder.slice(0, 3)) === JSON.stringify(expFefo),
-    `app=${gotOrder.join(' → ')} | đúng=${expFefo.join(' → ')}`)
+  // ORACLE — tách BẠCH hai việc mà bản đầu của gói này trộn làm một (và suýt báo oan app):
+  //   (a) CHỌN pallet nào  = luật luân chuyển (HSD ngắn nhất trước)
+  //   (b) ĐI theo thứ tự nào = đường ngắn nhất từ cửa
+  // Trộn hai cái là tự dựng kỳ vọng sai. Tính lại cả hai từ dữ liệu thô, không đọc của app.
+  const hsdOf = Object.fromEntries([pLow, pFar3, pNear1, pNear2].map(p => [p.pallet_code, p.expiry_date]))
+  const expSet = [pLow, pFar3, pNear1].map(p => p.pallet_code).sort()
+  const gotSet = tk.map(t => t.pallet_code).sort()
+  check('[5c] ORACLE FEFO (a) — chọn ĐÚNG tập 3 pallet HSD ngắn nhất, không phải pallet gần cửa',
+    JSON.stringify(gotSet) === JSON.stringify(expSet), `app=${gotSet.join(',')} | đúng=${expSet.join(',')}`)
+  const byHsd = tk.slice().sort((a, b) => String(hsdOf[a.pallet_code]).localeCompare(String(hsdOf[b.pallet_code])))
+  check('[5c2] ORACLE FEFO (b) — pallet lấy LẺ phải là pallet HSD DÀI NHẤT trong tập (cắt ở đuôi)',
+    byHsd[byHsd.length - 1]?.is_partial === true && byHsd.slice(0, -1).every(t => !t.is_partial),
+    byHsd.map(t => `${t.pallet_code}(HSD ${String(hsdOf[t.pallet_code]).slice(5)}${t.is_partial ? ',lẻ' : ''})`).join(' → '))
+  const dists = tk.map(t => Number(t.dist_cells ?? 1e9))
+  check('[5c3] ORACLE đường đi — thứ tự ĐI tăng dần theo khoảng cách từ cửa (đi một vòng, không nhảy)',
+    dists.every((d, i) => i === 0 || d >= dists[i - 1]), tk.map(t => `${t.seq}:${t.dist_cells}ô`).join(' '))
   const sumQty = tk.reduce((s, t) => s + Number(t.qty_base), 0)
   check('[5d] ORACLE số lượng: Σ việc = đúng nhu cầu 120 (không thừa = giữ chỗ oan, không thiếu = xe về non)',
     sumQty === 120, `Σ=${sumQty}`)
@@ -227,11 +251,11 @@ try {
   // ═══ [8] CHỈ ĐỊNH ĐÚNG NSX (EXACT) ═══════════════════════════════════════════════════════════
   const t4 = await mkTrip('T4')
   const i4 = await mkItem(t4.do, 30)
-  await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i4], rule: { kind: 'EXACT', value: pNear2.production_date?.slice(0, 10) } })
+  await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i4], rule: { kind: 'EXACT', value: String(pExact.production_date).slice(0, 10) } })
   r = await startTrip(t4.gdo, { license_plate: '51C44444', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
   const tk4 = await tasksOf(t4.gdo)
-  check('[8] Chỉ định NSX → lấy ĐÚNG pallet NSX đó, bất kể FEFO',
-    r.s === 200 && tk4.length === 1 && tk4[0].pallet_code === pNear2.pallet_code,
+  check('[8] Chỉ định NSX → lấy ĐÚNG pallet NSX đó dù HSD dài nhất (FEFO xếp nó cuối)',
+    r.s === 200 && tk4.length === 1 && tk4[0].pallet_code === pExact.pallet_code,
     tk4.map(t => t.pallet_code).join(',') || 'không có việc')
 
   // ═══ [9] GIỮ CHỖ MỀM — chuyến sau không chia lại pallet đã có chủ ════════════════════════════
@@ -358,8 +382,8 @@ try {
   check('[15b] %Date 150 → 422 (0–100)', r.s === 422, `http=${r.s}`)
   r = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'NEWEST' } })
   check('[15c] Quy tắc lạ → 422', r.s === 422, `http=${r.s}`)
-  r = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: ["x'--"], rule: { kind: 'FEFO' } })
-  check('[15d] Id kiểu injection → 400 BAD_ID', r.s === 400, `http=${r.s}`)
+  r = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: ["' or 1=1--"], rule: { kind: 'FEFO' } })
+  check('[15d] Id kiểu injection trong body → 400 (bộ mẫu chuẩn của gói 07)', r.s === 400, `http=${r.s}`)
   r = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [], rule: { kind: 'FEFO' } })
   check('[15e] Không chọn dòng nào → 400', r.s === 400, `http=${r.s}`)
   r = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i4], rule: null })
@@ -395,8 +419,16 @@ try {
   check('chạy trọn gói', false, String(e).slice(0, 200))
 } finally {
   await cleanup()
-  const left = await restAll('wms_tasks', `select=id&pallet_code=like.${T}*`)
-  check('[18] DỌN SẠCH — không sót bản ghi nào', left.length === 0, `còn ${left.length}`)
+  // Quét PHÒNG THỦ đủ mọi bảng fixture — bản đầu chỉ soi wms_tasks nên không thấy kho rác còn lại
+  // (bài học skill check-app: verifyClean có điểm mù thì lượt sau đỏ ở chỗ không liên quan).
+  const residue = []
+  for (const [tbl, col] of [['wms_tasks', 'pallet_code'], ['InventoryEntry', 'pallet_code'],
+    ['Location', 'location_code'], ['GroupDeliveryOrder', 'group_code'],
+    ['OutboundDelivery', 'delivery_code'], ['Material', 'material_code'], ['Warehouse', 'code']]) {
+    const rows = await restAll(tbl, `select=id&${col}=like.${T}*`)
+    if (rows.length) residue.push(`${tbl}:${rows.length}`)
+  }
+  check('[18] DỌN SẠCH — quét đủ 7 bảng fixture, không sót bản ghi nào', residue.length === 0, residue.join(' '))
 }
 
 finish('57-directed-work')

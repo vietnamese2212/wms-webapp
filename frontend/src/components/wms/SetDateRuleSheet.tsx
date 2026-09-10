@@ -179,7 +179,10 @@ export function SetDateRuleSheet(p: {
     if (!p.open) return
     setParts(Object.fromEntries(p.targets.map(t => [t.item_id, toParts(t.current, t.remaining)])))
     setOpenStock(null)
-    setChecked(new Set())
+    // TICK SẴN TẤT CẢ: người dùng vừa tick chọn đúng những dòng này ở trang Chốt %Date rồi mới bấm
+    // mở, bắt tick LẦN HAI trong dialog là bắt làm lại việc vừa làm (tự đo 10/09 — chính tôi vấp).
+    // Muốn áp cho ít dòng hơn thì bỏ tick, rẻ hơn nhiều so với tick lại từ đầu.
+    setChecked(new Set(p.targets.map(t => t.item_id)))
   }, [p.open, p.targets])
 
   const allChecked = p.targets.length > 0 && checked.size === p.targets.length

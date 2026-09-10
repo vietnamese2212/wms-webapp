@@ -358,6 +358,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   // 2 RULE per kho + 2 VẾT DUYỆT RIÊNG (user chốt 01/08): rule 1 đăng ký cổng (miễn = gate_waived) ·
   // rule 2 cân (miễn = weigh_waived) — duyệt rule nào thoát rule đó, duyệt TRƯỚC trên chuyến,
   // KHÔNG có lựa chọn nào ở dialog này ("bắt đầu và chọn là rủi ro").
+  const guidedWh    = gdo.warehouse?.work_mode === 'GUIDED'   // kho Hướng dẫn: lái xe nâng là BẮT BUỘC
   const ruleGate    = gdo.warehouse?.require_gate_on_start === true
   const gateWaived  = !!gdo.gate_waived_at
   const weighWaived = !!gdo.weigh_waived_at
@@ -525,7 +526,11 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs">Lái xe nâng</Label>
+            {/* Kho Hướng dẫn thì BE bắt buộc ≥ 1 người (422 FORKLIFT_REQUIRED) — nhãn phải nói TRƯỚC,
+                đừng để người ta điền xong, bấm Bắt đầu rồi mới biết còn thiếu (tự vấp 10/09). */}
+            <Label className="text-xs">
+              Lái xe nâng{guidedWh && <span className="text-red-500"> *</span>}
+            </Label>
             <TagPicker
               employees={(employees as EmpOption[]).filter(isForkliftDriver)}
               selectedIds={forklifterIds}

@@ -2,18 +2,23 @@
 // 2D để lên 3D luôn"). Không sửa gì trong 3D: camera che khuất, nhãn khó đọc, PDA Zebra yếu WebGL ⇒ mọi thao
 // tác vẽ vẫn ở 2D. Dùng ở trang Sơ đồ kho (nút 3D, desktop) và màn TV Giám sát vận hành (tự xoay).
 //
-// Quy ước dựng (đơn vị MÉT, 1 ô = cell_m):
-//   • Ô chứa hàng = khối theo w×h ô; CAO theo số TẦNG (mỗi tầng 1,5 m, ô sàn = 1 tầng). Mỗi tầng một lát:
-//     màu khu khi trống · sky khi có pallet · sky đậm khi đầy · viền cam khi có pallet QA giữ.
-//   • Cửa xuất/nhập = tấm mỏng màu cửa; có xe đang đậu (09/09) → khối xe + nhãn biển số, đủ xe → tấm đỏ.
-//   • Điểm đầu dãy = cột thấp màu cam. Tường = khối cao 3 m màu xám.
-//   • Nhãn tên dãy = sprite trên đỉnh khối (bỏ khi bản vẽ > 400 chân kệ để không nghẽn — Bàu Bàng 813).
-// Three.js nạp LAZY như Xếp xe 3D (LoadPlan3DDialog) — không phình bundle chính.
-import { useEffect, useRef, useState } from 'react'
+// Quy ước dựng (đơn vị MÉT, 1 ô lưới = cell_m = 1 CHÂN PALLET):
+//   • VỊ TRÍ TRỐNG KHÔNG DỰNG KHỐI (user chốt 10/09) — chỉ còn tấm nền mỏng màu khu để biết "có vị trí ở đây".
+//     Bản đầu dựng khối đặc cho mọi tầng nên kho vơi hàng trông y hệt kho đầy: nhìn 3D không biết gì thêm 2D.
+//   • GIÁ KỆ vẽ THẬT: trụ + thanh đỡ từng tầng, MÀU CAM như kệ ngoài kho thật. Kệ luôn hiện, kể cả tầng trống.
+//   • PALLET = một khối trên mỗi CHÂN pallet có hàng: đế màu pallet (Material.pallet_color của mã pallet —
+//     Loscam xanh, khai ở Mã hàng) + kiện hàng phía trên; QA giữ thì kiện hàng màu hổ phách.
+//   • Cửa xuất/nhập = tấm mỏng màu cửa; có xe đang đậu → dựng XE THẬT (đầu kéo + thùng cont, hoặc cabin + thùng
+//     xe tải, đủ bánh) theo `vehicle_type` RPC trả về; đủ xe → tấm đỏ.
+//   • Điểm đầu dãy = cột thấp màu cam. Tường = khối cao 3,5 m màu xám.
+// Khối lặp (trụ · thanh kệ · pallet) đi bằng InstancedMesh: Bàu Bàng 813 chân kệ × 4 tầng thì dựng mesh rời
+// là hàng vạn draw call. Three.js nạp LAZY như Xếp xe 3D (LoadPlan3DDialog) — không phình bundle chính.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MapOccupancy } from '@/api/warehouseMap'
 import type { DockStatus } from '@/types'
 import type { GridFrame } from '@/utils/warehouseGrid'
 import { KIND_COLOR, type Footprint } from '@/utils/warehouseFootprint'
+import { usePalletCarrierMaterials } from '@/api/hooks'
 
 export interface WarehouseMap3DProps {
   frame: GridFrame; cellM: number; blocked: [number, number][]
@@ -38,7 +43,17 @@ type ThreeCtx = {
 }
 
 const LEVEL_H = 1.5        // m / tầng
-const WALL_H = 3
+const WALL_H = 3.5         // user chốt 10/09
+const PAD_H = 0.05         // tấm nền đánh dấu vị trí (cũng là mặt bấm chọn)
+const BEAM_H = 0.12        // thanh đỡ kệ
+const POST_W = 0.09        // trụ kệ
+const POST_EVERY = 2       // 1 trụ mỗi 2 chân pallet (~2,4 m — bước kệ thật)
+const PALLET_BASE_H = 0.15
+const PALLET_LOAD_H = 1.05
+const RACK_COLOR = '#f97316'          // cam — kệ ngoài kho thật
+const DEFAULT_PALLET_COLOR = '#1d4ed8' // xanh Loscam (khớp DEFAULT_PALLET.baseColor của Xếp xe 3D)
+const LOAD_COLOR = '#d8c39a'          // kiện hàng trên pallet
+const LOAD_QA_COLOR = '#f59e0b'       // pallet bị QA giữ
 const LABEL_CAP = 400      // trên số này bỏ nhãn (mỗi nhãn = 1 texture)
 
 function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
@@ -74,6 +89,71 @@ function makeLabel(THREE: typeof import('three'), text: string, fg: string, bg: 
   return sp
 }
 
+/** Loại xe (tên trong danh mục Loại xe) có phải xe đầu kéo kéo container không. */
+function isContainerVehicle(vt: string | null | undefined, containerNo: string | null | undefined): boolean {
+  if (containerNo && containerNo.trim()) return true
+  return /CONT/i.test(vt ?? '')
+}
+
+/**
+ * Dựng một chiếc xe, thân nằm dọc trục X, cabin ở phía −X, bánh chạm y = 0.
+ * Container = đầu kéo + rơ-moóc + thùng cont (có gân sóng); còn lại = xe tải thùng kín.
+ * Không dùng texture: bánh + cabin + gân sóng là hình khối, đọc ra kiểu xe ngay ở góc nhìn xa.
+ */
+function buildVehicle(THREE: typeof import('three'), container: boolean, len: number): import('three').Group {
+  const g = new THREE.Group()
+  const W = 2.5, wr = 0.52, wt = 0.34
+  const mat = (c: string) => new THREE.MeshLambertMaterial({ color: new THREE.Color(c) })
+  const add = (w: number, h: number, d: number, c: string, px: number, py: number, pz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c))
+    m.position.set(px, py, pz)
+    g.add(m)
+    return m
+  }
+  const axle = (px: number, dual = false) => {
+    const geo = new THREE.CylinderGeometry(wr, wr, wt, 14)
+    const wm = mat('#111827')
+    for (const s of [-1, 1]) for (const k of dual ? [0, 1] : [0]) {
+      const t = new THREE.Mesh(geo, wm)
+      t.rotation.x = Math.PI / 2
+      t.position.set(px, wr, s * (W / 2 - 0.14 - k * (wt + 0.04)))
+      g.add(t)
+    }
+  }
+  const x0 = -len / 2
+  if (container) {
+    // Đầu kéo: cabin cao, 2 cầu; rơ-moóc: sàn dài + thùng cont + 3 cầu sau
+    const cabL = 2.3
+    add(cabL, 2.5, W, '#334155', x0 + cabL / 2, 1.05 + 1.25)              // cabin
+    add(0.12, 1.0, W * 0.86, '#0f172a', x0 + 0.06, 2.55)                  // kính trước
+    add(len - cabL - 0.2, 0.9, W * 0.7, '#1f2937', x0 + cabL + (len - cabL) / 2 - 0.1, 0.9)  // khung gầm + rơ-moóc
+    const contL = Math.max(4, len - cabL - 1.4)
+    const cont = add(contL, 2.6, W, '#b45309', x0 + cabL + 0.6 + contL / 2, 1.35 + 1.3)
+    // gân sóng 2 bên + cửa sau (đọc ra "container" chứ không phải hộp trơn)
+    const ribs = Math.max(4, Math.min(14, Math.round(contL / 1.1)))
+    for (let i = 1; i < ribs; i++) {
+      const rx = cont.position.x - contL / 2 + (contL * i) / ribs
+      for (const s of [-1, 1]) add(0.06, 2.3, 0.06, '#92400e', rx, cont.position.y, s * (W / 2 + 0.02))
+    }
+    add(0.1, 2.4, W * 0.96, '#7c2d12', cont.position.x + contL / 2 + 0.03, cont.position.y)   // cánh cửa sau
+    axle(x0 + 1.1); axle(x0 + cabL + 0.4)
+    for (let i = 0; i < 3; i++) axle(len / 2 - 1.0 - i * 1.35)
+  } else {
+    // Xe tải thùng kín: cabin thấp hơn thùng, 1 cầu trước + 2 cầu sau
+    const cabL = Math.min(2.2, len * 0.26)
+    add(len - 0.3, 0.22, W * 0.8, '#1f2937', 0, 0.95)                     // khung gầm
+    add(cabL, 1.95, W, '#e2e8f0', x0 + cabL / 2, 1.06 + 0.98)             // cabin
+    add(0.12, 0.85, W * 0.88, '#0f172a', x0 + 0.04, 2.45)                 // kính trước
+    const bodyL = len - cabL - 0.35
+    const body = add(bodyL, 2.35, W, '#f8fafc', x0 + cabL + 0.35 + bodyL / 2, 1.06 + 1.18)
+    add(bodyL * 0.98, 0.14, W * 1.01, '#0ea5e9', body.position.x, 1.2)    // viền hông xanh cho ra dáng xe tải
+    add(0.09, 2.2, W * 0.96, '#cbd5e1', body.position.x + bodyL / 2 + 0.03, body.position.y)  // cửa sau
+    axle(x0 + cabL * 0.55)
+    axle(len / 2 - 1.1, true)
+  }
+  return g
+}
+
 export function WarehouseMap3D(p: WarehouseMap3DProps) {
   const mountRef = useRef<HTMLDivElement>(null)
   const ctxRef = useRef<ThreeCtx | null>(null)
@@ -82,6 +162,13 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
   const pickRef = useRef(p.onPick); pickRef.current = p.onPick
   const fpRef = useRef(p.footprints); fpRef.current = p.footprints
   const framedRef = useRef('')   // khung đã đặt camera cho kho này chưa (đổi kho mới đặt lại)
+
+  // MÀU PALLET khai ở danh mục Mã hàng (mã có cờ "Pallet mang hàng") — cùng nguồn với Xếp xe 3D, không tự
+  // đặt màu riêng cho màn này. Danh mục vài dòng, cache 5 phút.
+  const { data: palletMats = [] } = usePalletCarrierMaterials(true)
+  const palletColor = useMemo(
+    () => palletMats.find(m => m.pallet_color)?.pallet_color ?? DEFAULT_PALLET_COLOR,
+    [palletMats])
 
   // ── Dựng renderer một lần ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -144,9 +231,15 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       const ndc = new c.THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
       c.raycaster.setFromCamera(ndc, c.camera)
       const hits = c.raycaster.intersectObjects(c.world.children, true)
-      const hit = hits.find(h => { let o: import('three').Object3D | null = h.object; while (o) { if (o.userData?.fpKey) return true; o = o.parent } return false })
       let key: string | null = null
-      if (hit) { let o: import('three').Object3D | null = hit.object; while (o) { if (o.userData?.fpKey) { key = o.userData.fpKey as string; break } o = o.parent } }
+      for (const h of hits) {
+        // Khối lặp đi bằng InstancedMesh nên không có group cha mang fpKey — tra theo instanceId
+        const keys = h.object.userData?.instKeys as string[] | undefined
+        if (keys && h.instanceId != null) { key = keys[h.instanceId] ?? null; if (key) break; continue }
+        let o: import('three').Object3D | null = h.object
+        while (o) { if (o.userData?.fpKey) { key = o.userData.fpKey as string; break } o = o.parent }
+        if (key) break
+      }
       pickRef.current(key ? fpRef.current.find(f => f.key === key) ?? null : null)
     }
     mount.addEventListener('pointerdown', onDown)
@@ -207,6 +300,10 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       return g
     }
 
+    // Gom khối LẶP để đẩy một lượt: trụ kệ · thanh đỡ · đế pallet · kiện hàng
+    type Piece = { x: number; y: number; z: number; sx: number; sy: number; sz: number; color?: string; key?: string }
+    const posts: Piece[] = [], beams: Piece[] = [], palletBases: Piece[] = [], palletLoads: Piece[] = []
+
     for (const f of p.footprints) {
       if (!f.anchor) continue
       const g = new THREE.Group()
@@ -216,31 +313,70 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       const selected = p.selectedKey === f.key
 
       if (f.kind === 'STORAGE') {
-        const zc = new THREE.Color(p.zoneColor.get(f.sub_code) ?? '#e2e8f0')
+        const zc = p.zoneColor.get(f.sub_code) ?? '#e2e8f0'
         const levels = f.locs.length || 1
+        const cellsN = Math.max(1, f.w * f.h)
+
+        // TẤM NỀN: vị trí trống thì đây là TẤT CẢ những gì hiện ra (user chốt 10/09) — và luôn là mặt bấm chọn
+        const padMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(selected ? '#0284c7' : zc) })
+        const pad = new THREE.Mesh(boxGeo(bw - 0.06, PAD_H, bd - 0.06), padMat)
+        pad.position.set(x, PAD_H / 2, z)
+        g.add(pad)
+
+        // PALLET theo TỪNG CHÂN có hàng — tô từ góc neo theo hàng, khớp lớp phủ Tồn của bản vẽ 2D
         f.locs.forEach((l, i) => {
           const o = p.occByLoc.get(l.id)
-          const cap = l.max_pallets > 0 ? l.max_pallets : 1
           const used = o?.pallets ?? 0
-          const ratio = used / cap
-          const color = used > 0 ? new THREE.Color(ratio >= 1 ? '#0284c7' : '#38bdf8') : zc
-          const mat = new THREE.MeshLambertMaterial({ color })
-          if ((o?.quarantine ?? 0) > 0) mat.emissive = new THREE.Color('#f59e0b'), mat.emissiveIntensity = 0.35
-          if (selected) mat.emissive = new THREE.Color('#0284c7'), mat.emissiveIntensity = 0.45
-          const mesh = new THREE.Mesh(boxGeo(bw - 0.08, LEVEL_H - 0.12, bd - 0.08), mat)
-          mesh.position.set(x, i * LEVEL_H + LEVEL_H / 2, z)
-          g.add(mesh)
+          if (used <= 0) return
+          const cap = l.max_pallets > 0 ? l.max_pallets : cellsN
+          const filled = Math.max(1, Math.min(cellsN, Math.round((cellsN * used) / cap)))
+          const qa = (o?.quarantine ?? 0) > 0
+          const yBase = i * LEVEL_H + (f.is_rack && i > 0 ? BEAM_H : PAD_H)
+          let k = 0
+          for (let cyi = 0; cyi < f.h && k < filled; cyi++) {
+            for (let cxi = 0; cxi < f.w && k < filled; cxi++, k++) {
+              const px = cx(f.anchor!.x + cxi), pz = cz(f.anchor!.y + cyi)
+              palletBases.push({ x: px, y: yBase + PALLET_BASE_H / 2, z: pz, sx: cm - 0.14, sy: PALLET_BASE_H, sz: cm - 0.14, key: f.key })
+              palletLoads.push({
+                x: px, y: yBase + PALLET_BASE_H + PALLET_LOAD_H / 2, z: pz,
+                sx: cm - 0.22, sy: PALLET_LOAD_H, sz: cm - 0.22,
+                color: qa ? LOAD_QA_COLOR : (selected ? '#38bdf8' : LOAD_COLOR), key: f.key,
+              })
+            }
+          }
         })
-        if (f.is_rack && levels > 1) {
-          // 4 chân kệ mảnh để đọc ra "kệ" (không phải khối sàn)
-          const postGeo = boxGeo(0.12, levels * LEVEL_H, 0.12)
-          const postMat = new THREE.MeshLambertMaterial({ color: 0x475569 })
-          for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-            const post = new THREE.Mesh(postGeo, postMat)
-            post.position.set(x + dx * (bw / 2 - 0.1), (levels * LEVEL_H) / 2, z + dz * (bd / 2 - 0.1))
-            g.add(post)
+
+        // GIÁ KỆ: trụ + thanh đỡ, luôn hiện (tầng trống vẫn thấy chỗ để hàng)
+        if (f.is_rack) {
+          const H = levels * LEVEL_H
+          const alongX = f.w >= f.h
+          const nAlong = alongX ? f.w : f.h
+          const cuts: number[] = []
+          for (let j = 0; j <= nAlong; j += POST_EVERY) cuts.push(j)
+          if (cuts[cuts.length - 1] !== nAlong) cuts.push(nAlong)
+          const ax0 = (alongX ? f.anchor.x : f.anchor.y) * cm
+          const across0 = (alongX ? f.anchor.y : f.anchor.x) * cm
+          const acrossLen = (alongX ? f.h : f.w) * cm
+          for (const j of cuts) {
+            const a = ax0 + j * cm
+            for (const s of [0, 1]) {
+              const b = across0 + s * acrossLen + (s === 0 ? POST_W / 2 : -POST_W / 2)
+              posts.push({ x: alongX ? a : b, y: H / 2, z: alongX ? b : a, sx: POST_W, sy: H, sz: POST_W, key: f.key })
+            }
+          }
+          for (let i = 1; i <= levels; i++) {
+            const y = i * LEVEL_H - BEAM_H / 2
+            for (const s of [0, 1]) {
+              const b = across0 + s * acrossLen + (s === 0 ? POST_W : -POST_W)
+              beams.push({
+                x: alongX ? ax0 + (nAlong * cm) / 2 : b, y, z: alongX ? b : ax0 + (nAlong * cm) / 2,
+                sx: alongX ? nAlong * cm : POST_W * 1.4, sy: BEAM_H, sz: alongX ? POST_W * 1.4 : nAlong * cm,
+                key: f.key,
+              })
+            }
           }
         }
+
         if (showLabels || selected) {
           const lab = makeLabel(THREE, f.label, '#0f172a', 'rgba(255,255,255,0.92)', Math.max(0.9, Math.min(2.2, Math.min(bw, bd) * 0.6)))
           lab.position.set(x, levels * LEVEL_H + 1.0, z)
@@ -260,35 +396,68 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
           const plate = new THREE.Mesh(boxGeo(bw, 0.16, bd), mat)
           plate.position.set(x, 0.08, z)
           g.add(plate)
-          // Xe đang đậu (09/09): mỗi xe một khối, xếp cạnh nhau theo chiều hẹp của cửa
-          const vehicles = dk?.vehicles ?? []
-          const plates = [...new Set(vehicles.map(v => v.license_plate ?? `(${v.group_code})`))]
-          if (plates.length) {
-            const along = bw >= bd ? 'x' : 'z'          // xe nằm dọc theo chiều dài cửa
-            const len = Math.min(12, (along === 'x' ? bw : bd) * 0.9), wid = 2.4, hgt = 2.8
-            const lane = (along === 'x' ? bd : bw) / plates.length
-            plates.forEach((pl, i) => {
-              const truck = new THREE.Mesh(boxGeo(along === 'x' ? len : wid, hgt, along === 'x' ? wid : len), new THREE.MeshLambertMaterial({ color: 0x334155 }))
-              const off = -((along === 'x' ? bd : bw) / 2) + lane * (i + 0.5)
-              truck.position.set(along === 'x' ? x : x + off, hgt / 2 + 0.16, along === 'x' ? z + off : z)
-              g.add(truck)
-              const cab = new THREE.Mesh(boxGeo(along === 'x' ? Math.min(2, len * 0.2) : wid, hgt * 0.75, along === 'x' ? wid : Math.min(2, len * 0.2)), new THREE.MeshLambertMaterial({ color: 0x0ea5e9 }))
-              cab.position.set(along === 'x' ? x - len / 2 - Math.min(1, len * 0.1) : x + off, hgt * 0.375 + 0.16, along === 'x' ? z + off : z - len / 2 - Math.min(1, len * 0.1))
-              g.add(cab)
-              const lab = makeLabel(THREE, pl, '#ffffff', 'rgba(15,23,42,0.85)', 1.3)
-              lab.position.set(truck.position.x, hgt + 1.2, truck.position.z)
+          // XE ĐANG ĐẬU: mỗi biển một xe, xếp cạnh nhau theo chiều hẹp của cửa, thân dọc chiều dài cửa.
+          // Kiểu xe theo `vehicle_type` (RPC 20260910i trả) — cont dài 16,5 m, xe tải 9,5 m, cắt vừa cửa.
+          const byPlate = new Map<string, DockStatus['vehicles'][number]>()
+          for (const v of dk?.vehicles ?? []) {
+            const k = v.license_plate ?? `(${v.group_code})`
+            if (!byPlate.has(k)) byPlate.set(k, v)
+          }
+          const list = [...byPlate.entries()]
+          if (list.length) {
+            const alongX = bw >= bd
+            const longM = alongX ? bw : bd, shortM = alongX ? bd : bw
+            const lane = shortM / list.length
+            list.forEach(([pl, v], i) => {
+              const cont = isContainerVehicle(v.vehicle_type, v.container_number)
+              const len = Math.max(6, Math.min(cont ? 16.5 : 9.5, longM))
+              const veh = buildVehicle(THREE, cont, len)
+              const off = -shortM / 2 + lane * (i + 0.5)
+              veh.position.set(alongX ? x : x + off, 0.16, alongX ? z + off : z)
+              if (!alongX) veh.rotation.y = Math.PI / 2
+              veh.userData.fpKey = f.key
+              g.add(veh)
+              const lab = makeLabel(THREE, cont && v.container_number ? `${pl} · ${v.container_number}` : pl, '#ffffff', 'rgba(15,23,42,0.85)', 1.3)
+              lab.position.set(veh.position.x, (cont ? 4.1 : 3.6) + 0.9, veh.position.z)
               g.add(lab)
             })
           }
           if (showLabels || selected) {
             const lab = makeLabel(THREE, `${f.label}${dk ? ` · ${dk.occupied}/${dk.capacity ?? '∞'} xe` : ''}`, '#ffffff', full ? 'rgba(220,38,38,0.9)' : 'rgba(21,128,61,0.85)', 1.2)
-            lab.position.set(x, plates.length ? 5.4 : 1.4, z)
+            lab.position.set(x, list.length ? 6.6 : 1.4, z)
             g.add(lab)
           }
         }
       }
       world.add(g)
     }
+
+    // Đẩy các khối lặp: 1 draw call mỗi loại thay vì mỗi khối một mesh
+    const pushInstanced = (pieces: Piece[], color: string, perInstanceColor: boolean) => {
+      if (!pieces.length) return
+      // Có màu theo từng khối thì màu VẬT LIỆU phải là TRẮNG — three nhân material.color × instanceColor,
+      // để nguyên màu nền sẽ ra một màu tối thứ ba không ai đặt.
+      const m = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshLambertMaterial({ color: new THREE.Color(perInstanceColor ? '#ffffff' : color) }),
+        pieces.length)
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3()
+      const col = new THREE.Color()
+      pieces.forEach((pc, i) => {
+        v.set(pc.x, pc.y, pc.z); s.set(pc.sx, pc.sy, pc.sz)
+        m4.compose(v, q, s)
+        m.setMatrixAt(i, m4)
+        if (perInstanceColor) m.setColorAt(i, col.set(pc.color ?? color))
+      })
+      m.instanceMatrix.needsUpdate = true
+      if (m.instanceColor) m.instanceColor.needsUpdate = true
+      m.userData.instKeys = pieces.map(x => x.key ?? '')
+      world.add(m)
+    }
+    pushInstanced(posts, RACK_COLOR, false)
+    pushInstanced(beams, RACK_COLOR, false)
+    pushInstanced(palletBases, palletColor, false)
+    pushInstanced(palletLoads, LOAD_COLOR, true)
 
     // Đặt camera lần đầu cho kho này (đổi kho → đặt lại; đổi dữ liệu → giữ góc người dùng đang xem).
     // Ngắm vào HỘP BAO của những gì đã vẽ (chân kệ + cửa + tường), không phải cả khung: Ba Vì khung 200×200 ô
@@ -308,7 +477,7 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       c.camera.near = 0.5; c.camera.far = Math.max(W, D) * 20; c.camera.updateProjectionMatrix()
       c.controls.update()
     }
-  }, [ready, p.frame.width, p.frame.height, p.cellM, p.blocked, p.footprints, p.zoneColor, p.occByLoc, p.dockByLoc, p.selectedKey])
+  }, [ready, p.frame.width, p.frame.height, p.cellM, p.blocked, p.footprints, p.zoneColor, p.occByLoc, p.dockByLoc, p.selectedKey, palletColor])
 
   // Khung gốc PHẢI là hộp có kích thước và đã định vị (caller truyền `absolute inset-0` hoặc `relative flex-1 min-h-0`).
   // Bẫy đã dính 09/09: tự thêm `relative` vào className `absolute inset-0` → Tailwind cho `relative` thắng ⇒ hộp cao 0,
@@ -321,7 +490,7 @@ export function WarehouseMap3D(p: WarehouseMap3DProps) {
       )}
       {!ready && !webglError && <div className="absolute inset-0 grid place-items-center text-xs text-slate-400">Đang dựng 3D…</div>}
       <div className="absolute left-2 bottom-2 rounded bg-white/85 px-2 py-1 text-[10px] text-slate-600 shadow-sm pointer-events-none">
-        Kéo: xoay · Lăn: phóng · Chuột phải: rê · Bấm khối: cột tầng · Cao = số tầng · Xanh = có pallet · Đỏ = cửa đủ xe
+        Kéo: xoay · Lăn: phóng · Chuột phải: rê · Bấm khối: cột tầng · Kệ cam · Mỗi khối = 1 pallet đang có hàng · Nền màu khu = chỗ trống · Cam = QA giữ · Đỏ = cửa đủ xe
       </div>
     </div>
   )

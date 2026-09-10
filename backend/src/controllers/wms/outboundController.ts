@@ -2548,7 +2548,9 @@ export type DockStatus = {
   capacity: number | null; occupied: number
   // Loại kho cửa phục vụ (10/09). Rỗng = mọi loại — bản vẽ cũ giữ nguyên hành vi.
   serve_categories: string[]
-  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null }[]
+  // `vehicle_type` + `container_number` (10/09, migration 20260910i): sơ đồ 3D vẽ xe container khác xe tải.
+  // RPC tra hộ vì loại xe không nằm trên chuyến (biển số → Vehicle → VehicleType, chưa gắn biển thì lấy ở lệnh VC).
+  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null; vehicle_type?: string | null; container_number?: string | null }[]
   grid_x: number | null; grid_y: number | null
 }
 

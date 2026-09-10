@@ -795,7 +795,9 @@ export interface DockStatus {
   capacity: number | null          // null = không giới hạn
   occupied: number                 // số XE đang chiếm (cùng biển = 1 xe)
   serve_categories: string[]       // Loại kho cửa phục vụ; RỖNG = mọi loại (10/09)
-  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null }[]
+  // `vehicle_type` + `container_number` (10/09): sơ đồ 3D vẽ XE CONTAINER khác XE TẢI — loại xe không
+  // nằm trên chuyến, RPC tra hộ (biển số → Vehicle → VehicleType, chưa gắn biển thì lấy ở lệnh VC).
+  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null; vehicle_type?: string | null; container_number?: string | null }[]
   grid_x: number | null; grid_y: number | null
 }
 

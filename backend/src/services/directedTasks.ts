@@ -410,7 +410,10 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   const openNow = ((openNowRaw ?? []) as Array<Record<string, unknown> & { id: string; from_location_id: string | null }>)
     .filter(r => !cancelIds.includes(r.id as string))
   const all = [...openNow, ...built]
-  if (!all.length) return { created: 0, cancelled, unset_items: unset, warning }
+  // ⚠ Cửa ra này là ca THƯỜNG GẶP NHẤT của lỗi "im lặng": không lập được việc nào ⇒ `all` rỗng ⇒
+  // thoát ở đây. Quên đắp `unmetWarning` vào đúng chỗ này thì cảnh báo viết ở cửa ra cuối không bao
+  // giờ tới được người dùng (đo thật 10/09: [15v] đỏ với cảnh báo rỗng).
+  if (!all.length) return { created: 0, cancelled, unset_items: unset, warning: warning ?? unmetWarning(unmet) }
   // Chụp lại giá trị CŨ trước khi đánh số — assignSeq ghi đè `seq` tại chỗ, so sau đó là so với chính nó
   const before = new Map(openNow.map(r => [r.id, { seq: r.seq as number, to: r.to_location_id as string | null, kind: r.to_kind as string | null, dist: r.dist_cells as number | null }]))
   assignSeq(all, locById, frame, mask, dist, gdo.dock_location_id, locById.get(gdo.dock_location_id ?? '') ?? null)

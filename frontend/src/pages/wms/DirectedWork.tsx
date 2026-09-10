@@ -9,7 +9,8 @@
 //   • việc xong thì GẠCH NGANG và VẪN Ở LẠI bảng tới khi chuyến kết thúc ("phòng tình huống bị
 //     quên") — có chip "Ẩn việc đã xong" cho ai muốn nhìn gọn, mặc định HIỆN.
 import { useMemo } from 'react'
-import { ListChecks, ArrowDownToLine, Truck, ScanLine, Check } from 'lucide-react'
+import { ListChecks, ArrowDownToLine, Truck, Check } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -29,7 +30,7 @@ type Tab = 'LOWER' | 'MOVE' | 'SCAN'
 const TABS: { key: Tab; label: string; icon: typeof Truck; hint: string }[] = [
   { key: 'LOWER', label: 'Cần hạ',     icon: ArrowDownToLine, hint: 'Xe nâng hạ — toàn kho, làm từ trên xuống' },
   { key: 'MOVE',  label: 'Cần đưa ra', icon: Truck,           hint: 'Xe nâng chuyển — đưa hàng ra cửa / vị trí nhặt lẻ' },
-  { key: 'SCAN',  label: 'Sắp quét',   icon: ScanLine,        hint: 'Thủ kho — từng pallet theo thứ tự quét' },
+  { key: 'SCAN',  label: 'Sắp quét',   icon: ScanIcon,        hint: 'Thủ kho — từng pallet theo thứ tự quét' },
 ]
 
 // Cột theo TAB: xe hạ và xe chuyển cần thông tin khác nhau, đừng nhồi một bảng cho cả hai
@@ -125,6 +126,12 @@ export default function DirectedWork() {
 
   const t = data?.totals ?? {}
   const unset = data?.unset_items ?? []
+  // Dựng câu NGOÀI JSX: dấu `>` trong biểu thức nằm giữa JSX làm trình biên dịch hiểu là thẻ
+  const unsetHint = unset.length
+    ? ` Mở chuyến rồi bấm “Chốt %Date” để hệ thống chia hàng: `
+      + unset.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')
+      + (unset.length > 4 ? ` … và ${unset.length - 4} dòng nữa` : '')
+    : ''
 
   function doConfirm(r: DirectedRow, undo: boolean) {
     if (tab === 'SCAN') return
@@ -165,11 +172,11 @@ export default function DirectedWork() {
 
         {/* Dòng CHƯA CHỐT %Date: không có việc nào — phải nói ra, không im lặng để người ta tưởng
             hàng đã được chia (user chốt: "trong nghĩ là mặc định đi làm, sau đó mới update thì sẽ là làm sai") */}
+        {/* Mobile chỉ 1 dòng: chuẩn mật độ đòi dữ liệu xuất hiện sớm, cảnh báo dài đẩy bảng xuống quá sâu */}
         {unset.length > 0 && (
-          <div className="shrink-0 border-b bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
-            <b>{unset.length} dòng hàng chưa chốt %Date</b> — chưa có việc nào được giao. Mở chuyến rồi bấm
-            “Chốt %Date” để hệ thống chia hàng: {unset.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')}
-            {unset.length > 4 ? ` … và ${unset.length - 4} dòng nữa` : ''}
+          <div className="shrink-0 border-b bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800 truncate sm:whitespace-normal">
+            <b>{unset.length} dòng hàng chưa chốt %Date</b> — chưa có việc nào được giao.
+            <span className="hidden sm:inline">{unsetHint}</span>
           </div>
         )}
 
@@ -180,8 +187,11 @@ export default function DirectedWork() {
             <TableHeader>
               <TableRow>
                 {cols.map((c, i) => (
+                  // KHÔNG đặt `relative` lên <TableHead>: tailwind-merge giữ class position CUỐI nên nó
+                  // đè mất `sticky top-0` của base ⇒ header hết đứng yên khi cuộn. th sticky đã là
+                  // containing block cho span absolute rồi (bẫy sticky-header-relative-trap).
                   <TableHead key={c.id}
-                    className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.label}
                     <span onPointerDown={e => startResize(i, e)}
                       className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70" />

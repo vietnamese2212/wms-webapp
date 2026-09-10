@@ -1,5 +1,19 @@
 # Directed Work đợt 1c — Kế hoạch lấy hàng theo vị trí + 3 bảng theo vai
 
+> ## ✅ ĐÃ THỰC THI XONG 10/09/2026 (dev `eaca7ccd` → `0a1121ce`)
+> Bước 2 (dữ liệu) · 3 (backend) · 4 (giao diện) · 5 (lưới gác) · 6 (tài liệu) — tất cả đã lên `dev`, áp staging.
+> **Đo:** gói QA 57 = **64/64** · 00 = 30/30 · 56 = 40/40 · 54 = 48/48 · 11 = 20/20 · 12 = 34/34 · 25 = 16/16 ·
+> 07 = 96/96 · 08 = 13/13 · cổng tĩnh XANH · tsc BE/FE + build xanh · Playwright 1280/390/360 không tràn.
+> **Ba mâu thuẫn trong plan đã gỡ khi thi hành** (plan qua 8 lượt sửa nên còn di sản): (a) `auto_pick_min_pct`
+> của mục 0.6 ĐÃ HUỶ — không tạo cột; (b) trạng thái việc chỉ 4 giá trị, giai đoạn là MỐC GIỜ (0.7 chốt),
+> nên index/RPC không dùng `LOWERED`; (c) route `PATCH …/items/:itemId/pin` gộp vào `date-rule` dạng EXACT.
+> **Bốn lỗi thật bị bắt trong lúc làm** (chi tiết ở SCHEMA_REVIEW + commit): `Employee` không có cột
+> `warehouse_ids` · quên bật RLS 2 bảng việc · `.in()` chưa khai trần (ratchet) · **xe hạ không bấm được
+> “✓ Xong” trên chính việc của mình** (Playwright bắt, gói 57 lúc đó KHÔNG bắt ⇒ đã thêm [10a2]/[10b2]).
+> **Còn để mở** (không chặn dùng): ngưỡng tầng xe hạ cho pallet nguyên (1 hay 2 — một setting, kho tự chọn);
+> có chặn Bắt đầu khi còn dòng chưa chốt %Date không (hiện KHÔNG chặn, chỉ ô vàng nhắc).
+
+
 > Lập 10/09/2026 (Fable brainstorm → Opus code). Kho thí điểm **Ba Vì** (QR, bản vẽ đủ: 74 chân kệ · 5 cửa xuất · 2 cửa nhập · 4 điểm đặt dãy).
 > Nền đã có: `warehouse_map` (đợt 0/0.5), cửa xuất có sức chứa xe (đợt 1a, RULE 3 `startGDO`), 3D chỉ xem (1b).
 > Đọc trước: `docs/plans/DIRECTED_WORK_PLAN.md` (giả định đang áp) · memory `directed-work-task-engine` (mọi câu đã chốt 08–09/09).

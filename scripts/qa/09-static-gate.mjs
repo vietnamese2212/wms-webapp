@@ -134,6 +134,37 @@ function countHookAfterEarlyReturn(sampleOut) {
   return n
 }
 
+/**
+ * ĐỘNG CƠ KHÔNG CÓ CÔNG TẮC — hook MUTATION khai trong `api/hooks.ts` mà KHÔNG màn nào gọi.
+ *
+ * Đường ghi đủ cả route + quyền + hook nhưng người dùng KHÔNG có nút nào bấm ⇒ tính năng chỉ mở
+ * được bằng cách gọi API tay. Dính HAI LẦN trong hai ngày: cờ `work_mode` (đợt 1c ra máy mà quên ô
+ * chọn — user hỏi mới lộ) và `useReplanGdo` (chuyến đang xuất 0 việc, không có cửa phục hồi nào).
+ * tsc không bắt được vì hook được EXPORT nên "có người dùng" về mặt kiểu.
+ * Chỉ đếm hook MUTATION (nút bấm); hook đọc có thể dùng gián tiếp qua queryKey nên bỏ qua.
+ */
+function countMutationHookWithoutButton(sampleOut) {
+  const HOOKS_FILE = join(ROOT, 'frontend/src/api/hooks.ts')
+  let src = ''
+  try { src = readFileSync(HOOKS_FILE, 'utf8') } catch { return 0 }
+  const names = [...src.matchAll(/export function (use[A-Za-z0-9_]+)/g)].map(m => m[1])
+  const muts = names.filter(n => {
+    const i = src.indexOf(`export function ${n}`)
+    const end = src.indexOf('\nexport ', i + 10)
+    return /useMutation\(/.test(src.slice(i, end < 0 ? undefined : end))
+  })
+  const all = filesOf('frontend/src', ['.ts', '.tsx'])
+    .filter(f => f !== HOOKS_FILE)
+    .map(f => readFileSync(f, 'utf8')).join('\n')
+  let n = 0
+  for (const name of muts) {
+    if (new RegExp(`\\b${name}\\b`).test(all)) continue
+    n++
+    if (sampleOut && sampleOut.length < 8) sampleOut.push(`api/hooks.ts: ${name} — không màn nào gọi`)
+  }
+  return n
+}
+
 // Màn nào ĐỌC danh mục vị trí (bất kể để chọn hay để lọc) thì phải có nút quét tem vị trí.
 // Đếm theo FILE, không theo dòng: 1 file thiếu = 1 vi phạm, đủ để CI chặn mà không nhiễu.
 function countLocPickerWithoutScan(sampleOut) {
@@ -241,6 +272,14 @@ const RULES = [
     key: 'hook_after_early_return',
     label: 'hook React gọi SAU lệnh return sớm — render đầu thoát sớm, render sau gọi thêm hook ⇒ TRẮNG TRANG (tsc không bắt được)',
     count: countHookAfterEarlyReturn,
+  },
+  // Baseline = 14 hook mutation cũ chưa nối nút (phần lớn là bản lẻ đã bị bản HÀNG LOẠT thay thế —
+  // dead code có sẵn, luật CLAUDE.md #3 nói ghi chú chứ không tự xoá). Ratchet chặn ĐẺ THÊM:
+  // viết route + quyền + hook rồi quên nút là CI đỏ ngay, không chờ user hỏi "cái này ở đâu?".
+  {
+    key: 'mutation_hook_without_button',
+    label: 'hook MUTATION không màn nào gọi — đường ghi có route+quyền+hook nhưng người dùng KHÔNG có nút nào bấm (đã dính work_mode + useReplanGdo)',
+    count: countMutationHookWithoutButton,
   },
   {
     key: 'gdo_in_progress_written_directly',

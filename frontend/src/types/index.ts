@@ -705,7 +705,7 @@ export interface GDO {
   delivery_date:    string
   warehouse_id:     string | null
   warehouse_type:   string | null
-  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; require_weigh_on_start?: boolean; require_gate_on_start?: boolean } | null
+  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; work_mode?: string | null; require_weigh_on_start?: boolean; require_gate_on_start?: boolean } | null
   shipto_party?:     string | null
   transfer_status?:  string | null
   dvvt:             string | null

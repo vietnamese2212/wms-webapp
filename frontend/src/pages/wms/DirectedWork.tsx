@@ -204,8 +204,17 @@ export default function DirectedWork() {
               {!isLoading && !f.warehouseId && <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Chọn kho để xem việc cần làm</TableCell></TableRow>}
               {!isLoading && f.warehouseId && tab === 'SCAN' && !f.gdoId && <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Chọn chuyến để xem thứ tự quét</TableCell></TableRow>}
               {!isLoading && f.warehouseId && rows.length === 0 && (tab !== 'SCAN' || f.gdoId) && (
+                // KHÔNG khẳng định lý do (câu cũ nói thẳng "kho chạy chế độ Thủ công" — đo 10/09 thì cả ba
+                // vế đều SAI: kho đang Hướng dẫn, chuyến đã Bắt đầu, dòng đã chốt %Date; việc thiếu chỉ vì
+                // cờ bật SAU khi chuyến bắt đầu nên không ai sắp lại). Nêu 3 chỗ cần kiểm + đường phục hồi.
                 <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">
-                  Không có việc nào — kho chạy chế độ Thủ công, hoặc chưa chuyến nào Bắt đầu, hoặc dòng hàng chưa chốt %Date
+                  <div>Không có việc nào cho kho này.</div>
+                  <div className="mt-1 text-slate-500">
+                    Kiểm lần lượt: kho đã bật <b>Chế độ làm việc = Hướng dẫn</b> chưa · có chuyến nào đã <b>Bắt đầu</b> chưa · dòng hàng đã <b>chốt %Date</b> chưa.
+                  </div>
+                  <div className="text-slate-500">
+                    Đủ cả ba mà vẫn trống (hay vừa bật Hướng dẫn khi chuyến đã chạy) → mở trang chuyến, bấm <b>↻ Sắp lại kế hoạch</b>.
+                  </div>
                 </TableCell></TableRow>
               )}
               {rows.map((r, idx) => {

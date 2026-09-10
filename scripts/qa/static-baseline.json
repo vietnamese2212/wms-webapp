@@ -1,4 +1,6 @@
 {
+  "hook_after_early_return": 0,
+  "mutation_hook_without_button": 14,
   "gdo_in_progress_written_directly": 8,
   "sql_round_before_divide": 5,
   "sql_like_unescaped": 14,
@@ -52,6 +54,5 @@
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
   "password_rule_hand_rolled": 0,
-  "upload_without_merge_expand": 0,
-  "hook_after_early_return": 0
+  "upload_without_merge_expand": 0
 }

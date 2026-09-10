@@ -29,7 +29,7 @@ import { SetDateRuleSheet, dateRuleLabel, type DateRuleTarget } from '@/componen
 import type { DateRule } from '@/types'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
-  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock, useDirectedBoard,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock, useDirectedBoard, useReplanGdo,
   useWaiveWeighGDO, useUnwaiveWeighGDO, useWaiveGateGDO, useUnwaiveGateGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
@@ -1522,6 +1522,8 @@ export default function OutboundDetail() {
   const { data: scanBoard } = useDirectedBoard(gdo?.warehouse_id, 'SCAN', {
     gdoId: gdo?.id ?? null, enabled: !!gdo?.started_at && (gdo?.tasks_summary?.total ?? 0) > 0,
   })
+  // Sắp lại kế hoạch lấy hàng — CỬA PHỤC HỒI duy nhất khi chuyến đang xuất mà không có việc nào
+  const replan = useReplanGdo()
   // Dòng hàng của chuyến để CHỐT %DATE — mở thẳng từ đây vì đó là chỗ thủ kho đang đứng
   const dateTargets: DateRuleTarget[] = useMemo(() => (gdo?.delivery_orders ?? []).flatMap(d =>
     (d.items ?? [])
@@ -1641,6 +1643,11 @@ export default function OutboundDetail() {
   // mở dialog gộp thông tin đơn + lịch sử, hiện cả desktop lẫn mobile — kể cả chuyến bất động.
   const nextTask = (scanBoard?.rows ?? []).find(r => !r.stage_done) ?? null
   const nUnsetDate = dateTargets.filter(t => !t.current).length
+  // Kho chạy Hướng dẫn (cờ ở KHO; loại hàng có thể ghi đè nhưng đủ để biết chuyến này CÓ nên có việc)
+  const guidedTrip = gdo.warehouse?.work_mode === 'GUIDED'
+  const noPlanYet  = guidedTrip && (gdo.tasks_summary?.total ?? 0) === 0
+  const canReplan  = guidedTrip && can(perms, 'directed_work', 'replan')
+    && (gdo.status === 'IN_PROGRESS' || gdo.status === 'PAUSED')
 
   const actionItems: ActionItem[] = []
   // CHỐT %DATE — cửa DUY NHẤT tạo quy tắc lấy hàng. Đặt ở chuyến vì thủ kho chốt ngay trước khi xuất.
@@ -1894,28 +1901,66 @@ export default function OutboundDetail() {
         </span>
       </div>
 
-      {/* KẾ HOẠCH LẤY HÀNG (Directed Work 1c) — chỉ hiện khi chuyến CÓ việc (kho Hướng dẫn).
-          Thủ kho cần đúng một câu: pallet nào tiếp theo, đang nằm đâu, đã được hạ chưa. */}
-      {gdo.started_at && (gdo.tasks_summary?.total ?? 0) > 0 && (
-        <Card className="px-2 py-1 bg-sky-50 border-sky-200">
+      {/* KẾ HOẠCH LẤY HÀNG (Directed Work 1c). Thủ kho cần đúng một câu: pallet nào tiếp theo, đang
+          nằm đâu, đã được hạ chưa.
+          ⚠ Khối này TRƯỚC 10/09 chỉ hiện khi `tasks_summary.total > 0` — nên chuyến ĐANG XUẤT ở kho
+          Hướng dẫn mà 0 việc thì trang chuyến KHÔNG NÓI GÌ, còn bảng Việc cần làm thì đổ lỗi sai
+          ("kho chạy Thủ công…"). Ca thật đo được 10/09: bật cờ Hướng dẫn SAU khi chuyến đã Bắt đầu ⇒
+          không đường nào gọi sắp lại ⇒ chuyến chạy cả buổi với 0 việc. Nay kho Hướng dẫn thì khối
+          LUÔN hiện, 0 việc = nói rõ + có nút Sắp lại. */}
+      {gdo.started_at && (guidedTrip || (gdo.tasks_summary?.total ?? 0) > 0) && (
+        <Card className={`px-2 py-1 ${noPlanYet ? 'bg-amber-50 border-amber-200' : 'bg-sky-50 border-sky-200'}`}>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-            <span className="font-semibold text-sky-800 flex items-center gap-1">
+            <span className={`font-semibold flex items-center gap-1 ${noPlanYet ? 'text-amber-800' : 'text-sky-800'}`}>
               <ListChecks className="h-3.5 w-3.5" />Kế hoạch lấy hàng
             </span>
-            <span className="text-slate-600">
-              <strong>{gdo.tasks_summary?.done ?? 0}/{gdo.tasks_summary?.total ?? 0}</strong> việc xong
-            </span>
-            {(gdo.tasks_summary?.to_lower ?? 0) > 0 && <span className="text-amber-700">chờ hạ {gdo.tasks_summary?.to_lower}</span>}
-            {(gdo.tasks_summary?.to_move ?? 0) > 0 && <span className="text-slate-600">chờ đưa ra {gdo.tasks_summary?.to_move}</span>}
-            {nextTask && (
-              <span className="text-slate-700">
-                · tiếp theo <b className="font-mono">{nextTask.pallet_codes?.[0] ?? ''}</b>
-                {nextTask.current_code && <> tại <b className="font-mono">{nextTask.current_code}</b></>}
-                {nextTask.waiting_lower ? <span className="text-amber-700"> (chờ xe hạ)</span> : <span className="text-green-700"> (lấy được)</span>}
+            {noPlanYet ? (
+              <span className="text-amber-800">
+                Chưa có việc nào cho chuyến này
+                {nUnsetDate > 0
+                  ? <> — còn <b>{nUnsetDate}</b> dòng chưa chốt %Date</>
+                  : <> — bấm <b>Sắp lại kế hoạch</b> để hệ thống chia hàng</>}
               </span>
+            ) : (
+              <>
+                <span className="text-slate-600">
+                  <strong>{gdo.tasks_summary?.done ?? 0}/{gdo.tasks_summary?.total ?? 0}</strong> việc xong
+                </span>
+                {(gdo.tasks_summary?.to_lower ?? 0) > 0 && <span className="text-amber-700">chờ hạ {gdo.tasks_summary?.to_lower}</span>}
+                {(gdo.tasks_summary?.to_move ?? 0) > 0 && <span className="text-slate-600">chờ đưa ra {gdo.tasks_summary?.to_move}</span>}
+                {nextTask && (
+                  <span className="text-slate-700">
+                    · tiếp theo <b className="font-mono">{nextTask.pallet_codes?.[0] ?? ''}</b>
+                    {nextTask.current_code && <> tại <b className="font-mono">{nextTask.current_code}</b></>}
+                    {nextTask.waiting_lower ? <span className="text-amber-700"> (chờ xe hạ)</span> : <span className="text-green-700"> (lấy được)</span>}
+                  </span>
+                )}
+              </>
             )}
-            <Link to="/wms/directed" className="ml-auto text-sky-700 hover:underline">Mở Việc cần làm →</Link>
+            <div className="ml-auto flex items-center gap-2">
+              {canReplan && (
+                <button className="text-sky-700 hover:underline disabled:opacity-50"
+                  title="Bỏ các việc CHƯA AI ĐỤNG rồi chia lại hàng theo %Date và tồn hiện tại (việc đã hạ / đã đưa ra giữ nguyên)"
+                  disabled={replan.isPending} onClick={() => replan.mutate(gdo.id)}>
+                  {replan.isPending ? 'Đang sắp…' : '↻ Sắp lại kế hoạch'}
+                </button>
+              )}
+              <Link to="/wms/directed" className="text-sky-700 hover:underline">Mở Việc cần làm →</Link>
+            </div>
           </div>
+          {replan.isSuccess && !replan.isPending && (
+            <div className="text-[11px] text-slate-600">
+              Đã sắp lại: {replan.data?.created ?? 0} việc mới
+              {(replan.data?.cancelled ?? 0) > 0 && ` · bỏ ${replan.data?.cancelled} việc cũ`}
+              {(replan.data?.unset_items ?? 0) > 0 && ` · ${replan.data?.unset_items} dòng chưa chốt %Date`}
+              {replan.data?.warning && <span className="text-amber-700"> · {replan.data.warning}</span>}
+            </div>
+          )}
+          {replan.isError && (
+            <div className="text-[11px] text-red-600">
+              Sắp lại không được: {(replan.error as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'}
+            </div>
+          )}
         </Card>
       )}
 

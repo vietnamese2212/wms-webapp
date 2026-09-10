@@ -564,7 +564,10 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await supabase.from('GroupDeliveryOrder')
-    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at), dock:Location!dock_location_id(id,location_code,row,kind,dock_capacity)')
+    // `work_mode` (10/09): trang chuyến phải biết kho có chạy Hướng dẫn không — chuyến ĐANG XUẤT ở kho
+    // Hướng dẫn mà 0 việc là BẤT THƯỜNG (bật cờ sau khi chuyến đã bắt đầu ⇒ không ai sắp lại hộ), phải
+    // hiện lý do + nút Sắp lại chứ không ẩn khối đi như trước. Đi ké embed sẵn có, không thêm round-trip.
+    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,work_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at), dock:Location!dock_location_id(id,location_code,row,kind,dock_capacity)')
     .eq('id', id).single()
   if (error || !gdo) return null
 

@@ -174,6 +174,13 @@ try {
   check('[4d] kind STORAGE qua cửa objects → 400', r.s === 400, `http=${r.s}`)
   r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DOCK_IN', name: '', grid_x: 12, grid_y: 12 })
   check('[4e] Thiếu tên → 400', r.s === 400, `http=${r.s}`)
+  // Tên quá dài phải BÁO, không được cắt còn 60 rồi tạo luôn: đo 10/09 (bắn đầu vào rác) thì bản vẽ
+  // Kho Ba Vì mọc ra một điểm đầu dãy tên "xxxxx…" mà người bấm vẫn thấy "đã tạo".
+  r = await api(`/wms/warehouse-map/${WH}/objects`, 'POST', { kind: 'DROP', name: 'y'.repeat(300), grid_x: 12, grid_y: 12 })
+  check('[4e2] Tên dài quá 60 ký tự → 400 (KHÔNG cắt âm thầm rồi vẫn tạo)',
+    r.s === 400 && /60/.test(r.j?.error?.message ?? ''), `http=${r.s} ${(r.j?.error?.message ?? '').slice(0, 80)}`)
+  const junk = (await restAll('Location', `warehouse_id=eq.${WH}&kind=eq.DROP`)).filter(l => /^y{20,}$/.test(String(l.row ?? '')))
+  check('[4e3] …và KHÔNG có bản ghi nào được tạo ra từ lần gọi đó', junk.length === 0, `${junk.length} bản ghi rác`)
   if (createdObj) {
     r = await api(`/wms/warehouse-map/${WH}/objects/${createdObj.id}`, 'PATCH', { name: `${T} cua xuat 2` })
     check('[4f] Đổi tên cửa → 200', r.s === 200 && r.j?.data?.name === `${T} cua xuat 2`, `http=${r.s} ${err(r)}`)

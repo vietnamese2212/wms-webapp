@@ -197,7 +197,11 @@ export async function createMapObject(req: Request, res: Response) {
     const b = (req.body ?? {}) as Record<string, unknown>
     const kind = String(b.kind ?? '') as GridKind
     if (!OBJECT_KINDS.includes(kind)) return fail(res, 400, 'VALIDATION_ERROR', 'Loại phải là DOCK_OUT (cửa xuất), DOCK_IN (cửa nhập) hoặc DROP (điểm đầu dãy)')
-    const name = typeof b.name === 'string' ? b.name.trim().slice(0, 60) : ''
+    // CẮT ÂM THẦM là điều app này cấm: tên 5.000 ký tự bị cắt còn 60 rồi TẠO LUÔN, người dán nhầm
+    // cả đoạn văn bản vẫn thấy "đã tạo" và trên bản vẽ mọc ra một đối tượng tên cụt (đo 10/09).
+    const raw = typeof b.name === 'string' ? b.name.trim() : ''
+    if (raw.length > 60) return fail(res, 400, 'VALIDATION_ERROR', `Tên tối đa 60 ký tự (đang ${raw.length}) — đặt tên ngắn cho dễ đọc trên bản vẽ`)
+    const name = raw
     if (!name) return fail(res, 400, 'VALIDATION_ERROR', 'Cần đặt tên (vd "Cửa xuất 2", "Đầu dãy A")')
     const gx = toInt(b.grid_x), gy = toInt(b.grid_y)
     if (gx === null || gy === null || Number.isNaN(gx) || Number.isNaN(gy) || gx < 0 || gy < 0) return fail(res, 400, 'VALIDATION_ERROR', 'Cần toạ độ ô (grid_x, grid_y) ≥ 0')
@@ -263,9 +267,10 @@ export async function renameMapObject(req: Request, res: Response) {
     if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Id không hợp lệ')
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null }
     if (b.name !== undefined) {
-      const name = typeof b.name === 'string' ? b.name.trim().slice(0, 60) : ''
-      if (!name) return fail(res, 400, 'VALIDATION_ERROR', 'Cần tên mới')
-      patch.row = name
+      const raw = typeof b.name === 'string' ? b.name.trim() : ''
+      if (raw.length > 60) return fail(res, 400, 'VALIDATION_ERROR', `Tên tối đa 60 ký tự (đang ${raw.length})`)
+      if (!raw) return fail(res, 400, 'VALIDATION_ERROR', 'Cần tên mới')
+      patch.row = raw
     }
     if (b.dock_capacity !== undefined) {
       // NULL = không giới hạn; 1..50 (CHECK ở DB) — số rác/thập phân chặn ở đây cho lời báo rõ

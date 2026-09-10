@@ -37,6 +37,10 @@ export interface StrategyValue {
   // (POSM soạn full trước) · OFF = không nhặt lẻ (ép 0 cả số tay upload cũ). Trần chỉ áp REMAINDER.
   loose_mode:                 string | null
   loose_max_cartons:          number | null
+  // CHỈ DẪN CÔNG VIỆC (Directed Work 1c, 10/09): Hướng dẫn = Bắt đầu chuyến SINH VIỆC lấy hàng có
+  // thứ tự cho 3 vai. Không có ô này trong app thì cả tính năng không bật được — đúng lỗi 10/09.
+  work_mode:                  string | null
+  lower_from_level:           number | null
 }
 
 export const STRATEGY_EMPTY: StrategyValue = {
@@ -46,6 +50,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
   putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
   loose_mode: null, loose_max_cartons: null,
+  work_mode: null, lower_from_level: null,
 }
 
 export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
@@ -55,6 +60,7 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   putaway_enforced: [], putaway_enforced_off: null,
   putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
   loose_mode: 'REMAINDER', loose_max_cartons: null,
+  work_mode: 'MANUAL', lower_from_level: 2,
 }
 
 export const LOOSE_MODE_OPTS = [
@@ -234,6 +240,41 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
                   onPatch({ loose_max_cartons: s === '' ? null : Number(s) })
                 }}
                 placeholder={isType ? `Kho: ${inherited.loose_max_cartons ?? '—'}` : '—'}
+                className="h-7 w-24 text-xs text-right" />
+            } />
+        )}
+      </SettingsGroup>
+
+      {/* ───────── XUẤT — Chỉ dẫn công việc (Directed Work 1c, 10/09) ───────── */}
+      <SettingsGroup title={<>XUẤT — Chỉ dẫn công việc{own(value.work_mode ?? value.lower_from_level)}</>}
+        tip={<>
+          Bật <b>Hướng dẫn</b> thì bấm Bắt đầu chuyến là hệ thống chia hàng theo luật lấy hàng của kho
+          và dựng 3 bảng ở menu <b>Việc cần làm</b> (Cần hạ · Cần đưa ra · Sắp quét). Kho phải là kho
+          quét QR và <b>đã vẽ Sơ đồ kho</b> — chưa đủ thì lưu sẽ báo rõ thiếu gì.
+          Dòng đơn <b>chưa chốt %Date</b> không sinh việc, chốt ở trang <b>Chốt %Date</b>.
+        </>}>
+        <SettingRow label="Chế độ làm việc"
+          desc={<>Thủ công = như hiện nay, người tự tìm hàng. Hướng dẫn = hệ thống chỉ đúng ô, đúng pallet, đúng thứ tự đường đi.</>}>
+          <SingleSelect
+            value={sel(value.work_mode)} onChange={put('work_mode')}
+            triggerClassName="h-8"
+            options={withInherit([
+              { value: 'MANUAL', label: 'Thủ công',  sub: 'mặc định — không sinh việc, không đổi thao tác hiện tại' },
+              { value: 'GUIDED', label: 'Hướng dẫn', sub: 'sinh việc lấy hàng có thứ tự cho xe nâng + thủ kho' },
+            ], inherited.work_mode)}
+          />
+        </SettingRow>
+        {(eff.work_mode ?? 'MANUAL') === 'GUIDED' && (
+          <SettingRow label={<>Tầng bắt đầu cần xe hạ{own(value.lower_from_level)}</>}
+            desc={<>Pallet nằm từ tầng này trở lên thì <b>xe nâng hạ</b> phải lấy xuống trước, xe nâng chuyển mới đưa ra cửa. Đặt <b>1</b> nếu mọi pallet trên kệ đều do xe hạ lấy.</>}
+            control={
+              <Input type="number" min={1} max={50}
+                value={value.lower_from_level != null ? String(value.lower_from_level) : ''}
+                onChange={e => {
+                  const v = e.target.value.trim()
+                  onPatch({ lower_from_level: v === '' ? null : Number(v) })
+                }}
+                placeholder={isType ? `Kho: ${inherited.lower_from_level ?? 2}` : '2'}
                 className="h-7 w-24 text-xs text-right" />
             } />
         )}

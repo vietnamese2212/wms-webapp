@@ -827,6 +827,8 @@ export interface WhTypeConfig {
   // Nhặt lẻ tự sinh 2 tầng (24/08) — null = theo mặc định kho
   loose_mode?:                 string | null
   loose_max_cartons?:          number | null
+  work_mode?:                  string | null
+  lower_from_level?:           number | null
 }
 
 export function useWhTypeConfigs(warehouseId: string | null | undefined) {

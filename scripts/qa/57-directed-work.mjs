@@ -470,12 +470,15 @@ try {
     // CŨ mà vẫn ăn hết nhu cầu thì lần sửa này thành vô tác dụng (đo thật 10/09).
     await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 1 } })
     const beforeIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
+    // Đếm DELTA quanh đúng lần PATCH này, không đếm TỔNG tích luỹ: dòng i3 bị đổi quy tắc nhiều lần
+    // trong khối này nên đếm tổng khiến phép kiểm phụ thuộc lịch sử — chập chờn, đã đỏ oan 1 lượt 10/09.
+    const cancel0 = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length
     await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 50 } })
     const afterIds = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.PENDING`)).map(x => x.id).sort()
-    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length
+    const cancelled = (await restAll('wms_tasks', `select=id&item_id=eq.${i3}&status=eq.CANCELLED&skip_reason=eq.DATE_RULE_CHANGED`)).length - cancel0
     check('[15s] Đổi %Date khi đã có việc → việc CHƯA AI ĐỤNG bị bỏ và sắp lại (không giữ pallet sai date)',
-      beforeIds.length > 0 && cancelled > 0 && JSON.stringify(beforeIds) !== JSON.stringify(afterIds),
-      `trước=${beforeIds.length} sau=${afterIds.length} đã bỏ=${cancelled}`)
+      beforeIds.length > 0 && cancelled >= beforeIds.length && JSON.stringify(beforeIds) !== JSON.stringify(afterIds),
+      `trước=${beforeIds.length} sau=${afterIds.length} lần này bỏ=${cancelled}`)
 
     // Trả fixture về "chưa chốt" → nhả pallet cho các mục sau (T8 của [16] cần pallet để lập việc)
     await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: null })
@@ -502,23 +505,31 @@ try {
   // Đo thật 10/09 (diễn tập đồng thời): 8 lượt bấm cùng lúc trên 5 việc = 40 dòng LOWERED cho 5 lần
   // hạ. Giai đoạn là MỐC GIỜ chứ không phải status nên việc đã hạ vẫn PENDING ⇒ lần bấm sau vẫn
   // khớp bộ lọc. Sổ này là nguồn "giờ công theo việc" của KPI ⇒ nhân số là hỏng số.
+  // Fixture RIÊNG — không mượn việc còn sót của chuyến khác: mượn thì có lượt chạy rơi vào mảng
+  // RỖNG và phép kiểm im lặng không chạy (đúng lớp sai "khẳng định trên mảng rỗng" đã dính trước đây).
   {
-    const tkAll = await tasksOf(t2.gdo)
-    const lowerable = tkAll.filter(t => t.status === 'PENDING' && t.needs_lower && !t.lowered_at).map(t => t.id)
-    if (lowerable.length) {
-      const one = [lowerable[0]]
+    const pU = await mkPallet('DBLTAP', 60, far.T3, dPlus(150), -50)   // tầng 3 ⇒ chắc chắn needs_lower
+    const tU = await mkTrip('TU')
+    const iU = await mkItem(tU.do, 60)
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [iU], rule: { kind: 'EXACT', value: pU.pallet_code } })
+    r = await startTrip(tU.gdo, { license_plate: '51C88888', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const tkU = (await tasksOf(tU.gdo)).filter(t => t.status === 'PENDING' && t.needs_lower && !t.lowered_at)
+    check('[15u0] Dựng được đúng một việc CHỜ HẠ để thử bấm hai lần (không mượn trạng thái chuyến khác)',
+      r.s === 200 && tkU.length === 1, `http=${r.s} việc chờ hạ=${tkU.length}`)
+    if (tkU.length) {
+      const one = [tkU[0].id]
       const r1 = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: one, stage: 'LOWER' })
       const at1 = (await restAll('wms_tasks', `select=lowered_at&id=eq.${one[0]}`))[0]?.lowered_at
+      await new Promise(s => setTimeout(s, 1100))   // đủ để mốc giờ MỚI khác mốc cũ nếu bị ghi đè
       const r2 = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: one, stage: 'LOWER' })
       const at2 = (await restAll('wms_tasks', `select=lowered_at&id=eq.${one[0]}`))[0]?.lowered_at
       const evs = await restAll('wms_task_events', `select=id&task_id=eq.${one[0]}&event=eq.LOWERED`)
       check('[15u] Bấm ✓ Xong lần hai: 200 nhưng changed=0, KHÔNG ghi đè mốc giờ đã hạ',
         r1.s === 200 && r2.s === 200 && Number(r2.j?.data?.changed ?? -1) === 0 && at1 === at2,
         `lần1=${r1.s}/${r1.j?.data?.changed} lần2=${r2.s}/${r2.j?.data?.changed} mốc: ${String(at1).slice(11, 19)} → ${String(at2).slice(11, 19)}`)
-      check('[15u2] Sổ sự kiện chỉ có ĐÚNG MỘT dòng LOWERED cho một lần hạ',
-        evs.length === 1, `${evs.length} dòng`)
-      await api('/wms/directed/tasks/confirm', 'POST', { task_ids: one, stage: 'LOWER', undo: true })
+      check('[15u2] Sổ sự kiện chỉ có ĐÚNG MỘT dòng LOWERED cho một lần hạ', evs.length === 1, `${evs.length} dòng`)
     }
+    await api(`/wms/outbound/${tU.gdo}`, 'PATCH', { status: 'COMPLETED' })
   }
 
   // ═══ [15t] HÀNG LẺ ĐÃ NẰM SẴN Ở VỊ TRÍ NHẶT LẺ → KHÔNG ĐẺ VIỆC XE NÂNG ═══════════════════════

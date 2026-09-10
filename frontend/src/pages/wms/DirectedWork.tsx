@@ -21,7 +21,7 @@ import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatTimestampTime } from '@/utils/formatters'
+import { formatDate, formatTimestampTime } from '@/utils/formatters'
 import type { DirectedRow } from '@/types'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
@@ -98,6 +98,20 @@ export default function DirectedWork() {
     return f.hideDone ? all.filter(r => !r.stage_done) : all
   }, [data, f.hideDone])
 
+  // STT = THỨ TỰ ĐI TRÊN BẢNG NÀY, đánh lại 1..n theo đúng trình tự dòng đang hiện.
+  // KHÔNG in `seq` thô: seq đếm theo TỪNG chuyến, và một dòng bảng gom nhiều việc cùng ô (STT lấy
+  // min) ⇒ bảng đọc ra 1, 2, 3, 5, 6 rồi lại 1, 2 của chuyến khác. Người đi theo thứ tự thấy số
+  // nhảy cóc và lặp thì hết tin vào chính cái thứ tự đó (user nêu 10/09).
+  const ordOf = useMemo(() => {
+    const m = new Map<string, number>()
+    let n = 0
+    for (const r of rows) if (!r.stage_done) m.set(r.group_key, ++n)
+    return m
+  }, [rows])
+  // "Hôm nay" phải là giá trị tính TRONG thân component (màn kho mở qua đêm giữ ngày hôm qua)
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const isOldTrip = (d: string | null | undefined) => !!d && d.slice(0, 10) < todayVN
+
   // Chuyến để chọn ở bảng Sắp quét — lấy từ chính việc đang có, không gọi thêm API
   const { data: allTrips } = useDirectedBoard(f.warehouseId, 'MOVE', { enabled: tab === 'SCAN' })
   const tripOpts = useMemo(() => {
@@ -126,11 +140,17 @@ export default function DirectedWork() {
 
   const t = data?.totals ?? {}
   const unset = data?.unset_items ?? []
+  // Tách chuyến CŨ còn dở ra khỏi việc hôm nay: chuyến bỏ dở từ tháng trước vẫn IN_PROGRESS nên
+  // ngày nào băng vàng cũng kêu về dữ liệu cũ — cảnh báo kêu hằng ngày thì người ta thôi đọc.
+  // KHÔNG giấu (việc dở vẫn là việc thật), chỉ hạ tông và nói rõ nó là chuyến ngày nào.
+  const unsetNow = unset.filter(u => !isOldTrip(u.delivery_date))
+  const unsetOld = unset.filter(u => isOldTrip(u.delivery_date))
+  const oldestUnset = unsetOld.map(u => u.delivery_date ?? '').filter(Boolean).sort()[0] ?? null
   // Dựng câu NGOÀI JSX: dấu `>` trong biểu thức nằm giữa JSX làm trình biên dịch hiểu là thẻ
-  const unsetHint = unset.length
+  const unsetHint = unsetNow.length
     ? ` Mở chuyến rồi bấm “Chốt %Date” để hệ thống chia hàng: `
-      + unset.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')
-      + (unset.length > 4 ? ` … và ${unset.length - 4} dòng nữa` : '')
+      + unsetNow.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')
+      + (unsetNow.length > 4 ? ` … và ${unsetNow.length - 4} dòng nữa` : '')
     : ''
 
   function doConfirm(r: DirectedRow, undo: boolean) {
@@ -174,9 +194,18 @@ export default function DirectedWork() {
             hàng đã được chia (user chốt: "trong nghĩ là mặc định đi làm, sau đó mới update thì sẽ là làm sai") */}
         {/* Mobile chỉ 1 dòng: chuẩn mật độ đòi dữ liệu xuất hiện sớm, cảnh báo dài đẩy bảng xuống quá sâu */}
         {unset.length > 0 && (
-          <div className="shrink-0 border-b bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800 truncate sm:whitespace-normal">
-            <b>{unset.length} dòng hàng chưa chốt %Date</b> — chưa có việc nào được giao.
-            <span className="hidden sm:inline">{unsetHint}</span>
+          <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] truncate sm:whitespace-normal ${
+            unsetNow.length ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-500'}`}>
+            {unsetNow.length > 0 && (<>
+              <b>{unsetNow.length} dòng hàng chưa chốt %Date</b> — chưa có việc nào được giao.
+              <span className="hidden sm:inline">{unsetHint}</span>
+            </>)}
+            {unsetOld.length > 0 && (
+              <span className={unsetNow.length ? 'text-amber-700/70' : ''}>
+                {unsetNow.length ? ' · ' : ''}{unsetOld.length} dòng thuộc <b>chuyến cũ còn dở</b>
+                {oldestUnset ? ` (từ ${formatDate(oldestUnset)})` : ''} — chốt nốt hoặc Hoàn thành/Hủy chuyến đó thì hết nhắc.
+              </span>
+            )}
           </div>
         )}
 
@@ -225,13 +254,20 @@ export default function DirectedWork() {
                 return (
                   <TableRow key={r.group_key} className={`${dim} ${first ? 'bg-sky-50' : ''}`}>
                     <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums sticky left-0 z-10 ${first ? 'bg-sky-50' : 'bg-white'}`}>
-                      {r.seq}
+                      {/* Việc đã xong không mang số thứ tự nữa — nó không còn nằm trong đường đi */}
+                      {ordOf.get(r.group_key) ?? <span className="text-slate-300 no-underline">✓</span>}
                     </TableCell>
 
                     {tab !== 'SCAN' && (
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         <div className="font-mono font-semibold">{r.license_plate ?? r.group_code ?? '—'}</div>
-                        <div className="text-[9px] text-slate-400">{r.dock_name ?? '—'}</div>
+                        <div className="text-[9px] text-slate-400">
+                          {r.dock_name ?? '—'}
+                          {/* Chuyến của ngày khác nằm chung bảng thì phải nói rõ, kẻo tưởng việc hôm nay */}
+                          {isOldTrip(r.delivery_date) && (
+                            <span className="text-amber-600 no-underline"> · chuyến {formatDate(r.delivery_date!)}</span>
+                          )}
+                        </div>
                       </TableCell>
                     )}
                     {tab === 'SCAN' && (

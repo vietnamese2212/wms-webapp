@@ -296,6 +296,16 @@ try {
   check('[10g] Mã kho kiểu injection → 400 (bộ mẫu chuẩn của gói 07)', b.s === 400, `http=${b.s}`)
   b = await api(`/wms/directed/board?mode=MOVE`)
   check('[10h] Thiếu mã kho → 400', b.s === 400, `http=${b.s}`)
+  // NGÀY CHUYẾN phải theo được ra bảng: màn này lấy việc của MỌI chuyến đang chạy, không có mốc
+  // thời gian nào — thiếu cột này thì chuyến bỏ dở từ tháng trước nằm lẫn với việc hôm nay mà
+  // không ai phân biệt được, và băng "chưa chốt %Date" đếm luôn cả chúng nên ngày nào cũng kêu.
+  b = await board('LOWER')
+  const dRows = b.j?.data?.rows ?? []
+  check('[10i] Mỗi dòng việc mang NGÀY CHUYẾN (để tách việc hôm nay với chuyến cũ còn dở)',
+    dRows.length > 0 && dRows.every(x => !!x.delivery_date), `${dRows.filter(x => !x.delivery_date).length}/${dRows.length} dòng thiếu ngày`)
+  const dUnset = b.j?.data?.unset_items ?? []
+  check('[10j] Dòng "chưa chốt %Date" cũng mang ngày chuyến',
+    dUnset.every(u => 'delivery_date' in u), dUnset.length ? `${dUnset.length} dòng` : 'không có dòng chưa chốt lúc này')
 
   // ═══ [11] NÚT "✓ XONG" ═══════════════════════════════════════════════════════════════════════
   const lowerGroup = lowerRows.find(x => x.task_ids?.length)

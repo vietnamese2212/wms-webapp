@@ -345,7 +345,11 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
 
 // ─── Start dialog ─────────────────────────────────────────────
 
-function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose: () => void }) {
+function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
+  open: boolean; gdo: GDO; onClose: () => void
+  onWaiveGate?: () => void               // có quyền duyệt bỏ qua cổng → mở thẳng hộp xác nhận
+  onWaiveWeigh?: () => void
+}) {
   const user = useAuthStore(s => s.user)
   const { data: employees = [] } = useWarehouseEmployees(gdo.warehouse_id)
   const { mutate: startGDO, isPending } = useStartGDO()
@@ -360,6 +364,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   // KHÔNG có lựa chọn nào ở dialog này ("bắt đầu và chọn là rủi ro").
   const guidedWh    = gdo.warehouse?.work_mode === 'GUIDED'   // kho Hướng dẫn: lái xe nâng là BẮT BUỘC
   const ruleGate    = gdo.warehouse?.require_gate_on_start === true
+  const ruleWeigh   = gdo.warehouse?.require_weigh_on_start === true
   const gateWaived  = !!gdo.gate_waived_at
   const weighWaived = !!gdo.weigh_waived_at
   // Kho bật rule cổng: KHÔNG cho nhập biển tay (xe không đăng ký = vi phạm rule 1, phải được duyệt);
@@ -421,6 +426,14 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     .filter(Boolean).join(', ')
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
+  // NÓI TRƯỚC, đừng để bấm rồi mới biết (user 10/09): bị 422 xong phải ĐÓNG dialog → tìm nút
+  // "Bỏ qua cổng"/"Bỏ qua cân" trên trang → MỞ LẠI dialog → điền lại = sáu bước cho một chuyến.
+  // Dialog đã biết sẵn kho bật rule nào và chuyến đã duyệt gì, nên nêu ngay lúc mở; người có
+  // quyền duyệt thì bấm luôn tại đây. Vẫn KHÔNG có cờ bypass nào gửi kèm lệnh Bắt đầu.
+  const preGate  = ruleGate  && !gateWaived  && !gateRegId && !internalPair
+  const preWeigh = ruleWeigh && !weighWaived && !internalPair
+  const preRules = [preGate ? 'ĐĂNG KÝ CỔNG' : null, preWeigh ? 'CÂN XE' : null].filter(Boolean).join(' + ')
+
   function handleSubmit() {
     // Chuyến đã được DUYỆT bỏ qua CỔNG: biển số tùy chọn (giao lẻ NV nhận không có xe)
     if (!effectivePlate.trim() && !internalPair && !gateWaived) {
@@ -479,6 +492,31 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
               {weighWaived && (
                 <p className="flex items-start gap-1.5"><Scale className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                   <span>Đã duyệt <b>bỏ qua CÂN</b> bởi {gdo.weigh_waived_by ?? '?'}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}.</span></p>
+              )}
+            </div>
+          )}
+
+          {!gdo.started_at && preRules && (
+            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 space-y-1.5">
+              <p className="flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>Kho yêu cầu <b>{preRules}</b> trước khi Bắt đầu.
+                  {preGate  && ' Chọn chuyến xe đã vào cổng ở ô ngay dưới.'}
+                  {preWeigh && ' Phiếu cân được tự tìm theo biển số lúc bấm Bắt đầu — xe chưa cân thì bấm sẽ bị chặn.'}
+                </span></p>
+              {(onWaiveGate && preGate) || (onWaiveWeigh && preWeigh) ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px]">Xe không đáp ứng được (giao lẻ, xe máy, cân hỏng)?</span>
+                  {onWaiveGate && preGate && (
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] border-amber-300 text-amber-700"
+                      onClick={onWaiveGate}>Duyệt bỏ qua cổng</Button>
+                  )}
+                  {onWaiveWeigh && preWeigh && (
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] border-amber-300 text-amber-700"
+                      onClick={onWaiveWeigh}>Duyệt bỏ qua cân</Button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px]">Xe không đáp ứng được thì nhờ người có quyền bấm <b>“Bỏ qua cổng”</b> / <b>“Bỏ qua cân”</b> trên trang chuyến rồi Bắt đầu lại.</p>
               )}
             </div>
           )}
@@ -2086,7 +2124,23 @@ export default function OutboundDetail() {
       {showHistory && <TripHistoryDialog gdoId={gdo.id} groupCode={gdo.group_code} infoContent={orderInfoJSX}
         onClose={() => setShowHistory(false)} />}
       {showStart && (
-        <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
+        <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)}
+          // Đường tắt tới ĐÚNG hộp xác nhận đang dùng cho 2 nút duyệt trên header — cùng một
+          // hành động, cùng một vết, chỉ bớt cho người dùng vòng đóng-mở dialog.
+          onWaiveGate={gdo.warehouse?.require_gate_on_start && !gdo.gate_waived_at && can(perms, 'outbound', 'gate_waive')
+            ? () => { setShowStart(false); setPendingConfirm({
+                title: 'Duyệt bỏ qua ĐĂNG KÝ CỔNG',
+                message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần Đăng ký cổng (ghi vết người duyệt). Rule cân — nếu kho bật — vẫn phải chấp hành. Xác nhận?`,
+                onConfirm: () => waiveGate({ id: gdo.id }),
+              }) }
+            : undefined}
+          onWaiveWeigh={gdo.warehouse?.require_weigh_on_start && !gdo.weigh_waived_at && can(perms, 'outbound', 'weigh_waive')
+            ? () => { setShowStart(false); setPendingConfirm({
+                title: 'Duyệt bỏ qua CÂN',
+                message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần phiếu cân (ghi vết người duyệt). Rule đăng ký cổng — nếu kho bật — vẫn phải chấp hành. Xác nhận?`,
+                onConfirm: () => waiveWeigh({ id: gdo.id }),
+              }) }
+            : undefined} />
       )}
       {showOrderScan && (
         <GdoScanSheet gdo={gdo} mode="outbound" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}

@@ -317,6 +317,15 @@ const RULES = [
     label: 'hook MUTATION không màn nào gọi — đường ghi có route+quyền+hook nhưng người dùng KHÔNG có nút nào bấm (đã dính work_mode + useReplanGdo)',
     count: countMutationHookWithoutButton,
   },
+  // Bảng Việc cần làm sắp xếp theo đường đi (xe đứng bãi → gần cửa → tầng cao), còn `seq` là số thứ
+  // tự đếm theo TỪNG chuyến và một dòng bảng gom nhiều việc cùng ô (lấy min). In thẳng `seq` ra cột
+  // STT ⇒ người đi theo thứ tự đọc ra 1, 2, 3, 5, 6 rồi lại 1, 2 của chuyến khác. Số thứ tự trên màn
+  // phải đánh lại theo đúng trình tự dòng đang hiện (user nêu 10/09).
+  {
+    key: 'directed_seq_rendered_raw',
+    label: 'in thẳng seq của việc ra cột STT — số nhảy cóc và lặp giữa các chuyến, người đi theo thứ tự hết tin vào thứ tự',
+    count: (s) => countMatches(['frontend/src'], ['.tsx'], l => /\{\s*r\.seq\s*\}/.test(l) && !/^\s*\/\//.test(l), s),
+  },
   {
     key: 'gdo_in_progress_written_directly',
     label: "ghi status:'IN_PROGRESS' ngoài 8 điểm đã biết — Bắt đầu chuyến phải đi qua startGDO (rule cổng/cân/cửa)",

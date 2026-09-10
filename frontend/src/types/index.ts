@@ -812,6 +812,7 @@ export interface DirectedRow {
   group_code: string | null
   license_plate: string | null
   started_at: string | null
+  delivery_date: string | null    // ngày chuyến — để tách việc hôm nay với chuyến cũ còn dở
   dock_name: string | null
   kind: 'PICK' | 'LOOSE_FEED'
   current_code: string | null      // VỊ TRÍ HIỆN TẠI của pallet — kể cả đang trên kệ (user chốt 10/09)
@@ -838,7 +839,7 @@ export interface DirectedBoard {
   rows: DirectedRow[]
   totals: { pending?: number; done?: number; to_lower?: number; to_move?: number; trips?: number }
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
-  unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null }[]
+  unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
 }
 // SPLIT = một dòng đơn nhiều mức date theo SỐ LƯỢNG ("250 thùng date 60, 30 thùng date 90")
 export type SimpleRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'

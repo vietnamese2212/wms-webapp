@@ -2648,14 +2648,23 @@ async function validForkliftIds(
   if (!list.length) return { ids: [], names: null }
   if (list.length > 20) return { error: 'Tối đa 20 người lái xe nâng cho một chuyến' }
   if (list.some(id => id.length > 100 || searchLooksLikeInjection(id))) return { error: 'Mã nhân sự không hợp lệ' }
-  const { data } = await supabase.from('Employee')
-    .select('id, name, warehouse_ids, warehouse_scope').in('id', list).eq('is_active', true)
-  const found = (data ?? []) as { id: string; name: string | null; warehouse_ids: string[] | null; warehouse_scope: string | null }[]
+  const { data, error } = await supabase.from('Employee')
+    .select('id, name, warehouse_scope').in('id', list).eq('is_active', true)
+  if (error) throw error
+  const found = (data ?? []) as { id: string; name: string | null; warehouse_scope: string | null }[]
   const missing = list.filter(id => !found.some(f => f.id === id))
   if (missing.length) return { error: 'Có người không còn làm việc hoặc không tồn tại — chọn lại' }
+  // Phạm vi kho của nhân sự nằm ở bảng `UserWarehouseAccess` (KHÔNG phải cột trên Employee).
+  // Người phạm vi toàn quốc thì kho nào cũng làm được.
   if (warehouseId) {
-    const outside = found.filter(f => f.warehouse_scope === 'ASSIGNED' && !(f.warehouse_ids ?? []).includes(warehouseId))
-    if (outside.length) return { error: `${outside.map(o => o.name ?? o.id).join(', ')} không được giao kho của chuyến này` }
+    const assigned = found.filter(f => f.warehouse_scope !== 'NATIONAL')
+    if (assigned.length) {
+      const { data: acc } = await supabase.from('UserWarehouseAccess')
+        .select('employee_id').eq('warehouse_id', warehouseId).in('employee_id', assigned.map(f => f.id))
+      const okIds = new Set(((acc ?? []) as { employee_id: string }[]).map(a => a.employee_id))
+      const outside = assigned.filter(f => !okIds.has(f.id))
+      if (outside.length) return { error: `${outside.map(o => o.name ?? o.id).join(', ')} không được giao kho của chuyến này` }
+    }
   }
   const byId = new Map(found.map(f => [f.id, f.name ?? '']))
   return { ids: list, names: list.map(id => byId.get(id) ?? '').filter(Boolean).join(', ') || null }

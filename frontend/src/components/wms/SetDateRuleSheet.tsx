@@ -131,12 +131,12 @@ function stockWarning(
     if (noStock) return { tone: 'bad', text: 'Mã này không còn tồn dùng được trong kho — không chốt được mức nào.' }
     if (r.kind === 'SPLIT') {
       const bad = (st.parts ?? []).map((x, i) => (x.ok ? 0 : (uiRow[i] ?? i + 1))).filter(i => i > 0)
-      return { tone: 'bad', text: `Phần ${bad.join(', ')} không còn tồn nào đạt${st.best_pct != null ? ` — %Date cao nhất trong kho là ${Math.round(st.best_pct)} %` : ''}.` }
+      return { tone: 'bad', text: `Phần ${bad.join(', ')} không còn tồn nào đạt${st.best_pct != null ? ` — %Date cao nhất trong kho là ${Math.floor(st.best_pct)} %` : ''}.` }
     }
     return {
       tone: 'bad',
       text: r.kind === 'MIN_PCT'
-        ? `Không còn tồn nào đạt ≥ ${Number(r.value ?? 0)} %${st.best_pct != null ? ` — cao nhất trong kho là ${Math.round(st.best_pct)} %` : ''}.`
+        ? `Không còn tồn nào đạt ≥ ${Number(r.value ?? 0)} %${st.best_pct != null ? ` — cao nhất trong kho là ${Math.floor(st.best_pct)} %` : ''}.`
         : `Không có pallet nào khớp “${String(r.value ?? '')}”.`,
     }
   }

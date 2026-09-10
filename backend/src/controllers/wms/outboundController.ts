@@ -5517,8 +5517,10 @@ export async function setItemsDateRule(req: Request, res: Response) {
       const bad = stock.filter(s => !s.ok)
       if (bad.length) {
         const best = bad.map(b => b.best_pct).filter((x): x is number => x != null)
+        // LÀM TRÒN XUỐNG: đây là mức người ta CHỌN ĐƯỢC. Làm tròn lên thì tồn cao nhất 98,8 % hiện
+        // ra "99 %" — đúng con số vừa bị từ chối, câu thông báo tự mâu thuẫn (đo thật 10/09).
         const hint = rule.kind === 'MIN_PCT' && best.length
-          ? ` %Date cao nhất còn trong kho là ${Math.round(Math.max(...best))} %.`
+          ? ` %Date cao nhất còn trong kho là ${Math.floor(Math.max(...best))} %.`
           : ''
         return fail(res, 422, 'DATE_RULE_NO_STOCK',
           `${bad.length} dòng không còn tồn nào đạt "${describeDateRule(rule)}".${hint} Chọn mức khác hoặc để dòng đó chưa chốt.`)

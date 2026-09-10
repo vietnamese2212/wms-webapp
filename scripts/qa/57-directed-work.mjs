@@ -498,6 +498,26 @@ try {
     check('[15r] Khoảng ngày quá rộng → 400 (kiểm ở BE TRƯỚC khi gọi DB)', bad.s === 400, `http=${bad.s}`)
   }
 
+  // ═══ [15t] HÀNG LẺ ĐÃ NẰM SẴN Ở VỊ TRÍ NHẶT LẺ → KHÔNG ĐẺ VIỆC XE NÂNG ═══════════════════════
+  // Bug đo thật 10/09 (Ba Vì, mã 610000022): 4.100 đơn vị đã nằm ở 3 vị trí nhặt lẻ, dòng đơn 500
+  // và 100 % là nhặt lẻ — vậy mà kế hoạch vẫn sai xe nâng đi lấy 420 từ ô KỆ, lại còn đưa RA CỬA
+  // thay vì về vị trí nhặt lẻ. Gốc: phần "đã có sẵn" chỉ được trừ khi vòng lặp ĐI NGANG đúng pallet
+  // ở vị trí nhặt lẻ, mà thứ tự pool theo luật luân chuyển nên pallet trên kệ sắp trước ăn mất phần đó.
+  {
+    const pFace = await mkPallet('PICKFACE', 300, locPick, dPlus(120), -60)
+    const t9 = await mkTrip('T9')
+    const i9 = await mkItem(t9.do, 100, { loose_picking: 100 })   // cả dòng là nhặt lẻ
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i9], rule: { kind: 'FEFO' } })
+    r = await startTrip(t9.gdo, { license_plate: '51C99999', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const tk9 = await tasksOf(t9.gdo)
+    check('[15t] Phần lẻ đã đủ ở vị trí nhặt lẻ → KHÔNG sinh việc xe nâng nào (không đẻ việc thừa)',
+      r.s === 200 && tk9.length === 0,
+      `http=${r.s} việc=${tk9.length} ${tk9.map(t => `${t.kind}/${t.qty_base}→${t.to_kind}`).join(',')} · pallet nhặt lẻ=${pFace.pallet_code}`)
+    check('[15t2] …và tuyệt đối không có việc PICK ra CỬA cho dòng nhặt lẻ',
+      !tk9.some(t => t.kind === 'PICK' && t.to_kind === 'DOCK'), `${tk9.filter(t => t.kind === 'PICK').length} việc PICK`)
+    await api(`/wms/outbound/${t9.gdo}`, 'PATCH', { status: 'COMPLETED' }).catch(() => {})
+  }
+
   // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
   const t8 = await mkTrip('T8')
   const i8 = await mkItem(t8.do, 10)

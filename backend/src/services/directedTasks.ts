@@ -334,12 +334,18 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       : 0
     let looseLeft = Math.max(0, n.loose - looseOnHand)
 
-    let left = n.qty
+    // Phần lẻ ĐÃ NẰM SẴN ở vị trí nhặt lẻ = KHÔNG có việc gì để giao ⇒ trừ THẲNG khỏi nhu cầu.
+    // Bản trước trừ dần TRONG vòng lặp, chỉ khi đi ngang đúng pallet ở vị trí nhặt lẻ — mà thứ tự
+    // pool là theo luật luân chuyển, nên một pallet TRÊN KỆ sắp trước sẽ ăn mất phần đó và đẻ ra
+    // việc xe nâng THỪA. Đo thật 10/09 (Ba Vì, mã 610000022): 4.100 đơn vị đã nằm ở 3 vị trí nhặt
+    // lẻ mà kế hoạch vẫn sai xe nâng đi lấy 420 từ ô kệ B_TP1_21_T4 — và vì `looseLeft` đã về 0 nên
+    // việc đó còn ra CỬA thay vì về vị trí nhặt lẻ, tức thủ kho nhặt lẻ ngay tại cửa.
+    let left = Math.max(0, n.qty - Math.min(n.loose, looseOnHand))
     for (const c of pool) {
       if (left <= 0) break
       const loc = c.location_id ? locById.get(c.location_id) : null
-      // Pallet đang nằm sẵn ở vị trí nhặt lẻ: thủ kho lấy tại chỗ, không cần xe nâng
-      if (loc?.is_pick_face === true && looseOnHand > 0) { left -= Math.min(left, freeOf(c)); continue }
+      // Pallet đang nằm sẵn ở vị trí nhặt lẻ: thủ kho lấy tại chỗ, không cần xe nâng (đã trừ ở trên)
+      if (loc?.is_pick_face === true && looseOnHand > 0) continue
       const take = Math.min(left, freeOf(c))
       if (take <= 0) continue
       const isLoose = looseLeft > 0

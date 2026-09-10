@@ -406,3 +406,9 @@ created_at, updated_at
 - `20260910h_date_rule_split.sql` — hàm IMMUTABLE `date_rule_valid(jsonb)` + CHECK `outbounditem_date_rule_kind`
   nới cho `{kind:'SPLIT', parts:[{qty_base,kind,value}]}` (1..10 phần · kind ∈ FEFO/MIN_PCT/EXACT · qty_base > 0).
   CHECK không nhận truy vấn con nên luật nằm trong hàm; `qty_base` so bằng CASE + regex để chuỗi rác không làm CHECK ném lỗi.
+- `20260910i_dock_vehicle_kind.sql` — `warehouse_docks_status` trả thêm `vehicle_type` + `container_number` của
+  từng xe đang đậu: sơ đồ kho 3D vẽ XE CONTAINER khác XE TẢI mà loại xe KHÔNG nằm trên chuyến (biển số →
+  `Vehicle` → `VehicleType`; chuyến chưa gắn biển thì lấy loại khai ở `TmsOrder.order_code` = Số xe).
+  ⚠️ Hai giá trị đi bằng TRUY VẤN CON trong `jsonb_build_object`, KHÔNG thêm JOIN vào CTE `veh`: một biển có
+  2 dòng `Vehicle` (hay một Số xe có 2 lệnh VC khác ngày) sẽ nhân đôi dòng ⇒ `occupied` sai ⇒ sống lại bug
+  đua suất cửa đã vá 09/09. Gói QA 56 (40 phép, có [6a] 5 xe tranh 1 suất) chạy lại XANH sau khi apply.

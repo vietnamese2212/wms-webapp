@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -8,7 +8,7 @@ import { formatDate, formatDateTime, formatTimestampTime, normalizeLicensePlate 
 import { isQtyLike } from '@/utils/inventoryMode'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
-import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen, ListChecks, CalendarClock } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -25,9 +25,11 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
+import { SetDateRuleSheet, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
+import type { DateRule } from '@/types'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
-  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock, useDirectedBoard,
   useWaiveWeighGDO, useUnwaiveWeighGDO, useWaiveGateGDO, useUnwaiveGateGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
@@ -1435,6 +1437,7 @@ export default function OutboundDetail() {
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng NGAY TẠI TRANG → mở màn quét chế độ súng (không camera)
   const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
+  const [showDateRule, setShowDateRule] = useState(false)
   // Mobile: thu gọn phần header chi tiết (info/audit/tổng) để list nhiều dòng như AppSheet; chevron bung ra. Desktop luôn hiện.
   const [showEditGDO,       setShowEditGDO]       = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
@@ -1603,7 +1606,39 @@ export default function OutboundDetail() {
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   // Nút Thông tin KHÔNG nằm ở đây nữa (user chốt 03/08 "gom về làm 1"): nút ⓘ cạnh mã chuyến
   // mở dialog gộp thông tin đơn + lịch sử, hiện cả desktop lẫn mobile — kể cả chuyến bất động.
+  // Dòng việc KẾ TIẾP của chuyến (kho Hướng dẫn) — chỉ gọi khi chuyến thật sự có việc
+  const { data: scanBoard } = useDirectedBoard(gdo.warehouse_id, 'SCAN', {
+    gdoId: gdo.id, enabled: !!gdo.started_at && (gdo.tasks_summary?.total ?? 0) > 0,
+  })
+  const nextTask = (scanBoard?.rows ?? []).find(r => !r.stage_done) ?? null
+
+  // Dòng hàng của chuyến để CHỐT %DATE — mở thẳng từ đây vì đó là chỗ thủ kho đang đứng
+  const dateTargets: DateRuleTarget[] = useMemo(() => (gdo.delivery_orders ?? []).flatMap(d =>
+    (d.items ?? [])
+      .filter(i => Number(i.cartons_ordered ?? 0) > Number(i.cartons_scanned ?? 0))
+      .map(i => ({
+        item_id: i.id,
+        material_id: i.material_id ?? null,
+        material_code: i.material_code_raw ?? null,
+        material_name: i.material?.short_name ?? null,
+        trip_label: d.delivery_code ?? null,
+        remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
+        note: i.header_text ?? null,
+        current: (i.date_rule as DateRule | null) ?? null,
+      }))), [gdo])
+  const nUnsetDate = dateTargets.filter(t => !t.current).length
+
   const actionItems: ActionItem[] = []
+  // CHỐT %DATE — cửa DUY NHẤT tạo quy tắc lấy hàng. Đặt ở chuyến vì thủ kho chốt ngay trước khi xuất.
+  if (dateTargets.length > 0 && can(perms, 'outbound', 'set_date'))
+    actionItems.push({
+      key: 'date-rule', icon: CalendarClock, label: 'Chốt %Date',
+      tip: nUnsetDate > 0
+        ? `${nUnsetDate} dòng chưa chốt — chưa chốt thì hệ thống KHÔNG chia hàng cho dòng đó`
+        : 'Sửa quy tắc lấy hàng theo date của từng dòng',
+      primary: nUnsetDate > 0,
+      onClick: () => setShowDateRule(true),
+    })
   // Chuyến bất động: ẩn Sửa đơn/Giao đơn (BE cũng chặn 422) — chỉ còn xem + lịch sử + xóa để dọn
   if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && !inertReason && can(perms, 'outbound', 'edit'))
     actionItems.push({
@@ -1845,6 +1880,31 @@ export default function OutboundDetail() {
         </span>
       </div>
 
+      {/* KẾ HOẠCH LẤY HÀNG (Directed Work 1c) — chỉ hiện khi chuyến CÓ việc (kho Hướng dẫn).
+          Thủ kho cần đúng một câu: pallet nào tiếp theo, đang nằm đâu, đã được hạ chưa. */}
+      {gdo.started_at && (gdo.tasks_summary?.total ?? 0) > 0 && (
+        <Card className="px-2 py-1 bg-sky-50 border-sky-200">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+            <span className="font-semibold text-sky-800 flex items-center gap-1">
+              <ListChecks className="h-3.5 w-3.5" />Kế hoạch lấy hàng
+            </span>
+            <span className="text-slate-600">
+              <strong>{gdo.tasks_summary?.done ?? 0}/{gdo.tasks_summary?.total ?? 0}</strong> việc xong
+            </span>
+            {(gdo.tasks_summary?.to_lower ?? 0) > 0 && <span className="text-amber-700">chờ hạ {gdo.tasks_summary?.to_lower}</span>}
+            {(gdo.tasks_summary?.to_move ?? 0) > 0 && <span className="text-slate-600">chờ đưa ra {gdo.tasks_summary?.to_move}</span>}
+            {nextTask && (
+              <span className="text-slate-700">
+                · tiếp theo <b className="font-mono">{nextTask.pallet_codes?.[0] ?? ''}</b>
+                {nextTask.current_code && <> tại <b className="font-mono">{nextTask.current_code}</b></>}
+                {nextTask.waiting_lower ? <span className="text-amber-700"> (chờ xe hạ)</span> : <span className="text-green-700"> (lấy được)</span>}
+              </span>
+            )}
+            <Link to="/wms/directed" className="ml-auto text-sky-700 hover:underline">Mở Việc cần làm →</Link>
+          </div>
+        </Card>
+      )}
+
       {gdo.started_at && (
         <Card className="px-2 py-1 bg-blue-50 border-blue-200">
           <div className="flex items-start justify-between gap-1">
@@ -2018,6 +2078,8 @@ export default function OutboundDetail() {
       {showEditTransport && (
         <EditTransportDialog open={showEditTransport} gdo={gdo} onClose={() => setShowEditTransport(false)} />
       )}
+      <SetDateRuleSheet open={showDateRule} onClose={() => setShowDateRule(false)}
+        targets={dateTargets} warehouseId={gdo.warehouse_id ?? null} />
       {showEditGDO && (
         <EditGDOModal
           gdoId={gdo.id}

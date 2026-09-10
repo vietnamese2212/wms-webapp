@@ -669,6 +669,9 @@ export interface OutboundItem {
   material_type:      string | null   // "Thành phẩm" | "POSM" | "Pallet Loscam"
   export_type:        string | null
   header_text:        string | null
+  // Quy tắc lấy hàng theo date do THỦ KHO chốt (1c). NULL = chưa chốt ⇒ dòng KHÔNG sinh việc.
+  date_rule?:         DateRule | null
+  pinned_pallets?:    string[] | null
   batch_required:     string | null
   date_required:      number | null
   cs_responsible:     string | null
@@ -751,6 +754,12 @@ export interface GDO {
   dock_location_id?:      string | null
   dock_assigned_at?:      string | null
   dock?:                  { id: string; location_code: string; row: string | null; kind: string; dock_capacity: number | null } | null
+  // Ô tổng kế hoạch lấy hàng (Directed Work 1c) — null khi kho chạy Thủ công (không có việc nào)
+  tasks_summary?:         { total: number; pending: number; done: number; to_lower: number; to_move: number; skipped: number } | null
+  // Cảnh báo trả kèm response Bắt đầu: lập kế hoạch hỏng / còn dòng chưa chốt %Date
+  plan_warning?:          string | null
+  plan_unset_items?:      number
+  forklift_driver_ids?:   string[] | null
   // Audit
   updated_at?:     string | null
   created_by?:     string | null
@@ -785,9 +794,52 @@ export interface DockStatus {
   id: string; location_code: string; name: string; kind: 'DOCK_OUT' | 'DOCK_IN'
   capacity: number | null          // null = không giới hạn
   occupied: number                 // số XE đang chiếm (cùng biển = 1 xe)
+  serve_categories: string[]       // Loại kho cửa phục vụ; RỖNG = mọi loại (10/09)
   vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null }[]
   grid_x: number | null; grid_y: number | null
 }
+
+// ─── VIỆC CẦN LÀM (Directed Work 1c, 10/09) ────────────────────────────────────────────────────
+// Một DÒNG BẢNG = một NHÓM việc gom theo VỊ TRÍ (xe nâng không quét tem, họ đi theo ô) ở bảng
+// Cần hạ / Cần đưa ra; ở bảng Sắp quét thì mỗi dòng là một pallet vì thủ kho quét theo tem.
+export interface DirectedRow {
+  group_key: string
+  task_ids: string[]
+  seq: number
+  gdo_id: string
+  group_code: string | null
+  license_plate: string | null
+  started_at: string | null
+  dock_name: string | null
+  kind: 'PICK' | 'LOOSE_FEED'
+  current_code: string | null      // VỊ TRÍ HIỆN TẠI của pallet — kể cả đang trên kệ (user chốt 10/09)
+  from_code: string | null
+  level_no: number | null
+  to_code: string | null
+  to_name: string | null
+  drop_name: string | null
+  dist_cells: number | null
+  n_pallets: number
+  qty_base: number
+  material_codes: (string | null)[]
+  material_name: string | null
+  pallet_codes: (string | null)[]
+  needs_lower: boolean
+  waiting_lower: boolean           // chưa hạ ⇒ xe chuyển thấy dòng mờ, chưa bấm được
+  stage_done: boolean              // xong Ở CHẶNG NÀY ⇒ gạch ngang, vẫn ở lại bảng
+  all_scanned: boolean
+  last_at: string | null
+  done_by_name: string | null
+  can_confirm: boolean
+}
+export interface DirectedBoard {
+  rows: DirectedRow[]
+  totals: { pending?: number; done?: number; to_lower?: number; to_move?: number; trips?: number }
+  // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
+  unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null }[]
+}
+export type DateRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'
+export interface DateRule { kind: DateRuleKind; value?: string | number | null; set_by?: string | null; set_at?: string | null }
 
 // 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP
 export interface OutboundEvent {

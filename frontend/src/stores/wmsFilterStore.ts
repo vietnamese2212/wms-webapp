@@ -258,6 +258,15 @@ interface WarehouseMapFilters {
   zones: string[]
   overlay: 'stock' | 'path' | 'none'
 }
+// Việc cần làm (Directed Work 1c, 10/09) — 3 bảng theo vai. `mine` = chỉ việc của chuyến mình được
+// giao lái xe nâng chuyển; `hideDone` = ẩn dòng đã xong (mặc định HIỆN — user chốt "phòng bị quên").
+interface DirectedWorkFilters {
+  warehouseId: string
+  tab: 'LOWER' | 'MOVE' | 'SCAN'
+  gdoId: string
+  mine: boolean
+  hideDone: boolean
+}
 interface DashboardFilters {
   warehouseId: string   // '' = tất cả kho trong scope
   // Khoảng ngày của tab NĂNG SUẤT (27/08) — '' = để component lấy mặc định THÁNG NÀY.
@@ -418,6 +427,7 @@ interface WmsFilterState {
   stocktakeCycle:    StocktakeCycleFilters
   slotting:          SlottingFilters
   warehouseMap:      WarehouseMapFilters
+  directedWork:      DirectedWorkFilters
   fill:              FillFilters
   forklift:          ForkliftFilters
   packing:           PackingFilters
@@ -461,6 +471,7 @@ interface WmsFilterState {
   setStocktakeCycle:    (f: Partial<StocktakeCycleFilters>)    => void
   setSlotting:          (f: Partial<SlottingFilters>)          => void
   setWarehouseMap:      (f: Partial<WarehouseMapFilters>)      => void
+  setDirectedWork:      (f: Partial<DirectedWorkFilters>)      => void
   setFill:              (f: Partial<FillFilters>)              => void
   setForklift:          (f: Partial<ForkliftFilters>)          => void
   setPacking:           (f: Partial<PackingFilters>)           => void
@@ -524,6 +535,7 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
+    directedWork: { warehouseId: '', tab: 'LOWER' as const, gdoId: '', mine: true, hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
@@ -578,6 +590,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setControlTower:     (f) => set(s => ({ controlTower:     { ...s.controlTower,     ...f } })),
       setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
       setWarehouseMap:     (f) => set(s => ({ warehouseMap:     { ...s.warehouseMap,     ...f } })),
+      setDirectedWork:     (f) => set(s => ({ directedWork:     { ...s.directedWork,     ...f } })),
       setFill:             (f) => set(s => ({ fill:             { ...s.fill,             ...f } })),
       setForklift:         (f) => set(s => ({ forklift:         { ...s.forklift,         ...f } })),
       setPacking:          (f) => set(s => ({ packing:          { ...s.packing,          ...f } })),

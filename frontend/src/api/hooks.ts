@@ -13,7 +13,7 @@ import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
-import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus } from '@/types'
+import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -4094,6 +4094,68 @@ export function useWarehouseDocks(warehouseId: string | null | undefined, enable
     },
   })
 }
+// ─── VIỆC CẦN LÀM (Directed Work 1c, 10/09) ────────────────────────────────────────────────────
+export function useDirectedBoard(
+  warehouseId: string | null | undefined,
+  mode: 'LOWER' | 'MOVE' | 'SCAN',
+  opts: { gdoId?: string | null; driverId?: string | null; enabled?: boolean } = {},
+) {
+  const { gdoId = null, driverId = null, enabled = true } = opts
+  return useQuery({
+    queryKey: ['directed-board', warehouseId, mode, gdoId, driverId],
+    // Bảng "Sắp quét" vô nghĩa nếu chưa chọn chuyến — đừng gọi để nhận 400
+    enabled: !!warehouseId && enabled && (mode !== 'SCAN' || !!gdoId),
+    staleTime: 10_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/directed/board', {
+        params: { warehouse_id: warehouseId, mode, ...(gdoId ? { gdo_id: gdoId } : {}), ...(driverId ? { driver_id: driverId } : {}) },
+      })
+      return data.data as DirectedBoard
+    },
+  })
+}
+
+/** Nút "✓ Xong" — gửi CẢ NHÓM việc của một vị trí trong một lần bấm. */
+export function useConfirmTasks() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { task_ids: string[]; stage: 'LOWER' | 'MOVE'; undo?: boolean }) =>
+      apiClient.post('/wms/directed/tasks/confirm', body).then(r => r.data.data as { changed: number; moved_pallets: number }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })   // LOOSE_FEED chuyển pallet thật trong tồn
+    },
+  })
+}
+
+export function useReplanGdo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (gdoId: string) =>
+      apiClient.post(`/wms/directed/gdos/${gdoId}/replan`, {}).then(r => r.data.data as { created: number; cancelled: number; unset_items: number; warning: string | null }),
+    onSettled: (_d, _e, gdoId) => {
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+      qc.invalidateQueries({ queryKey: ['gdo', gdoId] })
+    },
+  })
+}
+
+/** Chốt %Date HÀNG LOẠT — nhiều dòng, nhiều chuyến, lưu một lần. `rule: null` = xoá chốt. */
+export function useSetItemsDateRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { item_ids: string[]; rule: DateRule | null }) =>
+      apiClient.patch('/wms/outbound/items/date-rule', body).then(r => r.data.data as { updated: number; trips_replanned: number }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['outbound-prepare'] })
+    },
+  })
+}
+
 export function useChangeDock() {
   const qc = useQueryClient()
   return useMutation({

@@ -43,6 +43,7 @@ const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
 const warehouseMap       = () => import('@/pages/wms/WarehouseMap')
 const directedWork       = () => import('@/pages/wms/DirectedWork')
+const dateRules          = () => import('@/pages/wms/DateRules')
 const warehouseCosts     = () => import('@/pages/wms/WarehouseCosts')
 const lotTrace           = () => import('@/pages/wms/LotTrace')
 const warehouseCostVoucher = () => import('@/pages/wms/WarehouseCostVoucher')
@@ -94,6 +95,7 @@ export const Pages = {
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
   WarehouseMap: lazyRetry(warehouseMap),
   DirectedWork: lazyRetry(directedWork),
+  DateRules: lazyRetry(dateRules),
   WarehouseCosts: lazyRetry(warehouseCosts),
   LotTrace: lazyRetry(lotTrace),
   WarehouseCostVoucher: lazyRetry(warehouseCostVoucher),

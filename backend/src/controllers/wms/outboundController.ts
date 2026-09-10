@@ -31,7 +31,8 @@ import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, del
 import { guardPutaway } from '../../services/putawayContext'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
-  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, MAX_DATE_CHECK, type DateRule,
+  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, MAX_DATE_CHECK, MAX_RULE_PARTS,
+  type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 
 const now = () => new Date().toISOString()
@@ -5336,6 +5337,86 @@ export async function getPrepareBoard(req: Request, res: Response) {
 // không ai "tưởng mặc định rồi đi làm, sau mới update = làm sai".
 //
 /**
+ * Đọc + kiểm quy tắc date từ body. MỘT chỗ dùng chung cho cả cửa HỎI TRƯỚC lẫn cửa GHI, để hai bên
+ * không bao giờ hiểu khác nhau về cùng một payload.
+ */
+type ParsedRule = { rule: DateRule } | { err: { status: number; code: string; msg: string } }
+function parseDateRuleBody(raw: unknown): ParsedRule {
+  const bad = (msg: string, status = 422, code = 'VALIDATION_ERROR') => ({ err: { status, code, msg } })
+  const r = (raw ?? {}) as { kind?: unknown; value?: unknown; parts?: unknown }
+  const kind = String(r.kind ?? '')
+  if (kind === 'FEFO') return { rule: { kind: 'FEFO' } }
+  if (kind === 'MIN_PCT') {
+    const n = Number(r.value)
+    if (!Number.isFinite(n) || n < 0 || n > 100) return bad('%Date tối thiểu phải trong khoảng 0–100')
+    return { rule: { kind: 'MIN_PCT', value: Math.round(n) } }
+  }
+  if (kind === 'EXACT') {
+    const v = String(r.value ?? '').trim()
+    if (!v) return bad('Chọn NSX / HSD / mã lô / tem pallet cần lấy')
+    if (v.length > 120 || searchLooksLikeInjection(v)) return bad('Giá trị chỉ định không hợp lệ', 400, 'BAD_ID')
+    return { rule: { kind: 'EXACT', value: v } }
+  }
+  // CHIA PHẦN THEO SỐ LƯỢNG — "250 thùng date 60, 30 thùng date 90" trên CÙNG một dòng đơn
+  if (kind === 'SPLIT') {
+    const list = Array.isArray(r.parts) ? r.parts : []
+    if (!list.length) return bad('Chia phần thì phải khai ít nhất một phần')
+    if (list.length > MAX_RULE_PARTS) return bad(`Tối đa ${MAX_RULE_PARTS} phần cho một dòng`)
+    const parts: DateRulePart[] = []
+    for (const p of list as Array<{ qty_base?: unknown; kind?: unknown; value?: unknown }>) {
+      const q = Number(p?.qty_base)
+      if (!Number.isFinite(q) || q <= 0) return bad('Mỗi phần phải khai số lượng lớn hơn 0')
+      const sub = parseDateRuleBody({ kind: p?.kind, value: p?.value })
+      if ('err' in sub) return sub
+      if (sub.rule.kind === 'SPLIT') return bad('Không lồng chia phần trong chia phần')
+      parts.push({ qty_base: Math.round(q), kind: sub.rule.kind, value: sub.rule.value ?? null })
+    }
+    return { rule: { kind: 'SPLIT', parts } }
+  }
+  return bad('Quy tắc không hợp lệ (FEFO / ≥ %Date / chỉ định NSX-lô-tem / chia phần)')
+}
+
+/**
+ * GET /outbound/date-rule-lines — MÀN CHỐT %DATE: mọi DÒNG HÀNG của mọi chuyến trong khoảng ngày.
+ * User chốt 10/09: "trước lúc xuất, nv SAP kiểm tra TẤT CẢ đơn rồi input — cần nhìn hết đơn hàng
+ * (filter được) và thấy tất cả các dòng". Một RPC trả dòng + tổng + ô band (đừng kéo dòng về đếm).
+ */
+export async function getDateRuleLines(req: Request, res: Response) {
+  try {
+    const from = String(req.query.date_from ?? '')
+    const to = String(req.query.date_to ?? '') || from
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+      return fail(res, 'Thiếu hoặc sai khoảng ngày (date_from/date_to dạng YYYY-MM-DD)', 400)
+    const span = (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000
+    if (span < 0 || span > 62) return fail(res, 'Khoảng ngày tối đa 62 ngày', 400)
+
+    const whId = req.query.warehouse_id ? String(req.query.warehouse_id) : null
+    if (whId && (whId.length > 100 || searchLooksLikeInjection(whId))) return fail(res, 400, 'BAD_ID', 'Mã kho không hợp lệ')
+    const scope = scopeWhIds(req)
+    if (whId && scope && !scope.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+
+    const state = String(req.query.state ?? 'ALL').toUpperCase()
+    if (!['ALL', 'SET', 'UNSET'].includes(state)) return fail(res, 400, 'VALIDATION_ERROR', 'Trạng thái chốt không hợp lệ')
+    const search = req.query.search ? String(req.query.search).slice(0, 120) : null
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'BAD_ID', 'Từ khoá tìm kiếm không hợp lệ')
+
+    const pageSize = Math.min(1000, Math.max(1, Number(req.query.page_size ?? 200) || 200))
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1)
+    const cats = scopeCategoriesOf(req)
+
+    const { data, error } = await supabase.rpc('outbound_date_rule_lines', {
+      p_from: from, p_to: to,
+      p_scope_wh: scope, p_warehouse_id: whId,
+      p_categories: cats && cats.length ? cats : null,
+      p_state: state, p_search: search,
+      p_limit: pageSize, p_offset: (page - 1) * pageSize,
+    })
+    if (error) return fail(res, error)
+    return ok(res, { ...(data ?? { rows: [], total: 0, summary: {} }), page, page_size: pageSize })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/**
  * POST /outbound/items/date-rule/check { rules: [{ item_id, rule }] } — HỎI TRƯỚC KHI CHỐT.
  * Màn chốt gọi lúc người ta vừa gõ xong mức %Date: dòng nào không còn tồn nào đạt thì đỏ NGAY và
  * không cho Lưu (user chốt 10/09). Một lời gọi cho CẢ BẢNG — đừng hỏi từng dòng.
@@ -5351,12 +5432,10 @@ export async function checkItemsDateRule(req: Request, res: Response) {
     for (const r of list as Array<{ item_id?: unknown; rule?: { kind?: unknown; value?: unknown } }>) {
       const id = String(r?.item_id ?? '')
       if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Mã dòng hàng không hợp lệ')
-      const kind = String(r?.rule?.kind ?? '')
-      if (kind !== 'FEFO' && kind !== 'MIN_PCT' && kind !== 'EXACT') continue   // dòng chưa chốt → không kiểm
-      const v = r?.rule?.value
-      if (kind === 'EXACT' && (String(v ?? '').length > 120 || searchLooksLikeInjection(String(v ?? ''))))
-        return fail(res, 400, 'BAD_ID', 'Giá trị chỉ định không hợp lệ')
-      reqs.push({ item_id: id, rule: { kind, value: kind === 'MIN_PCT' ? Number(v ?? 0) : String(v ?? '') } })
+      if (!r?.rule?.kind) continue                      // dòng chưa chốt → không kiểm
+      const parsed = parseDateRuleBody(r.rule)
+      if ('err' in parsed) return fail(res, parsed.err.status, parsed.err.code, parsed.err.msg)
+      reqs.push({ item_id: id, rule: parsed.rule })
     }
     if (!reqs.length) return ok(res, [])
 
@@ -5388,29 +5467,21 @@ export async function setItemsDateRule(req: Request, res: Response) {
     // rule = null ⇒ XOÁ chốt (quay lại "chưa chốt"); dòng đó lập tức rời khỏi Việc cần làm
     let rule: DateRule | null = null
     if (body.rule != null) {
-      const r = body.rule as { kind?: unknown; value?: unknown }
-      const kind = String(r.kind ?? '')
-      if (kind === 'FEFO') rule = { kind: 'FEFO' }
-      else if (kind === 'MIN_PCT') {
-        const n = Number(r.value)
-        if (!Number.isFinite(n) || n < 0 || n > 100) return fail(res, 422, 'VALIDATION_ERROR', '%Date tối thiểu phải trong khoảng 0–100')
-        rule = { kind: 'MIN_PCT', value: Math.round(n) }
-      } else if (kind === 'EXACT') {
-        const v = String(r.value ?? '').trim()
-        if (!v) return fail(res, 422, 'VALIDATION_ERROR', 'Chọn NSX / HSD / mã lô / tem pallet cần lấy')
-        if (v.length > 120 || searchLooksLikeInjection(v)) return fail(res, 400, 'BAD_ID', 'Giá trị chỉ định không hợp lệ')
-        rule = { kind: 'EXACT', value: v }
-      } else return fail(res, 422, 'VALIDATION_ERROR', 'Quy tắc không hợp lệ (FEFO / ≥ %Date / chỉ định NSX-lô-tem)')
+      const parsed = parseDateRuleBody(body.rule)
+      if ('err' in parsed) return fail(res, parsed.err.status, parsed.err.code, parsed.err.msg)
+      rule = parsed.rule
     }
 
     // PHẠM VI KHO: dòng hàng thuộc chuyến kho nào — cắt theo phạm vi NGƯỜI GỌI, tất cả hoặc không.
     // Chuỗi tra ngược item → DO → chuyến; chunk 300 vì id đi trên URL của PostgREST.
     const idList = ids as string[]
     const itemRows = await fetchAllByIdChunks(idList, chunk => supabase.from('OutboundItem')
-      .select('id, do_id, delivery:OutboundDelivery!do_id(gdo_id, gdo:GroupDeliveryOrder!gdo_id(id, warehouse_id))')
+      .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, date_rule, date_required, delivery:OutboundDelivery!do_id(gdo_id, delivery_code, gdo:GroupDeliveryOrder!gdo_id(id, group_code, warehouse_id))')
       .in('id', chunk).order('id')) as unknown as Array<{
-        id: string; do_id: string
-        delivery: { gdo_id: string | null; gdo: { id: string; warehouse_id: string | null } | null } | null
+        id: string; do_id: string; material_code_raw: string | null
+        cartons_ordered: number | null; cartons_scanned: number | null
+        date_rule: unknown; date_required: number | null
+        delivery: { gdo_id: string | null; delivery_code: string | null; gdo: { id: string; group_code: string; warehouse_id: string | null } | null } | null
       }>
     if (!itemRows.length) return fail(res, 'Không tìm thấy dòng hàng nào (có thể đã bị xoá)', 404)
     const myWhs = scopeWhIds(req)
@@ -5420,6 +5491,16 @@ export async function setItemsDateRule(req: Request, res: Response) {
         return w && !myWhs.includes(w)
       })
       if (outside.length) return fail(res, `${outside.length} dòng thuộc kho ngoài phạm vi được giao`, 403)
+    }
+
+    // CHIA PHẦN: tổng SL các phần không được vượt SL đặt của dòng — vượt là người khai nhầm đơn vị
+    // (gõ thùng vào ô base) chứ không phải ý định thật; nhận vào rồi thì phần thừa lặng lẽ bị cắt.
+    if (rule?.kind === 'SPLIT') {
+      const sum = (rule.parts ?? []).reduce((s, p) => s + Number(p.qty_base ?? 0), 0)
+      const over = itemRows.filter(r => sum > Number(r.cartons_ordered ?? 0))
+      if (over.length)
+        return fail(res, 422, 'VALIDATION_ERROR',
+          `Tổng các phần (${sum}) vượt số lượng đặt của ${over.length} dòng (nhỏ nhất ${Math.min(...over.map(r => Number(r.cartons_ordered ?? 0)))}).`)
     }
 
     // CHỐT PHẢI CÓ HÀNG ĐỂ LẤY (user chốt 10/09): đòi %Date mà kho không còn pallet nào đạt thì
@@ -5450,6 +5531,30 @@ export async function setItemsDateRule(req: Request, res: Response) {
       if (error) return fail(res, error)
       updated.push(...((upd ?? []) as { id: string }[]))
     }
+
+    // SỔ LỊCH SỬ (user 10/09: "cần có info xem được lịch sử input, sửa"): ghi CŨ → MỚI cho từng
+    // dòng vào chính sổ sự kiện của chuyến, nên nút "Thông tin" trên chuyến hiện luôn, không phải
+    // dựng màn mới. Ghi sổ hỏng KHÔNG được làm hỏng việc chốt (logOutboundEvents tự bọc).
+    await logOutboundEvents(itemRows
+      .filter(r => r.delivery?.gdo?.group_code)
+      .map(r => {
+        const before = describeDateRule(dateRuleOf(r))
+        const after = describeDateRule(rule)
+        return {
+          group_code: r.delivery!.gdo!.group_code,
+          gdo_id: r.delivery!.gdo!.id,
+          event_type: rule ? 'DATE_RULE_SET' : 'DATE_RULE_CLEARED',
+          source: 'USER' as const,
+          actor: req.user?.name ?? null,
+          do_number: r.delivery?.delivery_code ?? null,
+          material_code: r.material_code_raw ?? null,
+          old_value: before,
+          new_value: after,
+          detail: rule
+            ? `Chốt %Date lấy hàng: ${before} → ${after}`
+            : `Xoá chốt %Date (dòng quay lại "chưa chốt", không sinh việc): ${before} → chưa chốt`,
+        }
+      }))
 
     // Chuyến ĐANG XUẤT thì kế hoạch lấy hàng phải sắp lại ngay — chốt xong là việc hiện ra, không
     // phải chờ ai bấm gì thêm (realtime đẩy bảng tự cập nhật).

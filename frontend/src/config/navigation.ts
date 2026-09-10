@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, Map as MapIcon, ListChecks,
+  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, Map as MapIcon, ListChecks, CalendarClock,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -59,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // Bản vẽ 2D của kho (08/09) — không dùng chữ "Layout": Phân công đã có tab Layout = mẫu phân công nhân sự
       { to: '/wms/warehouse-map', icon: MapIcon,        label: 'Sơ đồ kho',         module: 'warehouse_map' },
       // 3 bảng việc theo vai (Directed Work 1c, 10/09) — xe nâng hạ · xe nâng chuyển · thủ kho
+      { to: '/wms/outbound/date-rules', icon: CalendarClock, label: 'Chốt %Date',    anyActions: [['outbound', 'set_date']] },
       { to: '/wms/directed',      icon: ListChecks,     label: 'Việc cần làm',      module: 'directed_work' },
       { to: '/wms/forklift',      icon: Forklift,       label: 'Xe nâng',           module: 'forklift' },
       { to: '/wms/multi-scan',    icon: ScanIcon,       label: 'Quét loạt (test)',  adminOnly: true },

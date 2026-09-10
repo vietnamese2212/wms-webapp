@@ -25,7 +25,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
-import { SetDateRuleSheet, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
+import { SetDateRuleSheet, dateRuleLabel, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import type { DateRule } from '@/types'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
@@ -1036,6 +1036,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
     ...(hasBoxes ? [{ id: 'boxes', label: 'Hộp (KH)', w: 60, align: 'right' as const }] : []),
     ...(hasLoosePicking ? [{ id: 'loose_c', label: 'Lẻ thùng', w: 60, align: 'right' as const }, { id: 'loose_b', label: 'Lẻ hộp', w: 54, align: 'right' as const }] : []),
     ...(hasCsResp ? [{ id: 'cs', label: 'CS', w: 90 }] : []),
+    { id: 'daterule', label: '%Date lấy hàng', w: 118 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
     ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
     ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
@@ -1234,6 +1235,13 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
+                {/* Quy tắc ĐÃ CHỐT — cột LUÔN CÓ. Chốt xong mà bảng dòng hàng không hiện gì thì
+                    người chốt không có cách nào biết mình đã làm chưa (user bắt 10/09). */}
+                <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                  <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${dateRuleLabel(item.date_rule).cls}`}>
+                    {dateRuleLabel(item.date_rule).text}
+                  </span>
+                </TableCell>
                 {hasBatchRequired && (
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                     {item.batch_required

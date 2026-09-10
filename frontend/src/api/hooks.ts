@@ -4142,11 +4142,50 @@ export function useReplanGdo() {
 }
 
 /** Chốt %Date HÀNG LOẠT — nhiều dòng, nhiều chuyến, lưu một lần. `rule: null` = xoá chốt. */
+/** Màn "Chốt %Date": MỌI dòng hàng của MỌI chuyến trong khoảng ngày — nv SAP soi cả ngày một lượt. */
+export interface DateRuleLine {
+  item_id: string; gdo_id: string; group_code: string | null; license_plate: string | null
+  delivery_date: string; gdo_status: string
+  warehouse_id: string | null; warehouse_name: string | null; warehouse_type: string | null
+  delivery_code: string | null; distributor_name: string | null
+  material_id: string | null; material_code: string | null; material_name: string | null
+  units_per_carton: number | null; base_unit: string | null; entry_unit: string | null
+  cartons_ordered: number; cartons_scanned: number; remaining: number
+  header_text: string | null; batch_required: string | null; date_required: number | null
+  date_rule: DateRule | null; is_set: boolean
+}
+export function useDateRuleLines(p: {
+  from: string; to: string; warehouseId?: string; state?: string; search?: string; page: number; pageSize: number
+}) {
+  return useQuery({
+    queryKey: ['date-rule-lines', p],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/date-rule-lines', {
+        params: {
+          date_from: p.from, date_to: p.to,
+          warehouse_id: p.warehouseId || undefined,
+          state: p.state || undefined,
+          search: p.search || undefined,
+          page: p.page, page_size: p.pageSize,
+        },
+      })
+      return data.data as {
+        rows: DateRuleLine[]; total: number; page: number; page_size: number
+        summary: { lines: number; set: number; unset: number; with_note: number; trips: number }
+      }
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 10_000,
+  })
+}
+
 /** Hỏi TRƯỚC khi chốt: mức %Date đang gõ còn tồn nào đạt không (một lời gọi cho cả bảng). */
+export interface DateRuleStockPart { ok: boolean; qty_base: number; matched_base: number; matched_pallets: number }
 export interface DateRuleStock {
   item_id: string; ok: boolean
   matched_base: number; matched_pallets: number; total_base: number
   best_pct: number | null; need_base: number
+  parts?: DateRuleStockPart[]
 }
 export function useCheckDateRule(rules: Array<{ item_id: string; rule: DateRule }>, enabled: boolean) {
   return useQuery({

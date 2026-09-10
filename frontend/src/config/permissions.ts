@@ -59,7 +59,7 @@ export const MODULES = {
       reconcile:  'Đối chiếu SAP — xử lý hàng chờ "Cần xử lý" [Dữ liệu bên ngoài]',
       weigh_waive: 'Duyệt bỏ qua CÂN (rule 2) — xe không cân được (hỏng cân…), duyệt trên chuyến',
       gate_waive:  'Duyệt bỏ qua ĐĂNG KÝ CỔNG (rule 1) — xe không đăng ký (giao lẻ/xe máy/NV nhận…), duyệt trên chuyến; duyệt cổng ⇒ biển số tùy chọn',
-      set_date:    'Chốt %Date / NSX lấy hàng cho dòng đơn (thủ kho, chốt hàng loạt trước khi xuất — dòng chưa chốt không lên Việc cần làm)',
+      set_date:    'Chốt %Date / NSX lấy hàng cho dòng đơn — VÀ vào trang "Chốt %Date" (menu Kho WMS) để soi mọi dòng của mọi chuyến rồi chốt hàng loạt; dòng chưa chốt không lên Việc cần làm',
       rotation_override: 'Duyệt LẤY KHÁC THỨ TỰ luân chuyển — chỉ cần khi kho bật "bắt buộc" trong Cài đặt WMS → Kho; phải chọn lý do, có ghi vết',
     },
   },

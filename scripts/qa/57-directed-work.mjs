@@ -436,6 +436,57 @@ try {
       rFefo.s === 200 && (rFefo.j?.data ?? [])[0]?.ok === true, `http=${rFefo.s} ok=${(rFefo.j?.data ?? [])[0]?.ok}`)
   }
 
+  // ── [15m–15q] MỘT DÒNG NHIỀU MỨC DATE THEO SỐ LƯỢNG (user 10/09: "đơn 280 thùng nhưng 250 thùng
+  // date 60, 30 thùng date 90"). Dòng đơn từ SAP không tách đôi được nên phải chia trên quy tắc.
+  {
+    const it3 = (await restAll('OutboundItem', `select=cartons_ordered&id=eq.${i3}`))[0]
+    const ordered = Number(it3?.cartons_ordered ?? 0)
+    const a = Math.max(1, Math.floor(ordered * 0.7)), b = Math.max(1, ordered - a)
+
+    let r = await api('/wms/outbound/items/date-rule', 'PATCH', {
+      item_ids: [i3], rule: { kind: 'SPLIT', parts: [{ qty_base: a, kind: 'MIN_PCT', value: 1 }, { qty_base: b, kind: 'FEFO' }] },
+    })
+    const saved = (await restAll('OutboundItem', `select=date_rule&id=eq.${i3}`))[0]?.date_rule
+    check('[15m] Chia phần theo SL → 200, lưu đủ CẢ parts (không rơi mất khi gộp nhóm để lưu)',
+      r.s === 200 && saved?.kind === 'SPLIT' && (saved?.parts ?? []).length === 2
+      && Number(saved.parts[0].qty_base) === a && Number(saved.parts[1].qty_base) === b,
+      `http=${r.s} rule=${JSON.stringify(saved)}`)
+
+    r = await api('/wms/outbound/items/date-rule', 'PATCH', {
+      item_ids: [i3], rule: { kind: 'SPLIT', parts: [{ qty_base: ordered + 1, kind: 'MIN_PCT', value: 1 }] },
+    })
+    check('[15n] Tổng các phần VƯỢT số lượng đặt → 422 (gõ nhầm đơn vị thì phải chặn, không cắt ngầm)',
+      r.s === 422, `http=${r.s} msg=${(r.j?.error?.message ?? '').slice(0, 70)}`)
+
+    r = await api('/wms/outbound/items/date-rule/check', 'POST', {
+      rules: [{ item_id: i3, rule: { kind: 'SPLIT', parts: [{ qty_base: a, kind: 'MIN_PCT', value: 1 }, { qty_base: b, kind: 'MIN_PCT', value: 100 }] } }],
+    })
+    const row = (r.j?.data ?? [])[0]
+    check('[15o] Hỏi trước: chia phần thì trả kết quả TỪNG PHẦN, chỉ đúng phần nào không còn hàng',
+      r.s === 200 && Array.isArray(row?.parts) && row.parts.length === 2 && row.parts[0]?.ok === true && row.parts[1]?.ok === false && row?.ok === false,
+      `http=${r.s} parts=${JSON.stringify(row?.parts)}`)
+
+    // Trả về quy tắc thường để các mục sau không bị lệch
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: 1 } })
+
+    // SỔ LỊCH SỬ — user 10/09: "cần có info xem được lịch sử input, sửa"
+    const ev = await restAll('outbound_events', `select=event_type,old_value,new_value,actor,material_code&event_type=in.(DATE_RULE_SET,DATE_RULE_CLEARED)&order=created_at.desc&limit=10`)
+    check('[15p] Mỗi lần chốt/sửa %Date ghi một dòng sổ CŨ → MỚI kèm người làm',
+      ev.length > 0 && ev.every(e => e.actor && e.new_value != null && e.old_value != null),
+      `dòng sổ=${ev.length} mới nhất=${JSON.stringify(ev[0] ?? null)}`)
+
+    // MÀN CHỐT %DATE — mọi dòng của mọi chuyến trong khoảng ngày
+    const lines = await api(`/wms/outbound/date-rule-lines?date_from=${FIX.EXEC_DATE}&date_to=${FIX.EXEC_DATE}&page_size=500`)
+    const mine = (lines.d?.rows ?? []).filter(x => String(x.group_code ?? '').includes(TAG))
+    check('[15q] Màn "Chốt %Date": thấy dòng hàng của MỌI chuyến trong ngày + ô tổng khớp số dòng',
+      lines.s === 200 && mine.length > 0 && Number(lines.d?.summary?.lines ?? -1) === Number(lines.d?.total ?? -2)
+      && mine.every(x => x.item_id && x.group_code && x.material_code),
+      `http=${lines.s} dòng của gói=${mine.length} tổng=${lines.d?.total} band=${JSON.stringify(lines.d?.summary)}`)
+
+    const bad = await api(`/wms/outbound/date-rule-lines?date_from=${FIX.EXEC_DATE}&date_to=2027-12-31`)
+    check('[15r] Khoảng ngày quá rộng → 400 (kiểm ở BE TRƯỚC khi gọi DB)', bad.s === 400, `http=${bad.s}`)
+  }
+
   // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
   const t8 = await mkTrip('T8')
   const i8 = await mkItem(t8.do, 10)

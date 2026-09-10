@@ -44,22 +44,55 @@ const CHUNK_IDS = 300                       // trần id trên URL của PostgRE
 // ─── Quy tắc date của DÒNG ĐƠN (user chốt vòng 4) ──────────────────────────────────────────────
 // NULL = CHƯA CHỐT ⇒ dòng KHÔNG sinh việc. FEFO phải BẤM XÁC NHẬN, không phải mặc định ngầm —
 // nếu không, người trong kho "tưởng mặc định rồi đi làm, sau mới update thì đã làm sai".
-export type DateRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'
-export interface DateRule { kind: DateRuleKind; value?: string | number | null; set_by?: string | null; set_at?: string | null }
+// SPLIT = MỘT dòng đơn nhưng nhiều mức date theo SỐ LƯỢNG (user 10/09: "đơn 280 thùng nhưng 250
+// thùng date 60, 30 thùng date 90"). Dòng đơn đến từ SAP nên KHÔNG tách đôi được — phải chia ngay
+// trên quy tắc. Các phần chia hàng THEO THỨ TỰ KHAI; phần nào không khai hết SL thì phần dư của
+// dòng coi như CHƯA CHỐT (không sinh việc), đúng luật "chưa chốt thì không tự đi làm".
+export type DateRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT' | 'SPLIT'
+export type SimpleRuleKind = Exclude<DateRuleKind, 'SPLIT'>
+export interface DateRulePart { qty_base: number; kind: SimpleRuleKind; value?: string | number | null }
+export interface DateRule {
+  kind: DateRuleKind
+  value?: string | number | null
+  parts?: DateRulePart[]                    // chỉ có nghĩa khi kind = 'SPLIT'
+  set_by?: string | null; set_at?: string | null
+}
+export const MAX_RULE_PARTS = 10
+
+const isSimpleKind = (k: unknown): k is SimpleRuleKind => k === 'FEFO' || k === 'MIN_PCT' || k === 'EXACT'
 
 /** Đọc quy tắc của một dòng đơn. `date_required` cũ > 0 = đã có người quyết % ⇒ coi như MIN_PCT. */
 export function dateRuleOf(item: { date_rule?: unknown; date_required?: number | null }): DateRule | null {
   const r = item.date_rule as DateRule | null | undefined
-  if (r && (r.kind === 'FEFO' || r.kind === 'MIN_PCT' || r.kind === 'EXACT')) return r
+  if (r && isSimpleKind(r.kind)) return r
+  if (r && r.kind === 'SPLIT' && Array.isArray(r.parts) && r.parts.length) return r
   const pct = Number(item.date_required ?? 0)
   return pct > 0 ? { kind: 'MIN_PCT', value: pct } : null
 }
 
+const describeSimple = (k: SimpleRuleKind, v: unknown): string =>
+  k === 'FEFO' ? 'FEFO (hạn ngắn nhất trước)' : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %` : `đúng ${String(v ?? '')}`
+
 export function describeDateRule(r: DateRule | null): string {
   if (!r) return 'chưa chốt'
-  if (r.kind === 'FEFO') return 'FEFO (hạn ngắn nhất trước)'
-  if (r.kind === 'MIN_PCT') return `≥ ${Number(r.value ?? 0)} %`
-  return `đúng ${String(r.value ?? '')}`
+  if (r.kind === 'SPLIT')
+    return (r.parts ?? []).map(p => `${Number(p.qty_base)} × ${describeSimple(p.kind, p.value)}`).join(' · ')
+  return describeSimple(r.kind as SimpleRuleKind, r.value)
+}
+
+/** Quy tắc → danh sách phần (SL, quy tắc con). Dòng thường = một phần ăn trọn nhu cầu. */
+export function rulePartsOf(rule: DateRule, need: number): Array<{ qty: number; rule: DateRule }> {
+  if (rule.kind !== 'SPLIT') return [{ qty: need, rule }]
+  const out: Array<{ qty: number; rule: DateRule }> = []
+  let budget = need
+  for (const p of rule.parts ?? []) {
+    if (budget <= 0) break
+    const q = Math.min(budget, Math.max(0, Number(p.qty_base ?? 0)))
+    if (q <= 0) continue
+    out.push({ qty: q, rule: { kind: p.kind, value: p.value ?? null } })
+    budget -= q
+  }
+  return out
 }
 
 // ─── Kiểu nội bộ ───────────────────────────────────────────────────────────────────────────────
@@ -172,11 +205,15 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
     const need = remain - (open?.qty ?? 0)
     if (need <= 0) continue
     if (!rule) { unset++; continue }                   // CHƯA CHỐT date ⇒ không sinh việc (user chốt)
-    needs.push({
-      item: it, rule, qty: need,
-      loose: Math.max(0, Number(it.loose_picking ?? 0) - scanned),
+    // Dòng chia phần theo SL → mỗi phần là một nhu cầu riêng, chia THEO THỨ TỰ KHAI. Phần hàng LẺ
+    // gắn vào phần CUỐI được chia (thùng lẻ nằm ở đuôi đợt lấy).
+    const looseAll = Math.max(0, Number(it.loose_picking ?? 0) - scanned)
+    const parts = rulePartsOf(rule, need)
+    parts.forEach((p, idx) => needs.push({
+      item: it, rule: p.rule, qty: p.qty,
+      loose: idx === parts.length - 1 ? looseAll : 0,
       lowerFrom: cfg.lowerFromLevel,
-    })
+    }))
   }
 
   let cancelled = 0
@@ -256,11 +293,18 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   type NewTask = Record<string, unknown> & { from_location_id: string | null }
   const built: NewTask[] = []
 
+  // Pallet ĐÃ CHIA TRONG CHÍNH LƯỢT LẬP NÀY — `availableOf` đọc từ tồn nên không biết việc vừa dựng
+  // trong bộ nhớ. Thiếu sổ này thì hai nhu cầu cùng mã (hai NPP trên một chuyến, hoặc hai PHẦN của
+  // dòng chia theo SL) sẽ cùng trỏ vào một pallet ⇒ đụng unique (gdo, entry) WHERE PENDING, cả mẻ
+  // insert hỏng. Trừ dần ở đây là chỗ DUY NHẤT biết được.
+  const usedInPlan = new Map<string, number>()
+  const freeOf = (c: Cand) => availableOf(c) - (usedInPlan.get(c.id) ?? 0)
+
   for (const n of needs) {
     const it = n.item
     const mat = it.material ?? null
     const principle: RotationPrinciple = resolveRotation(gdo.warehouse, typeRows, mat?.category ?? null).principle
-    let pool = (byMat.get(it.material_id ?? '') ?? []).filter(c => matchesRule(c, mat, n.rule))
+    let pool = (byMat.get(it.material_id ?? '') ?? []).filter(c => matchesRule(c, mat, n.rule) && freeOf(c) > 0)
     if (!pool.length) continue
 
     // Thứ tự: LUẬT LUÂN CHUYỂN trước (không bao giờ vì gần cửa mà lấy sai thứ tự), rồi gần cửa,
@@ -278,7 +322,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       if (da !== db) return da - db
       const la = locById.get(a.location_id ?? '')?.level_no ?? 0, lb = locById.get(b.location_id ?? '')?.level_no ?? 0
       if (la !== lb) return la - lb
-      const va = availableOf(a), vb = availableOf(b)
+      const va = freeOf(a), vb = freeOf(b)
       if (va !== vb) return va - vb
       return naturalCompare(locById.get(a.location_id ?? '')?.location_code ?? '', locById.get(b.location_id ?? '')?.location_code ?? '')
     })
@@ -286,7 +330,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
     // Phần NHẶT LẺ đã có sẵn ở vị trí nhặt lẻ thì không phải hạ thêm (user chốt 0.9)
     const looseOnHand = n.loose > 0
       ? pool.filter(c => locById.get(c.location_id ?? '')?.is_pick_face === true)
-          .reduce((s, c) => s + availableOf(c), 0)
+          .reduce((s, c) => s + freeOf(c), 0)
       : 0
     let looseLeft = Math.max(0, n.loose - looseOnHand)
 
@@ -295,8 +339,8 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       if (left <= 0) break
       const loc = c.location_id ? locById.get(c.location_id) : null
       // Pallet đang nằm sẵn ở vị trí nhặt lẻ: thủ kho lấy tại chỗ, không cần xe nâng
-      if (loc?.is_pick_face === true && looseOnHand > 0) { left -= Math.min(left, availableOf(c)); continue }
-      const take = Math.min(left, availableOf(c))
+      if (loc?.is_pick_face === true && looseOnHand > 0) { left -= Math.min(left, freeOf(c)); continue }
+      const take = Math.min(left, freeOf(c))
       if (take <= 0) continue
       const isLoose = looseLeft > 0
       const dest = isLoose ? pickFaceFor(pickFaces, mat?.category ?? null, loc, locById, distOf) : null
@@ -316,7 +360,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
         id: randomUUID(), warehouse_id: whId, gdo_id: gdoId, item_id: it.id,
         entry_id: c.id, pallet_code: c.pallet_code,
         material_id: it.material_id ?? null, material_code: it.material_code_raw ?? null,
-        qty_base: take, is_partial: take < availableOf(c),
+        qty_base: take, is_partial: take < freeOf(c),
         kind,
         from_location_id: loc?.id ?? null, from_location_code: loc?.location_code ?? null,
         level_no: lvl, needs_lower: needsLower,
@@ -327,6 +371,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
         seq: 0, status: 'PENDING', plan_version: 1,
         created_at: nowT, updated_at: nowT,
       })
+      usedInPlan.set(c.id, (usedInPlan.get(c.id) ?? 0) + take)
       left -= take
       if (isLoose) looseLeft -= Math.min(looseLeft, take)
     }
@@ -395,6 +440,7 @@ function matchesRule(c: Cand, mat: MaterialShelfInfo | null, rule: DateRule): bo
 // cảnh báo NGAY LÚC CHỌN và không cho chọn") ────────────────────────────────────────────────────
 // Không chép lại luật khớp date: gọi chính `matchesRule` mà lúc sinh việc dùng — nếu không, màn
 // chốt sẽ nói "được" còn lúc chia hàng lại không ra pallet nào, đúng khuôn lỗi "4 bản chép tay".
+export interface DateRuleStockPart { ok: boolean; qty_base: number; matched_base: number; matched_pallets: number }
 export interface DateRuleStock {
   item_id: string
   ok: boolean                 // false = quy tắc có ràng buộc date mà KHÔNG pallet nào đạt
@@ -403,6 +449,7 @@ export interface DateRuleStock {
   total_base: number          // tồn dùng được của mã trong kho (không xét quy tắc)
   best_pct: number | null     // %Date CAO NHẤT còn trong kho — để người chốt biết gõ số nào mới được
   need_base: number           // còn phải lấy = đặt − đã quét
+  parts?: DateRuleStockPart[] // chỉ với quy tắc chia phần — để màn chốt chỉ ĐÚNG phần nào hỏng
 }
 
 export const MAX_DATE_CHECK = 500
@@ -450,18 +497,40 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
     const rule = ruleOf.get(it.id)!
     const wh = it.delivery?.gdo?.warehouse_id ?? null
     const pool = (wh && it.material_id) ? (poolOf.get(`${wh}::${it.material_id}`) ?? []) : []
-    const matched = pool.filter(c => matchesRule(c, it.material, rule))
     const pcts = pool.map(c => computePctDate(c, it.material)).filter((x): x is number => x != null)
+    const need = Math.max(0, Number(it.cartons_ordered ?? 0) - Number(it.cartons_scanned ?? 0))
+    const total = pool.reduce((s, c) => s + availableOf(c), 0)
+
+    // Đo TỪNG PHẦN, trừ dần pallet đã dùng cho phần trước — đúng cách bộ sinh việc sẽ chia, nếu không
+    // thì phần 2 được báo "đủ hàng" bằng chính pallet mà phần 1 đã lấy.
+    const used = new Map<string, number>()
+    const free = (c: Cand) => availableOf(c) - (used.get(c.id) ?? 0)
+    const parts = rulePartsOf(rule, need).map(p => {
+      const cand = pool.filter(c => matchesRule(c, it.material, p.rule) && free(c) > 0)
+      let left = p.qty, got = 0, pallets = 0
+      for (const c of cand) {
+        if (left <= 0) break
+        const take = Math.min(left, free(c))
+        if (take <= 0) continue
+        used.set(c.id, (used.get(c.id) ?? 0) + take)
+        got += take; left -= take; pallets++
+      }
+      return {
+        // FEFO không ĐÒI mốc date nào nên không có gì để mâu thuẫn với tồn — hết hàng thì màn chốt
+        // báo vàng, vẫn lưu được (hàng có thể về trong ca). Chỉ MIN_PCT/EXACT mới chặn.
+        ok: p.rule.kind === 'FEFO' ? true : cand.length > 0,
+        qty_base: p.qty, matched_base: got, matched_pallets: pallets,
+      }
+    })
     return {
       item_id: it.id,
-      // FEFO không ĐÒI mốc date nào nên không có gì để mâu thuẫn với tồn — hết hàng thì màn chốt
-      // báo vàng, vẫn lưu được (hàng có thể về trong ca). Chỉ MIN_PCT/EXACT mới chặn.
-      ok: rule.kind === 'FEFO' ? true : matched.length > 0,
-      matched_base: matched.reduce((s, c) => s + availableOf(c), 0),
-      matched_pallets: matched.length,
-      total_base: pool.reduce((s, c) => s + availableOf(c), 0),
+      ok: parts.every(p => p.ok),
+      matched_base: parts.reduce((s, p) => s + p.matched_base, 0),
+      matched_pallets: parts.reduce((s, p) => s + p.matched_pallets, 0),
+      total_base: total,
       best_pct: pcts.length ? Math.max(...pcts) : null,
-      need_base: Math.max(0, Number(it.cartons_ordered ?? 0) - Number(it.cartons_scanned ?? 0)),
+      need_base: need,
+      parts: rule.kind === 'SPLIT' ? parts : undefined,
     }
   })
 }

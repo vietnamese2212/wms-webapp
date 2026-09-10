@@ -59,6 +59,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setStocktakeCycle({ warehouseId: wid })
     s.setSlotting({ warehouseId: wid })
     s.setWarehouseMap({ warehouseId: wid })
+    s.setDateRules({ warehouseId: wid, page: 1 })
     s.setDirectedWork({ warehouseId: wid, gdoId: '' })   // đổi kho ⇒ chuyến đang chọn ở bảng Sắp quét không còn thuộc kho này
     s.setScanLog({ warehouses: one(wid) })
     s.setOutbound({ warehouseId: wid, page: 1 })

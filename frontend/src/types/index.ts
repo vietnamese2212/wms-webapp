@@ -838,8 +838,16 @@ export interface DirectedBoard {
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null }[]
 }
-export type DateRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'
-export interface DateRule { kind: DateRuleKind; value?: string | number | null; set_by?: string | null; set_at?: string | null }
+// SPLIT = một dòng đơn nhiều mức date theo SỐ LƯỢNG ("250 thùng date 60, 30 thùng date 90")
+export type SimpleRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'
+export type DateRuleKind = SimpleRuleKind | 'SPLIT'
+export interface DateRulePart { qty_base: number; kind: SimpleRuleKind; value?: string | number | null }
+export interface DateRule {
+  kind: DateRuleKind
+  value?: string | number | null
+  parts?: DateRulePart[]
+  set_by?: string | null; set_at?: string | null
+}
 
 // 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP
 export interface OutboundEvent {

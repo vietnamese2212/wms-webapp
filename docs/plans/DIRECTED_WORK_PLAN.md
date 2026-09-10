@@ -34,7 +34,9 @@ Nền tảng đã có: memory `directed-work-task-engine`, module `warehouse_map
 | 2 | Nút **3D** cạnh nhóm lớp phủ (ẩn < 1024px); góc nhìn 3D cho chế độ TV Giám sát vận hành (chỉ xem, tự xoay chậm). | Playwright desktop; 390 không hiện nút |
 | 3 | Guide (`WarehouseMapGuide`) thêm mục 3D; gói 54 thêm mục shape payload không đổi. | 54 xanh |
 
-## Đợt 1c — Kế hoạch lấy hàng + 3 bảng theo vai (≈ 3–4 ngày, lập plan chi tiết riêng trước khi code)
+## Đợt 1c — Kế hoạch lấy hàng + 3 bảng theo vai (≈ 3–4 ngày)
+
+> **Plan chi tiết đã lập 10/09 → `docs/plans/DIRECTED_WORK_1C_PLAN.md`** (mục 0 = 3 điểm ĐỔI so bảng dưới cần user gật: giữ chỗ MỀM qua bảng việc thay `cartons_reserved` · bỏ `level_seconds` · bỏ assignee per-việc; + Loại kho phục vụ cho cửa/đầu dãy theo câu hỏi user 10/09). Bảng dưới là phác thảo 09/09, giữ để đối chiếu; **code theo file chi tiết**.
 
 | # | Bước | Kiểm tra |
 |---|---|---|

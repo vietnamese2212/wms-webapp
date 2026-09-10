@@ -498,6 +498,29 @@ try {
     check('[15r] Khoảng ngày quá rộng → 400 (kiểm ở BE TRƯỚC khi gọi DB)', bad.s === 400, `http=${bad.s}`)
   }
 
+  // ═══ [15u] BẤM "✓ XONG" HAI LẦN → KHÔNG GHI ĐÈ MỐC GIỜ, KHÔNG ĐẺ THÊM DÒNG SỔ ════════════════
+  // Đo thật 10/09 (diễn tập đồng thời): 8 lượt bấm cùng lúc trên 5 việc = 40 dòng LOWERED cho 5 lần
+  // hạ. Giai đoạn là MỐC GIỜ chứ không phải status nên việc đã hạ vẫn PENDING ⇒ lần bấm sau vẫn
+  // khớp bộ lọc. Sổ này là nguồn "giờ công theo việc" của KPI ⇒ nhân số là hỏng số.
+  {
+    const tkAll = await tasksOf(t2.gdo)
+    const lowerable = tkAll.filter(t => t.status === 'PENDING' && t.needs_lower && !t.lowered_at).map(t => t.id)
+    if (lowerable.length) {
+      const one = [lowerable[0]]
+      const r1 = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: one, stage: 'LOWER' })
+      const at1 = (await restAll('wms_tasks', `select=lowered_at&id=eq.${one[0]}`))[0]?.lowered_at
+      const r2 = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: one, stage: 'LOWER' })
+      const at2 = (await restAll('wms_tasks', `select=lowered_at&id=eq.${one[0]}`))[0]?.lowered_at
+      const evs = await restAll('wms_task_events', `select=id&task_id=eq.${one[0]}&event=eq.LOWERED`)
+      check('[15u] Bấm ✓ Xong lần hai: 200 nhưng changed=0, KHÔNG ghi đè mốc giờ đã hạ',
+        r1.s === 200 && r2.s === 200 && Number(r2.j?.data?.changed ?? -1) === 0 && at1 === at2,
+        `lần1=${r1.s}/${r1.j?.data?.changed} lần2=${r2.s}/${r2.j?.data?.changed} mốc: ${String(at1).slice(11, 19)} → ${String(at2).slice(11, 19)}`)
+      check('[15u2] Sổ sự kiện chỉ có ĐÚNG MỘT dòng LOWERED cho một lần hạ',
+        evs.length === 1, `${evs.length} dòng`)
+      await api('/wms/directed/tasks/confirm', 'POST', { task_ids: one, stage: 'LOWER', undo: true })
+    }
+  }
+
   // ═══ [15t] HÀNG LẺ ĐÃ NẰM SẴN Ở VỊ TRÍ NHẶT LẺ → KHÔNG ĐẺ VIỆC XE NÂNG ═══════════════════════
   // Bug đo thật 10/09 (Ba Vì, mã 610000022): 4.100 đơn vị đã nằm ở 3 vị trí nhặt lẻ, dòng đơn 500
   // và 100 % là nhặt lẻ — vậy mà kế hoạch vẫn sai xe nâng đi lấy 420 từ ô KỆ, lại còn đưa RA CỬA

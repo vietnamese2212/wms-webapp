@@ -727,11 +727,21 @@ export async function confirmTasks(
     ? (stage === 'LOWER' ? { lowered_at: null, lowered_by: null } : { moved_at: null, moved_by: null })
     : (stage === 'LOWER' ? { lowered_at: at, lowered_by: actor } : { moved_at: at, moved_by: actor })
 
+  // CHỈ làm việc trên dòng THẬT SỰ ĐỔI TRẠNG THÁI. Việc đã hạ vẫn giữ status PENDING (giai đoạn là
+  // MỐC GIỜ, không phải status) nên lần bấm thứ hai vẫn khớp bộ lọc cũ ⇒ ghi đè mốc giờ + đẻ thêm
+  // một loạt dòng sổ. Đo thật 10/09: 8 lượt bấm cùng lúc trên 5 việc = 40 dòng LOWERED cho 5 lần hạ
+  // — sổ này là nguồn "giờ công theo việc" của KPI sau, nhân 8 lần là hỏng số. Bấm nhầm hai lần
+  // KHÔNG phải lỗi ⇒ trả 200 với changed = 0, không ném 409 vào mặt người đang đeo găng bấm PDA.
+  const todo = undo
+    ? open.filter(r => (stage === 'LOWER' ? r.lowered_at : r.moved_at) != null)
+    : open.filter(r => (stage === 'LOWER' ? r.lowered_at : r.moved_at) == null)
+  if (!todo.length) return { ok: true, changed: 0, moved_pallets: 0 }
+
   // Hàng về vị trí nhặt lẻ: xác nhận = pallet ĐÃ NẰM ở đó ⇒ ghi tồn theo. Đích đầy thì KHÔNG đánh dấu
   // (không tạo ngõ cụt: việc vẫn treo, người bấm được báo chọn chỗ khác — cùng luật Fill).
   let movedPallets = 0
   if (!undo) {
-    for (const r of open.filter(x => x.kind === 'LOOSE_FEED' && x.entry_id && x.to_location_id)) {
+    for (const r of todo.filter(x => x.kind === 'LOOSE_FEED' && x.entry_id && x.to_location_id)) {
       const { data: mv } = await supabase.rpc('move_pallets_to_location', {
         p_ids: [r.entry_id], p_location_id: r.to_location_id,
         p_updated_by: actor, p_update_date: at.slice(0, 10), p_now: at,
@@ -744,9 +754,14 @@ export async function confirmTasks(
     }
   }
 
-  const { data: upd } = await supabase.from('wms_tasks')
+  // CAS trên chính cột mốc giờ: hai người bấm cùng lúc thì chỉ một lượt khớp `is null`, lượt kia
+  // trả 0 dòng ⇒ không ghi đè mốc, không ghi sổ lần hai.
+  let q = supabase.from('wms_tasks')
     .update({ ...patch, confirm_source: undo ? null : 'MANUAL', updated_at: at })
-    .in('id', open.map(r => r.id)).eq('status', 'PENDING').limit(MAX_CONFIRM).select('id')
+    .in('id', todo.map(r => r.id)).eq('status', 'PENDING').limit(MAX_CONFIRM)
+  const col = stage === 'LOWER' ? 'lowered_at' : 'moved_at'
+  q = undo ? q.not(col, 'is', null) : q.is(col, null)
+  const { data: upd } = await q.select('id')
   const changed = ((upd ?? []) as { id: string }[]).length
   await logEvents(((upd ?? []) as { id: string }[]).map(r => ({
     task_id: r.id, event: undo ? 'REPLANNED' : (stage === 'LOWER' ? 'LOWERED' : 'MOVED'), actor,

@@ -223,7 +223,11 @@ export default function DirectedWork() {
 
                     {tab === 'LOWER' ? (
                       <>
-                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono">{r.from_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                          <div className="font-mono">{r.from_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</div>
+                          {/* Ai hạ, lúc mấy giờ — người sau nhìn vào phải biết việc đã xong do ai (user chốt) */}
+                          {r.stage_done && <div className="text-[9px] text-green-600 no-underline">{st.text}</div>}
+                        </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.level_no ?? '—'}</TableCell>
                       </>
                     ) : (

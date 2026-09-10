@@ -270,8 +270,17 @@ try {
   const lowerRows = b.j?.data?.rows ?? []
   check('[10a] Bảng "Cần hạ" chỉ có việc cần hạ, gom theo VỊ TRÍ',
     b.s === 200 && lowerRows.length > 0 && lowerRows.every(x => x.needs_lower), `http=${b.s} ${lowerRows.length} dòng`)
+  // Cờ can_confirm quyết định NÚT "✓ Xong" có hiện hay không. Bản đầu dùng chung một điều kiện cho
+  // cả 3 bảng nên "chờ xe hạ" khoá luôn tay của CHÍNH XE HẠ: bảng đầy việc mà không ai bấm xong được
+  // — không lỗi nào nổ, chỉ nút biến mất. Playwright bắt được, gói này thì không ⇒ thêm phép kiểm.
+  check('[10a2] Bảng "Cần hạ": việc CHƯA hạ phải BẤM ĐƯỢC (đó chính là việc của xe hạ)',
+    lowerRows.length > 0 && lowerRows.filter(x => !x.stage_done).every(x => x.can_confirm === true),
+    lowerRows.map(x => `${x.current_code}:${x.can_confirm}`).slice(0, 4).join(' '))
   b = await board('MOVE')
   const moveRows = b.j?.data?.rows ?? []
+  check('[10b2] Bảng "Cần đưa ra": việc CHƯA hạ thì KHÔNG bấm được (phải chờ xe hạ)',
+    moveRows.filter(x => x.waiting_lower).every(x => x.can_confirm === false),
+    moveRows.filter(x => x.waiting_lower).map(x => `${x.current_code}:${x.can_confirm}`).slice(0, 4).join(' ') || 'không có dòng chờ hạ')
   check('[10b] Bảng "Cần đưa ra" hiện VỊ TRÍ HIỆN TẠI của pallet kể cả đang trên kệ',
     b.s === 200 && moveRows.length > 0 && moveRows.every(x => !!x.current_code), moveRows.map(x => x.current_code).join(' '))
   check('[10c] Dòng chưa hạ được đánh dấu "chờ xe hạ" (mờ, chưa bấm được)',

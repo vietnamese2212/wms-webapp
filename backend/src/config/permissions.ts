@@ -1,7 +1,7 @@
 export const ALL_PERMISSIONS: Record<string, string[]> = {
   inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_ncc', 'update_prod_date', 'export', 'import'],
   inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete', 'putaway_override'],
-  outbound:     ['view', 'prepare', 'create', 'quick_export', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel', 'reconcile', 'weigh_waive', 'gate_waive', 'rotation_override'],
+  outbound:     ['view', 'prepare', 'create', 'quick_export', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel', 'reconcile', 'weigh_waive', 'gate_waive', 'rotation_override', 'set_date'],
   scanlog:      ['view', 'export'],
   // Truy xuất lô (28/08): ghép tồn + xuất + khách hàng vào một màn — rộng hơn từng trang lẻ nên
   // là quyền riêng, không đi ké inventory.view/scanlog.view. Export tách theo luật 26/07.
@@ -27,6 +27,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   alerts:            ['view', 'ack'],   // Trung tâm cảnh báo (06/08): view = xem + nhận push cảnh báo mới theo kho; ack riêng
   slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)
   warehouse_map:     ['view', 'edit'],   // Sơ đồ kho (08/09): view = xem bản vẽ + tồn theo ô + tìm pallet + đường đi; edit = dựng khung / đặt vị trí / cửa-bãi / kệ-sàn
+  directed_work:     ['view', 'confirm', 'replan'],   // Việc cần làm (10/09): 3 bảng theo vai; confirm = nút "✓ Xong" của xe nâng; replan = sắp lại kế hoạch chuyến
   fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)
   forklift:          ['view', 'check', 'delete_check', 'manage_vehicle', 'manage_item'],   // Xe nâng: ghi-sửa check ≠ xóa bản ghi (tách 05/08) / danh mục xe / danh mục hạng mục
   packing:           ['view', 'record', 'open_run', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): open_run = mở/đóng TRANG SỔ (lệnh) ≠ record = quét pallet; export riêng theo luật 26/07

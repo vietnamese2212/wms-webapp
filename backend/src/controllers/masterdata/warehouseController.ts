@@ -181,6 +181,9 @@ export async function createWarehouse(req: Request, res: Response) {
     if (scan_code_types !== undefined)        row.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
     const putErr = applyPutawayBody(req.body, row)                                                                   // quy tắc CẤT hàng (20260815d)
     if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
+    // Kho MỚI chưa thể có bản vẽ ⇒ chưa bật Hướng dẫn được (tính đường đi cần lưới Sơ đồ kho)
+    if (row.work_mode === 'GUIDED')
+      return fail(res, 422, 'GUIDED_PREREQ', 'Chưa bật "Hướng dẫn" cho kho vừa tạo được: cần vẽ Sơ đồ kho trước (Kho WMS → Sơ đồ kho), rồi bật trong form Kho.')
     let { data, error } = await supabase.from('Warehouse').insert(row).select().single()
     // Cột carton_scan_* chưa apply migration → bỏ các cột đó rồi thử lại (không chặn tạo kho)
     if (error && /carton_scan/i.test(error.message)) {
@@ -248,6 +251,20 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (scan_code_types !== undefined)        patch.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
     const putErr = applyPutawayBody(req.body, patch)                                                                   // quy tắc CẤT hàng (20260815d)
     if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
+    // ĐIỀU KIỆN bật "Hướng dẫn" (Directed Work 1c): kế hoạch lấy hàng ghim TEM PALLET và tính đường
+    // đi trên lưới ⇒ kho phải quản theo tem QR và đã vẽ Sơ đồ kho. Bật mà thiếu nền thì mỗi lần Bắt
+    // đầu chuyến chỉ sinh ra cảnh báo — thà nói thẳng ở đây, đúng chỗ người bật cờ đang đứng.
+    if (patch.work_mode === 'GUIDED') {
+      const [{ data: whNow }, { data: mapNow }] = await Promise.all([
+        supabase.from('Warehouse').select('inventory_mode').eq('id', req.params.id).maybeSingle(),
+        supabase.from('warehouse_maps').select('warehouse_id').eq('warehouse_id', req.params.id).maybeSingle(),
+      ])
+      const modeNow = (inventory_mode as string | undefined) ?? (whNow as { inventory_mode?: string | null } | null)?.inventory_mode
+      if (modeNow !== 'QR')
+        return fail(res, 422, 'GUIDED_PREREQ', 'Chỉ bật "Hướng dẫn" cho kho quản theo TEM QR — kho tính theo số lượng chưa biết pallet nằm ô nào.')
+      if (!mapNow)
+        return fail(res, 422, 'GUIDED_PREREQ', 'Kho này chưa có Sơ đồ kho — vẽ khung + đặt vị trí ở Kho WMS → Sơ đồ kho rồi mới bật "Hướng dẫn".')
+    }
     if (carton_scan_override !== undefined) patch.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (carton_scan_categories !== undefined) patch.carton_scan_categories = normCartonCats(carton_scan_categories)
     if (carton_scan_require_full !== undefined) patch.carton_scan_require_full = Boolean(carton_scan_require_full)

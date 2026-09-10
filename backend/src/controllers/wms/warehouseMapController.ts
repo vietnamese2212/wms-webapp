@@ -25,7 +25,7 @@ const KIND_GROUP: Record<GridKind, string> = { STORAGE: '', DOCK_OUT: 'CUAXUAT',
 const KIND_GROUP_NAME: Record<GridKind, string> = { STORAGE: '', DOCK_OUT: 'Cửa / bãi xuất', DOCK_IN: 'Cửa / bãi nhập', DROP: 'Điểm đầu dãy' }
 
 const MAP_LOC_COLS = 'id, location_code, sub_code, sub_name, row, shelf, kind, is_rack, level_no, grid_x, grid_y, grid_w, grid_h, ' +
-  'max_pallets, dock_capacity, categories, is_pick_face, slot_no_in, slot_no_out, is_active'
+  'max_pallets, dock_capacity, serve_categories, categories, is_pick_face, slot_no_in, slot_no_out, is_active'
 
 type WhRow = { id: string; code: string; name: string; nmsx_code: string | null }
 
@@ -278,13 +278,29 @@ export async function renameMapObject(req: Request, res: Response) {
       if (mp === null || Number.isNaN(mp) || mp < 0 || mp > 1000) return fail(res, 400, 'VALIDATION_ERROR', 'Sức chứa pallet chờ phải là số nguyên 0–1000 (0 = không giới hạn)')
       patch.max_pallets = mp
     }
-    if (Object.keys(patch).length === 2) return fail(res, 400, 'VALIDATION_ERROR', 'Không có gì để sửa (name / dock_capacity / max_pallets)')
+    // LOẠI KHO PHỤC VỤ (10/09): cửa/điểm đầu dãy này nhận hàng loại nào. Rỗng = MỌI loại (mặc định).
+    // Kho thật đang phân cửa bằng TÊN ("Cửa FG01", "Cửa sca") — khai ở đây thì app mới gác được.
+    if (b.serve_categories !== undefined) {
+      const v = b.serve_categories
+      if (v === null || (Array.isArray(v) && v.length === 0)) patch.serve_categories = null
+      else {
+        if (!Array.isArray(v) || v.length > 20) return fail(res, 400, 'VALIDATION_ERROR', 'Danh sách Loại kho không hợp lệ')
+        const cats = [...new Set(v.map(x => String(x ?? '').trim()).filter(Boolean))]
+        if (cats.some(c => c.length > 40 || searchLooksLikeInjection(c))) return fail(res, 400, 'BAD_ID', 'Mã Loại kho không hợp lệ')
+        const { data: known } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+        const valid = new Set(((known ?? []) as { value: string }[]).map(k => k.value))
+        const bad = cats.find(c => !valid.has(c))
+        if (bad) return fail(res, 422, 'VALIDATION_ERROR', `Loại kho "${bad}" không có trong danh mục`)
+        patch.serve_categories = cats
+      }
+    }
+    if (Object.keys(patch).length === 2) return fail(res, 400, 'VALIDATION_ERROR', 'Không có gì để sửa (name / dock_capacity / max_pallets / serve_categories)')
     const { data, error } = await supabase.from('Location')
       .update(patch)
-      .eq('id', id).eq('warehouse_id', wh.id).neq('kind', 'STORAGE').select('id, row, kind, dock_capacity, max_pallets').maybeSingle()
+      .eq('id', id).eq('warehouse_id', wh.id).neq('kind', 'STORAGE').select('id, row, kind, dock_capacity, max_pallets, serve_categories').maybeSingle()
     if (error) return fail(res, error)
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy cửa/bãi/điểm hạ này trong kho')
-    return ok(res, { id: data.id, name: data.row, kind: data.kind, dock_capacity: data.dock_capacity, max_pallets: data.max_pallets })
+    return ok(res, { id: data.id, name: data.row, kind: data.kind, dock_capacity: data.dock_capacity, max_pallets: data.max_pallets, serve_categories: data.serve_categories })
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -59,6 +59,7 @@ export const MODULES = {
       reconcile:  'Đối chiếu SAP — xử lý hàng chờ "Cần xử lý" [Dữ liệu bên ngoài]',
       weigh_waive: 'Duyệt bỏ qua CÂN (rule 2) — xe không cân được (hỏng cân…), duyệt trên chuyến',
       gate_waive:  'Duyệt bỏ qua ĐĂNG KÝ CỔNG (rule 1) — xe không đăng ký (giao lẻ/xe máy/NV nhận…), duyệt trên chuyến; duyệt cổng ⇒ biển số tùy chọn',
+      set_date:    'Chốt %Date / NSX lấy hàng cho dòng đơn (thủ kho, chốt hàng loạt trước khi xuất — dòng chưa chốt không lên Việc cần làm)',
       rotation_override: 'Duyệt LẤY KHÁC THỨ TỰ luân chuyển — chỉ cần khi kho bật "bắt buộc" trong Cài đặt WMS → Kho; phải chọn lý do, có ghi vết',
     },
   },
@@ -290,6 +291,14 @@ export const MODULES = {
     actions: {
       view: 'Xem bản vẽ kho: tồn theo ô, tìm pallet/mã, đường đi từ cửa',
       edit: 'Dựng khung lưới, đặt vị trí lên bản vẽ, cửa/bãi/điểm đầu dãy, đánh Kệ/Sàn',
+    },
+  },
+  directed_work: {
+    page: 'Việc cần làm',
+    actions: {
+      view:    'Xem 3 bảng việc: Cần hạ (xe nâng hạ) · Cần đưa ra (xe nâng chuyển) · Sắp quét (thủ kho)',
+      confirm: 'Bấm "✓ Xong" xác nhận đã hạ / đã đưa ra',
+      replan:  'Sắp lại kế hoạch lấy hàng của chuyến',
     },
   },
   fill: {

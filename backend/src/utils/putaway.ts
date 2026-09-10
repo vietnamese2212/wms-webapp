@@ -163,6 +163,18 @@ export function applyPutawayBody(
       target.loose_max_cartons = n
     }
   }
+  // Cách làm việc (10/09, Directed Work 1c) — cùng validator cho cả 2 tầng như các cờ trên
+  if (body.work_mode !== undefined) {
+    if (body.work_mode !== 'MANUAL' && body.work_mode !== 'GUIDED')
+      return 'Cách làm việc không hợp lệ (Thủ công / Hướng dẫn)'
+    target.work_mode = body.work_mode
+  }
+  if (body.lower_from_level !== undefined) {
+    const n = Number(body.lower_from_level)
+    if (!Number.isInteger(n) || n < 1 || n > 50)
+      return 'Tầng cần xe nâng hạ phải là số nguyên 1–50'
+    target.lower_from_level = n
+  }
   return null
 }
 
@@ -575,6 +587,7 @@ export const WH_TYPE_CFG_COLS = [
   'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full', 'putaway_single_ncc',
   'putaway_same_mat_date_pref', 'putaway_fallback',
   'loose_mode', 'loose_max_cartons',   // nhặt lẻ tự sinh 2 tầng (24/08) — validate ở applyPutawayBody
+  'work_mode', 'lower_from_level',     // cách làm việc 2 tầng (10/09, Directed Work 1c) — xem resolveWorkMode
 ] as const
 export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
 
@@ -636,6 +649,33 @@ export function resolveRotation(
     principle: asRotationPrinciple(m.rotation_principle),
     required:  m.rotation_required === true,
     source:    overridden ? 'TYPE' : 'WAREHOUSE',
+  }
+}
+
+// ─── CÁCH LÀM VIỆC 2 tầng (Directed Work 1c, 10/09) ────────────────────────────────────────────
+// MANUAL = người tự chọn hàng (mặc định, đúng cách kho chạy hôm nay) · GUIDED = hệ thống sinh việc
+// có thứ tự khi Bắt đầu chuyến. Đi CHUNG `mergedConfig` với rotation/putaway để chỉ có MỘT luật ghép
+// tầng — viết resolver riêng ở controller là đẻ bản chép tay thứ hai (bài học 4-bản-luật 14/08).
+export interface WorkModeConfig {
+  mode:            'MANUAL' | 'GUIDED'
+  lowerFromLevel:  number   // từ tầng này trở lên phải qua XE NÂNG HẠ
+  source:          'WAREHOUSE' | 'TYPE'
+}
+export const LOWER_FROM_LEVEL_DEFAULT = 2
+
+export function resolveWorkMode(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): WorkModeConfig {
+  const row = typeRowOf(typeRows, category)
+  const m = mergedConfig(wh, row)
+  const overridden = !!row && (row.work_mode != null || row.lower_from_level != null)
+  const lvl = Number(m.lower_from_level)
+  return {
+    mode:           m.work_mode === 'GUIDED' ? 'GUIDED' : 'MANUAL',
+    lowerFromLevel: Number.isFinite(lvl) && lvl >= 1 && lvl <= 50 ? Math.trunc(lvl) : LOWER_FROM_LEVEL_DEFAULT,
+    source:         overridden ? 'TYPE' : 'WAREHOUSE',
   }
 }
 

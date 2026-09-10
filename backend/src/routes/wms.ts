@@ -341,6 +341,7 @@ router.get('/outbound/reconcile-tasks/count',                 requirePerm('outbo
 router.get('/outbound/reconcile-tasks',                       requirePerm('outbound', 'reconcile'), reconcile.listReconcileTasks)
 router.post('/outbound/reconcile-tasks/:id/resolve',          requirePerm('outbound', 'reconcile'), reconcile.resolveReconcileTask)
 // CHỐT %Date hàng loạt (10/09) — đứng TRƯỚC mọi route `/outbound/:id` để "items" không bị nuốt làm id
+router.post('/outbound/items/date-rule/check',                requirePerm('outbound', 'set_date'), outbound.checkItemsDateRule)   // hỏi TRƯỚC khi chốt: mức %Date này còn tồn nào đạt không
 router.patch('/outbound/items/date-rule',                     requirePerm('outbound', 'set_date'), outbound.setItemsDateRule)
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
 // STT chuẩn bị theo booking khung giờ — read-only, dùng ở list Xuất kho (view) + board Chuẩn bị hàng (prepare) + list Nhặt lẻ (nhặt lẻ soạn TRƯỚC theo thứ tự xe tới)

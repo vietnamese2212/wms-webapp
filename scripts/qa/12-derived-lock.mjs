@@ -155,6 +155,26 @@ check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201
     `edit=${r.s} date=${g?.delivery_date} add2=${r2.s} total=${total}`)
 }
 
+// ── 4b. CHỐT %DATE PHẢI SỐNG SÓT khi dữ liệu ngoài dội xuống (user hỏi 10/09; đo thật cùng ngày:
+// thủ kho chốt ≥60 % rồi điều vận sửa MỘT ô trên Kế hoạch xuất ⇒ derive xóa+tạo lại dòng hàng ⇒
+// chốt biến mất KHÔNG một lời báo, chuyến vào ca không sinh việc nào). Cùng lớp với shipto gán tay.
+{
+  const g0 = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('01')}`))[0]
+  const dos0 = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g0.id}`)
+  const its0 = await restAll('OutboundItem', `select=id&do_id=in.(${dos0.map(d => d.id).join(',')})`)
+  const rSet = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: its0.map(i => i.id), rule: { kind: 'FEFO' } })
+  const line = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('01')}`))[0]
+  const rEdit = await api(`/external/khvc/${line.id}`, 'PUT', { note: 'điều vận sửa ghi chú' })
+  // Chuyến có thể đã bị xóa-tạo-lại → tra LẠI theo Số xe, không giữ id cũ
+  const g1 = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('01')}`))[0]
+  const dos1 = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g1.id}`)
+  const its1 = await restAll('OutboundItem', `select=id,date_rule&do_id=in.(${dos1.map(d => d.id).join(',')})`)
+  const kept = its1.filter(i => i.date_rule?.kind === 'FEFO').length
+  check('chốt %Date SỐNG SÓT qua lần sửa Kế hoạch xuất (derive xóa-tạo-lại dòng hàng)',
+    rSet.s === 200 && rEdit.s === 200 && its1.length > 0 && kept === its1.length,
+    `set=${rSet.s} edit=${rEdit.s} giữ=${kept}/${its1.length}`)
+}
+
 // ── 5. DO chưa có trong VL06O → KHÔNG chặn nữa (user chốt 03/08: điều vận nạp kế hoạch TRƯỚC khi
 // có VL06O). Dòng vẫn nhận, chuyến sinh ra ở dạng CHỜ dữ liệu — chi tiết ở gói 13.
 r = await api('/external/khvc', 'POST', { group_code: GC('02'), do_no: 'QADRVDO_MISSING', npp: 'X', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })

@@ -4142,6 +4142,24 @@ export function useReplanGdo() {
 }
 
 /** Chốt %Date HÀNG LOẠT — nhiều dòng, nhiều chuyến, lưu một lần. `rule: null` = xoá chốt. */
+/** Hỏi TRƯỚC khi chốt: mức %Date đang gõ còn tồn nào đạt không (một lời gọi cho cả bảng). */
+export interface DateRuleStock {
+  item_id: string; ok: boolean
+  matched_base: number; matched_pallets: number; total_base: number
+  best_pct: number | null; need_base: number
+}
+export function useCheckDateRule(rules: Array<{ item_id: string; rule: DateRule }>, enabled: boolean) {
+  return useQuery({
+    queryKey: ['date-rule-check', JSON.stringify(rules)],
+    queryFn: async () => {
+      const { data } = await apiClient.post('/wms/outbound/items/date-rule/check', { rules })
+      return data.data as DateRuleStock[]
+    },
+    enabled: enabled && rules.length > 0,
+    staleTime: 15_000,
+  })
+}
+
 export function useSetItemsDateRule() {
   const qc = useQueryClient()
   return useMutation({

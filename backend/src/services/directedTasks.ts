@@ -391,6 +391,81 @@ function matchesRule(c: Cand, mat: MaterialShelfInfo | null, rule: DateRule): bo
   return d(c.production_date) === v || d(c.expiry_date) === v || (c.batch ?? '') === v || c.pallet_code === v
 }
 
+// ─── CHỐT %DATE CÓ HÀNG ĐỂ LẤY KHÔNG (user chốt 10/09: "yêu cầu %date mà mã đó không còn thì phải
+// cảnh báo NGAY LÚC CHỌN và không cho chọn") ────────────────────────────────────────────────────
+// Không chép lại luật khớp date: gọi chính `matchesRule` mà lúc sinh việc dùng — nếu không, màn
+// chốt sẽ nói "được" còn lúc chia hàng lại không ra pallet nào, đúng khuôn lỗi "4 bản chép tay".
+export interface DateRuleStock {
+  item_id: string
+  ok: boolean                 // false = quy tắc có ràng buộc date mà KHÔNG pallet nào đạt
+  matched_base: number        // tồn dùng được ĐẠT quy tắc
+  matched_pallets: number
+  total_base: number          // tồn dùng được của mã trong kho (không xét quy tắc)
+  best_pct: number | null     // %Date CAO NHẤT còn trong kho — để người chốt biết gõ số nào mới được
+  need_base: number           // còn phải lấy = đặt − đã quét
+}
+
+export const MAX_DATE_CHECK = 500
+
+export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: DateRule }>): Promise<DateRuleStock[]> {
+  const ruleOf = new Map(reqs.map(r => [r.item_id, r.rule]))
+  const ids = [...ruleOf.keys()].slice(0, MAX_DATE_CHECK)
+  if (!ids.length) return []
+
+  const items = await fetchAllByIdChunks(ids, chunk => supabase.from('OutboundItem')
+    .select('id, material_id, cartons_ordered, cartons_scanned, material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides), delivery:OutboundDelivery!do_id(gdo:GroupDeliveryOrder!gdo_id(warehouse_id))')
+    .in('id', chunk).order('id')) as unknown as Array<{
+      id: string; material_id: string | null; cartons_ordered: number | null; cartons_scanned: number | null
+      material: MaterialShelfInfo | null
+      delivery: { gdo: { warehouse_id: string | null } | null } | null
+    }>
+
+  // Ứng viên pallet: gom theo KHO rồi hỏi một câu cho mọi mã của kho đó (đừng hỏi từng dòng đơn —
+  // một chuyến chục dòng sẽ thành chục round-trip trên cùng cái pool 10 khe của PostgREST).
+  const matsByWh = new Map<string, Set<string>>()
+  for (const it of items) {
+    const wh = it.delivery?.gdo?.warehouse_id ?? null
+    if (!wh || !it.material_id) continue
+    const s = matsByWh.get(wh) ?? new Set<string>()
+    s.add(it.material_id); matsByWh.set(wh, s)
+  }
+  const poolOf = new Map<string, Cand[]>()     // `${wh}::${material_id}` → pallet dùng được
+  for (const [wh, mats] of matsByWh) {
+    const cand = await fetchAllByIdChunks([...mats], chunk => supabase.from('InventoryEntry')
+      .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days')
+      .in('material_id', chunk)
+      .eq('warehouse_id', wh)
+      .in('status', [...PICKABLE_STATUSES])
+      .is('qa_status_id', null)
+      .gt('cartons_remaining', 0)
+      .order('id')) as unknown as Cand[]
+    for (const c of cand) {
+      if (!c.material_id || !isPickEligible(c) || availableOf(c) <= 0) continue
+      const k = `${wh}::${c.material_id}`
+      poolOf.set(k, [...(poolOf.get(k) ?? []), c])
+    }
+  }
+
+  return items.map(it => {
+    const rule = ruleOf.get(it.id)!
+    const wh = it.delivery?.gdo?.warehouse_id ?? null
+    const pool = (wh && it.material_id) ? (poolOf.get(`${wh}::${it.material_id}`) ?? []) : []
+    const matched = pool.filter(c => matchesRule(c, it.material, rule))
+    const pcts = pool.map(c => computePctDate(c, it.material)).filter((x): x is number => x != null)
+    return {
+      item_id: it.id,
+      // FEFO không ĐÒI mốc date nào nên không có gì để mâu thuẫn với tồn — hết hàng thì màn chốt
+      // báo vàng, vẫn lưu được (hàng có thể về trong ca). Chỉ MIN_PCT/EXACT mới chặn.
+      ok: rule.kind === 'FEFO' ? true : matched.length > 0,
+      matched_base: matched.reduce((s, c) => s + availableOf(c), 0),
+      matched_pallets: matched.length,
+      total_base: pool.reduce((s, c) => s + availableOf(c), 0),
+      best_pct: pcts.length ? Math.max(...pcts) : null,
+      need_base: Math.max(0, Number(it.cartons_ordered ?? 0) - Number(it.cartons_scanned ?? 0)),
+    }
+  })
+}
+
 /** Vị trí nhặt lẻ đích: đúng Loại kho phục vụ, còn chỗ, gần pallet nhất. */
 function pickFaceFor(
   faces: LocRow[], category: string | null, from: LocRow | null | undefined,

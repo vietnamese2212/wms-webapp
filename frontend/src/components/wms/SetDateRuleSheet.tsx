@@ -13,7 +13,8 @@ import { CalendarClock, Boxes, AlertTriangle } from 'lucide-react'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useSetItemsDateRule, useInventoryByMaterial } from '@/api/hooks'
+import { useSetItemsDateRule, useInventoryByMaterial, useCheckDateRule, type DateRuleStock } from '@/api/hooks'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import type { DateRule, DateRuleKind } from '@/types'
 
 export interface DateRuleTarget {
@@ -37,6 +38,28 @@ export function dateRuleLabel(r: DateRule | null | undefined): { text: string; c
   return { text: `Chỉ định ${String(r.value ?? '')}`, cls: 'bg-purple-100 text-purple-700' }
 }
 
+/**
+ * Câu cảnh báo của MỘT dòng, dựng từ số máy chủ trả (không tự so date ở đây — luật khớp date nằm
+ * ở `services/directedTasks.ts`). `bad` = chặn Lưu; `warn` = vẫn lưu được nhưng phải biết.
+ */
+function stockWarning(r: DateRule | null, st: DateRuleStock | undefined): { tone: 'bad' | 'warn'; text: string } | null {
+  if (!r || !st) return null
+  const noStock = st.total_base <= 0
+  if (!st.ok) {
+    if (noStock) return { tone: 'bad', text: 'Mã này không còn tồn dùng được trong kho — không chốt được mức nào.' }
+    return {
+      tone: 'bad',
+      text: r.kind === 'MIN_PCT'
+        ? `Không còn tồn nào đạt ≥ ${Number(r.value ?? 0)} %${st.best_pct != null ? ` — cao nhất trong kho là ${Math.round(st.best_pct)} %` : ''}.`
+        : `Không có pallet nào khớp “${String(r.value ?? '')}”.`,
+    }
+  }
+  if (noStock) return { tone: 'warn', text: 'Mã này chưa có tồn trong kho — chốt được nhưng chưa chia được hàng.' }
+  if (st.need_base > 0 && st.matched_base < st.need_base)
+    return { tone: 'warn', text: `Chỉ đủ ${nf(st.matched_base)}/${nf(st.need_base)} (${nf(st.matched_pallets)} pallet) đạt mức này.` }
+  return null
+}
+
 export function SetDateRuleSheet(p: {
   open: boolean
   onClose: () => void
@@ -58,6 +81,23 @@ export function SetDateRuleSheet(p: {
 
   const nDone = useMemo(() => Object.values(rules).filter(Boolean).length, [rules])
   const setOne = (id: string, r: DateRule | null) => setRules(s => ({ ...s, [id]: r }))
+
+  // CÒN HÀNG ĐỂ LẤY KHÔNG — hỏi máy chủ ngay lúc vừa gõ xong (user chốt 10/09: "yêu cầu %date mà
+  // mã đó không còn thì phải cảnh báo NGAY LÚC CHỌN và không cho chọn"). Một lời gọi cho cả bảng,
+  // debounce 400ms để gõ "8" rồi "5" không thành hai lượt hỏi.
+  const askList = useMemo(
+    () => p.targets.map(t => ({ item_id: t.item_id, rule: rules[t.item_id] })).filter((x): x is { item_id: string; rule: DateRule } => !!x.rule),
+    [p.targets, rules],
+  )
+  const asked = useDebouncedValue(askList, 400)
+  const { data: stock, isFetching: checking } = useCheckDateRule(asked, p.open)
+  const stockOf = useMemo(() => new Map((stock ?? []).map(s => [s.item_id, s])), [stock])
+  // Chỉ chặn khi câu trả lời ỨNG với quy tắc đang hiện trên màn (người vừa sửa xong thì chờ lượt hỏi mới)
+  const settled = JSON.stringify(asked) === JSON.stringify(askList)
+  const blocked = useMemo(
+    () => (settled ? askList.filter(a => stockOf.get(a.item_id)?.ok === false).map(a => a.item_id) : []),
+    [settled, askList, stockOf],
+  )
 
   function applyAll() {
     const r: DateRule | null = bulkKind === 'FEFO'
@@ -99,10 +139,14 @@ export function SetDateRuleSheet(p: {
       footer={
         <div className="flex items-center gap-2 w-full">
           <span className="text-[11px] text-slate-500">Đã chốt {nDone}/{p.targets.length} dòng</span>
+          {blocked.length > 0 && (
+            <span className="text-[11px] text-red-600 font-medium">· {blocked.length} dòng không còn hàng đạt mức đã chọn</span>
+          )}
           {errMsg && <span className="text-[11px] text-red-600 flex-1 truncate">{errMsg}</span>}
           <Button variant="outline" size="sm" className="ml-auto h-9 sm:h-8" onClick={p.onClose} disabled={save.isPending}>Huỷ</Button>
-          <Button size="sm" className="h-9 sm:h-8" onClick={submit} disabled={save.isPending || nDone === 0}>
-            {save.isPending ? 'Đang lưu…' : `Lưu ${nDone} dòng`}
+          <Button size="sm" className="h-9 sm:h-8" onClick={submit}
+            disabled={save.isPending || nDone === 0 || blocked.length > 0 || (checking && !settled)}>
+            {save.isPending ? 'Đang lưu…' : checking && !settled ? 'Đang tra tồn…' : `Lưu ${nDone} dòng`}
           </Button>
         </div>
       }
@@ -138,9 +182,11 @@ export function SetDateRuleSheet(p: {
             <tbody>
               {p.targets.map(t => {
                 const r = rules[t.item_id] ?? null
+                const st = settled ? stockOf.get(t.item_id) : undefined
+                const warn = stockWarning(r, st)
                 return (
                   <>
-                    <tr key={t.item_id} className="border-b last:border-0 align-top">
+                    <tr key={t.item_id} className={`border-b last:border-0 align-top ${warn?.tone === 'bad' ? 'bg-red-50/60' : ''}`}>
                       <td className="px-2 py-1.5 text-[11px] whitespace-nowrap">
                         <button className="font-mono font-semibold text-sky-700 hover:underline flex items-center gap-1"
                           title="Xem tồn kho của mã này để quyết định"
@@ -160,6 +206,12 @@ export function SetDateRuleSheet(p: {
                       </td>
                       <td className="px-2 py-1.5">
                         <RuleCell value={r} onChange={v => setOne(t.item_id, v)} />
+                        {warn && (
+                          <div className={`mt-1 text-[10px] flex items-start gap-1 max-w-[260px] ${warn.tone === 'bad' ? 'text-red-600 font-medium' : 'text-amber-600'}`}>
+                            <AlertTriangle className="h-3 w-3 mt-px shrink-0" />
+                            <span className="whitespace-normal break-words">{warn.text}</span>
+                          </div>
+                        )}
                       </td>
                     </tr>
                     {openStock && openStock === t.material_id && (

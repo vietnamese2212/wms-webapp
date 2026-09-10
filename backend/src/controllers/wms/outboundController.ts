@@ -31,7 +31,7 @@ import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, del
 import { guardPutaway } from '../../services/putawayContext'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
-  servesCategory, dateRuleOf, type DateRule,
+  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, MAX_DATE_CHECK, type DateRule,
 } from '../../services/directedTasks'
 
 const now = () => new Date().toISOString()
@@ -3623,6 +3623,36 @@ async function processVehicleGroups(
       }
     }
 
+    // %DATE ĐÃ CHỐT TAY — MANG THEO khi derive ghi đè (cùng lớp với shipto ở trên; user hỏi 10/09
+    // "dữ liệu bên ngoài thay đổi thì có ảnh hưởng gì không"). Đo thật 10/09: thủ kho chốt ≥60 % rồi
+    // điều vận sửa MỘT ô ĐVVT trên Kế hoạch xuất ⇒ derive xóa+tạo lại dòng hàng ⇒ chốt biến mất
+    // KHÔNG một lời báo, chuyến vào ca không sinh việc nào. Khớp theo (Số xe, NPP, mã hàng) — đổi mã
+    // thì không mang theo (đúng: quy tắc đó chốt cho mã cũ).
+    const keptItemRules = new Map<string, { date_rule: unknown; pinned_pallets: unknown }>()
+    {
+      const gcById = new Map<string, string>()
+      for (const [gc, id] of pendingSimpleMap)   gcById.set(id, gc)
+      for (const [gc, id] of pendingPreserveMap) gcById.set(id, gc)
+      const rebuildIds = [...gcById.keys()]
+      if (rebuildIds.length) {
+        const dvs = await fetchAllByIdChunks(rebuildIds, c => supabase.from('OutboundDelivery')
+          .select('id, gdo_id, distributor_name').in('gdo_id', c).order('id')) as { id: string; gdo_id: string; distributor_name: string | null }[]
+        const doById = new Map(dvs.map(d => [d.id, d]))
+        const its = dvs.length
+          ? await fetchAllByIdChunks(dvs.map(d => d.id), c => supabase.from('OutboundItem')
+              .select('do_id, material_code_raw, date_rule, pinned_pallets').in('do_id', c).order('do_id')) as
+              { do_id: string; material_code_raw: string | null; date_rule: unknown; pinned_pallets: unknown }[]
+          : []
+        for (const i of its) {
+          if (i.date_rule == null && i.pinned_pallets == null) continue
+          const d = doById.get(i.do_id); if (!d) continue
+          const gc = gcById.get(d.gdo_id); if (!gc) continue
+          keptItemRules.set(`${gc}::${String(d.distributor_name ?? '').trim()}::${String(i.material_code_raw ?? '').trim()}`,
+            { date_rule: i.date_rule ?? null, pinned_pallets: i.pinned_pallets ?? null })
+        }
+      }
+    }
+
     // Chuyến PENDING/PAUSED đang GIỮ HÀNG NHẶT LẺ → KHÔNG ghi đè/merge (user chốt 05/08): ghi đè
     // là xóa-tạo-lại item nên tự nhả phần giữ TRÊN GIẤY, trong khi hàng VẬT LÝ đã rời pallet nằm ở
     // vị trí chờ — user phải gỡ trả hàng nhặt lẻ trên chuyến trước rồi mới sửa/dội kế hoạch.
@@ -3846,6 +3876,8 @@ async function processVehicleGroups(
               od_refs:        Array.isArray(row['__od_refs']) ? row['__od_refs'] : [],   // liên kết ngược dòng OD (KHVC); file gộp trực tiếp → []
               cartons_scanned: 0,
               status: 'PENDING',
+              // Chốt %Date của thủ kho sống sót qua lần dội dữ liệu ngoài này (xem keptItemRules)
+              ...(keptItemRules.get(`${group_code}::${String(npp ?? '').trim()}::${mat_code}`) ?? {}),
               updated_at: now(),
             })
           }
@@ -5303,6 +5335,45 @@ export async function getPrepareBoard(req: Request, res: Response) {
 // đọc rồi CHỐT thành số. Và FEFO cũng phải BẤM XÁC NHẬN — dòng chưa chốt thì không sinh việc, để
 // không ai "tưởng mặc định rồi đi làm, sau mới update = làm sai".
 //
+/**
+ * POST /outbound/items/date-rule/check { rules: [{ item_id, rule }] } — HỎI TRƯỚC KHI CHỐT.
+ * Màn chốt gọi lúc người ta vừa gõ xong mức %Date: dòng nào không còn tồn nào đạt thì đỏ NGAY và
+ * không cho Lưu (user chốt 10/09). Một lời gọi cho CẢ BẢNG — đừng hỏi từng dòng.
+ */
+export async function checkItemsDateRule(req: Request, res: Response) {
+  try {
+    const raw = (req.body ?? {}) as { rules?: unknown }
+    const list = Array.isArray(raw.rules) ? raw.rules : []
+    if (!list.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa có dòng nào để kiểm')
+    if (list.length > MAX_DATE_CHECK) return fail(res, 400, 'VALIDATION_ERROR', `Tối đa ${MAX_DATE_CHECK} dòng mỗi lần kiểm`)
+
+    const reqs: Array<{ item_id: string; rule: DateRule }> = []
+    for (const r of list as Array<{ item_id?: unknown; rule?: { kind?: unknown; value?: unknown } }>) {
+      const id = String(r?.item_id ?? '')
+      if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Mã dòng hàng không hợp lệ')
+      const kind = String(r?.rule?.kind ?? '')
+      if (kind !== 'FEFO' && kind !== 'MIN_PCT' && kind !== 'EXACT') continue   // dòng chưa chốt → không kiểm
+      const v = r?.rule?.value
+      if (kind === 'EXACT' && (String(v ?? '').length > 120 || searchLooksLikeInjection(String(v ?? ''))))
+        return fail(res, 400, 'BAD_ID', 'Giá trị chỉ định không hợp lệ')
+      reqs.push({ item_id: id, rule: { kind, value: kind === 'MIN_PCT' ? Number(v ?? 0) : String(v ?? '') } })
+    }
+    if (!reqs.length) return ok(res, [])
+
+    // PHẠM VI KHO: không cho dò tồn của kho ngoài phạm vi bằng cách đoán id dòng hàng
+    const myWhs = scopeWhIds(req)
+    if (myWhs) {
+      const rows = await fetchAllByIdChunks(reqs.map(r => r.item_id), chunk => supabase.from('OutboundItem')
+        .select('id, delivery:OutboundDelivery!do_id(gdo:GroupDeliveryOrder!gdo_id(warehouse_id))')
+        .in('id', chunk).order('id')) as unknown as Array<{ id: string; delivery: { gdo: { warehouse_id: string | null } | null } | null }>
+      const outside = rows.filter(r => { const w = r.delivery?.gdo?.warehouse_id ?? null; return w && !myWhs.includes(w) })
+      if (outside.length) return fail(res, `${outside.length} dòng thuộc kho ngoài phạm vi được giao`, 403)
+    }
+
+    return ok(res, await checkDateRuleStock(reqs))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
 // PATCH /outbound/items/date-rule { item_ids: string[], rule: {kind, value} | null }
 // Nhiều dòng, nhiều chuyến trong MỘT lần lưu (bảng chốt tick nhiều dòng rồi Lưu một lần).
 export async function setItemsDateRule(req: Request, res: Response) {
@@ -5349,6 +5420,23 @@ export async function setItemsDateRule(req: Request, res: Response) {
         return w && !myWhs.includes(w)
       })
       if (outside.length) return fail(res, `${outside.length} dòng thuộc kho ngoài phạm vi được giao`, 403)
+    }
+
+    // CHỐT PHẢI CÓ HÀNG ĐỂ LẤY (user chốt 10/09): đòi %Date mà kho không còn pallet nào đạt thì
+    // chốt xong cũng KHÔNG sinh được việc — im lặng nhận rồi để người ta chờ là kiểu hỏng tệ nhất.
+    // Màn chốt đã cảnh báo tại chỗ; gác lại ở đây vì lọc trên UI chỉ là gợi ý (gọi thẳng API vẫn đặt
+    // được nếu không chặn). FEFO không ràng mốc date nào nên không gác.
+    if (rule && rule.kind !== 'FEFO') {
+      const stock = await checkDateRuleStock(itemRows.map(r => ({ item_id: r.id, rule })))
+      const bad = stock.filter(s => !s.ok)
+      if (bad.length) {
+        const best = bad.map(b => b.best_pct).filter((x): x is number => x != null)
+        const hint = rule.kind === 'MIN_PCT' && best.length
+          ? ` %Date cao nhất còn trong kho là ${Math.round(Math.max(...best))} %.`
+          : ''
+        return fail(res, 422, 'DATE_RULE_NO_STOCK',
+          `${bad.length} dòng không còn tồn nào đạt "${describeDateRule(rule)}".${hint} Chọn mức khác hoặc để dòng đó chưa chốt.`)
+      }
     }
 
     const t = now()

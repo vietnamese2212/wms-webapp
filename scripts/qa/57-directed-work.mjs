@@ -399,6 +399,43 @@ try {
   const i4row = (await restAll('OutboundItem', `select=date_rule&id=eq.${i4}`))[0]
   check('[15f] Xoá chốt → dòng về "chưa chốt"', r.s === 200 && !i4row?.date_rule, `rule=${JSON.stringify(i4row?.date_rule)}`)
 
+  // ── [15g–15k] ĐÒI %DATE MÀ KHO KHÔNG CÒN HÀNG ĐẠT (user chốt 10/09: "phải cảnh báo NGAY LÚC
+  // CHỌN và không cho chọn"). Màn chốt hỏi trước qua /check; cửa ghi gác lại vì lọc trên UI chỉ là
+  // gợi ý — gọi thẳng API vẫn đặt được nếu không chặn.
+  {
+    r = await api('/wms/outbound/items/date-rule/check', 'POST', { rules: [{ item_id: i3, rule: { kind: 'MIN_PCT', value: 1 } }] })
+    const okRow = (r.j?.data ?? [])[0]
+    check('[15g] Hỏi trước khi chốt: mức khả thi → ok + có pallet đạt',
+      r.s === 200 && okRow?.ok === true && Number(okRow?.matched_pallets) > 0,
+      `http=${r.s} ok=${okRow?.ok} pallet=${okRow?.matched_pallets} best=${okRow?.best_pct}`)
+
+    const rBad = await api('/wms/outbound/items/date-rule/check', 'POST', { rules: [{ item_id: i3, rule: { kind: 'EXACT', value: '1999-01-01' } }] })
+    const badRow = (rBad.j?.data ?? [])[0]
+    check('[15h] Hỏi trước khi chốt: NSX không có pallet nào → ok=false (đây là cái làm ô đỏ trên màn)',
+      rBad.s === 200 && badRow?.ok === false && Number(badRow?.matched_pallets) === 0,
+      `http=${rBad.s} ok=${badRow?.ok} pallet=${badRow?.matched_pallets}`)
+
+    const before = (await restAll('OutboundItem', `select=date_rule&id=eq.${i3}`))[0]?.date_rule
+    const rSave = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'EXACT', value: '1999-01-01' } })
+    const after = (await restAll('OutboundItem', `select=date_rule&id=eq.${i3}`))[0]?.date_rule
+    check('[15i] Gọi THẲNG API chốt mức không có hàng → 422 DATE_RULE_NO_STOCK',
+      rSave.s === 422 && rSave.j?.error?.code === 'DATE_RULE_NO_STOCK', `http=${rSave.s} code=${rSave.j?.error?.code}`)
+    check('[15j] Lần 422 đó KHÔNG ghi đè chốt đang có (không để dòng rơi về trạng thái lỡ dở)',
+      JSON.stringify(before) === JSON.stringify(after), `trước=${JSON.stringify(before)} sau=${JSON.stringify(after)}`)
+
+    // %Date cao hơn mọi pallet trong kho: lấy đúng mốc từ chính câu trả lời của máy chủ
+    const best = Number(okRow?.best_pct ?? 0)
+    if (best > 0 && best < 100) {
+      const rHigh = await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i3], rule: { kind: 'MIN_PCT', value: Math.min(100, Math.ceil(best) + 1) } })
+      check('[15k] ≥ %Date cao hơn mọi pallet còn trong kho → 422, thông báo nêu mức cao nhất hiện có',
+        rHigh.s === 422 && /cao nhất/.test(rHigh.j?.error?.message ?? ''), `http=${rHigh.s} msg=${(rHigh.j?.error?.message ?? '').slice(0, 90)}`)
+    } else check('[15k] ≥ %Date cao hơn mọi pallet', true, `best_pct=${best} — fixture không dựng được mốc, bỏ qua`)
+
+    const rFefo = await api('/wms/outbound/items/date-rule/check', 'POST', { rules: [{ item_id: i3, rule: { kind: 'FEFO' } }] })
+    check('[15l] FEFO KHÔNG bị chặn (không đòi mốc date nào nên không mâu thuẫn được với tồn)',
+      rFefo.s === 200 && (rFefo.j?.data ?? [])[0]?.ok === true, `http=${rFefo.s} ok=${(rFefo.j?.data ?? [])[0]?.ok}`)
+  }
+
   // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
   const t8 = await mkTrip('T8')
   const i8 = await mkItem(t8.do, 10)

@@ -85,7 +85,9 @@ export default function DateRules() {
     remaining: r.remaining,
     units: unitsOf(r),
     note: r.header_text,
-    current: r.date_rule,
+    // Mức KẾ THỪA từ VL06O (`date_required`): bộ sinh việc ĐÃ chia hàng theo nó, nên mở dialog phải
+    // thấy sẵn mức đó — bấm Lưu là biến nó thành chốt tay tường minh, chứ không phải ô trống.
+    current: r.date_rule ?? (Number(r.date_required) > 0 ? { kind: 'MIN_PCT', value: Number(r.date_required) } : null),
   }))
 
   const filterDefs: FilterDef[] = [
@@ -159,7 +161,7 @@ export default function DateRules() {
               )}
               {rows.map(r => {
                 const u = unitsOf(r)
-                const b = dateRuleLabel(r.date_rule, u)
+                const b = dateRuleLabel(r.date_rule, u, r.date_required)
                 return (
                   <TableRow key={r.item_id} className={picked.has(r.item_id) ? 'bg-sky-50' : ''}>
                     <TableCell className="px-2 py-1 whitespace-nowrap">

@@ -532,6 +532,22 @@ try {
     await api(`/wms/outbound/${tU.gdo}`, 'PATCH', { status: 'COMPLETED' })
   }
 
+  // ═══ [15v] MỨC DATE KẾ THỪA TỪ SAP MÀ KHO KHÔNG CÒN HÀNG ĐẠT → PHẢI NÓI RA ═══════════════════
+  // Cửa CHỐT TAY đã gác (422 DATE_RULE_NO_STOCK) nhưng mức đến từ cột "Date (%)" của VL06O KHÔNG đi
+  // qua cửa đó: upload xong là dòng có mức ngay. Đo thật 10/09 — SAP đòi 90 %, kho cao nhất 72 % ⇒
+  // 0 việc, 0 cảnh báo, bảng Việc cần làm trống trơn mà không ai biết vì sao.
+  {
+    const tV = await mkTrip('TV')
+    await mkItem(tV.do, 40, { date_required: 100 })     // 100 % = không pallet nào đạt (trừ hàng SX hôm nay)
+    r = await startTrip(tV.gdo, { license_plate: '51C77777', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const tkV = await tasksOf(tV.gdo)
+    check('[15v] Mức date kế thừa từ SAP không có hàng đạt → 0 việc NHƯNG có cảnh báo nêu mã + mức + tồn cao nhất',
+      r.s === 200 && tkV.length === 0 && /không có pallet nào đạt/i.test(r.j?.data?.plan_warning ?? '')
+        && String(r.j?.data?.plan_warning ?? '').includes(mat.material_code),
+      `http=${r.s} việc=${tkV.length} cảnh báo=${String(r.j?.data?.plan_warning ?? '—').slice(0, 150)}`)
+    await api(`/wms/outbound/${tV.gdo}`, 'PATCH', { status: 'COMPLETED' })
+  }
+
   // ═══ [15t] HÀNG LẺ ĐÃ NẰM SẴN Ở VỊ TRÍ NHẶT LẺ → KHÔNG ĐẺ VIỆC XE NÂNG ═══════════════════════
   // Bug đo thật 10/09 (Ba Vì, mã 610000022): 4.100 đơn vị đã nằm ở 3 vị trí nhặt lẻ, dòng đơn 500
   // và 100 % là nhặt lẻ — vậy mà kế hoạch vẫn sai xe nâng đi lấy 420 từ ô KỆ, lại còn đưa RA CỬA

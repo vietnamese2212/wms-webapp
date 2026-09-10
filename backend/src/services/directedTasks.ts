@@ -299,13 +299,30 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   // insert hỏng. Trừ dần ở đây là chỗ DUY NHẤT biết được.
   const usedInPlan = new Map<string, number>()
   const freeOf = (c: Cand) => availableOf(c) - (usedInPlan.get(c.id) ?? 0)
+  // Dòng ĐÃ CÓ mức date nhưng kho KHÔNG còn pallet nào đạt → gom lại để báo, đừng im lặng
+  const unmet: Array<{ code: string; rule: string; hint: string }> = []
 
   for (const n of needs) {
     const it = n.item
     const mat = it.material ?? null
     const principle: RotationPrinciple = resolveRotation(gdo.warehouse, typeRows, mat?.category ?? null).principle
     let pool = (byMat.get(it.material_id ?? '') ?? []).filter(c => matchesRule(c, mat, n.rule) && freeOf(c) > 0)
-    if (!pool.length) continue
+    if (!pool.length) {
+      // KHÔNG CÓ PALLET NÀO ĐẠT MỨC ⇒ dòng này KHÔNG có việc. Phải NÓI RA: cửa chốt tay đã gác
+      // (422 DATE_RULE_NO_STOCK) nhưng mức KẾ THỪA TỪ SAP (`date_required`) không đi qua cửa đó —
+      // upload xong là có ngay, và nếu kho không còn hàng đạt thì bảng việc trống trơn mà không ai
+      // biết vì sao (đo thật 10/09: SAP đòi 90 %, kho cao nhất 72 % ⇒ 0 việc, 0 lời cảnh báo).
+      const all = byMat.get(it.material_id ?? '') ?? []
+      const best = all.map(c => computePctDate(c, mat)).filter((x): x is number => x != null)
+      unmet.push({
+        code: it.material_code_raw ?? '?',
+        rule: describeDateRule(n.rule),
+        hint: all.length === 0 ? 'kho không còn tồn mã này'
+          : best.length ? `%Date cao nhất còn trong kho ${Math.floor(Math.max(...best))} %`
+            : 'tồn còn nhưng không khớp mức yêu cầu',
+      })
+      continue
+    }
 
     // Thứ tự: LUẬT LUÂN CHUYỂN trước (không bao giờ vì gần cửa mà lấy sai thứ tự), rồi gần cửa,
     // rồi tầng thấp (đỡ phải hạ), rồi ô ít hàng nhất (dọn hàng lẻ), rồi mã ô.
@@ -425,7 +442,19 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
     }).eq('id', r.id).eq('status', 'PENDING')
   }
 
-  return { created, cancelled, unset_items: unset, warning }
+  return { created, cancelled, unset_items: unset, warning: warning ?? unmetWarning(unmet) }
+}
+
+/** Câu báo cho các dòng có mức date mà kho không còn pallet nào đạt — gộp gọn, nêu mã + mức + tồn cao nhất. */
+function unmetWarning(unmet: Array<{ code: string; rule: string; hint: string }>): string | null {
+  if (!unmet.length) return null
+  const seen = new Map<string, { code: string; rule: string; hint: string }>()
+  for (const u of unmet) seen.set(`${u.code}|${u.rule}`, u)
+  const list = [...seen.values()]
+  const head = list.slice(0, 3).map(u => `${u.code} cần ${u.rule} (${u.hint})`).join(' · ')
+  return `${list.length} dòng KHÔNG có pallet nào đạt mức date yêu cầu nên chưa lập được việc: ${head}`
+    + (list.length > 3 ? ` … và ${list.length - 3} dòng nữa.` : '.')
+    + ' Sửa mức ở "Chốt %Date" (hoặc sửa Số lượng/Date ở DO SAP), hoặc chờ hàng mới về.'
 }
 
 /** Pallet có khớp quy tắc date của dòng đơn không. Đây là chỗ DUY NHẤT diễn giải DateRule. */

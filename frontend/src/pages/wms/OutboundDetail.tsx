@@ -1238,8 +1238,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 {/* Quy tắc ĐÃ CHỐT — cột LUÔN CÓ. Chốt xong mà bảng dòng hàng không hiện gì thì
                     người chốt không có cách nào biết mình đã làm chưa (user bắt 10/09). */}
                 <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${dateRuleLabel(item.date_rule, item.material).cls}`}>
-                    {dateRuleLabel(item.date_rule, item.material).text}
+                  <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${dateRuleLabel(item.date_rule, item.material, item.date_required).cls}`}>
+                    {dateRuleLabel(item.date_rule, item.material, item.date_required).text}
                   </span>
                 </TableCell>
                 {hasBatchRequired && (
@@ -1537,7 +1537,9 @@ export default function OutboundDetail() {
         remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
         units: i.material ?? null,     // để màn chốt hiện Thùng + lẻ, không đổ số base thô
         note: i.header_text ?? null,
-        current: (i.date_rule as DateRule | null) ?? null,
+        // Mức kế thừa từ VL06O đã được bộ sinh việc dùng ⇒ dialog phải mở ra với đúng mức đó
+        current: (i.date_rule as DateRule | null)
+          ?? (Number(i.date_required) > 0 ? ({ kind: 'MIN_PCT', value: Number(i.date_required) } as DateRule) : null),
       }))), [gdo])
 
   if (isLoading || !gdo) {

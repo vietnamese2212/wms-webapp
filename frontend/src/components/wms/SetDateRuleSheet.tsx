@@ -48,8 +48,18 @@ const nf = (n: number) => n.toLocaleString('vi-VN')
 const simpleText = (k: SimpleRuleKind, v: unknown): string =>
   k === 'FEFO' ? 'FEFO' : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %` : `Chỉ định ${String(v ?? '')}`
 
-/** Nhãn ngắn của quy tắc — dùng chung cho badge trên bảng dòng hàng. SL trong badge theo THÙNG. */
-export function dateRuleLabel(r: DateRule | null | undefined, units?: MatUnits | null): { text: string; cls: string } {
+/**
+ * Nhãn ngắn của quy tắc — dùng chung cho badge trên bảng dòng hàng. SL trong badge theo THÙNG.
+ * `dateRequired` = cột "Date (%)" của VL06O: chưa ai chốt tay nhưng hệ thống ĐÃ coi là mức phải theo
+ * (`dateRuleOf` đọc tương thích, và bộ sinh việc chia hàng theo mức đó). Trước 10/09 badge vẫn ghi
+ * "Chưa chốt" cho những dòng này trong khi bộ lọc/ô tổng đếm chúng là ĐÃ CHỐT — một màn hình kể hai
+ * câu chuyện trái ngược nhau.
+ */
+export function dateRuleLabel(
+  r: DateRule | null | undefined, units?: MatUnits | null, dateRequired?: number | null,
+): { text: string; cls: string } {
+  if (!r && Number(dateRequired) > 0)
+    return { text: `≥ ${Number(dateRequired)} % (SAP)`, cls: 'bg-sky-50 text-sky-700 border border-sky-200' }
   if (!r) return { text: 'Chưa chốt', cls: 'bg-amber-100 text-amber-800' }
   if (r.kind === 'SPLIT')
     return {

@@ -135,6 +135,37 @@ function countHookAfterEarlyReturn(sampleOut) {
 }
 
 /**
+ * Badge %Date phải luôn nhận CẢ mức kế thừa từ SAP (`date_required`).
+ *
+ * Bug 10/09: dòng có `date_required` (cột "Date (%)" của VL06O) được bộ sinh việc coi là ĐÃ CHỐT và
+ * chia hàng theo mức đó, ô tổng/bộ lọc cũng đếm là "Đã chốt" — nhưng badge trên bảng vẫn ghi "Chưa
+ * chốt" vì `date_rule` là null. Một màn hình kể hai câu chuyện trái ngược. Gọi `dateRuleLabel` mà
+ * quên tham số thứ ba là dựng lại đúng mâu thuẫn đó.
+ */
+function countDateRuleLabelMissingSap(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/export function dateRuleLabel/.test(line)) return
+      for (const m of line.matchAll(/dateRuleLabel\(([^)]*)\)/g)) {
+        let depth = 0, commas = 0
+        for (const ch of m[1]) {
+          if ('([{'.includes(ch)) depth++
+          else if (')]}'.includes(ch)) depth--
+          else if (ch === ',' && depth === 0) commas++
+        }
+        if (commas < 2) {
+          n++
+          if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+        }
+      }
+    })
+  }
+  return n
+}
+
+/**
  * ĐỘNG CƠ KHÔNG CÓ CÔNG TẮC — hook MUTATION khai trong `api/hooks.ts` mà KHÔNG màn nào gọi.
  *
  * Đường ghi đủ cả route + quyền + hook nhưng người dùng KHÔNG có nút nào bấm ⇒ tính năng chỉ mở
@@ -276,6 +307,11 @@ const RULES = [
   // Baseline = 14 hook mutation cũ chưa nối nút (phần lớn là bản lẻ đã bị bản HÀNG LOẠT thay thế —
   // dead code có sẵn, luật CLAUDE.md #3 nói ghi chú chứ không tự xoá). Ratchet chặn ĐẺ THÊM:
   // viết route + quyền + hook rồi quên nút là CI đỏ ngay, không chờ user hỏi "cái này ở đâu?".
+  {
+    key: 'daterule_label_without_sap_level',
+    label: 'gọi dateRuleLabel() thiếu mức kế thừa từ SAP (date_required) — badge ghi "Chưa chốt" trong khi bộ lọc/ô tổng đếm là ĐÃ CHỐT',
+    count: countDateRuleLabelMissingSap,
+  },
   {
     key: 'mutation_hook_without_button',
     label: 'hook MUTATION không màn nào gọi — đường ghi có route+quyền+hook nhưng người dùng KHÔNG có nút nào bấm (đã dính work_mode + useReplanGdo)',

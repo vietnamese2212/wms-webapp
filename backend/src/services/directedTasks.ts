@@ -34,6 +34,13 @@ import {
 
 const now = () => new Date().toISOString()
 
+// TRẦN KHAI RÕ cho các câu `.in(...)`: mọi danh sách id ở service này đều CÓ BIÊN (một nhóm ô trên
+// bảng xe nâng, các việc trên MỘT pallet, một chuyến) — khai ra để cổng tĩnh không phải đoán và để
+// người đọc sau biết vì sao chỗ này không cần phân trang.
+export const MAX_CONFIRM = 200              // ≤ 200 việc mỗi lần bấm "✓ Xong" (controller chặn)
+const MAX_TASKS_PER_PALLET = 50             // một pallet không thể là việc của 50 chuyến
+const CHUNK_IDS = 300                       // trần id trên URL của PostgREST
+
 // ─── Quy tắc date của DÒNG ĐƠN (user chốt vòng 4) ──────────────────────────────────────────────
 // NULL = CHƯA CHỐT ⇒ dòng KHÔNG sinh việc. FEFO phải BẤM XÁC NHẬN, không phải mặc định ngầm —
 // nếu không, người trong kho "tưởng mặc định rồi đi làm, sau mới update thì đã làm sai".
@@ -496,17 +503,21 @@ export async function skipTasksOnForeignScan(entryId: string | null, exceptGdoId
   if (!rows.length) return
   await supabase.from('wms_tasks')
     .update({ status: 'SKIPPED', skip_reason: 'PALLET_TAKEN', updated_at: now() })
-    .in('id', rows.map(r => r.id))
+    .in('id', rows.map(r => r.id)).limit(MAX_TASKS_PER_PALLET)
   await logEvents(rows.map(r => ({ task_id: r.id, event: 'SKIPPED', actor, note: 'PALLET_TAKEN' })))
   for (const g of [...new Set(rows.map(r => r.gdo_id))]) await planGdoTasks(g, actor)
 }
 
 async function cancelTasks(ids: string[], actor: string | null, reason: string): Promise<number> {
   if (!ids.length) return 0
-  const { data } = await supabase.from('wms_tasks')
-    .update({ status: 'CANCELLED', skip_reason: reason, updated_at: now() })
-    .in('id', ids).eq('status', 'PENDING').select('id')
-  const done = (data ?? []) as { id: string }[]
+  // Chunk 300: id đi trên URL của PostgREST (kể cả filter của UPDATE) — chuyến nhiều pallet là ca thường
+  const done: { id: string }[] = []
+  for (let i = 0; i < ids.length; i += CHUNK_IDS) {
+    const { data } = await supabase.from('wms_tasks')
+      .update({ status: 'CANCELLED', skip_reason: reason, updated_at: now() })
+      .in('id', ids.slice(i, i + CHUNK_IDS)).eq('status', 'PENDING').select('id')
+    done.push(...((data ?? []) as { id: string }[]))
+  }
   await logEvents(done.map(r => ({ task_id: r.id, event: 'CANCELLED', actor, note: reason })))
   return done.length
 }
@@ -532,7 +543,7 @@ export async function confirmTasks(
   if (!taskIds.length) return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Chưa chọn việc nào' }
   const { data } = await supabase.from('wms_tasks')
     .select('id, kind, status, needs_lower, entry_id, to_location_id, lowered_at, moved_at, from_location_code')
-    .in('id', taskIds)
+    .in('id', taskIds).limit(MAX_CONFIRM)   // trần khai ở controller: một lần bấm = một nhóm ô
   const rows = (data ?? []) as {
     id: string; kind: string; status: string; needs_lower: boolean; entry_id: string | null
     to_location_id: string | null; lowered_at: string | null; moved_at: string | null; from_location_code: string | null
@@ -567,7 +578,7 @@ export async function confirmTasks(
 
   const { data: upd } = await supabase.from('wms_tasks')
     .update({ ...patch, confirm_source: undo ? null : 'MANUAL', updated_at: at })
-    .in('id', open.map(r => r.id)).eq('status', 'PENDING').select('id')
+    .in('id', open.map(r => r.id)).eq('status', 'PENDING').limit(MAX_CONFIRM).select('id')
   const changed = ((upd ?? []) as { id: string }[]).length
   await logEvents(((upd ?? []) as { id: string }[]).map(r => ({
     task_id: r.id, event: undo ? 'REPLANNED' : (stage === 'LOWER' ? 'LOWERED' : 'MOVED'), actor,

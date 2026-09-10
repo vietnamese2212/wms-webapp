@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { searchLooksLikeInjection } from '../../utils/search'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
-import { planGdoTasks, confirmTasks, type ConfirmStage } from '../../services/directedTasks'
+import { planGdoTasks, confirmTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -69,7 +69,7 @@ export async function confirm(req: Request, res: Response) {
     // PHẠM VI KHO: việc thuộc kho ngoài phạm vi thì không được đánh dấu (id việc là uuid đoán được)
     const myWhs = scopeWhIds(req)
     if (myWhs) {
-      const { data: whs } = await supabase.from('wms_tasks').select('warehouse_id').in('id', ids as string[])
+      const { data: whs } = await supabase.from('wms_tasks').select('warehouse_id').in('id', ids as string[]).limit(MAX_CONFIRM)
       const outside = ((whs ?? []) as { warehouse_id: string }[]).filter(t => !myWhs.includes(t.warehouse_id))
       if (outside.length) return fail(res, 'Có việc thuộc kho ngoài phạm vi được giao', 403)
     }

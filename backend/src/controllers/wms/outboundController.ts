@@ -2638,6 +2638,8 @@ async function workModeOfGdo(
   return cats.some(c => resolveWorkMode(whRow, rows, c).mode === 'GUIDED') ? 'GUIDED' : 'MANUAL'
 }
 
+const MAX_FORKLIFT_DRIVERS = 20   // trần khai rõ: một chuyến không có 20 lái xe nâng
+
 // Danh sách lái xe nâng chuyển: id phải là nhân sự ĐANG LÀM và THUỘC KHO của chuyến (id lạ = 400,
 // không im lặng bỏ qua — bảng việc lọc theo danh sách này nên sai một id là mất người nhận việc).
 async function validForkliftIds(
@@ -2646,10 +2648,10 @@ async function validForkliftIds(
   const raw = Array.isArray(ids) ? ids : (legacyId ? [legacyId] : [])
   const list = [...new Set(raw.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(s => s.trim()))]
   if (!list.length) return { ids: [], names: null }
-  if (list.length > 20) return { error: 'Tối đa 20 người lái xe nâng cho một chuyến' }
+  if (list.length > MAX_FORKLIFT_DRIVERS) return { error: `Tối đa ${MAX_FORKLIFT_DRIVERS} người lái xe nâng cho một chuyến` }
   if (list.some(id => id.length > 100 || searchLooksLikeInjection(id))) return { error: 'Mã nhân sự không hợp lệ' }
   const { data, error } = await supabase.from('Employee')
-    .select('id, name, warehouse_scope').in('id', list).eq('is_active', true)
+    .select('id, name, warehouse_scope').in('id', list).eq('is_active', true).limit(MAX_FORKLIFT_DRIVERS)
   if (error) throw error
   const found = (data ?? []) as { id: string; name: string | null; warehouse_scope: string | null }[]
   const missing = list.filter(id => !found.some(f => f.id === id))
@@ -2660,7 +2662,7 @@ async function validForkliftIds(
     const assigned = found.filter(f => f.warehouse_scope !== 'NATIONAL')
     if (assigned.length) {
       const { data: acc } = await supabase.from('UserWarehouseAccess')
-        .select('employee_id').eq('warehouse_id', warehouseId).in('employee_id', assigned.map(f => f.id))
+        .select('employee_id').eq('warehouse_id', warehouseId).in('employee_id', assigned.map(f => f.id)).limit(MAX_FORKLIFT_DRIVERS)
       const okIds = new Set(((acc ?? []) as { employee_id: string }[]).map(a => a.employee_id))
       const outside = assigned.filter(f => !okIds.has(f.id))
       if (outside.length) return { error: `${outside.map(o => o.name ?? o.id).join(', ')} không được giao kho của chuyến này` }
@@ -5351,17 +5353,22 @@ export async function setItemsDateRule(req: Request, res: Response) {
 
     const t = now()
     const payload = rule ? { ...rule, set_by: req.user?.name ?? null, set_at: t } : null
-    const { data: upd, error } = await supabase.from('OutboundItem')
-      .update({ date_rule: payload, updated_at: t })
-      .in('id', itemRows.map(r => r.id)).select('id')
-    if (error) return fail(res, error)
+    // Chunk 300: id đi trên URL của PostgREST kể cả ở filter của UPDATE (500 uuid = ~18KB, đứt)
+    const updated: { id: string }[] = []
+    for (let i = 0; i < itemRows.length; i += 300) {
+      const { data: upd, error } = await supabase.from('OutboundItem')
+        .update({ date_rule: payload, updated_at: t })
+        .in('id', itemRows.slice(i, i + 300).map(r => r.id)).select('id')
+      if (error) return fail(res, error)
+      updated.push(...((upd ?? []) as { id: string }[]))
+    }
 
     // Chuyến ĐANG XUẤT thì kế hoạch lấy hàng phải sắp lại ngay — chốt xong là việc hiện ra, không
     // phải chờ ai bấm gì thêm (realtime đẩy bảng tự cập nhật).
     const gdoIds = [...new Set(itemRows.map(r => r.delivery?.gdo?.id).filter((x): x is string => !!x))]
     for (const g of gdoIds) await planGdoTasks(g, req.user?.name ?? null)
 
-    return ok(res, { updated: ((upd ?? []) as { id: string }[]).length, trips_replanned: gdoIds.length })
+    return ok(res, { updated: updated.length, trips_replanned: gdoIds.length })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

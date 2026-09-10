@@ -487,7 +487,11 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
         && /rpc\(\s*['"]move_pallets_to_location['"]/.test(line)
-        && !/(inventoryController|outboundController|slottingController|fillController)\.ts$/.test(file), s),
+    //   • directedTasks.ts     — "✓ Xong" của việc LOOSE_FEED (10/09): đích BẮT BUỘC là vị trí nhặt
+    //     lẻ do CHÍNH bộ sinh việc chọn (đã lọc theo Loại kho phục vụ + còn sức chứa), y hệt Fill ⇒
+    //     áp `block_pick_face` vào đây là tự chặn chính mình. Sức chứa vẫn được gác: RPC trả FULL thì
+    //     việc VẪN TREO và người bấm được báo đổi chỗ — không có ngõ cụt.
+        && !/(inventoryController|outboundController|slottingController|fillController|directedTasks)\.ts$/.test(file), s),
   },
   // Overlay quét KEEP-MOUNTED (ẩn bằng CSS `${open ? '' : 'hidden'}`) mà <QRScanner> không truyền
   // `active={open}` = camera CHẠY NGẦM sau khi user đóng (đèn camera sáng, tốn pin, lo ngại riêng

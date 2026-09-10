@@ -32,9 +32,9 @@ const PLAN_FILTER_CAP = 800
 
 // Đối chiếu SAP↔WMS sau khi SỬA/XÓA raw tay (AUGMENT — lỗi engine KHÔNG làm hỏng thao tác CRUD raw).
 async function reconcileQuiet(keys: OdKey[], actor: string | null) {
-  if (!keys.length) return
-  try { await reconcileFromSap(keys, { actor: actor || 'DO-SAP-EDIT' }) }
-  catch (e) { console.error('[reconcileFromSap] DO SAP edit:', e) }
+  if (!keys.length) return null
+  try { return await reconcileFromSap(keys, { actor: actor || 'DO-SAP-EDIT' }) }
+  catch (e) { console.error('[reconcileFromSap] DO SAP edit:', e); return null }
 }
 
 // Cột nghiệp vụ cho phép ghi tay (id/created_at do hệ thống; qty là numeric)
@@ -324,9 +324,13 @@ export async function updateDoSap(req: Request, res: Response) {
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
-    // Sửa raw tay → đối chiếu lại các đơn WMS dùng dòng OD này
-    await reconcileQuiet([{ od_number: String(data.od_number), od_item: String(data.od_item) }], req.user?.name ?? null)
-    return ok(res, data)
+    // Sửa raw tay → đối chiếu lại các đơn WMS dùng dòng OD này.
+    // TRẢ KẾT QUẢ ĐỐI CHIẾU cho FE (10/09): dòng đã quét thì engine KHÔNG tự áp mà đẩy sang hàng chờ
+    // "Cần xử lý" — bản trước lưu xong trả 200 trơn nên người sửa tưởng đã xong, quay lại Hoàn thành
+    // chuyến vẫn bị chặn y như cũ (đo thật trong diễn tập 10/09). Có số này thì màn hình nói được
+    // "n thay đổi cần duyệt ở tab Cần xử lý".
+    const rec = await reconcileQuiet([{ od_number: String(data.od_number), od_item: String(data.od_item) }], req.user?.name ?? null)
+    return ok(res, { ...(data as Record<string, unknown>), reconcile: rec })
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -685,7 +685,16 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
       }
       // PUT tuần tự (KHÔNG Promise.all): mỗi PUT chạy reconcile đọc-tính-ghi trên OutboundItem;
       // 2 dòng OD cùng đổ vào 1 item (od_refs) mà PUT song song → race mất cập nhật / task trùng.
-      for (const r of changed) await update.mutateAsync({ id: r.id, qty_base: draft[r.id] })
+      // Đếm phần KHÔNG tự áp được: dòng đã quét thì engine đẩy sang hàng chờ "Cần xử lý" — lưu xong
+      // mà im lặng thì người sửa tưởng đã dội xuống, quay lại Hoàn thành chuyến vẫn bị chặn y cũ
+      // (đo thật trong diễn tập 10/09).
+      let pending = 0
+      for (const r of changed) {
+        const res = await update.mutateAsync({ id: r.id, qty_base: draft[r.id] }) as { reconcile?: { review?: number; blocked?: number } | null }
+        pending += Number(res?.reconcile?.review ?? 0) + Number(res?.reconcile?.blocked ?? 0)
+      }
+      if (pending > 0)
+        blockedNote = [blockedNote, `${pending} thay đổi KHÔNG tự dội xuống đơn (dòng đã quét) — vào tab "Cần xử lý" bấm Áp SAP thì số kế hoạch mới khớp.`].filter(Boolean).join(' · ')
       await Promise.all(validAdded.map(l => create.mutateAsync({
         od_number: l.od_number, od_item: l.od_item.trim(),
         material_code: l.material_code.trim(), material_name: l.material_name,

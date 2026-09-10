@@ -1505,6 +1505,30 @@ export default function OutboundDetail() {
     }
   }, [isLoading, isError, gdo, navigate, id, unpin])
 
+  // ⚠ MỌI HOOK PHẢI NẰM TRÊN LỆNH RETURN SỚM NÀY. Hai hook dưới đây từng đứng dưới (đợt 1c) —
+  // lần render đầu chuyến chưa về nên hàm thoát ở đây, lần sau chạy tiếp và gọi THÊM hook ⇒ React
+  // "Rendered more hooks than during the previous render" ⇒ TOÀN BỘ trang chuyến trắng, tsc không
+  // bắt được vì đây là luật lúc chạy, không phải luật kiểu.
+  //
+  // Dòng việc KẾ TIẾP của chuyến (kho Hướng dẫn) — chỉ gọi khi chuyến thật sự có việc
+  const { data: scanBoard } = useDirectedBoard(gdo?.warehouse_id, 'SCAN', {
+    gdoId: gdo?.id ?? null, enabled: !!gdo?.started_at && (gdo?.tasks_summary?.total ?? 0) > 0,
+  })
+  // Dòng hàng của chuyến để CHỐT %DATE — mở thẳng từ đây vì đó là chỗ thủ kho đang đứng
+  const dateTargets: DateRuleTarget[] = useMemo(() => (gdo?.delivery_orders ?? []).flatMap(d =>
+    (d.items ?? [])
+      .filter(i => Number(i.cartons_ordered ?? 0) > Number(i.cartons_scanned ?? 0))
+      .map(i => ({
+        item_id: i.id,
+        material_id: i.material_id ?? null,
+        material_code: i.material_code_raw ?? null,
+        material_name: i.material?.short_name ?? null,
+        trip_label: d.delivery_code ?? null,
+        remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
+        note: i.header_text ?? null,
+        current: (i.date_rule as DateRule | null) ?? null,
+      }))), [gdo])
+
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">
@@ -1606,26 +1630,7 @@ export default function OutboundDetail() {
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   // Nút Thông tin KHÔNG nằm ở đây nữa (user chốt 03/08 "gom về làm 1"): nút ⓘ cạnh mã chuyến
   // mở dialog gộp thông tin đơn + lịch sử, hiện cả desktop lẫn mobile — kể cả chuyến bất động.
-  // Dòng việc KẾ TIẾP của chuyến (kho Hướng dẫn) — chỉ gọi khi chuyến thật sự có việc
-  const { data: scanBoard } = useDirectedBoard(gdo.warehouse_id, 'SCAN', {
-    gdoId: gdo.id, enabled: !!gdo.started_at && (gdo.tasks_summary?.total ?? 0) > 0,
-  })
   const nextTask = (scanBoard?.rows ?? []).find(r => !r.stage_done) ?? null
-
-  // Dòng hàng của chuyến để CHỐT %DATE — mở thẳng từ đây vì đó là chỗ thủ kho đang đứng
-  const dateTargets: DateRuleTarget[] = useMemo(() => (gdo.delivery_orders ?? []).flatMap(d =>
-    (d.items ?? [])
-      .filter(i => Number(i.cartons_ordered ?? 0) > Number(i.cartons_scanned ?? 0))
-      .map(i => ({
-        item_id: i.id,
-        material_id: i.material_id ?? null,
-        material_code: i.material_code_raw ?? null,
-        material_name: i.material?.short_name ?? null,
-        trip_label: d.delivery_code ?? null,
-        remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
-        note: i.header_text ?? null,
-        current: (i.date_rule as DateRule | null) ?? null,
-      }))), [gdo])
   const nUnsetDate = dateTargets.filter(t => !t.current).length
 
   const actionItems: ActionItem[] = []

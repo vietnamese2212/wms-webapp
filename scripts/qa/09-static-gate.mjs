@@ -104,6 +104,36 @@ function countDeadEndReturns(sampleOut) {
   return n
 }
 
+// HOOK GỌI SAU LỆNH RETURN SỚM — luật React lúc CHẠY, tsc và eslint hiện tại KHÔNG bắt.
+// Đo thật 10/09: `useDirectedBoard` + `useMemo` của trang chuyến bị đặt DƯỚI `if (isLoading || !gdo)
+// return <skeleton/>`. Lần render đầu chuyến chưa về nên hàm thoát sớm; lần sau chạy tiếp và gọi
+// THÊM hook ⇒ "Rendered more hooks than during the previous render" ⇒ TOÀN BỘ trang chuyến TRẮNG
+// (mọi chuyến, không riêng chuyến nào), trong khi tsc/build/QA API đều xanh — chỉ mở trang mới thấy.
+// Nhận diện theo lối viết 2-space của repo: thân hàm ở 2 space, `return` trong nhánh `if` top-level
+// (thụt ≥4) là return SỚM; sau đó bất kỳ lời gọi `useXxx(` nào cũng là vi phạm.
+function countHookAfterEarlyReturn(sampleOut) {
+  const HOOK = /(?:^|[\s=({,])use[A-Z]\w*\s*\(/
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    let inFn = false, earlyAt = 0, inIf = false
+    lines.forEach((line, i) => {
+      if (/^(export default function|export function|function)\s+[A-Z]/.test(line)) { inFn = true; earlyAt = 0; inIf = false; return }
+      if (!inFn) return
+      if (/^\}/.test(line)) { inFn = false; return }
+      if (!earlyAt && /^ {2}if\s*\(/.test(line)) inIf = true
+      if (inIf && /^\s{4,}return\b/.test(line)) { earlyAt = i + 1; inIf = false }
+      if (inIf && /^ {2}\}/.test(line)) inIf = false
+      if (!earlyAt && /^ {2}if\s*\(.*\)\s*return\b/.test(line)) earlyAt = i + 1
+      if (earlyAt && HOOK.test(line) && !/^\s*(\/\/|\*)/.test(line)) {
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1} (return sớm dòng ${earlyAt})`)
+      }
+    })
+  }
+  return n
+}
+
 // Màn nào ĐỌC danh mục vị trí (bất kể để chọn hay để lọc) thì phải có nút quét tem vị trí.
 // Đếm theo FILE, không theo dòng: 1 file thiếu = 1 vi phạm, đủ để CI chặn mà không nhiễu.
 function countLocPickerWithoutScan(sampleOut) {
@@ -207,6 +237,11 @@ const RULES = [
   // Baseline 8 (đều trong outboundController): 4 điểm CHUYẾN = quickExportGDO · quickExportExistingGDO · startGDO ·
   // uncompleteGDO, + 4 điểm dòng hàng/DO đi kèm (item/DO status theo chuyến). Mẫu bắt rộng có chủ đích: thêm bất kỳ
   // chỗ nào là phải giải thích trước khi nâng baseline.
+  {
+    key: 'hook_after_early_return',
+    label: 'hook React gọi SAU lệnh return sớm — render đầu thoát sớm, render sau gọi thêm hook ⇒ TRẮNG TRANG (tsc không bắt được)',
+    count: countHookAfterEarlyReturn,
+  },
   {
     key: 'gdo_in_progress_written_directly',
     label: "ghi status:'IN_PROGRESS' ngoài 8 điểm đã biết — Bắt đầu chuyến phải đi qua startGDO (rule cổng/cân/cửa)",

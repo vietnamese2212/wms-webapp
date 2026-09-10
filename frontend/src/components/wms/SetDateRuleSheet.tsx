@@ -170,8 +170,12 @@ export function SetDateRuleSheet(p: {
         </div>
 
         {/* Bảng dòng — mỗi dòng: mã · chuyến · SL · GHI CHÚ CS nguyên văn · ô chốt */}
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full">
+        {/* overflow-x-auto chứ KHÔNG overflow-hidden: ở 360px bảng rộng hơn màn, `hidden` sẽ CẮT
+            mất đúng hai cột quan trọng nhất — Ghi chú của CS và ô chốt (nơi hiện cảnh báo đỏ) —
+            mà không có cách nào kéo tới. Luật bảng của dự án: nội dung rộng thì cuộn NGANG trong
+            khung của chính nó, không ẩn cột. */}
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full min-w-[620px]">
             <thead>
               <tr className="bg-slate-50 border-b">
                 {['Mã hàng', 'Chuyến', 'Còn lấy', 'Ghi chú của CS', 'Quy tắc lấy hàng'].map(h => (

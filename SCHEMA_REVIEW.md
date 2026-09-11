@@ -443,3 +443,33 @@ created_at, updated_at
   ⚠️ Nguồn nằm TRONG jsonb chứ không phải cột riêng để nó tự sống sót qua `keptItemRules` của
   `processVehicleGroups` — thêm cột thì phải nhớ sửa cả chỗ mang theo, quên là mất nguồn âm thầm.
   JOIN khách theo `upper(btrim(g.shipto_party)) = c.ship_to_code`; không khớp ⇒ `customer_known=false`.
+- `20260911c_date_rule_master.sql` — **MỨC THEO CẶP (KHÁCH | KÊNH) × LOẠI HÀNG + kiểu "còn ≥ N ngày" (đợt 2,
+  user chốt 11/09).** Đợt 1 cho mỗi khách MỘT mức; đo lại thì mức thuộc về cặp và không phải lúc nào cũng
+  diễn đạt được bằng %: **FG01 hạn 120–720 ngày (TB 248) · FG02 CHỈ 45–60 ngày (TB 50)** ⇒ "còn ≥ 35 ngày" ra
+  **77,8 %** trên mã hạn 45 và **58,3 %** trên mã hạn 60; mức chung ≥ 60 % chỉ đòi **27 ngày** trên mã hạn 45 —
+  thiếu 8 ngày mà KHÔNG ai thấy gì sai. Mức lại khác theo từng khách (FG01: 60·70·80·85 %; FG02: 35·40 ngày).
+  **(1) Bảng `date_rule_master`** (`scope` CUSTOMER|CHANNEL · `scope_key` = Customer.id | mã kênh · `category`
+  NULL = mọi loại còn lại · `rule` jsonb) — unique `(scope, scope_key, category) NULLS NOT DISTINCT` (thiếu
+  mệnh đề này thì NULL ≠ NULL ⇒ khai 5 dòng chung mà không ai chặn). MỘT bảng cho CẢ khách lẫn kênh vì chúng
+  mang cùng một hình dạng sự thật; hai kho chứa = hai bộ kiểm tra, hai giao diện, và sớm muộn cũng lệch.
+  **(2) `date_rule_valid()` nhận thêm `MIN_DAYS`** (cả mức trên cùng lẫn trong `parts` của SPLIT — user chốt
+  "10 thùng date 40 ngày, 7 thùng date 35"), + hàm `date_rule_master_value_ok()` chặn giá trị (MIN_PCT 0<v≤100 ·
+  MIN_DAYS nguyên 1..3650).
+  **(3) BỎ `Customer.date_rule` và `LookupValue.meta.date_rule`** — giữ song song là đẻ ra câu hỏi "cột nói
+  60 %, bảng nói 70 %, cái nào thắng". Danh mục lúc đổi có 3 dòng (đều rác QA, date_rule NULL) ⇒ không tốn một
+  dòng dữ liệu nào; để dùng vài tuần rồi mới đổi thì phải gỡ ra khai lại.
+  **(4) RPC `date_rule_categories()`** — số mã / số mã CÓ khai hạn dùng / khoảng hạn dùng theo từng loại, đọc
+  từ DỮ LIỆU (PM01: **0/888 mã** khai hạn dùng) để màn khai làm mờ đúng loại không đo được date và quy đổi sống
+  ("≥ 60 % cho FG02 ≈ còn 27–36 ngày"). Bổ sung min/max ở `20260911f`.
+- `20260911d_customer_page.sql` — **`customer_page`**: một lời gọi trả dòng + tổng + các mức đã khai của từng
+  khách. Bản cũ đếm ô band bằng `select(...)` KHÔNG phân trang ⇒ dính trần 1000 dòng và cắt ÂM THẦM khi danh
+  mục vượt nghìn khách; đính mức theo từng trang cũng là thêm round-trip. Lọc `p_has_rule` (đã/chưa khai mức)
+  không viết được bằng filter PostgREST trên bảng Customer.
+- `20260911e_date_rule_lines_v3.sql` + `20260911g_…_has_channel.sql` — **`outbound_date_rule_lines` bản 3**:
+  ẨN dòng có mã KHÔNG ĐO ĐƯỢC DATE (user: "màn này chỉ để xử lý cái nào yêu cầu date"; đo: 181/1.953 dòng),
+  giữ ô đếm `no_shelf_life` để con số không biến mất khỏi sổ sách; trả thêm `material_category` ·
+  `shelf_life_days` · `rule_kind` · `reason`; lọc thêm `p_mat_categories` và `p_kinds`.
+  ⚠️ "Đo được date" phụ thuộc CẢ cờ `label_format`: tem V2 (`;`) mang HSD tường minh nên mã chưa khai hạn dùng
+  vẫn đo được NGÀY — cắt theo mỗi `shelf_life_days` là cắt oan cả một đơn vị (phép kiểm mirror `shelfLife`
+  bắt ra ca này lần chạy đầu). Bản `g` trả LẠI `customer_has_channel` bên cạnh `customer_has_rule`: hai cờ
+  trả lời hai câu khác nhau, gộp làm một thì cột "Khách · Kênh" ghi "chưa phân kênh" cho MỌI dòng (QA 58 [5d]).

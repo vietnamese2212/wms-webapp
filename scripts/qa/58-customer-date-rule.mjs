@@ -306,6 +306,9 @@ try {
 
   // ═══ [6] LUẬT CHUYỂN KHO đọc Customer.warehouse_id ════════════════════════════════════════════
   // Khách TRỎ KHO ⇒ kho nhận vào app xác nhận (SCAN); khách ngoài ⇒ tài xế tự xác nhận (SELF).
+  // TẮT quy định date ở kho cho khúc này: đây là phép kiểm luật CHUYỂN KHO, không phải luật date —
+  // để bật thì khách "chưa khai mức" bị cửa gác chặn và phép kiểm đỏ vì một lý do KHÔNG liên quan.
+  await restWrite('Warehouse', 'PATCH', `id=eq.${wh.id}`, { date_rule_policy: 'OFF', updated_at: nowIso() })
   const quick = async (ship, plate, code) => api('/wms/outbound/quick-export', 'POST', {
     delivery_date: today, warehouse_id: wh.id, dvvt, customer_name: `KH ${ship}`,
     delivery_code: code, warehouse_type: CAT, shipto_party: ship, license_plate: plate,

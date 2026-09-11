@@ -2,7 +2,10 @@
 
 > Tiếp nối [CUSTOMER_DATE_RULE_PLAN.md](CUSTOMER_DATE_RULE_PLAN.md) (đợt 1 ✅ 11/09). Đợt 1 cho mỗi khách **một** mức.
 > Đo lại với user 11/09 cho thấy mức thuộc về **cặp (khách × loại hàng)** và không diễn đạt được bằng phần trăm.
-> Trạng thái: **CHỜ THỰC THI**.
+> **Trạng thái: ✅ ĐÃ THỰC THI XONG 11/09/2026** — dev `acd0a512` → `08bca5aa`.
+> Migration áp staging: `20260911c` (bảng mức + MIN_DAYS) · `d` (customer_page) · `e`+`g` (date_rule_lines v3) · `f` (khoảng hạn dùng theo loại).
+> Đo: **QA 58 64/64** · 57 91/91 · 12 35/35 · 13 41 · 14 35 · 08 13/13 · 07 96/96 · 00 30/30 · `npm test` 66/66 ·
+> tsc BE+FE + build FE xanh · cổng tĩnh XANH · Playwright 1280 + 360 (không tràn ngang, dòng đầu ở 330px).
 
 ---
 

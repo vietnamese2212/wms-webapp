@@ -90,6 +90,9 @@ function RuleTable({ drafts, onChange, cats, inheritNote }: {
   const measurable = cats.filter(c => c.measurable)
   const rest = measurable.filter(c => !used.has(c.value)).map(c => c.value)
   const hasGeneral = drafts.some(d => d.category === null)
+  // "Các loại CÒN LẠI" chỉ đúng khi đã có dòng khai riêng để mà "còn lại"; chưa khai riêng loại nào
+  // thì dòng chung phủ TẤT CẢ và phải nói đúng như vậy.
+  const generalWord = used.size ? 'Các loại còn lại' : 'Mọi loại hàng'
   const patch = (i: number, up: Partial<RuleDraft>) => onChange(drafts.map((d, j) => (j === i ? { ...d, ...up } : d)))
 
   /** Quy đổi sống: mức đang gõ ra khoảng NGÀY (hoặc %) theo hạn dùng thật của loại hàng đó. */
@@ -129,7 +132,7 @@ function RuleTable({ drafts, onChange, cats, inheritNote }: {
                     onChange={e => patch(i, { category: e.target.value || null })}
                     className="h-8 w-full rounded-md border border-slate-300 bg-white px-1.5 text-[11px]">
                     <option value="">
-                      {rest.length ? `${hasGeneral && d.category === null ? 'Các loại còn lại' : 'Mọi loại hàng'} (${rest.join(', ')})` : 'Mọi loại hàng'}
+                      {rest.length ? `${generalWord} (${rest.join(', ')})` : generalWord}
                     </option>
                     {measurable.map(c => (
                       <option key={c.value} value={c.value} disabled={used.has(c.value) && d.category !== c.value}>
@@ -576,7 +579,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
   return (
     <FormSheet open onClose={onClose}
       title={row ? `Sửa khách hàng · ${row.ship_to_code}` : 'Thêm khách hàng / nơi nhận'}
-      description="Mã ship-to của SAP là khoá — %Date tự động và luật Chuyển kho đều tra theo mã này."
+      description="Mã ship-to của SAP là khoá — quy định date tự động và luật Chuyển kho đều tra theo mã này."
       footer={<>
         {err && <span className="text-[11px] text-red-600 flex-1 truncate">{err}</span>}
         <Button variant="outline" onClick={onClose} disabled={saving || saveRules.isPending}>Huỷ</Button>
@@ -600,7 +603,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
           <SingleSelect options={[{ value: '', label: '— Chưa phân kênh —' }, ...channels]}
             value={channel} onChange={setChannel} placeholder="Chọn kênh…" />
           <p className="mt-1 text-[11px] text-slate-400">
-            Chưa phân kênh thì dòng hàng của khách này KHÔNG được cấp %Date tự động — thủ kho vẫn phải chốt tay.
+            Chưa phân kênh thì dòng hàng của khách này KHÔNG được cấp quy định date tự động — thủ kho vẫn phải khai tay.
           </p>
         </div>
         <div>

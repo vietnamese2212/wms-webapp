@@ -74,6 +74,7 @@ const orgChart = () => import('@/pages/hr/OrgChart')
 const userManagement = () => import('@/pages/masterdata/UserManagement')
 const integrationKeys = () => import('@/pages/masterdata/IntegrationKeys')
 const materials      = () => import('@/pages/masterdata/Materials')
+const customers      = () => import('@/pages/masterdata/Customers')
 const externalData   = () => import('@/pages/external/ExternalData')
 const settings = () => import('@/pages/Settings')
 
@@ -126,6 +127,7 @@ export const Pages = {
   UserManagement: lazyRetry(userManagement),
   IntegrationKeys: lazyRetry(integrationKeys),
   Materials: lazyRetry(materials),
+  Customers: lazyRetry(customers),
   ExternalData: lazyRetry(externalData),
   Settings: lazyRetry(settings),
 }
@@ -161,6 +163,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/hr/attendance': attendance,
   '/hr/org': orgChart,
   '/masterdata/materials': materials,
+  '/masterdata/customers': customers,
   '/masterdata/users': userManagement,
   '/masterdata/integration-keys': integrationKeys,
   '/external/do-sap': externalData,

@@ -648,7 +648,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; work_mode?: string | null; lower_from_level?: number | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; work_mode?: string | null; lower_from_level?: number | null; date_rule_policy?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -704,6 +704,9 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   // bật rule nào chấp hành rule đó, bật cả 2 phải đủ cả 2. Miễn trừ = quyền outbound.weigh_waive.
   const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
+  // %DATE THEO KHÁCH HÀNG / KÊNH (11/09) — chỉ tầng KHO (luật theo KHÁCH, không theo loại hàng).
+  // Mặc định OFF cho mọi kho đang chạy: áp tự động là đổi hành vi, không tự bật hộ ai.
+  const [dateRulePolicy, setDateRulePolicy] = useState(wh?.date_rule_policy ?? 'OFF')
   // CHIẾN THUẬT MẶC ĐỊNH TOÀN KHO — xuất (14/08) + nhập (15/08) + thang 3 bước (21/08).
   // Gom vào MỘT object vì đúng bộ field này còn được khai lại ở tầng LOẠI KHO (StrategyFields
   // dùng chung 2 tầng); tách 12 useState rồi chép sang tầng kia là đẻ bản thứ hai.
@@ -785,12 +788,12 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, ...rot, ...putaway },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, ...rot, ...putaway },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -947,6 +950,29 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               Đây là phần DÙNG CHUNG cho cả kho; khai riêng cho từng Loại kho làm ở TAB LOẠI KHO
               (user chốt 21/08) — cùng bộ control `components/wms/StrategyFields.tsx`. */}
           <StrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} wide />
+          {/* %DATE THEO KHÁCH HÀNG / KÊNH (user chốt 11/09) — CHỈ tầng kho: luật đi theo KHÁCH NHẬN,
+              không theo loại hàng, nên không có bản khai riêng ở tab Loại kho. */}
+          <SettingsGroup title="XUẤT — %Date theo khách hàng"
+            tip={<>
+              Thay vì chốt tay từng dòng (production ~1.000 dòng/ngày), hệ thống lấy %Date mặc định từ
+              danh mục <b>Khách hàng</b> (menu Cấu hình) theo mã ship-to của chuyến: %Date riêng của
+              khách trước, không có thì lấy mức của <b>Kênh</b> (Kho tổng / NPP / BHX / KA / MT…).
+              <br /><br />
+              Dòng đã <b>chốt tay</b> và dòng có <b>%Date của VL06O</b> không bao giờ bị đè. Khách chưa
+              có trong danh mục hoặc <b>chưa phân kênh</b> thì KHÔNG được cấp %Date tự động — máy không đoán.
+              <br /><br />
+              Bật ở đây chỉ áp cho đơn <b>sinh sau</b>; đơn đang mở dùng nút "Áp lại theo master" ở trang Chốt %Date.
+            </>}>
+            <SettingRow label="Áp %Date tự động"
+              desc={<>Ghi chú của CS là chỗ <b>người</b> phải đọc — chọn "chỉ dòng không có ghi chú" để máy tránh đúng những dòng đó.</>}>
+              <SingleSelect value={dateRulePolicy} onChange={setDateRulePolicy} triggerClassName="h-8"
+                options={[
+                  { value: 'OFF',     label: 'Tắt',                       sub: 'mặc định — thủ kho chốt tay như hiện nay' },
+                  { value: 'NO_NOTE', label: 'Chỉ dòng KHÔNG có ghi chú CS', sub: 'khuyên dùng — dòng có ghi chú để người đọc rồi chốt' },
+                  { value: 'ALL',     label: 'Áp toàn bộ',                sub: 'mọi dòng chưa chốt tay, kể cả dòng có ghi chú CS' },
+                ]} />
+            </SettingRow>
+          </SettingsGroup>
           {isEdit ? (
             <button type="button" onClick={() => onGotoTypes?.(wh.id)}
               className="w-full rounded-md border border-sky-200 bg-sky-50 px-2.5 py-2 text-left text-xs text-sky-800 hover:bg-sky-100">

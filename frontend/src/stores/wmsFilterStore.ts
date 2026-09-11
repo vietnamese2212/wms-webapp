@@ -173,6 +173,17 @@ interface MaterialsFilters {
   page: number
   pageSize: number
 }
+// Khách hàng / Nơi nhận (11/09) — danh mục nuôi %Date tự động
+interface CustomersFilters {
+  search: string
+  channel: string[]
+  hasChannel: '' | '1' | '0'
+  warehouseId: string
+  active: '' | '1' | '0'
+  tab: 'list' | 'channels'
+  page: number
+  pageSize: number
+}
 interface InboundReportFilters {
   dateFrom: string
   dateTo: string
@@ -265,6 +276,8 @@ interface DateRuleFilters {
   warehouseId: string
   state: '' | 'SET' | 'UNSET'
   search: string
+  // NGUỒN quy tắc (11/09): MANUAL | CUSTOMER | CHANNEL | SAP | UNSET | REVIEW (cần xem vì hết tồn)
+  source: string[]
   page: number; pageSize: number
 }
 
@@ -447,6 +460,7 @@ interface WmsFilterState {
   locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
   materials:         MaterialsFilters
+  customers:         CustomersFilters
   inboundReport:     InboundReportFilters
   tmsBookings:       TmsBookingsFilters
   tmsTransfer:       TmsTransferFilters
@@ -492,6 +506,7 @@ interface WmsFilterState {
   setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
+  setCustomers:         (f: Partial<CustomersFilters>)         => void
   setInboundReport:     (f: Partial<InboundReportFilters>)     => void
   setAssignment:        (f: Partial<AssignmentFilters>)        => void
   setTmsBookings:       (f: Partial<TmsBookingsFilters>)       => void
@@ -545,7 +560,7 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
-    dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', page: 1, pageSize: 200 },
+    dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[], page: 1, pageSize: 200 },
     directedWork: { warehouseId: '', tab: 'LOWER' as const, gdoId: '', mine: true, hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
@@ -563,6 +578,7 @@ function initialFilters() {
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
     materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], dimsFilter: [], flagsFilter: [], page: 1, pageSize: 200 },
+    customers:  { search: '', channel: [], hasChannel: '' as const, warehouseId: '', active: '1' as const, tab: 'list' as const, page: 1, pageSize: 200 },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
@@ -615,6 +631,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
+      setCustomers:        (f) => set(s => ({ customers:        { ...s.customers,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
       setTmsBookings:      (f) => set(s => ({ tmsBookings:      { ...s.tmsBookings,      ...f } })),

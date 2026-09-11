@@ -16,7 +16,7 @@ const {
   Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, MoveLocation, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
-  UserManagement, IntegrationKeys, Materials, ExternalData, Settings,
+  UserManagement, IntegrationKeys, Materials, Customers, ExternalData, Settings,
 } = Pages
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -182,6 +182,10 @@ export default function App() {
         <Route
           path="/masterdata/materials"
           element={<PermissionRoute module="materials"><Materials /></PermissionRoute>}
+        />
+        <Route
+          path="/masterdata/customers"
+          element={<PermissionRoute module="customers"><Customers /></PermissionRoute>}
         />
 
         <Route path="/settings" element={<Settings />} />

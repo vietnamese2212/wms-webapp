@@ -7,16 +7,18 @@
 // "%Date của từng mã", và một mã có ghi chú CS riêng thì phải nhìn thấy ngay cạnh nhau.
 // Chốt xong thì mở dialog dùng CHUNG với trang chuyến (SetDateRuleSheet) — một luật, một chỗ sửa.
 import { useMemo, useState } from 'react'
-import { CalendarClock, AlertTriangle } from 'lucide-react'
+import { CalendarClock, AlertTriangle, RefreshCw } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { ActionCluster } from '@/components/shared/ActionBtn'
 import { SetDateRuleSheet, dateRuleLabel, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
-import { useDateRuleLines, type DateRuleLine } from '@/api/hooks'
+import { useDateRuleLines, useApplyDateRuleMaster, type DateRuleLine, type ApplyMasterResult } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -35,11 +37,24 @@ const COLS = [
   { id: 'date', label: 'Ngày xuất',     w: 84 },
   { id: 'trip', label: 'Số xe · Biển',  w: 168 },
   { id: 'npp',  label: 'NPP · Số DO',   w: 168 },
+  // Khách hàng / Kênh (11/09): %Date tự động chạy theo hai thứ này, nên người chốt phải thấy ngay
+  // vì sao dòng của mình có (hoặc không có) mức sẵn.
+  { id: 'cust', label: 'Khách · Kênh',  w: 170 },
   { id: 'mat',  label: 'Mã hàng',       w: 92 },
   { id: 'name', label: 'Tên hàng',      w: 190 },
   { id: 'qty',  label: 'Còn lấy',       w: 118, align: 'right' as const },
   { id: 'note', label: 'Ghi chú của CS', w: 200 },
-  { id: 'rule', label: '%Date lấy hàng', w: 170 },
+  { id: 'rule', label: '%Date lấy hàng', w: 190 },
+]
+
+// Nhãn nguồn trên bộ lọc — UNSET/REVIEW là hai LÁT CẮT, không phải giá trị của cột nguồn.
+const SOURCE_OPTS = [
+  { value: 'UNSET',    label: 'Chưa chốt' },
+  { value: 'MANUAL',   label: 'Chốt tay' },
+  { value: 'CUSTOMER', label: 'Theo khách' },
+  { value: 'CHANNEL',  label: 'Theo kênh' },
+  { value: 'SAP',      label: 'Từ VL06O' },
+  { value: 'REVIEW',   label: 'Cần xem (hết tồn)' },
 ]
 
 export default function DateRules() {
@@ -53,13 +68,14 @@ export default function DateRules() {
 
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [sheet, setSheet] = useState<DateRuleTarget[] | null>(null)
+  const [applyOpen, setApply] = useState(false)
 
   const { data, isLoading } = useDateRuleLines({
     from: f.from, to: f.to, warehouseId: f.warehouseId, state: f.state, search: f.search,
-    page: f.page, pageSize: f.pageSize,
+    source: f.source, page: f.page, pageSize: f.pageSize,
   })
   const rows = data?.rows ?? []
-  const sum = data?.summary ?? { lines: 0, set: 0, unset: 0, with_note: 0, trips: 0 }
+  const sum = data?.summary ?? { lines: 0, set: 0, unset: 0, with_note: 0, trips: 0, review: 0, no_channel: 0 }
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / f.pageSize))
 
@@ -99,6 +115,9 @@ export default function DateRules() {
     { key: 'state', label: 'Trạng thái chốt', type: 'single', pinned: true,
       options: [{ value: 'UNSET', label: 'Chưa chốt' }, { value: 'SET', label: 'Đã chốt' }],
       value: f.state, onChange: (v: string) => setF({ state: v as '' | 'SET' | 'UNSET', page: 1 }) },
+    { key: 'source', label: 'Nguồn %Date', type: 'multi', pinned: true,
+      options: SOURCE_OPTS, selected: f.source,
+      onChange: (v: string[]) => setF({ source: v, page: 1 }) },
   ]
 
   return (
@@ -110,12 +129,20 @@ export default function DateRules() {
               <CalendarClock className="h-4 w-4 text-sky-600" /> Chốt %Date
             </h1>
             <SearchInput value={f.search} onChange={v => setF({ search: v, page: 1 })}
-              placeholder="Số xe · biển số · NPP · số DO · mã hàng · ghi chú CS" className="flex-1 min-w-[140px]" />
+              placeholder="Số xe · biển số · NPP · khách · số DO · mã hàng · ghi chú CS" className="flex-1 min-w-[140px]" />
             <FilterSheetButton defs={filterDefs} />
-            <Button size="sm" className="h-9 sm:h-7" disabled={!canSet || picked.size === 0 || pickedWhs.size > 1}
-              onClick={() => setSheet(toTargets(pickedRows))}>
-              Chốt %Date ({picked.size})
-            </Button>
+            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+              <ActionCluster mobileInline items={[
+                { key: 'set', icon: CalendarClock, label: `Chốt %Date (${picked.size})`, primary: true,
+                  tip: pickedWhs.size > 1 ? 'Đang chọn dòng của nhiều kho — tồn tra theo kho, hãy lọc về một kho'
+                    : 'Chốt mức %Date cho các dòng đang tick',
+                  disabled: !canSet || picked.size === 0 || pickedWhs.size > 1,
+                  onClick: () => setSheet(toTargets(pickedRows)) },
+                { key: 'master', icon: RefreshCw, label: 'Áp lại theo master',
+                  tip: 'Áp %Date của Khách hàng / Kênh cho đơn đang mở trong khoảng ngày đang lọc — KHÔNG đụng dòng đã chốt tay',
+                  disabled: !canSet, onClick: () => setApply(true) },
+              ]} />
+            </div>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
           {pickedWhs.size > 1 && (
@@ -131,6 +158,10 @@ export default function DateRules() {
           { label: 'Chưa chốt', value: nf(sum.unset) },
           { label: 'Đã chốt', value: nf(sum.set) },
           { label: 'Có ghi chú CS', value: nf(sum.with_note) },
+          // Máy đã áp mức nhưng lúc áp kho KHÔNG còn pallet nào đạt — không chặn, nhưng giấu đi thì
+          // chuyến vào ca sinh 0 việc mà không ai biết vì sao.
+          { label: 'Cần xem', value: nf(sum.review), tip: 'Máy đã áp %Date nhưng kho không còn pallet nào đạt mức đó' },
+          { label: 'Khách chưa kênh', value: nf(sum.no_channel), tip: 'Dòng chưa chốt của khách chưa phân kênh (hoặc chưa có trong danh mục) — phân kênh ở trang Khách hàng' },
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${f.page}/${totalPages}` }] : []),
         ]} />
 
@@ -176,6 +207,13 @@ export default function DateRules() {
                       <div className="truncate">{r.distributor_name ?? '—'}</div>
                       <div className="text-[9px] text-slate-400 font-mono">{r.delivery_code ?? '—'}</div>
                     </TableCell>
+                    {/* Khách hàng của chuyến (khoá = mã ship-to SAP) + kênh — nguồn của %Date tự động */}
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                      <div className="truncate">{r.customer_name ?? (r.shipto_party ? <span className="font-mono">{r.shipto_party}</span> : <span className="text-slate-300">—</span>)}</div>
+                      {r.customer_has_channel
+                        ? <div className="text-[9px] text-slate-400 truncate">{r.channel}</div>
+                        : <div className="text-[9px] text-amber-600">{r.customer_known ? 'chưa phân kênh' : 'chưa có trong danh mục'}</div>}
+                    </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{r.material_code ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{r.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     {/* SL theo THÙNG (+ lẻ) — số base thô (13.440 hộp) không phải đơn vị kho dùng để nói chuyện */}
@@ -186,7 +224,12 @@ export default function DateRules() {
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls}`}>{b.text}</span>
+                      <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls} ${b.review ? 'ring-1 ring-red-400' : ''}`}
+                        title={b.review ? 'Kho không còn pallet nào đạt mức này — đổi mức hoặc để dòng chưa chốt' : undefined}>
+                        {b.text}
+                      </span>
+                      {b.source && <span className="ml-1 text-[9px] text-slate-400">· {b.source}</span>}
+                      {b.review && <span className="ml-1 text-[9px] font-semibold text-red-600">· cần xem</span>}
                     </TableCell>
                   </TableRow>
                 )
@@ -205,6 +248,86 @@ export default function DateRules() {
         <SetDateRuleSheet open onClose={() => { setSheet(null); setPicked(new Set()) }}
           targets={sheet} warehouseId={pickedRows[0]?.warehouse_id ?? null} />
       )}
+
+      {applyOpen && (
+        <ApplyMasterDialog from={f.from} to={f.to} warehouseId={f.warehouseId}
+          warehouseName={(whs ?? []).find(w => (w as { id: string }).id === f.warehouseId) ? ((whs ?? []).find(w => (w as { id: string }).id === f.warehouseId) as { name?: string }).name ?? '' : ''}
+          onClose={() => setApply(false)} />
+      )}
     </div>
+  )
+}
+
+/**
+ * ÁP LẠI %DATE THEO MASTER — 2 pha (kiểm trước → xác nhận).
+ * Master KHÔNG tự lan ngược cho đơn đang mở: sửa một ô cấu hình mà làm nghìn dòng đổi âm thầm là
+ * lỗi không ai lần ra được. Đây là đường duy nhất áp cho đơn cũ, và phải nói rõ sẽ đụng bao nhiêu.
+ */
+function ApplyMasterDialog({ from, to, warehouseId, warehouseName, onClose }: {
+  from: string; to: string; warehouseId: string; warehouseName: string; onClose: () => void
+}) {
+  const apply = useApplyDateRuleMaster()
+  const [pre, setPre] = useState<{ applied: number; cleared: number; kept: number; scanned: number } | null>(null)
+  const [done, setDone] = useState<ApplyMasterResult | null>(null)
+  const [err, setErr] = useState('')
+
+  const run = async (preflight: boolean) => {
+    setErr('')
+    try {
+      const res = await apply.mutateAsync({ from, to, warehouse_id: warehouseId || undefined, preflight })
+      if (preflight) {
+        const ex = (res.extra ?? []) as { label: string; value: number }[]
+        const get = (k: string) => Number(ex.find(e => e.label.startsWith(k))?.value ?? 0)
+        setPre({ applied: get('Sẽ áp'), cleared: get('Sẽ XOÁ'), kept: get('Giữ nguyên'), scanned: res.total ?? 0 })
+      } else setDone(res)
+    } catch (e) {
+      setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không áp được')
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle className="text-base">Áp lại %Date theo master</DialogTitle></DialogHeader>
+        <div className="space-y-2 text-sm text-slate-600">
+          <p>
+            Khoảng ngày <b>{formatDate(from)} – {formatDate(to)}</b>
+            {warehouseName ? <> · kho <b>{warehouseName}</b></> : <> · <b>mọi kho trong phạm vi của bạn</b></>}.
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Chỉ đụng dòng CHƯA CHỐT hoặc dòng do máy áp trước đó. Dòng người đã <b>chốt tay</b> không bao giờ bị đè.
+          </p>
+          {err && <p className="text-[11px] text-red-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {err}</p>}
+          {pre && !done && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-[12px] space-y-0.5">
+              <div>Xét <b>{nf(pre.scanned)}</b> dòng.</div>
+              <div className="text-green-700">Sẽ áp %Date: <b>{nf(pre.applied)}</b> dòng</div>
+              {pre.cleared > 0 && <div className="text-amber-700">Sẽ XOÁ mức máy đã áp: <b>{nf(pre.cleared)}</b> dòng (kho đổi chính sách hoặc dòng có ghi chú CS)</div>}
+              <div className="text-slate-500">Giữ nguyên vì đã chốt tay: {nf(pre.kept)} dòng</div>
+            </div>
+          )}
+          {done && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-2 text-[12px] space-y-0.5">
+              <div className="font-medium text-green-800">Đã áp {nf(done.applied)} dòng.</div>
+              {done.cleared > 0 && <div className="text-amber-700">Xoá mức máy cũ: {nf(done.cleared)} dòng</div>}
+              <div className="text-slate-600">Giữ chốt tay: {nf(done.kept_manual)} dòng · sắp lại kế hoạch {nf(done.trips_replanned)} chuyến đang xuất</div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={apply.isPending}>{done ? 'Đóng' : 'Huỷ'}</Button>
+          {!done && !pre && (
+            <Button disabled={apply.isPending} onClick={() => run(true)}>
+              {apply.isPending ? 'Đang kiểm…' : 'Kiểm trước'}
+            </Button>
+          )}
+          {!done && pre && (
+            <Button disabled={apply.isPending || (pre.applied + pre.cleared === 0)} onClick={() => run(false)}>
+              {apply.isPending ? 'Đang áp…' : `Xác nhận áp ${nf(pre.applied + pre.cleared)} dòng`}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

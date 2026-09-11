@@ -27,6 +27,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
   Warehouse:           [['warehouses']],
+  // Danh mục Khách hàng nuôi %Date tự động ⇒ đổi khách là màn Chốt %Date phải đổi theo (11/09)
+  Customer:            [['customers'], ['customer-channels'], ['customer-seed-candidates'], ['date-rule-lines']],
   WarehouseZone:       [['warehouse-zones'], ['dashboard']],
   LookupValue:         [['lookup']],            // prefix khớp ['lookup','warehouse_type'] & ['lookup',type]
   ImportShift:         [['import-shifts']],

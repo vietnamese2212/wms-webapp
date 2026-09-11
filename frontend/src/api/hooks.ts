@@ -775,7 +775,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; copy_from_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -784,7 +784,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -4155,9 +4155,15 @@ export interface DateRuleLine {
   cartons_ordered: number; cartons_scanned: number; remaining: number
   header_text: string | null; batch_required: string | null; date_required: number | null
   date_rule: DateRule | null; is_set: boolean
+  // Khách hàng / Kênh + nguồn quy tắc (11/09) — để biết con số trước mặt là quyết định của AI
+  shipto_party: string | null; customer_name: string | null; channel: string | null
+  customer_known: boolean; customer_has_channel: boolean
+  source: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SAP' | null
+  review: 'NO_STOCK' | null
 }
 export function useDateRuleLines(p: {
-  from: string; to: string; warehouseId?: string; state?: string; search?: string; page: number; pageSize: number
+  from: string; to: string; warehouseId?: string; state?: string; search?: string
+  source?: string[]; page: number; pageSize: number
 }) {
   return useQuery({
     queryKey: ['date-rule-lines', p],
@@ -4168,12 +4174,13 @@ export function useDateRuleLines(p: {
           warehouse_id: p.warehouseId || undefined,
           state: p.state || undefined,
           search: p.search || undefined,
+          source: p.source?.length ? p.source.join(',') : undefined,
           page: p.page, page_size: p.pageSize,
         },
       })
       return data.data as {
         rows: DateRuleLine[]; total: number; page: number; page_size: number
-        summary: { lines: number; set: number; unset: number; with_note: number; trips: number }
+        summary: { lines: number; set: number; unset: number; with_note: number; trips: number; review: number; no_channel: number }
       }
     },
     placeholderData: keepPreviousData,
@@ -4214,6 +4221,142 @@ export function useSetItemsDateRule() {
       // Chính màn "Chốt %Date" — thiếu key này thì chốt xong bảng vẫn ghi "Chưa chốt" (đo trên
       // Preview 10/09), người chốt tưởng mình bấm hụt và chốt lại lần nữa.
       qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
+    },
+  })
+}
+
+// ─── KHÁCH HÀNG / NƠI NHẬN + KÊNH (11/09) — master data nuôi %Date tự động ────────────────────
+export interface Customer {
+  id: string; ship_to_code: string; name: string; channel: string | null
+  date_rule: DateRule | null; warehouse_id: string | null
+  is_active: boolean; auto_created: boolean; note: string | null
+  created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
+}
+export interface CustomerFilters {
+  search?: string; channel?: string[]; hasChannel?: '' | '1' | '0'
+  warehouseId?: string; active?: '' | '1' | '0'; page: number; pageSize: number
+}
+export function useCustomers(f: CustomerFilters) {
+  return useQuery({
+    queryKey: ['customers', f],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/customers', {
+        params: {
+          search: f.search || undefined,
+          channel: f.channel?.length ? f.channel.join(',') : undefined,
+          has_channel: f.hasChannel || undefined,
+          warehouse_id: f.warehouseId || undefined,
+          active: f.active || undefined,
+          page: f.page, page_size: f.pageSize,
+        },
+      })
+      return data.data as {
+        rows: Customer[]; total: number; page: number; page_size: number
+        summary: { total: number; no_channel: number; with_warehouse: number; auto_created: number; inactive: number }
+      }
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+}
+
+export interface CustomerChannel {
+  id: string; value: string; label: string; date_rule: DateRule | null; sort_order: number | null; customers: number
+}
+export function useCustomerChannels() {
+  return useQuery({
+    queryKey: ['customer-channels'],
+    queryFn: async () => (await apiClient.get('/masterdata/customer-channels')).data.data as CustomerChannel[],
+    staleTime: 60_000,
+  })
+}
+
+/** Ứng viên nạp danh mục — mã ship-to đã thấy trong VL06O hoặc trên chuyến. */
+export interface CustomerCandidate {
+  ship_to_code: string; name: string; erp_lines: number; trips: number; last_date: string | null
+  exists_already: boolean; current_name: string | null; current_channel: string | null
+}
+export function useCustomerSeedCandidates(enabled: boolean) {
+  return useQuery({
+    queryKey: ['customer-seed-candidates'],
+    queryFn: async () => (await apiClient.get('/masterdata/customers/seed-candidates')).data.data as
+      { rows: CustomerCandidate[]; total: number; new_count: number; days: number },
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: ['customers'] })
+  qc.invalidateQueries({ queryKey: ['customer-channels'] })
+  qc.invalidateQueries({ queryKey: ['customer-seed-candidates'] })
+  // Màn Chốt %Date hiện tên khách + kênh của từng dòng — đổi danh mục là bảng đó phải đổi theo
+  qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
+}
+
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note'>> & { date_rule?: DateRule | null }
+export function useSaveCustomer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: CustomerPatch & { id?: string }) =>
+      (id ? apiClient.put(`/masterdata/customers/${id}`, body) : apiClient.post('/masterdata/customers', body))
+        .then(r => r.data.data as Customer),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+export function useDeactivateCustomer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/customers/${id}`).then(r => r.data.data as Customer),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+/** Thao tác hàng loạt: `ids` (dòng đã tick) HOẶC `filter` (chọn tất cả theo bộ lọc) — không cả hai. */
+export function useBulkUpdateCustomers() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids?: string[]; filter?: Record<string, unknown>; patch: CustomerPatch }) =>
+      apiClient.patch('/masterdata/customers/bulk', body).then(r => r.data.data as { updated: number }),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+export function useSeedCustomers() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ rows, preflight }: { rows: { ship_to_code: string; name: string }[]; preflight?: boolean }) =>
+      apiClient.post(`/masterdata/customers/seed${preflight ? '?preflight=1' : ''}`, { rows })
+        .then(r => r.data.data as { created?: number; skipped?: number } & Partial<UploadPreflight>),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+export function useUpdateCustomerChannel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; label?: string; date_rule?: DateRule | null }) =>
+      apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+
+/**
+ * ÁP LẠI %DATE THEO MASTER cho đơn đang mở. Master KHÔNG lan ngược (sửa một ô cấu hình mà làm nghìn
+ * dòng đổi âm thầm là lỗi không ai lần ra được) nên đây là đường DUY NHẤT áp cho đơn cũ — 2 pha:
+ * `preflight` đếm trước, người xem rồi mới bấm Xác nhận.
+ */
+export interface ApplyMasterResult {
+  scanned: number; applied: number; cleared: number; kept_manual: number; updated: number; trips_replanned: number
+}
+export function useApplyDateRuleMaster() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ preflight, ...body }: { from: string; to: string; warehouse_id?: string; preflight?: boolean }) =>
+      apiClient.post(`/wms/outbound/items/date-rule/apply-master${preflight ? '?preflight=1' : ''}`, body)
+        .then(r => r.data.data as ApplyMasterResult & Partial<UploadPreflight>),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
     },
   })
 }

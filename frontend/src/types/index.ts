@@ -845,11 +845,16 @@ export interface DirectedBoard {
 export type SimpleRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'
 export type DateRuleKind = SimpleRuleKind | 'SPLIT'
 export interface DateRulePart { qty_base: number; kind: SimpleRuleKind; value?: string | number | null }
+export type DateRuleSource = 'MANUAL' | 'CUSTOMER' | 'CHANNEL'
 export interface DateRule {
   kind: DateRuleKind
   value?: string | number | null
   parts?: DateRulePart[]
   set_by?: string | null; set_at?: string | null
+  // AI ĐẶT quy tắc (11/09): người chốt tay hay máy áp theo Khách hàng / Kênh. Thiếu = MANUAL.
+  source?: DateRuleSource | null
+  // Lúc máy áp, kho KHÔNG còn pallet nào đạt mức này — chỉ NHẮC, không chặn.
+  review?: 'NO_STOCK' | null
 }
 
 // 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP

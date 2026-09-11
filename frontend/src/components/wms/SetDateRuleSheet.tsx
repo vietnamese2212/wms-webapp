@@ -57,18 +57,35 @@ const simpleText = (k: SimpleRuleKind, v: unknown): string =>
  */
 export function dateRuleLabel(
   r: DateRule | null | undefined, units?: MatUnits | null, dateRequired?: number | null,
-): { text: string; cls: string } {
+): { text: string; cls: string; source?: string; review?: boolean } {
   if (!r && Number(dateRequired) > 0)
     return { text: `≥ ${Number(dateRequired)} % (SAP)`, cls: 'bg-sky-50 text-sky-700 border border-sky-200' }
   if (!r) return { text: 'Chưa chốt', cls: 'bg-amber-100 text-amber-800' }
+  // AI đặt quy tắc này — người chốt tay và máy áp theo master phải phân biệt được trên MỌI bảng,
+  // nếu không người ta không biết con số trước mặt là quyết định của ai (11/09).
+  const source = r.source === 'CUSTOMER' ? 'theo khách' : r.source === 'CHANNEL' ? 'theo kênh' : undefined
+  const review = r.review === 'NO_STOCK'
   if (r.kind === 'SPLIT')
     return {
       text: (r.parts ?? []).map(p => `${qtyEntryText(Number(p.qty_base), units)} ${simpleText(p.kind, p.value)}`).join(' · ') || 'Chia phần',
-      cls: 'bg-indigo-100 text-indigo-700',
+      cls: 'bg-indigo-100 text-indigo-700', source, review,
     }
-  if (r.kind === 'FEFO') return { text: 'FEFO', cls: 'bg-slate-100 text-slate-600' }
+  if (r.kind === 'FEFO') return { text: 'FEFO', cls: 'bg-slate-100 text-slate-600', source, review }
+  if (r.kind === 'MIN_PCT') return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700', source, review }
+  return { text: `Chỉ định ${String(r.value ?? '')}`, cls: 'bg-purple-100 text-purple-700', source, review }
+}
+
+/**
+ * Nhãn của quy tắc MASTER (Khách hàng / Kênh) — KHÔNG phải dòng đơn.
+ * Tách khỏi `dateRuleLabel` vì master không có mức kế thừa từ VL06O và không có trạng thái
+ * "chưa chốt": để trống ở đây nghĩa là "theo cấp trên" chứ không phải "chưa ai quyết".
+ * Dùng CHUNG bảng màu để badge nhìn giống nhau ở mọi màn.
+ */
+export function masterRuleLabel(r: DateRule | null | undefined): { text: string; cls: string } | null {
+  if (!r) return null
+  if (r.kind === 'FEFO')    return { text: 'FEFO', cls: 'bg-slate-100 text-slate-600' }
   if (r.kind === 'MIN_PCT') return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700' }
-  return { text: `Chỉ định ${String(r.value ?? '')}`, cls: 'bg-purple-100 text-purple-700' }
+  return { text: String(r.kind), cls: 'bg-slate-100 text-slate-600' }
 }
 
 /**

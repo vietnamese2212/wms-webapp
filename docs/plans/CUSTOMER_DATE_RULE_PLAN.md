@@ -18,7 +18,7 @@
 | Chuyến có `shipto_party` (mã ship-to SAP) | **99,7 %** (3.462 / 3.473), 87 mã khác nhau | **Khoá để tự động hoá đã có sẵn trên dữ liệu** |
 | `Warehouse.shipto_codes` có khai | **0 / 153** kho | Rule Chuyển kho hiện dò theo TÊN kho (`ilike name`) — chưa ai khai khoá |
 | Tên NPP trên chuyến khớp tên Kho danh mục | 0 / 91 | Khách hàng KHÔNG nằm trong bảng Kho hôm nay |
-| Tiền tố ship-to | `1xxxxxxx` 20 mã · `2xxxxxxx` 4 mã · `3xxxxxxx` 69 mã · `T…` 1 | Có thể là nhóm tài khoản SAP → **chỉ GỢI Ý kênh**, người tick mới có hiệu lực |
+| Tiền tố ship-to | `1xxxxxxx` 20 mã · `2xxxxxxx` 4 mã · `3xxxxxxx` 69 mã · `T…` 1 | Có thể là nhóm tài khoản SAP — user chốt 11/09 **KHÔNG gợi ý kênh theo tiền tố**; phân kênh bằng thao tác hàng loạt (4.1b) |
 
 ### 0.2 Ba quyết định thiết kế (user đã gật 11/09)
 
@@ -64,7 +64,7 @@ Chốt: **một helper `warehouseByShipto(shipto)`** dùng cho cả 3 chỗ, th�
 - Nút **"Nạp từ dữ liệu SAP"** trên trang Khách hàng: RPC `customer_seed_candidates()` trả DISTINCT `ship_to_code` + tên gần nhất + số DO (từ `erp_outbound_orders` ∪ `GroupDeliveryOrder.shipto_party`/`OutboundDelivery.distributor_name`), **2 pha xem-trước → xác nhận** (chuẩn upload). Kênh để trống.
 - **Derive gặp ship-to lạ ⇒ tự tạo Customer** (`auto_created = true`, kênh trống, tên = "Tên NPP" của file). Upsert lô theo `ship_to_code`, `ignoreDuplicates`. Chỉ khi có `resolvedShipto`.
 - Trang Chốt %Date có ô band **"Khách chưa kênh: n"** (dòng chưa chốt thuộc khách chưa phân kênh) → bấm nhảy sang trang Khách hàng lọc "chưa kênh".
-- Gợi ý kênh theo tiền tố ship-to: **KHÔNG làm ở đợt này** (user chưa xác nhận nghĩa của 1/2/3). Ghi vào "còn mở".
+- Gợi ý kênh theo tiền tố ship-to: **KHÔNG làm** (user chốt 11/09: "không cần gợi ý"). Thay bằng **thao tác hàng loạt** trên trang Khách hàng (mục 4.1b): tick nhiều khách → Phân kênh / Đặt %Date riêng / Trỏ kho một lần.
 
 ### 0.8 Giả định đang áp (user không phản đối thì giữ)
 1. Kênh seed: `KHO_TONG` Kho tổng · `NPP` Nhà phân phối · `BHX` Bách hoá xanh · `KA` Key Account · `MT` Modern Trade · `NOI_BO` Nội bộ · `KHAC` Khác. **Chỉ `NPP` seed `meta.date_rule = {kind:'MIN_PCT', value:60}`** (user nói 10/09: "NPP đi ≥ 60 % nếu CS không ghi chú"); kênh khác `date_rule = null` = chưa khai ⇒ không áp. Sửa trong app.
@@ -75,7 +75,6 @@ Chốt: **một helper `warehouseByShipto(shipto)`** dùng cho cả 3 chỗ, th�
 6. Bật `policy` cho kho đang có đơn mở KHÔNG tự áp; muốn áp thì bấm "Áp lại theo master".
 
 ### 0.9 Còn mở (không chặn)
-- Gợi ý kênh theo tiền tố ship-to (chờ user xác nhận nghĩa 1/2/3 bên SAP).
 - Bỏ hẳn `Warehouse.shipto_codes` + dò tên sau khi Customer đã khai đủ (đo: 0 kho đang khai nên chưa vội).
 - Kho `policy = ALL` với dòng có ghi chú: máy áp rồi, ghi chú CS vẫn hiện nguyên văn trên trang Chốt; có nên gắn `review: 'HAS_NOTE'` không — để user quyết sau khi dùng.
 
@@ -174,9 +173,10 @@ export async function ensureCustomers(rows: {ship_to_code, name}[], actor): Prom
 | `POST /masterdata/customers` | `customers.edit` | validate ship_to_code `^[A-Z0-9]+$` upper/trim, channel ∈ lookup, date_rule FEFO/MIN_PCT (1–100), warehouse_id tồn tại; 23505 → 409 |
 | `PUT /masterdata/customers/:id` | `customers.edit` | `.select()` 0 dòng = 404 (id TEXT); `logAdmin('CUSTOMER_UPDATE', diffFields)` |
 | `DELETE /masterdata/customers/:id` | `customers.edit` | mềm `is_active=false` |
+| `PATCH /masterdata/customers/bulk` | `customers.edit` | **Thao tác hàng loạt** (đặt TRƯỚC `/:id` trong router kẻo "bulk" bị nuốt làm id). Body `{ ids?: string[]; filter?: {search, channel[], has_channel, warehouse_id, is_active}; patch: { channel?: string\|null; date_rule?: DateRule\|null; warehouse_id?: string\|null; is_active?: boolean } }` — **`ids` HOẶC `filter`, không cả hai**: "chọn tất cả theo bộ lọc" gửi `filter` để BE tự resolve (luật 2 trần id trên URL — KHÔNG nhồi 1.000 id vào body rồi `.in()` không chunk; BE resolve id theo filter → UPDATE chunk 300). `patch` chỉ nhận đúng 4 khoá, khoá lạ → 400. `ids` ≤ 500. Trả `{updated}`; `logAdmin('CUSTOMER_BULK', {count, patch})`. Mẫu tham chiếu: `locationController.bulkFlagLocations` (áp theo bộ lọc) |
 | `GET /wms/lookup?type=customer_channel` | (đã có, hở đọc) | |
 | `PUT /wms/lookup/:id` với meta.date_rule | **quyền MỚI `customers.manage_channel`** | lookupController: nếu `type='customer_channel'` thì đòi quyền này thay `wms_settings.manage_type` (route hiện gate manage_type — thêm nhánh `requireAnyPerm` hoặc route riêng `PUT /masterdata/customer-channels/:id`; **chọn route riêng**, gọn hơn, không nới quyền cũ). Validate meta.date_rule FEFO/MIN_PCT. `logAdmin('CHANNEL_UPDATE')` |
-Thêm `CUSTOMER_UPDATE`, `CHANNEL_UPDATE` vào `ADMIN_AUDIT_ACTIONS` + nhãn FE `AUDIT_ACTION_LABEL`; `AdminAuditTarget` thêm `'Customer' | 'LookupValue'`.
+Thêm `CUSTOMER_UPDATE`, `CUSTOMER_BULK`, `CHANNEL_UPDATE` vào `ADMIN_AUDIT_ACTIONS` + nhãn FE `AUDIT_ACTION_LABEL`; `AdminAuditTarget` thêm `'Customer' | 'LookupValue'`.
 
 ### 3.4 Áp lại theo master — `POST /outbound/items/date-rule/apply-master`
 Body `{ from, to, warehouse_ids? }` (≤ 62 ngày, cắt scope kho như `getDateRuleLines`), quyền `outbound.set_date`. Nạp dòng của chuyến PENDING/IN_PROGRESS/PAUSED trong khoảng (chunk), lọc `source ∈ {CUSTOMER,CHANNEL}` ∪ chưa chốt, chạy `resolveDateRule` với `existing` bị coi là "đè được" (chỉ MANUAL giữ), UPDATE chunk 300, `flagNoStock`, `logOutboundEvents` source `'SYSTEM'`, `resetUntouchedTasksOfItems` + `planGdoTasks` cho chuyến IN_PROGRESS (như `setItemsDateRule`). Trần 5.000 dòng → 400 nêu thu hẹp khoảng. Trả `{applied, cleared, kept_manual, no_stock}`.
@@ -194,6 +194,12 @@ Tạo `async function warehouseByShipto(shipto): Promise<DestWh|null>` trong out
 - List page chuẩn `table-format`: cột Mã ship-to (mono) · Tên · Kênh (StatusBadge purple) · %Date riêng (badge `dateRuleLabel` hoặc "— theo kênh") · Kho nhận (tên kho hoặc "Khách ngoài") · Nguồn (Tự tạo / Nhập tay) · Hoạt động · Tạo/Sửa. FilterBar: Kênh (multi, có giá trị "Chưa kênh") · Kho nhận · Hoạt động. Search server. SummaryBand: Tổng · Chưa kênh · Trỏ kho · Tự tạo. Filter store slice `customers`.
 - Toolbar ActionCluster: **Thêm** (`edit`) · **Nạp từ dữ liệu SAP** (`import`, `mobileHidden`) → dialog 2 pha (bảng ứng viên + chip Đã có/Mới, tick, Xác nhận).
 - FormSheet Thêm/Sửa: Mã ship-to (khoá, chỉ sửa lúc tạo) · Tên · Kênh (`SingleSelect` từ lookup) · %Date riêng (radio "Theo kênh" | FEFO | ≥ n %) · Kho nhận (`WarehouseSingleSelect`, có "Khách ngoài") · Hoạt động · Ghi chú. Dòng chú thích dưới ô Kho nhận: *"Trỏ kho = kho nhận xác nhận hàng trong app khi chuyển kho; khách ngoài = tài xế tự xác nhận."*
+- **4.1b CHỌN NHIỀU + THAO TÁC HÀNG LOẠT (user chốt 11/09: "Khách hàng phải cho chọn multi, có action để setup nhanh kênh; làm đồng bộ như các module khác đang làm action").** Cột đầu = checkbox từng dòng + **MỘT ô chọn-tất-cả** (desktop ở đầu bảng; điện thoại ở thanh thao tác vì thẻ không có hàng tiêu đề — cùng luật trang Chốt %Date). Chọn-tất-cả có 2 mức như `Locations.tsx`: tick trang đang xem → hiện dòng *"Đã chọn 100 dòng trên trang — Chọn cả N dòng theo bộ lọc"* (`allFiltered`); khi `allFiltered` thì gửi `filter`, không gửi `ids`. Khi `picked.size > 0` thanh toolbar hiện thêm cụm **`ActionCluster`** (cùng component, cùng cỡ `h-9 sm:h-7`, mobile gom ⋮ ghim mép phải — KHÔNG tự viết `<Button>` rời):
+  - **Phân kênh (n)** — `SingleSelect` kênh trong Dialog xác nhận nhỏ → `PATCH …/bulk { patch: { channel } }`.
+  - **Đặt %Date riêng (n)** — radio Theo kênh (= `date_rule: null`) | FEFO | ≥ n % → `patch.date_rule`.
+  - **Trỏ kho (n)** — `WarehouseSingleSelect` (có "Khách ngoài" = null) → `patch.warehouse_id`.
+  - **Ngừng / Kích hoạt (n)** — `patch.is_active`, `danger` cho Ngừng.
+  Mọi nút gate `can(perms,'customers','edit')`, `disabled={saving}` + nhãn chờ, lỗi = banner đỏ inline; `ListFooter right` hiện "n đang chọn" (mẫu `DateRules.tsx`). Sau khi lưu: bỏ chọn, `invalidateQueries(['customers'])`, toast số dòng đổi. **Phạm vi của thao tác hàng loạt hiện rõ trong Dialog xác nhận** ("Áp kênh NPP cho **312 khách theo bộ lọc hiện tại**") — áp mù cả bảng là lỗi đã bị bác ở màn Chốt %Date.
 - Tab **Kênh** (cùng trang, tab thứ 2, gate `manage_channel`): bảng kênh (Mã · Tên · %Date mặc định · Số khách) + sửa inline qua FormSheet nhỏ (Tên, quy tắc FEFO/≥ n %/Chưa khai). Hint: *"Đổi mặc định chỉ áp cho đơn sinh sau; đơn đang mở dùng 'Áp lại theo master' ở trang Chốt %Date."*
 - Điện thoại: thẻ, không tràn 360.
 
@@ -211,7 +217,21 @@ Một ô chọn `date_rule_policy`: Tắt · Áp toàn bộ (bỏ qua dòng đã
 ### 4.4 Quyền (skill `add-permission`, đủ 4 nơi)
 Module mới FE `MODULES.customers` = {page:'Khách hàng', actions: view · edit · import · manage_channel} + BE `ALL_PERMISSIONS`; `navigation.ts` nhóm Cấu hình thêm `{ to:'/masterdata/customers', label:'Khách hàng', module:'customers' }` (đứng sau Mã hàng); route FE `PermissionRoute`; `TABLE_QUERY_MAP.Customer = [['customers'], ['date-rule-lines']]`, `LookupValue` đã map `['lookup']`. Hook: `useCustomers(filters)`, `useCustomerSeedCandidates`, `useSaveCustomer`, `useApplyDateRuleMaster` (onSettled invalidate `['date-rule-lines']`, `['gdo']`, `['customers']`).
 
-**Kiểm tra 4:** tsc FE + build xanh; Playwright 1280/390/360: trang Khách hàng (list + form + Nạp), tab Kênh, ô policy trong form Kho, trang Chốt có filter Nguồn + 2 ô band + nút Áp lại; user chỉ `customers.view` không thấy nút Thêm/Nạp.
+### 4.5 Chuẩn BẮT BUỘC tuân theo (user nhắc 11/09: "tuân thủ CLAUDE.md, skill, font, filter…") — Opus mở từng skill TRƯỚC khi code phần tương ứng
+| Phần | Skill / luật | Điểm dễ sót |
+|---|---|---|
+| Trang Khách hàng, tab Kênh, cột mới trang Chốt | `table-format` | card trên canvas xám · toolbar 1 hàng + `FilterBar` declarative (KHÔNG Select rời) · `SavedViews` + density · `SummaryBand` (tổng bằng SQL trên TOÀN bộ lọc, không cộng trang đang xem) · `ListPager`/`ListFooter` 50/100/200/500/1000 · typography 2 cỡ `text-[9px]` header / `text-[10px]` cell, mã `font-mono font-semibold`, số `tabular-nums` · `whitespace-nowrap` mọi th/td, KHÔNG `hidden sm:table-cell` · `StatusBadge` theo ngữ nghĩa (kênh = purple, hoạt động = green, ngừng = slate) · filter state trong `useWmsFilterStore` slice `customers` (tự nhớ per-user), mọi onChange filter kèm `page: 1` · nút inline cell `h-3.5 w-3.5` + `stopPropagation` · mobile toolbar ≤ 2 hàng, dòng dữ liệu đầu ≤ ~300px ở 390 |
+| Nút thao tác | `actionbtn-cluster-standard` (memory) | `ActionCluster` cho toolbar + thanh bulk + header detail; primary ≤ 2; `mobileHidden` cho Nạp từ SAP; `danger` cho Ngừng |
+| Form Thêm/Sửa khách, sửa kênh, dialog hàng loạt | CLAUDE.md "Mọi form Thêm/Sửa dùng `FormSheet`" | panel trượt phải, footer dính; dropdown trong sheet dùng `SingleSelect`/`WarehouseSingleSelect` (portal vào node dialog qua `usePopoverAnchor`, KHÔNG portal body); Dialog giữa CHỈ cho xác nhận hàng loạt |
+| Ô Kho nhận | scope | `useScopedWarehouses()` (không hook gốc); ô policy trong `StrategyFields` theo `settings-form-standard` (component KHÔNG khai trong component — mất focus sau 1 ký tự) |
+| 4 quyền mới + 7 route | `add-permission` | FE `MODULES` + BE `ALL_PERMISSIONS` + `can()` + `requirePerm`; bảng module→trang CLAUDE.md; route `bulk`/`seed*` đứng TRƯỚC `/:id` |
+| INSERT/UPDATE, bảng mới | `mutation-realtime` | `id: randomUUID()` + `updated_at` mọi INSERT; `TABLE_QUERY_MAP.Customer`; invalidate đủ `['customers']`, `['date-rule-lines']`, `['gdo']`; migration + `SCHEMA_REVIEW.md`; bump rebuild-token |
+| Bảng/RPC/route mới, upload seed | `security-hardening` | KHÔNG `CREATE POLICY … TO authenticated`; RPC không GRANT (mặc định đóng); id TEXT → `.select()` 0 dòng = 404; `fail(res, error)` truyền cả object (23505 → 409); `logAdmin` cho mọi thao tác quản trị; input `searchLooksLikeInjection` |
+| Nạp từ SAP (2 pha), Áp lại theo master | `upload-download-standard` | preflight xem-trước → xác nhận mới ghi; ghi LÔ chunk 500; idempotent theo `ship_to_code` |
+| Trước khi báo xong | `verify-feature` | tsc BE/FE + build · Postgres soi row · realtime 4 case · Playwright **1280 + 390 + 360** · QA 58 + chạy lại 57/12/14/07/08 · báo pass/fail kèm bằng chứng |
+| Số, ngày, đơn vị | CLAUDE.md | `formatDate`/`formatTimestampDate(ts,true)`; % hiện `≥ 60 %` kiểu VN; nhãn ĐVT từ danh mục; "hôm nay" là hàm |
+
+**Kiểm tra 4:** tsc FE + build xanh; Playwright 1280/390/360: trang Khách hàng (list + form + Nạp + **tick 3 dòng → Phân kênh → 3 dòng đổi, chọn-tất-cả theo bộ lọc → dialog nêu đúng N**), tab Kênh, ô policy trong form Kho, trang Chốt có filter Nguồn + 2 ô band + nút Áp lại; user chỉ `customers.view` không thấy nút Thêm/Nạp/thanh hàng loạt; mobile 360 không tràn ngang, ô chọn-tất-cả nằm ở thanh thao tác.
 
 ---
 
@@ -226,6 +246,7 @@ Fixture: kho QA (GUIDED có bản vẽ — dùng Ba Vì như 57, `freeDockFor`) 
 - [5a] ship-to lạ `QA58_NEW` trong file → Customer tự tạo `auto_created=true`, kênh NULL, band `no_channel ≥ 1`.
 - [6a–6c] Chuyển kho: hoàn thành chuyến tới khách D (trỏ kho CBBV) → `TmsOrder.delivery_mode='SCAN'`; khách C (không trỏ) → `SELF`; khách D đổi `warehouse_id=null` → chuyến mới `SELF`.
 - [7a–7d] API Khách hàng: id rác → 400/404, ship-to trùng → 409, date_rule EXACT/SPLIT → 400, tài khoản thiếu `customers.edit` → 403; kênh PUT thiếu `manage_channel` → 403.
+- [7e–7h] Hàng loạt: `ids` 3 khách → 3 đổi kênh; `filter {has_channel:false}` → đúng số khách chưa kênh đổi, khách đã kênh KHÔNG đổi; gửi cả `ids` lẫn `filter` → 400; `patch` có khoá lạ (`name`) → 400; `ids` 501 → 400.
 - [8a] RPC lines lọc `p_source=['CHANNEL']` chỉ trả dòng CHANNEL; `['REVIEW']` chỉ trả review.
 - [9a] anon key đọc `Customer` qua PostgREST → 0 dòng/401 (bảng mới đóng — cùng khuôn QA 40).
 - Gói 57 [19a–19e], gói 12 mục 4b, gói 14 mục 9 chạy lại xanh.

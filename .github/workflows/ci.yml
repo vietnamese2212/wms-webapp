@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: 20 }
+        with: { node-version: 22 }   # 22 = có WebSocket native; supabase-js v2.105 ném lỗi lúc createClient trên Node 20 (CI đỏ 11/09)
       - name: Cài dependency (BE + FE)
         run: |
           cd backend && npm ci --no-audit --no-fund &
@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: 20 }
+        with: { node-version: 22 }   # 22 = có WebSocket native; supabase-js v2.105 ném lỗi lúc createClient trên Node 20 (CI đỏ 11/09)
       - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
         run: |
           for i in $(seq 1 72); do

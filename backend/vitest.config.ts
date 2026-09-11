@@ -11,6 +11,7 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    setupFiles: ['tests/setup.ts'],   // env giả cho module tạo client Supabase lúc import (CI không có .env)
     // mỗi test in ra seed khi đỏ → tái hiện bằng RNG_SEED=<seed> npm test
     reporters: 'default',
   },

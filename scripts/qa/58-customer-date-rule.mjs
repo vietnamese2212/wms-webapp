@@ -361,6 +361,17 @@ try {
   const seededBefore = (await restAll('Customer', `select=id&ship_to_code=eq.${T}SEED1`)).length
   check('[7l] …và kiểm trước KHÔNG tạo bản ghi nào', seededBefore === 0, `n=${seededBefore}`)
 
+  // Cờ chính sách phải đi được qua CỬA CỦA APP (form Kho), không chỉ qua đường ghi thẳng bảng:
+  // thiếu tên cột trong whitelist của controller là ô trên form bấm xong không lưu được gì.
+  const rWhPut = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { date_rule_policy: 'ALL' })
+  const whAfter = (await restAll('Warehouse', `select=date_rule_policy&id=eq.${wh.id}`))[0]
+  check('[7m] Lưu chính sách %Date qua form Kho (PUT) ăn thật',
+    rWhPut.s === 200 && whAfter?.date_rule_policy === 'ALL', `${rWhPut.s} policy=${whAfter?.date_rule_policy}`)
+  const rWhBad = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { date_rule_policy: 'LUNG_TUNG' })
+  const whAfter2 = (await restAll('Warehouse', `select=date_rule_policy&id=eq.${wh.id}`))[0]
+  check('[7n] Giá trị chính sách lạ → rơi về TẮT, không ghi rác vào DB (CHECK ở DB là lá chắn cuối)',
+    whAfter2?.date_rule_policy === 'OFF', `${rWhBad.s} policy=${whAfter2?.date_rule_policy}`)
+
   // ═══ [8] Nhật ký quản trị ═════════════════════════════════════════════════════════════════════
   const audit = await restAll('admin_audit_events', "select=action&action=in.(CUSTOMER_BULK,CHANNEL_UPDATE)&order=created_at.desc&limit=20")
   check('[8a] Đổi danh mục Khách hàng / Kênh có vết Nhật ký quản trị',

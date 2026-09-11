@@ -218,8 +218,10 @@ export default function Customers() {
               <>
                 <SearchInput value={f.search} onChange={v => { setF({ search: v, page: 1 }); clearPick() }}
                   placeholder="Mã ship-to · tên khách hàng" className="flex-1 min-w-[140px]" />
-                <FilterSheetButton defs={filterDefs} />
+                {/* Mobile: nút Lọc đi CÙNG HÀNG với cụm thao tác (2 tab đã ăn hết hàng trên) —
+                    giữ toolbar ≤ 2 hàng để dòng dữ liệu đầu tiên không bị đẩy xuống quá sâu. */}
                 <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+                  <FilterSheetButton defs={filterDefs} />
                   <ActionCluster items={[...bulkItems, ...toolbarItems]} mobileInline />
                 </div>
               </>

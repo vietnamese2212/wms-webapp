@@ -20,7 +20,7 @@
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { recordServerError } from '../utils/response'
-import { computePctDate, type MaterialShelfInfo } from '../utils/shelfLife'
+import { computeDaysLeft, computePctDate, type MaterialShelfInfo } from '../utils/shelfLife'
 import {
   PICKABLE_STATUSES, isPickEligible, availableOf, rotationSortKey,
   type RotationEntry, type RotationPrinciple,
@@ -48,7 +48,10 @@ const CHUNK_IDS = 300                       // trần id trên URL của PostgRE
 // thùng date 60, 30 thùng date 90"). Dòng đơn đến từ SAP nên KHÔNG tách đôi được — phải chia ngay
 // trên quy tắc. Các phần chia hàng THEO THỨ TỰ KHAI; phần nào không khai hết SL thì phần dư của
 // dòng coi như CHƯA CHỐT (không sinh việc), đúng luật "chưa chốt thì không tự đi làm".
-export type DateRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT' | 'SPLIT'
+// MIN_DAYS = "còn tối thiểu N ngày" (11/09). Vì sao không dùng % cho mọi ca: FG02 hạn dùng chỉ
+// 45–60 ngày nên "còn ≥ 35 ngày" ra 77,8 % trên mã hạn 45 và 58,3 % trên mã hạn 60 — KHÔNG con số
+// phần trăm nào phục vụ được cả nhóm, và mức chung ≥ 60 % chỉ đòi 27 ngày trên mã hạn 45.
+export type DateRuleKind = 'FEFO' | 'MIN_PCT' | 'MIN_DAYS' | 'EXACT' | 'SPLIT'
 export type SimpleRuleKind = Exclude<DateRuleKind, 'SPLIT'>
 export interface DateRulePart { qty_base: number; kind: SimpleRuleKind; value?: string | number | null }
 export interface DateRule {
@@ -59,13 +62,19 @@ export interface DateRule {
   // AI ĐẶT quy tắc này (11/09) — nằm TRONG jsonb chứ không phải cột riêng để `keptItemRules` của
   // processVehicleGroups tự mang theo qua mỗi lần dữ liệu ngoài dội xuống. Thiếu khoá = MANUAL
   // (mọi dòng chốt trước 11/09 đều do người chốt). Luật gán: services/dateRulePolicy.ts
-  source?: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | null
-  // Cờ "cần xem": lúc máy áp, kho KHÔNG còn pallet nào đạt mức này (không chặn, chỉ nhắc)
-  review?: 'NO_STOCK' | null
+  source?: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SYSTEM' | null
+  // Cờ "cần xem" (không chặn, chỉ nhắc):
+  //   NO_STOCK     — lúc máy áp, kho KHÔNG còn pallet nào đạt mức này
+  //   BELOW_MASTER — %Date của VL06O quy ra ngày còn THẤP HƠN mức khách đã khai (VL06O vẫn thắng,
+  //                  nhưng im lặng nhận là giao thiếu date mà không ai biết)
+  review?: 'NO_STOCK' | 'BELOW_MASTER' | null
+  // Vì sao HỆ THỐNG tự đặt (chỉ đi kèm source = 'SYSTEM'): mã không đo được date.
+  reason?: 'NO_SHELF_LIFE' | null
 }
 export const MAX_RULE_PARTS = 10
 
-const isSimpleKind = (k: unknown): k is SimpleRuleKind => k === 'FEFO' || k === 'MIN_PCT' || k === 'EXACT'
+const isSimpleKind = (k: unknown): k is SimpleRuleKind =>
+  k === 'FEFO' || k === 'MIN_PCT' || k === 'MIN_DAYS' || k === 'EXACT'
 
 /** Đọc quy tắc của một dòng đơn. `date_required` cũ > 0 = đã có người quyết % ⇒ coi như MIN_PCT. */
 export function dateRuleOf(item: { date_rule?: unknown; date_required?: number | null }): DateRule | null {
@@ -77,7 +86,13 @@ export function dateRuleOf(item: { date_rule?: unknown; date_required?: number |
 }
 
 const describeSimple = (k: SimpleRuleKind, v: unknown): string =>
-  k === 'FEFO' ? 'FEFO (hạn ngắn nhất trước)' : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %` : `đúng ${String(v ?? '')}`
+  // "FEFO" KHÔNG quyết định thứ tự — thứ tự do nguyên tắc luân chuyển của kho quyết (rotation.ts).
+  // Nó chỉ có nghĩa "không đòi mốc nào", nên nhãn phải nói đúng như vậy: kho đặt LIFO mà nhãn ghi
+  // "hạn ngắn nhất trước" là nói dối người đọc.
+  k === 'FEFO' ? 'không đòi mốc'
+    : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %`
+      : k === 'MIN_DAYS' ? `còn ≥ ${Number(v ?? 0)} ngày`
+        : `đúng ${String(v ?? '')}`
 
 export function describeDateRule(r: DateRule | null): string {
   if (!r) return 'chưa chốt'
@@ -319,12 +334,20 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       // upload xong là có ngay, và nếu kho không còn hàng đạt thì bảng việc trống trơn mà không ai
       // biết vì sao (đo thật 10/09: SAP đòi 90 %, kho cao nhất 72 % ⇒ 0 việc, 0 lời cảnh báo).
       const all = byMat.get(it.material_id ?? '') ?? []
-      const best = all.map(c => computePctDate(c, mat)).filter((x): x is number => x != null)
+      // Nói bằng ĐÚNG thước mà quy tắc đang đòi — quy tắc tính theo ngày mà báo "%Date cao nhất
+      // 58 %" thì người đọc không biết mình phải hạ xuống bao nhiêu NGÀY.
+      const byDays = n.rule.kind === 'MIN_DAYS'
+      const best = all
+        .map(c => (byDays ? computeDaysLeft(c, mat) : computePctDate(c, mat)))
+        .filter((x): x is number => x != null)
       unmet.push({
         code: it.material_code_raw ?? '?',
         rule: describeDateRule(n.rule),
         hint: all.length === 0 ? 'kho không còn tồn mã này'
-          : best.length ? `%Date cao nhất còn trong kho ${Math.floor(Math.max(...best))} %`
+          : best.length
+            ? (byDays
+                ? `còn nhiều ngày nhất trong kho là ${Math.floor(Math.max(...best))} ngày`
+                : `%Date cao nhất còn trong kho ${Math.floor(Math.max(...best))} %`)
             : 'tồn còn nhưng không khớp mức yêu cầu',
       })
       continue
@@ -473,6 +496,12 @@ function matchesRule(c: Cand, mat: MaterialShelfInfo | null, rule: DateRule): bo
     const pct = computePctDate(c, mat)
     return pct != null && pct >= Number(rule.value ?? 0)
   }
+  // "Còn tối thiểu N ngày" — đo thẳng bằng ngày, KHÔNG quy về %. null = không biết hạn ⇒ không đạt
+  // (đúng như MIN_PCT: không chứng minh được thì không được lấy).
+  if (rule.kind === 'MIN_DAYS') {
+    const days = computeDaysLeft(c, mat)
+    return days != null && days >= Number(rule.value ?? 0)
+  }
   // EXACT: khớp NSX (yyyy-mm-dd) · HSD · mã lô · hoặc tem pallet
   const v = String(rule.value ?? '').trim()
   if (!v) return false
@@ -510,6 +539,7 @@ export interface DateRuleStock {
   matched_pallets: number
   total_base: number          // tồn dùng được của mã trong kho (không xét quy tắc)
   best_pct: number | null     // %Date CAO NHẤT còn trong kho — để người chốt biết gõ số nào mới được
+  best_days: number | null    // SỐ NGÀY còn lại cao nhất còn trong kho (cho quy tắc MIN_DAYS)
   need_base: number           // còn phải lấy = đặt − đã quét
   parts?: DateRuleStockPart[] // chỉ với quy tắc chia phần — để màn chốt chỉ ĐÚNG phần nào hỏng
 }
@@ -560,6 +590,7 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
     const wh = it.delivery?.gdo?.warehouse_id ?? null
     const pool = (wh && it.material_id) ? (poolOf.get(`${wh}::${it.material_id}`) ?? []) : []
     const pcts = pool.map(c => computePctDate(c, it.material)).filter((x): x is number => x != null)
+    const dayss = pool.map(c => computeDaysLeft(c, it.material)).filter((x): x is number => x != null)
     const need = Math.max(0, Number(it.cartons_ordered ?? 0) - Number(it.cartons_scanned ?? 0))
     const total = pool.reduce((s, c) => s + availableOf(c), 0)
 
@@ -591,6 +622,7 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
       matched_pallets: parts.reduce((s, p) => s + p.matched_pallets, 0),
       total_base: total,
       best_pct: pcts.length ? Math.max(...pcts) : null,
+      best_days: dayss.length ? Math.max(...dayss) : null,
       need_base: need,
       parts: rule.kind === 'SPLIT' ? parts : undefined,
     }

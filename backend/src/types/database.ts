@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-11T03:48:34.248Z · 93 bảng/view · 154 hàm · 0 enum
+// Sinh lúc 2026-09-11T06:20:01.669Z · 94 bảng/view · 158 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -92,7 +92,6 @@ export type Database = {
           ship_to_code: string
           name: string
           channel: string | null
-          date_rule: Json | null
           warehouse_id: string | null
           is_active: boolean
           auto_created: boolean
@@ -107,7 +106,6 @@ export type Database = {
           ship_to_code: string
           name: string
           channel?: string | null
-          date_rule?: Json | null
           warehouse_id?: string | null
           is_active?: boolean
           auto_created?: boolean
@@ -122,7 +120,6 @@ export type Database = {
           ship_to_code?: string
           name?: string
           channel?: string | null
-          date_rule?: Json | null
           warehouse_id?: string | null
           is_active?: boolean
           auto_created?: boolean
@@ -3005,6 +3002,45 @@ export type Database = {
         }
         Relationships: []
       }
+      date_rule_master: {
+        Row: {
+          id: string
+          scope: string
+          scope_key: string
+          category: string | null
+          rule: Json
+          note: string | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          scope: string
+          scope_key: string
+          category?: string | null
+          rule: Json
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          scope?: string
+          scope_key?: string
+          category?: string | null
+          rule?: Json
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       erp_outbound_orders: {
         Row: {
           id: string
@@ -4790,6 +4826,10 @@ export type Database = {
         Args: { p_categories: unknown; p_material_codes: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown }
         Returns: Json
       }
+      customer_page: {
+        Args: { p_channels?: unknown; p_warehouse_id?: unknown; p_has_rule?: unknown; p_offset?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown }
+        Returns: Json
+      }
       customer_seed_candidates: {
         Args: { arg2?: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: Json
@@ -4809,6 +4849,14 @@ export type Database = {
       dashboard_stats: {
         Args: { p_categories?: unknown; arg4?: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown }
         Returns: Json
+      }
+      date_rule_categories: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      date_rule_master_value_ok: {
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Returns: boolean
       }
       date_rule_valid: {
         Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
@@ -5059,7 +5107,7 @@ export type Database = {
         Returns: Json
       }
       outbound_date_rule_lines: {
-        Args: { p_to: unknown; p_warehouse_id: unknown; p_state?: unknown; p_limit?: unknown; p_source?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown }
+        Args: { p_to: unknown; p_warehouse_id: unknown; p_state?: unknown; p_limit?: unknown; p_source?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown } | { p_to: unknown; p_warehouse_id: unknown; p_state?: unknown; p_limit?: unknown; p_source?: unknown; p_kinds?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown }
         Returns: Json
       }
       outbound_gdos_facets: {
@@ -5243,7 +5291,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
+        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: string
       }
       unaccent_init: {

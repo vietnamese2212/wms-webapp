@@ -43,12 +43,20 @@ router.get('/customers',                  requirePerm('customers', 'view'),   cu
 router.get('/customers/seed-candidates',  requirePerm('customers', 'import'), customer.customerSeedCandidates)
 router.post('/customers/seed',            requirePerm('customers', 'import'), customer.seedCustomers)      // ?preflight=1 = chỉ đếm
 router.patch('/customers/bulk',           requirePerm('customers', 'edit'),   customer.bulkUpdateCustomers) // setup nhanh nhiều dòng
+router.patch('/customers/bulk-rule',      requirePerm('customers', 'edit'),   customer.bulkSetDateRule)     // đặt 1 mức cho nhiều khách
 router.post('/customers',                 requirePerm('customers', 'edit'),   customer.createCustomer)
 router.put('/customers/:id',              requirePerm('customers', 'edit'),   customer.updateCustomer)
 router.delete('/customers/:id',           requirePerm('customers', 'edit'),   customer.deactivateCustomer) // ngừng (mềm)
 // Kênh khách hàng — quyền RIÊNG, không đi ké wms_settings.manage_type (đó là taxonomy Loại kho)
 router.get('/customer-channels',          customer.listCustomerChannels)      // hở đọc: ô chọn kênh ở nhiều màn
 router.put('/customer-channels/:id',      requirePerm('customers', 'manage_channel'), customer.updateCustomerChannel)
+
+// Mức Quy định date theo (khách|kênh) × loại hàng — MỘT bảng dùng chung hai scope, nhưng HAI route
+// để mỗi cái gate ĐÚNG quyền sở hữu nó: gộp `requireAnyPerm` sẽ cho người chỉ có `edit` sửa luôn
+// mức của KÊNH (ảnh hưởng mọi khách trong kênh) — đúng bẫy "gộp quyền" của skill add-permission.
+router.get('/date-rules/categories',        requirePerm('customers', 'view'),           customer.dateRuleCategories)
+router.put('/date-rules/CUSTOMER/:key',     requirePerm('customers', 'edit'),           customer.replaceDateRules('CUSTOMER'))
+router.put('/date-rules/CHANNEL/:key',      requirePerm('customers', 'manage_channel'), customer.replaceDateRules('CHANNEL'))
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx

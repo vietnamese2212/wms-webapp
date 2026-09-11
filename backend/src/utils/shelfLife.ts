@@ -45,6 +45,50 @@ export interface PctDateEntry {
   ncc_id?:          string | null
 }
 
+export const DAY_MS = 86_400_000
+
+const msOf = (v: string | Date | null | undefined): number | null => {
+  if (!v) return null
+  const t = new Date(v).getTime()
+  return isNaN(t) ? null : t
+}
+
+/**
+ * HSD HIỆU LỰC (ms) của 1 pallet: HSD tường minh trên tem (V2) → suy từ NSX + shelf-life (V1).
+ * MỘT nguồn cho cả "số ngày còn lại" lẫn thứ tự luân chuyển — `utils/rotation.ts` import lại hàm
+ * này chứ KHÔNG giữ bản riêng (trước 11/09 nó có bản chép tay, đúng khuôn lỗi 4-bản-chép-tay).
+ * Trả null khi không đủ dữ liệu ⇒ "không biết hạn", KHÔNG phải "hết hạn".
+ */
+export function effectiveExpiryMs(
+  entry: PctDateEntry,
+  material: MaterialShelfInfo | null | undefined,
+): number | null {
+  const exp = msOf(entry.expiry_date)
+  if (exp != null) return exp
+  const prod = msOf(entry.production_date)
+  const days = resolveShelfLife(entry.shelf_life_days, material, entry.ncc_id)
+  if (prod == null || days <= 0) return null
+  return prod + days * DAY_MS
+}
+
+/**
+ * SỐ NGÀY CÒN LẠI tới HSD (≥ 0, CHƯA làm tròn). null = không đủ dữ liệu để kết luận.
+ * Nuôi quy tắc `MIN_DAYS` ("còn tối thiểu N ngày") — user chốt 11/09: FG02 hạn dùng chỉ 45–60 ngày
+ * nên "còn ≥ 35 ngày" ra 77,8 % trên mã hạn 45 và 58,3 % trên mã hạn 60; KHÔNG con số phần trăm
+ * nào phục vụ được cả nhóm ⇒ phải đo thẳng bằng ngày.
+ * MIRROR: frontend/src/utils/shelfLife.ts — FE làm tròn XUỐNG để hiện (còn 2,6 ngày thì nói "2
+ * ngày"; nói 3 là hứa quá), bất biến FE = floor(BE) do phép kiểm mirror gác.
+ */
+export function computeDaysLeft(
+  entry: PctDateEntry,
+  material: MaterialShelfInfo | null | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  const exp = effectiveExpiryMs(entry, material)
+  if (exp == null) return null
+  return Math.max(0, (exp - nowMs) / DAY_MS)
+}
+
 // %Date CÒN LẠI của 1 pallet (0..100+, CHƯA làm tròn). Trả null nếu không đủ dữ liệu.
 // - Tem V2 có expiry_date TƯỜNG MINH → dùng thẳng HSD (mẫu số = HSD − NSX; thiếu NSX thì lấy shelflife).
 //   ⇒ ĐV2 không cần khai shelf_life cho từng mã vẫn tính được %Date.

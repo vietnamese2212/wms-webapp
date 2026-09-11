@@ -11,9 +11,12 @@ export const ADMIN_AUDIT_ACTIONS = [
   // Danh mục Khách hàng / Kênh (11/09) — %Date tự động chạy theo 2 thứ này nên đổi chúng là đổi
   // cách lấy hàng của cả kho: phải biết ai đổi, lúc nào, từ gì sang gì.
   'CUSTOMER_CREATE', 'CUSTOMER_UPDATE', 'CUSTOMER_BULK', 'CUSTOMER_SEED', 'CHANNEL_UPDATE',
+  // Mức Quy định date theo (khách|kênh) × loại hàng (11/09 đợt 2) — đổi một ô ở đây là đổi mức
+  // lấy hàng của mọi đơn sinh sau, nên phải có vết riêng chứ không gộp vào CUSTOMER_UPDATE.
+  'DATE_RULE_MASTER',
 ] as const
 export type AdminAuditAction = typeof ADMIN_AUDIT_ACTIONS[number]
-export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel'
+export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel' | 'DateRuleMaster'
 
 type Json = Record<string, unknown>
 

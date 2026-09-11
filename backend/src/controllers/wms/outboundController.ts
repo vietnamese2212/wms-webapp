@@ -35,7 +35,7 @@ import {
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 import {
-  loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto,
+  loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
   type AutoApplied, type PolicyCtx,
 } from '../../services/dateRulePolicy'
 
@@ -138,17 +138,24 @@ function futureDateError(deliveryDate?: string | null): string | null {
 // Kho Thủ công (`work_mode` khác GUIDED) giữ nguyên hành vi cũ — không bắt chốt.
 type DateRuleGateItem = { date_rule?: unknown; date_required?: number | null; material_code_raw?: string | null }
 function dateRuleGateError(
-  workMode: string | null | undefined, item: DateRuleGateItem, what: 'lấy hàng' | 'nhặt lẻ',
+  gdo: unknown, item: DateRuleGateItem, what: 'lấy hàng' | 'nhặt lẻ',
 ): string | null {
-  if (workMode !== 'GUIDED') return null
-  if (item.date_rule != null) return null                       // đã chốt tay
-  if (Number(item.date_required ?? 0) > 0) return null           // mức kế thừa từ VL06O = đã có yêu cầu
+  // Kho chạy Hướng dẫn, HOẶC kho đã BẬT quy định date — cả hai đều là "kho này đi theo quy định
+  // date" (user chốt 11/09: "dòng nào không khai thì dòng đó không thao tác được").
+  // ⚠️ KHÔNG chặn vô điều kiện mọi kho: cả 153 kho đang để chính sách TẮT, chặn hết là dừng xuất
+  // hàng toàn bộ ngay lúc lên máy vì không dòng nào được cấp mức.
+  const wh = (gdo as { warehouse?: { work_mode?: string | null; date_rule_policy?: string | null } | null } | null)?.warehouse ?? null
+  const gated = wh?.work_mode === 'GUIDED' || asDateRulePolicy(wh?.date_rule_policy) !== 'OFF'
+  if (!gated) return null
+  if (item.date_rule != null) return null                        // đã khai (tay hoặc máy)
+  if (Number(item.date_required ?? 0) > 0) return null            // mức kế thừa từ VL06O = đã có yêu cầu
   const code = item.material_code_raw ? ` ${item.material_code_raw}` : ''
-  return `Dòng${code} CHƯA CHỐT %Date — kho chạy chế độ Hướng dẫn nên phải chốt trước khi ${what}. `
-    + `Vào menu "Chốt %Date" (hoặc nút Chốt %Date trên chuyến), chọn mức rồi làm tiếp — chốt xong kế hoạch tự sắp lại.`
+  return `Dòng${code} CHƯA CÓ QUY ĐỊNH DATE — kho này đi theo quy định date nên phải khai trước khi ${what}. `
+    + `Vào menu "Quy định date" (hoặc nút Quy định date trên chuyến), chọn mức rồi làm tiếp — khai xong kế hoạch tự sắp lại.`
 }
-// Chuyến nào cũng cần biết kho chạy chế độ nào ⇒ thêm nhúng này vào SELECT của các cửa lấy hàng.
-const GDO_WORK_MODE = 'warehouse:Warehouse!warehouse_id(work_mode)'
+// Chuyến nào cũng cần biết kho chạy chế độ nào + có bật quy định date không ⇒ thêm nhúng này vào
+// SELECT của các cửa lấy hàng.
+const GDO_WORK_MODE = 'warehouse:Warehouse!warehouse_id(work_mode, date_rule_policy)'
 const workModeOf = (gdo: unknown): string | null =>
   ((gdo as { warehouse?: { work_mode?: string | null } | null } | null)?.warehouse?.work_mode) ?? null
 
@@ -1173,12 +1180,20 @@ async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): 
 // %Date máy áp theo Khách hàng/Kênh cho MỘT chuyến (đơn tạo tay · thêm dòng tay · sửa đơn).
 // Đường upload dùng `loadPolicyCtx` một lần cho cả file; ở đây chỉ một kho + một ship-to nên nạp
 // gọn rồi trả hàm thuần. Luật nằm ở services/dateRulePolicy.ts — KHÔNG chép lại thang ưu tiên.
+// Mức nay phụ thuộc LOẠI HÀNG của mã (khách A: FG01 ≥ 70 %, FG02 ≥ 35 ngày) và HẠN DÙNG khai ở
+// danh mục (mã không đo được date thì hệ thống tự đặt "không đòi mốc") ⇒ hàm trả về nhận thêm 2
+// trường đó. Thiếu chúng thì mọi dòng rơi về mức "mọi loại hàng" — sai âm thầm, không lỗi nào nổi.
+type DateRuleItemIn = {
+  header_text: string | null; date_required: number | null
+  category?: string | null; shelf_life_days?: number | null
+}
 async function autoDateRuleFor(
   whId: string | null | undefined, shipto: string | null | undefined, actor: string | null,
-): Promise<(it: { header_text: string | null; date_required: number | null }) => DateRule | null> {
+): Promise<(it: DateRuleItemIn) => DateRule | null> {
   const ctx = await loadPolicyCtx([whId ?? null], [shipto ?? null])
   return it => resolveDateRule(ctx, {
     warehouseId: whId, shipto, headerText: it.header_text, dateRequired: it.date_required,
+    category: it.category ?? null, shelfLifeDays: it.shelf_life_days ?? null,
     existing: null, actor,
   }).rule
 }
@@ -1312,6 +1327,9 @@ export type MatPalletUnits = MatUnitsQ & {
   cartons_per_pallet?: number | null
   warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
   category?: string | null
+  // Hạn dùng khai ở danh mục — thang Quy định date cần để biết mã này có ĐO ĐƯỢC date không
+  // (0/null + tem không mang HSD ⇒ hệ thống tự đặt "không đòi mốc", xem services/dateRulePolicy).
+  shelf_life_days?: number | null
 }
 
 // ĐỢT 3 — NHẶT LẺ THEO PALLET (user chốt 20/07) + SETTING 2 TẦNG (user chốt 24/08).
@@ -1375,7 +1393,7 @@ export async function looseConfigOf(warehouseIds: string[] | null): Promise<Loos
 async function loosePalletMats(codes: string[]): Promise<Map<string, MatPalletUnits>> {
   if (!codes.length) return new Map()
   const { data } = await supabase.from('Material')
-    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, category')
+    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, category, shelf_life_days')
     .in('material_code', codes)   // form tay ≤ vài chục mã/đơn — không cần chunk
   return new Map(((data ?? []) as (MatPalletUnits & { material_code: string })[]).map(m => [String(m.material_code), m]))
 }
@@ -1428,9 +1446,9 @@ export async function createGDO(req: Request, res: Response) {
     // nguyên — fail ở đây thì chưa ghi gì, không để lại GDO mồ côi)
     const allCodes = [...new Set(items.map(i => i.material_code))]
     const { data: mats } = await supabase.from('Material')
-      .select('id, material_code, category, base_unit, entry_unit, units_per_carton').in('material_code', allCodes)
-    const matMap = new Map<string, { id: string; category: string | null } & MatUnitsQ>(
-      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category, base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton }])
+      .select('id, material_code, category, base_unit, entry_unit, units_per_carton, shelf_life_days').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null; shelf_life_days: number | null } & MatUnitsQ>(
+      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category, shelf_life_days: m.shelf_life_days, base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton }])
     )
     const baseErr = invalidItemQtyBase(items, matMap)
     if (baseErr) return fail(res, baseErr, 422)
@@ -1495,7 +1513,7 @@ export async function createGDO(req: Request, res: Response) {
       const header_text   = item.header_text?.trim() || null
       const date_required = item.date_required || null
       const itemId = randomUUID()
-      const rule = autoDate({ header_text, date_required })
+      const rule = autoDate({ header_text, date_required, category: material_type, shelf_life_days: matInfo?.shelf_life_days ?? null })
       if (rule) autoApplied.push({ id: itemId, warehouse_id: warehouse_id ?? null, material_id: matInfo?.id ?? null, rule })
       return {
         id: itemId, do_id: doId,
@@ -2305,8 +2323,12 @@ export async function updateGDO(req: Request, res: Response) {
     // (sửa số lượng/ghi chú không phải cơ hội để viết lại quyết định %Date của người khác).
     const autoDate = await autoDateRuleFor(effWh, effShipto, actorOf(req))
     const autoApplied: AutoApplied[] = []
-    const withAutoRule = <T extends { id: string; material_id: string | null; header_text: string | null; date_required: number | null }>(row: T): T & { date_rule: DateRule | null } => {
-      const rule = autoDate(row)
+    // Loại hàng đọc thẳng từ `material_type` của chính dòng sắp ghi; hạn dùng truyền vào (không có
+    // trên dòng đơn) — thiếu hai thứ này thì mức theo loại hàng không bao giờ khớp.
+    const withAutoRule = <T extends { id: string; material_id: string | null; header_text: string | null; date_required: number | null; material_type?: string | null }>(
+      row: T, shelfLifeDays?: number | null,
+    ): T & { date_rule: DateRule | null } => {
+      const rule = autoDate({ ...row, category: row.material_type ?? null, shelf_life_days: shelfLifeDays ?? null })
       if (rule) autoApplied.push({ id: row.id, warehouse_id: effWh, material_id: row.material_id, rule })
       return { ...row, date_rule: rule }
     }
@@ -2362,8 +2384,8 @@ export async function updateGDO(req: Request, res: Response) {
           doList.map((d: any) => [String(d.distributor_name ?? '').trim(), d.id as string])
         )
         const { data: newMats } = await supabase.from('Material')
-          .select('id, material_code, category').in('material_code', newRows.map(i => i.material_code))
-        const newMatMap = new Map((newMats ?? []).map((m: any) => [m.material_code as string, { id: m.id as string, category: m.category as string | null }]))
+          .select('id, material_code, category, shelf_life_days').in('material_code', newRows.map(i => i.material_code))
+        const newMatMap = new Map((newMats ?? []).map((m: any) => [m.material_code as string, { id: m.id as string, category: m.category as string | null, shelf_life_days: m.shelf_life_days as number | null }]))
         const inserts = newRows.map(item => {
           const matInfo = newMatMap.get(item.material_code)
           return withAutoRule({
@@ -2377,7 +2399,7 @@ export async function updateGDO(req: Request, res: Response) {
             cs_responsible: item.cs_responsible?.trim() || null,
             material_type: matInfo?.category ?? null, export_type: export_type ?? null,
             cartons_scanned: 0, status: 'PENDING', updated_at: t,
-          })
+          }, matInfo?.shelf_life_days ?? null)
         })
         const { error: insErr } = await supabase.from('OutboundItem').insert(inserts)
         if (insErr) return fail(res, insErr)
@@ -2400,11 +2422,11 @@ export async function updateGDO(req: Request, res: Response) {
 
       // Load material cho items mới
       const newCodes2 = items.filter(i => !existingByCode.has(i.material_code)).map(i => i.material_code)
-      let matMap = new Map<string, { id: string; category: string | null }>()
+      let matMap = new Map<string, { id: string; category: string | null; shelf_life_days: number | null }>()
       if (newCodes2.length) {
         const { data: mats } = await supabase.from('Material')
-          .select('id, material_code, category').in('material_code', newCodes2)
-        matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
+          .select('id, material_code, category, shelf_life_days').in('material_code', newCodes2)
+        matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category, shelf_life_days: m.shelf_life_days }]))
       }
 
       // Phân loại update / insert, thực thi song song
@@ -2419,7 +2441,7 @@ export async function updateGDO(req: Request, res: Response) {
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null
-          toInsert.push(withAutoRule({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t }))
+          toInsert.push(withAutoRule({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t }, matInfo?.shelf_life_days ?? null))
         }
       }
       await Promise.all([
@@ -3404,6 +3426,7 @@ async function mergePausedGDO(
         const auto = dateCtx ? resolveDateRule(dateCtx.ctx, {
           warehouseId: warehouse_id, shipto: dateCtx.shipto,
           headerText: fields.header_text, dateRequired: fields.date_required,
+          category: mu?.category ?? null, shelfLifeDays: mu?.shelf_life_days ?? null,
           existing: null, actor: dateCtx.actor,
         }).rule : null
         if (auto && dateCtx) dateCtx.out.push({ id: itemId, warehouse_id, material_id: mu?.id ?? null, rule: auto })
@@ -3648,7 +3671,7 @@ async function processVehicleGroups(
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party, awaiting_sap, plan_dropped')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock, category')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock, category, shelf_life_days')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
     ])
     // Policy nhặt lẻ 2 tầng — file trải nhiều kho nên nạp MỌI kho 1 lượt (2 câu, không per-group)
     const uploadLoosePol = await looseConfigOf(null)
@@ -3979,7 +4002,11 @@ async function processVehicleGroups(
             const keptRule      = keptItemRules.get(`${group_code}::${String(npp ?? '').trim()}::${mat_code}`)
             const auto          = keptRule ? null : resolveDateRule(policyCtx, {
               warehouseId: resolved_warehouse_id, shipto: resolvedShipto,
-              headerText, dateRequired: dateReq, existing: null, actor: req.user?.name ?? null,
+              headerText, dateRequired: dateReq,
+              // Loại hàng: ưu tiên cột của file (Material_type), thiếu thì lấy của danh mục
+              category: material_type ?? mu?.category ?? null,
+              shelfLifeDays: mu?.shelf_life_days ?? null,
+              existing: null, actor: req.user?.name ?? null,
             }).rule
             const itemId        = randomUUID()
             if (auto) autoApplied.push({ id: itemId, warehouse_id: resolved_warehouse_id, material_id: mu?.id ?? null, rule: auto })
@@ -4526,8 +4553,8 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
   const matCodes = [...new Set(raws.map(r => String(r.material_code ?? '').trim()).filter(Boolean))]
   const allMats = matCodes.length
     ? await fetchAllByIdChunks(matCodes, chunk => supabase.from('Material')
-        .select('id, material_code, category, base_unit, entry_unit, units_per_carton')
-        .in('material_code', chunk).order('id')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
+        .select('id, material_code, category, base_unit, entry_unit, units_per_carton, shelf_life_days')
+        .in('material_code', chunk).order('id')) as ({ id: string; material_code: string; category: string | null; shelf_life_days: number | null } & MatUnitsQ)[]
     : []
   const matByCode = new Map(allMats.map(m => [String(m.material_code).trim(), m]))
 
@@ -5482,8 +5509,16 @@ function parseDateRuleBody(raw: unknown): ParsedRule {
   if (kind === 'FEFO') return { rule: { kind: 'FEFO' } }
   if (kind === 'MIN_PCT') {
     const n = Number(r.value)
-    if (!Number.isFinite(n) || n < 0 || n > 100) return bad('%Date tối thiểu phải trong khoảng 0–100')
+    if (!Number.isFinite(n) || n < 0 || n > 100) return bad('% hạn dùng tối thiểu phải trong khoảng 0–100')
     return { rule: { kind: 'MIN_PCT', value: Math.round(n) } }
+  }
+  // "Còn tối thiểu N ngày" (11/09) — với hàng hạn ngắn thì % không diễn đạt nổi: FG02 hạn 45–60
+  // ngày nên "còn ≥ 35 ngày" ra 77,8 % trên mã này và 58,3 % trên mã kia.
+  if (kind === 'MIN_DAYS') {
+    const n = Number(r.value)
+    if (!Number.isInteger(n) || n < 1 || n > MAX_MIN_DAYS)
+      return bad(`Số ngày còn lại phải là số nguyên trong khoảng 1–${MAX_MIN_DAYS}`)
+    return { rule: { kind: 'MIN_DAYS', value: n } }
   }
   if (kind === 'EXACT') {
     const v = String(r.value ?? '').trim()
@@ -5507,12 +5542,14 @@ function parseDateRuleBody(raw: unknown): ParsedRule {
     }
     return { rule: { kind: 'SPLIT', parts } }
   }
-  return bad('Quy tắc không hợp lệ (FEFO / ≥ %Date / chỉ định NSX-lô-tem / chia phần)')
+  return bad('Quy định date không hợp lệ (không đòi mốc / ≥ % hạn dùng / ≥ số ngày còn lại / chỉ định NSX-lô-tem / chia phần)')
 }
 
-// Nguồn quy tắc dùng để LỌC trên màn chốt. MANUAL/CUSTOMER/CHANNEL/SAP là giá trị thật của cột
-// `source`; UNSET (chưa chốt) và REVIEW (máy áp nhưng lúc áp kho hết pallet đạt) là hai LÁT CẮT.
-const DATE_RULE_SOURCES = ['MANUAL', 'CUSTOMER', 'CHANNEL', 'SAP', 'UNSET', 'REVIEW'] as const as readonly string[]
+// Nguồn quy tắc dùng để LỌC trên màn khai. MANUAL/CUSTOMER/CHANNEL/SYSTEM/SAP là giá trị thật của
+// cột `source`; UNSET (chưa khai) và REVIEW (cần xem lại) là hai LÁT CẮT.
+const DATE_RULE_SOURCES = ['MANUAL', 'CUSTOMER', 'CHANNEL', 'SYSTEM', 'SAP', 'UNSET', 'REVIEW'] as const as readonly string[]
+// Kiểu quy định dùng để LỌC (ô "Kiểu" trên thanh lọc)
+const DATE_RULE_KINDS = ['FEFO', 'MIN_PCT', 'MIN_DAYS', 'EXACT', 'SPLIT'] as const as readonly string[]
 
 /**
  * GET /outbound/date-rule-lines — MÀN CHỐT %DATE: mọi DÒNG HÀNG của mọi chuyến trong khoảng ngày.
@@ -5545,7 +5582,16 @@ export async function getDateRuleLines(req: Request, res: Response) {
     // Lọc theo NGUỒN quy tắc (11/09). UNSET/REVIEW là hai LÁT CẮT, không phải giá trị của cột nguồn.
     const srcRaw = parseListParam(req.query.source) ?? []
     const src = srcRaw.map(s => s.toUpperCase()).filter(s => DATE_RULE_SOURCES.includes(s))
-    if (srcRaw.length && !src.length) return fail(res, 400, 'VALIDATION_ERROR', 'Nguồn %Date không hợp lệ')
+    if (srcRaw.length && !src.length) return fail(res, 400, 'VALIDATION_ERROR', 'Nguồn quy định date không hợp lệ')
+
+    // Lọc theo LOẠI HÀNG của mã (khác `p_categories` = loại hàng CHUYẾN chở, dùng cắt phạm vi)
+    const mcatRaw = parseListParam(req.query.material_category) ?? []
+    const mcat = mcatRaw.map(s => s.toUpperCase().trim()).filter(s => /^[A-Z0-9_]{1,30}$/.test(s))
+    if (mcatRaw.length && !mcat.length) return fail(res, 400, 'VALIDATION_ERROR', 'Loại hàng không hợp lệ')
+    // Lọc theo KIỂU quy định
+    const kindRaw = parseListParam(req.query.kind) ?? []
+    const kinds = kindRaw.map(s => s.toUpperCase()).filter(s => DATE_RULE_KINDS.includes(s))
+    if (kindRaw.length && !kinds.length) return fail(res, 400, 'VALIDATION_ERROR', 'Kiểu quy định date không hợp lệ')
 
     const { data, error } = await supabase.rpc('outbound_date_rule_lines', {
       p_from: from, p_to: to,
@@ -5554,6 +5600,8 @@ export async function getDateRuleLines(req: Request, res: Response) {
       p_state: state, p_search: search,
       p_limit: pageSize, p_offset: (page - 1) * pageSize,
       p_source: src.length ? src : null,
+      p_mat_categories: mcat.length ? mcat : null,
+      p_kinds: kinds.length ? kinds : null,
     })
     if (error) return fail(res, error)
     return ok(res, { ...(data ?? { rows: [], total: 0, summary: {} }), page, page_size: pageSize })
@@ -5751,6 +5799,7 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
       warehouse_id: string | null; shipto_party: string | null; material_id: string | null
       material_code: string | null; header_text: string | null; date_required: number | null
       date_rule: unknown; gdo_status: string
+      material_category: string | null; shelf_life_days: number | null
     }
     const rows: Row[] = []
     for (let page = 0; page < Math.ceil(APPLY_MASTER_CAP / 1000); page++) {
@@ -5758,7 +5807,10 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
         p_from: from, p_to: to, p_scope_wh: scope, p_warehouse_id: whId,
         p_categories: cats && cats.length ? cats : null,
         p_state: 'ALL', p_search: null, p_limit: 1000, p_offset: page * 1000,
-        p_source: ['CUSTOMER', 'CHANNEL', 'UNSET'],
+        // SYSTEM cũng vào tập ứng viên: mã vừa được khai hạn dùng thì dòng "không đòi mốc" do máy
+        // đặt phải được áp lại theo mức thật của khách, không kẹt mãi ở mức hệ thống.
+        p_source: ['CUSTOMER', 'CHANNEL', 'SYSTEM', 'UNSET'],
+        p_mat_categories: null, p_kinds: null,
       })
       if (error) return fail(res, error)
       const got = ((data ?? {}) as { rows?: Row[]; total?: number })
@@ -5776,6 +5828,7 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
         p_from: from, p_to: to, p_scope_wh: scope, p_warehouse_id: whId,
         p_categories: cats && cats.length ? cats : null,
         p_state: 'ALL', p_search: null, p_limit: 1, p_offset: 0, p_source: ['MANUAL'],
+        p_mat_categories: null, p_kinds: null,
       })
       keptManual = Number(((data ?? {}) as { total?: number }).total ?? 0)
     }
@@ -5788,6 +5841,7 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
       const out = resolveDateRule(ctx, {
         warehouseId: r.warehouse_id, shipto: r.shipto_party,
         headerText: r.header_text, dateRequired: r.date_required,
+        category: r.material_category, shelfLifeDays: r.shelf_life_days,
         existing: r.date_rule, actor, overwriteAuto: true,
       })
       if (out.keptManual) continue      // lưới an toàn: RPC đã lọc, nhưng chốt tay không bao giờ bị đụng
@@ -5995,7 +6049,7 @@ export async function checkScanItem(req: Request, res: Response) {
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     // Kho Hướng dẫn: chưa chốt %Date thì chưa được lấy hàng (xem dateRuleGateError). Báo ở BƯỚC XEM
     // TRƯỚC luôn để người quét biết ngay trên màn, không phải bấm Lưu mới lộ.
-    { const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
+    { const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
       if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
@@ -6106,7 +6160,7 @@ export async function scanItem(req: Request, res: Response) {
     }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     // Kho Hướng dẫn: chưa chốt %Date thì chưa được lấy hàng — cửa GHI, gác kể cả khi gọi thẳng API
-    { const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
+    { const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
       if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
@@ -6518,7 +6572,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     // Kho Hướng dẫn: XÁC NHẬN nhặt lẻ là bước TRỪ TỒN THẬT ⇒ cũng phải có %Date đã chốt như xuất
-    { const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, 'nhặt lẻ')
+    { const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, 'nhặt lẻ')
       if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     // SOẠN nhặt lẻ trước ngày = OK (chỉ giữ hàng/reserved), nhưng XÁC NHẬN = TRỪ TỒN THẬT = hàng rời kho
     // ⇒ phải đúng ngày xuất (probe 02/08: đây là đường lách FUTURE_DATE duy nhất còn trừ được tồn).
@@ -6613,7 +6667,7 @@ export async function manualLooseItem(req: Request, res: Response) {
     // Kho Hướng dẫn: ghi số nhặt lẻ thủ công (hàng no-QR) cũng là lấy hàng ⇒ chốt %Date trước.
     // Ghi số 0 = HOÀN lại phần đã soạn: luật là "chưa chốt thì chưa lấy", không phải "không sửa sai".
     if (Number(cartons) > 0) {
-      const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, 'nhặt lẻ')
+      const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, 'nhặt lẻ')
       if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
     }
 
@@ -7026,7 +7080,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     if (mcFutErr) return fail(res, 422, 'FUTURE_DATE', mcFutErr)
     // Kho Hướng dẫn: cùng lý do — GHI THÊM là lấy hàng, sửa GIẢM/hoàn thì luôn cho
     if (mcAdding) {
-      const drErr = dateRuleGateError(workModeOf(gdo), item as DateRuleGateItem, 'lấy hàng')
+      const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, 'lấy hàng')
       if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
     }
 

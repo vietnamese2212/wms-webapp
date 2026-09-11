@@ -16,14 +16,15 @@ import { safeSearch, searchLooksLikeInjection } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { logAdmin, diffFields } from '../../services/adminAudit'
-import { normShipto, parseMasterRule } from '../../services/dateRulePolicy'
+import { normShipto, normCategory, parseMasterRule, type MasterScope } from '../../services/dateRulePolicy'
+import type { DateRule } from '../../services/directedTasks'
 
 const now = () => new Date().toISOString()
 const MAX_BULK_IDS = 500
 
 type CustomerRow = {
   id: string; ship_to_code: string; name: string; channel: string | null
-  date_rule: unknown; warehouse_id: string | null; is_active: boolean; auto_created: boolean
+  warehouse_id: string | null; is_active: boolean; auto_created: boolean
   note: string | null; created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
 }
 
@@ -64,11 +65,8 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
       patch.channel = ch
     }
   }
-  if (body.date_rule !== undefined) {
-    const parsed = parseMasterRule(body.date_rule)
-    if ('err' in parsed) return bad(parsed.err, 422)
-    patch.date_rule = parsed.rule
-  }
+  // Mức Quy định date KHÔNG còn nằm trên bảng Customer (đợt 2): một khách mang NHIỀU mức theo loại
+  // hàng ⇒ bảng `date_rule_master`, sửa qua PUT /masterdata/date-rules/CUSTOMER/:id.
   if (body.warehouse_id !== undefined) {
     const wh = String(body.warehouse_id ?? '').trim()
     if (!wh) patch.warehouse_id = null
@@ -97,42 +95,26 @@ export async function listCustomers(req: Request, res: Response) {
     const pageSize = Math.min(500, Math.max(1, Number(req.query.page_size ?? 200) || 200))
     const page = Math.max(1, Number(req.query.page ?? 1) || 1)
 
-    // MỘT bộ lọc khai MỘT LẦN, áp cho CẢ trang đang xem LẪN ô band — hai bản chép tay là hai kết
-    // quả khác nhau đúng lúc không ai ngờ. Khai dạng (cột, toán tử, giá trị) rồi áp bằng `.filter()`
-    // nên cả hai truy vấn giữ nguyên kiểu riêng, không phải ép kiểu chỗ nào.
-    const orExpr = search ? `ship_to_code.ilike.%${safeSearch(search)}%,name.ilike.%${safeSearch(search)}%` : null
-    const conds: Array<{ col: string; op: string; val: unknown }> = []
-    if (channels.length) conds.push({ col: 'channel', op: 'in', val: `(${channels.map(c => `"${c.replace(/"/g, '')}"`).join(',')})` })
-    if (hasChannel === true)  conds.push({ col: 'channel', op: 'not.is', val: null })
-    if (hasChannel === false) conds.push({ col: 'channel', op: 'is', val: null })
-    if (whId) conds.push({ col: 'warehouse_id', op: 'eq', val: whId })
-    if (active !== null) conds.push({ col: 'is_active', op: 'eq', val: active })
+    const hasRule = req.query.has_rule === undefined ? null : String(req.query.has_rule) === '1'
 
-    let listQ = supabase.from('Customer').select('*', { count: 'exact' })
-    if (orExpr) listQ = listQ.or(orExpr)
-    for (const c of conds) listQ = listQ.filter(c.col, c.op, c.val)
-    // Ô band tính trên TOÀN bộ lọc, không phải trang đang xem (luật table-format mục 4)
-    let sumQ = supabase.from('Customer').select('channel, warehouse_id, auto_created, is_active')
-    if (orExpr) sumQ = sumQ.or(orExpr)
-    for (const c of conds) sumQ = sumQ.filter(c.col, c.op, c.val)
-
-    const [listRes, sumRes] = await Promise.all([
-      listQ.order('name').order('ship_to_code').range((page - 1) * pageSize, page * pageSize - 1),
-      sumQ,
-    ])
-    if (listRes.error) return fail(res, listRes.error)
-    if (sumRes.error) return fail(res, sumRes.error)
-
-    const all = (sumRes.data ?? []) as { channel: string | null; warehouse_id: string | null; auto_created: boolean; is_active: boolean }[]
+    // MỘT lời gọi trả dòng + tổng + các mức đã khai của từng khách (RPC `customer_page`).
+    // Bản cũ dùng 2 truy vấn PostgREST và ô band KHÔNG phân trang ⇒ dính trần 1000 dòng, cắt ÂM
+    // THẦM khi danh mục vượt nghìn khách. Đính mức theo từng trang cũng là thêm round-trip.
+    const { data, error } = await supabase.rpc('customer_page', {
+      p_search: search || null,
+      p_channels: channels.length ? channels : null,
+      p_has_channel: hasChannel,
+      p_warehouse_id: whId,
+      p_active: active,
+      p_has_rule: hasRule,
+      p_limit: pageSize,
+      p_offset: (page - 1) * pageSize,
+    })
+    if (error) return fail(res, error)
+    const out = (data ?? {}) as { rows?: unknown[]; total?: number; summary?: Record<string, number> }
     return ok(res, {
-      rows: listRes.data ?? [], total: listRes.count ?? 0, page, page_size: pageSize,
-      summary: {
-        total: all.length,
-        no_channel: all.filter(c => !c.channel).length,
-        with_warehouse: all.filter(c => c.warehouse_id).length,
-        auto_created: all.filter(c => c.auto_created).length,
-        inactive: all.filter(c => !c.is_active).length,
-      },
+      rows: out.rows ?? [], total: out.total ?? 0, page, page_size: pageSize,
+      summary: out.summary ?? {},
     })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
@@ -280,6 +262,45 @@ export async function deactivateCustomer(req: Request, res: Response) {
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
+/**
+ * Chọn tập khách cho thao tác hàng loạt: `ids` HOẶC `filter`, KHÔNG cả hai.
+ * Dùng chung cho "đổi kênh/kho/ngừng" và "đặt mức" — hai bản chép tay của cùng một phép chọn là
+ * hai cách hiểu "chọn tất cả" khác nhau, đúng lúc người dùng đang áp cho nghìn dòng.
+ */
+async function resolveBulkTargets(
+  body: { ids?: unknown; filter?: unknown },
+): Promise<{ idList: string[]; byFilter: boolean } | { err: { status: number; code: string; msg: string } }> {
+  const bad = (msg: string, status = 400, code = 'VALIDATION_ERROR') => ({ err: { status, code, msg } })
+  const hasIds = Array.isArray(body.ids) && body.ids.length > 0
+  const hasFilter = body.filter != null && typeof body.filter === 'object'
+  if (hasIds && hasFilter) return bad('Chỉ gửi MỘT trong hai: danh sách dòng đã chọn (ids) hoặc bộ lọc (filter)')
+  if (!hasIds && !hasFilter) return bad('Chưa chọn khách hàng nào')
+
+  if (hasIds) {
+    const ids = body.ids as unknown[]
+    if (ids.length > MAX_BULK_IDS) return bad(`Tối đa ${MAX_BULK_IDS} dòng mỗi lần — dùng "chọn tất cả theo bộ lọc" cho tập lớn hơn`)
+    if (ids.some(x => typeof x !== 'string' || !x || (x as string).length > 100 || searchLooksLikeInjection(x)))
+      return bad('Danh sách khách hàng có mã không hợp lệ', 400, 'BAD_ID')
+    return { idList: [...new Set(ids as string[])], byFilter: false }
+  }
+
+  const f = (body.filter ?? {}) as Record<string, unknown>
+  const search = f.search ? String(f.search).slice(0, 120) : ''
+  if (search && searchLooksLikeInjection(search)) return bad('Từ khoá tìm kiếm không hợp lệ', 400, 'BAD_ID')
+  let q = supabase.from('Customer').select('id')
+  if (search) { const s = safeSearch(search); q = q.or(`ship_to_code.ilike.%${s}%,name.ilike.%${s}%`) }
+  const chs = parseListParam(f.channel) ?? []
+  if (chs.length) q = q.filter('channel', 'in', `(${chs.map(c => `"${c.replace(/"/g, '')}"`).join(',')})`)
+  if (f.has_channel !== undefined && f.has_channel !== null)
+    q = q.filter('channel', String(f.has_channel) === '1' || f.has_channel === true ? 'not.is' : 'is', null)
+  if (f.warehouse_id) q = q.filter('warehouse_id', 'eq', String(f.warehouse_id))
+  if (f.active !== undefined && f.active !== null)
+    q = q.filter('is_active', 'eq', String(f.active) === '1' || f.active === true)
+  const { data, error } = await q.limit(5000)
+  if (error) return bad(error.message, 500, 'INTERNAL')
+  return { idList: ((data ?? []) as { id: string }[]).map(r => r.id), byFilter: true }
+}
+
 // ─── PATCH /masterdata/customers/bulk — SETUP NHANH (user chốt 11/09) ─────────────────────────
 // "Khách hàng phải cho chọn multi, có action để setup nhanh phần chức năng/kênh."
 // `ids` HOẶC `filter`, KHÔNG cả hai: danh sách đã phân trang nên client không còn đủ id của bộ lọc;
@@ -288,7 +309,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
-    const allowed = ['channel', 'date_rule', 'warehouse_id', 'is_active']
+    const allowed = ['channel', 'warehouse_id', 'is_active']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))
@@ -297,36 +318,10 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
     const parsed = await parseCustomerBody(rawPatch, false)
     if ('err' in parsed) return fail(res, parsed.err.status, parsed.err.code, parsed.err.msg)
 
-    const hasIds = Array.isArray(body.ids) && body.ids.length > 0
-    const hasFilter = body.filter != null && typeof body.filter === 'object'
-    if (hasIds && hasFilter)
-      return fail(res, 400, 'VALIDATION_ERROR', 'Chỉ gửi MỘT trong hai: danh sách dòng đã chọn (ids) hoặc bộ lọc (filter)')
-    if (!hasIds && !hasFilter) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn khách hàng nào')
-
-    let idList: string[] = []
-    if (hasIds) {
-      const ids = body.ids as unknown[]
-      if (ids.length > MAX_BULK_IDS) return fail(res, 400, 'VALIDATION_ERROR', `Tối đa ${MAX_BULK_IDS} dòng mỗi lần — dùng "chọn tất cả theo bộ lọc" cho tập lớn hơn`)
-      if (ids.some(x => typeof x !== 'string' || !x || (x as string).length > 100 || searchLooksLikeInjection(x)))
-        return fail(res, 400, 'BAD_ID', 'Danh sách khách hàng có mã không hợp lệ')
-      idList = [...new Set(ids as string[])]
-    } else {
-      const f = (body.filter ?? {}) as Record<string, unknown>
-      const search = f.search ? String(f.search).slice(0, 120) : ''
-      if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'BAD_ID', 'Từ khoá tìm kiếm không hợp lệ')
-      let q = supabase.from('Customer').select('id')
-      if (search) { const s = safeSearch(search); q = q.or(`ship_to_code.ilike.%${s}%,name.ilike.%${s}%`) }
-      const chs = parseListParam(f.channel) ?? []
-      if (chs.length) q = q.filter('channel', 'in', `(${chs.map(c => `"${c.replace(/"/g, '')}"`).join(',')})`)
-      if (f.has_channel !== undefined && f.has_channel !== null)
-        q = q.filter('channel', String(f.has_channel) === '1' || f.has_channel === true ? 'not.is' : 'is', null)
-      if (f.warehouse_id) q = q.filter('warehouse_id', 'eq', String(f.warehouse_id))
-      if (f.active !== undefined && f.active !== null)
-        q = q.filter('is_active', 'eq', String(f.active) === '1' || f.active === true)
-      const { data, error } = await q.limit(5000)
-      if (error) return fail(res, error)
-      idList = ((data ?? []) as { id: string }[]).map(r => r.id)
-    }
+    const picked = await resolveBulkTargets(body)
+    if ('err' in picked) return fail(res, picked.err.status, picked.err.code, picked.err.msg)
+    const { idList, byFilter } = picked
+    const hasIds = !byFilter
     if (!idList.length) return ok(res, { updated: 0 })
 
     const t = now()
@@ -354,19 +349,25 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
 
 export async function listCustomerChannels(_req: Request, res: Response) {
   try {
-    const [chRes, custRes] = await Promise.all([
+    const [chRes, custRes, ruleRes] = await Promise.all([
       supabase.from('LookupValue').select('id, value, meta, sort_order').eq('type', 'customer_channel').order('sort_order'),
       supabase.from('Customer').select('channel').eq('is_active', true),
+      supabase.from('date_rule_master').select('id, scope_key, category, rule').eq('scope', 'CHANNEL'),
     ])
     if (chRes.error) return fail(res, chRes.error)
+    if (ruleRes.error) return fail(res, ruleRes.error)
     const counts = new Map<string, number>()
     for (const c of ((custRes.data ?? []) as { channel: string | null }[]))
       if (c.channel) counts.set(c.channel, (counts.get(c.channel) ?? 0) + 1)
+    const rulesOf = new Map<string, MasterRuleRow[]>()
+    for (const r of ((ruleRes.data ?? []) as Array<{ id: string; scope_key: string; category: string | null; rule: unknown }>)) {
+      rulesOf.set(r.scope_key, [...(rulesOf.get(r.scope_key) ?? []), { id: r.id, category: r.category, rule: r.rule }])
+    }
     const rows = ((chRes.data ?? []) as { id: string; value: string; meta: Record<string, unknown> | null; sort_order: number | null }[])
       .map(r => ({
         id: r.id, value: r.value,
         label: String(r.meta?.label ?? r.value),
-        date_rule: r.meta?.date_rule ?? null,
+        rules: (rulesOf.get(r.value) ?? []).sort(byCategory),
         sort_order: r.sort_order,
         customers: counts.get(r.value) ?? 0,
       }))
@@ -375,9 +376,10 @@ export async function listCustomerChannels(_req: Request, res: Response) {
 }
 
 /**
- * PUT /masterdata/customer-channels/:id — sửa TÊN + %Date mặc định của kênh.
+ * PUT /masterdata/customer-channels/:id — sửa TÊN kênh.
+ * Mức Quy định date của kênh nằm ở `date_rule_master` (PUT /masterdata/date-rules/CHANNEL/:value).
  * Route RIÊNG chứ không đi ké `PUT /wms/lookup/:id`: cửa đó gate `wms_settings.manage_type`
- * (quản trị taxonomy Loại kho) — cho nó sửa luôn quy tắc lấy hàng là nới quyền không liên quan.
+ * (quản trị taxonomy Loại kho) — cho nó sửa luôn danh mục khách là nới quyền không liên quan.
  */
 export async function updateCustomerChannel(req: Request, res: Response) {
   try {
@@ -389,19 +391,13 @@ export async function updateCustomerChannel(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kênh')
     if (b.type !== 'customer_channel') return fail(res, 400, 'VALIDATION_ERROR', 'Mục này không phải Kênh khách hàng')
 
-    const body = (req.body ?? {}) as { label?: unknown; date_rule?: unknown }
+    const body = (req.body ?? {}) as { label?: unknown }
     const meta: Record<string, unknown> = { ...(b.meta ?? {}) }
     if (body.label !== undefined) {
       const label = String(body.label ?? '').trim()
       if (!label) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu tên kênh')
       if (label.length > 100) return fail(res, 400, 'VALIDATION_ERROR', 'Tên kênh tối đa 100 ký tự')
       meta.label = label
-    }
-    if (body.date_rule !== undefined) {
-      const parsed = parseMasterRule(body.date_rule)
-      if ('err' in parsed) return fail(res, 422, 'VALIDATION_ERROR', parsed.err)
-      if (parsed.rule) meta.date_rule = parsed.rule
-      else delete meta.date_rule          // xoá trắng = kênh CHƯA khai ⇒ không áp gì
     }
 
     const { data, error } = await supabase.from('LookupValue')
@@ -413,7 +409,195 @@ export async function updateCustomerChannel(req: Request, res: Response) {
       action: 'CHANNEL_UPDATE', target_type: 'CustomerChannel', target_id: id, target_label: b.value,
       before: { meta: b.meta ?? null }, after: { meta },
     })
-    // Đổi mặc định KHÔNG lan ngược: đơn đang mở chỉ đổi khi có người bấm "Áp lại theo master".
-    return ok(res, { ...(data as Record<string, unknown>), applies_to: 'Chỉ đơn sinh sau khi lưu — đơn đang mở dùng nút "Áp lại theo master" ở trang Chốt %Date' })
+    return ok(res, data as Record<string, unknown>)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── MỨC QUY ĐỊNH DATE THEO (KHÁCH|KÊNH) × LOẠI HÀNG ──────────────────────────────────────────
+// Một bảng, một bộ kiểm tra, một giao diện — dùng chung cho cả hai scope vì chúng mang CÙNG một
+// hình dạng sự thật. Tách làm hai chỗ chứa là tự đặt sẵn hai bản luật sẽ lệch nhau.
+
+type MasterRuleRow = { id: string; category: string | null; rule: unknown }
+const byCategory = (a: MasterRuleRow, b: MasterRuleRow) =>
+  (a.category ?? '').localeCompare(b.category ?? '')
+
+const MAX_RULE_ROWS = 20   // 5 loại hàng + dòng chung; 20 là trần rộng rãi để chặn payload rác
+
+/** Loại hàng phải có trong taxonomy Loại kho — gõ bừa một mã là mức im lặng không bao giờ khớp. */
+async function categoryExists(code: string): Promise<boolean> {
+  const { data } = await supabase.from('LookupValue')
+    .select('value').eq('type', 'warehouse_type').eq('value', code).maybeSingle()
+  return !!data
+}
+
+async function scopeKeyExists(scope: MasterScope, key: string): Promise<boolean> {
+  if (scope === 'CUSTOMER') {
+    const { data } = await supabase.from('Customer').select('id').eq('id', key).maybeSingle()
+    return !!data
+  }
+  const { data } = await supabase.from('LookupValue')
+    .select('value').eq('type', 'customer_channel').eq('value', key).maybeSingle()
+  return !!data
+}
+
+// ─── GET /masterdata/date-rules/categories ────────────────────────────────────────────────────
+// Loại hàng nào khai được mức — kèm số mã và số mã CÓ khai hạn dùng, để màn khai làm mờ đúng
+// loại không đo được date (PM01: 0/888 mã) và nói rõ lý do thay vì im lặng bỏ.
+export async function dateRuleCategories(_req: Request, res: Response) {
+  try {
+    const [catRes, lookRes] = await Promise.all([
+      supabase.rpc('date_rule_categories'),
+      supabase.from('LookupValue').select('value, meta, sort_order').eq('type', 'warehouse_type').order('sort_order'),
+    ])
+    if (catRes.error) return fail(res, catRes.error)
+    if (lookRes.error) return fail(res, lookRes.error)
+    const stat = new Map<string, { materials: number; with_shelf_life: number }>()
+    for (const r of ((catRes.data ?? []) as Array<{ category: string; materials: number; with_shelf_life: number }>))
+      stat.set(r.category, { materials: Number(r.materials), with_shelf_life: Number(r.with_shelf_life) })
+    const rows = ((lookRes.data ?? []) as Array<{ value: string; meta: Record<string, unknown> | null; sort_order: number | null }>)
+      .map(r => {
+        const s = stat.get(r.value) ?? { materials: 0, with_shelf_life: 0 }
+        return {
+          value: r.value,
+          label: String(r.meta?.label ?? r.value),
+          materials: s.materials,
+          with_shelf_life: s.with_shelf_life,
+          // false = mọi mã của loại này đều không khai hạn dùng ⇒ quy định date không áp được
+          measurable: s.with_shelf_life > 0,
+        }
+      })
+    return ok(res, rows)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── PUT /masterdata/date-rules/:scope/:key — THAY TRỌN bộ mức của một khách / một kênh ───────
+// Thay trọn (chứ không sửa từng dòng) vì màn khai là một BẢNG nhỏ: người dùng thêm/xoá/sửa dòng
+// rồi bấm Lưu một lần. Sửa lẻ từng dòng thì phải đồng bộ 3 loại thao tác giữa FE và BE, và cảnh
+// "xoá dòng chưa kịp gửi" sẽ để lại mức cũ đang chạy mà người khai tưởng đã bỏ.
+export const replaceDateRules = (scope: MasterScope) => async (req: Request, res: Response) => {
+  try {
+    const key = String(req.params.key ?? '')
+    if (!key || key.length > 100 || searchLooksLikeInjection(key)) return fail(res, 400, 'BAD_ID', 'Mã khách / kênh không hợp lệ')
+    if (!await scopeKeyExists(scope, key))
+      return fail(res, 404, 'NOT_FOUND', scope === 'CUSTOMER' ? 'Không tìm thấy khách hàng' : 'Không tìm thấy kênh')
+
+    const body = (req.body ?? {}) as { rules?: unknown }
+    const list = Array.isArray(body.rules) ? body.rules : []
+    if (list.length > MAX_RULE_ROWS) return fail(res, 400, 'VALIDATION_ERROR', `Tối đa ${MAX_RULE_ROWS} dòng mức`)
+
+    const wanted = new Map<string, { category: string | null; rule: DateRule }>()
+    for (const raw of list as Array<Record<string, unknown>>) {
+      const cat = raw?.category == null || String(raw.category).trim() === '' ? null : normCategory(raw.category)
+      if (raw?.category != null && String(raw.category).trim() !== '' && !cat)
+        return fail(res, 400, 'VALIDATION_ERROR', `Mã loại hàng không hợp lệ: "${String(raw.category)}"`)
+      if (cat && !await categoryExists(cat))
+        return fail(res, 400, 'VALIDATION_ERROR', `Loại hàng "${cat}" không có trong danh mục Loại kho`)
+      const parsed = parseMasterRule({ kind: raw?.kind, value: raw?.value })
+      if ('err' in parsed) return fail(res, 422, 'VALIDATION_ERROR', parsed.err)
+      if (!parsed.rule) continue                      // dòng trống = bỏ qua
+      const k = cat ?? ''
+      if (wanted.has(k))
+        return fail(res, 400, 'VALIDATION_ERROR', `Loại hàng "${cat ?? 'mọi loại'}" bị khai hai lần`)
+      wanted.set(k, { category: cat, rule: parsed.rule })
+    }
+
+    const { data: beforeRows } = await supabase.from('date_rule_master')
+      .select('id, category, rule').eq('scope', scope).eq('scope_key', key)
+    const before = (beforeRows ?? []) as MasterRuleRow[]
+
+    const t = now()
+    const actor = req.user?.name ?? null
+    // XOÁ TRƯỚC rồi mới ghi: đổi một dòng từ FG02 sang FG01 trong khi FG01 cũ đang bị xoá sẽ đụng
+    // unique nếu làm ngược (cùng bẫy đã gặp ở phiếu Chi phí kho).
+    const keepCats = new Set([...wanted.values()].map(r => r.category ?? ''))
+    const dropIds = before.filter(r => !keepCats.has(r.category ?? '')).map(r => r.id)
+    if (dropIds.length) {
+      const { error } = await supabase.from('date_rule_master').delete().in('id', dropIds)
+      if (error) return fail(res, error)
+    }
+    if (wanted.size) {
+      const payload = [...wanted.values()].map(r => ({
+        id: before.find(b => (b.category ?? '') === (r.category ?? ''))?.id ?? randomUUID(),
+        scope, scope_key: key, category: r.category, rule: r.rule,
+        created_by: actor, updated_by: actor, created_at: t, updated_at: t,
+      }))
+      const { error } = await supabase.from('date_rule_master').upsert(payload, { onConflict: 'id' })
+      if (error) return fail(res, error)
+    }
+
+    await logAdmin(req, {
+      action: 'DATE_RULE_MASTER', target_type: 'DateRuleMaster', target_id: `${scope}:${key}`,
+      target_label: `${scope === 'CUSTOMER' ? 'Khách' : 'Kênh'} ${key}`,
+      before: { rules: before.map(r => ({ category: r.category, rule: r.rule })) },
+      after: { rules: [...wanted.values()] },
+    })
+    // Đổi mức KHÔNG lan ngược: đơn đang mở chỉ đổi khi có người bấm "Áp lại theo master".
+    return ok(res, {
+      rules: [...wanted.values()],
+      applies_to: 'Chỉ đơn sinh sau khi lưu — đơn đang mở dùng nút "Áp lại theo master" ở trang Quy định date',
+    })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── PATCH /masterdata/customers/bulk-rule — đặt MỘT mức cho NHIỀU khách ──────────────────────
+// Đường khai chính cho lần đầu: 102 khách mà mở từng form thì không ai làm. Áp cho ĐÚNG MỘT loại
+// hàng mỗi lượt (hoặc dòng "mọi loại") — trộn nhiều loại trong một lượt thì hộp xác nhận không nói
+// nổi "bạn sắp đổi cái gì của bao nhiêu khách".
+export async function bulkSetDateRule(req: Request, res: Response) {
+  try {
+    const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; category?: unknown; kind?: unknown; value?: unknown }
+
+    const rawCat = body.category == null || String(body.category).trim() === '' ? null : normCategory(body.category)
+    if (body.category != null && String(body.category).trim() !== '' && !rawCat)
+      return fail(res, 400, 'VALIDATION_ERROR', 'Mã loại hàng không hợp lệ')
+    if (rawCat && !await categoryExists(rawCat))
+      return fail(res, 400, 'VALIDATION_ERROR', `Loại hàng "${rawCat}" không có trong danh mục Loại kho`)
+
+    // kind rỗng = XOÁ mức của loại hàng đó (không phải "đặt mức rỗng")
+    const clearing = body.kind == null || String(body.kind).trim() === ''
+    let rule: DateRule | null = null
+    if (!clearing) {
+      const parsed = parseMasterRule({ kind: body.kind, value: body.value })
+      if ('err' in parsed) return fail(res, 422, 'VALIDATION_ERROR', parsed.err)
+      rule = parsed.rule
+    }
+
+    const picked = await resolveBulkTargets(body)
+    if ('err' in picked) return fail(res, picked.err.status, picked.err.code, picked.err.msg)
+    const { idList, byFilter } = picked
+    if (!idList.length) return ok(res, { updated: 0 })
+
+    const t = now()
+    const actor = req.user?.name ?? null
+    let updated = 0
+    for (let i = 0; i < idList.length; i += 300) {
+      const chunk = idList.slice(i, i + 300)
+      // XOÁ trước rồi ghi lại: tránh phải suy đoán cách ON CONFLICT khớp chỉ mục NULLS NOT DISTINCT,
+      // và cũng là đường DUY NHẤT để "xoá mức" đi qua cùng một khối mã.
+      let del = supabase.from('date_rule_master').delete()
+        .eq('scope', 'CUSTOMER').in('scope_key', chunk)
+      del = rawCat ? del.eq('category', rawCat) : del.is('category', null)
+      const { error: delErr } = await del
+      if (delErr) return fail(res, delErr)
+
+      if (rule) {
+        const payload = chunk.map(id => ({
+          id: randomUUID(), scope: 'CUSTOMER', scope_key: id, category: rawCat, rule,
+          created_by: actor, updated_by: actor, created_at: t, updated_at: t,
+        }))
+        const { data, error } = await supabase.from('date_rule_master').insert(payload).select('id')
+        if (error) return fail(res, error)
+        updated += (data ?? []).length
+      } else {
+        updated += chunk.length
+      }
+    }
+
+    await logAdmin(req, {
+      action: 'DATE_RULE_MASTER', target_type: 'DateRuleMaster',
+      target_label: `${updated} khách hàng · ${rawCat ?? 'mọi loại hàng'}`,
+      after: { category: rawCat, rule, count: updated, by_filter: byFilter, cleared: clearing },
+    })
+    return ok(res, { updated, cleared: clearing })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }

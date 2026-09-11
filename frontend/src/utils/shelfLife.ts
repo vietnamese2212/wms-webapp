@@ -42,6 +42,40 @@ export interface PctDateEntry {
   ncc_id?:          string | null
 }
 
+export const DAY_MS = 86_400_000
+
+const msOf = (v: string | Date | null | undefined): number | null => {
+  if (!v) return null
+  const t = new Date(v).getTime()
+  return isNaN(t) ? null : t
+}
+
+// HSD HIỆU LỰC (ms): HSD tường minh trên tem (V2) → suy từ NSX + shelf-life (V1).
+// null = KHÔNG BIẾT hạn (không phải "hết hạn"). KHỚP backend effectiveExpiryMs.
+export function effectiveExpiryMs(
+  entry: PctDateEntry,
+  material: MaterialShelfInfo | null | undefined,
+): number | null {
+  const exp = msOf(entry.expiry_date)
+  if (exp != null) return exp
+  const prod = msOf(entry.production_date)
+  const days = resolveShelfLife(entry.shelf_life_days, material, entry.ncc_id)
+  if (prod == null || days <= 0) return null
+  return prod + days * DAY_MS
+}
+
+// SỐ NGÀY CÒN LẠI tới HSD (≥ 0, làm tròn XUỐNG để hiển thị — còn 2,6 ngày thì nói "2 ngày",
+// nói 3 là hứa quá). null nếu không đủ dữ liệu. Bất biến: FE = floor(BE.computeDaysLeft).
+export function computeDaysLeft(
+  entry: PctDateEntry,
+  material: MaterialShelfInfo | null | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  const exp = effectiveExpiryMs(entry, material)
+  if (exp == null) return null
+  return Math.max(0, Math.floor((exp - nowMs) / DAY_MS))
+}
+
 // %Date CÒN LẠI của 1 pallet (0..100, ĐÃ làm tròn). null nếu không đủ dữ liệu. KHỚP backend computePctDate.
 // - Tem V2 có expiry_date TƯỜNG MINH → dùng thẳng HSD (mẫu số = HSD − NSX; thiếu NSX thì lấy shelflife).
 // - Tem V1 (không expiry_date) → NSX + shelflife như cũ (kết quả trùng khớp, không đổi hành vi).

@@ -11,7 +11,7 @@
 //
 // Mirror FE (chỉ phần NHÃN + mã lý do): frontend/src/utils/rotation.ts — sửa luật phải sửa cả hai.
 
-import { resolveShelfLife, type MaterialShelfInfo } from './shelfLife'
+import { effectiveExpiryMs, type MaterialShelfInfo } from './shelfLife'
 
 export const ROTATION_PRINCIPLES = ['FEFO', 'FIFO', 'LIFO'] as const
 export type RotationPrinciple = typeof ROTATION_PRINCIPLES[number]
@@ -60,16 +60,9 @@ function msOf(v: string | Date | null | undefined): number | null {
   return isNaN(t) ? null : t
 }
 
-// HSD hiệu lực (ms): ưu tiên HSD tường minh trên tem (V2) → suy từ NSX + shelf-life (V1).
-// Cùng công thức nền với computePctDate: shelf-life lấy theo lô → theo NCC → mặc định của mã.
-function effectiveExpiryMs(e: RotationEntry, material: MaterialShelfInfo | null | undefined): number | null {
-  const exp = msOf(e.expiry_date)
-  if (exp != null) return exp
-  const prod = msOf(e.production_date)
-  const days = resolveShelfLife(e.shelf_life_days, material, e.ncc_id)
-  if (prod == null || days <= 0) return null
-  return prod + days * 86_400_000
-}
+// HSD hiệu lực (ms) đến từ `shelfLife.ts` — MỘT nguồn dùng chung với "số ngày còn lại" của quy
+// tắc MIN_DAYS. Trước 11/09 file này giữ bản chép tay riêng: đúng khuôn lỗi mà chính đầu file
+// đang cảnh báo, chỉ là ở tầng sâu hơn một bậc.
 
 // Khóa sắp xếp: NHỎ HƠN = nên lấy TRƯỚC. null = không đủ dữ liệu để xếp (đứng cuối, không kết luận
 // vi phạm — mã không khai NSX/HSD thì không có "thứ tự đúng" để mà sai).

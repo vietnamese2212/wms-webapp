@@ -5768,18 +5768,29 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
     if (rows.length >= APPLY_MASTER_CAP)
       return fail(res, 400, 'TOO_MANY_LINES', `Khoảng ngày này có hơn ${APPLY_MASTER_CAP.toLocaleString('vi-VN')} dòng cần xét — thu hẹp khoảng ngày hoặc lọc theo kho rồi áp lại.`)
 
+    // "Giữ nguyên vì đã CHỐT TAY" phải là số THẬT để người bấm yên tâm — đếm riêng, vì tập ứng viên
+    // ở trên đã LOẠI dòng MANUAL ngay trong RPC (không kéo về thứ mình không được phép đụng).
+    let keptManual = 0
+    {
+      const { data } = await supabase.rpc('outbound_date_rule_lines', {
+        p_from: from, p_to: to, p_scope_wh: scope, p_warehouse_id: whId,
+        p_categories: cats && cats.length ? cats : null,
+        p_state: 'ALL', p_search: null, p_limit: 1, p_offset: 0, p_source: ['MANUAL'],
+      })
+      keptManual = Number(((data ?? {}) as { total?: number }).total ?? 0)
+    }
+
     const ctx = await loadPolicyCtx(rows.map(r => r.warehouse_id), rows.map(r => r.shipto_party))
     const actor = req.user?.name ?? null
     // Gom theo QUY TẮC ĐÍCH: cùng một payload thì một câu UPDATE cho cả nhóm (đừng ghi từng dòng).
     const byPayload = new Map<string, { payload: DateRule | null; rows: Row[] }>()
-    let keptManual = 0
     for (const r of rows) {
       const out = resolveDateRule(ctx, {
         warehouseId: r.warehouse_id, shipto: r.shipto_party,
         headerText: r.header_text, dateRequired: r.date_required,
         existing: r.date_rule, actor, overwriteAuto: true,
       })
-      if (out.keptManual) { keptManual++; continue }
+      if (out.keptManual) continue      // lưới an toàn: RPC đã lọc, nhưng chốt tay không bao giờ bị đụng
       if (!out.changed) continue
       const key = JSON.stringify(out.rule ? { kind: out.rule.kind, value: out.rule.value ?? null, source: out.source } : null)
       const slot = byPayload.get(key) ?? { payload: out.rule, rows: [] }
@@ -5796,7 +5807,7 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
         { label: 'Sẽ áp %Date theo khách / kênh', value: applied },
         ...(cleared ? [{ label: 'Sẽ XOÁ chốt máy đã áp (kho đổi chính sách / có ghi chú CS)', value: cleared, warn: true }] : []),
         { label: 'Giữ nguyên vì đã CHỐT TAY', value: keptManual },
-        { label: 'Không đổi', value: Math.max(0, rows.length - applied - cleared - keptManual) },
+        { label: 'Không đổi', value: Math.max(0, rows.length - applied - cleared) },
       ],
     }))
 

@@ -1576,7 +1576,7 @@ export async function quickExportGDO(req: Request, res: Response) {
     const dvvtRes = (await buildDvvtResolver())(dvvt)
     const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
-    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode, require_weigh_on_start, require_gate_on_start').eq('id', warehouse_id).maybeSingle()
+    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode, require_weigh_on_start, require_gate_on_start, work_mode, date_rule_policy').eq('id', warehouse_id).maybeSingle()
     if (!wh) return fail(res, 'Không tìm thấy kho xuất', 404)
     const whMode = (wh as { inventory_mode?: string | null }).inventory_mode ?? null
 
@@ -1672,24 +1672,52 @@ export async function quickExportGDO(req: Request, res: Response) {
 
     const qxLooseMats = await loosePalletMats(allCodes)
     const qxLoosePol = await looseConfigOf([warehouse_id])
-    const itemRows = items.map(item => ({
-      id: randomUUID(), do_id: doId,
-      material_id: matMap.get(item.material_code)!.id,
-      material_code_raw: item.material_code,
-      cartons_ordered: item.cartons_ordered,
-      boxes_display: 0, weight: null, pallets_estimated: 0,
-      loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id,
-        qxLoosePol.of(warehouse_id, qxLooseMats.get(item.material_code)?.category ?? matMap.get(item.material_code)?.category ?? null)),
-      header_text: item.header_text?.trim() || null,
-      batch_required: item.batch_required?.trim() || null,
-      date_required: item.date_required || null,
-      cs_responsible: item.cs_responsible?.trim() || null,
-      material_type: matMap.get(item.material_code)!.category,
-      export_type: export_type ?? null, cartons_scanned: 0,
-      status: 'PENDING', updated_at: t,
-    }))
+    // "Xuất luôn" TRỪ TỒN THẬT y như quét ⇒ phải đi qua CÙNG cửa gác quy định date, nếu không nó
+    // thành đường lách: kho đang chạy theo quy định date mà một nút bấm là hàng ra khỏi kho không
+    // cần khai mức nào (cùng lớp lỗi "nhặt lẻ là cửa sau" đã vá 10/09).
+    const qxAutoDate = await autoDateRuleFor(warehouse_id ?? null, shipto_party ?? null, actor)
+    const qxApplied: AutoApplied[] = []
+    const itemRows = items.map(item => {
+      const mi = matMap.get(item.material_code)!
+      const rule = qxAutoDate({
+        header_text: item.header_text?.trim() || null,
+        date_required: item.date_required || null,
+        category: mi.category, shelf_life_days: qxLooseMats.get(item.material_code)?.shelf_life_days ?? null,
+      })
+      const itemId = randomUUID()
+      if (rule) qxApplied.push({ id: itemId, warehouse_id: warehouse_id ?? null, material_id: mi.id, rule })
+      return {
+        id: itemId, do_id: doId,
+        material_id: mi.id,
+        material_code_raw: item.material_code,
+        cartons_ordered: item.cartons_ordered,
+        boxes_display: 0, weight: null, pallets_estimated: 0,
+        loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id,
+          qxLoosePol.of(warehouse_id, qxLooseMats.get(item.material_code)?.category ?? mi.category ?? null)),
+        header_text: item.header_text?.trim() || null,
+        batch_required: item.batch_required?.trim() || null,
+        date_required: item.date_required || null,
+        cs_responsible: item.cs_responsible?.trim() || null,
+        material_type: mi.category,
+        export_type: export_type ?? null, cartons_scanned: 0,
+        date_rule: rule,
+        status: 'PENDING', updated_at: t,
+      }
+    })
+    // Chặn TRƯỚC khi ghi dòng nào: chuyến đã tạo ở trên còn xoá được, chứ tồn đã trừ thì không.
+    {
+      const gated = { warehouse: { work_mode: (wh as { work_mode?: string | null }).work_mode ?? null,
+                                  date_rule_policy: (wh as { date_rule_policy?: string | null }).date_rule_policy ?? null } }
+      const bad = itemRows.find(r => dateRuleGateError(gated, r as DateRuleGateItem, 'lấy hàng'))
+      if (bad) {
+        await supabase.from('OutboundDelivery').delete().eq('id', doId)
+        await supabase.from('GroupDeliveryOrder').delete().eq('id', gdoId)
+        return fail(res, 422, 'DATE_RULE_REQUIRED', dateRuleGateError(gated, bad as DateRuleGateItem, 'lấy hàng')!)
+      }
+    }
     const { error: itemErr } = await supabase.from('OutboundItem').insert(itemRows)
     if (itemErr) return fail(res, itemErr)
+    if (qxApplied.length) await flagNoStock(qxApplied)
 
     // Ghi nhận từng mã: pool (CAS) + entry CHỈ cho mã no-QR hiệu lực — khớp quickExportExistingGDO/manualCompleteItem.
     // Kho NONE + mã thường: không theo dõi tồn → chỉ đánh item COMPLETED (không pool, không entry — trước đây
@@ -1757,7 +1785,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select(`id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)`)
+      .select(`id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start,work_mode,date_rule_policy)`)
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
@@ -1807,13 +1835,20 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
     if (!doIds.length) return fail(res, 'Chuyến chưa có đơn/mặt hàng', 400)
     const { data: items } = await supabase.from('OutboundItem')
-      .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
+      .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
       .in('do_id', doIds)
     const pending = ((items ?? []) as Array<{
       id: string; material_id: string | null; material_code_raw: string | null
       cartons_ordered: number; cartons_scanned: number | null; status: string
+      date_rule?: unknown; date_required?: number | null
       material?: ({ material_code?: string | null; no_qr_tracking?: boolean | null } & MatUnitsQ) | null
     }>).filter(i => i.status !== 'COMPLETED')
+
+    // CÙNG cửa gác với quét/nhặt lẻ: "Xuất luôn" cũng trừ tồn thật, không được là đường lách.
+    for (const it of pending) {
+      const drErr = dateRuleGateError(gdo, it as DateRuleGateItem, 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
+    }
 
     const actor = req.user?.name || null
     // Ghi nhận từng mã TRƯỚC (trừ tồn). CHƯA đụng trạng thái GDO — nếu TẤT CẢ fail thì giữ nguyên PENDING

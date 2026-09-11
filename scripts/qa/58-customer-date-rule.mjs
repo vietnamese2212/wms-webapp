@@ -60,6 +60,9 @@ async function cleanup() {
     await restWrite('Customer', 'PATCH', `warehouse_id=eq.${w.id}`, { warehouse_id: null }).catch(() => {})
     await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
   }
+  // Mức khai theo khách: khoá là Customer.id nên phải xoá TRƯỚC khi xoá khách
+  for (const c of await restAll('Customer', `select=id&ship_to_code=like.${T}*`))
+    await restWrite('date_rule_master', 'DELETE', `scope=eq.CUSTOMER&scope_key=eq.${c.id}`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=like.${T}*`).catch(() => {})
   for (const m of await restAll('Material', `select=id&material_code=like.${T}*`))
     await restWrite('Material', 'DELETE', `id=eq.${m.id}`).catch(() => {})
@@ -96,18 +99,30 @@ try {
     created_at: nowIso(), updated_at: nowIso(),
   })
 
-  // Kênh NPP có sẵn mức ≥ 60 do migration seed — đọc lại để phép kiểm không phụ thuộc giả định.
-  const chNpp = (await restAll('LookupValue', "select=id,value,meta&type=eq.customer_channel&value=eq.NPP"))[0]
-  const chNppPct = Number(chNpp?.meta?.date_rule?.value ?? 0)
-  check('[0a] Kênh NPP có sẵn mức mặc định ≥ 60 % (migration seed)', chNppPct === 60, `mức=${chNppPct}`)
+  // ĐỢT 2 (11/09): mức nằm ở bảng `date_rule_master` theo cặp (khách|kênh) × LOẠI HÀNG — không còn
+  // là một cột trên Customer. Khai qua ĐÚNG cửa API để phép kiểm đi cùng đường người dùng đi.
+  const setRules = (scope, key, rules) =>
+    api(`/masterdata/date-rules/${scope}/${encodeURIComponent(key)}`, 'PUT', { rules })
+  const ruleRowsOf = async (scope, key) =>
+    restAll('date_rule_master', `select=category,rule&scope=eq.${scope}&scope_key=eq.${key}`)
 
-  const mkCust = (code, patch) => restWrite('Customer', 'POST', null, {
-    id: randomUUID(), ship_to_code: code, name: `KH ${code}`, is_active: true, auto_created: false,
-    created_at: nowIso(), updated_at: nowIso(), ...patch,
-  })
-  await mkCust(SHIP.A, { channel: 'NPP' })
-  await mkCust(SHIP.B, { channel: 'NPP', date_rule: { kind: 'MIN_PCT', value: 99 } })
-  await mkCust(SHIP.C, {})                                   // chưa phân kênh
+  // Kênh NPP có sẵn mức ≥ 60 do migration chuyển sang — đọc lại, không giả định.
+  const chNpp = (await restAll('LookupValue', "select=id,value,meta&type=eq.customer_channel&value=eq.NPP"))[0]
+  const chNppRows = await ruleRowsOf('CHANNEL', 'NPP')
+  const chNppPct = Number(chNppRows.find(r => r.category == null)?.rule?.value ?? 0)
+  check('[0a] Kênh NPP có sẵn mức mặc định ≥ 60 % (migration chuyển sang bảng mức)', chNppPct === 60, `mức=${chNppPct}`)
+
+  const mkCust = async (code, patch, rules) => {
+    const [c] = await restWrite('Customer', 'POST', null, {
+      id: randomUUID(), ship_to_code: code, name: `KH ${code}`, is_active: true, auto_created: false,
+      created_at: nowIso(), updated_at: nowIso(), ...patch,
+    })
+    if (rules?.length) await setRules('CUSTOMER', c.id, rules)
+    return c
+  }
+  const custA = await mkCust(SHIP.A, { channel: 'NPP' })
+  const custB = await mkCust(SHIP.B, { channel: 'NPP' }, [{ category: null, kind: 'MIN_PCT', value: 99 }])
+  await mkCust(SHIP.C, {})                                   // chưa phân kênh, chưa khai mức
   await mkCust(SHIP.D, { channel: 'NPP', warehouse_id: whDest.id })
 
   // Dòng raw VL06O — mỗi chuyến MỘT ship-to (ship-to là thuộc tính của CHUYẾN, không phải của dòng)
@@ -224,7 +239,7 @@ try {
     Number(ruleOf(a3b)?.value) === 70 && srcOf(a3b) === 'MANUAL', `rule=${JSON.stringify(ruleOf(a3b))}`)
 
   // Đổi mức mặc định của kênh — KHÔNG được lan ngược cho đơn đang mở
-  await api(`/masterdata/customer-channels/${chNpp.id}`, 'PUT', { date_rule: { kind: 'MIN_PCT', value: 65 } })
+  await setRules('CHANNEL', 'NPP', [{ category: null, kind: 'MIN_PCT', value: 65 }])
   const a1c = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
   check('[3c] Đổi mức của KÊNH KHÔNG lan ngược — dòng đang mở giữ nguyên mức cũ',
     Number(a1c?.date_rule?.value) === 60, `rule=${JSON.stringify(a1c?.date_rule)}`)
@@ -250,7 +265,7 @@ try {
     ev.some(e => e.source === 'SYSTEM'), `n=${ev.length} sources=${[...new Set(ev.map(e => e.source))].join(',')}`)
 
   // Trả kênh về 60 để không ảnh hưởng phép kiểm khác / lượt chạy sau
-  await api(`/masterdata/customer-channels/${chNpp.id}`, 'PUT', { date_rule: { kind: 'MIN_PCT', value: 60 } })
+  await setRules('CHANNEL', 'NPP', [{ category: null, kind: 'MIN_PCT', value: 60 }])
 
   // ═══ [4] CẦN XEM — máy áp mà kho không còn pallet nào đạt ═════════════════════════════════════
   const bNow = (await restAll('OutboundItem', `select=date_rule&id=eq.${b.id}`))[0]
@@ -311,12 +326,12 @@ try {
   const rDup = await api('/masterdata/customers', 'POST', { ship_to_code: SHIP.A, name: 'trùng' })
   check('[7a] Mã ship-to trùng → 409 (không đẻ khách đôi)', rDup.s === 409, `${rDup.s} ${err(rDup)}`)
 
-  const rBadRule = await api('/masterdata/customers', 'POST', { ship_to_code: `${T}Z1`, name: 'z', date_rule: { kind: 'EXACT', value: '2026-01-01' } })
-  check('[7b] Quy tắc master kiểu "chỉ định NSX" → 422 (đó là quyết định của TỪNG DÒNG)',
-    rBadRule.s === 422, `${rBadRule.s} ${err(rBadRule)}`)
+  const rBadRule = await setRules('CUSTOMER', custA.id, [{ category: null, kind: 'EXACT', value: '2026-01-01' }])
+  check('[7b] Quy tắc master kiểu "chỉ định NSX" → 400/422 (đó là quyết định của TỪNG DÒNG)',
+    rBadRule.s === 400 || rBadRule.s === 422, `${rBadRule.s} ${err(rBadRule)}`)
 
-  const rBadPct = await api('/masterdata/customers', 'POST', { ship_to_code: `${T}Z2`, name: 'z', date_rule: { kind: 'MIN_PCT', value: 140 } })
-  check('[7c] Mức %Date ngoài 1–100 → 422', rBadPct.s === 422, `${rBadPct.s} ${err(rBadPct)}`)
+  const rBadPct = await setRules('CUSTOMER', custA.id, [{ category: null, kind: 'MIN_PCT', value: 140 }])
+  check('[7c] Mức % ngoài 1–100 → 422', rBadPct.s === 422, `${rBadPct.s} ${err(rBadPct)}`)
 
   const rBadCh = await api('/masterdata/customers', 'POST', { ship_to_code: `${T}Z3`, name: 'z', channel: 'KHONG_CO_KENH_NAY' })
   check('[7d] Kênh không có trong danh mục → 400 (gõ bừa là %Date im lặng không áp)',
@@ -371,6 +386,166 @@ try {
   const whAfter2 = (await restAll('Warehouse', `select=date_rule_policy&id=eq.${wh.id}`))[0]
   check('[7n] Giá trị chính sách lạ → rơi về TẮT, không ghi rác vào DB (CHECK ở DB là lá chắn cuối)',
     whAfter2?.date_rule_policy === 'OFF', `${rWhBad.s} policy=${whAfter2?.date_rule_policy}`)
+
+  // ═══ [10] ĐỢT 2 — mức theo (khách × LOẠI HÀNG) · kiểu "còn ≥ N ngày" · mã không hạn dùng ══════
+  // Vì sao phải có: FG01 hạn 120–720 ngày còn FG02 chỉ 45–60 ⇒ "còn ≥ 35 ngày" ra 77,8 % trên mã
+  // này và 58,3 % trên mã kia. Nếu MIN_DAYS đo sai thì không có lỗi nào nổ — chỉ là hàng cận date
+  // vẫn qua cửa. Tồn fixture: SX 5 ngày trước, hạn 100 ngày ⇒ CÒN ≈ 95 ngày, %Date ≈ 95 %.
+  {
+    const askDays = async n => {
+      const r = await api('/wms/outbound/items/date-rule/check', 'POST',
+        { rules: [{ item_id: a1b.id, rule: { kind: 'MIN_DAYS', value: n } }] })
+      return r.s === 200 ? (r.j?.data ?? [])[0] : null
+    }
+    const ok90 = await askDays(90)
+    const bad99 = await askDays(99)
+    check('[10a] "còn ≥ 90 ngày" ĐẠT trên tồn còn ≈ 95 ngày', ok90?.ok === true,
+      `ok=${ok90?.ok} best_days=${ok90?.best_days}`)
+    check('[10b] "còn ≥ 99 ngày" KHÔNG đạt — và báo được số ngày cao nhất còn trong kho',
+      bad99?.ok === false && Number(bad99?.best_days) >= 90 && Number(bad99?.best_days) < 99,
+      `ok=${bad99?.ok} best_days=${bad99?.best_days}`)
+
+    const rSaveDays = await api('/wms/outbound/items/date-rule', 'PATCH',
+      { item_ids: [a1b.id], rule: { kind: 'MIN_DAYS', value: 90 } })
+    const a1Days = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
+    check('[10c] Khai kiểu NGÀY lưu được và ghi đúng hình dạng',
+      rSaveDays.s === 200 && a1Days?.date_rule?.kind === 'MIN_DAYS' && Number(a1Days?.date_rule?.value) === 90,
+      `${rSaveDays.s} ${JSON.stringify(a1Days?.date_rule)}`)
+
+    // CHIA PHẦN trộn hai thước (user chốt 11/09: "10 thùng date 40 ngày, 7 thùng date 35")
+    const rSplit = await api('/wms/outbound/items/date-rule', 'PATCH', {
+      item_ids: [a1b.id],
+      rule: { kind: 'SPLIT', parts: [{ qty_base: 10, kind: 'MIN_DAYS', value: 40 }, { qty_base: 7, kind: 'MIN_PCT', value: 80 }] },
+    })
+    const a1Split = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
+    check('[10d] Chia phần theo SL nhận CẢ kiểu ngày lẫn kiểu %, trộn trên cùng một dòng',
+      rSplit.s === 200 && a1Split?.date_rule?.kind === 'SPLIT'
+      && (a1Split?.date_rule?.parts ?? []).some(p => p.kind === 'MIN_DAYS' && Number(p.value) === 40)
+      && (a1Split?.date_rule?.parts ?? []).some(p => p.kind === 'MIN_PCT' && Number(p.value) === 80),
+      `${rSplit.s} ${JSON.stringify(a1Split?.date_rule)}`)
+
+    const rDaysBad = await api('/wms/outbound/items/date-rule', 'PATCH',
+      { item_ids: [a1b.id], rule: { kind: 'MIN_DAYS', value: 0 } })
+    check('[10e] Số ngày ≤ 0 → 422, không ghi mức vô nghĩa', rDaysBad.s === 422, `${rDaysBad.s} ${err(rDaysBad)}`)
+
+    // MỨC THEO LOẠI HÀNG thắng mức chung của CÙNG khách
+    const rCat = await setRules('CUSTOMER', custB.id, [
+      { category: null, kind: 'MIN_PCT', value: 10 },
+      { category: CAT,  kind: 'MIN_PCT', value: 88 },
+    ])
+    const rowsB = await ruleRowsOf('CUSTOMER', custB.id)
+    check('[10f] Một khách khai được NHIỀU mức theo loại hàng (dòng chung + dòng riêng)',
+      rCat.s === 200 && rowsB.length === 2 && rowsB.some(r => r.category === CAT), `${rCat.s} rows=${JSON.stringify(rowsB)}`)
+
+    await restWrite('Warehouse', 'PATCH', `id=eq.${wh.id}`, { date_rule_policy: 'ALL', updated_at: nowIso() })
+    await plan(GC('20'), `${T}DO_B`, `${T} NPPCAT`)
+    const g20 = await itemsOf(GC('20'))
+    const bCat = g20.items[0]
+    check('[10g] Dòng hàng ăn mức của ĐÚNG LOẠI HÀNG (88 %), không ăn mức chung (10 %)',
+      Number(ruleOf(bCat)?.value) === 88 && srcOf(bCat) === 'CUSTOMER', `rule=${JSON.stringify(ruleOf(bCat))}`)
+
+    // Khai lại chỉ MỘT dòng ⇒ dòng kia phải BIẾN MẤT (thay trọn, không cộng dồn)
+    await setRules('CUSTOMER', custB.id, [{ category: null, kind: 'MIN_PCT', value: 99 }])
+    const rowsB2 = await ruleRowsOf('CUSTOMER', custB.id)
+    check('[10h] Lưu bộ mức là THAY TRỌN — dòng bỏ đi biến mất, không sót mức cũ đang chạy',
+      rowsB2.length === 1 && rowsB2[0].category == null, `rows=${JSON.stringify(rowsB2)}`)
+
+    // MÃ KHÔNG KHAI HẠN DÙNG — hệ thống tự đặt "không đòi mốc" có LÝ DO, và ẩn khỏi màn khai
+    const [matNo] = await restWrite('Material', 'POST', null, {
+      id: randomUUID(), material_code: `${T}-NOSL`, material_description: 'QA khong han dung', short_name: 'QA NOSL',
+      category: CAT, base_unit: 'CS', cartons_per_pallet: 100, shelf_life_days: null, no_qr_tracking: true,
+      is_active: true, created_at: nowIso(), updated_at: nowIso(),
+    })
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: randomUUID(), od_number: `${T}DO_NOSL`, od_item: '10', material_code: matNo.material_code, qty_base: 20,
+      ship_to_code: SHIP.A, ship_to_name: `KH ${SHIP.A}`, source: 'EXCEL', sync_status: 'ACTIVE',
+      last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+    await plan(GC('21'), `${T}DO_NOSL`, `${T} NPPNOSL`)
+    const g21 = await itemsOf(GC('21'))
+    const noSl = g21.items[0]
+    check('[10i] Mã KHÔNG khai hạn dùng → hệ thống tự đặt "không đòi mốc", ghi rõ NGUỒN và LÝ DO',
+      ruleOf(noSl)?.kind === 'FEFO' && srcOf(noSl) === 'SYSTEM' && ruleOf(noSl)?.reason === 'NO_SHELF_LIFE',
+      `rule=${JSON.stringify(ruleOf(noSl))}`)
+
+    const rBoard = await api(`/wms/outbound/date-rule-lines?date_from=${today}&date_to=${today}&warehouse_id=${wh.id}&page_size=1000`)
+    const boardIds = (rBoard.j?.data?.rows ?? []).map(x => x.item_id)
+    check('[10j] …dòng đó KHÔNG hiện ở màn Quy định date (không có gì để khai)',
+      rBoard.s === 200 && !boardIds.includes(noSl.id), `${rBoard.s} n=${boardIds.length}`)
+    check('[10k] …nhưng con số VẪN trong sổ sách (ô "Không có hạn dùng")',
+      Number(rBoard.j?.data?.summary?.no_shelf_life ?? 0) >= 1,
+      `no_shelf_life=${rBoard.j?.data?.summary?.no_shelf_life}`)
+
+    // CỬA GÁC mở rộng: kho ĐÃ BẬT quy định date thì dòng chưa khai không quét được
+    const [matGate] = await restWrite('Material', 'POST', null, {
+      id: randomUUID(), material_code: `${T}-GATE`, material_description: 'QA gate', short_name: 'QA GATE',
+      category: CAT, base_unit: 'CS', cartons_per_pallet: 100, shelf_life_days: 100, no_qr_tracking: true,
+      is_active: true, created_at: nowIso(), updated_at: nowIso(),
+    })
+    await restWrite('InventoryEntry', 'POST', null, {
+      id: randomUUID(), pallet_code: matGate.material_code, material_id: matGate.id, warehouse_id: wh.id,
+      cartons_imported: 500, cartons_remaining: 500, cartons_reserved: 0,
+      status: 'IN_STOCK', production_date: dPlus(-5), import_date: vnDate(),
+      created_at: nowIso(), updated_at: nowIso(),
+    })
+    // Khách NEW đang ở kênh KHAC — kênh này CHƯA khai mức nào ⇒ dòng CHƯA KHAI. Kho đang bật
+    // policy = ALL thì cửa lấy hàng phải chặn, kể cả đường "Xuất luôn" (nó cũng TRỪ TỒN THẬT).
+    const rQx = await api('/wms/outbound/quick-export', 'POST', {
+      delivery_date: today, warehouse_id: wh.id, dvvt, customer_name: `KH ${SHIP.NEW}`,
+      delivery_code: `${T}QGATE`, warehouse_type: CAT, shipto_party: SHIP.NEW, license_plate: `${T}XE03`,
+      items: [{ material_code: matGate.material_code, cartons_ordered: 5 }],
+    })
+    check('[10l] Kho ĐÃ BẬT quy định date: "Xuất luôn" cũng bị chặn nếu dòng chưa khai (422)',
+      rQx.s === 422 && rQx.j?.error?.code === 'DATE_RULE_REQUIRED', `${rQx.s} ${err(rQx)}`)
+    const leftover = await restAll('GroupDeliveryOrder', `select=id&group_code=like.${T}*&status=eq.PENDING`)
+    check('[10l2] …và KHÔNG để lại chuyến rác: chặn TRƯỚC khi ghi dòng hàng',
+      !leftover.some(g => g.id === (rQx.j?.data?.id ?? '')), `n=${leftover.length}`)
+
+    await restWrite('Warehouse', 'PATCH', `id=eq.${wh.id}`, { date_rule_policy: 'OFF', updated_at: nowIso() })
+    const rQxOff = await api('/wms/outbound/quick-export', 'POST', {
+      delivery_date: today, warehouse_id: wh.id, dvvt, customer_name: `KH ${SHIP.NEW}`,
+      delivery_code: `${T}QGATE2`, warehouse_type: CAT, shipto_party: SHIP.NEW, license_plate: `${T}XE04`,
+      items: [{ material_code: matGate.material_code, cartons_ordered: 5 }],
+    })
+    check('[10m] Kho CHƯA bật (TẮT) + chế độ Thủ công: KHÔNG khoá nhầm — vẫn xuất bình thường',
+      rQxOff.s === 200 || rQxOff.s === 201, `${rQxOff.s} ${err(rQxOff)}`)
+
+    // Đặt MỘT mức cho NHIỀU khách (đường khai chính cho lần đầu 100+ khách)
+    const rBulkRule = await api('/masterdata/customers/bulk-rule', 'PATCH',
+      { filter: { search: T }, category: CAT, kind: 'MIN_DAYS', value: 35 })
+    const rowsA = await ruleRowsOf('CUSTOMER', custA.id)
+    check('[10n] Đặt 1 mức cho NHIỀU khách theo bộ lọc — ghi đúng loại hàng và đúng kiểu',
+      rBulkRule.s === 200 && Number(rBulkRule.j?.data?.updated ?? 0) >= 4
+      && rowsA.some(r => r.category === CAT && r.rule?.kind === 'MIN_DAYS' && Number(r.rule?.value) === 35),
+      `${rBulkRule.s} updated=${rBulkRule.j?.data?.updated} rowsA=${JSON.stringify(rowsA)}`)
+
+    const rBulkClear = await api('/masterdata/customers/bulk-rule', 'PATCH',
+      { filter: { search: T }, category: CAT, kind: null })
+    const rowsA2 = await ruleRowsOf('CUSTOMER', custA.id)
+    check('[10o] …và XOÁ mức của loại đó cũng đi qua cùng một cửa',
+      rBulkClear.s === 200 && !rowsA2.some(r => r.category === CAT), `${rBulkClear.s} rows=${JSON.stringify(rowsA2)}`)
+
+    const rBulkRuleBoth = await api('/masterdata/customers/bulk-rule', 'PATCH',
+      { ids: [custA.id], filter: { search: T }, category: null, kind: 'FEFO' })
+    check('[10p] Đặt mức hàng loạt: gửi CẢ ids lẫn filter → 400 (phạm vi phải rõ ràng)',
+      rBulkRuleBoth.s === 400, `${rBulkRuleBoth.s} ${err(rBulkRuleBoth)}`)
+
+    const rCatGhost = await setRules('CUSTOMER', custA.id, [{ category: 'KHONG_CO_LOAI_NAY', kind: 'MIN_PCT', value: 60 }])
+    check('[10q] Loại hàng không có trong danh mục → 400 (gõ bừa là mức im lặng không bao giờ khớp)',
+      rCatGhost.s === 400, `${rCatGhost.s} ${err(rCatGhost)}`)
+
+    const rDupCat = await setRules('CUSTOMER', custA.id, [
+      { category: CAT, kind: 'MIN_PCT', value: 60 }, { category: CAT, kind: 'MIN_DAYS', value: 30 },
+    ])
+    check('[10r] Khai HAI dòng cho cùng một loại hàng → 400, không để hai mức chọi nhau',
+      rDupCat.s === 400, `${rDupCat.s} ${err(rDupCat)}`)
+
+    const rCats = await api('/masterdata/date-rules/categories')
+    const catRows = rCats.j?.data ?? []
+    check('[10s] Danh sách loại hàng khai được: đọc từ DỮ LIỆU, có cờ "đo được date" + khoảng hạn dùng',
+      rCats.s === 200 && catRows.length > 0 && catRows.every(c => 'measurable' in c && 'min_shelf_life' in c),
+      `${rCats.s} n=${catRows.length}`)
+  }
 
   // ═══ [8] Nhật ký quản trị ═════════════════════════════════════════════════════════════════════
   const audit = await restAll('admin_audit_events', "select=action&action=in.(CUSTOMER_BULK,CHANNEL_UPDATE)&order=created_at.desc&limit=20")

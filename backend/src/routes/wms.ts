@@ -344,6 +344,7 @@ router.post('/outbound/reconcile-tasks/:id/resolve',          requirePerm('outbo
 router.get('/outbound/date-rule-lines',                       requirePerm('outbound', 'set_date'), outbound.getDateRuleLines)          // màn chốt %Date: mọi dòng của mọi chuyến trong khoảng ngày
 router.post('/outbound/items/date-rule/check',                requirePerm('outbound', 'set_date'), outbound.checkItemsDateRule)   // hỏi TRƯỚC khi chốt: mức %Date này còn tồn nào đạt không
 router.patch('/outbound/items/date-rule',                     requirePerm('outbound', 'set_date'), outbound.setItemsDateRule)
+router.post('/outbound/items/date-rule/apply-master',         requirePerm('outbound', 'set_date'), outbound.applyDateRuleMaster)   // ?preflight=1 = chỉ đếm
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
 // STT chuẩn bị theo booking khung giờ — read-only, dùng ở list Xuất kho (view) + board Chuẩn bị hàng (prepare) + list Nhặt lẻ (nhặt lẻ soạn TRƯỚC theo thứ tự xe tới)
 router.get('/outbound/booking-sequence',                      requireAnyPerm(['outbound', 'view'], ['outbound', 'prepare'], ['loosepicking', 'view']), outbound.getBookingSequence)

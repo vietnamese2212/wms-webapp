@@ -10,6 +10,7 @@ import { WH_TYPE_META_COLS, invalidateWhTypeMetaCache } from '../../utils/wareho
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 import { warehouseTypeUsage } from '../wms/lookupController'
+import { asDateRulePolicy } from '../../services/dateRulePolicy'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -179,6 +180,7 @@ export async function createWarehouse(req: Request, res: Response) {
     if (rotation_principle !== undefined)     row.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      row.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     if (scan_code_types !== undefined)        row.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
+    if (req.body.date_rule_policy !== undefined) row.date_rule_policy = asDateRulePolicy(req.body.date_rule_policy)   // %Date theo Khách hàng/Kênh (20260911)
     const putErr = applyPutawayBody(req.body, row)                                                                   // quy tắc CẤT hàng (20260815d)
     if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
     // Kho MỚI chưa thể có bản vẽ ⇒ chưa bật Hướng dẫn được (tính đường đi cần lưới Sơ đồ kho)
@@ -290,6 +292,9 @@ export async function updateWarehouse(req: Request, res: Response) {
         return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ')
       patch.warehouse_type = warehouse_type
     }
+    // %Date theo Khách hàng / Kênh (20260911) — bật ở đây KHÔNG áp ngược cho đơn đang mở; muốn áp
+    // thì bấm "Áp lại theo master" ở trang Chốt %Date (xem services/dateRulePolicy.ts).
+    if (req.body.date_rule_policy !== undefined) patch.date_rule_policy = asDateRulePolicy(req.body.date_rule_policy)
     if (parent_warehouse_id !== undefined) {
       const parentId = parent_warehouse_id ? String(parent_warehouse_id) : null
       const parentErr = await validateParent(parentId, req.params.id)

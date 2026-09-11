@@ -33,6 +33,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   packing:           ['view', 'record', 'open_run', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): open_run = mở/đóng TRANG SỔ (lệnh) ≠ record = quét pallet; export riêng theo luật 26/07
   inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],
+  customers:         ['view', 'edit', 'import', 'manage_channel'],   // Khách hàng / Nơi nhận + Kênh (20260911)
   pallet_print:      ['view', 'generate', 'reprint', 'history', 'audit'],
   pallet_ops:        ['view', 'merge', 'ungroup', 'split'],
   work_skill:        ['view', 'create', 'edit', 'delete', 'assign'],

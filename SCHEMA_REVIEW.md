@@ -412,3 +412,34 @@ created_at, updated_at
   ⚠️ Hai giá trị đi bằng TRUY VẤN CON trong `jsonb_build_object`, KHÔNG thêm JOIN vào CTE `veh`: một biển có
   2 dòng `Vehicle` (hay một Số xe có 2 lệnh VC khác ngày) sẽ nhân đôi dòng ⇒ `occupied` sai ⇒ sống lại bug
   đua suất cửa đã vá 09/09. Gói QA 56 (40 phép, có [6a] 5 xe tranh 1 suất) chạy lại XANH sau khi apply.
+- `20260911_customer_date_rule.sql` — **DANH MỤC KHÁCH HÀNG + KÊNH + chính sách %Date theo kho xuất (user chốt 11/09).**
+  Vì sao có việc này: đo staging 11/09 thì cột %Date của VL06O **trống 100 %** (0/26.675 dòng 60 ngày) ⇒ nguồn
+  %Date duy nhất là tay người, mà production ~1.000 dòng/ngày. Khoá tự động hoá đã nằm sẵn trên dữ liệu:
+  **99,7 % chuyến có `shipto_party`** (87 mã) và VL06O có 94 mã ship-to.
+  **(1) Bảng `"Customer"`** — khoá `ship_to_code` (UNIQUE, CHECK `^[A-Z0-9]+$`; đo thật: mọi mã đều chữ-số, dài ≤ 8),
+  `channel` (LookupValue `customer_channel`, **NULL = chưa phân kênh ⇒ KHÔNG cấp %Date tự động**), `date_rule` jsonb
+  **chỉ FEFO | MIN_PCT** (EXACT/SPLIT là quyết định của TỪNG DÒNG, không phải luật của một khách — CHECK chặn,
+  kèm chặn value ngoài (0;100]), `warehouse_id` = "nơi nhận này là KHO CỦA MÌNH" (luật Chuyển kho đọc cột này
+  trước khi dò `Warehouse.code`/`shipto_codes`/tên), `auto_created` = sinh tự động khi upload gặp ship-to lạ.
+  ⚠️ **Vì sao KHÔNG nhét khách vào bảng `Warehouse`** (ý đầu của user): Kho mang ~40 cột vận hành và được liệt kê
+  ở bộ chọn Kho toàn cục / phạm vi quyền / KPI / cảnh báo / chi phí / Sơ đồ kho ⇒ ~100 khách vào đó là lọt vào
+  mọi màn đang nói về "kho"; luật Chuyển kho hỏng chỉ là nạn nhân đầu tiên. RLS bật, 0 policy; `trg_wms_notify`
+  do event trigger tự gắn (realtime chỉ cần thêm dòng `TABLE_QUERY_MAP`).
+  **(2) 7 kênh seed** `customer_channel` (Kho tổng · NPP · BHX · KA · MT · Nội bộ · Khác) — **CHỈ NPP** mang sẵn
+  `meta.date_rule = MIN_PCT 60` (user 10/09: "NPP đi ≥ 60 % nếu CS không ghi chú"); kênh khác để trống = chưa khai
+  ⇒ không áp gì. Trước 11/09 app KHÔNG có chỗ nào khai "Kho tổng / NPP / BHX…".
+  **(3) `Warehouse.date_rule_policy`** OFF | ALL | NO_NOTE, **mặc định OFF cho cả 153 kho** (áp tự động là đổi
+  hành vi ⇒ không tự bật); NO_NOTE = chỉ áp dòng KHÔNG có ghi chú CS (ghi chú là chỗ NGƯỜI đọc — luật 10/09
+  "máy không đọc ghi chú"; đo: ghi chú chỉ 1,8 % dòng ≈ 18 dòng/ngày).
+  **(4) RPC `customer_seed_candidates(p_days)`** — DISTINCT ship-to **trong SQL** (VL06O ∪ chuyến + tên NPP) kèm cờ
+  "đã có trong danh mục", nuôi nút "Nạp từ dữ liệu SAP" 2 pha. Verify sau apply: 101 ứng viên · 7 kênh · 153 kho OFF ·
+  RLS bật 0 policy · publication vẫn RỖNG · 10/10 phép CHECK (EXACT/SPLIT/0 %/120 %/kind lạ/mã sai dạng đều 23514).
+- `20260911b_date_rule_lines_v2.sql` — **`outbound_date_rule_lines` bản 2**: DROP rồi CREATE (thêm tham số sẽ tạo
+  overload ⇒ PostgREST gọi bằng tên tham số sẽ nhập nhằng PGRST203). Thêm `p_source text[]`
+  (MANUAL|CUSTOMER|CHANNEL|SAP|UNSET|REVIEW) và mỗi dòng trả thêm `source` · `review` · `customer_name` · `channel` ·
+  `customer_known` · `customer_has_channel`; band thêm `review` (máy áp nhưng lúc áp kho hết pallet đạt) và
+  `no_channel` (**dòng chưa chốt mà khách chưa phân kênh / chưa có trong danh mục** — chỗ để đi khai master).
+  NGUỒN đọc từ `date_rule->>'source'`, thiếu khoá = MANUAL (dòng chốt trước 11/09 đều do người chốt).
+  ⚠️ Nguồn nằm TRONG jsonb chứ không phải cột riêng để nó tự sống sót qua `keptItemRules` của
+  `processVehicleGroups` — thêm cột thì phải nhớ sửa cả chỗ mang theo, quên là mất nguồn âm thầm.
+  JOIN khách theo `upper(btrim(g.shipto_party)) = c.ship_to_code`; không khớp ⇒ `customer_known=false`.

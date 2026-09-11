@@ -627,6 +627,31 @@ const RULES = [
         && /\.(update|insert|upsert|delete)\(/.test(line)
         && !/services[\\/]directedTasks\.ts$/.test(file), s),
   },
+  // %DATE TỰ ĐỘNG PHẢI CÓ MỘT ĐƯỜNG GHI (11/09). Dòng hàng sinh ở 4 chỗ (upload Kế hoạch xuất,
+  // merge chuyến tạm dừng, tạo đơn tay, thêm dòng tay) — mỗi chỗ tự viết thang ưu tiên là đúng khuôn
+  // "4 bản chép tay" của luật luân chuyển. Mọi giá trị `date_rule` máy đặt phải đến từ
+  // services/dateRulePolicy.ts; chỉ `setItemsDateRule` (người chốt tay) được ghi thẳng.
+  // Dấu hiệu người ta TỰ DỰNG một quy tắc %Date ở chỗ mới: gõ thẳng `{ kind: 'MIN_PCT', value: 60 }`.
+  // Nơi hợp lệ chỉ có 2: `dateRulePolicy.ts` (máy áp theo Khách/Kênh) và `directedTasks.ts` (đọc
+  // tương thích mức cũ của VL06O); `parseDateRuleBody` trong outboundController là bộ đọc payload
+  // người chốt tay — baseline giữ đúng số hiện có, không được tăng.
+  {
+    key: 'date_rule_hand_rolled',
+    label: "tự dựng quy tắc %Date ({ kind: 'MIN_PCT'… }) ngoài dateRulePolicy/directedTasks — phải gọi resolveDateRule",
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\{\s*kind\s*:\s*['"](FEFO|MIN_PCT|EXACT|SPLIT)['"]/.test(line)
+        && !/services[\\/](dateRulePolicy|directedTasks)\.ts$/.test(file), s),
+  },
+  // Dò bản ghi theo TÊN là luật hỏng ÂM THẦM khi ai đó đổi tên (cùng họ với `role_by_vietnamese_name`).
+  // Kho đích của ship-to nay khai tường minh ở `Customer.warehouse_id`; baseline = 2 nhánh dự phòng
+  // còn lại (chuyển kho + tra NCC khi nhập), không được đẻ thêm chỗ nào.
+  {
+    key: 'record_resolved_by_name_ilike',
+    label: 'dò bản ghi theo TÊN (.ilike("name", …)) — đổi tên danh mục là luồng hỏng không báo',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /\.ilike\(\s*['"]name['"]/.test(line), s),
+  },
   {
     key: 'qrscanner_keepmounted_without_active',
     label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',

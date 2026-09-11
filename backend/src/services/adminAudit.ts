@@ -8,9 +8,12 @@ export const ADMIN_AUDIT_ACTIONS = [
   'EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE', 'PASSWORD_SET', 'ACCOUNT_UNLOCK', 'EMPLOYEE_DELETE', 'EMPLOYEE_RESTORE',
   'WAREHOUSE_ACCESS', 'MANAGER_SET', 'JOBTITLE_CREATE', 'JOBTITLE_UPDATE', 'JOBTITLE_PARENT',
   'DEPARTMENT_CREATE', 'DEPARTMENT_UPDATE', 'SETTING_UPDATE', 'VISION_CONFIG', 'APIKEY_CREATE', 'APIKEY_REVOKE', 'APIKEY_DELETE',
+  // Danh mục Khách hàng / Kênh (11/09) — %Date tự động chạy theo 2 thứ này nên đổi chúng là đổi
+  // cách lấy hàng của cả kho: phải biết ai đổi, lúc nào, từ gì sang gì.
+  'CUSTOMER_CREATE', 'CUSTOMER_UPDATE', 'CUSTOMER_BULK', 'CUSTOMER_SEED', 'CHANNEL_UPDATE',
 ] as const
 export type AdminAuditAction = typeof ADMIN_AUDIT_ACTIONS[number]
-export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey'
+export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel'
 
 type Json = Record<string, unknown>
 

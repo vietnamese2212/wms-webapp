@@ -32,6 +32,8 @@
   "location_write_without_move_rpc": 1,
   "putaway_door_unreviewed": 0,
   "task_status_written_outside_service": 0,
+  "date_rule_hand_rolled": 4,
+  "record_resolved_by_name_ilike": 2,
   "qrscanner_keepmounted_without_active": 0,
   "tablehead_relative_kills_sticky": 0,
   "role_by_vietnamese_name": 0,

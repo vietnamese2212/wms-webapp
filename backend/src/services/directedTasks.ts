@@ -56,6 +56,12 @@ export interface DateRule {
   value?: string | number | null
   parts?: DateRulePart[]                    // chỉ có nghĩa khi kind = 'SPLIT'
   set_by?: string | null; set_at?: string | null
+  // AI ĐẶT quy tắc này (11/09) — nằm TRONG jsonb chứ không phải cột riêng để `keptItemRules` của
+  // processVehicleGroups tự mang theo qua mỗi lần dữ liệu ngoài dội xuống. Thiếu khoá = MANUAL
+  // (mọi dòng chốt trước 11/09 đều do người chốt). Luật gán: services/dateRulePolicy.ts
+  source?: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | null
+  // Cờ "cần xem": lúc máy áp, kho KHÔNG còn pallet nào đạt mức này (không chặn, chỉ nhắc)
+  review?: 'NO_STOCK' | null
 }
 export const MAX_RULE_PARTS = 10
 

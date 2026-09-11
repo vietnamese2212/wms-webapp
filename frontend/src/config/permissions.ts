@@ -343,6 +343,15 @@ export const MODULES = {
       delete: 'Ẩn mã hàng / xóa Nhà sản xuất',
     },
   },
+  customers: {
+    page: 'Khách hàng',
+    actions: {
+      view:           'Xem danh sách Khách hàng / Nơi nhận',
+      edit:           'Thêm / sửa / ngừng khách + thao tác hàng loạt (phân kênh, %Date riêng, trỏ kho)',
+      import:         'Nạp khách hàng từ dữ liệu SAP',
+      manage_channel: 'Tab Kênh — sửa tên + %Date mặc định của kênh (Kho tổng / NPP / BHX / KA / MT…)',
+    },
+  },
   pallet_print: {
     page: 'In tem pallet',
     actions: {

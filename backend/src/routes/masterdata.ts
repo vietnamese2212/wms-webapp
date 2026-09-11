@@ -5,6 +5,7 @@ import * as manufacturer from '../controllers/masterdata/manufacturerController'
 import * as material    from '../controllers/masterdata/materialController'
 import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as machine     from '../controllers/wms/machineController'
+import * as customer    from '../controllers/masterdata/customerController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
@@ -35,6 +36,19 @@ router.get('/warehouses/:id/type-configs', warehouse.getWarehouseTypeConfigs)
 router.put('/warehouses/:id/type-configs',
   requireAnyPerm(['wms_settings', 'manage_warehouse'], ['wms_settings', 'manage_type']),
   warehouse.putWarehouseTypeConfigs)
+
+// Khách hàng / Nơi nhận (20260911) — khoá ship-to của SAP; nuôi %Date tự động + luật Chuyển kho.
+// MỌI route tĩnh ("seed-candidates", "seed", "bulk") phải đứng TRƯỚC `/:id` kẻo bị nuốt làm id.
+router.get('/customers',                  requirePerm('customers', 'view'),   customer.listCustomers)
+router.get('/customers/seed-candidates',  requirePerm('customers', 'import'), customer.customerSeedCandidates)
+router.post('/customers/seed',            requirePerm('customers', 'import'), customer.seedCustomers)      // ?preflight=1 = chỉ đếm
+router.patch('/customers/bulk',           requirePerm('customers', 'edit'),   customer.bulkUpdateCustomers) // setup nhanh nhiều dòng
+router.post('/customers',                 requirePerm('customers', 'edit'),   customer.createCustomer)
+router.put('/customers/:id',              requirePerm('customers', 'edit'),   customer.updateCustomer)
+router.delete('/customers/:id',           requirePerm('customers', 'edit'),   customer.deactivateCustomer) // ngừng (mềm)
+// Kênh khách hàng — quyền RIÊNG, không đi ké wms_settings.manage_type (đó là taxonomy Loại kho)
+router.get('/customer-channels',          customer.listCustomerChannels)      // hở đọc: ô chọn kênh ở nhiều màn
+router.put('/customer-channels/:id',      requirePerm('customers', 'manage_channel'), customer.updateCustomerChannel)
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx

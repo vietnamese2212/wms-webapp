@@ -1,5 +1,27 @@
 # %Date theo KHÁCH HÀNG / KÊNH — master data thay cho chốt tay 1.000 dòng/ngày
 
+> ## ✅ ĐÃ THỰC THI XONG 11/09/2026 (dev `b75b35ac` → `619269bb`)
+> Bước 2 (dữ liệu) · 3 (backend) · 4 (giao diện) · 5 (lưới gác) · 6 (tài liệu) — tất cả đã lên `dev`, áp staging.
+> **Đo:** QA 58 = **44/44** · 57 = 91/91 · 12 = 35/35 · 13 = 41 · 14 = 35 · 08 = 13/13 · 07 = 96/96 · 00 = 30/30 ·
+> cổng tĩnh XANH · tsc BE/FE + build xanh · Playwright 1280 + 360 không tràn ngang.
+>
+> **Ba chỗ plan nói khác code thật (code thật thắng):**
+> (a) `dateRuleSourceLabel` của mục 3.1 KHÔNG dùng — nhãn nguồn hiện ở FE qua `dateRuleLabel(...).source`,
+>     và quy tắc MASTER có hàm riêng `masterRuleLabel` (ratchet `daterule_label_without_sap_level` bắt việc
+>     dùng lại `dateRuleLabel` cho master: master không có mức kế thừa SAP, cũng không có trạng thái "chưa chốt").
+> (b) Ratchet đổi tên cho đúng thứ nó gác: `date_rule_hand_rolled` (baseline 4) + `record_resolved_by_name_ilike`
+>     (baseline 2) — bản trong plan (`date_rule_written_outside_policy`) đếm cả dòng KHAI KIỂU nên vô nghĩa.
+> (c) `flagNoStock` gọi thẳng `checkDateRuleStock` và gom theo (kho, mã, quy tắc) lấy ĐẠI DIỆN — "còn pallet nào
+>     đạt không" không phụ thuộc số lượng dòng, nên 800 dòng/ngày chỉ còn vài chục nhóm phải hỏi.
+>
+> **Ba điều lộ ra lúc thi hành:** kho QTY tra tồn theo `pallet_code` = CHÍNH MÃ HÀNG (fixture đặt tên khác là
+> "còn 0" oan) · bộ đếm "giữ nguyên vì chốt tay" ban đầu luôn ra 0 vì tập ứng viên đã lọc bỏ MANUAL từ RPC ·
+> thư mục làm việc có thể có nhiều phiên cùng chạy nên `git add` phải liệt kê TỪNG FILE.
+>
+> **Còn để mở:** khách hàng tự sinh từ các gói QA khác (QAAWSHIP/QATMS/QADRVSHIP) nằm lại trong danh mục staging —
+> đúng theo thiết kế (danh mục tự nuôi), chỉ là nhiễu ở môi trường test; nếu phiền thì cleaner của gói 12/13/14
+> xoá thêm `Customer` theo tiền tố tag.
+
 > Lập 11/09/2026 (Fable brainstorm → Opus code). User chốt 3 điểm cùng ngày: **(1)** tách danh mục Khách hàng khỏi bảng Kho · **(2)** "Kênh khách hàng" là danh mục MỚI tạo trong việc này (trước đó không tồn tại) · **(3)** dòng có ghi chú CS thì ĐỂ TAY.
 > Đọc trước: CLAUDE.md hàng `outbound` mục **RULE 4** (date_rule · Chốt %Date · DATE_RULE_REQUIRED) · `docs/plans/DIRECTED_WORK_1C_PLAN.md` mục 0.6b · memory `directed-work-task-engine`.
 > **Opus code theo mục 2–7 đúng thứ tự, mỗi bước có "kiểm tra" riêng. Không mở rộng ngoài plan; chỗ nào plan mâu thuẫn với code thật thì code thật thắng, ghi lại ở đầu file này như 1c đã làm.**

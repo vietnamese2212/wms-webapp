@@ -12,4 +12,4 @@ Các file plan / execution-log / test-plan đã dời khỏi thư mục gốc (2
 | [TEST_PLAN_GOLIVE.md](TEST_PLAN_GOLIVE.md) | Kế hoạch test 6 tầng trước go-live + runbook. | Go-live XONG 23/07; phần sống (Tầng 0) = `scripts/qa/` |
 | [EXTERNAL_REALTIME_TEST_PLAN.md](EXTERNAL_REALTIME_TEST_PLAN.md) | Test plan realtime dữ liệu ngoài (erp_outbound_orders). | Nhật ký |
 | [DIRECTED_WORK_PLAN.md](DIRECTED_WORK_PLAN.md) · [DIRECTED_WORK_1C_PLAN.md](DIRECTED_WORK_1C_PLAN.md) | Sơ đồ kho → kế hoạch lấy hàng 3 vai (Fable plan → Opus code). | 1a/1b/1c ✅ XONG 09–10/09 |
-| [CUSTOMER_DATE_RULE_PLAN.md](CUSTOMER_DATE_RULE_PLAN.md) | %Date theo Khách hàng / Kênh — danh mục `Customer` (khoá ship-to SAP) + kênh `customer_channel` + policy theo kho xuất, thay chốt tay 1.000 dòng/ngày; rule Chuyển kho đọc `Customer.warehouse_id`. | 📝 Plan 11/09, chờ Opus code |
+| [CUSTOMER_DATE_RULE_PLAN.md](CUSTOMER_DATE_RULE_PLAN.md) | %Date theo Khách hàng / Kênh — danh mục `Customer` (khoá ship-to SAP) + kênh `customer_channel` + policy theo kho xuất, thay chốt tay 1.000 dòng/ngày; rule Chuyển kho đọc `Customer.warehouse_id`. | ✅ XONG 11/09 (dev b75b35ac→619269bb, QA 58 44/44) |

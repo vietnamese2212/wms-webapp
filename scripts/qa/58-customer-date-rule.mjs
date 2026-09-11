@@ -88,8 +88,9 @@ try {
     is_active: true, created_at: nowIso(), updated_at: nowIso(),
   })
   // Tồn %Date ≈ 95 % (SX 5 ngày trước / hạn dùng 100 ngày) — đủ cho mức ≥ 60, KHÔNG đủ mức ≥ 99.
+  // Kho QTY: dòng "pool" mang `pallet_code` = CHÍNH MÃ HÀNG (cửa Xuất luôn tra tồn theo khoá đó).
   await restWrite('InventoryEntry', 'POST', null, {
-    id: randomUUID(), pallet_code: `${T}-POOL`, material_id: mat.id, warehouse_id: wh.id,
+    id: randomUUID(), pallet_code: mat.material_code, material_id: mat.id, warehouse_id: wh.id,
     cartons_imported: 5000, cartons_remaining: 5000, cartons_reserved: 0,
     status: 'IN_STOCK', production_date: dPlus(-5), import_date: vnDate(),
     created_at: nowIso(), updated_at: nowIso(),

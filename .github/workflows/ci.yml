@@ -50,6 +50,10 @@ jobs:
     # Chỉ dev: main deploy production — không bắn QA vào production.
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    # 11/09: ngày 10/09 có 30 lượt push ⇒ 30 lượt qa-smoke nối đuôi, 5 lượt đỏ = 5 email cho cùng một
+    # trạng thái staging. Push mới thì HUỶ lượt cũ đang chờ Preview (lượt bị huỷ không gửi email, và
+    # kết quả của nó cũng vô nghĩa vì Preview đã đổi commit). Bước thu hồi tài khoản vẫn chạy (always()).
+    concurrency: { group: qa-smoke-dev, cancel-in-progress: true }
     env:
       PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
     steps:
@@ -95,10 +99,16 @@ jobs:
         if: steps.qaenv.outputs.skip == 'false'
         env:
           QA_BASE_URL: ${{ env.PREVIEW_URL }}
+        # Mỗi gói một khối + ::error nêu TÊN GÓI khi gói chết mà không kịp in phép kiểm nào (crash/đăng nhập
+        # hỏng) — 3/6 lượt đỏ ngày 10/09 chỉ có dòng "Process completed with exit code 1", không biết gói nào.
         run: |
-          node scripts/qa/00-invariant.mjs
-          node scripts/qa/07-params-fuzz.mjs
-          node scripts/qa/08-perm-coverage.mjs
+          rc=0
+          for p in 00-invariant 07-params-fuzz 08-perm-coverage; do
+            echo "::group::$p"
+            if ! node "scripts/qa/$p.mjs"; then echo "::error title=QA gói $p ĐỎ::xem khối $p trong log"; rc=1; fi
+            echo "::endgroup::"
+          done
+          exit $rc
       # always(): bộ kiểm đỏ thì tài khoản vẫn phải bị thu hồi — không để lại tài khoản superadmin
       # sống lay lắt trên staging vì một job fail.
       - name: Thu hồi tài khoản QA tạm

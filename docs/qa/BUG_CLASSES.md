@@ -30,6 +30,7 @@
 | C8 | **Đua ghi trên bộ đếm dùng chung** (khoá đúng mà đếm sai tập · CAS không jitter) | (5) gói 02/17/27/46/56 race · RPC row-lock | 09/09 QA 56 [6a] 5 xe 1 suất → 2 lọt | 09/09 |
 | C9 | **Cache "kỳ đã qua" không làm mới khi dữ liệu về muộn** | (5) gói 55 [4k] oracle hai đường | 09/09 | 09/09 |
 | C10 | **Hai tên cho một trạng thái** (`DONE` vs `COMPLETED`) | (5) gói 50 [29b][29c] danh sách đóng · CHECK ở DB · **chưa có tầng 1** (cột là text, kiểu sinh không thành enum — đổi cột sang enum Postgres mới lên tầng tsc) | 07/09 3.173 lệnh | 07/09 |
+| C12 | **Bước CI xanh máy dev, đỏ runner** (Windows/Node 24/npm 11 ≠ Ubuntu/Node 22/npm 10: npm-audit 03/09 · vitest 11/09 vì supabase-js đòi WebSocket native trên Node 20) — mỗi lần là một chuỗi email đỏ | quy trình: bước CI mới chạy thử dưới đúng Node runner TRƯỚC khi push: `npx -y -p node@22 -- node …` + `env -u SUPABASE_URL …` mô phỏng không `.env`; sau push đọc kết luận qua API công khai (`/actions/runs?branch=dev` → `/jobs` → `/check-runs/{id}/annotations`) | 11/09: tái hiện đúng lỗi bằng `npx -p node@20` | 11/09 |
 | C11 | **Phép kiểm QA khoá chính lỗi lại** (kiểm khớp hằng số cùng hiểu nhầm với code) | quy trình: phép kiểm mới phải ĐỎ trên bản lỗi (`git stash`) trước khi tin · oracle hai đường | 06/09 gói 22 [17] | 06/09 |
 
 **Ghi chú C6 (11/09):** 8 tên bảng trong code không có trong kiểu sinh từ staging — phải soi từng tên: bảng

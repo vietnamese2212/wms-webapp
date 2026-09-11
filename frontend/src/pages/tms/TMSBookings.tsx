@@ -54,8 +54,6 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
-import { parseVnNumber as parseVnNumberShared } from '@/utils/vnNumber'
-import { splitCategories } from '@/utils/categoryScope'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1167,12 +1165,20 @@ function parsePriority(val: unknown): boolean {
   return String(val ?? '').trim().toLowerCase() === 'x'
 }
 
-// Chuẩn số VN — luật nằm MỘT chỗ ở utils/vnNumber.ts (mirror BE). Bản chép tay cũ ở đây thiếu
-// nhánh "một chấm + đúng 3 chữ số = ngăn nghìn" nên `1.234` thùng đọc thành 1,234 (11/09).
+// Chuẩn số VN: dấu CHẤM = ngăn nghìn, dấu PHẨY = thập phân (1.234,56).
 // Trả null nếu ô trống, NaN nếu không phải số (để báo lỗi thay vì nuốt im lặng).
 function parseVnNumber(val: unknown): number | null {
   if (val == null || val === '') return null
-  return parseVnNumberShared(val) ?? NaN
+  if (typeof val === 'number') return val
+  let s = String(val).trim().replace(/\s/g, '')
+  if (!s) return null
+  const commas = (s.match(/,/g) ?? []).length
+  const dots   = (s.match(/\./g) ?? []).length
+  if (commas && dots)    s = s.replace(/\./g, '').replace(',', '.') // 1.234,56 → 1234.56
+  else if (commas > 1)   s = s.replace(/,/g, '')                    // 1,234,567 (kiểu US) → 1234567
+  else if (commas === 1) s = s.replace(',', '.')                    // 15,462 → 15.462
+  else if (dots > 1)     s = s.replace(/\./g, '')                   // 1.234.567 (nghìn VN) → 1234567
+  return Number(s)
 }
 
 function parseDirection(val: unknown): string {
@@ -3173,8 +3179,9 @@ const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolea
   { label: '', resize: false },                    // actions
 ]
 // Loại kho của 1 chuyến/lệnh có thể là chuỗi GHÉP nhiều loại ('FG01+PM01' = xe chở lẫn) — tách ra
-// để so khớp theo GIAO ≥1. Luật tách nằm ở utils/categoryScope.ts (mirror BE + wt_cats() SQL).
-const splitCats = splitCategories
+// để so khớp theo GIAO ≥1 (mirror wt_cats() bên SQL + splitCategories() bên BE). Đừng tự split('+').
+const splitCats = (raw?: string | null): string[] =>
+  String(raw ?? '').split('+').map(s => s.trim()).filter(Boolean)
 
 // Ô tìm tại máy (tab Chuyển kho): bỏ dấu + không phân biệt hoa thường, khớp cách server tìm (unaccent)
 const normSearch = (v: string) => v.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()

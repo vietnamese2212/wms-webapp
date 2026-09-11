@@ -141,3 +141,33 @@ for (const a of actUncov) console.log(`  ${a.key.padEnd(36)} ${a.noRoute ? '(FE-
 console.log(`\nFE ROUTES: ${feRoutes.length}`)
 // Chỉ đổ JSON khi có chỗ để đổ — không có QA_SIM_DIR thì đừng ghi bừa ra gốc ổ đĩa.
 if (SP) writeFileSync(`${SP}/surface.json`, JSON.stringify({ routes, actions, feRoutes }, null, 1))
+
+// ── 6. RATCHET ĐỘ PHỦ (11/09) — bộ QA lớn theo BỀ MẶT, không theo bug đã gặp ──────────────────────
+// `--ratchet`: số route/quyền CHƯA phép kiểm nào chạm không được TĂNG so coverage-baseline.json.
+// Thêm route mới mà không có gói QA gọi tới = đỏ ngay ở CI static (không cần server). Giảm được thì
+// `--update-baseline` khoá lại. Thước này BÁO THIẾU (xem đầu file) nên đỏ = kiểm chéo bằng grep trước khi kết luận.
+if (process.argv.includes('--ratchet') || process.argv.includes('--update-baseline')) {
+  const BASE = `${REPO}/scripts/qa/coverage-baseline.json`
+  const cur = { routes_uncovered: uncovered.length, actions_uncovered_with_route: actUncov.filter(a => !a.noRoute).length }
+  let base = {}
+  try { base = JSON.parse(readFileSync(BASE, 'utf8')) } catch { /* lần đầu */ }
+  const GH = process.env.GITHUB_ACTIONS === 'true'
+  let fail = 0
+  console.log('\n── RATCHET ĐỘ PHỦ ──')
+  for (const k of Object.keys(cur)) {
+    if (base[k] === undefined) console.log(`  🆕 ${k}: ${cur[k]}`)
+    else if (cur[k] > base[k]) {
+      fail++
+      const sample = k === 'routes_uncovered' ? uncovered.slice(0, 5).map(r => `${r.method} ${r.path}`) : actUncov.filter(a => !a.noRoute).slice(0, 5).map(a => a.key)
+      console.log(`  ❌ ${k}: ${cur[k]} > baseline ${base[k]} — bề mặt MỚI chưa gói QA nào chạm: ${sample.join(' · ')}`)
+      if (GH) console.log(`::error title=Độ phủ QA: ${k}::${cur[k]} > baseline ${base[k]} — ${sample.join(' ; ')}`)
+    } else if (cur[k] < base[k]) console.log(`  📉 ${k}: ${cur[k]} < baseline ${base[k]} — chạy --update-baseline để khoá`)
+    else console.log(`  ✅ ${k}: ${cur[k]} (= baseline)`)
+  }
+  if (process.argv.includes('--update-baseline') || Object.keys(base).length === 0) {
+    writeFileSync(BASE, JSON.stringify(cur, null, 2) + '\n')
+    console.log(`  💾 đã ghi baseline ${JSON.stringify(cur)}`)
+  }
+  console.log(`\n[COVERAGE-RATCHET] ${fail ? fail + ' ĐỎ' : 'XANH'}`)
+  process.exitCode = fail ? 1 : 0
+}

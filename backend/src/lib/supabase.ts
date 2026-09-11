@@ -1,4 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '../types/database'
 
 const url = process.env.SUPABASE_URL
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -72,3 +73,13 @@ export const supabase = createClient(url, key, {
     },
   },
 })
+
+// ── CLIENT CÓ KIỂU (11/09/2026) — CÙNG một instance, chỉ khác góc nhìn kiểu ────────────────────────
+// `Database` sinh từ information_schema staging (`npm run db:types`, scripts/gen-db-types.mjs). Dùng `db`
+// thay `supabase` thì: tên bảng/cột sai → lỗi tsc · `.insert()` thiếu cột NOT NULL không default (id,
+// updated_at) → lỗi tsc thay vì 23502 lúc chạy · `.rpc('tên')` sai tên/thiếu tham số → lỗi tsc · dòng trả
+// về có kiểu nên không cần ép kiểu tay. FILE MỚI bắt buộc dùng `db` (ratchet `untyped_supabase_import_files`,
+// gói 09); file cũ đổi dần khi chạm — KHÔNG mass-rewrite (CLAUDE.md #3). Sau migration đã apply staging:
+// chạy lại `npm run db:types` rồi commit (ratchet `db_types_unknown_table` báo khi code gọi bảng chưa có kiểu).
+export type Db = SupabaseClient<Database>
+export const db: Db = supabase as unknown as Db

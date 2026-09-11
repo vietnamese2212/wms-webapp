@@ -1,4 +1,6 @@
 // HSD (shelf-life) hiệu lực theo NCC — ngoại lệ NCC đè định mức chung.
+// MIRROR: frontend/src/utils/shelfLife.ts (FE làm tròn để hiển thị, BE giữ số thô để so ngưỡng —
+// phép kiểm backend/tests/mirror/shelfLife.mirror.test.ts gác bất biến FE = round(BE)).
 // Nếu material có supplier_shelf_life_overrides cho NCC đang xét → dùng giá trị đó;
 // không có NCC (SX/chuyển kho/pallet cũ) hoặc không khai override → dùng shelf_life_days mặc định.
 

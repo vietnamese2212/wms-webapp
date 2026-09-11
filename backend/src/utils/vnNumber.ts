@@ -1,5 +1,6 @@
 /**
- * SỐ VIẾT KIỂU VIỆT NAM — MỘT nguồn kiểm duy nhất cho backend.
+ * SỐ VIẾT KIỂU VIỆT NAM — MỘT nguồn kiểm duy nhất cho backend. MIRROR: frontend/src/utils/vnNumber.ts
+ * (11/09 — bản chép tay trong TMSBookings.tsx đã thay bằng import; phép kiểm mirror gác hai bản).
  *
  * Người Việt viết `1.234.567` (chấm phân cách nghìn) và `12,5` (phẩy thập phân); Excel xuất ra
  * chuỗi kiểu Mỹ `1,234,567` cũng thường gặp. Đọc sai ở đây KHÔNG báo lỗi — nó chỉ ghi một con số

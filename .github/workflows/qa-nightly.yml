@@ -1,0 +1,53 @@
+# BỘ KIỂM ĐẦY ĐỦ CHẠY ĐÊM (11/09/2026) — "pipeline đi tuần" cho 57 gói nghiệp vụ, không dựa vào ai nhớ chạy tay.
+# ci.yml chỉ chạy bậc read-only sau mỗi push; bậc full (có ghi dữ liệu staging, ~1h) chạy ở đây lúc 02:00 VN
+# trên branch dev + Preview dev. Đỏ = email cho người nhận thông báo GitHub, ::error nêu đúng gói/phép kiểm hỏng.
+#
+# ⚠️ GitHub chỉ kích `schedule` từ BRANCH MẶC ĐỊNH của repo — file này phải có mặt trên branch mặc định
+# (main) mới chạy theo lịch; nội dung chạy vẫn checkout `dev`. `workflow_dispatch` chạy tay được từ mọi branch.
+# Secret dùng chung với ci.yml: QA_DATABASE_URL (SUPABASE_URL|SERVICE_ROLE_KEY của STAGING). Tài khoản QA tự cấp/xoá.
+name: qa-nightly
+on:
+  schedule:
+    - cron: '0 19 * * *'   # 19:00 UTC = 02:00 giờ Việt Nam
+  workflow_dispatch: {}
+
+concurrency: { group: qa-staging, cancel-in-progress: false }
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: dev }
+      - uses: actions/setup-node@v5
+        with: { node-version: 20 }
+      - name: Cài dependency backend (unit test + audit ratchet cần node_modules)
+        run: cd backend && npm ci --no-audit --no-fund
+      - name: Dựng env cho bộ QA (từ secret — thiếu thì dừng có hướng dẫn)
+        run: |
+          if [ -z "${{ secrets.QA_DATABASE_URL }}" ]; then
+            echo "::error::Chưa khai secret QA_DATABASE_URL (SUPABASE_URL|SERVICE_ROLE_KEY staging nối bằng |) — bậc full không chạy được"; exit 1
+          fi
+          IFS='|' read -r url key <<< "${{ secrets.QA_DATABASE_URL }}"
+          printf 'SUPABASE_URL=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$url" "$key" > backend/.env
+      - name: Preview dev đang sống?
+        run: curl -sf --max-time 20 "$PREVIEW_URL/api/version" || { echo "::error::Preview dev không trả lời — Vercel build fail hoặc project bị pause"; exit 1; }
+      - name: Cấp tài khoản QA tạm cho lượt chạy này
+        id: qacred
+        run: |
+          npm i bcryptjs@2.4.3 --no-save --no-audit --no-fund >/dev/null 2>&1
+          out=$(node scripts/qa/ci-account.mjs provision) || { echo "::error::Không cấp được tài khoản QA tạm"; exit 1; }
+          email=$(printf '%s\n' "$out" | sed -n 's/^email=//p')
+          pass=$(printf '%s\n' "$out" | sed -n 's/^password=//p')
+          echo "::add-mask::$pass"
+          { echo "QA_ADMIN_EMAIL=$email"; echo "QA_ADMIN_PASSWORD=$pass"; } >> "$GITHUB_ENV"
+      - name: Bộ kiểm ĐẦY ĐỦ (run-all --tier full)
+        env:
+          QA_BASE_URL: ${{ env.PREVIEW_URL }}
+        run: node scripts/qa/run-all.mjs --tier full
+      - name: Thu hồi tài khoản QA tạm
+        if: always() && steps.qacred.outcome == 'success'
+        run: node scripts/qa/ci-account.mjs cleanup

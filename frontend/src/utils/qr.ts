@@ -45,11 +45,9 @@ export function isValidTem(raw: string): boolean {
     const [mat, , lot, nsx, hsd] = p
     if (!mat || !lot) return false
     if (!isValidDMY(nsx ?? '') || !isValidDMY(hsd ?? '')) return false
-    // Mã lô lệch cấu trúc vẫn hợp lệ (khớp BE); nếu ĐÚNG cấu trúc thì kiểm luôn ngày trong mã lô
-    if (V2_LOT.test(lot)) {
-      const mo = +lot.slice(4, 6), day = +lot.slice(6, 8)
-      return mo >= 1 && mo <= 12 && day >= 1 && day <= 31
-    }
+    // Mã lô lệch cấu trúc vẫn hợp lệ — KHỚP BE `parseV2` (BE không soi ngày trong mã lô). Bản trước
+    // FE tự soi thêm tháng/ngày trong mã lô ⇒ tem BE nhận mà FE tô đỏ, không ghi carton_scans
+    // (phép kiểm mirror qrParser bắt 11/09). Luật chỉ được thêm ở BE trước, FE chép theo.
     return true
   }
   const p = s.split('_')                        // V1: ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX

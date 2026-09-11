@@ -35,6 +35,12 @@ jobs:
         run: node scripts/qa/09-static-gate.mjs
       - name: Lỗ hổng thư viện (npm audit ratchet — high/critical không được tăng so audit-baseline.json)
         run: node scripts/qa/44-npm-audit.mjs
+      # 11/09: hai lưới rẻ nhất, không cần server — helper thuần + mirror BE⇄FE (vài giây) và ratchet độ phủ
+      # (route/quyền mới chưa gói QA nào chạm → đỏ ngay, không chờ đợt kiểm toàn app).
+      - name: Test đơn vị + mirror BE⇄FE (vitest)
+        run: cd backend && npm test --silent
+      - name: Ratchet độ phủ QA (route/quyền mới phải có phép kiểm chạm)
+        run: node scripts/qa/coverage-surface.mjs --ratchet
       - name: tsc backend
         run: cd backend && npx tsc --noEmit
       - name: tsc + build frontend

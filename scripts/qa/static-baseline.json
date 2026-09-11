@@ -58,5 +58,9 @@
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
   "password_rule_hand_rolled": 0,
-  "upload_without_merge_expand": 0
+  "upload_without_merge_expand": 0,
+  "write_route_without_validate": 258,
+  "untyped_supabase_import_files": 70,
+  "mirror_helper_without_test": 0,
+  "db_types_unknown_table": 8
 }

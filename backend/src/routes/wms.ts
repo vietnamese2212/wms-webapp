@@ -28,6 +28,7 @@ import * as integrationKeys from '../controllers/integration/keyController'
 import * as vision from '../controllers/integration/visionController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
+import { validate, z, zText } from '../middlewares/validate'
 
 // Chỉ nhận file Excel (chặn feed binary lạ vào XLSX.read) + 1 file + trần 10MB.
 // File sai loại → req.file undefined → controller trả 400 "Không có file" (không ném lỗi thô).
@@ -107,7 +108,9 @@ router.delete('/warehouse-costs/:id',           requirePerm('warehouse_cost', 'e
 
 // Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
 router.get('/settings',      systemSetting.listSettings)
-router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'), systemSetting.updateSetting)
+// 11/09: mẫu `validate({…})` — body không phải object / thiếu `value` / key rác → 400 kèm tên trường, trước khi vào controller
+router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'),
+  validate({ params: z.object({ key: zText(1, 64) }), body: z.object({ value: z.unknown() }) }), systemSetting.updateSetting)
 
 // Quản lý API key tích hợp ERP — CHỈ superadmin (kiểm trong controller). Key thô hiện 1 lần lúc tạo.
 router.get('/integration-keys',            integrationKeys.listKeys)

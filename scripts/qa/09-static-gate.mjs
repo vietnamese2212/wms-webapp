@@ -1119,6 +1119,99 @@ function countUploadsMissingPreflight(sampleOut) {
   return miss
 }
 
+// ── 11/09: TẦNG MÁY của hệ "lỗi chết hai lần" (docs/qa/BUG_CLASSES.md) ─────────────────────────
+// File import client supabase KHÔNG kiểu. File MỚI phải dùng `db` (createClient<Database>) để tên
+// bảng/cột sai, INSERT thiếu id/updated_at, trạng thái ngoài enum → lỗi tsc chứ không phải 23502/22P02 lúc chạy.
+function countUntypedSupabaseFiles(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    if (f.endsWith(`lib${sep}supabase.ts`)) continue
+    const src = readFileSync(f, 'utf8')
+    if (/import\s*\{[^}]*\bsupabase\b[^}]*\}\s*from\s*'[^']*lib\/supabase'/.test(src)) {
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(f.slice(ROOT.length + 1))
+    }
+  }
+  return n
+}
+// Helper BE tự nhận là MIRROR của FE (đầu file có chữ "mirror") thì phải có phép kiểm so hai bản trên cùng
+// input: backend/tests/mirror/<tên file>.mirror.test.ts. "Phải khớp nhau" chỉ là ghi chú cho tới khi có máy so.
+function countMirrorHelpersWithoutTest(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src/utils', ['.ts'])) {
+    const head = readFileSync(f, 'utf8').split(/\r?\n/).slice(0, 40).join('\n')
+    if (!/mirror/i.test(head)) continue
+    const name = f.split(sep).pop().replace(/\.ts$/, '')
+    try { statSync(join(ROOT, 'backend/tests/mirror', `${name}.mirror.test.ts`)) }
+    catch {
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)} → thiếu backend/tests/mirror/${name}.mirror.test.ts`)
+    }
+  }
+  return n
+}
+// Tên bảng code gọi `.from('X')` mà file kiểu sinh từ DB không có → hoặc gõ sai tên bảng, hoặc migration
+// đã apply mà chưa chạy `npm run db:types`. Bỏ qua storage bucket (`storage.from(...)`).
+function countUnknownTablesInCode(sampleOut) {
+  let types
+  try { types = readFileSync(join(ROOT, 'backend/src/types/database.ts'), 'utf8') } catch { return 0 }
+  const known = new Set([...types.matchAll(/^      ("?[\w-]+"?): \{$/gm)].map(m => m[1].replace(/"/g, '')))
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/storage\s*\.\s*from\(|^\s*\/\//.test(line)) return
+      for (const m of line.matchAll(/\.from\('([^']+)'\)/g)) {
+        if (!known.has(m[1])) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1} .from('${m[1]}')`) }
+      }
+    })
+  }
+  return n
+}
+// Route write không có validate({…}). Đọc TRỌN câu lệnh (route dài thường xuống dòng sau requirePerm),
+// không chỉ dòng đầu — kẻo route đã khai validate ở dòng 2 vẫn bị đếm.
+function countWriteRoutesWithoutValidate(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src/routes', ['.ts'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]
+      if (/^\s*\/\//.test(l) || !/\brouter\.(post|put|patch|delete)\s*\(/.test(l)) continue
+      let stmt = l, depth = 0, j = i
+      for (;;) {
+        for (const ch of lines[j]) { if (ch === '(') depth++; else if (ch === ')') depth-- }
+        if (depth <= 0 || j - i >= 6) break
+        j++; if (j >= lines.length) break
+        stmt += '\n' + lines[j]
+      }
+      if (!/\bvalidate\(/.test(stmt)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+    }
+  }
+  return n
+}
+RULES.unshift(
+  {
+    key: 'write_route_without_validate',
+    label: 'route write (post/put/patch/delete) không khai validate({…}) — input sai kiểu đi thẳng xuống controller/Postgres → 500 thay 400 (lớp lỗi lặp nhiều nhất 08–09/2026); route MỚI bắt buộc dùng middlewares/validate.ts',
+    count: countWriteRoutesWithoutValidate,
+  },
+  {
+    key: 'untyped_supabase_import_files',
+    label: 'file import { supabase } không kiểu — file MỚI dùng `db` (lib/supabase.ts) để tên bảng/cột/INSERT thiếu id+updated_at thành lỗi tsc',
+    count: countUntypedSupabaseFiles,
+  },
+  {
+    key: 'mirror_helper_without_test',
+    label: 'helper BE tự nhận MIRROR của FE mà không có backend/tests/mirror/<tên>.mirror.test.ts',
+    count: countMirrorHelpersWithoutTest,
+  },
+  {
+    key: 'db_types_unknown_table',
+    label: "code gọi .from('X') mà kiểu DB sinh ra không có bảng X — gõ sai tên bảng hoặc quên `npm run db:types` sau migration",
+    count: countUnknownTablesInCode,
+  },
+)
+
 let baseline = {}
 try { baseline = JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) } catch { /* lần đầu */ }
 

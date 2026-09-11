@@ -33,6 +33,7 @@ pg trực tiếp (`scratchpad/node_modules/pg`) cho seed/cleanup/EXPLAIN/tính-l
 ---
 
 ## Phần 0 — Phạm vi + chuẩn bị
+- **CHẠY TẦNG RẺ TRƯỚC KHI KHÁM PHÁ (11/09):** `cd backend && npm test` (unit + mirror BE⇄FE, 3 giây) → `node scripts/qa/09-static-gate.mjs` → `node scripts/qa/coverage-surface.mjs --ratchet`. Đỏ ở đây = lỗi lớp ĐÃ BIẾT, sửa ngay rồi mới đi tiếp — đừng để audit đắt tiền bắt lại thứ máy rẻ đã bắt được. Mở `docs/qa/BUG_CLASSES.md` để biết lớp nào đã có lưới.
 - Chốt phạm vi theo yêu cầu (1 màn / vài module / toàn app) → chọn phần nào chạy.
 - **Trích hợp đồng API TỪ CODE** (routes+controller): method/path/quyền/body(field+kiểu, số lượng có BASE?)/shape/điều kiện chặn/cơ chế đồng thời. Rộng → cử subagent song song. **Đừng đoán payload** (phát hiện giả).
 - Introspect **tên bảng/cột thật** (`information_schema`) — đừng tin tên nhớ (vd `OutboundItem.do_id`, `inbound_plan_lines.tms_order_id`).
@@ -76,7 +77,8 @@ Không chỉ login admin. Với action write: **ẩn nút đúng khi thiếu `ca
 ## Phần 7 — FIX tối thiểu + ĐO LẠI + (lên production)
 - Sửa đúng nguyên nhân gốc, phạm vi nhỏ ([[debug-systematic]]). Toàn vẹn: gộp ghi-nhiều-bước vào **1 RPC row-lock** + fallback. Perf: index/RPC. Mutation: [[mutation-realtime]] + migration `backend/migrations/*` + apply staging + `SCHEMA_REVIEW.md` + bump rebuild-token.
 - **ĐO LẠI cùng tham số → so trước/sau** (bằng chứng số). tsc/build xanh.
-- **CHỐNG HỒI QUY (sau MỌI fix):** chạy lại bộ regression chuẩn `node scripts/qa/run-all.mjs` (invariant/smoke sau sửa nhỏ; **FULL 4 gói XANH BẮT BUỘC trước khi merge `dev`→`main`** — luật CLAUDE.md + [[verify-feature]] Cổng 5b + memory `qa-regression-suite`). Regression là cổng LẶP LẠI, không do check-app sở hữu — check-app chỉ GỌI nó để chắc fix không làm vỡ luồng đang chạy.
+- **CHỐNG HỒI QUY (sau MỌI fix):** `node scripts/qa/run-all.mjs --tier fast` (static + unit/mirror + độ phủ + invariant + smoke + fuzz, ~5') sau sửa nhỏ; **`--tier full` XANH BẮT BUỘC trước khi merge `dev`→`main`** (bậc full còn chạy đêm theo lịch `qa-nightly.yml`) — luật CLAUDE.md + [[verify-feature]] Cổng 5b + memory `qa-regression-suite`. Regression là cổng LẶP LẠI, không do check-app sở hữu — check-app chỉ GỌI nó để chắc fix không làm vỡ luồng đang chạy.
+- **Fix kèm lưới đúng tầng:** helper thuần/mirror → thêm ca vào `backend/tests` · input xấu ở route → `validate({…})` + schema · tên bảng/cột → dùng `db` có kiểu · luật văn xuôi → ratchet 09. Xem bảng tầng ở `docs/qa/BUG_CLASSES.md`.
 - **⚠️ Verify FE fix qua trình duyệt PHẢI dùng fresh context/incognito** — app là PWA, service worker precache trả bundle CŨ cho context đang mở → tưởng fix không ăn (đã bị lừa 1 lần 23/07).
 - **Lên production (chỉ khi user nói RÕ)**: KHÔNG merge ẩu. preflight read-only → migration additive trước (thứ tự phụ thuộc) → cutover/data cùng cửa sổ deploy (freeze+backup+transaction verify+rollback nếu đổi nghĩa dữ liệu) → DROP sau khi code live → **verify 4 tầng** (DB·RPC·code probe route 401/404·app-smoke live 200). Chi tiết: [[production-golive-2026-07-23]] + `docs/plans/BASE_UNIT_EXECUTION_PLAN.md` 2.4.
 
@@ -84,6 +86,11 @@ Không chỉ login admin. Với action write: **ẩn nút đúng khi thiếu `ca
 - Cleaner theo TAG **`LIKE '%TAG%'`** (tag có thể GIỮA chuỗi). Nhận diện SIM CHÍNH XÁC (GDO qua join delivery `delivery_code`/`distributor_name`; thu id vào JS trước khi xóa; order phụ qua `transfer_gdo_id`), xóa theo thứ tự FK. **verifyClean có điểm mù → quét phòng thủ orphan** + cửa sổ thời gian. Residue = 0 mọi bảng.
   - ⚠️ **Điểm mù ĐÃ GẶP (23/07): cleaner GDO chỉ join `OutboundDelivery.delivery_code/distributor_name` → BỎ SÓT `GroupDeliveryOrder.license_plate`.** Nếu tem/biển SIM chỉ nằm ở `license_plate` (không ở delivery_code/npp), GDO cha sống sót sau khi con bị xóa → 10 GDO `SIMWMS-*` treo, thổi "Xuất hôm nay". ⇒ Cleaner GDO PHẢI quét THÊM `GroupDeliveryOrder.license_plate ILIKE '%TAG%'` (và mọi cột mang tem/biển ở CHÍNH bảng cha, không chỉ bảng con join). Đặt biển SIM có TAG (`SIMxxx-...`) để quét được. Xóa script scratchpad (nhất là file chứa creds) + ảnh Playwright; `git status` sạch (đừng add `Template upload.xlsx`).
 - **Báo cáo TRUNG THỰC**: đã kiểm phần nào (bằng chứng số/ảnh), lỗi THẬT (kèm phân loại), fix + đo trước/sau, **nghi ngờ nghiệp vụ/UX** để user quyết, phần skip + lý do. Fail nói fail. Ghi memory `project` + `MEMORY.md`.
+- ⭐ **NHÃN LẶP / MỚI cho TỪNG lỗi (bắt buộc từ 11/09 — đây là thước "có hồi kết"):** đối chiếu `docs/qa/BUG_CLASSES.md`.
+  - **LẶP** (lớp đã có trong sổ) ⇒ lưới của lớp đó hỏng/có lỗ. Việc phải làm: **sửa LƯỚI** (thêm ca vào test mirror/unit · siết ratchet · thêm phép kiểm gói QA), ghi ngày vào cột *Tái phát cuối*. Chỉ vá bug mà không sửa lưới = CHƯA xong. Cùng lớp lặp ≥ 2 lần ⇒ lưới sai TẦNG, đổi lên tầng rẻ hơn (regex → kiểu tsc).
+  - **MỚI** ⇒ thêm dòng vào sổ, chọn tầng lưới RẺ NHẤT bắt được (bảng tầng trong sổ): (1) tsc · (2) test đơn vị/mirror `backend/tests` · (3) ratchet 09 · (4) ratchet độ phủ · (5) gói QA · (6) error_logs.
+  - **Phép kiểm/ratchet mới phải ĐỎ trên bản lỗi trước khi tin** (`git stash` bản vá, chạy, thấy đỏ đúng dòng, `git stash pop`) — memory `feedback-qa-can-lock-in-the-bug`.
+  - Cuối báo cáo: bảng đếm **n LẶP / m MỚI** theo lớp. n > 0 là điều user cần thấy và là việc phải xử trước.
 
 ## Kỹ thuật kế thừa từ công cụ chuẩn (áp bằng plain-node/SQL — KHÔNG cài dependency)
 Không thêm tool/framework vào repo (giữ luật "viết tối thiểu"); **học phương pháp** rồi tự làm ad-hoc trong `scratchpad`:

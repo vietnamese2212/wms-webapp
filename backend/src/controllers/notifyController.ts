@@ -3,7 +3,8 @@
 // không đọc/ghi dữ liệu người khác. Việc AI ĐƯỢC NHẬN thông báo gì quyết định ở phía GỬI
 // (pushService: đích danh theo assign, hoặc theo quyền + scope kho).
 import { Request, Response } from 'express'
-import { supabase } from '../lib/supabase'
+// 11/09: file đầu tiên dùng client CÓ KIỂU `db` (tên bảng/cột/INSERT thiếu cột bắt buộc → lỗi tsc)
+import { db } from '../lib/supabase'
 import { maskServerMessage } from '../utils/response'
 import { getVapid, sendPushToEmployees, upsertSubscription, PREF_KEYS } from '../services/pushService'
 import { getRetentionDays } from '../utils/settings'
@@ -47,7 +48,7 @@ export async function unsubscribe(req: Request, res: Response) {
   if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
   const { endpoint } = req.body as { endpoint?: string }
   if (!endpoint) return fail(res, 400, 'BAD_ENDPOINT', 'Thiếu endpoint')
-  const { error } = await supabase.from('push_subscriptions')
+  const { error } = await db.from('push_subscriptions')
     .delete().eq('endpoint', endpoint).eq('employee_id', me)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { unsubscribed: true })
@@ -67,11 +68,11 @@ async function cleanupOldFeed(): Promise<void> {
   if (Date.now() - _lastFeedCleanupAt < 3600_000) return
   _lastFeedCleanupAt = Date.now()
   const cutoff = new Date(Date.now() - (await getRetentionDays()).feed * 86400_000).toISOString()
-  const { data } = await supabase.from('user_notifications')
+  const { data } = await db.from('user_notifications')
     .select('id').lt('created_at', cutoff).order('created_at').limit(FEED_CLEAN_BATCH)
   const ids = (data ?? []).map(r => r.id as string)
   for (let i = 0; i < ids.length; i += 300) {
-    await supabase.from('user_notifications').delete().in('id', ids.slice(i, i + 300))
+    await db.from('user_notifications').delete().in('id', ids.slice(i, i + 300))
   }
 }
 
@@ -81,10 +82,10 @@ export async function getFeed(req: Request, res: Response) {
   if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
   try { await cleanupOldFeed() } catch { /* dọn lỗi không chặn đọc */ }
   const [{ data, error }, unreadR] = await Promise.all([
-    supabase.from('user_notifications')
+    db.from('user_notifications')
       .select('id, kind, title, body, url, read_at, created_at')
       .eq('employee_id', me).order('created_at', { ascending: false }).limit(50),
-    supabase.from('user_notifications')
+    db.from('user_notifications')
       .select('id', { count: 'exact', head: true }).eq('employee_id', me).is('read_at', null),
   ])
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
@@ -97,7 +98,7 @@ export async function markFeedRead(req: Request, res: Response) {
   if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
   const { ids } = req.body as { ids?: string[] }
   const t = new Date().toISOString()
-  let q = supabase.from('user_notifications')
+  let q = db.from('user_notifications')
     .update({ read_at: t, updated_at: t }).eq('employee_id', me).is('read_at', null)
   if (Array.isArray(ids) && ids.length) q = q.in('id', ids.slice(0, 300))
   const { error } = await q
@@ -112,7 +113,7 @@ export async function markFeedRead(req: Request, res: Response) {
 export async function getPrefs(req: Request, res: Response) {
   const me = selfId(req)
   if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
-  const { data, error } = await supabase.from('notification_prefs')
+  const { data, error } = await db.from('notification_prefs')
     .select('prefs').eq('employee_id', me).maybeSingle()
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   const stored = (data?.prefs ?? {}) as Record<string, boolean>
@@ -135,12 +136,12 @@ export async function updatePrefs(req: Request, res: Response) {
   }
   const t = new Date().toISOString()
   // Merge với prefs cũ (PUT từng công tắc một không đè công tắc khác)
-  const { data: ex } = await supabase.from('notification_prefs')
+  const { data: ex } = await db.from('notification_prefs')
     .select('prefs').eq('employee_id', me).maybeSingle()
   const merged = { ...((ex?.prefs ?? {}) as Record<string, boolean>), ...clean }
   const { error } = ex
-    ? await supabase.from('notification_prefs').update({ prefs: merged, updated_at: t }).eq('employee_id', me)
-    : await supabase.from('notification_prefs').insert({ employee_id: me, prefs: merged, created_at: t, updated_at: t })
+    ? await db.from('notification_prefs').update({ prefs: merged, updated_at: t }).eq('employee_id', me)
+    : await db.from('notification_prefs').insert({ employee_id: me, prefs: merged, created_at: t, updated_at: t })
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { prefs: merged })
 }

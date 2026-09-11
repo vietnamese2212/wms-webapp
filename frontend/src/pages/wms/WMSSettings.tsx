@@ -952,7 +952,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           <StrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} wide />
           {/* %DATE THEO KHÁCH HÀNG / KÊNH (user chốt 11/09) — CHỈ tầng kho: luật đi theo KHÁCH NHẬN,
               không theo loại hàng, nên không có bản khai riêng ở tab Loại kho. */}
-          <SettingsGroup title="XUẤT — %Date theo khách hàng"
+          <SettingsGroup title="XUẤT — Quy định date theo khách hàng"
             tip={<>
               Thay vì chốt tay từng dòng (production ~1.000 dòng/ngày), hệ thống lấy %Date mặc định từ
               danh mục <b>Khách hàng</b> (menu Cấu hình) theo mã ship-to của chuyến: %Date riêng của
@@ -961,7 +961,8 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               Dòng đã <b>chốt tay</b> và dòng có <b>%Date của VL06O</b> không bao giờ bị đè. Khách chưa
               có trong danh mục hoặc <b>chưa phân kênh</b> thì KHÔNG được cấp %Date tự động — máy không đoán.
               <br /><br />
-              Bật ở đây chỉ áp cho đơn <b>sinh sau</b>; đơn đang mở dùng nút "Áp lại theo master" ở trang Chốt %Date.
+              Bật ở đây chỉ áp cho đơn <b>sinh sau</b>; đơn đang mở dùng nút "Áp lại theo master" ở trang Quy định date.
+              Bật cũng có nghĩa kho này <b>đi theo quy định date</b>: dòng chưa khai thì không quét / không nhặt lẻ được.
             </>}>
             <SettingRow label="Áp %Date tự động"
               desc={<>Ghi chú của CS là chỗ <b>người</b> phải đọc — chọn "chỉ dòng không có ghi chú" để máy tránh đúng những dòng đó.</>}>

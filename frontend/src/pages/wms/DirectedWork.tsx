@@ -148,7 +148,7 @@ export default function DirectedWork() {
   const oldestUnset = unsetOld.map(u => u.delivery_date ?? '').filter(Boolean).sort()[0] ?? null
   // Dựng câu NGOÀI JSX: dấu `>` trong biểu thức nằm giữa JSX làm trình biên dịch hiểu là thẻ
   const unsetHint = unsetNow.length
-    ? ` Mở chuyến rồi bấm “Chốt %Date” để hệ thống chia hàng: `
+    ? ` Mở chuyến rồi bấm “Quy định date” để hệ thống chia hàng: `
       + unsetNow.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')
       + (unsetNow.length > 4 ? ` … và ${unsetNow.length - 4} dòng nữa` : '')
     : ''
@@ -197,7 +197,7 @@ export default function DirectedWork() {
           <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] truncate sm:whitespace-normal ${
             unsetNow.length ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-500'}`}>
             {unsetNow.length > 0 && (<>
-              <b>{unsetNow.length} dòng hàng chưa chốt %Date</b> — chưa có việc nào được giao.
+              <b>{unsetNow.length} dòng hàng chưa khai quy định date</b> — chưa có việc nào được giao.
               <span className="hidden sm:inline">{unsetHint}</span>
             </>)}
             {unsetOld.length > 0 && (
@@ -239,7 +239,7 @@ export default function DirectedWork() {
                 <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">
                   <div>Không có việc nào cho kho này.</div>
                   <div className="mt-1 text-slate-500">
-                    Kiểm lần lượt: kho đã bật <b>Chế độ làm việc = Hướng dẫn</b> chưa · có chuyến nào đã <b>Bắt đầu</b> chưa · dòng hàng đã <b>chốt %Date</b> chưa.
+                    Kiểm lần lượt: kho đã bật <b>Chế độ làm việc = Hướng dẫn</b> chưa · có chuyến nào đã <b>Bắt đầu</b> chưa · dòng hàng đã <b>khai quy định date</b> chưa.
                   </div>
                   <div className="text-slate-500">
                     Đủ cả ba mà vẫn trống (hay vừa bật Hướng dẫn khi chuyến đã chạy) → mở trang chuyến, bấm <b>↻ Sắp lại kế hoạch</b>.

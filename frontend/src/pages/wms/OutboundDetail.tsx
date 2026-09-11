@@ -25,7 +25,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
-import { SetDateRuleSheet, dateRuleLabel, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
+import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import type { DateRule } from '@/types'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
@@ -1079,7 +1079,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
     ...(hasBoxes ? [{ id: 'boxes', label: 'Hộp (KH)', w: 60, align: 'right' as const }] : []),
     ...(hasLoosePicking ? [{ id: 'loose_c', label: 'Lẻ thùng', w: 60, align: 'right' as const }, { id: 'loose_b', label: 'Lẻ hộp', w: 54, align: 'right' as const }] : []),
     ...(hasCsResp ? [{ id: 'cs', label: 'CS', w: 90 }] : []),
-    { id: 'daterule', label: '%Date lấy hàng', w: 118 },
+    // HAI CỘT RIÊNG (user chốt 11/09): đã đòi % thì thôi đòi ngày — mỗi dòng điền đúng một cột.
+    { id: 'datepct',  label: '% date yêu cầu', w: 110 },
+    { id: 'datedays', label: 'Ngày date còn yêu cầu', w: 130 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
     ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
     ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
@@ -1278,13 +1280,28 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
-                {/* Quy tắc ĐÃ CHỐT — cột LUÔN CÓ. Chốt xong mà bảng dòng hàng không hiện gì thì
-                    người chốt không có cách nào biết mình đã làm chưa (user bắt 10/09). */}
-                <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${dateRuleLabel(item.date_rule, item.material, item.date_required).cls}`}>
-                    {dateRuleLabel(item.date_rule, item.material, item.date_required).text}
-                  </span>
-                </TableCell>
+                {/* Quy định date ĐÃ KHAI — cột LUÔN CÓ. Khai xong mà bảng dòng hàng không hiện gì
+                    thì người khai không có cách nào biết mình đã làm chưa (user bắt 10/09).
+                    Kiểu KHÔNG phải con số (không đòi mốc / chỉ định / chia phần / chưa khai) hiện
+                    badge ở cột %; cột ngày để trống. */}
+                {(() => {
+                  const c = dateRuleCols(item.date_rule, item.date_required)
+                  const b = dateRuleLabel(item.date_rule, item.material, item.date_required)
+                  const numeric = c.pct != null || c.days != null
+                  return <>
+                    <TableCell className="px-2 py-1 align-top whitespace-nowrap text-right">
+                      {c.pct
+                        ? <span className="text-[10px] font-semibold tabular-nums text-sky-700">{c.pct}</span>
+                        : c.days ? <span className="text-[10px] text-slate-300">—</span>
+                        : <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls}`}>{b.text}</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 align-top whitespace-nowrap text-right">
+                      {c.days
+                        ? <span className="text-[10px] font-semibold tabular-nums text-teal-700">{c.days}</span>
+                        : <span className="text-[10px] text-slate-300">{numeric ? '—' : ''}</span>}
+                    </TableCell>
+                  </>
+                })()}
                 {hasBatchRequired && (
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                     {item.batch_required
@@ -1698,7 +1715,7 @@ export default function OutboundDetail() {
   // CHỐT %DATE — cửa DUY NHẤT tạo quy tắc lấy hàng. Đặt ở chuyến vì thủ kho chốt ngay trước khi xuất.
   if (dateTargets.length > 0 && can(perms, 'outbound', 'set_date'))
     actionItems.push({
-      key: 'date-rule', icon: CalendarClock, label: 'Chốt %Date',
+      key: 'date-rule', icon: CalendarClock, label: 'Quy định date',
       tip: nUnsetDate > 0
         ? `${nUnsetDate} dòng chưa chốt — chưa chốt thì hệ thống KHÔNG chia hàng cho dòng đó`
         : 'Sửa quy tắc lấy hàng theo date của từng dòng',

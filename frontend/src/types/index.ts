@@ -842,19 +842,26 @@ export interface DirectedBoard {
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
 }
 // SPLIT = một dòng đơn nhiều mức date theo SỐ LƯỢNG ("250 thùng date 60, 30 thùng date 90")
-export type SimpleRuleKind = 'FEFO' | 'MIN_PCT' | 'EXACT'
+// MIN_DAYS = "còn tối thiểu N ngày" (11/09). Với hàng hạn ngắn thì % không diễn đạt nổi: FG02 hạn
+// 45–60 ngày nên "còn ≥ 35 ngày" ra 77,8 % trên mã này và 58,3 % trên mã kia.
+export type SimpleRuleKind = 'FEFO' | 'MIN_PCT' | 'MIN_DAYS' | 'EXACT'
 export type DateRuleKind = SimpleRuleKind | 'SPLIT'
 export interface DateRulePart { qty_base: number; kind: SimpleRuleKind; value?: string | number | null }
-export type DateRuleSource = 'MANUAL' | 'CUSTOMER' | 'CHANNEL'
+export type DateRuleSource = 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SYSTEM'
 export interface DateRule {
   kind: DateRuleKind
   value?: string | number | null
   parts?: DateRulePart[]
   set_by?: string | null; set_at?: string | null
-  // AI ĐẶT quy tắc (11/09): người chốt tay hay máy áp theo Khách hàng / Kênh. Thiếu = MANUAL.
+  // AI ĐẶT quy tắc (11/09): người khai tay · máy áp theo Khách hàng/Kênh · hệ thống tự đặt.
+  // Thiếu khoá = MANUAL (mọi dòng khai trước 11/09 đều do người khai).
   source?: DateRuleSource | null
-  // Lúc máy áp, kho KHÔNG còn pallet nào đạt mức này — chỉ NHẮC, không chặn.
-  review?: 'NO_STOCK' | null
+  // Cờ "cần xem" — chỉ NHẮC, không chặn:
+  //   NO_STOCK     = lúc máy áp, kho không còn pallet nào đạt mức này
+  //   BELOW_MASTER = %Date của VL06O quy ra ngày còn thấp hơn mức khách đã khai
+  review?: 'NO_STOCK' | 'BELOW_MASTER' | null
+  // Vì sao HỆ THỐNG tự đặt (chỉ đi kèm source = 'SYSTEM'): mã không đo được date
+  reason?: 'NO_SHELF_LIFE' | null
 }
 
 // 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP

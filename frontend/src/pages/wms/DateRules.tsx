@@ -1,11 +1,17 @@
-// CHỐT %DATE — màn của nhân viên SAP TRƯỚC GIỜ XUẤT (user chốt 10/09 vòng 8):
+// QUY ĐỊNH DATE (tên cũ "Chốt %Date", đổi 11/09) — màn của nhân viên SAP TRƯỚC GIỜ XUẤT
+// (user chốt 10/09 vòng 8):
 //   "trước lúc xuất hàng, nv SAP vào kiểm tra TẤT CẢ các đơn hàng sau đó input dữ liệu vào …
 //    cần nhìn hết đơn hàng (dạng filter được) và thấy tất cả các dòng sau đó input.
 //    Việc input này nên làm theo checkbox ở các dòng, có checkbox tất cả và checkbox chỗ nào cần"
 //
 // Khác trang Xuất kho: đơn vị hiển thị là DÒNG HÀNG, không phải chuyến — vì thứ phải quyết là
-// "%Date của từng mã", và một mã có ghi chú CS riêng thì phải nhìn thấy ngay cạnh nhau.
-// Chốt xong thì mở dialog dùng CHUNG với trang chuyến (SetDateRuleSheet) — một luật, một chỗ sửa.
+// "quy định date của từng mã", và một mã có ghi chú CS riêng thì phải nhìn thấy ngay cạnh nhau.
+// Khai xong thì mở dialog dùng CHUNG với trang chuyến (SetDateRuleSheet) — một luật, một chỗ sửa.
+//
+// MÀN NÀY CHỈ XỬ LÝ THỨ CÓ ĐÒI DATE (user chốt 11/09): dòng có mã KHÔNG khai hạn dùng đã được hệ
+// thống tự đặt "không đòi mốc" nên không hiện ở đây — RPC lọc sẵn, và ô band "Không có hạn dùng"
+// giữ lại con số để không ai tưởng đơn bị thiếu dòng. Chúng VẪN có việc ở "Việc cần làm": không có
+// date để so thì thứ tự lấy rơi xuống QUÃNG ĐƯỜNG tới cửa.
 import { useMemo, useState } from 'react'
 import { CalendarClock, AlertTriangle, RefreshCw } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -17,8 +23,11 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { ActionCluster } from '@/components/shared/ActionBtn'
-import { SetDateRuleSheet, dateRuleLabel, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
-import { useDateRuleLines, useApplyDateRuleMaster, type DateRuleLine, type ApplyMasterResult } from '@/api/hooks'
+import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
+import {
+  useDateRuleLines, useApplyDateRuleMaster, useDateRuleCategories,
+  type DateRuleLine, type ApplyMasterResult,
+} from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -43,18 +52,32 @@ const COLS = [
   { id: 'mat',  label: 'Mã hàng',       w: 92 },
   { id: 'name', label: 'Tên hàng',      w: 190 },
   { id: 'qty',  label: 'Còn lấy',       w: 118, align: 'right' as const },
-  { id: 'note', label: 'Ghi chú của CS', w: 200 },
-  { id: 'rule', label: '%Date lấy hàng', w: 190 },
+  { id: 'note', label: 'Ghi chú của CS', w: 190 },
+  // HAI CỘT RIÊNG (user chốt 11/09): "đã yêu cầu % thì thôi yêu cầu ngày" — mỗi dòng điền đúng một
+  // cột, cột kia gạch ngang. Cột Nguồn giữ phần không phải con số (không đòi mốc / chỉ định / chia
+  // phần) cùng với ai đặt và cờ cần xem.
+  { id: 'pct',  label: '% date yêu cầu', w: 120, align: 'right' as const },
+  { id: 'days', label: 'Ngày date còn yêu cầu', w: 140, align: 'right' as const },
+  { id: 'src',  label: 'Nguồn',          w: 150 },
 ]
 
 // Nhãn nguồn trên bộ lọc — UNSET/REVIEW là hai LÁT CẮT, không phải giá trị của cột nguồn.
 const SOURCE_OPTS = [
-  { value: 'UNSET',    label: 'Chưa chốt' },
-  { value: 'MANUAL',   label: 'Chốt tay' },
+  { value: 'UNSET',    label: 'Chưa khai' },
+  { value: 'MANUAL',   label: 'Khai tay' },
   { value: 'CUSTOMER', label: 'Theo khách' },
   { value: 'CHANNEL',  label: 'Theo kênh' },
+  { value: 'SYSTEM',   label: 'Hệ thống đặt' },
   { value: 'SAP',      label: 'Từ VL06O' },
-  { value: 'REVIEW',   label: 'Cần xem (hết tồn)' },
+  { value: 'REVIEW',   label: 'Cần xem' },
+]
+
+const KIND_OPTS = [
+  { value: 'MIN_PCT',  label: '≥ % hạn dùng' },
+  { value: 'MIN_DAYS', label: '≥ số ngày còn lại' },
+  { value: 'FEFO',     label: 'Không đòi mốc' },
+  { value: 'EXACT',    label: 'Chỉ định' },
+  { value: 'SPLIT',    label: 'Chia phần theo SL' },
 ]
 
 export default function DateRules() {
@@ -70,12 +93,13 @@ export default function DateRules() {
   const [sheet, setSheet] = useState<DateRuleTarget[] | null>(null)
   const [applyOpen, setApply] = useState(false)
 
+  const { data: cats } = useDateRuleCategories()
   const { data, isLoading } = useDateRuleLines({
     from: f.from, to: f.to, warehouseId: f.warehouseId, state: f.state, search: f.search,
-    source: f.source, page: f.page, pageSize: f.pageSize,
+    source: f.source, matCategory: f.matCategory, kind: f.kind, page: f.page, pageSize: f.pageSize,
   })
   const rows = data?.rows ?? []
-  const sum = data?.summary ?? { lines: 0, set: 0, unset: 0, with_note: 0, trips: 0, review: 0, no_channel: 0 }
+  const sum = data?.summary ?? { lines: 0, set: 0, unset: 0, with_note: 0, trips: 0, review: 0, no_channel: 0, no_shelf_life: 0 }
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / f.pageSize))
 
@@ -97,10 +121,17 @@ export default function DateRules() {
     material_id: r.material_id,
     material_code: r.material_code,
     material_name: r.material_name,
+    material_category: r.material_category ?? null,
     trip_label: `${r.group_code ?? ''}${r.delivery_code ? ` · ${r.delivery_code}` : ''}`,
     remaining: r.remaining,
     units: unitsOf(r),
     note: r.header_text,
+    // Khách hàng + kênh: người khai phải nhìn thấy mới quyết được mức (user 11/09)
+    customer_name: r.customer_name ?? r.shipto_party ?? null,
+    channel_label: r.customer_has_channel ? r.channel : null,
+    customer_known: r.customer_known,
+    warehouse_name: r.warehouse_name ?? null,
+    delivery_date: r.delivery_date ?? null,
     // Mức KẾ THỪA từ VL06O (`date_required`): bộ sinh việc ĐÃ chia hàng theo nó, nên mở dialog phải
     // thấy sẵn mức đó — bấm Lưu là biến nó thành chốt tay tường minh, chứ không phải ô trống.
     current: r.date_rule ?? (Number(r.date_required) > 0 ? { kind: 'MIN_PCT', value: Number(r.date_required) } : null),
@@ -112,12 +143,20 @@ export default function DateRules() {
     { key: 'wh', label: 'Kho', type: 'single', pinned: true,
       options: (whs ?? []).map(w => ({ value: (w as { id: string }).id, label: (w as { id: string; name?: string }).name ?? '' })),
       value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v, page: 1 }) },
-    { key: 'state', label: 'Trạng thái chốt', type: 'single', pinned: true,
-      options: [{ value: 'UNSET', label: 'Chưa chốt' }, { value: 'SET', label: 'Đã chốt' }],
+    { key: 'state', label: 'Trạng thái khai', type: 'single', pinned: true,
+      options: [{ value: 'UNSET', label: 'Chưa khai' }, { value: 'SET', label: 'Đã khai' }],
       value: f.state, onChange: (v: string) => setF({ state: v as '' | 'SET' | 'UNSET', page: 1 }) },
-    { key: 'source', label: 'Nguồn %Date', type: 'multi', pinned: true,
+    { key: 'source', label: 'Nguồn', type: 'multi', pinned: true,
       options: SOURCE_OPTS, selected: f.source,
       onChange: (v: string[]) => setF({ source: v, page: 1 }) },
+    // Loại hàng của MÃ (khác Loại kho mà chuyến chở) — mức khai theo cặp khách × loại hàng nên
+    // người khai cần xem riêng từng loại.
+    { key: 'mcat', label: 'Loại hàng', type: 'multi',
+      options: (cats ?? []).map(c => ({ value: c.value, label: c.label })),
+      selected: f.matCategory, onChange: (v: string[]) => setF({ matCategory: v, page: 1 }) },
+    { key: 'kind', label: 'Kiểu quy định', type: 'multi',
+      options: KIND_OPTS, selected: f.kind,
+      onChange: (v: string[]) => setF({ kind: v, page: 1 }) },
   ]
 
   return (
@@ -126,20 +165,20 @@ export default function DateRules() {
         <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 sm:rounded-t-xl space-y-1">
           <div className="flex items-center gap-2 flex-wrap w-full min-w-0">
             <h1 className="hidden sm:flex text-sm font-semibold text-slate-800 items-center gap-1.5 shrink-0">
-              <CalendarClock className="h-4 w-4 text-sky-600" /> Chốt %Date
+              <CalendarClock className="h-4 w-4 text-sky-600" /> Quy định date
             </h1>
             <SearchInput value={f.search} onChange={v => setF({ search: v, page: 1 })}
               placeholder="Số xe · biển số · NPP · khách · số DO · mã hàng · ghi chú CS" className="flex-1 min-w-[140px]" />
             <FilterSheetButton defs={filterDefs} />
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
               <ActionCluster mobileInline items={[
-                { key: 'set', icon: CalendarClock, label: `Chốt %Date (${picked.size})`, primary: true,
+                { key: 'set', icon: CalendarClock, label: `Quy định date (${picked.size})`, primary: true,
                   tip: pickedWhs.size > 1 ? 'Đang chọn dòng của nhiều kho — tồn tra theo kho, hãy lọc về một kho'
-                    : 'Chốt mức %Date cho các dòng đang tick',
+                    : 'Khai mức quy định date cho các dòng đang tick',
                   disabled: !canSet || picked.size === 0 || pickedWhs.size > 1,
                   onClick: () => setSheet(toTargets(pickedRows)) },
                 { key: 'master', icon: RefreshCw, label: 'Áp lại theo master',
-                  tip: 'Áp %Date của Khách hàng / Kênh cho đơn đang mở trong khoảng ngày đang lọc — KHÔNG đụng dòng đã chốt tay',
+                  tip: 'Áp mức của Khách hàng / Kênh cho đơn đang mở trong khoảng ngày đang lọc — KHÔNG đụng dòng đã khai tay',
                   disabled: !canSet, onClick: () => setApply(true) },
               ]} />
             </div>
@@ -155,13 +194,16 @@ export default function DateRules() {
         <SummaryBand tiles={[
           { label: 'Dòng hàng', value: nf(sum.lines) },
           { label: 'Chuyến', value: nf(sum.trips) },
-          { label: 'Chưa chốt', value: nf(sum.unset) },
-          { label: 'Đã chốt', value: nf(sum.set) },
+          { label: 'Chưa khai', value: nf(sum.unset) },
+          { label: 'Đã khai', value: nf(sum.set) },
           { label: 'Có ghi chú CS', value: nf(sum.with_note) },
           // Máy đã áp mức nhưng lúc áp kho KHÔNG còn pallet nào đạt — không chặn, nhưng giấu đi thì
           // chuyến vào ca sinh 0 việc mà không ai biết vì sao.
-          { label: 'Cần xem', value: nf(sum.review), tip: 'Máy đã áp %Date nhưng kho không còn pallet nào đạt mức đó' },
-          { label: 'Khách chưa kênh', value: nf(sum.no_channel), tip: 'Dòng chưa chốt của khách chưa phân kênh (hoặc chưa có trong danh mục) — phân kênh ở trang Khách hàng' },
+          { label: 'Cần xem', value: nf(sum.review), tip: 'Máy đã áp mức nhưng kho không còn pallet nào đạt — hoặc mức của VL06O thấp hơn mức khách đã khai' },
+          { label: 'Khách chưa khai mức', value: nf(sum.no_channel), tip: 'Dòng chưa khai của khách chưa có mức nào (khách lẫn kênh) — khai ở trang Khách hàng' },
+          // Dòng có mã KHÔNG đo được date đã bị ẩn khỏi bảng (hệ thống tự đặt "không đòi mốc") —
+          // nhưng con số phải còn trong sổ sách, nếu không người ta tưởng đơn bị thiếu dòng.
+          { label: 'Không có hạn dùng', value: nf(sum.no_shelf_life ?? 0), tip: 'Mã không khai hạn dùng — hệ thống tự đặt "không đòi mốc", không hiện ở bảng này vì không có gì để khai' },
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${f.page}/${totalPages}` }] : []),
         ]} />
 
@@ -193,6 +235,10 @@ export default function DateRules() {
               {rows.map(r => {
                 const u = unitsOf(r)
                 const b = dateRuleLabel(r.date_rule, u, r.date_required)
+                const cols = dateRuleCols(r.date_rule, r.date_required)
+                // Kiểu ĐÃ nằm ở hai cột số thì không lặp lại badge ở cột Nguồn
+                const numeric = (cols.pct != null || cols.days != null)
+                  && (r.date_rule == null || r.date_rule.kind === 'MIN_PCT' || r.date_rule.kind === 'MIN_DAYS')
                 return (
                   <TableRow key={r.item_id} className={picked.has(r.item_id) ? 'bg-sky-50' : ''}>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -223,13 +269,30 @@ export default function DateRules() {
                         ? <span className="text-red-600 whitespace-pre-wrap break-words">{r.header_text}</span>
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
+                    {/* Hai cột con số — mỗi dòng chỉ điền MỘT */}
+                    <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap text-sky-700">
+                      {cols.pct ?? <span className="text-slate-300 font-normal">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap text-teal-700">
+                      {cols.days ?? <span className="text-slate-300 font-normal">—</span>}
+                    </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls} ${b.review ? 'ring-1 ring-red-400' : ''}`}
-                        title={b.review ? 'Kho không còn pallet nào đạt mức này — đổi mức hoặc để dòng chưa chốt' : undefined}>
-                        {b.text}
-                      </span>
-                      {b.source && <span className="ml-1 text-[9px] text-slate-400">· {b.source}</span>}
-                      {b.review && <span className="ml-1 text-[9px] font-semibold text-red-600">· cần xem</span>}
+                      {/* Chỉ hiện badge cho kiểu KHÔNG phải con số (không đòi mốc · chỉ định · chia
+                          phần · chưa khai) — MIN_PCT/MIN_DAYS đã nằm ở hai cột bên trái rồi. */}
+                      {!numeric && (
+                        <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls} ${b.review ? 'ring-1 ring-red-400' : ''}`}>
+                          {b.text}
+                        </span>
+                      )}
+                      {b.source && <span className={`text-[9px] text-slate-400 ${numeric ? '' : 'ml-1'}`}>{numeric ? '' : '· '}{b.source}</span>}
+                      {b.review && (
+                        <span className="ml-1 text-[9px] font-semibold text-red-600"
+                          title={r.date_rule?.review === 'BELOW_MASTER'
+                            ? 'Mức của VL06O quy ra ngày còn thấp hơn mức khách đã khai'
+                            : 'Kho không còn pallet nào đạt mức này — đổi mức hoặc để dòng chưa khai'}>
+                          · cần xem
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 )

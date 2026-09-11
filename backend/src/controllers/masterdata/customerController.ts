@@ -451,17 +451,22 @@ export async function dateRuleCategories(_req: Request, res: Response) {
     ])
     if (catRes.error) return fail(res, catRes.error)
     if (lookRes.error) return fail(res, lookRes.error)
-    const stat = new Map<string, { materials: number; with_shelf_life: number }>()
-    for (const r of ((catRes.data ?? []) as Array<{ category: string; materials: number; with_shelf_life: number }>))
-      stat.set(r.category, { materials: Number(r.materials), with_shelf_life: Number(r.with_shelf_life) })
+    type CatStat = { materials: number; with_shelf_life: number; min_shelf_life: number | null; max_shelf_life: number | null }
+    const stat = new Map<string, CatStat>()
+    for (const r of ((catRes.data ?? []) as Array<{ category: string } & Record<string, unknown>>))
+      stat.set(r.category, {
+        materials: Number(r.materials ?? 0),
+        with_shelf_life: Number(r.with_shelf_life ?? 0),
+        min_shelf_life: r.min_shelf_life == null ? null : Number(r.min_shelf_life),
+        max_shelf_life: r.max_shelf_life == null ? null : Number(r.max_shelf_life),
+      })
     const rows = ((lookRes.data ?? []) as Array<{ value: string; meta: Record<string, unknown> | null; sort_order: number | null }>)
       .map(r => {
-        const s = stat.get(r.value) ?? { materials: 0, with_shelf_life: 0 }
+        const s = stat.get(r.value) ?? { materials: 0, with_shelf_life: 0, min_shelf_life: null, max_shelf_life: null }
         return {
           value: r.value,
           label: String(r.meta?.label ?? r.value),
-          materials: s.materials,
-          with_shelf_life: s.with_shelf_life,
+          ...s,
           // false = mọi mã của loại này đều không khai hạn dùng ⇒ quy định date không áp được
           measurable: s.with_shelf_life > 0,
         }
@@ -511,8 +516,8 @@ export const replaceDateRules = (scope: MasterScope) => async (req: Request, res
     // unique nếu làm ngược (cùng bẫy đã gặp ở phiếu Chi phí kho).
     const keepCats = new Set([...wanted.values()].map(r => r.category ?? ''))
     const dropIds = before.filter(r => !keepCats.has(r.category ?? '')).map(r => r.id)
-    if (dropIds.length) {
-      const { error } = await supabase.from('date_rule_master').delete().in('id', dropIds)
+    for (let i = 0; i < dropIds.length; i += 300) {
+      const { error } = await supabase.from('date_rule_master').delete().in('id', dropIds.slice(i, i + 300))
       if (error) return fail(res, error)
     }
     if (wanted.size) {

@@ -64,7 +64,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Xuất hàng', icon: PackageMinus,
         items: [
           { to: '/wms/outbound',           icon: PackageMinus,    label: 'Xuất kho',    module: 'outbound' },
-          { to: '/wms/outbound/date-rules', icon: CalendarClock,  label: 'Chốt %Date',  anyActions: [['outbound', 'set_date']] },
+          { to: '/wms/outbound/date-rules', icon: CalendarClock,  label: 'Quy định date', anyActions: [['outbound', 'set_date']] },
           // Nhặt lẻ = một phần của XUẤT (cùng dòng đơn, cùng cửa quét) — đặt cạnh nhau cho đúng việc
           { to: '/wms/loosepicking',       icon: Scissors,        label: 'Nhặt lẻ',     module: 'loosepicking' },
           { to: '/wms/fill',               icon: ArrowDownToLine, label: 'Fill hàng',   module: 'fill' },

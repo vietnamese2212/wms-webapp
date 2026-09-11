@@ -9,6 +9,7 @@ import * as customer    from '../controllers/masterdata/customerController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
+import { validate, zText, z } from '../middlewares/validate'
 import multer from 'multer'
 
 const router = Router()
@@ -43,7 +44,16 @@ router.get('/customers',                  requirePerm('customers', 'view'),   cu
 router.get('/customers/seed-candidates',  requirePerm('customers', 'import'), customer.customerSeedCandidates)
 router.post('/customers/seed',            requirePerm('customers', 'import'), customer.seedCustomers)      // ?preflight=1 = chỉ đếm
 router.patch('/customers/bulk',           requirePerm('customers', 'edit'),   customer.bulkUpdateCustomers) // setup nhanh nhiều dòng
-router.patch('/customers/bulk-rule',      requirePerm('customers', 'edit'),   customer.bulkSetDateRule)     // đặt 1 mức cho nhiều khách
+// Đặt 1 mức cho nhiều khách. `ids` XOR `filter` kiểm ở controller (phụ thuộc lẫn nhau), còn hình
+// dạng từng trường chặn ngay ở đây: `value` sai kiểu đi thẳng xuống Postgres là 500 thay vì 400.
+router.patch('/customers/bulk-rule',      requirePerm('customers', 'edit'),
+  validate({ body: z.object({
+    ids: z.array(zText(1, 100)).max(500).optional(),
+    filter: z.record(z.string(), z.unknown()).optional(),
+    category: zText(1, 30).nullable().optional(),
+    kind: z.enum(['FEFO', 'MIN_PCT', 'MIN_DAYS', '']).nullable().optional(),
+    value: z.union([z.number(), z.string(), z.null()]).optional(),
+  }) }), customer.bulkSetDateRule)
 router.post('/customers',                 requirePerm('customers', 'edit'),   customer.createCustomer)
 router.put('/customers/:id',              requirePerm('customers', 'edit'),   customer.updateCustomer)
 router.delete('/customers/:id',           requirePerm('customers', 'edit'),   customer.deactivateCustomer) // ngừng (mềm)
@@ -54,9 +64,21 @@ router.put('/customer-channels/:id',      requirePerm('customers', 'manage_chann
 // Mức Quy định date theo (khách|kênh) × loại hàng — MỘT bảng dùng chung hai scope, nhưng HAI route
 // để mỗi cái gate ĐÚNG quyền sở hữu nó: gộp `requireAnyPerm` sẽ cho người chỉ có `edit` sửa luôn
 // mức của KÊNH (ảnh hưởng mọi khách trong kênh) — đúng bẫy "gộp quyền" của skill add-permission.
-router.get('/date-rules/categories',        requirePerm('customers', 'view'),           customer.dateRuleCategories)
-router.put('/date-rules/CUSTOMER/:key',     requirePerm('customers', 'edit'),           customer.replaceDateRules('CUSTOMER'))
-router.put('/date-rules/CHANNEL/:key',      requirePerm('customers', 'manage_channel'), customer.replaceDateRules('CHANNEL'))
+// Hình dạng payload dùng chung hai scope — nhưng `validate(...)` phải nằm NGAY trên dòng route để
+// cổng tĩnh soi được (và để người đọc thấy ngay route này có gác đầu vào hay không).
+const RULE_SET = {
+  params: z.object({ key: zText(1, 100) }),
+  body: z.object({
+    rules: z.array(z.object({
+      category: zText(1, 30).nullable().optional(),
+      kind: z.enum(['FEFO', 'MIN_PCT', 'MIN_DAYS']),
+      value: z.union([z.number(), z.string(), z.null()]).optional(),
+    })).max(20),
+  }),
+}
+router.get('/date-rules/categories',    requirePerm('customers', 'view'),           customer.dateRuleCategories)
+router.put('/date-rules/CUSTOMER/:key', requirePerm('customers', 'edit'),           validate(RULE_SET), customer.replaceDateRules('CUSTOMER'))
+router.put('/date-rules/CHANNEL/:key',  requirePerm('customers', 'manage_channel'), validate(RULE_SET), customer.replaceDateRules('CHANNEL'))
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx

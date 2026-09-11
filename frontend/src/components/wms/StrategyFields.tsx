@@ -251,7 +251,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
           Bật <b>Hướng dẫn</b> thì bấm Bắt đầu chuyến là hệ thống chia hàng theo luật lấy hàng của kho
           và dựng 3 bảng ở menu <b>Việc cần làm</b> (Cần hạ · Cần đưa ra · Sắp quét). Kho phải là kho
           quét QR và <b>đã vẽ Sơ đồ kho</b> — chưa đủ thì lưu sẽ báo rõ thiếu gì.
-          Dòng đơn <b>chưa chốt %Date</b> không sinh việc, chốt ở trang <b>Chốt %Date</b>.
+          Dòng đơn <b>chưa khai quy định date</b> không sinh việc, khai ở trang <b>Quy định date</b>.
         </>}>
         <SettingRow label="Chế độ làm việc"
           desc={<>Thủ công = như hiện nay, người tự tìm hàng. Hướng dẫn = hệ thống chỉ đúng ô, đúng pallet, đúng thứ tự đường đi.</>}>

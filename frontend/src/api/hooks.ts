@@ -4158,12 +4158,16 @@ export interface DateRuleLine {
   // Khách hàng / Kênh + nguồn quy tắc (11/09) — để biết con số trước mặt là quyết định của AI
   shipto_party: string | null; customer_name: string | null; channel: string | null
   customer_known: boolean; customer_has_channel: boolean
-  source: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SAP' | null
-  review: 'NO_STOCK' | null
+  source: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SYSTEM' | 'SAP' | null
+  review: 'NO_STOCK' | 'BELOW_MASTER' | null
+  reason: 'NO_SHELF_LIFE' | null
+  // Loại hàng của MÃ + hạn dùng khai ở danh mục (đợt 2) — trục thứ hai của mức
+  material_category: string | null; shelf_life_days: number | null
+  rule_kind: string | null
 }
 export function useDateRuleLines(p: {
   from: string; to: string; warehouseId?: string; state?: string; search?: string
-  source?: string[]; page: number; pageSize: number
+  source?: string[]; matCategory?: string[]; kind?: string[]; page: number; pageSize: number
 }) {
   return useQuery({
     queryKey: ['date-rule-lines', p],
@@ -4175,16 +4179,36 @@ export function useDateRuleLines(p: {
           state: p.state || undefined,
           search: p.search || undefined,
           source: p.source?.length ? p.source.join(',') : undefined,
+          material_category: p.matCategory?.length ? p.matCategory.join(',') : undefined,
+          kind: p.kind?.length ? p.kind.join(',') : undefined,
           page: p.page, page_size: p.pageSize,
         },
       })
       return data.data as {
         rows: DateRuleLine[]; total: number; page: number; page_size: number
-        summary: { lines: number; set: number; unset: number; with_note: number; trips: number; review: number; no_channel: number }
+        summary: { lines: number; set: number; unset: number; with_note: number; trips: number
+                   review: number; no_channel: number; no_shelf_life: number }
       }
     },
     placeholderData: keepPreviousData,
     staleTime: 10_000,
+  })
+}
+
+/**
+ * Loại hàng khai được quy định date — kèm số mã CÓ khai hạn dùng để màn khai làm MỜ đúng loại
+ * không đo được date (đo 11/09: PM01 = 0/888 mã) thay vì im lặng bỏ.
+ */
+export interface DateRuleCategory {
+  value: string; label: string; materials: number; with_shelf_life: number; measurable: boolean
+  // Khoảng hạn dùng thật của loại này — để màn khai quy đổi SỐNG ("≥ 60 % ≈ còn 27–36 ngày")
+  min_shelf_life: number | null; max_shelf_life: number | null
+}
+export function useDateRuleCategories() {
+  return useQuery({
+    queryKey: ['date-rule-categories'],
+    queryFn: async () => (await apiClient.get('/masterdata/date-rules/categories')).data.data as DateRuleCategory[],
+    staleTime: 300_000,
   })
 }
 
@@ -4226,15 +4250,21 @@ export function useSetItemsDateRule() {
 }
 
 // ─── KHÁCH HÀNG / NƠI NHẬN + KÊNH (11/09) — master data nuôi %Date tự động ────────────────────
+/** Một dòng mức: loại hàng (null = mọi loại còn lại) + quy tắc. Bảng `date_rule_master`. */
+export interface MasterRuleRow { id?: string; category: string | null; rule: DateRule }
 export interface Customer {
   id: string; ship_to_code: string; name: string; channel: string | null
-  date_rule: DateRule | null; warehouse_id: string | null
+  warehouse_id: string | null
   is_active: boolean; auto_created: boolean; note: string | null
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
+  // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
+  rules: MasterRuleRow[]
+  channel_rules: MasterRuleRow[]
 }
 export interface CustomerFilters {
   search?: string; channel?: string[]; hasChannel?: '' | '1' | '0'
-  warehouseId?: string; active?: '' | '1' | '0'; page: number; pageSize: number
+  warehouseId?: string; active?: '' | '1' | '0'; hasRule?: '' | '1' | '0'
+  page: number; pageSize: number
 }
 export function useCustomers(f: CustomerFilters) {
   return useQuery({
@@ -4247,12 +4277,14 @@ export function useCustomers(f: CustomerFilters) {
           has_channel: f.hasChannel || undefined,
           warehouse_id: f.warehouseId || undefined,
           active: f.active || undefined,
+          has_rule: f.hasRule || undefined,
           page: f.page, page_size: f.pageSize,
         },
       })
       return data.data as {
         rows: Customer[]; total: number; page: number; page_size: number
-        summary: { total: number; no_channel: number; with_warehouse: number; auto_created: number; inactive: number }
+        summary: { total: number; no_channel: number; with_warehouse: number; auto_created: number
+                   inactive: number; no_rule: number }
       }
     },
     placeholderData: keepPreviousData,
@@ -4261,7 +4293,7 @@ export function useCustomers(f: CustomerFilters) {
 }
 
 export interface CustomerChannel {
-  id: string; value: string; label: string; date_rule: DateRule | null; sort_order: number | null; customers: number
+  id: string; value: string; label: string; rules: MasterRuleRow[]; sort_order: number | null; customers: number
 }
 export function useCustomerChannels() {
   return useQuery({
@@ -4294,7 +4326,7 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note'>> & { date_rule?: DateRule | null }
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note'>>
 export function useSaveCustomer() {
   const qc = useQueryClient()
   return useMutation({
@@ -4329,10 +4361,40 @@ export function useSeedCustomers() {
     onSettled: () => invalidateCustomers(qc),
   })
 }
+/**
+ * THAY TRỌN bộ mức của MỘT khách / MỘT kênh. Thay trọn chứ không sửa lẻ vì màn khai là một BẢNG
+ * nhỏ: người dùng thêm/xoá/sửa dòng rồi bấm Lưu một lần — sửa lẻ thì ca "xoá dòng chưa kịp gửi"
+ * sẽ để lại mức cũ đang chạy mà người khai tưởng đã bỏ.
+ */
+export function useSaveDateRules() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ scope, key, rules }: {
+      scope: 'CUSTOMER' | 'CHANNEL'; key: string
+      rules: Array<{ category: string | null; kind: string; value?: string | number | null }>
+    }) => apiClient.put(`/masterdata/date-rules/${scope}/${encodeURIComponent(key)}`, { rules })
+      .then(r => r.data.data as { rules: MasterRuleRow[]; applies_to: string }),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+
+/** Đặt MỘT mức (một loại hàng) cho NHIỀU khách — đường khai chính cho lần đầu. */
+export function useBulkSetDateRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      ids?: string[]; filter?: Record<string, unknown>
+      category: string | null; kind?: string | null; value?: string | number | null
+    }) => apiClient.patch('/masterdata/customers/bulk-rule', body)
+      .then(r => r.data.data as { updated: number; cleared: boolean }),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+
 export function useUpdateCustomerChannel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; date_rule?: DateRule | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
     onSettled: () => invalidateCustomers(qc),
   })

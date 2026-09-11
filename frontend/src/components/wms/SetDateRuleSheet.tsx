@@ -31,11 +31,19 @@ export interface DateRuleTarget {
   material_id: string | null
   material_code: string | null
   material_name?: string | null
+  material_category?: string | null
   trip_label?: string | null
   remaining: number             // SỐ BASE (hộp/chai/kg) — màn hình luôn quy về Thùng + lẻ để hiện
   units?: MatUnits | null       // quy cách của mã (base/entry/units_per_carton) để đổi Thùng ↔ base
   note?: string | null          // ghi chú CS (header_text) — hiện NGUYÊN VĂN
   current?: DateRule | null
+  // Khách hàng: người khai phải nhìn thấy mới quyết được mức (user 11/09, kèm ảnh màn hình cũ chỉ
+  // có 5 cột). `customer_known = false` ⇒ ship-to chưa có trong danh mục ⇒ không được cấp tự động.
+  customer_name?: string | null
+  channel_label?: string | null
+  customer_known?: boolean
+  warehouse_name?: string | null
+  delivery_date?: string | null
 }
 
 /** Một PHẦN của dòng: bao nhiêu hàng đi theo mức date nào. `kind: ''` = phần dư chưa khai. */
@@ -45,8 +53,14 @@ const MAX_PARTS = 10   // khớp CHECK `date_rule_valid()` ở DB
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
+// "FEFO" KHÔNG quyết định thứ tự lấy hàng — thứ tự do NGUYÊN TẮC LUÂN CHUYỂN của kho quyết
+// (utils/rotation.ts, khai ở form Kho / Loại kho). Ở đây nó chỉ có nghĩa "không đòi mốc nào", nên
+// nhãn phải nói đúng thế: kho đặt LIFO mà nhãn ghi "hạn ngắn nhất trước" là nói dối người đọc.
 const simpleText = (k: SimpleRuleKind, v: unknown): string =>
-  k === 'FEFO' ? 'FEFO' : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %` : `Chỉ định ${String(v ?? '')}`
+  k === 'FEFO' ? 'Không đòi mốc'
+    : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %`
+      : k === 'MIN_DAYS' ? `còn ≥ ${Number(v ?? 0)} ngày`
+        : `Chỉ định ${String(v ?? '')}`
 
 /**
  * Nhãn ngắn của quy tắc — dùng chung cho badge trên bảng dòng hàng. SL trong badge theo THÙNG.
@@ -60,19 +74,45 @@ export function dateRuleLabel(
 ): { text: string; cls: string; source?: string; review?: boolean } {
   if (!r && Number(dateRequired) > 0)
     return { text: `≥ ${Number(dateRequired)} % (SAP)`, cls: 'bg-sky-50 text-sky-700 border border-sky-200' }
-  if (!r) return { text: 'Chưa chốt', cls: 'bg-amber-100 text-amber-800' }
-  // AI đặt quy tắc này — người chốt tay và máy áp theo master phải phân biệt được trên MỌI bảng,
-  // nếu không người ta không biết con số trước mặt là quyết định của ai (11/09).
-  const source = r.source === 'CUSTOMER' ? 'theo khách' : r.source === 'CHANNEL' ? 'theo kênh' : undefined
-  const review = r.review === 'NO_STOCK'
+  if (!r) return { text: 'Chưa khai', cls: 'bg-amber-100 text-amber-800' }
+  // AI đặt quy tắc này — người khai tay, máy áp theo master và hệ thống tự đặt phải phân biệt được
+  // trên MỌI bảng, nếu không người ta không biết con số trước mặt là quyết định của ai (11/09).
+  const source = r.source === 'CUSTOMER' ? 'theo khách'
+    : r.source === 'CHANNEL' ? 'theo kênh'
+      : r.source === 'SYSTEM' ? (r.reason === 'NO_SHELF_LIFE' ? 'mã không có hạn dùng' : 'hệ thống đặt')
+        : undefined
+  const review = r.review != null
   if (r.kind === 'SPLIT')
     return {
       text: (r.parts ?? []).map(p => `${qtyEntryText(Number(p.qty_base), units)} ${simpleText(p.kind, p.value)}`).join(' · ') || 'Chia phần',
       cls: 'bg-indigo-100 text-indigo-700', source, review,
     }
-  if (r.kind === 'FEFO') return { text: 'FEFO', cls: 'bg-slate-100 text-slate-600', source, review }
+  if (r.kind === 'FEFO') return { text: 'Không đòi mốc', cls: 'bg-slate-100 text-slate-600', source, review }
   if (r.kind === 'MIN_PCT') return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700', source, review }
+  if (r.kind === 'MIN_DAYS') return { text: `còn ≥ ${Number(r.value ?? 0)} ngày`, cls: 'bg-teal-100 text-teal-700', source, review }
   return { text: `Chỉ định ${String(r.value ?? '')}`, cls: 'bg-purple-100 text-purple-700', source, review }
+}
+
+/**
+ * HAI CỘT RIÊNG cho bảng dòng hàng (user chốt 11/09: "đã yêu cầu % thì thôi yêu cầu ngày").
+ * Mỗi dòng chỉ điền MỘT trong hai; cột kia để gạch ngang. KHÔNG in số quy đổi ở đây — quy đổi chỉ
+ * có ích lúc KHAI (để thấy 60 % của mã hạn 45 ngày chỉ là 27 ngày), nhét vào bảng vận hành là bịa
+ * thêm một con số không ai yêu cầu.
+ */
+export function dateRuleCols(
+  r: DateRule | null | undefined, dateRequired?: number | null,
+): { pct: string | null; days: string | null } {
+  if (!r) return { pct: Number(dateRequired) > 0 ? `≥ ${Number(dateRequired)} %` : null, days: null }
+  const one = (k: SimpleRuleKind | 'SPLIT', v: unknown) =>
+    k === 'MIN_PCT' ? { pct: `≥ ${Number(v ?? 0)} %`, days: null }
+      : k === 'MIN_DAYS' ? { pct: null, days: `≥ ${Number(v ?? 0)} ngày` }
+        : { pct: null, days: null }
+  if (r.kind !== 'SPLIT') return one(r.kind, r.value)
+  // Chia phần: gộp từng thước lại, "40 ngày · 35 ngày" — vẫn không trộn hai cột vào nhau
+  const parts = r.parts ?? []
+  const pcts = parts.filter(p => p.kind === 'MIN_PCT').map(p => `${Number(p.value ?? 0)} %`)
+  const days = parts.filter(p => p.kind === 'MIN_DAYS').map(p => `${Number(p.value ?? 0)} ngày`)
+  return { pct: pcts.length ? `≥ ${pcts.join(' · ')}` : null, days: days.length ? `≥ ${days.join(' · ')}` : null }
 }
 
 /**
@@ -83,8 +123,9 @@ export function dateRuleLabel(
  */
 export function masterRuleLabel(r: DateRule | null | undefined): { text: string; cls: string } | null {
   if (!r) return null
-  if (r.kind === 'FEFO')    return { text: 'FEFO', cls: 'bg-slate-100 text-slate-600' }
-  if (r.kind === 'MIN_PCT') return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700' }
+  if (r.kind === 'FEFO')     return { text: 'Không đòi mốc', cls: 'bg-slate-100 text-slate-600' }
+  if (r.kind === 'MIN_PCT')  return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700' }
+  if (r.kind === 'MIN_DAYS') return { text: `còn ≥ ${Number(r.value ?? 0)} ngày`, cls: 'bg-teal-100 text-teal-700' }
   return { text: String(r.kind), cls: 'bg-slate-100 text-slate-600' }
 }
 
@@ -241,7 +282,7 @@ export function SetDateRuleSheet(p: {
     if (!k) return
     const val: string | number | null = k === 'FEFO'
       ? null
-      : k === 'MIN_PCT'
+      : k === 'MIN_PCT' || k === 'MIN_DAYS'
         ? (Number.isFinite(Number(bulkVal)) && bulkVal.trim() ? Math.round(Number(bulkVal)) : null)
         : (bulkVal.trim() || null)
     if (k !== 'FEFO' && val === null) return
@@ -288,11 +329,13 @@ export function SetDateRuleSheet(p: {
     <FormSheet
       open={p.open}
       onClose={p.onClose}
-      widthClass="sm:max-w-5xl"
-      title={<span className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-sky-600" />Chốt %Date lấy hàng</span>}
+      // TRỌN BỀ NGANG (user chốt 11/09): bản trước chiếm ~55 % màn mà bảng chỉ 5 cột và bỏ trống
+      // gần hết chiều cao — trong khi người khai cần nhìn KHÁCH HÀNG mới quyết được mức.
+      widthClass="sm:max-w-none sm:w-screen"
+      title={<span className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-sky-600" />Quy định date lấy hàng</span>}
       description={
         <span className="text-[11px] text-slate-500">
-          Hệ thống chỉ chia hàng cho dòng ĐÃ CHỐT — bỏ trống thì dòng đó không lên “Việc cần làm”.
+          Hệ thống chỉ chia hàng cho dòng ĐÃ KHAI — bỏ trống thì dòng đó không lên “Việc cần làm”.
           Mặc định cả dòng đi theo MỘT mức; muốn chia thì <b>sửa số lượng</b> của mức đó, phần còn lại
           sẽ hiện ra để khai tiếp.
         </span>
@@ -329,17 +372,20 @@ export function SetDateRuleSheet(p: {
             </label>
             <select value={bulkKind} onChange={e => setBulkKind(e.target.value as DateRuleKind)}
               className="h-9 sm:h-8 rounded-md border border-slate-300 bg-white px-2 text-[12px]">
-              <option value="MIN_PCT">%Date tối thiểu</option>
-              <option value="FEFO">FEFO — hạn ngắn nhất trước</option>
+              <option value="MIN_PCT">≥ % hạn dùng</option>
+              <option value="MIN_DAYS">≥ số ngày còn lại</option>
+              <option value="FEFO">Không đòi mốc</option>
               <option value="EXACT">Chỉ định NSX / HSD / lô / tem</option>
             </select>
             {bulkKind !== 'FEFO' && (
               <div className="relative">
                 <Input value={bulkVal} onChange={e => setBulkVal(e.target.value)}
-                  placeholder={bulkKind === 'MIN_PCT' ? '60' : 'YYYY-MM-DD hoặc mã lô / tem'}
-                  className={`h-9 sm:h-8 text-[12px] ${bulkKind === 'MIN_PCT' ? 'w-24 pr-6 text-right' : 'w-52'}`} />
-                {bulkKind === 'MIN_PCT' && (
-                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400 pointer-events-none">%</span>
+                  placeholder={bulkKind === 'MIN_PCT' ? '60' : bulkKind === 'MIN_DAYS' ? '35' : 'YYYY-MM-DD hoặc mã lô / tem'}
+                  className={`h-9 sm:h-8 text-[12px] ${bulkKind === 'EXACT' ? 'w-52' : 'w-24 pr-8 text-right'}`} />
+                {bulkKind !== 'EXACT' && (
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400 pointer-events-none">
+                    {bulkKind === 'MIN_PCT' ? '%' : 'ngày'}
+                  </span>
                 )}
               </div>
             )}
@@ -374,7 +420,12 @@ export function SetDateRuleSheet(p: {
                   <span className="text-[12px] font-semibold tabular-nums shrink-0">{qtyLabel(t.remaining, t.units)}</span>
                 </div>
                 {t.material_name && <div className="text-[10px] text-slate-500">{t.material_name}</div>}
-                <div className="text-[10px] text-slate-500">Chuyến {t.trip_label ?? '—'}</div>
+                <div className="text-[10px] text-slate-500">
+                  {t.customer_known === false
+                    ? <span className="text-amber-700">Khách chưa có trong danh mục</span>
+                    : <>{t.customer_name ?? '—'}{t.channel_label ? ` · ${t.channel_label}` : ' · chưa phân kênh'}</>}
+                </div>
+                <div className="text-[10px] text-slate-500">Chuyến {t.trip_label ?? '—'}{t.warehouse_name ? ` · ${t.warehouse_name}` : ''}</div>
                 {t.note && (
                   <div className="text-[11px] text-red-600 flex items-start gap-1">
                     <AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0" />
@@ -398,14 +449,14 @@ export function SetDateRuleSheet(p: {
 
         {/* Bảng dòng (từ sm trở lên) — mã · chuyến · SL · GHI CHÚ CS nguyên văn · ô chốt */}
         <div className="hidden sm:block rounded-lg border overflow-x-auto">
-          <table className="w-full min-w-[660px]">
+          <table className="w-full min-w-[1100px]">
             <thead>
               <tr className="bg-slate-50 border-b">
                 <th className="w-8 px-2 py-1.5">
                   <input type="checkbox" checked={allChecked} onChange={toggleAll} className="h-4 w-4 accent-sky-600"
                     title="Chọn tất cả các dòng" />
                 </th>
-                {['Mã hàng', 'Chuyến', 'Còn lấy', 'Ghi chú của CS', 'Quy tắc lấy hàng'].map(h => (
+                {['Mã hàng', 'Loại', 'Khách hàng', 'Kênh', 'Kho', 'Chuyến', 'Còn lấy', 'Đang có', 'Ghi chú của CS', 'Quy định date'].map(h => (
                   <th key={h} className="text-left text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -427,9 +478,35 @@ export function SetDateRuleSheet(p: {
                         </button>
                         {t.material_name && <div className="text-[9px] text-slate-400 max-w-[160px] truncate">{t.material_name}</div>}
                       </td>
+                      <td className="px-2 py-1.5 text-[10px] whitespace-nowrap text-slate-500">{t.material_category ?? '—'}</td>
+                      {/* Khách hàng — chưa có trong danh mục thì hổ phách, vì đó chính là lý do dòng
+                          này không được cấp mức tự động; bấm được sang danh mục để khai. */}
+                      <td className="px-2 py-1.5 text-[11px] whitespace-nowrap max-w-[160px] truncate">
+                        {t.customer_known === false
+                          ? <span className="text-amber-700">chưa có trong danh mục</span>
+                          : (t.customer_name ?? <span className="text-slate-300">—</span>)}
+                      </td>
+                      <td className="px-2 py-1.5 text-[11px] whitespace-nowrap">
+                        {t.channel_label ?? <span className="text-amber-700">chưa phân kênh</span>}
+                      </td>
+                      <td className="px-2 py-1.5 text-[10px] whitespace-nowrap text-slate-500 max-w-[120px] truncate">{t.warehouse_name ?? '—'}</td>
                       <td className="px-2 py-1.5 text-[11px] whitespace-nowrap text-slate-600">{t.trip_label ?? '—'}</td>
                       <td className="px-2 py-1.5 text-[11px] whitespace-nowrap text-right font-semibold tabular-nums">
                         {qtyLabel(t.remaining, t.units)}
+                      </td>
+                      {/* ĐANG CÓ: mức hiện hành + ai đặt — để không ghi đè nhầm thứ người khác vừa khai */}
+                      <td className="px-2 py-1.5 text-[11px] whitespace-nowrap">
+                        {(() => {
+                          // `null` tường minh: mức của VL06O ĐÃ được gấp vào `current` từ lúc dựng
+                          // target (xem toTargets ở trang Quy định date), nên ở đây không còn mức
+                          // kế thừa nào để truyền — và ratchet phải thấy đủ 3 tham số.
+                          const b = dateRuleLabel(t.current, t.units, null)
+                          return (
+                            <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${b.cls}`}>
+                              {b.text}{b.source && <span className="opacity-70">· {b.source}</span>}
+                            </span>
+                          )
+                        })()}
                       </td>
                       <td className="px-2 py-1.5 text-[11px]">
                         {t.note
@@ -450,7 +527,7 @@ export function SetDateRuleSheet(p: {
                     </tr>
                     {openStock && openStock === t.material_id && (
                       <tr key={`${t.item_id}-stock`} className="bg-sky-50/50 border-b">
-                        <td colSpan={6} className="px-2 py-2">
+                        <td colSpan={11} className="px-2 py-2">
                           <StockPanel materialId={t.material_id} warehouseId={p.warehouseId} />
                         </td>
                       </tr>
@@ -505,19 +582,23 @@ function RuleCell({ parts, onChange, remaining, units, partOk }: {
           <select value={p.kind}
             onChange={e => {
               const k = e.target.value as SimpleRuleKind | ''
-              patch(i, { kind: k, value: k === 'MIN_PCT' ? 60 : k === 'EXACT' ? '' : null })
+              patch(i, { kind: k, value: k === 'MIN_PCT' ? 60 : k === 'MIN_DAYS' ? 35 : k === 'EXACT' ? '' : null })
             }}
             className={`h-8 rounded-md border bg-white px-1.5 text-[11px] ${p.kind === '' ? 'border-amber-400 text-amber-700' : 'border-slate-300'}`}>
-            <option value="">— chưa chốt —</option>
-            <option value="FEFO">FEFO</option>
-            <option value="MIN_PCT">≥ %Date</option>
+            <option value="">— chưa khai —</option>
+            <option value="MIN_PCT">≥ % hạn</option>
+            <option value="MIN_DAYS">≥ số ngày</option>
+            <option value="FEFO">Không đòi mốc</option>
             <option value="EXACT">Chỉ định</option>
           </select>
-          {p.kind === 'MIN_PCT' && (
+          {(p.kind === 'MIN_PCT' || p.kind === 'MIN_DAYS') && (
             <div className="relative">
               <Input value={String(p.value ?? '')} onChange={e => patch(i, { value: e.target.value })}
-                placeholder="60" inputMode="numeric" className="h-8 w-[62px] pr-5 text-[11px] text-right" />
-              <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 pointer-events-none">%</span>
+                placeholder={p.kind === 'MIN_PCT' ? '60' : '35'} inputMode="numeric"
+                className={`h-8 text-[11px] text-right ${p.kind === 'MIN_PCT' ? 'w-[62px] pr-5' : 'w-[76px] pr-8'}`} />
+              <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 pointer-events-none">
+                {p.kind === 'MIN_PCT' ? '%' : 'ngày'}
+              </span>
             </div>
           )}
           {p.kind === 'EXACT' && (

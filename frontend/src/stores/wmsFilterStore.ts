@@ -180,6 +180,8 @@ interface CustomersFilters {
   hasChannel: '' | '1' | '0'
   warehouseId: string
   active: '' | '1' | '0'
+  // Đã khai mức quy định date chưa (đợt 2) — chỗ để tìm ra ai còn sót
+  hasRule: '' | '1' | '0'
   tab: 'list' | 'channels'
   page: number
   pageSize: number
@@ -276,8 +278,12 @@ interface DateRuleFilters {
   warehouseId: string
   state: '' | 'SET' | 'UNSET'
   search: string
-  // NGUỒN quy tắc (11/09): MANUAL | CUSTOMER | CHANNEL | SAP | UNSET | REVIEW (cần xem vì hết tồn)
+  // NGUỒN quy tắc (11/09): MANUAL | CUSTOMER | CHANNEL | SYSTEM | SAP | UNSET | REVIEW
   source: string[]
+  // LOẠI HÀNG của mã (đợt 2) — trục thứ hai của mức, khác Loại kho mà CHUYẾN chở
+  matCategory: string[]
+  // KIỂU quy định: MIN_PCT | MIN_DAYS | FEFO | EXACT | SPLIT
+  kind: string[]
   page: number; pageSize: number
 }
 
@@ -560,7 +566,8 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
-    dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[], page: 1, pageSize: 200 },
+    dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[],
+                    matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
     directedWork: { warehouseId: '', tab: 'LOWER' as const, gdoId: '', mine: true, hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
@@ -578,7 +585,8 @@ function initialFilters() {
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
     materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], dimsFilter: [], flagsFilter: [], page: 1, pageSize: 200 },
-    customers:  { search: '', channel: [], hasChannel: '' as const, warehouseId: '', active: '1' as const, tab: 'list' as const, page: 1, pageSize: 200 },
+    customers:  { search: '', channel: [], hasChannel: '' as const, warehouseId: '', active: '1' as const,
+                  hasRule: '' as const, tab: 'list' as const, page: 1, pageSize: 200 },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],

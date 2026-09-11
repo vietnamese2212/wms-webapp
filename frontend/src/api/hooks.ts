@@ -4307,6 +4307,12 @@ export function useCustomerChannels() {
 export interface CustomerCandidate {
   ship_to_code: string; name: string; erp_lines: number; trips: number; last_date: string | null
   exists_already: boolean; current_name: string | null; current_channel: string | null
+  current_warehouse_id: string | null
+  // GỢI Ý kho khớp (20260911h): 44/102 mã ship-to chờ nạp chính là kho đã có trong danh mục Kho.
+  // `match_by`: CODE = trùng mã kho · SHIPTO = nằm trong ship-to phụ của kho · NAME = trùng TÊN
+  // và tên đó duy nhất trong danh mục (khớp tên thì người nạp nên liếc lại trước khi tick).
+  wh_id: string | null; wh_code: string | null; wh_name: string | null
+  wh_mode: string | null; match_by: 'CODE' | 'SHIPTO' | 'NAME' | null
 }
 export function useCustomerSeedCandidates(enabled: boolean) {
   return useQuery({
@@ -4355,9 +4361,11 @@ export function useBulkUpdateCustomers() {
 export function useSeedCustomers() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ rows, preflight }: { rows: { ship_to_code: string; name: string }[]; preflight?: boolean }) =>
+    mutationFn: ({ rows, preflight }: {
+      rows: { ship_to_code: string; name: string; warehouse_id?: string | null }[]; preflight?: boolean
+    }) =>
       apiClient.post(`/masterdata/customers/seed${preflight ? '?preflight=1' : ''}`, { rows })
-        .then(r => r.data.data as { created?: number; skipped?: number } & Partial<UploadPreflight>),
+        .then(r => r.data.data as { created?: number; skipped?: number; linked?: number } & Partial<UploadPreflight>),
     onSettled: () => invalidateCustomers(qc),
   })
 }

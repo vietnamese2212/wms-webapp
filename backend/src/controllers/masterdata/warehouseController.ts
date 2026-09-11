@@ -33,6 +33,96 @@ function normShiptoCodes(input: unknown): string[] {
   return [...new Set((parseListParam(input) ?? []).map(s => s.toUpperCase()))]
 }
 
+// Ship-to phụ nay ĐẺ RA dòng trong danh mục Khách hàng, mà bảng đó có CHECK `^[A-Z0-9]+$` (≤ 50).
+// Hai cửa phải cùng một luật: không siết ở đây thì gõ "ABC-1" lưu được vào Kho rồi chết 23514 lúc
+// đồng bộ. Siết bây giờ không mất gì — đo 11/09: 0/153 kho đang khai cột này.
+function invalidShipto(codes: string[]): string | null {
+  return codes.find(c => !/^[A-Z0-9]+$/.test(c) || c.length > 50) ?? null
+}
+
+/**
+ * SHIP-TO PHỤ CỦA KHO ⇄ DANH MỤC KHÁCH HÀNG — hai cửa của MỘT sổ (đợt 2, §8 plan).
+ *
+ * `warehouseByShipto` tra danh mục Khách hàng TRƯỚC rồi mới tới `Warehouse.code`/`shipto_codes`.
+ * Khai ship-to phụ ở form Kho mà danh mục không biết ⇒ cùng một sự thật nằm hai nơi, và trang
+ * Khách hàng nói "khách ngoài" trong khi luật chuyển kho coi đó là kho nhà. Nay khai ở form Kho là
+ * danh mục tự có dòng trỏ về kho đó.
+ */
+async function shiptoCustomerClash(codes: string[], whId: string | null): Promise<string | null> {
+  if (!codes.length) return null
+  for (let i = 0; i < codes.length; i += 300) {   // `.in()` nằm trên URL — chunk 300
+    let q = supabase.from('Customer')
+      .select('ship_to_code, warehouse:Warehouse!warehouse_id(name)')
+      .in('ship_to_code', codes.slice(i, i + 300))
+      .not('warehouse_id', 'is', null)
+    if (whId) q = q.neq('warehouse_id', whId)
+    const { data } = await q
+    // PostgREST trả embed dạng MẢNG (kiểu sinh từ schema cũng vậy) — lấy phần tử đầu
+    const hit = ((data ?? []) as { ship_to_code: string; warehouse: { name: string }[] | null }[])[0]
+    if (hit)
+      return `Mã ship-to "${hit.ship_to_code}" đang trỏ về kho "${hit.warehouse?.[0]?.name ?? '?'}" trong danh mục Khách hàng — gỡ ở đó trước rồi khai lại.`
+  }
+  return null
+}
+
+/**
+ * Đồng bộ danh mục Khách hàng theo ship-to phụ vừa lưu.
+ * Thêm mã → khách đã có thì CHỈ trỏ kho (tên/kênh/mức của người khai luôn thắng), chưa có thì tạo.
+ * Bớt mã → **gỡ liên kết, KHÔNG xoá khách**: khách có thể đang mang kênh, mức date, ghi chú do
+ * người khai — xoá là mất thứ không dựng lại được, trong khi thứ cần bỏ chỉ là "kho nhận là ai".
+ *
+ * Chạy SAU khi ghi Kho thành công (PostgREST không có giao dịch bắc cầu 2 bảng). Hỏng ở đây thì
+ * lỗi nổi lên 500 chứ không nuốt — và luật chuyển kho vẫn chạy đúng nhờ bậc 2 đọc thẳng
+ * `Warehouse.shipto_codes`, nên trạng thái dở dang không làm sai nghiệp vụ, chỉ cần lưu lại.
+ */
+async function syncShiptoCustomers(
+  whId: string, whName: string, before: string[], after: string[], actor: string | null,
+): Promise<void> {
+  const add = after.filter(c => !before.includes(c))
+  const drop = before.filter(c => !after.includes(c))
+  if (!add.length && !drop.length) return
+  const t = new Date().toISOString()
+
+  if (add.length) {
+    const have = new Set<string>()
+    for (let i = 0; i < add.length; i += 300) {
+      const { data } = await supabase.from('Customer')
+        .select('ship_to_code').in('ship_to_code', add.slice(i, i + 300))
+      for (const c of ((data ?? []) as { ship_to_code: string }[])) have.add(c.ship_to_code)
+    }
+    const upd = add.filter(c => have.has(c))
+    for (let i = 0; i < upd.length; i += 300) {
+      const { error } = await supabase.from('Customer')
+        .update({ warehouse_id: whId, updated_by: actor, updated_at: t })
+        .in('ship_to_code', upd.slice(i, i + 300))
+      if (error) throw new Error(error.message)
+    }
+    const fresh = add.filter(c => !have.has(c))
+    for (let i = 0; i < fresh.length; i += 300) {   // 300: câu UPDATE bù dưới đây lọc trên URL
+      // Đua với `ensureCustomers` của upload Kế hoạch xuất (cũng tự tạo khách theo ship-to lạ):
+      // người thua nhường (ignoreDuplicates), rồi câu UPDATE bù trỏ kho cho dòng vừa có.
+      const { error } = await supabase.from('Customer').upsert(
+        fresh.slice(i, i + 300).map(code => ({
+          id: randomUUID(), ship_to_code: code, name: whName, warehouse_id: whId,
+          auto_created: true, is_active: true,
+          created_by: actor, updated_by: actor, created_at: t, updated_at: t,
+        })), { onConflict: 'ship_to_code', ignoreDuplicates: true })
+      if (error) throw new Error(error.message)
+      const { error: e2 } = await supabase.from('Customer')
+        .update({ warehouse_id: whId, updated_by: actor, updated_at: t })
+        .is('warehouse_id', null).in('ship_to_code', fresh.slice(i, i + 300))
+      if (e2) throw new Error(e2.message)
+    }
+  }
+
+  for (let i = 0; i < drop.length; i += 300) {
+    const { error } = await supabase.from('Customer')
+      .update({ warehouse_id: null, updated_by: actor, updated_at: t })
+      .eq('warehouse_id', whId).in('ship_to_code', drop.slice(i, i + 300))
+    if (error) throw new Error(error.message)
+  }
+}
+
 // Chặn 1 mã ship-to thuộc >1 kho (gây mơ hồ auto-detect chuyển kho). Trả mã đụng đầu tiên (nếu có).
 async function findShiptoClash(codes: string[], code: string, excludeId?: string): Promise<string | null> {
   const all = [...new Set([code.toUpperCase().trim(), ...codes].filter(Boolean))]
@@ -159,8 +249,12 @@ export async function createWarehouse(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Chế độ quản tồn không hợp lệ (QR, QTY hoặc NONE)')
 
     const shiptoArr = normShiptoCodes(shipto_codes)
+    const badShipto = invalidShipto(shiptoArr)
+    if (badShipto) return fail(res, 400, 'VALIDATION_ERROR', `Mã ship-to "${badShipto}" không hợp lệ — chỉ chữ IN HOA và số, tối đa 50 ký tự`)
     const clash = await findShiptoClash(shiptoArr, String(code))
     if (clash) return fail(res, 409, 'DUPLICATE', `Mã ship-to "${clash}" đã thuộc kho khác`)
+    const custClash = await shiptoCustomerClash(shiptoArr, null)
+    if (custClash) return fail(res, 409, 'DUPLICATE', custClash)
     const nmsx = normNmsx(nmsx_code)
     const nmsxClash = await findNmsxClash(nmsx)
     if (nmsxClash) return fail(res, 409, 'DUPLICATE', `Mã NMSX "${nmsxClash}" đã thuộc kho khác`)
@@ -223,6 +317,8 @@ export async function createWarehouse(req: Request, res: Response) {
         // Bảng chưa apply migration → tạo kho vẫn thành công (không chặn nghiệp vụ vì cấu hình)
         if (seedErr) console.error('seed warehouse_type_configs:', seedErr.message)
       }
+      // Ship-to phụ khai lúc TẠO kho cũng phải vào danh mục Khách hàng (cùng luật với lúc sửa)
+      if (shiptoArr.length) await syncShiptoCustomers(newId, String(name).trim(), [], shiptoArr, actor)
     }
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -279,13 +375,26 @@ export async function updateWarehouse(req: Request, res: Response) {
       if (nmsxClash) return fail(res, 409, 'DUPLICATE', `Mã NMSX "${nmsxClash}" đã thuộc kho khác`)
       patch.nmsx_code = nmsx
     }
+    // Ship-to phụ: đổi ở đây là đổi cả danh mục Khách hàng (xem `syncShiptoCustomers`). Tính sẵn
+    // "trước → sau" ở đây, còn ghi Customer thì để SAU khi câu UPDATE Kho thành công.
+    let shiptoPlan: { before: string[]; after: string[]; name: string } | null = null
     if (shipto_codes !== undefined) {
       const shiptoArr = normShiptoCodes(shipto_codes)
-      const { data: cur } = await supabase.from('Warehouse').select('code').eq('id', req.params.id).maybeSingle()
-      const code = (cur as { code?: string } | null)?.code ?? ''
-      const clash = await findShiptoClash(shiptoArr, code, req.params.id)
+      const badShipto = invalidShipto(shiptoArr)
+      if (badShipto) return fail(res, 400, 'VALIDATION_ERROR', `Mã ship-to "${badShipto}" không hợp lệ — chỉ chữ IN HOA và số, tối đa 50 ký tự`)
+      const { data: cur } = await supabase.from('Warehouse')
+        .select('code, name, shipto_codes').eq('id', req.params.id).maybeSingle()
+      const w = (cur as { code?: string; name?: string; shipto_codes?: string[] | null } | null)
+      const clash = await findShiptoClash(shiptoArr, w?.code ?? '', req.params.id)
       if (clash) return fail(res, 409, 'DUPLICATE', `Mã ship-to "${clash}" đã thuộc kho khác`)
+      const custClash = await shiptoCustomerClash(shiptoArr, req.params.id)
+      if (custClash) return fail(res, 409, 'DUPLICATE', custClash)
       patch.shipto_codes = shiptoArr
+      shiptoPlan = {
+        before: normShiptoCodes(w?.shipto_codes ?? []),
+        after: shiptoArr,
+        name: String(patch.name ?? w?.name ?? '').trim() || (w?.code ?? ''),
+      }
     }
     if (warehouse_type !== undefined) {
       if (!['CENTRAL', 'NPP'].includes(warehouse_type))
@@ -329,6 +438,8 @@ export async function updateWarehouse(req: Request, res: Response) {
     // phải xoá cache ngay, không thì user tick "bắt buộc" mà lượt quét kế vẫn lọt qua.
     invalidatePutawayConfig(req.params.id)
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
+    if (shiptoPlan)
+      await syncShiptoCustomers(req.params.id, shiptoPlan.name, shiptoPlan.before, shiptoPlan.after, req.user?.name || null)
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

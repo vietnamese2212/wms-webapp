@@ -52,6 +52,8 @@ async function cleanup() {
   }
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B})`)
   await restWrite('DeliverySlot', 'DELETE', `date=eq.${DAY}&time_from=eq.${SLOT_TIME}&warehouse_id=eq.${WH.id}`).catch(() => {})
+  // Khách tự sinh theo ship-to lạ (ensureCustomers, 11/09) — không dọn thì rác lại danh mục thật
+  await restWrite('Customer', 'DELETE', 'ship_to_code=eq.QATMS').catch(() => {})
 }
 const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   id: randomUUID(), od_number: doNo, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,

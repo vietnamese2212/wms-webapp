@@ -217,6 +217,25 @@ function stockWarning(
   return null
 }
 
+/**
+ * Ô lọc của màn khai. Khai ở MỨC MODULE, không lồng trong component cha — component khai bên trong
+ * thân component bị dựng lại mỗi lần render nên ô nhập mất focus sau đúng một ký tự (bẫy đã ghi ở
+ * memory `settings-form-standard`). `<select>` gốc của trình duyệt thay cho dropdown tự chế: màn
+ * này nằm trong FormSheet (Radix modal) — panel absolute/fixed bên trong sẽ bị cắt hoặc chết click.
+ */
+function PickFilter(p: {
+  label: string; value: string; onChange: (v: string) => void; options: string[]; all: string
+}) {
+  return (
+    <select value={p.value} onChange={e => p.onChange(e.target.value)} title={p.label}
+      className={`h-9 sm:h-8 max-w-[190px] rounded-md border bg-white px-2 text-[12px] ${
+        p.value === p.all ? 'border-slate-300 text-slate-600' : 'border-sky-400 text-sky-800 font-medium'}`}>
+      <option value={p.all}>{p.label}: tất cả</option>
+      {p.options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  )
+}
+
 export function SetDateRuleSheet(p: {
   open: boolean
   onClose: () => void
@@ -232,19 +251,59 @@ export function SetDateRuleSheet(p: {
   // Ô TICK từng dòng (user 10/09: "checkbox tất cả và checkbox chỗ nào cần") — chỉ điều khiển nút
   // "Áp"; nút Lưu vẫn lưu MỌI dòng đã có quy tắc, để sửa lẻ xong không bị mất vì quên tick.
   const [checked, setChecked] = useState<Set<string>>(new Set())
+  // BỘ LỌC TRONG CHÍNH MÀN KHAI (user bắt 11/09: "tới 1000 dòng đấy"). Chọn-tất-cả ở trang Quy định
+  // date đưa vào đây trọn một ngày xuất — không lọc được thì người khai phải cuộn qua cả nghìn dòng
+  // để tìm đúng nhóm cần áp. Lọc CLIENT: dòng đã nằm sẵn trong bộ nhớ, không gọi thêm máy chủ.
+  const ALL = '__all__'
+  const [q, setQ] = useState('')
+  const [fCat, setFCat] = useState(ALL)
+  const [fCust, setFCust] = useState(ALL)
+  const [fTrip, setFTrip] = useState(ALL)
+  const [fState, setFState] = useState<'ALL' | 'UNSET' | 'SET'>('ALL')
 
   useEffect(() => {
     if (!p.open) return
     setParts(Object.fromEntries(p.targets.map(t => [t.item_id, toParts(t.current, t.remaining)])))
     setOpenStock(null)
+    setQ(''); setFCat(ALL); setFCust(ALL); setFTrip(ALL); setFState('ALL')
     // TICK SẴN TẤT CẢ: người dùng vừa tick chọn đúng những dòng này ở trang Chốt %Date rồi mới bấm
     // mở, bắt tick LẦN HAI trong dialog là bắt làm lại việc vừa làm (tự đo 10/09 — chính tôi vấp).
     // Muốn áp cho ít dòng hơn thì bỏ tick, rẻ hơn nhiều so với tick lại từ đầu.
     setChecked(new Set(p.targets.map(t => t.item_id)))
   }, [p.open, p.targets])
 
-  const allChecked = p.targets.length > 0 && checked.size === p.targets.length
-  const toggleAll = () => setChecked(allChecked ? new Set() : new Set(p.targets.map(t => t.item_id)))
+  const uniq = (vals: (string | null | undefined)[]) =>
+    [...new Set(vals.map(v => String(v ?? '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'))
+  const optCats = useMemo(() => uniq(p.targets.map(t => t.material_category)), [p.targets])
+  const optCusts = useMemo(() => uniq(p.targets.map(t => t.customer_name)), [p.targets])
+  const optTrips = useMemo(() => uniq(p.targets.map(t => t.trip_label)), [p.targets])
+
+  // Dòng ĐANG HIỆN. Lọc "đã/chưa khai" đọc `current` (trạng thái LÚC MỞ), KHÔNG đọc ô đang gõ —
+  // nếu không, đang lọc "Chưa khai" mà gõ xong một dòng là dòng đó biến mất ngay dưới con trỏ.
+  const view = useMemo(() => {
+    const term = q.trim().toLowerCase()
+    return p.targets.filter(t => {
+      if (fCat !== ALL && String(t.material_category ?? '') !== fCat) return false
+      if (fCust !== ALL && String(t.customer_name ?? '') !== fCust) return false
+      if (fTrip !== ALL && String(t.trip_label ?? '') !== fTrip) return false
+      if (fState === 'SET' && !t.current) return false
+      if (fState === 'UNSET' && t.current) return false
+      if (term && ![t.material_code, t.material_name, t.customer_name, t.trip_label, t.note, t.warehouse_name, t.channel_label]
+        .some(v => String(v ?? '').toLowerCase().includes(term))) return false
+      return true
+    })
+  }, [p.targets, q, fCat, fCust, fTrip, fState])
+  const filtering = view.length !== p.targets.length
+
+  // Tick/áp CHỈ chạm dòng đang hiện — lọc xong áp nhầm vào dòng không nhìn thấy là lớp lỗi tệ nhất
+  // của bộ lọc (người khai tưởng mình vừa áp cho 8 dòng, thực ra đè lên 900).
+  const shownChecked = useMemo(() => view.filter(t => checked.has(t.item_id)), [view, checked])
+  const allChecked = view.length > 0 && shownChecked.length === view.length
+  const toggleAll = () => setChecked(s => {
+    const n = new Set(s)
+    for (const t of view) allChecked ? n.delete(t.item_id) : n.add(t.item_id)
+    return n
+  })
   const toggleOne = (id: string) => setChecked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   const partsOf = (t: DateRuleTarget): Part[] => parts[t.item_id] ?? toParts(t.current, t.remaining)
@@ -288,7 +347,7 @@ export function SetDateRuleSheet(p: {
     if (k !== 'FEFO' && val === null) return
     setParts(s => ({
       ...s,
-      ...Object.fromEntries(p.targets.filter(t => checked.has(t.item_id))
+      ...Object.fromEntries(shownChecked
         .map(t => [t.item_id, [{ qty_base: Math.max(0, t.remaining), kind: k, value: val }] as Part[]])),
     }))
   }
@@ -342,7 +401,11 @@ export function SetDateRuleSheet(p: {
       }
       footer={
         <div className="flex items-center gap-2 w-full">
-          <span className="text-[11px] text-slate-500">Đã chốt {nDone}/{p.targets.length} dòng</span>
+          {/* Lưu áp cho MỌI dòng đã khai, kể cả dòng đang bị bộ lọc giấu — phải nói ra, không thì
+              người lọc xong bấm Lưu sẽ tưởng mình chỉ lưu phần đang nhìn thấy. */}
+          <span className="text-[11px] text-slate-500">
+            Đã chốt {nDone}/{p.targets.length} dòng{filtering ? ' (tính cả dòng đang bị lọc ẩn)' : ''}
+          </span>
           {blocked.length > 0 && (
             <span className="text-[11px] text-red-600 font-medium">· {blocked.length} dòng không còn hàng đạt mức đã chọn</span>
           )}
@@ -356,6 +419,37 @@ export function SetDateRuleSheet(p: {
       }
     >
       <div className="space-y-3">
+        {/* LỌC NGAY TRONG MÀN KHAI — "chọn tất cả" ở trang Quy định date đưa vào đây trọn một ngày
+            xuất, có thể tới cả nghìn dòng (user 11/09). Không lọc được thì người khai phải cuộn
+            tìm đúng nhóm cần áp. Lọc client trên dòng đã nằm sẵn trong bộ nhớ — 0 lời gọi thêm. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Input value={q} onChange={e => setQ(e.target.value)}
+            placeholder="Tìm mã hàng, tên hàng, khách, chuyến, ghi chú CS…"
+            className="h-9 sm:h-8 text-[12px] w-full sm:w-72" />
+          {/* Chỉ hiện ô lọc khi nó CHIA ĐƯỢC tập dòng — mở từ trang chuyến thì cả bảng cùng một
+              chuyến, cùng một khách, bày ra ô chọn chỉ có một giá trị là bày ra nút không làm gì. */}
+          {optCats.length > 1 && <PickFilter label="Loại hàng" value={fCat} onChange={setFCat} options={optCats} all={ALL} />}
+          {optCusts.length > 1 && <PickFilter label="Khách" value={fCust} onChange={setFCust} options={optCusts} all={ALL} />}
+          {optTrips.length > 1 && <PickFilter label="Chuyến" value={fTrip} onChange={setFTrip} options={optTrips} all={ALL} />}
+          <select value={fState} onChange={e => setFState(e.target.value as 'ALL' | 'UNSET' | 'SET')}
+            title="Trạng thái khai lúc mở màn"
+            className={`h-9 sm:h-8 rounded-md border bg-white px-2 text-[12px] ${
+              fState === 'ALL' ? 'border-slate-300 text-slate-600' : 'border-sky-400 text-sky-800 font-medium'}`}>
+            <option value="ALL">Trạng thái: tất cả</option>
+            <option value="UNSET">Chưa khai</option>
+            <option value="SET">Đã khai</option>
+          </select>
+          {filtering && (
+            <Button variant="ghost" size="sm" className="h-9 sm:h-8 text-[11px] text-slate-500"
+              onClick={() => { setQ(''); setFCat(ALL); setFCust(ALL); setFTrip(ALL); setFState('ALL') }}>
+              Xoá lọc
+            </Button>
+          )}
+          <span className="ml-auto text-[11px] text-slate-500 tabular-nums">
+            Hiện {nf(view.length)}/{nf(p.targets.length)} dòng
+          </span>
+        </div>
+
         {/* ÁP NHANH — đây là HÀNH ĐỘNG lên các dòng đã tick, KHÔNG phải số liệu của đơn. Bản trước
             để ô "60" trần trên nền xám cạnh bảng nên nhìn hệt một cột số lượng (user bắt 10/09):
             nay đóng khung xanh, có tiêu đề, nút màu đặc và câu nhắc khi chưa tick dòng nào.
@@ -368,7 +462,7 @@ export function SetDateRuleSheet(p: {
             {/* Điện thoại không có hàng tiêu đề bảng nên ô "chọn tất cả" ở đây; desktop dùng ô đầu bảng */}
             <label className="sm:hidden flex items-center gap-1.5 text-[11px] font-medium text-slate-700 cursor-pointer">
               <input type="checkbox" checked={allChecked} onChange={toggleAll} className="h-4 w-4 accent-sky-600" />
-              Chọn tất cả {p.targets.length}
+              Chọn {filtering ? `${view.length} dòng đang hiện` : `tất cả ${p.targets.length}`}
             </label>
             <select value={bulkKind} onChange={e => setBulkKind(e.target.value as DateRuleKind)}
               className="h-9 sm:h-8 rounded-md border border-slate-300 bg-white px-2 text-[12px]">
@@ -390,11 +484,13 @@ export function SetDateRuleSheet(p: {
               </div>
             )}
             <Button size="sm" className="h-9 sm:h-8 bg-sky-600 hover:bg-sky-700 text-white"
-              onClick={applyAll} disabled={checked.size === 0}>
-              Áp cho {checked.size} dòng
+              onClick={applyAll} disabled={shownChecked.length === 0}>
+              Áp cho {shownChecked.length} dòng{filtering ? ' đang hiện' : ''}
             </Button>
-            {checked.size === 0 && (
-              <span className="text-[11px] text-slate-500">Tick ô vuông ở đầu dòng bên dưới để chọn</span>
+            {shownChecked.length === 0 && (
+              <span className="text-[11px] text-slate-500">
+                {view.length === 0 ? 'Bộ lọc đang không khớp dòng nào' : 'Tick ô vuông ở đầu dòng bên dưới để chọn'}
+              </span>
             )}
           </div>
         </div>
@@ -404,7 +500,12 @@ export function SetDateRuleSheet(p: {
             thì đọc được nhưng người ta phải ĐOÁN là có thể kéo, mà đây là màn BẮT BUỘC đọc ghi chú
             rồi mới quyết. Thẻ hiện đủ mọi trường, không giấu cột nào. */}
         <div className="sm:hidden space-y-2">
-          {p.targets.map(t => {
+          {view.length === 0 && (
+            <div className="rounded-lg border border-dashed p-4 text-center text-[11px] text-slate-400">
+              Không có dòng nào khớp bộ lọc.
+            </div>
+          )}
+          {view.map(t => {
             const { ps, warn, partOk } = renderRule(t)
             return (
               <div key={t.item_id} className={`rounded-lg border p-2 space-y-1.5 ${warn?.tone === 'bad' ? 'border-red-300 bg-red-50/60' : ''}`}>
@@ -421,9 +522,12 @@ export function SetDateRuleSheet(p: {
                 </div>
                 {t.material_name && <div className="text-[10px] text-slate-500">{t.material_name}</div>}
                 <div className="text-[10px] text-slate-500">
+                  {t.customer_name ?? '—'}
                   {t.customer_known === false
-                    ? <span className="text-amber-700">Khách chưa có trong danh mục</span>
-                    : <>{t.customer_name ?? '—'}{t.channel_label ? ` · ${t.channel_label}` : ' · chưa phân kênh'}</>}
+                    ? <span className="text-amber-700"> · chưa có trong danh mục</span>
+                    : t.channel_label
+                      ? ` · ${t.channel_label}`
+                      : <span className="text-amber-700"> · chưa phân kênh</span>}
                 </div>
                 <div className="text-[10px] text-slate-500">Chuyến {t.trip_label ?? '—'}{t.warehouse_name ? ` · ${t.warehouse_name}` : ''}</div>
                 {t.note && (
@@ -454,7 +558,7 @@ export function SetDateRuleSheet(p: {
               <tr className="bg-slate-50 border-b">
                 <th className="w-8 px-2 py-1.5">
                   <input type="checkbox" checked={allChecked} onChange={toggleAll} className="h-4 w-4 accent-sky-600"
-                    title="Chọn tất cả các dòng" />
+                    title={filtering ? 'Chọn các dòng ĐANG HIỆN (bộ lọc đang bật)' : 'Chọn tất cả các dòng'} />
                 </th>
                 {['Mã hàng', 'Loại', 'Khách hàng', 'Kênh', 'Kho', 'Chuyến', 'Còn lấy', 'Đang có', 'Ghi chú của CS', 'Quy định date'].map(h => (
                   <th key={h} className="text-left text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">{h}</th>
@@ -462,7 +566,12 @@ export function SetDateRuleSheet(p: {
               </tr>
             </thead>
             <tbody>
-              {p.targets.map(t => {
+              {view.length === 0 && (
+                <tr><td colSpan={11} className="px-2 py-6 text-center text-[11px] text-slate-400">
+                  Không có dòng nào khớp bộ lọc.
+                </td></tr>
+              )}
+              {view.map(t => {
                 const { ps, warn, partOk } = renderRule(t)
                 return (
                   <Fragment key={t.item_id}>
@@ -479,15 +588,24 @@ export function SetDateRuleSheet(p: {
                         {t.material_name && <div className="text-[9px] text-slate-400 max-w-[160px] truncate">{t.material_name}</div>}
                       </td>
                       <td className="px-2 py-1.5 text-[10px] whitespace-nowrap text-slate-500">{t.material_category ?? '—'}</td>
-                      {/* Khách hàng — chưa có trong danh mục thì hổ phách, vì đó chính là lý do dòng
-                          này không được cấp mức tự động; bấm được sang danh mục để khai. */}
-                      <td className="px-2 py-1.5 text-[11px] whitespace-nowrap max-w-[160px] truncate">
-                        {t.customer_known === false
-                          ? <span className="text-amber-700">chưa có trong danh mục</span>
-                          : (t.customer_name ?? <span className="text-slate-300">—</span>)}
+                      {/* Khách hàng — TÊN đứng trước, "chưa có trong danh mục" chỉ là chú thích phụ
+                          bên dưới (user bắt 11/09: "cái này có tên NPP mà?"). Bản trước in chữ đó ĐÈ
+                          LÊN chỗ đáng lẽ là tên, nên cả bảng đọc như thể không biết đang chốt cho ai
+                          — trong khi tên NPP nằm sẵn trên đơn. Hổ phách vẫn giữ: đó chính là lý do
+                          dòng này không được cấp mức tự động. */}
+                      <td className="px-2 py-1.5 text-[11px] whitespace-nowrap max-w-[180px]">
+                        <div className="truncate">{t.customer_name ?? <span className="text-slate-300">—</span>}</div>
+                        {t.customer_known === false && (
+                          <div className="text-[9px] text-amber-700">chưa có trong danh mục</div>
+                        )}
                       </td>
                       <td className="px-2 py-1.5 text-[11px] whitespace-nowrap">
-                        {t.channel_label ?? <span className="text-amber-700">chưa phân kênh</span>}
+                        {t.channel_label
+                          ?? (t.customer_known === false
+                            // Khách chưa vào danh mục thì KHÔNG có kênh để mà thiếu — kêu "chưa phân
+                            // kênh" ở đây là hai cảnh báo cho cùng một việc, cột bên đã nói rồi.
+                            ? <span className="text-slate-300">—</span>
+                            : <span className="text-amber-700">chưa phân kênh</span>)}
                       </td>
                       <td className="px-2 py-1.5 text-[10px] whitespace-nowrap text-slate-500 max-w-[120px] truncate">{t.warehouse_name ?? '—'}</td>
                       <td className="px-2 py-1.5 text-[11px] whitespace-nowrap text-slate-600">{t.trip_label ?? '—'}</td>

@@ -54,6 +54,10 @@ async function cleanup() {
   }
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${WH_CODE}*`)
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QADRVDO*`)
+  // KHÁCH HÀNG TỰ SINH (11/09): upload/derive gặp ship-to lạ thì `ensureCustomers` tự tạo dòng
+  // trong danh mục Khách hàng. Cleaner cũ không biết nên mỗi lượt chạy để lại rác trong danh mục
+  // thật — đúng lớp "bảng CHA sống sót sau khi con bị xoá" đã vấp ở GDO 23/07.
+  await restWrite('Customer', 'DELETE', 'ship_to_code=in.(QADRVSHIP,QACAP)').catch(() => {})
   // pool tồn dựng cho case nhặt lẻ (12c) — xóa theo kho test trước khi xóa kho
   const whs = await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)
   for (const w of whs) await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})

@@ -550,6 +550,84 @@ try {
       `${rCats.s} n=${catRows.length}`)
   }
 
+  // ═══ [11] NẠP TỪ SAP GỢI Ý TRỎ KHO + SHIP-TO PHỤ CỦA KHO GHI SANG DANH MỤC (§8 plan, 11/09) ═══
+  // Hai cửa cùng một sổ: `warehouseByShipto` tra danh mục Khách hàng TRƯỚC rồi mới tới
+  // `Warehouse.code`/`shipto_codes`. Khai một nơi mà nơi kia không biết là hai bản của một sự thật.
+  {
+    // (a) Ứng viên nạp phải NHẬN RA kho: kho fixture `QA58D` có mã trùng ship-to QA58D của chuyến
+    const rCand = await api('/masterdata/customers/seed-candidates?days=30')
+    const cand = (rCand.j?.data?.rows ?? []).find(r => r.ship_to_code === SHIP.D)
+    check('[11a] Ứng viên nạp gợi ý sẵn KHO KHỚP + nói rõ khớp bằng gì',
+      rCand.s === 200 && !!cand?.wh_id && cand.match_by === 'CODE' && cand.wh_id === whDest.id,
+      `${rCand.s} wh=${cand?.wh_name ?? '—'} by=${cand?.match_by ?? '—'}`)
+
+    // (b) Nạp KÈM trỏ kho — ghi đúng cái người tick, và bước kiểm-trước phải nói ra hệ quả
+    await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIP.NEW}`).catch(() => {})
+    const seedRow = [{ ship_to_code: SHIP.NEW, name: 'KH nạp thử', warehouse_id: whDest.id }]
+    const rPre = await api('/masterdata/customers/seed?preflight=1', 'POST', { rows: seedRow })
+    const extras = (rPre.j?.data?.extra ?? []).map(e => `${e.label}=${e.value}`).join(' | ')
+    check('[11b] Kiểm-trước nói rõ SỐ KHÁCH SẼ TRỎ KHO (trỏ kho = đổi luật chuyển kho, không im lặng)',
+      rPre.s === 200 && /Trỏ về kho[^|]*=1/.test(extras), `${rPre.s} ${extras.slice(0, 160)}`)
+    const rSeed = await api('/masterdata/customers/seed', 'POST', { rows: seedRow })
+    const cNew = (await restAll('Customer', `select=warehouse_id&ship_to_code=eq.${SHIP.NEW}`))[0]
+    check('[11c] Nạp xong khách MỚI trỏ đúng kho đã tick', rSeed.s === 201 && cNew?.warehouse_id === whDest.id,
+      `${rSeed.s} wh=${cNew?.warehouse_id === whDest.id}`)
+
+    // (c) Kho lạ → chặn cả lượt. Trỏ nhầm kho là đổi nơi nhận của khách đó, không phải lỗi nhỏ.
+    const rSeedBad = await api('/masterdata/customers/seed', 'POST', {
+      rows: [{ ship_to_code: `${T}ZZ`, name: 'x', warehouse_id: randomUUID() }],
+    })
+    check('[11d] Nạp trỏ vào kho KHÔNG có thật → 404, không ghi gì',
+      rSeedBad.s === 404 && (await restAll('Customer', `select=id&ship_to_code=eq.${T}ZZ`)).length === 0,
+      `${rSeedBad.s} ${err(rSeedBad)}`)
+
+    // (d) Ship-to phụ khai ở form Kho → danh mục Khách hàng tự có dòng trỏ về kho đó
+    const SUB = `${T}SUB`
+    await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SUB}`).catch(() => {})
+    const rAdd = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { shipto_codes: [SUB] })
+    const cSub = (await restAll('Customer', `select=id,warehouse_id,auto_created&ship_to_code=eq.${SUB}`))[0]
+    check('[11e] Khai ship-to phụ ở form Kho → danh mục Khách hàng có dòng trỏ đúng kho',
+      rAdd.s === 200 && cSub?.warehouse_id === wh.id && cSub?.auto_created === true,
+      `${rAdd.s} wh=${cSub?.warehouse_id === wh.id} auto=${cSub?.auto_created}`)
+
+    // (e) Mã đó đang thuộc kho khác trong danh mục → 409, KHÔNG im lặng cướp
+    const rSteal = await api(`/masterdata/warehouses/${whDest.id}`, 'PUT', { shipto_codes: [SUB] })
+    const cStill = (await restAll('Customer', `select=warehouse_id&ship_to_code=eq.${SUB}`))[0]
+    check('[11f] Ship-to đã trỏ kho khác trong danh mục → 409, liên kết cũ giữ nguyên',
+      rSteal.s === 409 && cStill?.warehouse_id === wh.id, `${rSteal.s} ${err(rSteal)}`)
+
+    // (f) Bỏ mã khỏi form Kho = GỠ liên kết, KHÔNG xoá khách (khách có thể mang kênh/mức/ghi chú)
+    await setRules('CUSTOMER', cSub.id, [{ category: null, kind: 'MIN_DAYS', value: 30 }])
+    const rDrop = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { shipto_codes: [] })
+    const cAfter = (await restAll('Customer', `select=id,warehouse_id&ship_to_code=eq.${SUB}`))[0]
+    const rulesLeft = await ruleRowsOf('CUSTOMER', cSub.id)
+    check('[11g] Bỏ ship-to phụ = GỠ liên kết, khách và mức đã khai VẪN CÒN (không xoá)',
+      rDrop.s === 200 && !!cAfter && cAfter.warehouse_id === null && rulesLeft.length === 1,
+      `${rDrop.s} còn_khách=${!!cAfter} wh=${cAfter?.warehouse_id} mức=${rulesLeft.length}`)
+    await restWrite('date_rule_master', 'DELETE', `scope=eq.CUSTOMER&scope_key=eq.${cSub.id}`).catch(() => {})
+
+    // (g) Hai cửa cùng một luật hình dạng mã: Customer có CHECK `^[A-Z0-9]+$`, form Kho phải chặn
+    // TRƯỚC, không thì lưu được vào Kho rồi chết 23514 lúc đồng bộ.
+    const rBadCode = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { shipto_codes: ['QA58-X'] })
+    check('[11h] Mã ship-to sai dạng bị chặn ngay ở form Kho (cùng luật với danh mục Khách hàng)',
+      rBadCode.s === 400, `${rBadCode.s} ${err(rBadCode)}`)
+
+    // (h) Cột "Khách hàng" màn Quy định date phải hiện TÊN NPP CÓ SẴN TRÊN ĐƠN. Bản trước lấy
+    // thuần `Customer.name` nên khách chưa nạp là cả cột in "chưa có trong danh mục" — màn hình vứt
+    // đi dữ liệu đang cầm trong tay và người chốt không biết đang chốt cho ai (user bắt 11/09).
+    // Dựng ĐÚNG ca đó: gỡ khách C khỏi danh mục rồi hỏi lại chính dòng của khách C.
+    const lineUrl = `/wms/outbound/date-rule-lines?date_from=${today}&date_to=${today}&warehouse_id=${wh.id}&page_size=200`
+    const custC = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP.C}`))[0]
+    if (custC) await restWrite('date_rule_master', 'DELETE', `scope=eq.CUSTOMER&scope_key=eq.${custC.id}`).catch(() => {})
+    await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIP.C}`).catch(() => {})
+    const rLines = await api(lineUrl)
+    const lnC = (rLines.j?.data?.rows ?? []).find(r => r.shipto_party === SHIP.C)
+    check('[11i] Khách CHƯA có trong danh mục: màn vẫn hiện TÊN NPP trên đơn (không nuốt mất danh tính)',
+      rLines.s === 200 && !!lnC && lnC.customer_known === false
+        && !!lnC.customer_name && lnC.customer_name === lnC.distributor_name,
+      `${rLines.s} known=${lnC?.customer_known} name=${lnC?.customer_name ?? '—'} npp=${lnC?.distributor_name ?? '—'}`)
+  }
+
   // ═══ [8] Nhật ký quản trị ═════════════════════════════════════════════════════════════════════
   const audit = await restAll('admin_audit_events', "select=action&action=in.(CUSTOMER_BULK,CHANNEL_UPDATE)&order=created_at.desc&limit=20")
   check('[8a] Đổi danh mục Khách hàng / Kênh có vết Nhật ký quản trị',

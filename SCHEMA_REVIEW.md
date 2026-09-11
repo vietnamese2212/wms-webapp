@@ -473,3 +473,16 @@ created_at, updated_at
   vẫn đo được NGÀY — cắt theo mỗi `shelf_life_days` là cắt oan cả một đơn vị (phép kiểm mirror `shelfLife`
   bắt ra ca này lần chạy đầu). Bản `g` trả LẠI `customer_has_channel` bên cạnh `customer_has_rule`: hai cờ
   trả lời hai câu khác nhau, gộp làm một thì cột "Khách · Kênh" ghi "chưa phân kênh" cho MỌI dòng (QA 58 [5d]).
+- `20260911h_customer_seed_warehouse.sql` — **`customer_seed_candidates` trả thêm KHO KHỚP**: `wh_id` ·
+  `wh_code` · `wh_name` · `wh_mode` · `match_by` (`CODE` mã kho | `SHIPTO` ship-to phụ | `NAME` trùng tên và
+  tên đó DUY NHẤT trong danh mục) + `current_warehouse_id`. Đo lại 11/09 sau khi apply: **102 ứng viên · 44
+  gợi ý (20 CODE · 0 SHIPTO · 24 NAME) · 3 kho trong số đó có quản tồn**. Gợi ý thôi — màn Nạp tick từng
+  dòng mới ghi: trỏ kho là đổi NƠI NHẬN của khách (chuyến tới đó thành chuyển kho), máy không quyết hộ.
+- `20260911i_date_rule_lines_npp_name.sql` — **cột "Khách hàng" hiện TÊN NPP có sẵn trên đơn**:
+  `customer_name = coalesce(Customer.name, OutboundDelivery.distributor_name)`. Bản cũ lấy thuần danh mục nên
+  khách chưa nạp là cả cột in "chưa có trong danh mục" — màn vứt đi dữ liệu đang cầm trong tay và người chốt
+  không biết đang chốt cho ai (user bắt 11/09 kèm ảnh; tên NPP đã nằm sẵn trong CTE để phục vụ tìm kiếm).
+  Kèm **DROP overload CŨ 10 tham số** (bản v2 của `…b` sót lại sau khi `…e` drop bản 9 rồi create bản 12):
+  PostgREST chọn hàm THEO TÊN THAM SỐ, một lời gọi quên `p_mat_categories`/`p_kinds` là rơi trúng bản cũ và
+  màn lặng lẽ quay về v2. ⚠️ Còn **một overload kiểu này chưa xử: `hr_employees_page`** (bản `p_jt_name` cũ
+  bên cạnh bản `p_jt_id` + `p_status`) — chưa đụng vì ngoài phạm vi đợt này.

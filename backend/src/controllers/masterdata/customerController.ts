@@ -134,6 +134,11 @@ export async function customerSeedCandidates(req: Request, res: Response) {
 // ─── POST /masterdata/customers/seed ──────────────────────────────────────────────────────────
 // 2 pha như mọi upload: `?preflight=1` chỉ đếm, không ghi. Idempotent theo ship_to_code —
 // khách đã có thì GIỮ NGUYÊN (tên/kênh do người khai luôn thắng dữ liệu nạp).
+//
+// TRỎ KHO NGAY LÚC NẠP (đợt 2, §8): đo staging 11/09 — 44/102 mã ship-to chờ nạp CHÍNH LÀ kho đã
+// có trong danh mục Kho. RPC gợi ý sẵn (`wh_id`/`match_by`), màn Nạp cho người xác nhận từng dòng,
+// còn đây chỉ ghi cái người ta đã tick. KHÔNG tự suy lại ở BE: gợi ý mà máy tự áp thì người nạp
+// không có chỗ nào để nói "không, khách này không phải kho của mình".
 export async function seedCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { rows?: unknown }
@@ -141,14 +146,32 @@ export async function seedCustomers(req: Request, res: Response) {
     if (!list.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn khách hàng nào để nạp')
     if (list.length > 2000) return fail(res, 400, 'VALIDATION_ERROR', 'Tối đa 2.000 khách mỗi lần nạp')
 
-    const wanted = new Map<string, string>()
+    const wanted = new Map<string, { name: string; warehouse_id: string | null }>()
     const badCodes: string[] = []
-    for (const r of list as Array<{ ship_to_code?: unknown; name?: unknown }>) {
+    for (const r of list as Array<{ ship_to_code?: unknown; name?: unknown; warehouse_id?: unknown }>) {
       const code = normShipto(r?.ship_to_code)
       if (!code) { badCodes.push(String(r?.ship_to_code ?? '')); continue }
-      if (!wanted.has(code)) wanted.set(code, String(r?.name ?? '').trim().slice(0, 200) || code)
+      const wh = String(r?.warehouse_id ?? '').trim()
+      if (wh && (wh.length > 100 || searchLooksLikeInjection(wh)))
+        return fail(res, 400, 'BAD_ID', `Mã kho không hợp lệ ở dòng "${code}"`)
+      if (!wanted.has(code))
+        wanted.set(code, { name: String(r?.name ?? '').trim().slice(0, 200) || code, warehouse_id: wh || null })
     }
     if (!wanted.size) return fail(res, 400, 'VALIDATION_ERROR', 'Không có mã ship-to hợp lệ nào trong danh sách')
+
+    // Kho phải CÓ THẬT — một lời gọi cho cả danh sách (số kho khác nhau bị chặn bởi số KHO, không
+    // bởi số dòng nạp). Kho lạ = chặn cả lượt: trỏ nhầm kho là đổi cả luật chuyển kho của khách đó.
+    const whIds = [...new Set([...wanted.values()].map(v => v.warehouse_id).filter((v): v is string => !!v))]
+    const whInfo = new Map<string, { code: string; name: string; inventory_mode: string | null }>()
+    for (let i = 0; i < whIds.length; i += 300) {
+      const { data } = await supabase.from('Warehouse')
+        .select('id, code, name, inventory_mode').in('id', whIds.slice(i, i + 300))
+      for (const w of ((data ?? []) as { id: string; code: string; name: string; inventory_mode: string | null }[]))
+        whInfo.set(w.id, { code: w.code, name: w.name, inventory_mode: w.inventory_mode })
+    }
+    const missingWh = whIds.filter(id => !whInfo.has(id))
+    if (missingWh.length)
+      return fail(res, 404, 'NOT_FOUND', `Không tìm thấy ${missingWh.length} kho được chọn để trỏ — tải lại danh sách rồi nạp lại`)
 
     const codes = [...wanted.keys()]
     const existing = new Set<string>()
@@ -158,6 +181,15 @@ export async function seedCustomers(req: Request, res: Response) {
     }
     const toCreate = codes.filter(c => !existing.has(c))
 
+    // Trỏ kho là quyết định VẬN HÀNH, không phải cột dữ liệu thường: khách trỏ vào kho CÓ QUẢN TỒN
+    // thì chuyến tới đó thành CHUYỂN KHO và kho nhận phải xác nhận trong app (luật đợt 1). Kho
+    // inventory_mode = NONE thì tài xế vẫn tự hoàn thành như cũ. Nói rõ con số ở bước kiểm-trước.
+    const linked = toCreate.filter(c => wanted.get(c)!.warehouse_id)
+    const linkedTracked = linked.filter(c => {
+      const m = whInfo.get(wanted.get(c)!.warehouse_id!)?.inventory_mode
+      return m != null && m !== 'NONE'
+    })
+
     if (isPreflight(req)) return ok(res, buildPreflight({
       unit: 'khách hàng', total: wanted.size,
       toInsert: toCreate.length, toUpdate: 0, skipped: existing.size,
@@ -166,16 +198,19 @@ export async function seedCustomers(req: Request, res: Response) {
       extra: [
         { label: 'Đã có trong danh mục (giữ nguyên)', value: existing.size },
         { label: 'Khách mới — CHƯA phân kênh nên chưa cấp %Date tự động', value: toCreate.length, warn: toCreate.length > 0 },
+        { label: 'Trỏ về kho trong danh mục (nhận diện chuyển kho)', value: linked.length },
+        { label: 'Trong đó kho CÓ QUẢN TỒN ⇒ kho nhận phải xác nhận trong app', value: linkedTracked.length, warn: linkedTracked.length > 0 },
       ],
     }))
 
-    if (!toCreate.length) return ok(res, { created: 0, skipped: existing.size })
+    if (!toCreate.length) return ok(res, { created: 0, skipped: existing.size, linked: 0 })
     const t = now()
     const actor = req.user?.name ?? null
     let created = 0
     for (let i = 0; i < toCreate.length; i += 500) {
       const payload = toCreate.slice(i, i + 500).map(code => ({
-        id: randomUUID(), ship_to_code: code, name: wanted.get(code)!,
+        id: randomUUID(), ship_to_code: code, name: wanted.get(code)!.name,
+        warehouse_id: wanted.get(code)!.warehouse_id,
         auto_created: false, is_active: true,
         created_by: actor, updated_by: actor, created_at: t, updated_at: t,
       }))
@@ -186,10 +221,10 @@ export async function seedCustomers(req: Request, res: Response) {
     }
     await logAdmin(req, {
       action: 'CUSTOMER_SEED', target_type: 'Customer',
-      target_label: `Nạp ${created} khách hàng từ dữ liệu SAP`,
-      after: { created, skipped: existing.size },
+      target_label: `Nạp ${created} khách hàng từ dữ liệu SAP${linked.length ? ` (${linked.length} trỏ kho)` : ''}`,
+      after: { created, skipped: existing.size, linked: linked.length },
     })
-    return ok(res, { created, skipped: existing.size }, 201)
+    return ok(res, { created, skipped: existing.size, linked: linked.length }, 201)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

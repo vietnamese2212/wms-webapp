@@ -50,6 +50,8 @@ async function cleanup() {
   await restWrite('reconcile_tasks', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`).catch(() => {})
   await restWrite('khvc_lines', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`)
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B})`)
+  // Khách tự sinh theo ship-to lạ (ensureCustomers, 11/09) — không dọn thì rác lại danh mục thật
+  await restWrite('Customer', 'DELETE', 'ship_to_code=eq.QAAWSHIP').catch(() => {})
 }
 const gdoOf = async gc => (await restAll('GroupDeliveryOrder',
   `select=id,status,awaiting_sap,awaiting_dos,plan_dropped&group_code=eq.${gc}`))[0] ?? null

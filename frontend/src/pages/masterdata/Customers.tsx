@@ -754,8 +754,11 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
   const { data, isLoading } = useCustomerSeedCandidates(true)
   const seed = useSeedCustomers()
   const [picked, setPicked] = useState<Set<string> | null>(null)   // null = chưa đụng → mặc định chọn hết dòng MỚI
+  // TRỎ KHO: mã nào được nối về kho trong danh mục Kho. Mặc định nhận HẾT gợi ý — vì đó đúng là
+  // hiện trạng (44/102 mã ship-to chính là kho nhà), còn dòng nào sai thì bỏ tick ngay tại đây.
+  const [linked, setLinked] = useState<Set<string> | null>(null)
   const [pre, setPre] = useState<UploadPreflight | null>(null)
-  const [done, setDone] = useState<{ created: number; skipped: number } | null>(null)
+  const [done, setDone] = useState<{ created: number; skipped: number; linked: number } | null>(null)
   const [err, setErr] = useState('')
 
   const rows = data?.rows ?? []
@@ -766,27 +769,54 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
     const n = new Set(sel); n.has(code) ? n.delete(code) : n.add(code); return n
   })
 
+  const suggested = useMemo(() => newRows.filter(r => r.wh_id), [newRows])
+  const link = linked ?? new Set(suggested.map(r => r.ship_to_code))
+  const toggleLink = (code: string) => setLinked(() => {
+    const n = new Set(link); n.has(code) ? n.delete(code) : n.add(code); return n
+  })
+  const allLinked = suggested.length > 0 && suggested.every(r => link.has(r.ship_to_code))
+  const toggleAllLinks = () => setLinked(allLinked ? new Set() : new Set(suggested.map(r => r.ship_to_code)))
+  const nByName = useMemo(() => suggested.filter(r => r.match_by === 'NAME').length, [suggested])
+
   const run = async (preflight: boolean) => {
     setErr('')
     try {
-      const res = await seed.mutateAsync({ rows: chosen.map(r => ({ ship_to_code: r.ship_to_code, name: r.name })), preflight })
+      const res = await seed.mutateAsync({
+        rows: chosen.map(r => ({
+          ship_to_code: r.ship_to_code, name: r.name,
+          warehouse_id: link.has(r.ship_to_code) ? r.wh_id : null,
+        })),
+        preflight,
+      })
       if (preflight) setPre(res as UploadPreflight)
-      else { setDone({ created: res.created ?? 0, skipped: res.skipped ?? 0 }); setPre(null) }
+      else { setDone({ created: res.created ?? 0, skipped: res.skipped ?? 0, linked: res.linked ?? 0 }); setPre(null) }
     } catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không nạp được') }
   }
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="w-[95vw] max-w-3xl h-[90dvh] sm:h-[80vh] flex flex-col">
+      {/* Rộng hơn bản trước: thêm cột "Trỏ về kho" (tên kho + nhãn khớp bằng gì) vào bảng 7 cột cũ */}
+      <DialogContent className="w-[95vw] max-w-5xl h-[90dvh] sm:h-[80vh] flex flex-col">
         <DialogHeader><DialogTitle className="text-base">Nạp khách hàng từ dữ liệu SAP</DialogTitle></DialogHeader>
         <p className="text-xs text-slate-500">
           Mã ship-to đã thấy trong VL06O hoặc trên chuyến. Khách nạp vào để TRỐNG kênh — phải phân kênh
           thì %Date mới được cấp tự động.
         </p>
+        {/* Gợi ý trỏ kho — nói rõ có bao nhiêu mã khớp và khớp bằng gì, để người nạp biết chỗ nào
+            đáng liếc lại. Khớp TÊN là suy đoán yếu hơn khớp mã nên tách số ra, không gộp làm một. */}
+        {suggested.length > 0 && (
+          <p className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-md px-2 py-1.5">
+            <b>{nf(suggested.length)}</b> mã ship-to khớp kho đã có trong danh mục Kho
+            {nByName > 0 && <> (trong đó <b>{nf(nByName)}</b> khớp theo TÊN — nên liếc lại)</>} — đã tick sẵn
+            ở cột “Trỏ về kho”. Khách trỏ kho là <b>nơi nhận nội bộ</b>: chuyến tới đó thành chuyển kho,
+            và nếu kho đó có quản tồn thì kho nhận phải xác nhận trong app.
+          </p>
+        )}
         {err && <p className="text-[11px] text-red-600">{err}</p>}
         {done ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-sm">
             <p className="font-medium text-green-700">Đã nạp {nf(done.created)} khách hàng mới.</p>
+            {done.linked > 0 && <p className="text-slate-600">{nf(done.linked)} khách được trỏ về kho trong danh mục.</p>}
             <p className="text-slate-500">{nf(done.skipped)} khách đã có trong danh mục — giữ nguyên.</p>
           </div>
         ) : pre ? (
@@ -802,10 +832,19 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
                   {['', 'Mã ship-to', 'Tên', 'Dòng VL06O', 'Chuyến', 'Gần nhất', 'Trạng thái'].map((h, i) => (
                     <TableHead key={i} className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">{h}</TableHead>
                   ))}
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">
+                    <span className="flex items-center gap-1.5">
+                      {suggested.length > 0 && (
+                        <input type="checkbox" checked={allLinked} onChange={toggleAllLinks}
+                          className="h-3.5 w-3.5 accent-sky-600" title="Tick/bỏ tick mọi gợi ý trỏ kho" />
+                      )}
+                      Trỏ về kho
+                    </span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && <TableRow><TableCell colSpan={7} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
+                {isLoading && <TableRow><TableCell colSpan={8} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
                 {rows.map((r: CustomerCandidate) => (
                   <TableRow key={r.ship_to_code} className={r.exists_already ? 'text-slate-400' : ''}>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -821,6 +860,25 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
                       {r.exists_already
                         ? <StatusBadge tone="slate">Đã có</StatusBadge>
                         : <StatusBadge tone="green">Mới</StatusBadge>}
+                    </TableCell>
+                    {/* TRỎ VỀ KHO — gợi ý của máy, người tick mới ghi. Dòng "Đã có" không đụng tới
+                        (tên/kênh/kho của người khai luôn thắng dữ liệu nạp) nên chỉ hiện kho đang
+                        trỏ, muốn đổi thì dùng thao tác hàng loạt "Trỏ kho" ngoài danh mục. */}
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {r.exists_already ? (
+                        <span className="text-[10px] text-slate-400">
+                          {r.current_warehouse_id ? 'đã trỏ kho' : '—'}
+                        </span>
+                      ) : r.wh_id ? (
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" checked={link.has(r.ship_to_code)} disabled={!sel.has(r.ship_to_code)}
+                            onChange={() => toggleLink(r.ship_to_code)} className="h-4 w-4 accent-sky-600" />
+                          <span className="text-[10px] max-w-[150px] truncate">{r.wh_name}</span>
+                          <StatusBadge tone={r.match_by === 'NAME' ? 'amber' : 'blue'}>
+                            {r.match_by === 'CODE' ? 'trùng mã' : r.match_by === 'SHIPTO' ? 'ship-to phụ' : 'trùng tên'}
+                          </StatusBadge>
+                        </label>
+                      ) : <span className="text-slate-300 text-[10px]">—</span>}
                     </TableCell>
                   </TableRow>
                 ))}

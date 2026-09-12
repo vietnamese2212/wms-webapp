@@ -840,6 +840,12 @@ export interface DirectedRow {
   // không để việc biến mất không lời (xe hạ đã hạ pallet đó xuống rồi)
   skipped: boolean
   skip_reason: string | null
+  // NHẬN việc chung (12/09) — khoá mềm 10 phút; claimed_by = Employee.id
+  claim_active: boolean
+  claimed_by: string | null
+  claimed_by_name: string | null
+  // Kho KHÔNG có xe hạ riêng: dòng chờ hạ ở bảng xe chuyển là MỘT việc "Hạ & đưa ra"
+  combined_lower: boolean
   stage_done: boolean              // xong Ở CHẶNG NÀY ⇒ gạch ngang, vẫn ở lại bảng
   all_scanned: boolean
   last_at: string | null
@@ -849,6 +855,7 @@ export interface DirectedRow {
 export interface DirectedBoard {
   rows: DirectedRow[]
   totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number }
+  settings?: { separate_lowering_forklift?: boolean }
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
 }

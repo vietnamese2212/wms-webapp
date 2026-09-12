@@ -767,7 +767,9 @@ export async function cancelGdoTasks(gdoId: string, reason: string, actor: strin
 }
 
 // ─── NÚT "✓ XONG" (xe nâng tự đánh dấu — phòng quên) ───────────────────────────────────────────
-export type ConfirmStage = 'LOWER' | 'MOVE'
+// BOTH (12/09) = kho KHÔNG có xe hạ riêng (`Warehouse.separate_lowering_forklift = false`): một người vừa
+// hạ vừa chuyển bấm MỘT nút "Hạ & đưa ra" — trước đó phải đổi tab hai lần + bấm hai lần cho một pallet.
+export type ConfirmStage = 'LOWER' | 'MOVE' | 'BOTH'
 export interface ConfirmResult { ok: true; changed: number; moved_pallets: number }
 
 /**
@@ -789,6 +791,23 @@ export async function confirmTasks(
   if (!rows.length) return { ok: false, status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy việc (có thể đã bị huỷ hoặc chuyến đã kết thúc)' }
   const open = rows.filter(r => r.status === 'PENDING')
   if (!open.length) return { ok: false, status: 409, code: 'ALREADY_DONE', message: 'Việc này đã xong hoặc không còn hiệu lực' }
+  if (stage === 'BOTH') {
+    // Hạ (chỉ những việc cần hạ mà chưa hạ) rồi đưa ra — hai chặng, hai vết, một cú bấm.
+    if (!undo) {
+      const needLower = open.filter(r => r.needs_lower && !r.lowered_at).map(r => r.id)
+      if (needLower.length) {
+        const low = await confirmTasks(needLower, 'LOWER', false, actor)
+        if (!low.ok) return low
+      }
+    }
+    const mv = await confirmTasks(open.map(r => r.id), 'MOVE', undo, actor)
+    if (undo && mv.ok) {
+      // Bấm nhầm "Hạ & đưa ra" thì bỏ CẢ HAI mốc — để lại mốc "đã hạ" là kể một câu chuyện không có thật
+      const lowered = open.filter(r => r.needs_lower && r.lowered_at).map(r => r.id)
+      if (lowered.length) await confirmTasks(lowered, 'LOWER', true, actor)
+    }
+    return mv
+  }
   if (stage === 'LOWER' && open.some(r => !r.needs_lower))
     return { ok: false, status: 400, code: 'NOT_LOWERABLE', message: 'Có việc không thuộc diện phải hạ' }
 
@@ -838,4 +857,46 @@ export async function confirmTasks(
     note: undo ? `bỏ đánh dấu ${stage}` : null,
   })))
   return { ok: true, changed, moved_pallets: movedPallets }
+}
+
+// ─── NÚT "NHẬN" — việc CHUNG có người cầm (12/09) ─────────────────────────────────────────────
+// Bảng "Cần hạ" là việc chung toàn kho: hai xe hạ cùng ca nhìn cùng dòng số 1 và cùng chạy tới cùng ô.
+// Nhận = KHOÁ MỀM `CLAIM_TTL_MS`: không bấm ✓ Xong trong hạn thì việc tự nhả (xe hỏng, đổi ca…), không
+// ai bị kẹt; và KHÔNG chặn người khác bấm ✓ Xong (Hướng dẫn là chỉ đường, không phải rào).
+export const CLAIM_TTL_MS = 10 * 60_000
+export interface ClaimResult { ok: true; changed: number; held_by: string | null }
+
+export async function claimTasks(
+  taskIds: string[], actorId: string | null, actor: string | null, undo: boolean,
+): Promise<ClaimResult | { ok: false; status: number; code: string; message: string }> {
+  if (!taskIds.length) return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Chưa chọn việc nào' }
+  if (!actorId) return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Không xác định được người nhận việc' }
+  const at = now()
+  if (undo) {
+    const { data } = await supabase.from('wms_tasks')
+      .update({ claimed_by: null, claimed_at: null, updated_at: at })
+      .in('id', taskIds).eq('claimed_by', actorId).limit(MAX_CONFIRM).select('id')
+    const ids = ((data ?? []) as { id: string }[]).map(r => r.id)
+    await logEvents(ids.map(id => ({ task_id: id, event: 'UNCLAIMED', actor })))
+    return { ok: true, changed: ids.length, held_by: null }
+  }
+  // CAS: chỉ giành được việc KHÔNG ai giữ, hoặc người giữ đã quá hạn, hoặc chính mình (bấm lại = gia hạn)
+  const stale = new Date(Date.now() - CLAIM_TTL_MS).toISOString()
+  const { data } = await supabase.from('wms_tasks')
+    .update({ claimed_by: actorId, claimed_at: at, updated_at: at })
+    .in('id', taskIds).eq('status', 'PENDING').limit(MAX_CONFIRM)   // trần khai: một lần bấm = một nhóm ô
+    .or(`claimed_by.is.null,claimed_at.lt.${stale},claimed_by.eq.${actorId}`)
+    .select('id')
+  const ids = ((data ?? []) as { id: string }[]).map(r => r.id)
+  await logEvents(ids.map(id => ({ task_id: id, event: 'CLAIMED', actor })))
+  let heldBy: string | null = null
+  if (!ids.length) {
+    // Thua: nói ai đang giữ để người bấm biết đường đi việc khác
+    const { data: holder } = await supabase.from('wms_tasks')
+      .select('claimed_by, holder:Employee!claimed_by(name)')
+      .in('id', taskIds).not('claimed_by', 'is', null).limit(1)
+    const h = ((holder ?? []) as unknown as { claimed_by: string | null; holder: { name?: string | null } | null }[])[0]
+    heldBy = h?.holder?.name ?? h?.claimed_by ?? null
+  }
+  return { ok: true, changed: ids.length, held_by: heldBy }
 }

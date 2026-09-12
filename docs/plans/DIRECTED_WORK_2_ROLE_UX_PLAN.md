@@ -5,7 +5,9 @@
 > (không phải vuốt kéo nhiều). Mục đích: vị trí liên quan nắm được họ cần làm gì thì show lên app ở
 > Việc cần làm; cái nào việc chung, cái nào việc riêng làm rõ."*
 >
-> Trạng thái: **CHỜ USER DUYỆT** — chưa code dòng nào. Số đo lấy trên staging 12/09.
+> Trạng thái (12/09 chiều): user duyệt "Ok làm đi" → **Đợt A XONG** (`c2183b32`, migration 20260912d/e) ·
+> **Đợt B XONG** (migration 20260912f; B2 dùng `claimed_by/claimed_at` thay cột riêng, B3 = cờ kho
+> `separate_lowering_forklift`) · **Đợt C CHƯA** — làm khi user gật tiếp. Số đo lấy trên staging 12/09.
 
 ## 0. Hiện trạng đo được (không suy diễn)
 

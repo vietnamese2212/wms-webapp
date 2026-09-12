@@ -534,3 +534,10 @@ created_at, updated_at
   quét" in `qtyLabel` cho pallet lấy MỘT PHẦN (trước đó RPC có `qty_base` nhưng màn chỉ in "1 pallet · mã").
   Việc bị bỏ đứng nhóm riêng (đuôi `|S` trong `group_key`), `can_confirm=false`, xếp cuối; totals thêm `skipped`.
   Cùng chữ ký 4 tham số ⇒ CREATE OR REPLACE thay đúng bản cũ, không đẻ overload (gói 00 `function_overloads()` gác).
+- `20260912f_directed_work_claim_combined.sql` — **Việc cần làm đợt B: NHẬN việc chung + kho không có xe hạ riêng.**
+  `wms_tasks.claimed_by/claimed_at` = khoá MỀM 10 phút (quá hạn coi như nhả; KHÔNG chặn người khác ✓ Xong —
+  Hướng dẫn là chỉ đường, không phải rào); CAS ở `claimTasks()` (`claimed_by IS NULL OR quá hạn OR chính mình`),
+  thua thì trả `held_by` tên người đang giữ. `Warehouse.separate_lowering_forklift` (mặc định TRUE = hành vi cũ):
+  FALSE ⇒ RPC trả `combined_lower=true`, dòng chờ hạ ở bảng xe chuyển bấm được, stage `BOTH` ghi cả `lowered_at`
+  + `moved_at` (undo bỏ cả hai), tab Cần hạ ẩn. RPC `directed_board` trả thêm `claim_active · claimed_by ·
+  claimed_by_name · combined_lower` và `settings.separate_lowering_forklift`. Gói QA 57 [12f–12g4] gác.

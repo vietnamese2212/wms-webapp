@@ -775,7 +775,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; copy_from_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -784,7 +784,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -4118,17 +4118,27 @@ export function useDirectedBoard(
   })
 }
 
-/** Nút "✓ Xong" — gửi CẢ NHÓM việc của một vị trí trong một lần bấm. */
+/** Nút "✓ Xong" — gửi CẢ NHÓM việc của một vị trí trong một lần bấm. BOTH = "Hạ & đưa ra" (kho không xe hạ riêng). */
 export function useConfirmTasks() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { task_ids: string[]; stage: 'LOWER' | 'MOVE'; undo?: boolean }) =>
+    mutationFn: (body: { task_ids: string[]; stage: 'LOWER' | 'MOVE' | 'BOTH'; undo?: boolean }) =>
       apiClient.post('/wms/directed/tasks/confirm', body).then(r => r.data.data as { changed: number; moved_pallets: number }),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['directed-board'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
       qc.invalidateQueries({ queryKey: ['inventory'] })   // LOOSE_FEED chuyển pallet thật trong tồn
     },
+  })
+}
+
+/** Nút "Nhận" việc chung (12/09) — khoá mềm 10 phút, không chặn người khác bấm ✓ Xong. */
+export function useClaimTasks() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { task_ids: string[]; undo?: boolean }) =>
+      apiClient.post('/wms/directed/tasks/claim', body).then(r => r.data.data as { changed: number; held_by: string | null }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['directed-board'] }),
   })
 }
 

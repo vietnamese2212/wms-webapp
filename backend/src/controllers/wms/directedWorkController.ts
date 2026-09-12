@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { searchLooksLikeInjection } from '../../utils/search'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
-import { planGdoTasks, confirmTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
+import { planGdoTasks, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -63,18 +63,40 @@ export async function confirm(req: Request, res: Response) {
     if (ids.length > 200) return fail(res, 400, 'VALIDATION_ERROR', 'Tối đa 200 việc mỗi lần bấm')
     if (ids.some(id => badId(id))) return fail(res, 400, 'BAD_ID', 'Mã việc không hợp lệ')
     const stage = String(body.stage ?? '').toUpperCase()
-    if (stage !== 'LOWER' && stage !== 'MOVE')
-      return fail(res, 400, 'VALIDATION_ERROR', 'Giai đoạn không hợp lệ (LOWER / MOVE)')
+    if (stage !== 'LOWER' && stage !== 'MOVE' && stage !== 'BOTH')
+      return fail(res, 400, 'VALIDATION_ERROR', 'Giai đoạn không hợp lệ (LOWER / MOVE / BOTH)')
 
-    // PHẠM VI KHO: việc thuộc kho ngoài phạm vi thì không được đánh dấu (id việc là uuid đoán được)
-    const myWhs = scopeWhIds(req)
-    if (myWhs) {
-      const { data: whs } = await supabase.from('wms_tasks').select('warehouse_id').in('id', ids as string[]).limit(MAX_CONFIRM)
-      const outside = ((whs ?? []) as { warehouse_id: string }[]).filter(t => !myWhs.includes(t.warehouse_id))
-      if (outside.length) return fail(res, 'Có việc thuộc kho ngoài phạm vi được giao', 403)
-    }
+    if (!(await tasksInScope(req, res, ids as string[]))) return
 
     const r = await confirmTasks(ids as string[], stage as ConfirmStage, body.undo === true, req.user?.name ?? null)
+    if (!r.ok) return fail(res, r.status, r.code, r.message)
+    return ok(res, r)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/** PHẠM VI KHO: việc thuộc kho ngoài phạm vi thì không được đánh dấu / nhận (id việc là uuid đoán được). */
+async function tasksInScope(req: Request, res: Response, ids: string[]): Promise<boolean> {
+  const myWhs = scopeWhIds(req)
+  if (!myWhs) return true
+  const { data: whs } = await supabase.from('wms_tasks').select('warehouse_id').in('id', ids).limit(MAX_CONFIRM)
+  const outside = ((whs ?? []) as { warehouse_id: string }[]).filter(t => !myWhs.includes(t.warehouse_id))
+  if (outside.length) { fail(res, 'Có việc thuộc kho ngoài phạm vi được giao', 403); return false }
+  return true
+}
+
+/**
+ * POST /wms/directed/tasks/claim { task_ids, undo? } — nút "Nhận" việc chung (12/09).
+ * Cùng quyền `confirm`: nhận là bước trước của ✓ Xong, không phải năng lực riêng.
+ */
+export async function claim(req: Request, res: Response) {
+  try {
+    const body = (req.body ?? {}) as { task_ids?: unknown; undo?: unknown }
+    const ids = Array.isArray(body.task_ids) ? body.task_ids : []
+    if (!ids.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn việc nào')
+    if (ids.length > MAX_CONFIRM) return fail(res, 400, 'VALIDATION_ERROR', `Tối đa ${MAX_CONFIRM} việc mỗi lần bấm`)
+    if (ids.some(id => badId(id))) return fail(res, 400, 'BAD_ID', 'Mã việc không hợp lệ')
+    if (!(await tasksInScope(req, res, ids as string[]))) return
+    const r = await claimTasks(ids as string[], req.user?.sub ?? null, req.user?.name ?? null, body.undo === true)
     if (!r.ok) return fail(res, r.status, r.code, r.message)
     return ok(res, r)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }

@@ -258,6 +258,8 @@ router.patch('/slotting/zone-config/:id',                     requirePerm('slott
 // ── VIỆC CẦN LÀM (Directed Work 1c, 10/09) — 3 bảng theo vai ──────────────────────────────────
 router.get('/directed/board',                                 requirePerm('directed_work', 'view'),    directed.getBoard)
 router.post('/directed/tasks/confirm',                        requirePerm('directed_work', 'confirm'), directed.confirm)
+router.post('/directed/tasks/claim',                          requirePerm('directed_work', 'confirm'),                    // "Nhận" việc chung = bước trước của ✓ Xong (12/09)
+  validate({ body: z.object({ task_ids: z.array(zText(1, 100)).min(1).max(200), undo: z.boolean().optional() }) }), directed.claim)
 router.post('/directed/gdos/:id/replan',                      requirePerm('directed_work', 'replan'),  directed.replan)
 
 router.get('/warehouse-map/:warehouseId',                     requirePerm('warehouse_map', 'view'), warehouseMap.getWarehouseMap)

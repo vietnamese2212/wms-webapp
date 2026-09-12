@@ -381,6 +381,59 @@ try {
     scanRows.length > 0 && scanRows.every(x => typeof x.is_partial === 'boolean' && 'units_per_carton' in x && 'base_unit' in x),
     `${scanRows.filter(x => x.is_partial).length}/${scanRows.length} dòng lấy một phần`)
 
+  // ═══ [12f] NHẬN VIỆC CHUNG (12/09) — khoá mềm 10', người khác đang cầm thì không giành được ═══
+  b = await board('LOWER')
+  const claimGroup = (b.j?.data?.rows ?? []).find(x => !x.stage_done && !x.skipped && x.task_ids?.length)
+  if (claimGroup) {
+    const cIds = claimGroup.task_ids
+    const minAgo = m => new Date(Date.now() - m * 60_000).toISOString()
+    // Người KHÁC đang cầm (ghi thẳng DB — gói chỉ có một tài khoản)
+    await restWrite('wms_tasks', 'PATCH', `id=in.(${cIds.join(',')})`, { claimed_by: 'qa57-other', claimed_at: minAgo(1) })
+    r = await api('/wms/directed/tasks/claim', 'POST', { task_ids: cIds })
+    check('[12f] Việc đang có người khác cầm → KHÔNG giành được (changed=0) và biết ai đang giữ',
+      r.s === 200 && r.j?.data?.changed === 0 && !!r.j?.data?.held_by, `http=${r.s} changed=${r.j?.data?.changed} held_by=${r.j?.data?.held_by}`)
+    b = await board('LOWER')
+    const heldRow = (b.j?.data?.rows ?? []).find(x => x.group_key === claimGroup.group_key)
+    check('[12f2] Bảng hiện người đang cầm việc (claim_active + claimed_by)',
+      !!heldRow && heldRow.claim_active === true && heldRow.claimed_by === 'qa57-other', heldRow ? `claimed_by=${heldRow.claimed_by}` : 'không thấy dòng')
+    // Quá 10 phút không ✓ Xong → tự nhả: người khác nhận được
+    await restWrite('wms_tasks', 'PATCH', `id=in.(${cIds.join(',')})`, { claimed_at: minAgo(11) })
+    r = await api('/wms/directed/tasks/claim', 'POST', { task_ids: cIds })
+    check('[12f3] Người cầm quá 10 phút không làm → việc tự nhả, người sau nhận được đủ nhóm',
+      r.s === 200 && r.j?.data?.changed === cIds.length, `http=${r.s} changed=${r.j?.data?.changed}/${cIds.length}`)
+    b = await board('LOWER')
+    const mineRow = (b.j?.data?.rows ?? []).find(x => x.group_key === claimGroup.group_key)
+    check('[12f4] Bảng hiện đúng người vừa nhận (tên, không phải id)',
+      !!mineRow && mineRow.claim_active === true && !!mineRow.claimed_by_name && mineRow.claimed_by !== 'qa57-other', mineRow ? `${mineRow.claimed_by_name}` : 'không thấy dòng')
+    r = await api('/wms/directed/tasks/claim', 'POST', { task_ids: cIds, undo: true })
+    check('[12f5] Bỏ nhận → nhả đủ nhóm', r.s === 200 && r.j?.data?.changed === cIds.length, `http=${r.s} changed=${r.j?.data?.changed}`)
+    const evc = await restAll('wms_task_events', `select=event&task_id=eq.${cIds[0]}&event=in.(CLAIMED,UNCLAIMED)`)
+    check('[12f6] Sổ sự kiện ghi vết nhận / bỏ nhận', evc.some(e => e.event === 'CLAIMED') && evc.some(e => e.event === 'UNCLAIMED'), evc.map(e => e.event).join(','))
+  } else check('[12f] Nhận việc chung', true, 'không còn nhóm việc chờ hạ để thử — bỏ qua')
+
+  // ═══ [12g] KHO KHÔNG CÓ XE HẠ RIÊNG — một nút "Hạ & đưa ra" (12/09) ═══════════════════════════
+  await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { separate_lowering_forklift: false })
+  b = await board('MOVE')
+  const comb = (b.j?.data?.rows ?? []).find(x => x.waiting_lower && !x.stage_done && !x.skipped)
+  check('[12g] Kho không xe hạ riêng: bảng báo settings + dòng chờ hạ ở xe chuyển BẤM ĐƯỢC (combined_lower)',
+    b.j?.data?.settings?.separate_lowering_forklift === false && !!comb && comb.can_confirm === true && comb.combined_lower === true,
+    `settings=${JSON.stringify(b.j?.data?.settings)} ${comb ? `can=${comb.can_confirm} comb=${comb.combined_lower}` : 'không có dòng chờ hạ'}`)
+  if (comb) {
+    r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: comb.task_ids, stage: 'BOTH' })
+    const afterB = await restAll('wms_tasks', `select=id,lowered_at,moved_at&id=in.(${comb.task_ids.join(',')})`)
+    check('[12g2] "Hạ & đưa ra" ghi CẢ HAI mốc trong một cú bấm',
+      r.s === 200 && afterB.length === comb.task_ids.length && afterB.every(t => t.lowered_at && t.moved_at), `http=${r.s} ${err(r)} ${afterB.map(t => `${!!t.lowered_at}/${!!t.moved_at}`).join(' ')}`)
+    r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: comb.task_ids, stage: 'BOTH', undo: true })
+    const afterU = await restAll('wms_tasks', `select=id,lowered_at,moved_at&id=in.(${comb.task_ids.join(',')})`)
+    check('[12g3] Bấm nhầm "Hạ & đưa ra" → bỏ CẢ HAI mốc (không để lại mốc đã hạ giả)',
+      r.s === 200 && afterU.every(t => !t.lowered_at && !t.moved_at), `${afterU.map(t => `${!!t.lowered_at}/${!!t.moved_at}`).join(' ')}`)
+  }
+  await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { separate_lowering_forklift: true })
+  b = await board('MOVE')
+  check('[12g4] Bật lại xe hạ riêng → dòng chờ hạ ở xe chuyển KHÔNG bấm được như cũ',
+    b.j?.data?.settings?.separate_lowering_forklift === true && (b.j?.data?.rows ?? []).filter(x => x.waiting_lower && !x.stage_done).every(x => x.can_confirm === false),
+    `settings=${JSON.stringify(b.j?.data?.settings)}`)
+
   // ═══ [13] BỎ BẮT ĐẦU → HUỶ VIỆC TREO ═════════════════════════════════════════════════════════
   const t5 = await mkTrip('T5')
   const i5 = await mkItem(t5.do, 20)

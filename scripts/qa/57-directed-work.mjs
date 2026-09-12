@@ -63,8 +63,11 @@ try {
   // ═══ [0] FIXTURE ══════════════════════════════════════════════════════════════════════════════
   const cats = await restAll('LookupValue', 'select=value&type=eq.warehouse_type&limit=3')
   const CAT_A = cats[0]?.value ?? 'FG01', CAT_B = cats[1]?.value ?? CAT_A
+  // `Warehouse.warehouse_type` chỉ nhận 'CENTRAL'|'NPP' (app chặn 400 giá trị khác) — KHÔNG phải
+  // Loại kho; Loại kho của kho nằm ở `warehouse_type_configs`. Nhét CAT_A vào đây là ghi giá trị
+  // app từ chối, và làm bất biến warehouse_type_column_coverage (gói 00) đỏ oan.
   const [wh] = await restWrite('Warehouse', 'POST', null, {
-    id: randomUUID(), code: `${T}_W`, name: 'QA directed work', warehouse_type: CAT_A,
+    id: randomUUID(), code: `${T}_W`, name: 'QA directed work', warehouse_type: 'CENTRAL',
     inventory_mode: 'QR', require_gate_on_start: false, require_weigh_on_start: false,
     is_active: true, work_mode: 'MANUAL', lower_from_level: 2, updated_at: nowIso(),
   })
@@ -170,7 +173,7 @@ try {
   r = await api(`/masterdata/warehouses/${whId}`, 'PUT', { work_mode: 'GUIDED', lower_from_level: 2 })
   check('[2a] Bật Hướng dẫn cho kho QR có bản vẽ → 200', r.s === 200, `http=${r.s} ${err(r)}`)
   const [whQty] = await restWrite('Warehouse', 'POST', null, {
-    id: randomUUID(), code: `${T}_Q`, name: 'QA dw qty', warehouse_type: CAT_A, inventory_mode: 'QTY',
+    id: randomUUID(), code: `${T}_Q`, name: 'QA dw qty', warehouse_type: 'CENTRAL', inventory_mode: 'QTY',
     is_active: true, updated_at: nowIso(),
   })
   r = await api(`/masterdata/warehouses/${whQty.id}`, 'PUT', { work_mode: 'GUIDED' })

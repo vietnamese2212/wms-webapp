@@ -89,6 +89,9 @@ try {
     const [row] = await restWrite('OutboundItem', 'POST', null, {
       id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
       cartons_ordered: ordered, cartons_scanned: 0, loose_picking: loose, status: 'PENDING',
+      // Kho fixture chạy chế độ HƯỚNG DẪN ⇒ cửa quét đòi dòng phải KHAI quy định date trước (luật
+      // 10/09, mở rộng 11/09). Gói này đo VỊ TRÍ PHẦN DƯ, không đo date ⇒ khai "không đòi mốc".
+      date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso(), set_by: 'QA 10' },
       created_at: nowIso(), updated_at: nowIso(),
     })
     created.items.push(row.id)

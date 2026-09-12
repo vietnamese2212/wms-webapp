@@ -76,13 +76,19 @@ try {
   const vt = (await restAll('VehicleType', 'select=name&is_active=eq.true&limit=1'))[0]?.name ?? 'XE TẢI'
   const dvvt = (await restAll('TransportCompany', 'select=name&limit=1'))[0]?.name ?? 'QA DVVT'
 
+  // ⚠️ `Warehouse.warehouse_type` KHÔNG phải Loại kho — nó chỉ nhận 'CENTRAL'|'NPP'
+  // (warehouseController chặn 400 mọi giá trị khác); Loại kho của kho nằm ở `warehouse_type_configs`.
+  // Fixture cũ nhét CAT ('FG01') vào đây — giá trị mà chính API của app sẽ TỪ CHỐI, lọt được vì
+  // fixture INSERT thẳng qua PostgREST. Hậu quả đo thật 12/09: bất biến `warehouse_type_column_coverage`
+  // của gói 00 ĐỎ, báo cột này "mang Loại kho mà cascade đổi tên bỏ sót" — trong khi thủ phạm là
+  // rác fixture, không phải lỗi cascade. Dữ liệu nạp phải là dữ liệu app chấp nhận được.
   const [wh] = await restWrite('Warehouse', 'POST', null, {
-    id: randomUUID(), code: T, name: 'QA khách hàng %Date', warehouse_type: CAT,
+    id: randomUUID(), code: T, name: 'QA khách hàng %Date', warehouse_type: 'CENTRAL',
     inventory_mode: 'QTY', require_gate_on_start: false, require_weigh_on_start: false,
     is_active: true, date_rule_policy: 'OFF', updated_at: nowIso(),
   })
   const [whDest] = await restWrite('Warehouse', 'POST', null, {
-    id: randomUUID(), code: `${T}D`, name: 'QA kho nhận', warehouse_type: CAT,
+    id: randomUUID(), code: `${T}D`, name: 'QA kho nhận', warehouse_type: 'NPP',
     inventory_mode: 'QTY', is_active: true, updated_at: nowIso(),
   })
   const [mat] = await restWrite('Material', 'POST', null, {
@@ -626,6 +632,38 @@ try {
       rLines.s === 200 && !!lnC && lnC.customer_known === false
         && !!lnC.customer_name && lnC.customer_name === lnC.distributor_name,
       `${rLines.s} known=${lnC?.customer_known} name=${lnC?.customer_name ?? '—'} npp=${lnC?.distributor_name ?? '—'}`)
+  }
+
+  // ═══ [12] BA CỬA CÒN LẠI CỦA MODULE — ratchet độ phủ bắt "chưa gói QA nào chạm" ═══════════════
+  // Tab Kênh (đọc + đổi tên) và nút Ngừng khách chưa từng được gọi trong bộ kiểm. Cửa không ai
+  // chạm là cửa không ai biết nó hỏng — lớp lỗi 06/09 (146/389 route chưa gói nào chạm).
+  {
+    const rChans = await api('/masterdata/customer-channels')
+    const chans = rChans.j?.data ?? []
+    const npp = chans.find(c => c.value === 'NPP')
+    check('[12a] Tab Kênh đọc được: mỗi kênh kèm SỐ KHÁCH và bộ mức đã khai',
+      rChans.s === 200 && !!npp && Array.isArray(npp.rules) && typeof npp.customers === 'number',
+      `${rChans.s} n=${chans.length} npp.rules=${npp?.rules?.length ?? '—'} khách=${npp?.customers ?? '—'}`)
+
+    // Đổi tên kênh: đi một vòng rồi TRẢ LẠI — staging là dữ liệu dùng chung, không để lại vết
+    const oldLabel = npp?.label ?? 'NPP'
+    const rRename = await api(`/masterdata/customer-channels/${npp?.id}`, 'PUT', { label: `${oldLabel} ${T}` })
+    const mid = (await api('/masterdata/customer-channels')).j?.data?.find(c => c.value === 'NPP')
+    await api(`/masterdata/customer-channels/${npp?.id}`, 'PUT', { label: oldLabel })
+    const back = (await api('/masterdata/customer-channels')).j?.data?.find(c => c.value === 'NPP')
+    check('[12b] Đổi TÊN kênh chỉ đụng nhãn, MÃ kênh giữ nguyên (mã là khoá các khách đang trỏ vào)',
+      rRename.s === 200 && mid?.label === `${oldLabel} ${T}` && mid?.value === 'NPP' && back?.label === oldLabel,
+      `${rRename.s} giữa=${mid?.label ?? '—'} sau=${back?.label ?? '—'}`)
+
+    const rBadChan = await api('/masterdata/customer-channels/khong-co-that', 'PUT', { label: 'x' })
+    check('[12c] Đổi tên kênh không tồn tại → 404 (không 500)', rBadChan.s === 404, `${rBadChan.s} ${err(rBadChan)}`)
+
+    // NGỪNG khách là xoá MỀM: bản ghi phải còn để chuyến cũ tra ra tên, chỉ thôi tham gia cấp mức
+    const rStop = await api(`/masterdata/customers/${custA.id}`, 'DELETE')
+    const stopped = (await restAll('Customer', `select=id,is_active&ship_to_code=eq.${SHIP.A}`))[0]
+    check('[12d] "Ngừng" khách = xoá MỀM (bản ghi còn, is_active=false) — chuyến cũ vẫn tra ra tên',
+      (rStop.s === 200 || rStop.s === 204) && !!stopped && stopped.is_active === false,
+      `${rStop.s} còn=${!!stopped} active=${stopped?.is_active}`)
   }
 
   // ═══ [8] Nhật ký quản trị ═════════════════════════════════════════════════════════════════════

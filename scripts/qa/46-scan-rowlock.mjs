@@ -92,6 +92,16 @@ try {
   }
   check('[1] Dựng nền: 11 pallet tem thật vào kho QR', pallets.length === 11, `${pallets.length}/11 pallet`)
 
+  // Kho fixture (Ba Vì) CÓ THỂ đang ở chế độ HƯỚNG DẪN — khi đó Bắt đầu đòi lái xe nâng
+  // (422 FORKLIFT_REQUIRED) và cửa quét đòi dòng đã khai quy định date (422 DATE_RULE_REQUIRED).
+  // Khai sẵn cả hai để gói MIỄN NHIỄM với work_mode của kho dùng chung: gói này đo KHOÁ DÒNG lúc
+  // quét, không đo chỉ dẫn công việc. Đo thật 12/09 — một tài khoản mô phỏng bật GUIDED cho Ba Vì
+  // rồi không trả về, thế là gói đỏ 8 phép mà không phép nào dính dáng tới chuyện đó.
+  // Phạm vi TOÀN QUỐC để qua cửa "người này có được giao kho của chuyến không".
+  const [drvEmp] = await restAll('Employee',
+    'select=id,name&is_active=is.true&warehouse_scope=eq.NATIONAL&limit=1')
+  const drvId = drvEmp?.id ?? null
+
   // Mở 1 chuyến ĐANG XUẤT (qua rule cổng + cân của kho)
   let plateSeq = 0
   async function openTrip(orderedBase, label) {
@@ -122,14 +132,18 @@ try {
     })
     created.weighs.push(wt.id)
     // Ba Vì có cửa xuất trên Sơ đồ kho (09/09) → Bắt đầu phải gắn cửa (4 chuyến ≤ 5 cửa; mỗi chuyến một cửa trống)
-    const st = await api(`/wms/outbound/${gdo.id}/start`, 'POST', { license_plate: plate, gate_registration_id: gateId, dock_location_id: await freeDockFor(WH.id, plate) })
-    return { gdo, item: gdo.delivery_orders?.[0]?.items?.[0], started: st.s, plate }
+    // Khai "không đòi mốc" cho dòng hàng TRƯỚC khi Bắt đầu (kho Hướng dẫn: chưa khai thì không
+    // sinh việc và cửa quét chặn 422). FEFO = không ràng mốc date nên không đụng bài đo khoá dòng.
+    const itemId = gdo.delivery_orders?.[0]?.items?.[0]?.id
+    if (itemId) await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [itemId], rule: { kind: 'FEFO' } })
+    const st = await api(`/wms/outbound/${gdo.id}/start`, 'POST', { license_plate: plate, gate_registration_id: gateId, dock_location_id: await freeDockFor(WH.id, plate), forklift_driver_ids: drvId ? [drvId] : [] })
+    return { gdo, item: gdo.delivery_orders?.[0]?.items?.[0], started: st.s, startErr: st.j?.error?.code ?? st.j?.error?.message ?? '', plate }
   }
 
   // ── [2] 8 người quét 8 pallet KHÁC NHAU vào dòng hàng chỉ đặt 3 pallet ───
   {
     const t = await openTrip(PB * 3, 'quota')
-    check('[2a] Chuyến mở được (qua rule cổng + cân)', t?.started === 200, `http=${t?.started}`)
+    check('[2a] Chuyến mở được (qua rule cổng + cân)', t?.started === 200, `http=${t?.started} ${t?.startErr ?? ''}`)
     const use = pallets.slice(0, 8)
     const rs = await pool(use.map(code => () =>
       api(`/wms/outbound/${t.gdo.id}/items/${t.item.id}/scan`, 'POST', { qr_code: code, cartons_override: PB })), 8)

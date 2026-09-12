@@ -130,6 +130,10 @@ try {
     const [row] = await restWrite('OutboundItem', 'POST', null, {
       id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code ?? mat.code,
       cartons_ordered: 900, cartons_scanned: 0, loose_picking: 0, status: 'PENDING',
+      // Kho fixture (Ba Vì) chạy chế độ HƯỚNG DẪN ⇒ cửa quét đòi dòng phải KHAI quy định date trước
+      // (luật 10/09, mở rộng 11/09). Gói này đo THỨ TỰ LUÂN CHUYỂN, không đo date ⇒ khai "không đòi
+      // mốc" là đúng ngữ nghĩa và không đụng gì tới thứ tự (thứ tự do rotation_principle của kho).
+      date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso(), set_by: 'QA 29' },
       created_at: nowIso(), updated_at: nowIso(),
     })
     created.items.push(row.id)

@@ -486,3 +486,13 @@ created_at, updated_at
   PostgREST chọn hàm THEO TÊN THAM SỐ, một lời gọi quên `p_mat_categories`/`p_kinds` là rơi trúng bản cũ và
   màn lặng lẽ quay về v2. ⚠️ Còn **một overload kiểu này chưa xử: `hr_employees_page`** (bản `p_jt_name` cũ
   bên cạnh bản `p_jt_id` + `p_status`) — chưa đụng vì ngoài phạm vi đợt này.
+- `20260911j_rename_wh_type_date_rule_master.sql` — **`rename_warehouse_type` phủ thêm `date_rule_master.category`**.
+  Bảng mức-theo-cặp của đợt 2 mang mã Loại kho ở cột `category`, nhưng cascade đổi tên Loại kho không biết tới
+  nó ⇒ đổi tên `FG02` là mọi mức khai riêng cho FG02 trỏ vào một loại KHÔNG CÒN TỒN TẠI, im lặng, và đơn sinh
+  sau đó tụt xuống mức "mọi loại hàng". Không phải suy đoán: bất biến `warehouse_type_column_coverage()` (gói
+  QA 00) tự quét SỐNG mọi cột text nên nó chỉ thẳng ra cột thiếu — apply xong hàm trả 0 dòng.
+  📌 Ranh giới đã xác minh 12/09: **`Warehouse.warehouse_type` KHÔNG thuộc cascade này và KHÔNG nên thuộc** —
+  cột đó chỉ nhận `CENTRAL`|`NPP` (`warehouseController` chặn 400 giá trị khác; staging: 149 NPP · 4 CENTRAL),
+  tức là TỪ ĐỒNG ÂM với taxonomy Loại kho `FG01/FG02/PK01/PM01/RM01`, cùng loại với `Material.product_type`
+  vốn đã được miễn trừ sẵn. Loại kho của một kho nằm ở `warehouse_type_configs`. Cột này chỉ làm bất biến đỏ
+  khi có fixture QA ghi thẳng giá trị taxonomy vào đó qua PostgREST (đi vòng qua controller) — đã vá ở gói 57/58.

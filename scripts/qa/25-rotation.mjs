@@ -135,6 +135,12 @@ try {
     const [row] = await restWrite('OutboundItem', 'POST', null, {
       id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
       cartons_ordered: ordered, cartons_scanned: 0, loose_picking: 0, status: 'PENDING',
+      // Kho fixture (Ba Vì) đang chạy chế độ HƯỚNG DẪN ⇒ cửa quét đòi dòng phải KHAI quy định date
+      // trước (luật 10/09, mở rộng 11/09). Gói này đo THỨ TỰ LUÂN CHUYỂN chứ không đo date ⇒ khai
+      // "không đòi mốc" là đúng ngữ nghĩa và không đụng tới thứ tự (thứ tự do rotation_principle
+      // của kho quyết). Khai ngay tại fixture để gói MIỄN NHIỄM với work_mode của kho dùng chung —
+      // đo thật 12/09: một tài khoản mô phỏng bật GUIDED cho Ba Vì là 4 gói đỏ cùng lúc.
+      date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso(), set_by: 'QA 25' },
       created_at: nowIso(), updated_at: nowIso(),
     })
     created.items.push(row.id)

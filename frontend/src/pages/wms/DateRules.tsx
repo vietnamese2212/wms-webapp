@@ -25,7 +25,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { ActionCluster } from '@/components/shared/ActionBtn'
 import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import {
-  useDateRuleLines, useApplyDateRuleMaster, useDateRuleCategories,
+  useDateRuleLines, useApplyDateRuleMaster, useDateRuleCategories, useCustomerChannels,
   type DateRuleLine, type ApplyMasterResult,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
@@ -94,6 +94,13 @@ export default function DateRules() {
   const [applyOpen, setApply] = useState(false)
 
   const { data: cats } = useDateRuleCategories()
+  // NHÃN KÊNH LẤY TỪ DANH MỤC, không in mã thô (user bắt 12/09: "Kênh không lấy mã mà lấy theo tên
+  // chứ?"). Bảng in thẳng `r.channel` = KHO_TONG / NPP / BHX trong khi danh mục có sẵn "Kho tổng" /
+  // "Nhà phân phối" / "Bách hoá xanh" — và chính cái field nhận giá trị đó còn tên là `channel_label`.
+  // Đổi tên kênh trong Cấu hình → màn này phải đổi theo, không được đóng băng mã.
+  const { data: channels } = useCustomerChannels()
+  const channelLabel = (v: string | null | undefined) =>
+    (channels ?? []).find(c => c.value === v)?.label ?? v ?? ''
   const { data, isLoading } = useDateRuleLines({
     from: f.from, to: f.to, warehouseId: f.warehouseId, state: f.state, search: f.search,
     source: f.source, matCategory: f.matCategory, kind: f.kind, page: f.page, pageSize: f.pageSize,
@@ -139,7 +146,7 @@ export default function DateRules() {
     note: r.header_text,
     // Khách hàng + kênh: người khai phải nhìn thấy mới quyết được mức (user 11/09)
     customer_name: r.customer_name ?? r.shipto_party ?? null,
-    channel_label: r.customer_has_channel ? r.channel : null,
+    channel_label: r.customer_has_channel ? channelLabel(r.channel) : null,
     customer_known: r.customer_known,
     warehouse_name: r.warehouse_name ?? null,
     delivery_date: r.delivery_date ?? null,
@@ -276,7 +283,7 @@ export default function DateRules() {
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       <div className="truncate">{r.customer_name ?? (r.shipto_party ? <span className="font-mono">{r.shipto_party}</span> : <span className="text-slate-300">—</span>)}</div>
                       {r.customer_has_channel
-                        ? <div className="text-[9px] text-slate-400 truncate">{r.channel}</div>
+                        ? <div className="text-[9px] text-slate-400 truncate">{channelLabel(r.channel)}</div>
                         : <div className="text-[9px] text-amber-600">{r.customer_known ? 'chưa phân kênh' : 'chưa có trong danh mục'}</div>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{r.material_code ?? '—'}</TableCell>

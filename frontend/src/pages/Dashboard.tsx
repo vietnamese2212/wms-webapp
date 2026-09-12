@@ -137,11 +137,15 @@ export default function Dashboard() {
             <span className="text-xs text-slate-500 dark:text-slate-400">Dữ liệu thời gian thực</span>
           </div>
         </div>
-        {/* Chọn CHỦ ĐỀ — cùng một lần lấy số liệu, chỉ đổi phần đang xem */}
-        <div className="mt-1.5 flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-[11px] font-medium w-fit">
+        {/* Chọn CHỦ ĐỀ — cùng một lần lấy số liệu, chỉ đổi phần đang xem.
+            ĐIỆN THOẠI: 7 tab cần ~428 px mà chỗ chỉ có 336 px, dải liền mạch ép nhãn XUỐNG DÒNG
+            ("Tổng/quan", "Năng/suất" — đo 12/09). Cắt cho cuộn ngang thì lại giấu mất tab. ⇒ mobile
+            tách thành CHIP rời tự xuống hàng, mọi tab thấy đủ và nhãn giữ một dòng; desktop giữ
+            nguyên dải liền. */}
+        <div className="mt-1.5 flex flex-wrap gap-1 text-[11px] font-medium sm:w-fit sm:flex-nowrap sm:gap-0 sm:rounded-lg sm:border sm:border-slate-200 sm:dark:border-slate-700 sm:overflow-hidden">
           {TABS.map(({ key, label }) => (
             <button key={key} type="button" onClick={() => setTab(key)}
-              className={`px-3 py-1 transition-colors border-l first:border-l-0 border-slate-200 dark:border-slate-700 ${
+              className={`whitespace-nowrap rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1.5 transition-colors sm:rounded-none sm:border-0 sm:border-l sm:first:border-l-0 sm:py-1 ${
                 tab === key
                   ? 'bg-sky-600 text-white'
                   : 'bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5'}`}>

@@ -18,17 +18,24 @@ export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; 
   // Mobile (đợt UI 24/08): LƯỚI kín hàng theo SỐ Ô — 1 ô = full, 2/4 ô = 2 cột, còn lại 3 cột —
   // mọi ô hiện đủ, KHÔNG cuộn ngang, KHÔNG ô trống, hết cảnh nhãn cắt cụt "SL (QUY Đ…".
   // Desktop giữ flex 1 hàng chia vạch như cũ.
-  const mCols = tiles.length === 1 ? 'grid-cols-1'
-    : (tiles.length === 2 || tiles.length === 4) ? 'grid-cols-2 [&>div:nth-child(2n)]:border-r-0'
+  const cols = tiles.length === 1 ? 1 : (tiles.length === 2 || tiles.length === 4) ? 2 : 3
+  const mCols = cols === 1 ? 'grid-cols-1'
+    : cols === 2 ? 'grid-cols-2 [&>div:nth-child(2n)]:border-r-0'
     : 'grid-cols-3 [&>div:nth-child(3n)]:border-r-0'
+  // Ô LẺ Ở HÀNG CUỐI (rà điện thoại 12/09): 5 ô / 7 ô / 8 ô chia 3 cột thì hàng cuối hở 1–2 ô
+  // xanh trống trơn — trông như dải bị cắt dở. Ô cuối GIÃN RA lấp nốt phần thừa.
+  const rem = tiles.length % cols
+  const lastSpan = rem === 0 ? 0 : cols - rem + 1
   return (
-    <div className={`grid ${mCols} sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
+    <div className={`grid ${mCols} [&>div:last-child]:border-r-0 sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
       {tiles.map((t, i) => (
         // Màn nhỏ (PDA/phone) tự COMPACT để nhường chỗ cho bảng; desktop giữ cỡ đầy. compact=true ép nhỏ mọi cỡ.
-        // title fallback = label: nhãn dài hiếm hoi vẫn truncate → đọc được khi giữ tay/hover
+        // flex-col + justify-between: nhãn dài XUỐNG DÒNG trên điện thoại (không cắt cụt) mà các CON SỐ
+        // trong cùng một hàng vẫn thẳng đáy với nhau. Desktop vẫn truncate 1 dòng như cũ.
         <div key={i} title={t.tip ?? t.label}
-          className={`sm:flex-1 min-w-0 sm:min-w-[84px] text-center border-white/10 border-b border-r sm:!border-0 ${compact ? 'px-2 py-0.5 sm:px-3' : 'px-2 py-1 sm:px-3 sm:py-1.5'}`}>
-          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 truncate">{t.label}</div>
+          style={lastSpan && i === tiles.length - 1 ? { gridColumn: `span ${lastSpan}` } : undefined}
+          className={`sm:flex-1 min-w-0 sm:min-w-[84px] flex flex-col justify-between text-center border-white/10 border-b border-r sm:!border-0 ${compact ? 'px-2 py-0.5 sm:px-3' : 'px-2 py-1 sm:px-3 sm:py-1.5'}`}>
+          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight sm:truncate">{t.label}</div>
           <div className={`font-semibold leading-tight tabular-nums whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}
           </div>

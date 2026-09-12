@@ -430,13 +430,19 @@ export default function DirectedWork() {
             <h1 className="hidden sm:flex text-sm font-semibold text-slate-800 items-center gap-1.5 shrink-0">
               <ListChecks className="h-4 w-4 text-sky-600" /> Việc cần làm
             </h1>
-            {/* Tab = 3 VAI. Để nút to trên mobile: người bấm đang đeo găng, đứng giữa kho */}
-            <div className="flex items-center gap-1 flex-1 min-w-0">
+            {/* Tab = 4 VAI. Để nút to trên mobile: người bấm đang đeo găng, đứng giữa kho.
+                ĐIỆN THOẠI (đo 12/09 ở 360 VÀ 390 px): 4 tab cần 351 px mà khung chỉ còn 248 px ⇒ tab
+                thứ tư "Sắp quét" TRÔI RA NGOÀI MÀN và nằm DƯỚI nút Lọc — thủ kho không bấm nổi vào
+                bảng của chính mình, lại còn không nhìn ra tab nào đang chọn. Đây là lần thứ tư cùng
+                một khuôn "vai này bị khoá khỏi màn của vai kia", nên chữa tận gốc: mobile cho tab
+                thành LƯỚI 4 CỘT chiếm trọn bề ngang (bỏ icon lấy chỗ cho chữ), nút Lọc tự xuống
+                hàng dưới. Desktop giữ nguyên một hàng. */}
+            <div className="grid grid-cols-4 gap-1 w-full sm:flex sm:w-auto sm:flex-1 sm:items-center sm:min-w-0">
               {tabs.map(x => (
                 <button key={x.key} onClick={() => setF({ tab: x.key })} title={x.hint}
-                  className={`flex items-center gap-1 rounded-md px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
+                  className={`flex items-center justify-center sm:justify-start gap-1 rounded-md px-1 sm:px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
                     tab === x.key ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  <x.icon className="h-3.5 w-3.5" /> {x.label}
+                  <x.icon className="hidden sm:block h-3.5 w-3.5" /> {x.label}
                   {x.key === 'INBOX' && mineCount > 0 && (
                     <span className={`ml-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${tab === 'INBOX' ? 'bg-white/25 text-white' : 'bg-red-500 text-white'}`}>{mineCount}</span>
                   )}
@@ -451,7 +457,7 @@ export default function DirectedWork() {
                 <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét
               </Button>
             )}
-            <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
+            <span className="sm:hidden ml-auto"><FilterSheetButton defs={filterDefs} /></span>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>

@@ -84,12 +84,15 @@ export function Header() {
         </SheetContent>
       </Sheet>
 
-      {/* Logo (mobile only) */}
-      <Link to="/" className="flex items-center gap-2 lg:hidden">
+      {/* Logo (mobile only) — TÊN chỉ hiện từ sm trở lên: ở 360 px cái tên chiếm ~88 px, tự xuống
+          2 DÒNG trong thanh cao 48 px và đẩy nút tài khoản ra tận x=366 (cắt mất 6 px ngoài màn,
+          đo 12/09). Điện thoại giữ ô "M" là đủ nhận diện — tên app không phải thứ người trong kho
+          cần đọc lại mỗi màn, còn đang ở trang nào thì thanh dưới đã nói. */}
+      <Link to="/" className="flex items-center gap-2 lg:hidden shrink-0">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white">
           <span className="text-xs font-bold">M</span>
         </div>
-        <span className="font-bold text-sm text-white">Mal SupplyC</span>
+        <span className="hidden sm:inline font-bold text-sm text-white whitespace-nowrap">Mal SupplyC</span>
       </Link>
 
       {/* Bối cảnh Kho / Loại kho toàn cục (kiểu Infor) — áp cho filter & form toàn app */}

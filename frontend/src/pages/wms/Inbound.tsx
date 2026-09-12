@@ -1584,8 +1584,11 @@ export default function Inbound() {
           )}
         </div>
 
-        {/* Bối cảnh ngày (số liệu tổng đã đưa vào SummaryBand bên dưới) */}
-        <p className="text-xs text-slate-500 -mt-1">
+        {/* Bối cảnh ngày (số liệu tổng đã đưa vào SummaryBand bên dưới).
+            Mobile ẨN (hiến pháp UI mục 20 — dòng meta phụ): ở 360 px dòng này cộng với dải 7 ô tổng
+            đẩy dòng dữ liệu đầu tiên xuống y=382, quá xa mốc ~300 và người dùng chỉ còn thấy 3 phiếu
+            trên cả màn. Ngày vẫn đọc được ở cột NGÀY NHẬP của từng dòng và trong tấm Lọc. */}
+        <p className="hidden sm:block text-xs text-slate-500 -mt-1">
           {hasDate ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>

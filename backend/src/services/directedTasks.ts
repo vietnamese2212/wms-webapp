@@ -891,12 +891,15 @@ export async function claimTasks(
   await logEvents(ids.map(id => ({ task_id: id, event: 'CLAIMED', actor })))
   let heldBy: string | null = null
   if (!ids.length) {
-    // Thua: nói ai đang giữ để người bấm biết đường đi việc khác
+    // Thua: nói ai đang giữ để người bấm biết đường đi việc khác. `claimed_by` KHÔNG có FK sang Employee
+    // (nhân sự nghỉ việc vẫn giữ được vết) nên không embed được — tra tên bằng câu thứ hai, không có thì in id.
     const { data: holder } = await supabase.from('wms_tasks')
-      .select('claimed_by, holder:Employee!claimed_by(name)')
-      .in('id', taskIds).not('claimed_by', 'is', null).limit(1)
-    const h = ((holder ?? []) as unknown as { claimed_by: string | null; holder: { name?: string | null } | null }[])[0]
-    heldBy = h?.holder?.name ?? h?.claimed_by ?? null
+      .select('claimed_by').in('id', taskIds).not('claimed_by', 'is', null).limit(1)
+    const hid = ((holder ?? []) as { claimed_by: string | null }[])[0]?.claimed_by ?? null
+    if (hid) {
+      const { data: emp } = await supabase.from('Employee').select('name').eq('id', hid).maybeSingle()
+      heldBy = (emp as { name?: string | null } | null)?.name ?? hid
+    }
   }
   return { ok: true, changed: ids.length, held_by: heldBy }
 }

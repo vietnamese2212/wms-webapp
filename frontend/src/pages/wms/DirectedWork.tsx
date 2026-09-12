@@ -366,7 +366,8 @@ export default function DirectedWork() {
                     <span className="font-semibold">{dest ?? <span className="text-slate-300 font-normal">—</span>}</span>
                     {r.kind === 'LOOSE_FEED' && <span className="ml-1 text-xs text-purple-600">nhặt lẻ</span>}
                   </Step>
-                  {(closed || r.waiting_lower || r.combined_lower || heldByOther) && (
+                  {/* "⏳ chờ xe hạ" là lời nói với XE CHUYỂN — trên thẻ của chính xe hạ thì đó là việc của họ, không phải chờ ai */}
+                  {(closed || heldByOther || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
                     <div className={`text-xs ${st.cls}`}>
                       {closed ? st.text : heldByOther ? `${heldByOther} đang làm` : st.text}
                     </div>

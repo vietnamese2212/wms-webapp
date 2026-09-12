@@ -382,7 +382,16 @@ try {
     `${scanRows.filter(x => x.is_partial).length}/${scanRows.length} dòng lấy một phần`)
 
   // ═══ [12f] NHẬN VIỆC CHUNG (12/09) — khoá mềm 10', người khác đang cầm thì không giành được ═══
-  b = await board('LOWER')
+  // Chuyến RIÊNG cho hai phép [12f]/[12g]: tới đây mọi việc cần hạ của t2 đã bị [11] hạ hết ⇒ bảng Cần hạ
+  // không còn nhóm chờ nào để thử (lượt đầu 12/09 vì thế "bỏ qua" + [12g] đỏ oan).
+  // Hai pallet TRÊN KỆ, hạn gần nhất kho ⇒ FEFO chắc chắn chọn chúng ⇒ có việc CẦN HẠ để thử Nhận / Hạ&đưa ra
+  await mkPallet('CLAIM_T3', 60, far.T3,  dPlus(3), -50)
+  await mkPallet('CLAIM_T2', 60, near.T2, dPlus(4), -50)
+  const t7 = await mkTrip('TCLAIM')
+  const i7 = await mkItem(t7.do, 100)
+  await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i7], rule: { kind: 'FEFO' } })
+  await startTrip(t7.gdo, { license_plate: '51C77770', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+  b = await board('LOWER', `&gdo_id=${t7.gdo}`)
   const claimGroup = (b.j?.data?.rows ?? []).find(x => !x.stage_done && !x.skipped && x.task_ids?.length)
   if (claimGroup) {
     const cIds = claimGroup.task_ids
@@ -409,11 +418,11 @@ try {
     check('[12f5] Bỏ nhận → nhả đủ nhóm', r.s === 200 && r.j?.data?.changed === cIds.length, `http=${r.s} changed=${r.j?.data?.changed}`)
     const evc = await restAll('wms_task_events', `select=event&task_id=eq.${cIds[0]}&event=in.(CLAIMED,UNCLAIMED)`)
     check('[12f6] Sổ sự kiện ghi vết nhận / bỏ nhận', evc.some(e => e.event === 'CLAIMED') && evc.some(e => e.event === 'UNCLAIMED'), evc.map(e => e.event).join(','))
-  } else check('[12f] Nhận việc chung', true, 'không còn nhóm việc chờ hạ để thử — bỏ qua')
+  } else check('[12f] Nhận việc chung', false, `chuyến T7 không có nhóm việc chờ hạ (${(b.j?.data?.rows ?? []).length} dòng) — fixture thiếu pallet trên kệ`)
 
   // ═══ [12g] KHO KHÔNG CÓ XE HẠ RIÊNG — một nút "Hạ & đưa ra" (12/09) ═══════════════════════════
   await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { separate_lowering_forklift: false })
-  b = await board('MOVE')
+  b = await board('MOVE', `&gdo_id=${t7.gdo}`)
   const comb = (b.j?.data?.rows ?? []).find(x => x.waiting_lower && !x.stage_done && !x.skipped)
   check('[12g] Kho không xe hạ riêng: bảng báo settings + dòng chờ hạ ở xe chuyển BẤM ĐƯỢC (combined_lower)',
     b.j?.data?.settings?.separate_lowering_forklift === false && !!comb && comb.can_confirm === true && comb.combined_lower === true,
@@ -429,10 +438,11 @@ try {
       r.s === 200 && afterU.every(t => !t.lowered_at && !t.moved_at), `${afterU.map(t => `${!!t.lowered_at}/${!!t.moved_at}`).join(' ')}`)
   }
   await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { separate_lowering_forklift: true })
-  b = await board('MOVE')
+  b = await board('MOVE', `&gdo_id=${t7.gdo}`)
+  const waitRows = (b.j?.data?.rows ?? []).filter(x => x.waiting_lower && !x.stage_done)
   check('[12g4] Bật lại xe hạ riêng → dòng chờ hạ ở xe chuyển KHÔNG bấm được như cũ',
-    b.j?.data?.settings?.separate_lowering_forklift === true && (b.j?.data?.rows ?? []).filter(x => x.waiting_lower && !x.stage_done).every(x => x.can_confirm === false),
-    `settings=${JSON.stringify(b.j?.data?.settings)}`)
+    b.j?.data?.settings?.separate_lowering_forklift === true && waitRows.length > 0 && waitRows.every(x => x.can_confirm === false),
+    `settings=${JSON.stringify(b.j?.data?.settings)} ${waitRows.length} dòng chờ hạ`)
 
   // ═══ [13] BỎ BẮT ĐẦU → HUỶ VIỆC TREO ═════════════════════════════════════════════════════════
   const t5 = await mkTrip('T5')
@@ -729,17 +739,24 @@ try {
 } catch (e) {
   check('chạy trọn gói', false, String(e).slice(0, 200))
 } finally {
-  await cleanup()
-  // Quét PHÒNG THỦ đủ mọi bảng fixture — bản đầu chỉ soi wms_tasks nên không thấy kho rác còn lại
-  // (bài học skill check-app: verifyClean có điểm mù thì lượt sau đỏ ở chỗ không liên quan).
-  const residue = []
-  for (const [tbl, col] of [['wms_tasks', 'pallet_code'], ['InventoryEntry', 'pallet_code'],
-    ['Location', 'location_code'], ['GroupDeliveryOrder', 'group_code'],
-    ['OutboundDelivery', 'delivery_code'], ['Material', 'material_code'], ['Warehouse', 'code']]) {
-    const rows = await restAll(tbl, `select=id&${col}=like.${T}*`)
-    if (rows.length) residue.push(`${tbl}:${rows.length}`)
+  // QA_KEEP_FIXTURE=1 (12/09): GIỮ kho QA57_W + chuyến đang chạy để soi bằng mắt trên Preview (chế độ thẻ
+  // PDA, nút Nhận…) — staging không có chuyến GUIDED nào đang mở ngoài fixture này. Lượt chạy sau tự dọn
+  // ở đầu gói. CHỈ dùng tay, CI không đặt cờ này.
+  if (process.env.QA_KEEP_FIXTURE === '1') {
+    console.log(`⚠ QA_KEEP_FIXTURE=1 — giữ fixture ${T}_W để soi bằng mắt; chạy lại gói (không cờ) để dọn`)
+  } else {
+    await cleanup()
+    // Quét PHÒNG THỦ đủ mọi bảng fixture — bản đầu chỉ soi wms_tasks nên không thấy kho rác còn lại
+    // (bài học skill check-app: verifyClean có điểm mù thì lượt sau đỏ ở chỗ không liên quan).
+    const residue = []
+    for (const [tbl, col] of [['wms_tasks', 'pallet_code'], ['InventoryEntry', 'pallet_code'],
+      ['Location', 'location_code'], ['GroupDeliveryOrder', 'group_code'],
+      ['OutboundDelivery', 'delivery_code'], ['Material', 'material_code'], ['Warehouse', 'code']]) {
+      const rows = await restAll(tbl, `select=id&${col}=like.${T}*`)
+      if (rows.length) residue.push(`${tbl}:${rows.length}`)
+    }
+    check('[18] DỌN SẠCH — quét đủ 7 bảng fixture, không sót bản ghi nào', residue.length === 0, residue.join(' '))
   }
-  check('[18] DỌN SẠCH — quét đủ 7 bảng fixture, không sót bản ghi nào', residue.length === 0, residue.join(' '))
 }
 
 finish('57-directed-work')

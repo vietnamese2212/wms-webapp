@@ -177,7 +177,10 @@ export default function FillPicking() {
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 shrink-0 sm:rounded-t-xl space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
+            {/* Mobile ẨN tiêu đề trang như các list page khác (hiến pháp UI mục 20): ở 360 px cái
+                tiêu đề chiếm ~90 px, đẩy ô ngày/ô tìm xuống thành hàng thứ ba của thanh công cụ
+                (chuẩn là tối đa 2). Bỏ nó ra thì tab + ngày nằm gọn một hàng, hàng còn lại là các nút. */}
+            <h1 className="hidden sm:flex text-sm font-semibold text-slate-800 items-center gap-1.5 shrink-0">
               <ArrowDownToLine className="h-4 w-4 text-sky-600" /> Fill hàng
             </h1>
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-medium shrink-0">

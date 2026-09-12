@@ -244,11 +244,14 @@ try {
   check('[3b] Dữ liệu ngoài dội xuống KHÔNG xoá chốt tay (mang theo cả NGUỒN)',
     Number(ruleOf(a3b)?.value) === 70 && srcOf(a3b) === 'MANUAL', `rule=${JSON.stringify(ruleOf(a3b))}`)
 
-  // Đổi mức mặc định của kênh — KHÔNG được lan ngược cho đơn đang mở
-  await setRules('CHANNEL', 'NPP', [{ category: null, kind: 'MIN_PCT', value: 65 }])
+  // Đổi mức mặc định của kênh → ÁP NGAY cho đơn đang mở (user chốt 12/09, đảo luật "không lan ngược"
+  // của 11/09). Phép kiểm cũ khẳng định "dòng đang mở GIỮ NGUYÊN mức cũ" — tức khoá đúng cái hành vi
+  // user vừa bác (lớp feedback-qa-can-lock-in-the-bug), nên viết lại theo chiều ngược.
+  const rCh = await setRules('CHANNEL', 'NPP', [{ category: null, kind: 'MIN_PCT', value: 65 }])
   const a1c = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
-  check('[3c] Đổi mức của KÊNH KHÔNG lan ngược — dòng đang mở giữ nguyên mức cũ',
-    Number(a1c?.date_rule?.value) === 60, `rule=${JSON.stringify(a1c?.date_rule)}`)
+  check('[3c] Đổi mức của KÊNH áp NGAY cho dòng đang mở, không chờ ai bấm thêm nút',
+    Number(a1c?.date_rule?.value) === 65 && a1c?.date_rule?.source === 'CHANNEL',
+    `rule=${JSON.stringify(a1c?.date_rule)} · ${JSON.stringify(rCh.j?.data?.date_rule_applied)}`)
 
   const rPre = await api('/wms/outbound/items/date-rule/apply-master?preflight=1', 'POST',
     { from: today, to: today, warehouse_id: wh.id })

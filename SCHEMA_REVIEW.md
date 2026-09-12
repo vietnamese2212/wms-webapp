@@ -563,3 +563,17 @@ created_at, updated_at
   trong MỘT `jsonb_build_object` — hai mảng `jsonb_agg(DISTINCT …)` rời nhau không bảo đảm cùng thứ tự) để dòng việc có
   nút tra tồn kho. Gói QA 57 [10b2]/[10b3]/[10c]/[12g4] gác — ba phép kiểm cũ đã bị VIẾT LẠI vì chúng khẳng định đúng
   hành vi user vừa bác (lớp `feedback-qa-can-lock-in-the-bug`).
+- `20260912i_grant_missing_perms_bavi.sql` — **CẤP THỬ cho Ba Vì: 73 action chưa chức danh nào có.** Gói QA 08 đo được
+  73 action khai trong mã mà KHÔNG chức danh nào được cấp ⇒ nút/trang tàng hình với cả 38 nhân viên, chỉ superadmin
+  thấy. Nặng nhất: **Lái xe nâng (17 người) không mở nổi trang Xe nâng** — check list an toàn hằng ngày của chính họ —
+  và **NV SAP TP (3 người) không mở nổi Quy định date**, mà kho Hướng dẫn chưa khai mức date thì KHÔNG AI lấy hàng được.
+  Cấp theo **NĂNG LỰC SẴN CÓ**, không so tên (ratchet `role_by_vietnamese_name`): 9 luật `van_hanh` · `quet_xuat` ·
+  `chung_tu` · `giam_sat` (= đang được sửa pallet của NGƯỜI KHÁC) · `quan_ly` (= đang được sửa cấu hình Kho) ·
+  `sua_vi_tri` · `quan_nhan_su` · `danh_muc_hang` · `phan_cong`. **Phạm vi Ba Vì** ép bằng mệnh đề `EXISTS` trên
+  `UserWarehouseAccess` — diễn tập lần 1 thiếu nó nên chạm luôn 2 chức danh không có ai ở Ba Vì. CHỈ THÊM, không gỡ;
+  chạy lại ra cùng kết quả. Bản sao nguyên trạng ở `x_bak_jobtitle_perms_20260912i` + file `*_ROLLBACK.sql` (đã chạy
+  thử đường lui một lượt, quyền về đúng nguyên trạng). Kết quả: **281 quyền cho 9 chức danh**. Kiểm bằng TÀI KHOẢN VAI
+  THẬT (không phải Admin): Lái xe nâng mở được Xe nâng/Fill/Sơ đồ kho/Việc cần làm, bị 403 ở Quy định date · Chi phí kho
+  · Nhật ký quản trị. Chính lượt kiểm đó lộ ra **NV SAP bị 403 ở Hộp việc** trong khi hộp việc có đúng 2 dòng dành cho
+  họ ("khai quy định date", "DO SAP cần xử lý") ⇒ thêm `chung_tu → directed_work.view` (CHỈ xem, không ✓ Xong, không
+  sắp lại kế hoạch).

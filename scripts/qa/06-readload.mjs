@@ -8,8 +8,9 @@
 // đúng lúc kho đang cao điểm. Đã gặp thật 1 lần khi chạy 48 endpoint liên tiếp.
 //
 // Ngưỡng đánh giá: KHÔNG có 500/401, và max mỗi đường < 8.000ms (trần PostgREST).
-import { login, api, check, finish, pool, teardownGdo, cleanupTagged, resolveFixtures, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, teardownGdo, cleanupTagged, resolveFixtures, FIX, requireLoadApproval } from './lib.mjs'
 
+requireLoadApproval('06-readload.mjs')
 console.log('── GÓI READLOAD: ghi nhiều module + 6 người ĐỌC, đồng thời ──')
 await login()
 await resolveFixtures()   // tra MAT_POOL_ID lúc chạy (đừng hardcode id — id cũ đã chết)

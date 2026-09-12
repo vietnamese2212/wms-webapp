@@ -119,5 +119,13 @@ for (const s of steps) {
 console.log('\n══════════ TỔNG KẾT ══════════')
 for (const s of summary) console.log(`  ${s.ok ? '✅' : '❌'} ${s.label}`)
 const fails = summary.filter(s => !s.ok).length
-console.log(fails ? `\n⛔ ${fails} bước FAIL — KHÔNG merge main.` : `\n🟢 XANH toàn bộ (bậc ${TIER})${TIER === 'full' ? ' — đủ điều kiện merge main.' : ' — bậc full vẫn phải xanh trước khi merge.'}`)
+// ⚠️ Chế độ --offline CHỈ chạy vài bước không cần DB (cổng tĩnh · audit · npm test · độ phủ).
+// Trước 11/09 nó vẫn in "đủ điều kiện merge main" y như bậc full chạy đủ 60 bước — cùng lớp lỗi
+// với /api/health luôn trả "ok": đèn xanh nói nhiều hơn những gì nó thật sự đo được.
+const verdict = fails
+  ? `\n⛔ ${fails} bước FAIL — KHÔNG merge main.`
+  : OFFLINE
+    ? `\n🟢 XANH ${steps.length} bước KHÔNG CẦN DB — CHƯA kết luận được gì về nghiệp vụ (các gói cần DB chưa chạy).`
+    : `\n🟢 XANH toàn bộ (bậc ${TIER})${TIER === 'full' ? ' — đủ điều kiện merge main.' : ' — bậc full vẫn phải xanh trước khi merge.'}`
+console.log(verdict)
 process.exit(fails ? 1 : 0)

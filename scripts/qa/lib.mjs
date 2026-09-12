@@ -27,6 +27,22 @@ export const FIX = {
   EXEC_DATE: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }),
 }
 
+// ── GÓI TẢI PHẢI XIN PHÉP MỚI CHẠY (chốt 11/09) ──
+// Staging chạy trên máy Supabase NANO gói MIỄN PHÍ: quỹ Disk IO là hạn mức TÍCH LUỸ, đốt hết thì
+// máy bị bóp xuống mức không nhận nổi một kết nối nào — và KHÔNG có nút nào mua lại ngay, chỉ chờ
+// quỹ tự hồi (hoặc nâng gói trả tiền). Đo thật 11/09: staging chết nhiều giờ, toàn bộ việc dev
+// đứng lại, restart chỉ làm nặng thêm (cache nguội ⇒ đọc đĩa nhiều hơn).
+// Ba gói 03-scale · 05-rush · 06-readload CỐ Ý bơm tải — chúng vốn đã nằm ngoài mọi bậc của
+// run-all, nhưng "nằm ngoài lịch" không ngăn được một lần gõ tay. Rào này bắt phải khai chủ đích.
+export function requireLoadApproval(pack) {
+  if (process.env.QA_ALLOW_LOAD === '1') return
+  console.error(`\n⛔ ${pack} là GÓI TẢI — không tự chạy được.`)
+  console.error('   Staging là máy NANO gói miễn phí: bắn tải có thể đốt cạn quỹ Disk IO và làm')
+  console.error('   CẢ môi trường dev chết nhiều giờ (đã xảy ra 11/09/2026).')
+  console.error('   Chạy có chủ đích, ngoài giờ làm việc:  QA_ALLOW_LOAD=1 node scripts/qa/' + pack)
+  process.exit(2)
+}
+
 // ── App API ──
 let token = ''
 let realtimeToken = null
@@ -166,10 +182,14 @@ export async function resolveFixtures() {
   FIX.MAT_POOL_ID = mats[0].id
   FIX.MAT_POOL_CAT = mats[0].category
 
-  // 1 vị trí ĐANG HOẠT ĐỘNG ở kho QR, nhận đúng loại hàng của mã test (hoặc chưa gán loại)
+  // 1 vị trí ĐANG HOẠT ĐỘNG ở kho QR, nhận đúng loại hàng của mã test (hoặc chưa gán loại).
+  // CHỈ lấy vị trí CẤT HÀNG (`kind=STORAGE`): từ đợt Sơ đồ kho (09/09), cửa xuất/cửa nhập/điểm đầu
+  // dãy cũng là dòng `Location` nhưng `max_pallets=0` ⇒ quét nhập vào đó là 422 LOCATION_FULL. Ba Vì
+  // có `B_CUANHAP_*` đứng đầu bảng chữ cái nên fixture "vị trí đầu tiên" rơi trúng cửa nhập (gói 04
+  // đỏ âm thầm). Vị trí là thứ SINH THÊM được — fixture phải nói rõ mình cần LOẠI nào.
   const cat = FIX.MAT_POOL_CAT
   const locs = await restAll('Location',
-    `select=id,location_code,categories&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&order=location_code&limit=200`)
+    `select=id,location_code,categories&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&kind=eq.STORAGE&order=location_code&limit=200`)
   const hit = locs.find(l => !l.categories?.length || (cat && l.categories.includes(cat))) ?? locs[0]
   if (!hit) throw new Error(`Fixture: kho QR ${FIX.WH_QR.name} không có vị trí nào`)
   FIX.LOC_QR_ID = hit.id

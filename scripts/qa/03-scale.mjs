@@ -1,7 +1,8 @@
 // GÓI SCALE — seed N đơn xuất + lệnh chuyển kho, đo latency/payload các list, rồi DỌN SẠCH.
 // node 03-scale.mjs [N]  (mặc định 300; seed vào kho NONE An Sơn — không đụng tồn thật)
-import { login, api, check, finish, pool, cleanupTagged, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, cleanupTagged, FIX, requireLoadApproval } from './lib.mjs'
 
+requireLoadApproval('03-scale.mjs')
 const N = Number(process.argv[2] ?? 300)
 const LIST_MS_LIMIT = 3000      // ngưỡng chấp nhận cho list
 const PAYLOAD_LIMIT = 5 * 1024 * 1024

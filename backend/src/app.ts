@@ -88,12 +88,19 @@ app.get('/api/telemetry/digest', async (_req, res) => {
 })
 
 // Warm up: simple HTTP call to Supabase (no TCP pool to initialize)
+// ⚠️ PHẢI NÓI THẬT KHI DB CHẾT (vá 11/09). Bản cũ trả `{status:'ok'}` ở CẢ hai nhánh, mà
+// supabase-js KHÔNG ném lỗi (nó trả `{data, error}`) nên `catch` còn không bao giờ chạy tới —
+// tức endpoint này về mặt toán học không có đường nào báo ốm. Đo thật ngày 11/09: staging Postgres
+// cạn quỹ Disk IO, không nhận nổi một kết nối nào suốt nhiều giờ, mà /api/health vẫn 200 "ok" ⇒
+// tôi đọc nhầm thành "đã hồi phục". Chuông báo luôn nói khoẻ thì không phải chuông.
+// Không trả message thô của DB ra ngoài (cùng luật che 5xx) — chỉ đủ để biết ốm ở tầng nào.
 app.get('/api/health', async (_req, res) => {
   try {
-    await supabase.from('Warehouse').select('id').limit(1)
-    res.json({ status: 'ok' })
+    const { error } = await supabase.from('Warehouse').select('id').limit(1)
+    if (error) return res.status(503).json({ status: 'degraded', db: 'unreachable' })
+    res.json({ status: 'ok', db: 'ok' })
   } catch {
-    res.json({ status: 'ok' })
+    res.status(503).json({ status: 'degraded', db: 'unreachable' })
   }
 })
 

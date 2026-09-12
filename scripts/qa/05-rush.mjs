@@ -1,8 +1,9 @@
 // GÓI RUSH — "giờ cao điểm": 4 nhóm thao tác THẬT chạy đồng thời ~2', ~25 in-flight.
 // Không nằm trong run-all mặc định (nặng) — chạy tay trước go-live: node scripts/qa/05-rush.mjs
 // Trong lúc chạy nên mở app refresh vài lần (không được văng /login). Kết thúc: tự dọn + tự check bất biến.
-import { login, api, check, finish, pool, restAll, teardownGdo, cleanupTagged, resolveFixtures, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, restAll, teardownGdo, cleanupTagged, resolveFixtures, FIX, requireLoadApproval } from './lib.mjs'
 
+requireLoadApproval('05-rush.mjs')
 console.log('── GÓI RUSH (giờ cao điểm ~2 phút) ──')
 await login()
 // FIX.MAT_POOL_ID phải tra lúc CHẠY: id hardcode cũ (4a55517f…) đã không còn trong DB

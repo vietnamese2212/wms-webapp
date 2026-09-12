@@ -859,6 +859,32 @@ export interface DirectedBoard {
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
 }
+// HỘP VIỆC theo người (đợt C, 12/09) — mọi nguồn việc (chuyến · fill · slotting · chuyển kho · date · DO SAP)
+// về cùng một hình dạng, chia 3 vùng: Của tôi · Việc chung của kho · Đang chờ người khác
+export interface WorkInboxRow {
+  zone: 'MINE' | 'SHARED' | 'WAITING'
+  source: string          // TRIP · CLAIM · FILL · LOWER · FILL_OPEN · SLOTTING · TRANSFER · DATE · RECONCILE · TRIP_WAIT · OTHER_CLAIM
+  key: string
+  warehouse_id: string
+  wh_name: string | null
+  title: string
+  sub: string | null
+  n: number
+  link: string            // '' = chỉ xem (đang chờ người khác, mình không có quyền làm)
+}
+export interface WorkInbox {
+  mine: WorkInboxRow[]; shared: WorkInboxRow[]; waiting: WorkInboxRow[]
+  counts: { mine: number; shared: number; waiting: number }
+}
+export interface DirectedSupervision {
+  live: { gdo_id: string; group_code: string | null; license_plate: string | null; dock_name: string | null; started_at: string | null
+          pending: number; waiting_lower: number; done: number; oldest_wait_min: number | null; claimers: string | null; drivers: string | null }[]
+  by_person: { name: string; lowered: number; moved: number; done: number }[]
+  by_day: { day: string; done: number; skipped_other: number; adherence_pct: number | null }[]
+  lead_time: { lower_to_move_min: number | null; move_to_scan_min: number | null; sample: number }
+  since: string
+  days: number
+}
 // SPLIT = một dòng đơn nhiều mức date theo SỐ LƯỢNG ("250 thùng date 60, 30 thùng date 90")
 // MIN_DAYS = "còn tối thiểu N ngày" (11/09). Với hàng hạn ngắn thì % không diễn đạt nổi: FG02 hạn
 // 45–60 ngày nên "còn ≥ 35 ngày" ra 77,8 % trên mã này và 58,3 % trên mã kia.

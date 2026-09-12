@@ -74,6 +74,58 @@ export async function confirm(req: Request, res: Response) {
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
+// ─── HỘP VIỆC THEO NGƯỜI (đợt C, 12/09) ────────────────────────────────────────────────────────
+// RPC `work_inbox` trả MỌI nguồn việc kèm quyền cần có (pm/pa); controller lọc theo quyền người gọi:
+// có quyền → giữ nguyên vùng; không có quyền mà dòng có bản "chờ" (wv) → rơi xuống WAITING với câu chờ;
+// không có gì → bỏ. Quyền quyết định ở ĐÂY (một chỗ), RPC không biết ai đang hỏi.
+type InboxRow = {
+  zone: 'MINE' | 'SHARED' | 'WAITING'; source: string; key: string
+  warehouse_id: string; wh_name: string | null; title: string; sub: string | null; n: number; link: string
+  pm: string; pa: string; wv: boolean; sub_wait: string | null
+}
+const userHasPerm = (req: Request, mod: string, action: string): boolean =>
+  req.user?.is_superadmin === true || (req.user?.module_permissions?.[mod] ?? []).includes(action)
+
+/** GET /wms/directed/inbox?warehouse_id= — kho bỏ trống = mọi kho trong phạm vi (badge bottom-nav dùng dạng này) */
+export async function getInbox(req: Request, res: Response) {
+  try {
+    const whId = req.query.warehouse_id ? String(req.query.warehouse_id) : ''
+    if (whId && badId(whId)) return fail(res, 400, 'BAD_ID', 'Mã kho không hợp lệ')
+    const myWhs = scopeWhIds(req)
+    if (whId && myWhs && !myWhs.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    // Phạm vi kho rỗng ≠ không giới hạn (memory empty-scope-means-unlimited): người chưa được giao kho thấy hộp trống
+    if (!whId && myWhs && myWhs.length === 0) return ok(res, { mine: [], shared: [], waiting: [], counts: { mine: 0, shared: 0, waiting: 0 } })
+    const ids: string[] | null = whId ? [whId] : myWhs
+    const { data, error } = await supabase.rpc('work_inbox', { p_warehouse_ids: ids, p_employee_id: req.user?.sub ?? '' })
+    if (error) return fail(res, error)
+    const rows = ((data as { rows?: InboxRow[] } | null)?.rows ?? [])
+    const out = { mine: [] as InboxRow[], shared: [] as InboxRow[], waiting: [] as InboxRow[] }
+    for (const r of rows) {
+      if (userHasPerm(req, r.pm, r.pa)) {
+        (r.zone === 'MINE' ? out.mine : r.zone === 'SHARED' ? out.shared : out.waiting).push(r)
+      } else if (r.wv) {
+        out.waiting.push({ ...r, zone: 'WAITING', sub: r.sub_wait ?? r.sub, link: '' })
+      }
+    }
+    const sum = (a: InboxRow[]) => a.reduce((s, r) => s + Number(r.n ?? 0), 0)
+    return ok(res, { ...out, counts: { mine: sum(out.mine), shared: sum(out.shared), waiting: sum(out.waiting) } })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/** GET /wms/directed/supervision?warehouse_id=&days= — góc nhìn giám sát (quyền replan) */
+export async function getSupervision(req: Request, res: Response) {
+  try {
+    const whId = String(req.query.warehouse_id ?? '')
+    if (badId(whId)) return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã kho')
+    const myWhs = scopeWhIds(req)
+    if (myWhs && !myWhs.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const days = Math.min(90, Math.max(1, Number(req.query.days ?? 7) || 7))
+    const { data, error } = await supabase.rpc('directed_supervision', { p_warehouse_id: whId, p_days: days })
+    if (error) return fail(res, error)
+    return ok(res, data ?? {})
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
 /** PHẠM VI KHO: việc thuộc kho ngoài phạm vi thì không được đánh dấu / nhận (id việc là uuid đoán được). */
 async function tasksInScope(req: Request, res: Response, ids: string[]): Promise<boolean> {
   const myWhs = scopeWhIds(req)

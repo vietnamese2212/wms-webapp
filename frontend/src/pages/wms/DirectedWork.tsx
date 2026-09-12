@@ -16,15 +16,15 @@
 //   • Kho không xe hạ riêng: một nút "Hạ & đưa ra", tab Cần hạ ẩn.
 //   • Tab Sắp quét có nút QUÉT ngay tại chỗ (thủ kho không phải sang Xuất kho → chuyến → Quét).
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2 } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO } from '@/api/hooks'
+import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -32,12 +32,16 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyLabel } from '@/utils/qtyUnits'
-import type { DirectedRow } from '@/types'
+import type { DirectedRow, WorkInbox, WorkInboxRow, DirectedSupervision } from '@/types'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
-type Tab = 'LOWER' | 'MOVE' | 'SCAN'
+// INBOX (đợt C, 12/09) = HỘP VIỆC theo NGƯỜI, gom mọi nguồn (chuyến · fill · slotting · chuyển kho · date · DO SAP)
+// thành 3 vùng: Của tôi · Việc chung của kho · Đang chờ người khác. Ba tab vai còn lại là màn LÀM VIỆC chi tiết.
+type Tab = 'INBOX' | 'LOWER' | 'MOVE' | 'SCAN'
+type BoardTab = Exclude<Tab, 'INBOX'>
 const TABS: { key: Tab; label: string; icon: typeof Truck; hint: string }[] = [
+  { key: 'INBOX', label: 'Hộp việc',   icon: Inbox,           hint: 'Việc của tôi · việc chung của kho · đang chờ người khác — từ mọi nguồn' },
   { key: 'LOWER', label: 'Cần hạ',     icon: ArrowDownToLine, hint: 'Xe nâng hạ — toàn kho, làm từ trên xuống' },
   { key: 'MOVE',  label: 'Cần đưa ra', icon: Truck,           hint: 'Xe nâng chuyển — đưa hàng ra cửa / vị trí nhặt lẻ' },
   { key: 'SCAN',  label: 'Sắp quét',   icon: ScanIcon,        hint: 'Thủ kho — từng pallet theo thứ tự quét' },
@@ -45,6 +49,7 @@ const TABS: { key: Tab; label: string; icon: typeof Truck; hint: string }[] = [
 
 // Cột theo TAB: xe hạ và xe chuyển cần thông tin khác nhau, đừng nhồi một bảng cho cả hai
 const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' }[]> = {
+  INBOX: [],
   LOWER: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
     { id: 'trip', label: 'Chuyến · Cửa',   w: 150 },
@@ -84,7 +89,7 @@ const SKIP_LABEL: Record<string, string> = {
 }
 
 /** Trạng thái một dòng — chữ ngắn, đọc lướt được trên PDA. */
-function stateOf(r: DirectedRow, tab: Tab): { text: string; cls: string } {
+function stateOf(r: DirectedRow, tab: BoardTab): { text: string; cls: string } {
   if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `bỏ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
   if (r.all_scanned) return { text: `✓ quét đủ${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}`, cls: 'text-green-600' }
   if (r.stage_done) return {
@@ -100,7 +105,7 @@ function stateOf(r: DirectedRow, tab: Tab): { text: string; cls: string } {
 // Mọi nút của một dòng — dùng CHUNG cho bảng (PC) và thẻ (PDA) để hai màn không kể hai câu chuyện khác nhau.
 type RowAction = { key: string; label: string; icon: typeof Check; primary?: boolean; muted?: boolean; onClick: () => void }
 function actionsFor(
-  r: DirectedRow, tab: Tab, me: string | null, canConfirm: boolean,
+  r: DirectedRow, tab: BoardTab, me: string | null, canConfirm: boolean,
   fire: { confirm: (r: DirectedRow, stage: 'LOWER' | 'MOVE' | 'BOTH', undo: boolean) => void; claim: (r: DirectedRow, undo: boolean) => void },
 ): { actions: RowAction[]; heldByOther: string | null } {
   const heldByOther = r.claim_active && r.claimed_by && r.claimed_by !== me ? (r.claimed_by_name ?? 'người khác') : null
@@ -123,6 +128,120 @@ function actionsFor(
   return { actions, heldByOther }
 }
 
+// ─── HỘP VIỆC ─────────────────────────────────────────────────────────────────────────────────
+const ZONE_META = {
+  MINE:    { title: 'Của tôi',                 hint: 'giao đích danh cho bạn — làm trước',            tone: 'border-sky-300 bg-sky-50/60',     dot: 'bg-sky-500' },
+  SHARED:  { title: 'Việc chung của kho',      hint: 'ai có quyền cũng làm được — bấm Nhận để không trùng nhau', tone: 'border-slate-200 bg-white', dot: 'bg-emerald-500' },
+  WAITING: { title: 'Đang chờ người khác',     hint: 'chỉ để biết — không cần bạn làm gì lúc này',    tone: 'border-slate-200 bg-slate-50',    dot: 'bg-slate-400' },
+} as const
+
+function InboxRowView({ r, showWh }: { r: WorkInboxRow; showWh: boolean }) {
+  const body = (
+    <>
+      <span className="shrink-0 min-w-9 h-9 px-1.5 rounded-lg bg-slate-900 text-white text-sm font-semibold tabular-nums flex items-center justify-center">{nf(r.n)}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-slate-800 truncate">{r.title}</span>
+        {r.sub && <span className="block text-[11px] text-slate-500 truncate">{r.sub}</span>}
+        {showWh && r.wh_name && <span className="block text-[10px] text-slate-400 truncate">{r.wh_name}</span>}
+      </span>
+      {r.link && <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />}
+    </>
+  )
+  const cls = 'flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 min-h-12'
+  return r.link
+    ? <Link to={r.link} className={`${cls} hover:border-sky-300 hover:bg-sky-50 active:bg-sky-100`}>{body}</Link>
+    : <div className={`${cls} opacity-80`}>{body}</div>
+}
+
+function InboxZone({ zone, rows, showWh }: { zone: keyof typeof ZONE_META; rows: WorkInboxRow[]; showWh: boolean }) {
+  const m = ZONE_META[zone]
+  return (
+    <section className={`rounded-xl border p-3 space-y-2 ${m.tone}`}>
+      <header className="flex items-baseline gap-2">
+        <span className={`h-2 w-2 rounded-full ${m.dot}`} />
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-700">{m.title}</h2>
+        <span className="text-[11px] text-slate-500">· {m.hint}</span>
+        <span className="ml-auto text-[11px] font-semibold tabular-nums text-slate-600">{nf(rows.reduce((s, r) => s + r.n, 0))}</span>
+      </header>
+      {rows.length === 0
+        ? <p className="text-[11px] text-slate-400 px-1">
+            {zone === 'MINE' ? 'Không có việc nào giao đích danh cho bạn.' : zone === 'SHARED' ? 'Kho không còn việc chung nào chờ.' : 'Không có gì đang chờ người khác.'}
+          </p>
+        : <div className="space-y-1.5">{rows.map(r => <InboxRowView key={r.key} r={r} showWh={showWh} />)}</div>}
+    </section>
+  )
+}
+
+/** Góc nhìn giám sát (quyền replan) — ai đang làm gì, chuyến nào chờ hạ lâu, % làm đúng kế hoạch. */
+function SupervisionPanel({ s }: { s: DirectedSupervision }) {
+  const mins = (m: number | null | undefined) => (m == null ? '—' : `${nf(m)}′`)
+  const th = 'text-[9px] font-medium text-slate-500 px-2 py-1 text-left whitespace-nowrap'
+  const td = 'px-2 py-1 text-[11px] whitespace-nowrap'
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+      <header className="flex items-baseline gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-700">Giám sát · {s.days} ngày</h2>
+        <span className="text-[11px] text-slate-500">· hạ → đưa ra TB {mins(s.lead_time?.lower_to_move_min)} · đưa ra → quét đủ TB {mins(s.lead_time?.move_to_scan_min)} ({nf(s.lead_time?.sample ?? 0)} việc)</span>
+      </header>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="overflow-x-auto">
+          <div className="text-[10px] font-semibold text-slate-500 mb-1">Chuyến đang chạy — ai đang làm, chờ hạ lâu nhất</div>
+          <table className="w-full"><thead><tr><th className={th}>Chuyến</th><th className={th}>Cửa</th><th className={`${th} text-right`}>Còn</th><th className={`${th} text-right`}>Chờ hạ</th><th className={`${th} text-right`}>Lâu nhất</th><th className={th}>Đang cầm</th><th className={th}>Xe chuyển</th></tr></thead>
+            <tbody>
+              {s.live.length === 0 && <tr><td colSpan={7} className={`${td} text-slate-400`}>Không có chuyến nào đang chạy</td></tr>}
+              {s.live.map(l => (
+                <tr key={l.gdo_id} className="border-t border-slate-100">
+                  <td className={`${td} font-mono font-semibold`}>{l.license_plate ?? l.group_code}</td>
+                  <td className={td}>{l.dock_name ?? '—'}</td>
+                  <td className={`${td} text-right tabular-nums`}>{nf(l.pending)}</td>
+                  <td className={`${td} text-right tabular-nums ${l.waiting_lower > 0 ? 'text-amber-700 font-semibold' : ''}`}>{nf(l.waiting_lower)}</td>
+                  <td className={`${td} text-right tabular-nums ${(l.oldest_wait_min ?? 0) >= 30 ? 'text-red-600 font-semibold' : ''}`}>{mins(l.oldest_wait_min)}</td>
+                  <td className={td}>{l.claimers ?? <span className="text-slate-300">—</span>}</td>
+                  <td className={`${td} text-slate-500`}>{l.drivers ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody></table>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="overflow-x-auto">
+            <div className="text-[10px] font-semibold text-slate-500 mb-1">Theo người</div>
+            <table className="w-full"><thead><tr><th className={th}>Người</th><th className={`${th} text-right`}>Hạ</th><th className={`${th} text-right`}>Đưa ra</th><th className={`${th} text-right`}>Quét</th></tr></thead>
+              <tbody>
+                {s.by_person.length === 0 && <tr><td colSpan={4} className={`${td} text-slate-400`}>Chưa có ai ghi việc</td></tr>}
+                {s.by_person.map(p => (
+                  <tr key={p.name} className="border-t border-slate-100"><td className={td}>{p.name}</td><td className={`${td} text-right tabular-nums`}>{nf(p.lowered)}</td><td className={`${td} text-right tabular-nums`}>{nf(p.moved)}</td><td className={`${td} text-right tabular-nums`}>{nf(p.done)}</td></tr>
+                ))}
+              </tbody></table>
+          </div>
+          <div className="overflow-x-auto">
+            <div className="text-[10px] font-semibold text-slate-500 mb-1">Làm đúng kế hoạch theo ngày <span className="font-normal">(xong ÷ (xong + quét pallet khác))</span></div>
+            <table className="w-full"><thead><tr><th className={th}>Ngày</th><th className={`${th} text-right`}>Xong</th><th className={`${th} text-right`}>Lấy khác</th><th className={`${th} text-right`}>% đúng</th></tr></thead>
+              <tbody>
+                {s.by_day.length === 0 && <tr><td colSpan={4} className={`${td} text-slate-400`}>Chưa có việc xong</td></tr>}
+                {s.by_day.map(d => (
+                  <tr key={d.day} className="border-t border-slate-100"><td className={td}>{formatDate(d.day)}</td><td className={`${td} text-right tabular-nums`}>{nf(d.done)}</td><td className={`${td} text-right tabular-nums`}>{nf(d.skipped_other)}</td>
+                    <td className={`${td} text-right tabular-nums font-semibold ${d.adherence_pct != null && d.adherence_pct < 70 ? 'text-red-600' : d.adherence_pct != null && d.adherence_pct < 90 ? 'text-amber-700' : 'text-green-700'}`}>{d.adherence_pct == null ? '—' : `${nf(d.adherence_pct)} %`}</td></tr>
+                ))}
+              </tbody></table>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function InboxPanel({ inbox, loading, showWh, sup }: { inbox: WorkInbox | undefined; loading: boolean; showWh: boolean; sup: DirectedSupervision | undefined }) {
+  if (loading && !inbox) return <div className="py-6 text-center text-[11px] text-slate-400">Đang tải hộp việc…</div>
+  return (
+    <div className="p-2 sm:p-3 space-y-3">
+      <InboxZone zone="MINE"    rows={inbox?.mine ?? []}    showWh={showWh} />
+      <InboxZone zone="SHARED"  rows={inbox?.shared ?? []}  showWh={showWh} />
+      <InboxZone zone="WAITING" rows={inbox?.waiting ?? []} showWh={showWh} />
+      {sup && <SupervisionPanel s={sup} />}
+    </div>
+  )
+}
+
 /** Một dòng chỉ dẫn trên thẻ: NHÃN nhỏ bên trái · nội dung to bên phải. */
 function Step({ label, children, big }: { label: string; children: React.ReactNode; big?: boolean }) {
   return (
@@ -140,6 +259,7 @@ export default function DirectedWork() {
   const me = user?.id ?? null
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canConfirm = can(perms, 'directed_work', 'confirm')
+  const canReplan = can(perms, 'directed_work', 'replan')     // vai giám sát → thấy khối Giám sát trong Hộp việc
   const canScan = can(perms, 'outbound', 'scan')
   // Băng "chưa khai quy định date" là VIỆC của người có quyền chốt — xe nâng chỉ cần biết dòng đó
   // đang chờ người khác, không cần lời hướng dẫn họ không làm được.
@@ -149,23 +269,30 @@ export default function DirectedWork() {
   useEffect(() => {
     if (!f.warehouseId && whs?.length === 1) setF({ warehouseId: (whs[0] as { id: string }).id })
   }, [whs, f.warehouseId, setF])
-  // Chuông "được giao xe nâng" trỏ tới đây kèm ?trip= — mở đúng chuyến ở bảng Sắp quét
+  // Chuông "được giao xe nâng" và các dòng Hộp việc trỏ tới đây kèm ?trip= / ?tab= — mở đúng chuyến, đúng bảng
   const [sp] = useSearchParams()
   useEffect(() => {
     const trip = sp.get('trip')
     if (trip && trip !== f.gdoId) setF({ gdoId: trip })
-  }, [sp, f.gdoId, setF])
+    const t = sp.get('tab')
+    if (t && ['INBOX', 'LOWER', 'MOVE', 'SCAN'].includes(t) && t !== f.tab) setF({ tab: t as Tab })
+  }, [sp, f.gdoId, f.tab, setF])
 
-  const tab = f.tab as Tab
+  const tab = (f.tab as Tab) ?? 'INBOX'
+  const boardTab: BoardTab = tab === 'INBOX' ? 'MOVE' : tab
   const { widths: colW, startResize, totalWidth } = useColumnResize(`directed_${tab.toLowerCase()}_col_widths`, COLS[tab].map(c => c.w))
 
   const confirmTasks = useConfirmTasks()
   const claimTasks = useClaimTasks()
-  const { data, isLoading } = useDirectedBoard(f.warehouseId, tab, {
+  const { data, isLoading } = useDirectedBoard(f.warehouseId, boardTab, {
+    enabled: tab !== 'INBOX',
     gdoId: tab === 'SCAN' ? (f.gdoId || null) : null,
     // "Của tôi" chỉ có nghĩa ở bảng xe chuyển (việc gắn theo người được giao lúc Bắt đầu)
     driverId: tab === 'MOVE' && f.mine ? (me ?? null) : null,
   })
+  // Hộp việc: kho bỏ trống = mọi kho trong phạm vi (người quản lý nhiều kho nhìn một lượt)
+  const inbox = useWorkInbox(f.warehouseId || null, tab === 'INBOX')
+  const sup = useDirectedSupervision(f.warehouseId || null, 7, tab === 'INBOX' && canReplan)
   // Kho KHÔNG có xe hạ riêng: mọi việc nằm ở bảng xe chuyển, tab Cần hạ vô nghĩa → ẩn + đổi tab
   const sepLower = data?.settings?.separate_lowering_forklift !== false
   useEffect(() => {
@@ -212,7 +339,7 @@ export default function DirectedWork() {
   const { data: scanGdo } = useGDO(tab === 'SCAN' && canScan && f.gdoId ? f.gdoId : undefined)
 
   const filterDefs: FilterDef[] = [
-    { key: 'wh', label: 'Kho', type: 'single', pinned: true, allLabel: 'Chọn kho…',
+    { key: 'wh', label: 'Kho', type: 'single', pinned: true, allLabel: tab === 'INBOX' ? 'Mọi kho được giao' : 'Chọn kho…',
       options: (whs ?? []).map(w => ({ value: (w as { id: string }).id, label: (w as { id: string; name?: string }).name ?? '' })),
       value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v, gdoId: '' }) },
     ...(tab === 'SCAN' ? [{
@@ -224,9 +351,11 @@ export default function DirectedWork() {
       options: [{ value: 'all', label: 'Tất cả việc trong kho' }],
       value: f.mine ? '' : 'all', onChange: (v: string) => setF({ mine: v !== 'all' }),
     }] : []),
-    { key: 'done', label: 'Việc đã xong', type: 'single', allLabel: 'Hiện (mặc định — để đối chiếu)',
+    ...(tab !== 'INBOX' ? [{
+      key: 'done', label: 'Việc đã xong', type: 'single' as const, allLabel: 'Hiện (mặc định — để đối chiếu)',
       options: [{ value: 'hide', label: 'Ẩn việc đã xong' }],
-      value: f.hideDone ? 'hide' : '', onChange: (v: string) => setF({ hideDone: v === 'hide' }) },
+      value: f.hideDone ? 'hide' : '', onChange: (v: string) => setF({ hideDone: v === 'hide' }),
+    }] : []),
   ]
 
   const t = data?.totals ?? {}
@@ -249,6 +378,8 @@ export default function DirectedWork() {
     confirm: (r: DirectedRow, stage: 'LOWER' | 'MOVE' | 'BOTH', undo: boolean) => confirmTasks.mutate({ task_ids: r.task_ids, stage, undo }),
     claim:   (r: DirectedRow, undo: boolean) => claimTasks.mutate({ task_ids: r.task_ids, undo }),
   }
+  // Số việc CỦA TÔI lên nhãn tab — mở trang là biết còn bao nhiêu, không cần vào tab
+  const mineCount = inbox.data?.counts?.mine ?? 0
   const apiErr = (e: unknown) => (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   const emptyReason = !f.warehouseId ? 'Chọn kho để xem việc cần làm'
     : (tab === 'SCAN' && !f.gdoId) ? 'Chọn chuyến để xem thứ tự quét' : null
@@ -269,6 +400,9 @@ export default function DirectedWork() {
                   className={`flex items-center gap-1 rounded-md px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
                     tab === x.key ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                   <x.icon className="h-3.5 w-3.5" /> {x.label}
+                  {x.key === 'INBOX' && mineCount > 0 && (
+                    <span className={`ml-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${tab === 'INBOX' ? 'bg-white/25 text-white' : 'bg-red-500 text-white'}`}>{mineCount}</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -285,6 +419,17 @@ export default function DirectedWork() {
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 
+        {tab === 'INBOX' && (
+          <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+            <InboxPanel inbox={inbox.data} loading={inbox.isLoading} showWh={!f.warehouseId}
+              sup={canReplan && f.warehouseId ? sup.data : undefined} />
+            {canReplan && !f.warehouseId && (
+              <p className="px-3 pb-3 text-[11px] text-slate-400">Chọn một kho để xem khối Giám sát (ai đang làm · chờ hạ lâu nhất · % làm đúng kế hoạch).</p>
+            )}
+          </div>
+        )}
+
+        {tab !== 'INBOX' && (<>
         <SummaryBand tiles={[
           { label: 'Việc còn lại', value: nf(t.pending ?? 0), accent: (t.pending ?? 0) > 0 },
           { label: 'Chờ hạ',       value: nf(t.to_lower ?? 0) },
@@ -335,10 +480,10 @@ export default function DirectedWork() {
               </div>
             )}
             {rows.map(r => {
-              const st = stateOf(r, tab)
+              const st = stateOf(r, boardTab)
               const first = r.group_key === nextKey
               const closed = r.stage_done || r.skipped
-              const { actions, heldByOther } = actionsFor(r, tab, me, canConfirm, fire)
+              const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire)
               const ord = ordOf.get(r.group_key)
               const dest = tab === 'LOWER' ? (r.drop_name ?? r.to_name) : (r.to_name ?? r.to_code)
               const where = tab === 'LOWER' ? r.from_code : r.current_code
@@ -433,11 +578,11 @@ export default function DirectedWork() {
                 </TableCell></TableRow>
               )}
               {rows.map(r => {
-                const st = stateOf(r, tab)
+                const st = stateOf(r, boardTab)
                 // Xong = GẠCH NGANG + xám, vẫn ở lại bảng (user chốt "phòng bị quên")
                 const dim = (r.stage_done || r.skipped) ? 'text-slate-400 line-through' : ''
                 const first = r.group_key === nextKey
-                const { actions, heldByOther } = actionsFor(r, tab, me, canConfirm, fire)
+                const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire)
                 return (
                   <TableRow key={r.group_key} className={`${dim} ${first ? 'bg-sky-50' : ''}`}>
                     <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums sticky left-0 z-10 ${first ? 'bg-sky-50' : 'bg-white'}`}>
@@ -546,6 +691,7 @@ export default function DirectedWork() {
           )}
           {confirmTasks.data?.moved_pallets ? <span className="text-green-600">· đã chuyển {confirmTasks.data.moved_pallets} pallet về vị trí nhặt lẻ</span> : null}
         </div>
+        </>)}
       </div>
 
       {scanOpen && scanGdo && <GdoScanSheet gdo={scanGdo} mode="outbound" onClose={() => setScanOpen(false)} />}

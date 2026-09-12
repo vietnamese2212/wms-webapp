@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-12T09:54:30.461Z · 94 bảng/view · 157 hàm · 0 enum
+// Sinh lúc 2026-09-12T10:36:32.664Z · 94 bảng/view · 159 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -4878,6 +4878,10 @@ export type Database = {
         Args: { p_mode: unknown; p_driver_id: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown }
         Returns: Json
       }
+      directed_supervision: {
+        Args: { p_days: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Returns: Json
+      }
       fill_candidates: {
         Args: { p_warehouse_id: unknown; p_limit: unknown; arg6: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
         Returns: Json
@@ -5307,7 +5311,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
+        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: string
       }
       unaccent_init: {
@@ -5393,6 +5397,10 @@ export type Database = {
       word_similarity_op: {
         Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
         Returns: boolean
+      }
+      work_inbox: {
+        Args: { p_employee_id: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
+        Returns: Json
       }
       wt_cats: {
         Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }

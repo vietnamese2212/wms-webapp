@@ -289,7 +289,7 @@ interface DateRuleFilters {
 
 interface DirectedWorkFilters {
   warehouseId: string
-  tab: 'LOWER' | 'MOVE' | 'SCAN'
+  tab: 'INBOX' | 'LOWER' | 'MOVE' | 'SCAN'   // INBOX = hộp việc theo người (đợt C, 12/09) — mặc định cho người mới
   gdoId: string
   mine: boolean
   hideDone: boolean
@@ -568,7 +568,7 @@ function initialFilters() {
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
     dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[],
                     matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
-    directedWork: { warehouseId: '', tab: 'LOWER' as const, gdoId: '', mine: true, hideDone: false },
+    directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },

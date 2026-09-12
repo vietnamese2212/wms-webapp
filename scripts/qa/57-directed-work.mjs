@@ -310,6 +310,37 @@ try {
   check('[10j] Dòng "chưa chốt %Date" cũng mang ngày chuyến',
     dUnset.every(u => 'delivery_date' in u), dUnset.length ? `${dUnset.length} dòng` : 'không có dòng chưa chốt lúc này')
 
+  // ═══ [10k] HỘP VIỆC theo người (đợt C, 12/09) — mọi nguồn về 3 vùng, số khớp với bảng vai ═══════
+  b = await api(`/wms/directed/inbox?warehouse_id=${whId}`)
+  const ib = b.j?.data ?? {}
+  check('[10k] Hộp việc trả 3 vùng (mine · shared · waiting) + counts',
+    b.s === 200 && Array.isArray(ib.mine) && Array.isArray(ib.shared) && Array.isArray(ib.waiting) && typeof ib.counts?.mine === 'number',
+    `http=${b.s} mine=${ib.mine?.length} shared=${ib.shared?.length} waiting=${ib.waiting?.length}`)
+  // Oracle: "Cần hạ n pallet" ở vùng chung = tổng pallet chưa hạ trên bảng Cần hạ (chưa ai nhận)
+  const waitPallets = dRows.filter(x => !x.stage_done && !x.skipped && !x.claim_active).reduce((s, x) => s + Number(x.n_pallets), 0)
+  const ibLower = (ib.shared ?? []).find(x => x.source === 'LOWER')
+  check('[10k2] Vùng chung: dòng "Cần hạ" khớp tổng pallet chờ hạ chưa ai nhận trên bảng Cần hạ',
+    waitPallets === 0 ? !ibLower : (!!ibLower && Number(ibLower.n) === waitPallets && ibLower.link.includes('tab=LOWER')),
+    `bảng=${waitPallets} hộp=${ibLower?.n ?? 'không có dòng'}`)
+  const ibDate = (ib.shared ?? []).find(x => x.source === 'DATE')
+  check('[10k3] Vùng chung: dòng "Khai quy định date" ≥ số dòng chưa chốt của chuyến đang chạy, trỏ trang Quy định date',
+    dUnset.length === 0 ? true : (!!ibDate && Number(ibDate.n) >= dUnset.length && ibDate.link === '/wms/outbound/date-rules'),
+    `chưa chốt=${dUnset.length} hộp=${ibDate?.n ?? 'không có dòng'}`)
+  check('[10k4] Mỗi dòng hộp việc đủ trường hiển thị (title · n · link · warehouse)',
+    [...ib.mine, ...ib.shared, ...ib.waiting].every(x => typeof x.title === 'string' && Number.isFinite(Number(x.n)) && typeof x.link === 'string' && !!x.warehouse_id),
+    `${[...ib.mine, ...ib.shared, ...ib.waiting].length} dòng`)
+  b = await api(`/wms/directed/inbox?warehouse_id=${encodeURIComponent("' or 1=1--")}`)
+  check('[10k5] Hộp việc: mã kho kiểu injection → 400', b.s === 400, `http=${b.s}`)
+  // Giám sát (quyền replan): chuyến đang chạy có mặt, khối theo ngày / theo người / lead time có hình dạng
+  b = await api(`/wms/directed/supervision?warehouse_id=${whId}&days=7`)
+  const sv = b.j?.data ?? {}
+  check('[10l] Giám sát trả live · by_person · by_day · lead_time, chuyến T2 có trong live',
+    b.s === 200 && Array.isArray(sv.live) && Array.isArray(sv.by_person) && Array.isArray(sv.by_day) && typeof sv.lead_time === 'object'
+      && sv.live.some(l => l.gdo_id === t2.gdo && Number.isFinite(Number(l.pending))),
+    `http=${b.s} live=${sv.live?.length} person=${sv.by_person?.length} day=${sv.by_day?.length}`)
+  b = await api(`/wms/directed/supervision?warehouse_id=${whId}&days=9999`)
+  check('[10l2] Giám sát kẹp số ngày về trần 90', b.s === 200 && b.j?.data?.days === 90, `days=${b.j?.data?.days}`)
+
   // ═══ [11] NÚT "✓ XONG" ═══════════════════════════════════════════════════════════════════════
   const lowerGroup = lowerRows.find(x => x.task_ids?.length)
   if (!lowerGroup) throw new Error('Bảng Cần hạ rỗng — không có nhóm nào để thử nút ✓ Xong')

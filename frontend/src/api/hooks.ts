@@ -13,7 +13,7 @@ import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
-import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule } from '@/types'
+import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule, WorkInbox, DirectedSupervision } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -4139,6 +4139,35 @@ export function useClaimTasks() {
     mutationFn: (body: { task_ids: string[]; undo?: boolean }) =>
       apiClient.post('/wms/directed/tasks/claim', body).then(r => r.data.data as { changed: number; held_by: string | null }),
     onSettled: () => qc.invalidateQueries({ queryKey: ['directed-board'] }),
+  })
+}
+
+/** Hộp việc theo người (đợt C) — whId null = mọi kho trong phạm vi (badge bottom-nav). */
+export function useWorkInbox(whId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['work-inbox', whId ?? ''],
+    enabled,
+    staleTime: 20_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/directed/inbox', { params: whId ? { warehouse_id: whId } : {} })
+      return data.data as WorkInbox
+    },
+  })
+}
+
+/** Góc nhìn giám sát Việc cần làm (quyền replan): ai đang làm · chờ hạ lâu nhất · % làm đúng kế hoạch. */
+export function useDirectedSupervision(whId: string | null | undefined, days = 7, enabled = true) {
+  return useQuery({
+    queryKey: ['directed-supervision', whId, days],
+    enabled: enabled && !!whId,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/directed/supervision', { params: { warehouse_id: whId, days } })
+      return data.data as DirectedSupervision
+    },
   })
 }
 

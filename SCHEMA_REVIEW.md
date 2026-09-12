@@ -541,3 +541,12 @@ created_at, updated_at
   FALSE ⇒ RPC trả `combined_lower=true`, dòng chờ hạ ở bảng xe chuyển bấm được, stage `BOTH` ghi cả `lowered_at`
   + `moved_at` (undo bỏ cả hai), tab Cần hạ ẩn. RPC `directed_board` trả thêm `claim_active · claimed_by ·
   claimed_by_name · combined_lower` và `settings.separate_lowering_forklift`. Gói QA 57 [12f–12g4] gác.
+- `20260912g_work_inbox.sql` — **Việc cần làm đợt C: HỘP VIỆC theo người + RPC giám sát.** `work_inbox(p_warehouse_ids
+  text[], p_employee_id)` gom MỌI nguồn việc (chuyến tôi là xe chuyển · việc tôi đang cầm · lệnh fill giao tôi · cần
+  hạ chưa ai nhận · fill chưa ai nhận · kế hoạch Slotting mở · chuyển kho chờ nhận · dòng chưa khai quy định date · DO
+  SAP cần xử lý · pallet chờ xe hạ · người khác đang cầm) về CÙNG hình dạng `{zone, source, key, warehouse_id, wh_name,
+  title, sub, n, link, pm, pa, wv, sub_wait}`; RPC KHÔNG biết quyền — trả `pm/pa` để controller lọc theo quyền người
+  gọi (không quyền + `wv` ⇒ rơi xuống WAITING với câu chờ). `p_warehouse_ids NULL` = mọi kho (chỉ phạm vi toàn quốc).
+  Ngày chuyến timestamptz so theo ngày VN bằng `AT TIME ZONE`. `directed_supervision(p_warehouse_id, p_days)` (quyền
+  `directed_work.replan`): live (chuyến đang chạy · chờ hạ lâu nhất · ai đang cầm) · by_person · by_day (**% làm đúng kế
+  hoạch = done / (done + skipped OTHER_PALLET)**) · lead_time. Gói QA 57 [10k–10l2] gác.

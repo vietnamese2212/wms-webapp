@@ -15,8 +15,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   warehouse_maps:      [['warehouse-map']],
   // Fill hàng: màn danh sách lệnh + chi tiết lệnh phải sáng ngay khi người khác quét/gán/hủy
   // (không F5); fill-demand vì dòng treo được trừ vào phần "thiếu" của mã đó.
-  FillTask:            [['fill-orders'], ['fill-order'], ['fill-demand'], ['fill-report']],
-  FillOrder:           [['fill-orders'], ['fill-order']],
+  FillTask:            [['fill-orders'], ['fill-order'], ['fill-demand'], ['fill-report'], ['work-inbox']],
+  FillOrder:           [['fill-orders'], ['fill-order'], ['work-inbox']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
   // materials-paged/summary: trang danh mục phân trang SERVER — key RIÊNG, không nằm dưới tiền tố
@@ -41,7 +41,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TransportCompany:    [['tms-transport-companies'], ['tms-vehicles']],                // vehicle embed ncc
   Vehicle:             [['tms-vehicles']],
   // transfer-goods/inbound-by-gdo/plan-vs-actual: BE cập nhật TmsOrder khi nhận chuyển kho (receiving_started_at, status DONE…) — user khác xem tiến độ nhận phải thấy ngay
-  TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
+  TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary'], ['work-inbox']],
   // booking-sequence: STT chuẩn bị theo booking (list Xuất kho + board Chuẩn bị hàng) — đặt/hủy/đổi khung giờ là số tự nhảy
   TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest'], ['booking-sequence']],
   DeliverySlot:        [['tms-delivery-slots'], ['booking-sequence']],
@@ -51,23 +51,23 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
   // fill-demand: "Cần" của tab Đề xuất fill = đơn nhặt lẻ theo NGÀY XUẤT — đơn phát sinh/đổi ngày
   // phải làm số nhảy ngay với người đang mở tab (user chốt 05/08), không chờ F5.
-  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand'], ['outbound-docks'], ['directed-board']],
+  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand'], ['outbound-docks'], ['directed-board'], ['work-inbox'], ['directed-supervision']],
   // list Xuất phân trang: tổng SummaryBand + phân bổ NPP tính từ DO/Item → đổi dòng hàng
   // phải refetch cả summary, không thì số đứng im cho tới lần poll sau.
   // Việc cần làm (1c): 3 vai nhìn 3 bảng khác nhau trên CÙNG kế hoạch — một người bấm '✓ Xong'
   // hay thủ kho quét thì hai màn còn lại phải đổi ngay, không chờ ai F5.
-  wms_tasks:           [['directed-board'], ['gdo'], ['gdos']],
+  wms_tasks:           [['directed-board'], ['gdo'], ['gdos'], ['work-inbox'], ['directed-supervision']],
   OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],
-  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods'], ['fill-demand'], ['date-rule-lines']],
+  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods'], ['fill-demand'], ['date-rule-lines'], ['work-inbox']],
   OutboundScanEntry:   [['gdo'], ['gdos-paged'], ['outbound-summary'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
-  reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
+  reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count'], ['work-inbox']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
   erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events']],   // VL06O về → chuyến chờ tự kích hoạt (không cần F5)
   outbound_events:     [['gdo-events']],
   khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
-  SlottingPlan:        [['slotting-plans'], ['slotting-plan']],
+  SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],
   forklift_vehicles:        [['forklifts'], ['forklift-board'], ['forklift-report']],
   forklift_checklist_items: [['forklift-items']],

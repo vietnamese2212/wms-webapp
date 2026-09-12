@@ -161,13 +161,15 @@ export async function createSlotTemplate(req: Request, res: Response) {
     // gì chặn và bảng cũng KHÔNG có unique index ⇒ thêm lại đúng khung đã có là đẻ dòng thứ hai.
     // Hậu quả không báo lỗi mà SAI SỐ: "Sinh khung giờ" đẻ hai DeliverySlot cùng giờ, lịch đặt xe
     // hiện hai dòng trùng nhau và sức chứa thật của kho ÂM THẦM gấp đôi. (Đo 12/09 trên staging.)
-    const { data: trung, error: dupErr } = await supabase.from('SlotTemplate')
+    // Không lọc thứ trên URL: khoá (kho, loại xe, loại hàng, giờ) tối đa 7 dòng — một dòng mỗi thứ —
+    // nên lấy hết rồi lọc trong JS, khỏi dính họ lỗi `.in()` bị cap 1000 cắt âm thầm.
+    const { data: cungGio, error: dupErr } = await supabase.from('SlotTemplate')
       .select('day_of_week')
       .eq('warehouse_id', warehouse_id).eq('vehicle_type_id', vehicle_type_id)
       .eq('cargo_type', cargo_type).eq('time_from', f).eq('time_to', t)
-      .in('day_of_week', days_of_week)
     if (dupErr) return fail(res, dupErr)
-    if (trung?.length) {
+    const trung = (cungGio ?? []).filter((x: { day_of_week: number }) => days_of_week.includes(x.day_of_week))
+    if (trung.length) {
       const DOW = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
       const ten = [...new Set((trung as { day_of_week: number }[]).map(x => DOW[x.day_of_week] ?? x.day_of_week))]
       return fail(res, `Khung giờ ${f}–${t} đã có sẵn cho ${ten.join(', ')} — sửa dòng đang có thay vì thêm bản thứ hai`, 409)

@@ -229,6 +229,27 @@ let XE1 = null
   check('[18] Thêm LẺ một khung giờ mẫu có giờ kết thúc TRƯỚC giờ bắt đầu → phải chặn y như lưới',
     r.s === 400, `s=${r.s} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
 
+  // Cửa lưới tự khử trùng, cửa lẻ thì không — và bảng KHÔNG có unique index. Thêm lại đúng khung
+  // đã có là đẻ dòng thứ hai: "Sinh khung giờ" đẻ 2 DeliverySlot cùng giờ ⇒ lịch hiện 2 dòng trùng
+  // và sức chứa thật của kho ÂM THẦM GẤP ĐÔI. Không lỗi, không cảnh báo. (Đo thật 12/09.)
+  r = await A('/tms/slot-templates', 'POST', {
+    warehouse_id: WH.id, vehicle_type_id: VT1.id, cargo_type: 'ALL',
+    days_of_week: [DOW], time_from: '22:00', time_to: '22:30', max_vehicles: 9,
+  })
+  const soTrung = (await restAll('SlotTemplate',
+    `select=id&warehouse_id=eq.${WH.id}&vehicle_type_id=eq.${VT1.id}&cargo_type=eq.ALL`
+    + `&day_of_week=eq.${DOW}&time_from=eq.22:00:00&time_to=eq.22:30:00`)).length
+  check('[18b] Thêm LẺ đúng khung giờ ĐÃ CÓ → chặn, không đẻ dòng thứ hai (sức chứa gấp đôi câm lặng)',
+    r.s === 409 && soTrung === 1, `s=${r.s} · ${soTrung} dòng trong DB · ${(r.j?.error?.message ?? '').slice(0, 80)}`)
+
+  // `max_vehicles: 0` = "khoá khung giờ", cửa lưới nhận (phép [16] dùng 0 được) — cửa lẻ phải nhận y hệt
+  r = await A('/tms/slot-templates', 'POST', {
+    warehouse_id: WH.id, vehicle_type_id: VT2.id, cargo_type: 'ALL',
+    days_of_week: [DOW], time_from: '06:00', time_to: '06:30', max_vehicles: 0,
+  })
+  check('[18c] Thêm LẺ khung giờ KHOÁ (0 xe) → nhận y như cửa lưới, không kêu "thiếu thông tin"',
+    r.s === 200 || r.s === 201, `s=${r.s} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
+
   // ⚠ PHÉP KIỂM NÀY TỪNG KHOÁ CHÍNH CÁI LỖI LẠI (sửa 12/09). Bản 07/09 khẳng định "CN phải bị
   // chặn" — chép lại đúng cái CHECK cũ của DB mà không hỏi nó đúng chưa, trong khi giao diện VỐN
   // ĐÃ có nút "CN". Kho chạy Chủ Nhật thì lịch ngày đó rỗng không lời giải thích (đo thật: chuyến

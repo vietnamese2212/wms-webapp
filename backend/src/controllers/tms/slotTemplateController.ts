@@ -145,16 +145,39 @@ export async function createSlotTemplate(req: Request, res: Response) {
       warehouse_id: string; vehicle_type_id: string; cargo_type?: string
       days_of_week: number[]; time_from: string; time_to: string; max_vehicles: number
     }
-    if (!warehouse_id || !vehicle_type_id || !days_of_week?.length || !time_from || !time_to || !max_vehicles)
+    // `max_vehicles: 0` là GIÁ TRỊ HỢP LỆ ("khoá khung giờ") — `!max_vehicles` coi 0 là thiếu, nên
+    // cửa lẻ từng không khoá được khung trong khi cửa lưới thì khoá được. Lại "hai cửa một sổ".
+    if (!warehouse_id || !vehicle_type_id || !days_of_week?.length || !time_from || !time_to
+        || max_vehicles === undefined || max_vehicles === null)
       return fail(res, 'Thiếu thông tin bắt buộc', 400)
     const shapeErr = slotShapeError(days_of_week, time_from, time_to, max_vehicles)
     if (shapeErr) return fail(res, shapeErr, 400)
     if (!guardWh(req, res, warehouse_id) || !guardCargo(req, res, cargo_type)) return
+
+    // Giờ lưu theo HH:MM như cửa lưới — hai cửa phải ghi cùng một dạng thì mới so khớp được nhau.
+    const f = String(time_from).slice(0, 5), t = String(time_to).slice(0, 5)
+
+    // CHỐNG TRÙNG. Cửa lưới tự khử trùng (một khoá thứ|giờ chỉ ứng một dòng), cửa lẻ thì không có
+    // gì chặn và bảng cũng KHÔNG có unique index ⇒ thêm lại đúng khung đã có là đẻ dòng thứ hai.
+    // Hậu quả không báo lỗi mà SAI SỐ: "Sinh khung giờ" đẻ hai DeliverySlot cùng giờ, lịch đặt xe
+    // hiện hai dòng trùng nhau và sức chứa thật của kho ÂM THẦM gấp đôi. (Đo 12/09 trên staging.)
+    const { data: trung, error: dupErr } = await supabase.from('SlotTemplate')
+      .select('day_of_week')
+      .eq('warehouse_id', warehouse_id).eq('vehicle_type_id', vehicle_type_id)
+      .eq('cargo_type', cargo_type).eq('time_from', f).eq('time_to', t)
+      .in('day_of_week', days_of_week)
+    if (dupErr) return fail(res, dupErr)
+    if (trung?.length) {
+      const DOW = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+      const ten = [...new Set((trung as { day_of_week: number }[]).map(x => DOW[x.day_of_week] ?? x.day_of_week))]
+      return fail(res, `Khung giờ ${f}–${t} đã có sẵn cho ${ten.join(', ')} — sửa dòng đang có thay vì thêm bản thứ hai`, 409)
+    }
+
     const now = new Date().toISOString()
     const actor = req.user?.name || null
     const rows = days_of_week.map(dow => ({
       id: randomUUID(), warehouse_id, vehicle_type_id, cargo_type,
-      day_of_week: dow, time_from, time_to, max_vehicles: Number(max_vehicles),
+      day_of_week: dow, time_from: f, time_to: t, max_vehicles: Number(max_vehicles),
       is_active: true, created_at: now, updated_at: now,
       created_by: actor, updated_by: actor,
     }))

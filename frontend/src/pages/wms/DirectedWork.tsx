@@ -8,7 +8,7 @@
 //   • "không cần chỉ dẫn bằng văn xuôi, đưa vào TABLE" ⇒ mỗi việc là một DÒNG, không phải câu chữ.
 //   • việc xong thì GẠCH NGANG và VẪN Ở LẠI bảng tới khi chuyến kết thúc ("phòng tình huống bị
 //     quên") — có chip "Ẩn việc đã xong" cho ai muốn nhìn gọn, mặc định HIỆN.
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { ListChecks, ArrowDownToLine, Truck, Check } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -22,6 +22,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
+import { qtyLabel } from '@/utils/qtyUnits'
 import type { DirectedRow } from '@/types'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
@@ -64,8 +65,18 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
   ],
 }
 
+// Việc BỊ BỎ phải nói lý do (12/09): xe hạ đã hạ pallet xuống rồi mà việc lặng lẽ biến mất thì không
+// ai biết vì sao hàng mình vừa hạ không còn được nhắc. Dòng này gạch xám, không STT, không nút.
+const SKIP_LABEL: Record<string, string> = {
+  OTHER_PALLET: 'bỏ — thủ kho đã lấy pallet khác',
+  PALLET_TAKEN: 'bỏ — chuyến khác đã lấy pallet này',
+  DATE_RULE_CHANGED: 'bỏ — quy định date đã đổi, đã sắp lại',
+  PLAN_CHANGED: 'bỏ — kế hoạch đổi',
+}
+
 /** Trạng thái một dòng — chữ ngắn, đọc lướt được trên PDA. */
 function stateOf(r: DirectedRow, tab: Tab): { text: string; cls: string } {
+  if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `bỏ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
   if (r.all_scanned) return { text: `✓ quét đủ${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}`, cls: 'text-green-600' }
   if (r.stage_done) return {
     text: `✓ ${tab === 'LOWER' ? 'đã hạ' : 'đã đưa ra'}${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}${r.done_by_name ? ` · ${r.done_by_name}` : ''}`,
@@ -82,7 +93,14 @@ export default function DirectedWork() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canConfirm = can(perms, 'directed_work', 'confirm')
+  // Băng "chưa khai quy định date" là VIỆC của người có quyền chốt — xe nâng chỉ cần biết dòng đó
+  // đang chờ người khác, không cần lời hướng dẫn họ không làm được.
+  const canSetDate = can(perms, 'outbound', 'set_date')
   const { data: whs } = useScopedWarehouses(true)
+  // Phạm vi chỉ có MỘT kho ⇒ tự chọn, không bắt bấm "Chọn kho…" mỗi lần mở (lái xe nâng thường 1 kho)
+  useEffect(() => {
+    if (!f.warehouseId && whs?.length === 1) setF({ warehouseId: (whs[0] as { id: string }).id })
+  }, [whs, f.warehouseId, setF])
   const tab = f.tab as Tab
   const { widths: colW, startResize, totalWidth } = useColumnResize(`directed_${tab.toLowerCase()}_col_widths`, COLS[tab].map(c => c.w))
 
@@ -95,7 +113,7 @@ export default function DirectedWork() {
 
   const rows = useMemo(() => {
     const all = data?.rows ?? []
-    return f.hideDone ? all.filter(r => !r.stage_done) : all
+    return f.hideDone ? all.filter(r => !r.stage_done && !r.skipped) : all
   }, [data, f.hideDone])
 
   // STT = THỨ TỰ ĐI TRÊN BẢNG NÀY, đánh lại 1..n theo đúng trình tự dòng đang hiện.
@@ -105,7 +123,7 @@ export default function DirectedWork() {
   const ordOf = useMemo(() => {
     const m = new Map<string, number>()
     let n = 0
-    for (const r of rows) if (!r.stage_done) m.set(r.group_key, ++n)
+    for (const r of rows) if (!r.stage_done && !r.skipped) m.set(r.group_key, ++n)
     return m
   }, [rows])
   // "Hôm nay" phải là giá trị tính TRONG thân component (màn kho mở qua đêm giữ ngày hôm qua)
@@ -193,7 +211,13 @@ export default function DirectedWork() {
         {/* Dòng CHƯA CHỐT %Date: không có việc nào — phải nói ra, không im lặng để người ta tưởng
             hàng đã được chia (user chốt: "trong nghĩ là mặc định đi làm, sau đó mới update thì sẽ là làm sai") */}
         {/* Mobile chỉ 1 dòng: chuẩn mật độ đòi dữ liệu xuất hiện sớm, cảnh báo dài đẩy bảng xuống quá sâu */}
-        {unset.length > 0 && (
+        {unset.length > 0 && !canSetDate && (
+          <div className="shrink-0 border-b px-3 py-1.5 text-[11px] bg-slate-50 text-slate-500 truncate sm:whitespace-normal">
+            {unset.length} dòng hàng đang <b>chờ người khác</b> khai quy định date — chưa có việc từ các dòng đó
+            {unsetOld.length ? ` (${unsetOld.length} thuộc chuyến cũ)` : ''}.
+          </div>
+        )}
+        {unset.length > 0 && canSetDate && (
           <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] truncate sm:whitespace-normal ${
             unsetNow.length ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-500'}`}>
             {unsetNow.length > 0 && (<>
@@ -249,13 +273,15 @@ export default function DirectedWork() {
               {rows.map((r, idx) => {
                 const st = stateOf(r, tab)
                 // Xong = GẠCH NGANG + xám, vẫn ở lại bảng (user chốt "phòng bị quên")
-                const dim = r.stage_done ? 'text-slate-400 line-through' : ''
-                const first = idx === 0 && !r.stage_done
+                const dim = (r.stage_done || r.skipped) ? 'text-slate-400 line-through' : ''
+                const first = idx === 0 && !r.stage_done && !r.skipped
                 return (
                   <TableRow key={r.group_key} className={`${dim} ${first ? 'bg-sky-50' : ''}`}>
                     <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums sticky left-0 z-10 ${first ? 'bg-sky-50' : 'bg-white'}`}>
-                      {/* Việc đã xong không mang số thứ tự nữa — nó không còn nằm trong đường đi */}
-                      {ordOf.get(r.group_key) ?? <span className="text-slate-300 no-underline">✓</span>}
+                      {/* Việc đã xong / đã bỏ không mang số thứ tự nữa — nó không còn nằm trong đường đi */}
+                      {r.skipped
+                        ? <span className="text-slate-300 no-underline">—</span>
+                        : (ordOf.get(r.group_key) ?? <span className="text-slate-300 no-underline">✓</span>)}
                     </TableCell>
 
                     {tab !== 'SCAN' && (
@@ -281,7 +307,7 @@ export default function DirectedWork() {
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                           <div className="font-mono">{r.from_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</div>
                           {/* Ai hạ, lúc mấy giờ — người sau nhìn vào phải biết việc đã xong do ai (user chốt) */}
-                          {r.stage_done && <div className="text-[9px] text-green-600 no-underline">{st.text}</div>}
+                          {(r.stage_done || r.skipped) && <div className={`text-[9px] no-underline ${r.skipped ? 'text-slate-400' : 'text-green-600'}`}>{st.text}</div>}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.level_no ?? '—'}</TableCell>
                       </>
@@ -298,6 +324,12 @@ export default function DirectedWork() {
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-400">pallet</span>
                       <span className="text-[9px] text-slate-400"> · {r.material_codes?.filter(Boolean).join(', ') || '—'}</span>
+                      {/* Pallet lấy MỘT PHẦN: thủ kho phải biết lấy bao nhiêu thùng (đọc theo THÙNG + lẻ, không in base thô) */}
+                      {tab === 'SCAN' && r.is_partial && !r.stage_done && (
+                        <div className="text-[9px] font-semibold text-amber-700 no-underline">
+                          lấy {qtyLabel(r.qty_base, r)} — một phần pallet, phần còn lại để lại
+                        </div>
+                      )}
                     </TableCell>
 
                     {tab === 'LOWER' && (
@@ -315,7 +347,7 @@ export default function DirectedWork() {
 
                     {tab !== 'SCAN' && (
                       <TableCell className="px-2 py-1 whitespace-nowrap">
-                        {canConfirm && (r.can_confirm || r.stage_done) && !r.all_scanned && (
+                        {canConfirm && !r.skipped && (r.can_confirm || r.stage_done) && !r.all_scanned && (
                           <Button size="sm" variant={r.stage_done ? 'outline' : 'default'}
                             className="h-7 px-2 text-[10px]"
                             disabled={confirmTasks.isPending}
@@ -324,7 +356,7 @@ export default function DirectedWork() {
                             <Check className="h-3.5 w-3.5 mr-0.5" /> {r.stage_done ? 'Bỏ' : 'Xong'}
                           </Button>
                         )}
-                        {!canConfirm && !r.stage_done && <span className="text-[9px] text-slate-300">—</span>}
+                        {(!canConfirm || r.skipped) && !r.stage_done && <span className="text-[9px] text-slate-300">—</span>}
                       </TableCell>
                     )}
                   </TableRow>
@@ -337,6 +369,7 @@ export default function DirectedWork() {
         <div className="shrink-0 border-t bg-white px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-3 sm:rounded-b-xl">
           <span>{nf(rows.length)} dòng việc</span>
           {(t.pending ?? 0) > 0 && <span className="text-slate-400">· còn {nf(t.pending ?? 0)} việc chưa xong</span>}
+          {(t.skipped ?? 0) > 0 && <span className="text-slate-400">· {nf(t.skipped ?? 0)} việc đã bỏ (quét pallet khác / kế hoạch đổi)</span>}
           {confirmTasks.isError && <span className="text-red-600">· {(confirmTasks.error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không ghi được — thử lại'}</span>}
           {confirmTasks.data?.moved_pallets ? <span className="text-green-600">· đã chuyển {confirmTasks.data.moved_pallets} pallet về vị trí nhặt lẻ</span> : null}
         </div>

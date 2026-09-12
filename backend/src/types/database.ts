@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-11T07:55:56.005Z · 94 bảng/view · 157 hàm · 0 enum
+// Sinh lúc 2026-09-12T09:40:48.103Z · 94 bảng/view · 157 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -862,6 +862,7 @@ export type Database = {
           parent_id: string | null
           in_chart: boolean
           is_driver: boolean
+          landing_page: string | null
         }
         Insert: {
           id: string
@@ -876,6 +877,7 @@ export type Database = {
           parent_id?: string | null
           in_chart?: boolean
           is_driver?: boolean
+          landing_page?: string | null
         }
         Update: {
           id?: string
@@ -890,6 +892,7 @@ export type Database = {
           parent_id?: string | null
           in_chart?: boolean
           is_driver?: boolean
+          landing_page?: string | null
         }
         Relationships: []
       }
@@ -4898,6 +4901,10 @@ export type Database = {
         Args: { p_to: unknown; arg4: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
         Returns: Json
       }
+      function_overloads: {
+        Args: Record<PropertyKey, never>
+        Returns: Record<string, unknown>[]
+      }
       gate_leaves_page: {
         Args: { p_limit: unknown; p_date_to: unknown; p_warehouse_type: unknown; p_company_id: unknown; p_status?: unknown; p_categories?: unknown; p_wt_order?: unknown; p_collapsed_wh?: unknown; p_collapsed_vt?: unknown; p_vt_null?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg34?: unknown; arg36?: unknown; arg38?: unknown; arg40?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown; arg91?: unknown; arg92?: unknown; arg93?: unknown; arg94?: unknown; arg95?: unknown; arg96?: unknown; arg97?: unknown; arg98?: unknown; arg99?: unknown; arg100?: unknown; arg101?: unknown; arg102?: unknown; arg103?: unknown; arg104?: unknown; arg105?: unknown; arg106?: unknown; arg107?: unknown; arg108?: unknown; arg109?: unknown; arg110?: unknown }
         Returns: Json
@@ -4995,7 +5002,7 @@ export type Database = {
         Returns: Json
       }
       hr_employees_page: {
-        Args: { p_dept: unknown; p_wh: unknown; p_active: unknown; p_offset: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown } | { p_dept: unknown; p_wh: unknown; p_active: unknown; p_status: unknown; p_limit: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown }
+        Args: { p_dept: unknown; p_wh: unknown; p_active: unknown; p_status: unknown; p_limit: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown }
         Returns: Json
       }
       hr_leaves_page: {

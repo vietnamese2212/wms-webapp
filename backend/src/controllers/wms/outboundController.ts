@@ -29,6 +29,7 @@ import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/up
 import { expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
 import { guardPutaway } from '../../services/putawayContext'
+import { notifyEmployees } from '../../services/pushService'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
   servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, MAX_DATE_CHECK, MAX_RULE_PARTS,
@@ -2962,6 +2963,11 @@ export async function startGDO(req: Request, res: Response) {
     // Không fire-and-forget (`void fn()`) — serverless đóng băng lambda ngay sau response.
     const plan = startWorkMode === 'GUIDED' ? await planGdoTasks(req.params.id, req.user?.name ?? null) : null
     const result = await fetchGDOFull(req.params.id)
+    // BÁO NGƯỜI ĐƯỢC GIAO XE NÂNG (12/09): trước đó tài xế chỉ biết có việc nếu tự mở trang — chuông
+    // (feed Cá nhân + push theo cài đặt "Được giao việc") là đường duy nhất tới người đang ngồi trên xe.
+    // Không báo cho chính người bấm Bắt đầu; url mang id chuyến để mỗi chuyến là một thông báo riêng.
+    await notifyForkliftDrivers(startDrivers.ids, req.user?.sub ?? null, req.user?.name ?? null,
+      result as { group_code?: string | null; license_plate?: string | null } | null, req.params.id)
     if (plan && (plan.warning || plan.unset_items > 0)) {
       return ok(res, {
         ...(result as Record<string, unknown>),
@@ -2972,6 +2978,22 @@ export async function startGDO(req: Request, res: Response) {
     }
     return ok(res, result)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/** Chuông cho lái xe nâng vừa được gắn vào chuyến (Bắt đầu / Sửa thông tin xe). Không bao giờ throw. */
+async function notifyForkliftDrivers(
+  ids: string[], selfId: string | null, actor: string | null,
+  gdo: { group_code?: string | null; license_plate?: string | null } | null, gdoId: string,
+) {
+  const targets = ids.filter(id => id && id !== selfId)
+  if (!targets.length) return
+  const code = gdo?.group_code ?? gdoId
+  await notifyEmployees(targets, 'ASSIGN', 'assign', {
+    title: `Chuyến ${code}${gdo?.license_plate ? ` · ${gdo.license_plate}` : ''}`,
+    body: `${actor ?? 'Thủ kho'} giao bạn làm xe nâng chuyển cho chuyến này — mở Việc cần làm để xem thứ tự lấy hàng`,
+    url: `/wms/directed?trip=${gdoId}`,
+    tag: `directed-${gdoId}`,
+  })
 }
 
 // ─── Duyệt bỏ qua TỪNG RULE — 2 tình huống, 2 action, 2 quyền riêng (user chốt 01/08:
@@ -3056,7 +3078,7 @@ export async function updateTransport(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, req.params.id))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('started_at, warehouse_id, warehouse_type, license_plate, gate_waived_at, weigh_waived_at, forklift_driver_ids, warehouse:Warehouse(require_gate_on_start,require_weigh_on_start,work_mode,lower_from_level)')
+      .select('started_at, warehouse_id, warehouse_type, group_code, license_plate, gate_waived_at, weigh_waived_at, forklift_driver_ids, warehouse:Warehouse(require_gate_on_start,require_weigh_on_start,work_mode,lower_from_level)')
       .eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Chuyến chưa được bắt đầu', 400)
     const utGateWaived  = !!(gdo as { gate_waived_at?: string | null }).gate_waived_at
@@ -3125,6 +3147,12 @@ export async function updateTransport(req: Request, res: Response) {
       })
       .eq('id', req.params.id)
     if (error) return fail(res, error)
+    // Người MỚI được thêm vào danh sách xe nâng chuyển → chuông (người đã có từ trước không báo lại)
+    {
+      const oldIds = new Set(utGdoRow.forklift_driver_ids ?? [])
+      await notifyForkliftDrivers(utDrivers.ids.filter(id => !oldIds.has(id)), req.user?.sub ?? null, req.user?.name ?? null,
+        { group_code: (gdo as { group_code?: string | null }).group_code ?? null, license_plate: utNewPlate ?? null }, req.params.id)
+    }
     if (utPlateChanged) {
       // Biển đổi → phiếu cân auto của biển CŨ không còn thuộc chuyến này (match tay giữ nguyên)
       await supabase.from('WeighTicket')

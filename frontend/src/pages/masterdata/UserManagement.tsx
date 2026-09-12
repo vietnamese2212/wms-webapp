@@ -34,6 +34,7 @@ import {
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { MODULES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { LANDING_PAGES, LANDING_DEFAULT_LABEL } from '@/config/landing'
 import { PERMISSION_PAGES } from '@/config/navigation'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
@@ -670,6 +671,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const [deptId,     setDeptId]     = useState(jt?.department_id ?? '')
   const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
   const [isDriver,   setIsDriver]   = useState(jt?.is_driver     ?? false)
+  const [landing,    setLanding]    = useState<string>(jt?.landing_page ?? '')   // '' = Tổng quan
   const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
 
   // Ô tìm trang/tab/action trong bảng phân quyền (user 19/08 "đang kéo nhiều quá"):
@@ -718,7 +720,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     const cleanPerms = Object.fromEntries(
       Object.entries(modulePerms).filter((e): e is [string, string[]] => e[1] !== undefined)
     )
-    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver }
+    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver, landing_page: landing || null }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
@@ -894,6 +896,17 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
               Là chức danh tài xế
               <span className="block text-[11px] font-normal text-slate-500">Tài khoản mang chức danh này được gán xe và mở màn hình tài xế (chỉ có tác dụng khi phòng ban là đơn vị vận tải).</span>
             </Label>
+          </div>
+          {/* Trang mở đầu theo chức danh (12/09): lái xe nâng đăng nhập là thấy việc của mình, không đi
+              qua Dashboard KPI toàn công ty rồi mới lần vào menu. Chỉ có tác dụng khi có quyền vào trang đó. */}
+          <div className="space-y-1">
+            <Label className="text-xs">Trang mở đầu sau đăng nhập</Label>
+            <SingleSelect
+              value={landing || '__default__'}
+              onChange={v => setLanding(v === '__default__' ? '' : v)}
+              options={[{ value: '__default__', label: LANDING_DEFAULT_LABEL }, ...LANDING_PAGES.map(l => ({ value: l.to, label: l.label }))]}
+            />
+            <p className="text-[11px] text-slate-500">Chỉ áp khi chức danh có quyền vào trang đó; không thì vẫn mở Tổng quan.</p>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">

@@ -27,7 +27,16 @@ function escalationError(req: Request, perms?: Record<string, string[]>): string
 }
 
 const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_carrier, is_active, created_at, updated_at, created_by, updated_by'
-const JT_SELECT   = 'id, name, department_id, parent_id, in_chart, is_driver, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
+const JT_SELECT   = 'id, name, department_id, parent_id, in_chart, is_driver, landing_page, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
+
+// Trang mở đầu sau đăng nhập (12/09) — CHECK ở DB là regex đường dẫn; ở đây chặn sớm để trả 400 tiếng Việt.
+// undefined = không đụng (giữ giá trị cũ) · null/'' = về Tổng quan · chuỗi = đường dẫn nội bộ.
+function landingPageOf(v: unknown): { value: string | null } | { skip: true } | { error: string } {
+  if (v === undefined) return { skip: true }
+  if (v === null || v === '') return { value: null }
+  if (typeof v !== 'string' || !/^\/[a-z0-9/_-]{1,80}$/.test(v)) return { error: 'Trang mở đầu không hợp lệ — chọn trong danh sách' }
+  return { value: v }
+}
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -105,16 +114,19 @@ export async function listJobTitles(req: Request, res: Response) {
 export async function createJobTitle(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
-    const { name, department_id, module_permissions, parent_id, in_chart } = req.body as {
+    const { name, department_id, module_permissions, parent_id, in_chart, landing_page } = req.body as {
       name: string
       department_id: string
       module_permissions?: Record<string, string[]>
       parent_id?: string | null
       in_chart?: boolean
+      landing_page?: string | null
     }
     if (!name || !department_id) return fail(res, 'name và department_id là bắt buộc', 400)
     const escErr = escalationError(req, module_permissions)
     if (escErr) return fail(res, escErr, 403)
+    const lp = landingPageOf(landing_page)
+    if ('error' in lp) return fail(res, lp.error, 400)
 
     const actor = req.user?.name || null
     const now = new Date().toISOString()
@@ -126,6 +138,7 @@ export async function createJobTitle(req: Request, res: Response) {
         parent_id: parent_id || null,
         in_chart: in_chart ?? false,
         module_permissions: module_permissions ?? {},
+        landing_page: 'skip' in lp ? null : lp.value,
         created_at: now, updated_at: now,
         created_by: actor, updated_by: actor,
       })
@@ -177,23 +190,31 @@ export async function updateJobTitle(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
-    const { name, is_active, module_permissions, is_driver } = req.body as {
-      name?: string; is_active?: boolean; is_driver?: boolean
+    const { name, is_active, module_permissions, is_driver, landing_page } = req.body as {
+      name?: string; is_active?: boolean; is_driver?: boolean; landing_page?: string | null
       module_permissions?: Record<string, string[]>
     }
     const escErr = escalationError(req, module_permissions)
     if (escErr) return fail(res, escErr, 403)
-    const { data: before } = await supabase.from('JobTitle').select('name, is_active, module_permissions, is_driver').eq('id', id).maybeSingle()
+    const lp = landingPageOf(landing_page)
+    if ('error' in lp) return fail(res, lp.error, 400)
+    const { data: before } = await supabase.from('JobTitle').select('name, is_active, module_permissions, is_driver, landing_page').eq('id', id).maybeSingle()
     const { data, error } = await supabase
       .from('JobTitle')
-      .update({ name, is_active, module_permissions, is_driver, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+      .update({
+        name, is_active, module_permissions, is_driver,
+        ...('skip' in lp ? {} : { landing_page: lp.value }),
+        updated_at: new Date().toISOString(), updated_by: req.user?.name || null,
+      })
       .eq('id', id)
       .select(JT_SELECT)
       .maybeSingle()
     if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
     // Sổ quản trị: ĐỔI QUYỀN chức danh là thao tác IT hỏi đầu tiên ("ai cấp quyền này, khi nào?")
-    const d = diffFields(before as Record<string, unknown> | null, { name, is_active, module_permissions, is_driver })
+    const d = diffFields(before as Record<string, unknown> | null, {
+      name, is_active, module_permissions, is_driver, ...('skip' in lp ? {} : { landing_page: lp.value }),
+    })
     if (Object.keys(d.after).length)
       await logAdmin(req, { action: 'JOBTITLE_UPDATE', target_type: 'JobTitle', target_id: id, target_label: (before as { name?: string } | null)?.name ?? name ?? id, ...d })
     return ok(res, data)

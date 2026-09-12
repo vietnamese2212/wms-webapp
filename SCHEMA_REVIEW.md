@@ -520,3 +520,17 @@ created_at, updated_at
   ⚠ Gói QA 50 phép **[19] trước đây KHOÁ CHÍNH LỖI LẠI** (khẳng định "CN phải bị chặn" — chép lại cái CHECK
   cũ mà không hỏi nó đúng chưa); nay [19] đòi CN được NHẬN + [19b] đòi sinh được lịch ngày CN, [20] vẫn chặn
   giá trị ngoài 0..6. Đã chứng minh ĐỎ trên bản chưa vá (cả hai cửa trả 400 *"chỉ nhận T2..T7, mã 1..6"*).
+- `20260912d_directed_work_roles.sql` — **Việc cần làm: cấp quyền theo chức danh + `JobTitle.landing_page`**.
+  Đo 12/09: **0/9 chức danh kho có quyền `directed_work`** — Lái xe nâng (17 người) và Thủ kho TP (9 người)
+  không thấy mục menu, không ai bấm được "✓ Xong"; tính năng ra máy 10/09 mà chưa người dùng thật nào tới được.
+  Cấp theo NĂNG LỰC sẵn có, KHÔNG so tên tiếng Việt: có `outbound.prepare`/`outbound.scan`/`loosepicking.scan`
+  → `view`; có `outbound.prepare` → `+confirm`; có `outbound.assign` → `+replan`; chỉ điền cho chức danh chưa có
+  key (admin đã tự cấp/gỡ thì không đè). Cột mới `landing_page` (CHECK regex đường dẫn; NULL = Tổng quan) —
+  chức danh được ✓ Xong mà không quét xuất, không giao việc (= lái xe nâng thuần) mở app rơi thẳng vào
+  `/wms/directed`; FE chỉ chuyển hướng khi user có quyền vào trang đích (chống vòng lặp `PermissionRoute` ↔ `/`).
+  Ô chọn ở form Chức danh; một nguồn danh sách trang = `frontend/src/config/landing.ts`.
+- `20260912e_directed_board_skipped_partial.sql` — **RPC `directed_board` trả cả việc SKIPPED (kèm `skip_reason`)
+  của chuyến đang chạy + `is_partial` và đơn vị của mã** (`units_per_carton/entry_unit/base_unit`) để bảng "Sắp
+  quét" in `qtyLabel` cho pallet lấy MỘT PHẦN (trước đó RPC có `qty_base` nhưng màn chỉ in "1 pallet · mã").
+  Việc bị bỏ đứng nhóm riêng (đuôi `|S` trong `group_key`), `can_confirm=false`, xếp cuối; totals thêm `skipped`.
+  Cùng chữ ký 4 tham số ⇒ CREATE OR REPLACE thay đúng bản cũ, không đẻ overload (gói 00 `function_overloads()` gác).

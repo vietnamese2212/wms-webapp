@@ -361,7 +361,25 @@ try {
     const skipped = (await tasksOf(t2.gdo)).filter(t => t.status === 'SKIPPED' && t.skip_reason === 'OTHER_PALLET')
     check('[12c] Quét pallet KHÁC kế hoạch → không chặn, việc cũ ghi "lấy pallet khác", kế hoạch tự lành',
       r.s === 200 && skipped.length > 0, `http=${r.s} ${err(r)} bỏ=${skipped.length} treo trước=${before}`)
+    // (12/09) Việc bị bỏ KHÔNG được biến mất không lời: xe hạ đã hạ pallet đó xuống rồi. Bảng phải trả dòng
+    // đó kèm lý do, gạch xám, không bấm được — và không đè lên nhóm việc còn treo cùng ô.
+    b = await board('SCAN', `&gdo_id=${t2.gdo}`)
+    const skRow = (b.j?.data?.rows ?? []).find(x => x.skipped === true)
+    check('[12d] Bảng trả việc ĐÃ BỎ kèm lý do (skipped + skip_reason), không bấm được',
+      !!skRow && skRow.skip_reason === 'OTHER_PALLET' && skRow.can_confirm === false,
+      skRow ? `${skRow.pallet_codes?.[0]} · ${skRow.skip_reason} · bấm được=${skRow.can_confirm}` : 'không thấy dòng đã bỏ trên bảng')
+    check('[12d2] Ô tổng có số việc đã bỏ', Number(b.j?.data?.totals?.skipped ?? 0) >= skipped.length,
+      `totals.skipped=${b.j?.data?.totals?.skipped}`)
+    const liveRows = (b.j?.data?.rows ?? []).filter(x => !x.skipped)
+    check('[12d3] Dòng đã bỏ đứng nhóm RIÊNG — việc còn treo cùng ô vẫn giữ nguyên cờ của nó',
+      liveRows.every(x => x.skipped === false && Array.isArray(x.task_ids)), `${liveRows.length} dòng sống`)
   } else check('[12c] Quét pallet khác kế hoạch', true, 'không còn pallet rảnh để thử — bỏ qua')
+  // (12/09) Pallet lấy MỘT PHẦN: thủ kho phải đọc được số THÙNG phải lấy ⇒ mọi dòng mang is_partial + đơn vị mã
+  b = await board('SCAN', `&gdo_id=${t2.gdo}`)
+  const scanRows = b.j?.data?.rows ?? []
+  check('[12e] Mỗi dòng Sắp quét mang is_partial + đơn vị của mã (để in "lấy N thùng" khi lấy một phần)',
+    scanRows.length > 0 && scanRows.every(x => typeof x.is_partial === 'boolean' && 'units_per_carton' in x && 'base_unit' in x),
+    `${scanRows.filter(x => x.is_partial).length}/${scanRows.length} dòng lấy một phần`)
 
   // ═══ [13] BỎ BẮT ĐẦU → HUỶ VIỆC TREO ═════════════════════════════════════════════════════════
   const t5 = await mkTrip('T5')

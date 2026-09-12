@@ -77,6 +77,9 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     job_title_id:       emp.job_title_id ?? null,
     job_title_name:     jt?.name ?? null,
     is_driver:          jt?.is_driver === true,                 // chức danh TÀI XẾ (cờ, không so tên)
+    // Trang mở đầu theo CHỨC DANH (12/09): lái xe nâng mở app là rơi vào Việc cần làm thay vì
+    // Dashboard KPI toàn công ty. FE chỉ chuyển hướng khi user có quyền vào trang đó (chống vòng lặp).
+    landing_page:       (jt?.landing_page as string | null | undefined) ?? null,
     department:         dept?.name ?? null,
     is_carrier_dept:    dept?.is_carrier === true,              // phòng ban là ĐƠN VỊ VẬN TẢI
     allowed_categories: emp.allowed_categories ?? [],
@@ -152,7 +155,7 @@ export async function login(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -196,7 +199,7 @@ export async function me(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

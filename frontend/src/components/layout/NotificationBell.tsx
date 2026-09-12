@@ -19,7 +19,7 @@ import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 const PREF_LABEL: { key: string; label: string; desc: string }[] = [
-  { key: 'assign',     label: 'Được giao việc',      desc: 'Giao lệnh fill / giao lại dòng cho bạn' },
+  { key: 'assign',     label: 'Được giao việc',      desc: 'Giao lệnh fill / giao lại dòng cho bạn · được chọn làm xe nâng chuyển của một chuyến xuất' },
   { key: 'reconcile',  label: 'Cần xử lý SAP',       desc: 'SAP đổi dữ liệu sinh việc chờ xử (cần quyền reconcile)' },
   { key: 'EXPIRY',     label: 'Tồn cận date',        desc: 'Mã có lô %Date dưới ngưỡng trong kho của bạn' },
   // Không ghi số ngưỡng cứng ở đây — ngưỡng chỉnh được ở tab "Cài đặt ngưỡng" trang Thông báo

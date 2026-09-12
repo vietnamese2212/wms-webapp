@@ -14,6 +14,7 @@ export interface User {
   job_title_id?: string | null
   job_title_name?: string | null
   is_driver?: boolean          // chức danh TÀI XẾ (cờ JobTitle.is_driver — KHÔNG so tên)
+  landing_page?: string | null // trang mở đầu theo chức danh (JobTitle.landing_page) — null = Tổng quan
   is_carrier_dept?: boolean    // phòng ban là ĐƠN VỊ VẬN TẢI (cờ Department.is_carrier)
   ncc_id?: string | null
   employee_code?: string | null
@@ -48,6 +49,7 @@ export interface JobTitle {
   parent_id:          string | null
   in_chart?:          boolean
   is_driver?:         boolean      // chức danh TÀI XẾ — cờ thay việc so tên 'Lái xe'
+  landing_page?:      string | null // trang mở đầu sau đăng nhập (null = Tổng quan)
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions
@@ -824,11 +826,20 @@ export interface DirectedRow {
   dist_cells: number | null
   n_pallets: number
   qty_base: number
+  // Pallet lấy MỘT PHẦN (12/09): thủ kho phải biết lấy bao nhiêu thùng — kèm đơn vị của mã để in qtyLabel
+  is_partial: boolean
+  units_per_carton: number | null
+  entry_unit: string | null
+  base_unit: string | null
   material_codes: (string | null)[]
   material_name: string | null
   pallet_codes: (string | null)[]
   needs_lower: boolean
   waiting_lower: boolean           // chưa hạ ⇒ xe chuyển thấy dòng mờ, chưa bấm được
+  // Việc BỊ BỎ (12/09): thủ kho quét pallet khác / chuyến khác lấy trước — vẫn trả về để nói lý do,
+  // không để việc biến mất không lời (xe hạ đã hạ pallet đó xuống rồi)
+  skipped: boolean
+  skip_reason: string | null
   stage_done: boolean              // xong Ở CHẶNG NÀY ⇒ gạch ngang, vẫn ở lại bảng
   all_scanned: boolean
   last_at: string | null
@@ -837,7 +848,7 @@ export interface DirectedRow {
 }
 export interface DirectedBoard {
   rows: DirectedRow[]
-  totals: { pending?: number; done?: number; to_lower?: number; to_move?: number; trips?: number }
+  totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number }
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
 }

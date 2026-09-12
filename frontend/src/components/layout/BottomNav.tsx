@@ -1,11 +1,16 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, PackagePlus, PackageMinus, Scissors, ClipboardList, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, PackagePlus, PackageMinus, Scissors, ClipboardList, ShieldCheck, ListChecks } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
-// Thanh dưới mobile = lối tắt VẬN HÀNH chính (menu đầy đủ ở drawer ☰)
+// Thanh dưới mobile = lối tắt VẬN HÀNH chính (menu đầy đủ ở drawer ☰).
+// Thứ tự = ưu tiên: "Việc cần làm" đứng đầu (màn mở đầu ca của xe nâng/thủ kho, 12/09). Thanh chỉ chứa
+// tối đa MAX_TABS ô cho vừa 360 px (7 ô × 52 px = tràn) — người có đủ mọi quyền (quản lý, làm việc trên
+// PC) mất ô Dashboard ở cuối, vẫn vào được qua drawer ☰.
+const MAX_TABS = 6
 const ALL_TABS: { to: string; icon: React.ElementType; label: string; end?: boolean; module?: ModuleKey }[] = [
+  { to: '/wms/directed',     icon: ListChecks,      label: 'Việc',      module: 'directed_work' },
   { to: '/wms/inbound',      icon: PackagePlus,     label: 'Nhập kho',  module: 'inbound' },
   { to: '/wms/outbound',     icon: PackageMinus,    label: 'Xuất kho',  module: 'outbound' },
   { to: '/wms/loosepicking', icon: Scissors,        label: 'Nhặt lẻ',  module: 'loosepicking' },
@@ -22,7 +27,7 @@ export function BottomNav() {
   const tabs = ALL_TABS.filter(tab => {
     if (!tab.module) return true
     return admin || canAccess(perms, tab.module)
-  })
+  }).slice(0, MAX_TABS)
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 flex h-16 items-center justify-around border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 lg:hidden safe-area-inset-bottom">

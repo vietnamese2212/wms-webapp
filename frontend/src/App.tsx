@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
 import { can, canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { LANDING_PAGES } from '@/config/landing'
 import { Pages } from '@/routes/lazyPages'
 
 // Login giữ eager (màn đầu khi chưa đăng nhập). Mọi trang còn lại tách chunk
@@ -57,6 +58,10 @@ function PermissionRoute({
 function DashboardRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
+  // Trang mở đầu theo CHỨC DANH (12/09): lái xe nâng vào thẳng Việc cần làm. Chỉ chuyển khi user có
+  // quyền vào trang đích — không thì PermissionRoute đá về "/" và hai route ném nhau vô hạn.
+  const landing = LANDING_PAGES.find(l => l.to === user?.landing_page)
+  if (landing && (isAdmin(user) || canAccess(perms, landing.module))) return <Navigate to={landing.to} replace />
   const allowed = isAdmin(user) || canAccess(perms, 'dashboard')
   if (!allowed) return <Navigate to="/wms/alerts" replace />
   return <>{children}</>

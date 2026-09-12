@@ -1,4 +1,8 @@
 {
+  "write_route_without_validate": 258,
+  "untyped_supabase_import_files": 70,
+  "mirror_helper_without_test": 0,
+  "db_types_unknown_table": 8,
   "hook_after_early_return": 0,
   "daterule_label_without_sap_level": 0,
   "mutation_hook_without_button": 14,
@@ -48,6 +52,7 @@
   "route_without_permission": 3,
   "scan_formats_declared_outside_engine": 0,
   "tablist_center_blocks_scroll": 0,
+  "shrinking_flex_row_of_nowrap_chips": 0,
   "component_defined_inside_component": 0,
   "catalogue_full_load": 0,
   "assumed_carton_used_directly": 0,
@@ -59,9 +64,5 @@
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
   "password_rule_hand_rolled": 0,
-  "upload_without_merge_expand": 0,
-  "write_route_without_validate": 258,
-  "untyped_supabase_import_files": 70,
-  "mirror_helper_without_test": 0,
-  "db_types_unknown_table": 8
+  "upload_without_merge_expand": 0
 }

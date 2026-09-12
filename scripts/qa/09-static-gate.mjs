@@ -816,6 +816,31 @@ const RULES = [
     count: (s) => countMatches(['frontend/src/components/ui/tabs.tsx'], ['.tsx'],
       l => /justify-center/.test(l) && /inline-flex h-10/.test(l), s),
   },
+  // Cùng họ với luật trên, nhưng là dải tab TỰ CHẾ (không qua TabsList): hàng flex CO ĐƯỢC
+  // (`flex-1 min-w-0`) render một danh sách nút `whitespace-nowrap`. Container co lại, nút thì
+  // không ⇒ nút cuối TRÀN RA NGOÀI MÀN và nằm dưới phần tử bên cạnh (thường là nút Lọc). KHÔNG
+  // lỗi nào nổ, tsc/build/QA đều xanh, chỉ người cầm điện thoại mới thấy. Đo 12/09 ở Việc cần làm:
+  // 4 tab cần 351 px trong khung 248 px ⇒ thủ kho không bấm nổi tab "Sắp quét" của chính mình.
+  // Hàng như vậy phải khai một trong: flex-wrap · overflow-x-auto · grid-cols-* · sm:flex (mobile
+  // đi lối khác). Luật đã thử ngược trên bản lỗi (cd5752de) = ĐỎ 1, bản vá = 0.
+  {
+    key: 'shrinking_flex_row_of_nowrap_chips',
+    label: 'hàng flex CO ĐƯỢC (flex-1 min-w-0) render danh sách nút — nút cuối tràn ra ngoài màn điện thoại và bị phần tử bên cạnh đè; khai flex-wrap / overflow-x-auto / grid-cols-* / sm:flex',
+    count: (s) => {
+      const re = /className=(?:"|\{`)([^"`]*\bflex\b[^"`]*\bflex-1\b[^"`]*\bmin-w-0\b[^"`]*|[^"`]*\bflex-1\b[^"`]*\bmin-w-0\b[^"`]*\bflex\b[^"`]*)(?:"|`\})\s*>\s*\{?\s*[\w.]+\.map\(/g
+      let n = 0
+      for (const f of filesOf('frontend/src', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        let m
+        while ((m = re.exec(src))) {
+          if (/flex-wrap|overflow-x-auto|overflow-auto|grid-cols|sm:flex/.test(m[1])) continue
+          n++
+          if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+        }
+      }
+      return n
+    },
+  },
   {
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',

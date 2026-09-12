@@ -53,7 +53,7 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
     { id: 'qty',  label: 'Hạ',             w: 150 },
     { id: 'dist', label: 'Quãng đường',    w: 90,  align: 'right' },
     { id: 'to',   label: 'Đặt xuống',      w: 140 },
-    { id: 'act',  label: '',               w: 150 },
+    { id: 'act',  label: '',               w: 190 },   // Nhận + Xong (+ Bỏ nhận) đứng cạnh nhau
   ],
   MOVE: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
@@ -62,7 +62,7 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
     { id: 'st',   label: 'Trạng thái',     w: 130 },
     { id: 'qty',  label: 'Đưa',            w: 150 },
     { id: 'to',   label: 'Tới',            w: 140 },
-    { id: 'act',  label: '',               w: 150 },
+    { id: 'act',  label: '',               w: 190 },
   ],
   SCAN: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
@@ -272,8 +272,10 @@ export default function DirectedWork() {
                 </button>
               ))}
             </div>
+            {/* PC: nút Quét đứng cạnh tab. Mobile 360 px không đủ chỗ (3 tab + Quét + Lọc đè lên nhau — đo 12/09)
+                ⇒ mobile đưa Quét thành thanh full bề ngang ngay trên thẻ đầu (xem dưới) */}
             {tab === 'SCAN' && canScan && f.gdoId && (
-              <Button className="h-9 sm:h-7 px-3 text-[11px]" disabled={!scanGdo} onClick={() => setScanOpen(true)}
+              <Button className="hidden sm:inline-flex h-7 px-3 text-[11px]" disabled={!scanGdo} onClick={() => setScanOpen(true)}
                 title="Quét pallet cho chuyến đang chọn — cùng màn quét với trang chuyến">
                 <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét
               </Button>
@@ -319,6 +321,11 @@ export default function DirectedWork() {
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {/* ── PDA: THẺ (không cuộn ngang; thẻ đầu to, nút ✓ ≥ 44 px) ── */}
           <div className="sm:hidden p-2 space-y-2">
+            {tab === 'SCAN' && canScan && f.gdoId && !isLoading && (
+              <Button className="w-full h-11 text-sm" disabled={!scanGdo} onClick={() => setScanOpen(true)}>
+                <ScanIcon className="h-4 w-4 mr-1.5" /> Quét pallet chuyến này
+              </Button>
+            )}
             {isLoading && <div className="py-6 text-center text-[11px] text-slate-400">Đang tải…</div>}
             {!isLoading && emptyReason && <div className="py-6 text-center text-[11px] text-slate-400">{emptyReason}</div>}
             {!isLoading && !emptyReason && rows.length === 0 && (

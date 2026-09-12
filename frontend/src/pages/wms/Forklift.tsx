@@ -1053,8 +1053,11 @@ function VehicleSection({ whOpts, warehouseId }: { whOpts: { value: string; labe
   return (
     <div>
       <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 flex items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1">Danh mục xe nâng ({vehicles.length})</span>
-        <ActionCluster items={[{
+        {/* Cụm nút mặc định chiếm TRỌN hàng trên mobile (w-full — đúng cho header trang detail),
+            nhưng ở thanh tiêu đề khối thì nó ép tiêu đề còn ~60 px và bẻ thành 5 dòng (đo 360 px
+            12/09). Ở đây cụm chỉ cần rộng đúng bằng nút. */}
+        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1 min-w-0">Danh mục xe nâng ({vehicles.length})</span>
+        <ActionCluster className="w-auto shrink-0" items={[{
           key: 'add', icon: Plus, label: 'Thêm xe', tip: 'Khai báo xe nâng mới',
           primary: true, variant: 'default', onClick: () => { setEditing(null); setShowForm(true) },
         } satisfies ActionItem]} />
@@ -1183,8 +1186,8 @@ function ItemSection({ whOpts, warehouseId }: { whOpts: { value: string; label: 
   return (
     <div>
       <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 flex items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1">Hạng mục check list ({items.length}) — theo kho hoặc dùng chung</span>
-        <ActionCluster items={[{
+        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1 min-w-0">Hạng mục check list ({items.length}) — theo kho hoặc dùng chung</span>
+        <ActionCluster className="w-auto shrink-0" items={[{
           key: 'add', icon: Plus, label: 'Thêm hạng mục', tip: 'Thêm nội dung kiểm tra mới',
           primary: true, variant: 'default', onClick: () => { setEditing(null); setShowForm(true) },
         } satisfies ActionItem]} />

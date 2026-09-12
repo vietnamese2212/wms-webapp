@@ -785,10 +785,25 @@ export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean }) =>
-      apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+      apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data as WarehouseSaved),
+    // Bật/tắt "Áp %Date tự động" ghi thẳng vào dòng hàng của đơn đang mở (BE áp ngay từ 12/09) →
+    // phải làm mới cả màn Quy định date và bảng việc, không đợi người dùng bấm lại.
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
+      if (data?.date_rule_applied?.updated) {
+        for (const k of [['date-rule-lines'], ['gdo'], ['gdos'], ['directed-board'], ['work-inbox']])
+          qc.invalidateQueries({ queryKey: k })
+      }
+    },
   })
 }
+
+/** Kết quả áp %Date theo master mà BE trả kèm mỗi lần đổi cấu hình (kho / khách / kênh). */
+export interface DateRuleApplied {
+  scanned: number; applied: number; cleared: number; kept_manual: number
+  updated: number; trips_replanned: number; capped: boolean; note?: string
+}
+export type WarehouseSaved = Record<string, unknown> & { date_rule_applied?: DateRuleApplied }
 
 export function useDeleteWarehouse() {
   const qc = useQueryClient()
@@ -4421,9 +4436,16 @@ export function useSaveDateRules() {
       scope: 'CUSTOMER' | 'CHANNEL'; key: string
       rules: Array<{ category: string | null; kind: string; value?: string | number | null }>
     }) => apiClient.put(`/masterdata/date-rules/${scope}/${encodeURIComponent(key)}`, { rules })
-      .then(r => r.data.data as { rules: MasterRuleRow[]; applies_to: string }),
-    onSettled: () => invalidateCustomers(qc),
+      .then(r => r.data.data as { rules: MasterRuleRow[]; date_rule_applied?: DateRuleApplied }),
+    // Lưu mức xong BE đã áp ngay cho đơn đang mở (12/09) → làm mới cả màn Quy định date và bảng việc
+    onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })
+}
+
+/** Sau khi đổi cấu hình %Date: dòng hàng của đơn đang mở đã bị ghi lại, mọi màn đọc nó phải nạp lại. */
+function invalidateAfterDateRule(qc: ReturnType<typeof useQueryClient>) {
+  for (const k of [['date-rule-lines'], ['gdo'], ['gdos'], ['gdos-paged'], ['directed-board'], ['work-inbox']])
+    qc.invalidateQueries({ queryKey: k })
 }
 
 /** Đặt MỘT mức (một loại hàng) cho NHIỀU khách — đường khai chính cho lần đầu. */
@@ -4434,8 +4456,8 @@ export function useBulkSetDateRule() {
       ids?: string[]; filter?: Record<string, unknown>
       category: string | null; kind?: string | null; value?: string | number | null
     }) => apiClient.patch('/masterdata/customers/bulk-rule', body)
-      .then(r => r.data.data as { updated: number; cleared: boolean }),
-    onSettled: () => invalidateCustomers(qc),
+      .then(r => r.data.data as { updated: number; cleared: boolean; date_rule_applied?: DateRuleApplied }),
+    onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })
 }
 
@@ -4444,13 +4466,13 @@ export function useUpdateCustomerChannel() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; label?: string }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
-    onSettled: () => invalidateCustomers(qc),
+    onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })
 }
 
 /**
- * ÁP LẠI %DATE THEO MASTER cho đơn đang mở. Master KHÔNG lan ngược (sửa một ô cấu hình mà làm nghìn
- * dòng đổi âm thầm là lỗi không ai lần ra được) nên đây là đường DUY NHẤT áp cho đơn cũ — 2 pha:
+ * ÁP LẠI %DATE THEO MASTER cho đơn đang mở. Từ 12/09 đổi cấu hình đã tự áp ngay, nên nút này còn
+ * dùng cho KHOẢNG NGÀY ngoài cửa sổ tự động và cho lần chạy lại sau khi tồn kho đổi — 2 pha:
  * `preflight` đếm trước, người xem rồi mới bấm Xác nhận.
  */
 export interface ApplyMasterResult {

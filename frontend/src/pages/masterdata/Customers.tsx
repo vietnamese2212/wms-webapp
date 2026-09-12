@@ -732,7 +732,7 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
               allLabel="— Khách ngoài (bỏ trỏ kho) —" />
           )}
           <p className="text-[11px] text-amber-700">
-            Chỉ áp cho ĐƠN SINH SAU. Đơn đang mở dùng nút "Áp lại theo master" ở trang Quy định date.
+            Lưu xong áp NGAY cho cả đơn đang mở của kho đã bật "Áp %Date tự động" — dòng đã chốt tay giữ nguyên.
           </p>
         </div>
         <DialogFooter>
@@ -914,8 +914,8 @@ function ChannelsTab({ canEdit, onEdit }: {
   return (
     <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
       <p className="px-3 py-2 text-[11px] text-slate-500">
-        Mức mặc định của kênh áp cho ĐƠN SINH SAU khi lưu. Đơn đang mở dùng nút "Áp lại theo master"
-        ở trang Quy định date — master không tự lan ngược để một ô cấu hình không làm nghìn dòng đổi âm thầm.
+        Mức mặc định của kênh. Lưu xong áp NGAY cho đơn đang mở của mọi kho đã bật "Áp %Date tự động";
+        dòng đã chốt tay không bao giờ bị đè, và mỗi dòng đổi đều có vết trong sổ chuyến.
       </p>
       <Table className="min-w-full">
         <TableHeader>

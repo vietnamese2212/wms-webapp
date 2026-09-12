@@ -791,7 +791,26 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     if (isEdit) {
       update(
         { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, ...rot, ...putaway },
-        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
+        {
+          // Bật/tắt "Áp %Date tự động" đã ghi thẳng vào đơn đang mở — phải NÓI RA số dòng vừa đổi,
+          // không thì lại đúng cảnh "bấm Lưu xong không thấy gì xảy ra" (user 12/09).
+          onSuccess: (saved) => {
+            const a = saved?.date_rule_applied
+            if (a && (a.updated > 0 || a.note)) toast({
+              title: a.updated > 0
+                ? `Đã áp %Date cho ${a.updated.toLocaleString('vi-VN')} dòng hàng đang mở`
+                : 'Chưa áp được cho đơn đang mở',
+              description: a.note ?? [
+                a.applied ? `${a.applied} dòng nhận mức theo khách / kênh` : '',
+                a.cleared ? `${a.cleared} dòng gỡ mức máy đã áp` : '',
+                a.kept_manual ? `${a.kept_manual} dòng giữ nguyên vì đã chốt tay` : '',
+                a.trips_replanned ? `${a.trips_replanned} chuyến đang xuất đã sắp lại việc` : '',
+              ].filter(Boolean).join(' · '),
+            })
+            onClose()
+          },
+          onError: e => setErr(apiMsg(e)),
+        }
       )
     } else {
       create(
@@ -980,7 +999,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               Dòng đã <b>chốt tay</b> và dòng có <b>%Date của VL06O</b> không bao giờ bị đè. Khách chưa
               có trong danh mục hoặc <b>chưa phân kênh</b> thì KHÔNG được cấp %Date tự động — máy không đoán.
               <br /><br />
-              Bật ở đây chỉ áp cho đơn <b>sinh sau</b>; đơn đang mở dùng nút "Áp lại theo master" ở trang Quy định date.
+              Bật (hoặc tắt) ở đây <b>áp ngay</b> cho cả đơn đang mở của kho này, rồi báo lại số dòng vừa đổi.
               Bật cũng có nghĩa kho này <b>đi theo quy định date</b>: dòng chưa khai thì không quét / không nhặt lẻ được.
             </>}>
             <SettingRow label="Áp %Date tự động"

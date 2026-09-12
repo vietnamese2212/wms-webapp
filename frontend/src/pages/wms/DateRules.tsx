@@ -229,7 +229,7 @@ export default function DateRules() {
           <div className="shrink-0 border-b bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
             <b>{f.warehouseId ? `Kho ${offWhs[0]?.name ?? ''} đang TẮT` : 'Mọi kho trong phạm vi của bạn đang TẮT'} áp %Date tự động</b> — mức khai
             ở trang Khách hàng / Kênh sẽ không tự vào dòng hàng nào, mọi dòng vẫn phải khai tay.
-            <span className="hidden sm:inline"> Bật ở <b>Cài đặt WMS → Kho → sửa kho → Áp %Date tự động</b>. Bật xong chỉ áp cho đơn sinh SAU đó; đơn đang mở dùng nút “Áp lại theo master”.</span>
+            <span className="hidden sm:inline"> Bật ở <b>Cài đặt WMS → Kho → sửa kho → Áp %Date tự động</b>. Bật xong là áp NGAY cho cả đơn đang mở (trừ dòng đã chốt tay).</span>
           </div>
         )}
 

@@ -11,6 +11,7 @@ import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 import { warehouseTypeUsage } from '../wms/lookupController'
 import { asDateRulePolicy } from '../../services/dateRulePolicy'
+import { autoApplyAfterConfigChange } from '../../services/dateRuleApply'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -403,9 +404,15 @@ export async function updateWarehouse(req: Request, res: Response) {
         return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ')
       patch.warehouse_type = warehouse_type
     }
-    // %Date theo Khách hàng / Kênh (20260911) — bật ở đây KHÔNG áp ngược cho đơn đang mở; muốn áp
-    // thì bấm "Áp lại theo master" ở trang Chốt %Date (xem services/dateRulePolicy.ts).
-    if (req.body.date_rule_policy !== undefined) patch.date_rule_policy = asDateRulePolicy(req.body.date_rule_policy)
+    // %Date theo Khách hàng / Kênh (20260911) — từ 12/09 bật/tắt ở đây ÁP NGAY cho đơn đang mở của
+    // chính kho này (user: "rõ ràng việc áp dụng phải được thực thi ngay chứ"). Chỉ chạy khi giá trị
+    // THỰC SỰ đổi: lưu form vì lý do khác mà cũng quét lại mấy nghìn dòng là phí.
+    let policyChanged = false
+    if (req.body.date_rule_policy !== undefined) {
+      patch.date_rule_policy = asDateRulePolicy(req.body.date_rule_policy)
+      const { data: curP } = await supabase.from('Warehouse').select('date_rule_policy').eq('id', req.params.id).maybeSingle()
+      policyChanged = asDateRulePolicy((curP as { date_rule_policy?: string | null } | null)?.date_rule_policy) !== patch.date_rule_policy
+    }
     if (parent_warehouse_id !== undefined) {
       const parentId = parent_warehouse_id ? String(parent_warehouse_id) : null
       const parentErr = await validateParent(parentId, req.params.id)
@@ -442,7 +449,12 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
     if (shiptoPlan)
       await syncShiptoCustomers(req.params.id, shiptoPlan.name, shiptoPlan.before, shiptoPlan.after, req.user?.name || null)
-    ok(res, data)
+    // Bật/tắt "Áp %Date tự động" → áp NGAY cho đơn đang mở của kho này. Dòng CHỐT TAY không bị đụng;
+    // tắt cờ thì gỡ đúng phần MÁY đã áp. Hàm tự bọc lỗi nên lưu kho không bao giờ hỏng vì bước này.
+    const dateRuleApplied = policyChanged
+      ? await autoApplyAfterConfigChange({ warehouseId: req.params.id, actor: req.user?.name ?? null })
+      : null
+    ok(res, { ...(data as Record<string, unknown>), ...(dateRuleApplied ? { date_rule_applied: dateRuleApplied } : {}) })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

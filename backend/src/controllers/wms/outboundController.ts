@@ -39,6 +39,7 @@ import {
   loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
   type AutoApplied, type PolicyCtx,
 } from '../../services/dateRulePolicy'
+import { applyMasterToOpenOrders, APPLY_MASTER_CAP } from '../../services/dateRuleApply'
 
 const now = () => new Date().toISOString()
 
@@ -5831,15 +5832,13 @@ export async function setItemsDateRule(req: Request, res: Response) {
 /**
  * POST /outbound/items/date-rule/apply-master?preflight=1 — ÁP LẠI %DATE THEO MASTER.
  *
- * Vì sao phải có nút này thay vì để master tự lan ngược: sửa một ô cấu hình (mức của kênh NPP) mà
- * làm nghìn dòng đơn đang mở đổi âm thầm là đúng lớp lỗi người ta không bao giờ lần ra được. Nên
- * master chỉ áp cho dòng SINH SAU; muốn áp cho đơn đang mở thì PHẢI có người bấm, có khoảng ngày,
- * có báo cáo trước, và có vết trong sổ chuyến.
+ * Từ 12/09 đổi cấu hình đã TỰ áp ngay (`services/dateRuleApply.ts`), nên nút này còn dùng cho hai
+ * việc mà đường tự động không phủ: áp cho KHOẢNG NGÀY khác cửa sổ mặc định, và chạy lại sau khi TỒN
+ * KHO đổi (dòng gắn cờ "cần xem" nay đã có hàng đạt mức).
  *
  * CHỈ đụng dòng máy áp (CUSTOMER/CHANNEL) hoặc chưa chốt. Dòng CHỐT TAY không bao giờ đụng tới —
  * `resolveDateRule` chặn ở bậc 1, kể cả khi gọi với overwriteAuto.
  */
-const APPLY_MASTER_CAP = 5_000
 export async function applyDateRuleMaster(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { from?: unknown; to?: unknown; warehouse_id?: unknown }
@@ -5856,120 +5855,25 @@ export async function applyDateRuleMaster(req: Request, res: Response) {
     if (whId && scope && !scope.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     const cats = scopeCategoriesOf(req)
 
-    // Ứng viên = dòng CHƯA CHỐT ∪ dòng MÁY đã áp. Lọc ngay trong RPC để không kéo về dòng chốt tay.
-    type Row = {
-      item_id: string; gdo_id: string; group_code: string | null; delivery_code: string | null
-      warehouse_id: string | null; shipto_party: string | null; material_id: string | null
-      material_code: string | null; header_text: string | null; date_required: number | null
-      date_rule: unknown; gdo_status: string
-      material_category: string | null; shelf_life_days: number | null
-    }
-    const rows: Row[] = []
-    for (let page = 0; page < Math.ceil(APPLY_MASTER_CAP / 1000); page++) {
-      const { data, error } = await supabase.rpc('outbound_date_rule_lines', {
-        p_from: from, p_to: to, p_scope_wh: scope, p_warehouse_id: whId,
-        p_categories: cats && cats.length ? cats : null,
-        p_state: 'ALL', p_search: null, p_limit: 1000, p_offset: page * 1000,
-        // SYSTEM cũng vào tập ứng viên: mã vừa được khai hạn dùng thì dòng "không đòi mốc" do máy
-        // đặt phải được áp lại theo mức thật của khách, không kẹt mãi ở mức hệ thống.
-        p_source: ['CUSTOMER', 'CHANNEL', 'SYSTEM', 'UNSET'],
-        p_mat_categories: null, p_kinds: null,
-      })
-      if (error) return fail(res, error)
-      const got = ((data ?? {}) as { rows?: Row[]; total?: number })
-      rows.push(...(got.rows ?? []))
-      if (rows.length >= Number(got.total ?? 0) || !(got.rows ?? []).length) break
-    }
-    if (rows.length >= APPLY_MASTER_CAP)
+    const out = await applyMasterToOpenOrders({
+      from, to, warehouseId: whId, scopeWh: scope, categories: cats,
+      actor: req.user?.name ?? null, dryRun: isPreflight(req),
+    })
+    if (out.capped)
       return fail(res, 400, 'TOO_MANY_LINES', `Khoảng ngày này có hơn ${APPLY_MASTER_CAP.toLocaleString('vi-VN')} dòng cần xét — thu hẹp khoảng ngày hoặc lọc theo kho rồi áp lại.`)
-
-    // "Giữ nguyên vì đã CHỐT TAY" phải là số THẬT để người bấm yên tâm — đếm riêng, vì tập ứng viên
-    // ở trên đã LOẠI dòng MANUAL ngay trong RPC (không kéo về thứ mình không được phép đụng).
-    let keptManual = 0
-    {
-      const { data } = await supabase.rpc('outbound_date_rule_lines', {
-        p_from: from, p_to: to, p_scope_wh: scope, p_warehouse_id: whId,
-        p_categories: cats && cats.length ? cats : null,
-        p_state: 'ALL', p_search: null, p_limit: 1, p_offset: 0, p_source: ['MANUAL'],
-        p_mat_categories: null, p_kinds: null,
-      })
-      keptManual = Number(((data ?? {}) as { total?: number }).total ?? 0)
-    }
-
-    const ctx = await loadPolicyCtx(rows.map(r => r.warehouse_id), rows.map(r => r.shipto_party))
-    const actor = req.user?.name ?? null
-    // Gom theo QUY TẮC ĐÍCH: cùng một payload thì một câu UPDATE cho cả nhóm (đừng ghi từng dòng).
-    const byPayload = new Map<string, { payload: DateRule | null; rows: Row[] }>()
-    for (const r of rows) {
-      const out = resolveDateRule(ctx, {
-        warehouseId: r.warehouse_id, shipto: r.shipto_party,
-        headerText: r.header_text, dateRequired: r.date_required,
-        category: r.material_category, shelfLifeDays: r.shelf_life_days,
-        existing: r.date_rule, actor, overwriteAuto: true,
-      })
-      if (out.keptManual) continue      // lưới an toàn: RPC đã lọc, nhưng chốt tay không bao giờ bị đụng
-      if (!out.changed) continue
-      const key = JSON.stringify(out.rule ? { kind: out.rule.kind, value: out.rule.value ?? null, source: out.source } : null)
-      const slot = byPayload.get(key) ?? { payload: out.rule, rows: [] }
-      slot.rows.push(r); byPayload.set(key, slot)
-    }
-    const applied = [...byPayload.values()].filter(g => g.payload).reduce((s, g) => s + g.rows.length, 0)
-    const cleared = [...byPayload.values()].filter(g => !g.payload).reduce((s, g) => s + g.rows.length, 0)
 
     // KIỂM TRƯỚC: chưa ghi gì, trả báo cáo để người bấm biết chính xác sẽ đụng bao nhiêu dòng.
     if (isPreflight(req)) return ok(res, buildPreflight({
-      unit: 'dòng', total: rows.length,
-      toInsert: applied, toUpdate: 0, skipped: rows.length - applied - cleared,
+      unit: 'dòng', total: out.scanned,
+      toInsert: out.applied, toUpdate: 0, skipped: out.scanned - out.applied - out.cleared,
       extra: [
-        { label: 'Sẽ áp %Date theo khách / kênh', value: applied },
-        ...(cleared ? [{ label: 'Sẽ XOÁ chốt máy đã áp (kho đổi chính sách / có ghi chú CS)', value: cleared, warn: true }] : []),
-        { label: 'Giữ nguyên vì đã CHỐT TAY', value: keptManual },
-        { label: 'Không đổi', value: Math.max(0, rows.length - applied - cleared) },
+        { label: 'Sẽ áp %Date theo khách / kênh', value: out.applied },
+        ...(out.cleared ? [{ label: 'Sẽ XOÁ chốt máy đã áp (kho đổi chính sách / có ghi chú CS)', value: out.cleared, warn: true }] : []),
+        { label: 'Giữ nguyên vì đã CHỐT TAY', value: out.kept_manual },
+        { label: 'Không đổi', value: Math.max(0, out.scanned - out.applied - out.cleared) },
       ],
     }))
-
-    const t = now()
-    const autoApplied: AutoApplied[] = []
-    const events: OutboundEventInput[] = []
-    let updated = 0
-    for (const g of byPayload.values()) {
-      const payload = g.payload ? { ...g.payload, set_by: actor ?? 'HỆ THỐNG', set_at: t } : null
-      for (let i = 0; i < g.rows.length; i += 300) {
-        const chunk = g.rows.slice(i, i + 300)
-        const { error } = await supabase.from('OutboundItem')
-          .update({ date_rule: payload, updated_at: t })
-          .in('id', chunk.map(r => r.item_id))
-        if (error) return fail(res, error)
-        updated += chunk.length
-      }
-      for (const r of g.rows) {
-        if (payload) autoApplied.push({ id: r.item_id, warehouse_id: r.warehouse_id, material_id: r.material_id, rule: payload })
-        if (!r.group_code) continue
-        events.push({
-          group_code: r.group_code, gdo_id: r.gdo_id,
-          event_type: payload ? 'DATE_RULE_SET' : 'DATE_RULE_CLEARED',
-          source: 'SYSTEM', actor,
-          do_number: r.delivery_code ?? null, material_code: r.material_code ?? null,
-          old_value: describeDateRule(dateRuleOf({ date_rule: r.date_rule, date_required: r.date_required })),
-          new_value: describeDateRule(payload),
-          detail: payload
-            ? `Áp lại %Date theo master (${payload.source === 'CUSTOMER' ? 'khách hàng' : 'kênh'}): ${describeDateRule(payload)}`
-            : 'Áp lại theo master: kho không còn áp tự động cho dòng này — quay lại "chưa chốt"',
-        })
-      }
-    }
-    await logOutboundEvents(events)
-    if (autoApplied.length) await flagNoStock(autoApplied)
-
-    // Chuyến ĐANG XUẤT phải sắp lại kế hoạch ngay — bỏ việc CHƯA AI ĐỤNG trước rồi mới sắp lại,
-    // không thì việc cũ (trỏ pallet theo mức date CŨ) ăn hết nhu cầu và lần áp này thành vô tác dụng.
-    const liveGdos = [...new Set(rows.filter(r => r.gdo_status === 'IN_PROGRESS').map(r => r.gdo_id))]
-    if (liveGdos.length) {
-      await resetUntouchedTasksOfItems(rows.filter(r => r.gdo_status === 'IN_PROGRESS').map(r => r.item_id), actor)
-      for (const g of liveGdos) await planGdoTasks(g, actor)
-    }
-
-    return ok(res, { scanned: rows.length, applied, cleared, kept_manual: keptManual, updated, trips_replanned: liveGdos.length })
+    return ok(res, out)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

@@ -396,6 +396,49 @@ try {
   check('[7n] Giá trị chính sách lạ → rơi về TẮT, không ghi rác vào DB (CHECK ở DB là lá chắn cuối)',
     whAfter2?.date_rule_policy === 'OFF', `${rWhBad.s} policy=${whAfter2?.date_rule_policy}`)
 
+  // ═══ ĐỔI CẤU HÌNH LÀ ÁP NGAY (user chốt 12/09: "rõ ràng việc áp dụng phải được thực thi ngay chứ")
+  // Bản 11/09 chỉ áp cho dòng SINH SAU, nên bật công tắc xong màn hình y nguyên và người khai tưởng
+  // mình khai sai — cái giá của IM LẶNG đắt hơn cái giá của "nghìn dòng đổi". Phép kiểm gác cả ba
+  // chiều: bật → dòng ĐANG MỞ đổi ngay trong chính lượt gọi; tắt → gỡ đúng phần MÁY đã áp; và dòng
+  // CHỐT TAY không bao giờ bị đụng ở cả hai chiều.
+  {
+    await setRules('CUSTOMER', custA.id, [{ category: null, kind: 'MIN_PCT', value: 77 }])
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${a1b.id}`, { date_rule: null })
+
+    const rOn = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { date_rule_policy: 'ALL' })
+    const onRow = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
+    check('[7o] Bật "Áp %Date tự động" → dòng ĐANG MỞ nhận mức NGAY trong chính lượt lưu',
+      rOn.s === 200 && Number(onRow?.date_rule?.value) === 77 && onRow?.date_rule?.source === 'CUSTOMER',
+      `${rOn.s} rule=${JSON.stringify(onRow?.date_rule)}`)
+    check('[7o2] …và lượt lưu TRẢ VỀ số dòng vừa đổi để màn hình nói ra được',
+      Number(rOn.j?.data?.date_rule_applied?.updated) >= 1,
+      JSON.stringify(rOn.j?.data?.date_rule_applied))
+
+    const rOff = await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { date_rule_policy: 'OFF' })
+    const offRow = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
+    check('[7p] Tắt lại → gỡ đúng phần MÁY đã áp, dòng về "chưa chốt"',
+      rOff.s === 200 && !offRow?.date_rule, `${rOff.s} rule=${JSON.stringify(offRow?.date_rule)}`)
+
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [a1b.id], rule: { kind: 'FEFO' } })
+    await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { date_rule_policy: 'ALL' })
+    const keepRow = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
+    check('[7q] Dòng CHỐT TAY không bị đè khi bật cờ (bậc 1 của thang ưu tiên)',
+      keepRow?.date_rule?.kind === 'FEFO' && keepRow?.date_rule?.source === 'MANUAL',
+      JSON.stringify(keepRow?.date_rule))
+
+    // Lưu MỨC của khách cũng phải áp ngay, không riêng cờ kho
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${a1b.id}`, { date_rule: null })
+    const rRule = await setRules('CUSTOMER', custA.id, [{ category: null, kind: 'MIN_PCT', value: 66 }])
+    const ruleRow = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
+    check('[7r] Lưu MỨC của khách cũng áp ngay cho đơn đang mở (không chỉ cờ của kho)',
+      rRule.s === 200 && Number(ruleRow?.date_rule?.value) === 66,
+      `${rRule.s} rule=${JSON.stringify(ruleRow?.date_rule)} · ${JSON.stringify(rRule.j?.data?.date_rule_applied)}`)
+
+    await api(`/masterdata/warehouses/${wh.id}`, 'PUT', { date_rule_policy: 'OFF' })
+    await restWrite('date_rule_master', 'DELETE', `scope=eq.CUSTOMER&scope_key=eq.${custA.id}`).catch(() => {})
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${a1b.id}`, { date_rule: null })
+  }
+
   // ═══ [10] ĐỢT 2 — mức theo (khách × LOẠI HÀNG) · kiểu "còn ≥ N ngày" · mã không hạn dùng ══════
   // Vì sao phải có: FG01 hạn 120–720 ngày còn FG02 chỉ 45–60 ⇒ "còn ≥ 35 ngày" ra 77,8 % trên mã
   // này và 58,3 % trên mã kia. Nếu MIN_DAYS đo sai thì không có lỗi nào nổ — chỉ là hàng cận date

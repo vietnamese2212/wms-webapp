@@ -37,11 +37,18 @@
  * được chỉ đường (không có date để so thì tối ưu QUÃNG ĐƯỜNG). Đặt "không đòi mốc" thì mọi pallet
  * đều đạt, việc vẫn sinh, và thứ tự rơi thẳng xuống khoảng cách BFS trên Sơ đồ kho.
  *
- * ─── KHÔNG LAN NGƯỢC ──────────────────────────────────────────────────────────────────────────
- * Sửa mức của kênh/khách chỉ có hiệu lực cho dòng SINH SAU ĐÓ. Đơn đang mở chỉ đổi khi có người
- * bấm "Áp lại theo master" (`applyDateRuleMaster`) — tránh cảnh sửa một ô cấu hình làm nghìn dòng
- * đổi mà không ai biết. Vì thế `resolveDateRule` mặc định GIỮ mọi quy tắc đang có; chỉ đường
- * "Áp lại" mới truyền `overwriteAuto: true` (và kể cả lúc đó, MANUAL vẫn bất khả xâm phạm).
+ * ─── ĐỔI CẤU HÌNH LÀ ÁP NGAY (user chốt 12/09: "rõ ràng việc áp dụng phải được thực thi ngay chứ") ─
+ * Bản 11/09 bắt người dùng bấm "Áp lại theo master" cho đơn đang mở, lý do là sợ "sửa một ô cấu hình
+ * làm nghìn dòng đổi âm thầm". Đo bằng người dùng thật thì cái giá ĐẮT HƠN: bật công tắc xong màn
+ * hình không đổi gì, không một lời giải thích, nên người khai tưởng mình khai sai và đi tìm lỗi ở
+ * chỗ không có lỗi. Nay MỌI hành động cấu hình có chủ đích đều áp NGAY cho đơn đang mở:
+ *   • đổi `Warehouse.date_rule_policy` → áp cho đơn đang mở của CHÍNH kho đó
+ *   • lưu bộ mức của Khách / Kênh, hay đổi kênh của khách → áp cho đơn đang mở của mọi kho ĐANG BẬT
+ * Ba lớp giữ cho nó không "âm thầm": (1) dòng CHỐT TAY không bao giờ bị đụng — `resolveDateRule`
+ * chặn ở bậc 1 kể cả với `overwriteAuto`; (2) mỗi dòng đổi ghi một sự kiện vào sổ chuyến, đọc được
+ * ở nút "Thông tin" của chuyến; (3) lời gọi trả về SỐ DÒNG đã đổi để màn hình nói ra ngay.
+ * Nút "Áp lại theo master" GIỮ LẠI: dùng khi tồn kho đổi (dòng "cần xem" có hàng trở lại) hoặc khi
+ * muốn áp cho khoảng ngày khác với cửa sổ tự động.
  */
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'

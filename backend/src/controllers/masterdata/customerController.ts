@@ -17,10 +17,23 @@ import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { logAdmin, diffFields } from '../../services/adminAudit'
 import { normShipto, normCategory, parseMasterRule, type MasterScope } from '../../services/dateRulePolicy'
+import { autoApplyAfterConfigChange, warehousesWithPolicyOn } from '../../services/dateRuleApply'
 import type { DateRule } from '../../services/directedTasks'
 
 const now = () => new Date().toISOString()
 const MAX_BULK_IDS = 500
+
+/**
+ * ĐỔI DANH MỤC LÀ ÁP NGAY cho đơn đang mở (user chốt 12/09: "rõ ràng việc áp dụng phải được thực thi
+ * ngay chứ"). Thu hẹp về các kho ĐANG BẬT áp tự động: mức chỉ có nghĩa ở đó, quét cả 153 kho rồi bỏ
+ * qua gần hết là đốt lượt truy vấn. Không kho nào bật ⇒ 0 việc, không gọi gì thêm.
+ * KHÔNG BAO GIỜ làm hỏng lượt lưu danh mục — hàm bên trong đã tự bọc lỗi.
+ */
+async function autoApplyNow(req: Request) {
+  const whs = await warehousesWithPolicyOn()
+  if (!whs.length) return { scanned: 0, applied: 0, cleared: 0, kept_manual: 0, updated: 0, trips_replanned: 0, capped: false, note: 'Chưa kho nào bật "Áp %Date tự động" — mức khai ở đây chưa áp cho kho nào.' }
+  return autoApplyAfterConfigChange({ scopeWh: whs, actor: req.user?.name ?? null })
+}
 
 type CustomerRow = {
   id: string; ship_to_code: string; name: string; channel: string | null
@@ -273,7 +286,9 @@ export async function updateCustomer(req: Request, res: Response) {
       action: 'CUSTOMER_UPDATE', target_type: 'Customer', target_id: id,
       target_label: `${row.ship_to_code} — ${row.name}`, before: d.before, after: d.after,
     })
-    return ok(res, row)
+    // Đổi KÊNH (hoặc ngừng khách) là đổi mức áp cho khách đó ⇒ áp ngay cho đơn đang mở
+    const touchedRule = 'channel' in parsed.patch || 'is_active' in parsed.patch
+    return ok(res, { ...row, ...(touchedRule ? { date_rule_applied: await autoApplyNow(req) } : {}) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -374,7 +389,8 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
       target_label: `${updated} khách hàng`,
       after: { ...parsed.patch, count: updated, by_filter: !hasIds },
     })
-    return ok(res, { updated })
+    const touchedRule = 'channel' in parsed.patch || 'is_active' in parsed.patch
+    return ok(res, { updated, ...(touchedRule ? { date_rule_applied: await autoApplyNow(req) } : {}) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -444,7 +460,7 @@ export async function updateCustomerChannel(req: Request, res: Response) {
       action: 'CHANNEL_UPDATE', target_type: 'CustomerChannel', target_id: id, target_label: b.value,
       before: { meta: b.meta ?? null }, after: { meta },
     })
-    return ok(res, data as Record<string, unknown>)
+    return ok(res, { ...(data as Record<string, unknown>), date_rule_applied: await autoApplyNow(req) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -571,11 +587,10 @@ export const replaceDateRules = (scope: MasterScope) => async (req: Request, res
       before: { rules: before.map(r => ({ category: r.category, rule: r.rule })) },
       after: { rules: [...wanted.values()] },
     })
-    // Đổi mức KHÔNG lan ngược: đơn đang mở chỉ đổi khi có người bấm "Áp lại theo master".
-    return ok(res, {
-      rules: [...wanted.values()],
-      applies_to: 'Chỉ đơn sinh sau khi lưu — đơn đang mở dùng nút "Áp lại theo master" ở trang Quy định date',
-    })
+    // ÁP NGAY cho đơn đang mở (user chốt 12/09) — dòng chốt tay vẫn bất khả xâm phạm, mỗi dòng đổi
+    // có một sự kiện trong sổ chuyến, và số dòng trả về để màn hình nói ra.
+    const applied = await autoApplyNow(req)
+    return ok(res, { rules: [...wanted.values()], date_rule_applied: applied })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -638,6 +653,6 @@ export async function bulkSetDateRule(req: Request, res: Response) {
       target_label: `${updated} khách hàng · ${rawCat ?? 'mọi loại hàng'}`,
       after: { category: rawCat, rule, count: updated, by_filter: byFilter, cleared: clearing },
     })
-    return ok(res, { updated, cleared: clearing })
+    return ok(res, { updated, cleared: clearing, date_rule_applied: await autoApplyNow(req) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }

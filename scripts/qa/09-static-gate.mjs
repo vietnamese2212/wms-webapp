@@ -643,6 +643,23 @@ const RULES = [
         && /\{\s*kind\s*:\s*['"](FEFO|MIN_PCT|EXACT|SPLIT)['"]/.test(line)
         && !/services[\\/](dateRulePolicy|directedTasks)\.ts$/.test(file), s),
   },
+  // THỨ TỰ LUÂN CHUYỂN KHÔNG PHẢI QUY ĐỊNH DATE (chốt plan đợt 2 §2, dựng lưới 12/09).
+  // Hai khái niệm khác hẳn nhau mà rất dễ lẫn vì cùng họ chữ viết tắt:
+  //   • `date_rule.kind` = YÊU CẦU VỀ DATE của khách — FEFO · MIN_PCT · MIN_DAYS · EXACT · SPLIT.
+  //   • FIFO / LIFO = THỨ TỰ LẤY HÀNG của kho — sống ở `Warehouse.rotation_principle` và
+  //     `warehouse_type_configs`, do `utils/rotation.ts` quyết, KHÔNG phải thứ khách đặt ra.
+  // Nhét FIFO/LIFO vào ô quy định date là hỏng ÂM THẦM: `matchesRule` không có nhánh nào cho chúng
+  // nên dòng hàng đó thành "không pallet nào đạt" ⇒ không sinh việc lấy hàng, hoặc lọt qua cửa gác
+  // như thể đã khai xong. CHECK `date_rule_valid()` ở DB chặn được đường GHI, nhưng lưới này chặn
+  // sớm hơn một nhịp: ngay lúc ai đó gõ ra dòng code. Baseline 0 — chưa từng có chỗ nào.
+  {
+    key: 'rotation_kind_in_date_rule',
+    label: "nhét FIFO/LIFO vào ô quy định date (kind) — đó là THỨ TỰ LẤY HÀNG của kho, không phải yêu cầu date của khách",
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && (/\{\s*kind\s*:\s*['"](FIFO|LIFO)['"]/.test(line)
+            || (/kind/.test(line) && /['"]FEFO['"]/.test(line) && /['"](FIFO|LIFO)['"]/.test(line))), s),
+  },
   // Dò bản ghi theo TÊN là luật hỏng ÂM THẦM khi ai đó đổi tên (cùng họ với `role_by_vietnamese_name`).
   // Kho đích của ship-to nay khai tường minh ở `Customer.warehouse_id`; baseline = 2 nhánh dự phòng
   // còn lại (chuyển kho + tra NCC khi nhập), không được đẻ thêm chỗ nào.

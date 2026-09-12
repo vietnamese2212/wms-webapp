@@ -496,3 +496,16 @@ created_at, updated_at
   tức là TỪ ĐỒNG ÂM với taxonomy Loại kho `FG01/FG02/PK01/PM01/RM01`, cùng loại với `Material.product_type`
   vốn đã được miễn trừ sẵn. Loại kho của một kho nằm ở `warehouse_type_configs`. Cột này chỉ làm bất biến đỏ
   khi có fixture QA ghi thẳng giá trị taxonomy vào đó qua PostgREST (đi vòng qua controller) — đã vá ở gói 57/58.
+- `20260912_drop_hr_employees_page_overload.sql` — **DROP bản CŨ 9 tham số của `hr_employees_page`**
+  (`p_jt_name`), giữ bản 10 tham số (`p_jt_id` + `p_status`) mà `employeeController` đang gọi. Bản cũ sót
+  lại vì migration trước dùng `CREATE OR REPLACE` — lệnh đó chỉ thay bản TRÙNG chữ ký, thêm/bớt tham số
+  là ĐẺ overload. PostgREST phân giải theo **TẬP TÊN THAM SỐ** nên một lời gọi quên `p_status` là rơi
+  trúng bản cũ: mất bộ lọc trạng thái và lọc chức danh quay về so theo TÊN (đổi tên chức danh = hỏng câm).
+  Overload này còn rò vào `types/database.ts` dưới dạng Args kiểu UNION hai chữ ký. Nghiệm thu:
+  `GET /masterdata/employees` 200 cả khi kèm `status=ACTIVE` (tham số CHỈ có ở bản mới).
+- `20260912b_function_overload_guard.sql` — **RPC gác `function_overloads()`** (0 dòng = sạch), gói QA
+  00-invariant gọi mỗi lượt. Đây là lưới cho lớp lỗi đã cắn HAI lần trong hai ngày: `outbound_date_rule_lines`
+  (11/09 — màn Quy định date lặng lẽ rơi về bản cũ, mất bộ lọc) và `hr_employees_page` (12/09). Trước đó
+  chỉ có câu SQL quét tay trong ghi chú — tức phải có người NHỚ đi quét. Miễn trừ duy nhất: `unaccent`
+  (extension cố ý 2 bản). Đã chứng minh phép kiểm ĐỎ trên bản lỗi: dựng tạm `zz_overload_probe` 2 bản →
+  gói 00 đỏ đúng tên hàm → gỡ → xanh lại.

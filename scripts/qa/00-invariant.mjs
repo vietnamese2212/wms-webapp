@@ -240,6 +240,22 @@ for (const [table, label] of [
       : 'RPC warehouse_type_column_coverage chưa apply (migration 20260815b)')
 }
 
+// 11a. KHÔNG HÀM NÀO ĐƯỢC CÓ HAI BẢN (chốt 12/09 — lớp lỗi đã cắn HAI lần).
+//      `CREATE OR REPLACE FUNCTION` chỉ thay bản TRÙNG chữ ký; thêm/bớt một tham số là ĐẺ hàm mới
+//      chứ không thay. Mà PostgREST phân giải theo TẬP TÊN THAM SỐ trong body, không theo thứ tự ⇒
+//      một lời gọi quên tham số mới là rơi trúng bản CŨ: không lỗi, không cảnh báo, màn hình lặng lẽ
+//      quay về hành vi phiên bản trước. Đã dính `outbound_date_rule_lines` (11/09 — màn Quy định date
+//      mất bộ lọc) và `hr_employees_page` (12/09 — lọc chức danh so theo TÊN, đổi tên là hỏng câm).
+//      Thêm tham số có DEFAULT KHÔNG cứu: bản cũ vẫn khớp khi lời gọi không nhắc tên tham số mới.
+{
+  const dup = await restRpc('function_overloads')
+  check('Không hàm public nào có HAI bản (đổi chữ ký RPC phải DROP bản cũ)',
+    Array.isArray(dup) && dup.length === 0,
+    Array.isArray(dup)
+      ? (dup.length ? `SÓT: ${dup.map(d => `${d.fn}(${d.n} bản)`).join(', ')}` : 'quét toàn schema public')
+      : 'RPC function_overloads chưa apply (migration 20260912b)')
+}
+
 // 11b. MỌI KHO PHẢI CÓ MỌI LOẠI KHO (user chốt 21/08: loại kho là DANH MỤC CHUNG — tạo một lần thì
 //      tất cả kho đều có; mỗi kho chỉ khác nhau ở SETTING). Thiếu cặp (kho, loại) = kho đó không có
 //      dòng cấu hình ⇒ setting riêng không khai được và (Đợt 2) form ghi sẽ chặn oan đúng loại đó.

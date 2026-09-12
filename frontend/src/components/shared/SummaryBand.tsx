@@ -26,6 +26,9 @@ export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; 
   // xanh trống trơn — trông như dải bị cắt dở. Ô cuối GIÃN RA lấp nốt phần thừa.
   const rem = tiles.length % cols
   const lastSpan = rem === 0 ? 0 : cols - rem + 1
+  // Từ 3 hàng trở lên (7–9 ô) dải ăn hơn 100 px của màn điện thoại — bóp đệm dọc lại để bảng còn
+  // chỗ thở (Nhập kho 7 ô: dòng dữ liệu đầu tiên từ y=382 xuống còn ~343).
+  const tight = tiles.length > cols * 2
   return (
     <div className={`grid ${mCols} [&>div:last-child]:border-r-0 sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
       {tiles.map((t, i) => (
@@ -34,7 +37,7 @@ export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; 
         // trong cùng một hàng vẫn thẳng đáy với nhau. Desktop vẫn truncate 1 dòng như cũ.
         <div key={i} title={t.tip ?? t.label}
           style={lastSpan && i === tiles.length - 1 ? { gridColumn: `span ${lastSpan}` } : undefined}
-          className={`sm:flex-1 min-w-0 sm:min-w-[84px] flex flex-col justify-between text-center border-white/10 border-b border-r sm:!border-0 ${compact ? 'px-2 py-0.5 sm:px-3' : 'px-2 py-1 sm:px-3 sm:py-1.5'}`}>
+          className={`sm:flex-1 min-w-0 sm:min-w-[84px] flex flex-col justify-between text-center border-white/10 border-b border-r sm:!border-0 ${compact ? 'px-2 py-0.5 sm:px-3' : `px-2 ${tight ? 'py-0.5' : 'py-1'} sm:px-3 sm:py-1.5`}`}>
           <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight sm:truncate">{t.label}</div>
           <div className={`font-semibold leading-tight tabular-nums whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}

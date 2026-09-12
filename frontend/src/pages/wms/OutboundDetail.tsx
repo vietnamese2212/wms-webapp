@@ -451,7 +451,11 @@ function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
         container_number:     containerNum || undefined,
         exporter_name:        exporterName || undefined,
         loader_name:          loaderName   || undefined,
-        forklift_driver_id:   forklifterIds[0] || undefined,
+        // Gửi CẢ DANH SÁCH. Trước 12/09 chỗ này chỉ gửi NGƯỜI ĐẦU TIÊN vào trường số ít, nên ô
+        // chọn cho tick nhiều người, tên vẫn hiện đủ trên chuyến (chuỗi `..._names` riêng), mà
+        // việc thì chỉ MỘT người nhận — những người kia mở "Việc cần làm" thấy bảng trống và
+        // chuông "được giao xe" cũng không tới. Không lỗi nào nổ, chỉ lệch âm thầm.
+        forklift_driver_ids:  forklifterIds,
         forklift_driver_names: forklifterNames || undefined,
         gate_registration_id: gateRegId || undefined,
         allow_shared_gate:    special || undefined,
@@ -618,8 +622,12 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
     (gdo.exporter_name ?? '').split(',').map(s => s.trim()).filter(Boolean)
   )
   const [loaderName,      setLoaderName]      = useState(gdo.loader_name ?? '')
+  // Mở form phải lấy ĐỦ danh sách đang giao. Bản cũ đọc cột số ít `forklift_driver_id` nên chuyến
+  // giao 3 người mở ra chỉ thấy 1 người được tick — người sửa không biết mình đang gỡ ai, và chỉ
+  // cần bấm Lưu (dù chỉ sửa biển số) là hai người kia rơi khỏi chuyến.
   const [forklifterIds,   setForklifterIds]   = useState<string[]>(
-    gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
+    gdo.forklift_driver_ids?.length ? gdo.forklift_driver_ids
+      : gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
   )
   const [gateRegId,       setGateRegId]       = useState(gdo.gate_registration_id ?? '')
   const [special,         setSpecial]         = useState(false)   // mặc định CHỈ xe đang trong cổng; muốn xe đã ra/vãng lai phải tự tích
@@ -672,7 +680,9 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
         container_number:      containerNum  || undefined,
         exporter_name:         exporterNames.join(', ') || undefined,
         loader_name:           loaderName    || undefined,
-        forklift_driver_id:    forklifterIds[0] || undefined,
+        // Gửi mảng KỂ CẢ KHI RỖNG: đó là cách duy nhất nói "tôi gỡ hết người" — BE phân biệt
+        // rỗng với không-gửi, và tự chặn 422 nếu kho Hướng dẫn còn việc treo.
+        forklift_driver_ids:   forklifterIds,
         forklift_driver_names: forklifterNames  || undefined,
         gate_registration_id:  gateRegId || null,
         allow_shared_gate:     special || undefined,

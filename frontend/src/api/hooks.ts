@@ -4078,7 +4078,10 @@ export function useStartGDO() {
     mutationFn: ({ id, ...body }: {
       id: string; license_plate?: string; container_number?: string
       exporter_name?: string; loader_name?: string
-      forklift_driver_id?: string; forklift_driver_names?: string
+      // Một chuyến giao được NHIỀU lái xe nâng ⇒ gửi `forklift_driver_ids`. Cột số ít
+      // `forklift_driver_id` là dạng CŨ, BE chỉ dùng khi không có mảng — gửi nó là tự cắt
+      // danh sách còn một người (xem ghi chú ở StartDialog/EditTransportDialog).
+      forklift_driver_ids?: string[]; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
       dock_location_id?: string | null   // cửa xuất (bắt buộc khi kho có cửa trên Sơ đồ kho — BE 422 DOCK_REQUIRED/DOCK_FULL)
       // 2 rule cổng/cân per kho: KHÔNG có cờ bỏ qua nào ở đây — miễn trừ duy nhất là duyệt
@@ -4512,7 +4515,8 @@ export function useUpdateTransport() {
     mutationFn: ({ id, ...body }: {
       id: string; license_plate?: string; container_number?: string   // biển TÙY CHỌN khi chuyến đã duyệt bỏ qua cổng (giao lẻ)
       exporter_name?: string; loader_name?: string
-      forklift_driver_id?: string; forklift_driver_names?: string
+      // Như useStartGDO: gửi MẢNG, đừng gửi cột số ít (sẽ cắt danh sách còn một người).
+      forklift_driver_ids?: string[]; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
     }) => apiClient.patch(`/wms/outbound/${id}/transport`, body).then(r => r.data.data as GDO),
     onSuccess: (data, { id }) => {
@@ -4594,7 +4598,9 @@ export function useUnwaiveGateGDO() {
 export const useUnassignGDO   = makeUndoGDOMutation('unassign',
   old => ({ ...old, assigned_at: null, assigned_by: null, status: 'PENDING' }))
 export const useUnstartGDO    = makeUndoGDOMutation('unstart',
-  old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_names: null, status: 'PENDING' }))
+  // Xoá cả `forklift_driver_ids` (nguồn thật) chứ không riêng cột số ít, kẻo màn hình còn giữ
+  // danh sách người của chuyến vừa bỏ Bắt đầu cho tới lượt nạp lại.
+  old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_ids: null, forklift_driver_names: null, status: 'PENDING' }))
 export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
   old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }),
   [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-transfer']])

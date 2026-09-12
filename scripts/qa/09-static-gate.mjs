@@ -841,6 +841,18 @@ const RULES = [
       return n
     },
   },
+  // Gửi PHẦN TỬ ĐẦU của một mảng vào trường số ít = cắt danh sách còn 1 người mà không báo gì.
+  // Đo 12/09: màn "Bắt đầu chuyến" và "Sửa thông tin xe" cho tick NHIỀU lái xe nâng, tên vẫn hiện
+  // đủ trên chuyến (chuỗi `..._names` lưu riêng) nhưng chỉ một người thật sự được giao việc —
+  // những người còn lại mở "Việc cần làm" thấy bảng trống, chuông cũng không tới. Không lỗi nào nổ.
+  // Cột số ít là dạng CŨ giữ cho tương thích; đường ghi mới phải gửi MẢNG (BE tự lo dạng cũ).
+  // Bỏ qua dòng chú thích — chính luật này từng tự bắt câu ghi chú của mình (bẫy `as_any`).
+  {
+    key: 'first_of_list_sent_as_singular',
+    label: 'gửi `<x>_id: <x>Ids[0]` — cắt danh sách nhiều người/nhiều mục còn MỘT mà giao diện vẫn hiện đủ; gửi cả mảng',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /\b\w+_id\s*:\s*\w*[Ii]ds\s*\[\s*0\s*\]/.test(line), s),
+  },
   {
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',

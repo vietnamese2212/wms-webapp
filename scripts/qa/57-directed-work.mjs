@@ -281,13 +281,27 @@ try {
     lowerRows.map(x => `${x.current_code}:${x.can_confirm}`).slice(0, 4).join(' '))
   b = await board('MOVE')
   const moveRows = b.j?.data?.rows ?? []
-  check('[10b2] Bảng "Cần đưa ra": việc CHƯA hạ thì KHÔNG bấm được (phải chờ xe hạ)',
-    moveRows.filter(x => x.waiting_lower).every(x => x.can_confirm === false),
-    moveRows.filter(x => x.waiting_lower).map(x => `${x.current_code}:${x.can_confirm}`).slice(0, 4).join(' ') || 'không có dòng chờ hạ')
+  // ĐỔI LUẬT 12/09 (user: "Cần hạ KHÔNG bắt buộc phải thao tác xác nhận đã hạ"): bản cũ khoá mọi
+  // dòng chờ hạ ở bảng xe chuyển ⇒ không ai bấm tab Cần hạ thì bảng này đứng im cả ca. Phép kiểm cũ
+  // khẳng định `can_confirm === false` — tức KHOÁ CHÍNH LỖI LẠI (lớp feedback-qa-can-lock-in-the-bug).
+  check('[10b2] Bảng "Cần đưa ra": việc còn trên kệ VẪN bấm được, bằng một nút "Hạ & đưa ra"',
+    moveRows.filter(x => x.waiting_lower && !x.stage_done && !x.skipped)
+      .every(x => x.can_confirm === true && x.combined_lower === true),
+    moveRows.filter(x => x.waiting_lower).map(x => `${x.current_code}:${x.can_confirm}/${x.combined_lower}`).slice(0, 4).join(' ') || 'không có dòng chờ hạ')
   check('[10b] Bảng "Cần đưa ra" hiện VỊ TRÍ HIỆN TẠI của pallet kể cả đang trên kệ',
     b.s === 200 && moveRows.length > 0 && moveRows.every(x => !!x.current_code), moveRows.map(x => x.current_code).join(' '))
-  check('[10c] Dòng chưa hạ được đánh dấu "chờ xe hạ" (mờ, chưa bấm được)',
-    moveRows.some(x => x.waiting_lower === true && x.can_confirm === false))
+  check('[10c] Dòng chưa hạ vẫn được đánh dấu "chờ xe hạ" để biết hiện trạng — nhưng KHÔNG bị khoá',
+    moveRows.some(x => x.waiting_lower === true && x.can_confirm === true))
+  // Bảng của xe chuyển phải NÓI HẾT phần việc của kho. Bộ lọc cũ còn loại hẳn việc "đưa về vị trí
+  // nhặt lẻ còn trên kệ" nên phần việc đó chỉ sống ở tab Cần hạ — không tab nào nói ra là nó thiếu.
+  {
+    const allPending = await restAll('wms_tasks', `select=id&warehouse_id=eq.${whId}&status=eq.PENDING`)
+    const shown = new Set(moveRows.flatMap(x => x.task_ids ?? []))
+    const missing = allPending.filter(t => !shown.has(t.id))
+    check('[10b3] "Cần đưa ra" không giấu việc nào: mọi việc còn treo của kho đều có mặt',
+      allPending.length > 0 && missing.length === 0,
+      `${allPending.length} việc treo · thiếu ${missing.length}`)
+  }
   b = await board('SCAN', `&gdo_id=${t2.gdo}`)
   check('[10d] Bảng "Sắp quét" theo chuyến trả TỪNG pallet (thủ kho quét theo tem)',
     b.s === 200 && tk.length > 0 && (b.j?.data?.rows ?? []).length === tk.length, `${(b.j?.data?.rows ?? []).length} vs ${tk.length}`)
@@ -471,9 +485,12 @@ try {
   await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { separate_lowering_forklift: true })
   b = await board('MOVE', `&gdo_id=${t7.gdo}`)
   const waitRows = (b.j?.data?.rows ?? []).filter(x => x.waiting_lower && !x.stage_done)
-  check('[12g4] Bật lại xe hạ riêng → dòng chờ hạ ở xe chuyển KHÔNG bấm được như cũ',
-    b.j?.data?.settings?.separate_lowering_forklift === true && waitRows.length > 0 && waitRows.every(x => x.can_confirm === false),
-    `settings=${JSON.stringify(b.j?.data?.settings)} ${waitRows.length} dòng chờ hạ`)
+  // Cờ này nay CHỈ còn quyết định có HIỆN tab "Cần hạ" hay không (12/09). Nó KHÔNG được khoá tay
+  // xe chuyển trở lại — đó chính là hành vi user bác.
+  check('[12g4] Bật lại xe hạ riêng → tab Cần hạ hiện lại, nhưng xe chuyển VẪN bấm được',
+    b.j?.data?.settings?.separate_lowering_forklift === true && waitRows.length > 0
+      && waitRows.every(x => x.can_confirm === true && x.combined_lower === true),
+    `settings=${JSON.stringify(b.j?.data?.settings)} ${waitRows.length} dòng chờ hạ · ${waitRows.map(x => `${x.can_confirm}/${x.combined_lower}`).slice(0, 3).join(' ')}`)
 
   // ═══ [13] BỎ BẮT ĐẦU → HUỶ VIỆC TREO ═════════════════════════════════════════════════════════
   const t5 = await mkTrip('T5')

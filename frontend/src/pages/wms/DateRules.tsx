@@ -103,6 +103,17 @@ export default function DateRules() {
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / f.pageSize))
 
+  // CÔNG TẮC THEO KHO — khai mức ở Khách hàng / Kênh xong mà kho vẫn TẮT thì máy không áp gì, và
+  // trước 12/09 màn này không nói một lời nào (user hỏi thẳng "tại sao Quy định date không chạy dù
+  // đã khai Khách hàng, kênh rồi?" — đo staging: 0/153 kho bật). Cấu hình im lặng = người dùng đi
+  // tìm lỗi ở chỗ không có lỗi.
+  const offWhs = useMemo(() => {
+    const list = (whs ?? []) as { id: string; name?: string; date_rule_policy?: string | null }[]
+    const inScope = f.warehouseId ? list.filter(w => w.id === f.warehouseId) : list
+    return inScope.filter(w => String(w.date_rule_policy ?? 'OFF').toUpperCase() === 'OFF')
+  }, [whs, f.warehouseId])
+  const allOff = offWhs.length > 0 && offWhs.length === (f.warehouseId ? 1 : (whs ?? []).length)
+
   const allPicked = rows.length > 0 && rows.every(r => picked.has(r.item_id))
   const toggleAll = () => setPicked(s => {
     const n = new Set(s)
@@ -206,6 +217,14 @@ export default function DateRules() {
           { label: 'Không có hạn dùng', value: nf(sum.no_shelf_life ?? 0), tip: 'Mã không khai hạn dùng — hệ thống tự đặt "không đòi mốc", không hiện ở bảng này vì không có gì để khai' },
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${f.page}/${totalPages}` }] : []),
         ]} />
+
+        {allOff && (
+          <div className="shrink-0 border-b bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+            <b>{f.warehouseId ? `Kho ${offWhs[0]?.name ?? ''} đang TẮT` : 'Mọi kho trong phạm vi của bạn đang TẮT'} áp %Date tự động</b> — mức khai
+            ở trang Khách hàng / Kênh sẽ không tự vào dòng hàng nào, mọi dòng vẫn phải khai tay.
+            <span className="hidden sm:inline"> Bật ở <b>Cài đặt WMS → Kho → sửa kho → Áp %Date tự động</b>. Bật xong chỉ áp cho đơn sinh SAU đó; đơn đang mở dùng nút “Áp lại theo master”.</span>
+          </div>
+        )}
 
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"

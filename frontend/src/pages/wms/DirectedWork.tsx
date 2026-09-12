@@ -15,9 +15,9 @@
 //   • "Nhận" việc chung (khoá mềm 10') — hai xe hạ cùng ca không cùng chạy tới một ô.
 //   • Kho không xe hạ riêng: một nút "Hạ & đưa ra", tab Cần hạ ẩn.
 //   • Tab Sắp quét có nút QUÉT ngay tại chỗ (thủ kho không phải sang Xuất kho → chuyến → Quét).
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight } from 'lucide-react'
+import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -26,6 +26,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
+import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -96,10 +97,37 @@ function stateOf(r: DirectedRow, tab: BoardTab): { text: string; cls: string } {
     text: `✓ ${tab === 'LOWER' ? 'đã hạ' : 'đã đưa ra'}${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}${r.done_by_name ? ` · ${r.done_by_name}` : ''}`,
     cls: 'text-green-600',
   }
-  if (r.combined_lower) return { text: 'trên kệ — hạ rồi đưa ra', cls: 'text-slate-600' }
+  // Bảng XE CHUYỂN: hàng còn trên kệ vẫn LÀM ĐƯỢC — một nút ghi cả hai mốc (12/09, user: "Cần hạ
+  // không bắt buộc phải thao tác xác nhận đã hạ").
+  if (r.combined_lower) return { text: 'còn trên kệ — hạ rồi đưa ra', cls: 'text-slate-600' }
+  // Trên bảng của CHÍNH xe hạ thì "chờ xe hạ" là vô nghĩa: đó là việc của họ
+  if (tab === 'LOWER') return { text: 'cần hạ xuống', cls: 'text-slate-500' }
   if (r.waiting_lower) return { text: '⏳ chờ xe hạ', cls: 'text-amber-600' }
-  if (r.needs_lower) return { text: 'cần hạ xuống', cls: 'text-slate-500' }
+  if (r.needs_lower) return { text: 'đã hạ — đưa ra được', cls: 'text-slate-500' }
   return { text: 'lấy trực tiếp', cls: 'text-slate-500' }
+}
+
+/** Mã hàng trên dòng việc = NÚT tra tồn kho + vị trí (user 12/09: "tương tự như bên Chuẩn bị hàng"). */
+type PickedMat = { id: string; code: string; mat: DirectedRow | null }
+function StockButtons({ r, onPick, big }: { r: DirectedRow; onPick: (m: PickedMat) => void; big?: boolean }) {
+  const list = (r.materials ?? []).filter(m => m?.id)
+  if (!list.length) return null
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 align-middle no-underline">
+      {list.map(m => (
+        <button key={m.id} type="button"
+          // Ô nhiều mã: mỗi mã một nút — đơn vị tính (thùng/hộp) của dòng là min() cross-mã nên chỉ
+          // tin được khi ô chỉ có MỘT mã; nhiều mã thì để dialog tự đọc đơn vị, đừng in số sai.
+          onClick={() => onPick({ id: m.id, code: m.code ?? '', mat: list.length === 1 ? r : null })}
+          title={`Xem tồn kho và vị trí của mã ${m.code ?? ''} trong kho này`}
+          className={`inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-50 text-slate-600 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 ${
+            big ? 'h-8 px-2 text-xs' : 'h-5 px-1.5 text-[9px]'}`}>
+          <Boxes className={big ? 'h-3.5 w-3.5' : 'h-3 w-3'} />
+          {list.length > 1 ? (m.code ?? '') : 'Tồn kho'}
+        </button>
+      ))}
+    </span>
+  )
 }
 
 // Mọi nút của một dòng — dùng CHUNG cho bảng (PC) và thẻ (PDA) để hai màn không kể hai câu chuyện khác nhau.
@@ -269,14 +297,21 @@ export default function DirectedWork() {
   useEffect(() => {
     if (!f.warehouseId && whs?.length === 1) setF({ warehouseId: (whs[0] as { id: string }).id })
   }, [whs, f.warehouseId, setF])
-  // Chuông "được giao xe nâng" và các dòng Hộp việc trỏ tới đây kèm ?trip= / ?tab= — mở đúng chuyến, đúng bảng
+  // Chuông "được giao xe nâng" và các dòng Hộp việc trỏ tới đây kèm ?trip= / ?tab= — mở đúng chuyến, đúng bảng.
+  // ⚠ ÁP ĐÚNG MỘT LẦN CHO MỖI ĐƯỜNG DẪN. Bản đầu so `t !== f.tab` rồi ghi đè: vào trang bằng link có
+  // `?tab=` thì mỗi lần người dùng bấm tab khác, f.tab đổi ⇒ effect chạy lại ⇒ kéo NGƯỢC về tab của
+  // đường dẫn ⇒ "bấm một tab rồi tab khác không chọn được nữa" (user báo 12/09). Nhớ giá trị tham số
+  // ĐÃ ÁP: đổi link mới áp lại, còn bấm tab là quyền của người dùng.
   const [sp] = useSearchParams()
+  const appliedLink = useRef<string | null>(null)
   useEffect(() => {
-    const trip = sp.get('trip')
-    if (trip && trip !== f.gdoId) setF({ gdoId: trip })
-    const t = sp.get('tab')
-    if (t && ['INBOX', 'LOWER', 'MOVE', 'SCAN'].includes(t) && t !== f.tab) setF({ tab: t as Tab })
-  }, [sp, f.gdoId, f.tab, setF])
+    const t = sp.get('tab'), trip = sp.get('trip')
+    const key = `${t ?? ''}|${trip ?? ''}`
+    if (appliedLink.current === key) return
+    appliedLink.current = key
+    if (trip) setF({ gdoId: trip })
+    if (t && ['INBOX', 'LOWER', 'MOVE', 'SCAN'].includes(t)) setF({ tab: t as Tab })
+  }, [sp, setF])
 
   const tab = (f.tab as Tab) ?? 'INBOX'
   const boardTab: BoardTab = tab === 'INBOX' ? 'MOVE' : tab
@@ -336,6 +371,8 @@ export default function DirectedWork() {
 
   // Nút QUÉT ngay trên bảng Sắp quét — dùng lại đúng màn quét của trang chuyến (một luồng, một luật)
   const [scanOpen, setScanOpen] = useState(false)
+  // Tra tồn kho + vị trí của mã ngay trên dòng việc — cùng dialog với trang Chuẩn bị hàng
+  const [invMat, setInvMat] = useState<PickedMat | null>(null)
   const { data: scanGdo } = useGDO(tab === 'SCAN' && canScan && f.gdoId ? f.gdoId : undefined)
 
   const filterDefs: FilterDef[] = [
@@ -513,6 +550,7 @@ export default function DirectedWork() {
                     {tab === 'SCAN' && r.is_partial && !r.stage_done && (
                       <div className="text-xs font-semibold text-amber-700">lấy {qtyLabel(r.qty_base, r)} — một phần pallet</div>
                     )}
+                    <div className="mt-1"><StockButtons r={r} onPick={setInvMat} big /></div>
                   </Step>
                   <Step label={tab === 'LOWER' ? 'Đặt xuống' : 'Tới'} big={first}>
                     <span className="font-semibold">{dest ?? <span className="text-slate-300 font-normal">—</span>}</span>
@@ -642,6 +680,7 @@ export default function DirectedWork() {
                           lấy {qtyLabel(r.qty_base, r)} — một phần pallet, phần còn lại để lại
                         </div>
                       )}
+                      <div className="mt-0.5"><StockButtons r={r} onPick={setInvMat} /></div>
                     </TableCell>
 
                     {tab === 'LOWER' && (
@@ -695,6 +734,11 @@ export default function DirectedWork() {
       </div>
 
       {scanOpen && scanGdo && <GdoScanSheet gdo={scanGdo} mode="outbound" onClose={() => setScanOpen(false)} />}
+      {invMat && (
+        <MaterialStockDialog materialId={invMat.id} materialCode={invMat.code}
+          materialName={rows.find(r => r.materials?.some(m => m.id === invMat.id))?.material_name ?? ''}
+          mat={invMat.mat} warehouseId={f.warehouseId || undefined} onClose={() => setInvMat(null)} />
+      )}
     </div>
   )
 }

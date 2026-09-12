@@ -550,3 +550,16 @@ created_at, updated_at
   Ngày chuyến timestamptz so theo ngày VN bằng `AT TIME ZONE`. `directed_supervision(p_warehouse_id, p_days)` (quyền
   `directed_work.replan`): live (chuyến đang chạy · chờ hạ lâu nhất · ai đang cầm) · by_person · by_day (**% làm đúng kế
   hoạch = done / (done + skipped OTHER_PALLET)**) · lead_time. Gói QA 57 [10k–10l2] gác.
+- `20260912h_directed_board_move_unlocked.sql` — **"Cần đưa ra" thôi tự khoá tay mình** (user 12/09: *"Cần hạ KHÔNG
+  bắt buộc phải thao tác xác nhận đã hạ. Cần đưa ra thể hiện nội dung cần đưa ra chứ không phải chỉ mỗi cái mà cần-hạ
+  xác nhận"*). `directed_board` đổi 3 chỗ: (a) `can_confirm` = chỉ còn `NOT stage_done AND NOT skipped` — bỏ mệnh đề
+  khoá theo `waiting_lower` ở mode MOVE (xác nhận hạ là thao tác TUỲ NGHI, lấy nó làm điều kiện tiên quyết thì bảng xe
+  chuyển đứng im cả ca — cùng khuôn lỗi 20260910f, chỉ đổi chỗ khoá); (b) bộ lọc MOVE nay là TOÀN BỘ việc của kho, bỏ
+  loại trừ `LOOSE_FEED AND needs_lower` (việc "đưa về vị trí nhặt lẻ" vẫn là việc mang hàng đi, giấu khỏi bảng xe chuyển
+  thì không tab nào nói ra là nó thiếu); (c) `combined_lower` = `p_mode='MOVE' AND waiting_lower`, không còn phụ thuộc
+  `separate_lowering_forklift` — cờ đó nay CHỈ quyết định có hiện tab "Cần hạ" hay không. Gọi `move_pallets_to_location`
+  hai lần cho cùng pallet + cùng ô (LOWER rồi MOVE trong stage BOTH) là vô hại: phép đếm sức chứa loại chính `p_ids`.
+  `totals.to_move` đổi nghĩa thành "mọi việc treo chưa đưa ra" cho khớp. Trả thêm `materials` `[{id, code}]` (cặp dựng
+  trong MỘT `jsonb_build_object` — hai mảng `jsonb_agg(DISTINCT …)` rời nhau không bảo đảm cùng thứ tự) để dòng việc có
+  nút tra tồn kho. Gói QA 57 [10b2]/[10b3]/[10c]/[12g4] gác — ba phép kiểm cũ đã bị VIẾT LẠI vì chúng khẳng định đúng
+  hành vi user vừa bác (lớp `feedback-qa-can-lock-in-the-bug`).

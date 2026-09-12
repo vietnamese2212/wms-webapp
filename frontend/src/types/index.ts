@@ -832,6 +832,9 @@ export interface DirectedRow {
   entry_unit: string | null
   base_unit: string | null
   material_codes: (string | null)[]
+  // CẶP id+mã dựng trong SQL (12/09) — nút "Tồn" cần material_id, mà hai mảng agg rời nhau không
+  // bảo đảm cùng thứ tự nên ghép theo chỉ số sẽ tra nhầm mã ở ô chứa nhiều mã
+  materials: { id: string; code: string | null }[]
   material_name: string | null
   pallet_codes: (string | null)[]
   needs_lower: boolean

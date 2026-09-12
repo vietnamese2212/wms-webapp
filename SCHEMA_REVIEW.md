@@ -509,3 +509,14 @@ created_at, updated_at
   chỉ có câu SQL quét tay trong ghi chú — tức phải có người NHỚ đi quét. Miễn trừ duy nhất: `unaccent`
   (extension cố ý 2 bản). Đã chứng minh phép kiểm ĐỎ trên bản lỗi: dựng tạm `zz_overload_probe` 2 bản →
   gói 00 đỏ đúng tên hàm → gỡ → xanh lại.
+- `20260912c_slot_template_sunday.sql` — **`SlotTemplate_day_of_week_check` nới từ `1..6` thành `0..6`**
+  (0 = Chủ Nhật, theo quy ước `getUTCDay()`; **KHÔNG dùng 7**). Tab Khung giờ (Cài đặt TMS) VỐN ĐÃ có nút
+  "CN" kèm chú thích *"mặc định T2–T7; chọn CN nếu cần"*, còn hai cửa ghi thì từ chối thứ 0 — app mời chọn
+  Chủ Nhật rồi từ chối chính lựa chọn đó. Hệ quả đo thật 12/09: kho có xe chạy Chủ Nhật thì lịch ngày đó
+  **RỖNG** — không phải "hết chỗ" mà là không có ô nào, và màn hình không nói gì (chuyến Bàu Bàng 06/09 là
+  chuyến duy nhất trong 54 chuyến không đặt được khung giờ). Hai chỗ sinh `DeliverySlot` vốn đã so
+  `day_of_week` với `getUTCDay()` và ghi sẵn chú thích *"CN chỉ sinh nếu có template CN"* ⇒ đường SINH đã
+  tính tới Chủ Nhật từ đầu, chỉ cửa VÀO là khoá; nên chỉ nới CHECK + `slotShapeError`, không đụng logic sinh.
+  ⚠ Gói QA 50 phép **[19] trước đây KHOÁ CHÍNH LỖI LẠI** (khẳng định "CN phải bị chặn" — chép lại cái CHECK
+  cũ mà không hỏi nó đúng chưa); nay [19] đòi CN được NHẬN + [19b] đòi sinh được lịch ngày CN, [20] vẫn chặn
+  giá trị ngoài 0..6. Đã chứng minh ĐỎ trên bản chưa vá (cả hai cửa trả 400 *"chỉ nhận T2..T7, mã 1..6"*).

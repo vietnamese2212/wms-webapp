@@ -118,13 +118,19 @@ export async function listSlotTemplates(req: Request, res: Response) {
  * Trước đây cửa lưới (`batchUpsertSlotTemplates`) kiểm giờ đầy đủ còn cửa lẻ (`createSlotTemplate`)
  * thì không, nên gửi thẳng API tạo được khung "22:00 → 08:00" (đo 07/09, gói QA 50 phép [18]:
  * s=201) — cùng một sổ mà hai cửa hai luật. Thứ trong tuần thì CẢ HAI đều bỏ qua, để DB chặn bằng
- * `SlotTemplate_day_of_week_check` (1..6) ⇒ 23514 → "Lỗi hệ thống" thay vì nói rõ "chỉ T2..T7"
- * (phép [19][20]).
+ * `SlotTemplate_day_of_week_check` ⇒ 23514 → "Lỗi hệ thống" thay vì nói rõ (phép [19][20]).
+ *
+ * ⚠ CHỦ NHẬT (mã 0) LÀ HỢP LỆ từ 12/09 (migration `20260912c`). Bản 07/09 chốt luật là "chỉ
+ * T2..T7, mã 1..6" — chép lại đúng cái CHECK cũ của DB mà không hỏi nó đúng chưa, trong khi
+ * giao diện VỐN ĐÃ có nút "CN". Kết quả: app mời chọn Chủ Nhật rồi từ chối chính lựa chọn đó,
+ * và kho có chạy Chủ Nhật thì lịch ngày đó rỗng không lời giải thích (đo 12/09: chuyến Bàu Bàng
+ * 06/09). Quy ước theo `getUTCDay()`: 0 = CN, 1..6 = T2..T7 — KHÔNG dùng 7 cho Chủ Nhật.
+ *
  * Trả null nếu hợp lệ, ngược lại trả câu tiếng Việt để controller `fail(…, 400)`.
  */
 function slotShapeError(days: number[], time_from: string, time_to: string, max_vehicles: unknown): string | null {
-  const bad = days.filter(d => !Number.isInteger(d) || d < 1 || d > 6)
-  if (bad.length) return `Thứ không hợp lệ (${bad.join(', ')}) — chỉ nhận T2..T7, mã 1..6`
+  const bad = days.filter(d => !Number.isInteger(d) || d < 0 || d > 6)
+  if (bad.length) return `Thứ không hợp lệ (${bad.join(', ')}) — chỉ nhận CN và T2..T7 (mã 0 = Chủ Nhật, 1..6 = T2..T7)`
   const f = (time_from || '').slice(0, 5), t = (time_to || '').slice(0, 5)
   if (!/^\d{2}:\d{2}$/.test(f) || !/^\d{2}:\d{2}$/.test(t)) return 'Giờ phải theo dạng HH:MM'
   if (f >= t) return `Giờ kết thúc phải sau giờ bắt đầu (${f}–${t})`

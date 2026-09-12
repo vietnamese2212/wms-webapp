@@ -10,7 +10,7 @@
 //   (2) KHUNG GIỜ KẸT CHỖ — sổ đếm `DeliverySlot.booked_count` là CACHE; mọi phép kiểm ở đây so nó
 //       với ĐẾM SỐNG tự tính lại (dòng BOOKED/ARRIVED/DONE không biển + số BIỂN phân biệt), không so
 //       hằng số gõ tay. Huỷ dòng kế hoạch cuối cùng làm lệnh thành ĐÃ HUỶ mà không nhả khung (mục [56]).
-//   (3) LỖI "Lỗi hệ thống" THAY CHO LỜI TỪ CHỐI RÕ RÀNG — trùng mã, thứ ngoài T2..T7, id rác trên
+//   (3) LỖI "Lỗi hệ thống" THAY CHO LỜI TỪ CHỐI RÕ RÀNG — trùng mã, thứ ngoài 0..6, id rác trên
 //       route PATCH/PUT/DELETE (gói 07 mục 6 chỉ quét route GET nên lớp này chưa có lưới).
 //
 // AN TOÀN: mọi bản ghi gói này tạo ra đều mang tiền tố QA50 (mã loại xe / mã ĐVVT / biển số / mã lệnh).
@@ -35,7 +35,7 @@ async function A(path, method = 'GET', body) {
   return r
 }
 
-// ── Ngày test: tương lai, thứ ∈ T2..T7 (SlotTemplate.day_of_week CHECK 1..6, không có Chủ nhật) ──
+// ── Ngày test chính: tương lai, thứ ∈ T2..T7 (Chủ Nhật có đường đi riêng ở mục [19]/[19b]) ──
 let D = null, DOW = 0
 for (let k = 10; k < 20; k++) {
   const t = new Date(); t.setUTCDate(t.getUTCDate() + k)
@@ -229,18 +229,41 @@ let XE1 = null
   check('[18] Thêm LẺ một khung giờ mẫu có giờ kết thúc TRƯỚC giờ bắt đầu → phải chặn y như lưới',
     r.s === 400, `s=${r.s} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
 
+  // ⚠ PHÉP KIỂM NÀY TỪNG KHOÁ CHÍNH CÁI LỖI LẠI (sửa 12/09). Bản 07/09 khẳng định "CN phải bị
+  // chặn" — chép lại đúng cái CHECK cũ của DB mà không hỏi nó đúng chưa, trong khi giao diện VỐN
+  // ĐÃ có nút "CN". Kho chạy Chủ Nhật thì lịch ngày đó rỗng không lời giải thích (đo thật: chuyến
+  // Bàu Bàng 06/09). Nay CN là NGÀY HỢP LỆ; cái phải chặn chỉ còn giá trị ngoài 0..6.
   r = await A('/tms/slot-templates', 'POST', {
     warehouse_id: WH.id, vehicle_type_id: VT2.id, cargo_type: 'ALL',
     days_of_week: [0], time_from: '08:00', time_to: '09:00', max_vehicles: 1,
   })
-  check('[19] Thêm khung giờ mẫu cho CHỦ NHẬT (thứ 0) → báo rõ "chỉ T2..T7", không "Lỗi hệ thống"',
-    r.s >= 400 && r.s < 500, `s=${r.s} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
+  const cnDb = await restAll('SlotTemplate',
+    `select=id,day_of_week&vehicle_type_id=eq.${VT2.id}&day_of_week=eq.0`)
+  check('[19] Khai khung giờ mẫu cho CHỦ NHẬT (thứ 0) → nhận, vì màn hình có nút CN cho người dùng bấm',
+    (r.s === 200 || r.s === 201) && cnDb.length === 1,
+    `s=${r.s} · dòng CN trong DB=${cnDb.length} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
+
+  // Lịch ngày Chủ Nhật phải sinh được từ template CN — nếu không thì khai xong vẫn không ai đặt được
+  const cnNgay = (() => {
+    for (let k = 10; k < 20; k++) {
+      const t = new Date(); t.setUTCDate(t.getUTCDate() + k)
+      const ds = t.toISOString().slice(0, 10); const [y, m, d] = ds.split('-').map(Number)
+      if (new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 0) return ds
+    }
+    return null
+  })()
+  r = await A('/tms/slots/generate', 'POST', { warehouse_id: WH.id, dates: [cnNgay] })
+  const cnSlots = await restAll('DeliverySlot',
+    `select=id&vehicle_type_id=eq.${VT2.id}&date=eq.${cnNgay}`)
+  check('[19b] Sinh lịch ngày CHỦ NHẬT từ template CN → có khung để đặt (khai xong phải dùng được)',
+    r.s === 200 && cnSlots.length >= 1, `ngày=${cnNgay} · s=${r.s} · ${cnSlots.length} khung`)
+  // Dọn: `wipe()` xoá MỌI DeliverySlot + SlotTemplate theo vehicle_type_id của gói (kể cả ngày CN này)
 
   r = await A('/tms/slot-templates/batch', 'POST', {
     warehouse_id: WH.id, vehicle_type_id: VT2.id, cargo_type: 'ALL', days_of_week: [7],
     time_slots: [{ time_from: '08:00', time_to: '09:00', max_vehicles: 1 }],
   })
-  check('[20] Lưu cụm khung giờ với thứ ngoài T2..T7 (giá trị 7) → báo rõ, không "Lỗi hệ thống"',
+  check('[20] Lưu cụm khung giờ với thứ NGOÀI 0..6 (giá trị 7) → báo rõ, không "Lỗi hệ thống"',
     r.s >= 400 && r.s < 500, `s=${r.s} · ${(r.j?.error?.message ?? '').slice(0, 70)}`)
 
   r = await A(`/tms/slot-templates?warehouse_id=${WH.id}&vehicle_type_id=${VT1.id}`, 'GET')

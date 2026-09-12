@@ -149,13 +149,17 @@ function PersonSearchMenu({ options, onPick, placeholder }: {
 
 // Picker theo ID (Lái xe nâng — cần forklift_driver_id) — có ô tìm
 function TagPicker({
-  fixedName, employees, selectedIds, onChange, placeholder = 'Thêm người…',
+  fixedName, employees, selectedIds, onChange, placeholder = 'Thêm người…', nameOf,
 }: {
   fixedName?: string
   employees: EmpOption[]
   selectedIds: string[]
   onChange: (ids: string[]) => void
   placeholder?: string
+  // Tra tên cho người ĐANG ĐƯỢC CHỌN mà không còn trong danh sách chọn được — vd người đã đổi chức
+  // danh nên không còn là "Lái xe nâng". Thiếu đường tra này thì chip in MÃ THÔ và người sửa không
+  // biết mình đang gỡ ai (đúng lớp lỗi "giá trị đã chọn phải LUÔN CÓ NHÃN" trong CLAUDE.md).
+  nameOf?: (id: string) => string | undefined
 }) {
   const unselected = employees.filter(e => !selectedIds.includes(e.id))
   return (
@@ -166,9 +170,11 @@ function TagPicker({
         )}
         {selectedIds.map(id => {
           const emp = employees.find(e => e.id === id)
+          const label = emp?.name ?? nameOf?.(id)
           return (
-            <span key={id} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-              {emp?.name ?? id}
+            <span key={id} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700"
+              title={label ? undefined : 'Người này không còn trong danh sách lái xe nâng của kho'}>
+              {label ?? 'Không rõ (ngoài danh sách)'}
               <button type="button" onClick={() => onChange(selectedIds.filter(s => s !== id))}>
                 <X className="h-3 w-3 text-slate-400 hover:text-red-500" />
               </button>
@@ -656,7 +662,18 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
-  const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
+  // Tên đã lưu trên chuyến là lưới đỡ cuối: BE ghi `..._names` theo ĐÚNG THỨ TỰ của `..._ids`, nên
+  // người đã đổi chức danh (không còn trong danh sách lái xe nâng của kho) vẫn hiện ra tên thật
+  // thay vì một chuỗi uuid.
+  const storedNames = (() => {
+    const ids = gdo.forklift_driver_ids ?? (gdo.forklift_driver_id ? [gdo.forklift_driver_id] : [])
+    const names = (gdo.forklift_driver_names ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    const m = new Map<string, string>()
+    if (ids.length === names.length) ids.forEach((id, i) => m.set(id, names[i]))
+    return m
+  })()
+  const nameOfDriver = (id: string) => empMap.get(id) ?? storedNames.get(id)
+  const forklifterNames = forklifterIds.map(id => nameOfDriver(id) ?? id).filter(Boolean).join(', ')
 
   // Đổi CỬA giữa chuyến (09/09): cùng luật đếm xe như lúc Bắt đầu — đi route riêng PATCH /dock TRƯỚC, đầy thì
   // dừng ngay (không lưu nửa chừng thông tin xe rồi mới báo cửa đầy)
@@ -755,6 +772,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
               employees={(employees as EmpOption[]).filter(isForkliftDriver)}
               selectedIds={forklifterIds}
               onChange={setForklifterIds}
+              nameOf={nameOfDriver}
               placeholder="Chọn lái xe nâng…"
             />
           </div>

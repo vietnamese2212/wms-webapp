@@ -831,6 +831,19 @@ try {
     await api(`/wms/outbound/${tQ.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
+  // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
+  const t8 = await mkTrip('T8')
+  const i8 = await mkItem(t8.do, 10)
+  await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i8], rule: { kind: 'FEFO' } })
+  await startTrip(t8.gdo, { license_plate: '51C88888', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+  const b8 = (await tasksOf(t8.gdo)).length
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${i8}`, { cartons_scanned: 10, status: 'COMPLETED' })
+  r = await api(`/wms/outbound/${t8.gdo}`, 'PATCH', { status: 'COMPLETED' })
+  const a8 = await tasksOf(t8.gdo)
+  check('[16] Hoàn thành chuyến → việc còn treo hết hiệu lực, việc đã xong giữ nguyên vết',
+    r.s === 200 && b8 > 0 && a8.every(t => t.status !== 'PENDING'),
+    `http=${r.s} trước=${b8} sau=${a8.map(t => t.status).join(',')}`)
+
   // ═══ [21] LOOSE_FEED: "✓ Xong" phải CHUYỂN THẬT pallet về vị trí nhặt lẻ ══════════════════════
   // Bug thật 13/09 (diễn tập vận hành bắt được, không phép kiểm nào chạm): app trả
   // `{ok:true, moved_pallets:1}` mà tồn KHÔNG đổi vị trí — `p_updated_by` nhận TÊN người dùng
@@ -839,8 +852,10 @@ try {
   // nhặt lẻ thì không có hàng, sổ tồn vẫn nói pallet nằm trên kệ. ORACLE: đọc lại `location_id`
   // của chính pallet đó — đừng tin con số API tự báo.
   {
+    // Nhu cầu nhặt lẻ phải VƯỢT tồn đang có ở vị trí nhặt lẻ (fixture [15t] để sẵn 300 ở đó),
+    // nếu không thì đủ hàng tại chỗ ⇒ không sinh việc nào và phép kiểm tự vô hiệu.
     const tLF = await mkTrip('TLF')
-    await mkItem(tLF.do, 24, { loose_picking: 24, date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+    await mkItem(tLF.do, 400, { loose_picking: 400, date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
     r = await startTrip(tLF.gdo, { license_plate: '51C21021', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
     const lf = (await tasksOf(tLF.gdo)).filter(t => t.kind === 'LOOSE_FEED')
     check('[21a] Thiếu hàng ở vị trí nhặt lẻ ⇒ sinh việc LOOSE_FEED', lf.length > 0, `http=${r.s} ${err(r)}`)
@@ -863,19 +878,6 @@ try {
     }
     await api(`/wms/outbound/${tLF.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
-
-  // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
-  const t8 = await mkTrip('T8')
-  const i8 = await mkItem(t8.do, 10)
-  await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [i8], rule: { kind: 'FEFO' } })
-  await startTrip(t8.gdo, { license_plate: '51C88888', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
-  const b8 = (await tasksOf(t8.gdo)).length
-  await restWrite('OutboundItem', 'PATCH', `id=eq.${i8}`, { cartons_scanned: 10, status: 'COMPLETED' })
-  r = await api(`/wms/outbound/${t8.gdo}`, 'PATCH', { status: 'COMPLETED' })
-  const a8 = await tasksOf(t8.gdo)
-  check('[16] Hoàn thành chuyến → việc còn treo hết hiệu lực, việc đã xong giữ nguyên vết',
-    r.s === 200 && b8 > 0 && a8.every(t => t.status !== 'PENDING'),
-    `http=${r.s} trước=${b8} sau=${a8.map(t => t.status).join(',')}`)
 
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════
   const allTasks = await restAll('wms_tasks', `select=id,gdo_id,item_id,qty_base,status&warehouse_id=eq.${whId}`)

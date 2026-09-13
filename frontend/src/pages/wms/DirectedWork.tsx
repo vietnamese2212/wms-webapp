@@ -27,7 +27,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
-import { TaskDetailSheet, palletPct, rowRule } from '@/components/wms/TaskDetailSheet'
+import { TaskDetailSheet, palletPct, palletDays, rowRule } from '@/components/wms/TaskDetailSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -155,24 +155,34 @@ function StockButtons({ r, onPick, big }: { r: DirectedRow; onPick: (m: PickedMa
  * ngày là chỗ "lấy pallet nào" có hậu quả thật.
  */
 const MAX_TEM = 3
-/** MỘT nguồn cho cả bảng (PC) lẫn thẻ (PDA): tem · NSX gộp · yêu cầu date · %Date thật. */
+/** MỘT nguồn cho cả bảng (PC) lẫn thẻ (PDA): tem · NSX gộp · yêu cầu date · số đo date thật. */
 function dateBits(r: DirectedRow) {
   const pallets = r.pallets ?? []
   const pcts = pallets.map(palletPct).filter((p): p is number => p != null)
-  const days = [...new Set(pallets.map(p => p.production_date).filter(Boolean) as string[])].sort()
+  const dys = pallets.map(palletDays).filter((d): d is number => d != null)
+  const nsxDays = [...new Set(pallets.map(p => p.production_date).filter(Boolean) as string[])].sort()
+  // THƯỚC ĐO PHẢI KHỚP YÊU CẦU: dòng đòi "còn ≥ 35 ngày" mà màn in "%Date" thì người đọc KHÔNG so
+  // được — đó đúng là lý do kiểu MIN_DAYS ra đời (FG02 hạn 45–60 ngày nên 35 ngày ra 77,8 % trên mã
+  // này và 58,3 % trên mã kia). In sai thước là mời người ta tự quy đổi trong đầu, tức mời sai.
+  const byDays = (r.date_rules ?? []).some(x =>
+    x?.kind === 'MIN_DAYS' || (x?.kind === 'SPLIT' && (x.parts ?? []).some(p => p.kind === 'MIN_DAYS')))
+  const span = (a: number[], unit: (lo: number, hi: number) => string) =>
+    a.length ? unit(Math.min(...a), Math.max(...a)) : null
   return {
     codes: pallets.length ? pallets.map(p => p.code) : (r.pallet_codes ?? []),
     rule: rowRule(r),
-    lo: pcts.length ? Math.min(...pcts) : null,
-    hi: pcts.length ? Math.max(...pcts) : null,
+    // Màu luôn theo %Date (thang màu chung toàn app), kể cả khi CHỮ in theo ngày
+    tone: pcts.length ? Math.min(...pcts) : null,
+    measure: byDays
+      ? span(dys, (lo, hi) => (lo === hi ? `còn ${nf(lo)} ngày` : `còn ${nf(lo)}–${nf(hi)} ngày`))
+      : span(pcts, (lo, hi) => (lo === hi ? `${lo}%` : `${lo}–${hi}%`)),
     // Cùng ngày thì in một ngày; khác ngày thì in KHOẢNG — chính chỗ khác ngày là chỗ "lấy pallet
     // nào" có hậu quả thật (8/18 việc đang chờ rơi vào ca này, đo staging 13/09).
-    nsx: days.length
-      ? `${formatDate(days[0], 'dd-MM-yy')}${days.length > 1 ? ` → ${formatDate(days[days.length - 1], 'dd-MM-yy')}` : ''}`
+    nsx: nsxDays.length
+      ? `${formatDate(nsxDays[0], 'dd-MM-yy')}${nsxDays.length > 1 ? ` → ${formatDate(nsxDays[nsxDays.length - 1], 'dd-MM-yy')}` : ''}`
       : null,
   }
 }
-function pctText(lo: number | null, hi: number | null) { return lo == null ? null : lo === hi ? `${lo}%` : `${lo}–${hi}%` }
 
 function TemCell({ r, off }: { r: DirectedRow; off?: boolean }) {
   const { codes, nsx } = dateBits(r)
@@ -190,15 +200,15 @@ function TemCell({ r, off }: { r: DirectedRow; off?: boolean }) {
 
 /** YÊU CẦU date của dòng đơn ĐẶT CẠNH %Date thật của pallet — so bằng mắt, không phải nhớ. */
 function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: boolean }) {
-  const { rule, lo, hi } = dateBits(r)
+  const { rule, measure, tone } = dateBits(r)
   return (
     <div className="leading-tight space-y-0.5">
       {rule
         ? <div className={`inline-block rounded px-1 text-[9px] font-medium no-underline ${rule.cls}`}>{rule.text}</div>
         : <div className="text-[9px] text-slate-300 no-underline">chưa khai</div>}
-      {lo != null && (
-        <div className={`text-[10px] font-bold tabular-nums no-underline ${off ? 'text-slate-400' : pctDateCls(lo, bands)}`}>
-          {pctText(lo, hi)}
+      {measure && (
+        <div className={`text-[10px] font-bold tabular-nums no-underline ${off ? 'text-slate-400' : pctDateCls(tone, bands)}`}>
+          {measure}
         </div>
       )}
     </div>
@@ -644,7 +654,7 @@ export default function DirectedWork() {
               const ord = ordOf.get(r.group_key)
               const dest = tab === 'LOWER' ? (r.drop_name ?? r.to_name) : (r.to_name ?? r.to_code)
               const where = tab === 'LOWER' ? r.from_code : r.current_code
-              const { codes, rule, lo, hi, nsx } = dateBits(r)
+              const { codes, rule, measure, tone, nsx } = dateBits(r)
               return (
                 // Bấm THẺ = mở chi tiết việc; nút bên trong tự chặn nổi bọt (panel chỉ để đọc nên
                 // bấm nhầm không hỏng gì, nhưng vẫn có dòng "Chi tiết ›" để người dùng biết bấm được).
@@ -675,7 +685,7 @@ export default function DirectedWork() {
                     {rule
                       ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
                       : <span className="text-xs text-slate-400">chưa khai</span>}
-                    {lo != null && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(lo, pctBands)}`}>{pctText(lo, hi)}</span>}
+                    {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
                     {nsx && <div className="text-xs text-slate-500">NSX {nsx}</div>}
                   </Step>
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
@@ -732,8 +742,11 @@ export default function DirectedWork() {
                   // KHÔNG đặt `relative` lên <TableHead>: tailwind-merge giữ class position CUỐI nên nó
                   // đè mất `sticky top-0` của base ⇒ header hết đứng yên khi cuộn. th sticky đã là
                   // containing block cho span absolute rồi (bẫy sticky-header-relative-trap).
+                  // Cột THAO TÁC ghim mép PHẢI: bảng nay 9–10 cột nên tràn khung ở 1280 px, mà nút
+                  // "Nhận / Xong" là thứ người ta vào đây để bấm — bắt kéo ngang mới thấy nút là
+                  // đúng lỗi đã chữa ở Sổ đóng gói 12/08 ("khỏi kéo ngang mới thấy nút").
                   <TableHead key={c.id}
-                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'act' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                     {c.label}
                     <span onPointerDown={e => startResize(i, e)}
                       className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70" />
@@ -852,7 +865,7 @@ export default function DirectedWork() {
                     </TableCell>
 
                     {tab !== 'SCAN' && (
-                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <TableCell className={`px-2 py-1 whitespace-nowrap sticky right-0 z-10 border-l border-slate-200 ${first ? 'bg-sky-50' : 'bg-white'}`}>
                         <div className="flex items-center gap-1">
                           {actions.map(a => (
                             <Button key={a.key} size="sm" variant={a.primary ? 'default' : 'outline'}

@@ -854,11 +854,59 @@ export interface DirectedRow {
   last_at: string | null
   done_by_name: string | null
   can_confirm: boolean
+  // ── Thông tin để TRẢ LỜI TẠI CHỖ (13/09) ─────────────────────────────────────────────────────
+  // TỪNG pallet của nhóm + nguyên liệu thô để tính %Date bằng `computePctDate` (luật một nguồn —
+  // KHÔNG tính trong SQL). Đo staging 13/09: 16/18 việc đang chờ có ô chứa NHIỀU pallet cùng mã
+  // (nhiều nhất 13), 8/18 ca các pallet đó khác NSX ⇒ "lấy cái nào" là câu hỏi thật, không lý thuyết.
+  pallets: DirectedPallet[]
+  date_rules: DateRule[]          // yêu cầu date của (các) dòng đơn trong nhóm — thường đúng 1
+  date_required: number | null    // mức % kế thừa từ VL06O khi chưa ai chốt tay
+  customer_name: string | null    // NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai
+  do_codes: string | null
+  cs_note: string | null          // ghi chú CS nguyên văn (máy không đọc, người đọc)
+}
+// Một pallet trong nhóm việc. `mat_*` = shelflife của MÃ (và ngoại lệ theo NCC) — cặp với
+// `production_date`/`expiry_date`/`shelf_life_days` của LÔ để `computePctDate` cho ra đúng con số
+// mà trang Tồn kho đang hiện. Đo 13/09: 0/19.527 pallet tồn có shelflife riêng ⇒ đường đi thực tế
+// là NSX + shelflife của mã.
+export interface DirectedPallet {
+  task_id: string
+  code: string | null
+  material_code: string | null
+  qty_base: number
+  is_partial: boolean
+  level_no: number | null
+  loc_code: string | null
+  production_date: string | null
+  expiry_date: string | null
+  shelf_life_days: number | null
+  ncc_id: string | null
+  mat_shelf_days: number | null
+  mat_overrides: { transport_company_id: string; shelf_life_days: number }[] | null
+  done: boolean
+  skipped: boolean
+}
+// Hồ sơ chuyến — tiến độ đếm theo DÒNG HÀNG, không cộng thùng cross-mã (luật base-unit)
+export interface DirectedTrip {
+  gdo_id: string
+  group_code: string | null
+  license_plate: string | null
+  dock_name: string | null
+  started_at: string | null
+  delivery_date: string | null
+  customers: string | null
+  n_do: number
+  lines_total: number
+  lines_done: number
+  lines_unset: number
+  tasks_pending: number
+  tasks_done: number
 }
 export interface DirectedBoard {
   rows: DirectedRow[]
   totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number }
   settings?: { separate_lowering_forklift?: boolean }
+  trips?: DirectedTrip[]
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
 }

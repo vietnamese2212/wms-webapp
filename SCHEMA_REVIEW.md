@@ -587,3 +587,21 @@ created_at, updated_at
   Chữa theo gốc rễ CLAUDE.md đã ghi — **đừng KÉO DÒNG để tính ra một TẬP**: RPC `admin_login_ip_pairs(p_emails, p_memory,
   p_recent)` gom theo `(email, ip)` trả `has_old · has_new · first_new_at`, nên số dòng bị chặn bởi **SỐ CẶP** (đo: 14)
   chứ không bởi số lượt đăng nhập. Nhẹ hơn hẳn khi quét mỗi 10 phút. Gói QA 45 về **17/17**.
+- `20260913b_directed_board_context.sql` — **"Việc cần làm" phải TRẢ LỜI ĐƯỢC TẠI CHỖ** (user 13/09: *"nó chính là nơi
+  giao MỌI việc cho user … nơi mà user có thể check được các thông tin liên quan TẠI ĐÓ khi làm việc ở đó"*). Bảng đang
+  nói đủ câu lệnh (đi ô nào · mấy pallet · đưa tới đâu) nhưng im lặng trước ba câu hỏi kế tiếp của người đứng giữa kho:
+  (1) **"lấy PALLET NÀO?"** — bảng xe nâng gom theo VỊ TRÍ nên chỉ ghi "1 pallet mã X", trong khi đo staging 13/09
+  **16/18 việc đang chờ có ô còn nhiều pallet cùng mã** (nhiều nhất **13 pallet**) và **8/18 ca các pallet đó khác NSX**;
+  kế hoạch đã ghim đúng pallet theo luật luân chuyển + quy định date, nhưng cái ghim ấy không hiện ra thì lấy pallet mặt
+  ngoài là chuyện đương nhiên ⇒ việc thành `SKIPPED 'OTHER_PALLET'` và chính chỉ số **"% làm đúng kế hoạch"** của khối
+  Giám sát tụt vì MÀN HÌNH thiếu dữ kiện, không phải vì người làm sai; (2) **"đúng date chưa?"** — yêu cầu của dòng đơn
+  (`OutboundItem.date_rule`) lẫn date thật của pallet đều không có mặt, tức mức đã chốt ở trang Quy định date chỉ sống
+  trong DB; (3) **"giao cho ai, còn bao nhiêu?"** — NPP · số DO · ghi chú CS · tiến độ đều nằm sẵn trong DB mà không
+  ai đưa ra. Nay `directed_board` trả thêm: `pallets[]` (tem + NSX + HSD + shelflife lô/mã + NCC, theo từng task),
+  `date_rules[]`/`date_required`, `customer_name`/`do_codes`/`cs_note`, và `trips[]` (hồ sơ chuyến + tiến độ đếm theo
+  **DÒNG HÀNG**, KHÔNG cộng thùng cross-mã). ⚠️ **%Date KHÔNG tính trong SQL** — RPC chỉ trả nguyên liệu thô để FE gọi
+  `computePctDate` (luật một nguồn `utils/shelfLife.ts`); chép công thức xuống SQL là đúng khuôn mà ratchet
+  `rotation_rule_hand_rolled` / `date_rule_hand_rolled` đã dựng để cấm. Đo 13/09: **0/19.527 pallet tồn** có
+  `shelf_life_days` hay `expiry_date` riêng ⇒ đường đi thực tế là NSX + shelflife của mã. Chữ ký hàm KHÔNG đổi ⇒ thay
+  tại chỗ, không sinh bản nạp chồng. FE: thêm cột **Tem pallet** + **Date** (yêu cầu đặt cạnh %Date thật), tên hàng và
+  NPP trên dòng, băng hồ sơ chuyến, và **bấm dòng/thẻ mở panel chi tiết việc** (`components/wms/TaskDetailSheet.tsx`).

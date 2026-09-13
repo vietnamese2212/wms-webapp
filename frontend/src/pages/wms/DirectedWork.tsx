@@ -24,16 +24,18 @@ import { Button } from '@/components/ui/button'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision } from '@/api/hooks'
+import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
+import { TaskDetailSheet, palletPct, rowRule } from '@/components/wms/TaskDetailSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
+import { pctDateCls, type PctBands } from '@/utils/pctDateBands'
 import { qtyLabel } from '@/utils/qtyUnits'
-import type { DirectedRow, WorkInbox, WorkInboxRow, DirectedSupervision } from '@/types'
+import type { DirectedRow, WorkInbox, WorkInboxRow, DirectedSupervision, DirectedTrip } from '@/types'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
@@ -48,35 +50,50 @@ const TABS: { key: Tab; label: string; icon: typeof Truck; hint: string }[] = [
   { key: 'SCAN',  label: 'Sắp quét',   icon: ScanIcon,        hint: 'Thủ kho — từng pallet theo thứ tự quét' },
 ]
 
-// Cột theo TAB: xe hạ và xe chuyển cần thông tin khác nhau, đừng nhồi một bảng cho cả hai
+// Cột theo TAB: xe hạ và xe chuyển cần thông tin khác nhau, đừng nhồi một bảng cho cả hai.
+//
+// Hai cột THÊM 13/09 (user: "nơi user check được các thông tin liên quan tại đó khi làm việc ở đó"):
+//   • "Tem pallet" ở bảng XE NÂNG — bảng gom theo VỊ TRÍ nên trước đó chỉ nói "1 pallet mã X", trong
+//     khi đo staging 13/09 thì 16/18 việc đang chờ có ô còn NHIỀU pallet cùng mã (nhiều nhất 13) và
+//     8/18 ca các pallet đó khác NSX. Kế hoạch ghim đúng pallet theo luật luân chuyển + quy định
+//     date, nhưng cái ghim ấy không hiện ra thì người đi lấy đương nhiên lấy pallet mặt ngoài —
+//     việc thành SKIPPED 'OTHER_PALLET' và chính chỉ số "% làm đúng kế hoạch" tụt vì màn hình
+//     thiếu dữ kiện, không phải vì người làm sai.
+//   • "Date" — YÊU CẦU của dòng đơn đặt cạnh %DATE THẬT của pallet. Chốt quy định date xong mà
+//     người thực hiện không đọc được thì mức chốt chỉ sống trong DB.
 const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' }[]> = {
   INBOX: [],
   LOWER: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
-    { id: 'trip', label: 'Chuyến · Cửa',   w: 150 },
-    { id: 'loc',  label: 'Vị trí',         w: 150 },
+    { id: 'trip', label: 'Chuyến · Giao cho', w: 150 },
+    { id: 'loc',  label: 'Vị trí',         w: 140 },
     { id: 'lvl',  label: 'Tầng',           w: 52,  align: 'right' },
-    { id: 'qty',  label: 'Hạ',             w: 150 },
-    { id: 'dist', label: 'Quãng đường',    w: 90,  align: 'right' },
-    { id: 'to',   label: 'Đặt xuống',      w: 140 },
+    { id: 'pal',  label: 'Tem pallet',     w: 185 },
+    { id: 'date', label: 'Date',           w: 104 },
+    { id: 'qty',  label: 'Hạ',             w: 140 },
+    { id: 'dist', label: 'Quãng đường',    w: 84,  align: 'right' },
+    { id: 'to',   label: 'Đặt xuống',      w: 130 },
     { id: 'act',  label: '',               w: 190 },   // Nhận + Xong (+ Bỏ nhận) đứng cạnh nhau
   ],
   MOVE: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
-    { id: 'trip', label: 'Chuyến · Cửa',   w: 150 },
-    { id: 'cur',  label: 'Vị trí hiện tại', w: 160 },
-    { id: 'st',   label: 'Trạng thái',     w: 130 },
-    { id: 'qty',  label: 'Đưa',            w: 150 },
-    { id: 'to',   label: 'Tới',            w: 140 },
+    { id: 'trip', label: 'Chuyến · Giao cho', w: 150 },
+    { id: 'cur',  label: 'Vị trí hiện tại', w: 150 },
+    { id: 'pal',  label: 'Tem pallet',     w: 185 },
+    { id: 'date', label: 'Date',           w: 104 },
+    { id: 'st',   label: 'Trạng thái',     w: 126 },
+    { id: 'qty',  label: 'Đưa',            w: 140 },
+    { id: 'to',   label: 'Tới',            w: 130 },
     { id: 'act',  label: '',               w: 190 },
   ],
   SCAN: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
     { id: 'pal',  label: 'Tem pallet',     w: 190 },
-    { id: 'cur',  label: 'Vị trí hiện tại', w: 160 },
-    { id: 'st',   label: 'Trạng thái',     w: 150 },
-    { id: 'qty',  label: 'Lấy',            w: 150 },
-    { id: 'to',   label: 'Tới',            w: 140 },
+    { id: 'date', label: 'Date',           w: 104 },
+    { id: 'cur',  label: 'Vị trí hiện tại', w: 150 },
+    { id: 'st',   label: 'Trạng thái',     w: 140 },
+    { id: 'qty',  label: 'Lấy',            w: 140 },
+    { id: 'to',   label: 'Tới',            w: 130 },
   ],
 }
 
@@ -118,7 +135,8 @@ function StockButtons({ r, onPick, big }: { r: DirectedRow; onPick: (m: PickedMa
         <button key={m.id} type="button"
           // Ô nhiều mã: mỗi mã một nút — đơn vị tính (thùng/hộp) của dòng là min() cross-mã nên chỉ
           // tin được khi ô chỉ có MỘT mã; nhiều mã thì để dialog tự đọc đơn vị, đừng in số sai.
-          onClick={() => onPick({ id: m.id, code: m.code ?? '', mat: list.length === 1 ? r : null })}
+          // stopPropagation: dòng/thẻ bao ngoài nay mở panel chi tiết khi bấm.
+          onClick={e => { e.stopPropagation(); onPick({ id: m.id, code: m.code ?? '', mat: list.length === 1 ? r : null }) }}
           title={`Xem tồn kho và vị trí của mã ${m.code ?? ''} trong kho này`}
           className={`inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-50 text-slate-600 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 ${
             big ? 'h-8 px-2 text-xs' : 'h-5 px-1.5 text-[9px]'}`}>
@@ -127,6 +145,63 @@ function StockButtons({ r, onPick, big }: { r: DirectedRow; onPick: (m: PickedMa
         </button>
       ))}
     </span>
+  )
+}
+
+/**
+ * TEM PALLET của dòng việc (13/09). Nhóm gom theo vị trí có thể nhiều pallet — liệt kê tối đa 3 rồi
+ * "+n", đủ để người đứng trước ô đối chiếu bằng mắt; danh sách đầy đủ nằm trong ô chi tiết.
+ * Dòng phụ = NGÀY SẢN XUẤT: cùng ngày thì in một ngày, khác ngày thì in khoảng — chính chỗ khác
+ * ngày là chỗ "lấy pallet nào" có hậu quả thật.
+ */
+const MAX_TEM = 3
+/** MỘT nguồn cho cả bảng (PC) lẫn thẻ (PDA): tem · NSX gộp · yêu cầu date · %Date thật. */
+function dateBits(r: DirectedRow) {
+  const pallets = r.pallets ?? []
+  const pcts = pallets.map(palletPct).filter((p): p is number => p != null)
+  const days = [...new Set(pallets.map(p => p.production_date).filter(Boolean) as string[])].sort()
+  return {
+    codes: pallets.length ? pallets.map(p => p.code) : (r.pallet_codes ?? []),
+    rule: rowRule(r),
+    lo: pcts.length ? Math.min(...pcts) : null,
+    hi: pcts.length ? Math.max(...pcts) : null,
+    // Cùng ngày thì in một ngày; khác ngày thì in KHOẢNG — chính chỗ khác ngày là chỗ "lấy pallet
+    // nào" có hậu quả thật (8/18 việc đang chờ rơi vào ca này, đo staging 13/09).
+    nsx: days.length
+      ? `${formatDate(days[0], 'dd-MM-yy')}${days.length > 1 ? ` → ${formatDate(days[days.length - 1], 'dd-MM-yy')}` : ''}`
+      : null,
+  }
+}
+function pctText(lo: number | null, hi: number | null) { return lo == null ? null : lo === hi ? `${lo}%` : `${lo}–${hi}%` }
+
+function TemCell({ r, off }: { r: DirectedRow; off?: boolean }) {
+  const { codes, nsx } = dateBits(r)
+  if (!codes.length) return <span className="text-slate-300">—</span>
+  return (
+    <div className="leading-tight">
+      {codes.slice(0, MAX_TEM).map((c, i) => (
+        <div key={`${c}-${i}`} className={`font-mono text-[9px] font-semibold truncate ${off ? 'line-through' : ''}`}>{c ?? '—'}</div>
+      ))}
+      {codes.length > MAX_TEM && <div className="text-[9px] text-slate-400 no-underline">+{nf(codes.length - MAX_TEM)} pallet nữa</div>}
+      {nsx && <div className="text-[9px] text-slate-400 no-underline">NSX {nsx}</div>}
+    </div>
+  )
+}
+
+/** YÊU CẦU date của dòng đơn ĐẶT CẠNH %Date thật của pallet — so bằng mắt, không phải nhớ. */
+function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: boolean }) {
+  const { rule, lo, hi } = dateBits(r)
+  return (
+    <div className="leading-tight space-y-0.5">
+      {rule
+        ? <div className={`inline-block rounded px-1 text-[9px] font-medium no-underline ${rule.cls}`}>{rule.text}</div>
+        : <div className="text-[9px] text-slate-300 no-underline">chưa khai</div>}
+      {lo != null && (
+        <div className={`text-[10px] font-bold tabular-nums no-underline ${off ? 'text-slate-400' : pctDateCls(lo, bands)}`}>
+          {pctText(lo, hi)}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -275,7 +350,8 @@ function Step({ label, children, big }: { label: string; children: React.ReactNo
   return (
     <div className="flex items-baseline gap-2 min-w-0">
       <span className="w-16 shrink-0 text-[9px] uppercase tracking-wide text-slate-400">{label}</span>
-      <span className={`min-w-0 break-words ${big ? 'text-base' : 'text-sm'}`}>{children}</span>
+      {/* div chứ không span: nội dung một bước nay có nhiều dòng khối (tem pallet, NSX, tên hàng) */}
+      <div className={`min-w-0 break-words ${big ? 'text-base' : 'text-sm'}`}>{children}</div>
     </div>
   )
 }
@@ -374,6 +450,28 @@ export default function DirectedWork() {
   // Tra tồn kho + vị trí của mã ngay trên dòng việc — cùng dialog với trang Chuẩn bị hàng
   const [invMat, setInvMat] = useState<PickedMat | null>(null)
   const { data: scanGdo } = useGDO(tab === 'SCAN' && canScan && f.gdoId ? f.gdoId : undefined)
+
+  // ── CHI TIẾT MỘT VIỆC (13/09) ────────────────────────────────────────────────────────────────
+  // Bảng chỉ đủ chỗ cho câu lệnh ngắn; mọi thứ còn lại (hồ sơ chuyến · ghi chú CS · từng tem +
+  // NSX + %Date · tiến độ) nằm sau một cú bấm vào dòng, không phải sau một lần rời trang.
+  const pctBands = usePctBands()
+  const tripOf = useMemo(() => {
+    const m = new Map<string, DirectedTrip>()
+    for (const t of data?.trips ?? []) m.set(t.gdo_id, t)
+    return m
+  }, [data])
+  const [detailKey, setDetailKey] = useState<string | null>(null)
+  const detailRow = useMemo(() => rows.find(r => r.group_key === detailKey) ?? null, [rows, detailKey])
+  // Hồ sơ chuyến hiện thành BĂNG riêng chỉ khi bảng đang nói về ĐÚNG MỘT chuyến (tab Sắp quét đã
+  // chọn chuyến, hoặc kho chỉ có một chuyến đang chạy). Nhiều chuyến thì thông tin đó thuộc về
+  // TỪNG DÒNG (cột Chuyến · Giao cho) chứ không phải một câu chung dễ đọc nhầm.
+  const focusTrip = useMemo(() => {
+    const list = data?.trips ?? []
+    if (tab === 'SCAN' && f.gdoId) return list.find(x => x.gdo_id === f.gdoId)
+    return list.length === 1 ? list[0] : undefined
+  }, [data, tab, f.gdoId])
+  // Trang chuyến gác bằng quyền `outbound` — xe nâng thuần không vào được, đừng mời họ bấm vào 403
+  const canOpenTrip = can(perms, 'outbound', 'view')
 
   const filterDefs: FilterDef[] = [
     { key: 'wh', label: 'Kho', type: 'single', pinned: true, allLabel: tab === 'INBOX' ? 'Mọi kho được giao' : 'Chọn kho…',
@@ -481,6 +579,22 @@ export default function DirectedWork() {
           { label: 'Chuyến',       value: nf(t.trips ?? 0) },
         ]} />
 
+        {/* HỒ SƠ CHUYẾN ĐANG LÀM (13/09) — giao cho ai · mấy DO · còn bao nhiêu. Trước đó bảng chỉ
+            có biển số + cửa, trong khi NPP/số DO/tiến độ đều nằm sẵn trong DB. Mobile giữ ba mẩu
+            cốt lõi, phần còn lại chỉ hiện từ sm (chuẩn mật độ: dữ liệu phải xuất hiện sớm). */}
+        {focusTrip && (
+          <div className="shrink-0 border-b bg-sky-50/70 px-3 py-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+            <span className="font-mono font-semibold">{focusTrip.license_plate ?? focusTrip.group_code ?? '—'}</span>
+            {focusTrip.customers && <span className="truncate max-w-[55%] sm:max-w-none">Giao cho <b>{focusTrip.customers}</b></span>}
+            <span className="tabular-nums">{nf(focusTrip.lines_done)}/{nf(focusTrip.lines_total)} dòng quét đủ</span>
+            <span className="hidden sm:inline text-slate-500 tabular-nums">còn {nf(focusTrip.tasks_pending)} việc</span>
+            {focusTrip.dock_name && <span className="hidden sm:inline text-slate-500">{focusTrip.dock_name}</span>}
+            <span className="hidden sm:inline text-slate-500 tabular-nums">{nf(focusTrip.n_do)} DO</span>
+            {focusTrip.started_at && <span className="hidden sm:inline text-slate-500">bắt đầu {formatTimestampTime(focusTrip.started_at)}</span>}
+            {focusTrip.lines_unset > 0 && <span className="text-amber-700 tabular-nums">{nf(focusTrip.lines_unset)} dòng chưa khai date</span>}
+          </div>
+        )}
+
         {/* Dòng CHƯA CHỐT %Date: không có việc nào — phải nói ra, không im lặng để người ta tưởng
             hàng đã được chia (user chốt: "trong nghĩ là mặc định đi làm, sau đó mới update thì sẽ là làm sai") */}
         {/* Mobile chỉ 1 dòng: chuẩn mật độ đòi dữ liệu xuất hiện sớm, cảnh báo dài đẩy bảng xuống quá sâu */}
@@ -530,8 +644,11 @@ export default function DirectedWork() {
               const ord = ordOf.get(r.group_key)
               const dest = tab === 'LOWER' ? (r.drop_name ?? r.to_name) : (r.to_name ?? r.to_code)
               const where = tab === 'LOWER' ? r.from_code : r.current_code
+              const { codes, rule, lo, hi, nsx } = dateBits(r)
               return (
-                <div key={r.group_key}
+                // Bấm THẺ = mở chi tiết việc; nút bên trong tự chặn nổi bọt (panel chỉ để đọc nên
+                // bấm nhầm không hỏng gì, nhưng vẫn có dòng "Chi tiết ›" để người dùng biết bấm được).
+                <div key={r.group_key} onClick={() => setDetailKey(r.group_key)}
                   className={`rounded-xl border p-3 space-y-1.5 ${closed ? 'border-slate-200 bg-slate-50 text-slate-400' : first ? 'border-sky-400 bg-sky-50 shadow-sm' : heldByOther ? 'border-slate-200 bg-white opacity-70' : 'border-slate-200 bg-white'}`}>
                   <div className="flex items-center justify-between gap-2 text-[10px]">
                     <span className={`font-semibold uppercase tracking-wide ${first ? 'text-sky-700' : closed ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -542,9 +659,25 @@ export default function DirectedWork() {
                       {isOldTrip(r.delivery_date) && <span className="text-amber-600"> · chuyến {formatDate(r.delivery_date!)}</span>}
                     </span>
                   </div>
-                  {tab === 'SCAN' && (
-                    <Step label="Tem" big={first}><span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{r.pallet_codes?.[0] ?? '—'}</span></Step>
-                  )}
+                  {/* NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai, không chỉ biết biển số */}
+                  {r.customer_name && <div className="text-[11px] text-slate-500 truncate">Giao cho {r.customer_name}</div>}
+                  {/* TEM PALLET ở CẢ BA VAI (13/09): ô còn nhiều pallet cùng mã thì "lấy cái nào" là
+                      câu hỏi thật — 16/18 việc đang chờ rơi vào ca đó khi đo staging. */}
+                  <Step label="Tem" big={first}>
+                    {codes.length === 0 ? <span className="text-slate-300 font-normal">—</span> : (<>
+                      {codes.slice(0, MAX_TEM).map((c, i) => (
+                        <div key={`${c}-${i}`} className={`font-mono font-semibold break-all ${closed ? 'line-through' : ''}`}>{c ?? '—'}</div>
+                      ))}
+                      {codes.length > MAX_TEM && <div className="text-xs text-slate-500">+{nf(codes.length - MAX_TEM)} pallet nữa — xem Chi tiết</div>}
+                    </>)}
+                  </Step>
+                  <Step label="Date" big={first}>
+                    {rule
+                      ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
+                      : <span className="text-xs text-slate-400">chưa khai</span>}
+                    {lo != null && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(lo, pctBands)}`}>{pctText(lo, hi)}</span>}
+                    {nsx && <div className="text-xs text-slate-500">NSX {nsx}</div>}
+                  </Step>
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
                     <span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{where ?? <span className="text-slate-300 font-sans font-normal">chưa có trên bản vẽ</span>}</span>
                     {r.level_no != null && r.level_no > 1 && <span className="text-xs text-slate-500"> · tầng {r.level_no}</span>}
@@ -553,6 +686,7 @@ export default function DirectedWork() {
                   <Step label={tab === 'LOWER' ? 'Hạ' : tab === 'MOVE' ? 'Đưa' : 'Lấy'} big={first}>
                     <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-500">pallet</span>
                     <span className="text-xs text-slate-500"> · {r.material_codes?.filter(Boolean).join(', ') || '—'}</span>
+                    {r.material_name && <div className="text-xs text-slate-500">{r.material_name}</div>}
                     {tab === 'SCAN' && r.is_partial && !r.stage_done && (
                       <div className="text-xs font-semibold text-amber-700">lấy {qtyLabel(r.qty_base, r)} — một phần pallet</div>
                     )}
@@ -573,12 +707,15 @@ export default function DirectedWork() {
                       {actions.map(a => (
                         <Button key={a.key} variant={a.primary ? 'default' : 'outline'} disabled={busy}
                           className={`${first ? 'h-11 text-sm' : 'h-9 text-xs'} ${a.primary ? 'flex-1' : 'px-3'} ${a.muted ? 'opacity-70' : ''}`}
-                          onClick={a.onClick}>
+                          onClick={e => { e.stopPropagation(); a.onClick() }}>
                           <a.icon className="h-4 w-4 mr-1" /> {a.label}
                         </Button>
                       ))}
                     </div>
                   )}
+                  <div className="flex items-center justify-end text-[11px] text-sky-700 pt-0.5">
+                    Chi tiết <ChevronRight className="h-3.5 w-3.5" />
+                  </div>
                 </div>
               )
             })}
@@ -624,20 +761,34 @@ export default function DirectedWork() {
               {rows.map(r => {
                 const st = stateOf(r, boardTab)
                 // Xong = GẠCH NGANG + xám, vẫn ở lại bảng (user chốt "phòng bị quên")
-                const dim = (r.stage_done || r.skipped) ? 'text-slate-400 line-through' : ''
+                const closed = r.stage_done || r.skipped
+                const dim = closed ? 'text-slate-400 line-through' : ''
                 const first = r.group_key === nextKey
                 const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire)
+                const cell = 'px-2 py-1 text-[10px] whitespace-nowrap'
                 return (
-                  <TableRow key={r.group_key} className={`${dim} ${first ? 'bg-sky-50' : ''}`}>
-                    <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums sticky left-0 z-10 ${first ? 'bg-sky-50' : 'bg-white'}`}>
+                  // Bấm DÒNG = mở chi tiết việc (hồ sơ chuyến · từng tem + NSX + %Date · ghi chú CS).
+                  // Nút bên trong tự chặn nổi bọt để không vừa bấm ✓ vừa mở panel.
+                  <TableRow key={r.group_key} onClick={() => setDetailKey(r.group_key)}
+                    title="Bấm để xem chi tiết việc này"
+                    className={`cursor-pointer ${dim} ${first ? 'bg-sky-50' : ''}`}>
+                    <TableCell className={`${cell} text-right font-semibold tabular-nums sticky left-0 z-10 ${first ? 'bg-sky-50' : 'bg-white'}`}>
                       {/* Việc đã xong / đã bỏ không mang số thứ tự nữa — nó không còn nằm trong đường đi */}
                       {r.skipped
                         ? <span className="text-slate-300 no-underline">—</span>
                         : (ordOf.get(r.group_key) ?? <span className="text-slate-300 no-underline">✓</span>)}
                     </TableCell>
 
-                    {tab !== 'SCAN' && (
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    {tab === 'SCAN' ? (<>
+                      <TableCell className={cell}><TemCell r={r} off={closed} /></TableCell>
+                      <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
+                      <TableCell className={cell}>
+                        <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
+                        {r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
+                      </TableCell>
+                      <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>{st.text}</TableCell>
+                    </>) : (<>
+                      <TableCell className={cell}>
                         <div className="font-mono font-semibold">{r.license_plate ?? r.group_code ?? '—'}</div>
                         <div className="text-[9px] text-slate-400">
                           {r.dock_name ?? '—'}
@@ -646,40 +797,38 @@ export default function DirectedWork() {
                             <span className="text-amber-600 no-underline"> · chuyến {formatDate(r.delivery_date!)}</span>
                           )}
                         </div>
+                        {/* NƠI NHẬN: người lấy hàng phải biết mình đang phục vụ ai, không chỉ biết biển số */}
+                        {r.customer_name && <div className="text-[9px] text-slate-500 truncate no-underline">{r.customer_name}</div>}
                       </TableCell>
-                    )}
-                    {tab === 'SCAN' && (
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">
-                        {r.pallet_codes?.[0] ?? '—'}
-                      </TableCell>
-                    )}
-
-                    {tab === 'LOWER' ? (
-                      <>
-                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                      {tab === 'LOWER' ? (<>
+                        <TableCell className={cell}>
                           <div className="font-mono">{r.from_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</div>
                           {/* Ai hạ, lúc mấy giờ — người sau nhìn vào phải biết việc đã xong do ai (user chốt) */}
-                          {(r.stage_done || r.skipped) && <div className={`text-[9px] no-underline ${r.skipped ? 'text-slate-400' : 'text-green-600'}`}>{st.text}</div>}
+                          {closed && <div className={`text-[9px] no-underline ${r.skipped ? 'text-slate-400' : 'text-green-600'}`}>{st.text}</div>}
                           {heldByOther && !r.stage_done && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.level_no ?? '—'}</TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        <TableCell className={`${cell} text-right tabular-nums`}>{r.level_no ?? '—'}</TableCell>
+                        <TableCell className={cell}><TemCell r={r} off={closed} /></TableCell>
+                        <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
+                      </>) : (<>
+                        <TableCell className={cell}>
                           <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
                           {r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                         </TableCell>
-                        <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${r.stage_done ? '' : st.cls}`}>
+                        <TableCell className={cell}><TemCell r={r} off={closed} /></TableCell>
+                        <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
+                        <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>
                           {st.text}
                           {heldByOther && !r.stage_done && !r.skipped && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
                         </TableCell>
-                      </>
-                    )}
+                      </>)}
+                    </>)}
 
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    <TableCell className={cell}>
                       <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-400">pallet</span>
                       <span className="text-[9px] text-slate-400"> · {r.material_codes?.filter(Boolean).join(', ') || '—'}</span>
+                      {/* Tên hàng: trong kho người ta gọi hàng theo TÊN, mã 9 số chỉ khớp được trên giấy */}
+                      {r.material_name && <div className="text-[9px] text-slate-500 truncate no-underline">{r.material_name}</div>}
                       {/* Pallet lấy MỘT PHẦN: thủ kho phải biết lấy bao nhiêu thùng (đọc theo THÙNG + lẻ, không in base thô) */}
                       {tab === 'SCAN' && r.is_partial && !r.stage_done && (
                         <div className="text-[9px] font-semibold text-amber-700 no-underline">
@@ -690,12 +839,12 @@ export default function DirectedWork() {
                     </TableCell>
 
                     {tab === 'LOWER' && (
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
+                      <TableCell className={`${cell} text-right tabular-nums`}>
                         {r.dist_cells != null ? `${nf(r.dist_cells)} ô` : <span className="text-slate-300">—</span>}
                       </TableCell>
                     )}
 
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    <TableCell className={cell}>
                       {tab === 'LOWER'
                         ? (r.drop_name ?? r.to_name ?? <span className="text-slate-300">—</span>)
                         : (r.to_name ?? r.to_code ?? <span className="text-slate-300">—</span>)}
@@ -709,7 +858,7 @@ export default function DirectedWork() {
                             <Button key={a.key} size="sm" variant={a.primary ? 'default' : 'outline'}
                               className={`h-7 px-2 text-[10px] ${a.muted ? 'opacity-70' : ''}`} disabled={busy}
                               title={a.key === 'undo' ? 'Bấm lại để bỏ đánh dấu (bấm nhầm)' : a.key === 'claim' ? 'Đánh dấu tôi đang làm việc này (tự nhả sau 10 phút)' : a.key === 'unclaim' ? 'Trả việc lại cho người khác' : 'Xác nhận đã làm xong việc này'}
-                              onClick={a.onClick}>
+                              onClick={e => { e.stopPropagation(); a.onClick() }}>
                               <a.icon className="h-3.5 w-3.5 mr-0.5" /> {a.label}
                             </Button>
                           ))}
@@ -740,6 +889,12 @@ export default function DirectedWork() {
       </div>
 
       {scanOpen && scanGdo && <GdoScanSheet gdo={scanGdo} mode="outbound" onClose={() => setScanOpen(false)} />}
+      {detailRow && (
+        <TaskDetailSheet row={detailRow} tab={boardTab} trip={tripOf.get(detailRow.gdo_id)} bands={pctBands}
+          canOpenTrip={canOpenTrip} busy={busy}
+          actions={actionsFor(detailRow, boardTab, me, canConfirm, fire).actions}
+          onStock={setInvMat} onClose={() => setDetailKey(null)} />
+      )}
       {invMat && (
         <MaterialStockDialog materialId={invMat.id} materialCode={invMat.code}
           materialName={rows.find(r => r.materials?.some(m => m.id === invMat.id))?.material_name ?? ''}

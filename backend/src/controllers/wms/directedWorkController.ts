@@ -80,7 +80,10 @@ export async function confirm(req: Request, res: Response) {
 
     if (!(await tasksInScope(req, res, ids as string[]))) return
 
-    const r = await confirmTasks(ids as string[], stage as ConfirmStage, body.undo === true, req.user?.name ?? null)
+    // actor = TÊN (hiện trên bảng "ai làm"); actorId = ID nhân viên (ghi vào InventoryEntry.updated_by,
+    // cột có khoá ngoại — truyền tên vào là 23503 và pallet đứng im, vá 13/09).
+    const r = await confirmTasks(ids as string[], stage as ConfirmStage, body.undo === true,
+      req.user?.name ?? null, req.user?.sub ?? null)
     if (!r.ok) return fail(res, r.status, r.code, r.message)
     return ok(res, r)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }

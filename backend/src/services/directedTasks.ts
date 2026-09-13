@@ -27,6 +27,10 @@ import {
 } from '../utils/rotation'
 import { resolveRotation, resolveWorkMode, type WhTypeConfigRow } from '../utils/putaway'
 import { qaHoldIds, qaNotHeldFilter } from './qaStatus'
+
+// `InventoryEntry.updated_by` là KHOÁ NGOẠI tới `Employee(id)` — ghi TÊN vào là 23503. Mọi cửa
+// chuyển vị trí trong app đều gác bằng đúng khuôn này (Tồn kho · Slotting · phần dư khi quét).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../utils/pagination'
 import {
   buildBlockedMask, bfsFrom, distanceToCells, footprintCells, orderByNearest, naturalCompare,
@@ -783,7 +787,7 @@ export interface ConfirmResult { ok: true; changed: number; moved_pallets: numbe
  * thủ kho sẽ trừ thùng tại đó nên tồn phải nằm đúng chỗ (khác PICK: pallet ra cửa rồi rời kho).
  */
 export async function confirmTasks(
-  taskIds: string[], stage: ConfirmStage, undo: boolean, actor: string | null,
+  taskIds: string[], stage: ConfirmStage, undo: boolean, actor: string | null, actorId: string | null = null,
 ): Promise<ConfirmResult | { ok: false; status: number; code: string; message: string }> {
   if (!taskIds.length) return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Chưa chọn việc nào' }
   const { data } = await supabase.from('wms_tasks')
@@ -801,15 +805,15 @@ export async function confirmTasks(
     if (!undo) {
       const needLower = open.filter(r => r.needs_lower && !r.lowered_at).map(r => r.id)
       if (needLower.length) {
-        const low = await confirmTasks(needLower, 'LOWER', false, actor)
+        const low = await confirmTasks(needLower, 'LOWER', false, actor, actorId)
         if (!low.ok) return low
       }
     }
-    const mv = await confirmTasks(open.map(r => r.id), 'MOVE', undo, actor)
+    const mv = await confirmTasks(open.map(r => r.id), 'MOVE', undo, actor, actorId)
     if (undo && mv.ok) {
       // Bấm nhầm "Hạ & đưa ra" thì bỏ CẢ HAI mốc — để lại mốc "đã hạ" là kể một câu chuyện không có thật
       const lowered = open.filter(r => r.needs_lower && r.lowered_at).map(r => r.id)
-      if (lowered.length) await confirmTasks(lowered, 'LOWER', true, actor)
+      if (lowered.length) await confirmTasks(lowered, 'LOWER', true, actor, actorId)
     }
     return mv
   }
@@ -833,16 +837,34 @@ export async function confirmTasks(
 
   // Hàng về vị trí nhặt lẻ: xác nhận = pallet ĐÃ NẰM ở đó ⇒ ghi tồn theo. Đích đầy thì KHÔNG đánh dấu
   // (không tạo ngõ cụt: việc vẫn treo, người bấm được báo chọn chỗ khác — cùng luật Fill).
+  //
+  // ⚠️ HAI LỖI ĐÃ VÁ 13/09 (diễn tập vận hành bắt được — app báo "đã chuyển 1 pallet" mà tồn KHÔNG đổi):
+  //  1. `p_updated_by` ghi vào `InventoryEntry.updated_by`, cột này có KHOÁ NGOẠI tới `Employee(id)`.
+  //     Truyền TÊN người dùng ⇒ 23503, RPC ném lỗi, pallet đứng nguyên trên kệ. Mọi cửa chuyển vị trí
+  //     khác (Tồn kho · Slotting · phần dư khi quét) đều gác `updatedBy` bằng UUID hoặc null — chỗ này
+  //     là chỗ DUY NHẤT lệch. ⇒ nhận `actorId` riêng, chỉ nhận UUID.
+  //  2. `error` của RPC bị VỨT và `movedPallets++` chạy vô điều kiện ⇒ đếm SỐ LẦN THỬ chứ không phải
+  //     số lần chuyển được, nên hỏng vẫn báo thành công. Thủ kho ra vị trí nhặt lẻ thì không có hàng,
+  //     mà sổ tồn vẫn nói pallet nằm trên kệ. Nay chỉ tính khi RPC trả "OK|…", hỏng thì việc VẪN TREO.
   let movedPallets = 0
   if (!undo) {
     for (const r of todo.filter(x => x.kind === 'LOOSE_FEED' && x.entry_id && x.to_location_id)) {
-      const { data: mv } = await supabase.rpc('move_pallets_to_location', {
+      const { data: mv, error: mvErr } = await supabase.rpc('move_pallets_to_location', {
         p_ids: [r.entry_id], p_location_id: r.to_location_id,
-        p_updated_by: actor, p_update_date: at.slice(0, 10), p_now: at,
+        p_updated_by: UUID_RE.test(actorId ?? '') ? actorId : null,
+        p_update_date: at.slice(0, 10), p_now: at,
       })
       const msg = String(mv ?? '')
       if (msg.startsWith('FULL')) {
         return { ok: false, status: 409, code: 'LOCATION_FULL', message: `Vị trí nhặt lẻ đã đầy — đổi vị trí đến rồi bấm lại (pallet ${r.from_location_code ?? ''}).` }
+      }
+      if (mvErr || !msg.startsWith('OK')) {
+        recordServerError('be', `LOOSE_FEED chuyển pallet hỏng: ${mvErr?.message ?? `RPC trả "${msg}"`}`,
+          409, 'MOVE_FAILED', '/wms/directed/tasks/confirm')
+        return {
+          ok: false, status: 409, code: 'MOVE_FAILED',
+          message: `Chưa chuyển được pallet ${r.from_location_code ?? ''} về vị trí nhặt lẻ — việc vẫn còn đó, thử lại hoặc đổi vị trí đến.`,
+        }
       }
       movedPallets++
     }

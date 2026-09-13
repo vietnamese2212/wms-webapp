@@ -831,6 +831,39 @@ try {
     await api(`/wms/outbound/${tQ.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
+  // ═══ [21] LOOSE_FEED: "✓ Xong" phải CHUYỂN THẬT pallet về vị trí nhặt lẻ ══════════════════════
+  // Bug thật 13/09 (diễn tập vận hành bắt được, không phép kiểm nào chạm): app trả
+  // `{ok:true, moved_pallets:1}` mà tồn KHÔNG đổi vị trí — `p_updated_by` nhận TÊN người dùng
+  // trong khi `InventoryEntry.updated_by` có khoá ngoại tới `Employee(id)` ⇒ RPC ném 23503, và
+  // `error` bị vứt nên số đếm là SỐ LẦN THỬ chứ không phải số lần chuyển được. Thủ kho ra vị trí
+  // nhặt lẻ thì không có hàng, sổ tồn vẫn nói pallet nằm trên kệ. ORACLE: đọc lại `location_id`
+  // của chính pallet đó — đừng tin con số API tự báo.
+  {
+    const tLF = await mkTrip('TLF')
+    await mkItem(tLF.do, 24, { loose_picking: 24, date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+    r = await startTrip(tLF.gdo, { license_plate: '51C21021', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const lf = (await tasksOf(tLF.gdo)).filter(t => t.kind === 'LOOSE_FEED')
+    check('[21a] Thiếu hàng ở vị trí nhặt lẻ ⇒ sinh việc LOOSE_FEED', lf.length > 0, `http=${r.s} ${err(r)}`)
+    if (lf.length) {
+      const t = lf[0]
+      const locOf = async id => (await restAll('InventoryEntry', `select=location_id&id=eq.${id}`))[0]?.location_id ?? null
+      const truoc = await locOf(t.entry_id)
+      r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [t.id], stage: 'BOTH' })
+      const sau = await locOf(t.entry_id)
+      check('[21b] "✓ Xong" của LOOSE_FEED CHUYỂN THẬT pallet về vị trí nhặt lẻ (đọc lại tồn, không tin số API báo)',
+        r.s === 200 && sau === t.to_location_id && sau !== truoc,
+        `http=${r.s} báo moved=${r.j?.data?.moved_pallets} · pallet ${truoc} → ${sau} · đích ${t.to_location_id}`)
+      check('[21c] Số pallet API báo đã chuyển = số THẬT SỰ chuyển được',
+        Number(r.j?.data?.moved_pallets ?? 0) === (sau === t.to_location_id ? 1 : 0),
+        `API báo ${r.j?.data?.moved_pallets} · thật ${sau === t.to_location_id ? 1 : 0}`)
+      r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [t.id], stage: 'BOTH', undo: true })
+      const t2 = (await tasksOf(tLF.gdo)).find(x => x.id === t.id)
+      check('[21d] Hoàn tác bỏ CẢ hai mốc giờ', r.s === 200 && !t2?.lowered_at && !t2?.moved_at,
+        `http=${r.s} hạ=${t2?.lowered_at} đưa=${t2?.moved_at}`)
+    }
+    await api(`/wms/outbound/${tLF.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
   // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
   const t8 = await mkTrip('T8')
   const i8 = await mkItem(t8.do, 10)

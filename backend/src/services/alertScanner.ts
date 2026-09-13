@@ -326,28 +326,24 @@ async function ruleAdminNewIp(TH: AlertThresholds): Promise<AlertCandidate[]> {
   const adminEmails = new Set(((admins ?? []) as { email: string | null }[]).map(a => (a.email ?? '').toLowerCase()).filter(Boolean))
   if (!adminEmails.size) return []
   const memory = new Date(Date.now() - TH.ADMIN_IP_MEMORY_DAYS * 86400_000).toISOString()
-  const recentCut = Date.now() - 24 * 3600_000
-  const { data, error } = await supabase.from('auth_login_events')
-    .select('email, ip, created_at').eq('ok', true).is('reason', null)
-    .in('email', [...adminEmails].slice(0, 100)).gte('created_at', memory)
-    .order('created_at').limit(5000)
+  const recent = new Date(Date.now() - 24 * 3600_000).toISOString()
+  // HỎI DB TRẢ TẬP (email, ip) — ĐỪNG kéo dòng về rồi tự dựng tập bằng vòng lặp. Bản cũ
+  // `.select(...).limit(5000)` KHÔNG vượt được trần ~1.000 dòng của PostgREST nên chỉ thấy 1.000
+  // lượt CŨ NHẤT trong 30 ngày: đo 13/09 lúc 02:48 thì 11 GIỜ đăng nhập gần nhất nằm ngoài tầm
+  // — mà "IP lạ" hoàn toàn là chuyện của dòng MỚI, nên cảnh báo im lặng đúng lúc cần kêu và càng
+  // đông người dùng càng mù thêm. Số dòng nay bị chặn bởi SỐ CẶP (đo: 14) chứ không bởi số lượt.
+  const { data, error } = await supabase.rpc('admin_login_ip_pairs', {
+    p_emails: [...adminEmails].slice(0, 100), p_memory: memory, p_recent: recent,
+  })
   if (error) throw new Error(error.message)
-  const rows = (data ?? []) as { email: string; ip: string | null; created_at: string }[]
-  const known = new Set<string>()       // (email|ip) đã thấy TRƯỚC cửa sổ 24h
-  const hasHistory = new Set<string>()  // email có lịch sử >24h — ngày đầu bật (chưa có lịch sử) thì KHÔNG báo oan mọi IP
-  const fresh = new Map<string, { email: string; ip: string; at: string }>()
-  for (const r of rows) {
-    if (!r.ip) continue
-    const em = r.email.toLowerCase()
-    const k = `${em}|${r.ip}`
-    if (new Date(r.created_at).getTime() < recentCut) { known.add(k); hasHistory.add(em) }
-    else if (!known.has(k) && !fresh.has(k)) fresh.set(k, { email: em, ip: r.ip, at: r.created_at })
-  }
-  return [...fresh.entries()].filter(([k, f]) => !known.has(k) && hasHistory.has(f.email)).map(([k, f]) => ({
-    rule: 'ADMIN_NEW_IP' as const, dedup_key: `ADMINIP|${k}`, severity: 'WARNING' as const,
+  const pairs = (data ?? []) as { email: string; ip: string; has_old: boolean; has_new: boolean; first_new_at: string | null }[]
+  // email có lịch sử >24h — ngày đầu bật (chưa có lịch sử) thì KHÔNG báo oan mọi IP
+  const hasHistory = new Set(pairs.filter(p => p.has_old).map(p => p.email))
+  return pairs.filter(p => p.has_new && !p.has_old && hasHistory.has(p.email)).map(p => ({
+    rule: 'ADMIN_NEW_IP' as const, dedup_key: `ADMINIP|${p.email}|${p.ip}`, severity: 'WARNING' as const,
     warehouse_id: null, category: null,
-    title: `Tài khoản quản trị ${f.email} đăng nhập từ IP mới ${f.ip}`,
-    detail: `Lúc ${new Date(f.at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} — IP này chưa thấy trong ${TH.ADMIN_IP_MEMORY_DAYS} ngày. Không phải bạn? Đổi mật khẩu admin ngay và soi nhật ký quản trị.`,
+    title: `Tài khoản quản trị ${p.email} đăng nhập từ IP mới ${p.ip}`,
+    detail: `Lúc ${new Date(p.first_new_at ?? Date.now()).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} — IP này chưa thấy trong ${TH.ADMIN_IP_MEMORY_DAYS} ngày. Không phải bạn? Đổi mật khẩu admin ngay và soi nhật ký quản trị.`,
     object_url: '/masterdata/users',
   }))
 }

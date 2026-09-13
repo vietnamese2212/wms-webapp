@@ -187,11 +187,28 @@ export async function resolveFixtures() {
   // dãy cũng là dòng `Location` nhưng `max_pallets=0` ⇒ quét nhập vào đó là 422 LOCATION_FULL. Ba Vì
   // có `B_CUANHAP_*` đứng đầu bảng chữ cái nên fixture "vị trí đầu tiên" rơi trúng cửa nhập (gói 04
   // đỏ âm thầm). Vị trí là thứ SINH THÊM được — fixture phải nói rõ mình cần LOẠI nào.
+  // …VÀ PHẢI CÒN CHỖ. Lần rot thứ hai của cùng fixture này (bậc full 12/09): vị trí được chọn đã
+  // chứa 31 pallet trên sức chứa 7 — dữ liệu nạp cho demo làm 124 vị trí Ba Vì vượt sức chứa — nên
+  // mọi lượt quét nhập trả 422 LOCATION_FULL và gói 04 + gói 22 đỏ vì FIXTURE chứ không vì code.
+  // App chặn là ĐÚNG; thứ sai là fixture đòi một chỗ đã đầy. Cùng khuôn `freeDockFor`: cần tài
+  // nguyên có sức chứa thì phải HỎI nó còn chỗ không, đừng lấy cái đầu bảng chữ cái.
   const cat = FIX.MAT_POOL_CAT
   const locs = await restAll('Location',
-    `select=id,location_code,categories&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&kind=eq.STORAGE&order=location_code&limit=200`)
-  const hit = locs.find(l => !l.categories?.length || (cat && l.categories.includes(cat))) ?? locs[0]
+    `select=id,location_code,categories,max_pallets&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&kind=eq.STORAGE&order=location_code&limit=200`)
+  const fit = locs.filter(l => !l.categories?.length || (cat && l.categories.includes(cat)))
+  const cand = fit.slice(0, 60)          // 60 id « trần ~300 uuid của .in() trên URL
+  const dang = new Map()
+  if (cand.length) {
+    const rows = await restAll('InventoryEntry',
+      `select=location_id&location_id=in.(${cand.map(l => l.id).join(',')})&cartons_remaining=gt.0`)
+    for (const r of rows) dang.set(r.location_id, (dang.get(r.location_id) ?? 0) + 1)
+  }
+  const conCho = (l) => !l.max_pallets || (dang.get(l.id) ?? 0) < l.max_pallets
+  const hit = cand.find(conCho) ?? fit.find(conCho) ?? fit[0] ?? locs[0]
   if (!hit) throw new Error(`Fixture: kho QR ${FIX.WH_QR.name} không có vị trí nào`)
+  if (!conCho(hit)) throw new Error(
+    `Fixture: kho QR ${FIX.WH_QR.name} không còn vị trí nào trống cho loại ${cat ?? '(mọi loại)'} — ` +
+    `dọn bớt tồn hoặc nâng sức chứa trước khi chạy bộ kiểm`)
   FIX.LOC_QR_ID = hit.id
   FIX.LOC_QR_CODE = hit.location_code
 }

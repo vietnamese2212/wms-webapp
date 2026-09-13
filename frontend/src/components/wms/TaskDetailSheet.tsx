@@ -87,7 +87,9 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, actions, b
 
   return (
     <Sheet open onOpenChange={v => { if (!v) onClose() }}>
-      <SheetContent side="right" className="w-full sm:w-[30rem] p-0 flex flex-col gap-0">
+      {/* 34rem chứ không 30: bảng pallet có tem dài ~26 ký tự + NSX + %Date + SL, ở 30rem thì cột SL
+          chạm mép. Điện thoại vẫn full bề ngang. */}
+      <SheetContent side="right" className="w-full sm:w-[34rem] p-0 flex flex-col gap-0">
         <SheetHeader className="px-4 pt-4 pb-3 border-b space-y-1 text-left">
           <SheetTitle className="text-sm font-semibold text-slate-800">
             {/* Mã ĐỊNH DANH không được cắt cụt trên điện thoại (hiến pháp UI 24/08) */}

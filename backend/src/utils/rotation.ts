@@ -47,10 +47,15 @@ export function availableOf(e: RotationEntry): number {
 
 // Pallet có được đưa vào so sánh / gợi ý không.
 // PHẢI khớp đúng điều kiện mà scanItem chấp nhận: còn hàng + KHÔNG bị QA giữ.
-// (qa_status_id có giá trị = đang giữ — bulkUpdateQA chỉ đặt cột này, KHÔNG đổi `status`,
-//  nên đừng suy QA từ status='QUARANTINE'.)
-export function isPickEligible(e: RotationEntry): boolean {
-  if (e.qa_status_id) return false
+// (bulkUpdateQA chỉ đặt `qa_status_id`, KHÔNG đổi `status`, nên đừng suy QA từ status='QUARANTINE'.)
+//
+// ⚠️ `qaHold` là BẮT BUỘC, cố ý: trước 13/09 hàm này coi MỌI giá trị qa_status_id là "đang giữ",
+// nhưng danh mục QAStatus có mã `OK` = ĐÃ DUYỆT và cửa quét vẫn cho xuất pallet đó ⇒ cùng một
+// pallet, quét thì xuất được mà gợi ý/kế hoạch bảo "hết hàng" (đo Ba Vì: 8.760 pallet bị tính là
+// kẹt trong khi chỉ 5 pallet bị giữ thật). Bắt truyền tham số để mọi điểm gọi phải lấy bộ id từ
+// `services/qaStatus.ts` — thiếu là lỗi BIÊN DỊCH chứ không âm thầm sai.
+export function isPickEligible(e: RotationEntry, qaHold: ReadonlySet<string>): boolean {
+  if (e.qa_status_id && qaHold.has(e.qa_status_id)) return false
   return availableOf(e) > 0
 }
 

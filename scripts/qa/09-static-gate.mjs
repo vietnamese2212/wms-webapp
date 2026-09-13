@@ -714,6 +714,20 @@ const RULES = [
     // frontend/src/utils/rotation.ts (dòng cũ không có cột rotation_*). Code mới không được tăng.
   },
   {
+    key: 'qa_hold_rule_hand_rolled',
+    label: 'tự viết "pallet có bị QA giữ không" bằng qa_status_id null/not-null — phải qua services/qaStatus.ts (BE) / public.qa_is_hold() (SQL)',
+    // Bug thật 13/09: danh mục QAStatus có mã `OK` = ĐÃ DUYỆT, và cửa QUÉT XUẤT vốn hiểu đúng
+    // (`qa_status.code !== 'OK'`), nhưng 5 chỗ chỉ-đường + 3 RPC thống kê lại coi "có giá trị =
+    // đang giữ" ⇒ cùng một pallet: quét thì xuất được mà kế hoạch bảo "hết hàng". Đo Ba Vì:
+    // Giám sát vận hành đếm 8.760 pallet "kẹt" trong khi chỉ 5 bị giữ thật; 83 mã không chốt
+    // được bất kỳ mức %Date nào. Quét nhập tem V2 TỰ đóng dấu OK nên đơn vị tem `;` mất 100 % tồn.
+    // Miễn 1 file: services/qaStatus.ts (nó LÀ luật). Baseline 0.
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && !/services[\\/]qaStatus\.ts$/.test(file)
+        && /qa_status_id['"]?\s*,\s*null\s*\)|qa_status_id\b[^\n]*\bIS\s+(NOT\s+)?NULL\b|\bqa_status_id\s*(\?\?\s*null\s*\)\s*)?(!==?|===?)\s*null\b/i.test(line), s),
+  },
+  {
     key: 'putaway_rule_hand_rolled',
     label: 'tự đoán "cất pallet vào ô nào" (has_same_material / slot_no_in / so sức chứa để gợi ý) — phải đi qua utils/putaway (BE) / khối `putaway` do BE trả (FE)',
     // Cùng họ bug với rotation_rule_hand_rolled, đo 15/08: luật ★ có 3 bản chép tay (BE

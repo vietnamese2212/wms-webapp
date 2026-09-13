@@ -633,3 +633,18 @@ created_at, updated_at
   lấy lại được **một nửa** lợi ích (−10 % so với −16 %) vì nó coi hai ô kề nhau qua một khối kệ là gần. **CHỈ áp bảng
   "Cần hạ"** — bảng "Cần đưa ra" việc nào cũng kết thúc tại CỬA nên tổng quãng đường không phụ thuộc thứ tự. Gói QA 57
   thêm **[20a–20d]** gác hai chiều.
+- `20260913e_qa_ok_is_not_hold.sql` — **DẤU QA "OK" KHÔNG PHẢI LÀ GIỮ HÀNG** (phát hiện trong diễn tập vận hành 13/09).
+  Danh mục `QAStatus` có 4 mã: `X` · `XCQ` (X cảm quan) · `X7` (X 7 ngày) là GIỮ, còn **`OK` là ĐÃ DUYỆT**. Cửa QUÉT
+  XUẤT vốn hiểu đúng (`inv.qa_status?.code !== 'OK'`), `slottingController` và RPC `warehouse_kpi` cũng đúng — nhưng
+  **5 chỗ chỉ-đường trong TypeScript + 3 RPC thống kê** lại coi *"có giá trị = đang giữ"*. Hệ quả: cùng một pallet,
+  **quét thì xuất được mà kế hoạch/gợi ý/kiểm tồn bảo "hết hàng"** — đúng khuôn lỗi "hai cửa cùng một sổ mà khác luật".
+  Đo Ba Vì trước khi vá: Giám sát vận hành đếm **8.760** pallet "kẹt" (thật: **5**) · **227/230** vị trí bị coi là QA giữ
+  (thật: **4**) · **83 mã** không chốt được **BẤT KỲ** mức %Date nào kể cả 1 % dù kho đầy hàng xuất được · **336.960
+  base** biến mất khỏi phép đếm tồn của màn chốt. **KHÔNG phải rác dữ liệu**: quét nhập tem V2 (`;`) TỰ đóng dấu `OK`
+  (`parsed.qa_ok ? 'OK' : 'X'`) ⇒ đơn vị dùng tem chấm phẩy sẽ có **100 % tồn vô hình** với Việc cần làm. Ý định gốc đã
+  ghi ngay trong migration đầu tiên: *"bỏ trống = mặc định OK, không cần lưu vào qa_status_id"* ⇒ dấu OK phải được đối
+  xử NHƯ BỎ TRỐNG. Vá bằng MỘT nguồn hai phía: `public.qa_is_hold(text)` (SQL, STABLE) + `services/qaStatus.ts`
+  (`qaHoldIds` / `qaNotHeldFilter`, nhớ 30 giây). `isPickEligible` nay **bắt buộc** tham số bộ id giữ — thiếu là lỗi
+  BIÊN DỊCH, không âm thầm sai. 3 RPC sửa đúng một dòng mỗi hàm (`control_tower_resources.locked` ·
+  `outbound_shortage_stats.avail` · `putaway_slot_facts.qa_hold`). Lưới: ratchet **`qa_hold_rule_hand_rolled`**
+  (baseline 0, đã thử ngược — ĐỎ 4 trên bản lỗi) + test đơn vị `backend/tests/unit/qaHold.test.ts`.

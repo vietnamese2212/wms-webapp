@@ -35,6 +35,7 @@ import {
   servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, MAX_DATE_CHECK, MAX_RULE_PARTS,
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
+import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
 import {
   loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
   type AutoApplied, type PolicyCtx,
@@ -5250,6 +5251,7 @@ async function rotationSuggestionsByMaterial(
   const out = new Map<string, FefoSuggestion[]>()
   if (!matIds.length) return out
   const useWhFilter = warehouseIds.length > 0
+  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const entryChunks = await Promise.all(
     Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
       fetchAllRowsParallel(() => {
@@ -5261,7 +5263,8 @@ async function rotationSuggestionsByMaterial(
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
           // nơi rồi mới biết không lấy được (lỗi thật, vá 14/08). Lọc ở DB cho nhẹ, JS kiểm lại bằng
           // isPickEligible để luật chỉ có MỘT bản.
-          .is('qa_status_id', null)
+          // "GIỮ" = dấu QA khác `OK`; dấu OK là ĐÃ DUYỆT và cửa quét vẫn cho xuất (services/qaStatus.ts).
+          .or(qaFilter)
           .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
           .order('id')
         if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
@@ -5284,7 +5287,7 @@ async function rotationSuggestionsByMaterial(
   type Agg = FefoSuggestion & { rot_key: number | null; pick_rank: number }
   const byMat = new Map<string, Map<string, Agg>>()
   for (const e of (entries ?? [])) {
-    if (!isPickEligible(e)) continue
+    if (!isPickEligible(e, qaHold)) continue
     const principle = rotCfg.of(e.location?.warehouse_id, e.material?.category).principle
     const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
     const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
@@ -5377,19 +5380,21 @@ async function rotationCheckOf(args: {
   }
   if (!materialId || !warehouseId) return base
 
+  // "QA giữ" = dấu QA khác `OK` (services/qaStatus.ts) — cùng luật với cửa quét xuất bên dưới.
+  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
     .select('pallet_code, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id)')
     .eq('material_id', materialId)
     .eq('location.warehouse_id', warehouseId)
     .in('status', [...PICKABLE_STATUSES])
-    .is('qa_status_id', null)
+    .or(qaFilter)
     .gt('cartons_remaining', 0)
     .order('id')) as Array<RotationEntry & { pallet_code: string | null; location: { location_code: string | null } | null }>
 
   let best: (typeof rows)[number] | null = null
   let bestKey: number | null = null
   for (const r of rows) {
-    if (!isPickEligible(r)) continue
+    if (!isPickEligible(r, qaHold)) continue
     // Đơn có yêu cầu %Date: pallet dưới ngưỡng (hoặc không tính được %Date) sẽ bị chặn lúc quét
     // cho đơn này → loại khỏi tập so sánh, "pallet tốt nhất" = tốt nhất TRONG SỐ lấy được.
     if (minPct > 0) {

@@ -26,6 +26,7 @@ import {
   type RotationEntry, type RotationPrinciple,
 } from '../utils/rotation'
 import { resolveRotation, resolveWorkMode, type WhTypeConfigRow } from '../utils/putaway'
+import { qaHoldIds, qaNotHeldFilter } from './qaStatus'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../utils/pagination'
 import {
   buildBlockedMask, bfsFrom, distanceToCells, footprintCells, orderByNearest, naturalCompare,
@@ -279,12 +280,15 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   // ── Ứng viên pallet theo mã (một câu cho cả chuyến) ──────────────────────────────────────────
   const matIds = [...new Set(needs.map(n => n.item.material_id).filter((x): x is string => !!x))]
   if (!matIds.length) return { created: 0, cancelled, unset_items: unset, warning }
+  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const candRaw = await fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
     .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days')
     .in('material_id', chunk)
     .eq('warehouse_id', whId)
     .in('status', [...PICKABLE_STATUSES])
-    .is('qa_status_id', null)          // pallet bị QA giữ thì lúc quét bị chặn — chỉ đường tới đó là đẩy người đi vô ích
+    // Pallet bị QA giữ thì lúc quét bị chặn — chỉ đường tới đó là đẩy người đi vô ích.
+    // "GIỮ" = dấu QA khác `OK`; dấu OK nghĩa ĐÃ DUYỆT và cửa quét vẫn cho xuất (services/qaStatus.ts).
+    .or(qaFilter)
     .gt('cartons_remaining', 0)
     .order('id')) as unknown as Cand[]
 
@@ -301,7 +305,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   const byMat = new Map<string, Cand[]>()
   for (const c of (candRaw ?? [])) {
     if (!c.material_id || taken.has(c.id)) continue
-    if (!isPickEligible(c)) continue
+    if (!isPickEligible(c, qaHold)) continue
     const arr = byMat.get(c.material_id) ?? []
     arr.push(c); byMat.set(c.material_id, arr)
   }
@@ -569,17 +573,18 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
     s.add(it.material_id); matsByWh.set(wh, s)
   }
   const poolOf = new Map<string, Cand[]>()     // `${wh}::${material_id}` → pallet dùng được
+  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   for (const [wh, mats] of matsByWh) {
     const cand = await fetchAllByIdChunks([...mats], chunk => supabase.from('InventoryEntry')
       .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days')
       .in('material_id', chunk)
       .eq('warehouse_id', wh)
       .in('status', [...PICKABLE_STATUSES])
-      .is('qa_status_id', null)
+      .or(qaFilter)          // dấu QA `OK` = ĐÃ DUYỆT, vẫn xuất được (services/qaStatus.ts)
       .gt('cartons_remaining', 0)
       .order('id')) as unknown as Cand[]
     for (const c of cand) {
-      if (!c.material_id || !isPickEligible(c) || availableOf(c) <= 0) continue
+      if (!c.material_id || !isPickEligible(c, qaHold) || availableOf(c) <= 0) continue
       const k = `${wh}::${c.material_id}`
       poolOf.set(k, [...(poolOf.get(k) ?? []), c])
     }

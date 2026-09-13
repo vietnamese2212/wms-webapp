@@ -618,3 +618,18 @@ created_at, updated_at
   cách từ cửa"* — chính quan niệm sai ở trên, đóng khung thành luật (lớp `feedback-qa-can-lock-in-the-bug`); vòng ngắn
   nhất KHÔNG có tính chất đó, và đo được là thứ nó đòi hỏi lại đi XA HƠN. Oracle mới kiểm tính chất THẬT của một vòng
   đi: **không quay lại ô đã rời** (đã thử ngược: chuỗi A,B,A và A,B,A,B đều ĐỎ). Gói 57 vẫn **113/113**.
+- `20260913d_cross_trip_pick_radius.sql` — **"NHẶT DỌC ĐƯỜNG"** (user chốt 13/09). Cùng phép đo trên cho thấy thứ tự
+  việc kẹt giữa hai tiêu chí ĐỐI NHAU: nhóm theo chuyến ⇒ xe rời cửa sớm nhưng xe nâng đi xa hơn đường ngắn nhất
+  ~25 %; đổi sang đường ngắn nhất toàn kho ⇒ giữ cửa lâu hơn **37 %** (2.071 → 2.834 m). Không chọn vế sau: cửa là tài
+  nguyên hiếm, app đã mô hình hoá bằng `Location.dock_capacity`. Phương án THẮNG CẢ HAI: giữ nhóm theo chuyến, nhưng
+  khi xe nâng đang đứng ở một điểm đặt dãy mà có việc của **chuyến khác** trong bán kính R thì làm luôn — đo (hàng rải
+  đều, 8 chuyến × 10 việc) **3.854 → 3.242 m (−16 % đường)** và **2.071 → 1.982 m (xe rời cửa SỚM hơn)**. Hàng co cụm
+  trong vài dãy chỉ −2…−4 % ⇒ là **THAM SỐ CỦA KHO**: cột `Warehouse.cross_trip_pick_radius` (số Ô LƯỚI, CHECK 0..200,
+  **0 = TẮT, mặc định cho MỌI kho đang chạy** — bật tự động là đổi cách làm việc của người ta mà không ai khai). RPC trả
+  thêm `from_location_id`/`drop_location_id` mỗi dòng + `settings.cross_trip_pick_radius`; việc sắp lại làm ở **BACKEND**
+  (`services/directedRoute.ts`, bản vẽ nhớ 60 s trong tiến trình, mỗi điểm đứng chỉ BFS một lần) bằng ĐÚNG
+  `utils/warehouseGrid.ts` của bộ lập kế hoạch — BFS lưới 200×200 không thuộc về SQL, và chép bản thứ hai là đúng khuôn
+  mà ratchet `rotation_rule_hand_rolled` cấm. ⚠️ Đo gần/xa **phải bằng BFS**: thử cả hai thì khoảng cách hình học chỉ
+  lấy lại được **một nửa** lợi ích (−10 % so với −16 %) vì nó coi hai ô kề nhau qua một khối kệ là gần. **CHỈ áp bảng
+  "Cần hạ"** — bảng "Cần đưa ra" việc nào cũng kết thúc tại CỬA nên tổng quãng đường không phụ thuộc thứ tự. Gói QA 57
+  thêm **[20a–20d]** gác hai chiều.

@@ -577,3 +577,13 @@ created_at, updated_at
   · Nhật ký quản trị. Chính lượt kiểm đó lộ ra **NV SAP bị 403 ở Hộp việc** trong khi hộp việc có đúng 2 dòng dành cho
   họ ("khai quy định date", "DO SAP cần xử lý") ⇒ thêm `chung_tu → directed_work.view` (CHỈ xem, không ✓ Xong, không
   sắp lại kế hoạch).
+- `20260913_admin_ip_pairs.sql` — **cảnh báo bảo mật `ADMIN_NEW_IP` đang MÙ vì trần 1.000 dòng.** `ruleAdminNewIp` kéo
+  `auth_login_events` về Node rồi tự dựng tập `(email|ip)` bằng vòng lặp, khai `.limit(5000)` — mà `.limit(N>1000)`
+  KHÔNG vượt được trần ~1.000 dòng/response của PostgREST ⇒ chỉ nhận **1.000 lượt CŨ NHẤT** trong cửa sổ 30 ngày.
+  Đo thật 13/09 02:48: xin 5.000 → trả đúng 1.000, dòng mới nhất trong kết quả là **15:53 hôm trước** ⇒ **11 giờ đăng
+  nhập gần nhất vô hình**. Mà "IP lạ" hoàn toàn là chuyện của dòng MỚI ⇒ luật im lặng đúng lúc cần kêu, và **càng đông
+  người dùng càng mù thêm** — hỏng theo chiều nguy hiểm nhất. Bằng chứng lặp lại: gói QA 45 XANH ở lượt full thứ nhất
+  (sổ <1.000 dòng) rồi ĐỎ ở lượt thứ hai vài giờ sau (sổ vượt 1.000); dựng lại ngoài gói QA cũng không sinh cảnh báo.
+  Chữa theo gốc rễ CLAUDE.md đã ghi — **đừng KÉO DÒNG để tính ra một TẬP**: RPC `admin_login_ip_pairs(p_emails, p_memory,
+  p_recent)` gom theo `(email, ip)` trả `has_old · has_new · first_new_at`, nên số dòng bị chặn bởi **SỐ CẶP** (đo: 14)
+  chứ không bởi số lượt đăng nhập. Nhẹ hơn hẳn khi quét mỗi 10 phút. Gói QA 45 về **17/17**.

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-12T10:36:32.664Z · 94 bảng/view · 159 hàm · 0 enum
+// Sinh lúc 2026-09-13T07:24:16.277Z · 95 bảng/view · 160 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2339,6 +2339,7 @@ export type Database = {
           lower_from_level: number
           date_rule_policy: string
           separate_lowering_forklift: boolean
+          cross_trip_pick_radius: number
         }
         Insert: {
           id: string
@@ -2381,6 +2382,7 @@ export type Database = {
           lower_from_level?: number
           date_rule_policy?: string
           separate_lowering_forklift?: boolean
+          cross_trip_pick_radius?: number
         }
         Update: {
           id?: string
@@ -2423,6 +2425,7 @@ export type Database = {
           lower_from_level?: number
           date_rule_policy?: string
           separate_lowering_forklift?: boolean
+          cross_trip_pick_radius?: number
         }
         Relationships: []
       }
@@ -4442,6 +4445,27 @@ export type Database = {
         }
         Relationships: []
       }
+      x_bak_jobtitle_perms_20260912i: {
+        Row: {
+          id: string | null
+          name: string | null
+          module_permissions: Json | null
+          backed_up_at: string | null
+        }
+        Insert: {
+          id?: string | null
+          name?: string | null
+          module_permissions?: Json | null
+          backed_up_at?: string | null
+        }
+        Update: {
+          id?: string | null
+          name?: string | null
+          module_permissions?: Json | null
+          backed_up_at?: string | null
+        }
+        Relationships: []
+      }
       x_bak_order_dup_20260725: {
         Row: {
           id: string | null
@@ -4785,6 +4809,10 @@ export type Database = {
       adjust_inventory_atomic: {
         Args: { p_delta: unknown; p_actor_name: unknown; p_stocktake_by: unknown; p_vn_date: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown }
         Returns: string
+      }
+      admin_login_ip_pairs: {
+        Args: { p_memory: unknown; email: unknown; has_old: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown }
+        Returns: Record<string, unknown>[]
       }
       alerts_expiry_candidates: {
         Args: { arg2?: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }

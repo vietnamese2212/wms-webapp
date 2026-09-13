@@ -648,7 +648,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; date_rule_policy?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -705,6 +705,8 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
   // Kho có xe nâng HẠ riêng? (12/09) — mặc định CÓ = hành vi cũ; kho một xe vừa hạ vừa chuyển tắt đi
   const [sepLower,      setSepLower]      = useState(wh?.separate_lowering_forklift !== false)
+  // NHẶT DỌC ĐƯỜNG (13/09) — bán kính theo Ô LƯỚI, 0 = tắt. Giữ dạng CHUỖI để xoá trắng ô được.
+  const [pickRadius,    setPickRadius]    = useState(String(wh?.cross_trip_pick_radius ?? 0))
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
   // %DATE THEO KHÁCH HÀNG / KÊNH (11/09) — chỉ tầng KHO (luật theo KHÁCH, không theo loại hàng).
   // Mặc định OFF cho mọi kho đang chạy: áp tự động là đổi hành vi, không tự bật hộ ai.
@@ -790,7 +792,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, ...rot, ...putaway },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, ...rot, ...putaway },
         {
           // Bật/tắt "Áp %Date tự động" đã ghi thẳng vào đơn đang mở — phải NÓI RA số dòng vừa đổi,
           // không thì lại đúng cảnh "bấm Lưu xong không thấy gì xảy ra" (user 12/09).
@@ -814,7 +816,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -986,6 +988,25 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
                   “Cần đưa ra” gộp hai chặng thành một nút <b>Hạ &amp; đưa ra</b>, tab “Cần hạ” ẩn.
                 </span>
               </Label>
+            </div>
+          )}
+          {/* NHẶT DỌC ĐƯỜNG (13/09) — chỉ có nghĩa khi kho có XE HẠ RIÊNG, vì chỉ bảng "Cần hạ" mới
+              chuyển pallet từ ô ra ĐIỂM ĐẶT DÃY rồi đi tiếp; bảng "Cần đưa ra" việc nào cũng kết
+              thúc tại cửa nên tổng quãng đường không phụ thuộc thứ tự. */}
+          {(strat.work_mode ?? 'MANUAL') === 'GUIDED' && sepLower && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 space-y-1">
+              <Label htmlFor="wh-pick-radius" className="text-sm leading-snug">Nhặt dọc đường — bán kính (số ô)</Label>
+              <div className="flex items-center gap-2">
+                <Input id="wh-pick-radius" type="number" min={0} max={200} className="h-8 w-24"
+                  value={pickRadius} onChange={e => setPickRadius(e.target.value)} placeholder="0" />
+                <span className="text-[11px] text-slate-500">0 = tắt (mặc định)</span>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Xe nâng đang đứng ở một điểm đặt dãy mà có việc của <b>chuyến khác</b> trong bán kính này thì
+                bảng “Cần hạ” đưa việc đó lên làm luôn, khỏi phải quay lại lần nữa. Đo trên bản vẽ Kho Ba Vì
+                (1 ô ≈ 1,2 m): <b>12 ô</b> tiết kiệm ~16 % quãng đường mà xe vẫn rời cửa sớm hơn. Kho có hàng
+                dồn trong vài dãy thì gần như không lợi gì — cứ để 0.
+              </p>
             </div>
           )}
           {/* %DATE THEO KHÁCH HÀNG / KÊNH (user chốt 11/09) — CHỈ tầng kho: luật đi theo KHÁCH NHẬN,

@@ -24,6 +24,13 @@ function asScanCodeTypes(v: unknown): string {
   return (SCAN_CODE_TYPES as readonly string[]).includes(s) ? s : 'BOTH'
 }
 
+// NHẶT DỌC ĐƯỜNG (20260913d): bán kính theo Ô LƯỚI, 0 = tắt. Kẹp 0..200 đúng CHECK ở DB để giá trị
+// gõ nhầm trả 400 tử tế chứ không chết 23514 ở tận câu ghi.
+function asPickRadius(v: unknown): number {
+  const n = Math.trunc(Number(v))
+  return Number.isFinite(n) ? Math.min(200, Math.max(0, n)) : 0
+}
+
 function extractCount(arr: unknown): number {
   if (Array.isArray(arr) && arr.length > 0) return (arr[0] as { count: number }).count ?? 0
   return 0
@@ -273,6 +280,7 @@ export async function createWarehouse(req: Request, res: Response) {
     if (require_weigh_on_start !== undefined) row.require_weigh_on_start = Boolean(require_weigh_on_start)   // rule 2: cân khi Bắt đầu xuất (20260801)
     if (require_gate_on_start !== undefined)  row.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (separate_lowering_forklift !== undefined) row.separate_lowering_forklift = Boolean(separate_lowering_forklift)   // kho có xe hạ riêng? (20260912f)
+    if (req.body.cross_trip_pick_radius !== undefined) row.cross_trip_pick_radius = asPickRadius(req.body.cross_trip_pick_radius)  // nhặt dọc đường (20260913d)
     if (rotation_principle !== undefined)     row.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      row.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     if (scan_code_types !== undefined)        row.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
@@ -347,6 +355,7 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (require_weigh_on_start !== undefined) patch.require_weigh_on_start = Boolean(require_weigh_on_start)   // rule 2: cân khi Bắt đầu xuất (20260801)
     if (require_gate_on_start !== undefined)  patch.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (separate_lowering_forklift !== undefined) patch.separate_lowering_forklift = Boolean(separate_lowering_forklift)   // kho có xe hạ riêng? (20260912f)
+    if (req.body.cross_trip_pick_radius !== undefined) patch.cross_trip_pick_radius = asPickRadius(req.body.cross_trip_pick_radius)  // nhặt dọc đường (20260913d)
     if (rotation_principle !== undefined)     patch.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      patch.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     if (scan_code_types !== undefined)        patch.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)

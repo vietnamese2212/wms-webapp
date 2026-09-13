@@ -773,6 +773,64 @@ try {
     await api(`/wms/outbound/${t19b.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
+  // ═══ [20] NHẶT DỌC ĐƯỜNG — bán kính của kho (13/09) ═══════════════════════════════════════════
+  // Đo 13/09 (BFS ngoài app, bản vẽ thật Ba Vì): nhóm theo chuyến làm xe nâng đi xa hơn đường ngắn
+  // nhất ~25 %, nhưng đổi sang đường ngắn nhất thì giữ cửa lâu hơn 37 % ⇒ phương án giữa: đứng ở
+  // điểm đặt dãy mà có việc chuyến khác trong bán kính R thì làm luôn (−16 % đường, cửa vẫn sớm hơn).
+  // Phép kiểm gác CẢ HAI chiều: tắt (0) thì tuyệt đối không đảo, bật thì phải đảo đúng dòng gần.
+  {
+    // Ba ô kệ dựng riêng: A1 và B1 SÁT NHAU, A2 ở tít dãy bên kia.
+    const rA1 = await mkLoc('RTA', '91', 'T2', 3, 10)
+    const rA2 = await mkLoc('RTA', '92', 'T2', 16, 12)
+    const rB1 = await mkLoc('RTB', '93', 'T2', 4, 10)
+    // HSD NGẮN HƠN MỌI pallet fixture khác (ngắn nhất trước đó là +5 ngày) để FEFO chắc chắn chọn
+    // đúng ba pallet này — không để phép kiểm phụ thuộc pallet còn sót của các mục trước.
+    const mk = async (code, loc, expDays) => (await restWrite('InventoryEntry', 'POST', null, {
+      id: randomUUID(), pallet_code: `${T}-${code}`, material_id: mat.id, warehouse_id: whId,
+      location_id: loc, cartons_imported: 10, cartons_remaining: 10, cartons_reserved: 0,
+      status: 'IN_STOCK', production_date: dPlus(-30), expiry_date: dPlus(expDays),
+      import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+    }))[0]
+    await mk('RT_A1', rA1, 1); await mk('RT_A2', rA2, 2); await mk('RT_B1', rB1, 3)
+
+    const tP = await mkTrip('TP'), tQ = await mkTrip('TQ')
+    const iP = await mkItem(tP.do, 20), iQ = await mkItem(tQ.do, 10)
+    await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [iP, iQ], rule: { kind: 'FEFO' } })
+    await startTrip(tP.gdo, { license_plate: '51C20001', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    await startTrip(tQ.gdo, { license_plate: '51C20002', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+
+    const tripsOf = async () => {
+      const b = await board('LOWER')
+      return (b.j?.data?.rows ?? []).filter(x => !x.stage_done && !x.skipped).map(x => x.license_plate)
+    }
+    // Tắt (mặc định): bảng đi hết chuyến P rồi mới sang Q — không dòng nào của Q chen vào giữa P
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { cross_trip_pick_radius: 0, updated_at: nowIso() })
+    const off = await tripsOf()
+    const grouped = a => { const seen = new Set(); let prev = null
+      for (const p of a) { if (p !== prev) { if (seen.has(p)) return false; seen.add(p); prev = p } } return true }
+    check('[20a] Bán kính 0 (mặc định): bảng Cần hạ đi TRỌN từng chuyến, không đan xen',
+      off.length >= 3 && grouped(off), off.join(' → '))
+
+    // Bật: việc của chuyến Q nằm sát ô đầu của P ⇒ phải được kéo lên làm luôn, không để quay lại
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { cross_trip_pick_radius: 40, updated_at: nowIso() })
+    const on = await tripsOf()
+    check('[20b] Bật bán kính: việc chuyến KHÁC ở ô gần được kéo lên xen vào giữa (nhặt dọc đường)',
+      on.length === off.length && !grouped(on), `tắt: ${off.join(' → ')} | bật: ${on.join(' → ')}`)
+    check('[20c] Sắp lại KHÔNG làm mất hay đẻ thêm việc nào', on.length === off.length
+      && JSON.stringify(on.slice().sort()) === JSON.stringify(off.slice().sort()), `${off.length} → ${on.length}`)
+
+    // Bảng "Cần đưa ra" KHÔNG được đụng tới: ở đó mỗi việc đều kết thúc tại cửa nên đảo thứ tự chỉ
+    // làm người ta nhảy chuyến mà không rút ngắn được gì.
+    const bm = await board('MOVE')
+    const moveTrips = (bm.j?.data?.rows ?? []).filter(x => !x.stage_done && !x.skipped).map(x => x.license_plate)
+    check('[20d] Bán kính KHÔNG áp cho bảng Cần đưa ra (ở đó thứ tự không đổi được quãng đường)',
+      grouped(moveTrips), moveTrips.join(' → '))
+
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { cross_trip_pick_radius: 0, updated_at: nowIso() })
+    await api(`/wms/outbound/${tP.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+    await api(`/wms/outbound/${tQ.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
   // ═══ [16] HOÀN THÀNH CHUYẾN → DỌN VIỆC TREO ══════════════════════════════════════════════════
   const t8 = await mkTrip('T8')
   const i8 = await mkItem(t8.do, 10)

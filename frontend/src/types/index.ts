@@ -905,7 +905,7 @@ export interface DirectedTrip {
 export interface DirectedBoard {
   rows: DirectedRow[]
   totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number }
-  settings?: { separate_lowering_forklift?: boolean }
+  settings?: { separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number }
   trips?: DirectedTrip[]
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]

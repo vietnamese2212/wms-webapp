@@ -14,6 +14,7 @@ import { ok, fail } from '../../utils/response'
 import { searchLooksLikeInjection } from '../../utils/search'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { planGdoTasks, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
+import { reorderCrossTripPickup, type RoutableRow } from '../../services/directedRoute'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -47,7 +48,18 @@ export async function getBoard(req: Request, res: Response) {
       p_warehouse_id: whId, p_mode: mode, p_gdo_id: gdoId, p_driver_id: driverId,
     })
     if (error) return fail(res, error)
-    return ok(res, data ?? { rows: [], totals: {}, unset_items: [] })
+    const board = (data ?? { rows: [], totals: {}, unset_items: [] }) as {
+      rows?: RoutableRow[]; settings?: { cross_trip_pick_radius?: number }
+    }
+    // NHẶT DỌC ĐƯỜNG (13/09) — chỉ bảng "Cần hạ", chỉ khi kho khai bán kính. Ở bảng "Cần đưa ra"
+    // mỗi việc đều kết thúc tại cửa nên tổng quãng đường KHÔNG phụ thuộc thứ tự; sắp lại ở đó chỉ
+    // làm người ta nhảy chuyến mà không được gì. Sắp ở BACKEND vì BFS trên lưới 200×200 thuộc về
+    // `utils/warehouseGrid.ts` — nguồn DUY NHẤT của phép đo đường đi, đừng chép bản thứ hai xuống SQL.
+    const radius = Number(board.settings?.cross_trip_pick_radius ?? 0)
+    if (mode === 'LOWER' && radius > 0 && Array.isArray(board.rows)) {
+      board.rows = await reorderCrossTripPickup(board.rows, whId, radius)
+    }
+    return ok(res, board)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

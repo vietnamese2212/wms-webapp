@@ -137,7 +137,22 @@ try {
     const itemId = gdo.delivery_orders?.[0]?.items?.[0]?.id
     if (itemId) await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [itemId], rule: { kind: 'FEFO' } })
     const st = await api(`/wms/outbound/${gdo.id}/start`, 'POST', { license_plate: plate, gate_registration_id: gateId, dock_location_id: await freeDockFor(WH.id, plate), forklift_driver_ids: drvId ? [drvId] : [] })
+    if (st.s !== 200) console.log(`  ⚠ chuyến ${label} KHÔNG Bắt đầu được: http=${st.s} ${st.j?.error?.code ?? ''} — các phép kiểm sau sẽ lạc đề`)
     return { gdo, item: gdo.delivery_orders?.[0]?.items?.[0], started: st.s, startErr: st.j?.error?.code ?? st.j?.error?.message ?? '', plate }
+  }
+
+  /**
+   * NHẢ CỬA XUẤT sau khi khối đã đo xong.
+   * Cửa xuất Ba Vì là tài nguyên DÙNG CHUNG với dữ liệu demo của user — đo bậc full 12/09: 4/6 cửa
+   * đang có xe của 7 chuyến sống, chỉ còn 3 suất. Gói này mở 4 chuyến và GIỮ cả 4 cửa tới cuối bài
+   * ⇒ hai chuyến cuối 422 DOCK_FULL, và lỗi hiện ra tận phép kiểm sau dưới dạng "Chuyến chưa Bắt
+   * đầu" — thông báo lạc đề, tốn cả buổi mới lần ra. Khối đo xong thì trả cửa lại, mỗi lúc chỉ cần
+   * MỘT cửa trống. Không đụng gì tới chuyến demo của user.
+   */
+  async function nhaCua(t) {
+    if (!t?.gdo?.id) return
+    await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${t.gdo.id}`,
+      { dock_location_id: null, dock_assigned_at: null }).catch(() => {})
   }
 
   // ── [2] 8 người quét 8 pallet KHÁC NHAU vào dòng hàng chỉ đặt 3 pallet ───
@@ -159,6 +174,7 @@ try {
     check('[2b] Tồn trừ ĐÚNG 3 pallet, 5 pallet còn lại nguyên vẹn (không trừ oan)',
       consumed === 3 && untouched === 5, `hết=${consumed} nguyên=${untouched}`)
     check('[2c] Không pallet nào âm tồn', ents.every(e => Number(e.cartons_remaining) >= 0))
+    await nhaCua(t)
   }
 
   // ── [3] 5 người quét CÙNG MỘT pallet ─────────────────────────────────────
@@ -173,6 +189,7 @@ try {
     check('[3] 5 người quét CÙNG 1 pallet → đúng 1 lượt ăn, 1 vết quét, tồn về 0 (không trừ hai lần)',
       okN === 1 && scans.length === 1 && Number(e?.cartons_remaining) === 0,
       `ăn=${okN}/5 vết=${scans.length} tồn=${e?.cartons_remaining}`)
+    await nhaCua(t)
   }
 
   // ── [4] Thông báo quét nhầm mã: nói MÃ HÀNG, không in uuid ───────────────
@@ -196,6 +213,7 @@ try {
     check('[4b] Bước kiểm-trước-khi-quét cũng nói rõ mã hàng (trước đây câm)',
       msg2.includes(mat.material_code) && msg2.includes(other.material_code),
       `msg="${msg2.slice(0, 120)}"`)
+    await nhaCua(t)
   }
 
   // ── [5][6] Giao thiếu: hướng dẫn phải nói "Tạm dừng" và đường đó chạy được ─
@@ -221,6 +239,7 @@ try {
     check('[6b] Việc hạ SL để lại VẾT giao thiếu (không xoá dấu để đo mức phục vụ)',
       ev.some(e => String(e.event_type).startsWith('QTY_REDUCED')),
       `loại sự kiện: ${[...new Set(ev.map(e => e.event_type))].join(',') || '—'}`)
+    await nhaCua(t)
   }
   // ── [7] Giám sát vận hành: đường "đưa số cũ khi nghẽn" phải dùng ĐÚNG khoá cache ─────────
   {

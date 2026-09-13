@@ -11,8 +11,36 @@ const WH = FIX.WH_QTY
 // Chu kỳ per hạng KHÔNG hardcode nữa (13/08: thành cờ `cycle_count`) — lấy từ chính response
 // `cycle_days` rồi kiểm NHẤT QUÁN nội tại (từng dòng khớp bảng chu kỳ API công bố).
 
+// CHỈ xoá lượt kiểm — hàm này còn được gọi GIỮA bài ([3] xoá lượt kiểm rồi đọc lại), nên nó
+// tuyệt đối không được đụng dòng tồn mà bài vẫn đang cần (xoá tồn = mã rơi khỏi danh sách kiểm
+// kê ⇒ [3] so với `undefined`). Dòng tồn tạm dọn riêng ở cuối.
 async function cleanup() {
   await restWrite('StocktakeLog', 'DELETE', `note=eq.${TAG}`).catch(() => {})
+}
+async function cleanupTon() {
+  await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.${TAG}*`).catch(() => {})
+}
+
+/**
+ * Kho harness phải CÓ TỒN thì mới kiểm kê được — mà tồn là thứ các gói khác XUẤT ĐI.
+ * Bậc full 12/09: Bluestar còn đúng 1 dòng, EXPORTED, remaining 0 ⇒ gói đỏ vì MÔI TRƯỜNG chứ
+ * không vì code. Gói tự dựng lấy dòng tồn của mình (tag SIMCYCLE, dọn ở cuối) thay vì bám vào
+ * dữ liệu người khác để lại — cùng nguyên tắc "seed SIM tự chứa" của skill check-app.
+ */
+async function tonHarness() {
+  const co = (await restAll('InventoryEntry',
+    `select=id,material_id,pallet_code&warehouse_id=eq.${WH.id}&cartons_remaining=gt.0&material_id=not.is.null&limit=1`))[0]
+  if (co) return co
+  const mat = (await restAll('Material', `select=id,material_code&is_active=is.true&is_non_stock=not.is.true&order=material_code&limit=1`))[0]
+  if (!mat) return null
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const [row] = await restWrite('InventoryEntry', 'POST', null, {
+    id: randomUUID(), warehouse_id: WH.id, pallet_code: `${TAG}_${Date.now()}`,
+    material_id: mat.id, location_id: null, origin: 'QA', stack_layer: 1, putaway_checked: false,
+    cartons_imported: 5, cartons_remaining: 5, cartons_reserved: 0,
+    import_date: vnDate, status: 'IN_STOCK', created_at: t(), updated_at: t(),
+  })
+  return row ? { id: row.id, material_id: mat.id, pallet_code: row.pallet_code } : null
 }
 
 console.log(`── KIỂM KÊ LUÂN PHIÊN ABC · ${BASE.replace('https://', '')} ──`)
@@ -27,6 +55,10 @@ await login(); await cleanup()
   const r = await api('/wms/stocktake/cycle', 'GET')
   check('Thiếu warehouse_id → 400', r.s === 400, `http=${r.s}`)
 }
+
+// Dựng nền TRƯỚC khi đọc danh sách: mã của dòng tồn vừa dựng phải có mặt trong chính lượt [1],
+// nếu không thì [3] so "trước ↔ sau" trên một mã không tồn tại trong bảng chụp đầu.
+const ent = await tonHarness()
 
 // [1] Bề mặt + bất biến nội tại: hạng hợp lệ, chu kỳ khớp hạng, due_in tự tính lại khớp
 const r1 = await api(`/wms/stocktake/cycle?warehouse_id=${WH.id}`, 'GET')
@@ -53,11 +85,10 @@ const CYCLE = r1.j?.data?.cycle_days ?? { A: 7, B: 30, C: 90 }
 }
 
 // [2] Oracle "kiểm gần nhất": seed 1 lượt kiểm HÔM NAY cho 1 mã đang có tồn → mã đó hết đến hạn
-const ent = (await restAll('InventoryEntry',
-  `select=id,material_id,pallet_code&warehouse_id=eq.${WH.id}&cartons_remaining=gt.0&material_id=not.is.null&limit=1`))[0]
 if (!ent) {
-  check('Kho harness có tồn để seed lượt kiểm', false, 'Bluestar không còn dòng tồn nào')
+  check('Kho harness có tồn để seed lượt kiểm', false, `${WH.name} không có tồn và không dựng nổi dòng tồn tạm`)
 } else {
+  check('Kho harness có tồn để seed lượt kiểm', true)
   const mat = (await restAll('Material', `select=material_code&id=eq.${ent.material_id}`))[0]
   await restWrite('StocktakeLog', 'POST', null, {
     id: randomUUID(), entry_id: ent.id, pallet_code: ent.pallet_code, warehouse_id: WH.id,
@@ -88,6 +119,7 @@ if (!ent) {
 }
 
 console.log('\n🧹 dọn…')
-await cleanup()
-console.log(`residue=${(await restAll('StocktakeLog', `select=id&note=eq.${TAG}`)).length}`)
+await cleanup(); await cleanupTon()
+console.log(`residue=${(await restAll('StocktakeLog', `select=id&note=eq.${TAG}`)).length}`
+  + ` · tồn tạm=${(await restAll('InventoryEntry', `select=id&pallet_code=like.${TAG}*`)).length}`)
 finish('CYCLE-COUNT')

@@ -125,7 +125,14 @@ try {
   //     đó"): lấy 1 pallet V1 đủ 6 đoạn từ tồn kho, bóc chu kỳ/máy/nmsx rồi truy KHÔNG ngày —
   //     pallet mẫu phải có mặt (index biểu thức idx_ie_tem_*); chu kỳ đệm 0 vẫn khớp; tổ hợp
   //     thêm tiền tố tem phải THU HẸP (AND) chứ không nới.
-  const ie6 = (await restAll('InventoryEntry', 'select=pallet_code&pallet_code=like.*_*_*_*_*_*&order=pallet_code', 1000))
+  // Mẫu phải CÒN TỒN: phép kiểm này đo "tổ hợp bộ lọc có thu hẹp đúng không", nên mẫu bắt buộc
+  // phải là thứ chắc chắn hiện ra ở bảng. Bậc full 12/09 vớ trúng một pallet tồn=0 mà KHÔNG có
+  // lượt quét xuất nào (tồn bị đưa về 0 bằng đường khác) ⇒ không vào bảng tồn, cũng không vào
+  // bảng giao, và phép kiểm đỏ vì MẪU chứ không vì bộ lọc.
+  // ⚠ Chính ca đó lộ ra một chỗ LỆCH THẬT của màn Truy xuất lô: ô tổng đếm 1 pallet trong khi cả
+  //   hai bảng rỗng. Đã báo user, CHƯA sửa — đừng tưởng dòng lọc dưới đây là đã xử lý xong.
+  const ie6 = (await restAll('InventoryEntry',
+    'select=pallet_code&pallet_code=like.*_*_*_*_*_*&cartons_remaining=gt.0&order=pallet_code', 1000))
     .find(r => /^\d{6}(_[^_]+){5}$/.test(r.pallet_code))
   if (ie6) {
     const seg = ie6.pallet_code.split('_')

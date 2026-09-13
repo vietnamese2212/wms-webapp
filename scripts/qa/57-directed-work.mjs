@@ -217,9 +217,23 @@ try {
   check('[5c2] ORACLE FEFO (b) — pallet lấy LẺ phải là pallet HSD DÀI NHẤT trong tập (cắt ở đuôi)',
     byHsd[byHsd.length - 1]?.is_partial === true && byHsd.slice(0, -1).every(t => !t.is_partial),
     byHsd.map(t => `${t.pallet_code}(HSD ${String(hsdOf[t.pallet_code]).slice(5)}${t.is_partial ? ',lẻ' : ''})`).join(' → '))
-  const dists = tk.map(t => Number(t.dist_cells ?? 1e9))
-  check('[5c3] ORACLE đường đi — thứ tự ĐI tăng dần theo khoảng cách từ cửa (đi một vòng, không nhảy)',
-    dists.every((d, i) => i === 0 || d >= dists[i - 1]), tk.map(t => `${t.seq}:${t.dist_cells}ô`).join(' '))
+  // ⚠ Bản trước của phép kiểm này khẳng định "thứ tự đi phải TĂNG DẦN theo khoảng cách từ cửa".
+  // Đó là QUAN NIỆM SAI đóng khung thành luật (đúng lớp `feedback-qa-can-lock-in-the-bug`): một vòng
+  // ngắn nhất KHÔNG có tính chất đó — nó đi sâu vào một dãy rồi vòng ra, nên khoảng cách tới cửa lên
+  // xuống là chuyện bình thường. Đo 13/09 trên bản vẽ thật Ba Vì (BFS dựng ngoài app, TB 12 lượt):
+  // sắp theo khoảng-cách-tới-cửa đi 4.013 m, còn vòng do `assignSeq` tính đi 3.854 m — tức chính cái
+  // mà phép kiểm cũ đòi hỏi lại là cái đi XA HƠN. Giữ nguyên nó là khoá luôn đường cải tiến.
+  //
+  // Oracle ĐÚNG cho "đi một vòng, không nhảy" = KHÔNG QUAY LẠI Ô ĐÃ RỜI. Đây mới là tính chất thật
+  // của một vòng đi, và nó bắt được hồi quy thật (sắp xen kẽ giữa các ô ⇒ A, B, A).
+  const visitOrder = tk.map(t => t.from_location_code ?? t.from_location_id ?? '?')
+  const firstSeen = new Map(), revisit = []
+  visitOrder.forEach((code, i) => {
+    if (!firstSeen.has(code)) { firstSeen.set(code, i); return }
+    if (visitOrder[i - 1] !== code) revisit.push(`${code} (bước ${firstSeen.get(code) + 1} rồi lại bước ${i + 1})`)
+  })
+  check('[5c3] ORACLE đường đi — mỗi VỊ TRÍ làm xong một lần rồi mới đi tiếp, không quay lại ô đã rời',
+    revisit.length === 0, revisit.length ? `quay lại: ${revisit.join(' · ')}` : visitOrder.join(' → '))
   const sumQty = tk.reduce((s, t) => s + Number(t.qty_base), 0)
   check('[5d] ORACLE số lượng: Σ việc = đúng nhu cầu 120 (không thừa = giữ chỗ oan, không thiếu = xe về non)',
     sumQty === 120, `Σ=${sumQty}`)

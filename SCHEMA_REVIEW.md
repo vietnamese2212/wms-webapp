@@ -605,3 +605,16 @@ created_at, updated_at
   `shelf_life_days` hay `expiry_date` riêng ⇒ đường đi thực tế là NSX + shelflife của mã. Chữ ký hàm KHÔNG đổi ⇒ thay
   tại chỗ, không sinh bản nạp chồng. FE: thêm cột **Tem pallet** + **Date** (yêu cầu đặt cạnh %Date thật), tên hàng và
   NPP trên dòng, băng hồ sơ chuyến, và **bấm dòng/thẻ mở panel chi tiết việc** (`components/wms/TaskDetailSheet.tsx`).
+- `20260913c_directed_board_keep_route.sql` — **bảng "Cần hạ" đang VỨT BỎ vòng đường mà kế hoạch đã tính.** `assignSeq`
+  đánh `seq` bằng vòng láng giềng gần nhất (BFS trên Sơ đồ kho, xuất phát từ cửa của chuyến), nhưng ORDER BY của bảng
+  sắp LẠI theo `dist_cells` (khoảng cách TỚI CỬA) rồi mới tới `seq` ⇒ vòng đi bị thay bằng danh sách xa/gần cửa — mà
+  xa/gần cửa **không phải một vòng đi**: hai ô cùng cách cửa 50 ô có thể ở hai đầu kho. Hai khoá này có từ bản đầu
+  (`20260910c`) và chưa bao giờ kèm dòng giải thích nào. **Đo thật 13/09** trên chính bản vẽ Ba Vì (200×200 ô · 1,2
+  m/ô · 236 vị trí · 5 cửa), dựng lại BFS NGOÀI app, trung bình 12 lượt gieo: hàng rải đều 8 chuyến × 10 việc — quãng
+  đường **4.013 → 3.854 m (−4 %)** và giải phóng cửa **2.173 → 2.071 m (−5 %, xe rời cửa SỚM hơn)** ⇒ **lỗ thuần**, đi
+  xa hơn VÀ giữ cửa lâu hơn, không đổi lại được gì. `-level_no` cũng bỏ: "hạ từ trên xuống" chỉ có nghĩa TRONG một ô và
+  `assignSeq` đã sắp rồi; một dòng bảng = một ô nên khoá đó chỉ đảo thứ tự GIỮA các ô. GIỮ `truck_idle` (ưu tiên nghiệp
+  vụ có lý do). Cùng đợt **gói QA 57 [5c3] viết lại**: phép kiểm cũ khẳng định *"thứ tự đi phải TĂNG DẦN theo khoảng
+  cách từ cửa"* — chính quan niệm sai ở trên, đóng khung thành luật (lớp `feedback-qa-can-lock-in-the-bug`); vòng ngắn
+  nhất KHÔNG có tính chất đó, và đo được là thứ nó đòi hỏi lại đi XA HƠN. Oracle mới kiểm tính chất THẬT của một vòng
+  đi: **không quay lại ô đã rời** (đã thử ngược: chuỗi A,B,A và A,B,A,B đều ĐỎ). Gói 57 vẫn **113/113**.

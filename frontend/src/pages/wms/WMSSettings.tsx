@@ -1003,9 +1003,11 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               </div>
               <p className="text-[11px] text-slate-500 leading-snug">
                 Xe nâng đang đứng ở một điểm đặt dãy mà có việc của <b>chuyến khác</b> trong bán kính này thì
-                bảng “Cần hạ” đưa việc đó lên làm luôn, khỏi phải quay lại lần nữa. Đo trên bản vẽ Kho Ba Vì
-                (1 ô ≈ 1,2 m): <b>12 ô</b> tiết kiệm ~16 % quãng đường mà xe vẫn rời cửa sớm hơn. Kho có hàng
-                dồn trong vài dãy thì gần như không lợi gì — cứ để 0.
+                bảng “Cần hạ” đưa việc đó lên làm luôn, khỏi phải quay lại lần nữa. Thứ tự vẫn bám theo chuyến —
+                chỉ nhặt thêm việc nằm ngay trên đường đi.
+                <br />Đo trên bản vẽ Kho Ba Vì (1 ô ≈ 1,2 m, 8 chuyến × 10 việc): <b>12–24 ô</b> (≈ 14–29 m) tiết
+                kiệm <b>14 % quãng đường</b> mà xe vẫn rời cửa sớm hơn; khai lớn hơn không lợi thêm, khai nhỏ hơn
+                (4 ô) vẫn được ~10 %. Kho có hàng dồn trong vài dãy thì gần như không lợi gì — cứ để 0.
               </p>
             </div>
           )}

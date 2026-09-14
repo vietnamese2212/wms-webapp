@@ -537,6 +537,19 @@ let WH1 = null, ZONE = null
   })).j?.data
   check('[46] Tạo kho mới để thử nghiệm', !!WH1?.id, `mã=${WH1?.code}`)
 
+  // [46b] KHO MỚI TẠO QUA APP PHẢI CÓ ĐỦ MỌI LOẠI KHO (user chốt 21/08: loại kho là danh mục CHUNG).
+  // Đây là lưới cho ĐƯỜNG THẬT — trước 14/09 việc này do bất biến gói 00 gác bằng cách đếm toàn DB,
+  // nhưng phép đếm đó cũng vơ luôn kho fixture (bộ kiểm ghi thẳng PostgREST, không qua cửa app) nên
+  // đỏ oan mỗi lần có gói QA chạy. Nay gói 00 bỏ kho `QA*`, còn ĐÚNG cửa app thì đo ở đây: thiếu seed
+  // ⇒ kho mới không khai được setting riêng theo loại và form ghi sẽ chặn oan đúng loại đó.
+  if (WH1?.id) {
+    const types = await restAll('LookupValue', 'select=value&type=eq.warehouse_type')
+    const cfg = await restAll('warehouse_type_configs', `select=type_code&warehouse_id=eq.${WH1.id}`)
+    check('[46b] Kho tạo qua app nhận ĐỦ mọi Loại kho (seed cấu hình, không phải khai tay)',
+      cfg.length === types.length && types.every(t => cfg.some(c => c.type_code === t.value)),
+      `${cfg.length}/${types.length} loại`)
+  }
+
   let r = await api('/wms/zones', 'POST', { warehouse_id: WH1.id, name: `${P} Khu thiếu loại`, categories: [] })
   check('[47] Tạo khu vực mà chưa chọn Loại kho nào → chặn kèm hướng dẫn',
     r.s === 400 && /ít nhất 1 Loại kho/i.test(r.j?.error?.message ?? ''), `s=${r.s} · "${(r.j?.error?.message ?? '').slice(0, 50)}"`)

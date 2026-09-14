@@ -254,6 +254,29 @@ function ghAnnotate(level, pack, text) {
   if (GH()) console.log(`::${level} title=${ghProp(`QA ${pack}`)}::${ghEsc(text)}`)
 }
 
+// ── LƯỚI CUỐI: GÓI CHẾT GIỮA CHỪNG PHẢI TỰ KHAI CHẾT VÌ GÌ (chốt 14/09) ───────────────────────────
+// Đo thật: 2 trong 5 lượt CI đỏ ngày 14/09 để lại ĐÚNG một dòng "Process completed with exit code 1"
+// — không phép kiểm nào hỏng, vì script NGÃ trước khi tới `finish()` (một lượt gọi PostgREST ném lỗi
+// lúc staging quá tải / vé hết hạn). `finish()` in `::error` rất đẹp nhưng nó KHÔNG BAO GIỜ được gọi,
+// nên người nhận email lại rơi đúng cảnh "chuông kêu mà không biết chỗ nào" mà CLAUDE.md đã cấm.
+// Handler này là lưới cuối cho MỌI gói: cứ import lib.mjs là có, không phải làm gì thêm.
+const PACK_FILE = (process.argv[1] ?? '').split(/[\\/]/).pop() || 'QA'
+function dieLoud(kind, err) {
+  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err)
+  console.error(`\n[${PACK_FILE}] GÓI CHẾT GIỮA CHỪNG (${kind}):`, err)
+  ghAnnotate('error', PACK_FILE, `GÓI CHẾT GIỮA CHỪNG (${kind}) — ${msg.replace(/\s+/g, ' ').slice(0, 400)}`)
+  process.exit(1)
+}
+process.on('uncaughtException', e => dieLoud('lỗi không bắt được', e))
+process.on('unhandledRejection', e => dieLoud('promise bị từ chối', e))
+
+// DẤU NHẬN DIỆN BẢN GHI CỦA CHÍNH BỘ KIỂM (fixture), để phân biệt với dữ liệu nghiệp vụ.
+// Mọi gói đều đặt mã có tiền tố gói: QA57_W · QA49WH1 · QAGRUL_DO · QALOOSE · QA-SUITE · SIMWMS…
+// CỐ Ý đòi sau "QA" phải là SỐ hoặc ≥2 CHỮ HOA liền: chuỗi "QA giữ" (trạng thái QA của pallet) và
+// `qa_status` KHÔNG được tính là fixture, nếu không thì lỗi thật về QA sẽ bị nuốt.
+const FIXTURE_RE = /(^|[^A-Za-z])(QA[0-9]|QA[A-Z]{2,}|QA-SUITE|SIMWMS)/
+export const looksFixture = (s) => FIXTURE_RE.test(String(s ?? ''))
+
 /**
  * @param {string} pack tên gói (in ra dòng tổng kết)
  * @param {{ retryOnFail?: boolean }} [opts] retryOnFail = ĐO LẠI một lần sau khi lắng trước khi kết luận đỏ.
@@ -280,6 +303,20 @@ export function finish(pack, opts = {}) {
       ghAnnotate('notice', pack, `${fail.length} vi phạm ở lần đo đầu TỰ HẾT khi đo lại sau ${Math.round(wait / 1000)}s — nhiều khả năng có bộ kiểm khác đang ghi vào cùng DB: ${names}`)
     }
     process.exit(r.status ?? 1)
+  }
+
+  // VI PHẠM CHỈ TRỎ VÀO FIXTURE CỦA CHÍNH BỘ KIỂM = KHÔNG PHẢI LỖI DỮ LIỆU (chốt 14/09).
+  // Vì sao: staging là sân chung — CI chạy sau MỖI push, còn người phát triển thì chạy gói QA hàng
+  // chục phút. Gói khác đang dựng/dọn fixture (xoá chuyến xong chưa xoá DO, kho fixture ghi THẲNG
+  // PostgREST nên không đi qua đường seed của app…) làm bất biến toàn-DB thấy "vi phạm" trong suốt
+  // lúc đó — đo thật 13–14/09: 5 lượt CI đỏ, 0 lượt là lỗi sản phẩm, và mỗi lượt là một email.
+  // Chỉ nới khi ĐỦ CẢ HAI: (a) gói này là loại đọc trạng thái CHUNG (`retryOnFail`), (b) MỌI phép
+  // hỏng đều nêu mã mang dấu bộ kiểm. Còn một phép hỏng không mang dấu ⇒ ĐỎ như thường, cổng nguyên vẹn.
+  if (fail.length && opts.retryOnFail && fail.every(f => looksFixture(f.detail))) {
+    const names = fail.map(f => `${f.name} — ${f.detail}`).join(' · ')
+    console.log(`\n[${pack}] ${fail.length} vi phạm đều trỏ vào FIXTURE của bộ kiểm (mã mang dấu QA*/SIM*) ⇒ có gói QA khác đang chạy trên cùng DB, KHÔNG phải lỗi dữ liệu.`)
+    ghAnnotate('notice', pack, `${fail.length} vi phạm chỉ nằm trên fixture của bộ kiểm (gói QA khác đang chạy) — không tính đỏ: ${names.slice(0, 500)}`)
+    process.exit(0)
   }
 
   for (const r of fail.slice(0, ANNOTATION_CAP)) ghAnnotate('error', pack, `${r.name}${r.detail ? ` — ${r.detail}` : ''}`)

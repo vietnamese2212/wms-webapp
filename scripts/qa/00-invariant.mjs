@@ -45,13 +45,18 @@ const orphanLines = lines.filter(l => !foundOrd.has(l.tms_order_id))
 check('Không dòng kế hoạch nhập mồ côi', orphanLines.length === 0, orphanLines.length ? `${orphanLines.length} dòng` : `soi ${lines.length} dòng`)
 
 // 5. OutboundScanEntry không mồ côi (item đã xóa)
-const scans = await restAll('OutboundScanEntry', 'select=id,item_id')
+// `pallet_code` lấy kèm để câu lỗi NÊU ĐƯỢC MÃ — không có mã thì không phân biệt nổi rác của fixture
+// bộ kiểm (QA57_…) với rác thật, mà chính chỗ đó quyết định lượt CI đỏ hay chỉ ghi chú (xem finish()).
+const scans = await restAll('OutboundScanEntry', 'select=id,item_id,pallet_code')
 const itemIds = [...new Set(scans.map(s => s.item_id))]
 const foundItem = new Set()
 for (const c of chunk(itemIds))
   for (const i of await restAll('OutboundItem', `select=id&id=in.(${c.join(',')})`)) foundItem.add(i.id)
 const orphanScans = scans.filter(s => !foundItem.has(s.item_id))
-check('Không scan entry mồ côi', orphanScans.length === 0, orphanScans.length ? `${orphanScans.length} entry` : `soi ${scans.length} entry`)
+check('Không scan entry mồ côi', orphanScans.length === 0,
+  orphanScans.length
+    ? `${orphanScans.length} entry — vd ${orphanScans.slice(0, 3).map(s => s.pallet_code).join(', ')}`
+    : `soi ${scans.length} entry`)
 
 // 5b. OutboundDelivery không mồ côi (chuyến đã xóa) — probe 02/08 C5b: 2 lượt replan/upload chạy
 // song song trên cùng Số xe (chuyến PENDING = xóa-tạo-lại) sinh DO trỏ chuyến vừa bị xóa. Rác này
@@ -260,13 +265,24 @@ for (const [table, label] of [
 //      tất cả kho đều có; mỗi kho chỉ khác nhau ở SETTING). Thiếu cặp (kho, loại) = kho đó không có
 //      dòng cấu hình ⇒ setting riêng không khai được và (Đợt 2) form ghi sẽ chặn oan đúng loại đó.
 //      Lệch phát sinh khi có đường tạo kho / tạo loại MỚI quên seed, hoặc ai đó INSERT thẳng DB.
+//      ⚠️ CHỈ ĐẾM KHO NGHIỆP VỤ — kho fixture của bộ kiểm (mã `QA*`) bị loại ra. Vì sao: mọi gói QA
+//      tạo kho bằng cách ghi THẲNG PostgREST (`restWrite('Warehouse','POST')`), tức cố ý đi vòng qua
+//      `warehouseController.createWarehouse` — nơi seed cấu hình loại. Kho đó thiếu dòng cấu hình là
+//      ĐƯƠNG NHIÊN, không phản ánh bug nào của app; đếm nó vào đây thì suốt lúc gói 57 chạy (2 kho
+//      QA57_W + QA57_Q) phép kiểm ra 765/775 và mỗi push là một lượt CI đỏ + một email (đo 13–14/09:
+//      5 lượt liên tiếp). Lưới cho ĐƯỜNG THẬT (tạo kho qua API phải seed đủ loại) nằm ở gói 49 [46b].
 {
-  const nWh = (await restAll('Warehouse', 'select=id')).length
+  const whs = await restAll('Warehouse', 'select=id,code')
+  const real = whs.filter(w => !/^QA/i.test(String(w.code ?? '')))
+  const realIds = new Set(real.map(w => w.id))
   const types = await restAll('LookupValue', 'select=value&type=eq.warehouse_type')
-  const cfgs = await restAll('warehouse_type_configs', 'select=warehouse_id,type_code')
-  const expect = nWh * types.length
+  const cfgs = (await restAll('warehouse_type_configs', 'select=warehouse_id,type_code'))
+    .filter(c => realIds.has(c.warehouse_id))
+  const expect = real.length * types.length
+  const skipped = whs.length - real.length
   check('Mọi kho đều có đủ mọi Loại kho (danh mục chung, không kho nào bị thiếu dòng cấu hình)',
-    cfgs.length === expect, `${cfgs.length}/${expect} cặp (${nWh} kho × ${types.length} loại)`)
+    cfgs.length === expect,
+    `${cfgs.length}/${expect} cặp (${real.length} kho × ${types.length} loại)${skipped ? ` · bỏ qua ${skipped} kho fixture QA*` : ''}`)
 }
 
 // 12. RPC scan_insert_pallet PHẢI GHI ĐỦ MỌI KHOÁ mà backend gửi (chốt 15/08).

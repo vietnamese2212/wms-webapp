@@ -65,37 +65,39 @@ const TABS: { key: Tab; label: string; icon: typeof Truck; hint: string }[] = [
 //     người thực hiện không đọc được thì mức chốt chỉ sống trong DB.
 const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' }[]> = {
   INBOX: [],
+  // Tổng bề rộng giữ ≤ ~1.000 px để ở 1280 px cột thao tác ghim mép phải KHÔNG đè lên cột "Tới"
+  // (đo 14/09: act 210 + qty 190 làm "Cửa cont 2" chỉ còn thấy "Cửa c"). Bỏ cột Tem pallet mới có chỗ.
   LOWER: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
-    { id: 'trip', label: 'Chuyến · Giao cho', w: 150 },
-    { id: 'loc',  label: 'Vị trí',         w: 140 },
-    { id: 'lvl',  label: 'Tầng',           w: 52,  align: 'right' },
+    { id: 'trip', label: 'Chuyến · Giao cho', w: 140 },
+    { id: 'loc',  label: 'Vị trí',         w: 130 },
+    { id: 'lvl',  label: 'Tầng',           w: 48,  align: 'right' },
     // Cột "Tem pallet" BỎ 14/09 (user: "43 pallet chung một date thì pallet nào cũng được") — lệnh chỉ
     // là "lấy N pallet ở ô X"; tem ghim + NSX + %Date từng pallet nằm sau KÍNH LÚP (panel chi tiết).
-    { id: 'date', label: 'Date',           w: 110 },
-    { id: 'qty',  label: 'Hạ',             w: 190 },
+    { id: 'date', label: 'Date',           w: 100 },
+    { id: 'qty',  label: 'Hạ',             w: 170 },
     // Cột "Quãng đường" BỎ 14/09: từ 20260913c bảng không sắp theo nó nữa, con số không còn quyết định
     // gì mà chiếm chỗ của thứ cần đọc; vẫn xem được trong panel chi tiết.
-    { id: 'to',   label: 'Đặt xuống',      w: 130 },
-    { id: 'act',  label: '',               w: 190 },   // Nhận + Xong (+ Bỏ nhận) đứng cạnh nhau
+    { id: 'to',   label: 'Đặt xuống',      w: 110 },
+    { id: 'act',  label: '',               w: 184 },   // kính lúp + Xong + Nhận
   ],
   MOVE: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
-    { id: 'trip', label: 'Chuyến · Giao cho', w: 150 },
-    { id: 'cur',  label: 'Vị trí hiện tại', w: 150 },
-    { id: 'date', label: 'Date',           w: 110 },
-    { id: 'st',   label: 'Trạng thái',     w: 126 },
-    { id: 'qty',  label: 'Đưa',            w: 190 },
-    { id: 'to',   label: 'Tới',            w: 130 },
-    { id: 'act',  label: '',               w: 210 },
+    { id: 'trip', label: 'Chuyến · Giao cho', w: 140 },
+    { id: 'cur',  label: 'Vị trí hiện tại', w: 130 },
+    { id: 'date', label: 'Date',           w: 100 },
+    { id: 'st',   label: 'Trạng thái',     w: 120 },
+    { id: 'qty',  label: 'Đưa',            w: 170 },
+    { id: 'to',   label: 'Tới',            w: 110 },
+    { id: 'act',  label: '',               w: 184 },
   ],
   SCAN: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
-    { id: 'cur',  label: 'Vị trí',         w: 150 },
-    { id: 'date', label: 'Date',           w: 110 },
-    { id: 'st',   label: 'Trạng thái',     w: 140 },
-    { id: 'qty',  label: 'Lấy',            w: 190 },
-    { id: 'to',   label: 'Tới',            w: 130 },
+    { id: 'cur',  label: 'Vị trí',         w: 130 },
+    { id: 'date', label: 'Date',           w: 100 },
+    { id: 'st',   label: 'Trạng thái',     w: 120 },
+    { id: 'qty',  label: 'Lấy',            w: 170 },
+    { id: 'to',   label: 'Tới',            w: 110 },
     { id: 'act',  label: '',               w: 48 },   // chỉ kính lúp
   ],
 }

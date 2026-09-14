@@ -907,9 +907,11 @@ try {
   // OTHER_PALLET và "% làm đúng kế hoạch" không tụt. Chỉ khác date/khác ô mới là lệch kế hoạch thật.
   {
     const locEq = await mkLoc('KE', '05', 'T1', 12, 14)
-    const pA = await mkPallet('EQ_A', 50, locEq, dPlus(300), -40)
-    const pB = await mkPallet('EQ_B', 50, locEq, dPlus(300), -40)          // tương đương A (cùng ô, cùng NSX, cùng HSD)
-    const pC = await mkPallet('EQ_C', 50, locEq, dPlus(330), -10)          // KHÁC date — không tương đương
+    // HSD phải NGẮN HƠN mọi pallet còn lại của fixture (PICKFACE +120, NEAR +200/+400…) để FEFO ghim
+    // đúng vào A/B — lần chạy đầu 14/09 kế hoạch ghim QA57-PICKFACE vì A/B khai +300.
+    const pA = await mkPallet('EQ_A', 50, locEq, dPlus(1), -40)
+    const pB = await mkPallet('EQ_B', 50, locEq, dPlus(1), -40)            // tương đương A (cùng ô, cùng NSX, cùng HSD)
+    const pC = await mkPallet('EQ_C', 50, locEq, dPlus(2), -10)            // KHÁC date — không tương đương
     const tEq = await mkTrip('TEQ')
     const iEq = await mkItem(tEq.do, 50, { date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
     r = await startTrip(tEq.gdo, { license_plate: '51C22221', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })

@@ -1055,6 +1055,81 @@ try {
     for (const g of [tC1.gdo, tC2.gdo, gT.id]) await api(`/wms/outbound/${g}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
+  // ═══ [24] SẮP LẠI TỰ ĐỘNG THEO TỒN (user chốt 14/09: "chỉ đặt việc lúc Bắt đầu là bước lùi") ════
+  // Trigger 20260914e ghi (kho, mã) vào hàng đợi khi tồn của mã đang có việc treo chưa ai đụng đổi; lần
+  // tải bảng kế tiếp xả hàng đợi: chạy thử, KHÁC bộ pallet mới sắp lại. Ba chiều: đổi mà không tốt hơn
+  // ⇒ không đụng · tốt hơn ⇒ sắp lại có vết STOCK_CHANGED · việc đã hạ ⇒ không bao giờ bị đụng.
+  {
+    const locQ = await mkLoc('KE', '07', 'T2', 12, 18)
+    const R99 = { kind: 'MIN_PCT', value: 99, source: 'MANUAL', set_at: nowIso() }
+    const pQ1 = await mkPallet('RQ1', 100, locQ, dPlus(700), -1)            // ≥ 99 % và HSD ngắn nhất trong tập ≥ 99 lúc này
+    const tQ = await mkTrip('TRQ')
+    await mkItem(tQ.do, 100, { date_rule: R99 })
+    r = await startTrip(tQ.gdo, { license_plate: '51C24241', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    let tkQ = (await tasksOf(tQ.gdo)).filter(t => t.status === 'PENDING')
+    const okStart = r.s === 200 && tkQ.length === 1 && tkQ[0].entry_id === pQ1.id
+    check('[24a] Bắt đầu → 1 việc ghim RQ1 (HSD ngắn nhất trong tập đạt mức)', okStart, `http=${r.s} việc=${tkQ.length} ghim=${tkQ[0]?.pallet_code}`)
+    if (okStart) {
+      const id0 = tkQ[0].id
+      // Tồn đổi nhưng KHÔNG tốt hơn (HSD dài hơn RQ1) ⇒ hàng đợi có dòng, xả ra KHÔNG sắp lại
+      await mkPallet('RQ2', 100, locQ, dPlus(750), -1)
+      let q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${mat.id}`)
+      check('[24b] Nhập pallet cùng mã → trigger ghi (kho, mã) vào hàng đợi', q.length === 1, `${q.length} dòng`)
+      b = await board('MOVE')
+      let after = (await tasksOf(tQ.gdo)).filter(t => t.status === 'PENDING')
+      // `auto_replanned` đếm MỌI chuyến của kho fixture (chuyến của các phép kiểm trước còn mở cũng bị
+      // xét) nên chỉ đòi là số; oracle là CHÍNH việc của chuyến này
+      check('[24c] Xả hàng đợi: pallet mới KHÔNG tốt hơn ⇒ việc của chuyến GIỮ NGUYÊN id (không sắp lại vô cớ)',
+        b.s === 200 && Number.isFinite(Number(b.j?.data?.auto_replanned)) && after.length === 1 && after[0].id === id0,
+        `http=${b.s} auto=${b.j?.data?.auto_replanned} id giữ=${after[0]?.id === id0}`)
+      q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${mat.id}`)
+      check('[24c2] Hàng đợi được xả sạch sau lần tải bảng', q.length === 0, `${q.length} dòng còn`)
+      // Tồn đổi TỐT HƠN (HSD ngắn hơn, vẫn ≥ 99 %) ⇒ sắp lại tự động, việc cũ CANCELLED/STOCK_CHANGED, việc mới ghim RQ3
+      const pQ3 = await mkPallet('RQ3', 100, locQ, dPlus(600), -1)
+      b = await board('MOVE')
+      const allQ = await tasksOf(tQ.gdo)
+      after = allQ.filter(t => t.status === 'PENDING')
+      const old = allQ.find(t => t.id === id0)
+      check('[24d] Hàng về HSD ngắn hơn ⇒ lần tải bảng kế tiếp SẮP LẠI: auto_replanned≥1, việc cũ STOCK_CHANGED, việc mới ghim RQ3',
+        b.s === 200 && Number(b.j?.data?.auto_replanned) >= 1 && old?.status === 'CANCELLED' && old?.skip_reason === 'STOCK_CHANGED'
+          && after.length === 1 && after[0].entry_id === pQ3.id,
+        `http=${b.s} auto=${b.j?.data?.auto_replanned} cũ=${old?.status}/${old?.skip_reason} mới=${after[0]?.pallet_code}`)
+      // Việc ĐÃ HẠ không bị đụng dù hàng còn tốt hơn nữa về
+      if (after.length === 1) {
+        const id1 = after[0].id
+        await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [id1], stage: 'LOWER' })
+        await mkPallet('RQ4', 100, locQ, dPlus(500), -1)
+        b = await board('MOVE')
+        const kept = (await tasksOf(tQ.gdo)).find(t => t.id === id1)
+        check('[24e] Việc ĐÃ HẠ: hàng tốt hơn về vẫn KHÔNG bị đụng (cùng id, vẫn PENDING, mốc hạ còn, vẫn ghim RQ3)',
+          b.s === 200 && kept?.status === 'PENDING' && !!kept?.lowered_at && kept?.entry_id === pQ3.id,
+          `http=${b.s} auto=${b.j?.data?.auto_replanned} kept=${kept?.status} hạ=${kept?.lowered_at ? 'còn' : 'MẤT'}`)
+      }
+    }
+    await api(`/wms/outbound/${tQ.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
+  // ═══ [25] ĐƯỜNG ĐI NHẶT LẺ (user 14/09 "A → B → C sao cho hợp lý") ═══════════════════════════
+  // Vị trí lấy = gợi ý đầu của cột "Vị trí lấy"; thứ tự ghé = BFS từ cửa của chuyến. Fixture chỉ có
+  // một mã nên một điểm ghé — kiểm hình dạng + routed + vị trí là nơi CÓ hàng của mã.
+  {
+    const tR = await mkTrip('TROUTE')
+    const iR = await mkItem(tR.do, 60, { loose_picking: 60, date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+    r = await startTrip(tR.gdo, { license_plate: '51C25251', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const rr = await api(`/wms/directed/loose-route?gdo_id=${tR.gdo}`)
+    const st = rr.j?.data?.stops ?? []
+    check('[25a] Đường đi nhặt lẻ: 200, có bản vẽ ⇒ routed=true, xuất phát = cửa của chuyến, ≥ 1 điểm ghé seq 1 mang dòng hàng',
+      r.s === 200 && rr.s === 200 && rr.j?.data?.routed === true && rr.j?.data?.start_code === 'Cua A'
+        && st.length >= 1 && st[0].seq === 1 && st.some(s => s.materials.some(m => m.item_id === iR)),
+      `http=${rr.s} routed=${rr.j?.data?.routed} start=${rr.j?.data?.start_code} stops=${st.map(s => `${s.seq}:${s.location_code}`).join(' → ')}`)
+    const stockLocs = new Set((await restAll('InventoryEntry', `select=location_id&material_id=eq.${mat.id}&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)).map(e => e.location_id))
+    check('[25b] Điểm ghé là vị trí THẬT SỰ có tồn của mã (không chỉ đường tới ô trống)',
+      st.length >= 1 && st.every(s => stockLocs.has(s.location_id)), st.map(s => s.location_code).join(','))
+    r = await api('/wms/directed/loose-route?gdo_id=not-a-uuid')
+    check('[25c] gdo_id rác → 400, không 500', r.s === 400, `http=${r.s}`)
+    await api(`/wms/outbound/${tR.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════
   const allTasks = await restAll('wms_tasks', `select=id,gdo_id,item_id,qty_base,status&warehouse_id=eq.${whId}`)
   const openByItem = new Map()

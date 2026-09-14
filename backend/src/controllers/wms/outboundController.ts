@@ -5231,7 +5231,7 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
 // Chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
 // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in()).
 // Trả map material_id → danh sách vị trí ĐÃ SORT (hòa %Date → ít hàng nhất trước → tên) — caller tự slice.
-type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null }
+export type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null }
 // Hạng nhặt của từng khu, khoá `${warehouse_id}|${sub_code}` — 1 câu cho cả danh sách kho.
 // Cùng nguồn với trang Tối ưu vị trí và với chiến thuật cất hàng ABC (WarehouseZone.pick_rank),
 // nên "gần cửa" ở hai luồng nhập/xuất là CÙNG một định nghĩa, không phải hai bản chép tay.
@@ -5245,7 +5245,9 @@ async function pickRankByZone(warehouseIds: string[]): Promise<Map<string, numbe
   return map
 }
 
-async function rotationSuggestionsByMaterial(
+// export (14/09): đường đi nhặt lẻ (`directedWorkController.getLooseRoute`) dùng CÙNG gợi ý này để
+// xếp thứ tự ghé — vị trí lấy và thứ tự đi phải nói về cùng một pallet, không hai bản luật.
+export async function rotationSuggestionsByMaterial(
   matIds: string[], warehouseIds: string[], rotCfg: RotationResolver,
 ): Promise<Map<string, FefoSuggestion[]>> {
   const out = new Map<string, FefoSuggestion[]>()
@@ -5325,7 +5327,7 @@ async function rotationSuggestionsByMaterial(
 interface RotationResolver {
   of: (warehouseId: string | null | undefined, category: string | null | undefined) => RotationConfig
 }
-async function rotationConfigOf(warehouseIds: string[]): Promise<RotationResolver> {
+export async function rotationConfigOf(warehouseIds: string[]): Promise<RotationResolver> {
   const whById = new Map<string, Record<string, unknown>>()
   const typesByWh = new Map<string, WhTypeConfigRow[]>()
   const ids = [...new Set(warehouseIds.filter(Boolean))]

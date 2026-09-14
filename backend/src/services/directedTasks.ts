@@ -134,7 +134,15 @@ type LocRow = {
   grid_x: number | null; grid_y: number | null; grid_w: number | null; grid_h: number | null
   max_pallets: number | null; is_pick_face: boolean | null; serve_categories: string[] | null
 }
-export interface PlanResult { created: number; cancelled: number; unset_items: number; warning: string | null }
+export interface PlanResult {
+  created: number; cancelled: number; unset_items: number; warning: string | null
+  pins?: string[]      // CHỈ khi chạy thử (dryRun): bộ `${entry_id}:${qty_base}` mà kế hoạch SẼ ghim — để so với việc đang treo
+}
+/** Tuỳ chọn lập kế hoạch — mặc định = hành vi cũ. */
+export interface PlanOpts {
+  dryRun?: boolean                // KHÔNG ghi gì (không huỷ, không chèn, không sắp lại seq); trả `pins`
+  ignoreTaskIds?: Set<string>     // coi các việc treo này như KHÔNG TỒN TẠI (nhu cầu tính lại, pallet của chúng tự do)
+}
 
 const EMPTY: PlanResult = { created: 0, cancelled: 0, unset_items: 0, warning: null }
 
@@ -152,9 +160,9 @@ async function logEvents(rows: { task_id: string; event: string; actor: string |
  * nhu cầu nên chạy lần hai không đẻ thêm; chỉ bù đúng phần còn thiếu.
  * KHÔNG BAO GIỜ ném ra ngoài — Bắt đầu chuyến không được hỏng vì lập kế hoạch hỏng.
  */
-export async function planGdoTasks(gdoId: string, actor: string | null): Promise<PlanResult> {
+export async function planGdoTasks(gdoId: string, actor: string | null, opts: PlanOpts = {}): Promise<PlanResult> {
   try {
-    return await planInner(gdoId, actor)
+    return await planInner(gdoId, actor, opts)
   } catch (e) {
     recordServerError('be', String((e as Error)?.message ?? e), 500, 'PLAN_FAILED', `directedTasks.planGdoTasks/${gdoId}`)
     return { ...EMPTY, warning: 'Không lập được kế hoạch lấy hàng cho chuyến này — chuyến vẫn xuất bình thường như chế độ Thủ công.' }
@@ -170,20 +178,63 @@ export async function planGdoTasks(gdoId: string, actor: string | null): Promise
  * Cùng khuôn với `resetUntouchedTasksOfItems` (đổi %Date). GIỮ việc đã hạ / đã đưa ra (công người
  * ta bỏ ra thật) và việc ĐANG có người cầm trong hạn `CLAIM_TTL_MS` (xe nâng đang trên đường tới).
  */
-export async function replanGdoTasks(gdoId: string, actor: string | null): Promise<PlanResult> {
-  const { data } = await supabase.from('wms_tasks')
-    .select('id, claimed_by, claimed_at').eq('gdo_id', gdoId).eq('status', 'PENDING')
-    .is('lowered_at', null).is('moved_at', null)
-  const stale = Date.now() - CLAIM_TTL_MS
-  const ids = ((data ?? []) as { id: string; claimed_by: string | null; claimed_at: string | null }[])
-    .filter(t => !t.claimed_by || !t.claimed_at || new Date(t.claimed_at).getTime() < stale)
-    .map(t => t.id)
-  const reset = await cancelTasks(ids, actor, 'REPLANNED')
+export async function replanGdoTasks(gdoId: string, actor: string | null, reason = 'REPLANNED'): Promise<PlanResult> {
+  const ids = (await untouchedTasksOf(gdoId)).map(t => t.id)
+  const reset = await cancelTasks(ids, actor, reason)
   const r = await planGdoTasks(gdoId, actor)
   return { ...r, cancelled: r.cancelled + reset }
 }
 
-async function planInner(gdoId: string, actor: string | null): Promise<PlanResult> {
+/** Việc treo CHƯA AI ĐỤNG của chuyến: chưa hạ, chưa đưa ra, không ai đang cầm trong hạn `CLAIM_TTL_MS`. */
+async function untouchedTasksOf(gdoId: string): Promise<Array<{ id: string; entry_id: string | null; qty_base: number }>> {
+  const { data } = await supabase.from('wms_tasks')
+    .select('id, entry_id, qty_base, claimed_by, claimed_at').eq('gdo_id', gdoId).eq('status', 'PENDING')
+    .is('lowered_at', null).is('moved_at', null)
+  const stale = Date.now() - CLAIM_TTL_MS
+  return ((data ?? []) as Array<{ id: string; entry_id: string | null; qty_base: number; claimed_by: string | null; claimed_at: string | null }>)
+    .filter(t => !t.claimed_by || !t.claimed_at || new Date(t.claimed_at).getTime() < stale)
+}
+
+/**
+ * XẢ HÀNG ĐỢI SẮP LẠI THEO TỒN (user chốt 14/09: "tại thời điểm hạ họ check được tồn mới nhất… chỉ đặt
+ * việc lúc Bắt đầu là bước lùi"). Trigger `trg_wms_replan_enqueue` (migration 20260914e) ghi (kho, mã)
+ * vào `wms_replan_queue` mỗi khi tồn của mã đang có việc treo chưa ai đụng thay đổi. Gọi ở đầu mỗi lần
+ * tải bảng Việc cần làm / Hộp việc của kho đó ⇒ xe nâng mở bảng lúc sắp đi lấy là thấy đúng tồn hiện tại.
+ *
+ * Chỉ SẮP LẠI KHI KẾT QUẢ KHÁC: chạy thử kế hoạch (coi việc chưa ai đụng như không có) rồi so bộ pallet;
+ * trùng thì không đụng gì — nếu không, mỗi lần chuyến CHÍNH NÓ quét một pallet cũng đổi id mọi việc còn
+ * lại (sổ sự kiện đầy rác, màn nháy). Việc đã hạ / đã đưa ra / đang có người cầm không bao giờ bị đụng.
+ * Hai người cùng tải bảng: câu DELETE … RETURNING là lượt "nhận" — người xoá được dòng mới làm.
+ */
+export async function drainReplanQueue(whId: string, actor = 'hệ thống — tồn đổi'): Promise<{ replanned: number; checked: number }> {
+  const { data: claimed } = await supabase.from('wms_replan_queue')
+    .delete().eq('warehouse_id', whId).select('material_id')
+  const mats = [...new Set(((claimed ?? []) as { material_id: string }[]).map(r => r.material_id))]
+  if (!mats.length) return { replanned: 0, checked: 0 }
+  // Chuyến bị ảnh hưởng = có việc treo chưa ai đụng của các mã vừa đổi tồn (mats có biên: số mã đổi tồn
+  // từ lần tải trước — thường 1–3; chunk 300 cho chắc)
+  const gdos = new Set<string>()
+  for (let i = 0; i < mats.length; i += CHUNK_IDS) {
+    const { data } = await supabase.from('wms_tasks').select('gdo_id')
+      .eq('warehouse_id', whId).eq('status', 'PENDING').is('lowered_at', null).is('moved_at', null)
+      .in('material_id', mats.slice(i, i + CHUNK_IDS))
+    for (const r of (data ?? []) as { gdo_id: string }[]) gdos.add(r.gdo_id)
+  }
+  let replanned = 0
+  for (const gdoId of gdos) {
+    const untouched = await untouchedTasksOf(gdoId)
+    if (!untouched.length) continue
+    const trial = await planGdoTasks(gdoId, actor, { dryRun: true, ignoreTaskIds: new Set(untouched.map(t => t.id)) })
+    const cur = untouched.map(t => `${t.entry_id}:${t.qty_base}`).sort().join('|')
+    const next = (trial.pins ?? []).slice().sort().join('|')
+    if (cur === next) continue
+    await replanGdoTasks(gdoId, actor, 'STOCK_CHANGED')
+    replanned++
+  }
+  return { replanned, checked: gdos.size }
+}
+
+async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {}): Promise<PlanResult> {
   const { data: gdoRow } = await supabase.from('GroupDeliveryOrder')
     .select('id, warehouse_id, status, started_at, dock_location_id, warehouse:Warehouse(id,inventory_mode,work_mode,lower_from_level,rotation_principle,rotation_required)')
     .eq('id', gdoId).maybeSingle()
@@ -218,7 +269,9 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   // Việc còn treo của CHÍNH chuyến này = phần đã lập trước đó (tính vào nhu cầu ⇒ idempotent)
   const { data: mineRaw } = await supabase.from('wms_tasks')
     .select('id, item_id, entry_id, qty_base, seq').eq('gdo_id', gdoId).eq('status', 'PENDING')
-  const mine = (mineRaw ?? []) as { id: string; item_id: string; entry_id: string | null; qty_base: number; seq: number }[]
+  // `ignoreTaskIds` (chạy thử của hàng đợi sắp lại): coi các việc đó như chưa có — nhu cầu tính lại, pallet tự do
+  const mine = ((mineRaw ?? []) as { id: string; item_id: string; entry_id: string | null; qty_base: number; seq: number }[])
+    .filter(t => !opts.ignoreTaskIds?.has(t.id))
   const openByItem = new Map<string, { qty: number; rows: typeof mine }>()
   for (const t of mine) {
     const cur = openByItem.get(t.item_id) ?? { qty: 0, rows: [] as typeof mine }
@@ -266,8 +319,8 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   }
 
   let cancelled = 0
-  if (cancelIds.length) cancelled = await cancelTasks(cancelIds, actor, 'PLAN_CHANGED')
-  if (!needs.length) return { created: 0, cancelled, unset_items: unset, warning: null }
+  if (cancelIds.length && !opts.dryRun) cancelled = await cancelTasks(cancelIds, actor, 'PLAN_CHANGED')
+  if (!needs.length) return { created: 0, cancelled, unset_items: unset, warning: null, ...(opts.dryRun ? { pins: [] } : {}) }
 
   // ── Bản vẽ kho: lưới + vị trí (BFS từ cửa của chuyến) ────────────────────────────────────────
   const [{ data: mapRow }, locsRaw] = await Promise.all([
@@ -480,6 +533,14 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
         rule: describeDateRule(n.rule),
         hint: `chỉ đủ ${qtyLabel(n.qty - left, mat)}/${qtyLabel(n.qty, mat)} đạt mức, thiếu ${qtyLabel(left, mat)}`,
       })
+    }
+  }
+
+  // CHẠY THỬ: trả bộ pallet sẽ ghim, không ghi gì (hàng đợi sắp lại so với việc đang treo)
+  if (opts.dryRun) {
+    return {
+      created: built.length, cancelled: 0, unset_items: unset, warning: warning ?? unmetWarning(unmet),
+      pins: built.map(b => `${b.entry_id}:${b.qty_base}`),
     }
   }
 

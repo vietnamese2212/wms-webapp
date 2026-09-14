@@ -912,6 +912,7 @@ export interface DirectedBoard {
   totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number }
   settings?: { separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number }
   trips?: DirectedTrip[]
+  auto_replanned?: number     // số chuyến vừa được máy sắp lại theo tồn mới ngay trước lần tải này (14/09)
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
   // 14/09 mang thêm mã/quy cách/NPP để mở SetDateRuleSheet ngay tại trang ("Khai ngay")
   unset_items: {

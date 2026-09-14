@@ -3874,6 +3874,21 @@ export function useGdoPickSuggestions(gdoId: string | undefined) {
   })
 }
 
+// ĐƯỜNG ĐI NHẶT LẺ (14/09): thứ tự ghé vị trí lấy từ cửa của chuyến (BFS trên Sơ đồ kho, cùng phép
+// đo với vòng đi xe nâng). Key prefix 'gdo' → realtime tự làm mới khi quét / tồn đổi.
+export interface LooseRouteStop {
+  seq: number; location_id: string; location_code: string; is_pick_face: boolean
+  materials: Array<{ item_id: string; material_id: string; material_code: string | null; pct_date: number | null; available: number }>
+}
+export interface LooseRoute { routed: boolean; start_code: string | null; stops: LooseRouteStop[]; unlocated: Array<{ item_id: string; material_code: string | null }> }
+export function useLooseRoute(gdoId: string | undefined) {
+  return useQuery({
+    queryKey: ['gdo', 'loose-route', gdoId],
+    queryFn: () => apiClient.get(`/wms/directed/loose-route?gdo_id=${gdoId}`).then(r => r.data.data as LooseRoute),
+    enabled: !!gdoId,
+  })
+}
+
 export type CheckOutboundScanResult = {
   pallet_code:       string
   production_date:   string | null

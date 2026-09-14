@@ -636,6 +636,12 @@ export default function DirectedWork() {
         {/* HỒ SƠ CHUYẾN ĐANG LÀM (13/09) — giao cho ai · mấy DO · còn bao nhiêu. Trước đó bảng chỉ
             có biển số + cửa, trong khi NPP/số DO/tiến độ đều nằm sẵn trong DB. Mobile giữ ba mẩu
             cốt lõi, phần còn lại chỉ hiện từ sm (chuẩn mật độ: dữ liệu phải xuất hiện sớm). */}
+        {/* Máy vừa sắp lại việc chưa ai đụng theo tồn mới (14/09) — phải NÓI RA, kẻo xe nâng thấy thứ tự đổi mà không biết vì sao */}
+        {(data?.auto_replanned ?? 0) > 0 && (
+          <div className="shrink-0 border-b bg-amber-50 px-3 py-1 text-[11px] text-amber-800">
+            Tồn kho vừa đổi — kế hoạch của {data?.auto_replanned} chuyến đã được sắp lại theo tồn hiện tại (việc đã hạ / đã đưa ra giữ nguyên).
+          </div>
+        )}
         {focusTrip && (
           <div className="shrink-0 border-b bg-sky-50/70 px-3 py-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <span className="font-mono font-semibold">{tripName(focusTrip)}</span>

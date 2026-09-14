@@ -680,3 +680,10 @@ created_at, updated_at
   luôn phải gắn kèm với số xe"). Bản cũ `COALESCE(license_plate, group_code)` ⇒ chuyến có biển thì Số xe (khoá điều vận /
   SAP / Kế hoạch xuất) biến mất. Thay đúng 2 chỗ (việc của tôi · pallet chờ xe hạ), cùng chữ ký, CREATE OR REPLACE. FE cùng
   đợt dùng helper `tripName()`. Đã áp staging 14/09.
+- `20260914e_replan_queue.sql` — **hàng đợi SẮP LẠI THEO TỒN** (user chốt 14/09: "chỉ đặt việc lúc Bắt đầu là bước lùi"). Bảng
+  `wms_replan_queue(warehouse_id, material_id, queued_at)` PK (kho, mã); trigger row-level `trg_wms_replan_enqueue` trên
+  `InventoryEntry` (INSERT/DELETE/UPDATE OF status·cartons_remaining·cartons_reserved·location_id·qa_status_id·production_date·
+  expiry_date·warehouse_id·material_id) upsert một dòng KHI mã đó đang có việc treo chưa ai đụng (EXISTS trên index riêng phần mới
+  `idx_wms_tasks_pending_wh_mat`); bọc EXCEPTION nên không bao giờ hỏng giao dịch tồn. Node xả hàng đợi ở đầu mỗi lần tải bảng
+  Việc cần làm (`drainReplanQueue`): chạy thử kế hoạch, KHÁC bộ pallet mới bỏ việc chưa ai đụng (lý do STOCK_CHANGED) và ghim lại.
+  Bảng nội bộ: RLS bật, 0 policy, đã DROP trigger realtime `trg_wms_notify`. Đã áp staging 14/09; `npm run db:types` chạy lại.

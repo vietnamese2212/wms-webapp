@@ -12,9 +12,11 @@ import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { searchLooksLikeInjection } from '../../utils/search'
-import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
-import { replanGdoTasks, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
-import { reorderCrossTripPickup, type RoutableRow } from '../../services/directedRoute'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG, fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { replanGdoTasks, drainReplanQueue, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
+import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from '../../services/directedRoute'
+// Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này
+import { rotationSuggestionsByMaterial, rotationConfigOf } from './outboundController'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -44,13 +46,18 @@ export async function getBoard(req: Request, res: Response) {
     const driverId = req.query.driver_id ? String(req.query.driver_id) : null
     if (driverId && badId(driverId)) return fail(res, 400, 'BAD_ID', 'Mã nhân sự không hợp lệ')
 
+    // TỒN ĐỔI TỪ LẦN TẢI TRƯỚC → sắp lại việc chưa ai đụng TRƯỚC khi đọc bảng (14/09, user: "tại thời
+    // điểm hạ họ check được tồn mới nhất"). Hàng đợi thường rỗng ⇒ một câu DELETE trả 0 dòng.
+    const drained = await drainReplanQueue(whId)
+
     const { data, error } = await supabase.rpc('directed_board', {
       p_warehouse_id: whId, p_mode: mode, p_gdo_id: gdoId, p_driver_id: driverId,
     })
     if (error) return fail(res, error)
     const board = (data ?? { rows: [], totals: {}, unset_items: [] }) as {
-      rows?: RoutableRow[]; settings?: { cross_trip_pick_radius?: number }
+      rows?: RoutableRow[]; settings?: { cross_trip_pick_radius?: number }; auto_replanned?: number
     }
+    board.auto_replanned = drained.replanned
     // NHẶT DỌC ĐƯỜNG (13/09) — chỉ bảng "Cần hạ", chỉ khi kho khai bán kính. Ở bảng "Cần đưa ra"
     // mỗi việc đều kết thúc tại cửa nên tổng quãng đường KHÔNG phụ thuộc thứ tự; sắp lại ở đó chỉ
     // làm người ta nhảy chuyến mà không được gì. Sắp ở BACKEND vì BFS trên lưới 200×200 thuộc về
@@ -171,6 +178,72 @@ export async function claim(req: Request, res: Response) {
 }
 
 /** POST /wms/directed/gdos/:id/replan — sắp lại kế hoạch (bản vẽ đổi, đơn đổi, muốn tính lại đường đi) */
+/**
+ * GET /wms/directed/loose-route?gdo_id= — ĐƯỜNG ĐI NHẶT LẺ của một chuyến (user 14/09 "A → B → C sao
+ * cho hợp lý"). Vị trí lấy của mỗi mã = gợi ý ĐẦU của cột "Vị trí lấy" (cùng `rotationSuggestionsByMaterial`,
+ * cùng luật luân chuyển + QA); thứ tự ghé = BFS từ cửa của chuyến qua các vị trí đó. Không giữ chỗ,
+ * không ghi gì — chỉ xếp thứ tự cho người nhặt.
+ */
+export async function getLooseRoute(req: Request, res: Response) {
+  try {
+    const gdoId = String(req.query.gdo_id ?? '')
+    if (badId(gdoId)) return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã chuyến')
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('id, warehouse_id, dock_location_id').eq('id', gdoId).maybeSingle()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến', 404)
+    const g = gdo as { id: string; warehouse_id: string | null; dock_location_id: string | null }
+    const myWhs = scopeWhIds(req)
+    if (myWhs && g.warehouse_id && !myWhs.includes(g.warehouse_id)) return fail(res, 'Chuyến thuộc kho ngoài phạm vi được giao', 403)
+    const whId = g.warehouse_id
+    if (!whId) return ok(res, { routed: false, start_code: null, stops: [], unlocated: [] })
+
+    const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id'))
+    const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
+    const items = doIds.length ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+      .select('id, material_id, material_code_raw, loose_picking, cartons_ordered, cartons_scanned')
+      .in('do_id', chunk).gt('loose_picking', 0).order('id')) as unknown as Array<{
+        id: string; material_id: string | null; material_code_raw: string | null; loose_picking: number | null
+        cartons_ordered: number | null; cartons_scanned: number | null
+      }> : []
+    // Dòng đã lấy đủ thì khỏi ghé
+    const open = items.filter(it => Number(it.cartons_scanned ?? 0) < Number(it.cartons_ordered ?? 0))
+    const matIds = [...new Set(open.map(it => it.material_id).filter((x): x is string => !!x))]
+    if (!matIds.length) return ok(res, { routed: false, start_code: null, stops: [], unlocated: [] })
+
+    const sug = await rotationSuggestionsByMaterial(matIds, [whId], await rotationConfigOf([whId]))
+    const codeByMat = new Map<string, { code: string; pct_date: number | null; available: number }>()
+    for (const m of matIds) {
+      const first = (sug.get(m) ?? []).find(s => !!s.location_code)
+      if (first?.location_code) codeByMat.set(m, { code: first.location_code, pct_date: first.pct_date, available: first.available })
+    }
+    const codes = [...new Set([...codeByMat.values()].map(v => v.code))]
+    const locRows = codes.length ? await fetchAllByIdChunks(codes, chunk => supabase.from('Location')
+      .select('id, location_code, row, is_pick_face').eq('warehouse_id', whId).in('location_code', chunk).order('id')) as unknown as
+      Array<{ id: string; location_code: string; row: string | null; is_pick_face: boolean | null }> : []
+    const locByCode = new Map(locRows.map(l => [l.location_code, l]))
+
+    const { order, routed } = await orderLocationsFromDock(whId, g.dock_location_id, [...locByCode.values()].map(l => l.id))
+    const seqOfLoc = new Map(order.map((id, i) => [id, i + 1]))
+    type Stop = { seq: number; location_id: string; location_code: string; is_pick_face: boolean; materials: Array<{ item_id: string; material_id: string; material_code: string | null; pct_date: number | null; available: number }> }
+    const stops = new Map<string, Stop>()
+    const unlocated: Array<{ item_id: string; material_code: string | null }> = []
+    for (const it of open) {
+      const v = it.material_id ? codeByMat.get(it.material_id) : null
+      const loc = v ? locByCode.get(v.code) : null
+      if (!v || !loc) { unlocated.push({ item_id: it.id, material_code: it.material_code_raw }); continue }
+      const s = stops.get(loc.id) ?? { seq: seqOfLoc.get(loc.id) ?? 0, location_id: loc.id, location_code: loc.location_code, is_pick_face: loc.is_pick_face === true, materials: [] }
+      s.materials.push({ item_id: it.id, material_id: it.material_id!, material_code: it.material_code_raw, pct_date: v.pct_date, available: v.available })
+      stops.set(loc.id, s)
+    }
+    let startCode: string | null = null
+    if (g.dock_location_id) {
+      const { data: dk } = await supabase.from('Location').select('row, location_code').eq('id', g.dock_location_id).maybeSingle()
+      startCode = (dk as { row: string | null; location_code: string } | null)?.row ?? (dk as { location_code: string } | null)?.location_code ?? null
+    }
+    return ok(res, { routed, start_code: startCode, stops: [...stops.values()].sort((a, b) => a.seq - b.seq), unlocated })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
 export async function replan(req: Request, res: Response) {
   try {
     if (badId(req.params.id)) return fail(res, 400, 'BAD_ID', 'Mã chuyến không hợp lệ')

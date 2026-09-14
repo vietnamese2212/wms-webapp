@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-13T07:24:16.277Z · 95 bảng/view · 160 hàm · 0 enum
+// Sinh lúc 2026-09-14T06:30:18.664Z · 96 bảng/view · 161 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -4283,6 +4283,24 @@ export type Database = {
         }
         Relationships: []
       }
+      wms_replan_queue: {
+        Row: {
+          warehouse_id: string
+          material_id: string
+          queued_at: string
+        }
+        Insert: {
+          warehouse_id: string
+          material_id: string
+          queued_at?: string
+        }
+        Update: {
+          warehouse_id?: string
+          material_id?: string
+          queued_at?: string
+        }
+        Relationships: []
+      }
       wms_task_events: {
         Row: {
           id: string
@@ -5210,6 +5228,10 @@ export type Database = {
         Args: { p_material_id: unknown; p_with_mats?: unknown; pallets?: unknown; same_material?: unknown }
         Returns: Record<string, unknown>[]
       }
+      qa_is_hold: {
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Returns: boolean
+      }
       qty_entry_decimal: {
         Args: { p_entry_unit: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
         Returns: number
@@ -5339,7 +5361,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
         Returns: string
       }
       unaccent_init: {

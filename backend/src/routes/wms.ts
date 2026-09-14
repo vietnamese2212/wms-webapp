@@ -263,6 +263,7 @@ router.post('/directed/tasks/confirm',                        requirePerm('direc
 router.post('/directed/tasks/claim',                          requirePerm('directed_work', 'confirm'),                    // "Nhận" việc chung = bước trước của ✓ Xong (12/09)
   validate({ body: z.object({ task_ids: z.array(zText(1, 100)).min(1).max(200), undo: z.boolean().optional() }) }), directed.claim)
 router.post('/directed/gdos/:id/replan',                      requirePerm('directed_work', 'replan'),  directed.replan)
+router.get('/directed/loose-route',                           requireAnyPerm(['loosepicking', 'view'], ['directed_work', 'view']), directed.getLooseRoute)   // đường đi nhặt lẻ A→B→C của một chuyến (14/09)
 
 router.get('/warehouse-map/:warehouseId',                     requirePerm('warehouse_map', 'view'), warehouseMap.getWarehouseMap)
 router.get('/warehouse-map/:warehouseId/occupancy',           requirePerm('warehouse_map', 'view'), warehouseMap.getMapOccupancy)

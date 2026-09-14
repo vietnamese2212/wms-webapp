@@ -21,7 +21,7 @@
 import { db } from '../lib/supabase'
 import { fetchAllRowsParallel } from '../utils/pagination'
 import {
-  buildBlockedMask, bfsFrom, distanceToCells, footprintCells,
+  buildBlockedMask, bfsFrom, distanceToCells, footprintCells, orderByNearest,
   type GridFrame, type GridLoc,
 } from '../utils/warehouseGrid'
 
@@ -69,6 +69,26 @@ async function loadGrid(warehouseId: string): Promise<Grid | null> {
 /** Chỉ dùng trong phép kiểm — buộc nạp lại bản vẽ ngay sau khi sửa Sơ đồ kho. */
 export function clearRouteGridCache(warehouseId?: string): void {
   if (warehouseId) cache.delete(warehouseId); else cache.clear()
+}
+
+/**
+ * ĐƯỜNG ĐI NHẶT LẺ (user 14/09: "con đường của Nhặt lẻ A → B → C sao cho hợp lý"): thứ tự ghé các
+ * vị trí từ cửa của chuyến, tham lam "gần nhất chưa ghé" trên BFS của bản vẽ — cùng phép đo với vòng
+ * đi của xe nâng (`assignSeq`), không chép bản thứ hai. Không có bản vẽ / không có điểm xuất phát ⇒
+ * trả nguyên thứ tự đưa vào và `routed=false` để màn hình nói thật là chưa có đường.
+ */
+export async function orderLocationsFromDock(
+  warehouseId: string, startLocationId: string | null, locationIds: string[],
+): Promise<{ order: string[]; routed: boolean }> {
+  const uniq = [...new Set(locationIds)]
+  const grid = await loadGrid(warehouseId)
+  if (!grid || uniq.length < 2) return { order: uniq, routed: !!grid && uniq.length > 0 }
+  const start = (startLocationId ? grid.locById.get(startLocationId) : null)
+    ?? [...grid.locById.values()].find(l => l.kind === 'DROP' && l.grid_x != null) ?? null
+  if (!start || start.grid_x == null || start.grid_y == null) return { order: uniq, routed: false }
+  const targets = uniq.map(id => { const l = grid.locById.get(id); return l ? footprintCells(l as unknown as GridLoc) : [] })
+  const idx = orderByNearest(grid.frame, grid.mask, { x: start.grid_x, y: start.grid_y }, targets)
+  return { order: idx.map(i => uniq[i]), routed: true }
 }
 
 /**

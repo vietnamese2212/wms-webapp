@@ -10,7 +10,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, useLooseRoute, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { scanRotationOf } from '@/utils/rotation'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
@@ -203,13 +203,19 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
   // Cột "Vị trí lấy" — top 2 vị trí FEFO trên màn (đồng bộ trang Xuất)
   const { data: pickSug } = useGdoPickSuggestions(gdoId)
+  // ĐƯỜNG ĐI NHẶT Lẻ (user 14/09 "A → B → C sao cho hợp lý"): thứ tự ghé vị trí lấy từ cửa của chuyến,
+  // BFS trên Sơ đồ kho — cùng phép đo với vòng đi xe nâng. Dòng hàng xếp theo thứ tự ghé; chưa có bản vẽ
+  // thì giữ thứ tự cũ và dải đường đi nói thẳng "chưa có bản vẽ".
+  const { data: route } = useLooseRoute(gdoId)
+  const seqOfItem = new Map<string, number>()
+  for (const s of route?.stops ?? []) for (const m of s.materials) seqOfItem.set(m.item_id, s.seq)
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
 
   const allItems = doRecords.flatMap(d =>
     d.items
       .filter(i => i.loose_picking > 0)
       .map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
-  )
+  ).sort((a, b) => (seqOfItem.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (seqOfItem.get(b.id) ?? Number.MAX_SAFE_INTEGER))
   // 3 cột CUỐI riêng biệt (user 19/07, đồng bộ Xuất): Batch yêu cầu · %Date yêu cầu · Header text — style đỏ như detail mã
   const hasBatchRequired = allItems.some(i => i.batch_required)
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
@@ -272,6 +278,23 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
           mat={inventoryItem.material}
           onClose={() => setInventoryItemId(null)}
         />
+      )}
+      {/* Dải ĐƯỜNG ĐI: một dòng, cuộn ngang trên điện thoại (hàng nowrap trong khung co được phải cuộn — luật 12/09) */}
+      {route && route.stops.length > 0 && (
+        <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] flex items-center gap-2 overflow-x-auto whitespace-nowrap ${route.routed ? 'bg-sky-50/70 text-slate-700' : 'bg-slate-50 text-slate-500'}`}>
+          <span className="font-semibold text-sky-800 shrink-0">Đường đi nhặt lẻ</span>
+          {route.start_code && <span className="text-slate-500 shrink-0">từ {route.start_code}</span>}
+          {!route.routed && <span className="text-amber-700 shrink-0">(kho chưa có bản vẽ / chuyến chưa gắn cửa — chưa xếp theo đường)</span>}
+          {route.stops.map((s, i) => (
+            <span key={s.location_id} className="shrink-0">
+              {i > 0 && <span className="text-slate-400 mx-1">→</span>}
+              <span className="inline-flex items-center justify-center h-4 min-w-4 rounded-full bg-sky-600 text-white text-[10px] font-semibold px-1 mr-1">{s.seq}</span>
+              <span className="font-mono font-semibold">{s.location_code}</span>
+              <span className="text-slate-500"> ({s.materials.map(m => m.material_code ?? '?').join(', ')})</span>
+            </span>
+          ))}
+          {route.unlocated.length > 0 && <span className="text-amber-700 shrink-0">· {route.unlocated.length} mã chưa có tồn để chỉ chỗ</span>}
+        </div>
       )}
       <ResizableTable key={colSig} storageKey={`loosepicking_items_w:${colSig}`} cols={cols}>
         <TableBody>

@@ -3901,6 +3901,8 @@ export interface LooseRoute {
   unlocated: Array<{
     item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
     units: MatUnits | null; remaining_base: number
+    // NO_MATCH = kho CÒN hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng
+    reason?: 'NO_STOCK' | 'NO_MATCH'
   }>
   done: LooseRouteDone[]
 }

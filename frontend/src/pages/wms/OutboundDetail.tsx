@@ -1260,7 +1260,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   >
                     {(() => {
                       if (item.status === 'COMPLETED') return <span className="text-[10px] text-slate-300">—</span>
-                      const sugs = item.material_id ? pickSug?.[item.material_id] ?? [] : []
+                      // Dòng đã chốt mức %Date có khoá riêng theo ID DÒNG (đã lọc đúng mức);
+                      // chưa chốt thì rơi về khoá theo MÃ. Mức thuộc về dòng, không thuộc về mã.
+                      const sugs = pickSug?.[item.id] ?? (item.material_id ? pickSug?.[item.material_id] ?? [] : [])
                       if (sugs.length === 0) return <span className="text-[10px] text-slate-300">—</span>
                       return (
                         <div className="leading-tight">

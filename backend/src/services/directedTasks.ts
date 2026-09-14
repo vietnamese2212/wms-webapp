@@ -604,8 +604,14 @@ function unmetWarning(unmet: Array<{ code: string; rule: string; hint: string }>
     + ' Sửa mức ở "Chốt %Date" (hoặc sửa Số lượng/Date ở DO SAP), hoặc chờ hàng mới về.'
 }
 
+/**
+ * Pallet nhìn từ góc "có đạt quy tắc date không" — đúng những trường mọi nhánh của `matchesRule`
+ * cần. Rộng hơn `Cand` để CỬA CHỈ ĐƯỜNG (gợi ý vị trí lấy) gọi được mà không phải nạp cả dòng việc.
+ */
+export type DateRulePallet = RotationEntry & { pallet_code?: string | null; batch?: string | null }
+
 /** Pallet có khớp quy tắc date của dòng đơn không. Đây là chỗ DUY NHẤT diễn giải DateRule. */
-function matchesRule(c: Cand, mat: MaterialShelfInfo | null, rule: DateRule): boolean {
+function matchesRule(c: DateRulePallet, mat: MaterialShelfInfo | null, rule: DateRule): boolean {
   if (rule.kind === 'FEFO') return true
   if (rule.kind === 'MIN_PCT') {
     const pct = computePctDate(c, mat)
@@ -622,6 +628,25 @@ function matchesRule(c: Cand, mat: MaterialShelfInfo | null, rule: DateRule): bo
   if (!v) return false
   const d = (x: string | Date | null | undefined) => (x ? new Date(x).toISOString().slice(0, 10) : '')
   return d(c.production_date) === v || d(c.expiry_date) === v || (c.batch ?? '') === v || c.pallet_code === v
+}
+
+/**
+ * CỬA CHỈ ĐƯỜNG PHẢI ĐI CÙNG LUẬT VỚI BỘ SINH VIỆC (vá 14/09, đo trên fixture tự chứa).
+ *
+ * Trước đó gợi ý "Vị trí lấy" và lộ trình nhặt lẻ đi FEFO thuần, KHÔNG đọc mức %Date đã chốt trên
+ * dòng đơn ⇒ cùng một dòng hàng, bảng "Việc cần làm" chỉ sang ô đạt mức còn bảng "Theo vị trí" chỉ
+ * sang ô date 9 %. Người nhặt đi theo màn nào thì lấy hàng theo màn đó, và KHÔNG lỗi nào nổ: cửa
+ * quét chỉ soi `date_required` của VL06O, không soi quy tắc chốt tay.
+ *
+ * Quy tắc CHIA PHẦN: đạt MỘT phần bất kỳ là được — ô đó có hàng cho ít nhất một phần của dòng.
+ */
+export function palletMeetsDateRule(
+  e: DateRulePallet, mat: MaterialShelfInfo | null, rule: DateRule | null | undefined,
+): boolean {
+  if (!rule) return true
+  // Ngân sách LỚN để `rulePartsOf` trả về MỌI phần (truyền 1 thì chỉ ra phần đầu) — không chép lại
+  // cách bóc tách phần, dùng chính hàm mà bộ sinh việc dùng.
+  return rulePartsOf(rule, Number.MAX_SAFE_INTEGER).some(p => matchesRule(e, mat, p.rule))
 }
 
 /**

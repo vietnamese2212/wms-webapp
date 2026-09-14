@@ -39,6 +39,8 @@ type Row = {
   dist: string | null; material_code: string | null; material_name: string | null; units: MatUnits | null
   remaining: number; effective: number; scanned: number; pct_date: number | null; available: number | null
   done: boolean
+  // Dòng không chỉ được chỗ VÌ kho còn hàng mã này nhưng không pallet nào đạt mức date đã chốt
+  no_match?: boolean
 }
 
 // Thứ tự cột theo câu hỏi của người đi nhặt (user 14/09 "mã hàng rồi tới tên hàng chứ, bố trí khoa học vào"):
@@ -89,6 +91,7 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
       key: u.item_id, item_id: u.item_id, material_id: u.material_id, stop_no: null, location_code: null, is_pick_face: false, first_of_stop: true, n_in_stop: 1,
       dist: null, material_code: u.material_code, material_name: u.material_name, units: u.units,
       remaining: u.remaining_base, effective: u.remaining_base, scanned: 0, pct_date: null, available: null, done: false,
+      no_match: u.reason === 'NO_MATCH',
     })
     for (const d of route?.done ?? []) out.push({
       key: d.item_id, item_id: d.item_id, material_id: d.material_id, stop_no: null, location_code: d.location_code, is_pick_face: false,
@@ -167,7 +170,11 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                       {r.done ? (
                         <span className="text-[10px]">{r.location_code ?? '—'} <span className="no-underline text-[9px]">đã lấy</span></span>
                       ) : r.location_code == null ? (
-                        <span className="text-[10px] text-amber-700">chưa có tồn để chỉ chỗ</span>
+                        /* Hai lý do KHÁC HẲN nhau: hết hàng thì chờ hàng về, còn hàng mà không đạt
+                           mức date đã chốt thì việc phải làm là đổi mức / gỡ QA — gộp một câu là bắt đoán. */
+                        <span className="text-[10px] text-amber-700">
+                          {r.no_match ? 'còn hàng nhưng không đạt mức date' : 'chưa có tồn để chỉ chỗ'}
+                        </span>
                       ) : r.first_of_stop ? (
                         <div className="leading-tight">
                           <div className="flex items-center gap-1">

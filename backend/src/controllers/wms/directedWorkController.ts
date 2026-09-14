@@ -13,10 +13,14 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { searchLooksLikeInjection } from '../../utils/search'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG, fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
-import { replanGdoTasks, drainReplanQueue, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
+import {
+  replanGdoTasks, drainReplanQueue, confirmTasks, claimTasks, MAX_CONFIRM,
+  dateRuleOf, palletMeetsDateRule, type ConfirmStage,
+} from '../../services/directedTasks'
 import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from '../../services/directedRoute'
-// Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này
-import { rotationSuggestionsByMaterial, rotationConfigOf } from './outboundController'
+// Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này,
+// và lọc thêm theo mức %Date đã chốt của TỪNG DÒNG (luật khớp date vẫn nằm ở directedTasks)
+import { rotationSuggestionsFor, rotationConfigOf, type SuggestionGroup } from './outboundController'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -202,10 +206,11 @@ export async function getLooseRoute(req: Request, res: Response) {
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
     type MatQ = { short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
     const items = doIds.length ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, material_id, material_code_raw, loose_picking, cartons_ordered, cartons_scanned, material:Material!material_id(short_name, base_unit, entry_unit, units_per_carton)')
+      .select('id, material_id, material_code_raw, loose_picking, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(short_name, base_unit, entry_unit, units_per_carton)')
       .in('do_id', chunk).gt('loose_picking', 0).order('id')) as unknown as Array<{
         id: string; material_id: string | null; material_code_raw: string | null; loose_picking: number | null
         cartons_ordered: number | null; cartons_scanned: number | null; material: MatQ | null
+        date_rule: unknown; date_required: number | null
       }> : []
     // CÒN LẤY nhặt lẻ (base) — cùng công thức `itemLooseProgress` của trang Nhặt lẻ / `looseRemainingOf` của màn quét:
     // phần quét chẵn vượt kế hoạch chẵn ăn vào phần lẻ; lấy đủ phần lẻ thì khỏi ghé dù pallet chẵn còn chưa quét.
@@ -241,13 +246,28 @@ export async function getLooseRoute(req: Request, res: Response) {
     const matIds = [...new Set(open.map(it => it.material_id).filter((x): x is string => !!x))]
     if (!matIds.length) return ok(res, { routed: false, start_code: null, cell_m: null, stops: [], unlocated: [], done: doneRows })
 
-    const sug = await rotationSuggestionsByMaterial(matIds, [whId], await rotationConfigOf([whId]))
-    const codeByMat = new Map<string, { code: string; pct_date: number | null; available: number }>()
-    for (const m of matIds) {
-      const first = (sug.get(m) ?? []).find(s => !!s.location_code)
-      if (first?.location_code) codeByMat.set(m, { code: first.location_code, pct_date: first.pct_date, available: first.available })
+    // GỢI Ý THEO TỪNG DÒNG, KHÔNG THEO MÃ (vá 14/09): mức %Date đã chốt thuộc về DÒNG ĐƠN, và
+    // trước bản vá này lộ trình bỏ qua nó hoàn toàn — đo trên fixture: dòng chốt "≥ 80 %" mà bảng
+    // "Việc cần làm" chỉ sang ô đạt mức còn bảng "Theo vị trí" chỉ sang ô 9 %. Người nhặt đi theo
+    // màn nào lấy hàng theo màn đó và KHÔNG lỗi nào nổ (cửa quét chỉ soi `date_required` của VL06O).
+    // Khoá phụ `#all` = cùng dòng nhưng BỎ bộ lọc mức — chỉ để phân biệt "kho hết hàng" với "hàng
+    // còn nhưng không đạt mức", KHÔNG tốn thêm lượt hỏi DB (cùng một lời gọi).
+    const ruleOfItem = new Map<string, ReturnType<typeof dateRuleOf>>()
+    const groups: SuggestionGroup[] = []
+    for (const it of open) {
+      if (!it.material_id) continue
+      const rule = dateRuleOf(it)
+      ruleOfItem.set(it.id, rule)
+      groups.push({ key: it.id, material_id: it.material_id, accept: e => palletMeetsDateRule(e, e.material, rule) })
+      if (rule) groups.push({ key: `${it.id}#all`, material_id: it.material_id })
     }
-    const codes = [...new Set([...codeByMat.values()].map(v => v.code))]
+    const sug = await rotationSuggestionsFor(groups, [whId], await rotationConfigOf([whId]))
+    const codeByItem = new Map<string, { code: string; pct_date: number | null; available: number }>()
+    for (const it of open) {
+      const first = (sug.get(it.id) ?? []).find(s => !!s.location_code)
+      if (first?.location_code) codeByItem.set(it.id, { code: first.location_code, pct_date: first.pct_date, available: first.available })
+    }
+    const codes = [...new Set([...codeByItem.values()].map(v => v.code))]
     const locRows = codes.length ? await fetchAllByIdChunks(codes, chunk => supabase.from('Location')
       .select('id, location_code, row, is_pick_face').eq('warehouse_id', whId).in('location_code', chunk).order('id')) as unknown as
       Array<{ id: string; location_code: string; row: string | null; is_pick_face: boolean | null }> : []
@@ -264,14 +284,21 @@ export async function getLooseRoute(req: Request, res: Response) {
     const stops = new Map<string, Stop>()
     // Dòng chưa có tồn để chỉ chỗ VẪN phải mang `units` + `material_id`: thiếu quy cách thì bảng in số BASE
     // dán nhãn "thùng" và ô tổng cộng base thô (đo 14/09: 60 hộp hiện "60 thùng", tổng 203,8 thay vì 146,3)
-    const unlocated: Array<{ item_id: string; material_id: string | null; material_code: string | null; material_name: string | null; units: MatQ | null; remaining_base: number }> = []
+    const unlocated: Array<{
+      item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
+      units: MatQ | null; remaining_base: number
+      // VÌ SAO không chỉ được chỗ — "hết hàng" và "hàng còn nhưng không đạt mức date đã chốt" là hai
+      // việc phải làm khác hẳn nhau (chờ hàng về ↔ đổi mức / gỡ QA), gộp một câu là bắt người đọc đoán.
+      reason: 'NO_STOCK' | 'NO_MATCH'
+    }> = []
     for (const it of open) {
-      const v = it.material_id ? codeByMat.get(it.material_id) : null
+      const v = codeByItem.get(it.id)
       const loc = v ? locByCode.get(v.code) : null
       if (!v || !loc) {
         unlocated.push({
           item_id: it.id, material_id: it.material_id, material_code: it.material_code_raw,
           material_name: it.material?.short_name ?? null, units: it.material ?? null, remaining_base: remainingOf(it),
+          reason: ruleOfItem.get(it.id) && (sug.get(`${it.id}#all`) ?? []).length ? 'NO_MATCH' : 'NO_STOCK',
         })
         continue
       }

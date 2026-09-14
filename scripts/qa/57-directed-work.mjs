@@ -1169,6 +1169,65 @@ try {
         sc.s === 200 && rr2.s === 200 && take > 0 && (take >= 60 ? !m2 : Number(m2?.remaining_base) === 60 - take),
         `scan=${sc.s} ${err(sc)} take=${take} rem_sau=${m2?.remaining_base ?? 'rời'} stops=${st2.map(s => `${s.seq}:${s.location_code}`).join(' → ')}`)
     }
+    // ═══ [25f–25g] MỨC %DATE ĐÃ CHỐT PHẢI ĐỔI Ô ĐƯỢC CHỈ ═════════════════════════════════════
+    // ĐO THẬT 14/09 trên fixture riêng: dòng chốt "≥ 80 %" mà bảng "Theo vị trí" vẫn chỉ sang ô
+    // FEFO đầu tiên (date 9 %) trong khi bảng "Việc cần làm" chỉ sang ô đạt mức ⇒ HAI MÀN CỦA CÙNG
+    // MỘT APP nói hai chỗ khác nhau cho cùng một dòng hàng. Không lỗi nào nổ: cửa quét chỉ soi
+    // `date_required` của VL06O, không soi quy tắc chốt tay — người nhặt lấy hàng dưới mức đã cam
+    // kết với khách mà không ai biết. Mã hàng + pallet DỰNG RIÊNG để không phụ thuộc trạng thái
+    // còn lại của các mục trước.
+    {
+      const [matD] = await restWrite('Material', 'POST', null, {
+        id: randomUUID(), material_code: `${T}-MDATE`, material_description: 'QA date rule', short_name: 'QA date',
+        category: CAT_A, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 24,
+        cartons_per_pallet: 100, shelf_life_days: 365, is_active: true, created_at: nowIso(), updated_at: nowIso(),
+      })
+      // Ô GẦN cửa mang date THẤP (FEFO lấy trước) · ô XA mang date CAO ⇒ mốc 80 % chỉ ô XA đạt.
+      const mkD = async (code, locId, expDays, prodOff) => (await restWrite('InventoryEntry', 'POST', null, {
+        id: randomUUID(), pallet_code: `${T}-${code}`, material_id: matD.id, warehouse_id: whId,
+        location_id: locId, cartons_imported: 200, cartons_remaining: 200, cartons_reserved: 0,
+        status: 'IN_STOCK', production_date: dPlus(prodOff), expiry_date: dPlus(expDays),
+        import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+      }))[0]
+      await mkD('DLOW', near.T1, 10, -355)     // %Date ≈ 2,7 %
+      await mkD('DHIGH', far.T3, 360, -5)      // %Date ≈ 98,6 %
+      const mkItemD = async (doId, rule) => (await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: doId, material_id: matD.id, material_code_raw: matD.material_code,
+        cartons_ordered: 100, cartons_scanned: 0, loose_picking: 40, date_rule: rule,
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      }))[0].id
+
+      const tD = await mkTrip('TDATE')
+      const iD = await mkItemD(tD.do, { kind: 'MIN_PCT', value: 80, source: 'MANUAL', set_at: nowIso() })
+      const rD = await startTrip(tD.gdo, { license_plate: '51C25260', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+      const rrD = await api(`/wms/directed/loose-route?gdo_id=${tD.gdo}`)
+      const stD = (rrD.j?.data?.stops ?? []).find(s => (s.materials ?? []).some(m => m.item_id === iD))
+      const tkD = (await tasksOf(tD.gdo)).filter(t => t.item_id === iD && !t.skipped)
+      const taskLoc = [...new Set(tkD.map(t => t.from_location_id))]
+      check('[25f1] Dòng chốt "≥ 80 %": lộ trình chỉ sang ô CÓ hàng đạt mức, KHÔNG sang ô FEFO đầu không đạt',
+        rrD.s === 200 && stD?.location_id === far.T3,
+        `http=${rD.s}/${rrD.s} lộ trình→${stD?.location_code ?? '(không có)'} (ô đạt mức = ${T}_KB_02_T3)`)
+      check('[25f2] Bảng việc và bảng lộ trình chỉ CÙNG một ô cho cùng một dòng hàng (không hai bản luật)',
+        taskLoc.length === 1 && taskLoc[0] === stD?.location_id,
+        `việc→${taskLoc.length} ô ${taskLoc[0] === far.T3 ? '(đạt mức)' : taskLoc[0] === near.T1 ? '(KHÔNG đạt)' : ''} · lộ trình→${stD?.location_id === far.T3 ? '(đạt mức)' : stD?.location_id === near.T1 ? '(KHÔNG đạt)' : '(không có)'}`)
+      check('[25f3] %Date in trên dòng là của ĐÚNG pallet ở ô được chỉ (≥ 80), không phải pallet ô khác',
+        Number((stD?.materials ?? []).find(m => m.item_id === iD)?.pct_date ?? 0) >= 80,
+        `pct=${(stD?.materials ?? []).find(m => m.item_id === iD)?.pct_date}`)
+
+      // Mức KHÔNG pallet nào đạt: ghi thẳng DB vì cửa chốt đã gác 422 DATE_RULE_NO_STOCK — trạng
+      // thái này vẫn xảy ra thật khi tồn đổi SAU lúc chốt. Bảng phải nói ĐÚNG lý do: còn hàng mà
+      // không đạt mức ≠ hết hàng (hai việc phải làm khác hẳn: đổi mức / gỡ QA ↔ chờ hàng về).
+      const tN = await mkTrip('TDATE2')
+      const iN = await mkItemD(tN.do, { kind: 'MIN_PCT', value: 99, source: 'MANUAL', set_at: nowIso() })
+      const rrN = await api(`/wms/directed/loose-route?gdo_id=${tN.gdo}`)
+      const unN = (rrN.j?.data?.unlocated ?? []).find(u => u.item_id === iN)
+      check('[25g] Không pallet nào đạt mức ⇒ dòng KHÔNG bị chỉ sang ô sai, và nêu đúng lý do "còn hàng nhưng không đạt mức"',
+        rrN.s === 200 && !!unN && unN.reason === 'NO_MATCH'
+          && !(rrN.j?.data?.stops ?? []).some(s => (s.materials ?? []).some(m => m.item_id === iN)),
+        `http=${rrN.s} reason=${unN?.reason} có điểm ghé=${(rrN.j?.data?.stops ?? []).some(s => (s.materials ?? []).some(m => m.item_id === iN))}`)
+      await api(`/wms/outbound/${tD.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+    }
+
     // `GroupDeliveryOrder.id` là TEXT ⇒ id rác = 0 dòng = 404 (luật pg-error-is-user-error: KHÔNG chặn theo hình dạng uuid); chỉ cấm 500
     r = await api('/wms/directed/loose-route?gdo_id=not-a-uuid')
     check('[25c] gdo_id rác → 4xx (404 vì khoá text), không 500', r.s === 400 || r.s === 404, `http=${r.s}`)

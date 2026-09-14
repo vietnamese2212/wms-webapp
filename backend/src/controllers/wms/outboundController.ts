@@ -32,7 +32,7 @@ import { guardPutaway } from '../../services/putawayContext'
 import { notifyEmployees } from '../../services/pushService'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
-  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, MAX_DATE_CHECK, MAX_RULE_PARTS,
+  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, palletMeetsDateRule, MAX_DATE_CHECK, MAX_RULE_PARTS,
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
@@ -5245,12 +5245,36 @@ async function pickRankByZone(warehouseIds: string[]): Promise<Map<string, numbe
   return map
 }
 
-// export (14/09): đường đi nhặt lẻ (`directedWorkController.getLooseRoute`) dùng CÙNG gợi ý này để
-// xếp thứ tự ghé — vị trí lấy và thứ tự đi phải nói về cùng một pallet, không hai bản luật.
+// Pallet ứng viên nhìn từ hàm gợi ý — đủ trường để caller tự lọc thêm (vd "có đạt mức %Date đã chốt
+// trên dòng đơn không"), không phải đoán từ kết quả đã gộp.
+export type SuggestionEntry = RotationEntry & {
+  material_id: string
+  pallet_code: string | null
+  batch: string | null
+  location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null } | null
+  material: (MaterialShelfInfo & { category?: string | null }) | null
+}
+/**
+ * Một "câu hỏi gợi ý": lấy hàng cho KHOÁ nào, của mã nào, và pallet nào được tính.
+ * Có `accept` vì quy tắc date thuộc về DÒNG ĐƠN chứ không thuộc về mã hàng — hai dòng cùng mã có
+ * thể đòi hai mức khác nhau, nên kết quả phải khoá theo dòng, không khoá theo mã.
+ */
+export interface SuggestionGroup { key: string; material_id: string; accept?: (e: SuggestionEntry) => boolean }
+
+/** Giữ nguyên cửa cũ: mỗi mã một câu hỏi, không lọc thêm gì. */
 export async function rotationSuggestionsByMaterial(
   matIds: string[], warehouseIds: string[], rotCfg: RotationResolver,
 ): Promise<Map<string, FefoSuggestion[]>> {
+  return rotationSuggestionsFor(matIds.map(id => ({ key: id, material_id: id })), warehouseIds, rotCfg)
+}
+
+// export (14/09): đường đi nhặt lẻ (`directedWorkController.getLooseRoute`) dùng CÙNG gợi ý này để
+// xếp thứ tự ghé — vị trí lấy và thứ tự đi phải nói về cùng một pallet, không hai bản luật.
+export async function rotationSuggestionsFor(
+  groups: SuggestionGroup[], warehouseIds: string[], rotCfg: RotationResolver,
+): Promise<Map<string, FefoSuggestion[]>> {
   const out = new Map<string, FefoSuggestion[]>()
+  const matIds = [...new Set(groups.map(g => g.material_id))]
   if (!matIds.length) return out
   const useWhFilter = warehouseIds.length > 0
   const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
@@ -5259,7 +5283,9 @@ export async function rotationSuggestionsByMaterial(
       fetchAllRowsParallel(() => {
         let q = supabase.from('InventoryEntry')
           // `category` = khóa chọn chiến thuật tầng 2 (mỗi loại kho có thể chạy nguyên tắc riêng)
-          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
+          // `pallet_code`/`batch`: quy tắc date kiểu CHỈ ĐỊNH khớp theo tem hoặc mã lô — thiếu 2 cột
+          // này thì bộ lọc của caller sẽ loại sạch pallet và màn hình nói "không còn hàng đạt mức".
+          .select(`material_id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
           .in('status', [...PICKABLE_STATUSES])
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
@@ -5274,11 +5300,7 @@ export async function rotationSuggestionsByMaterial(
       })
     )
   )
-  const entries = entryChunks.flat() as Array<RotationEntry & {
-    material_id: string
-    location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null } | null
-    material: (MaterialShelfInfo & { category?: string | null }) | null
-  }>
+  const entries = entryChunks.flat() as SuggestionEntry[]
   // HẠNG NHẶT của khu = khu đó gần cửa xuất tới đâu (1 = gần nhất). Kho đã xếp hạng ở trang Tối ưu
   // vị trí và luồng CẤT hàng đã dùng (chiến thuật ABC), nhưng luồng LẤY hàng thì chưa đọc dòng nào:
   // hoà ngày là xếp theo TÊN vị trí (alphabet) — người nhặt bị đẩy sang khu xa trong khi khu gần
@@ -5287,29 +5309,33 @@ export async function rotationSuggestionsByMaterial(
   const rankByZone = await pickRankByZone([...new Set(entries.map(e => e.location?.warehouse_id).filter((x): x is string => !!x))])
   const nowMs = Date.now()
   type Agg = FefoSuggestion & { rot_key: number | null; pick_rank: number }
-  const byMat = new Map<string, Map<string, Agg>>()
+  const eligibleByMat = new Map<string, SuggestionEntry[]>()
   for (const e of (entries ?? [])) {
     if (!isPickEligible(e, qaHold)) continue
-    const principle = rotCfg.of(e.location?.warehouse_id, e.material?.category).principle
-    const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
-    const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
-    const rot_key  = rotationSortKey(e, e.material, principle)
-    const rot_date = rotationDateOf(e, e.material, principle)
-    const loc = e.location?.location_code ?? '(chưa xác định)'
-    // Khu chưa xếp hạng → đẩy xuống cuối nhóm cùng ngày (không có thông tin thì không ưu ái)
-    const pick_rank = rankByZone.get(`${e.location?.warehouse_id ?? ''}|${e.location?.sub_code ?? ''}`) ?? Number.MAX_SAFE_INTEGER
-    const k = `${rot_key ?? 'n'}|${loc}`
-    const locMap = byMat.get(e.material_id) ?? new Map<string, Agg>()
-    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key, pick_rank }
-    cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
-    locMap.set(k, cur)
-    byMat.set(e.material_id, locMap)
+    eligibleByMat.set(e.material_id, [...(eligibleByMat.get(e.material_id) ?? []), e])
   }
-  for (const [matId, locMap] of byMat) {
+  for (const g of groups) {
+    const locMap = new Map<string, Agg>()
+    for (const e of eligibleByMat.get(g.material_id) ?? []) {
+      if (g.accept && !g.accept(e)) continue
+      const principle = rotCfg.of(e.location?.warehouse_id, e.material?.category).principle
+      const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
+      const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
+      const rot_key  = rotationSortKey(e, e.material, principle)
+      const rot_date = rotationDateOf(e, e.material, principle)
+      const loc = e.location?.location_code ?? '(chưa xác định)'
+      // Khu chưa xếp hạng → đẩy xuống cuối nhóm cùng ngày (không có thông tin thì không ưu ái)
+      const pick_rank = rankByZone.get(`${e.location?.warehouse_id ?? ''}|${e.location?.sub_code ?? ''}`) ?? Number.MAX_SAFE_INTEGER
+      const k = `${rot_key ?? 'n'}|${loc}`
+      const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key, pick_rank }
+      cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
+      locMap.set(k, cur)
+    }
+    if (!locMap.size) continue
     // Thứ tự = ĐÚNG nguyên tắc luân chuyển của kho (không còn cứng %Date). Hòa ngày → KHU GẦN CỬA
     // XUẤT trước (hạng nhặt, 17/08) → vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí.
     // Hạng nhặt đứng SAU rot_key: đi ít bước là để nhanh, không bao giờ đổi được thứ tự lấy hàng.
-    out.set(matId, [...locMap.values()].sort((a, b) => {
+    out.set(g.key, [...locMap.values()].sort((a, b) => {
       const ka = a.rot_key ?? Infinity, kb = b.rot_key ?? Infinity
       if (ka !== kb) return ka - kb
       if (a.pick_rank !== b.pick_rank) return a.pick_rank - b.pick_rank
@@ -5452,11 +5478,22 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
     const doIds = (dos ?? []).map((d: { id: string }) => d.id)
     if (!doIds.length) return ok(res, {})
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('material_id').in('do_id', chunk).order('id')) as Array<{ material_id: string | null }>
+      .select('id, material_id, date_rule, date_required').in('do_id', chunk).order('id')) as Array<{
+        id: string; material_id: string | null; date_rule: unknown; date_required: number | null
+      }>
     const matIds = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
     const whIds = gdo.warehouse_id ? [gdo.warehouse_id] : []
-    const sugByMat = await rotationSuggestionsByMaterial(matIds, whIds, await rotationConfigOf(whIds))
-    return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
+    // Mức %Date thuộc về DÒNG ĐƠN, không thuộc về mã hàng (14/09) ⇒ dòng nào đã chốt mức thì trả
+    // thêm khoá theo ID DÒNG, đã lọc đúng mức đó. Khoá theo MÃ giữ nguyên nghĩa cũ để bundle PWA
+    // cũ (tra theo material_id) không mất cột; bản mới tra theo dòng trước, rơi về mã nếu chưa chốt.
+    const groups: SuggestionGroup[] = matIds.map(m => ({ key: m, material_id: m }))
+    for (const it of items) {
+      const rule = dateRuleOf(it)
+      if (!rule || !it.material_id) continue
+      groups.push({ key: it.id, material_id: it.material_id, accept: e => palletMeetsDateRule(e, e.material, rule) })
+    }
+    const sugByKey = await rotationSuggestionsFor(groups, whIds, await rotationConfigOf(whIds))
+    return ok(res, Object.fromEntries([...sugByKey.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

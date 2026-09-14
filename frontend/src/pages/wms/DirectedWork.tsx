@@ -639,7 +639,7 @@ export default function DirectedWork() {
         {focusTrip && (
           <div className="shrink-0 border-b bg-sky-50/70 px-3 py-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <span className="font-mono font-semibold">{tripName(focusTrip)}</span>
-            {focusTrip.customers && <span className="truncate max-w-[55%] sm:max-w-none">Giao cho <b>{focusTrip.customers}</b></span>}
+            {focusTrip.customers && <span className="truncate max-w-[55%] sm:max-w-none"><b>{focusTrip.customers}</b></span>}
             <span className="tabular-nums">{nf(focusTrip.lines_done)}/{nf(focusTrip.lines_total)} dòng quét đủ</span>
             <span className="hidden sm:inline text-slate-500 tabular-nums">còn {nf(focusTrip.tasks_pending)} việc</span>
             {focusTrip.dock_name && <span className="hidden sm:inline text-slate-500">{focusTrip.dock_name}</span>}
@@ -721,13 +721,13 @@ export default function DirectedWork() {
                       {isOldTrip(r.delivery_date) && <span className="text-amber-600"> · chuyến {formatDate(r.delivery_date!)}</span>}
                     </span>
                   </div>
-                  {/* NƠI NHẬN + SỐ XE — người lấy hàng phải biết đang phục vụ ai, và dòng nào cũng phải
-                      gắn Số xe (user 14/09 "Giao cho Tuyết Trang_Số xe"); biển số ở dòng trên là thứ nhìn
-                      thấy ngoài bãi, Số xe là thứ điều vận/SAP gọi tên */}
+                  {/* NƠI NHẬN · SỐ XE — người lấy hàng phải biết đang phục vụ ai, và dòng nào cũng phải
+                      gắn Số xe (user 14/09 "Tuyết Trang_Số xe", rồi "bỏ chữ Giao cho và Số xe" — chỉ in
+                      giá trị); biển số ở dòng trên là thứ nhìn thấy ngoài bãi, Số xe là thứ điều vận/SAP gọi */}
                   {(r.customer_name || r.group_code) && (
                     <div className="text-[11px] text-slate-500 truncate">
-                      {r.customer_name ? <>Giao cho {r.customer_name}</> : null}
-                      {r.group_code && <>{r.customer_name ? ' · ' : ''}Số xe <span className="font-mono">{r.group_code}</span></>}
+                      {r.customer_name}
+                      {r.group_code && <>{r.customer_name ? ' · ' : ''}<span className="font-mono">{r.group_code}</span></>}
                     </div>
                   )}
                   <Step label="Date" big={first}>

@@ -245,6 +245,12 @@ try {
     tk.map(t => `${t.from_location_code}:L${t.level_no}${t.needs_lower ? '↓' : ''}`).join(' '))
   check('[5h] Việc cần hạ có ĐIỂM ĐẶT DÃY; việc lấy trực tiếp thì không',
     tk.length > 0 && tk.every(t => t.needs_lower ? !!t.drop_location_id : !t.drop_location_id))
+  // Điểm đặt dãy phải là dãy CỦA PALLET, không phải điểm gần cửa nhất (14/09): dãy KB (x=16) có điểm
+  // "Dau day 2" (x=18) ngay cạnh, còn "Dau day 1" (x=4) gần Cửa A — bản cũ chọn điểm 1 cho cả kho.
+  const lowerTasks = tk.filter(t => t.needs_lower && t.drop_location_id)
+  check('[5h2] Điểm đặt dãy = điểm GẦN Ô NGUỒN nhất (dãy KB → Dau day 2, dãy KA → Dau day 1), không phải gần cửa',
+    lowerTasks.length > 0 && lowerTasks.every(t => t.drop_location_id === (/_KB_/.test(t.from_location_code ?? '') ? dropB : dropA)),
+    lowerTasks.map(t => `${t.from_location_code}→${t.drop_location_id === dropB ? 'Dau day 2' : t.drop_location_id === dropA ? 'Dau day 1' : '?'}`).join(' '))
   check('[5i] Đích của việc ra cửa = CỬA của chuyến', tk.length > 0 && tk.every(t => t.to_location_id === dockA && t.to_kind === 'DOCK'))
   check('[5j] Có khoảng cách BFS từ cửa (bản vẽ đã vẽ)', tk.length > 0 && tk.every(t => t.dist_cells != null), tk.map(t => t.dist_cells).join(','))
 

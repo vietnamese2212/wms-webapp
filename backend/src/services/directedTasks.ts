@@ -303,6 +303,20 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
     const d = distanceToCells(frame, mask, dist, cells)
     return d < 0 ? null : d
   }
+  // Đường đi từ một ĐIỂM ĐÍCH (điểm đầu dãy / vị trí nhặt lẻ — vài điểm) tới Ô NGUỒN của pallet. BFS
+  // từ mỗi điểm đích ĐÚNG MỘT LẦN rồi tra cho mọi pallet. Vì sao không dùng `distOf`: đó là khoảng cách
+  // tới CỬA — chọn điểm đặt "gần cửa nhất" là bắt xe hạ chở pallet SCA băng qua nửa kho tới điểm đặt
+  // của dãy FG01 (user 14/09: "SCA ở FG02 thì đâu hạ chỗ đó nhỉ"); điểm đầu dãy phải là dãy CỦA pallet.
+  const fromTarget = new Map<string, Int32Array>()
+  const distBetween = (target: LocRow, from: LocRow | null | undefined): number | null => {
+    if (!frame || !mask || !from || target.grid_x == null || target.grid_y == null) return null
+    let d = fromTarget.get(target.id)
+    if (!d) { d = bfsFrom(frame, mask, { x: target.grid_x, y: target.grid_y }).dist; fromTarget.set(target.id, d) }
+    const cells = footprintCells(from as unknown as GridLoc)
+    if (!cells.length) return null
+    const r = distanceToCells(frame, mask, d, cells)
+    return r < 0 ? null : r
+  }
 
   // ── Ứng viên pallet theo mã (một câu cho cả chuyến) ──────────────────────────────────────────
   const matIds = [...new Set(needs.map(n => n.item.material_id).filter((x): x is string => !!x))]
@@ -426,7 +440,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       const take = Math.min(left, freeOf(c))
       if (take <= 0) continue
       const isLoose = looseLeft > 0
-      const dest = isLoose ? pickFaceFor(pickFaces, mat?.category ?? null, loc, locById, distOf) : null
+      const dest = isLoose ? pickFaceFor(pickFaces, mat?.category ?? null, loc, distBetween, distOf) : null
       if (isLoose && !dest) {
         // Kho chưa khai vị trí nhặt lẻ → nói ra, không im lặng biến phần lẻ thành việc ra cửa
         warning = warning ?? 'Kho chưa khai VỊ TRÍ NHẶT LẺ — phần hàng lẻ chưa có chỗ hạ xuống (khai ở trang Vị trí kho).'
@@ -438,7 +452,7 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       const needsLower = kind === 'LOOSE_FEED'
         ? loc?.is_rack === true
         : (lvl != null && lvl >= n.lowerFrom)
-      const drop = kind === 'PICK' && needsLower ? dropFor(locs, mat?.category ?? null, loc, distOf) : null
+      const drop = kind === 'PICK' && needsLower ? dropFor(locs, mat?.category ?? null, loc, distBetween, distOf) : null
       built.push({
         id: randomUUID(), warehouse_id: whId, gdo_id: gdoId, item_id: it.id,
         entry_id: c.id, pallet_code: c.pallet_code,
@@ -723,26 +737,32 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
   })
 }
 
-/** Vị trí nhặt lẻ đích: đúng Loại kho phục vụ, còn chỗ, gần pallet nhất. */
-function pickFaceFor(
-  faces: LocRow[], category: string | null, from: LocRow | null | undefined,
-  _byId: Map<string, LocRow>, distOf: (l: LocRow | null | undefined) => number | null,
-): LocRow | null {
-  const ok = faces.filter(f => servesCategory(f, category))
-  if (!ok.length) return null
-  return ok.slice().sort((a, b) => (distOf(a) ?? Infinity) - (distOf(b) ?? Infinity)
-    || naturalCompare(a.location_code, b.location_code))[0] ?? null
+type DistBetween = (target: LocRow, from: LocRow | null | undefined) => number | null
+type DistOf = (l: LocRow | null | undefined) => number | null
+
+/** Điểm đích gần Ô NGUỒN nhất (BFS từ đích tới ô pallet); không đo được thì rơi về gần cửa, rồi mã ô. */
+function nearestTo(cands: LocRow[], from: LocRow | null | undefined, distBetween: DistBetween, distOf: DistOf): LocRow | null {
+  const key = (l: LocRow) => distBetween(l, from) ?? distOf(l) ?? Infinity
+  return cands.slice().sort((a, b) => key(a) - key(b) || naturalCompare(a.location_code, b.location_code))[0] ?? null
 }
 
-/** Điểm đầu dãy để xe hạ đặt pallet xuống: đúng Loại kho phục vụ, gần ô nguồn nhất. */
-function dropFor(
-  locs: LocRow[], category: string | null, _from: LocRow | null | undefined,
-  distOf: (l: LocRow | null | undefined) => number | null,
+/** Vị trí nhặt lẻ đích: đúng Loại kho phục vụ, gần pallet nhất. */
+function pickFaceFor(
+  faces: LocRow[], category: string | null, from: LocRow | null | undefined, distBetween: DistBetween, distOf: DistOf,
 ): LocRow | null {
-  const drops = locs.filter(l => l.kind === 'DROP' && servesCategory(l, category))
-  if (!drops.length) return null
-  return drops.slice().sort((a, b) => (distOf(a) ?? Infinity) - (distOf(b) ?? Infinity)
-    || naturalCompare(a.location_code, b.location_code))[0] ?? null
+  return nearestTo(faces.filter(f => servesCategory(f, category)), from, distBetween, distOf)
+}
+
+/**
+ * Điểm đầu dãy để xe hạ đặt pallet xuống: đúng Loại kho phục vụ, gần Ô NGUỒN nhất. Bản trước sắp theo
+ * khoảng cách tới CỬA (tham số `_from` bị bỏ không dùng) ⇒ mọi pallet của chuyến cùng đổ về một điểm
+ * gần cửa, kể cả pallet nằm ở dãy tận đầu kia — đo Ba Vì 14/09: 4 điểm đặt đều để "mọi loại", pallet SCA
+ * (x≈78) được giao đặt ở điểm x=65 của dãy FG01 chỉ vì nó gần Cửa sca hơn.
+ */
+function dropFor(
+  locs: LocRow[], category: string | null, from: LocRow | null | undefined, distBetween: DistBetween, distOf: DistOf,
+): LocRow | null {
+  return nearestTo(locs.filter(l => l.kind === 'DROP' && servesCategory(l, category)), from, distBetween, distOf)
 }
 
 /**

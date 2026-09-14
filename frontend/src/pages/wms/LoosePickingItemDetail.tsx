@@ -3,6 +3,8 @@ import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
 import { ArrowLeft, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
@@ -433,7 +435,7 @@ export default function LoosePickingItemDetail() {
   const invAggRows = useMemo<InvAggRow[]>(() => {
     const map = new Map<string, InvAggRow>()
     for (const e of sortedInv) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.available; r.entries.push(e) }
@@ -677,7 +679,7 @@ export default function LoosePickingItemDetail() {
           <div className="flex items-center gap-x-2 gap-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
-                onClick={() => navigate(`/wms/loosepicking/${gdoId}`)}
+                onClick={() => navigate(backTarget(`/wms/loosepicking/${gdoId}`))}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />

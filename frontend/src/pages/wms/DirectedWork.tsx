@@ -17,17 +17,19 @@
 //   • Tab Sắp quét có nút QUÉT ngay tại chỗ (thủ kho không phải sang Xuất kho → chuyến → Quét).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes } from 'lucide-react'
+import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes, CalendarClock, ExternalLink } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { SetDateRuleSheet, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
-import { TaskDetailSheet, palletPct, palletDays, rowRule } from '@/components/wms/TaskDetailSheet'
+import { TaskDetailSheet, palletPct, palletDays, rowRule, anchorDirected } from '@/components/wms/TaskDetailSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -71,7 +73,8 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
     { id: 'pal',  label: 'Tem pallet',     w: 185 },
     { id: 'date', label: 'Date',           w: 104 },
     { id: 'qty',  label: 'Hạ',             w: 140 },
-    { id: 'dist', label: 'Quãng đường',    w: 84,  align: 'right' },
+    // Cột "Quãng đường" BỎ 14/09: từ 20260913c bảng không sắp theo nó nữa, con số không còn quyết định
+    // gì mà chiếm chỗ của thứ cần đọc; vẫn xem được trong panel chi tiết.
     { id: 'to',   label: 'Đặt xuống',      w: 130 },
     { id: 'act',  label: '',               w: 190 },   // Nhận + Xong (+ Bỏ nhận) đứng cạnh nhau
   ],
@@ -99,16 +102,19 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
 
 // Việc BỊ BỎ phải nói lý do (12/09): xe hạ đã hạ pallet xuống rồi mà việc lặng lẽ biến mất thì không
 // ai biết vì sao hàng mình vừa hạ không còn được nhắc. Dòng này gạch xám, không STT, không nút.
+// CHỮ "BỎ" ĐỔI 14/09: trước đó ba việc khác nhau cùng một chữ trên một màn — nút "Bỏ" (xoá dấu ✓) ·
+// "Bỏ nhận" (trả việc) · "Đã bỏ" (hệ thống huỷ) — chính user hỏi "bỏ là gỡ ra hay chỉ hoàn tác?".
+// Nay: "Bỏ dấu ✓" · "Trả việc" · "Hệ thống đã huỷ".
 const SKIP_LABEL: Record<string, string> = {
-  OTHER_PALLET: 'bỏ — thủ kho đã lấy pallet khác',
-  PALLET_TAKEN: 'bỏ — chuyến khác đã lấy pallet này',
-  DATE_RULE_CHANGED: 'bỏ — quy định date đã đổi, đã sắp lại',
-  PLAN_CHANGED: 'bỏ — kế hoạch đổi',
+  OTHER_PALLET: 'hệ thống đã huỷ — thủ kho đã lấy pallet khác',
+  PALLET_TAKEN: 'hệ thống đã huỷ — chuyến khác đã lấy pallet này',
+  DATE_RULE_CHANGED: 'hệ thống đã huỷ — quy định date đã đổi, đã sắp lại',
+  PLAN_CHANGED: 'hệ thống đã huỷ — kế hoạch đổi',
 }
 
 /** Trạng thái một dòng — chữ ngắn, đọc lướt được trên PDA. */
 function stateOf(r: DirectedRow, tab: BoardTab): { text: string; cls: string } {
-  if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `bỏ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
+  if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `hệ thống đã huỷ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
   if (r.all_scanned) return { text: `✓ quét đủ${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}`, cls: 'text-green-600' }
   if (r.stage_done) return {
     text: `✓ ${tab === 'LOWER' ? 'đã hạ' : 'đã đưa ra'}${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}${r.done_by_name ? ` · ${r.done_by_name}` : ''}`,
@@ -217,27 +223,39 @@ function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: bo
 
 // Mọi nút của một dòng — dùng CHUNG cho bảng (PC) và thẻ (PDA) để hai màn không kể hai câu chuyện khác nhau.
 type RowAction = { key: string; label: string; icon: typeof Check; primary?: boolean; muted?: boolean; onClick: () => void }
-function actionsFor(
-  r: DirectedRow, tab: BoardTab, me: string | null, canConfirm: boolean,
-  fire: { confirm: (r: DirectedRow, stage: 'LOWER' | 'MOVE' | 'BOTH', undo: boolean) => void; claim: (r: DirectedRow, undo: boolean) => void },
-): { actions: RowAction[]; heldByOther: string | null } {
+type ConfirmStage = 'LOWER' | 'MOVE' | 'BOTH'
+type Fire = {
+  confirm: (r: DirectedRow, stage: ConfirmStage) => void
+  undo: (r: DirectedRow, stage: ConfirmStage) => void      // việc nhặt lẻ hỏi thêm một câu (hàng đưa xuống chưa?)
+  claim: (r: DirectedRow, undo: boolean) => void
+}
+const ACTION_TIP: Record<string, string> = {
+  undo: 'Bỏ dấu ✓ vừa bấm (bấm nhầm) — việc quay lại hàng chờ',
+  claim: 'Đánh dấu tôi đang làm việc này để người khác khỏi cùng chạy tới (tự nhả sau 10 phút)',
+  unclaim: 'Trả việc lại cho người khác',
+  done: 'Xác nhận đã làm xong việc này',
+}
+function actionsFor(r: DirectedRow, tab: BoardTab, me: string | null, canConfirm: boolean, fire: Fire):
+  { actions: RowAction[]; heldByOther: string | null } {
   const heldByOther = r.claim_active && r.claimed_by && r.claimed_by !== me ? (r.claimed_by_name ?? 'người khác') : null
   if (tab === 'SCAN' || !canConfirm || r.skipped || r.all_scanned) return { actions: [], heldByOther }
   if (r.stage_done) {
     const stage = r.combined_lower ? 'BOTH' : tab
-    return { actions: [{ key: 'undo', label: 'Bỏ', icon: Undo2, onClick: () => fire.confirm(r, stage, true) }], heldByOther }
+    return { actions: [{ key: 'undo', label: 'Bỏ dấu ✓', icon: Undo2, onClick: () => fire.undo(r, stage) }], heldByOther }
   }
   if (!r.can_confirm) return { actions: [], heldByOther }
   const actions: RowAction[] = []
   const mine = r.claim_active && r.claimed_by === me
-  // Việc CHUNG: nhận trước rồi làm. Người khác đang cầm thì vẫn cho ✓ Xong (chỉ đường, không phải rào) nhưng lùi xuống.
-  if (!mine && !heldByOther) actions.push({ key: 'claim', label: 'Nhận', icon: Hand, primary: true, onClick: () => fire.claim(r, false) })
+  // MỘT NHÁT (14/09): "Xong" LUÔN là nút chính — kho một xe nâng thì "Nhận" là nhát bấm vô nghĩa lặp
+  // mỗi việc. "Nhận" thành nút phụ, chỉ có ý nghĩa khi nhiều xe cùng ca; bấm Xong khi chưa nhận thì
+  // máy chủ vẫn ghi đúng người bấm là người làm. Người khác đang cầm thì Xong vẫn bấm được nhưng mờ đi.
   actions.push({
     key: 'done', label: r.combined_lower ? 'Hạ & đưa ra' : 'Xong', icon: Check,
-    primary: mine || !!heldByOther, muted: !!heldByOther,
-    onClick: () => fire.confirm(r, r.combined_lower ? 'BOTH' : tab, false),
+    primary: true, muted: !!heldByOther,
+    onClick: () => fire.confirm(r, r.combined_lower ? 'BOTH' : tab),
   })
-  if (mine) actions.push({ key: 'unclaim', label: 'Bỏ nhận', icon: Undo2, onClick: () => fire.claim(r, true) })
+  if (!mine && !heldByOther) actions.push({ key: 'claim', label: 'Nhận', icon: Hand, onClick: () => fire.claim(r, false) })
+  if (mine) actions.push({ key: 'unclaim', label: 'Trả việc', icon: Undo2, onClick: () => fire.claim(r, true) })
   return { actions, heldByOther }
 }
 
@@ -261,8 +279,10 @@ function InboxRowView({ r, showWh }: { r: WorkInboxRow; showWh: boolean }) {
     </>
   )
   const cls = 'flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 min-h-12'
+  // Link nội bộ trang này (?tab=…) thì không neo; sang trang khác thì neo để thanh "‹ Về Việc cần làm" hiện
+  const leaves = !!r.link && !r.link.startsWith('/wms/directed')
   return r.link
-    ? <Link to={r.link} className={`${cls} hover:border-sky-300 hover:bg-sky-50 active:bg-sky-100`}>{body}</Link>
+    ? <Link to={r.link} onClick={leaves ? anchorDirected : undefined} className={`${cls} hover:border-sky-300 hover:bg-sky-50 active:bg-sky-100`}>{body}</Link>
     : <div className={`${cls} opacity-80`}>{body}</div>
 }
 
@@ -513,16 +533,44 @@ export default function DirectedWork() {
   const oldestUnset = unsetOld.map(u => u.delivery_date ?? '').filter(Boolean).sort()[0] ?? null
   // Dựng câu NGOÀI JSX: dấu `>` trong biểu thức nằm giữa JSX làm trình biên dịch hiểu là thẻ
   const unsetHint = unsetNow.length
-    ? ` Mở chuyến rồi bấm “Quy định date” để hệ thống chia hàng: `
-      + unsetNow.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')
+    ? ' ' + unsetNow.slice(0, 4).map(u => `${u.group_code ?? ''} · ${u.material_code ?? ''}`).join(' · ')
       + (unsetNow.length > 4 ? ` … và ${unsetNow.length - 4} dòng nữa` : '')
     : ''
 
   const busy = confirmTasks.isPending || claimTasks.isPending
-  const fire = {
-    confirm: (r: DirectedRow, stage: 'LOWER' | 'MOVE' | 'BOTH', undo: boolean) => confirmTasks.mutate({ task_ids: r.task_ids, stage, undo }),
-    claim:   (r: DirectedRow, undo: boolean) => claimTasks.mutate({ task_ids: r.task_ids, undo }),
+  // BỎ DẤU ✓ TRÊN VIỆC NHẶT LẺ (14/09): ✓ của nó đã GHI TỒN (pallet chuyển về vị trí nhặt lẻ), nên bỏ
+  // dấu mà không hỏi là để sổ nói một đằng hàng nằm một nẻo. Chỉ con người biết hàng đã đưa xuống
+  // chưa ⇒ hỏi đúng MỘT câu, hai lối: ghi lại về ô cũ (restore) hay chỉ bỏ dấu.
+  const [undoAsk, setUndoAsk] = useState<{ r: DirectedRow; stage: ConfirmStage } | null>(null)
+  const [lastRestore, setLastRestore] = useState(false)
+  const fire: Fire = {
+    confirm: (r, stage) => { setLastRestore(false); confirmTasks.mutate({ task_ids: r.task_ids, stage }) },
+    undo: (r, stage) => {
+      if (r.kind === 'LOOSE_FEED') { setUndoAsk({ r, stage }); return }
+      setLastRestore(false); confirmTasks.mutate({ task_ids: r.task_ids, stage, undo: true })
+    },
+    claim: (r, undo) => claimTasks.mutate({ task_ids: r.task_ids, undo }),
   }
+  const runUndo = (restore: boolean) => {
+    if (!undoAsk) return
+    setLastRestore(restore)
+    confirmTasks.mutate({ task_ids: undoAsk.r.task_ids, stage: undoAsk.stage, undo: true, restore })
+    setUndoAsk(null)
+  }
+  // Việc NHẶT Lẻ ở tab Sắp quét: lối thẳng tới dòng hàng nơi thủ kho bấm "Check nhặt lẻ" (bước trừ tồn thật)
+  const canLoose = can(perms, 'loosepicking', 'view')
+  const looseLinkOf = (r: DirectedRow) =>
+    canLoose && r.kind === 'LOOSE_FEED' && r.item_id ? `/wms/loosepicking/${r.gdo_id}/items/${r.item_id}` : null
+  // "KHAI NGAY" (14/09): băng vàng từng bảo "mở chuyến rồi bấm Quy định date" — mỗi dòng chưa khai là
+  // một lần rời trang. Nay mở đúng SetDateRuleSheet dùng chung với trang chuyến ngay tại đây.
+  const [dateOpen, setDateOpen] = useState(false)
+  const dateTargets = useMemo<DateRuleTarget[]>(() => (data?.unset_items ?? []).map(u => ({
+    item_id: u.item_id, material_id: u.material_id ?? null, material_code: u.material_code,
+    material_name: u.material_name ?? null, material_category: u.material_category ?? null,
+    trip_label: u.group_code ?? null, remaining: Number(u.remaining ?? 0),
+    units: { units_per_carton: u.units_per_carton ?? null, entry_unit: u.entry_unit ?? null, base_unit: u.base_unit ?? null },
+    note: u.note ?? null, current: null, customer_name: u.customer_name ?? null,
+  })), [data])
   // Số việc CỦA TÔI lên nhãn tab — mở trang là biết còn bao nhiêu, không cần vào tab
   const mineCount = inbox.data?.counts?.mine ?? 0
   const apiErr = (e: unknown) => (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -615,18 +663,25 @@ export default function DirectedWork() {
           </div>
         )}
         {unset.length > 0 && canSetDate && (
-          <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] truncate sm:whitespace-normal ${
+          <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] flex items-center gap-2 ${
             unsetNow.length ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-500'}`}>
-            {unsetNow.length > 0 && (<>
-              <b>{unsetNow.length} dòng hàng chưa khai quy định date</b> — chưa có việc nào được giao.
-              <span className="hidden sm:inline">{unsetHint}</span>
-            </>)}
-            {unsetOld.length > 0 && (
-              <span className={unsetNow.length ? 'text-amber-700/70' : ''}>
-                {unsetNow.length ? ' · ' : ''}{unsetOld.length} dòng thuộc <b>chuyến cũ còn dở</b>
-                {oldestUnset ? ` (từ ${formatDate(oldestUnset)})` : ''} — chốt nốt hoặc Hoàn thành/Hủy chuyến đó thì hết nhắc.
-              </span>
-            )}
+            <span className="min-w-0 flex-1 truncate sm:whitespace-normal">
+              {unsetNow.length > 0 && (<>
+                <b>{unsetNow.length} dòng hàng chưa khai quy định date</b> — chưa có việc nào được giao.
+                <span className="hidden sm:inline">{unsetHint}</span>
+              </>)}
+              {unsetOld.length > 0 && (
+                <span className={unsetNow.length ? 'text-amber-700/70' : ''}>
+                  {unsetNow.length ? ' · ' : ''}{unsetOld.length} dòng thuộc <b>chuyến cũ còn dở</b>
+                  {oldestUnset ? ` (từ ${formatDate(oldestUnset)})` : ''} — chốt nốt hoặc Hoàn thành/Hủy chuyến đó thì hết nhắc.
+                </span>
+              )}
+            </span>
+            {/* KHAI NGAY tại chỗ — không rời trang (14/09) */}
+            <Button size="sm" className="h-8 sm:h-7 px-2.5 text-[11px] shrink-0" onClick={() => setDateOpen(true)}
+              title="Mở màn khai quy định date cho các dòng này ngay tại đây">
+              <CalendarClock className="h-3.5 w-3.5 mr-1" /> Khai ngay ({unset.length})
+            </Button>
           </div>
         )}
 
@@ -662,7 +717,7 @@ export default function DirectedWork() {
                   className={`rounded-xl border p-3 space-y-1.5 ${closed ? 'border-slate-200 bg-slate-50 text-slate-400' : first ? 'border-sky-400 bg-sky-50 shadow-sm' : heldByOther ? 'border-slate-200 bg-white opacity-70' : 'border-slate-200 bg-white'}`}>
                   <div className="flex items-center justify-between gap-2 text-[10px]">
                     <span className={`font-semibold uppercase tracking-wide ${first ? 'text-sky-700' : closed ? 'text-slate-400' : 'text-slate-500'}`}>
-                      {r.skipped ? 'Đã bỏ' : r.stage_done ? 'Đã xong' : first ? 'Việc kế tiếp' : `#${ord ?? ''}`}
+                      {r.skipped ? 'Hệ thống đã huỷ' : r.stage_done ? 'Đã xong' : first ? 'Việc kế tiếp' : `#${ord ?? ''}`}
                     </span>
                     <span className="truncate text-slate-500">
                       {tab === 'SCAN' ? null : <>{r.license_plate ?? r.group_code ?? '—'}{r.dock_name ? ` · ${r.dock_name}` : ''}</>}
@@ -691,7 +746,6 @@ export default function DirectedWork() {
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
                     <span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{where ?? <span className="text-slate-300 font-sans font-normal">chưa có trên bản vẽ</span>}</span>
                     {r.level_no != null && r.level_no > 1 && <span className="text-xs text-slate-500"> · tầng {r.level_no}</span>}
-                    {tab === 'LOWER' && r.dist_cells != null && <span className="text-xs text-slate-400"> · {nf(r.dist_cells)} ô</span>}
                   </Step>
                   <Step label={tab === 'LOWER' ? 'Hạ' : tab === 'MOVE' ? 'Đưa' : 'Lấy'} big={first}>
                     <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-500">pallet</span>
@@ -705,6 +759,12 @@ export default function DirectedWork() {
                   <Step label={tab === 'LOWER' ? 'Đặt xuống' : 'Tới'} big={first}>
                     <span className="font-semibold">{dest ?? <span className="text-slate-300 font-normal">—</span>}</span>
                     {r.kind === 'LOOSE_FEED' && <span className="ml-1 text-xs text-purple-600">nhặt lẻ</span>}
+                    {tab === 'SCAN' && looseLinkOf(r) && (
+                      <Link to={looseLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
+                        className="mt-1 flex items-center gap-1 text-xs text-purple-700 underline">
+                        <ExternalLink className="h-3.5 w-3.5" /> Trừ tồn nhặt lẻ ở dòng hàng
+                      </Link>
+                    )}
                   </Step>
                   {/* "⏳ chờ xe hạ" là lời nói với XE CHUYỂN — trên thẻ của chính xe hạ thì đó là việc của họ, không phải chờ ai */}
                   {(closed || heldByOther || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
@@ -851,17 +911,18 @@ export default function DirectedWork() {
                       <div className="mt-0.5"><StockButtons r={r} onPick={setInvMat} /></div>
                     </TableCell>
 
-                    {tab === 'LOWER' && (
-                      <TableCell className={`${cell} text-right tabular-nums`}>
-                        {r.dist_cells != null ? `${nf(r.dist_cells)} ô` : <span className="text-slate-300">—</span>}
-                      </TableCell>
-                    )}
-
                     <TableCell className={cell}>
                       {tab === 'LOWER'
                         ? (r.drop_name ?? r.to_name ?? <span className="text-slate-300">—</span>)
                         : (r.to_name ?? r.to_code ?? <span className="text-slate-300">—</span>)}
                       {r.kind === 'LOOSE_FEED' && <span className="ml-1 text-[9px] text-purple-600">nhặt lẻ</span>}
+                      {/* Hai bước, hai người: xe nâng ✓ = pallet về vị trí nhặt lẻ; thủ kho "Check nhặt lẻ" ở dòng hàng = trừ tồn */}
+                      {tab === 'SCAN' && looseLinkOf(r) && (
+                        <Link to={looseLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
+                          className="block text-[9px] text-purple-700 no-underline hover:underline">
+                          Trừ tồn nhặt lẻ ›
+                        </Link>
+                      )}
                     </TableCell>
 
                     {tab !== 'SCAN' && (
@@ -870,7 +931,7 @@ export default function DirectedWork() {
                           {actions.map(a => (
                             <Button key={a.key} size="sm" variant={a.primary ? 'default' : 'outline'}
                               className={`h-7 px-2 text-[10px] ${a.muted ? 'opacity-70' : ''}`} disabled={busy}
-                              title={a.key === 'undo' ? 'Bấm lại để bỏ đánh dấu (bấm nhầm)' : a.key === 'claim' ? 'Đánh dấu tôi đang làm việc này (tự nhả sau 10 phút)' : a.key === 'unclaim' ? 'Trả việc lại cho người khác' : 'Xác nhận đã làm xong việc này'}
+                              title={ACTION_TIP[a.key]}
                               onClick={e => { e.stopPropagation(); a.onClick() }}>
                               <a.icon className="h-3.5 w-3.5 mr-0.5" /> {a.label}
                             </Button>
@@ -890,13 +951,15 @@ export default function DirectedWork() {
         <div className="shrink-0 border-t bg-white px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-3 flex-wrap sm:rounded-b-xl">
           <span>{nf(rows.length)} dòng việc</span>
           {(t.pending ?? 0) > 0 && <span className="text-slate-400">· còn {nf(t.pending ?? 0)} việc chưa xong</span>}
-          {(t.skipped ?? 0) > 0 && <span className="text-slate-400">· {nf(t.skipped ?? 0)} việc đã bỏ (quét pallet khác / kế hoạch đổi)</span>}
+          {(t.skipped ?? 0) > 0 && <span className="text-slate-400">· {nf(t.skipped ?? 0)} việc hệ thống đã huỷ (quét pallet khác / kế hoạch đổi)</span>}
           {confirmTasks.isError && <span className="text-red-600">· {apiErr(confirmTasks.error) ?? 'Không ghi được — thử lại'}</span>}
           {claimTasks.isError && <span className="text-red-600">· {apiErr(claimTasks.error) ?? 'Không nhận được — thử lại'}</span>}
           {claimTasks.data && claimTasks.data.changed === 0 && claimTasks.data.held_by && (
             <span className="text-amber-700">· {claimTasks.data.held_by} vừa nhận việc này trước bạn</span>
           )}
-          {confirmTasks.data?.moved_pallets ? <span className="text-green-600">· đã chuyển {confirmTasks.data.moved_pallets} pallet về vị trí nhặt lẻ</span> : null}
+          {confirmTasks.data?.moved_pallets
+            ? <span className="text-green-600">· {lastRestore ? `đã ghi lại ${confirmTasks.data.moved_pallets} pallet về ô cũ` : `đã chuyển ${confirmTasks.data.moved_pallets} pallet về vị trí nhặt lẻ`}</span>
+            : null}
         </div>
         </>)}
       </div>
@@ -904,10 +967,35 @@ export default function DirectedWork() {
       {scanOpen && scanGdo && <GdoScanSheet gdo={scanGdo} mode="outbound" onClose={() => setScanOpen(false)} />}
       {detailRow && (
         <TaskDetailSheet row={detailRow} tab={boardTab} trip={tripOf.get(detailRow.gdo_id)} bands={pctBands}
-          canOpenTrip={canOpenTrip} busy={busy}
+          canOpenTrip={canOpenTrip} looseLink={looseLinkOf(detailRow)} busy={busy}
           actions={actionsFor(detailRow, boardTab, me, canConfirm, fire).actions}
           onStock={setInvMat} onClose={() => setDetailKey(null)} />
       )}
+      {/* HỎI MỘT CÂU khi bỏ dấu ✓ của việc nhặt lẻ — dialog giữa màn chỉ để xác nhận nhỏ (chuẩn UI) */}
+      <Dialog open={!!undoAsk} onOpenChange={v => { if (!v) setUndoAsk(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Bỏ dấu ✓ việc nhặt lẻ</DialogTitle>
+            <DialogDescription className="text-xs text-slate-600">
+              Sổ tồn đang ghi {undoAsk ? nf(undoAsk.r.n_pallets) : 0} pallet
+              {undoAsk?.r.pallet_codes?.filter(Boolean).length ? <> (<span className="font-mono">{undoAsk.r.pallet_codes.filter(Boolean).slice(0, 2).join(', ')}{undoAsk.r.pallet_codes.filter(Boolean).length > 2 ? '…' : ''}</span>)</> : null}
+              {' '}ở <b>{undoAsk?.r.to_name ?? undoAsk?.r.to_code ?? 'vị trí nhặt lẻ'}</b>. Hàng đã được đưa xuống đó chưa?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 pt-1">
+            <Button variant="outline" className="h-11 justify-start text-left whitespace-normal" disabled={busy} onClick={() => runUndo(true)}>
+              <Undo2 className="h-4 w-4 mr-2 shrink-0" />
+              <span><b>Chưa</b> — ghi lại pallet về ô cũ <span className="font-mono">{undoAsk?.r.from_code ?? ''}</span> và bỏ dấu</span>
+            </Button>
+            <Button className="h-11 justify-start text-left whitespace-normal" disabled={busy} onClick={() => runUndo(false)}>
+              <Check className="h-4 w-4 mr-2 shrink-0" />
+              <span><b>Rồi</b> — hàng đang nằm ở đó, chỉ bỏ dấu ✓</span>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Khai quy định date TẠI CHỖ — cùng màn với trang chuyến / Nhặt lẻ / Quy định date */}
+      <SetDateRuleSheet open={dateOpen} onClose={() => setDateOpen(false)} targets={dateTargets} warehouseId={f.warehouseId || null} />
       {invMat && (
         <MaterialStockDialog materialId={invMat.id} materialCode={invMat.code}
           materialName={rows.find(r => r.materials?.some(m => m.id === invMat.id))?.material_name ?? ''}

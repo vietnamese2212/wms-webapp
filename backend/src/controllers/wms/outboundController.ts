@@ -5772,14 +5772,20 @@ export async function setItemsDateRule(req: Request, res: Response) {
       const stock = await checkDateRuleStock(itemRows.map(r => ({ item_id: r.id, rule })))
       const bad = stock.filter(s => !s.ok)
       if (bad.length) {
-        const best = bad.map(b => b.best_pct).filter((x): x is number => x != null)
+        // BA TÌNH HUỐNG, BA LỜI KHUYÊN (14/09) — gộp chung một câu "chọn mức khác" là khuyên sai
+        // đúng lúc người ta cần tin: hàng bị QA giữ thì đổi mức bao nhiêu cũng không ra pallet.
+        const noStock = bad.filter(b => b.total_base <= 0 && b.held_pallets <= 0)
+        const held = bad.filter(b => b.total_base <= 0 && b.held_pallets > 0)
+        const below = bad.filter(b => b.total_base > 0)
+        const best = below.map(b => b.best_pct).filter((x): x is number => x != null)
         // LÀM TRÒN XUỐNG: đây là mức người ta CHỌN ĐƯỢC. Làm tròn lên thì tồn cao nhất 98,8 % hiện
         // ra "99 %" — đúng con số vừa bị từ chối, câu thông báo tự mâu thuẫn (đo thật 10/09).
-        const hint = rule.kind === 'MIN_PCT' && best.length
-          ? ` %Date cao nhất còn trong kho là ${Math.floor(Math.max(...best))} %.`
-          : ''
-        return fail(res, 422, 'DATE_RULE_NO_STOCK',
-          `${bad.length} dòng không còn tồn nào đạt "${describeDateRule(rule)}".${hint} Chọn mức khác hoặc để dòng đó chưa chốt.`)
+        const parts: string[] = []
+        if (held.length) parts.push(`${held.length} dòng có hàng nhưng TOÀN BỘ ${held.reduce((s, b) => s + b.held_pallets, 0)} pallet đang bị QA giữ — gỡ QA ở trang Tồn kho rồi chốt, đổi mức không giúp được`)
+        if (noStock.length) parts.push(`${noStock.length} dòng không còn tồn mã đó trong kho`)
+        if (below.length) parts.push(`${below.length} dòng có hàng nhưng không pallet nào đạt "${describeDateRule(rule)}"${
+          rule.kind === 'MIN_PCT' && best.length ? ` (%Date cao nhất còn trong kho là ${Math.floor(Math.max(...best))} %)` : ''} — chọn mức khác hoặc để chưa chốt`)
+        return fail(res, 422, 'DATE_RULE_NO_STOCK', `Không chốt được: ${parts.join('; ')}.`)
       }
     }
 

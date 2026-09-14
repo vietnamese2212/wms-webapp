@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useInventoryByMaterial, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { isQaHeld } from '@/utils/qaHold'
 
 export function MaterialStockDialog({ materialId, materialCode, materialName, mat, warehouseId, onClose }: {
   materialId: string; materialCode: string; materialName: string
@@ -27,7 +28,7 @@ export function MaterialStockDialog({ materialId, materialCode, materialName, ma
   const rows: Agg[] = useMemo(() => {
     const map = new Map<string, Agg>()
     for (const e of inv) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)   // dấu OK = đã duyệt, KHÔNG phải giữ (utils/qaHold.ts)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.available; r.entries.push(e) }

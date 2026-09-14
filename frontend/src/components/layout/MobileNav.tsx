@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { clearReturnTo } from '@/lib/returnTo'
 import { Settings, BarChart3, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -15,6 +16,7 @@ function MobileLink({ item, nested = false }: { item: NavItem; nested?: boolean 
     <NavLink
       to={item.to}
       end={item.to === '/'}
+      onClick={clearReturnTo}
       className={({ isActive }) =>
         cn('relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
           nested && 'py-2 pl-8 text-[13px]',

@@ -722,10 +722,14 @@ const RULES = [
     // Giám sát vận hành đếm 8.760 pallet "kẹt" trong khi chỉ 5 bị giữ thật; 83 mã không chốt
     // được bất kỳ mức %Date nào. Quét nhập tem V2 TỰ đóng dấu OK nên đơn vị tem `;` mất 100 % tồn.
     // Miễn 1 file: services/qaStatus.ts (nó LÀ luật). Baseline 0.
+    // 14/09 bắt thêm dạng FE: `!!e.qa_status` / `qa_status !== null` — 5 màn tra tồn dùng nó làm
+    // nhãn "QA giữ" nên pallet đã duyệt OK cũng tím. Miễn thêm utils/qaHold.ts (bản FE của luật).
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
         && !/services[\\/]qaStatus\.ts$/.test(file)
-        && /qa_status_id['"]?\s*,\s*null\s*\)|qa_status_id\b[^\n]*\bIS\s+(NOT\s+)?NULL\b|\bqa_status_id\s*(\?\?\s*null\s*\)\s*)?(!==?|===?)\s*null\b/i.test(line), s),
+        && !/utils[\\/]qaHold\.ts$/.test(file)
+        && (/qa_status_id['"]?\s*,\s*null\s*\)|qa_status_id\b[^\n]*\bIS\s+(NOT\s+)?NULL\b|\bqa_status_id\s*(\?\?\s*null\s*\)\s*)?(!==?|===?)\s*null\b/i.test(line)
+          || /!!\s*[\w.]*\.qa_status\b(?!_id)|\.qa_status\s*(!==?|===?)\s*null\b/.test(line)), s),
   },
   {
     key: 'putaway_rule_hand_rolled',

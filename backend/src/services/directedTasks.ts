@@ -546,6 +546,7 @@ export interface DateRuleStock {
   matched_base: number        // tồn dùng được ĐẠT quy tắc
   matched_pallets: number
   total_base: number          // tồn dùng được của mã trong kho (không xét quy tắc)
+  held_pallets: number        // pallet CÒN HÀNG nhưng đang bị QA GIỮ — tồn có mà không lấy được; khuyên "gỡ QA", không khuyên "đổi mức"
   best_pct: number | null     // %Date CAO NHẤT còn trong kho — để người chốt biết gõ số nào mới được
   best_days: number | null    // SỐ NGÀY còn lại cao nhất còn trong kho (cho quy tắc MIN_DAYS)
   need_base: number           // còn phải lấy = đặt − đã quét
@@ -577,19 +578,26 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
     s.add(it.material_id); matsByWh.set(wh, s)
   }
   const poolOf = new Map<string, Cand[]>()     // `${wh}::${material_id}` → pallet dùng được
-  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
+  // Pallet ĐANG BỊ QA GIỮ đếm riêng (14/09): câu từ chối "không còn tồn nào đạt" từng gộp ba tình
+  // huống rất khác nhau — hết hàng · hàng có nhưng QA giữ · hàng có nhưng hết date. Khi hàng bị giữ
+  // thì lời khuyên "chọn mức khác" không bao giờ đúng, việc phải làm là gỡ QA. Đo Ba Vì 13/09: mã
+  // 510000306 có 72 pallet mà 70 bị giữ, người chốt nhìn panel thấy hàng, app bảo hết hàng.
+  const heldOf = new Map<string, number>()
+  const qaHold = await qaHoldIds()
   for (const [wh, mats] of matsByWh) {
     const cand = await fetchAllByIdChunks([...mats], chunk => supabase.from('InventoryEntry')
       .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days')
       .in('material_id', chunk)
       .eq('warehouse_id', wh)
       .in('status', [...PICKABLE_STATUSES])
-      .or(qaFilter)          // dấu QA `OK` = ĐÃ DUYỆT, vẫn xuất được (services/qaStatus.ts)
       .gt('cartons_remaining', 0)
       .order('id')) as unknown as Cand[]
     for (const c of cand) {
-      if (!c.material_id || !isPickEligible(c, qaHold) || availableOf(c) <= 0) continue
+      if (!c.material_id) continue
       const k = `${wh}::${c.material_id}`
+      // dấu QA `OK` = ĐÃ DUYỆT, vẫn xuất được — luật một nguồn services/qaStatus.ts
+      if (c.qa_status_id && qaHold.has(c.qa_status_id)) { heldOf.set(k, (heldOf.get(k) ?? 0) + 1); continue }
+      if (!isPickEligible(c, qaHold) || availableOf(c) <= 0) continue
       poolOf.set(k, [...(poolOf.get(k) ?? []), c])
     }
   }
@@ -630,6 +638,7 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
       matched_base: parts.reduce((s, p) => s + p.matched_base, 0),
       matched_pallets: parts.reduce((s, p) => s + p.matched_pallets, 0),
       total_base: total,
+      held_pallets: (wh && it.material_id) ? (heldOf.get(`${wh}::${it.material_id}`) ?? 0) : 0,
       best_pct: pcts.length ? Math.max(...pcts) : null,
       best_days: dayss.length ? Math.max(...dayss) : null,
       need_base: need,
@@ -788,14 +797,19 @@ export interface ConfirmResult { ok: true; changed: number; moved_pallets: numbe
  */
 export async function confirmTasks(
   taskIds: string[], stage: ConfirmStage, undo: boolean, actor: string | null, actorId: string | null = null,
+  // HOÀN TÁC việc nhặt lẻ (14/09): `restore = true` ⇒ ghi pallet TRỞ LẠI ô nó vừa rời. Chỉ con người
+  // biết hàng đã được đẩy xuống thật hay chưa nên FE hỏi đúng một câu rồi truyền cờ này; mặc định
+  // (không truyền) = chỉ bỏ dấu, tồn giữ nguyên như trước.
+  restore = false,
 ): Promise<ConfirmResult | { ok: false; status: number; code: string; message: string }> {
   if (!taskIds.length) return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Chưa chọn việc nào' }
   const { data } = await supabase.from('wms_tasks')
-    .select('id, kind, status, needs_lower, entry_id, to_location_id, lowered_at, moved_at, from_location_code')
+    .select('id, kind, status, needs_lower, entry_id, to_location_id, lowered_at, moved_at, from_location_id, from_location_code')
     .in('id', taskIds).limit(MAX_CONFIRM)   // trần khai ở controller: một lần bấm = một nhóm ô
   const rows = (data ?? []) as {
     id: string; kind: string; status: string; needs_lower: boolean; entry_id: string | null
-    to_location_id: string | null; lowered_at: string | null; moved_at: string | null; from_location_code: string | null
+    to_location_id: string | null; lowered_at: string | null; moved_at: string | null
+    from_location_id: string | null; from_location_code: string | null
   }[]
   if (!rows.length) return { ok: false, status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy việc (có thể đã bị huỷ hoặc chuyến đã kết thúc)' }
   const open = rows.filter(r => r.status === 'PENDING')
@@ -809,7 +823,7 @@ export async function confirmTasks(
         if (!low.ok) return low
       }
     }
-    const mv = await confirmTasks(open.map(r => r.id), 'MOVE', undo, actor, actorId)
+    const mv = await confirmTasks(open.map(r => r.id), 'MOVE', undo, actor, actorId, restore)
     if (undo && mv.ok) {
       // Bấm nhầm "Hạ & đưa ra" thì bỏ CẢ HAI mốc — để lại mốc "đã hạ" là kể một câu chuyện không có thật
       const lowered = open.filter(r => r.needs_lower && r.lowered_at).map(r => r.id)
@@ -847,27 +861,36 @@ export async function confirmTasks(
   //     số lần chuyển được, nên hỏng vẫn báo thành công. Thủ kho ra vị trí nhặt lẻ thì không có hàng,
   //     mà sổ tồn vẫn nói pallet nằm trên kệ. Nay chỉ tính khi RPC trả "OK|…", hỏng thì việc VẪN TREO.
   let movedPallets = 0
-  if (!undo) {
-    for (const r of todo.filter(x => x.kind === 'LOOSE_FEED' && x.entry_id && x.to_location_id)) {
-      const { data: mv, error: mvErr } = await supabase.rpc('move_pallets_to_location', {
-        p_ids: [r.entry_id], p_location_id: r.to_location_id,
-        p_updated_by: UUID_RE.test(actorId ?? '') ? actorId : null,
-        p_update_date: at.slice(0, 10), p_now: at,
-      })
-      const msg = String(mv ?? '')
-      if (msg.startsWith('FULL')) {
-        return { ok: false, status: 409, code: 'LOCATION_FULL', message: `Vị trí nhặt lẻ đã đầy — đổi vị trí đến rồi bấm lại (pallet ${r.from_location_code ?? ''}).` }
-      }
-      if (mvErr || !msg.startsWith('OK')) {
-        recordServerError('be', `LOOSE_FEED chuyển pallet hỏng: ${mvErr?.message ?? `RPC trả "${msg}"`}`,
-          409, 'MOVE_FAILED', '/wms/directed/tasks/confirm')
-        return {
-          ok: false, status: 409, code: 'MOVE_FAILED',
-          message: `Chưa chuyển được pallet ${r.from_location_code ?? ''} về vị trí nhặt lẻ — việc vẫn còn đó, thử lại hoặc đổi vị trí đến.`,
-        }
-      }
-      movedPallets++
+  // Chiều xuôi (hành vi cũ, giữ nguyên): về vị trí nhặt lẻ. Chiều hoàn tác + `restore`: về lại ô
+  // xuất phát — cùng RPC, cùng luật sức chứa, ô cũ đầy thì KHÔNG bỏ dấu (không tạo trạng thái
+  // "dấu đã bỏ mà hàng ghi lửng lơ"). Ở đường BOTH cờ restore chỉ đi vào lượt MOVE (lượt LOWER
+  // kế tiếp nhận mặc định false) nên pallet chỉ được ghi lại MỘT lần.
+  const looseMoves = todo.filter(x => x.kind === 'LOOSE_FEED' && x.entry_id
+    && (undo ? restore && x.from_location_id : x.to_location_id))
+  for (const r of looseMoves) {
+    const dest = undo ? r.from_location_id : r.to_location_id
+    const { data: mv, error: mvErr } = await supabase.rpc('move_pallets_to_location', {
+      p_ids: [r.entry_id], p_location_id: dest,
+      p_updated_by: UUID_RE.test(actorId ?? '') ? actorId : null,
+      p_update_date: at.slice(0, 10), p_now: at,
+    })
+    const msg = String(mv ?? '')
+    if (msg.startsWith('FULL')) {
+      return undo
+        ? { ok: false, status: 409, code: 'LOCATION_FULL', message: `Ô cũ ${r.from_location_code ?? ''} đã đầy — chưa ghi lại được. Dấu ✓ vẫn giữ; chuyển pallet ở trang Tồn kho nếu hàng chưa đưa xuống.` }
+        : { ok: false, status: 409, code: 'LOCATION_FULL', message: `Vị trí nhặt lẻ đã đầy — đổi vị trí đến rồi bấm lại (pallet ${r.from_location_code ?? ''}).` }
     }
+    if (mvErr || !msg.startsWith('OK')) {
+      recordServerError('be', `LOOSE_FEED chuyển pallet hỏng (${undo ? 'hoàn tác' : 'xác nhận'}): ${mvErr?.message ?? `RPC trả "${msg}"`}`,
+        409, 'MOVE_FAILED', '/wms/directed/tasks/confirm')
+      return {
+        ok: false, status: 409, code: 'MOVE_FAILED',
+        message: undo
+          ? `Chưa ghi lại được pallet về ô ${r.from_location_code ?? ''} — dấu ✓ vẫn giữ, thử lại.`
+          : `Chưa chuyển được pallet ${r.from_location_code ?? ''} về vị trí nhặt lẻ — việc vẫn còn đó, thử lại hoặc đổi vị trí đến.`,
+      }
+    }
+    movedPallets++
   }
 
   // CAS trên chính cột mốc giờ: hai người bấm cùng lúc thì chỉ một lượt khớp `is null`, lượt kia
@@ -881,7 +904,7 @@ export async function confirmTasks(
   const changed = ((upd ?? []) as { id: string }[]).length
   await logEvents(((upd ?? []) as { id: string }[]).map(r => ({
     task_id: r.id, event: undo ? 'REPLANNED' : (stage === 'LOWER' ? 'LOWERED' : 'MOVED'), actor,
-    note: undo ? `bỏ đánh dấu ${stage}` : null,
+    note: undo ? `bỏ đánh dấu ${stage}${restore ? ' — pallet ghi lại về ô cũ' : ''}` : null,
   })))
   return { ok: true, changed, moved_pallets: movedPallets }
 }

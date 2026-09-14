@@ -15,6 +15,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { setRealtimeAuth } from '@/lib/supabase'
 import { setUnitLabels } from '@/utils/qtyUnits'
 import { OfflineBanner } from '@/offline/OfflineBanner'
+import { ReturnBar } from './ReturnBar'
 import { AppUpdateBanner } from '@/components/shared/AppUpdateButton'
 import { OfflineQueuePanel } from '@/offline/OfflineQueuePanel'
 import { initScanQueue } from '@/offline/scanQueue'
@@ -86,6 +87,8 @@ export function Shell() {
       <div className="flex flex-1 flex-col min-w-0">
         <Header />
         <OfflineBanner />
+        {/* "‹ Về Việc cần làm" — điểm neo cho trang giao việc, hiện ở mọi trang đích (14/09) */}
+        <ReturnBar />
         <main className="flex-1 overflow-y-auto pb-16 lg:pb-0 bg-slate-100">
           {/* Page transition: fade + trượt nhẹ mỗi lần đổi route (key theo pathname) */}
           <div key={location.pathname} className="h-full animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out">

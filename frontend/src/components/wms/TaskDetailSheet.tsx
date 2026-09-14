@@ -21,7 +21,11 @@ import { computeDaysLeft, computePctDate } from '@/utils/shelfLife'
 import { pctDateCls, type PctBands } from '@/utils/pctDateBands'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
+import { setReturnTo } from '@/lib/returnTo'
 import type { DirectedPallet, DirectedRow, DirectedTrip } from '@/types'
+
+/** Neo "về Việc cần làm" trước khi rời trang — thanh ở Shell + mũi tên trang đích sẽ đưa về đây. */
+export const anchorDirected = () => setReturnTo('/wms/directed', 'Việc cần làm')
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
@@ -67,12 +71,14 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 )
 const dash = <span className="text-slate-300">—</span>
 
-export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, actions, busy, onStock, onClose }: {
+export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink, actions, busy, onStock, onClose }: {
   row: DirectedRow
   tab: 'LOWER' | 'MOVE' | 'SCAN'
   trip: DirectedTrip | undefined
   bands: PctBands
   canOpenTrip: boolean
+  // Việc NHẶT LẺ: đường tới dòng hàng nơi thủ kho bấm "Check nhặt lẻ" (bước trừ tồn thật) — null = không có quyền
+  looseLink?: string | null
   actions: { key: string; label: string; icon: React.ComponentType<{ className?: string }>; primary?: boolean; onClick: () => void }[]
   busy: boolean
   onStock: (m: { id: string; code: string; mat: DirectedRow | null }) => void
@@ -122,12 +128,22 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, actions, b
             )}
             {/* Ghi chú CS là CHỮ do người viết — máy không đọc, nhưng người lấy hàng thì nên đọc */}
             {row.cs_note && <Row label="Ghi chú CS"><span className="text-amber-800">{row.cs_note}</span></Row>}
-            {canOpenTrip && (
-              <div className="pt-1">
-                <Link to={`/wms/outbound/${row.gdo_id}`} onClick={onClose}
-                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline">
-                  <ExternalLink className="h-3 w-3" /> Mở trang chuyến
-                </Link>
+            {(canOpenTrip || looseLink) && (
+              <div className="pt-1 flex flex-wrap gap-3">
+                {canOpenTrip && (
+                  <Link to={`/wms/outbound/${row.gdo_id}`} onClick={() => { anchorDirected(); onClose() }}
+                    className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline">
+                    <ExternalLink className="h-3 w-3" /> Mở trang chuyến
+                  </Link>
+                )}
+                {/* Hai bước, hai người, cùng gọi là "xong": xe nâng ✓ = pallet đã về vị trí nhặt lẻ;
+                    thủ kho "Check nhặt lẻ" ở dòng hàng mới là bước TRỪ TỒN. Trang này chỉ đường tới đó. */}
+                {looseLink && (
+                  <Link to={looseLink} onClick={() => { anchorDirected(); onClose() }}
+                    className="inline-flex items-center gap-1 text-[11px] text-purple-700 hover:underline">
+                    <ExternalLink className="h-3 w-3" /> Trừ tồn nhặt lẻ ở dòng hàng
+                  </Link>
+                )}
               </div>
             )}
           </Section>

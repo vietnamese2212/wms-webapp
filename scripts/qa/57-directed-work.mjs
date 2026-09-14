@@ -875,6 +875,28 @@ try {
       const t2 = (await tasksOf(tLF.gdo)).find(x => x.id === t.id)
       check('[21d] Hoàn tác bỏ CẢ hai mốc giờ', r.s === 200 && !t2?.lowered_at && !t2?.moved_at,
         `http=${r.s} hạ=${t2?.lowered_at} đưa=${t2?.moved_at}`)
+      // HAI LỐI HOÀN TÁC (14/09): mặc định CHỈ bỏ dấu, tồn giữ nguyên ở vị trí nhặt lẻ (hàng đã đưa xuống);
+      // `restore: true` = người bấm nói hàng CHƯA đưa xuống ⇒ pallet ghi lại về ô cũ. Oracle vẫn là
+      // đọc lại location_id của chính pallet đó.
+      const sauUndo = await locOf(t.entry_id)
+      check('[21e] Hoàn tác KHÔNG kèm restore ⇒ tồn GIỮ NGUYÊN ở vị trí nhặt lẻ (hàng đã đưa xuống)',
+        sauUndo === t.to_location_id, `pallet đang ở ${sauUndo} · đích ${t.to_location_id}`)
+      r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [t.id], stage: 'BOTH' })
+      const lai = await locOf(t.entry_id)
+      r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [t.id], stage: 'BOTH', undo: true, restore: true })
+      const veCu = await locOf(t.entry_id)
+      const t3 = (await tasksOf(tLF.gdo)).find(x => x.id === t.id)
+      check('[21f] Hoàn tác kèm restore ⇒ pallet GHI LẠI VỀ Ô CŨ và bỏ cả hai mốc giờ',
+        r.s === 200 && lai === t.to_location_id && veCu === truoc && !t3?.lowered_at && !t3?.moved_at,
+        `http=${r.s} báo moved=${r.j?.data?.moved_pallets} · ${lai} → ${veCu} · ô cũ ${truoc} · hạ=${t3?.lowered_at} đưa=${t3?.moved_at}`)
+      check('[21g] Số pallet API báo khi restore = số THẬT SỰ ghi lại',
+        Number(r.j?.data?.moved_pallets ?? 0) === (veCu === truoc ? 1 : 0),
+        `API báo ${r.j?.data?.moved_pallets} · thật ${veCu === truoc ? 1 : 0}`)
+      // `restore` không có nghĩa khi KHÔNG undo — gửi kèm lúc xác nhận phải bị bỏ qua (pallet vẫn về vị trí nhặt lẻ)
+      r = await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [t.id], stage: 'BOTH', restore: true })
+      const xuoi = await locOf(t.entry_id)
+      check('[21h] Cờ restore gửi kèm lúc XÁC NHẬN bị bỏ qua — pallet vẫn về vị trí nhặt lẻ',
+        r.s === 200 && xuoi === t.to_location_id, `http=${r.s} pallet ở ${xuoi}`)
     }
     await api(`/wms/outbound/${tLF.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }

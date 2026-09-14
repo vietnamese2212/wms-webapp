@@ -5,6 +5,8 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { formatDate, formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -825,7 +827,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
   const aggRows: AggRow[] = (() => {
     const map = new Map<string, AggRow>()
     for (const e of sorted) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.available; r.entries.push(e) }
@@ -2276,7 +2278,7 @@ export default function OutboundDetail() {
               tự wrap nên mã từng bị ép còn vài px, bẻ dọc từng ký tự (user bắt 02/09) */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-1 max-sm:w-full max-sm:flex-none">
-              <button onClick={() => navigate('/wms/outbound')}
+              <button onClick={() => navigate(backTarget('/wms/outbound'))}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
                 <ArrowLeft className="h-4 w-4" />
               </button>

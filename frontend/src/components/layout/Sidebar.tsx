@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { clearReturnTo } from '@/lib/returnTo'
 import {
   ChevronLeft, ChevronRight, ChevronDown, BarChart3,
 } from 'lucide-react'
@@ -28,6 +29,7 @@ function NavItemComponent({ item, collapsed, nested = false }: { item: NavItem; 
   const linkContent = (
     <NavLink
       to={item.to}
+      onClick={clearReturnTo}   // đi bằng menu = rời hẳn luồng "về nơi vừa rời"
       onMouseEnter={() => prefetchPage(item.to)}
       onFocus={() => prefetchPage(item.to)}
       className={cn(

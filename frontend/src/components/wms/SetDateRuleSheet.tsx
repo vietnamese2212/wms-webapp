@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input'
 import { useSetItemsDateRule, useInventoryByMaterial, useCheckDateRule, type DateRuleStock } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { qtyLabel, qtyEntryDecimal, qtyEntryText, qtyFromEntryBase, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { isQaHeld } from '@/utils/qaHold'
 import type { DateRule, DateRuleKind, SimpleRuleKind } from '@/types'
 
 export interface DateRuleTarget {
@@ -196,6 +197,9 @@ function stockWarning(
   if (!r || !st) return null
   const noStock = st.total_base <= 0
   if (!st.ok) {
+    // Hàng CÓ nhưng QA giữ hết: lời khuyên phải là "gỡ QA", không phải "đổi mức" (14/09)
+    if (noStock && (st.held_pallets ?? 0) > 0)
+      return { tone: 'bad', text: `Có ${nf(st.held_pallets)} pallet nhưng TOÀN BỘ đang bị QA giữ — gỡ QA ở trang Tồn kho rồi chốt; đổi mức không giúp được.` }
     if (noStock) return { tone: 'bad', text: 'Mã này không còn tồn dùng được trong kho — không chốt được mức nào.' }
     if (r.kind === 'SPLIT') {
       const bad = (st.parts ?? []).map((x, i) => (x.ok ? 0 : (uiRow[i] ?? i + 1))).filter(i => i > 0)
@@ -747,25 +751,42 @@ function StockPanel({ materialId, warehouseId }: { materialId: string | null; wa
   const { data, isLoading } = useInventoryByMaterial(materialId, warehouseId ?? undefined)
   if (!materialId) return <div className="text-[11px] text-slate-400">Mã chưa khớp danh mục — không tra được tồn</div>
   if (isLoading) return <div className="text-[11px] text-slate-400">Đang tra tồn…</div>
-  const rows = (data ?? []) as Array<{ pallet_code?: string; location_code?: string; production_date?: string | null; pct_date?: number | null; cartons_remaining?: number }>
+  const rows = (data ?? []) as Array<{
+    pallet_code?: string; location_code?: string; production_date?: string | null; pct_date?: number | null
+    cartons_remaining?: number; qa_status?: { code?: string | null } | null
+  }>
   if (!rows.length) return <div className="text-[11px] text-slate-400">Không còn tồn mã này trong kho</div>
-  // Gom theo NSX: người chốt quyết theo NGÀY, không theo từng tem
-  const byDate = new Map<string, { pallets: number; qty: number; pct: number | null }>()
+  // Gom theo NSX: người chốt quyết theo NGÀY, không theo từng tem. Pallet QA GIỮ tách chip riêng
+  // (14/09): panel này từng đếm cả pallet bị giữ vào chip ⇒ app từ chối "≥ 60 %" trong khi panel
+  // ngay bên cạnh vẫn khoe có hàng (đo Ba Vì: mã 510000306 có 72 pallet, 70 bị giữ). Cùng ngôn ngữ
+  // hình ảnh với dialog Tra tồn kho: nền tím + nhãn "QA giữ", xếp cuối.
+  const byDate = new Map<string, { pallets: number; qty: number; pct: number | null; held: boolean }>()
   for (const e of rows) {
+    const held = isQaHeld(e.qa_status)
     const d = (e.production_date ?? '').slice(0, 10) || '(không rõ NSX)'
-    const cur = byDate.get(d) ?? { pallets: 0, qty: 0, pct: e.pct_date ?? null }
+    const k = `${d}|${held ? 'Q' : ''}`
+    const cur = byDate.get(k) ?? { pallets: 0, qty: 0, pct: e.pct_date ?? null, held }
     cur.pallets++; cur.qty += Number(e.cartons_remaining ?? 0)
-    byDate.set(d, cur)
+    byDate.set(k, cur)
   }
+  const chips = [...byDate.entries()].sort((a, b) => Number(a[1].held) - Number(b[1].held) || a[0].localeCompare(b[0]))
+  const nHeld = rows.filter(e => isQaHeld(e.qa_status)).length
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {[...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([d, v]) => (
-        <span key={d} className="rounded-md border border-sky-200 bg-white px-1.5 py-1 text-[10px] whitespace-nowrap">
-          <b className="font-mono">{d}</b>
-          {v.pct != null && <span className="text-slate-500"> · {Math.round(v.pct)} %</span>}
-          <span className="text-slate-500"> · {nf(v.pallets)} pallet</span>
-        </span>
-      ))}
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-1.5">
+        {chips.map(([k, v]) => (
+          <span key={k} className={`rounded-md border px-1.5 py-1 text-[10px] whitespace-nowrap ${
+            v.held ? 'border-purple-200 bg-purple-50 text-purple-800' : 'border-sky-200 bg-white'}`}>
+            <b className="font-mono">{k.split('|')[0]}</b>
+            {v.pct != null && <span className={v.held ? 'text-purple-700' : 'text-slate-500'}> · {Math.round(v.pct)} %</span>}
+            <span className={v.held ? 'text-purple-700' : 'text-slate-500'}> · {nf(v.pallets)} pallet</span>
+            {v.held && <span className="ml-1 rounded bg-purple-100 px-1 font-medium text-purple-700">QA giữ</span>}
+          </span>
+        ))}
+      </div>
+      {nHeld > 0 && nHeld === rows.length && (
+        <div className="text-[11px] text-purple-800">Toàn bộ {nf(nHeld)} pallet đang bị QA giữ — không lấy được mức nào cho tới khi gỡ QA ở trang Tồn kho.</div>
+      )}
     </div>
   )
 }

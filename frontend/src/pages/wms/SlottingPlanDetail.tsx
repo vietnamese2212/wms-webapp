@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { ArrowLeft, Boxes, CheckCircle2, ChevronDown, ChevronRight, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
+import { backTarget } from '@/lib/returnTo'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
@@ -173,7 +174,7 @@ export default function SlottingPlanDetail() {
         {/* Header */}
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-1.5 print:hidden">
           <div className="flex items-center gap-2 flex-wrap">
-            <Link to="/wms/slotting" className="text-slate-400 hover:text-slate-600 shrink-0"><ArrowLeft className="h-4 w-4" /></Link>
+            <Link to={backTarget('/wms/slotting')} className="text-slate-400 hover:text-slate-600 shrink-0"><ArrowLeft className="h-4 w-4" /></Link>
             <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
               <Boxes className="h-4 w-4 text-sky-600" /> {plan.name}
             </h1>

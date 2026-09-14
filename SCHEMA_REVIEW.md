@@ -648,3 +648,14 @@ created_at, updated_at
   BIÊN DỊCH, không âm thầm sai. 3 RPC sửa đúng một dòng mỗi hàm (`control_tower_resources.locked` ·
   `outbound_shortage_stats.avail` · `putaway_slot_facts.qa_hold`). Lưới: ratchet **`qa_hold_rule_hand_rolled`**
   (baseline 0, đã thử ngược — ĐỎ 4 trên bản lỗi) + test đơn vị `backend/tests/unit/qaHold.test.ts`.
+- `20260914_directed_board_item_units.sql` — **Việc cần làm: XỬ LÝ TẠI CHỖ, không rời trang** (bậc 1+2 đề nghị 14/09, user duyệt).
+  RPC `directed_board` cùng chữ ký (CREATE OR REPLACE, không nạp chồng), sinh từ định nghĩa đang chạy bằng
+  `scratchpad/ops/gen_mig_board.mjs` thay đúng 4 chỗ: (a) `rows[].item_id` — tab Sắp quét, dòng việc NHẶT LẺ có lối
+  "Trừ tồn nhặt lẻ ›" trỏ thẳng tới dòng hàng (bước trừ tồn thật là nút "Check nhặt lẻ (n)" ở trang dòng hàng; trang
+  này chỉ CHỈ ĐƯỜNG, không mở cửa sau); (b) `unset_items[]` mang `material_id · material_name · material_category ·
+  units_per_carton/entry_unit/base_unit · customer_name` để băng vàng "chưa khai quy định date" mở thẳng
+  `SetDateRuleSheet` tại trang ("Khai ngay") thay vì "mở chuyến rồi bấm Quy định date". Cùng đợt, KHÔNG đổi schema:
+  `confirmTasks` nhận `restore` (hoàn tác việc nhặt lẻ hỏi "hàng đưa xuống chưa?" — Chưa ⇒ pallet ghi lại về
+  `from_location_id` qua cùng RPC `move_pallets_to_location`, ô cũ đầy ⇒ 409 giữ dấu; Rồi ⇒ chỉ bỏ dấu như cũ);
+  `checkDateRuleStock` trả thêm `held_pallets` để câu `DATE_RULE_NO_STOCK` tách ba tình huống (hết hàng · hàng có nhưng
+  QA giữ hết ⇒ khuyên gỡ QA · hàng có nhưng không đạt mức ⇒ khuyên đổi mức). Gói QA 57 thêm **[21e–21h]**.

@@ -3,6 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare, CalendarClock } from 'lucide-react'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -73,7 +75,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
   const aggRows: AggRow[] = (() => {
     const map = new Map<string, AggRow>()
     for (const e of sorted) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
@@ -688,7 +690,7 @@ export default function LoosePickingDetail() {
         {/* Row 1: back + code + status + ⓘ + cụm action (1 dòng, không wrap — cụm action bọc shrink-0) */}
         <div className="flex items-center gap-x-2 gap-y-1.5">
           <div className="flex items-center gap-1.5 min-w-0 flex-1">
-            <button onClick={() => navigate('/wms/loosepicking')}
+            <button onClick={() => navigate(backTarget('/wms/loosepicking'))}
               className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </button>

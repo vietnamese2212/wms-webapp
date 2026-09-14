@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
+import { backTarget } from '@/lib/returnTo'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -171,7 +172,7 @@ export default function FillOrderDetail() {
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={() => navigate('/wms/fill')} title="Về danh sách"
+            <button onClick={() => navigate(backTarget('/wms/fill'))} title="Về danh sách"
               className="h-9 w-9 sm:h-7 sm:w-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </button>

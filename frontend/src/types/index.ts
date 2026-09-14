@@ -817,6 +817,7 @@ export interface DirectedRow {
   delivery_date: string | null    // ngày chuyến — để tách việc hôm nay với chuyến cũ còn dở
   dock_name: string | null
   kind: 'PICK' | 'LOOSE_FEED'
+  item_id?: string | null          // dòng hàng (14/09) — tab Sắp quét: lối "Trừ tồn nhặt lẻ" trỏ thẳng dòng hàng
   current_code: string | null      // VỊ TRÍ HIỆN TẠI của pallet — kể cả đang trên kệ (user chốt 10/09)
   from_code: string | null
   level_no: number | null
@@ -908,7 +909,14 @@ export interface DirectedBoard {
   settings?: { separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number }
   trips?: DirectedTrip[]
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
-  unset_items: { gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number; note: string | null; delivery_date: string | null }[]
+  // 14/09 mang thêm mã/quy cách/NPP để mở SetDateRuleSheet ngay tại trang ("Khai ngay")
+  unset_items: {
+    gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number
+    note: string | null; delivery_date: string | null
+    material_id?: string | null; material_name?: string | null; material_category?: string | null
+    units_per_carton?: number | null; entry_unit?: string | null; base_unit?: string | null
+    customer_name?: string | null
+  }[]
 }
 // HỘP VIỆC theo người (đợt C, 12/09) — mọi nguồn việc (chuyến · fill · slotting · chuyển kho · date · DO SAP)
 // về cùng một hình dạng, chia 3 vùng: Của tôi · Việc chung của kho · Đang chờ người khác

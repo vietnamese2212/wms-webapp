@@ -4140,7 +4140,8 @@ export function useDirectedBoard(
 export function useConfirmTasks() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { task_ids: string[]; stage: 'LOWER' | 'MOVE' | 'BOTH'; undo?: boolean }) =>
+    // restore: hoàn tác việc NHẶT LẺ và ghi pallet lại về ô cũ (chỉ khi người bấm xác nhận hàng chưa đưa xuống)
+    mutationFn: (body: { task_ids: string[]; stage: 'LOWER' | 'MOVE' | 'BOTH'; undo?: boolean; restore?: boolean }) =>
       apiClient.post('/wms/directed/tasks/confirm', body).then(r => r.data.data as { changed: number; moved_pallets: number }),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['directed-board'] })
@@ -4275,6 +4276,7 @@ export interface DateRuleStockPart { ok: boolean; qty_base: number; matched_base
 export interface DateRuleStock {
   item_id: string; ok: boolean
   matched_base: number; matched_pallets: number; total_base: number
+  held_pallets: number        // pallet còn hàng nhưng QA đang giữ — lời khuyên là "gỡ QA", không phải "đổi mức"
   best_pct: number | null; need_base: number
   parts?: DateRuleStockPart[]
 }

@@ -69,7 +69,7 @@ export async function getBoard(req: Request, res: Response) {
  */
 export async function confirm(req: Request, res: Response) {
   try {
-    const body = (req.body ?? {}) as { task_ids?: unknown; stage?: unknown; undo?: unknown }
+    const body = (req.body ?? {}) as { task_ids?: unknown; stage?: unknown; undo?: unknown; restore?: unknown }
     const ids = Array.isArray(body.task_ids) ? body.task_ids : []
     if (!ids.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn việc nào')
     if (ids.length > 200) return fail(res, 400, 'VALIDATION_ERROR', 'Tối đa 200 việc mỗi lần bấm')
@@ -82,8 +82,9 @@ export async function confirm(req: Request, res: Response) {
 
     // actor = TÊN (hiện trên bảng "ai làm"); actorId = ID nhân viên (ghi vào InventoryEntry.updated_by,
     // cột có khoá ngoại — truyền tên vào là 23503 và pallet đứng im, vá 13/09).
+    // restore = hoàn tác việc nhặt lẻ VÀ ghi pallet lại về ô cũ (FE hỏi người bấm "hàng đưa xuống chưa?")
     const r = await confirmTasks(ids as string[], stage as ConfirmStage, body.undo === true,
-      req.user?.name ?? null, req.user?.sub ?? null)
+      req.user?.name ?? null, req.user?.sub ?? null, body.undo === true && body.restore === true)
     if (!r.ok) return fail(res, r.status, r.code, r.message)
     return ok(res, r)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }

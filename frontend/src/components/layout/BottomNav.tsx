@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { clearReturnTo } from '@/lib/returnTo'
 import { LayoutDashboard, PackagePlus, PackageMinus, Scissors, ClipboardList, ShieldCheck, ListChecks } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -43,6 +44,7 @@ export function BottomNav() {
             key={tab.to}
             to={tab.to}
             end={tab.end}
+            onClick={clearReturnTo}
             className={({ isActive }) =>
               cn(
                 'flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg transition-colors min-w-[52px]',

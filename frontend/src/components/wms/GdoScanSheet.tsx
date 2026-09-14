@@ -56,37 +56,11 @@ function looseRemainingOf(item: OutboundItem): number {
   return Math.max(0, effective - Math.min(looseScanned, effective))
 }
 
-export interface GdoScanPanelProps {
+export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan }: {
   gdo: GDO; mode: 'outbound' | 'loose'; onClose: () => void
   pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn khi mount
-  /** Nhúng vào màn khác (Theo vị trí công việc, 14/09): bỏ tiêu đề + nút Đóng của panel, khung ngoài tự lo. */
-  embedded?: boolean
-  /** Mã hàng vừa nhận từ tem (null = chưa nhận / tem không thuộc đơn) — để khung ngoài đối chiếu với điểm ghé đang đứng. */
-  onActiveItemChange?: (itemId: string | null) => void
-  /** Lưu thành công một lượt quét — khung ngoài làm mới điểm ghé / tự sang điểm kế. */
-  onSaved?: (info: { itemId: string; palletCode: string; cartons: number }) => void
-}
-
-/** Vỏ full-screen (portal + nền tối) — API cũ, mọi chỗ gọi trước 14/09 không đổi gì. */
-export function GdoScanSheet(props: GdoScanPanelProps) {
-  return createPortal(
-    <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
-      <div className="absolute inset-0 bg-black/60" onClick={props.onClose} />
-      <div className="relative mt-auto bg-white rounded-t-2xl h-[92dvh] flex flex-col overflow-hidden">
-        <GdoScanPanel {...props} />
-      </div>
-    </div>,
-    document.body
-  )
-}
-
-/**
- * THÂN màn quét cấp đơn — camera/súng · nhận mã từ tem · check · số lượng · phần dư · luân chuyển · cất.
- * Tách khỏi vỏ (14/09) để màn "Theo vị trí công việc" nhúng được mà KHÔNG viết luồng quét thứ hai
- * (luật một nguồn cho luân chuyển / cất / phần dư). Tự chiếm hết chiều cao khung cha (flex-1).
- */
-export function GdoScanPanel({ gdo, mode, onClose, pdaMode = false, initialScan, embedded = false, onActiveItemChange, onSaved }: GdoScanPanelProps) {
+}) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const codeTypes = useScanCodeTypes(gdo.warehouse_id)   // loại mã camera giải = theo KHO CỦA CHUYẾN
   // Súng quét: hễ có 1 phát bắn = chuyển hẳn sang chế độ súng (tắt camera) cả phiên.
@@ -129,8 +103,6 @@ export function GdoScanPanel({ gdo, mode, onClose, pdaMode = false, initialScan,
     mode === 'loose' ? looseRemainingOf(i) : Math.max(0, i.cartons_ordered - i.cartons_scanned)
 
   const activeItem = activeItemId ? items.find(i => i.id === activeItemId) ?? null : null
-  // Báo khung ngoài mã vừa nhận (màn Theo vị trí đối chiếu với điểm ghé đang đứng)
-  useEffect(() => { onActiveItemChange?.(activeItemId) }, [activeItemId]) // eslint-disable-line
   const activeRemaining = activeItem ? remainingOf(activeItem) : 0
   const activeMatCode = activeItem ? (activeItem.material?.material_code ?? activeItem.material_code_raw ?? '—') : ''
   const activeMatName = activeItem ? (activeItem.material?.short_name ?? activeItem.material_code_raw ?? '—') : ''
@@ -236,7 +208,6 @@ export function GdoScanPanel({ gdo, mode, onClose, pdaMode = false, initialScan,
   function afterSaveSuccess(data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target: ItemWithDO) {
     setCheckResult(null)
     setCount(c => c + 1)
-    onSaved?.({ itemId: target.id, palletCode: data.scan_entry.pallet_code, cartons: Number(data.scan_entry.cartons_scanned) })
     // Kho/Loại kho bật quét-thùng (chỉ luồng xuất) → mở panel multiscan thùng neo vào pallet vừa quét
     if (mode === 'outbound' && gdo.carton_scan_enabled) {
       setFeedback(null)
@@ -327,19 +298,19 @@ export function GdoScanPanel({ gdo, mode, onClose, pdaMode = false, initialScan,
 
   const rot = checkResult?.rotation ?? null
 
-  return (
-    <>
-        <div className={`flex-1 flex flex-col gap-2.5 min-h-0 ${embedded ? 'p-2' : 'p-4'}`}>
-          {!embedded && (
-            <div>
-              <p className="font-semibold text-lg text-slate-800">
-                {mode === 'loose' ? 'Quét nhặt lẻ' : 'Quét xuất hàng'} — <span className="font-mono">{gdo.group_code}</span>
-              </p>
-              <p className="text-sm text-slate-500">
-                Quét tem pallet bất kỳ thuộc đơn — tự nhận mã hàng · hỗ trợ súng quét · phiên này: <strong>{count}</strong> pallet
-              </p>
-            </div>
-          )}
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative mt-auto bg-white rounded-t-2xl h-[92dvh] flex flex-col overflow-hidden">
+        <div className="p-4 flex-1 flex flex-col gap-2.5 min-h-0">
+          <div>
+            <p className="font-semibold text-lg text-slate-800">
+              {mode === 'loose' ? 'Quét nhặt lẻ' : 'Quét xuất hàng'} — <span className="font-mono">{gdo.group_code}</span>
+            </p>
+            <p className="text-sm text-slate-500">
+              Quét tem pallet bất kỳ thuộc đơn — tự nhận mã hàng · hỗ trợ súng quét · phiên này: <strong>{count}</strong> pallet
+            </p>
+          </div>
 
           {/* Ngữ cảnh MÃ HÀNG vừa nhận từ QR: tên + còn thiếu + NPP + header text + điều kiện Batch/%Date */}
           {activeItem && (
@@ -498,14 +469,15 @@ export function GdoScanPanel({ gdo, mode, onClose, pdaMode = false, initialScan,
               ⏸ {queuedThisGdo} lượt quét đang chờ mạng (chưa tính vào số đã xuất)
             </div>
           )}
-          {!activeItem && !feedback && !checkResult && !embedded && (
+          {!activeItem && !feedback && !checkResult && (
             <p className="text-[11px] text-slate-400 text-center">
               Hệ thống tự nhận mã hàng từ tem và hiện điều kiện xuất của mã đó
             </p>
           )}
 
-          {!embedded && <Button variant="outline" className="w-full" onClick={onClose} disabled={saving}>Đóng</Button>}
+          <Button variant="outline" className="w-full" onClick={onClose} disabled={saving}>Đóng</Button>
         </div>
+      </div>
 
       {cartonFor && activeItem && (
         <CartonScanSheet
@@ -518,6 +490,7 @@ export function GdoScanPanel({ gdo, mode, onClose, pdaMode = false, initialScan,
           onSkip={finishCarton}
         />
       )}
-    </>
+    </div>,
+    document.body
   )
 }

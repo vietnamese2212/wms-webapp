@@ -1,8 +1,11 @@
 # Kế hoạch: "Đi nhặt lẻ" — MỘT nút mở ĐƯỜNG ĐI và QUÉT ngay tại đó (user chốt 14/09/2026)
 
-> **ĐÃ THỰC THI 14/09** (commit `df261a4d`) — nút lấy tên user chốt: **"Theo vị trí"** (màn "Theo vị trí công việc"),
-> component `components/wms/LooseRouteSheet.tsx`; `GdoScanSheet` tách thành `GdoScanPanel`; BE `loose-route` trả
-> `remaining_base` · `material_name` · `units` · `dist_from_prev_cells` · `cell_m`. Gói 57 [25d1–25d2]. Phần dưới là plan gốc.
+> **ĐÃ THỰC THI 14/09** — nút **"Theo vị trí"** (màn "Theo vị trí công việc"), `components/wms/LooseRouteSheet.tsx`.
+> Bản đầu (`df261a4d`) làm theo plan dưới: thẻ ô hiện tại + quét NHÚNG (`GdoScanPanel`). **User chỉnh lại cùng ngày:**
+> *"giao diện dạng TABLE — mỗi vị trí × mã hàng là 1 dòng, tối ưu từ trên xuống; nút quét QR như trang chi tiết Nhặt lẻ;
+> link với Nhặt lẻ/Xuất để có gì đổi là cập nhật"* ⇒ bản hiện tại = BẢNG lộ trình + `GdoScanSheet` nguyên bản (bỏ
+> `GdoScanPanel`), dòng đã lấy đủ gạch ngang ở cuối (`done[]`). BE trả thêm `remaining_base/effective_base/scanned_base`
+> · `material_name` · `units` · `dist_from_prev_cells` · `cell_m` · `done[]`. Gói 57 [25d1–25d2]. Phần dưới là plan gốc.
 
 > User: *"mở 1 nút và hiện lên con đường đi lấy, và quét được luôn ở đó."* — sau khi hỏi *"cả chục mã thì làm sao?"*
 > về dải đường đi một dòng trên trang Nhặt lẻ. Plan viết trước khi compact; thực thi ở lượt sau.

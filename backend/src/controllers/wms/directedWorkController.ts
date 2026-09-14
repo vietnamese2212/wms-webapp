@@ -196,7 +196,7 @@ export async function getLooseRoute(req: Request, res: Response) {
     const myWhs = scopeWhIds(req)
     if (myWhs && g.warehouse_id && !myWhs.includes(g.warehouse_id)) return fail(res, 'Chuyến thuộc kho ngoài phạm vi được giao', 403)
     const whId = g.warehouse_id
-    if (!whId) return ok(res, { routed: false, start_code: null, cell_m: null, stops: [], unlocated: [] })
+    if (!whId) return ok(res, { routed: false, start_code: null, cell_m: null, stops: [], unlocated: [], done: [] })
 
     const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id'))
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
@@ -210,21 +210,36 @@ export async function getLooseRoute(req: Request, res: Response) {
     // CÒN LẤY nhặt lẻ (base) — cùng công thức `itemLooseProgress` của trang Nhặt lẻ / `looseRemainingOf` của màn quét:
     // phần quét chẵn vượt kế hoạch chẵn ăn vào phần lẻ; lấy đủ phần lẻ thì khỏi ghé dù pallet chẵn còn chưa quét.
     const looseScanned = new Map<string, number>()
+    // Ô đã lấy hàng của từng dòng (từ pallet đã quét lẻ) — để dòng ĐÃ XONG vẫn nằm trong bảng lộ trình kèm ô đã lấy
+    const scannedLoc = new Map<string, string>()
     if (items.length) {
       const scans = await fetchAllByIdChunks(items.map(it => it.id), chunk => supabase.from('OutboundScanEntry')
-        .select('item_id, cartons_scanned').in('item_id', chunk).eq('is_loose_picking', true).order('id')) as unknown as
-        Array<{ item_id: string; cartons_scanned: number | null }>
-      for (const s of scans) looseScanned.set(s.item_id, (looseScanned.get(s.item_id) ?? 0) + Number(s.cartons_scanned ?? 0))
+        .select('item_id, cartons_scanned, entry:InventoryEntry!inventory_entry_id(location:Location!location_id(location_code))')
+        .in('item_id', chunk).eq('is_loose_picking', true).order('id')) as unknown as
+        Array<{ item_id: string; cartons_scanned: number | null; entry: { location: { location_code: string } | null } | null }>
+      for (const s of scans) {
+        looseScanned.set(s.item_id, (looseScanned.get(s.item_id) ?? 0) + Number(s.cartons_scanned ?? 0))
+        const lc = s.entry?.location?.location_code
+        if (lc) scannedLoc.set(s.item_id, lc)
+      }
     }
-    const remainingOf = (it: typeof items[number]) => {
+    const progressOf = (it: typeof items[number]) => {
       const ls = looseScanned.get(it.id) ?? 0
       const ov = Math.max(0, (Number(it.cartons_scanned ?? 0) - ls) - (Number(it.cartons_ordered ?? 0) - Number(it.loose_picking ?? 0)))
       const effective = Math.max(0, Number(it.loose_picking ?? 0) - ov)
-      return Math.max(0, effective - Math.min(ls, effective))
+      const done = Math.min(ls, effective)
+      return { effective, done, remaining: Math.max(0, effective - done) }
     }
+    const remainingOf = (it: typeof items[number]) => progressOf(it).remaining
     const open = items.filter(it => remainingOf(it) > 0)
+    // Dòng đã lấy đủ phần lẻ — GẠCH NGANG nhưng vẫn ở lại bảng (cùng luật Việc cần làm "phòng bị quên")
+    const doneRows = items.filter(it => remainingOf(it) === 0).map(it => ({
+      item_id: it.id, material_id: it.material_id, material_code: it.material_code_raw, material_name: it.material?.short_name ?? null,
+      units: it.material ?? null, effective_base: progressOf(it).effective, scanned_base: progressOf(it).done,
+      location_code: scannedLoc.get(it.id) ?? null,
+    }))
     const matIds = [...new Set(open.map(it => it.material_id).filter((x): x is string => !!x))]
-    if (!matIds.length) return ok(res, { routed: false, start_code: null, cell_m: null, stops: [], unlocated: [] })
+    if (!matIds.length) return ok(res, { routed: false, start_code: null, cell_m: null, stops: [], unlocated: [], done: doneRows })
 
     const sug = await rotationSuggestionsByMaterial(matIds, [whId], await rotationConfigOf([whId]))
     const codeByMat = new Map<string, { code: string; pct_date: number | null; available: number }>()
@@ -243,7 +258,7 @@ export async function getLooseRoute(req: Request, res: Response) {
     const legOfLoc = new Map(order.map((id, i) => [id, legs[i] ?? -1]))
     type StopMat = {
       item_id: string; material_id: string; material_code: string | null; material_name: string | null
-      units: MatQ | null; remaining_base: number; pct_date: number | null; available: number
+      units: MatQ | null; remaining_base: number; effective_base: number; scanned_base: number; pct_date: number | null; available: number
     }
     type Stop = { seq: number; location_id: string; location_code: string; is_pick_face: boolean; dist_from_prev_cells: number | null; materials: StopMat[] }
     const stops = new Map<string, Stop>()
@@ -257,9 +272,10 @@ export async function getLooseRoute(req: Request, res: Response) {
         seq: seqOfLoc.get(loc.id) ?? 0, location_id: loc.id, location_code: loc.location_code, is_pick_face: loc.is_pick_face === true,
         dist_from_prev_cells: routed && leg >= 0 ? leg : null, materials: [],
       }
+      const pg = progressOf(it)
       s.materials.push({
         item_id: it.id, material_id: it.material_id!, material_code: it.material_code_raw, material_name: it.material?.short_name ?? null,
-        units: it.material ?? null, remaining_base: remainingOf(it), pct_date: v.pct_date, available: v.available,
+        units: it.material ?? null, remaining_base: pg.remaining, effective_base: pg.effective, scanned_base: pg.done, pct_date: v.pct_date, available: v.available,
       })
       stops.set(loc.id, s)
     }
@@ -268,7 +284,7 @@ export async function getLooseRoute(req: Request, res: Response) {
       const { data: dk } = await supabase.from('Location').select('row, location_code').eq('id', g.dock_location_id).maybeSingle()
       startCode = (dk as { row: string | null; location_code: string } | null)?.row ?? (dk as { location_code: string } | null)?.location_code ?? null
     }
-    return ok(res, { routed, start_code: startCode, cell_m, stops: [...stops.values()].sort((a, b) => a.seq - b.seq), unlocated })
+    return ok(res, { routed, start_code: startCode, cell_m, stops: [...stops.values()].sort((a, b) => a.seq - b.seq), unlocated, done: doneRows })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

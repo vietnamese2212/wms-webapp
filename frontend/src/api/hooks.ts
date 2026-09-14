@@ -3882,7 +3882,13 @@ export interface LooseRouteMaterial {
   item_id: string; material_id: string; material_code: string | null; material_name: string | null
   units: MatUnits | null
   remaining_base: number          // còn lấy nhặt lẻ (BASE) — cùng công thức itemLooseProgress; BE đã lọc dòng = 0
+  effective_base: number; scanned_base: number   // cần / đã lấy (BASE) — in "đã/cần" theo thùng
   pct_date: number | null; available: number
+}
+/** Dòng đã lấy đủ phần lẻ — vẫn nằm cuối bảng lộ trình, gạch ngang (phòng bị quên) */
+export interface LooseRouteDone {
+  item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
+  units: MatUnits | null; effective_base: number; scanned_base: number; location_code: string | null
 }
 export interface LooseRouteStop {
   seq: number; location_id: string; location_code: string; is_pick_face: boolean
@@ -3893,6 +3899,7 @@ export interface LooseRoute {
   routed: boolean; start_code: string | null; cell_m: number | null
   stops: LooseRouteStop[]
   unlocated: Array<{ item_id: string; material_code: string | null; material_name: string | null; remaining_base: number }>
+  done: LooseRouteDone[]
 }
 export function useLooseRoute(gdoId: string | undefined) {
   return useQuery({

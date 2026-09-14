@@ -165,12 +165,11 @@ function StockButtons({ r, onPick, big }: { r: DirectedRow; onPick: (m: PickedMa
  * NSX · %Date từng pallet nằm sau KÍNH LÚP (panel chi tiết). Riêng ô có NHIỀU NSX của cùng mã thì NSX
  * phải lên bảng vì lúc đó nó là phần của lệnh ("lấy 2 pallet NSX 28-07 ở ô X").
  */
-/** Dòng "lấy bao nhiêu": N pallet · lấy bất kỳ trong M cùng NSX (nếu có chọn) · đã quét k/N (Sắp quét). */
+/** Dòng phụ dưới "N pallet": chỉ tiến độ quét (Sắp quét). User 14/09: KHÔNG in "bất kỳ trong M cùng NSX"
+ *  — lệnh chỉ cần số pallet + ô + NSX là đủ, cái "pallet nào cũng được" nằm ở luật cửa quét, không cần nói. */
 function pickHint(r: DirectedRow, tab: BoardTab): string | null {
-  const bits: string[] = []
-  if ((r.n_equiv ?? 0) > r.n_pallets) bits.push(`bất kỳ trong ${nf(r.n_equiv ?? 0)} pallet cùng NSX ở ô`)
-  if (tab === 'SCAN' && (r.n_done ?? 0) > 0 && !r.all_scanned) bits.push(`đã quét ${nf(r.n_done ?? 0)}`)
-  return bits.length ? bits.join(' · ') : null
+  if (tab === 'SCAN' && (r.n_done ?? 0) > 0 && !r.all_scanned) return `đã quét ${nf(r.n_done ?? 0)}`
+  return null
 }
 /** MỘT nguồn cho cả bảng (PC) lẫn thẻ (PDA): NSX gộp · yêu cầu date · số đo date thật. */
 function dateBits(r: DirectedRow) {
@@ -192,9 +191,8 @@ function dateBits(r: DirectedRow) {
     measure: byDays
       ? span(dys, (lo, hi) => (lo === hi ? `còn ${nf(lo)} ngày` : `còn ${nf(lo)}–${nf(hi)} ngày`))
       : span(pcts, (lo, hi) => (lo === hi ? `${lo}%` : `${lo}–${hi}%`)),
-    // NSX chỉ lên bảng khi Ô CÓ NHIỀU NSX của cùng mã (lúc đó nó là phần của lệnh); ô một date thì
-    // pallet nào cũng được, in NSX chỉ thêm chữ.
-    nsx: nsxDays.length && (r.cell_ndates ?? 1) > 1
+    // NSX LUÔN lên bảng (user 14/09: "chỉ cần ghi là date nào là được") — đó là phần của lệnh; tem cụ thể thì không.
+    nsx: nsxDays.length
       ? `${formatDate(nsxDays[0], 'dd-MM-yy')}${nsxDays.length > 1 ? ` → ${formatDate(nsxDays[nsxDays.length - 1], 'dd-MM-yy')}` : ''}`
       : null,
   }
@@ -213,7 +211,8 @@ function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: bo
           {measure}
         </div>
       )}
-      {nsx && <div className="text-[9px] font-semibold text-amber-800 no-underline" title="Ô này có nhiều NSX của cùng mã — lấy đúng NSX này">NSX {nsx}</div>}
+      {nsx && <div className={`text-[9px] font-semibold no-underline ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}
+        title={(r.cell_ndates ?? 1) > 1 ? 'Ô này có nhiều NSX của cùng mã — lấy đúng NSX này' : undefined}>NSX {nsx}</div>}
     </div>
   )
 }
@@ -729,8 +728,7 @@ export default function DirectedWork() {
                       ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
                       : <span className="text-xs text-slate-400">chưa khai</span>}
                     {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
-                    {/* NSX chỉ hiện khi ô có nhiều NSX — lúc đó "lấy NSX nào" là phần của lệnh */}
-                    {nsx && <div className="text-xs font-semibold text-amber-800">lấy NSX {nsx} (ô có nhiều NSX)</div>}
+                    {nsx && <div className={`text-xs font-semibold ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}>NSX {nsx}</div>}
                   </Step>
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
                     <span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{where ?? <span className="text-slate-300 font-sans font-normal">chưa có trên bản vẽ</span>}</span>
@@ -888,7 +886,6 @@ export default function DirectedWork() {
                     <TableCell className={cell}>
                       <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-400">pallet</span>
                       <span className="text-[9px] text-slate-400"> · {r.material_codes?.filter(Boolean).join(', ') || '—'}</span>
-                      {/* "bất kỳ trong M cùng NSX": tem ghim chỉ là gợi ý (user 14/09) */}
                       {pickHint(r, boardTab) && <div className="text-[9px] text-slate-500 no-underline">{pickHint(r, boardTab)}</div>}
                       {/* Tên hàng: trong kho người ta gọi hàng theo TÊN, mã 9 số chỉ khớp được trên giấy */}
                       {r.material_name && <div className="text-[9px] text-slate-500 truncate no-underline">{r.material_name}</div>}

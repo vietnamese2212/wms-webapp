@@ -41,16 +41,18 @@ type Row = {
   done: boolean
 }
 
+// Thứ tự cột theo câu hỏi của người đi nhặt (user 14/09 "mã hàng rồi tới tên hàng chứ, bố trí khoa học vào"):
+// ĐI ĐÂU (Vị trí · Quãng) → LẤY GÌ (Mã · Tên) → BAO NHIÊU (Còn lấy · Đã/cần) → PALLET NÀO (%Date · Tồn ở ô) → THAO TÁC (ghim mép phải)
 const COLS: RtColDef[] = [
   { id: 'seq',  label: 'Vị trí', w: 168 },   // đủ chỗ cho "① B_TP1_10_T1 ×2 kế tiếp" ở 360 px (đo: 118 cắt mất chip)
+  { id: 'dist', label: 'Quãng', w: 64, align: 'right' },
   { id: 'mat',  label: 'Mã hàng', w: 92 },
-  { id: 'rem',  label: 'Còn lấy', w: 110, align: 'right' },
-  { id: 'prog', label: 'Đã / cần', w: 96, align: 'right' },
-  { id: 'act',  label: '', w: 104, align: 'center' },
   { id: 'name', label: 'Tên hàng', w: 200 },
+  { id: 'rem',  label: 'Còn lấy', w: 110, align: 'right' },
+  { id: 'prog', label: 'Đã / cần', w: 120, align: 'right' },
   { id: 'pct',  label: '%Date pallet', w: 82, align: 'right' },
   { id: 'avail', label: 'Tồn ở ô', w: 96, align: 'right' },
-  { id: 'dist', label: 'Quãng', w: 70, align: 'right' },
+  { id: 'act',  label: 'Thao tác', w: 104, align: 'center' },
 ]
 
 export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: () => void; canScan: boolean }) {
@@ -174,14 +176,24 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                         <span className="text-[10px] text-slate-400 pl-5">↳ cùng ô</span>
                       )}
                     </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] text-slate-500">{r.dist ?? ''}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px]">{r.material_code ?? '—'}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] truncate" title={r.material_name ?? undefined}>{r.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] font-semibold tabular-nums">
                       {r.done ? <span className="text-green-700 no-underline">✓ đủ</span> : qtyLabel(r.remaining, r.units)}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] tabular-nums">
                       {qtyLabel(r.scanned, r.units)} <span className="text-slate-400">/ {qtyLabel(r.effective, r.units)}</span>
                     </TableCell>
-                    <TableCell className="px-1 py-1 whitespace-nowrap text-center">
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] tabular-nums">
+                      {r.pct_date != null ? <span className={pctDateCls(r.pct_date, pctBands)}>{r.pct_date}%</span> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 py-1 whitespace-nowrap text-right text-[10px] tabular-nums ${short ? 'text-amber-700 font-semibold' : ''}`}
+                      title={short ? 'Ô này không đủ — lấy hết rồi bảng sẽ chỉ ô kế tiếp có hàng' : undefined}>
+                      {r.available != null ? <>{qtyLabel(r.available, r.units)}{short && ' ⚠'}</> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    {/* Thao tác GHIM MÉP PHẢI — bảng 9 cột tràn khung 360/1280, nút bấm không được là thứ bị đẩy ra ngoài */}
+                    <TableCell className={`px-1 py-1 whitespace-nowrap text-center sticky right-0 z-10 ${stickyBg}`}>
                       {!r.done && scanAllowed && (
                         noQr.has(r.item_id) ? (
                           <button onClick={() => navigate(`/wms/loosepicking/${gdo.id}/items/${r.item_id}?scan=1`)}
@@ -202,15 +214,6 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                         </button>
                       )}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] truncate">{r.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] tabular-nums">
-                      {r.pct_date != null ? <span className={pctDateCls(r.pct_date, pctBands)}>{r.pct_date}%</span> : <span className="text-slate-300">—</span>}
-                    </TableCell>
-                    <TableCell className={`px-2 py-1 whitespace-nowrap text-right text-[10px] tabular-nums ${short ? 'text-amber-700 font-semibold' : ''}`}
-                      title={short ? 'Ô này không đủ — lấy hết rồi bảng sẽ chỉ ô kế tiếp có hàng' : undefined}>
-                      {r.available != null ? <>{qtyLabel(r.available, r.units)}{short && ' ⚠'}</> : <span className="text-slate-300">—</span>}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] text-slate-500">{r.dist ?? ''}</TableCell>
                   </TableRow>
                 )
               })}

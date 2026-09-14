@@ -47,6 +47,9 @@ async function cleanup() {
     // Chuyến Hoàn thành ⇒ tự sinh lệnh chuyển kho + DÒNG KẾ HOẠCH NHẬP ở kho đích; dòng đó trỏ
     // `warehouse_id` (FK không CASCADE) nên còn nó là không xoá được kho — lượt sau đỏ ở fixture.
     await restWrite('inbound_plan_lines', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    // `wms_replan_queue` KHÔNG có khoá ngoại (cột text) ⇒ xoá kho không kéo theo dòng hàng đợi, và
+    // không ai xả được nữa vì xả theo kho đang mở bảng. Mỗi lượt chạy để lại 1 dòng rác (đo 14/09: 5 dòng).
+    await restWrite('wms_replan_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})

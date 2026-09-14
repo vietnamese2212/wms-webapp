@@ -42,7 +42,7 @@ type Row = {
 }
 
 const COLS: RtColDef[] = [
-  { id: 'seq',  label: 'Vị trí', w: 118 },
+  { id: 'seq',  label: 'Vị trí', w: 168 },   // đủ chỗ cho "① B_TP1_10_T1 ×2 kế tiếp" ở 360 px (đo: 118 cắt mất chip)
   { id: 'mat',  label: 'Mã hàng', w: 92 },
   { id: 'rem',  label: 'Còn lấy', w: 110, align: 'right' },
   { id: 'prog', label: 'Đã / cần', w: 96, align: 'right' },

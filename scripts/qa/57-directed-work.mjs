@@ -1125,8 +1125,9 @@ try {
     const stockLocs = new Set((await restAll('InventoryEntry', `select=location_id&material_id=eq.${mat.id}&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)).map(e => e.location_id))
     check('[25b] Điểm ghé là vị trí THẬT SỰ có tồn của mã (không chỉ đường tới ô trống)',
       st.length >= 1 && st.every(s => stockLocs.has(s.location_id)), st.map(s => s.location_code).join(','))
+    // `GroupDeliveryOrder.id` là TEXT ⇒ id rác = 0 dòng = 404 (luật pg-error-is-user-error: KHÔNG chặn theo hình dạng uuid); chỉ cấm 500
     r = await api('/wms/directed/loose-route?gdo_id=not-a-uuid')
-    check('[25c] gdo_id rác → 400, không 500', r.s === 400, `http=${r.s}`)
+    check('[25c] gdo_id rác → 4xx (404 vì khoá text), không 500', r.s === 400 || r.s === 404, `http=${r.s}`)
     await api(`/wms/outbound/${tR.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 

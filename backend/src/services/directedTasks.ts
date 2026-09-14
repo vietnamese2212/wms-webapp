@@ -27,6 +27,7 @@ import {
 } from '../utils/rotation'
 import { resolveRotation, resolveWorkMode, type WhTypeConfigRow } from '../utils/putaway'
 import { qaHoldIds, qaNotHeldFilter } from './qaStatus'
+import { qtyLabel, type MatUnits } from '../utils/qtyUnits'
 
 // `InventoryEntry.updated_by` là KHOÁ NGOẠI tới `Employee(id)` — ghi TÊN vào là 23503. Mọi cửa
 // chuyển vị trí trong app đều gác bằng đúng khuôn này (Tồn kho · Slotting · phần dư khi quét).
@@ -160,6 +161,28 @@ export async function planGdoTasks(gdoId: string, actor: string | null): Promise
   }
 }
 
+/**
+ * "SẮP LẠI KẾ HOẠCH" bấm tay = BỎ việc CHƯA AI ĐỤNG rồi sinh lại (user chốt 14/09).
+ * Vì sao không gọi thẳng `planGdoTasks`: hàm đó idempotent — việc treo TÍNH VÀO nhu cầu nên gọi
+ * lại ra "0 việc mới" và ghim CŨ vẫn đứng nguyên. Đo thật 14/09: 16/18 việc treo ở Ba Vì lập từ
+ * 12/09 với bộ lọc QA lỗi (dấu OK bị coi là giữ) nên trỏ pallet date 80 % trong khi date ngắn hơn
+ * còn đầy; vá lọc tối 13/09 xong bấm "Sắp lại" vẫn y nguyên — nút "làm lại" mà không làm lại gì.
+ * Cùng khuôn với `resetUntouchedTasksOfItems` (đổi %Date). GIỮ việc đã hạ / đã đưa ra (công người
+ * ta bỏ ra thật) và việc ĐANG có người cầm trong hạn `CLAIM_TTL_MS` (xe nâng đang trên đường tới).
+ */
+export async function replanGdoTasks(gdoId: string, actor: string | null): Promise<PlanResult> {
+  const { data } = await supabase.from('wms_tasks')
+    .select('id, claimed_by, claimed_at').eq('gdo_id', gdoId).eq('status', 'PENDING')
+    .is('lowered_at', null).is('moved_at', null)
+  const stale = Date.now() - CLAIM_TTL_MS
+  const ids = ((data ?? []) as { id: string; claimed_by: string | null; claimed_at: string | null }[])
+    .filter(t => !t.claimed_by || !t.claimed_at || new Date(t.claimed_at).getTime() < stale)
+    .map(t => t.id)
+  const reset = await cancelTasks(ids, actor, 'REPLANNED')
+  const r = await planGdoTasks(gdoId, actor)
+  return { ...r, cancelled: r.cancelled + reset }
+}
+
 async function planInner(gdoId: string, actor: string | null): Promise<PlanResult> {
   const { data: gdoRow } = await supabase.from('GroupDeliveryOrder')
     .select('id, warehouse_id, status, started_at, dock_location_id, warehouse:Warehouse(id,inventory_mode,work_mode,lower_from_level,rotation_principle,rotation_required)')
@@ -184,12 +207,12 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   const doIds = (dos ?? []).map((d: { id: string }) => d.id)
   if (!doIds.length) return EMPTY
   const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-    .select('id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, date_required, date_rule, pinned_pallets, batch_required, material:Material!material_id(category, short_name, shelf_life_days, supplier_shelf_life_overrides, no_qr_tracking)')
+    .select('id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, date_required, date_rule, pinned_pallets, batch_required, material:Material!material_id(category, short_name, shelf_life_days, supplier_shelf_life_overrides, no_qr_tracking, units_per_carton, entry_unit, base_unit)')
     .in('do_id', chunk).order('id')) as unknown as Array<{
       id: string; material_id: string | null; material_code_raw: string | null
       cartons_ordered: number | null; cartons_scanned: number | null; loose_picking: number | null
       date_required: number | null; date_rule: unknown; pinned_pallets: string[] | null; batch_required: string | null
-      material: (MaterialShelfInfo & { category?: string | null; short_name?: string | null; no_qr_tracking?: boolean | null }) | null
+      material: (MaterialShelfInfo & MatUnits & { category?: string | null; short_name?: string | null; no_qr_tracking?: boolean | null }) | null
     }>
 
   // Việc còn treo của CHÍNH chuyến này = phần đã lập trước đó (tính vào nhu cầu ⇒ idempotent)
@@ -351,12 +374,12 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       unmet.push({
         code: it.material_code_raw ?? '?',
         rule: describeDateRule(n.rule),
-        hint: all.length === 0 ? 'kho không còn tồn mã này'
+        hint: 'không có pallet nào đạt — ' + (all.length === 0 ? 'kho không còn tồn mã này'
           : best.length
             ? (byDays
                 ? `còn nhiều ngày nhất trong kho là ${Math.floor(Math.max(...best))} ngày`
                 : `%Date cao nhất còn trong kho ${Math.floor(Math.max(...best))} %`)
-            : 'tồn còn nhưng không khớp mức yêu cầu',
+            : 'tồn còn nhưng không khớp mức yêu cầu'),
       })
       continue
     }
@@ -435,6 +458,15 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
       left -= take
       if (isLoose) looseLeft -= Math.min(looseLeft, take)
     }
+    // THIẾU MỘT PHẦN cũng phải nói (14/09): pool có 1 pallet đạt mà dòng cần 2 thì trên đây chỉ báo
+    // khi pool RỖNG — dòng được nửa việc và im lặng về nửa còn lại. Người bấm Bắt đầu tưởng đủ.
+    if (left > 0) {
+      unmet.push({
+        code: it.material_code_raw ?? '?',
+        rule: describeDateRule(n.rule),
+        hint: `chỉ đủ ${qtyLabel(n.qty - left, mat)}/${qtyLabel(n.qty, mat)} đạt mức, thiếu ${qtyLabel(left, mat)}`,
+      })
+    }
   }
 
   // ── Thứ tự đi: vòng ngắn nhất từ cửa qua các VỊ TRÍ (cùng vị trí thì tầng cao trước) ─────────
@@ -485,14 +517,14 @@ async function planInner(gdoId: string, actor: string | null): Promise<PlanResul
   return { created, cancelled, unset_items: unset, warning: warning ?? unmetWarning(unmet) }
 }
 
-/** Câu báo cho các dòng có mức date mà kho không còn pallet nào đạt — gộp gọn, nêu mã + mức + tồn cao nhất. */
+/** Câu báo cho các dòng THIẾU pallet đạt mức date (không có hoặc chỉ đủ một phần) — gộp gọn, nêu mã + mức + vì sao. */
 function unmetWarning(unmet: Array<{ code: string; rule: string; hint: string }>): string | null {
   if (!unmet.length) return null
   const seen = new Map<string, { code: string; rule: string; hint: string }>()
   for (const u of unmet) seen.set(`${u.code}|${u.rule}`, u)
   const list = [...seen.values()]
   const head = list.slice(0, 3).map(u => `${u.code} cần ${u.rule} (${u.hint})`).join(' · ')
-  return `${list.length} dòng KHÔNG có pallet nào đạt mức date yêu cầu nên chưa lập được việc: ${head}`
+  return `${list.length} dòng THIẾU pallet đạt mức date yêu cầu nên chưa lập đủ việc: ${head}`
     + (list.length > 3 ? ` … và ${list.length - 3} dòng nữa.` : '.')
     + ' Sửa mức ở "Chốt %Date" (hoặc sửa Số lượng/Date ở DO SAP), hoặc chờ hàng mới về.'
 }
@@ -551,6 +583,11 @@ export interface DateRuleStock {
   best_days: number | null    // SỐ NGÀY còn lại cao nhất còn trong kho (cho quy tắc MIN_DAYS)
   need_base: number           // còn phải lấy = đặt − đã quét
   parts?: DateRuleStockPart[] // chỉ với quy tắc chia phần — để màn chốt chỉ ĐÚNG phần nào hỏng
+  // TRANH CHẤP GIỮA CÁC ĐƠN (14/09): các dòng KHÁC cùng mã · cùng kho · cùng ngày xuất đang mở, và
+  // tổng tồn ĐẠT MỨC này (đã trừ pallet chuyến khác ghim). Máy nói ra, người chốt quyết chia cho ai.
+  competing_lines: number
+  competing_base: number
+  rule_pool_base: number
 }
 
 export const MAX_DATE_CHECK = 500
@@ -561,11 +598,11 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
   if (!ids.length) return []
 
   const items = await fetchAllByIdChunks(ids, chunk => supabase.from('OutboundItem')
-    .select('id, material_id, cartons_ordered, cartons_scanned, material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides), delivery:OutboundDelivery!do_id(gdo:GroupDeliveryOrder!gdo_id(warehouse_id))')
+    .select('id, material_id, cartons_ordered, cartons_scanned, material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides), delivery:OutboundDelivery!do_id(gdo:GroupDeliveryOrder!gdo_id(id, warehouse_id, delivery_date))')
     .in('id', chunk).order('id')) as unknown as Array<{
       id: string; material_id: string | null; cartons_ordered: number | null; cartons_scanned: number | null
       material: MaterialShelfInfo | null
-      delivery: { gdo: { warehouse_id: string | null } | null } | null
+      delivery: { gdo: { id: string; warehouse_id: string | null; delivery_date: string | null } | null } | null
     }>
 
   // Ứng viên pallet: gom theo KHO rồi hỏi một câu cho mọi mã của kho đó (đừng hỏi từng dòng đơn —
@@ -602,10 +639,43 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
     }
   }
 
+  // TRANH CHẤP GIỮA CÁC ĐƠN (user hỏi 14/09: "1 pallet đạt date, 5 đơn cần 10 pallet thì sao?").
+  // Bản trước so TỪNG DÒNG với TOÀN tồn kho: 5 đơn đều thấy "chỉ đủ 1/2" và đều lưu được, tổng 5 đơn
+  // cần 10 mà kho có 1 thì không ai thấy cho tới khi từng chuyến Bắt đầu. Nay gom nhu cầu các dòng
+  // KHÁC cùng mã · cùng kho · cùng NGÀY XUẤT đang mở để màn chốt so TỔNG nhu cầu với TỔNG tồn đạt mức.
+  // Máy chỉ NÓI RA — người chốt quyết chia pallet cho đơn nào (mức của các dòng đó có thể khác nên
+  // không cộng trừ thay). Cửa gác `ok` KHÔNG đổi: giữ chỗ là mềm, chuyến sau vẫn được chốt và quét.
+  const competing = new Map<string, Array<{ item_id: string; need: number }>>()   // `${wh}::${mat}::${date}`
+  // Ngày xuất của các dòng đang hỏi — ≤ MAX_DATE_CHECK dòng nên danh sách ngày có biên (thường 1–2 ngày)
+  const dates = [...new Set(items.map(it => it.delivery?.gdo?.delivery_date).filter((d): d is string => !!d))]
+  for (const wh of dates.length ? matsByWh.keys() : []) {
+    const others = await fetchAllByIdChunks([...(matsByWh.get(wh) ?? [])], chunk => supabase.from('OutboundItem')
+      .select('id, material_id, cartons_ordered, cartons_scanned, delivery:OutboundDelivery!do_id!inner(gdo:GroupDeliveryOrder!gdo_id!inner(warehouse_id, status, delivery_date, plan_dropped, awaiting_sap))')
+      .in('material_id', chunk)
+      .eq('delivery.gdo.warehouse_id', wh)
+      .in('delivery.gdo.status', ['PENDING', 'IN_PROGRESS', 'PAUSED'])
+      .in('delivery.gdo.delivery_date', dates.slice(0, MAX_DATE_CHECK))
+      .order('id'))
+    for (const o of (others ?? []) as unknown as Array<{
+      id: string; material_id: string | null; cartons_ordered: number | null; cartons_scanned: number | null
+      delivery: { gdo: { delivery_date: string | null; plan_dropped: boolean | null; awaiting_sap: boolean | null } | null } | null
+    }>) {
+      const g = o.delivery?.gdo
+      if (!g || g.plan_dropped || g.awaiting_sap || !o.material_id || !g.delivery_date) continue   // chuyến bất động không tranh hàng
+      const need = Math.max(0, Number(o.cartons_ordered ?? 0) - Number(o.cartons_scanned ?? 0))
+      if (need <= 0) continue
+      const k = `${wh}::${o.material_id}::${g.delivery_date}`
+      competing.set(k, [...(competing.get(k) ?? []), { item_id: o.id, need }])
+    }
+  }
+
   return items.map(it => {
     const rule = ruleOf.get(it.id)!
     const wh = it.delivery?.gdo?.warehouse_id ?? null
     const pool = (wh && it.material_id) ? (poolOf.get(`${wh}::${it.material_id}`) ?? []) : []
+    const rivals = (wh && it.material_id && it.delivery?.gdo?.delivery_date)
+      ? (competing.get(`${wh}::${it.material_id}::${it.delivery.gdo.delivery_date}`) ?? []).filter(x => x.item_id !== it.id)
+      : []
     const pcts = pool.map(c => computePctDate(c, it.material)).filter((x): x is number => x != null)
     const dayss = pool.map(c => computeDaysLeft(c, it.material)).filter((x): x is number => x != null)
     const need = Math.max(0, Number(it.cartons_ordered ?? 0) - Number(it.cartons_scanned ?? 0))
@@ -643,6 +713,12 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
       best_days: dayss.length ? Math.max(...dayss) : null,
       need_base: need,
       parts: rule.kind === 'SPLIT' ? parts : undefined,
+      competing_lines: rivals.length,
+      competing_base: rivals.reduce((s, x) => s + x.need, 0),
+      rule_pool_base: (() => {
+        const rules = rulePartsOf(rule, Math.max(need, 1)).map(p => p.rule)
+        return pool.filter(c => rules.some(pr => matchesRule(c, it.material, pr))).reduce((s, c) => s + availableOf(c), 0)
+      })(),
     }
   })
 }

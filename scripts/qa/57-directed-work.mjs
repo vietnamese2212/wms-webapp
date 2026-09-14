@@ -248,11 +248,19 @@ try {
   check('[5i] Đích của việc ra cửa = CỬA của chuyến', tk.length > 0 && tk.every(t => t.to_location_id === dockA && t.to_kind === 'DOCK'))
   check('[5j] Có khoảng cách BFS từ cửa (bản vẽ đã vẽ)', tk.length > 0 && tk.every(t => t.dist_cells != null), tk.map(t => t.dist_cells).join(','))
 
-  // ═══ [6] LẬP LẠI KHÔNG ĐẺ THÊM (idempotent) ══════════════════════════════════════════════════
+  // ═══ [6] SẮP LẠI = BỎ VIỆC CHƯA AI ĐỤNG RỒI SINH LẠI (14/09) ═══════════════════════════════════
+  // Trước 14/09 nút này gọi thẳng bộ sinh việc idempotent ⇒ luôn "0 việc mới" và ghim CŨ đứng nguyên
+  // (16/18 việc Ba Vì lập bằng bộ lọc QA lỗi vẫn sống sau khi vá). Tồn không đổi thì sắp lại phải ra
+  // ĐÚNG bộ pallet cũ, số việc treo không đổi, việc cũ chuyển CANCELLED lý do REPLANNED.
   r = await api(`/wms/directed/gdos/${t2.gdo}/replan`, 'POST', {})
-  const tk2 = await tasksOf(t2.gdo)
-  check('[6] Sắp lại → 0 việc mới (nhu cầu đã được việc treo phủ hết)',
-    r.s === 200 && r.j?.data?.created === 0 && tk.length > 0 && tk2.length === tk.length, `created=${r.j?.data?.created} ${tk.length}→${tk2.length}`)
+  const tk2 = (await tasksOf(t2.gdo)).filter(t => t.status === 'PENDING')
+  const pins = a => JSON.stringify(a.map(t => `${t.entry_id}:${t.qty_base}`).sort())
+  check('[6] Sắp lại (tồn không đổi) → việc cũ bỏ lý do REPLANNED, việc mới ghim ĐÚNG bộ pallet cũ, số việc treo không đổi',
+    r.s === 200 && r.j?.data?.created === tk.length && r.j?.data?.cancelled >= tk.length && tk.length > 0
+      && tk2.length === tk.length && pins(tk2) === pins(tk)
+      && (await tasksOf(t2.gdo)).filter(t => t.status === 'CANCELLED' && t.skip_reason === 'REPLANNED').length >= tk.length,
+    `created=${r.j?.data?.created} cancelled=${r.j?.data?.cancelled} ${tk.length}→${tk2.length} cùng bộ pallet=${pins(tk2) === pins(tk)}`)
+  tk = tk2      // các phép kiểm sau dùng bộ việc mới (id đã đổi)
 
   // ═══ [7] QUY TẮC ≥ %DATE loại pallet date thấp ═══════════════════════════════════════════════
   const t3 = await mkTrip('T3')
@@ -959,6 +967,86 @@ try {
     } else check('[22f] Quét pallet khác date', true, `bỏ qua — kế hoạch ghim ${tk2[0]?.pallet_code ?? 'không có việc'}`)
     await api(`/wms/outbound/${tEq.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
     await api(`/wms/outbound/${tEq2.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
+  // ═══ [23] KẾ HOẠCH CŨ SỐNG SÓT · THIẾU MỘT PHẦN · TRANH CHẤP GIỮA CÁC ĐƠN (user hỏi 14/09) ═════
+  // "1 pallet đạt date mà 5 đơn cần 10 pallet thì chỉ định của mỗi đơn thế nào?" Ba lỗ đo được khi trả
+  // lời: (a) "Sắp lại" không sắp lại (idempotent nuốt) — [6] đã gác chiều tồn-không-đổi, đây gác chiều
+  // TỒN ĐỔI + việc đã hạ phải sống; (b) dòng chỉ đủ MỘT PHẦN không ai báo; (c) màn chốt so từng dòng với
+  // toàn kho nên 5 đơn đều thấy "đủ". Pallet ≥ 99 % chỉ có bộ HI tạo ở đây (EXACT của fixture là 98,6 %).
+  {
+    const locHi = await mkLoc('KE', '06', 'T2', 12, 16)
+    const pHi1 = await mkPallet('HI1', 50, locHi, dPlus(1000), -1)          // 99,9 % — pallet DUY NHẤT đạt ≥ 99 lúc này
+    const RULE99 = { kind: 'MIN_PCT', value: 99, source: 'MANUAL', set_at: nowIso() }
+    const tHi = await mkTrip('THI')
+    await mkItem(tHi.do, 100, { date_rule: RULE99 })                          // cần 100, kho đạt mức chỉ có 50
+    r = await startTrip(tHi.gdo, { license_plate: '51C23231', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    let tkHi = (await tasksOf(tHi.gdo)).filter(t => t.status === 'PENDING')
+    check('[23b] Dòng chỉ đủ MỘT PHẦN pallet đạt mức → có việc cho phần đủ VÀ cảnh báo nêu "chỉ đủ …" + mã hàng',
+      r.s === 200 && tkHi.length === 1 && tkHi[0].entry_id === pHi1.id && Number(tkHi[0].qty_base) === 50
+        && /chỉ đủ/i.test(r.j?.data?.plan_warning ?? '') && String(r.j?.data?.plan_warning ?? '').includes(mat.material_code),
+      `http=${r.s} việc=${tkHi.length} ghim=${tkHi[0]?.pallet_code}:${tkHi[0]?.qty_base} cảnh báo=${String(r.j?.data?.plan_warning ?? '—').slice(0, 160)}`)
+
+    // (a) Tồn đổi: hàng mới về, HSD NGẮN HƠN HI1 nhưng vẫn ≥ 99 % ⇒ FEFO đúng phải là HI2. Chưa ai đụng
+    // việc HI1 ⇒ Sắp lại phải bỏ nó (REPLANNED) và ghim HI2 trọn 100.
+    const pHi2 = await mkPallet('HI2', 100, locHi, dPlus(900), -1)
+    const oldId = tkHi[0]?.id
+    r = await api(`/wms/directed/gdos/${tHi.gdo}/replan`, 'POST', {})
+    const allHi = await tasksOf(tHi.gdo)
+    tkHi = allHi.filter(t => t.status === 'PENDING')
+    const oldRow = allHi.find(t => t.id === oldId)
+    check('[23a] Tồn đổi → Sắp lại BỎ việc chưa ai đụng (CANCELLED/REPLANNED) và ghim lại theo FEFO mới (HI2, trọn 100)',
+      r.s === 200 && Number(r.j?.data?.created) === 1 && Number(r.j?.data?.cancelled) >= 1
+        && oldRow?.status === 'CANCELLED' && oldRow?.skip_reason === 'REPLANNED'
+        && tkHi.length === 1 && tkHi[0].entry_id === pHi2.id && Number(tkHi[0].qty_base) === 100,
+      `http=${r.s} created=${r.j?.data?.created} cancelled=${r.j?.data?.cancelled} cũ=${oldRow?.status}/${oldRow?.skip_reason} mới=${tkHi[0]?.pallet_code}:${tkHi[0]?.qty_base}`)
+
+    // Việc ĐÃ HẠ là công người ta bỏ ra thật ⇒ Sắp lại phải GIỮ (cùng id, mốc hạ còn), dù có pallet mới tốt hơn
+    if (tkHi.length === 1) {
+      const keepId = tkHi[0].id
+      await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [keepId], stage: 'LOWER' })
+      await mkPallet('HI3', 100, locHi, dPlus(800), -1)                       // còn "tốt hơn" HI2 theo FEFO
+      r = await api(`/wms/directed/gdos/${tHi.gdo}/replan`, 'POST', {})
+      const kept = (await tasksOf(tHi.gdo)).find(t => t.id === keepId)
+      const pend = (await tasksOf(tHi.gdo)).filter(t => t.status === 'PENDING')
+      check('[23a2] Việc ĐÃ HẠ sống qua Sắp lại: cùng id, vẫn PENDING, mốc hạ còn, không đẻ việc mới',
+        r.s === 200 && Number(r.j?.data?.created) === 0 && Number(r.j?.data?.cancelled) === 0
+          && kept?.status === 'PENDING' && !!kept?.lowered_at && kept?.entry_id === pHi2.id && pend.length === 1,
+        `http=${r.s} created=${r.j?.data?.created} cancelled=${r.j?.data?.cancelled} kept=${kept?.status} hạ=${kept?.lowered_at ? 'còn' : 'MẤT'} treo=${pend.length}`)
+    }
+    await api(`/wms/outbound/${tHi.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+
+    // (c) Hai chuyến CÙNG NGÀY cùng mã, mỗi dòng cần 200 mà tồn ≥ 99 % chỉ có bộ HI (250) ⇒ từng dòng "đủ"
+    // nhưng CỘNG lại thì thiếu. Máy phải trả competing_lines/competing_base/rule_pool_base để màn chốt nói.
+    const hiPool = (await restAll('InventoryEntry', `select=cartons_remaining&pallet_code=like.${T}-HI*&cartons_remaining=gt.0`))
+      .reduce((s, e) => s + Number(e.cartons_remaining), 0)
+    const tC1 = await mkTrip('TC1'), tC2 = await mkTrip('TC2')
+    const iC1 = await mkItem(tC1.do, 200), iC2 = await mkItem(tC2.do, 200)
+    r = await api('/wms/outbound/items/date-rule/check', 'POST', { rules: [{ item_id: iC1, rule: RULE99 }, { item_id: iC2, rule: RULE99 }] })
+    const c1 = (r.j?.data ?? []).find(x => x.item_id === iC1), c2 = (r.j?.data ?? []).find(x => x.item_id === iC2)
+    check('[23c] Hỏi trước khi chốt: mỗi dòng thấy DÒNG KHÁC cùng mã cùng ngày (≥ 1, ≥ 200) và tổng tồn đạt mức = bộ HI',
+      r.s === 200 && c1 && c2 && Number(c1.competing_lines) >= 1 && Number(c1.competing_base) >= 200
+        && Number(c2.competing_lines) >= 1 && Number(c2.competing_base) >= 200
+        && Number(c1.rule_pool_base) === hiPool && Number(c2.rule_pool_base) === hiPool
+        && Number(c1.need_base) + Number(c1.competing_base) > Number(c1.rule_pool_base),
+      `http=${r.s} c1: rivals=${c1?.competing_lines}/${c1?.competing_base} pool=${c1?.rule_pool_base} (HI=${hiPool}) · c2: rivals=${c2?.competing_lines}/${c2?.competing_base} pool=${c2?.rule_pool_base}`)
+    check('[23c2] Cửa gác KHÔNG siết theo tranh chấp — từng dòng vẫn ok=true (giữ chỗ là mềm, chuyến sau vẫn chốt được)',
+      c1?.ok === true && c2?.ok === true, `ok=${c1?.ok}/${c2?.ok}`)
+    // Chuyến KHÁC NGÀY không phải đối thủ: dòng cùng mã ngày mai không được cộng vào
+    const [gT] = await restWrite('GroupDeliveryOrder', 'POST', null, {
+      id: randomUUID(), group_code: `${T}_TC3`, warehouse_id: whId, warehouse_type: CAT_A,
+      delivery_date: dPlus(1), planned_date: dPlus(1), status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+    })
+    const [dT] = await restWrite('OutboundDelivery', 'POST', null, {
+      id: randomUUID(), gdo_id: gT.id, delivery_code: `${T}_TC3_DO`, distributor_name: T, created_at: nowIso(), updated_at: nowIso(),
+    })
+    const iC3 = await mkItem(dT.id, 200)
+    r = await api('/wms/outbound/items/date-rule/check', 'POST', { rules: [{ item_id: iC3, rule: RULE99 }] })
+    const c3 = (r.j?.data ?? [])[0]
+    check('[23c3] Dòng ngày MAI không thấy hai dòng hôm nay là đối thủ (tranh chấp đo theo NGÀY XUẤT)',
+      r.s === 200 && Number(c3?.competing_lines ?? -1) === 0 && Number(c3?.competing_base ?? -1) === 0,
+      `rivals=${c3?.competing_lines}/${c3?.competing_base}`)
+    for (const g of [tC1.gdo, tC2.gdo, gT.id]) await api(`/wms/outbound/${g}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════

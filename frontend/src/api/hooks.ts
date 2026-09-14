@@ -4279,6 +4279,8 @@ export interface DateRuleStock {
   held_pallets: number        // pallet còn hàng nhưng QA đang giữ — lời khuyên là "gỡ QA", không phải "đổi mức"
   best_pct: number | null; need_base: number
   parts?: DateRuleStockPart[]
+  // Tranh chấp giữa các đơn cùng mã · cùng kho · cùng ngày xuất (14/09) — máy nói ra, người chốt chia
+  competing_lines?: number; competing_base?: number; rule_pool_base?: number
 }
 export function useCheckDateRule(rules: Array<{ item_id: string; rule: DateRule }>, enabled: boolean) {
   return useQuery({

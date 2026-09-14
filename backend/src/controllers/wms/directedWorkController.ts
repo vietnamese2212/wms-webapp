@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { searchLooksLikeInjection } from '../../utils/search'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
-import { planGdoTasks, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
+import { replanGdoTasks, confirmTasks, claimTasks, MAX_CONFIRM, type ConfirmStage } from '../../services/directedTasks'
 import { reorderCrossTripPickup, type RoutableRow } from '../../services/directedRoute'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
@@ -180,6 +180,7 @@ export async function replan(req: Request, res: Response) {
     const myWhs = scopeWhIds(req)
     const whId = (gdo as { warehouse_id: string | null }).warehouse_id
     if (myWhs && whId && !myWhs.includes(whId)) return fail(res, 'Chuyến thuộc kho ngoài phạm vi được giao', 403)
-    return ok(res, await planGdoTasks(req.params.id, req.user?.name ?? null))
+    // Bấm tay "Sắp lại" = bỏ việc chưa ai đụng rồi sinh lại — gọi thẳng planGdoTasks thì ra "0 việc mới" (14/09)
+    return ok(res, await replanGdoTasks(req.params.id, req.user?.name ?? null))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }

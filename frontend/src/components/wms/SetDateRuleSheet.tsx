@@ -218,6 +218,11 @@ function stockWarning(
   const need = r.kind === 'SPLIT' ? (st.parts ?? []).reduce((s, x) => s + Number(x.qty_base || 0), 0) : st.need_base
   if (need > 0 && st.matched_base < need)
     return { tone: 'warn', text: `Chỉ đủ ${qtyLabel(st.matched_base, units)}/${qtyLabel(need, units)} (${nf(st.matched_pallets)} pallet) đạt mức này.` }
+  // Dòng này đủ, nhưng CỘNG các đơn khác cùng mã cùng ngày thì kho không đủ pallet đạt mức (14/09:
+  // "1 pallet đạt date mà 5 đơn cần 10"). Máy không tự chia — người chốt biết mà quyết cho đơn nào.
+  const rivals = Number(st.competing_lines ?? 0), rivalBase = Number(st.competing_base ?? 0), poolBase = Number(st.rule_pool_base ?? 0)
+  if (need > 0 && rivals > 0 && need + rivalBase > poolBase)
+    return { tone: 'warn', text: `Cùng ngày còn ${nf(rivals)} dòng khác cùng mã cần ${qtyLabel(rivalBase, units)}; tồn đạt mức chỉ ${qtyLabel(poolBase, units)} cho tổng ${qtyLabel(need + rivalBase, units)} — chuyến Bắt đầu sau sẽ thiếu, cân nhắc chia mức.` }
   return null
 }
 

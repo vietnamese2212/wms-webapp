@@ -29,7 +29,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
-import { TaskDetailSheet, palletPct, palletDays, rowRule, anchorDirected } from '@/components/wms/TaskDetailSheet'
+import { TaskDetailSheet, palletPct, palletDays, rowRule, anchorDirected, tripName } from '@/components/wms/TaskDetailSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -320,7 +320,7 @@ function SupervisionPanel({ s }: { s: DirectedSupervision }) {
               {s.live.length === 0 && <tr><td colSpan={7} className={`${td} text-slate-400`}>Không có chuyến nào đang chạy</td></tr>}
               {s.live.map(l => (
                 <tr key={l.gdo_id} className="border-t border-slate-100">
-                  <td className={`${td} font-mono font-semibold`}>{l.license_plate ?? l.group_code}</td>
+                  <td className={`${td} font-mono font-semibold`}>{tripName(l)}</td>
                   <td className={td}>{l.dock_name ?? '—'}</td>
                   <td className={`${td} text-right tabular-nums`}>{nf(l.pending)}</td>
                   <td className={`${td} text-right tabular-nums ${l.waiting_lower > 0 ? 'text-amber-700 font-semibold' : ''}`}>{nf(l.waiting_lower)}</td>
@@ -638,7 +638,7 @@ export default function DirectedWork() {
             cốt lõi, phần còn lại chỉ hiện từ sm (chuẩn mật độ: dữ liệu phải xuất hiện sớm). */}
         {focusTrip && (
           <div className="shrink-0 border-b bg-sky-50/70 px-3 py-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-            <span className="font-mono font-semibold">{focusTrip.license_plate ?? focusTrip.group_code ?? '—'}</span>
+            <span className="font-mono font-semibold">{tripName(focusTrip)}</span>
             {focusTrip.customers && <span className="truncate max-w-[55%] sm:max-w-none">Giao cho <b>{focusTrip.customers}</b></span>}
             <span className="tabular-nums">{nf(focusTrip.lines_done)}/{nf(focusTrip.lines_total)} dòng quét đủ</span>
             <span className="hidden sm:inline text-slate-500 tabular-nums">còn {nf(focusTrip.tasks_pending)} việc</span>
@@ -721,8 +721,15 @@ export default function DirectedWork() {
                       {isOldTrip(r.delivery_date) && <span className="text-amber-600"> · chuyến {formatDate(r.delivery_date!)}</span>}
                     </span>
                   </div>
-                  {/* NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai, không chỉ biết biển số */}
-                  {r.customer_name && <div className="text-[11px] text-slate-500 truncate">Giao cho {r.customer_name}</div>}
+                  {/* NƠI NHẬN + SỐ XE — người lấy hàng phải biết đang phục vụ ai, và dòng nào cũng phải
+                      gắn Số xe (user 14/09 "Giao cho Tuyết Trang_Số xe"); biển số ở dòng trên là thứ nhìn
+                      thấy ngoài bãi, Số xe là thứ điều vận/SAP gọi tên */}
+                  {(r.customer_name || r.group_code) && (
+                    <div className="text-[11px] text-slate-500 truncate">
+                      {r.customer_name ? <>Giao cho {r.customer_name}</> : null}
+                      {r.group_code && <>{r.customer_name ? ' · ' : ''}Số xe <span className="font-mono">{r.group_code}</span></>}
+                    </div>
+                  )}
                   <Step label="Date" big={first}>
                     {rule
                       ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
@@ -850,7 +857,7 @@ export default function DirectedWork() {
                       <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>{st.text}</TableCell>
                     </>) : (<>
                       <TableCell className={cell}>
-                        <div className="font-mono font-semibold">{r.license_plate ?? r.group_code ?? '—'}</div>
+                        <div className="font-mono font-semibold">{tripName(r)}</div>
                         <div className="text-[9px] text-slate-400">
                           {r.dock_name ?? '—'}
                           {/* Chuyến của ngày khác nằm chung bảng thì phải nói rõ, kẻo tưởng việc hôm nay */}

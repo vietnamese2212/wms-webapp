@@ -676,3 +676,7 @@ created_at, updated_at
   bảng trống). Sau `20260914b` object mỗi dòng có 51 khoá. Vá: tách hai `jsonb_build_object` nối `||` ngay trong
   `jsonb_agg`, JSON y hệt, không đổi chữ ký. Bài học: RPC trả dòng jsonb "rộng" thì ĐẾM KHOÁ trước khi thêm — trần này
   tsc/QA tĩnh không thấy, chỉ lộ khi gọi thật; gói 57 [10a] là lưới đã bắt được.
+- `20260914d_work_inbox_trip_name.sql` — **tên chuyến trong Hộp việc = SỐ XE · biển số** (user chốt 14/09 "trong nội dung
+  luôn phải gắn kèm với số xe"). Bản cũ `COALESCE(license_plate, group_code)` ⇒ chuyến có biển thì Số xe (khoá điều vận /
+  SAP / Kế hoạch xuất) biến mất. Thay đúng 2 chỗ (việc của tôi · pallet chờ xe hạ), cùng chữ ký, CREATE OR REPLACE. FE cùng
+  đợt dùng helper `tripName()`. Đã áp staging 14/09.

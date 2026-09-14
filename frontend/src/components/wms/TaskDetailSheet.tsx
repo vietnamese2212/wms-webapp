@@ -27,6 +27,14 @@ import type { DirectedPallet, DirectedRow, DirectedTrip } from '@/types'
 /** Neo "về Việc cần làm" trước khi rời trang — thanh ở Shell + mũi tên trang đích sẽ đưa về đây. */
 export const anchorDirected = () => setReturnTo('/wms/directed', 'Việc cần làm')
 
+/**
+ * Tên chuyến trên MỌI nội dung = SỐ XE (group_code) trước, biển số sau (user 14/09: "trong nội dung
+ * luôn phải gắn kèm với số xe"). Bản cũ in `license_plate ?? group_code` nên chuyến có biển thì Số xe —
+ * khoá mà điều vận, SAP và Kế hoạch xuất cùng gọi — biến mất khỏi bảng.
+ */
+export const tripName = (r: { group_code?: string | null; license_plate?: string | null } | null | undefined) =>
+  [r?.group_code, r?.license_plate].filter(Boolean).join(' · ') || '—'
+
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
 /**
@@ -112,7 +120,7 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
         <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4">
           <Section title="Chuyến">
             <Row label="Số xe">
-              <span className="font-mono font-semibold">{row.license_plate ?? row.group_code ?? '—'}</span>
+              <span className="font-mono font-semibold">{tripName(row)}</span>
               {row.dock_name && <span className="text-slate-500"> · {row.dock_name}</span>}
             </Row>
             <Row label="Giao cho">{row.customer_name ?? trip?.customers ?? dash}</Row>

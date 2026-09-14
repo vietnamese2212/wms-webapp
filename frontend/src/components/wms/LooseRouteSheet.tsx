@@ -77,7 +77,8 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
         <MapPin className="h-4 w-4 text-sky-400 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold leading-tight">Theo vị trí công việc</p>
-          <p className="text-[11px] text-slate-300 leading-tight truncate">
+          {/* Số xe · biển · tiến độ — cho XUỐNG DÒNG ở 360 px, không cắt "…" mất chữ "còn N mã" (đo thật 14/09) */}
+          <p className="text-[11px] text-slate-300 leading-tight break-words">
             <span className="font-mono">{tripName(gdo)}</span>
             {stops.length > 0 && <> · điểm ghé <b className="text-white">{curIdx + 1}/{stops.length}</b> · còn <b className="text-white">{totalMats}</b> mã</>}
           </p>

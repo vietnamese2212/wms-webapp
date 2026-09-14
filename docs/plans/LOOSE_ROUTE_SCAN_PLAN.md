@@ -1,5 +1,9 @@
 # Kế hoạch: "Đi nhặt lẻ" — MỘT nút mở ĐƯỜNG ĐI và QUÉT ngay tại đó (user chốt 14/09/2026)
 
+> **ĐÃ THỰC THI 14/09** (commit `df261a4d`) — nút lấy tên user chốt: **"Theo vị trí"** (màn "Theo vị trí công việc"),
+> component `components/wms/LooseRouteSheet.tsx`; `GdoScanSheet` tách thành `GdoScanPanel`; BE `loose-route` trả
+> `remaining_base` · `material_name` · `units` · `dist_from_prev_cells` · `cell_m`. Gói 57 [25d1–25d2]. Phần dưới là plan gốc.
+
 > User: *"mở 1 nút và hiện lên con đường đi lấy, và quét được luôn ở đó."* — sau khi hỏi *"cả chục mã thì làm sao?"*
 > về dải đường đi một dòng trên trang Nhặt lẻ. Plan viết trước khi compact; thực thi ở lượt sau.
 

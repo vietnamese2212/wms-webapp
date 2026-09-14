@@ -681,7 +681,8 @@ created_at, updated_at
   SAP / Kế hoạch xuất) biến mất. Thay đúng 2 chỗ (việc của tôi · pallet chờ xe hạ), cùng chữ ký, CREATE OR REPLACE. FE cùng
   đợt dùng helper `tripName()`. Đã áp staging 14/09.
 - `20260914e_replan_queue.sql` — **hàng đợi SẮP LẠI THEO TỒN** (user chốt 14/09: "chỉ đặt việc lúc Bắt đầu là bước lùi"). Bảng
-  `wms_replan_queue(warehouse_id, material_id, queued_at)` PK (kho, mã); trigger row-level `trg_wms_replan_enqueue` trên
+  `wms_replan_queue(warehouse_id text, material_id text, queued_at)` PK (kho, mã) — TEXT vì `InventoryEntry`/`wms_tasks` khoá text
+  (bản đầu khai uuid ⇒ INSERT trong trigger nổ 42804 bị EXCEPTION nuốt, hàng đợi rỗng im lặng — gói 57 [24b] bắt ngay lượt đầu); trigger row-level `trg_wms_replan_enqueue` trên
   `InventoryEntry` (INSERT/DELETE/UPDATE OF status·cartons_remaining·cartons_reserved·location_id·qa_status_id·production_date·
   expiry_date·warehouse_id·material_id) upsert một dòng KHI mã đó đang có việc treo chưa ai đụng (EXISTS trên index riêng phần mới
   `idx_wms_tasks_pending_wh_mat`); bọc EXCEPTION nên không bao giờ hỏng giao dịch tồn. Node xả hàng đợi ở đầu mỗi lần tải bảng

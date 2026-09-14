@@ -18,9 +18,12 @@
 -- wms_notify mà event trigger tự gắn lúc CREATE TABLE).
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS public.wms_replan_queue (
-  warehouse_id uuid        NOT NULL,
-  material_id  uuid        NOT NULL,
+-- ⚠ `InventoryEntry.warehouse_id` / `material_id` là TEXT (48/82 bảng khoá text — memory pg-error-is-user-error),
+-- bản đầu khai uuid ⇒ INSERT trong trigger nổ 42804 và bị EXCEPTION nuốt: hàng đợi im lặng rỗng, gói 57 [24b] bắt.
+DROP TABLE IF EXISTS public.wms_replan_queue;
+CREATE TABLE public.wms_replan_queue (
+  warehouse_id text        NOT NULL,
+  material_id  text        NOT NULL,
   queued_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (warehouse_id, material_id)
 );

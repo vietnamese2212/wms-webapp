@@ -188,8 +188,9 @@ export async function getLooseRoute(req: Request, res: Response) {
   try {
     const gdoId = String(req.query.gdo_id ?? '')
     if (badId(gdoId)) return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã chuyến')
-    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+    const { data: gdo, error: gErr } = await supabase.from('GroupDeliveryOrder')
       .select('id, warehouse_id, dock_location_id').eq('id', gdoId).maybeSingle()
+    if (gErr) return fail(res, gErr)              // id rác trên cột uuid = 22P02 ⇒ 400, không phải "không tìm thấy"
     if (!gdo) return fail(res, 'Không tìm thấy chuyến', 404)
     const g = gdo as { id: string; warehouse_id: string | null; dock_location_id: string | null }
     const myWhs = scopeWhIds(req)

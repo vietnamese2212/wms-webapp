@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-14T06:30:18.664Z · 96 bảng/view · 161 hàm · 0 enum
+// Sinh lúc 2026-09-14T06:46:59.938Z · 96 bảng/view · 161 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {

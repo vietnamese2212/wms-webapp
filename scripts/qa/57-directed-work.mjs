@@ -901,6 +901,64 @@ try {
     await api(`/wms/outbound/${tLF.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
+  // ═══ [22] PALLET TƯƠNG ĐƯƠNG (user chốt 14/09) ═══════════════════════════════════════════════
+  // "43 pallet chung một date thì pallet nào cũng được." Kế hoạch ghim một tem chỉ để giữ chỗ mềm; thủ
+  // kho quét pallet KHÁC nhưng cùng ô · cùng mã · cùng NSX thì việc phải XONG (đổi ghim), KHÔNG bị huỷ
+  // OTHER_PALLET và "% làm đúng kế hoạch" không tụt. Chỉ khác date/khác ô mới là lệch kế hoạch thật.
+  {
+    const locEq = await mkLoc('KE', '05', 'T1', 12, 14)
+    const pA = await mkPallet('EQ_A', 50, locEq, dPlus(300), -40)
+    const pB = await mkPallet('EQ_B', 50, locEq, dPlus(300), -40)          // tương đương A (cùng ô, cùng NSX, cùng HSD)
+    const pC = await mkPallet('EQ_C', 50, locEq, dPlus(330), -10)          // KHÁC date — không tương đương
+    const tEq = await mkTrip('TEQ')
+    const iEq = await mkItem(tEq.do, 50, { date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+    r = await startTrip(tEq.gdo, { license_plate: '51C22221', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const tkEq = (await tasksOf(tEq.gdo)).filter(t => t.status === 'PENDING')
+    const pinned = tkEq[0]
+    const pinnedIsAB = pinned && [pA.id, pB.id].includes(pinned.entry_id)
+    check('[22a] Kế hoạch ghim MỘT trong hai pallet cùng date (FEFO: HSD ngắn hơn C)', tkEq.length === 1 && pinnedIsAB,
+      `http=${r.s} ${err(r)} việc=${tkEq.length} ghim=${pinned?.pallet_code}`)
+    if (pinnedIsAB) {
+      const other = pinned.entry_id === pA.id ? pB : pA
+      // Bảng phải NÓI "bất kỳ trong 2 cùng NSX" — tem ghim chỉ là gợi ý
+      b = await board('SCAN', `&gdo_id=${tEq.gdo}`)
+      const rowEq = (b.j?.data?.rows ?? []).find(x => x.task_ids?.includes(pinned.id))
+      check('[22b] Bảng trả n_equiv = 2 (hai pallet tương đương trong ô) và cell_ndates = 2 (ô có hai NSX)',
+        rowEq && Number(rowEq.n_equiv) === 2 && Number(rowEq.cell_ndates) === 2,
+        rowEq ? `n_equiv=${rowEq.n_equiv} cell_ndates=${rowEq.cell_ndates}` : 'không thấy dòng')
+      r = await api(`/wms/outbound/${tEq.gdo}/items/${iEq}/scan`, 'POST', {
+        qr_code: other.pallet_code, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP',
+      })
+      const afterEq = (await tasksOf(tEq.gdo))
+      const doneEq = afterEq.find(t => t.id === pinned.id)
+      check('[22c] Quét pallet TƯƠNG ĐƯƠNG (khác tem, cùng ô/mã/NSX) → việc XONG, ghim đổi sang pallet vừa quét',
+        r.s === 200 && doneEq?.status === 'DONE' && doneEq?.entry_id === other.id && doneEq?.confirm_source === 'SCAN',
+        `http=${r.s} ${err(r)} status=${doneEq?.status} entry=${doneEq?.entry_id === other.id ? 'đã đổi' : doneEq?.pallet_code}`)
+      check('[22d] KHÔNG có việc nào bị huỷ OTHER_PALLET — người làm đúng nghiệp vụ không bị trừ điểm',
+        !afterEq.some(t => t.status === 'SKIPPED' && t.skip_reason === 'OTHER_PALLET'),
+        `skipped=${afterEq.filter(t => t.status === 'SKIPPED').length}`)
+      const evEq = await restAll('wms_task_events', `select=note&task_id=eq.${pinned.id}&event=eq.DONE`)
+      check('[22e] Sổ sự kiện ghi rõ "pallet tương đương (kế hoạch ghim …)" — vết còn để truy',
+        evEq.some(e => /tương đương/.test(e.note ?? '')), evEq.map(e => e.note).join(' | '))
+    }
+    // Chiều ngược: quét pallet KHÁC DATE trong cùng ô ⇒ vẫn là OTHER_PALLET (đó là lệch kế hoạch thật)
+    const tEq2 = await mkTrip('TEQ2')
+    const iEq2 = await mkItem(tEq2.do, 50, { date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+    r = await startTrip(tEq2.gdo, { license_plate: '51C22222', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const tk2 = (await tasksOf(tEq2.gdo)).filter(t => t.status === 'PENDING')
+    if (tk2.length && [pA.id, pB.id].includes(tk2[0].entry_id)) {
+      r = await api(`/wms/outbound/${tEq2.gdo}/items/${iEq2}/scan`, 'POST', {
+        qr_code: pC.pallet_code, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP',
+      })
+      const after2 = await tasksOf(tEq2.gdo)
+      check('[22f] Quét pallet KHÁC DATE cùng ô → vẫn OTHER_PALLET (lệch kế hoạch thật, không bị luật tương đương nuốt)',
+        r.s === 200 && after2.some(t => t.status === 'SKIPPED' && t.skip_reason === 'OTHER_PALLET'),
+        `http=${r.s} ${err(r)} skipped=${after2.filter(t => t.status === 'SKIPPED').map(t => t.skip_reason).join(',')}`)
+    } else check('[22f] Quét pallet khác date', true, `bỏ qua — kế hoạch ghim ${tk2[0]?.pallet_code ?? 'không có việc'}`)
+    await api(`/wms/outbound/${tEq.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+    await api(`/wms/outbound/${tEq2.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════
   const allTasks = await restAll('wms_tasks', `select=id,gdo_id,item_id,qty_base,status&warehouse_id=eq.${whId}`)
   const openByItem = new Map()

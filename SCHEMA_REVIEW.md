@@ -659,3 +659,15 @@ created_at, updated_at
   `from_location_id` qua cùng RPC `move_pallets_to_location`, ô cũ đầy ⇒ 409 giữ dấu; Rồi ⇒ chỉ bỏ dấu như cũ);
   `checkDateRuleStock` trả thêm `held_pallets` để câu `DATE_RULE_NO_STOCK` tách ba tình huống (hết hàng · hàng có nhưng
   QA giữ hết ⇒ khuyên gỡ QA · hàng có nhưng không đạt mức ⇒ khuyên đổi mức). Gói QA 57 thêm **[21e–21h]**.
+- `20260914b_directed_board_equiv.sql` — **LỆNH = "lấy N pallet ở ô X", tem pallet chỉ là GỢI Ý** (user chốt 14/09: *"trên
+  dãy có 43 pallet đều thoả điều kiện, chung một date, thì pallet nào cũng được"*). Kế hoạch ghim một `entry_id` chỉ để
+  giữ chỗ mềm giữa các chuyến, KHÔNG phải mệnh lệnh. Đo Ba Vì 14/09: **14/17** việc đang treo có pallet tương đương ngay
+  trong cùng ô (TB 5, nhiều nhất 10) — trước đó bảng in tem ghim như lệnh, và quét pallet khác cái ghim bị huỷ
+  `OTHER_PALLET` ⇒ chỉ số "% làm đúng kế hoạch" trừ điểm người làm ĐÚNG nghiệp vụ (tôi đưa tem lên bảng hôm 13/09 là chữa
+  triệu chứng bằng cách ép người theo máy). RPC `directed_board` cùng chữ ký: `rows[].n_equiv` (pallet trong ô cùng mã +
+  cùng NSX/HSD/mã lô với pallet ghim) · `rows[].cell_ndates` (ô có mấy NSX của mã đó; > 1 thì NSX mới lên bảng vì lúc đó
+  nó là phần của lệnh) · `rows[].n_done`; **Sắp quét nay gom theo Ô** như hai bảng kia (không còn mỗi tem một dòng). Cửa
+  quét (`markTaskDoneByScan` / `skipTasksOnForeignScan`): pallet tương đương = đúng việc ⇒ đổi ghim rồi đóng, sổ ghi
+  "pallet tương đương (kế hoạch ghim …)"; chuyến khác lấy mất pallet ghim thì đổi ghim sang pallet tương đương còn trống
+  thay vì huỷ `PALLET_TAKEN`; chỉ khác ô / khác date mới là `OTHER_PALLET`. FE bỏ cột "Tem pallet", thêm KÍNH LÚP mở
+  panel chi tiết. Gói QA 57 **[22a–22f]** gác cả hai chiều. Sinh bằng `scratchpad/ops/gen_mig_board2.mjs`.

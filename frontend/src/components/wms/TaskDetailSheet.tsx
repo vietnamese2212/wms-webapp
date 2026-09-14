@@ -162,7 +162,18 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
             {tab === 'LOWER' && row.dist_cells != null && <Row label="Quãng đường">{nf(row.dist_cells)} ô</Row>}
           </Section>
 
-          <Section title={`Pallet phải lấy (${nf(pallets.length)})`}>
+          {/* TEM GHIM CHỈ LÀ GỢI Ý (user 14/09): ô cùng date thì pallet nào cũng được — nói thẳng ở đây,
+              để người soi kính lúp không đọc danh sách dưới thành mệnh lệnh phải tìm đúng tem. */}
+          <Section title={`Pallet kế hoạch ghim (${nf(pallets.length)})`}>
+            {(row.n_equiv ?? 0) > pallets.length && (
+              <p className="text-[11px] text-slate-600">
+                Ô này còn <b>{nf(row.n_equiv ?? 0)}</b> pallet cùng mã, cùng NSX — <b>lấy pallet nào trong số đó cũng được</b>, tem dưới đây chỉ là gợi ý.
+                Quét pallet khác cùng NSX vẫn tính là đúng kế hoạch.
+              </p>
+            )}
+            {(row.cell_ndates ?? 1) > 1 && (
+              <p className="text-[11px] text-amber-800">Ô này có <b>{nf(row.cell_ndates ?? 0)}</b> NSX khác nhau của cùng mã — phải lấy đúng NSX ghi dưới đây.</p>
+            )}
             {pallets.length === 0 ? <p className="text-[11px] text-slate-400">Không có dữ liệu pallet.</p> : (
               <div className="overflow-x-auto">
                 <table className="w-full">

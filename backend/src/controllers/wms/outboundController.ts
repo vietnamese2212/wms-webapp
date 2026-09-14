@@ -6416,8 +6416,10 @@ export async function scanItem(req: Request, res: Response) {
     // Quét là SỰ THẬT; kế hoạch chỉ đi theo. KHÔNG chặn gì ở đây (chế độ Hướng dẫn là chỉ đường,
     // không phải rào), và mọi lỗi ở khối này KHÔNG được làm hỏng lượt quét đã ghi xong.
     try {
-      const closed = await markTaskDoneByScan(gdoId, inv.id as string, scanId, req.user?.name ?? null)
-      // Quét pallet KHÁC pallet kế hoạch chỉ: bỏ một việc treo của dòng rồi sắp bù — kế hoạch tự lành
+      // Pallet TƯƠNG ĐƯƠNG (cùng ô · cùng mã · cùng NSX) với pallet kế hoạch ghim thì cũng là ĐÚNG việc
+      // (user 14/09: "43 pallet chung một date thì pallet nào cũng được") — markTaskDoneByScan tự đổi ghim.
+      const closed = await markTaskDoneByScan(gdoId, inv.id as string, scanId, req.user?.name ?? null, itemId)
+      // Quét pallet KHÁC Ô / KHÁC DATE so với mọi việc treo: bỏ một việc treo của dòng rồi sắp bù — kế hoạch tự lành
       if (!closed) await skipOnePendingOfItem(gdoId, itemId, 'OTHER_PALLET', req.user?.name ?? null)
       // Pallet này đang là việc của CHUYẾN KHÁC (hai chuyến cùng cần một pallet) → chuyến kia mất
       // pallet, phải biết ngay và được sắp bù

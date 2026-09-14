@@ -17,7 +17,7 @@
 //   • Tab Sắp quét có nút QUÉT ngay tại chỗ (thủ kho không phải sang Xuất kho → chuyến → Quét).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes, CalendarClock, ExternalLink } from 'lucide-react'
+import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes, CalendarClock, ExternalLink, Search } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -70,9 +70,10 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
     { id: 'trip', label: 'Chuyến · Giao cho', w: 150 },
     { id: 'loc',  label: 'Vị trí',         w: 140 },
     { id: 'lvl',  label: 'Tầng',           w: 52,  align: 'right' },
-    { id: 'pal',  label: 'Tem pallet',     w: 185 },
-    { id: 'date', label: 'Date',           w: 104 },
-    { id: 'qty',  label: 'Hạ',             w: 140 },
+    // Cột "Tem pallet" BỎ 14/09 (user: "43 pallet chung một date thì pallet nào cũng được") — lệnh chỉ
+    // là "lấy N pallet ở ô X"; tem ghim + NSX + %Date từng pallet nằm sau KÍNH LÚP (panel chi tiết).
+    { id: 'date', label: 'Date',           w: 110 },
+    { id: 'qty',  label: 'Hạ',             w: 190 },
     // Cột "Quãng đường" BỎ 14/09: từ 20260913c bảng không sắp theo nó nữa, con số không còn quyết định
     // gì mà chiếm chỗ của thứ cần đọc; vẫn xem được trong panel chi tiết.
     { id: 'to',   label: 'Đặt xuống',      w: 130 },
@@ -82,21 +83,20 @@ const COLS: Record<Tab, { id: string; label: string; w: number; align?: 'right' 
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
     { id: 'trip', label: 'Chuyến · Giao cho', w: 150 },
     { id: 'cur',  label: 'Vị trí hiện tại', w: 150 },
-    { id: 'pal',  label: 'Tem pallet',     w: 185 },
-    { id: 'date', label: 'Date',           w: 104 },
+    { id: 'date', label: 'Date',           w: 110 },
     { id: 'st',   label: 'Trạng thái',     w: 126 },
-    { id: 'qty',  label: 'Đưa',            w: 140 },
+    { id: 'qty',  label: 'Đưa',            w: 190 },
     { id: 'to',   label: 'Tới',            w: 130 },
-    { id: 'act',  label: '',               w: 190 },
+    { id: 'act',  label: '',               w: 210 },
   ],
   SCAN: [
     { id: 'seq',  label: 'STT',            w: 46,  align: 'right' },
-    { id: 'pal',  label: 'Tem pallet',     w: 190 },
-    { id: 'date', label: 'Date',           w: 104 },
-    { id: 'cur',  label: 'Vị trí hiện tại', w: 150 },
+    { id: 'cur',  label: 'Vị trí',         w: 150 },
+    { id: 'date', label: 'Date',           w: 110 },
     { id: 'st',   label: 'Trạng thái',     w: 140 },
-    { id: 'qty',  label: 'Lấy',            w: 140 },
+    { id: 'qty',  label: 'Lấy',            w: 190 },
     { id: 'to',   label: 'Tới',            w: 130 },
+    { id: 'act',  label: '',               w: 48 },   // chỉ kính lúp
   ],
 }
 
@@ -116,6 +116,8 @@ const SKIP_LABEL: Record<string, string> = {
 function stateOf(r: DirectedRow, tab: BoardTab): { text: string; cls: string } {
   if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `hệ thống đã huỷ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
   if (r.all_scanned) return { text: `✓ quét đủ${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}`, cls: 'text-green-600' }
+  // Sắp quét gom theo Ô (14/09): nhóm 3 pallet mới quét 1 thì nói "đã quét 1/3", không phải im
+  if (tab === 'SCAN' && (r.n_done ?? 0) > 0) return { text: `đã quét ${nf(r.n_done ?? 0)}/${nf(r.n_pallets)}`, cls: 'text-sky-700' }
   if (r.stage_done) return {
     text: `✓ ${tab === 'LOWER' ? 'đã hạ' : 'đã đưa ra'}${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}${r.done_by_name ? ` · ${r.done_by_name}` : ''}`,
     cls: 'text-green-600',
@@ -155,13 +157,20 @@ function StockButtons({ r, onPick, big }: { r: DirectedRow; onPick: (m: PickedMa
 }
 
 /**
- * TEM PALLET của dòng việc (13/09). Nhóm gom theo vị trí có thể nhiều pallet — liệt kê tối đa 3 rồi
- * "+n", đủ để người đứng trước ô đối chiếu bằng mắt; danh sách đầy đủ nằm trong ô chi tiết.
- * Dòng phụ = NGÀY SẢN XUẤT: cùng ngày thì in một ngày, khác ngày thì in khoảng — chính chỗ khác
- * ngày là chỗ "lấy pallet nào" có hậu quả thật.
+ * LỆNH LẤY HÀNG = "lấy N pallet ở ô X" (user chốt 14/09: "chỉ cần chỉ định bao nhiêu pallet ở vị trí
+ * nào"). Tem pallet ghim KHÔNG hiện trên bảng nữa — trong ô cùng date thì pallet nào cũng được, in tem
+ * lên là biến gợi ý thành mệnh lệnh (đo Ba Vì: 14/17 việc có pallet tương đương ngay trong ô). Tem ·
+ * NSX · %Date từng pallet nằm sau KÍNH LÚP (panel chi tiết). Riêng ô có NHIỀU NSX của cùng mã thì NSX
+ * phải lên bảng vì lúc đó nó là phần của lệnh ("lấy 2 pallet NSX 28-07 ở ô X").
  */
-const MAX_TEM = 3
-/** MỘT nguồn cho cả bảng (PC) lẫn thẻ (PDA): tem · NSX gộp · yêu cầu date · số đo date thật. */
+/** Dòng "lấy bao nhiêu": N pallet · lấy bất kỳ trong M cùng NSX (nếu có chọn) · đã quét k/N (Sắp quét). */
+function pickHint(r: DirectedRow, tab: BoardTab): string | null {
+  const bits: string[] = []
+  if ((r.n_equiv ?? 0) > r.n_pallets) bits.push(`bất kỳ trong ${nf(r.n_equiv ?? 0)} pallet cùng NSX ở ô`)
+  if (tab === 'SCAN' && (r.n_done ?? 0) > 0 && !r.all_scanned) bits.push(`đã quét ${nf(r.n_done ?? 0)}`)
+  return bits.length ? bits.join(' · ') : null
+}
+/** MỘT nguồn cho cả bảng (PC) lẫn thẻ (PDA): NSX gộp · yêu cầu date · số đo date thật. */
 function dateBits(r: DirectedRow) {
   const pallets = r.pallets ?? []
   const pcts = pallets.map(palletPct).filter((p): p is number => p != null)
@@ -175,38 +184,23 @@ function dateBits(r: DirectedRow) {
   const span = (a: number[], unit: (lo: number, hi: number) => string) =>
     a.length ? unit(Math.min(...a), Math.max(...a)) : null
   return {
-    codes: pallets.length ? pallets.map(p => p.code) : (r.pallet_codes ?? []),
     rule: rowRule(r),
     // Màu luôn theo %Date (thang màu chung toàn app), kể cả khi CHỮ in theo ngày
     tone: pcts.length ? Math.min(...pcts) : null,
     measure: byDays
       ? span(dys, (lo, hi) => (lo === hi ? `còn ${nf(lo)} ngày` : `còn ${nf(lo)}–${nf(hi)} ngày`))
       : span(pcts, (lo, hi) => (lo === hi ? `${lo}%` : `${lo}–${hi}%`)),
-    // Cùng ngày thì in một ngày; khác ngày thì in KHOẢNG — chính chỗ khác ngày là chỗ "lấy pallet
-    // nào" có hậu quả thật (8/18 việc đang chờ rơi vào ca này, đo staging 13/09).
-    nsx: nsxDays.length
+    // NSX chỉ lên bảng khi Ô CÓ NHIỀU NSX của cùng mã (lúc đó nó là phần của lệnh); ô một date thì
+    // pallet nào cũng được, in NSX chỉ thêm chữ.
+    nsx: nsxDays.length && (r.cell_ndates ?? 1) > 1
       ? `${formatDate(nsxDays[0], 'dd-MM-yy')}${nsxDays.length > 1 ? ` → ${formatDate(nsxDays[nsxDays.length - 1], 'dd-MM-yy')}` : ''}`
       : null,
   }
 }
 
-function TemCell({ r, off }: { r: DirectedRow; off?: boolean }) {
-  const { codes, nsx } = dateBits(r)
-  if (!codes.length) return <span className="text-slate-300">—</span>
-  return (
-    <div className="leading-tight">
-      {codes.slice(0, MAX_TEM).map((c, i) => (
-        <div key={`${c}-${i}`} className={`font-mono text-[9px] font-semibold truncate ${off ? 'line-through' : ''}`}>{c ?? '—'}</div>
-      ))}
-      {codes.length > MAX_TEM && <div className="text-[9px] text-slate-400 no-underline">+{nf(codes.length - MAX_TEM)} pallet nữa</div>}
-      {nsx && <div className="text-[9px] text-slate-400 no-underline">NSX {nsx}</div>}
-    </div>
-  )
-}
-
 /** YÊU CẦU date của dòng đơn ĐẶT CẠNH %Date thật của pallet — so bằng mắt, không phải nhớ. */
 function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: boolean }) {
-  const { rule, measure, tone } = dateBits(r)
+  const { rule, measure, tone, nsx } = dateBits(r)
   return (
     <div className="leading-tight space-y-0.5">
       {rule
@@ -217,6 +211,7 @@ function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: bo
           {measure}
         </div>
       )}
+      {nsx && <div className="text-[9px] font-semibold text-amber-800 no-underline" title="Ô này có nhiều NSX của cùng mã — lấy đúng NSX này">NSX {nsx}</div>}
     </div>
   )
 }
@@ -709,7 +704,8 @@ export default function DirectedWork() {
               const ord = ordOf.get(r.group_key)
               const dest = tab === 'LOWER' ? (r.drop_name ?? r.to_name) : (r.to_name ?? r.to_code)
               const where = tab === 'LOWER' ? r.from_code : r.current_code
-              const { codes, rule, measure, tone, nsx } = dateBits(r)
+              const { rule, measure, tone, nsx } = dateBits(r)
+              const hint = pickHint(r, boardTab)
               return (
                 // Bấm THẺ = mở chi tiết việc; nút bên trong tự chặn nổi bọt (panel chỉ để đọc nên
                 // bấm nhầm không hỏng gì, nhưng vẫn có dòng "Chi tiết ›" để người dùng biết bấm được).
@@ -726,22 +722,13 @@ export default function DirectedWork() {
                   </div>
                   {/* NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai, không chỉ biết biển số */}
                   {r.customer_name && <div className="text-[11px] text-slate-500 truncate">Giao cho {r.customer_name}</div>}
-                  {/* TEM PALLET ở CẢ BA VAI (13/09): ô còn nhiều pallet cùng mã thì "lấy cái nào" là
-                      câu hỏi thật — 16/18 việc đang chờ rơi vào ca đó khi đo staging. */}
-                  <Step label="Tem" big={first}>
-                    {codes.length === 0 ? <span className="text-slate-300 font-normal">—</span> : (<>
-                      {codes.slice(0, MAX_TEM).map((c, i) => (
-                        <div key={`${c}-${i}`} className={`font-mono font-semibold break-all ${closed ? 'line-through' : ''}`}>{c ?? '—'}</div>
-                      ))}
-                      {codes.length > MAX_TEM && <div className="text-xs text-slate-500">+{nf(codes.length - MAX_TEM)} pallet nữa — xem Chi tiết</div>}
-                    </>)}
-                  </Step>
                   <Step label="Date" big={first}>
                     {rule
                       ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
                       : <span className="text-xs text-slate-400">chưa khai</span>}
                     {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
-                    {nsx && <div className="text-xs text-slate-500">NSX {nsx}</div>}
+                    {/* NSX chỉ hiện khi ô có nhiều NSX — lúc đó "lấy NSX nào" là phần của lệnh */}
+                    {nsx && <div className="text-xs font-semibold text-amber-800">lấy NSX {nsx} (ô có nhiều NSX)</div>}
                   </Step>
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
                     <span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{where ?? <span className="text-slate-300 font-sans font-normal">chưa có trên bản vẽ</span>}</span>
@@ -750,6 +737,7 @@ export default function DirectedWork() {
                   <Step label={tab === 'LOWER' ? 'Hạ' : tab === 'MOVE' ? 'Đưa' : 'Lấy'} big={first}>
                     <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-500">pallet</span>
                     <span className="text-xs text-slate-500"> · {r.material_codes?.filter(Boolean).join(', ') || '—'}</span>
+                    {hint && <div className="text-xs text-slate-500">{hint}</div>}
                     {r.material_name && <div className="text-xs text-slate-500">{r.material_name}</div>}
                     {tab === 'SCAN' && r.is_partial && !r.stage_done && (
                       <div className="text-xs font-semibold text-amber-700">lấy {qtyLabel(r.qty_base, r)} — một phần pallet</div>
@@ -783,8 +771,9 @@ export default function DirectedWork() {
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center justify-end text-[11px] text-sky-700 pt-0.5">
-                    Chi tiết <ChevronRight className="h-3.5 w-3.5" />
+                  {/* KÍNH LÚP (user 14/09): tem pallet ghim · NSX · %Date từng pallet · hồ sơ chuyến — chỉ khi cần soi */}
+                  <div className="flex items-center justify-end gap-1 text-[11px] text-sky-700 pt-0.5">
+                    <Search className="h-3.5 w-3.5" /> Soi chi tiết (tem pallet · NSX · %Date)
                   </div>
                 </div>
               )
@@ -853,12 +842,11 @@ export default function DirectedWork() {
                     </TableCell>
 
                     {tab === 'SCAN' ? (<>
-                      <TableCell className={cell}><TemCell r={r} off={closed} /></TableCell>
-                      <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                       <TableCell className={cell}>
                         <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
                         {r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                       </TableCell>
+                      <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                       <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>{st.text}</TableCell>
                     </>) : (<>
                       <TableCell className={cell}>
@@ -881,14 +869,12 @@ export default function DirectedWork() {
                           {heldByOther && !r.stage_done && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
                         </TableCell>
                         <TableCell className={`${cell} text-right tabular-nums`}>{r.level_no ?? '—'}</TableCell>
-                        <TableCell className={cell}><TemCell r={r} off={closed} /></TableCell>
                         <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                       </>) : (<>
                         <TableCell className={cell}>
                           <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
                           {r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                         </TableCell>
-                        <TableCell className={cell}><TemCell r={r} off={closed} /></TableCell>
                         <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                         <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>
                           {st.text}
@@ -900,6 +886,8 @@ export default function DirectedWork() {
                     <TableCell className={cell}>
                       <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-400">pallet</span>
                       <span className="text-[9px] text-slate-400"> · {r.material_codes?.filter(Boolean).join(', ') || '—'}</span>
+                      {/* "bất kỳ trong M cùng NSX": tem ghim chỉ là gợi ý (user 14/09) */}
+                      {pickHint(r, boardTab) && <div className="text-[9px] text-slate-500 no-underline">{pickHint(r, boardTab)}</div>}
                       {/* Tên hàng: trong kho người ta gọi hàng theo TÊN, mã 9 số chỉ khớp được trên giấy */}
                       {r.material_name && <div className="text-[9px] text-slate-500 truncate no-underline">{r.material_name}</div>}
                       {/* Pallet lấy MỘT PHẦN: thủ kho phải biết lấy bao nhiêu thùng (đọc theo THÙNG + lẻ, không in base thô) */}
@@ -925,9 +913,15 @@ export default function DirectedWork() {
                       )}
                     </TableCell>
 
-                    {tab !== 'SCAN' && (
+                    {(
                       <TableCell className={`px-2 py-1 whitespace-nowrap sticky right-0 z-10 border-l border-slate-200 ${first ? 'bg-sky-50' : 'bg-white'}`}>
                         <div className="flex items-center gap-1">
+                          {/* KÍNH LÚP — như nút "Xem tồn kho" bên Xuất: soi tem pallet ghim · NSX · %Date · hồ sơ chuyến */}
+                          <button type="button" onClick={e => { e.stopPropagation(); setDetailKey(r.group_key) }}
+                            title="Soi chi tiết việc: tem pallet gợi ý, NSX, %Date từng pallet, hồ sơ chuyến"
+                            className="flex items-center justify-center h-7 w-7 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 no-underline">
+                            <Search className="h-4 w-4" />
+                          </button>
                           {actions.map(a => (
                             <Button key={a.key} size="sm" variant={a.primary ? 'default' : 'outline'}
                               className={`h-7 px-2 text-[10px] ${a.muted ? 'opacity-70' : ''}`} disabled={busy}
@@ -936,7 +930,6 @@ export default function DirectedWork() {
                               <a.icon className="h-3.5 w-3.5 mr-0.5" /> {a.label}
                             </Button>
                           ))}
-                          {actions.length === 0 && !r.stage_done && <span className="text-[9px] text-slate-300">—</span>}
                         </div>
                       </TableCell>
                     )}

@@ -826,6 +826,10 @@ export interface DirectedRow {
   drop_name: string | null
   dist_cells: number | null
   n_pallets: number
+  // PALLET TƯƠNG ĐƯƠNG (14/09): lệnh = "lấy N pallet ở ô X"; tem ghim chỉ là gợi ý
+  n_done?: number                  // đã quét mấy pallet trong nhóm (Sắp quét gom theo ô)
+  n_equiv?: number                 // pallet trong ô cùng mã + cùng NSX với pallet ghim — lấy cái nào cũng được
+  cell_ndates?: number             // ô có mấy NSX khác nhau của mã đó — > 1 thì phải nói rõ NSX
   qty_base: number
   // Pallet lấy MỘT PHẦN (12/09): thủ kho phải biết lấy bao nhiêu thùng — kèm đơn vị của mã để in qtyLabel
   is_partial: boolean

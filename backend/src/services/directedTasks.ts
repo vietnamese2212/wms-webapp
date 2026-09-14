@@ -718,14 +718,56 @@ function assignSeq(
 // ─── ĐÓNG VIỆC ─────────────────────────────────────────────────────────────────────────────────
 
 /** Thủ kho quét đúng pallet đang có việc → việc XONG (điền nốt mốc chặng còn trống). */
+// ─── PALLET TƯƠNG ĐƯƠNG (user chốt 14/09) ──────────────────────────────────────────────────────
+// "Trên dãy có 43 pallet đều thoả điều kiện (chung một date) thì pallet nào cũng được." Kế hoạch
+// GHIM một entry_id chỉ để giữ chỗ mềm giữa các chuyến; cái ghim đó KHÔNG phải mệnh lệnh. Đo Ba Vì
+// 14/09: 14/17 việc đang treo có pallet tương đương ngay trong cùng ô (TB 5, nhiều nhất 10) — trước
+// đó quét bất kỳ pallet nào khác cái ghim là việc bị huỷ `OTHER_PALLET` và "% làm đúng kế hoạch"
+// trừ điểm người làm ĐÚNG nghiệp vụ. Tương đương = cùng ô · cùng mã · cùng NSX (tem V2: cùng HSD +
+// mã lô). Cùng ô + cùng date thì mọi luật date/luân chuyển cho ra cùng kết luận, không cần so lại.
+type EntryKey = { location_id: string | null; material_id: string | null; production_date: string | null; expiry_date: string | null; batch: string | null }
+const sameKey = (a: EntryKey, b: EntryKey) =>
+  !!a.location_id && a.location_id === b.location_id && !!a.material_id && a.material_id === b.material_id
+  && (a.production_date ?? '') === (b.production_date ?? '') && (a.expiry_date ?? '') === (b.expiry_date ?? '')
+  && (a.batch ?? '') === (b.batch ?? '')
+async function entryKeyOf(entryId: string): Promise<(EntryKey & { pallet_code: string | null }) | null> {
+  const { data } = await supabase.from('InventoryEntry')
+    .select('location_id, material_id, production_date, expiry_date, batch, pallet_code').eq('id', entryId).limit(1)
+  return ((data ?? [])[0] as (EntryKey & { pallet_code: string | null }) | undefined) ?? null
+}
+
+/**
+ * Thủ kho quét một pallet → đóng việc của chuyến. Khớp ĐÚNG pallet ghim thì đóng ngay; không thì tìm
+ * việc treo của CÙNG DÒNG HÀNG (ưu tiên) hay cùng chuyến mà pallet ghim TƯƠNG ĐƯƠNG với pallet vừa
+ * quét ⇒ đổi ghim sang pallet thật rồi đóng. Chỉ khi không có gì tương đương mới trả false để
+ * controller ghi `OTHER_PALLET` (lấy khác ô / khác date — đó mới là lệch kế hoạch thật).
+ */
 export async function markTaskDoneByScan(
-  gdoId: string, entryId: string | null, scanEntryId: string | null, actor: string | null,
+  gdoId: string, entryId: string | null, scanEntryId: string | null, actor: string | null, itemId: string | null = null,
 ): Promise<boolean> {
   if (!entryId) return false
+  type T = { id: string; item_id: string | null; lowered_at: string | null; moved_at: string | null; needs_lower: boolean }
   const { data } = await supabase.from('wms_tasks')
-    .select('id, lowered_at, moved_at, needs_lower').eq('gdo_id', gdoId).eq('entry_id', entryId).eq('status', 'PENDING').limit(1)
-  const t = (data ?? [])[0] as { id: string; lowered_at: string | null; moved_at: string | null; needs_lower: boolean } | undefined
-  if (!t) return false
+    .select('id, item_id, lowered_at, moved_at, needs_lower').eq('gdo_id', gdoId).eq('entry_id', entryId).eq('status', 'PENDING').limit(1)
+  let t = (data ?? [])[0] as T | undefined
+  let swapped: string | null = null
+  if (!t) {
+    const key = await entryKeyOf(entryId)
+    if (!key?.location_id || !key.material_id) return false
+    const { data: cand } = await supabase.from('wms_tasks')
+      .select('id, item_id, lowered_at, moved_at, needs_lower, seq, entry:InventoryEntry!entry_id(location_id, material_id, production_date, expiry_date, batch, pallet_code)')
+      .eq('gdo_id', gdoId).eq('status', 'PENDING')
+      .eq('from_location_id', key.location_id).eq('material_id', key.material_id)
+      .order('seq').limit(MAX_TASKS_PER_PALLET)
+    const rows = ((cand ?? []) as unknown as Array<T & { seq: number; entry: (EntryKey & { pallet_code: string | null }) | null }>)
+      .filter(r => r.entry && sameKey(r.entry, key))
+    // Cùng dòng hàng trước (đúng đơn), rồi mới tới việc khác của chuyến
+    const pick = rows.find(r => itemId && r.item_id === itemId) ?? rows[0]
+    if (!pick) return false
+    t = pick
+    swapped = pick.entry?.pallet_code ?? null
+    await supabase.from('wms_tasks').update({ entry_id: entryId, pallet_code: key.pallet_code, updated_at: now() }).eq('id', pick.id).eq('status', 'PENDING')
+  }
   const at = now()
   await supabase.from('wms_tasks').update({
     status: 'DONE', done_at: at, done_by: actor, scan_entry_id: scanEntryId,
@@ -734,7 +776,7 @@ export async function markTaskDoneByScan(
     ...(t.moved_at ? {} : { moved_at: at, moved_by: actor }),
     updated_at: at,
   }).eq('id', t.id)
-  await logEvents([{ task_id: t.id, event: 'DONE', actor, note: 'quét đủ' }])
+  await logEvents([{ task_id: t.id, event: 'DONE', actor, note: swapped ? `quét đủ — pallet tương đương (kế hoạch ghim ${swapped})` : 'quét đủ' }])
   return true
 }
 
@@ -757,11 +799,37 @@ export async function skipTasksOnForeignScan(entryId: string | null, exceptGdoId
     .select('id, gdo_id').eq('entry_id', entryId).eq('status', 'PENDING').neq('gdo_id', exceptGdoId)
   const rows = (data ?? []) as { id: string; gdo_id: string }[]
   if (!rows.length) return
+  // PALLET TƯƠNG ĐƯƠNG (14/09): chuyến kia chỉ mất một cái ghim, không mất hàng — còn pallet cùng ô
+  // cùng date chưa ai ghim thì đổi ghim lặng lẽ, việc của họ vẫn nguyên, không huỷ, không sắp lại.
+  const key = await entryKeyOf(entryId)
+  const survivors: { id: string; gdo_id: string }[] = []
+  if (key?.location_id && key.material_id) {
+    const { data: same } = await supabase.from('InventoryEntry')
+      .select('id, pallet_code, location_id, material_id, production_date, expiry_date, batch, cartons_remaining, cartons_imported, cartons_reserved')
+      .eq('location_id', key.location_id).eq('material_id', key.material_id).neq('id', entryId)
+      .in('status', [...PICKABLE_STATUSES]).gt('cartons_remaining', 0).order('pallet_code').limit(200)
+    const pool = ((same ?? []) as unknown as Array<EntryKey & Cand>).filter(e => sameKey(e, key) && availableOf(e) > 0)
+    if (pool.length) {
+      const { data: taken } = await supabase.from('wms_tasks').select('entry_id').eq('status', 'PENDING')
+        .in('entry_id', pool.map(p => p.id).slice(0, CHUNK_IDS))
+      const busy = new Set(((taken ?? []) as { entry_id: string | null }[]).map(x => x.entry_id))
+      const free = pool.filter(p => !busy.has(p.id))
+      for (const r of rows) {
+        const alt = free.shift()
+        if (!alt) break
+        await supabase.from('wms_tasks').update({ entry_id: alt.id, pallet_code: alt.pallet_code, updated_at: now() }).eq('id', r.id).eq('status', 'PENDING')
+        await logEvents([{ task_id: r.id, event: 'REPLANNED', actor, note: `đổi ghim sang pallet tương đương ${alt.pallet_code} (chuyến khác đã lấy pallet cũ)` }])
+        survivors.push(r)
+      }
+    }
+  }
+  const lost = rows.filter(r => !survivors.some(s => s.id === r.id))
+  if (!lost.length) return
   await supabase.from('wms_tasks')
     .update({ status: 'SKIPPED', skip_reason: 'PALLET_TAKEN', updated_at: now() })
-    .in('id', rows.map(r => r.id)).limit(MAX_TASKS_PER_PALLET)
-  await logEvents(rows.map(r => ({ task_id: r.id, event: 'SKIPPED', actor, note: 'PALLET_TAKEN' })))
-  for (const g of [...new Set(rows.map(r => r.gdo_id))]) await planGdoTasks(g, actor)
+    .in('id', lost.map(r => r.id)).limit(MAX_TASKS_PER_PALLET)
+  await logEvents(lost.map(r => ({ task_id: r.id, event: 'SKIPPED', actor, note: 'PALLET_TAKEN' })))
+  for (const g of [...new Set(lost.map(r => r.gdo_id))]) await planGdoTasks(g, actor)
 }
 
 async function cancelTasks(ids: string[], actor: string | null, reason: string): Promise<number> {

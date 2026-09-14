@@ -896,7 +896,8 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; max_materials?: number | null; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
+    // sub_code/row/shelf (14/09): đổi mã khi ô TRỐNG — BE gác 409 nếu còn hàng / việc treo
+    mutationFn: ({ id, ...body }: { id: string; sub_code?: string; row?: string; shelf?: string; sub_name?: string; max_pallets?: number; max_materials?: number | null; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })

@@ -305,6 +305,9 @@ export default function Locations() {
     ? [(selectedWh.nmsx_code?.trim() || selectedWh.code), form.sub_code, form.row, form.shelf].filter(Boolean).join('_')
     : null
 
+  // Ô TRỐNG thì đổi được Khu / Dãy / Tầng (mã ghép lại, giữ id) — có hàng thì khoá và NÓI lý do (14/09)
+  const canRename = dialogMode === 'edit' && !!editing && editing.used_slots === 0
+
   // ── Handlers: location ───────────────────────────────────────
   function setField(k: keyof typeof EMPTY_FORM, v: string) {
     setForm(f => ({ ...f, [k]: v }))
@@ -360,8 +363,13 @@ export default function Locations() {
           max_materials: form.max_materials.trim() ? Number(form.max_materials) : null,
         })
       } else if (editing) {
+        // Chỉ gửi Khu/Dãy/Tầng khi ĐỔI (ô trống) — gửi kèm khi không đổi là bắt BE kiểm khu/tồn vô ích
+        const sub = form.sub_code.trim().toUpperCase(), row = form.row.trim(), shelf = form.shelf.trim()
+        const renamed = canRename && (sub !== editing.sub_code || row !== editing.row || shelf !== (editing.shelf ?? ''))
+        if (renamed && (!sub || !row)) { setFormError('Khu vực và vị trí là bắt buộc'); return }
         await updateLocation.mutateAsync({
           id:                 editing.id,
+          ...(renamed ? { sub_code: sub, row, shelf } : {}),
           sub_name:           form.sub_name.trim() || undefined,
           max_pallets:        form.max_pallets ? Number(form.max_pallets) : undefined,
           // Ô trống phải gửi `null` TƯỜNG MINH = "gỡ giới hạn". Gửi `undefined` thì BE hiểu là
@@ -817,11 +825,14 @@ export default function Locations() {
         }
       >
           <div className="space-y-3">
-            {/* ── Edit: thông tin read-only ── */}
+            {/* ── Edit: mã hiện tại + vì sao đổi được / không (user 14/09: khoá im lặng là không hợp lý) ── */}
             {dialogMode === 'edit' && editing && (
               <div className="bg-slate-50 rounded px-3 py-2 space-y-0.5">
-                <p className="text-[10px] text-slate-500">Vị trí · {editing.warehouse.name}</p>
+                <p className="text-[10px] text-slate-500">Vị trí · {editing.warehouse.name} <span className="text-slate-400">(kho không đổi được — pallet thuộc kho)</span></p>
                 <p className="font-mono font-semibold text-sm">{editing.location_code}</p>
+                {canRename
+                  ? <p className="text-[10px] text-slate-500">Ô đang trống — đổi được Khu vực / Vị trí / Tầng bên dưới; mã sẽ ghép lại, giữ nguyên toạ độ Sơ đồ kho và các cờ.</p>
+                  : <p className="text-[10px] text-amber-700">Đang có {editing.used_slots} pallet nên Khu vực / Vị trí / Tầng khoá — chuyển hết hàng đi rồi mới đổi mã (tem QR dán kệ sẽ hết hiệu lực).</p>}
               </div>
             )}
 
@@ -839,8 +850,8 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Khu vực kho (chỉ add) — Loại kho KẾ THỪA từ khu, không chọn tay ── */}
-            {dialogMode === 'add' && (
+            {/* ── Khu vực kho (add, hoặc edit khi ô trống) — Loại kho KẾ THỪA từ khu, không chọn tay ── */}
+            {(dialogMode === 'add' || canRename) && (
               <div>
                 <Label className="text-xs">Khu vực kho <span className="text-red-500">*</span></Label>
                 <Select value={form.sub_code || '__none__'}
@@ -873,8 +884,8 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Loại kho (edit) — read-only, kế thừa từ khu ── */}
-            {dialogMode === 'edit' && editing && (
+            {/* ── Loại kho (edit, ô có hàng) — read-only, kế thừa từ khu; ô trống thì đã hiện theo khu đang chọn ở trên ── */}
+            {dialogMode === 'edit' && editing && !canRename && (
               <div>
                 <Label className="text-xs">Loại kho <span className="text-slate-400">(kế thừa từ Khu vực)</span></Label>
                 <p className="text-sm font-medium text-slate-700 mt-1">{editing.categories?.length ? editing.categories.join(', ') : '—'}</p>
@@ -892,8 +903,8 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Vị trí + Tầng (chỉ add) ── */}
-            {dialogMode === 'add' && (
+            {/* ── Vị trí + Tầng (add, hoặc edit khi ô trống) ── */}
+            {(dialogMode === 'add' || canRename) && (
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Label className="text-xs">Vị trí <span className="text-red-500">*</span></Label>
@@ -908,11 +919,14 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Preview mã vị trí ── */}
-            {dialogMode === 'add' && locationPreview && (
-              <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2">
-                <p className="text-[10px] text-blue-500 mb-0.5">Mã vị trí sẽ là</p>
-                <p className="font-mono font-semibold text-sm text-blue-700">{locationPreview}</p>
+            {/* ── Preview mã vị trí (add: luôn; edit: chỉ khi mã ĐỔI, kèm nhắc in lại tem) ── */}
+            {locationPreview && (dialogMode === 'add' || (canRename && editing && locationPreview !== editing.location_code)) && (
+              <div className={`border rounded px-3 py-2 ${dialogMode === 'add' ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+                <p className={`text-[10px] mb-0.5 ${dialogMode === 'add' ? 'text-blue-500' : 'text-amber-700'}`}>
+                  {dialogMode === 'add' ? 'Mã vị trí sẽ là' : `Mã đổi từ ${editing?.location_code} thành`}
+                </p>
+                <p className={`font-mono font-semibold text-sm ${dialogMode === 'add' ? 'text-blue-700' : 'text-amber-800'}`}>{locationPreview}</p>
+                {dialogMode === 'edit' && <p className="text-[10px] text-amber-700 mt-0.5">Tem QR đang dán kệ mang mã cũ — in lại tem sau khi lưu (Vị trí kho → In tem).</p>}
               </div>
             )}
 

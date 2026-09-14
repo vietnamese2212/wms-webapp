@@ -51,6 +51,7 @@ async function cleanup() {
     await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('WarehouseZone', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})   // khu tạo ở [26]
     await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
   }
   for (const m of await restAll('Material', `select=id&material_code=like.${T}*`))
@@ -1129,6 +1130,41 @@ try {
     r = await api('/wms/directed/loose-route?gdo_id=not-a-uuid')
     check('[25c] gdo_id rác → 4xx (404 vì khoá text), không 500', r.s === 400 || r.s === 404, `http=${r.s}`)
     await api(`/wms/outbound/${tR.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+  }
+
+  // ═══ [26] ĐỔI MÃ VỊ TRÍ KHI Ô TRỐNG (user 14/09: "thêm rồi không sửa được khá nhiều — không hợp lý") ═
+  // Gõ nhầm lúc tạo mà phải xoá tạo lại là mất toạ độ Sơ đồ kho + cờ. Nay PUT nhận Khu/Dãy/Tầng khi ô
+  // KHÔNG hàng, KHÔNG việc treo; mã ghép lại theo tiền tố kho, id giữ nguyên. Có hàng ⇒ 409 nói rõ.
+  {
+    const [zone] = await restWrite('WarehouseZone', 'POST', null, {
+      id: randomUUID(), warehouse_id: whId, code: 'KE', name: 'Ke QA57', categories: [CAT_A], is_active: true,
+      created_at: nowIso(), updated_at: nowIso(),
+    })
+    const locA = await mkLoc('KE', '08', 'T1', 12, 20)
+    r = await api(`/masterdata/locations/${locA.id}`, 'PUT', { row: '80' })
+    const a2 = (await restAll('Location', `select=id,location_code,row,shelf,sub_code,grid_x,grid_y&id=eq.${locA.id}`))[0]
+    check('[26a] Ô trống: đổi Dãy → 200, mã ghép lại theo tiền tố kho, giữ id + toạ độ bản vẽ',
+      r.s === 200 && a2?.location_code === `${T}_W_KE_80_T1` && a2?.row === '80' && a2?.grid_x === 12 && a2?.grid_y === 20,
+      `http=${r.s} ${err(r)} mã=${a2?.location_code} grid=${a2?.grid_x},${a2?.grid_y}`)
+    // Ô CÓ HÀNG: far.T3 đang chứa pallet fixture ⇒ 409 có tên lỗi, không đổi gì
+    const before = (await restAll('Location', `select=location_code&id=eq.${far.T3}`))[0]?.location_code
+    r = await api(`/masterdata/locations/${far.T3}`, 'PUT', { row: '99' })
+    const after = (await restAll('Location', `select=location_code&id=eq.${far.T3}`))[0]?.location_code
+    check('[26b] Ô CÓ HÀNG: đổi Dãy → 409 LOCATION_NOT_EMPTY, mã giữ nguyên',
+      r.s === 409 && r.j?.error?.code === 'LOCATION_NOT_EMPTY' && after === before, `http=${r.s} ${err(r)} mã=${after}`)
+    // Trùng mã với ô khác ⇒ 409 DUPLICATE
+    const locB = await mkLoc('KE', '09', 'T1', 13, 20)
+    r = await api(`/masterdata/locations/${locB.id}`, 'PUT', { row: '80' })
+    check('[26c] Đổi sang mã đã có ô khác dùng → 409 DUPLICATE', r.s === 409 && r.j?.error?.code === 'DUPLICATE', `http=${r.s} ${err(r)}`)
+    // Khu không có trong danh mục ⇒ 400 (cùng luật lúc tạo)
+    r = await api(`/masterdata/locations/${locB.id}`, 'PUT', { sub_code: 'KHONGCO' })
+    check('[26d] Đổi sang khu chưa khai → 400', r.s === 400, `http=${r.s} ${err(r)}`)
+    // Chỉ sửa sức chứa (không gửi Khu/Dãy/Tầng) ⇒ đường cũ y nguyên, không đụng mã
+    r = await api(`/masterdata/locations/${locB.id}`, 'PUT', { max_pallets: 7 })
+    const b2 = (await restAll('Location', `select=location_code,max_pallets&id=eq.${locB.id}`))[0]
+    check('[26e] PUT không mang Khu/Dãy/Tầng → hành vi cũ, mã không đổi', r.s === 200 && Number(b2?.max_pallets) === 7 && b2?.location_code === `${T}_KE_09_T1`,
+      `http=${r.s} mã=${b2?.location_code} max=${b2?.max_pallets}`)
+    await restWrite('WarehouseZone', 'DELETE', `id=eq.${zone.id}`).catch(() => {})
   }
 
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════

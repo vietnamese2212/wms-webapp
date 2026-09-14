@@ -645,6 +645,55 @@ export async function updateLocation(req: Request, res: Response) {
     // Loại của vị trí KHÔNG sửa lẻ ở đây — kế thừa từ Khu (sửa loại = sửa ở Khu vực, tự cascade)
     const { sub_name, sub_type, max_pallets, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
+
+    // ĐỔI MÃ (Khu · Dãy · Tầng) KHI Ô TRỐNG — user 14/09: "khi thêm và sửa thì các nội dung khi thêm không
+    // sửa được khá nhiều, không hợp lý". Gõ nhầm "09" thành "9" lúc tạo mà phải XOÁ rồi TẠO LẠI là mất
+    // toạ độ trên Sơ đồ kho, các cờ đã tick và lịch sử gắn với id. Mã vị trí = Kho_Khu_Dãy_Tầng nằm trên
+    // tem QR dán kệ và trên bảng việc, nên chỉ cho đổi khi ô KHÔNG có hàng và KHÔNG việc treo trỏ vào;
+    // giữ nguyên id ⇒ bản vẽ / cờ / lịch sử còn nguyên. Kho KHÔNG bao giờ đổi (pallet thuộc kho).
+    const body = req.body as { sub_code?: unknown; row?: unknown; shelf?: unknown }
+    if (body.sub_code !== undefined || body.row !== undefined || body.shelf !== undefined) {
+      const { data: curRaw } = await supabase.from('Location')
+        .select('id, warehouse_id, sub_code, row, shelf, location_code, kind').eq('id', req.params.id).maybeSingle()
+      if (!curRaw) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+      const cur = curRaw as { id: string; warehouse_id: string; sub_code: string; row: string; shelf: string | null; location_code: string; kind: string | null }
+      const sub   = body.sub_code !== undefined ? String(body.sub_code).trim().toUpperCase() : cur.sub_code
+      const row   = body.row      !== undefined ? String(body.row).trim() : cur.row
+      const shelf = body.shelf    !== undefined ? String(body.shelf ?? '').trim() : (cur.shelf ?? '')
+      if (!sub || !row) return fail(res, 400, 'VALIDATION_ERROR', 'Khu vực và Vị trí không được để trống')
+      if (sub !== cur.sub_code || row !== cur.row || shelf !== (cur.shelf ?? '')) {
+        if (cur.kind && cur.kind !== 'STORAGE')
+          return fail(res, 400, 'VALIDATION_ERROR', 'Cửa / điểm đầu dãy đổi tên ở trang Sơ đồ kho')
+        const { count: nPal } = await supabase.from('InventoryEntry')
+          .select('id', { count: 'exact', head: true }).eq('location_id', cur.id).gt('cartons_remaining', 0)
+        if ((nPal ?? 0) > 0)
+          return fail(res, 409, 'LOCATION_NOT_EMPTY', `Vị trí đang có ${nPal} pallet — chuyển hết hàng đi rồi mới đổi mã (tem QR dán kệ sẽ hết hiệu lực)`)
+        const { count: nTask } = await supabase.from('wms_tasks')
+          .select('id', { count: 'exact', head: true }).eq('status', 'PENDING')
+          .or(`from_location_id.eq.${cur.id},to_location_id.eq.${cur.id},drop_location_id.eq.${cur.id}`)
+        if ((nTask ?? 0) > 0)
+          return fail(res, 409, 'LOCATION_HAS_TASKS', `Còn ${nTask} việc xe nâng đang trỏ tới vị trí này — chờ xong hoặc sắp lại kế hoạch rồi đổi`)
+        // Khu mới phải có trong Khu vực của kho + loại của khu trong phạm vi người sửa — cùng luật lúc tạo
+        const { data: zone } = await supabase.from('WarehouseZone')
+          .select('name, categories').eq('warehouse_id', cur.warehouse_id).eq('code', sub).maybeSingle()
+        if (!zone) return fail(res, 400, 'VALIDATION_ERROR', `Khu "${sub}" chưa có trong Khu vực của kho — tạo khu ở Cài đặt WMS → Khu vực trước`)
+        const zoneCats = (zone as { name: string | null; categories: string[] | null }).categories ?? null
+        if (!categoriesAllAllowed(req, zoneCats)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+        const { data: wh } = await supabase.from('Warehouse').select('code, nmsx_code').eq('id', cur.warehouse_id).maybeSingle()
+        if (!wh) return fail(res, 404, 'NOT_FOUND', 'Kho không tồn tại')
+        const w = wh as { code: string; nmsx_code: string | null }
+        const newCode = buildLocationCode((w.nmsx_code && String(w.nmsx_code).trim()) || w.code, sub, row, shelf)
+        const { data: dup } = await supabase.from('Location').select('id')
+          .eq('warehouse_id', cur.warehouse_id).eq('location_code', newCode).neq('id', cur.id).limit(1)
+        if ((dup ?? []).length) return fail(res, 409, 'DUPLICATE', `Mã ${newCode} đã có vị trí khác dùng`)
+        patch.sub_code = sub; patch.row = row; patch.shelf = shelf; patch.location_code = newCode
+        if (sub !== cur.sub_code) {
+          patch.categories = zoneCats                       // loại kế thừa theo khu MỚI
+          if (sub_name === undefined) patch.sub_name = (zone as { name: string | null }).name ?? null
+        }
+        // Text copy trên ĐIỂM ĐẶT / ĐÍCH của việc đã xong giữ nguyên (lịch sử); việc treo không có (đã gác)
+      }
+    }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
     // Sức chứa ÂM/không phải số: RPC move_pallets_to_location chỉ kiểm sức chứa khi `v_max > 0`,

@@ -1140,9 +1140,9 @@ try {
       id: randomUUID(), warehouse_id: whId, code: 'KE', name: 'Ke QA57', categories: [CAT_A], is_active: true,
       created_at: nowIso(), updated_at: nowIso(),
     })
-    const locA = await mkLoc('KE', '08', 'T1', 12, 20)
-    r = await api(`/masterdata/locations/${locA.id}`, 'PUT', { row: '80' })
-    const a2 = (await restAll('Location', `select=id,location_code,row,shelf,sub_code,grid_x,grid_y&id=eq.${locA.id}`))[0]
+    const locA = await mkLoc('KE', '08', 'T1', 12, 20)          // mkLoc trả ID (như far.T3)
+    r = await api(`/masterdata/locations/${locA}`, 'PUT', { row: '80' })
+    const a2 = (await restAll('Location', `select=id,location_code,row,shelf,sub_code,grid_x,grid_y&id=eq.${locA}`))[0]
     check('[26a] Ô trống: đổi Dãy → 200, mã ghép lại theo tiền tố kho, giữ id + toạ độ bản vẽ',
       r.s === 200 && a2?.location_code === `${T}_W_KE_80_T1` && a2?.row === '80' && a2?.grid_x === 12 && a2?.grid_y === 20,
       `http=${r.s} ${err(r)} mã=${a2?.location_code} grid=${a2?.grid_x},${a2?.grid_y}`)
@@ -1154,14 +1154,14 @@ try {
       r.s === 409 && r.j?.error?.code === 'LOCATION_NOT_EMPTY' && after === before, `http=${r.s} ${err(r)} mã=${after}`)
     // Trùng mã với ô khác ⇒ 409 DUPLICATE
     const locB = await mkLoc('KE', '09', 'T1', 13, 20)
-    r = await api(`/masterdata/locations/${locB.id}`, 'PUT', { row: '80' })
+    r = await api(`/masterdata/locations/${locB}`, 'PUT', { row: '80' })
     check('[26c] Đổi sang mã đã có ô khác dùng → 409 DUPLICATE', r.s === 409 && r.j?.error?.code === 'DUPLICATE', `http=${r.s} ${err(r)}`)
     // Khu không có trong danh mục ⇒ 400 (cùng luật lúc tạo)
-    r = await api(`/masterdata/locations/${locB.id}`, 'PUT', { sub_code: 'KHONGCO' })
+    r = await api(`/masterdata/locations/${locB}`, 'PUT', { sub_code: 'KHONGCO' })
     check('[26d] Đổi sang khu chưa khai → 400', r.s === 400, `http=${r.s} ${err(r)}`)
     // Chỉ sửa sức chứa (không gửi Khu/Dãy/Tầng) ⇒ đường cũ y nguyên, không đụng mã
-    r = await api(`/masterdata/locations/${locB.id}`, 'PUT', { max_pallets: 7 })
-    const b2 = (await restAll('Location', `select=location_code,max_pallets&id=eq.${locB.id}`))[0]
+    r = await api(`/masterdata/locations/${locB}`, 'PUT', { max_pallets: 7 })
+    const b2 = (await restAll('Location', `select=location_code,max_pallets&id=eq.${locB}`))[0]
     check('[26e] PUT không mang Khu/Dãy/Tầng → hành vi cũ, mã không đổi', r.s === 200 && Number(b2?.max_pallets) === 7 && b2?.location_code === `${T}_KE_09_T1`,
       `http=${r.s} mã=${b2?.location_code} max=${b2?.max_pallets}`)
     await restWrite('WarehouseZone', 'DELETE', `id=eq.${zone.id}`).catch(() => {})

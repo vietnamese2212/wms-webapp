@@ -671,3 +671,8 @@ created_at, updated_at
   "pallet tương đương (kế hoạch ghim …)"; chuyến khác lấy mất pallet ghim thì đổi ghim sang pallet tương đương còn trống
   thay vì huỷ `PALLET_TAKEN`; chỉ khác ô / khác date mới là `OTHER_PALLET`. FE bỏ cột "Tem pallet", thêm KÍNH LÚP mở
   panel chi tiết. Gói QA 57 **[22a–22f]** gác cả hai chiều. Sinh bằng `scratchpad/ops/gen_mig_board2.mjs`.
+- `20260914c_directed_board_arg_limit.sql` — **rows của `directed_board` vượt TRẦN 100 THAM SỐ của `jsonb_build_object`**
+  (đo thật 14/09 ngay khi gói 57 chạy trên Preview: `GET /wms/directed/board` 500 "cannot pass more than 100 arguments",
+  bảng trống). Sau `20260914b` object mỗi dòng có 51 khoá. Vá: tách hai `jsonb_build_object` nối `||` ngay trong
+  `jsonb_agg`, JSON y hệt, không đổi chữ ký. Bài học: RPC trả dòng jsonb "rộng" thì ĐẾM KHOÁ trước khi thêm — trần này
+  tsc/QA tĩnh không thấy, chỉ lộ khi gọi thật; gói 57 [10a] là lưới đã bắt được.

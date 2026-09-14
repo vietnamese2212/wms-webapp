@@ -279,13 +279,18 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
           onClose={() => setInventoryItemId(null)}
         />
       )}
-      {/* Dải ĐƯỜNG ĐI: một dòng, cuộn ngang trên điện thoại (hàng nowrap trong khung co được phải cuộn — luật 12/09) */}
+      {/* Dải ĐƯỜNG ĐI = TÓM TẮT một dòng (user 14/09 "cả chục mã thì làm sao?"): số điểm ghé + xuất phát;
+          thứ tự chi tiết nằm ở SỐ GHÉ trên từng dòng bảng (đã xếp theo đường). Danh sách điểm ghé chỉ in
+          khi ≤ 4 điểm, còn không thì cuộn ngang được (hàng nowrap trong khung co phải cuộn — luật 12/09). */}
       {route && route.stops.length > 0 && (
         <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] flex items-center gap-2 overflow-x-auto whitespace-nowrap ${route.routed ? 'bg-sky-50/70 text-slate-700' : 'bg-slate-50 text-slate-500'}`}>
           <span className="font-semibold text-sky-800 shrink-0">Đường đi nhặt lẻ</span>
-          {route.start_code && <span className="text-slate-500 shrink-0">từ {route.start_code}</span>}
+          <span className="shrink-0">
+            <b>{route.stops.length}</b> điểm ghé{route.start_code ? <> từ <b>{route.start_code}</b></> : null}
+            {route.stops.length > 4 && <span className="text-slate-500"> — thứ tự ghé ghi ở số tròn đầu mỗi dòng, bảng đã xếp theo đường</span>}
+          </span>
           {!route.routed && <span className="text-amber-700 shrink-0">(kho chưa có bản vẽ / chuyến chưa gắn cửa — chưa xếp theo đường)</span>}
-          {route.stops.map((s, i) => (
+          {route.stops.length <= 4 && route.stops.map((s, i) => (
             <span key={s.location_id} className="shrink-0">
               {i > 0 && <span className="text-slate-400 mx-1">→</span>}
               <span className="inline-flex items-center justify-center h-4 min-w-4 rounded-full bg-sky-600 text-white text-[10px] font-semibold px-1 mr-1">{s.seq}</span>
@@ -325,7 +330,12 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   onClick={() => navigate(`/wms/loosepicking/${gdoId}/items/${item.id}`)}
                 >
                   <TableCell className={`px-2 py-1 align-top whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
-                    <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
+                    <div className={`text-[10px] font-mono font-semibold ${textCls} flex items-center gap-1`}>
+                      {/* SỐ GHÉ trên từng dòng (user 14/09 "cả chục mã thì làm sao?") — dải trên chỉ tóm tắt, thứ tự đi đọc ở đây */}
+                      {seqOfItem.has(item.id) && (
+                        <span className="inline-flex items-center justify-center h-4 min-w-4 rounded-full bg-sky-600 text-white text-[9px] font-semibold px-1 shrink-0"
+                          title={`Điểm ghé thứ ${seqOfItem.get(item.id)} trên đường đi nhặt lẻ`}>{seqOfItem.get(item.id)}</span>
+                      )}
                       {matCode}
                       <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} mat={item.material} />
                     </div>

@@ -557,6 +557,9 @@ export default function DirectedWork() {
   const canLoose = can(perms, 'loosepicking', 'view')
   const looseLinkOf = (r: DirectedRow) =>
     canLoose && r.kind === 'LOOSE_FEED' && r.item_id ? `/wms/loosepicking/${r.gdo_id}/items/${r.item_id}` : null
+  // "Theo vị trí công việc" (14/09): mở trang Nhặt lẻ của chuyến với màn đường đi + quét tại chỗ đã bật sẵn
+  const routeLinkOf = (r: DirectedRow) =>
+    canLoose && r.kind === 'LOOSE_FEED' && r.gdo_id ? `/wms/loosepicking/${r.gdo_id}?route=1` : null
   // "KHAI NGAY" (14/09): băng vàng từng bảo "mở chuyến rồi bấm Quy định date" — mỗi dòng chưa khai là
   // một lần rời trang. Nay mở đúng SetDateRuleSheet dùng chung với trang chuyến ngay tại đây.
   const [dateOpen, setDateOpen] = useState(false)
@@ -766,6 +769,12 @@ export default function DirectedWork() {
                         <ExternalLink className="h-3.5 w-3.5" /> Trừ tồn nhặt lẻ ở dòng hàng
                       </Link>
                     )}
+                    {tab === 'SCAN' && routeLinkOf(r) && (
+                      <Link to={routeLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
+                        className="mt-1 flex items-center gap-1 text-xs text-sky-700 underline">
+                        <ScanIcon className="h-3.5 w-3.5" /> Theo vị trí công việc — đi và quét
+                      </Link>
+                    )}
                   </Step>
                   {/* "⏳ chờ xe hạ" là lời nói với XE CHUYỂN — trên thẻ của chính xe hạ thì đó là việc của họ, không phải chờ ai */}
                   {(closed || heldByOther || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
@@ -921,6 +930,12 @@ export default function DirectedWork() {
                         <Link to={looseLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
                           className="block text-[9px] text-purple-700 no-underline hover:underline">
                           Trừ tồn nhặt lẻ ›
+                        </Link>
+                      )}
+                      {tab === 'SCAN' && routeLinkOf(r) && (
+                        <Link to={routeLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
+                          className="block text-[9px] text-sky-700 no-underline hover:underline">
+                          Theo vị trí công việc ›
                         </Link>
                       )}
                     </TableCell>

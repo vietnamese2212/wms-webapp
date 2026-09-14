@@ -119,7 +119,7 @@ export function pathTo(f: GridFrame, mask: Uint8Array, bfs: { dist: Int32Array; 
  * Thứ tự ghé các đích từ điểm xuất phát: tham lam "đích gần nhất chưa ghé" (đủ tốt cho mười mấy
  * điểm của một chuyến; không giải TSP). Trả mảng CHỈ SỐ của `targets`; đích không tới được xếp cuối.
  */
-export function orderByNearest(f: GridFrame, mask: Uint8Array, start: GridCell, targets: ReadonlyArray<ReadonlyArray<GridCell>>): number[] {
+export function orderByNearest(f: GridFrame, mask: Uint8Array, start: GridCell, targets: ReadonlyArray<ReadonlyArray<GridCell>>, legsOut?: number[]): number[] {
   const remaining = new Set(targets.map((_, i) => i))
   const order: number[] = []
   let cur = start
@@ -132,8 +132,9 @@ export function orderByNearest(f: GridFrame, mask: Uint8Array, start: GridCell, 
     }
     if (bestI < 0 || !bestCell) break
     order.push(bestI); remaining.delete(bestI); cur = bestCell
+    if (legsOut) legsOut.push(bestD)   // quãng (ô) từ điểm đứng trước tới đích này — Theo vị trí công việc in ra mét
   }
-  for (const i of [...remaining].sort((a, b) => a - b)) order.push(i)
+  for (const i of [...remaining].sort((a, b) => a - b)) { order.push(i); if (legsOut) legsOut.push(-1) }
   return order
 }
 

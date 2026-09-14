@@ -1,8 +1,8 @@
-import { useState, useEffect, Fragment } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useState, useEffect, useRef, Fragment } from 'react'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare, CalendarClock } from 'lucide-react'
+import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare, CalendarClock, MapPin } from 'lucide-react'
 import { isQaHeld } from '@/utils/qaHold'
 import { backTarget } from '@/lib/returnTo'
 import { ScanIcon } from '@/components/shared/ScanIcon'
@@ -18,6 +18,7 @@ import { ShortageBadge } from '@/components/shared/ShortageBadge'
 // kho hàng ⇒ dùng CHUNG badge + màn chốt %Date của trang chuyến, đừng dựng bản riêng cho màn này.
 import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
+import { LooseRouteSheet } from '@/components/wms/LooseRouteSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -556,14 +557,24 @@ export default function LoosePickingDetail() {
   const [showDateRule,    setShowDateRule]    = useState(false)   // chốt %Date cho chính các dòng nhặt lẻ
   const [hdrOpen,         setHdrOpen]         = useState(false)   // mobile: popup thông tin đơn (thanh mảnh + nút Info)
   const [pdaScan,         setPdaScan]         = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
+  // THEO VỊ TRÍ CÔNG VIỆC (user 14/09): đường đi từ cửa qua từng ô + quét ngay tại đó. `?route=1` (link từ
+  // Việc cần làm) mở sẵn MỘT lần cho mỗi đường dẫn — không ghi đè khi người dùng đã đóng.
+  const [showRoute,       setShowRoute]       = useState(false)
+  const [searchParams] = useSearchParams()
+  const routeParamApplied = useRef<string | null>(null)
+  useEffect(() => {
+    const key = `${id}:${searchParams.get('route') ?? ''}`
+    if (searchParams.get('route') === '1' && routeParamApplied.current !== key) { routeParamApplied.current = key; setShowRoute(true) }
+  }, [id, searchParams])
 
   function toggleExpand(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
   }
 
-  // PDA: bóp cò ngay tại trang → tự mở màn quét chế độ SÚNG (không camera) — điều kiện = nút Quét QR
+  // PDA: bóp cò ngay tại trang → tự mở màn quét chế độ SÚNG (không camera) — điều kiện = nút Quét QR.
+  // Màn Theo vị trí đang mở thì panel quét trong đó đã nghe súng — trang không mở thêm màn thứ hai.
   useWedgeScanner(code => {
-    if (!gdo || showOrderScan) return
+    if (!gdo || showOrderScan || showRoute) return
     if (gdo.status === 'COMPLETED' || gdo.status === 'CANCELLED') return
     if (!can(perms, 'loosepicking', 'scan')) return
     const anyLoose = (gdo.delivery_orders ?? []).some(d => d.items.some(i =>
@@ -656,7 +667,17 @@ export default function LoosePickingDetail() {
   // Rule chặn giữ nguyên (BE kiểm theo item): sai mã, không vượt số nhặt lẻ, tạm dừng…
   const hasLooseRemaining = allLooseItems.some(i =>
     i.material?.no_qr_tracking !== true && itemLooseProgress(i).remaining > 0)
-  if (hasLooseRemaining && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'loosepicking', 'scan'))
+  const tripOpen = gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED'
+  // THEO VỊ TRÍ CÔNG VIỆC (user 14/09 "mở 1 nút và hiện lên con đường đi lấy, và quét được luôn ở đó"):
+  // nút CHÍNH của người nhặt lẻ — đường đi từ cửa qua từng ô, mã phải lấy ở mỗi ô, quét ngay dưới.
+  if (allLooseItems.some(i => itemLooseProgress(i).remaining > 0) && tripOpen)
+    actionItems.push({
+      key: 'route', icon: MapPin, label: 'Theo vị trí',
+      tip: 'Theo vị trí công việc — đường đi từ cửa qua từng ô lấy hàng, quét ngay tại đó',
+      primary: true, variant: 'default',
+      onClick: () => { unlockAudio(); setShowRoute(true) },
+    })
+  if (hasLooseRemaining && tripOpen && can(perms, 'loosepicking', 'scan'))
     actionItems.push({
       key: 'scan-order', icon: ScanIcon, label: 'Quét QR',
       tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện của mã đó',
@@ -705,6 +726,9 @@ export default function LoosePickingDetail() {
       {showOrderScan && (
         <GdoScanSheet gdo={gdo} mode="loose" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
+      )}
+      {showRoute && !showOrderScan && (
+        <LooseRouteSheet gdo={gdo} canScan={can(perms, 'loosepicking', 'scan')} onClose={() => setShowRoute(false)} />
       )}
       <SetDateRuleSheet open={showDateRule} onClose={() => setShowDateRule(false)}
         targets={dateTargets} warehouseId={gdo.warehouse_id ?? null} />

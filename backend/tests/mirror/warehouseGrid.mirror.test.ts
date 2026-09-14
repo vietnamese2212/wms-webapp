@@ -42,6 +42,23 @@ describe(`warehouseGrid BE ⇄ FE (seed ${SEED})`, () => {
       expect(FE.distanceToCells(f, mf, bf.dist, targets[0] ?? []), ctx).toBe(BE.distanceToCells(f, mb, bb.dist, targets[0] ?? []))
       expect(FE.pathToCells(f, mf, bf, targets[0] ?? []), ctx).toEqual(BE.pathToCells(f, mb, bb, targets[0] ?? []))
       expect(FE.orderByNearest(f, mf, start, targets), ctx).toEqual(BE.orderByNearest(f, mb, start, targets))
+      // Quãng từng chặng (Theo vị trí công việc 14/09): cùng thứ tự, cùng số ô, một số cho mỗi đích; đích không tới được = -1
+      const legsB: number[] = [], legsF: number[] = []
+      const ordB = BE.orderByNearest(f, mb, start, targets, legsB)
+      FE.orderByNearest(f, mf, start, targets, legsF)
+      expect(legsF, ctx).toEqual(legsB)
+      expect(legsB.length, ctx).toBe(ordB.length)
+      // ORACLE độc lập: đi lại từng chặng bằng bfsFrom + pathToCells — chỗ ĐỨNG sau mỗi chặng = ô đi được cuối
+      // trên đường (ô "bước vào kệ" bị chắn không phải chỗ đứng); tổng quãng phải khớp từng số một
+      let stand = start
+      for (let k = 0; k < ordB.length; k++) {
+        const bfs = BE.bfsFrom(f, mb, stand)
+        const d = BE.distanceToCells(f, mb, bfs.dist, targets[ordB[k]])
+        expect(legsB[k], `${ctx} leg#${k}`).toBe(d < 0 ? -1 : d)
+        if (d < 0) break   // từ đây về sau đều là đích không tới được, xếp cuối với -1
+        const p = BE.pathToCells(f, mb, bfs, targets[ordB[k]]).filter(c => !mb[c.y * f.width + c.x])
+        if (p.length) stand = p[p.length - 1]
+      }
       expect(FE.lineCells(start, t), ctx).toEqual(BE.lineCells(start, t))
     }
     const NAMES = ['A1', 'A10', 'A2', 'a2', 'B_T1', 'B_T10', 'B_T2', '', '10', '9', 'A12_T4', 'A12_T1', 'Kho Lẻ', 'kho lẻ']

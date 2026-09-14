@@ -15,6 +15,7 @@ import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule, WorkInbox, DirectedSupervision } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
+import type { MatUnits } from '@/utils/qtyUnits'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -3877,11 +3878,22 @@ export function useGdoPickSuggestions(gdoId: string | undefined) {
 
 // ĐƯỜNG ĐI NHẶT LẺ (14/09): thứ tự ghé vị trí lấy từ cửa của chuyến (BFS trên Sơ đồ kho, cùng phép
 // đo với vòng đi xe nâng). Key prefix 'gdo' → realtime tự làm mới khi quét / tồn đổi.
+export interface LooseRouteMaterial {
+  item_id: string; material_id: string; material_code: string | null; material_name: string | null
+  units: MatUnits | null
+  remaining_base: number          // còn lấy nhặt lẻ (BASE) — cùng công thức itemLooseProgress; BE đã lọc dòng = 0
+  pct_date: number | null; available: number
+}
 export interface LooseRouteStop {
   seq: number; location_id: string; location_code: string; is_pick_face: boolean
-  materials: Array<{ item_id: string; material_id: string; material_code: string | null; pct_date: number | null; available: number }>
+  dist_from_prev_cells: number | null   // quãng (ô lưới) từ điểm đứng trước; null = chưa có bản vẽ / không tới được
+  materials: LooseRouteMaterial[]
 }
-export interface LooseRoute { routed: boolean; start_code: string | null; stops: LooseRouteStop[]; unlocated: Array<{ item_id: string; material_code: string | null }> }
+export interface LooseRoute {
+  routed: boolean; start_code: string | null; cell_m: number | null
+  stops: LooseRouteStop[]
+  unlocated: Array<{ item_id: string; material_code: string | null; material_name: string | null; remaining_base: number }>
+}
 export function useLooseRoute(gdoId: string | undefined) {
   return useQuery({
     queryKey: ['gdo', 'loose-route', gdoId],

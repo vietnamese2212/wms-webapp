@@ -1126,6 +1126,25 @@ try {
     const stockLocs = new Set((await restAll('InventoryEntry', `select=location_id&material_id=eq.${mat.id}&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)).map(e => e.location_id))
     check('[25b] Điểm ghé là vị trí THẬT SỰ có tồn của mã (không chỉ đường tới ô trống)',
       st.length >= 1 && st.every(s => stockLocs.has(s.location_id)), st.map(s => s.location_code).join(','))
+    // [25d] THEO VỊ TRÍ CÔNG VIỆC (14/09): mỗi mã mang CÒN LẤY (base) + tên + đơn vị; mỗi điểm mang quãng từ điểm trước;
+    // quét nhặt lẻ ĐỦ phần lẻ ⇒ dòng rời khỏi đường đi dù pallet chẵn còn chưa quét (cùng công thức itemLooseProgress)
+    {
+      const m0 = st[0]?.materials?.find(m => m.item_id === iR)
+      check('[25d1] Mỗi mã trên điểm ghé mang remaining_base = phần lẻ còn lấy (60), tên hàng, đơn vị; điểm ghé có quãng ô ≥ 0 và cell_m',
+        Number(m0?.remaining_base) === 60 && 'material_name' in (m0 ?? {}) && m0?.units && 'units_per_carton' in m0.units
+          && Number(st[0]?.dist_from_prev_cells) >= 0 && Number(rr.j?.data?.cell_m) > 0,
+        `rem=${m0?.remaining_base} name=${m0?.material_name} units=${JSON.stringify(m0?.units)} dist=${st[0]?.dist_from_prev_cells} cell_m=${rr.j?.data?.cell_m}`)
+      const pal = (await restAll('InventoryEntry', `select=pallet_code,cartons_remaining,cartons_reserved&location_id=eq.${st[0]?.location_id}&material_id=eq.${mat.id}&cartons_remaining=gt.0&order=cartons_remaining.desc&limit=1`))[0]
+      const take = Math.min(60, Number(pal?.cartons_remaining ?? 0) - Number(pal?.cartons_reserved ?? 0))
+      const sc = await api(`/wms/outbound/${tR.gdo}/items/${iR}/scan`, 'POST',
+        { qr_code: pal?.pallet_code, qty_semantics: 'base', cartons_override: take, loose_picking_mode: true, leftover_ui: true, leftover_location_id: 'KEEP' })
+      const rr2 = await api(`/wms/directed/loose-route?gdo_id=${tR.gdo}`)
+      const st2 = rr2.j?.data?.stops ?? []
+      const m2 = st2.flatMap(s => s.materials).find(m => m.item_id === iR)
+      check('[25d2] Quét nhặt lẻ N lẻ ⇒ còn lấy giảm đúng N; lấy đủ 60 ⇒ dòng RỜI đường đi (không còn điểm ghé mang nó)',
+        sc.s === 200 && rr2.s === 200 && take > 0 && (take >= 60 ? !m2 : Number(m2?.remaining_base) === 60 - take),
+        `scan=${sc.s} ${err(sc)} take=${take} rem_sau=${m2?.remaining_base ?? 'rời'} stops=${st2.map(s => `${s.seq}:${s.location_code}`).join(' → ')}`)
+    }
     // `GroupDeliveryOrder.id` là TEXT ⇒ id rác = 0 dòng = 404 (luật pg-error-is-user-error: KHÔNG chặn theo hình dạng uuid); chỉ cấm 500
     r = await api('/wms/directed/loose-route?gdo_id=not-a-uuid')
     check('[25c] gdo_id rác → 4xx (404 vì khoá text), không 500', r.s === 400 || r.s === 404, `http=${r.s}`)

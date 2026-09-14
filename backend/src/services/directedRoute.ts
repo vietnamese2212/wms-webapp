@@ -35,7 +35,7 @@ export interface RoutableRow {
 }
 
 type LocRow = { id: string; kind: string; grid_x: number | null; grid_y: number | null; grid_w: number | null; grid_h: number | null }
-type Grid = { frame: GridFrame; mask: Uint8Array; locById: Map<string, LocRow> }
+type Grid = { frame: GridFrame; mask: Uint8Array; locById: Map<string, LocRow>; cellM: number }
 
 // Bản vẽ đổi rất ít (chỉ khi có người sửa Sơ đồ kho) nhưng bảng việc được tải lại mỗi 10 giây và
 // nhiều người cùng mở ⇒ nhớ trong tiến trình 60 giây, theo đúng khuôn getter-cache của dự án.
@@ -46,12 +46,12 @@ async function loadGrid(warehouseId: string): Promise<Grid | null> {
   const hit = cache.get(warehouseId)
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.grid
   const [{ data: mapRow }, locsRaw] = await Promise.all([
-    db.from('warehouse_maps').select('width, height, blocked').eq('warehouse_id', warehouseId).maybeSingle(),
+    db.from('warehouse_maps').select('width, height, blocked, cell_m').eq('warehouse_id', warehouseId).maybeSingle(),
     fetchAllRowsParallel(() => db.from('Location')
       .select('id, kind, grid_x, grid_y, grid_w, grid_h')
       .eq('warehouse_id', warehouseId).eq('is_active', true).order('id')),
   ])
-  const map = mapRow as { width: number; height: number; blocked: [number, number][] | null } | null
+  const map = mapRow as { width: number; height: number; blocked: [number, number][] | null; cell_m: number | null } | null
   let grid: Grid | null = null
   if (map) {
     const locs = (locsRaw ?? []) as LocRow[]
@@ -60,6 +60,7 @@ async function loadGrid(warehouseId: string): Promise<Grid | null> {
       frame,
       mask: buildBlockedMask(frame, map.blocked ?? [], locs as unknown as GridLoc[]),
       locById: new Map(locs.map(l => [l.id, l])),
+      cellM: Number(map.cell_m) > 0 ? Number(map.cell_m) : 1.2,
     }
   }
   cache.set(warehouseId, { at: Date.now(), grid })
@@ -79,16 +80,19 @@ export function clearRouteGridCache(warehouseId?: string): void {
  */
 export async function orderLocationsFromDock(
   warehouseId: string, startLocationId: string | null, locationIds: string[],
-): Promise<{ order: string[]; routed: boolean }> {
+): Promise<{ order: string[]; routed: boolean; legs: number[]; cell_m: number | null }> {
   const uniq = [...new Set(locationIds)]
   const grid = await loadGrid(warehouseId)
-  if (!grid || uniq.length < 2) return { order: uniq, routed: !!grid && uniq.length > 0 }
+  const noLegs = uniq.map(() => -1)
+  if (!grid) return { order: uniq, routed: false, legs: noLegs, cell_m: null }
   const start = (startLocationId ? grid.locById.get(startLocationId) : null)
     ?? [...grid.locById.values()].find(l => l.kind === 'DROP' && l.grid_x != null) ?? null
-  if (!start || start.grid_x == null || start.grid_y == null) return { order: uniq, routed: false }
+  if (!start || start.grid_x == null || start.grid_y == null) return { order: uniq, routed: false, legs: noLegs, cell_m: grid.cellM }
   const targets = uniq.map(id => { const l = grid.locById.get(id); return l ? footprintCells(l as unknown as GridLoc) : [] })
-  const idx = orderByNearest(grid.frame, grid.mask, { x: start.grid_x, y: start.grid_y }, targets)
-  return { order: idx.map(i => uniq[i]), routed: true }
+  // Một điểm ghé vẫn chạy qua BFS để có quãng đường từ cửa (trước 14/09 dưới 2 điểm thì trả nguyên)
+  const legs: number[] = []
+  const idx = orderByNearest(grid.frame, grid.mask, { x: start.grid_x, y: start.grid_y }, targets, legs)
+  return { order: idx.map(i => uniq[i]), routed: true, legs, cell_m: grid.cellM }
 }
 
 /**

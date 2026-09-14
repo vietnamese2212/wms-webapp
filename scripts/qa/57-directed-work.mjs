@@ -1066,9 +1066,29 @@ try {
   {
     const locQ = await mkLoc('KE', '07', 'T2', 12, 18)
     const R99 = { kind: 'MIN_PCT', value: 99, source: 'MANUAL', set_at: nowIso() }
-    const pQ1 = await mkPallet('RQ1', 100, locQ, dPlus(700), -1)            // ≥ 99 % và HSD ngắn nhất trong tập ≥ 99 lúc này
+    // MÃ RIÊNG cho khối này — KHÔNG dùng chung `mat` với các mục trước. Vì sao: giữ chỗ mềm chia
+    // pallet giữa MỌI chuyến còn mở của kho, nên nếu một chuyến khác của chính bộ kiểm cũng cần mã
+    // đó thì nó có thể ăn mất pallet RQ3 ngay trong lượt xả hàng đợi ⇒ phép kiểm đỏ mà app KHÔNG
+    // sai (đo 14/09: đỏ 2/3 lượt trong gói, còn dựng CÔ LẬP 4 lượt thì xanh 16/16). Phép kiểm phụ
+    // thuộc trạng thái của phép kiểm khác là phép kiểm sẽ kêu oan — lớp C11/C18.
+    const [matQ] = await restWrite('Material', 'POST', null, {
+      id: randomUUID(), material_code: `${T}-MRQ`, material_description: 'QA replan queue', short_name: 'QA RQ',
+      category: CAT_A, base_unit: 'CS', cartons_per_pallet: 100, shelf_life_days: 365,
+      is_active: true, created_at: nowIso(), updated_at: nowIso(),
+    })
+    const mkPalletQ = async (code, locId, exp) => (await restWrite('InventoryEntry', 'POST', null, {
+      id: randomUUID(), pallet_code: `${T}-${code}`, material_id: matQ.id, warehouse_id: whId,
+      location_id: locId, cartons_imported: 100, cartons_remaining: 100, cartons_reserved: 0,
+      status: 'IN_STOCK', production_date: dPlus(-1), expiry_date: dPlus(exp),
+      import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+    }))[0]
+    const pQ1 = await mkPalletQ('RQ1', locQ, 700)            // ≥ 99 % và HSD ngắn nhất trong tập ≥ 99 lúc này
     const tQ = await mkTrip('TRQ')
-    await mkItem(tQ.do, 100, { date_rule: R99 })
+    await restWrite('OutboundItem', 'POST', null, {
+      id: randomUUID(), do_id: tQ.do, material_id: matQ.id, material_code_raw: matQ.material_code,
+      cartons_ordered: 100, cartons_scanned: 0, status: 'PENDING', date_rule: R99,
+      created_at: nowIso(), updated_at: nowIso(),
+    })
     r = await startTrip(tQ.gdo, { license_plate: '51C24241', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
     let tkQ = (await tasksOf(tQ.gdo)).filter(t => t.status === 'PENDING')
     const okStart = r.s === 200 && tkQ.length === 1 && tkQ[0].entry_id === pQ1.id
@@ -1076,8 +1096,8 @@ try {
     if (okStart) {
       const id0 = tkQ[0].id
       // Tồn đổi nhưng KHÔNG tốt hơn (HSD dài hơn RQ1) ⇒ hàng đợi có dòng, xả ra KHÔNG sắp lại
-      await mkPallet('RQ2', 100, locQ, dPlus(750), -1)
-      let q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${mat.id}`)
+      await mkPalletQ('RQ2', locQ, 750)
+      let q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${matQ.id}`)
       check('[24b] Nhập pallet cùng mã → trigger ghi (kho, mã) vào hàng đợi', q.length === 1, `${q.length} dòng`)
       b = await board('MOVE')
       let after = (await tasksOf(tQ.gdo)).filter(t => t.status === 'PENDING')
@@ -1086,10 +1106,10 @@ try {
       check('[24c] Xả hàng đợi: pallet mới KHÔNG tốt hơn ⇒ việc của chuyến GIỮ NGUYÊN id (không sắp lại vô cớ)',
         b.s === 200 && Number.isFinite(Number(b.j?.data?.auto_replanned)) && after.length === 1 && after[0].id === id0,
         `http=${b.s} auto=${b.j?.data?.auto_replanned} id giữ=${after[0]?.id === id0}`)
-      q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${mat.id}`)
+      q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${matQ.id}`)
       check('[24c2] Hàng đợi được xả sạch sau lần tải bảng', q.length === 0, `${q.length} dòng còn`)
       // Tồn đổi TỐT HƠN (HSD ngắn hơn, vẫn ≥ 99 %) ⇒ sắp lại tự động, việc cũ CANCELLED/STOCK_CHANGED, việc mới ghim RQ3
-      const pQ3 = await mkPallet('RQ3', 100, locQ, dPlus(600), -1)
+      const pQ3 = await mkPalletQ('RQ3', locQ, 600)
       b = await board('MOVE')
       const allQ = await tasksOf(tQ.gdo)
       after = allQ.filter(t => t.status === 'PENDING')
@@ -1102,7 +1122,7 @@ try {
       if (after.length === 1) {
         const id1 = after[0].id
         await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [id1], stage: 'LOWER' })
-        await mkPallet('RQ4', 100, locQ, dPlus(500), -1)
+        await mkPalletQ('RQ4', locQ, 500)
         b = await board('MOVE')
         const kept = (await tasksOf(tQ.gdo)).find(t => t.id === id1)
         check('[24e] Việc ĐÃ HẠ: hàng tốt hơn về vẫn KHÔNG bị đụng (cùng id, vẫn PENDING, mốc hạ còn, vẫn ghim RQ3)',
@@ -1231,6 +1251,23 @@ try {
     // `GroupDeliveryOrder.id` là TEXT ⇒ id rác = 0 dòng = 404 (luật pg-error-is-user-error: KHÔNG chặn theo hình dạng uuid); chỉ cấm 500
     r = await api('/wms/directed/loose-route?gdo_id=not-a-uuid')
     check('[25c] gdo_id rác → 4xx (404 vì khoá text), không 500', r.s === 400 || r.s === 404, `http=${r.s}`)
+
+    // [25h] CHUYẾN CHƯA BẮT ĐẦU VẪN PHẢI CÓ THỨ TỰ — đây là ca THƯỜNG GẶP NHẤT của nhặt lẻ, không
+    // phải ngoại lệ: soạn hàng lẻ trước khi xe tới là chủ đích (cửa quét miễn `started_at` cho
+    // `loose_picking_mode`), mà chuyến chưa Bắt đầu thì chưa có `dock_location_id`. Trước bản vá
+    // 14/09, đúng lúc đó màn "Theo vị trí" mất sạch thứ tự và báo "chưa có bản vẽ / chưa gắn cửa"
+    // trong khi kho đã vẽ cửa lẫn điểm đầu dãy. Điểm xuất phát tự chọn phải ỔN ĐỊNH và NÓI RA.
+    {
+      const tP = await mkTrip('TPRESTART')
+      await mkItem(tP.do, 48, { loose_picking: 48, date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+      const rp = await api(`/wms/directed/loose-route?gdo_id=${tP.gdo}`)
+      const sp = rp.j?.data?.stops ?? []
+      check('[25h] Chuyến CHƯA Bắt đầu (chưa gắn cửa) vẫn có thứ tự + quãng, và nêu rõ xuất phát từ đâu',
+        rp.s === 200 && rp.j?.data?.routed === true && !!rp.j?.data?.start_code
+          && sp.length >= 1 && Number(sp[0]?.dist_from_prev_cells) >= 0,
+        `http=${rp.s} routed=${rp.j?.data?.routed} start=${rp.j?.data?.start_code} dist=${sp[0]?.dist_from_prev_cells}`)
+      await api(`/wms/outbound/${tP.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+    }
     await api(`/wms/outbound/${tR.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 

@@ -136,7 +136,9 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
           <p className="text-[11px] text-slate-300 leading-tight break-words">
             <span className="font-mono">{tripName(gdo)}</span>
             {route?.start_code && <> · xuất phát <b className="text-white">{route.start_code}</b></>}
-            {route && !route.routed && <span className="text-amber-300"> · chưa có bản vẽ / chưa gắn cửa — thứ tự chưa theo đường</span>}
+            {/* Chỉ cảnh báo khi CÒN điểm để ghé — lấy đủ hết rồi mà vẫn kêu "chưa có bản vẽ" là sai
+                sự thật (kho có bản vẽ hẳn hoi) và đẩy thủ kho đi kiểm Sơ đồ kho cho một việc không có. */}
+            {route && !route.routed && nStops > 0 && <span className="text-amber-300"> · chưa có bản vẽ / chưa gắn cửa — thứ tự chưa theo đường</span>}
           </p>
         </div>
         {scanAllowed && openRows.some(r => !noQr.has(r.item_id)) && (
@@ -172,8 +174,9 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                       ) : r.location_code == null ? (
                         /* Hai lý do KHÁC HẲN nhau: hết hàng thì chờ hàng về, còn hàng mà không đạt
                            mức date đã chốt thì việc phải làm là đổi mức / gỡ QA — gộp một câu là bắt đoán. */
-                        <span className="text-[10px] text-amber-700">
-                          {r.no_match ? 'còn hàng nhưng không đạt mức date' : 'chưa có tồn để chỉ chỗ'}
+                        <span className="text-[10px] text-amber-700"
+                          title={r.no_match ? 'Kho còn hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng — đổi mức ở "Chốt %Date" hoặc gỡ QA' : undefined}>
+                          {r.no_match ? 'không đạt mức date' : 'chưa có tồn để chỉ chỗ'}
                         </span>
                       ) : r.first_of_stop ? (
                         <div className="leading-tight">

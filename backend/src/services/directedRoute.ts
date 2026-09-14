@@ -34,7 +34,10 @@ export interface RoutableRow {
   skipped?: boolean | null
 }
 
-type LocRow = { id: string; kind: string; grid_x: number | null; grid_y: number | null; grid_w: number | null; grid_h: number | null }
+type LocRow = {
+  id: string; kind: string; grid_x: number | null; grid_y: number | null; grid_w: number | null; grid_h: number | null
+  location_code: string; row: string | null
+}
 type Grid = { frame: GridFrame; mask: Uint8Array; locById: Map<string, LocRow>; cellM: number }
 
 // Bản vẽ đổi rất ít (chỉ khi có người sửa Sơ đồ kho) nhưng bảng việc được tải lại mỗi 10 giây và
@@ -48,7 +51,7 @@ async function loadGrid(warehouseId: string): Promise<Grid | null> {
   const [{ data: mapRow }, locsRaw] = await Promise.all([
     db.from('warehouse_maps').select('width, height, blocked, cell_m').eq('warehouse_id', warehouseId).maybeSingle(),
     fetchAllRowsParallel(() => db.from('Location')
-      .select('id, kind, grid_x, grid_y, grid_w, grid_h')
+      .select('id, kind, grid_x, grid_y, grid_w, grid_h, location_code, row')
       .eq('warehouse_id', warehouseId).eq('is_active', true).order('id')),
   ])
   const map = mapRow as { width: number; height: number; blocked: [number, number][] | null; cell_m: number | null } | null
@@ -80,19 +83,29 @@ export function clearRouteGridCache(warehouseId?: string): void {
  */
 export async function orderLocationsFromDock(
   warehouseId: string, startLocationId: string | null, locationIds: string[],
-): Promise<{ order: string[]; routed: boolean; legs: number[]; cell_m: number | null }> {
+): Promise<{ order: string[]; routed: boolean; legs: number[]; cell_m: number | null; start_code: string | null }> {
   const uniq = [...new Set(locationIds)]
   const grid = await loadGrid(warehouseId)
   const noLegs = uniq.map(() => -1)
-  if (!grid) return { order: uniq, routed: false, legs: noLegs, cell_m: null }
+  if (!grid) return { order: uniq, routed: false, legs: noLegs, cell_m: null, start_code: null }
+  // ĐIỂM XUẤT PHÁT: cửa của chuyến → điểm đầu dãy → CỬA XUẤT bất kỳ (ổn định theo mã).
+  // Bậc ba là ca THƯỜNG GẶP NHẤT của nhặt lẻ chứ không phải ngoại lệ: soạn hàng lẻ trước khi xe
+  // tới là chủ đích (cửa quét miễn `started_at` cho `loose_picking_mode`), mà chuyến chưa Bắt đầu
+  // thì chưa có `dock_location_id` ⇒ trước bản vá, đúng màn "Theo vị trí" mất sạch thứ tự và chỉ
+  // báo "chưa gắn cửa" — kho đã vẽ cửa hẳn hoi. Chọn tuỳ ý nhưng ỔN ĐỊNH còn hơn không có đường.
+  const byCode = (a: LocRow, b: LocRow) => a.location_code.localeCompare(b.location_code)
+  const placed = [...grid.locById.values()].filter(l => l.grid_x != null && l.grid_y != null)
   const start = (startLocationId ? grid.locById.get(startLocationId) : null)
-    ?? [...grid.locById.values()].find(l => l.kind === 'DROP' && l.grid_x != null) ?? null
-  if (!start || start.grid_x == null || start.grid_y == null) return { order: uniq, routed: false, legs: noLegs, cell_m: grid.cellM }
+    ?? placed.filter(l => l.kind === 'DROP').sort(byCode)[0]
+    ?? placed.filter(l => l.kind === 'DOCK_OUT').sort(byCode)[0]
+    ?? null
+  if (!start || start.grid_x == null || start.grid_y == null) return { order: uniq, routed: false, legs: noLegs, cell_m: grid.cellM, start_code: null }
+  const startCode = start.row ?? start.location_code
   const targets = uniq.map(id => { const l = grid.locById.get(id); return l ? footprintCells(l as unknown as GridLoc) : [] })
   // Một điểm ghé vẫn chạy qua BFS để có quãng đường từ cửa (trước 14/09 dưới 2 điểm thì trả nguyên)
   const legs: number[] = []
   const idx = orderByNearest(grid.frame, grid.mask, { x: start.grid_x, y: start.grid_y }, targets, legs)
-  return { order: idx.map(i => uniq[i]), routed: true, legs, cell_m: grid.cellM }
+  return { order: idx.map(i => uniq[i]), routed: true, legs, cell_m: grid.cellM, start_code: startCode }
 }
 
 /**

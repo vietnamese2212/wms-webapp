@@ -273,7 +273,7 @@ export async function getLooseRoute(req: Request, res: Response) {
       Array<{ id: string; location_code: string; row: string | null; is_pick_face: boolean | null }> : []
     const locByCode = new Map(locRows.map(l => [l.location_code, l]))
 
-    const { order, routed, legs, cell_m } = await orderLocationsFromDock(whId, g.dock_location_id, [...locByCode.values()].map(l => l.id))
+    const { order, routed, legs, cell_m, start_code: routeStart } = await orderLocationsFromDock(whId, g.dock_location_id, [...locByCode.values()].map(l => l.id))
     const seqOfLoc = new Map(order.map((id, i) => [id, i + 1]))
     const legOfLoc = new Map(order.map((id, i) => [id, legs[i] ?? -1]))
     type StopMat = {
@@ -314,11 +314,10 @@ export async function getLooseRoute(req: Request, res: Response) {
       })
       stops.set(loc.id, s)
     }
-    let startCode: string | null = null
-    if (g.dock_location_id) {
-      const { data: dk } = await supabase.from('Location').select('row, location_code').eq('id', g.dock_location_id).maybeSingle()
-      startCode = (dk as { row: string | null; location_code: string } | null)?.row ?? (dk as { location_code: string } | null)?.location_code ?? null
-    }
+    // Tên điểm xuất phát lấy từ CHÍNH điểm mà vòng đường đã dùng (có thể là cửa tự chọn khi chuyến
+    // chưa Bắt đầu) — nếu chỉ đọc cửa của chuyến thì màn hình nói "chưa gắn cửa" trong khi đường
+    // đi đã tính từ một cửa có thật, người đọc không biết mình đang đi từ đâu.
+    const startCode: string | null = routeStart
     return ok(res, { routed, start_code: startCode, cell_m, stops: [...stops.values()].sort((a, b) => a.seq - b.seq), unlocated, done: doneRows })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }

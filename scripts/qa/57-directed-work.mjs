@@ -1141,6 +1141,27 @@ try {
       const rr2 = await api(`/wms/directed/loose-route?gdo_id=${tR.gdo}`)
       const st2 = rr2.j?.data?.stops ?? []
       const m2 = st2.flatMap(s => s.materials).find(m => m.item_id === iR)
+      // [25e] DÒNG CHƯA CÓ TỒN vẫn phải mang QUY CÁCH: thiếu `units` thì bảng "Theo vị trí" in số BASE mà
+      // dán nhãn "thùng" và ô tổng cộng base thô (đo 14/09: 60 hộp hiện "60 thùng", tổng 203,8 thay 146,3).
+      // Dựng bằng một dòng hàng của mã KHÔNG có tồn nào trong kho.
+      const [matNo] = await restWrite('Material', 'POST', null, {
+        id: randomUUID(), material_code: `${T}-MNOSTOCK`, material_description: 'QA khong ton', short_name: 'QA khong ton',
+        category: CAT_A, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 24,
+        cartons_per_pallet: 100, shelf_life_days: 365, is_active: true, created_at: nowIso(), updated_at: nowIso(),
+      })
+      const iNo = (await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: tR.do, material_id: matNo.id, material_code_raw: matNo.material_code,
+        cartons_ordered: 240, cartons_scanned: 0, loose_picking: 60,
+        date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      }))[0].id
+      const rr3 = await api(`/wms/directed/loose-route?gdo_id=${tR.gdo}`)
+      const un = (rr3.j?.data?.unlocated ?? []).find(u => u.item_id === iNo)
+      check('[25e] Dòng CHƯA CÓ TỒN vẫn mang quy cách (units) + material_id — thiếu là bảng in số hộp dán nhãn "thùng" và tổng cộng base thô',
+        rr3.s === 200 && !!un && Number(un.remaining_base) === 60 && Number(un.units?.units_per_carton) === 24
+          && un.material_id === matNo.id,
+        `unlocated=${JSON.stringify(un)}`)
+
       check('[25d2] Quét nhặt lẻ N lẻ ⇒ còn lấy giảm đúng N; lấy đủ 60 ⇒ dòng RỜI đường đi (không còn điểm ghé mang nó)',
         sc.s === 200 && rr2.s === 200 && take > 0 && (take >= 60 ? !m2 : Number(m2?.remaining_base) === 60 - take),
         `scan=${sc.s} ${err(sc)} take=${take} rem_sau=${m2?.remaining_base ?? 'rời'} stops=${st2.map(s => `${s.seq}:${s.location_code}`).join(' → ')}`)

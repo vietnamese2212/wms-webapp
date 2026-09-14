@@ -42,11 +42,13 @@ type Row = {
 }
 
 // Thứ tự cột theo câu hỏi của người đi nhặt (user 14/09 "mã hàng rồi tới tên hàng chứ, bố trí khoa học vào"):
-// ĐI ĐÂU (Vị trí · Quãng) → LẤY GÌ (Mã · Tên) → BAO NHIÊU (Còn lấy · Đã/cần) → PALLET NÀO (%Date · Tồn ở ô) → THAO TÁC (ghim mép phải)
+// ĐI ĐÂU (Vị trí — quãng đường nằm ở DÒNG PHỤ trong chính cột này) → LẤY GÌ (Mã · Tên)
+// → BAO NHIÊU (Còn lấy · Đã/cần) → PALLET NÀO (%Date · Tồn ở ô) → THAO TÁC.
+// Quãng KHÔNG tách cột riêng: ở 360 px nó chen giữa Vị trí (ghim trái) và Mã hàng, đẩy mã hàng —
+// thứ người ta cần đọc ngay sau ô — ra khỏi tầm nhìn (đo 14/09).
 const COLS: RtColDef[] = [
-  { id: 'seq',  label: 'Vị trí', w: 168 },   // đủ chỗ cho "① B_TP1_10_T1 ×2 kế tiếp" ở 360 px (đo: 118 cắt mất chip)
-  { id: 'dist', label: 'Quãng', w: 64, align: 'right' },
-  { id: 'mat',  label: 'Mã hàng', w: 92 },
+  { id: 'seq',  label: 'Vị trí · quãng', w: 172 },   // đủ chỗ "① B_TP1_10_T1 ×2 kế tiếp" ở 360 px (đo: 118 cắt mất chip)
+  { id: 'mat',  label: 'Mã hàng', w: 96 },
   { id: 'name', label: 'Tên hàng', w: 200 },
   { id: 'rem',  label: 'Còn lấy', w: 110, align: 'right' },
   { id: 'prog', label: 'Đã / cần', w: 120, align: 'right' },
@@ -84,8 +86,8 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
       }))
     })
     for (const u of route?.unlocated ?? []) out.push({
-      key: u.item_id, item_id: u.item_id, material_id: null, stop_no: null, location_code: null, is_pick_face: false, first_of_stop: true, n_in_stop: 1,
-      dist: null, material_code: u.material_code, material_name: u.material_name, units: null,
+      key: u.item_id, item_id: u.item_id, material_id: u.material_id, stop_no: null, location_code: null, is_pick_face: false, first_of_stop: true, n_in_stop: 1,
+      dist: null, material_code: u.material_code, material_name: u.material_name, units: u.units,
       remaining: u.remaining_base, effective: u.remaining_base, scanned: 0, pct_date: null, available: null, done: false,
     })
     for (const d of route?.done ?? []) out.push({
@@ -99,6 +101,7 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
   const openRows = rows.filter(r => !r.done)
   const nextKey = openRows[0]?.key ?? null
   const nStops = route?.stops.length ?? 0
+  const startCode = route?.start_code ?? null
   // Tổng cross-mã: quy đổi THÙNG per mã trước khi cộng (luật base-unit); trộn đơn vị ⇒ "SL quy đổi"
   const unitSet = new Set(rows.map(r => qtyUnitLabel(r.units)))
   const unitLbl = unitSet.size === 1 ? ([...unitSet][0] || 'thùng') : 'SL quy đổi'
@@ -166,17 +169,19 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                       ) : r.location_code == null ? (
                         <span className="text-[10px] text-amber-700">chưa có tồn để chỉ chỗ</span>
                       ) : r.first_of_stop ? (
-                        <div className="flex items-center gap-1">
-                          <span className={`inline-flex items-center justify-center h-4 min-w-4 rounded-full text-[9px] font-semibold px-1 shrink-0 ${isNext ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-700'}`}>{r.stop_no}</span>
-                          <span className="font-mono font-semibold text-[11px]">{r.location_code}</span>
-                          {r.n_in_stop > 1 && <span className="text-[9px] text-slate-400">×{r.n_in_stop}</span>}
-                          {isNext && <span className="text-[9px] rounded-full bg-sky-600 text-white px-1.5">kế tiếp</span>}
+                        <div className="leading-tight">
+                          <div className="flex items-center gap-1">
+                            <span className={`inline-flex items-center justify-center h-4 min-w-4 rounded-full text-[9px] font-semibold px-1 shrink-0 ${isNext ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-700'}`}>{r.stop_no}</span>
+                            <span className="font-mono font-semibold text-[11px]">{r.location_code}</span>
+                            {r.n_in_stop > 1 && <span className="text-[9px] text-slate-400">×{r.n_in_stop}</span>}
+                            {isNext && <span className="text-[9px] rounded-full bg-sky-600 text-white px-1.5">kế tiếp</span>}
+                          </div>
+                          {r.dist && <div className="text-[9px] text-slate-400 pl-5">{r.stop_no === 1 && startCode ? `${startCode} → ` : ''}{r.dist}</div>}
                         </div>
                       ) : (
                         <span className="text-[10px] text-slate-400 pl-5">↳ cùng ô</span>
                       )}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] text-slate-500">{r.dist ?? ''}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px]">{r.material_code ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] truncate" title={r.material_name ?? undefined}>{r.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-right text-[10px] font-semibold tabular-nums">
@@ -192,8 +197,10 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                       title={short ? 'Ô này không đủ — lấy hết rồi bảng sẽ chỉ ô kế tiếp có hàng' : undefined}>
                       {r.available != null ? <>{qtyLabel(r.available, r.units)}{short && ' ⚠'}</> : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    {/* Thao tác GHIM MÉP PHẢI — bảng 9 cột tràn khung 360/1280, nút bấm không được là thứ bị đẩy ra ngoài */}
-                    <TableCell className={`px-1 py-1 whitespace-nowrap text-center sticky right-0 z-10 ${stickyBg}`}>
+                    {/* Thao tác ghim mép phải TỪ `sm` TRỞ LÊN. Ở 360 px hai cột ghim hai đầu ăn hết 272/360 px và
+                        cột ghim phải ĐÈ lên Mã hàng (đo 14/09) — trên máy nhỏ để nó trôi theo bảng, nút "Quét QR"
+                        to ở đầu màn vẫn luôn trong tầm tay nên không ai mất đường quét. */}
+                    <TableCell className={`px-1 py-1 whitespace-nowrap text-center sm:sticky sm:right-0 sm:z-10 ${stickyBg}`}>
                       {!r.done && scanAllowed && (
                         noQr.has(r.item_id) ? (
                           <button onClick={() => navigate(`/wms/loosepicking/${gdo.id}/items/${r.item_id}?scan=1`)}

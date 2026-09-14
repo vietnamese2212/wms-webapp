@@ -262,11 +262,19 @@ export async function getLooseRoute(req: Request, res: Response) {
     }
     type Stop = { seq: number; location_id: string; location_code: string; is_pick_face: boolean; dist_from_prev_cells: number | null; materials: StopMat[] }
     const stops = new Map<string, Stop>()
-    const unlocated: Array<{ item_id: string; material_code: string | null; material_name: string | null; remaining_base: number }> = []
+    // Dòng chưa có tồn để chỉ chỗ VẪN phải mang `units` + `material_id`: thiếu quy cách thì bảng in số BASE
+    // dán nhãn "thùng" và ô tổng cộng base thô (đo 14/09: 60 hộp hiện "60 thùng", tổng 203,8 thay vì 146,3)
+    const unlocated: Array<{ item_id: string; material_id: string | null; material_code: string | null; material_name: string | null; units: MatQ | null; remaining_base: number }> = []
     for (const it of open) {
       const v = it.material_id ? codeByMat.get(it.material_id) : null
       const loc = v ? locByCode.get(v.code) : null
-      if (!v || !loc) { unlocated.push({ item_id: it.id, material_code: it.material_code_raw, material_name: it.material?.short_name ?? null, remaining_base: remainingOf(it) }); continue }
+      if (!v || !loc) {
+        unlocated.push({
+          item_id: it.id, material_id: it.material_id, material_code: it.material_code_raw,
+          material_name: it.material?.short_name ?? null, units: it.material ?? null, remaining_base: remainingOf(it),
+        })
+        continue
+      }
       const leg = legOfLoc.get(loc.id) ?? -1
       const s = stops.get(loc.id) ?? {
         seq: seqOfLoc.get(loc.id) ?? 0, location_id: loc.id, location_code: loc.location_code, is_pick_face: loc.is_pick_face === true,

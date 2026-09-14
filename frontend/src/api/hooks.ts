@@ -3898,7 +3898,10 @@ export interface LooseRouteStop {
 export interface LooseRoute {
   routed: boolean; start_code: string | null; cell_m: number | null
   stops: LooseRouteStop[]
-  unlocated: Array<{ item_id: string; material_code: string | null; material_name: string | null; remaining_base: number }>
+  unlocated: Array<{
+    item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
+    units: MatUnits | null; remaining_base: number
+  }>
   done: LooseRouteDone[]
 }
 export function useLooseRoute(gdoId: string | undefined) {

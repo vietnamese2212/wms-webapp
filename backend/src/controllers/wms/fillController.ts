@@ -177,8 +177,12 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     // chuyến cũng là "hạ hàng xuống ô nhặt lẻ", nhưng RPC `fill_demand` chỉ đếm `FillTask` ⇒ cùng một
     // nhu cầu bị tính hai lần và mã đó bị hạ hai lần. Chưa nổ suốt 6 tuần CHỈ vì chưa ai ra lệnh fill
     // nào (đo 15/09: 0 lệnh / 9 việc LOOSE_FEED) — bật tự động là nó thành chuyện thường ngày.
-    supabase.from('wms_tasks').select('material_id, qty_base')
-      .eq('warehouse_id', warehouseId).eq('kind', 'LOOSE_FEED').eq('status', 'PENDING'),
+    // CHỈ việc của chuyến xuất ĐÚNG NGÀY này (embed !inner lọc, không trả cột): lệnh fill là sổ của một
+    // ngày, việc hạ cho chuyến hôm nay không được trừ vào nhu cầu ngày mai (cùng lỗ với `pend` của RPC,
+    // migration 20260915e — gói 18 [24b2] bắt: dòng ngày 21/12 trừ hết nhu cầu ngày mai ⇒ "thiếu 0").
+    supabase.from('wms_tasks').select('material_id, qty_base, gdo:GroupDeliveryOrder!gdo_id!inner()')
+      .eq('warehouse_id', warehouseId).eq('kind', 'LOOSE_FEED').eq('status', 'PENDING')
+      .eq('gdo.delivery_date', day),
   ])
   const busy = new Set(((busyRaw.data ?? []) as { entry_id: string | null }[]).map(t => t.entry_id).filter(Boolean))
   const feedPending = new Map<string, number>()

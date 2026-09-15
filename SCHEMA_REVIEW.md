@@ -700,3 +700,7 @@ created_at, updated_at
   `fill_reconcile_lease`/`_release` cho đường bấm tay `/fill/auto` (bận ⇒ 409 BUSY). `fill_close_reason()` = một chuỗi cho `fill_order_close`
   và `fill_report`; `fill_report` nay giữ dòng huỷ vì chốt ngày trong mẫu số (`missed`, `missed_n`, `pending_n = total − done − missed`).
   Đã áp staging 15/09; `npm run db:types` chạy lại (+60 dòng).
+- `20260915e_fill_demand_pending_per_day.sql` — `fill_demand` CTE `pend` thêm `AND target_date = p_date`: "đang có lệnh" từng đếm dòng
+  PENDING của mã trên MỌI ngày, nên khi máy đối chiếu cả ngày mai thì dòng của hôm nay trừ hết nhu cầu ngày mai ⇒ "thiếu 0" ⇒ không mở
+  dòng nào cho mai (gói 18 [24b2] bắt ngay lượt đầu sau deploy). Mọi khoá khác của Fill vốn đã theo ngày; chỉ phép trừ này còn nhìn xuyên
+  ngày. Cùng đợt phía TS `withLotCheck` lọc việc LOOSE_FEED theo `GroupDeliveryOrder.delivery_date` (embed `!inner`). Đã áp staging 15/09.

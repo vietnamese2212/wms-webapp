@@ -1261,7 +1261,28 @@ function countWriteRoutesWithoutValidate(sampleOut) {
   }
   return n
 }
+// Gói QA kết thúc mà KHÔNG qua `finish()` hoặc `tally()` thì khi đỏ chỉ để lại "exit code 1" trên hồ sơ
+// công khai của lượt chạy — log đầy đủ đòi đăng nhập, nên người nhận email biết ĐỎ mà không biết ĐỎ Ở ĐÂU
+// (đo 14–15/09: gói 07 đỏ hai lượt liền, không một dòng nào nói phép kiểm nào hỏng). Baseline = các gói
+// tự đếm còn lại (chỉ chạy ở bậc full); gói MỚI bắt buộc dùng một trong hai.
+function countSilentQaPacks(sampleOut) {
+  let n = 0
+  for (const f of filesOf('scripts/qa', ['.mjs'])) {
+    const name = f.split(sep).pop()
+    if (!/^\d\d-/.test(name)) continue           // chỉ xét gói đánh số, bỏ lib/runner/công cụ
+    const src = readFileSync(f, 'utf8')
+    if (/\b(finish|tally)\s*\(/.test(src)) continue
+    n++
+    if (sampleOut && sampleOut.length < 5) sampleOut.push(name)
+  }
+  return n
+}
 RULES.unshift(
+  {
+    key: 'qa_pack_without_annotated_finish',
+    label: 'gói QA không gọi finish()/tally() — đỏ thì KHÔNG in ::error nêu phép kiểm nào hỏng, người nhận email phải đăng nhập tải log mới biết',
+    count: countSilentQaPacks,
+  },
   {
     key: 'write_route_without_validate',
     label: 'route write (post/put/patch/delete) không khai validate({…}) — input sai kiểu đi thẳng xuống controller/Postgres → 500 thay 400 (lớp lỗi lặp nhiều nhất 08–09/2026); route MỚI bắt buộc dùng middlewares/validate.ts',

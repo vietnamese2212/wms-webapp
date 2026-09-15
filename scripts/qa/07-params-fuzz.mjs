@@ -7,14 +7,15 @@
 //   3. Payload < 4MB (trần Vercel 4,5MB — chừa lề an toàn).
 // usage: node scripts/qa/07-params-fuzz.mjs
 import { readFileSync, readdirSync } from 'fs'
-import { BASE, login, api, HAS_DB, restAll, FIX } from './lib.mjs'
+import { BASE, login, api, HAS_DB, restAll, FIX, tally } from './lib.mjs'
 
 const MAX_BYTES = 4 * 1024 * 1024
 let pass = 0, fail = 0
 const bad = []
 const chk = (cond, label, detail = '') => {
   if (cond) { pass++; console.log(`  ✅ ${label}${detail ? ' — ' + detail : ''}`) }
-  else { fail++; bad.push(label); console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
+  // đẩy CẢ detail vào `bad`: chú thích lên email chỉ có chuỗi này, thiếu số liệu thì vẫn phải mở log
+  else { fail++; bad.push(detail ? `${label} — ${detail}` : label); console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
 }
 const rowsOf = (j) => {
   const d = j?.data ?? j
@@ -442,7 +443,9 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
   }
 }
 
-console.log(`\n[PARAMS-FUZZ] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}`)
-if (fail) console.log('  Hỏng: ' + bad.join(' | '))
-// KHÔNG process.exit() cưỡng bức sau fetch HTTPS (libuv assert trên Windows) — đặt exitCode, thoát tự nhiên.
-process.exitCode = fail ? 1 : 0
+// `tally` thay cho việc tự đặt exitCode: gói này chạy trong CI SAU MỖI PUSH nên khi đỏ, TÊN phép kiểm
+// hỏng phải lên được trang lượt chạy + email (log đầy đủ đòi đăng nhập mới tải được). `retryOnFail`
+// bật vì gói đọc TRẠNG THÁI CHUNG của DB (ô tổng ⇄ Σ danh sách trên toàn scope) — một bộ kiểm khác
+// đang ghi trên cùng staging làm nó lệch vài giây; đo lại sau khi lắng thì vi phạm ẢO tự hết, vi phạm
+// THẬT vẫn hỏng ở lần hai. Đo 14–15/09: 2 lượt CI đỏ ở gói này mà chạy tay ngay sau đó 94/94 PASS.
+tally('PARAMS-FUZZ', { pass, fail, bad }, { retryOnFail: true })

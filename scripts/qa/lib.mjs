@@ -324,6 +324,53 @@ export function finish(pack, opts = {}) {
   process.exit(fail.length ? 1 : 0)
 }
 
+/**
+ * KẾT THÚC CHO GÓI TỰ ĐẾM (không dùng `check()`/`results` của lib) — chốt 15/09.
+ *
+ * VÌ SAO: 9/59 gói giữ bộ đếm riêng (`pass`/`fail`/`bad`) rồi tự đặt `process.exitCode`, nên luật
+ * "job đỏ phải tự khai hỏng ở đâu" (10/09) KHÔNG áp cho chúng: gói 07 đỏ hai lượt liền 14–15/09 mà
+ * hồ sơ công khai chỉ có đúng một dòng "QA gói 07-params-fuzz ĐỎ — xem log", còn log thì đòi đăng
+ * nhập. Người nhận email lại rơi đúng cảnh chuông kêu mà không biết chỗ nào — y hệt lớp lỗi đã cấm.
+ *
+ * Dùng: `tally('PARAMS-FUZZ', { pass, fail, bad }, { retryOnFail: true })` ở CUỐI gói.
+ *   - `bad` = mảng TÊN phép kiểm hỏng (kèm chi tiết nếu có) — chính nó lên `::error`.
+ *   - `retryOnFail` chỉ bật cho gói ĐỌC TRẠNG THÁI CHUNG của DB (tổng tồn, danh sách toàn kho…);
+ *     gói tự dựng fixture riêng thì không cần và không nên (xem chú thích của `finish`).
+ * KHÔNG `process.exit()` cưỡng bức: trên Windows, thoát ngay sau fetch HTTPS làm libuv assert
+ * (exit 127 bẩn) — đặt `process.exitCode` rồi để event-loop tự cạn.
+ */
+export function tally(pack, { pass = 0, fail = 0, bad = [], note = '' }, opts = {}) {
+  console.log(`\n[${pack}] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}${note}`)
+  if (!fail) { process.exitCode = 0; return }
+  console.log('  Hỏng: ' + bad.join(' | '))
+
+  if (opts.retryOnFail && process.env.QA_SETTLE_RETRY !== '1') {
+    const wait = Math.max(0, Number(process.env.QA_SETTLE_MS ?? 20000))
+    console.log(`\n[${pack}] ${fail} phép kiểm hỏng ở lần đo ĐẦU — chờ ${Math.round(wait / 1000)}s cho các lượt ghi đang chạy lắng rồi ĐO LẠI.`)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait)
+    const r = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: 'inherit', env: { ...process.env, QA_SETTLE_RETRY: '1' },
+    })
+    if (r.status === 0) {
+      console.log(`\n[${pack}] Lần đo hai SẠCH ⇒ ${fail} vi phạm lần đầu là ẢO (có lượt ghi chạy song song).`)
+      ghAnnotate('notice', pack, `${fail} phép kiểm hỏng ở lần đo đầu TỰ HẾT khi đo lại sau ${Math.round(wait / 1000)}s — nhiều khả năng có bộ kiểm khác đang ghi vào cùng DB: ${bad.join(' · ').slice(0, 400)}`)
+    }
+    process.exitCode = r.status ?? 1
+    return
+  }
+
+  if (opts.retryOnFail && bad.length && bad.every(looksFixture)) {
+    console.log(`\n[${pack}] ${fail} vi phạm đều trỏ vào FIXTURE của bộ kiểm ⇒ có gói QA khác đang chạy trên cùng DB.`)
+    ghAnnotate('notice', pack, `${fail} vi phạm chỉ nằm trên fixture của bộ kiểm — không tính đỏ: ${bad.join(' · ').slice(0, 400)}`)
+    process.exitCode = 0
+    return
+  }
+
+  for (const b of bad.slice(0, ANNOTATION_CAP)) ghAnnotate('error', pack, String(b).slice(0, 400))
+  if (bad.length > ANNOTATION_CAP) ghAnnotate('error', pack, `… và ${bad.length - ANNOTATION_CAP} phép kiểm hỏng nữa (xem log đầy đủ của bước này)`)
+  process.exitCode = 1
+}
+
 // Chạy song song có giới hạn in-flight (mặc định 20 — an toàn max_connections=60)
 export async function pool(tasks, limit = 20) {
   const out = []; let i = 0

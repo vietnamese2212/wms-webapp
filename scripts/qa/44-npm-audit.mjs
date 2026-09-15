@@ -7,6 +7,7 @@ import { spawnSync } from 'child_process'
 import { readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { tally } from './lib.mjs'
 
 const DIR = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(DIR, '..', '..')
@@ -37,7 +38,9 @@ function audit(pkg) {
 }
 
 let fails = 0, changed = false
-for (const pkg of ['backend', 'frontend']) {
+const badPkgs = []   // gói vượt baseline → lên ::error (email chỉ đọc được chú thích, không đọc được log)
+const PKGS = ['backend', 'frontend']
+for (const pkg of PKGS) {
   const a = audit(pkg)
   const b = baseline[pkg] ?? { critical: 0, high: 0 }
   if (a.skip) { console.log(`  ⏭  ${pkg}: bỏ qua — ${a.skip}`); continue }
@@ -46,10 +49,15 @@ for (const pkg of ['backend', 'frontend']) {
   const better = a.critical < b.critical || a.high < b.high
   console.log(`  ${worse ? '❌' : '✅'} ${pkg}: critical ${a.critical} (baseline ${b.critical}) · high ${a.high} (baseline ${b.high}) · moderate ${a.moderate}`)
   for (const it of a.items) console.log(`       ${it}`)
-  if (worse) { fails++; console.log(`       → lỗ hổng high/critical TĂNG so baseline — dọn (npm audit fix) hoặc cân nhắc thư viện vừa thêm`) }
+  if (worse) {
+    fails++
+    badPkgs.push(`${pkg}: critical ${a.critical}/${b.critical} · high ${a.high}/${b.high} (hiện/baseline)`)
+    console.log(`       → lỗ hổng high/critical TĂNG so baseline — dọn (npm audit fix) hoặc cân nhắc thư viện vừa thêm`)
+  }
   if (better && !UPDATE) console.log(`       ↓ đã GIẢM so baseline — chạy --update-baseline để khoá thành quả`)
   if (UPDATE) { baseline[pkg] = { critical: a.critical, high: a.high }; changed = true }
 }
 if (UPDATE && changed) { writeFileSync(BASELINE_FILE, JSON.stringify(baseline, null, 2) + '\n'); console.log('  📝 đã ghi audit-baseline.json') }
-console.log(fails ? `\n[NPM-AUDIT] ${fails} gói ĐỎ` : '\n[NPM-AUDIT] XANH')
-process.exit(fails ? 1 : 0)
+// `tally` nêu TÊN gói vượt baseline lên trang lượt chạy + email (không có thì người nhận chỉ thấy
+// "exit code 1" và phải đăng nhập tải log mới biết). KHÔNG retry — audit không phụ thuộc trạng thái DB.
+tally('NPM-AUDIT', { pass: PKGS.length - fails, fail: fails, bad: badPkgs })

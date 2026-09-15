@@ -10,14 +10,15 @@
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { restAll, restWrite, restRpc, HAS_DB, FIX } from './lib.mjs'
+import { restAll, restWrite, restRpc, HAS_DB, FIX, tally } from './lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const STRICT = process.argv.includes('--strict')
 let pass = 0, fail = 0, warns = 0
+const bad = []   // tên phép kiểm hỏng → lên ::error của lượt chạy (email chỉ đọc được chú thích)
 const chk = (c, label, detail = '') => {
   if (c) { pass++; console.log(`  ✅ ${label}${detail ? ' — ' + detail : ''}`) }
-  else { fail++; console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
+  else { fail++; bad.push(detail ? `${label} — ${detail}` : label); console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
 }
 const warn = (label) => { warns++; console.log(`  ⚠️  ${label}`) }
 
@@ -251,7 +252,6 @@ if (!HAS_DB) {
   }
 }
 
-console.log(`\n[PERM-COVERAGE] ${pass}/${pass + fail} PASS${warns ? ` · ${warns} cảnh báo` : ''}${fail ? ` · ${fail} FAIL` : ''}`)
-// KHÔNG process.exit() ở đây: trên Windows, exit cưỡng bức ngay sau fetch HTTPS làm libuv assert
-// (exit code 127 bẩn). Đặt exitCode rồi để event-loop tự cạn — socket undici đã unref, thoát sạch.
-process.exitCode = fail ? 1 : 0
+// `tally` (KHÔNG retry — gói này so CẤU HÌNH quyền FE⇄BE, không đọc trạng thái dữ liệu đang chạy):
+// chạy mỗi push nên đỏ phải nêu được TÊN phép kiểm ngay trên trang lượt chạy + email.
+tally('PERM-COVERAGE', { pass, fail, bad, note: warns ? ` · ${warns} cảnh báo` : '' })

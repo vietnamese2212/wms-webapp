@@ -307,7 +307,8 @@ router.post('/fill/scan',                                     requirePerm('fill'
 router.patch('/fill/orders/:id',                              requirePerm('fill', 'assign'),
   validate({ body: z.object({ assignee_id: zText(1, 100).nullable() }) }), fill.assignFillOrder)
 // Chốt ngày: đóng sổ lệnh của ngày, huỷ nốt dòng chưa thực hiện (cùng quyền với ra lệnh)
-router.post('/fill/orders/:id/close',                         requirePerm('fill', 'plan'),    fill.closeFillOrder)
+router.post('/fill/orders/:id/close',                         requirePerm('fill', 'plan'),
+  validate({ params: z.object({ id: zText(1, 100) }) }), fill.closeFillOrder)
 router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'change_dest']), fill.updateFillTask)
 router.delete('/fill/tasks/:id',                              requirePerm('fill', 'cancel'),  fill.cancelFillTask)
 router.delete('/fill/orders/:id',                             requirePerm('fill', 'cancel'),  fill.cancelFillOrder)

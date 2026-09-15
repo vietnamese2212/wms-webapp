@@ -20,12 +20,37 @@
 
 import { db } from '../lib/supabase'
 
-/** Kho đã khai vị trí nhặt lẻ chưa. */
-export async function hasPickFace(warehouseId: string | null | undefined): Promise<boolean> {
-  if (!warehouseId) return false
-  const { data } = await db.from('Location').select('id')
-    .eq('warehouse_id', warehouseId).eq('is_pick_face', true).eq('is_active', true).limit(1)
-  return (data ?? []).length > 0
+/**
+ * ⚠️ HỎI THEO LOẠI KHO CỦA MÃ, KHÔNG PHẢI THEO KHO (vá 15/09, kiểm app).
+ *
+ * Bản đầu chỉ hỏi "kho có khai ô nhặt lẻ nào không" ⇒ một kho khai ô lẻ cho FG01 là MỌI loại hàng
+ * khác cũng bị giục "fill xuống ô lẻ" — trong khi Fill hàng LỌC HẲN mã đó khỏi Đề xuất (không ô nào
+ * nhận loại ấy thì không có đích để hạ). Hai cửa nói hai chuyện, và người dùng đi vào NGÕ CỤT: bảng
+ * "Theo vị trí" ghi "nên fill xuống ô lẻ" kèm nút "Fill hàng ›", bấm sang thì trang Fill im lặng
+ * hoàn toàn về mã đó. Đo Ba Vì 15/09: 3/3 ô nhặt lẻ khai FG01, mã 510000306 (FG02) cần nhặt lẻ 60
+ * thùng ⇒ lộ trình gắn `need_fill_from = B_TP3_32_T1` còn Đề xuất chỉ hiện 8/9 mã. Ở kho có tích
+ * "bắt buộc lấy đúng thứ tự" thì còn nặng hơn: cửa quét trả 422 mà KHÔNG có đường fill nào để đi ⇒
+ * hàng loại đó không ai lấy được. Cùng lớp lỗi C19.
+ *
+ * Luật nhận loại giống hệt đích fill (`takePickFace`): ô không khai `categories` = nhận MỌI loại;
+ * mã chưa khai Loại kho = null-inclusive, ô nào cũng nhận.
+ */
+export interface PickFaceAcceptor {
+  /** Kho đã khai vị trí nhặt lẻ nào chưa (bất kể loại) */
+  any: boolean
+  /** Có vị trí nhặt lẻ nhận Loại kho này không — đây mới là câu hỏi các cửa cần */
+  accepts(category: string | null | undefined): boolean
+}
+
+export async function pickFaceAcceptor(warehouseId: string | null | undefined): Promise<PickFaceAcceptor> {
+  if (!warehouseId) return { any: false, accepts: () => false }
+  const { data } = await db.from('Location').select('categories')
+    .eq('warehouse_id', warehouseId).eq('is_pick_face', true).eq('is_active', true)
+  const rows = (data ?? []) as { categories: string[] | null }[]
+  if (!rows.length) return { any: false, accepts: () => false }
+  const anyCat = rows.some(r => !(r.categories ?? []).length)   // ô để trống = nhận mọi loại
+  const set = new Set(rows.flatMap(r => r.categories ?? []))
+  return { any: true, accepts: cat => anyCat || !cat || set.has(cat) }
 }
 
 /**

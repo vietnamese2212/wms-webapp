@@ -111,6 +111,32 @@ function countDeadEndReturns(sampleOut) {
 // (mọi chuyến, không riêng chuyến nào), trong khi tsc/build/QA API đều xanh — chỉ mở trang mới thấy.
 // Nhận diện theo lối viết 2-space của repo: thân hàm ở 2 space, `return` trong nhánh `if` top-level
 // (thụt ≥4) là return SỚM; sau đó bất kỳ lời gọi `useXxx(` nào cũng là vi phạm.
+/**
+ * VIỆC NỀN ghi lỗi với status 500 CỨNG — quá tải bị xử như app hỏng ⇒ digest dựng cờ đỏ và GỬI EMAIL
+ * trong khi app vẫn chạy. Đo thật 15/09: rule EXPIRY chạm trần câu lệnh lúc bộ kiểm chạy ⇒ 2 dòng
+ * `ALERT_RULE_FAILED` 500. Đường đi qua `fail()` đã dịch 57014 → 503 từ 07/09; đường NỀN thì chưa,
+ * nên luật phải gác riêng: dùng `recordBackgroundFailure(...)` (tự phân biệt quá tải/hỏng thật).
+ * Miễn trừ: chính `utils/response.ts` (nơi định nghĩa) và lưới cuối `app.ts` (UNCAUGHT = hỏng thật).
+ */
+function countBackgroundError500(sampleOut) {
+  let n = 0
+  const SKIP = ['backend/src/utils/response.ts', 'backend/src/app.ts']
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
+    if (SKIP.includes(rel)) continue
+    const src = readFileSync(f, 'utf8')
+    // gọi recordServerError(...) mà đối số status là literal 500 (có thể xuống dòng)
+    const re = /recordServerError\s*\(\s*'be'\s*,[\s\S]{0,400}?,\s*500\s*,/g
+    let m
+    while ((m = re.exec(src)) !== null) {
+      n++
+      if (sampleOut && sampleOut.length < 5)
+        sampleOut.push(`${rel}:${src.slice(0, m.index).split(/\r?\n/).length}`)
+    }
+  }
+  return n
+}
+
 function countHookAfterEarlyReturn(sampleOut) {
   const HOOK = /(?:^|[\s=({,])use[A-Z]\w*\s*\(/
   let n = 0
@@ -299,6 +325,11 @@ const RULES = [
   // Baseline 8 (đều trong outboundController): 4 điểm CHUYẾN = quickExportGDO · quickExportExistingGDO · startGDO ·
   // uncompleteGDO, + 4 điểm dòng hàng/DO đi kèm (item/DO status theo chuyến). Mẫu bắt rộng có chủ đích: thêm bất kỳ
   // chỗ nào là phải giải thích trước khi nâng baseline.
+  {
+    key: 'background_error_500_hardcoded',
+    label: 'việc NỀN ghi error_logs với status 500 cứng — quá tải bị xử như app hỏng ⇒ cờ đỏ + email báo oan; dùng recordBackgroundFailure()',
+    count: countBackgroundError500,
+  },
   {
     key: 'hook_after_early_return',
     label: 'hook React gọi SAU lệnh return sớm — render đầu thoát sớm, render sau gọi thêm hook ⇒ TRẮNG TRANG (tsc không bắt được)',

@@ -54,6 +54,12 @@ export async function runAutoFill(req: Request, res: Response) {
       return fail(res, 409, 'BUSY', 'Kho này đang được đối chiếu ở một lượt khác — thử lại sau vài giây')
     leasedWh = warehouse_id
     const r = await autoFillDay(warehouse_id, date || vnToday())
+    // ⚠️ NHẢ KHOÁ TRƯỚC KHI TRẢ LỜI, không để `finally` lo: trên serverless, response gửi xong là
+    // lambda có thể bị ĐÓNG BĂNG giữa việc (luật CLAUDE.md, cùng bẫy với `void fn()`), khoá sẽ treo
+    // hết 90 giây và cú bấm "chạy ngay" kế tiếp nhận 409 oan. Đo thật 15/09: gói 18 [22d] đỏ với
+    // `created=undefined` vì lượt thứ hai bị chối.
+    await releaseWarehouse(warehouse_id)
+    leasedWh = null
     return ok(res, r)
   } catch (e) {
     // TRUYỀN CẢ ĐỐI TƯỢNG LỖI (luật 07/09) — `fail` tự dịch: quá hạn truy vấn ⇒ 503 kèm hướng dẫn

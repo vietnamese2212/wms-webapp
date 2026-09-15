@@ -44,6 +44,7 @@ const created = { locs: [], entries: [], gdo: null, do: null, items: [], mat2: n
 let savedAutoFill = null
 let savedTypeAutoFill
 let savedTypeCode = null
+let savedRotReq = null     // cờ "bắt buộc lấy đúng thứ tự" mượn của kho thật (cụm 25b)
 async function cleanupOrders(whId) {
   // FillOrder → FillTask → FillTaskScan đều ON DELETE CASCADE; lệnh fixture nhận diện bằng DAY
   if (whId) await restWrite('FillOrder', 'DELETE', `warehouse_id=eq.${whId}&target_date=eq.${DAY}`).catch(() => {})
@@ -54,6 +55,9 @@ async function cleanup(whId) {
   // Công tắc "tự ra lệnh fill" mượn của kho thật → TRẢ LẠI đúng giá trị cũ (gói 22)
   if (whId && savedAutoFill !== null)
     await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { auto_fill: savedAutoFill, updated_at: nowIso() }).catch(() => {})
+  // Cờ "bắt buộc lấy đúng thứ tự" mượn ở cụm 25b — trả lại kể cả khi gói ngã giữa chừng
+  if (whId && savedRotReq !== null)
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_required: savedRotReq, updated_at: nowIso() }).catch(() => {})
   if (whId && savedTypeAutoFill !== undefined && savedTypeCode)
     await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.${savedTypeCode}`,
       { auto_fill: savedTypeAutoFill, updated_at: nowIso() }).catch(() => {})
@@ -835,6 +839,53 @@ try {
     if (!(o.FillTask ?? []).length) await restWrite('FillOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
   await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gdo.id}`, { delivery_date: DAY, updated_at: nowIso() })
   await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
+
+  // ── 25. MÃ KHÔNG CÓ Ô NHẶT LẺ NÀO NHẬN LOẠI CỦA NÓ ⇒ KHÔNG GIỤC FILL, KHÔNG CHẶN ──────────────
+  // Lỗi thật đo trên Ba Vì 15/09 (kiểm app): 3/3 ô nhặt lẻ khai FG01, mã FG02 cần nhặt lẻ 60 thùng
+  // ⇒ bảng "Theo vị trí" gắn "nên fill xuống ô lẻ" + nút "Fill hàng ›", bấm sang thì trang Fill LỌC
+  // HẲN mã đó (không đích nào nhận loại) ⇒ NGÕ CỤT: màn A bảo đi, màn B im lặng. Nguyên nhân:
+  // `hasPickFace` hỏi theo KHO thay vì theo LOẠI KHO của mã. Lớp C19.
+  // Fixture: mat2 mang loại `__QANOPF__` — không ô nhặt lẻ nào của kho nhận loại đó.
+  const p25 = (await restWrite('InventoryEntry', 'POST', null, {
+    id: randomUUID(), pallet_code: `${TAG}-NOPF25`, material_id: mat2.id, warehouse_id: whId,
+    location_id: locRsv.id, cartons_imported: 90, cartons_remaining: 90, cartons_reserved: 0,
+    status: 'IN_STOCK', stack_layer: 1, production_date: new Date(Date.now() - 86400000 * 3).toISOString(),
+    import_date: nowIso(), created_at: nowIso(), updated_at: nowIso(),
+  }))[0]
+  created.entries.push(p25.id)
+  const route25 = await api(`/wms/directed/loose-route?gdo_id=${gdo.id}`)
+  const matsOf = (code) => (route25.j?.data?.stops ?? [])
+    .flatMap(s => (s.materials ?? []).map(m => ({ ...m, stop: s.location_code })))
+    .filter(m => m.material_code === code)
+  const row25 = matsOf(mat2.material_code)[0]
+  const un25  = (route25.j?.data?.unlocated ?? []).find(u => u.material_code === mat2.material_code)
+  check('25a. Mã mà KHÔNG ô nhặt lẻ nào nhận loại → lộ trình vẫn chỉ ô lấy, KHÔNG giục "fill xuống ô lẻ"',
+    route25.s === 200 && !!row25 && !row25.need_fill_from,
+    `http=${route25.s} điểm_ghé=${row25?.stop ?? '—'} need_fill=${row25?.need_fill_from ?? 'KHÔNG'} unlocated=${un25?.reason ?? '—'}`)
+
+  // 25b. Nhánh CHẶN (kho tích "bắt buộc lấy đúng thứ tự") không được khoá loại hàng KHÔNG fill được:
+  // chặn mà không có đường fill = loại đó không ai lấy nổi.
+  const [whRot] = await restAll('Warehouse', `select=rotation_required&id=eq.${whId}`)
+  savedRotReq = whRot?.rotation_required === true
+  await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_required: true, updated_at: nowIso() })
+  const route25b = await api(`/wms/directed/loose-route?gdo_id=${gdo.id}`)
+  const row25b = (route25b.j?.data?.stops ?? [])
+    .flatMap(s => (s.materials ?? []).map(m => ({ ...m, stop: s.location_code })))
+    .find(m => m.material_code === mat2.material_code)
+  const un25b = (route25b.j?.data?.unlocated ?? []).find(u => u.material_code === mat2.material_code)
+  check('25b. Kho tích "bắt buộc đúng thứ tự" cũng KHÔNG chặn loại hàng không fill được (còn đường lấy)',
+    route25b.s === 200 && !!row25b && un25b?.reason !== 'NEED_FILL',
+    `điểm_ghé=${row25b?.stop ?? 'KHÔNG'} unlocated=${un25b?.reason ?? '—'}`)
+  // 25c. …nhưng mã CÓ ô nhặt lẻ nhận loại thì luật cũ giữ nguyên (vẫn đòi fill xuống trước)
+  const un25c = (route25b.j?.data?.unlocated ?? []).find(u => u.material_code === mat.material_code)
+  const row25c = (route25b.j?.data?.stops ?? [])
+    .flatMap(s => (s.materials ?? []).map(m => ({ ...m, stop: s.location_code })))
+    .find(m => m.material_code === mat.material_code)
+  check('25c. …mã CÓ ô nhặt lẻ nhận loại thì luật fill-trước vẫn áp như cũ',
+    un25c?.reason === 'NEED_FILL' || !!row25c?.need_fill_from || !!row25c,
+    `unlocated=${un25c?.reason ?? '—'} need_fill=${row25c?.need_fill_from ?? '—'}`)
+  await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_required: savedRotReq, updated_at: nowIso() })
+  savedRotReq = null
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup(WH)

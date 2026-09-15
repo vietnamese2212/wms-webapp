@@ -21,7 +21,7 @@ import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from
 // Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này,
 // và lọc thêm theo mức %Date đã chốt của TỪNG DÒNG (luật khớp date vẫn nằm ở directedTasks)
 import { rotationSuggestionsFor, rotationConfigOf, type SuggestionGroup } from './outboundController'
-import { hasPickFace, pickFaceFirst } from '../../services/loosePickFace'
+import { pickFaceAcceptor, pickFaceFirst } from '../../services/loosePickFace'
 import { autoFillSafe } from '../../services/autoFill'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
@@ -275,7 +275,8 @@ export async function getLooseRoute(req: Request, res: Response) {
     const sug = await rotationSuggestionsFor(groups, [whId], rotCfg)
     // HÀNG LẺ LẤY Ở VỊ TRÍ NHẶT LẺ (15/09) — luật + hai mức cảnh báo/chặn: services/loosePickFace.ts.
     // Kho chưa khai ô nhặt lẻ nào ⇒ `pickFaceMode=false` ⇒ giữ nguyên hành vi cũ, không tự bật hộ ai.
-    const pickFaceMode = await hasPickFace(whId)
+    // Hỏi theo LOẠI KHO của từng mã: kho khai ô lẻ cho FG01 KHÔNG có nghĩa hàng FG02 fill xuống được
+    const pickFace = await pickFaceAcceptor(whId)
     const codeByItem = new Map<string, { code: string; pct_date: number | null; available: number; need_fill_from: string | null }>()
     // Dòng bị CHẶN vì phải fill xuống trước (chỉ ở kho tích "bắt buộc đúng thứ tự")
     const blockedFill = new Map<string, string | null>()   // item_id → ô đang giữ lô đúng thứ tự
@@ -286,7 +287,9 @@ export async function getLooseRoute(req: Request, res: Response) {
       // Lô ĐÚNG THỨ TỰ đã nằm ở ô nhặt lẻ chưa? (phép so ở `loosePickFace.ts`, dùng chung với cột
       // "Vị trí lấy" của trang Nhặt lẻ — hai màn phải chỉ cùng một ô)
       const pick = pickFaceFirst(list)[0]
-      const needFill = pickFaceMode && !pick.is_pick_face
+      // Không ô nhặt lẻ nào nhận loại này ⇒ KHÔNG giục fill (Fill hàng cũng không có đích để hạ) và
+      // KHÔNG chặn: nhặt trên kệ là đường duy nhất còn lại cho loại hàng đó.
+      const needFill = pickFace.accepts(it.material?.category) && !pick.is_pick_face
       if (needFill && rotCfg.of(whId, it.material?.category ?? null).required) { blockedFill.set(it.id, first.location_code); continue }
       codeByItem.set(it.id, {
         code: pick.location_code!, pct_date: pick.pct_date, available: pick.available,

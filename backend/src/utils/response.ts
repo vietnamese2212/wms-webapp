@@ -37,6 +37,24 @@ function routeOf(res: Response | undefined): string {
 // LUẬT (21/08) — lỗi BE ghi vào `error_logs` BẮT BUỘC kèm CHỖ XẢY RA. Ràng buộc bằng KIỂU (overload
 // dưới) để quên là **lỗi biên dịch**, không phải nhắc nhau bằng văn xuôi: bằng chứng thật là 40 dòng
 // `statement timeout` với `url = NULL` — cờ đỏ dựng lên mà không ai lần ra endpoint nào phải sửa.
+/**
+ * VIỆC NỀN HỎNG — phân biệt QUÁ TẢI với HỎNG THẬT trước khi ghi (chốt 15/09, kiểm app).
+ *
+ * Các đường nền (quét cảnh báo · lập kế hoạch lấy hàng · đồng bộ việc) không đi qua `fail()` nên
+ * chúng ghi thẳng `recordServerError(..., 500, ...)`. Hệ quả đo được: staging bận (bộ kiểm đang
+ * chạy) làm rule EXPIRY chạm trần câu lệnh ⇒ 2 dòng `ALERT_RULE_FAILED` status 500 ⇒ digest dựng
+ * cờ đỏ "lỗi BE 24h" ⇒ **email báo hỏng gửi cho người dùng trong khi app không hỏng gì**. Đúng lớp
+ * "chuông kêu oan" đã phải vá nhiều lần ở CI và ở `fail()` (57014 → 503), nay tái phát ở đường nền.
+ *
+ * Vẫn GHI (rule chết câm còn nguy hơn — bài học 06/08), nhưng quá tải ghi 503 để digest đếm vào
+ * overload thay vì cờ đỏ; lỗi thật (hàm không tồn tại, cột sai…) giữ nguyên 500.
+ */
+export function recordBackgroundFailure(message: string, code: string, where: string, e: unknown): void {
+  const overload = isQueryTimeout(e)
+  recordServerError('be', `${message}${overload ? ' — QUÁ TẢI, bỏ qua vòng này' : ''}`,
+    overload ? 503 : 500, overload ? `${code}_OVERLOAD` : code, where)
+}
+
 export function recordServerError(source: 'be', message: string, status: number | undefined, code: string | undefined, url: string): void
 export function recordServerError(source: 'fe', message: string, status?: number, code?: string, url?: string, ua?: string): void
 export function recordServerError(source: 'be' | 'fe', message: string, status?: number, code?: string, url?: string, ua?: string) {

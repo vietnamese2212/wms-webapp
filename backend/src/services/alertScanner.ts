@@ -14,7 +14,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { computePctDate, type SupplierOverride } from '../utils/shelfLife'
 import { qtyLabel } from '../utils/qtyUnits'
-import { recordServerError } from '../utils/response'
+import { recordBackgroundFailure } from '../utils/response'
 import { sendPushToPerm } from './pushService'
 
 export const THRESHOLDS = {
@@ -376,8 +376,10 @@ export async function runAlertScan(force = false): Promise<void> {
         // chạy còn nguy hơn không có. Ghi error_logs → digest hằng ngày dựng cờ đỏ + chính rule
         // BE_ERRORS sẽ nổi cảnh báo ngay vòng quét này.
         console.error(`[alerts] rule ${rule} lỗi (bỏ qua vòng này):`, e)
-        recordServerError('be', `[alerts] rule ${rule} lỗi: ${String((e as Error)?.message ?? e)}`,
-          500, 'ALERT_RULE_FAILED', `alertScanner/${rule}`)
+        // Quá tải (chạm trần câu lệnh lúc DB bận) ≠ rule hỏng: ghi 503 để digest đếm vào overload,
+        // không dựng cờ đỏ và gửi email báo hỏng khi app vẫn chạy bình thường.
+        recordBackgroundFailure(`[alerts] rule ${rule} lỗi: ${String((e as Error)?.message ?? e)}`,
+          'ALERT_RULE_FAILED', `alertScanner/${rule}`, e)
       }
     }
     if (!okRules.length) return

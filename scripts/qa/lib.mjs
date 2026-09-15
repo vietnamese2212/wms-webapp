@@ -135,12 +135,25 @@ async function fetchNetRetry(url, init, tries = 3) {
 }
 
 // GET 1 trang PostgREST (limit/offset). filter = chuỗi query PostgREST.
+//
+// QUÁ HẠN TRUY VẤN (57014) ĐƯỢC THỬ LẠI — đây là QUÁ TẢI của staging, không phải tín hiệu của app.
+// Đo 15/09 (bậc full): gói `00-invariant` đọc `InventoryEntry` gặp `canceling statement due to
+// statement timeout` ⇒ gói CHẾT GIỮA CHỪNG, không tới `finish()` nên cả lưới `retryOnFail` lẫn lưới
+// nhận-diện-fixture đều không áp ⇒ bậc full đỏ trong khi chạy riêng thì xanh. Cùng lớp "cổng kêu oan
+// vì chính bộ kiểm" (C18/C20/C22) — cổng đỏ oan là cổng sẽ bị bỏ qua. CHỈ nới đúng 57014: mọi mã lỗi
+// khác vẫn ném ngay để không che lỗi thật.
 async function restPage(table, filter, offset, limit) {
-  const r = await fetchNetRetry(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
-    headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` },
-  })
-  if (!r.ok) throw new Error(`PostgREST ${table}: ${r.status} ${await r.text()}`)
-  return r.json()
+  const url = `${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`
+  const headers = { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` }
+  for (let i = 0; ; i++) {
+    const r = await fetchNetRetry(url, { headers })
+    if (r.ok) return r.json()
+    const body = await r.text()
+    const overload = /57014|statement timeout/i.test(body)
+    if (!overload || i >= 2) throw new Error(`PostgREST ${table}: ${r.status} ${body}`)
+    console.log(`  ⏳ ${table}: DB quá tải (57014) — đợi rồi đọc lại (lần ${i + 2}/3)`)
+    await new Promise(res => setTimeout(res, 3000 * (i + 1) + Math.random() * 1000))
+  }
 }
 // Kéo ĐỦ mọi dòng (né cap-1000). maxRows = cầu chì an toàn cho staging.
 export async function restAll(table, filter, maxRows = 50_000) {

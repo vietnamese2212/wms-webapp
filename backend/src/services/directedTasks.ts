@@ -19,7 +19,7 @@
  */
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
-import { recordServerError } from '../utils/response'
+import { recordServerError, recordBackgroundFailure } from '../utils/response'
 import { computeDaysLeft, computePctDate, type MaterialShelfInfo } from '../utils/shelfLife'
 import {
   PICKABLE_STATUSES, isPickEligible, availableOf, rotationSortKey,
@@ -164,7 +164,9 @@ export async function planGdoTasks(gdoId: string, actor: string | null, opts: Pl
   try {
     return await planInner(gdoId, actor, opts)
   } catch (e) {
-    recordServerError('be', String((e as Error)?.message ?? e), 500, 'PLAN_FAILED', `directedTasks.planGdoTasks/${gdoId}`)
+    // Lập kế hoạch là bước NẶNG (quét tồn + BFS bản vẽ) nên chạm trần câu lệnh lúc DB bận là chuyện
+    // quá tải, không phải hỏng — ghi 503 để khỏi dựng cờ đỏ oan (15/09).
+    recordBackgroundFailure(String((e as Error)?.message ?? e), 'PLAN_FAILED', `directedTasks.planGdoTasks/${gdoId}`, e)
     return { ...EMPTY, warning: 'Không lập được kế hoạch lấy hàng cho chuyến này — chuyến vẫn xuất bình thường như chế độ Thủ công.' }
   }
 }

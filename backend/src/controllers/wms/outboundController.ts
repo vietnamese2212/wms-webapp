@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
-import { ok, fail, recordServerError } from '../../utils/response'
+import { ok, fail, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
@@ -36,7 +36,7 @@ import {
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
-import { hasPickFace, looseFillMessage, pickFaceFirst } from '../../services/loosePickFace'
+import { pickFaceAcceptor, looseFillMessage, pickFaceFirst } from '../../services/loosePickFace'
 import { autoFillSafe } from '../../services/autoFill'
 import {
   loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
@@ -6230,9 +6230,11 @@ export async function scanItem(req: Request, res: Response) {
     // tự phải được FILL xuống vị trí nhặt lẻ rồi mới nhặt: nhặt thẳng trên kệ vừa nguy hiểm (tầng
     // 4) vừa để kho lẻ mãi giữ lô mới không ai đụng — tức chính lô cũ ở lại kho. Luật + van xả:
     // `services/loosePickFace.ts`. Đo 15/09: 0/153 kho đang tích, nên cửa này nằm im tới khi kho bật.
+    // Điều kiện phải hỏi theo LOẠI KHO của chính mã đang quét: kho khai ô lẻ cho FG01 mà chặn cả hàng
+    // FG02 thì loại đó không ai lấy được — Fill hàng không có đích nào để hạ nó xuống (vá 15/09).
     if (loose_picking_mode && rotCfg.required
       && (inv as { location?: { is_pick_face?: boolean | null } | null }).location?.is_pick_face !== true
-      && await hasPickFace(gdo?.warehouse_id)) {
+      && (await pickFaceAcceptor(gdo?.warehouse_id)).accepts(shelfMat?.category ?? null)) {
       const raw  = String(rotation_override_reason ?? '').trim()
       const code = raw.split(':')[0].trim()
       const msg  = looseFillMessage(rotation.best_location_code)
@@ -6492,7 +6494,7 @@ export async function scanItem(req: Request, res: Response) {
       await skipTasksOnForeignScan(inv.id as string, gdoId, req.user?.name ?? null)
       if (!closed) await planGdoTasks(gdoId, req.user?.name ?? null)
     } catch (e) {
-      recordServerError('be', String((e as Error)?.message ?? e), 500, 'TASK_SYNC_FAILED', req.originalUrl)
+      recordBackgroundFailure(String((e as Error)?.message ?? e), 'TASK_SYNC_FAILED', req.originalUrl, e)
     }
 
     return ok(res, {

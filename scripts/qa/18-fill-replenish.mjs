@@ -50,7 +50,6 @@ async function cleanupOrders(whId) {
 }
 async function cleanup(whId) {
   await cleanupOrders(whId)
-  if (whId) await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
   await restWrite('FillOrder', 'DELETE', `order_code=eq.${TAG}-TODAY`).catch(() => {})
   // Công tắc "tự ra lệnh fill" mượn của kho thật → TRẢ LẠI đúng giá trị cũ (gói 22)
   if (whId && savedAutoFill !== null)
@@ -70,6 +69,9 @@ async function cleanup(whId) {
   for (const id of created.locs)    await restWrite('Location', 'DELETE', `id=eq.${id}`).catch(() => {})
   if (created.mat2) await restWrite('Material', 'DELETE', `id=eq.${created.mat2}`).catch(() => {})
   if (created.mat3) await restWrite('Material', 'DELETE', `id=eq.${created.mat3}`).catch(() => {})
+  // HÀNG ĐỢI ĐỐI CHIẾU XOÁ CUỐI CÙNG: chính các bước khôi phục ở trên (trả lại công tắc `auto_fill`,
+  // trả ngày chuyến, xoá dòng hàng) đều kích trigger ghi lại (kho, ngày) — dọn trước là dọn hụt.
+  if (whId) await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
 }
 // Tàn dư của lần chạy hỏng giữa chừng (fixture phải TỰ HỒI PHỤC)
 for (const o of await restAll('FillOrder', `select=id&target_date=eq.${DAY}`))
@@ -840,6 +842,7 @@ try {
     + (await restAll('Location', `select=id&location_code=like.${TAG}-*`)).length
     + (WH ? (await restAll('FillOrder', `select=id&warehouse_id=eq.${WH}&target_date=eq.${DAY}`)).length : 0)
     + (created.gdo ? (await restAll('wms_tasks', `select=id&gdo_id=eq.${created.gdo}`)).length : 0)
+    + (WH ? (await restAll('fill_reconcile_queue', `select=warehouse_id&warehouse_id=eq.${WH}`)).length : 0)
   console.log(`residue=${residue}`)
 }
 

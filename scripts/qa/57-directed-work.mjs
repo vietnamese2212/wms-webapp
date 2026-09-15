@@ -1268,6 +1268,135 @@ try {
         `http=${rp.s} routed=${rp.j?.data?.routed} start=${rp.j?.data?.start_code} dist=${sp[0]?.dist_from_prev_cells}`)
       await api(`/wms/outbound/${tP.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
     }
+
+    // ═══ [25i–25n] HÀNG LẺ NHẶT Ở KHO LẺ — CẢNH BÁO ↔ CHẶN (user chốt 15/09) ═════════════════════
+    // Đo Ba Vì 15/09: 13/13 điểm ghé của lộ trình nhặt lẻ đều TRÊN KỆ (5 điểm tầng 4) trong khi ô
+    // nhặt lẻ ngay dưới đang có đúng mã đó — vì gợi ý đi luân chuyển thuần, không đọc `is_pick_face`.
+    // Luật user chốt: hàng lẻ phải nhặt Ở KHO LẺ và ở đó phải là ĐÚNG LÔ; chưa đúng thì việc phải làm
+    // là FILL lô đúng xuống. Kho KHÔNG tích "bắt buộc đúng thứ tự" ⇒ cảnh báo; tích rồi ⇒ chặn.
+    {
+      const [matP] = await restWrite('Material', 'POST', null, {
+        id: randomUUID(), material_code: `${T}-MPF`, material_description: 'QA pick face', short_name: 'QA ô lẻ',
+        category: CAT_A, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 24,
+        cartons_per_pallet: 100, shelf_life_days: 365, is_active: true, created_at: nowIso(), updated_at: nowIso(),
+      })
+      const mkP = async (code, locId, expDays, prodOff) => (await restWrite('InventoryEntry', 'POST', null, {
+        id: randomUUID(), pallet_code: `${T}-${code}`, material_id: matP.id, warehouse_id: whId,
+        location_id: locId, cartons_imported: 200, cartons_remaining: 200, cartons_reserved: 0,
+        status: 'IN_STOCK', production_date: dPlus(prodOff), expiry_date: dPlus(expDays),
+        import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+      }))[0]
+      // Ô NHẶT LẺ đang giữ lô MỚI, còn lô ĐÚNG THỨ TỰ (HSD ngắn hơn) nằm trên KỆ — đúng hiện trạng Ba Vì
+      const pOld = await mkP('PF_OLD', far.T3, 30, -300)
+      await mkP('PF_NEW', locPick, 300, -20)
+      const setReq = req => restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_required: req, updated_at: nowIso() })
+      const tF = await mkTrip('TPICKFACE')
+      const [itF] = await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: tF.do, material_id: matP.id, material_code_raw: matP.material_code,
+        cartons_ordered: 200, cartons_scanned: 0, loose_picking: 96,   // đủ lớn để sau 1 lượt quét vẫn còn dòng trên bảng
+        date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      })
+      const routeF = async () => {
+        const r2 = await api(`/wms/directed/loose-route?gdo_id=${tF.gdo}`)
+        const st = (r2.j?.data?.stops ?? []).find(s => (s.materials ?? []).some(m => m.item_id === itF.id))
+        return { r: r2, st, m: (st?.materials ?? []).find(m => m.item_id === itF.id), un: (r2.j?.data?.unlocated ?? []).find(u => u.item_id === itF.id) }
+      }
+
+      // (a) KHO KHÔNG TÍCH BẮT BUỘC ⇒ vẫn chỉ ô có lô đúng (trên kệ) NHƯNG phải NÓI RA "nên fill xuống"
+      const w1 = await routeF()
+      check('[25i] Kho lẻ giữ lô KHÁC: vẫn có điểm ghé (không khoá việc) nhưng ghi rõ "cần fill xuống ô lẻ"',
+        w1.r.s === 200 && w1.st?.location_id === far.T3 && w1.st?.is_pick_face === false
+          && w1.m?.need_fill_from === w1.st?.location_code && !w1.un,
+        `lộ trình→${w1.st?.location_code ?? '(không có)'} ô_lẻ=${w1.st?.is_pick_face} need_fill=${w1.m?.need_fill_from ?? 'KHÔNG CÓ'}`)
+
+      // (b) KHO TÍCH BẮT BUỘC ⇒ CHẶN: không điểm ghé, nêu lý do + ô phải fill từ đó
+      await setReq(true)
+      const w2 = await routeF()
+      check('[25j] Kho tích "bắt buộc đúng thứ tự" ⇒ dòng KHÔNG có điểm ghé, nêu NEED_FILL kèm ô nguồn',
+        w2.r.s === 200 && !w2.st && w2.un?.reason === 'NEED_FILL' && !!w2.un?.fill_from,
+        `có điểm ghé=${!!w2.st} reason=${w2.un?.reason ?? '(không có dòng)'} fill_from=${w2.un?.fill_from}`)
+
+      // (c) CỬA QUÉT phải chặn thật — lọc trên màn chỉ là gợi ý
+      const scOff = await api(`/wms/outbound/${tF.gdo}/items/${itF.id}/scan`, 'POST', {
+        qr_code: pOld.pallet_code, loose_picking_mode: true, cartons_override: 24, leftover_location_id: 'KEEP',
+      })
+      // Tài khoản chạy bộ kiểm là superadmin ⇒ CÓ quyền duyệt lấy khác thứ tự, nên cửa dừng ở bước
+      // "chọn lý do" (ROTATION_REASON_REQUIRED) thay vì LOOSE_PICK_FACE_REQUIRED. Cái phải khoá là:
+      // BỊ CHẶN và câu chặn nói đúng việc phải làm — không phải mã lỗi nào rơi ra trước.
+      check('[25k] Quét nhặt lẻ pallet NGOÀI vị trí nhặt lẻ ở kho bắt buộc ⇒ 422, câu chặn nêu "vị trí nhặt lẻ"',
+        scOff.s === 422 && ['LOOSE_PICK_FACE_REQUIRED', 'ROTATION_REASON_REQUIRED'].includes(scOff.j?.error?.code)
+          && /VỊ TRÍ NHẶT LẺ/i.test(String(scOff.j?.error?.message ?? '')),
+        `http=${scOff.s} ${err(scOff)}`)
+
+      // (c2) BA MÀN PHẢI NÓI CÙNG MỘT VIỆC (lưới của lớp C19): lộ trình bảo "cần fill xuống" thì bộ
+      // sinh việc phải ĐẶT ĐÚNG việc fill đó, không được coi lô sai ở kho lẻ là "đã có sẵn, hết việc".
+      const tG = await mkTrip('TPFPLAN')
+      await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: tG.do, material_id: matP.id, material_code_raw: matP.material_code,
+        cartons_ordered: 200, cartons_scanned: 0, loose_picking: 96,
+        date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      })
+      await startTrip(tG.gdo, { license_plate: '51C25262', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+      const tkG = (await tasksOf(tG.gdo)).filter(t => !t.skipped)
+      const feed = tkG.find(t => t.kind === 'LOOSE_FEED')
+      check('[25o] Bộ sinh việc ĐẶT đúng việc fill mà lộ trình đang đòi (lô ở kho lẻ sai ⇒ không tính là "có sẵn")',
+        !!feed && feed.from_location_id === far.T3 && feed.to_kind === 'PICK_FACE',
+        `việc=${tkG.map(t => `${t.kind}@${t.from_location_code}`).join(', ') || '(không có)'}`)
+      await api(`/wms/outbound/${tG.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+
+      // (d) FILL xuống rồi (lô ĐÚNG có mặt ở ô nhặt lẻ) ⇒ lộ trình chỉ vào Ô NHẶT LẺ và quét được
+      const pFed = await mkP('PF_FED', locPick, 30, -300)
+      const w3 = await routeF()
+      const scOk = await api(`/wms/outbound/${tF.gdo}/items/${itF.id}/scan`, 'POST', {
+        qr_code: pFed.pallet_code, loose_picking_mode: true, cartons_override: 24, leftover_location_id: 'KEEP',
+      })
+      check('[25l] Fill đúng lô xuống ô nhặt lẻ ⇒ lộ trình chỉ VÀO Ô NHẶT LẺ, hết cảnh báo, quét được',
+        w3.st?.location_id === locPick && w3.st?.is_pick_face === true && !w3.m?.need_fill_from && scOk.s === 200,
+        `lộ trình→${w3.st?.location_code ?? '(không có)'} ô_lẻ=${w3.st?.is_pick_face} need_fill=${w3.m?.need_fill_from ?? 'không'} quét=${scOk.s} ${err(scOk)}`)
+
+      // (e) KHO CHƯA KHAI Ô NHẶT LẺ ⇒ KHÔNG tự bật luật (cùng khuôn "kho có vẽ cửa thì mới bắt cửa")
+      await restWrite('Location', 'PATCH', `id=eq.${locPick}`, { is_pick_face: false, updated_at: nowIso() })
+      const w4 = await routeF()
+      await restWrite('Location', 'PATCH', `id=eq.${locPick}`, { is_pick_face: true, updated_at: nowIso() })
+      check('[25m] Kho CHƯA khai vị trí nhặt lẻ ⇒ giữ nguyên hành vi cũ: có điểm ghé, không cảnh báo, không chặn',
+        w4.r.s === 200 && !!w4.st && !w4.m?.need_fill_from && !w4.un,
+        `có điểm ghé=${!!w4.st} need_fill=${w4.m?.need_fill_from ?? 'không'} unlocated=${w4.un?.reason ?? 'không'}`)
+
+      // (f) LUẬT DATE CỦA DÒNG PHẢI ĐI VÀO CẢ CỬA GÁC LUÂN CHUYỂN (lớp C19, vá 15/09):
+      // dòng chốt "≥ 80 %" ở kho BẮT BUỘC từng bị 422 sai thứ tự vì "pallet tốt nhất" đem so là
+      // pallet 2,7 % — pallet mà chính dòng này KHÔNG được phép lấy. Cửa gác chỉ vào thứ không lấy được.
+      const [matC] = await restWrite('Material', 'POST', null, {
+        id: randomUUID(), material_code: `${T}-MROT`, material_description: 'QA rot rule', short_name: 'QA rot',
+        category: CAT_A, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 24,
+        cartons_per_pallet: 100, shelf_life_days: 365, is_active: true, created_at: nowIso(), updated_at: nowIso(),
+      })
+      const mkC = async (code, locId, expDays, prodOff) => (await restWrite('InventoryEntry', 'POST', null, {
+        id: randomUUID(), pallet_code: `${T}-${code}`, material_id: matC.id, warehouse_id: whId,
+        location_id: locId, cartons_imported: 200, cartons_remaining: 200, cartons_reserved: 0,
+        status: 'IN_STOCK', production_date: dPlus(prodOff), expiry_date: dPlus(expDays),
+        import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+      }))[0]
+      await mkC('ROT_LOW', near.T1, 10, -355)          // %Date ≈ 2,7 % — cũ nhất, nhưng dòng KHÔNG lấy được
+      const pHigh = await mkC('ROT_HIGH', far.T3, 360, -5)   // %Date ≈ 98,6 % — đúng thứ hai, dòng lấy được
+      const tC = await mkTrip('TROT')
+      const [itC] = await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: tC.do, material_id: matC.id, material_code_raw: matC.material_code,
+        cartons_ordered: 48, cartons_scanned: 0, loose_picking: 0,
+        date_rule: { kind: 'MIN_PCT', value: 80, source: 'MANUAL', set_at: nowIso() },
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      })
+      await startTrip(tC.gdo, { license_plate: '51C25261', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+      const scRot = await api(`/wms/outbound/${tC.gdo}/items/${itC.id}/scan`, 'POST', {
+        qr_code: pHigh.pallet_code, cartons_override: 24, leftover_location_id: 'KEEP',
+      })
+      check('[25n] Kho bắt buộc + dòng chốt "≥ 80 %": quét ĐÚNG pallet đạt mức KHÔNG bị 422 sai thứ tự',
+        scRot.s === 200, `http=${scRot.s} ${err(scRot)}`)
+
+      await setReq(false)
+      for (const g of [tF.gdo, tC.gdo]) await api(`/wms/outbound/${g}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+    }
     await api(`/wms/outbound/${tR.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 

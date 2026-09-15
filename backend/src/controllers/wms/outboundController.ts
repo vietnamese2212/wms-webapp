@@ -36,6 +36,7 @@ import {
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
+import { hasPickFace, looseFillMessage } from '../../services/loosePickFace'
 import {
   loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
   type AutoApplied, type PolicyCtx,
@@ -5231,7 +5232,10 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
 // Chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
 // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in()).
 // Trả map material_id → danh sách vị trí ĐÃ SORT (hòa %Date → ít hàng nhất trước → tên) — caller tự slice.
-export type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null }
+// `is_pick_face` = ô này có phải VỊ TRÍ NHẶT LẺ không. Cần ở đây vì phần lẻ lấy bằng TAY: nó phải
+// được nhặt ở vị trí nhặt lẻ, còn pallet chẵn thì lấy ngay trên kệ — cùng một danh sách gợi ý mà
+// hai việc đọc theo hai cách, nên cờ phải đi kèm từng ô thay vì để caller tự tra lại.
+export type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null; is_pick_face: boolean }
 // Hạng nhặt của từng khu, khoá `${warehouse_id}|${sub_code}` — 1 câu cho cả danh sách kho.
 // Cùng nguồn với trang Tối ưu vị trí và với chiến thuật cất hàng ABC (WarehouseZone.pick_rank),
 // nên "gần cửa" ở hai luồng nhập/xuất là CÙNG một định nghĩa, không phải hai bản chép tay.
@@ -5251,7 +5255,7 @@ export type SuggestionEntry = RotationEntry & {
   material_id: string
   pallet_code: string | null
   batch: string | null
-  location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null } | null
+  location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null; is_pick_face: boolean | null } | null
   material: (MaterialShelfInfo & { category?: string | null }) | null
 }
 /**
@@ -5285,7 +5289,7 @@ export async function rotationSuggestionsFor(
           // `category` = khóa chọn chiến thuật tầng 2 (mỗi loại kho có thể chạy nguyên tắc riêng)
           // `pallet_code`/`batch`: quy tắc date kiểu CHỈ ĐỊNH khớp theo tem hoặc mã lô — thiếu 2 cột
           // này thì bộ lọc của caller sẽ loại sạch pallet và màn hình nói "không còn hàng đạt mức".
-          .select(`material_id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
+          .select(`material_id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
           .in('status', [...PICKABLE_STATUSES])
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
@@ -5327,7 +5331,7 @@ export async function rotationSuggestionsFor(
       // Khu chưa xếp hạng → đẩy xuống cuối nhóm cùng ngày (không có thông tin thì không ưu ái)
       const pick_rank = rankByZone.get(`${e.location?.warehouse_id ?? ''}|${e.location?.sub_code ?? ''}`) ?? Number.MAX_SAFE_INTEGER
       const k = `${rot_key ?? 'n'}|${loc}`
-      const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key, pick_rank }
+      const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key, pick_rank, is_pick_face: e.location?.is_pick_face === true }
       cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
       locMap.set(k, cur)
     }
@@ -5391,15 +5395,18 @@ async function rotationCheckOf(args: {
   entry: RotationEntry; material: MaterialShelfInfo | null; materialId: string | null
   warehouseId: string | null; principle: RotationPrinciple; required: boolean
   source?: 'WAREHOUSE' | 'TYPE'
-  // %Date tối thiểu ĐƠN yêu cầu (item.date_required): pallet dưới ngưỡng KHÔNG xuất được cho đơn
-  // này (bị chặn 400 ở check %Date) nên không được đề cử làm "pallet phải lấy trước" — nếu không,
-  // đơn đòi date cao ở kho bật "bắt buộc" sẽ KẸT: mọi pallet đạt yêu cầu đều "sai thứ tự" so với
-  // pallet không đạt (cùng lớp lỗi "gợi ý chỉ vào pallet không lấy được" ở đầu utils/rotation.ts,
-  // đã fix cho QA-giữ, sót ca này — user hỏi trúng 25/08).
-  minPctDate?: number
+  // QUY TẮC DATE CỦA DÒNG ĐƠN: pallet không đạt mức KHÔNG xuất được cho dòng này (bị chặn ở bước
+  // kiểm %Date) nên không được đề cử làm "pallet phải lấy trước" — nếu không, dòng đòi date cao ở
+  // kho bật "bắt buộc" sẽ KẸT: mọi pallet đạt yêu cầu đều "sai thứ tự" so với pallet không đạt
+  // (cùng lớp lỗi "gợi ý chỉ vào pallet không lấy được" ở đầu utils/rotation.ts, đã fix cho QA-giữ).
+  // ⚠️ Phải đọc CẢ `date_rule` chốt tay chứ không chỉ `date_required` của VL06O (vá 15/09, lớp C19):
+  // bản cũ chỉ biết %Date của SAP, nên dòng chốt tay "≥ 80 %" ở kho bật bắt buộc bị so với pallet
+  // 9 % ⇒ 422 sai thứ tự cho ĐÚNG pallet mà chính app vừa chỉ tới. Luật diễn giải DateRule vẫn là
+  // `palletMeetsDateRule`, không đẻ bản hai.
+  rule?: DateRule | null
 }): Promise<RotationCheck> {
   const { entry, material, materialId, warehouseId, principle, required } = args
-  const minPct = Number(args.minPctDate ?? 0)
+  const rule = args.rule ?? null
   const base: RotationCheck = {
     principle, required, source: args.source ?? 'WAREHOUSE',
     violation: false, date_label: ROTATION_DATE_LABEL[principle],
@@ -5411,24 +5418,21 @@ async function rotationCheckOf(args: {
   // "QA giữ" = dấu QA khác `OK` (services/qaStatus.ts) — cùng luật với cửa quét xuất bên dưới.
   const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-    .select('pallet_code, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id)')
+    .select('pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id, is_pick_face)')
     .eq('material_id', materialId)
     .eq('location.warehouse_id', warehouseId)
     .in('status', [...PICKABLE_STATUSES])
     .or(qaFilter)
     .gt('cartons_remaining', 0)
-    .order('id')) as Array<RotationEntry & { pallet_code: string | null; location: { location_code: string | null } | null }>
+    .order('id')) as Array<RotationEntry & { pallet_code: string | null; batch: string | null; location: { location_code: string | null; is_pick_face: boolean | null } | null }>
 
   let best: (typeof rows)[number] | null = null
   let bestKey: number | null = null
   for (const r of rows) {
     if (!isPickEligible(r, qaHold)) continue
-    // Đơn có yêu cầu %Date: pallet dưới ngưỡng (hoặc không tính được %Date) sẽ bị chặn lúc quét
-    // cho đơn này → loại khỏi tập so sánh, "pallet tốt nhất" = tốt nhất TRONG SỐ lấy được.
-    if (minPct > 0) {
-      const pct = computePctDate(r, material)
-      if (pct == null || pct < minPct) continue
-    }
+    // Dòng có quy tắc date: pallet không đạt sẽ bị chặn lúc quét cho dòng này → loại khỏi tập so
+    // sánh, "pallet tốt nhất" = tốt nhất TRONG SỐ lấy được.
+    if (rule && !palletMeetsDateRule(r, material, rule)) continue
     const k = rotationSortKey(r, material, principle)
     if (k == null) continue
     if (bestKey == null || k < bestKey) { bestKey = k; best = r }
@@ -6110,7 +6114,7 @@ export async function checkScanItem(req: Request, res: Response) {
       entry: inv as RotationEntry, material: mat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
       principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
-      minPctDate: dateReqPct,
+      rule: dateRuleOf(item as DateRuleGateItem),
     })
 
     return res.json({
@@ -6152,7 +6156,7 @@ export async function scanItem(req: Request, res: Response) {
     ] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
       itemOfGdo(itemId, gdoId),
-      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id, is_pick_face)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
       employee_id
         ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
@@ -6198,7 +6202,7 @@ export async function scanItem(req: Request, res: Response) {
       entry: inv as RotationEntry, material: shelfMat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
       principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
-      minPctDate: Number(item.date_required ?? 0),
+      rule: dateRuleOf(item as DateRuleGateItem),
     })
 
     // ── CHẶN khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────────────────
@@ -6213,6 +6217,23 @@ export async function scanItem(req: Request, res: Response) {
         return fail(res, 422, 'ROTATION_VIOLATION', `${rotationBlockMessage(rotation)} Cần người có quyền duyệt lấy khác thứ tự.`)
       if (!isRotationReason(code))
         return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${rotationBlockMessage(rotation)} Chọn lý do để tiếp tục.`)
+      rotationOverride = raw.slice(0, 200)
+    }
+    // ── CHẶN nhặt lẻ NGOÀI vị trí nhặt lẻ khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────
+    // Kho tích bắt buộc = cam kết đi đúng thứ tự luân chuyển. Hàng lẻ lấy bằng TAY, nên lô đúng thứ
+    // tự phải được FILL xuống vị trí nhặt lẻ rồi mới nhặt: nhặt thẳng trên kệ vừa nguy hiểm (tầng
+    // 4) vừa để kho lẻ mãi giữ lô mới không ai đụng — tức chính lô cũ ở lại kho. Luật + van xả:
+    // `services/loosePickFace.ts`. Đo 15/09: 0/153 kho đang tích, nên cửa này nằm im tới khi kho bật.
+    if (loose_picking_mode && rotCfg.required
+      && (inv as { location?: { is_pick_face?: boolean | null } | null }).location?.is_pick_face !== true
+      && await hasPickFace(gdo?.warehouse_id)) {
+      const raw  = String(rotation_override_reason ?? '').trim()
+      const code = raw.split(':')[0].trim()
+      const msg  = looseFillMessage(rotation.best_location_code)
+      if (!canRotationOverride(req))
+        return fail(res, 422, 'LOOSE_PICK_FACE_REQUIRED', `${msg} Cần người có quyền duyệt lấy khác thứ tự.`)
+      if (!isRotationReason(code))
+        return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${msg} Chọn lý do để tiếp tục.`)
       rotationOverride = raw.slice(0, 200)
     }
     // %Date pallet: ưu tiên HSD tường minh trên tem (V2) → fallback NSX+shelflife (V1). Tính 1 lần, tái dùng cho check + lưu.

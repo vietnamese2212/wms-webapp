@@ -424,7 +424,8 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
   for (const n of needs) {
     const it = n.item
     const mat = it.material ?? null
-    const principle: RotationPrinciple = resolveRotation(gdo.warehouse, typeRows, mat?.category ?? null).principle
+    const rot = resolveRotation(gdo.warehouse, typeRows, mat?.category ?? null)
+    const principle: RotationPrinciple = rot.principle
     let pool = (byMat.get(it.material_id ?? '') ?? []).filter(c => matchesRule(c, mat, n.rule) && freeOf(c) > 0)
     if (!pool.length) {
       // KHÔNG CÓ PALLET NÀO ĐẠT MỨC ⇒ dòng này KHÔNG có việc. Phải NÓI RA: cửa chốt tay đã gác
@@ -471,11 +472,14 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
       return naturalCompare(locById.get(a.location_id ?? '')?.location_code ?? '', locById.get(b.location_id ?? '')?.location_code ?? '')
     })
 
-    // Phần NHẶT LẺ đã có sẵn ở vị trí nhặt lẻ thì không phải hạ thêm (user chốt 0.9)
-    const looseOnHand = n.loose > 0
-      ? pool.filter(c => locById.get(c.location_id ?? '')?.is_pick_face === true)
-          .reduce((s, c) => s + freeOf(c), 0)
-      : 0
+    // Phần NHẶT LẺ đã có sẵn ở vị trí nhặt lẻ thì không phải hạ thêm (user chốt 0.9).
+    // ⚠️ Kho tích "BẮT BUỘC lấy đúng thứ tự" (15/09): chỉ tính là "có sẵn" khi ĐÚNG LÔ — kho lẻ
+    // đang giữ lô MỚI trong khi lô cũ nằm trên kệ thì nhặt ở đó là vi phạm chính luật kho vừa bật,
+    // việc phải làm là FILL lô cũ xuống (services/loosePickFace.ts). Kho không tích ⇒ y như cũ.
+    const bestKey = pool.length ? keyOf.get(pool[0].id) ?? null : null
+    const onPickFace = (c: Cand) => locById.get(c.location_id ?? '')?.is_pick_face === true
+      && (!rot.required || (keyOf.get(c.id) ?? null) === bestKey)
+    const looseOnHand = n.loose > 0 ? pool.filter(onPickFace).reduce((s, c) => s + freeOf(c), 0) : 0
     let looseLeft = Math.max(0, n.loose - looseOnHand)
 
     // Phần lẻ ĐÃ NẰM SẴN ở vị trí nhặt lẻ = KHÔNG có việc gì để giao ⇒ trừ THẲNG khỏi nhu cầu.
@@ -488,8 +492,10 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
     for (const c of pool) {
       if (left <= 0) break
       const loc = c.location_id ? locById.get(c.location_id) : null
-      // Pallet đang nằm sẵn ở vị trí nhặt lẻ: thủ kho lấy tại chỗ, không cần xe nâng (đã trừ ở trên)
-      if (loc?.is_pick_face === true && looseOnHand > 0) continue
+      // Pallet đang nằm sẵn ở vị trí nhặt lẻ: thủ kho lấy tại chỗ, không cần xe nâng (đã trừ ở trên).
+      // Kho bắt buộc đúng thứ tự: pallet ở kho lẻ mà SAI LÔ cũng bỏ qua — nó không giải quyết được
+      // phần lẻ (nhặt ở đó là vi phạm), và sinh việc "chuyển từ kho lẻ về kho lẻ" là việc rỗng.
+      if (loc?.is_pick_face === true && (looseOnHand > 0 || (rot.required && looseLeft > 0))) continue
       const take = Math.min(left, freeOf(c))
       if (take <= 0) continue
       const isLoose = looseLeft > 0

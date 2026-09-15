@@ -21,6 +21,7 @@ import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from
 // Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này,
 // và lọc thêm theo mức %Date đã chốt của TỪNG DÒNG (luật khớp date vẫn nằm ở directedTasks)
 import { rotationSuggestionsFor, rotationConfigOf, type SuggestionGroup } from './outboundController'
+import { hasPickFace } from '../../services/loosePickFace'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -204,9 +205,9 @@ export async function getLooseRoute(req: Request, res: Response) {
 
     const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id'))
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
-    type MatQ = { short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
+    type MatQ = { short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; category?: string | null }
     const items = doIds.length ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, material_id, material_code_raw, loose_picking, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(short_name, base_unit, entry_unit, units_per_carton)')
+      .select('id, material_id, material_code_raw, loose_picking, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(short_name, base_unit, entry_unit, units_per_carton, category)')
       .in('do_id', chunk).gt('loose_picking', 0).order('id')) as unknown as Array<{
         id: string; material_id: string | null; material_code_raw: string | null; loose_picking: number | null
         cartons_ordered: number | null; cartons_scanned: number | null; material: MatQ | null
@@ -261,11 +262,29 @@ export async function getLooseRoute(req: Request, res: Response) {
       groups.push({ key: it.id, material_id: it.material_id, accept: e => palletMeetsDateRule(e, e.material, rule) })
       if (rule) groups.push({ key: `${it.id}#all`, material_id: it.material_id })
     }
-    const sug = await rotationSuggestionsFor(groups, [whId], await rotationConfigOf([whId]))
-    const codeByItem = new Map<string, { code: string; pct_date: number | null; available: number }>()
+    const rotCfg = await rotationConfigOf([whId])
+    const sug = await rotationSuggestionsFor(groups, [whId], rotCfg)
+    // HÀNG LẺ LẤY Ở VỊ TRÍ NHẶT LẺ (15/09) — luật + hai mức cảnh báo/chặn: services/loosePickFace.ts.
+    // Kho chưa khai ô nhặt lẻ nào ⇒ `pickFaceMode=false` ⇒ giữ nguyên hành vi cũ, không tự bật hộ ai.
+    const pickFaceMode = await hasPickFace(whId)
+    const codeByItem = new Map<string, { code: string; pct_date: number | null; available: number; need_fill_from: string | null }>()
+    // Dòng bị CHẶN vì phải fill xuống trước (chỉ ở kho tích "bắt buộc đúng thứ tự")
+    const blockedFill = new Map<string, string | null>()   // item_id → ô đang giữ lô đúng thứ tự
     for (const it of open) {
-      const first = (sug.get(it.id) ?? []).find(s => !!s.location_code)
-      if (first?.location_code) codeByItem.set(it.id, { code: first.location_code, pct_date: first.pct_date, available: first.available })
+      const list = (sug.get(it.id) ?? []).filter(s => !!s.location_code)
+      const first = list[0]
+      if (!first?.location_code) continue
+      // Lô ĐÚNG THỨ TỰ đã nằm ở ô nhặt lẻ chưa? Cùng `rot_date` = cùng lô theo nguyên tắc của kho
+      // (FEFO nói HSD, FIFO/LIFO nói NSX) ⇒ lấy ô nào cũng không phải "sai thứ tự", nên ưu tiên ô
+      // nhặt lẻ: đó mới là chỗ nhặt bằng tay được.
+      const atPickFace = list.find(s => s.is_pick_face && s.rot_date === first.rot_date)
+      const pick = atPickFace ?? first
+      const needFill = pickFaceMode && !atPickFace
+      if (needFill && rotCfg.of(whId, it.material?.category ?? null).required) { blockedFill.set(it.id, first.location_code); continue }
+      codeByItem.set(it.id, {
+        code: pick.location_code!, pct_date: pick.pct_date, available: pick.available,
+        need_fill_from: needFill ? first.location_code : null,
+      })
     }
     const codes = [...new Set([...codeByItem.values()].map(v => v.code))]
     const locRows = codes.length ? await fetchAllByIdChunks(codes, chunk => supabase.from('Location')
@@ -279,6 +298,9 @@ export async function getLooseRoute(req: Request, res: Response) {
     type StopMat = {
       item_id: string; material_id: string; material_code: string | null; material_name: string | null
       units: MatQ | null; remaining_base: number; effective_base: number; scanned_base: number; pct_date: number | null; available: number
+      // Ô đang giữ lô ĐÚNG THỨ TỰ, khi ô này không phải vị trí nhặt lẻ ⇒ "nên fill xuống rồi hãy
+      // nhặt". CẢNH BÁO thôi (kho không tích bắt buộc); tích rồi thì dòng rơi sang `unlocated`.
+      need_fill_from: string | null
     }
     type Stop = { seq: number; location_id: string; location_code: string; is_pick_face: boolean; dist_from_prev_cells: number | null; materials: StopMat[] }
     const stops = new Map<string, Stop>()
@@ -287,18 +309,22 @@ export async function getLooseRoute(req: Request, res: Response) {
     const unlocated: Array<{
       item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
       units: MatQ | null; remaining_base: number
-      // VÌ SAO không chỉ được chỗ — "hết hàng" và "hàng còn nhưng không đạt mức date đã chốt" là hai
-      // việc phải làm khác hẳn nhau (chờ hàng về ↔ đổi mức / gỡ QA), gộp một câu là bắt người đọc đoán.
-      reason: 'NO_STOCK' | 'NO_MATCH'
+      // VÌ SAO không chỉ được chỗ — bốn việc phải làm khác hẳn nhau, gộp một câu là bắt người đọc
+      // đoán: chờ hàng về (NO_STOCK) ↔ đổi mức / gỡ QA (NO_MATCH) ↔ fill xuống kho lẻ (NEED_FILL).
+      reason: 'NO_STOCK' | 'NO_MATCH' | 'NEED_FILL'
+      fill_from: string | null     // NEED_FILL: ô đang giữ lô đúng thứ tự, fill từ đó xuống
     }> = []
     for (const it of open) {
       const v = codeByItem.get(it.id)
       const loc = v ? locByCode.get(v.code) : null
       if (!v || !loc) {
+        const blocked = blockedFill.has(it.id)
         unlocated.push({
           item_id: it.id, material_id: it.material_id, material_code: it.material_code_raw,
           material_name: it.material?.short_name ?? null, units: it.material ?? null, remaining_base: remainingOf(it),
-          reason: ruleOfItem.get(it.id) && (sug.get(`${it.id}#all`) ?? []).length ? 'NO_MATCH' : 'NO_STOCK',
+          reason: blocked ? 'NEED_FILL'
+            : ruleOfItem.get(it.id) && (sug.get(`${it.id}#all`) ?? []).length ? 'NO_MATCH' : 'NO_STOCK',
+          fill_from: blockedFill.get(it.id) ?? null,
         })
         continue
       }
@@ -311,6 +337,7 @@ export async function getLooseRoute(req: Request, res: Response) {
       s.materials.push({
         item_id: it.id, material_id: it.material_id!, material_code: it.material_code_raw, material_name: it.material?.short_name ?? null,
         units: it.material ?? null, remaining_base: pg.remaining, effective_base: pg.effective, scanned_base: pg.done, pct_date: v.pct_date, available: v.available,
+        need_fill_from: v.need_fill_from,
       })
       stops.set(loc.id, s)
     }

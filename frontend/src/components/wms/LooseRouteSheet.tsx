@@ -32,6 +32,14 @@ function metres(cells: number | null | undefined, cellM: number | null | undefin
   return m >= 10 ? `~${Math.round(m)} m` : `~${m.toFixed(1).replace('.', ',')} m`
 }
 
+// Ô lấy nằm TRÊN KỆ trong khi phần lẻ lẽ ra phải nhặt ở kho lẻ ⇒ nói ra, nhưng KHÔNG chặn (kho
+// chưa tích "bắt buộc lấy đúng thứ tự"). Chữ ngắn để vừa cột Vị trí ở 360 px, ý đầy đủ nằm ở tooltip.
+const FillHint = () => (
+  <div className="text-[9px] text-amber-700 pl-5" title="Hàng lẻ nên nhặt ở VỊ TRÍ NHẶT LẺ: ra lệnh fill lô này xuống kho lẻ rồi nhặt ở đó — lấy ngay trên kệ là leo tầng và để kho lẻ mãi giữ lô mới hơn.">
+    ⚠ nên fill xuống ô lẻ
+  </div>
+)
+
 type Row = {
   key: string; item_id: string; material_id: string | null
   // stop_no = thứ tự ghé ĐÁNH LẠI trên FE theo vị trí trong mảng stops (1..N liền mạch) — không in seq thô của BE
@@ -41,6 +49,10 @@ type Row = {
   done: boolean
   // Dòng không chỉ được chỗ VÌ kho còn hàng mã này nhưng không pallet nào đạt mức date đã chốt
   no_match?: boolean
+  // HÀNG LẺ NHẶT Ở KHO LẺ (15/09): ô đang giữ lô đúng thứ tự KHÔNG phải vị trí nhặt lẻ.
+  //   need_fill = cảnh báo (vẫn ghé ô trên kệ được) · blocked_fill = kho tích "bắt buộc" ⇒ phải fill trước
+  need_fill?: string | null
+  blocked_fill?: boolean
 }
 
 // Thứ tự cột theo câu hỏi của người đi nhặt (user 14/09 "mã hàng rồi tới tên hàng chứ, bố trí khoa học vào"):
@@ -84,14 +96,14 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
         dist: i === 0 ? metres(s.dist_from_prev_cells, route?.cell_m) : null,
         material_code: m.material_code, material_name: m.material_name, units: m.units,
         remaining: m.remaining_base, effective: m.effective_base, scanned: m.scanned_base, pct_date: m.pct_date, available: m.available,
-        done: false,
+        done: false, need_fill: m.need_fill_from ?? null,
       }))
     })
     for (const u of route?.unlocated ?? []) out.push({
       key: u.item_id, item_id: u.item_id, material_id: u.material_id, stop_no: null, location_code: null, is_pick_face: false, first_of_stop: true, n_in_stop: 1,
       dist: null, material_code: u.material_code, material_name: u.material_name, units: u.units,
       remaining: u.remaining_base, effective: u.remaining_base, scanned: 0, pct_date: null, available: null, done: false,
-      no_match: u.reason === 'NO_MATCH',
+      no_match: u.reason === 'NO_MATCH', blocked_fill: u.reason === 'NEED_FILL', need_fill: u.fill_from ?? null,
     })
     for (const d of route?.done ?? []) out.push({
       key: d.item_id, item_id: d.item_id, material_id: d.material_id, stop_no: null, location_code: d.location_code, is_pick_face: false,
@@ -117,6 +129,9 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
   // Điều kiện nằm ở THAM SỐ enabled (không return sớm) — màn quét đang mở thì máy đọc súng của nó nghe, đây tắt.
   const wedgeArmed = !scan.open && scanAllowed && openRows.some(r => !noQr.has(r.item_id))
   useWedgeScanner(code => openScan(code), wedgeArmed)
+
+  const nFill = openRows.filter(r => r.need_fill || r.blocked_fill).length
+  const nBlocked = openRows.filter(r => r.blocked_fill).length
 
   const tiles = [
     { label: 'Điểm ghé', value: nStops },
@@ -150,6 +165,21 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
         <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10 shrink-0" title="Đóng"><X className="h-5 w-5" /></button>
       </div>
 
+      {/* HÀNG LẺ NHẶT Ở KHO LẺ — nói ra ngay đầu bảng kèm ĐƯỜNG ĐI TIẾP (ra lệnh fill), đừng bắt
+          người đọc tự suy "vậy giờ phải làm gì". Đỏ = kho tích bắt buộc (không nhặt được cho tới khi
+          fill xong) · hổ phách = mới là lời khuyên. */}
+      {nFill > 0 && (
+        <div className={`shrink-0 border-b px-3 py-1.5 flex items-center gap-2 text-[11px] ${nBlocked > 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+          <span className="flex-1 min-w-0">
+            <b>{nFill} mã</b> {nBlocked > 0 ? 'PHẢI fill xuống vị trí nhặt lẻ mới nhặt được' : 'nên fill xuống vị trí nhặt lẻ'} — lô đúng thứ tự đang nằm trên kệ.
+          </span>
+          <button onClick={() => navigate('/wms/fill')}
+            className={`shrink-0 h-7 px-2 rounded text-white font-semibold ${nBlocked > 0 ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+            Fill hàng ›
+          </button>
+        </div>
+      )}
+
       <div className="shrink-0"><SummaryBand tiles={tiles} /></div>
 
       {/* Bảng lộ trình — MỘT vùng cuộn, sticky header + cột đầu (chuẩn table-format) */}
@@ -172,11 +202,15 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                       {r.done ? (
                         <span className="text-[10px]">{r.location_code ?? '—'} <span className="no-underline text-[9px]">đã lấy</span></span>
                       ) : r.location_code == null ? (
-                        /* Hai lý do KHÁC HẲN nhau: hết hàng thì chờ hàng về, còn hàng mà không đạt
-                           mức date đã chốt thì việc phải làm là đổi mức / gỡ QA — gộp một câu là bắt đoán. */
-                        <span className="text-[10px] text-amber-700"
-                          title={r.no_match ? 'Kho còn hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng — đổi mức ở "Chốt %Date" hoặc gỡ QA' : undefined}>
-                          {r.no_match ? 'không đạt mức date' : 'chưa có tồn để chỉ chỗ'}
+                        /* Ba lý do KHÁC HẲN nhau: hết hàng thì chờ hàng về · còn hàng mà không đạt mức
+                           date đã chốt thì đổi mức / gỡ QA · lô đúng thứ tự còn trên kệ ở kho BẮT BUỘC
+                           đúng thứ tự thì phải FILL xuống kho lẻ. Gộp một câu là bắt người đọc đoán. */
+                        <span className={`text-[10px] ${r.blocked_fill ? 'text-red-600 font-semibold' : 'text-amber-700'}`}
+                          title={r.blocked_fill
+                            ? `Kho bật "bắt buộc lấy đúng thứ tự": hàng lẻ phải nhặt ở vị trí nhặt lẻ. Cần fill${r.need_fill ? ` từ ô ${r.need_fill}` : ''} xuống kho lẻ rồi mới nhặt được.`
+                            : r.no_match ? 'Kho còn hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng — đổi mức ở "Chốt %Date" hoặc gỡ QA' : undefined}>
+                          {r.blocked_fill ? `phải fill xuống kho lẻ${r.need_fill ? ` (từ ${r.need_fill})` : ''}`
+                            : r.no_match ? 'không đạt mức date' : 'chưa có tồn để chỉ chỗ'}
                         </span>
                       ) : r.first_of_stop ? (
                         <div className="leading-tight">
@@ -187,9 +221,13 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                             {isNext && <span className="text-[9px] rounded-full bg-sky-600 text-white px-1.5">kế tiếp</span>}
                           </div>
                           {r.dist && <div className="text-[9px] text-slate-400 pl-5">{r.stop_no === 1 && startCode ? `${startCode} → ` : ''}{r.dist}</div>}
+                          {r.need_fill && <FillHint />}
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-400 pl-5">↳ cùng ô</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] text-slate-400 pl-5">↳ cùng ô</span>
+                          {r.need_fill && <FillHint />}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px]">{r.material_code ?? '—'}</TableCell>

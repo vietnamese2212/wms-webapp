@@ -3884,6 +3884,9 @@ export interface LooseRouteMaterial {
   remaining_base: number          // còn lấy nhặt lẻ (BASE) — cùng công thức itemLooseProgress; BE đã lọc dòng = 0
   effective_base: number; scanned_base: number   // cần / đã lấy (BASE) — in "đã/cần" theo thùng
   pct_date: number | null; available: number
+  // Ô đang giữ lô ĐÚNG THỨ TỰ khi ô đó KHÔNG phải vị trí nhặt lẻ ⇒ "nên fill xuống rồi hãy nhặt"
+  // (cảnh báo; kho tích "bắt buộc đúng thứ tự" thì dòng nằm ở `unlocated` với reason NEED_FILL).
+  need_fill_from?: string | null
 }
 /** Dòng đã lấy đủ phần lẻ — vẫn nằm cuối bảng lộ trình, gạch ngang (phòng bị quên) */
 export interface LooseRouteDone {
@@ -3901,8 +3904,11 @@ export interface LooseRoute {
   unlocated: Array<{
     item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
     units: MatUnits | null; remaining_base: number
-    // NO_MATCH = kho CÒN hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng
-    reason?: 'NO_STOCK' | 'NO_MATCH'
+    // NO_MATCH  = kho CÒN hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng
+    // NEED_FILL = kho tích "bắt buộc đúng thứ tự": lô đúng thứ tự đang trên kệ, phải fill xuống
+    //             vị trí nhặt lẻ rồi mới nhặt được (services/loosePickFace.ts)
+    reason?: 'NO_STOCK' | 'NO_MATCH' | 'NEED_FILL'
+    fill_from?: string | null
   }>
   done: LooseRouteDone[]
 }

@@ -12,7 +12,7 @@ import { rotationConfigOf } from './outboundController'
 import { availableOf, isPickEligible, rotationSortKey, type RotationEntry } from '../../utils/rotation'
 import { type MaterialShelfInfo } from '../../utils/shelfLife'
 import { qaHoldIds } from '../../services/qaStatus'
-import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { dateRuleOf, palletMeetsDateRule, type DateRule } from '../../services/directedTasks'
 
 // ─── FILL HÀNG PHỤC VỤ NHẶT LẺ (v3 — user chốt 05/08) ───────────────────────
@@ -141,28 +141,43 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
   const rows = payload?.rows ?? []
   // Kho chưa khai ô nhặt lẻ nào ⇒ không có luật này (không tự bật hộ ai)
   if (!rows.length || !Number(payload?.pick_face_locations ?? 0)) return payload
-  const matIds = [...new Set(rows.map(r => r.material_id).filter(Boolean))]
+  // ⚠️ CỐ Ý tính cho MỌI dòng, kể cả mã đang không có gì ở kho lẻ (chỗ đó con số của RPC vẫn đúng):
+  // gợi ý của RPC sắp theo `fefo_key` viết trong SQL — không biết nguyên tắc luân chuyển của kho,
+  // không biết shelf-life theo NCC, không biết mức %Date của dòng. Để lẫn hai luật trong CÙNG một
+  // bảng là đúng thứ đang phải dọn, nên thà trả thêm ít dòng tồn còn hơn hai dòng cạnh nhau nói theo
+  // hai luật khác nhau.
+  const need = rows.filter(r => r.material_id)
+  const matIds = [...new Set(need.map(r => r.material_id))]
   // MỨC %DATE THUỘC VỀ DÒNG ĐƠN — Fill cũng phải đọc (cửa thứ ba, vẫn lớp C19). Không đọc thì màn
   // này đòi hạ một lô mà CHÍNH đơn không được phép lấy: đo Ba Vì 15/09, mã 510000155 lộ trình bảo
   // "lấy ngay ở kho lẻ" (lô đạt mức ≥ 60 %) còn Fill lại bảo "hạ lô cũ hơn xuống" — lô đó rơi dưới
   // mức nên hạ xuống cũng không ai lấy được. Gộp mức của các dòng cùng mã theo phép HỢP: pallet
   // dùng được cho ÍT NHẤT một dòng là đáng fill; dòng chưa chốt mức ⇒ mã đó không ràng buộc gì.
   const rulesByMat = await looseRulesOfDay(warehouseId, day, matIds)
-  const [ents, qaHold, rotCfg, busyRaw] = await Promise.all([
+  const [ents, mats, qaHold, rotCfg, busyRaw] = await Promise.all([
+    // KHÔNG nhúng Material vào từng dòng tồn: `supplier_shelf_life_overrides` là jsonb lặp lại trên
+    // MỌI pallet của mã (hàng nghìn dòng) — tra một lần rồi ghép ở JS.
     fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
-      .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, location:Location!inner(location_code, warehouse_id, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)')
+      .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, location:Location!inner(location_code, warehouse_id, is_pick_face)')
       .in('material_id', chunk).eq('location.warehouse_id', warehouseId)
       .in('status', [...FILL_STATUSES]).gt('cartons_remaining', 0).order('id')) as unknown as Promise<FillEntry[]>,
+    fetchAllByIdChunks(matIds, chunk => supabase.from('Material')
+      .select('id, category, shelf_life_days, supplier_shelf_life_overrides').in('id', chunk).order('id')) as unknown as
+      Promise<Array<MaterialShelfInfo & { id: string; category: string | null }>>,
     qaHoldIds(),
     rotationConfigOf([warehouseId]),
     // Pallet đã nằm trong một dòng lệnh fill đang treo thì không đề xuất lần hai (giữ đúng luật RPC)
     supabase.from('FillTask').select('entry_id').eq('warehouse_id', warehouseId).eq('status', 'PENDING'),
   ])
   const busy = new Set(((busyRaw.data ?? []) as { entry_id: string | null }[]).map(t => t.entry_id).filter(Boolean))
+  const matById = new Map(mats.map(m => [m.id, m]))
   const byMat = new Map<string, FillEntry[]>()
-  for (const e of ents) byMat.set(e.material_id, [...(byMat.get(e.material_id) ?? []), e])
+  for (const e of ents) {
+    e.material = matById.get(e.material_id) ?? null
+    byMat.set(e.material_id, [...(byMat.get(e.material_id) ?? []), e])
+  }
 
-  for (const r of rows) {
+  for (const r of need) {
     const all = byMat.get(r.material_id) ?? []
     const rules = rulesByMat.get(r.material_id)
     // `rules === null` = có dòng chưa chốt mức ⇒ không ràng buộc; mảng rỗng = không có dòng nào (giữ nguyên)
@@ -222,10 +237,16 @@ export async function getFillDemand(req: Request, res: Response) {
     })
     if (error) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (fill hàng)')
+      if (isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
       return fail(res, 500, 'DB_ERROR', error.message)
     }
     return ok(res, await withLotCheck(data as FillDemandPayload, warehouse_id, date || vnToday()))
-  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+  } catch (e) {
+    // Bước tính "đúng lô" kéo tồn của các mã đang cần ⇒ lúc DB bận có thể chạm trần câu lệnh.
+    // Đó là QUÁ TẢI, không phải lỗi lập trình: trả 503 kèm hướng dẫn (và không thổi cờ "lỗi BE").
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e))
+  }
 }
 
 // ─── GET /wms/fill/candidates?warehouse_id&material_id ─────────────────────

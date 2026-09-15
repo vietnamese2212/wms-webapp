@@ -665,6 +665,12 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                 <div className="flex items-center gap-2">
                   <span className={`font-mono text-xs font-bold ${fillRowText(o.status) || 'text-slate-800'}`}>{o.order_code}</span>
                   <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_STATUS_LABEL[o.status]}</span>
+                  {/* Dấu "máy tạo" phải có Ở CẢ THẺ (kiểm 360px 15/09: bảng desktop có, thẻ mobile
+                      thiếu) — người kho dùng điện thoại, mà đây đúng là chỗ họ cần biết vì sao có
+                      việc mình không bấm. Hai lối hiển thị cùng một dữ liệu thì phải nói cùng một chuyện. */}
+                  {o.auto_created && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 ring-1 ring-sky-200 shrink-0">Máy tạo</span>
+                  )}
                   <span className="text-[10px] text-slate-400">{formatTimestampDate(o.target_date, true)}</span>
                   <span className="ml-auto text-[11px] tabular-nums font-semibold">{nf(o.pallets_done)}/{nf(o.pallets_req)} pl</span>
                 </div>

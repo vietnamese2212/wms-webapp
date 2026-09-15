@@ -13,9 +13,9 @@
 import { NextFunction, Request, Response } from 'express'
 import { ok, fail } from '../../utils/response'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { isDay } from '../../utils/dates'
+import { db } from '../../lib/supabase'
 import { autoFillDay, autoFillSafe, vnToday } from '../../services/autoFill'
-
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * Chạy bộ tự ra lệnh TRƯỚC khi tính nhu cầu của trang Fill hàng — nếu không, chính người quan tâm
@@ -36,10 +36,19 @@ export async function runAutoFill(req: Request, res: Response) {
   try {
     const { warehouse_id, date } = req.body as { warehouse_id?: string; date?: string }
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho')
-    if (date && !DAY_RE.test(date)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
+    // `isDay` của utils/dates (kiểm LỊCH, không chỉ kiểm DẠNG) — regex trần cho '2026-13-99' đi
+    // thẳng xuống Postgres và nổ 22008 ⇒ 500. Đúng lỗi đã vá ở chính module này 05/08; tôi chép
+    // lại regex trong file mới nên vấp lại (kiểm 15/09).
+    if (date && !isDay(date)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
     const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
     if (scope && scope.length && !scope.includes(warehouse_id))
       return fail(res, 403, 'FORBIDDEN', 'Kho ngoài phạm vi được phân quyền')
+
+    // Kho KHÔNG TỒN TẠI phải là 404, không phải 200 "đã chạy, 0 lệnh". `Warehouse.id` là cột TEXT
+    // nên id gõ sai không nổ 22P02 mà chỉ khớp 0 dòng — người vận hành đọc "created: 0" rồi kết
+    // luận "kho không thiếu gì" trong khi thật ra họ gõ nhầm kho (lớp "thành công giả", CLAUDE.md).
+    const { data: wh } = await db.from('Warehouse').select('id').eq('id', warehouse_id).maybeSingle()
+    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho này')
 
     const r = await autoFillDay(warehouse_id, date || vnToday(), { force: true })
     return ok(res, r)

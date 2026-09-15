@@ -147,6 +147,25 @@ app.use('/api', (req, res, next) => {
       }
     }
   }
+  // ── CÙNG LUẬT CHO THÂN YÊU CẦU (15/09) ──
+  // Lưới trên chỉ đi qua `req.query`, nên MỌI route POST/PUT nhận ngày trong BODY đều lọt: đo thật
+  // `POST /wms/fill/auto` với `date:'2026-13-99'` → 22008 → **500**. Đúng lớp "lưới mù theo CHIỀU"
+  // đã ghi 07/09 (lưới id-rác chỉ khớp `router.get`), nay lặp lại ở chiều query↔body. Chỉ soi khoá
+  // TẦNG ĐẦU và cắt mảng ở 100 phần tử: thân của upload là mảng nghìn dòng, quét sâu là bắt MỌI
+  // request trả giá cho một ca hiếm.
+  const body = req.body as unknown
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    for (const [key, raw] of Object.entries(body as Record<string, unknown>)) {
+      if (!DATE_PARAM.test(key)) continue
+      const vals = Array.isArray(raw) ? raw.slice(0, 100) : [raw]
+      for (const v of vals) {
+        if (typeof v !== 'string' || !DAY_SHAPE.test(v) || isDay(v)) continue
+        const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)
+        return res.status(400).json({ success: false, error: { code: 'BAD_DATE',
+          message: `Ngày ở trường "${safeKey}" không có thật (${v}).` } })
+      }
+    }
+  }
   next()
 })
 

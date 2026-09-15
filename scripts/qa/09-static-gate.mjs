@@ -1206,6 +1206,29 @@ function countUntypedSupabaseFiles(sampleOut) {
   }
   return n
 }
+// NGÀY: kiểm bằng regex `^\d{4}-\d{2}-\d{2}$` là kiểm DẠNG chứ không kiểm LỊCH — '2026-13-99' /
+// '2026-02-31' khớp regex rồi nổ 22008 ở Postgres ⇒ 500 rác (làm rule "lỗi BE 24h" kêu oan).
+// `utils/dates.ts` đã nhận là có ratchet này từ 30/08 nhưng CHƯA AI VIẾT, nên 15/09 một file mới lại
+// chép regex và vấp đúng lỗi cũ. Đếm mọi chỗ tự viết regex ngày trong controller/service mà KHÔNG
+// nằm cùng dòng/khối với `isDay` — dùng `isDay` của utils/dates là đường đúng duy nhất.
+function countDateRegexWithoutCalendarCheck(sampleOut) {
+  let n = 0
+  const RE = /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//
+  for (const dir of ['backend/src/controllers', 'backend/src/services', 'backend/src/routes']) {
+    for (const f of filesOf(dir, ['.ts'])) {
+      const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+      lines.forEach((ln, i) => {
+        if (!RE.test(ln)) return
+        // Cho qua nếu chính dòng đó (hoặc 2 dòng kề) đã gọi kiểm LỊCH
+        const near = lines.slice(Math.max(0, i - 2), i + 3).join('\n')
+        if (/isDay|dayOrNull|Date\.parse|Date\.UTC/.test(near)) return
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+      })
+    }
+  }
+  return n
+}
 // Helper BE tự nhận là MIRROR của FE (đầu file có chữ "mirror") thì phải có phép kiểm so hai bản trên cùng
 // input: backend/tests/mirror/<tên file>.mirror.test.ts. "Phải khớp nhau" chỉ là ghi chú cho tới khi có máy so.
 function countMirrorHelpersWithoutTest(sampleOut) {
@@ -1287,6 +1310,11 @@ RULES.unshift(
     key: 'write_route_without_validate',
     label: 'route write (post/put/patch/delete) không khai validate({…}) — input sai kiểu đi thẳng xuống controller/Postgres → 500 thay 400 (lớp lỗi lặp nhiều nhất 08–09/2026); route MỚI bắt buộc dùng middlewares/validate.ts',
     count: countWriteRoutesWithoutValidate,
+  },
+  {
+    key: 'date_regex_without_calendar_check',
+    label: 'tự viết regex ngày ^\\d{4}-\\d{2}-\\d{2}$ mà không kiểm LỊCH — "2026-13-99"/"2026-02-31" khớp dạng rồi nổ 22008 ⇒ 500; dùng isDay/dayOrNull của utils/dates.ts',
+    count: countDateRegexWithoutCalendarCheck,
   },
   {
     key: 'untyped_supabase_import_files',

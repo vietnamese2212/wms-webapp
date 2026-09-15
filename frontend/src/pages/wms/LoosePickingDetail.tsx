@@ -574,7 +574,7 @@ export default function LoosePickingDetail() {
   }
 
   // PDA: bóp cò ngay tại trang → tự mở màn quét chế độ SÚNG (không camera) — điều kiện = nút Quét QR.
-  // Màn Theo vị trí đang mở thì panel quét trong đó đã nghe súng — trang không mở thêm màn thứ hai.
+  // Màn Tối ưu tuyến đang mở thì panel quét trong đó đã nghe súng — trang không mở thêm màn thứ hai.
   useWedgeScanner(code => {
     if (!gdo || showOrderScan || showRoute) return
     if (gdo.status === 'COMPLETED' || gdo.status === 'CANCELLED') return
@@ -670,12 +670,13 @@ export default function LoosePickingDetail() {
   const hasLooseRemaining = allLooseItems.some(i =>
     i.material?.no_qr_tracking !== true && itemLooseProgress(i).remaining > 0)
   const tripOpen = gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED'
-  // THEO VỊ TRÍ CÔNG VIỆC (user 14/09 "mở 1 nút và hiện lên con đường đi lấy, và quét được luôn ở đó"):
+  // TỐI ƯU TUYẾN (user 14/09 "mở 1 nút và hiện lên con đường đi lấy, và quét được luôn ở đó"; đổi tên
+  // từ "Theo vị trí" 15/09 — tên cũ nói CHỖ, việc thật của màn là sắp THỨ TỰ đi sao cho ngắn nhất):
   // nút CHÍNH của người nhặt lẻ — đường đi từ cửa qua từng ô, mã phải lấy ở mỗi ô, quét ngay dưới.
   if (allLooseItems.some(i => itemLooseProgress(i).remaining > 0) && tripOpen)
     actionItems.push({
-      key: 'route', icon: MapPin, label: 'Theo vị trí',
-      tip: 'Theo vị trí công việc — đường đi từ cửa qua từng ô lấy hàng, quét ngay tại đó',
+      key: 'route', icon: MapPin, label: 'Tối ưu tuyến',
+      tip: 'Tối ưu tuyến — đường đi ngắn nhất từ cửa qua từng ô lấy hàng, quét ngay tại đó',
       primary: true, variant: 'default',
       onClick: () => { unlockAudio(); setShowRoute(true) },
     })

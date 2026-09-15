@@ -132,7 +132,7 @@ export function orderByNearest(f: GridFrame, mask: Uint8Array, start: GridCell, 
     }
     if (bestI < 0 || !bestCell) break
     order.push(bestI); remaining.delete(bestI); cur = bestCell
-    if (legsOut) legsOut.push(bestD)   // quãng (ô) từ điểm đứng trước tới đích này — Theo vị trí công việc in ra mét
+    if (legsOut) legsOut.push(bestD)   // quãng (ô) từ điểm đứng trước tới đích này — màn Tối ưu tuyến in ra mét
   }
   for (const i of [...remaining].sort((a, b) => a - b)) { order.push(i); if (legsOut) legsOut.push(-1) }
   return order

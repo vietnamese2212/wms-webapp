@@ -557,7 +557,7 @@ export default function DirectedWork() {
   const canLoose = can(perms, 'loosepicking', 'view')
   const looseLinkOf = (r: DirectedRow) =>
     canLoose && r.kind === 'LOOSE_FEED' && r.item_id ? `/wms/loosepicking/${r.gdo_id}/items/${r.item_id}` : null
-  // "Theo vị trí công việc" (14/09): mở trang Nhặt lẻ của chuyến với màn đường đi + quét tại chỗ đã bật sẵn
+  // "Tối ưu tuyến" (14/09, đổi tên 15/09): mở trang Nhặt lẻ của chuyến với màn đường đi + quét tại chỗ đã bật sẵn
   const routeLinkOf = (r: DirectedRow) =>
     canLoose && r.kind === 'LOOSE_FEED' && r.gdo_id ? `/wms/loosepicking/${r.gdo_id}?route=1` : null
   // "KHAI NGAY" (14/09): băng vàng từng bảo "mở chuyến rồi bấm Quy định date" — mỗi dòng chưa khai là
@@ -783,7 +783,7 @@ export default function DirectedWork() {
                     {tab === 'SCAN' && routeLinkOf(r) && (
                       <Link to={routeLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
                         className="mt-1 flex items-center gap-1 text-xs text-sky-700 underline">
-                        <ScanIcon className="h-3.5 w-3.5" /> Theo vị trí công việc — đi và quét
+                        <ScanIcon className="h-3.5 w-3.5" /> Tối ưu tuyến — đi và quét
                       </Link>
                     )}
                   </Step>
@@ -946,7 +946,7 @@ export default function DirectedWork() {
                       {tab === 'SCAN' && routeLinkOf(r) && (
                         <Link to={routeLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
                           className="block text-[9px] text-sky-700 no-underline hover:underline">
-                          Theo vị trí công việc ›
+                          Tối ưu tuyến ›
                         </Link>
                       )}
                     </TableCell>

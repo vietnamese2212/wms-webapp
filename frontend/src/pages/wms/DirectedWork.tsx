@@ -645,6 +645,17 @@ export default function DirectedWork() {
             Tồn kho vừa đổi — kế hoạch của {data?.auto_replanned} chuyến đã được sắp lại theo tồn hiện tại (việc đã hạ / đã đưa ra giữ nguyên).
           </div>
         )}
+        {/* Máy vừa tự đặt / thu hồi lệnh fill (15/09) — cùng luật với dải trên: máy làm gì dưới tay
+            người thì phải nói ra, kẻo lệnh tự mọc trong Hộp việc mà không ai biết từ đâu ra */}
+        {(data?.auto_fill?.created || data?.auto_fill?.recalled) ? (
+          <div className="shrink-0 border-b bg-sky-50 px-3 py-1 text-[11px] text-sky-900 flex flex-wrap items-center gap-x-2">
+            <span>
+              {(data.auto_fill.created ?? 0) > 0 && <>Hệ thống vừa ra <b>{data.auto_fill.created} dòng lệnh fill</b> hàng xuống kho lẻ{data.auto_fill.order_code ? <> ({data.auto_fill.order_code})</> : null} — chưa giao ai. </>}
+              {(data.auto_fill.recalled ?? 0) > 0 && <>Thu hồi <b>{data.auto_fill.recalled} dòng</b> không còn cần. </>}
+            </span>
+            <Link to="/wms/fill" onClick={anchorDirected} className="underline underline-offset-2 hover:text-sky-700">Mở Fill hàng ›</Link>
+          </div>
+        ) : null}
         {focusTrip && (
           <div className="shrink-0 border-b bg-sky-50/70 px-3 py-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <span className="font-mono font-semibold">{tripName(focusTrip)}</span>

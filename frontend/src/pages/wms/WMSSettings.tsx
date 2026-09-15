@@ -610,6 +610,7 @@ const STRAT_FIELDS = [
   'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full',
   'putaway_single_ncc', 'putaway_enforced', 'putaway_same_mat_date_pref', 'putaway_fallback',
   'loose_mode', 'loose_max_cartons',
+  'auto_fill',   // tự ra lệnh fill hàng nhặt lẻ (15/09) — 2 tầng Kho + Loại kho
   // Chỉ dẫn công việc (Directed Work 1c, 10/09) — 2 tầng như mọi cờ trên. Thiếu ở đây thì cả tính
   // năng "Việc cần làm" không có đường nào bật từ trong app.
   'work_mode', 'lower_from_level',
@@ -648,7 +649,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -729,6 +730,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     putaway_fallback:           wh?.putaway_fallback ?? 'BY_CODE',
     loose_mode:                 wh?.loose_mode ?? 'REMAINDER',
     loose_max_cartons:          wh?.loose_max_cartons ?? null,
+    auto_fill:                  wh?.auto_fill === true,
     work_mode:                  wh?.work_mode ?? 'MANUAL',
     lower_from_level:           wh?.lower_from_level ?? 2,
   })
@@ -787,6 +789,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     const rot = {
       rotation_principle: strat.rotation_principle ?? 'FEFO', rotation_required: strat.rotation_required === true,
       loose_mode: strat.loose_mode ?? 'REMAINDER', loose_max_cartons: looseMax,
+      auto_fill: strat.auto_fill === true,   // tự ra lệnh fill hàng nhặt lẻ (15/09)
       // Chỉ dẫn công việc (Directed Work 1c) — BE gác điều kiện bật Hướng dẫn (kho QR + đã vẽ Sơ đồ kho)
       work_mode: strat.work_mode ?? 'MANUAL', lower_from_level: lowerLvl ?? 2,
     }
@@ -1893,6 +1896,7 @@ export default function WMSSettings() {
     putaway_single_ncc:         stratWh?.putaway_single_ncc === true,
     loose_mode:                 stratWh?.loose_mode ?? 'REMAINDER',
     loose_max_cartons:          stratWh?.loose_max_cartons ?? null,
+    auto_fill:                  stratWh?.auto_fill === true,
   }
   // Lưu setting RIÊNG của (kho, loại) — gọi từ dialog sau khi phần danh mục chung đã lưu.
   // renamedFrom: vừa đổi tên loại ⇒ cascade đã đổi type_code, phải dựng payload theo tên MỚI.

@@ -13,6 +13,7 @@ import * as weigh from '../controllers/wms/weighTicketController'
 import * as controlTower from '../controllers/wms/controlTowerController'
 import * as slotting from '../controllers/wms/slottingController'
 import * as fill from '../controllers/wms/fillController'
+import * as autoFill from '../controllers/wms/autoFillController'
 import * as alerts from '../controllers/wms/alertController'
 import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
@@ -296,6 +297,9 @@ router.get('/fill/pick-face-locations',                       requirePerm('fill'
 // Ô chọn người nhận lệnh — dùng lại controller danh sách nhân sự theo kho (read-only) của Xuất kho
 router.get('/fill/employees',                                 requirePerm('fill', 'assign'),  outbound.getWarehouseEmployees)
 router.post('/fill/orders',                                   requirePerm('fill', 'plan'),    fill.createFillOrder)
+// "Chạy ngay" bộ tự ra lệnh (15/09) — cùng quyền với nút ra lệnh tay vì nó tạo đúng thứ đó
+router.post('/fill/auto',                                     requirePerm('fill', 'plan'),
+  validate({ body: z.object({ warehouse_id: zText(1, 100), date: zText(10, 10).optional() }) }), autoFill.runAutoFill)
 router.post('/fill/scan',                                     requirePerm('fill', 'execute'), fill.scanFill)
 // Gán người (assign) và đổi vị trí đích (plan) đi chung 1 route → controller tự kiểm TỪNG quyền
 // Gán người ≠ đổi vị trí đến ≠ hủy = 3 quyền riêng (tách 05/08 — controller kiểm đúng field)

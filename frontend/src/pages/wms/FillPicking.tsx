@@ -759,7 +759,12 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                     <div className="leading-tight">
-                      <div className="text-slate-600 truncate">{o.created_by ?? '—'}</div>
+                      {/* Lệnh do MÁY đặt phải nhìn ra ngay: người xem cần biết vì sao có việc mình
+                          không bấm (15/09) — và biết nó tự thu hồi khi nhu cầu hết. */}
+                      {o.auto_created
+                        ? <span className="inline-flex items-center rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-700 ring-1 ring-sky-200"
+                            title="Hệ thống tự đặt theo nhu cầu nhặt lẻ trong ngày — chưa ai nhận thì tự thu hồi khi hết nhu cầu">Máy tạo</span>
+                        : <div className="text-slate-600 truncate">{o.created_by ?? '—'}</div>}
                       <div className="text-[9px] text-slate-400">{formatTimestampDate(o.created_at, true)}</div>
                     </div>
                   </TableCell>

@@ -22,6 +22,7 @@ import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from
 // và lọc thêm theo mức %Date đã chốt của TỪNG DÒNG (luật khớp date vẫn nằm ở directedTasks)
 import { rotationSuggestionsFor, rotationConfigOf, type SuggestionGroup } from './outboundController'
 import { hasPickFace, pickFaceFirst } from '../../services/loosePickFace'
+import { autoFillSafe } from '../../services/autoFill'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -54,6 +55,9 @@ export async function getBoard(req: Request, res: Response) {
     // TỒN ĐỔI TỪ LẦN TẢI TRƯỚC → sắp lại việc chưa ai đụng TRƯỚC khi đọc bảng (14/09, user: "tại thời
     // điểm hạ họ check được tồn mới nhất"). Hàng đợi thường rỗng ⇒ một câu DELETE trả 0 dòng.
     const drained = await drainReplanQueue(whId)
+    // TỰ RA LỆNH FILL (15/09) — không có pg_cron nên quét lười theo traffic, throttle 10'/instance.
+    // Trang này là màn mở đầu ca của kho Hướng dẫn; kho tắt công tắc thì đây là 2 câu nhẹ rồi về.
+    const autoFill = await autoFillSafe(whId)
 
     const { data, error } = await supabase.rpc('directed_board', {
       p_warehouse_id: whId, p_mode: mode, p_gdo_id: gdoId, p_driver_id: driverId,
@@ -61,8 +65,13 @@ export async function getBoard(req: Request, res: Response) {
     if (error) return fail(res, error)
     const board = (data ?? { rows: [], totals: {}, unset_items: [] }) as {
       rows?: RoutableRow[]; settings?: { cross_trip_pick_radius?: number }; auto_replanned?: number
+      auto_fill?: { created: number; recalled: number; order_code: string | null }
     }
     board.auto_replanned = drained.replanned
+    // Máy vừa đặt việc dưới tay người thì phải NÓI RA (cùng luật với dải "đã sắp lại theo tồn")
+    if (autoFill.created || autoFill.recalled) board.auto_fill = {
+      created: autoFill.created, recalled: autoFill.recalled, order_code: autoFill.order_code,
+    }
     // NHẶT DỌC ĐƯỜNG (13/09) — chỉ bảng "Cần hạ", chỉ khi kho khai bán kính. Ở bảng "Cần đưa ra"
     // mỗi việc đều kết thúc tại cửa nên tổng quãng đường KHÔNG phụ thuộc thứ tự; sắp lại ở đó chỉ
     // làm người ta nhảy chuyến mà không được gì. Sắp ở BACKEND vì BFS trên lưới 200×200 thuộc về

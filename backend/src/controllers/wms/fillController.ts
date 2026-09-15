@@ -125,12 +125,14 @@ type FillSug = {
   from_location_id: string | null; from_location_code: string | null
   avail: number; production_date: string | null; expiry_date: string | null
 }
-type FillDemandRow = {
-  material_id: string; demand_base: number; pending_base: number; short_base: number
+export type FillDemandRow = {
+  material_id: string; demand_base: number
+  pending_base: number; short_base: number
   pick_face_base: number; pick_face_ok_base?: number; lot_date?: string | null
+  rule_unset?: boolean
   suggestions?: FillSug[]
 }
-type FillDemandPayload = { rows?: FillDemandRow[]; pick_face_locations?: number } | null
+export type FillDemandPayload = { rows?: FillDemandRow[]; pick_face_locations?: number } | null
 type FillEntry = RotationEntry & {
   id: string; pallet_code: string | null; material_id: string; location_id: string | null; status: string
   location: { location_code: string | null; warehouse_id: string | null; is_pick_face: boolean | null } | null
@@ -154,7 +156,7 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
   // mức nên hạ xuống cũng không ai lấy được. Gộp mức của các dòng cùng mã theo phép HỢP: pallet
   // dùng được cho ÍT NHẤT một dòng là đáng fill; dòng chưa chốt mức ⇒ mã đó không ràng buộc gì.
   const rulesByMat = await looseRulesOfDay(warehouseId, day, matIds)
-  const [ents, mats, qaHold, rotCfg, busyRaw] = await Promise.all([
+  const [ents, mats, qaHold, rotCfg, busyRaw, feedRaw] = await Promise.all([
     // KHÔNG nhúng Material vào từng dòng tồn: `supplier_shelf_life_overrides` là jsonb lặp lại trên
     // MỌI pallet của mã (hàng nghìn dòng) — tra một lần rồi ghép ở JS.
     fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
@@ -168,8 +170,19 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     rotationConfigOf([warehouseId]),
     // Pallet đã nằm trong một dòng lệnh fill đang treo thì không đề xuất lần hai (giữ đúng luật RPC)
     supabase.from('FillTask').select('entry_id').eq('warehouse_id', warehouseId).eq('status', 'PENDING'),
+    // ⚠️ HAI ĐƯỜNG FILL PHẢI BIẾT NHAU (15/09). Việc `LOOSE_FEED` mà bộ lập kế hoạch đặt lúc Bắt đầu
+    // chuyến cũng là "hạ hàng xuống ô nhặt lẻ", nhưng RPC `fill_demand` chỉ đếm `FillTask` ⇒ cùng một
+    // nhu cầu bị tính hai lần và mã đó bị hạ hai lần. Chưa nổ suốt 6 tuần CHỈ vì chưa ai ra lệnh fill
+    // nào (đo 15/09: 0 lệnh / 9 việc LOOSE_FEED) — bật tự động là nó thành chuyện thường ngày.
+    supabase.from('wms_tasks').select('material_id, qty_base')
+      .eq('warehouse_id', warehouseId).eq('kind', 'LOOSE_FEED').eq('status', 'PENDING'),
   ])
   const busy = new Set(((busyRaw.data ?? []) as { entry_id: string | null }[]).map(t => t.entry_id).filter(Boolean))
+  const feedPending = new Map<string, number>()
+  for (const t of ((feedRaw.data ?? []) as { material_id: string | null; qty_base: number | null }[])) {
+    if (!t.material_id) continue
+    feedPending.set(t.material_id, (feedPending.get(t.material_id) ?? 0) + Number(t.qty_base ?? 0))
+  }
   const matById = new Map(mats.map(m => [m.id, m]))
   const byMat = new Map<string, FillEntry[]>()
   for (const e of ents) {
@@ -196,10 +209,16 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     const ok = sorted
       .filter(e => e.location?.is_pick_face === true && isPickEligible(e, qaHold) && (keyOf.get(e.id) ?? null) === bestKey)
       .reduce((s, e) => s + availableOf(e), 0)
-    const short = Math.max(0, Number(r.demand_base ?? 0) - ok - Number(r.pending_base ?? 0))
+    const pending = Number(r.pending_base ?? 0) + (feedPending.get(r.material_id) ?? 0)
+    const short = Math.max(0, Number(r.demand_base ?? 0) - ok - pending)
     r.pick_face_ok_base = ok
     r.lot_date = bestKey == null ? null : new Date(bestKey).toISOString().slice(0, 10)
+    r.pending_base = pending
     r.short_base = short
+    // "Có dòng CHƯA CHỐT mức %Date" ≠ "không dòng nào ràng buộc". Với người xem thì cả hai đều là
+    // không lọc gì, nhưng đường TỰ RA LỆNH phải phân biệt: chưa chốt thì chưa được lấy (luật 10/09),
+    // nên máy không được tự chọn lô hộ. `undefined` = mã không có dòng lẻ nào hôm nay.
+    r.rule_unset = rulesByMat.has(r.material_id) && rules === null
 
     const sug: FillSug[] = []
     let cum = 0
@@ -219,6 +238,26 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     r.suggestions = sug
   }
   return payload
+}
+
+// Trạng thái LỆNH suy lại từ các dòng của nó (rollup trong DB, tránh drift khi đua). Gói vào hàm để
+// đường tự động gọi được mà không phải mở thêm một client DB thứ hai.
+export async function fillOrderRollup(orderId: string): Promise<void> {
+  await supabase.rpc('fill_order_rollup', { p_order_id: orderId })
+}
+
+/**
+ * Nhu cầu fill của (kho, ngày) — THÂN DUY NHẤT dùng cho cả trang Đề xuất lẫn đường TỰ RA LỆNH
+ * (`services/autoFill.ts`). Máy và màn hình phải nhìn cùng một con số, nếu không người mở trang sẽ
+ * thấy "thiếu 0" trong khi máy vừa đặt một lệnh hạ hàng — đúng lớp lỗi hai-bản-luật đang phải dọn.
+ * KHÔNG cắt phạm vi kho/loại: đường tự động chạy dưới danh nghĩa hệ thống, không phải một người.
+ */
+export async function fillDemandOf(warehouseId: string, day: string): Promise<FillDemandPayload> {
+  const { data, error } = await supabase.rpc('fill_demand', {
+    p_wh_scope: null, p_cat_scope: null, p_warehouse_id: warehouseId, p_date: day,
+  })
+  if (error) throw error
+  return withLotCheck(data as FillDemandPayload, warehouseId, day)
 }
 
 // ─── GET /wms/fill/demand?warehouse_id&date ─────────────────────────────────
@@ -340,11 +379,11 @@ function locAcceptsCat(locCats: string[] | null, matCat: string | null): boolean
 // ─── Chỉ mục vị trí nhặt lẻ còn chỗ (dựng MỘT LẦN cho cả lệnh) ───────────────
 // Ưu tiên chỗ ĐANG chứa đúng mã đó, rồi tới chỗ trống nhiều. `free` bị TRỪ theo SỐ PALLET của
 // từng dòng để 3 dòng cùng lúc không dồn hết vào một ô 2 slot.
-type PickFaceIdx = {
+export type PickFaceIdx = {
   locs: { id: string; code: string; cats: string[] | null; free: number }[]
   hasMat: Map<string, Set<string>>
 }
-async function buildPickFaceIdx(warehouseId: string, materialIds: string[]): Promise<PickFaceIdx> {
+export async function buildPickFaceIdx(warehouseId: string, materialIds: string[]): Promise<PickFaceIdx> {
   const { data: locRaw } = await supabase.from('Location')
     .select('id, location_code, max_pallets, categories')
     .eq('warehouse_id', warehouseId).eq('is_pick_face', true).eq('is_active', true)
@@ -379,7 +418,7 @@ async function buildPickFaceIdx(warehouseId: string, materialIds: string[]): Pro
     hasMat,
   }
 }
-function takePickFace(idx: PickFaceIdx, materialId: string, matCat: string | null, nPallets: number): { id: string; code: string } | null {
+export function takePickFace(idx: PickFaceIdx, materialId: string, matCat: string | null, nPallets: number): { id: string; code: string } | null {
   const same = idx.hasMat.get(materialId)
   const pool = idx.locs.filter(l => l.free > 0 && locAcceptsCat(l.cats, matCat))
   if (!pool.length) return null

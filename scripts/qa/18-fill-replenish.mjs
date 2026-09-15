@@ -40,12 +40,23 @@ console.log('── GÓI FILL-REPLENISH (v3 gom lệnh theo DATE) ──')
 await login()
 
 const created = { locs: [], entries: [], gdo: null, do: null, items: [], mat2: null }
+// Công tắc mượn của kho thật (cụm 22) — null = chưa đụng tới
+let savedAutoFill = null
+let savedTypeAutoFill
+let savedTypeCode = null
 async function cleanupOrders(whId) {
   // FillOrder → FillTask → FillTaskScan đều ON DELETE CASCADE; lệnh fixture nhận diện bằng DAY
   if (whId) await restWrite('FillOrder', 'DELETE', `warehouse_id=eq.${whId}&target_date=eq.${DAY}`).catch(() => {})
 }
 async function cleanup(whId) {
   await cleanupOrders(whId)
+  // Công tắc "tự ra lệnh fill" mượn của kho thật → TRẢ LẠI đúng giá trị cũ (gói 22)
+  if (whId && savedAutoFill !== null)
+    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { auto_fill: savedAutoFill, updated_at: nowIso() }).catch(() => {})
+  if (whId && savedTypeAutoFill !== undefined && savedTypeCode)
+    await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.${savedTypeCode}`,
+      { auto_fill: savedTypeAutoFill, updated_at: nowIso() }).catch(() => {})
+  if (created.gdo) await restWrite('wms_tasks', 'DELETE', `gdo_id=eq.${created.gdo}`).catch(() => {})
   for (const id of created.items)   await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${id}`).catch(() => {})
   for (const id of created.items)   await restWrite('OutboundItem', 'DELETE', `id=eq.${id}`).catch(() => {})
   if (created.do)  await restWrite('OutboundDelivery', 'DELETE', `id=eq.${created.do}`).catch(() => {})
@@ -586,12 +597,119 @@ try {
     race21.every(r => r.s === 201) && Number(line21r?.qty_base) === 420 && line21r?.required_pallets === 7
       && dupPending === 1 && emptyOrders === 0,
     `qty=${line21r?.qty_base} pl=${line21r?.required_pallets} pending=${dupPending} vỏ=${emptyOrders}`)
+
+  // ── 22. TỰ RA LỆNH FILL (15/09) ────────────────────────────────────────────
+  // Vì sao có cụm này: module Fill ra 05/08 mà tới 15/09 có ĐÚNG 0 lệnh được tạo — nút "Ra lệnh"
+  // là một nhát bấm không ai đi qua. Máy ra lệnh thay, nhưng đúng 4 ranh giới: kho phải TỰ BẬT ·
+  // chạy hai lần không đẻ lệnh đôi · dòng chưa chốt %Date thì máy KHÔNG chọn lô hộ · hết nhu cầu
+  // thì tự thu hồi. Bỏ bất kỳ cái nào trong bốn là máy đi hạ hàng không ai cần.
+  await cleanupOrders(whId)                      // xoá lệnh của các cụm trên để phép trừ sạch
+  const runAuto = () => api('/wms/fill/auto', 'POST', { warehouse_id: whId, date: DAY })
+  const autoLines = async () => (await restAll('FillTask',
+    `select=id,material_id,qty_base,assignee_id,status,fill_order_id&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
+  const autoOrders = async () => (await restAll('FillOrder',
+    `select=id,auto_created,created_by&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
+
+  const [whBefore] = await restAll('Warehouse', `select=auto_fill&id=eq.${whId}`)
+  savedAutoFill = whBefore?.auto_fill === true
+
+  // 22a. Kho CHƯA bật ⇒ máy không được tự làm gì (đo 15/09: 153/153 kho đang tắt)
+  await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { auto_fill: false, updated_at: nowIso() })
+  const off22 = await runAuto()
+  check('22a. Kho TẮT công tắc → máy không ra lệnh nào (không tự bật hộ ai)',
+    off22.s === 200 && Number(off22.j?.data?.created ?? -1) === 0 && (await autoLines()).length === 0,
+    `http=${off22.s} created=${off22.j?.data?.created} lines=${(await autoLines()).length}`)
+
+  await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { auto_fill: true, updated_at: nowIso() })
+
+  // 22b. Dòng CHƯA CHỐT %Date ⇒ máy KHÔNG tự chọn lô hộ (luật 10/09 "chưa chốt thì chưa được lấy")
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: null, updated_at: nowIso() })
+  const unset22 = await runAuto()
+  check('22b. Dòng chưa chốt %Date → bỏ qua + nêu MÃ, không đẻ dòng lệnh',
+    unset22.s === 200 && Number(unset22.j?.data?.created ?? -1) === 0
+      && (unset22.j?.data?.unset ?? []).includes(mat.material_code),
+    `created=${unset22.j?.data?.created} unset=${JSON.stringify(unset22.j?.data?.unset ?? [])}`)
+
+  // 22c. Chốt mức → máy ra lệnh ĐÚNG phần thiếu mà trang Đề xuất đang hiện, KHÔNG gán ai
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'FEFO' }, updated_at: nowIso() })
+  const before22 = await demandOf()
+  const shortNow = Number(before22.row?.short_base ?? 0)
+  const on22 = await runAuto()
+  const lines22 = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
+  const ords22 = await autoOrders()
+  const qty22 = lines22.reduce((s, l) => s + Number(l.qty_base), 0)
+  check('22c. Bật → ra lệnh đúng phần THIẾU của trang Đề xuất, lệnh mang dấu "máy tạo", KHÔNG gán ai',
+    on22.s === 200 && shortNow > 0 && Number(on22.j?.data?.created ?? 0) > 0
+      && qty22 === shortNow
+      && lines22.every(l => l.assignee_id === null)
+      && ords22.length === 1 && ords22[0].auto_created === true,
+    `thiếu=${shortNow} lệnh=${qty22} dòng=${lines22.length} gán=${lines22.filter(l => l.assignee_id).length} auto=${ords22[0]?.auto_created}`)
+
+  // 22d. Chạy lại ⇒ KHÔNG đẻ lệnh thứ hai (phần đang treo đã trừ vào "thiếu"; unique gác nốt)
+  const again22 = await runAuto()
+  const lines22b = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
+  check('22d. Chạy lần hai → 0 dòng mới, không nhân đôi việc (máy KHÔNG cộng dồn như người bấm tay)',
+    again22.s === 200 && Number(again22.j?.data?.created ?? -1) === 0 && lines22b.length === lines22.length,
+    `created=${again22.j?.data?.created} dòng ${lines22.length}→${lines22b.length}`)
+
+  // 22e. VIỆC LOOSE_FEED của bộ lập kế hoạch cũng là "hàng sắp xuống ô lẻ" — Fill phải trừ nó ra,
+  // không thì cùng một nhu cầu bị hạ HAI lần (hai đường fill vốn mù với nhau tới 15/09).
+  await cleanupOrders(whId)
+  const feedQty = 30
+  await restWrite('wms_tasks', 'POST', null, {
+    id: randomUUID(), warehouse_id: whId, gdo_id: gdo.id, item_id: item.id, material_id: mat.id,
+    entry_id: pA.id, pallet_code: pA.code, qty_base: feedQty, kind: 'LOOSE_FEED',
+    needs_lower: false, seq: 1, status: 'PENDING', plan_version: 1,
+    created_at: nowIso(), updated_at: nowIso(),
+  })
+  const withFeed = await demandOf()
+  check('22e. Việc LOOSE_FEED đang treo được trừ vào "đang có lệnh" → thiếu giảm đúng 30',
+    Number(withFeed.row?.short_base ?? -1) === Math.max(0, shortNow - feedQty)
+      && Number(withFeed.row?.pending_base ?? 0) >= feedQty,
+    `thiếu ${shortNow}→${withFeed.row?.short_base} (kỳ vọng ${Math.max(0, shortNow - feedQty)}) · đang-có-lệnh=${withFeed.row?.pending_base}`)
+  await restWrite('wms_tasks', 'DELETE', `gdo_id=eq.${created.gdo}`).catch(() => {})
+
+  // 22f. Công tắc theo LOẠI KHO TẮT được cái kho đang bật (2 tầng, user chốt 15/09)
+  savedTypeCode = mat.category
+  const [tcfg] = await restAll('warehouse_type_configs',
+    `select=auto_fill&warehouse_id=eq.${whId}&type_code=eq.${savedTypeCode}`)
+  if (tcfg) {
+    savedTypeAutoFill = tcfg.auto_fill
+    await cleanupOrders(whId)
+    await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.${savedTypeCode}`,
+      { auto_fill: false, updated_at: nowIso() })
+    const typeOff = await runAuto()
+    check('22f. Loại kho tắt riêng → mã thuộc loại đó KHÔNG được máy ra lệnh dù KHO đang bật',
+      typeOff.s === 200 && !(await autoLines()).some(l => l.material_id === mat.id && l.status === 'PENDING'),
+      `created=${typeOff.j?.data?.created}`)
+    await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.${savedTypeCode}`,
+      { auto_fill: savedTypeAutoFill, updated_at: nowIso() })
+    savedTypeAutoFill = undefined
+  } else {
+    savedTypeCode = null
+    check('22f. Loại kho tắt riêng → mã thuộc loại đó KHÔNG được máy ra lệnh dù KHO đang bật',
+      true, 'kho fixture chưa khai dòng cấu hình loại — bỏ qua (không có gì để tắt)')
+  }
+
+  // 22g. HẾT NHU CẦU (đơn huỷ / đổi ngày) ⇒ lệnh máy đặt mà CHƯA AI ĐỤNG phải tự thu hồi —
+  // không thì có người đi hạ pallet không ai cần VÀ chiếm mất ô nhặt lẻ.
+  await cleanupOrders(whId)
+  await runAuto()
+  const born = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING').length
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: 0, updated_at: nowIso() })
+  const recall = await runAuto()
+  const stillOpen = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING').length
+  check('22g. Nhu cầu về 0 → thu hồi dòng máy đặt chưa ai đụng, không để lệnh ma',
+    born > 0 && Number(recall.j?.data?.recalled ?? 0) >= born && stillOpen === 0,
+    `đặt=${born} thu hồi=${recall.j?.data?.recalled} còn treo=${stillOpen}`)
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: LOOSE, updated_at: nowIso() })
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup(WH)
   const residue = (await restAll('InventoryEntry', `select=id&pallet_code=like.${TAG}-*`)).length
     + (await restAll('Location', `select=id&location_code=like.${TAG}-*`)).length
     + (WH ? (await restAll('FillOrder', `select=id&warehouse_id=eq.${WH}&target_date=eq.${DAY}`)).length : 0)
+    + (created.gdo ? (await restAll('wms_tasks', `select=id&gdo_id=eq.${created.gdo}`)).length : 0)
   console.log(`residue=${residue}`)
 }
 

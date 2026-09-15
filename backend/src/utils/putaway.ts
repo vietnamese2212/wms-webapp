@@ -175,6 +175,9 @@ export function applyPutawayBody(
       return 'Tầng cần xe nâng hạ phải là số nguyên 1–50'
     target.lower_from_level = n
   }
+  // Tự ra lệnh fill (15/09) — cùng validator cho cả 2 tầng; null ở tầng LOẠI = "theo kho"
+  // đã được `applyWhTypeConfigBody` xử trước khi gọi vào đây.
+  if (body.auto_fill !== undefined) target.auto_fill = Boolean(body.auto_fill)
   return null
 }
 
@@ -588,6 +591,7 @@ export const WH_TYPE_CFG_COLS = [
   'putaway_same_mat_date_pref', 'putaway_fallback',
   'loose_mode', 'loose_max_cartons',   // nhặt lẻ tự sinh 2 tầng (24/08) — validate ở applyPutawayBody
   'work_mode', 'lower_from_level',     // cách làm việc 2 tầng (10/09, Directed Work 1c) — xem resolveWorkMode
+  'auto_fill',                         // tự ra lệnh fill hàng nhặt lẻ (15/09) — xem resolveAutoFill
 ] as const
 export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
 
@@ -677,6 +681,21 @@ export function resolveWorkMode(
     lowerFromLevel: Number.isFinite(lvl) && lvl >= 1 && lvl <= 50 ? Math.trunc(lvl) : LOWER_FROM_LEVEL_DEFAULT,
     source:         overridden ? 'TYPE' : 'WAREHOUSE',
   }
+}
+
+// ─── TỰ RA LỆNH FILL 2 tầng (15/09) ────────────────────────────────────────────────────────────
+// Máy tự đặt lệnh hạ hàng xuống VỊ TRÍ NHẶT LẺ cho ngày xuất hôm nay, KHÔNG gán ai. Cùng đường ghép
+// tầng với rotation/work_mode — đừng tra thẳng `wh.auto_fill` ở controller, loại kho sẽ bị bỏ qua.
+export interface AutoFillConfig { enabled: boolean; source: 'WAREHOUSE' | 'TYPE' }
+
+export function resolveAutoFill(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): AutoFillConfig {
+  const row = typeRowOf(typeRows, category)
+  const m = mergedConfig(wh, row)
+  return { enabled: m.auto_fill === true, source: !!row && row.auto_fill != null ? 'TYPE' : 'WAREHOUSE' }
 }
 
 export function resolvePutawayRules(

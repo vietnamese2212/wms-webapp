@@ -236,11 +236,12 @@ export async function drainReplanQueue(whId: string, actor = 'hệ thống — t
 
 async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {}): Promise<PlanResult> {
   const { data: gdoRow } = await supabase.from('GroupDeliveryOrder')
-    .select('id, warehouse_id, status, started_at, dock_location_id, warehouse:Warehouse(id,inventory_mode,work_mode,lower_from_level,rotation_principle,rotation_required)')
+    .select('id, warehouse_id, status, started_at, delivery_date, dock_location_id, warehouse:Warehouse(id,inventory_mode,work_mode,lower_from_level,rotation_principle,rotation_required)')
     .eq('id', gdoId).maybeSingle()
   if (!gdoRow) return EMPTY
   const gdo = gdoRow as unknown as {
-    id: string; warehouse_id: string | null; status: string; started_at: string | null; dock_location_id: string | null
+    id: string; warehouse_id: string | null; status: string; started_at: string | null
+    delivery_date: string | null; dock_location_id: string | null
     warehouse: Record<string, unknown> | null
   }
   const whId = gdo.warehouse_id
@@ -407,6 +408,26 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
   // ── Vị trí NHẶT LẺ đủ điều kiện (đích của việc LOOSE_FEED) ───────────────────────────────────
   const pickFaces = locs.filter(l => l.kind === 'STORAGE' && l.is_pick_face === true)
 
+  // ⚠️ HAI ĐƯỜNG FILL PHẢI BIẾT NHAU (15/09). Lệnh fill đang treo cũng là "hàng sắp xuống ô nhặt lẻ"
+  // — máy tự ra lệnh (services/autoFill.ts) đặt nó TRƯỚC lúc xe vào cửa, nên tới đây mà không đếm thì
+  // chuyến sinh thêm một việc LOOSE_FEED cho ĐÚNG nhu cầu đó ⇒ cùng một mã bị hạ hai lần. Chưa nổ
+  // suốt 6 tuần chỉ vì chưa ai ra lệnh fill nào (đo 15/09: 0 lệnh / 9 việc LOOSE_FEED).
+  const fillPending = new Map<string, number>()
+  const gdoDay = (gdo.delivery_date ?? '').slice(0, 10)
+  if (gdoDay && needs.some(n => n.loose > 0)) {
+    const { data: ft } = await supabase.from('FillTask')
+      .select('material_id, qty_base, qty_done_base')
+      .eq('warehouse_id', whId).eq('status', 'PENDING').eq('target_date', gdoDay)
+    for (const f of ((ft ?? []) as { material_id: string | null; qty_base: number; qty_done_base: number | null }[])) {
+      if (!f.material_id) continue
+      const remain = Math.max(0, Number(f.qty_base) - Number(f.qty_done_base ?? 0))
+      fillPending.set(f.material_id, (fillPending.get(f.material_id) ?? 0) + remain)
+    }
+  }
+  // Phần đã có lệnh fill lo chỉ được tính MỘT LẦN cho cả chuyến — hai dòng cùng mã (hai NPP) mà mỗi
+  // dòng tự trừ trọn phần đó là bỏ sót việc thật.
+  const fillUsed = new Map<string, number>()
+
   // ── Chia việc ────────────────────────────────────────────────────────────────────────────────
   const nowT = now()
   type NewTask = Record<string, unknown> & { from_location_id: string | null }
@@ -479,7 +500,13 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
     const bestKey = pool.length ? keyOf.get(pool[0].id) ?? null : null
     const onPickFace = (c: Cand) => locById.get(c.location_id ?? '')?.is_pick_face === true
       && (!rot.required || (keyOf.get(c.id) ?? null) === bestKey)
-    const looseOnHand = n.loose > 0 ? pool.filter(onPickFace).reduce((s, c) => s + freeOf(c), 0) : 0
+    const atPickFace = n.loose > 0 ? pool.filter(onPickFace).reduce((s, c) => s + freeOf(c), 0) : 0
+    // Phần đã có LỆNH FILL treo lo = coi như đã có người đi hạ, đừng đặt việc thứ hai cho cùng nhu cầu
+    const matKey = it.material_id ?? ''
+    const fillLeft = Math.max(0, (fillPending.get(matKey) ?? 0) - (fillUsed.get(matKey) ?? 0))
+    const fillTake = n.loose > 0 ? Math.min(fillLeft, Math.max(0, n.loose - atPickFace)) : 0
+    if (fillTake > 0) fillUsed.set(matKey, (fillUsed.get(matKey) ?? 0) + fillTake)
+    const looseOnHand = atPickFace + fillTake
     let looseLeft = Math.max(0, n.loose - looseOnHand)
 
     // Phần lẻ ĐÃ NẰM SẴN ở vị trí nhặt lẻ = KHÔNG có việc gì để giao ⇒ trừ THẲNG khỏi nhu cầu.

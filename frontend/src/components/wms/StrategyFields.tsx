@@ -37,6 +37,9 @@ export interface StrategyValue {
   // (POSM soạn full trước) · OFF = không nhặt lẻ (ép 0 cả số tay upload cũ). Trần chỉ áp REMAINDER.
   loose_mode:                 string | null
   loose_max_cartons:          number | null
+  // TỰ RA LỆNH FILL (15/09): máy tự đặt lệnh hạ hàng xuống VỊ TRÍ NHẶT LẺ cho ngày xuất hôm nay,
+  // KHÔNG gán ai. Mặc định TẮT — tự ra lệnh là đổi hành vi, không tự bật hộ kho nào.
+  auto_fill:                  boolean | null
   // CHỈ DẪN CÔNG VIỆC (Directed Work 1c, 10/09): Hướng dẫn = Bắt đầu chuyến SINH VIỆC lấy hàng có
   // thứ tự cho 3 vai. Không có ô này trong app thì cả tính năng không bật được — đúng lỗi 10/09.
   work_mode:                  string | null
@@ -49,7 +52,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
   putaway_block_full: null, putaway_single_ncc: null,
   putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
-  loose_mode: null, loose_max_cartons: null,
+  loose_mode: null, loose_max_cartons: null, auto_fill: null,
   work_mode: null, lower_from_level: null,
 }
 
@@ -59,7 +62,7 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   putaway_block_qa_hold: false, putaway_block_full: false, putaway_single_ncc: false,
   putaway_enforced: [], putaway_enforced_off: null,
   putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
-  loose_mode: 'REMAINDER', loose_max_cartons: null,
+  loose_mode: 'REMAINDER', loose_max_cartons: null, auto_fill: false,
   work_mode: 'MANUAL', lower_from_level: 2,
 }
 
@@ -214,7 +217,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
       </SettingsGroup>
 
       {/* ───────── XUẤT — Nhặt lẻ tự sinh (24/08) ───────── */}
-      <SettingsGroup title={<>XUẤT — Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons)}</>}
+      <SettingsGroup title={<>XUẤT — Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons ?? value.auto_fill)}</>}
         tip={<>
           <b>Không nhặt lẻ</b> ép về 0 kể cả cột "Nhặt lẻ" ghi tay trong file upload kiểu cũ.
           Mã không khai quy cách thùng (CÁI/KG…): chế độ Phần lẻ luôn ra 0 — muốn nhặt lẻ loại đó
@@ -243,6 +246,15 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
                 className="h-7 w-24 text-xs text-right" />
             } />
         )}
+        <SettingRow label={<>Tự ra lệnh fill hàng{own(value.auto_fill)}</>}
+          desc={<>Máy tự đặt lệnh hạ hàng xuống <b>vị trí nhặt lẻ</b> cho ngày xuất <b>hôm nay</b>, <b>không gán ai</b> — lệnh hiện ở <b>Việc cần làm → Hộp việc → Việc chung của kho</b>, ai rảnh thì nhận. Tắt = phải vào trang <b>Fill hàng</b> bấm ra lệnh như hiện nay.</>}
+          tip={<>
+            Chỉ chạy ở kho <b>đã khai vị trí nhặt lẻ</b>. Dòng đơn <b>chưa khai quy định date</b> thì
+            máy KHÔNG tự chọn lô hộ (chưa chốt thì chưa được lấy) — khai xong lệnh tự có.
+            Nhu cầu hết (đơn huỷ / đổi ngày / hàng đã đủ đúng lô) thì lệnh máy đặt mà <b>chưa ai đụng</b> tự thu hồi.
+          </>}
+          htmlFor={isType ? undefined : `${idPrefix}-autofill`}
+          control={boolCtl('auto_fill', `${idPrefix}-autofill`)} />
       </SettingsGroup>
 
       {/* ───────── XUẤT — Chỉ dẫn công việc (Directed Work 1c, 10/09) ───────── */}

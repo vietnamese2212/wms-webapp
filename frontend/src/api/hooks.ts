@@ -843,6 +843,7 @@ export interface WhTypeConfig {
   // Nhặt lẻ tự sinh 2 tầng (24/08) — null = theo mặc định kho
   loose_mode?:                 string | null
   loose_max_cartons?:          number | null
+  auto_fill?:                  boolean | null   // tự ra lệnh fill (15/09) — null = theo kho
   work_mode?:                  string | null
   lower_from_level?:           number | null
 }
@@ -5180,6 +5181,7 @@ export interface FillTaskRow {
 export interface FillOrderRow {
   id: string; order_code: string; warehouse_id: string; target_date: string
   status: FillTaskStatus; created_by: string | null; created_at: string
+  auto_created?: boolean | null            // lệnh do HỆ THỐNG tự đặt (15/09), không phải người bấm
   lines_n: number; pending_lines: number; done_lines: number; cancelled_lines: number
   pallets_req: number; pallets_done: number
   qty_req_entry: number; qty_done_entry: number

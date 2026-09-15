@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-14T06:46:59.938Z · 96 bảng/view · 161 hàm · 0 enum
+// Sinh lúc 2026-09-15T04:23:46.793Z · 96 bảng/view · 161 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -342,6 +342,7 @@ export type Database = {
           created_by: string | null
           created_at: string
           updated_at: string
+          auto_created: boolean
         }
         Insert: {
           id: string
@@ -352,6 +353,7 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          auto_created?: boolean
         }
         Update: {
           id?: string
@@ -362,6 +364,7 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          auto_created?: boolean
         }
         Relationships: []
       }
@@ -2340,6 +2343,7 @@ export type Database = {
           date_rule_policy: string
           separate_lowering_forklift: boolean
           cross_trip_pick_radius: number
+          auto_fill: boolean
         }
         Insert: {
           id: string
@@ -2383,6 +2387,7 @@ export type Database = {
           date_rule_policy?: string
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
+          auto_fill?: boolean
         }
         Update: {
           id?: string
@@ -2426,6 +2431,7 @@ export type Database = {
           date_rule_policy?: string
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
+          auto_fill?: boolean
         }
         Relationships: []
       }
@@ -4224,6 +4230,7 @@ export type Database = {
           putaway_enforced_off: string[] | null
           work_mode: string | null
           lower_from_level: number | null
+          auto_fill: boolean | null
         }
         Insert: {
           id: string
@@ -4252,6 +4259,7 @@ export type Database = {
           putaway_enforced_off?: string[] | null
           work_mode?: string | null
           lower_from_level?: number | null
+          auto_fill?: boolean | null
         }
         Update: {
           id?: string
@@ -4280,6 +4288,7 @@ export type Database = {
           putaway_enforced_off?: string[] | null
           work_mode?: string | null
           lower_from_level?: number | null
+          auto_fill?: boolean | null
         }
         Relationships: []
       }

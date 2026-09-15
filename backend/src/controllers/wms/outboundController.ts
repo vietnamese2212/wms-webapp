@@ -37,6 +37,7 @@ import {
 } from '../../services/directedTasks'
 import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
 import { hasPickFace, looseFillMessage, pickFaceFirst } from '../../services/loosePickFace'
+import { autoFillSafe } from '../../services/autoFill'
 import {
   loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
   type AutoApplied, type PolicyCtx,
@@ -6926,6 +6927,12 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     } else if (warehouse_id) {
       effectiveWh = [warehouse_id]
     }
+
+    // TỰ RA LỆNH FILL (15/09) — quét lười theo traffic, throttle 10'/instance. Đặt ở ĐÂY chứ không
+    // chỉ ở trang Việc cần làm: trang đó chỉ có nghĩa với kho Hướng dẫn, mà kho nhiều ô nhặt lẻ nhất
+    // (Bàu Bàng, 25/28 ô) đang chạy THỦ CÔNG ⇒ móc một chỗ là bỏ sót đúng kho cần nhất. Chỉ chạy khi
+    // người xem đang đứng ở MỘT kho cụ thể — lọc rỗng là "mọi kho trong phạm vi", không rõ kho nào.
+    if (warehouse_id && effectiveWh?.length === 1) await autoFillSafe(warehouse_id)
 
     // TRANG = CHUYẾN XE, chọn trong RPC `loose_picking_page` (migration 20260728_loose_picking_paged_rpc.sql).
     // Đường cũ nạp HẾT chuyến trong khoảng ngày rồi mới lọc `loose_picking > 0` ở tầng thứ ba —

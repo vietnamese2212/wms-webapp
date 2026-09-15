@@ -326,7 +326,10 @@ export async function getFillDemand(req: Request, res: Response) {
     // Bước tính "đúng lô" kéo tồn của các mã đang cần ⇒ lúc DB bận có thể chạm trần câu lệnh.
     // Đó là QUÁ TẢI, không phải lỗi lập trình: trả 503 kèm hướng dẫn (và không thổi cờ "lỗi BE").
     if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
-    console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e))
+    // Câu lỗi THẬT, không `String(e)`: đối tượng lỗi Supabase in ra thành "[object Object]".
+    console.error(e)
+    return fail(res, 500, 'SERVER_ERROR', e instanceof Error ? e.message
+      : String((e as { message?: string })?.message ?? 'Lỗi không rõ'))
   }
 }
 

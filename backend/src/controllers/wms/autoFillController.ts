@@ -12,8 +12,7 @@
  * vào đó là vòng import khép kín ngay tại lúc nạp module.
  */
 import { NextFunction, Request, Response } from 'express'
-import { ok, fail } from '../../utils/response'
-import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { ok, fail, type PgLikeError } from '../../utils/response'
 import { isDay } from '../../utils/dates'
 import { db } from '../../lib/supabase'
 import { autoFillDay, drainFillQueue, leaseWarehouse, releaseWarehouse, vnToday } from '../../services/autoFill'
@@ -57,10 +56,12 @@ export async function runAutoFill(req: Request, res: Response) {
     const r = await autoFillDay(warehouse_id, date || vnToday())
     return ok(res, r)
   } catch (e) {
-    // Bước tính nhu cầu kéo tồn của mọi mã đang cần ⇒ lúc DB bận có thể chạm trần câu lệnh. Đó là
-    // QUÁ TẢI, không phải lỗi lập trình — 503 kèm hướng dẫn, và không thổi cờ cảnh báo "lỗi BE".
-    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
-    return fail(res, 500, 'SERVER_ERROR', String(e))
+    // TRUYỀN CẢ ĐỐI TƯỢNG LỖI (luật 07/09) — `fail` tự dịch: quá hạn truy vấn ⇒ 503 kèm hướng dẫn
+    // (quá tải, không thổi cờ "lỗi BE"), mã Postgres ⇒ 4xx đúng nghĩa, còn lại ⇒ 500 kèm câu lỗi
+    // THẬT. Bản cũ `String(e)` biến đối tượng lỗi Supabase thành chuỗi "[object Object]" — đo trên
+    // staging 15/09: đúng một dòng `error_logs` như vậy, digest dựng được cờ đỏ mà không ai lần ra
+    // nổi hỏng ở đâu (chính lớp lỗi "5xx không nói rõ chỗ" đã chốt 21/08).
+    return fail(res, e as PgLikeError)
   } finally {
     if (leasedWh) await releaseWarehouse(leasedWh)
   }

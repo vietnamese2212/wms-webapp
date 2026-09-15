@@ -385,7 +385,10 @@ try {
   check('9d. Có VẾT QUÉT (FillTaskScan) đúng tem đúng SL', scans9.length === 1
     && scans9[0].entry_id === pA.id && Number(scans9[0].qty_base) === 60,
     `scans=${scans9.length}`)
-  check('9e. Lệnh 1-dòng rollup DONE khi dòng xong', order1Row?.status === 'DONE', `order=${order1Row?.status}`)
+  // 15/09 — LỆNH LÀ SỔ CỦA CẢ NGÀY: hạ xong dòng cuối KHÔNG đóng lệnh. Tự đóng thì 10h sáng đóng,
+  // 11h có đơn mới là phải mở lại một chứng từ đã đóng. Đóng sổ là việc của 'Chốt ngày'.
+  check('9e. Hạ xong dòng cuối, lệnh của NGÀY vẫn ĐANG MỞ (chỉ chốt ngày mới đóng)',
+    order1Row?.status === 'PENDING', `order=${order1Row?.status}`)
 
   // ── 10. Quét lại pallet đã hạ ─────────────────────────────────────────────
   const scanAgain = await scan(pA.code, { commit: true })
@@ -408,7 +411,8 @@ try {
     `treo ${dBefore.row?.pending_base} → ${dAfter.row?.pending_base} (giảm ${pendDrop}, kỳ vọng ${lineB.qty_base})`)
   check('11b. Sau khi hủy, phép trừ vẫn khớp (thiếu = cần − có − treo, kẹp sàn 0)',
     Number(dAfter.row?.short_base) === shortExp, `thiếu=${dAfter.row?.short_base} kỳ vọng=${shortExp}`)
-  check('11c. Lệnh 1-dòng rollup CANCELLED khi dòng cuối bị hủy', orderB?.status === 'CANCELLED',
+  check('11c. Hủy dòng cuối, lệnh của NGÀY vẫn ĐANG MỞ (đơn phát sinh sau còn vào được sổ này)',
+    orderB?.status === 'PENDING',
     `order=${orderB?.status}`)
 
   // ── 12. ĐUA QUÉT: 2 người commit CÙNG TEM cùng lúc → đúng 1 ăn ────────────
@@ -426,11 +430,21 @@ try {
   await api(`/wms/fill/tasks/${line12.id}`, 'DELETE')   // dọn dòng 2-pallet còn treo
 
   // ── 13. Ô tổng toàn cảnh + ngữ nghĩa tham số ──────────────────────────────
+  // 15/09: lệnh KHÔNG còn tự chuyển CANCELLED khi dòng cuối bị hủy (nó là sổ của cả ngày), nên
+  // dựng thẳng một lệnh đã hủy làm mồi — phép kiểm này đo Ô TỔNG có đếm ngoài bộ lọc hay không,
+  // không đo cách lệnh trở thành đã-hủy.
+  const baitId = randomUUID()
+  await restWrite('FillOrder', 'POST', null, {
+    id: baitId, order_code: `QAFILL-CXL-${Date.now() % 1000000}`, warehouse_id: whId,
+    target_date: DAY, status: 'CANCELLED', created_by: 'QA', created_at: nowIso(), updated_at: nowIso(),
+  }).catch(() => {})
   const band = await api(`/wms/fill/orders?warehouse_id=${whId}&status=PENDING`)
   check('13a. Ô tổng /fill/orders đếm toàn cảnh (lọc "Chờ làm" vẫn thấy số đã hủy)',
     band.s === 200 && Number(band.j?.data?.cancelled_n) >= 1
       && (band.j?.data?.rows ?? []).every(r => r.status === 'PENDING'),
     `rows=${band.j?.data?.rows?.length} đã hủy=${band.j?.data?.cancelled_n}`)
+  // Dọn con mồi NGAY: [21b] đếm "lệnh vỏ" trên MỌI lệnh của ngày, để lại là nó báo oan
+  await restWrite('FillOrder', 'DELETE', `id=eq.${baitId}`).catch(() => {})
   const rep = await api(`/wms/fill/report?warehouse_id=${whId}&date_from=${DAY}&date_to=${DAY}`)
   const repRows = rep.j?.data?.rows ?? []
   const doneTotal = repRows.reduce((s, r) => s + Number(r.done_n), 0)
@@ -703,6 +717,54 @@ try {
     born > 0 && Number(recall.j?.data?.recalled ?? 0) >= born && stillOpen === 0,
     `đặt=${born} thu hồi=${recall.j?.data?.recalled} còn treo=${stillOpen}`)
   await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: LOOSE, updated_at: nowIso() })
+
+  // ── 23. LỆNH THEO NGÀY (user chốt 15/09): 1 kho × 1 ngày × 1 loại kho = 1 lệnh ───────────────
+  // Đơn vị công việc là TRẠNG THÁI của một ngày, không phải SỰ KIỆN của một lần bấm.
+  await cleanupOrders(whId)
+  await runAuto()
+  const day1 = (await restAll('FillOrder',
+    `select=id,status,warehouse_type,assignee_id&warehouse_id=eq.${whId}&target_date=eq.${DAY}&status=eq.PENDING`))
+  check('23a. Một lệnh ĐANG MỞ cho mỗi (kho, ngày, loại kho) — không còn "mỗi lần bấm một lệnh"',
+    day1.length === 1 && day1[0].warehouse_type === mat.category,
+    `n=${day1.length} loại=${day1[0]?.warehouse_type} (mã thuộc ${mat.category})`)
+
+  // 23b. ĐƠN PHÁT SINH — lỗi mô hình cũ ĐÁNH RƠI: dòng cùng (mã, NSX) đang treo ⇒ INSERT đụng
+  // uq_filltask_pending_matdate ⇒ đường tự động nuốt 23505 ⇒ phần tăng KHÔNG BAO GIỜ thành lệnh
+  // (đường bấm tay thì cộng dồn). Đo thật trên bản cũ: nhu cầu 150→250 mà tổng dòng đứng im 150.
+  const sumOpen = async () => (await restAll('FillTask',
+    `select=qty_base&warehouse_id=eq.${whId}&target_date=eq.${DAY}&material_id=eq.${mat.id}&status=eq.PENDING`))
+    .reduce((s, t) => s + Number(t.qty_base), 0)
+  const before23 = await sumOpen()
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`,
+    { loose_picking: LOOSE + 80, updated_at: nowIso() })
+  const grow = await runAuto()
+  const after23 = await sumOpen()
+  check('23b. Đơn phát sinh → phần tăng được CỘNG vào dòng cùng NSX (không bị nuốt 23505)',
+    after23 > before23, `tổng ${before23}→${after23} · cộng=${grow.j?.data?.added} mới=${grow.j?.data?.created}`)
+  check('23c. …và vẫn ĐÚNG MỘT lệnh của ngày, không mở lệnh thứ hai',
+    (await restAll('FillOrder',
+      `select=id&warehouse_id=eq.${whId}&target_date=eq.${DAY}&status=eq.PENDING`)).length === 1)
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: LOOSE, updated_at: nowIso() })
+
+  // 23d. GÁN CẢ LỆNH = "nhận kế hoạch cả ngày" (user chốt) — dòng đang treo kéo theo NGAY
+  const emp23 = (await restAll('Employee', 'select=id,name&is_active=eq.true&limit=1'))[0]
+  const asg23 = await api(`/wms/fill/orders/${day1[0].id}`, 'PATCH', { assignee_id: emp23?.id })
+  const lines23 = await restAll('FillTask',
+    `select=assignee_id&fill_order_id=eq.${day1[0].id}&status=eq.PENDING`)
+  check('23d. Gán CẢ LỆNH → mọi dòng đang treo nhận người đó (kế hoạch cả ngày)',
+    asg23.s === 200 && lines23.length > 0 && lines23.every(l => l.assignee_id === emp23?.id),
+    `http=${asg23.s} dòng=${lines23.length}`)
+
+  // 23e. CHỐT NGÀY — lệnh chỉ đóng bằng hành vi này (rollup KHÔNG tự đóng nữa)
+  const close23 = await api(`/wms/fill/orders/${day1[0].id}/close`, 'POST', {})
+  const [closed23] = await restAll('FillOrder', `select=status,closed_at&id=eq.${day1[0].id}`)
+  const left23 = await restAll('FillTask',
+    `select=id,cancel_reason&fill_order_id=eq.${day1[0].id}&status=eq.PENDING`)
+  check('23e. Chốt ngày → lệnh ĐÃ CHỐT, dòng chưa làm bị huỷ kèm lý do (không để việc mồ côi)',
+    close23.s === 200 && closed23?.status === 'DONE' && !!closed23?.closed_at && left23.length === 0,
+    `http=${close23.s} status=${closed23?.status} còn_treo=${left23.length}`)
+  check('23f. Chốt lần hai → 409, không đóng chồng',
+    (await api(`/wms/fill/orders/${day1[0].id}/close`, 'POST', {})).s === 409)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup(WH)

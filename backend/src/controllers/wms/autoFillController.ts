@@ -12,6 +12,7 @@
  */
 import { Request, Response } from 'express'
 import { ok, fail } from '../../utils/response'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { autoFillDay, vnToday } from '../../services/autoFill'
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -28,5 +29,10 @@ export async function runAutoFill(req: Request, res: Response) {
 
     const r = await autoFillDay(warehouse_id, date || vnToday(), { force: true })
     return ok(res, r)
-  } catch (e) { return fail(res, 500, 'SERVER_ERROR', String(e)) }
+  } catch (e) {
+    // Bước tính nhu cầu kéo tồn của mọi mã đang cần ⇒ lúc DB bận có thể chạm trần câu lệnh. Đó là
+    // QUÁ TẢI, không phải lỗi lập trình — 503 kèm hướng dẫn, và không thổi cờ cảnh báo "lỗi BE".
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    return fail(res, 500, 'SERVER_ERROR', String(e))
+  }
 }

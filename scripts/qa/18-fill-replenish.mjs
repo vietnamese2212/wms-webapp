@@ -134,7 +134,10 @@ try {
     .reduce((s, e) => s + Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)), 0)
 
   await mkPallet('FILLER', 30, locFull.id, 1)              // lấp đầy vị trí FULL (max = 1)
-  const pOnPF = await mkPallet('ONPF', 40, locPF.id, 2)    // ĐANG Ở vị trí nhặt lẻ → là "đang có"
+  // Kho lẻ ĐẦY hàng nhưng là lô MỚI (2 ngày) — tái hiện đúng hiện trạng Ba Vì 15/09: tồn ở kho lẻ
+  // thừa thãi mà không có lô nào đúng thứ tự ⇒ vẫn PHẢI fill. Chỉ 45 là lô ĐÚNG (cùng NSX với pA).
+  const pOnPF = await mkPallet('ONPF', 200, locPF.id, 2)   // ĐANG Ở vị trí nhặt lẻ → là "đang có"
+  await mkPallet('ONPFOK', 45, locPF.id, 500)              // ở kho lẻ VÀ đúng lô ⇒ khỏi fill 45
   await mkPallet('BADSTOCK', 5, locBad.id, 3)              // locBad chứa sẵn mã (bẫy cụm 17)
   // NSX fixture phải GIÀ HƠN mọi tồn thật của mã (mã chọn ngẫu nhiên từ kho — staging dữ liệu
   // lớn có pallet thật NSX ~105 ngày ⇒ 90 ngày thua FEFO, check 2c đỏ oan dù app gợi ý ĐÚNG)
@@ -142,8 +145,10 @@ try {
   const pB = await mkPallet('B', 60, locRsv.id, 470)
   const pC = await mkPallet('C', 60, locRsv.id, 440)       // mới nhất (trong bộ fixture)
 
-  // Nhu cầu: thiếu kỳ vọng = LOOSE − (tồn thật + 40 pOnPF + 5 BADSTOCK) = 100
-  const LOOSE = realPF + 45 + 100
+  // Nhu cầu CỐ ĐỊNH: thiếu kỳ vọng = 145 − 45 (phần ĐÚNG LÔ ở kho lẻ) = 100.
+  // (Trước 15/09 công thức phải cộng `realPF` để triệt tiêu tồn thật ở kho lẻ; nay "có" chỉ tính
+  //  hàng ĐÚNG LÔ nên tồn thật lô khác không còn triệt tiêu được — và đó chính là điều phải kiểm.)
+  const LOOSE = 145
   const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
     id: randomUUID(), group_code: `${TAG}-GDO`, warehouse_id: whId, warehouse_type: mat.category,
     delivery_date: DAY, planned_date: DAY, status: 'PENDING',
@@ -197,14 +202,41 @@ try {
     `select=id&warehouse_id=eq.${whId}&is_pick_face=is.true`)).map(l => l.id))
   const oraclePF = pfRows.filter(e => pfLocIds.has(e.location_id))
     .reduce((s, e) => s + Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)), 0)
+  // ORACLE "ĐÚNG LÔ" — tự cài lại, KHÔNG gọi code app (15/09): "đang có ở kho lẻ" chỉ tính là CÓ khi
+  // đó là lô ĐÚNG THỨ TỰ; kho lẻ giữ lô mới trong khi lô cũ nằm trên kệ thì vẫn phải fill (nhặt ở đó
+  // là vi phạm chính luật luân chuyển kho đang chạy). Trước 15/09 phép kiểm này KHOÁ luật cũ lại.
+  const [matFull] = await restAll('Material', `select=shelf_life_days&id=eq.${mat.id}`)
+  const qaHoldQA = new Set((await restAll('QAStatus', 'select=id,code'))
+    .filter(q => String(q.code).toUpperCase() !== 'OK').map(q => q.id))
+  const okAtPickFace = async () => {
+    const es = await restAll('InventoryEntry',
+      `select=location_id,cartons_remaining,cartons_reserved,production_date,expiry_date,shelf_life_days,qa_status_id,status&material_id=eq.${mat.id}&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)
+    const live = es.filter(e => ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'].includes(e.status)
+      && !(e.qa_status_id && qaHoldQA.has(e.qa_status_id))
+      && Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)) > 0)
+    const keyOf = e => e.expiry_date ? Date.parse(e.expiry_date)
+      : (e.production_date && (e.shelf_life_days ?? matFull?.shelf_life_days)
+        ? Date.parse(e.production_date) + Number(e.shelf_life_days ?? matFull.shelf_life_days) * 864e5 : null)
+    const keyed = live.map(e => ({ ...e, k: keyOf(e) })).filter(e => e.k != null).sort((a, b) => a.k - b.k)
+    const best = keyed[0]?.k ?? null
+    return keyed.filter(e => pfLocIds.has(e.location_id) && e.k === best)
+      .reduce((s, e) => s + Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)), 0)
+  }
+  const ok1 = await okAtPickFace()
   const d1 = await demandOf()
   check('1a. "Cần nhặt lẻ" khớp oracle', Number(d1.row?.demand_base) === LOOSE,
     `api=${d1.row?.demand_base} oracle=${LOOSE}`)
   check('1b. "Đang có ở vị trí nhặt lẻ" khớp oracle', Number(d1.row?.pick_face_base) === oraclePF,
     `api=${d1.row?.pick_face_base} oracle=${oraclePF}`)
-  check('1c. "Thiếu" = cần − đang có − đang có lệnh',
-    Number(d1.row?.short_base) === Math.max(0, LOOSE - oraclePF - Number(d1.row?.pending_base ?? 0)),
-    `thiếu=${d1.row?.short_base}`)
+  check('1c. "Thiếu" = cần − ĐÚNG LÔ ở kho lẻ − đang có lệnh',
+    Number(d1.row?.short_base) === Math.max(0, LOOSE - ok1 - Number(d1.row?.pending_base ?? 0))
+      && Number(d1.row?.pick_face_ok_base) === ok1,
+    `thiếu=${d1.row?.short_base} · đúng lô api=${d1.row?.pick_face_ok_base} oracle=${ok1} (tổng ở kho lẻ ${oraclePF})`)
+  // Ca SINH RA bản vá: kho lẻ ĐẦY hàng nhưng toàn lô mới ⇒ app từng báo "thiếu 0" và KHÔNG ra lệnh
+  // fill được, trong khi bảng "Theo vị trí" lại đang đòi fill (đo Ba Vì: 8/8 mã, kho lẻ 45.259 hộp).
+  check('1d. Kho lẻ có hàng nhưng SAI LÔ ⇒ vẫn báo thiếu VÀ vẫn có pallet để hạ (không phải ngõ cụt)',
+    ok1 < oraclePF ? (Number(d1.row?.short_base) > 0 && (d1.row?.suggestions ?? []).length > 0) : true,
+    `đúng lô=${ok1}/${oraclePF} thiếu=${d1.row?.short_base} gợi ý=${(d1.row?.suggestions ?? []).length} pallet`)
 
   // ── 2. Gợi ý FEFO + vừa đủ ────────────────────────────────────────────────
   const sug = d1.row?.suggestions ?? []
@@ -317,7 +349,9 @@ try {
   const del = await api(`/wms/fill/tasks/${lineB.id}`, 'DELETE')
   const dAfter = await demandOf()
   const pendDrop = Number(dBefore.row?.pending_base) - Number(dAfter.row?.pending_base)
-  const shortExp = Math.max(0, Number(dAfter.row?.demand_base) - Number(dAfter.row?.pick_face_base) - Number(dAfter.row?.pending_base))
+  // "có" ở đây là có ĐÚNG LÔ (15/09) — dùng lại đúng con số app trả để phép trừ vẫn kiểm được,
+  // còn ĐỊNH NGHĨA của con số đó do [1c]/[1d] gác bằng oracle tự cài.
+  const shortExp = Math.max(0, Number(dAfter.row?.demand_base) - Number(dAfter.row?.pick_face_ok_base) - Number(dAfter.row?.pending_base))
   const [orderB] = await restAll('FillOrder', `select=status&id=eq.${lineB.fill_order_id}`)
   // Kỳ vọng = qty THẬT của dòng lúc hủy (đua cụm 5 đã cộng dồn thành 120 — đừng hard-code 60)
   check('11a. Hủy dòng → NHẢ đúng lượng đang giữ', del.s === 200 && pendDrop === Number(lineB.qty_base),

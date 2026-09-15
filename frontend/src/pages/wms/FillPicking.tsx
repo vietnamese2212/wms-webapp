@@ -468,9 +468,17 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
                     {qtyLabel(Number(r.demand_base), r)}
                   </TableCell>
+                  {/* "Có ở kho lẻ" mà KHÔNG phải lô đúng thứ tự thì nhặt ở đó là vi phạm luật luân
+                      chuyển của chính kho ⇒ phải nói ra, nếu không người đọc thấy tồn to đùng mà
+                      máy báo "thiếu" sẽ tưởng máy sai (đo Ba Vì 15/09: có 45.259, đúng lô 0). */}
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
                     {qtyLabel(Number(r.pick_face_base), r)}
                     <span className="text-slate-400"> · {r.pick_face_pallets} pl</span>
+                    {r.pick_face_ok_base != null && Number(r.pick_face_ok_base) < Number(r.pick_face_base) && (
+                      <div className="text-[9px] text-amber-700" title={`Chỉ ${qtyLabel(Number(r.pick_face_ok_base), r)} ở vị trí nhặt lẻ là lô ĐÚNG THỨ TỰ${r.lot_date ? ` (${r.lot_date})` : ''} — phần còn lại là lô khác, nhặt ở đó là lấy sai thứ tự.`}>
+                        đúng lô: {qtyLabel(Number(r.pick_face_ok_base), r)}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
                     {Number(r.pending_base) > 0

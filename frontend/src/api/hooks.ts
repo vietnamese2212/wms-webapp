@@ -5138,6 +5138,9 @@ export interface FillDemandRow {
   category: string | null
   base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   demand_base: number; pick_face_base: number; pick_face_pallets: number
+  // Trong số đang có ở kho lẻ, bao nhiêu là ĐÚNG LÔ theo nguyên tắc luân chuyển (15/09) — `short_base`
+  // tính theo số này, vì nhặt lẻ lấy lô khác là vi phạm chính luật kho đang chạy.
+  pick_face_ok_base?: number; lot_date?: string | null
   pending_base: number; pending_n: number; short_base: number
   to_location: { id: string; code: string } | null
   suggestions: FillSuggestion[]

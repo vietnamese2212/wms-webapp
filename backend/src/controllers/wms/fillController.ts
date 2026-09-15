@@ -8,6 +8,11 @@ import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 import { computePctDate } from '../../utils/shelfLife'
 import { notifyEmployees } from '../../services/pushService'
+import { rotationConfigOf } from './outboundController'
+import { availableOf, isPickEligible, rotationSortKey, type RotationEntry } from '../../utils/rotation'
+import { type MaterialShelfInfo } from '../../utils/shelfLife'
+import { qaHoldIds } from '../../services/qaStatus'
+import { fetchAllByIdChunks } from '../../utils/pagination'
 
 // ─── FILL HÀNG PHỤC VỤ NHẶT LẺ (v3 — user chốt 05/08) ───────────────────────
 // Nhặt lẻ lấy hàng bằng TAY ⇒ hàng phải nằm ở "vị trí nhặt lẻ" (cờ Location.is_pick_face).
@@ -70,6 +75,95 @@ const mayFill = (req: Request, action: string): boolean => {
   return isAdmin || (perms.fill ?? []).includes(action)
 }
 
+// ─── "CÓ SẴN Ở KHO LẺ" PHẢI LÀ CÓ ĐÚNG LÔ (15/09, user chốt cùng luật nhặt lẻ) ────────────────
+// RPC `fill_demand` đếm SỐ LƯỢNG ở vị trí nhặt lẻ, không hỏi "có phải lô đúng thứ tự không" ⇒ kho
+// lẻ giữ lô MỚI trong khi lô cũ nằm trên kệ thì màn này báo "thiếu 0" và KHÔNG ra lệnh fill được,
+// trong khi bảng "Theo vị trí" lại đang đòi fill (đo Ba Vì 15/09: 8/8 mã "đúng lô = 0" mà kho lẻ
+// có tới 45.259 hộp). Đây là cửa thứ BA cùng trả lời một câu hỏi — lớp lỗi C19.
+// Tính LẠI Ở TS, KHÔNG chép luật luân chuyển xuống SQL: `rotationSuggestionsFor` đã gộp sẵn theo
+// (lô, vị trí) kèm cờ `is_pick_face`; "đúng lô" = cùng `rot_date` với gợi ý đầu (`pickFaceFirst`).
+// ⚠️ Phải tính lại CẢ "thiếu" LẪN "pallet đề xuất hạ": RPC chỉ dựng gợi ý cho mã có `short_base > 0`
+// (SQL), nên sửa mỗi con số thiếu sẽ ra màn hình "thiếu 1.068 mà không pallet nào để hạ" — bấm ra
+// lệnh cũng không được, tức vẫn đúng cái user hỏi. Tính ở TS còn gỡ được MỘT BẢN CHÉP TAY của luật
+// luân chuyển nằm trong SQL (`fefo_key`): thứ tự lấy hàng chỉ có một nguồn là `utils/rotation.ts`.
+const FILL_STATUSES = ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'] as const
+const MAX_SUGG = 40
+type FillSug = {
+  entry_id: string; pallet_code: string | null
+  from_location_id: string | null; from_location_code: string | null
+  avail: number; production_date: string | null; expiry_date: string | null
+}
+type FillDemandRow = {
+  material_id: string; demand_base: number; pending_base: number; short_base: number
+  pick_face_base: number; pick_face_ok_base?: number; lot_date?: string | null
+  suggestions?: FillSug[]
+}
+type FillDemandPayload = { rows?: FillDemandRow[]; pick_face_locations?: number } | null
+type FillEntry = RotationEntry & {
+  id: string; pallet_code: string | null; material_id: string; location_id: string | null; status: string
+  location: { location_code: string | null; warehouse_id: string | null; is_pick_face: boolean | null } | null
+  material: (MaterialShelfInfo & { category?: string | null }) | null
+}
+
+async function withLotCheck(payload: FillDemandPayload, warehouseId: string): Promise<FillDemandPayload> {
+  const rows = payload?.rows ?? []
+  // Kho chưa khai ô nhặt lẻ nào ⇒ không có luật này (không tự bật hộ ai)
+  if (!rows.length || !Number(payload?.pick_face_locations ?? 0)) return payload
+  const matIds = [...new Set(rows.map(r => r.material_id).filter(Boolean))]
+  const [ents, qaHold, rotCfg, busyRaw] = await Promise.all([
+    fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
+      .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, location:Location!inner(location_code, warehouse_id, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)')
+      .in('material_id', chunk).eq('location.warehouse_id', warehouseId)
+      .in('status', [...FILL_STATUSES]).gt('cartons_remaining', 0).order('id')) as unknown as Promise<FillEntry[]>,
+    qaHoldIds(),
+    rotationConfigOf([warehouseId]),
+    // Pallet đã nằm trong một dòng lệnh fill đang treo thì không đề xuất lần hai (giữ đúng luật RPC)
+    supabase.from('FillTask').select('entry_id').eq('warehouse_id', warehouseId).eq('status', 'PENDING'),
+  ])
+  const busy = new Set(((busyRaw.data ?? []) as { entry_id: string | null }[]).map(t => t.entry_id).filter(Boolean))
+  const byMat = new Map<string, FillEntry[]>()
+  for (const e of ents) byMat.set(e.material_id, [...(byMat.get(e.material_id) ?? []), e])
+
+  for (const r of rows) {
+    const pool = byMat.get(r.material_id) ?? []
+    const principle = rotCfg.of(warehouseId, pool[0]?.material?.category ?? null).principle
+    const keyOf = new Map(pool.map(e => [e.id, rotationSortKey(e, e.material, principle)]))
+    const sorted = [...pool].sort((a, b) => {
+      const ka = keyOf.get(a.id) ?? Infinity, kb = keyOf.get(b.id) ?? Infinity
+      if (ka !== kb) return ka - kb
+      return a.id.localeCompare(b.id)
+    })
+    // LÔ ĐÚNG THỨ TỰ = lô của pallet đứng đầu trong số LẤY ĐƯỢC (bỏ pallet QA giữ — pallet đó cửa
+    // quét xuất không cho lấy nên nó không định nghĩa được "lô phải lấy").
+    const bestKey = keyOf.get(sorted.find(e => isPickEligible(e, qaHold))?.id ?? '') ?? null
+    const ok = sorted
+      .filter(e => e.location?.is_pick_face === true && isPickEligible(e, qaHold) && (keyOf.get(e.id) ?? null) === bestKey)
+      .reduce((s, e) => s + availableOf(e), 0)
+    const short = Math.max(0, Number(r.demand_base ?? 0) - ok - Number(r.pending_base ?? 0))
+    r.pick_face_ok_base = ok
+    r.lot_date = bestKey == null ? null : new Date(bestKey).toISOString().slice(0, 10)
+    r.short_base = short
+
+    const sug: FillSug[] = []
+    let cum = 0
+    for (const e of sorted) {
+      if (cum >= short || sug.length >= MAX_SUGG) break
+      if (e.location?.is_pick_face === true || busy.has(e.id)) continue
+      const avail = availableOf(e)
+      if (avail <= 0) continue
+      sug.push({
+        entry_id: e.id, pallet_code: e.pallet_code,
+        from_location_id: e.location_id, from_location_code: e.location?.location_code ?? null,
+        avail, production_date: (e.production_date as string | null) ?? null,
+        expiry_date: (keyOf.get(e.id) != null ? new Date(keyOf.get(e.id)!).toISOString().slice(0, 10) : null),
+      })
+      cum += avail
+    }
+    r.suggestions = sug
+  }
+  return payload
+}
+
 // ─── GET /wms/fill/demand?warehouse_id&date ─────────────────────────────────
 export async function getFillDemand(req: Request, res: Response) {
   try {
@@ -88,7 +182,7 @@ export async function getFillDemand(req: Request, res: Response) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (fill hàng)')
       return fail(res, 500, 'DB_ERROR', error.message)
     }
-    return ok(res, data)
+    return ok(res, await withLotCheck(data as FillDemandPayload, warehouse_id))
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

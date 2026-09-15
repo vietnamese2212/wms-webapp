@@ -98,12 +98,19 @@ export default function FillOrderDetail() {
     const byMat = new Map(demand.rows.map(r => [r.material_id, r]))
     for (const l of lines) {
       if (l.status !== 'PENDING') continue
+      // Dòng do MÁY đặt thì bộ đối chiếu tự hạ/thu hồi ở lượt chạy kế — giục người hủy tay là đẩy họ
+      // làm việc máy đang làm, và hủy xong máy lại đặt lại. Chỉ nhắc với dòng NGƯỜI đặt (máy không đụng).
+      if ((l.created_by ?? '') === 'Hệ thống') continue
       const r = byMat.get(l.material_id)
       if (!r) { // fill_demand chỉ trả mã còn cần > 0 → vắng mặt = ngày xuất này hết nhu cầu mã đó
         m.set(l.id, 'Ngày xuất này không còn nhu cầu nhặt lẻ mã này (đơn đã giảm/hủy hoặc đổi ngày) — cân nhắc hủy dòng')
         continue
       }
-      const needLeft = Math.max(0, Number(r.demand_base) - Number(r.pick_face_base))
+      // 15/09 — ĐO CÙNG MỘT THƯỚC VỚI MÁY. Bản cũ trừ `pick_face_base` (mọi thứ đang ở ô lẻ) trong
+      // khi bộ đối chiếu trừ `pick_face_ok_base` (chỉ phần ĐÚNG LÔ) ⇒ dải vàng giục hủy đúng những
+      // dòng máy cố ý giữ, hủy xong 10 phút sau máy đặt lại — vòng luẩn quẩn không ai thắng.
+      const needLeft = Math.max(0, Number(r.demand_base)
+        - Number(r.pick_face_ok_base ?? r.pick_face_base) - Number(r.feed_pending_base ?? 0))
       if (Number(r.pending_base) > needLeft) {
         m.set(l.id, `Cần đã giảm — tổng đang treo (mọi lệnh) ${qtyLabel(Number(r.pending_base), l)}, chỉ còn thiếu ${qtyLabel(needLeft, l)} — cân nhắc hủy bớt`)
       }

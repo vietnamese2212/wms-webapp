@@ -5142,6 +5142,8 @@ export interface FillDemandRow {
   // Trong số đang có ở kho lẻ, bao nhiêu là ĐÚNG LÔ theo nguyên tắc luân chuyển (15/09) — `short_base`
   // tính theo số này, vì nhặt lẻ lấy lô khác là vi phạm chính luật kho đang chạy.
   pick_face_ok_base?: number; lot_date?: string | null
+  // Phần nhu cầu đã có việc LOOSE_FEED lo (tách riêng khỏi `pending_base` gộp cả dòng lệnh fill)
+  feed_pending_base?: number
   pending_base: number; pending_n: number; short_base: number
   to_location: { id: string; code: string } | null
   suggestions: FillSuggestion[]

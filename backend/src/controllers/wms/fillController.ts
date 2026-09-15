@@ -129,6 +129,9 @@ export type FillDemandRow = {
   material_id: string; demand_base: number
   pending_base: number; short_base: number
   pick_face_base: number; pick_face_ok_base?: number; lot_date?: string | null
+  // Phần nhu cầu đã có việc LOOSE_FEED lo — tách RIÊNG khỏi `pending_base` (gộp cả dòng FillTask)
+  // để bộ đối chiếu tính được "nhu cầu còn phải phủ bằng lệnh fill" mà không phải trừ ngược.
+  feed_pending_base?: number
   rule_unset?: boolean
   suggestions?: FillSug[]
 }
@@ -209,8 +212,10 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     const ok = sorted
       .filter(e => e.location?.is_pick_face === true && isPickEligible(e, qaHold) && (keyOf.get(e.id) ?? null) === bestKey)
       .reduce((s, e) => s + availableOf(e), 0)
-    const pending = Number(r.pending_base ?? 0) + (feedPending.get(r.material_id) ?? 0)
+    const feed = feedPending.get(r.material_id) ?? 0
+    const pending = Number(r.pending_base ?? 0) + feed
     const short = Math.max(0, Number(r.demand_base ?? 0) - ok - pending)
+    r.feed_pending_base = feed
     r.pick_face_ok_base = ok
     r.lot_date = bestKey == null ? null : new Date(bestKey).toISOString().slice(0, 10)
     r.pending_base = pending
@@ -244,6 +249,39 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
 // đường tự động gọi được mà không phải mở thêm một client DB thứ hai.
 export async function fillOrderRollup(orderId: string): Promise<void> {
   await supabase.rpc('fill_order_rollup', { p_order_id: orderId })
+}
+
+export interface DayOrder {
+  id: string; order_code: string; created?: boolean
+  assignee_id: string | null; assignee_name: string | null; assigned_by: string | null
+}
+
+/**
+ * LỆNH CỦA NGÀY — một lệnh ĐANG MỞ cho mỗi (kho, ngày xuất, loại kho); khoá `uq_fillorder_open` gác
+ * ở DB (user chốt 15/09: "1 ngày, 1 kho, 1 loại kho chỉ có 1 lệnh fill"). RPC `fill_order_ensure` tự
+ * đọc-lại-rồi-tạo dưới lock; ở đây chỉ lo sinh MÃ lệnh (unique riêng) và thử lại khi đụng mã.
+ *
+ * Đặt ở ĐÂY chứ không ở `services/autoFill`: service đó đã import file này, để hàm bên kia rồi import
+ * ngược là vòng khép kín ngay lúc nạp module.
+ */
+export async function ensureDayOrder(
+  warehouseId: string, day: string, type: string | null, auto: boolean, actor: string | null,
+): Promise<DayOrder | null> {
+  const prefix = 'F' + day.slice(2).replace(/-/g, '') + '-'
+  const t = now()
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { count } = await supabase.from('FillOrder')
+      .select('id', { count: 'exact', head: true }).like('order_code', `${prefix}%`)
+    const { data, error } = await supabase.rpc('fill_order_ensure', {
+      p_id: randomUUID(), p_warehouse_id: warehouseId, p_target_date: day, p_type: type,
+      p_order_code: prefix + String((count ?? 0) + 1 + attempt).padStart(2, '0'),
+      p_auto: auto, p_actor: actor, p_now: t,
+    })
+    if (error) throw error
+    if (data) return data as DayOrder
+    await new Promise(r => setTimeout(r, 80 + Math.random() * 200))
+  }
+  return null
 }
 
 /**
@@ -533,24 +571,29 @@ export async function createFillOrder(req: Request, res: Response) {
     }
     if (!rows.length) return res.status(201).json({ success: true, data: { created: 0, skipped } })
 
-    // Mã lệnh: F + yymmdd + '-' + số thứ tự trong ngày. Đua sinh số = retry với jitter trên
-    // unique index uq_fillorder_code (JS check không đỡ được 2 người bấm cùng mili-giây).
-    const prefix = 'F' + vnToday().slice(2).replace(/-/g, '') + '-'
-    let order: { id: string; order_code: string } | null = null
-    for (let attempt = 0; attempt < 5 && !order; attempt++) {
-      const { count } = await supabase.from('FillOrder')
-        .select('id', { count: 'exact', head: true }).like('order_code', `${prefix}%`)
-      const code = prefix + String((count ?? 0) + 1 + attempt).padStart(2, '0')
-      const { data: ins, error } = await supabase.from('FillOrder')
-        .insert({ id: randomUUID(), order_code: code, warehouse_id, target_date: day,
-                  status: 'PENDING', created_by: actor, created_at: t, updated_at: t })
-        .select('id, order_code').single()
-      if (!error && ins) { order = ins as { id: string; order_code: string }; break }
-      if ((error as { code?: string } | null)?.code !== '23505') throw error
-      await new Promise(r => setTimeout(r, 100 + Math.random() * 300))
+    // MỘT LỆNH CHO MỖI (kho, ngày, LOẠI KHO) — không còn "mỗi lần bấm một lệnh" (user chốt 15/09).
+    // Bấm tay giờ là THÊM VÀO lệnh của ngày, nên một mẻ trải nhiều Loại kho sẽ rơi vào nhiều lệnh.
+    const orderOf = new Map<string, DayOrder>()
+    for (const cat of new Set(rows.map(r => matMap.get(r.material_id as string)?.category ?? null))) {
+      const o = await ensureDayOrder(warehouse_id, day, cat, false, actor)
+      if (!o) return fail(res, 409, 'CONFLICT', 'Không mở được lệnh của ngày — thử lại giúp')
+      orderOf.set(cat ?? '', o)
     }
-    if (!order) return fail(res, 409, 'CONFLICT', 'Không sinh được mã lệnh — thử lại giúp')
-    for (const r of rows) r.fill_order_id = order.id
+    for (const r of rows) {
+      const o = orderOf.get(matMap.get(r.material_id as string)?.category ?? '')
+      if (o) r.fill_order_id = o.id
+    }
+    const order = orderOf.values().next().value as DayOrder
+
+    // "Giao cho ai" ở dialog nay gán CẢ LỆNH NGÀY — người đó nhận kế hoạch cả ngày, kể cả dòng máy
+    // thêm vào lúc 11h (user chốt 15/09). Dòng của mẻ này vẫn mang tên người đó như cũ.
+    if (asg) {
+      for (const o of orderOf.values()) {
+        await supabase.from('FillOrder').update({
+          assignee_id: asg.id, assignee_name: asg.name, assigned_by: actor, assigned_at: t, updated_at: t,
+        }).eq('id', o.id).eq('status', 'PENDING')
+      }
+    }
 
     // Ghi theo LÔ; đụng unique (mã+date này ĐANG có dòng treo) → rơi xuống từng dòng, và dòng
     // trùng thì CỘNG DỒN vào dòng treo (đơn phát sinh — user chốt 05/08) qua RPC nguyên tử
@@ -605,16 +648,20 @@ export async function createFillOrder(req: Request, res: Response) {
       added_qty: m.added_qty, added_pallets: m.added_pallets,
       order_code: m.fill_order_id ? codeOf.get(m.fill_order_id) ?? null : null,
     }))
-    if (!created) {   // lệnh rỗng thì đừng để lại vỏ (dòng cộng dồn nằm ở lệnh CŨ)
-      await supabase.from('FillOrder').delete().eq('id', order.id)
-      return res.status(201).json({ success: true, data: { created: 0, skipped, merged: mergedOut } })
+    // Lệnh VỪA MỞ trong lượt này mà rốt cuộc không nhận dòng nào (tất cả cộng dồn vào dòng cũ) thì
+    // đừng để lại vỏ. Lệnh ĐÃ CÓ TỪ TRƯỚC thì không đụng — đó là sổ của cả ngày, không phải của mẻ này.
+    for (const o of orderOf.values()) {
+      if (!o.created) continue
+      if (rows.some(r => r.fill_order_id === o.id)) continue
+      await supabase.from('FillOrder').delete().eq('id', o.id)
     }
+    if (!created) return res.status(201).json({ success: true, data: { created: 0, skipped, merged: mergedOut } })
     // Báo người được giao (nếu giao cho NGƯỜI KHÁC): ghi feed Cá nhân (nút chuông) + đổ chuông
     // theo cài đặt. Await để chắc xong trước khi serverless đóng, nhưng KHÔNG fail response.
     if (asg && asg.id !== selfId(req)) {
       await notifyEmployees([asg.id], 'ASSIGN', 'assign', {
         title: `Lệnh fill ${order.order_code}`,
-        body: `${actor ?? 'Quản lý'} giao bạn ${created} dòng hạ hàng nhặt lẻ — ngày xuất ${fmtDMY(day)}`,
+        body: `${actor ?? 'Quản lý'} giao bạn kế hoạch fill CẢ NGÀY ${fmtDMY(day)} — ${created} dòng hạ hàng nhặt lẻ`,
         url: `/wms/fill/orders/${order.id}`,
         tag: `fill-${order.id}`,
       })
@@ -725,8 +772,86 @@ export async function cancelFillOrder(req: Request, res: Response) {
       .update({ status: 'CANCELLED', cancel_reason: reason ?? 'Hủy cả lệnh', updated_at: now() })
       .eq('fill_order_id', order.id).eq('status', 'PENDING').select('id')
     if (error) throw error
-    await supabase.rpc('fill_order_rollup', { p_order_id: order.id })
+    // Lệnh của NGÀY không còn tự suy trạng thái từ dòng (nếu không, hạ xong dòng cuối lúc 10h là
+    // lệnh đóng, 11h có đơn mới lại phải mở lại một chứng từ đã đóng). Huỷ cả lệnh là hành vi CỦA
+    // NGƯỜI nên đặt trạng thái thẳng tay ở đây.
+    await supabase.from('FillOrder')
+      .update({ status: 'CANCELLED', closed_at: now(), closed_by: req.user?.name || null, updated_at: now() })
+      .eq('id', order.id).eq('status', 'PENDING')
     return ok(res, { cancelled: (cancelled ?? []).length })
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+}
+
+// ─── PATCH /wms/fill/orders/:id — GÁN NGƯỜI cho CẢ LỆNH NGÀY ────────────────
+/**
+ * "Lệnh fill có thể được vào gán người, và người đó sẽ nhận kế hoạch cả ngày" (user chốt 15/09).
+ * Gán ở cấp LỆNH chứ không phải từng dòng: dòng máy thêm vào lúc 11h tự kế thừa (xem
+ * `services/autoFill` → reconcileUp), nên người nhận lúc 7h không phải quay lại nhận lại.
+ * Dòng đang treo được kéo theo NGAY — trừ dòng đã giao đích danh người KHÁC (đó là chỉ định riêng).
+ */
+export async function assignFillOrder(req: Request, res: Response) {
+  try {
+    const { assignee_id } = req.body as { assignee_id?: string | null }
+    if (assignee_id === undefined) return fail(res, 400, 'INVALID_INPUT', 'Không có gì để sửa')
+    const { data: order } = await supabase.from('FillOrder')
+      .select('id, order_code, warehouse_id, target_date, status, assignee_id').eq('id', req.params.id).maybeSingle()
+    if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy lệnh fill')
+    if (!guardWarehouse(req, res, order.warehouse_id as string)) return
+    if (order.status !== 'PENDING') return fail(res, 409, 'NOT_PENDING', 'Lệnh đã chốt hoặc đã hủy — không gán được')
+
+    let asg: { id: string; name: string } | null = null
+    if (assignee_id) {
+      const { data: emp } = await supabase.from('Employee')
+        .select('id, name').eq('id', assignee_id).eq('is_active', true).maybeSingle()
+      if (!emp) return fail(res, 400, 'INVALID_INPUT', 'Nhân sự không tồn tại hoặc đã nghỉ')
+      asg = { id: emp.id as string, name: emp.name as string }
+    }
+    const t = now()
+    const actor = req.user?.name || null
+    await supabase.from('FillOrder').update({
+      assignee_id: asg?.id ?? null, assignee_name: asg?.name ?? null,
+      assigned_by: asg ? actor : null, assigned_at: asg ? t : null, updated_at: t,
+    }).eq('id', order.id).eq('status', 'PENDING')
+
+    // Kéo theo dòng đang treo CHƯA GÁN hoặc đang mang tên người giữ kế hoạch CŨ
+    const prev = order.assignee_id as string | null
+    let q = supabase.from('FillTask').update({
+      assignee_id: asg?.id ?? null, assignee_name: asg?.name ?? null,
+      assigned_by: asg ? actor : null, assigned_at: asg ? t : null, updated_at: t,
+    }).eq('fill_order_id', order.id).eq('status', 'PENDING')
+    q = prev ? q.or(`assignee_id.is.null,assignee_id.eq.${prev}`) : q.is('assignee_id', null)
+    const { data: moved } = await q.select('id')
+
+    if (asg && asg.id !== selfId(req)) {
+      await notifyEmployees([asg.id], 'ASSIGN', 'assign', {
+        title: `Kế hoạch fill ${order.order_code}`,
+        body: `${actor ?? 'Quản lý'} giao bạn kế hoạch fill CẢ NGÀY ${fmtDMY(String(order.target_date).slice(0, 10))}`,
+        url: `/wms/fill/orders/${order.id}`,
+        tag: `fill-${order.id}`,
+      })
+    }
+    return ok(res, { assignee_id: asg?.id ?? null, assignee_name: asg?.name ?? null, lines: (moved ?? []).length })
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+}
+
+// ─── POST /wms/fill/orders/:id/close — CHỐT NGÀY ────────────────────────────
+/**
+ * Lệnh của một ngày sống tới lúc được chốt. Không có cron nên đường "tự" là lượt chạy đầu tiên của
+ * hôm sau (`closeStaleOrders`); nút này cho người muốn đóng sớm khi ca đã xong.
+ */
+export async function closeFillOrder(req: Request, res: Response) {
+  try {
+    const { data: order } = await supabase.from('FillOrder')
+      .select('id, warehouse_id, status').eq('id', req.params.id).maybeSingle()
+    if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy lệnh fill')
+    if (!guardWarehouse(req, res, order.warehouse_id as string)) return
+    const { data } = await supabase.rpc('fill_order_close', {
+      p_order_id: order.id, p_actor: req.user?.name || null, p_now: now(),
+    })
+    const out = data as { code?: string; cancelled_lines?: number; status?: string } | null
+    if (out?.code === 'NOT_OPEN') return fail(res, 409, 'NOT_PENDING', 'Lệnh đã chốt hoặc đã hủy')
+    if (out?.code !== 'CLOSED')   return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy lệnh fill')
+    return ok(res, { cancelled_lines: Number(out.cancelled_lines ?? 0) })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

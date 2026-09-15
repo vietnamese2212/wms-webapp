@@ -7,6 +7,9 @@ import { computePctDate } from '@/utils/shelfLife'
 import { formatTimestampDate } from '@/utils/formatters'
 
 export const FILL_STATUS_LABEL: Record<string, string> = { PENDING: 'Chờ làm', DONE: 'Đã hạ', CANCELLED: 'Đã hủy' }
+// LỆNH ≠ DÒNG (15/09): lệnh nay là sổ của CẢ NGÀY nên nó không "đã hạ" — nó ĐANG MỞ tới lúc được
+// chốt cuối ngày. Dùng bảng nhãn riêng, đừng để hai thứ khác nghĩa đi chung một từ.
+export const FILL_ORDER_STATUS_LABEL: Record<string, string> = { PENDING: 'Đang mở', DONE: 'Đã chốt', CANCELLED: 'Đã hủy' }
 export const FILL_STATUS_BADGE: Record<string, string> = {
   PENDING:   'bg-amber-100 text-amber-700',
   DONE:      'bg-blue-100 text-blue-700',

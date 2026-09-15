@@ -5182,6 +5182,7 @@ export interface FillOrderRow {
   id: string; order_code: string; warehouse_id: string; target_date: string
   status: FillTaskStatus; created_by: string | null; created_at: string
   auto_created?: boolean | null            // lệnh do HỆ THỐNG tự đặt (15/09), không phải người bấm
+  warehouse_type?: string | null           // lệnh theo NGÀY: một lệnh cho mỗi (kho, ngày, loại kho)
   lines_n: number; pending_lines: number; done_lines: number; cancelled_lines: number
   pallets_req: number; pallets_done: number
   qty_req_entry: number; qty_done_entry: number
@@ -5220,7 +5221,11 @@ export function useFillOrder(orderId?: string) {
       const { data } = await apiClient.get(`/wms/fill/orders/${orderId}`)
       const d = data.data as {
         order: { id: string; order_code: string; warehouse_id: string; target_date: string
-                 status: FillTaskStatus; created_by: string | null; created_at: string }
+                 status: FillTaskStatus; created_by: string | null; created_at: string
+                 // Lệnh theo NGÀY (15/09): một lệnh cho mỗi (kho, ngày, loại kho), gán người cả ngày
+                 warehouse_type: string | null; auto_created: boolean | null
+                 assignee_id: string | null; assignee_name: string | null
+                 closed_at: string | null; closed_by: string | null }
         lines: (FillTaskRow & { material: { entry_unit: string | null; units_per_carton: number | null; base_unit: string | null } | null })[]
         scans: FillScanRow[]
       }
@@ -5309,6 +5314,28 @@ export function useCancelFillOrder() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       apiClient.delete(`/wms/fill/orders/${id}`, { data: reason ? { reason } : undefined }).then(r => r.data.data),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
+// Gán CẢ LỆNH NGÀY cho một người — "người đó nhận kế hoạch cả ngày" (15/09): dòng máy thêm vào
+// sau đó cũng thuộc về họ, không phải nhận lại từng lần.
+export function useAssignFillOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, assignee_id }: { id: string; assignee_id: string | null }) =>
+      apiClient.patch(`/wms/fill/orders/${id}`, { assignee_id })
+        .then(r => r.data.data as { assignee_id: string | null; assignee_name: string | null; lines: number }),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
+// Chốt ngày — đóng sổ lệnh của ngày, huỷ nốt dòng chưa thực hiện (có vết để báo cáo còn mẫu số)
+export function useCloseFillOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      apiClient.post(`/wms/fill/orders/${id}/close`).then(r => r.data.data as { cancelled_lines: number }),
     onSettled: () => invalidateFill(qc),
   })
 }

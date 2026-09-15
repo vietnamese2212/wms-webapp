@@ -303,6 +303,11 @@ router.post('/fill/auto',                                     requirePerm('fill'
 router.post('/fill/scan',                                     requirePerm('fill', 'execute'), fill.scanFill)
 // Gán người (assign) và đổi vị trí đích (plan) đi chung 1 route → controller tự kiểm TỪNG quyền
 // Gán người ≠ đổi vị trí đến ≠ hủy = 3 quyền riêng (tách 05/08 — controller kiểm đúng field)
+// Gán CẢ LỆNH NGÀY cho một người ("nhận kế hoạch cả ngày", 15/09) — cùng quyền với gán từng dòng
+router.patch('/fill/orders/:id',                              requirePerm('fill', 'assign'),
+  validate({ body: z.object({ assignee_id: zText(1, 100).nullable() }) }), fill.assignFillOrder)
+// Chốt ngày: đóng sổ lệnh của ngày, huỷ nốt dòng chưa thực hiện (cùng quyền với ra lệnh)
+router.post('/fill/orders/:id/close',                         requirePerm('fill', 'plan'),    fill.closeFillOrder)
 router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'change_dest']), fill.updateFillTask)
 router.delete('/fill/tasks/:id',                              requirePerm('fill', 'cancel'),  fill.cancelFillTask)
 router.delete('/fill/orders/:id',                             requirePerm('fill', 'cancel'),  fill.cancelFillOrder)

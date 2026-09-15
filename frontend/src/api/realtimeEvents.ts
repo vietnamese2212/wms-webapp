@@ -56,7 +56,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // phải refetch cả summary, không thì số đứng im cho tới lần poll sau.
   // Việc cần làm (1c): 3 vai nhìn 3 bảng khác nhau trên CÙNG kế hoạch — một người bấm '✓ Xong'
   // hay thủ kho quét thì hai màn còn lại phải đổi ngay, không chờ ai F5.
-  wms_tasks:           [['directed-board'], ['gdo'], ['gdos'], ['work-inbox'], ['directed-supervision']],
+  // fill-demand: phần "thiếu" của Fill có TRỪ việc LOOSE_FEED đang treo (15/09) — kế hoạch được sắp
+  // lại mà bảng này đứng im thì người mở trang Fill thấy số cũ và ra lệnh cho thứ đã có người lo.
+  wms_tasks:           [['directed-board'], ['gdo'], ['gdos'], ['work-inbox'], ['directed-supervision'], ['fill-demand']],
   OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],
   // `directed-board` từ 13/09: bảng Việc cần làm nay đọc cả YÊU CẦU DATE và TIẾN ĐỘ DÒNG HÀNG của
   // chuyến, nên dòng đơn đổi (chốt date, quét thêm) phải làm mới bảng — không chỉ khi wms_tasks đổi.

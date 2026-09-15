@@ -22,7 +22,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { FillScanOverlay } from './FillScanOverlay'
-import { AssigneePicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
+import { AssigneePicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
 import {
   useWarehouses, useFillDemand, useFillCandidates, useFillOrders, useFillReport,
   useCreateFillOrder, useCancelFillOrder,
@@ -375,11 +375,11 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
           <span className="text-[11px] text-slate-500">
             Đã chọn <b className="text-slate-700">{sel.size}</b> mã ·
-            {' '}{nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet sẽ vào MỘT lệnh
+            {' '}{nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet sẽ vào lệnh fill của NGÀY (mỗi Loại kho một lệnh)
           </span>
           <Button size="sm" className="h-7 text-[11px] ml-auto" disabled={sel.size === 0 || createOrder.isPending}
             onClick={() => { setErr(''); setAssignOpen(true) }}>
-            <Plus className="h-3.5 w-3.5 mr-1" />{createOrder.isPending ? 'Đang tạo…' : 'Ra lệnh fill'}
+            <Plus className="h-3.5 w-3.5 mr-1" />{createOrder.isPending ? 'Đang lưu…' : 'Đưa vào lệnh fill'}
           </Button>
         </div>
       )}
@@ -571,7 +571,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setAssignOpen(false)} disabled={createOrder.isPending}>Hủy</Button>
             <Button size="sm" onClick={raLenh} disabled={createOrder.isPending}>
-              {createOrder.isPending ? 'Đang tạo…' : 'Ra lệnh'}
+              {createOrder.isPending ? 'Đang lưu…' : 'Đưa vào lệnh'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -664,7 +664,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                 onClick={() => navigate(`/wms/fill/orders/${o.id}`)}>
                 <div className="flex items-center gap-2">
                   <span className={`font-mono text-xs font-bold ${fillRowText(o.status) || 'text-slate-800'}`}>{o.order_code}</span>
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_STATUS_LABEL[o.status]}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_ORDER_STATUS_LABEL[o.status]}</span>
                   {/* Dấu "máy tạo" phải có Ở CẢ THẺ (kiểm 360px 15/09: bảng desktop có, thẻ mobile
                       thiếu) — người kho dùng điện thoại, mà đây đúng là chỗ họ cần biết vì sao có
                       việc mình không bấm. Hai lối hiển thị cùng một dữ liệu thì phải nói cùng một chuyện. */}
@@ -739,7 +739,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">{formatTimestampDate(o.target_date, true)}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{o.order_code}</TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_STATUS_LABEL[o.status]}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_ORDER_STATUS_LABEL[o.status]}</span>
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate" title={o.mat_codes ?? ''}>
                     {o.mat_codes ?? <span className="text-slate-300">—</span>}

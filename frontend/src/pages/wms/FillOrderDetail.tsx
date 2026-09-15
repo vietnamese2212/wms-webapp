@@ -5,7 +5,7 @@
 // Bulk chạy SONG SONG per-dòng qua route PATCH/DELETE /fill/tasks/:id (chuẩn Promise.all).
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X } from 'lucide-react'
+import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X, Bot, Lock } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { backTarget } from '@/lib/returnTo'
 import { Button } from '@/components/ui/button'
@@ -14,8 +14,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { FillScanOverlay } from './FillScanOverlay'
-import { AssigneePicker, DestPicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText, RequiredDateBadge } from './fillShared'
-import { useFillOrder, useFillDemand, useUpdateFillTask, useCancelFillTask, useCancelFillOrder, type FillTaskRow } from '@/api/hooks'
+import { AssigneePicker, DestPicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText, RequiredDateBadge } from './fillShared'
+import { useFillOrder, useFillDemand, useUpdateFillTask, useCancelFillTask, useCancelFillOrder,
+  useAssignFillOrder, useCloseFillOrder, type FillTaskRow } from '@/api/hooks'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import { useAuthStore } from '@/stores/authStore'
@@ -56,6 +57,7 @@ export default function FillOrderDetail() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   // Mỗi nút 1 quyền riêng (user chốt 05/08 — không gộp "plan" cho cả 3 nút)
   const canCancel     = can(perms, 'fill', 'cancel')
+  const canPlan       = can(perms, 'fill', 'plan')      // chốt ngày = hành vi kế hoạch, cùng quyền ra lệnh
   const canChangeDest = can(perms, 'fill', 'change_dest')
   const canAssign     = can(perms, 'fill', 'assign')
   const canExecute    = can(perms, 'fill', 'execute')
@@ -65,10 +67,12 @@ export default function FillOrderDetail() {
   const updateTask  = useUpdateFillTask()
   const cancelTask  = useCancelFillTask()
   const cancelOrder = useCancelFillOrder()
+  const assignOrder = useAssignFillOrder()
+  const closeOrder  = useCloseFillOrder()
   const { widths: colW, startResize, totalWidth } = useColumnResize('fill_line_col_widths', LINE_COLS.map(c => c.w))
 
   const [sel, setSel] = useState<Set<string>>(new Set())
-  const [dlg, setDlg] = useState<'assign' | 'dest' | null>(null)
+  const [dlg, setDlg] = useState<'assign' | 'dest' | 'assign-order' | null>(null)
   const [val, setVal] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -156,6 +160,20 @@ export default function FillOrderDetail() {
     }
   }
 
+  // CHỐT NGÀY = đóng sổ, không hoàn tác được ⇒ hỏi một câu và NÓI TRƯỚC số dòng sẽ bị hủy theo.
+  async function doCloseOrder() {
+    if (!order) return
+    const left = lines.filter(l => l.status === 'PENDING').length
+    if (!window.confirm(left
+      ? `Chốt lệnh ${order.order_code}? ${left} dòng chưa thực hiện sẽ bị hủy kèm lý do "Chốt ngày".`
+      : `Chốt lệnh ${order.order_code}?`)) return
+    setErr('')
+    try { await closeOrder.mutateAsync({ id: order.id }) }
+    catch (e: unknown) {
+      setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không chốt được lệnh')
+    }
+  }
+
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải lệnh fill…</div>
   // Lệnh đã hủy/dọn hoặc link cũ: phải nói RÕ lý do + có LỐI VỀ. Bản cũ chỉ in "Không tìm thấy
   // lệnh fill" giữa màn trắng, không đường nào đi tiếp — người dùng kẹt, phải bấm Back trình duyệt
@@ -181,11 +199,29 @@ export default function FillOrderDetail() {
               Lệnh fill <span className="font-mono">{order.order_code}</span>
             </h1>
             <span className={`text-[9px] px-1.5 py-0.5 rounded-full shrink-0 ${FILL_STATUS_BADGE[order.status]}`}>
-              {FILL_STATUS_LABEL[order.status]}
+              {FILL_ORDER_STATUS_LABEL[order.status]}
             </span>
+            {/* LỆNH CỦA NGÀY (15/09): khoá là (kho, ngày, LOẠI KHO) — nói ra để người mở không đi
+                tìm "lệnh còn lại" của cùng ngày; và nói AI đang giữ kế hoạch cả ngày này. */}
+            {order.warehouse_type && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">
+                Loại {order.warehouse_type}
+              </span>
+            )}
+            {order.auto_created && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 shrink-0 flex items-center gap-1"
+                title="Lệnh do hệ thống tự mở theo nhu cầu nhặt lẻ trong ngày">
+                <Bot className="h-3 w-3" /> Máy tạo
+              </span>
+            )}
             <span className="text-[11px] text-slate-500 shrink-0">
               Ngày xuất <b>{formatDate(order.target_date)}</b>
               {order.created_by && <> · tạo bởi {order.created_by}</>}
+              {' · '}
+              {order.assignee_name
+                ? <>giao <b className="text-slate-700">{order.assignee_name}</b> (cả ngày)</>
+                : <span className="text-amber-700">chưa giao ai</span>}
+              {order.closed_at && <> · chốt {formatDateTime(order.closed_at)}</>}
             </span>
             {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08 "đưa action lên trên
                 nút ba chấm") — người cầm điện thoại phải thấy đủ thao tác ngay */}
@@ -195,6 +231,22 @@ export default function FillOrderDetail() {
                   title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh trong lệnh này"
                   onClick={() => { setScanMounted(true); setScanOpen(true) }}>
                   <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
+                </Button>
+              )}
+              {canAssign && order.status === 'PENDING' && (
+                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                  disabled={assignOrder.isPending}
+                  title="Giao kế hoạch fill CẢ NGÀY này cho một người — dòng hệ thống thêm vào sau cũng thuộc về họ"
+                  onClick={() => { setVal(order.assignee_id ?? ''); setErr(''); setDlg('assign-order') }}>
+                  <UserPlus className="h-3.5 w-3.5 mr-1" /> Giao cả ngày
+                </Button>
+              )}
+              {canPlan && order.status === 'PENDING' && (
+                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                  disabled={closeOrder.isPending}
+                  title="Đóng sổ lệnh của ngày: dòng chưa thực hiện sẽ bị hủy kèm lý do (giữ vết để báo cáo)"
+                  onClick={doCloseOrder}>
+                  <Lock className="h-3.5 w-3.5 mr-1" /> {closeOrder.isPending ? 'Đang chốt…' : 'Chốt ngày'}
                 </Button>
               )}
               {canCancel && order.status === 'PENDING' && (
@@ -448,12 +500,21 @@ export default function FillOrderDetail() {
       <Dialog open={dlg !== null} onOpenChange={o => !o && setDlg(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="flex items-center gap-1.5">
-            {dlg === 'assign'
+            {dlg === 'assign-order'
+              ? <><UserPlus className="h-4 w-4 text-sky-600" /> Giao kế hoạch CẢ NGÀY cho ai?</>
+              : dlg === 'assign'
               ? <><UserPlus className="h-4 w-4 text-sky-600" /> Giao {pendingSel.length} dòng cho ai?</>
               : <><MapPin className="h-4 w-4 text-sky-600" /> Đổi vị trí đến ({pendingSel.length} dòng)</>}
           </DialogTitle></DialogHeader>
           <div className="space-y-2">
-            {dlg === 'assign'
+            {dlg === 'assign-order' && (
+              <p className="text-[11px] text-slate-500">
+                Người này nhận toàn bộ kế hoạch fill ngày <b>{formatDate(order.target_date)}</b>
+                {order.warehouse_type && <> · loại <b>{order.warehouse_type}</b></>} — kể cả dòng hệ thống
+                thêm vào trong ngày. Để trống = bỏ giao.
+              </p>
+            )}
+            {dlg === 'assign' || dlg === 'assign-order'
               ? <AssigneePicker warehouseId={order.warehouse_id} value={val} onChange={setVal} />
               : <DestPicker warehouseId={order.warehouse_id}
                   materialId={[...new Set(pendingSel.map(l => l.material_id))].length === 1 ? pendingSel[0]?.material_id : undefined}
@@ -467,11 +528,21 @@ export default function FillOrderDetail() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setDlg(null)} disabled={busy}>Hủy</Button>
-            <Button size="sm" disabled={busy || (dlg === 'dest' && !val)}
-              onClick={() => bulk(l => updateTask.mutateAsync(dlg === 'assign'
-                ? { id: l.id, assignee_id: val || null }
-                : { id: l.id, to_location_id: val }), pendingSel)}>
-              {busy ? 'Đang lưu…' : 'Lưu'}
+            <Button size="sm" disabled={busy || assignOrder.isPending || (dlg === 'dest' && !val)}
+              onClick={async () => {
+                if (dlg === 'assign-order') {
+                  setErr('')
+                  try { await assignOrder.mutateAsync({ id: order.id, assignee_id: val || null }); setDlg(null) }
+                  catch (e: unknown) {
+                    setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không giao được kế hoạch')
+                  }
+                  return
+                }
+                await bulk(l => updateTask.mutateAsync(dlg === 'assign'
+                  ? { id: l.id, assignee_id: val || null }
+                  : { id: l.id, to_location_id: val }), pendingSel)
+              }}>
+              {busy || assignOrder.isPending ? 'Đang lưu…' : 'Lưu'}
             </Button>
           </DialogFooter>
         </DialogContent>

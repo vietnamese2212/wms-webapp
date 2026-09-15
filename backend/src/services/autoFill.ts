@@ -96,16 +96,6 @@ export async function autoFillDay(
   if (!Number(payload?.pick_face_locations ?? 0)) return result
   const rows = (payload?.rows ?? []) as FillDemandRow[]
 
-  const matIds = [...new Set(rows.map(r => r.material_id).filter(Boolean))]
-  const mats = new Map<string, { code: string; name: string | null; category: string | null }>()
-  for (let i = 0; i < matIds.length; i += 300) {
-    const { data } = await db.from('Material')
-      .select('id, material_code, short_name, category').in('id', matIds.slice(i, i + 300))
-    for (const m of data ?? []) mats.set(m.id, { code: m.material_code, name: m.short_name, category: m.category })
-  }
-  const onFor = (materialId: string) =>
-    resolveAutoFill(wh as unknown as Record<string, unknown>, typeRows, mats.get(materialId)?.category ?? null).enabled
-
   // Dòng đang mở của NGÀY này — dùng cho cả hai chiều (hạ bớt / cộng thêm)
   const { data: openRaw } = await db.from('FillTask')
     .select('id, material_id, required_date, qty_base, qty_done_base, required_pallets, scanned_pallets, fill_order_id, created_by, created_at')
@@ -116,6 +106,18 @@ export async function autoFillDay(
     if (!l.material_id) continue
     openByMat.set(l.material_id, [...(openByMat.get(l.material_id) ?? []), l])
   }
+
+  // ⚠️ HỢP của hai tập, không chỉ tập nhu cầu: mã HẾT nhu cầu BIẾN MẤT khỏi `rows` (RPC chỉ trả mã
+  // còn cần), nên duyệt theo `rows` là đúng những dòng đáng thu hồi nhất lại không bao giờ tới lượt.
+  const matIds = [...new Set([...rows.map(r => r.material_id), ...openByMat.keys()].filter(Boolean))]
+  const mats = new Map<string, { code: string; name: string | null; category: string | null }>()
+  for (let i = 0; i < matIds.length; i += 300) {
+    const { data } = await db.from('Material')
+      .select('id, material_code, short_name, category').in('id', matIds.slice(i, i + 300))
+    for (const m of data ?? []) mats.set(m.id, { code: m.material_code, name: m.short_name, category: m.category })
+  }
+  const onFor = (materialId: string) =>
+    resolveAutoFill(wh as unknown as Record<string, unknown>, typeRows, mats.get(materialId)?.category ?? null).enabled
 
   await reconcileDown(rows, openByMat, onFor, result)
   await reconcileUp(warehouseId, day, rows, openByMat, mats, onFor, result)
@@ -152,14 +154,20 @@ async function reconcileDown(
   onFor: (id: string) => boolean, result: AutoFillResult,
 ): Promise<void> {
   const t = now()
+  // Nhu cầu THẬT còn phải phủ bằng lệnh fill = cần − đã có đúng lô ở ô lẻ − việc LOOSE_FEED treo.
+  // KHÔNG trừ chính các dòng lệnh đang xét: chúng là thứ đang được đem ra cân xem có thừa không.
+  const needOf = new Map<string, number>()
   for (const r of rows) {
-    if (!r.material_id || !onFor(r.material_id)) continue
-    const list = openByMat.get(r.material_id) ?? []
-    if (!list.length) continue
-    // Nhu cầu THẬT còn phải phủ bằng lệnh fill = cần − đã có đúng lô ở ô lẻ − việc LOOSE_FEED treo.
-    // KHÔNG trừ chính các dòng lệnh đang xét: chúng là thứ đang được đem ra cân xem có thừa không.
-    const need = Math.max(0, Number(r.demand_base ?? 0)
-      - Number(r.pick_face_ok_base ?? 0) - Number(r.feed_pending_base ?? 0))
+    if (!r.material_id) continue
+    needOf.set(r.material_id, Math.max(0, Number(r.demand_base ?? 0)
+      - Number(r.pick_face_ok_base ?? 0) - Number(r.feed_pending_base ?? 0)))
+  }
+  // DUYỆT THEO DÒNG ĐANG MỞ, không theo danh sách nhu cầu: mã hết nhu cầu BIẾN MẤT khỏi danh sách
+  // đó (RPC chỉ trả mã còn cần) nên duyệt kiểu kia là bỏ sót đúng những dòng đáng thu hồi nhất —
+  // đơn huỷ sạch một mã thì lệnh của mã đó đứng nguyên. Vắng mặt = nhu cầu 0.
+  for (const [matId, list] of openByMat) {
+    if (!onFor(matId) || !list.length) continue
+    const need = needOf.get(matId) ?? 0
     const remainOf = (l: OpenTask) => Math.max(0, Number(l.qty_base) - Number(l.qty_done_base ?? 0))
     let excess = list.reduce((s, l) => s + remainOf(l), 0) - need
     if (excess <= 0) continue

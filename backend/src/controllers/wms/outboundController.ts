@@ -6928,7 +6928,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       effectiveWh = [warehouse_id]
     }
 
-    // TỰ RA LỆNH FILL (15/09) — quét lười theo traffic, throttle 10'/instance. Đặt ở ĐÂY chứ không
+    // TỰ RA LỆNH FILL (15/09) — xả hàng đợi đối chiếu (kho, ngày xuất), một RPC. Đặt ở ĐÂY chứ không
     // chỉ ở trang Việc cần làm: trang đó chỉ có nghĩa với kho Hướng dẫn, mà kho nhiều ô nhặt lẻ nhất
     // (Bàu Bàng, 25/28 ô) đang chạy THỦ CÔNG ⇒ móc một chỗ là bỏ sót đúng kho cần nhất. Chỉ chạy khi
     // người xem đang đứng ở MỘT kho cụ thể — lọc rỗng là "mọi kho trong phạm vi", không rõ kho nào.

@@ -688,3 +688,15 @@ created_at, updated_at
   `idx_wms_tasks_pending_wh_mat`); bọc EXCEPTION nên không bao giờ hỏng giao dịch tồn. Node xả hàng đợi ở đầu mỗi lần tải bảng
   Việc cần làm (`drainReplanQueue`): chạy thử kế hoạch, KHÁC bộ pallet mới bỏ việc chưa ai đụng (lý do STOCK_CHANGED) và ghim lại.
   Bảng nội bộ: RLS bật, 0 policy, đã DROP trigger realtime `trg_wms_notify`. Đã áp staging 14/09; `npm run db:types` chạy lại.
+- `20260915d_fill_reconcile_queue.sql` — **hàng đợi ĐỐI CHIẾU FILL theo (kho, ngày xuất)** (user chốt 15/09 vòng 3: "đơn nhặt lẻ của
+  ngày nào đổi thì máy ra lệnh cho ngày đó") + thuê kho + báo cáo giữ mẫu số. Bảng `fill_reconcile_queue(warehouse_id, target_date, queued_at)`
+  PK (kho, ngày) và `fill_reconcile_state(warehouse_id PK, last_sweep, lease_until)` — cả hai nội bộ (RLS bật, 0 policy, DROP `trg_wms_notify`).
+  `fill_reconcile_enqueue(kho, ngày)` chỉ ghi khi kho/loại có bật `auto_fill` và ngày trong chân trời hôm nay + mai (VN); 5 trigger row-level
+  gọi nó: `OutboundItem` (dòng có `loose_picking`, UPDATE OF loose_picking·cartons_ordered·status·date_rule·material_id — cố ý KHÔNG bắt
+  `cartons_scanned`, đường nóng PDA) · `GroupDeliveryOrder` (delivery_date·status·awaiting_sap·plan_dropped·warehouse_id, ghi cả OLD lẫn NEW)
+  · `InventoryEntry` khi NEW/OLD `location_id` là ô nhặt lẻ (ghi hôm nay + mai) · `wms_tasks` kind LOOSE_FEED · `Warehouse`/`warehouse_type_configs`
+  khi `auto_fill` thành true. `fill_reconcile_take(kho, hôm_nay, sweep_s=1800, lease_s=90)` = MỘT round-trip: FOR UPDATE dòng trạng thái, bận ⇒
+  `{leased:false}`; xoá dòng ngày đã qua; DELETE…RETURNING dòng ≤ hôm nay+1; tới hạn quét thì thêm hôm nay + mai; có việc mới cấp lease.
+  `fill_reconcile_lease`/`_release` cho đường bấm tay `/fill/auto` (bận ⇒ 409 BUSY). `fill_close_reason()` = một chuỗi cho `fill_order_close`
+  và `fill_report`; `fill_report` nay giữ dòng huỷ vì chốt ngày trong mẫu số (`missed`, `missed_n`, `pending_n = total − done − missed`).
+  Đã áp staging 15/09; `npm run db:types` chạy lại (+60 dòng).

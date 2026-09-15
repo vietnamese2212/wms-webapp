@@ -5240,6 +5240,7 @@ export function useFillOrder(orderId?: string) {
 export interface FillReportRow {
   assignee_id: string | null; assignee_name: string
   total_n: number; done_n: number; pending_n: number
+  missed_n?: number            // dòng bị huỷ lúc CHỐT NGÀY vì chưa thực hiện (vẫn nằm trong mẫu số)
   done_qty_entry: number; total_qty_entry: number
   avg_minutes: number | null; rate: number
 }
@@ -5249,7 +5250,7 @@ export function useFillReport(params?: { warehouse_id: string; date_from?: strin
     enabled: !!params?.warehouse_id,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/fill/report', { params })
-      return data.data as { rows: FillReportRow[]; total: number; done: number; unassigned: number; qty_entry: number }
+      return data.data as { rows: FillReportRow[]; total: number; done: number; missed?: number; unassigned: number; qty_entry: number }
     },
   })
 }

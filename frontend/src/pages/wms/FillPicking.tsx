@@ -80,6 +80,7 @@ const REPORT_COLS = [
   { id: 'who',   label: 'Người thực hiện', w: 200 },
   { id: 'total', label: 'Được giao',       w: 100, align: 'right' as const },
   { id: 'done',  label: 'Đã xong',         w: 100, align: 'right' as const },
+  { id: 'missed', label: 'Không kịp',       w: 100, align: 'right' as const },   // huỷ lúc chốt ngày — vẫn trong mẫu số
   { id: 'rate',  label: 'Tỷ lệ hoàn thành', w: 150 },
   { id: 'qty',   label: QTY_CONVERTED_LABEL, w: 130, align: 'right' as const },
   { id: 'avg',   label: 'TG trung bình',   w: 120, align: 'right' as const },
@@ -920,6 +921,8 @@ function ReportTab({ warehouseId, from, to, dense }: {
       <SummaryBand tiles={[
         { label: 'Tổng dòng lệnh', value: nf(data?.total ?? 0) },
         { label: 'Đã xong',   value: nf(data?.done ?? 0) },
+        { label: 'Không kịp', value: nf(data?.missed ?? 0), danger: (data?.missed ?? 0) > 0,
+          tip: 'Dòng còn treo lúc chốt ngày — bị huỷ với lý do "chưa thực hiện" nhưng vẫn tính vào mẫu số' },
         { label: 'Tỷ lệ hoàn thành', value: `${nf(rate)}%`, danger: rate < 80, accent: rate >= 80 },
         { label: 'Chưa giao ai', value: nf(data?.unassigned ?? 0) },
         { label: `ĐÃ HẠ — ${QTY_CONVERTED_LABEL}`, value: nf(data?.qty_entry ?? 0), tip: QTY_CONVERTED_TIP },
@@ -954,6 +957,9 @@ function ReportTab({ warehouseId, from, to, dense }: {
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{nf(r.total_n)}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold">{nf(r.done_n)}</TableCell>
+                <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums ${(r.missed_n ?? 0) > 0 ? 'text-red-600' : ''}`}>
+                  {(r.missed_n ?? 0) > 0 ? nf(r.missed_n ?? 0) : <span className="text-slate-300">—</span>}
+                </TableCell>
                 <TableCell className="px-2 py-1 whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
                     <div className="h-1.5 flex-1 min-w-[40px] rounded-full bg-slate-200 overflow-hidden">

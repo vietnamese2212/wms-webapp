@@ -10,16 +10,24 @@
  * ĐƠN VỊ CÔNG VIỆC = MỘT NGÀY, KHÔNG PHẢI MỘT MẺ (user chốt 15/09 vòng 2): "1 ngày, 1 kho, 1 loại
  * kho chỉ có 1 lệnh fill — chi tiết trong đó thay đổi, cuối ngày Hoàn thành". Bản đầu của tôi bọc
  * lấy THÓI QUEN BẤM TAY (mỗi lần bấm = một lệnh mới) nên máy sinh từng mẻ; nhưng máy không quyết
- * từng mẻ, nó liên tục trả lời MỘT câu hỏi "hôm nay kho này còn thiếu gì ở ô lẻ". Vì thế file này
- * nay là bộ ĐỐI CHIẾU: đọc nhu cầu → kéo các dòng của ngày về đúng con số đó (thêm · cộng · hạ ·
+ * từng mẻ, nó liên tục trả lời MỘT câu hỏi "ngày này kho này còn thiếu gì ở ô lẻ". Vì thế file này
+ * là bộ ĐỐI CHIẾU: đọc nhu cầu → kéo các dòng của ngày về đúng con số đó (thêm · cộng · hạ ·
  * thu hồi), chứ không phải bộ TẠO.
+ *
+ * NHỊP CHẠY = HÀNG ĐỢI THEO (kho, NGÀY XUẤT) (user chốt 15/09 vòng 3: "đơn nhặt lẻ của ngày nào đổi
+ * thì máy ra lệnh cho ngày đó"). Trigger DB (migration 20260915d) ghi (kho, ngày) khi đơn / chuyến /
+ * tồn ở ô lẻ / việc LOOSE_FEED đổi; lần đọc kế tiếp `drainFillQueue` lấy ra bằng MỘT RPC vừa lấy
+ * dòng vừa THUÊ kho (`fill_reconcile_take`) rồi đối chiếu đúng những ngày đó — hôm nay và ngày mai
+ * (ca 22h chuẩn bị cho chuyến NGÀY MAI là lúc kho cần lệnh fill nhất). Không có pg_cron nên còn một
+ * lượt QUÉT AN TOÀN mỗi 30 phút cho thứ trigger bỏ sót, mốc nằm Ở DB chứ không trong RAM lambda.
+ * Bản trước "throttle 10 phút trong tiến trình" có hai lỗ: mỗi instance mới chạy lại một lượt, và
+ * hai instance cùng thấy "thiếu 100" thì `fill_task_topup` cộng delta HAI lần — dòng máy đặt tự hạ
+ * lại ở lượt sau, dòng NGƯỜI đặt thì thừa vĩnh viễn. Lease theo kho đóng cả hai.
  *
  * RANH GIỚI: máy quyết **ĐỂ LÀM GÌ**, người quyết **AI LÀM**. Máy không tự chọn người; nhưng lệnh
  * của ngày gán được cho một người ("nhận kế hoạch cả ngày" — user chốt), và dòng máy thêm lúc 11h
- * KẾ THỪA người đã nhận từ 7h, không thì lời hứa đó rỗng.
- *
- * CHỈ NGÀY XUẤT HÔM NAY ở đường tự động: ô nhặt lẻ có sức chứa (cả hệ thống 28 ô). Ngày khác thì
- * chọn tay trên trang Fill (user chốt 15/09: "chọn tay nếu không đúng ngày thì hay hơn").
+ * KẾ THỪA người đã nhận từ 7h, không thì lời hứa đó rỗng. Máy đổi dòng của người đang giữ kế hoạch
+ * thì phải NÓI với người đó (thông báo đích danh), không chỉ hiện dải xanh ở Việc cần làm.
  *
  * MỌI phép tính nhu cầu đi qua `fillDemandOf` — đúng con số trang Đề xuất đang hiện. Viết lại ở đây
  * là đẻ bản luật thứ hai: máy hạ một đằng, màn hình nói một nẻo.
@@ -31,12 +39,17 @@ import {
   type FillDemandRow, type DayOrder,
 } from '../controllers/wms/fillController'
 import { resolveAutoFill, type WhTypeConfigRow } from '../utils/putaway'
+import { notifyEmployees } from './pushService'
 
 const now = () => new Date().toISOString()
 // Ngày NGHIỆP VỤ theo giờ VN (luật timezone CLAUDE.md) — "hôm nay" của kho, không phải của máy chủ
 export const vnToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const fmtDMY = (d: string) => { const [y, m, day] = d.slice(0, 10).split('-'); return `${day}/${m}/${y}` }
 
 export const AUTO_ACTOR = 'Hệ thống'
+/** Quét an toàn mỗi 30 phút (thứ trigger bỏ sót) · lease 90 giây (một lượt đối chiếu đo ~1–3 s) */
+const SWEEP_S = 30 * 60
+const LEASE_S = 90
 
 export interface AutoFillResult {
   created: number            // số DÒNG mới mở trong lệnh của ngày
@@ -47,38 +60,40 @@ export interface AutoFillResult {
   order_code: string | null
   unset: string[]            // mã bỏ qua vì còn dòng CHƯA CHỐT %Date
   no_dest: string[]          // mã bỏ qua vì không còn ô nhặt lẻ trống nhận Loại kho đó
+  days?: string[]            // các ngày đã đối chiếu trong lượt này (đường hàng đợi)
 }
 const emptyResult = (): AutoFillResult => ({
   created: 0, added: 0, reduced: 0, recalled: 0, closed: 0, order_code: null, unset: [], no_dest: [],
 })
 
-/**
- * Nhịp chạy: KHÔNG có pg_cron trên hạ tầng này nên quét LƯỜI theo traffic, throttle trong tiến trình
- * y như `alertScanner` / `cleanupOldPhotos`. Chạy trùng giữa hai instance không sinh lệnh đôi: khoá
- * `uq_fillorder_open` giữ MỘT lệnh mở cho mỗi (kho, ngày, loại), và mọi thay đổi dòng đi qua RPC có
- * khoá dòng chứ không còn là cuộc đua INSERT.
- */
-const THROTTLE_MS = 10 * 60_000
-const _lastRun = new Map<string, number>()
-
 interface OpenTask {
   id: string; material_id: string | null; required_date: string | null
   qty_base: number; qty_done_base: number | null; required_pallets: number | null
   scanned_pallets: number | null; fill_order_id: string | null; created_by: string | null
-  created_at: string | null
+  created_at: string | null; assignee_id: string | null
 }
 
-export async function autoFillDay(
-  warehouseId: string, day: string, opts: { force?: boolean } = {},
-): Promise<AutoFillResult> {
-  const key = `${warehouseId}|${day}`
-  if (!opts.force && Date.now() - (_lastRun.get(key) ?? 0) < THROTTLE_MS) return emptyResult()
-  _lastRun.set(key, Date.now())
+/** Sổ "máy đã đụng dòng của ai" — gom theo (người, lệnh) để cuối lượt báo MỘT lần, không báo từng dòng */
+type Touched = Map<string, { assignee: string; orderId: string; added: number; reduced: number; recalled: number }>
+const touch = (t: Touched, assignee: string | null, orderId: string | null, k: 'added' | 'reduced' | 'recalled') => {
+  if (!assignee || !orderId) return
+  const key = `${assignee}|${orderId}`
+  const cur = t.get(key) ?? { assignee, orderId, added: 0, reduced: 0, recalled: 0 }
+  cur[k]++
+  t.set(key, cur)
+}
 
+/**
+ * Đối chiếu MỘT (kho, ngày). Không tự thuê kho — caller (`drainFillQueue` / cửa bấm tay) đã thuê.
+ * Chốt lười luôn dựa vào NGÀY HÔM NAY theo giờ VN, KHÔNG dựa vào `day` — bản trước lấy `day` làm
+ * mốc nên chạy tay cho NGÀY MAI là chốt luôn lệnh HÔM NAY (đo thật 15/09: gói QA gọi ngày 21/12
+ * làm hai lệnh F260915-01/-02 của Ba Vì bị "Hệ thống" chốt lúc 15:17 và 15:23).
+ */
+export async function autoFillDay(warehouseId: string, day: string): Promise<AutoFillResult> {
   const result = emptyResult()
   // CHỐT NGÀY LƯỜI — không có cron nên lượt chạy đầu của hôm sau là chỗ duy nhất "tự" đóng sổ hôm
   // trước. Chạy TRƯỚC cổng công tắc: kho tắt tự động vẫn có lệnh người đặt tay cần được đóng.
-  result.closed = await closeStaleOrders(warehouseId, day)
+  result.closed = await closeStaleOrders(warehouseId)
 
   // ── Công tắc 2 TẦNG: mặc định của kho + ghi đè theo LOẠI KHO (`resolveAutoFill`, một luật ghép
   // tầng dùng chung với luân chuyển/cách làm việc). Kho tắt mà KHÔNG loại nào bật ⇒ về ngay — đây
@@ -98,7 +113,7 @@ export async function autoFillDay(
 
   // Dòng đang mở của NGÀY này — dùng cho cả hai chiều (hạ bớt / cộng thêm)
   const { data: openRaw } = await db.from('FillTask')
-    .select('id, material_id, required_date, qty_base, qty_done_base, required_pallets, scanned_pallets, fill_order_id, created_by, created_at')
+    .select('id, material_id, required_date, qty_base, qty_done_base, required_pallets, scanned_pallets, fill_order_id, created_by, created_at, assignee_id')
     .eq('warehouse_id', warehouseId).eq('target_date', day).eq('status', 'PENDING')
   const open = (openRaw ?? []) as unknown as OpenTask[]
   const openByMat = new Map<string, OpenTask[]>()
@@ -119,23 +134,69 @@ export async function autoFillDay(
   const onFor = (materialId: string) =>
     resolveAutoFill(wh as unknown as Record<string, unknown>, typeRows, mats.get(materialId)?.category ?? null).enabled
 
-  await reconcileDown(rows, openByMat, onFor, result)
-  await reconcileUp(warehouseId, day, rows, openByMat, mats, onFor, result)
+  const touched: Touched = new Map()
+  await reconcileDown(rows, openByMat, onFor, result, touched)
+  await reconcileUp(warehouseId, day, rows, openByMat, mats, onFor, result, touched)
+  await notifyTouched(touched, day)
   return result
 }
 
 /**
- * Bọc cho các ĐƯỜNG ĐỌC gọi kèm (trang Việc cần làm, trang Nhặt lẻ, trang Fill): việc nền hỏng thì
- * trang vẫn phải mở được — người đang vào ca không có gì để làm với lỗi của bộ đặt lệnh. Vẫn ghi log
- * để còn thấy. `await` chứ không `void fn()`: trên serverless, response trả xong là lambda có thể bị
- * đóng băng giữa việc (luật CLAUDE.md).
+ * ĐƯỜNG CHÍNH cho các trang đọc (Việc cần làm · Nhặt lẻ · Fill hàng): một RPC lấy các ngày cần soát
+ * của kho + thuê kho; có gì mới đối chiếu. Hàng đợi thường rỗng và chưa tới hạn quét ⇒ đúng MỘT
+ * round-trip rồi về, trang không phải trả giá 2 s của `fill_demand` ở mỗi lần mở.
+ * Việc nền hỏng thì trang vẫn phải mở được — người đang vào ca không có gì để làm với lỗi của bộ đặt
+ * lệnh. `await` chứ không `void fn()`: trên serverless, response trả xong là lambda có thể bị đóng
+ * băng giữa việc (luật CLAUDE.md).
  */
-export async function autoFillSafe(warehouseId: string | null | undefined, day = vnToday()): Promise<AutoFillResult> {
-  if (!warehouseId) return emptyResult()
-  try { return await autoFillDay(warehouseId, day) } catch (e) {
+export async function drainFillQueue(warehouseId: string | null | undefined): Promise<AutoFillResult> {
+  const agg = emptyResult()
+  if (!warehouseId) return agg
+  const today = vnToday()
+  let leased = false
+  try {
+    const { data } = await db.rpc('fill_reconcile_take', {
+      p_wh: warehouseId, p_today: today, p_sweep_s: SWEEP_S, p_lease_s: LEASE_S,
+    } as never)
+    const take = (data ?? {}) as { leased?: boolean; days?: string[] }
+    if (!take.leased || !take.days?.length) return agg
+    leased = true
+    agg.days = []
+    for (const day of take.days) {
+      try {
+        const r = await autoFillDay(warehouseId, day)
+        agg.created += r.created; agg.added += r.added; agg.reduced += r.reduced
+        agg.recalled += r.recalled; agg.closed += r.closed
+        agg.order_code = agg.order_code ?? r.order_code
+        agg.unset.push(...r.unset); agg.no_dest.push(...r.no_dest)
+        agg.days.push(day)
+      } catch (e) {
+        // Lỗi một ngày (thường là DB quá tải) ⇒ trả dòng về hàng đợi để lượt sau soát lại, không nuốt
+        console.error('autoFill:', day, e instanceof Error ? e.message : String(e))
+        await db.from('fill_reconcile_queue').upsert(
+          { warehouse_id: warehouseId, target_date: day, queued_at: now() } as never,
+          { onConflict: 'warehouse_id,target_date' },
+        )
+      }
+    }
+  } catch (e) {
     console.error('autoFill:', e instanceof Error ? e.message : String(e))
-    return emptyResult()
+  } finally {
+    if (leased) await db.rpc('fill_reconcile_release', { p_wh: warehouseId } as never)
   }
+  return agg
+}
+
+/** Tên cũ — các đường đọc đang gọi; nay là đường hàng đợi */
+export const autoFillSafe = drainFillQueue
+
+/** Thuê kho cho đường BẤM TAY (cùng ổ khoá với đường tự động). false = kho đang có lượt khác chạy */
+export async function leaseWarehouse(warehouseId: string): Promise<boolean> {
+  const { data } = await db.rpc('fill_reconcile_lease', { p_wh: warehouseId, p_lease_s: LEASE_S } as never)
+  return data === true
+}
+export async function releaseWarehouse(warehouseId: string): Promise<void> {
+  await db.rpc('fill_reconcile_release', { p_wh: warehouseId } as never)
 }
 
 // ─── CHIỀU GIẢM — nhu cầu tụt (đơn huỷ · đổi ngày · hàng đã có đủ đúng lô ở ô lẻ) ────────────────
@@ -151,7 +212,7 @@ export async function autoFillSafe(warehouseId: string | null | undefined, day =
  */
 async function reconcileDown(
   rows: FillDemandRow[], openByMat: Map<string, OpenTask[]>,
-  onFor: (id: string) => boolean, result: AutoFillResult,
+  onFor: (id: string) => boolean, result: AutoFillResult, touched: Touched,
 ): Promise<void> {
   const t = now()
   // Nhu cầu THẬT còn phải phủ bằng lệnh fill = cần − đã có đúng lô ở ô lẻ − việc LOOSE_FEED treo.
@@ -188,6 +249,7 @@ async function reconcileDown(
       if (!out || (out.code !== 'REDUCED' && out.code !== 'CANCELLED')) continue
       excess -= Number(out.freed ?? cut)
       result.reduced++
+      touch(touched, l.assignee_id, l.fill_order_id, out.code === 'CANCELLED' ? 'recalled' : 'reduced')
       if (out.code === 'CANCELLED') result.recalled++
       l.qty_base = Math.max(0, Number(l.qty_base) - Number(out.freed ?? cut))
     }
@@ -198,7 +260,7 @@ async function reconcileDown(
 async function reconcileUp(
   warehouseId: string, day: string, rows: FillDemandRow[], openByMat: Map<string, OpenTask[]>,
   mats: Map<string, { code: string; name: string | null; category: string | null }>,
-  onFor: (id: string) => boolean, result: AutoFillResult,
+  onFor: (id: string) => boolean, result: AutoFillResult, touched: Touched,
 ): Promise<void> {
   const pending = rows.filter(r => r.material_id && onFor(r.material_id) && Number(r.short_base ?? 0) > 0)
   if (!pending.length && !rows.some(r => r.material_id && onFor(r.material_id) && r.rule_unset)) return
@@ -236,11 +298,17 @@ async function reconcileUp(
       // (mã, NSX) đang treo ⇒ INSERT đụng khoá ⇒ bản cũ nuốt 23505 và phần tăng không bao giờ thành
       // lệnh, trong khi đường bấm tay thì cộng dồn. Máy CỘNG được cả vào dòng người đặt (nội dung
       // dòng là "cần hạ bao nhiêu", không phải "người đó quyết bao nhiêu") nhưng không HẠ dòng đó.
+      // Cộng delta chỉ an toàn vì caller đang giữ LEASE của kho — hai instance không cùng cộng.
       const { data: topped } = await db.rpc('fill_task_topup', {
         p_warehouse_id: warehouseId, p_target_date: day, p_material_id: r.material_id,
         p_required_date: reqDate, p_add_qty: qty, p_add_pallets: group.length, p_now: t,
       } as never)
-      if (topped) { result.added++; left -= qty; continue }
+      if (topped) {
+        const tl = topped as { assignee_id?: string | null; fill_order_id?: string | null }
+        result.added++; left -= qty
+        touch(touched, tl.assignee_id ?? null, tl.fill_order_id ?? null, 'added')
+        continue
+      }
 
       const dest = takePickFace(pfIdx, r.material_id, mat.category, group.length)
       if (!dest) { result.no_dest.push(mat.code); break }
@@ -263,16 +331,39 @@ async function reconcileUp(
         created_by: AUTO_ACTOR, created_at: t, updated_at: t,
       } as never)
       if (error) {
-        // Chỉ còn một ca tới được đây: instance khác vừa mở dòng cùng (mã, NSX) giữa lời gọi topup
+        // Chỉ còn một ca tới được đây: người bấm tay vừa mở dòng cùng (mã, NSX) giữa lời gọi topup
         // và lời gọi insert. Lượt sau đối chiếu lại là xong — KHÔNG cộng dồn mù ở đây.
         if ((error as { code?: string }).code !== '23505') throw error
         continue
       }
       result.created++
       result.order_code = order.order_code
+      touch(touched, order.assignee_id, order.id, 'added')
       left -= qty
       openByMat.set(r.material_id, [...(openByMat.get(r.material_id) ?? [])])
     }
+  }
+}
+
+/**
+ * Máy đổi kế hoạch của người đang giữ thì NÓI với người đó — một thông báo mỗi (người, lệnh) mỗi
+ * lượt, gộp số dòng cộng / hạ / thu hồi. Dòng chưa ai giữ thì không báo ai (nó nằm ở Hộp việc chung).
+ * Dùng chung công tắc chuông `assign` (giao việc) — đây là kế hoạch ĐÃ giao cho họ vừa đổi.
+ */
+async function notifyTouched(touched: Touched, day: string): Promise<void> {
+  for (const t of touched.values()) {
+    const parts: string[] = []
+    if (t.added)    parts.push(`thêm/cộng ${t.added} dòng`)
+    if (t.reduced)  parts.push(`hạ ${t.reduced} dòng`)
+    if (t.recalled) parts.push(`thu hồi ${t.recalled} dòng`)
+    if (!parts.length) continue
+    const { data: o } = await db.from('FillOrder').select('order_code').eq('id', t.orderId).maybeSingle()
+    await notifyEmployees([t.assignee], 'FILL_CHANGED', 'assign', {
+      title: `Kế hoạch fill ${o?.order_code ?? ''} vừa đổi`,
+      body: `Hệ thống ${parts.join(' · ')} theo đơn nhặt lẻ ngày ${fmtDMY(day)}`,
+      url: `/wms/fill/orders/${t.orderId}`,
+      tag: `fill-${t.orderId}`,
+    })
   }
 }
 
@@ -288,11 +379,14 @@ class OrderCache {
 }
 
 /**
- * Chốt lười lệnh của những NGÀY ĐÃ QUA. Không có cron ⇒ lượt chạy đầu tiên của hôm sau là chỗ duy
- * nhất "tự" đóng sổ mà không cần ai nhớ. Dòng còn treo bị huỷ kèm lý do trong RPC — xe đã đi rồi,
- * để lại dòng PENDING trong một lệnh đã đóng là đẻ ra việc mồ côi không ai nhìn.
+ * Chốt lười lệnh của những NGÀY ĐÃ QUA — mốc là 0h HÔM NAY theo giờ VN, không phải ngày caller đang
+ * đối chiếu. User chốt 15/09: "0h, lệnh nào chưa xong thì khoá lại" — ca 22h chuẩn bị là cho chuyến
+ * NGÀY MAI nên lệnh họ đang làm mang ngày mai, qua 0h vẫn là lệnh của hôm nay, không bị đụng.
+ * Dòng còn treo bị huỷ kèm lý do trong RPC — xe đã đi rồi, để lại dòng PENDING trong một lệnh đã đóng
+ * là đẻ ra việc mồ côi không ai nhìn; lý do đó cũng là mẫu số của báo cáo Kết quả.
  */
-async function closeStaleOrders(warehouseId: string, today: string): Promise<number> {
+async function closeStaleOrders(warehouseId: string): Promise<number> {
+  const today = vnToday()
   const { data } = await db.from('FillOrder')
     .select('id').eq('warehouse_id', warehouseId).eq('status', 'PENDING').lt('target_date', today).limit(50)
   const ids = (data ?? []).map(o => o.id as string)

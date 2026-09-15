@@ -50,6 +50,8 @@ async function cleanupOrders(whId) {
 }
 async function cleanup(whId) {
   await cleanupOrders(whId)
+  if (whId) await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
+  await restWrite('FillOrder', 'DELETE', `order_code=eq.${TAG}-TODAY`).catch(() => {})
   // Công tắc "tự ra lệnh fill" mượn của kho thật → TRẢ LẠI đúng giá trị cũ (gói 22)
   if (whId && savedAutoFill !== null)
     await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { auto_fill: savedAutoFill, updated_at: nowIso() }).catch(() => {})
@@ -765,6 +767,72 @@ try {
     `http=${close23.s} status=${closed23?.status} còn_treo=${left23.length}`)
   check('23f. Chốt lần hai → 409, không đóng chồng',
     (await api(`/wms/fill/orders/${day1[0].id}/close`, 'POST', {})).s === 409)
+
+  // ── 24. RÀ RỦI RO 15/09 (vòng 3) — bốn lỗ user duyệt vá ───────────────────────────────────────
+  const TODAY    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const TOMORROW = new Date(Date.now() + 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  // 24a. LỖI ĐÃ NỔ THẬT: chính gói này gọi /fill/auto với DAY = 21/12 và làm hai lệnh HÔM NAY của kho
+  // thật bị "Hệ thống" chốt (15:17 · 15:23 ngày 15/09) — chốt lười lấy `day` truyền vào làm mốc thay
+  // cho 0h hôm nay. Mồi = một lệnh ĐANG MỞ của hôm nay (loại kho giả để không đụng khoá với lệnh thật).
+  const bait24 = (await restWrite('FillOrder', 'POST', null, {
+    id: randomUUID(), order_code: `${TAG}-TODAY`, warehouse_id: whId, target_date: TODAY,
+    warehouse_type: '__QA24__', status: 'PENDING', auto_created: false, created_by: 'QA',
+    created_at: nowIso(), updated_at: nowIso(),
+  }))[0]
+  const future24 = await runAuto()                  // DAY = ngày tương lai
+  const [bait24After] = await restAll('FillOrder', `select=status,closed_by&id=eq.${bait24.id}`)
+  check('24a. Chạy tay cho ngày TƯƠNG LAI → lệnh HÔM NAY vẫn ĐANG MỞ (mốc chốt lười = 0h hôm nay, không phải ngày truyền vào)',
+    future24.s === 200 && bait24After?.status === 'PENDING',
+    `http=${future24.s} status=${bait24After?.status} closed_by=${bait24After?.closed_by ?? '—'}`)
+  await restWrite('FillOrder', 'DELETE', `id=eq.${bait24.id}`).catch(() => {})
+
+  // 24c. BÁO CÁO KẾT QUẢ phải giữ dòng "chốt ngày — chưa thực hiện" trong MẪU SỐ (23e vừa huỷ ≥1 dòng
+  // như vậy). Bản cũ lọc `status <> 'CANCELLED'` ⇒ sau chốt ai cũng 100 % — lớp "xoá dấu vết" 28/08.
+  const rep24 = await api(`/wms/fill/report?warehouse_id=${whId}&date_from=${DAY}&date_to=${DAY}`)
+  check('24c. Báo cáo Kết quả đếm dòng "không kịp" (huỷ lúc chốt ngày) vào mẫu số',
+    rep24.s === 200 && Number(rep24.j?.data?.missed ?? 0) >= 1
+      && Number(rep24.j?.data?.total ?? 0) >= Number(rep24.j?.data?.missed ?? 0)
+      && (rep24.j?.data?.rows ?? []).some(r => Number(r.missed_n ?? 0) >= 1),
+    `missed=${rep24.j?.data?.missed} total=${rep24.j?.data?.total}`)
+
+  // 24d. MÁY ĐỔI DÒNG CỦA NGƯỜI ĐANG GIỮ KẾ HOẠCH ⇒ báo đích danh (feed cá nhân), không chỉ dải xanh
+  const day24 = (await restAll('FillOrder',
+    `select=id&warehouse_id=eq.${whId}&target_date=eq.${DAY}&status=eq.PENDING&warehouse_type=eq.${mat.category}`))[0]
+  await restWrite('user_notifications', 'DELETE', `employee_id=eq.${emp23?.id}&kind=eq.FILL_CHANGED`).catch(() => {})
+  const asg24 = day24 ? await api(`/wms/fill/orders/${day24.id}`, 'PATCH', { assignee_id: emp23?.id }) : { s: 0 }
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: LOOSE + 80, updated_at: nowIso() })
+  const grow24 = await runAuto()
+  const notif24 = await restAll('user_notifications',
+    `select=id,url,body&employee_id=eq.${emp23?.id}&kind=eq.FILL_CHANGED`)
+  check('24d. Đơn phát sinh làm máy CỘNG vào dòng đã giao ⇒ người giữ kế hoạch nhận thông báo đích danh',
+    asg24.s === 200 && Number(grow24.j?.data?.added ?? 0) >= 1
+      && notif24.some(n => n.url === `/wms/fill/orders/${day24?.id}`),
+    `assign=${asg24.s} added=${grow24.j?.data?.added} notif=${notif24.length}`)
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: LOOSE, updated_at: nowIso() })
+  await restWrite('user_notifications', 'DELETE', `employee_id=eq.${emp23?.id}&kind=eq.FILL_CHANGED`).catch(() => {})
+
+  // 24b. HÀNG ĐỢI THEO (kho, NGÀY XUẤT): đơn của NGÀY MAI đổi ⇒ trigger ghi (kho, mai) ⇒ lần đọc kế
+  // tiếp (trang Fill) tự đối chiếu đúng ngày đó — không cần ai bấm, không chờ nhịp 10 phút, và
+  // "chỉ hôm nay" không còn bỏ rơi ca 22h chuẩn bị cho chuyến ngày mai.
+  await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gdo.id}`, { delivery_date: TOMORROW, updated_at: nowIso() })
+  const queued24 = await restAll('fill_reconcile_queue', `select=target_date&warehouse_id=eq.${whId}&target_date=eq.${TOMORROW}`)
+  check('24b1. Đổi ngày chuyến sang MAI → trigger ghi (kho, mai) vào hàng đợi đối chiếu',
+    queued24.length === 1, `rows=${queued24.length}`)
+  const read24 = await api(`/wms/fill/demand?warehouse_id=${whId}&date=${TODAY}`)   // xem HÔM NAY, máy vẫn soát MAI
+  const tomLines = await restAll('FillTask',
+    `select=id,fill_order_id&warehouse_id=eq.${whId}&target_date=eq.${TOMORROW}&material_id=eq.${mat.id}&status=eq.PENDING`)
+  const queuedAfter = await restAll('fill_reconcile_queue', `select=target_date&warehouse_id=eq.${whId}&target_date=eq.${TOMORROW}`)
+  check('24b2. Lần đọc kế tiếp xả hàng đợi → lệnh fill cho NGÀY MAI tự có, hàng đợi rỗng',
+    read24.s === 200 && tomLines.length >= 1 && queuedAfter.length === 0,
+    `http=${read24.s} dòng_mai=${tomLines.length} còn_đợi=${queuedAfter.length}`)
+  // dọn phần 24b: chỉ dòng của MÃ fixture + vỏ lệnh rỗng (kho thật có thể có lệnh mai của người khác)
+  for (const l of tomLines) await restWrite('FillTask', 'DELETE', `id=eq.${l.id}`).catch(() => {})
+  for (const o of await restAll('FillOrder', `select=id,FillTask(id)&warehouse_id=eq.${whId}&target_date=eq.${TOMORROW}&auto_created=eq.true`))
+    if (!(o.FillTask ?? []).length) await restWrite('FillOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gdo.id}`, { delivery_date: DAY, updated_at: nowIso() })
+  await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup(WH)

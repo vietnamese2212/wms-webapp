@@ -55,8 +55,8 @@ export async function getBoard(req: Request, res: Response) {
     // TỒN ĐỔI TỪ LẦN TẢI TRƯỚC → sắp lại việc chưa ai đụng TRƯỚC khi đọc bảng (14/09, user: "tại thời
     // điểm hạ họ check được tồn mới nhất"). Hàng đợi thường rỗng ⇒ một câu DELETE trả 0 dòng.
     const drained = await drainReplanQueue(whId)
-    // TỰ RA LỆNH FILL (15/09) — không có pg_cron nên quét lười theo traffic, throttle 10'/instance.
-    // Trang này là màn mở đầu ca của kho Hướng dẫn; kho tắt công tắc thì đây là 2 câu nhẹ rồi về.
+    // TỰ RA LỆNH FILL (15/09) — hàng đợi theo (kho, ngày xuất) do trigger DB nuôi; ở đây chỉ xả hàng
+    // đợi (một RPC, thường trả rỗng). Trang này là màn mở đầu ca của kho Hướng dẫn.
     const autoFill = await autoFillSafe(whId)
 
     const { data, error } = await supabase.rpc('directed_board', {

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-15T08:01:10.941Z · 96 bảng/view · 164 hàm · 0 enum
+// Sinh lúc 2026-09-15T12:37:16.117Z · 98 bảng/view · 169 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3206,6 +3206,45 @@ export type Database = {
         }
         Relationships: []
       }
+      fill_reconcile_queue: {
+        Row: {
+          warehouse_id: string
+          target_date: string
+          queued_at: string
+        }
+        Insert: {
+          warehouse_id: string
+          target_date: string
+          queued_at?: string
+        }
+        Update: {
+          warehouse_id?: string
+          target_date?: string
+          queued_at?: string
+        }
+        Relationships: []
+      }
+      fill_reconcile_state: {
+        Row: {
+          warehouse_id: string
+          last_sweep: string | null
+          lease_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          warehouse_id: string
+          last_sweep?: string | null
+          lease_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          warehouse_id?: string
+          last_sweep?: string | null
+          lease_until?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       forklift_checklist_items: {
         Row: {
           id: string
@@ -4962,6 +5001,10 @@ export type Database = {
         Args: { p_warehouse_id: unknown; p_limit: unknown; arg6: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
         Returns: Json
       }
+      fill_close_reason: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       fill_demand: {
         Args: { p_cat_scope: unknown; p_date: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown }
         Returns: Json
@@ -4980,6 +5023,22 @@ export type Database = {
       }
       fill_orders_page: {
         Args: { p_warehouse_id: unknown; p_to: unknown; p_assignee: unknown; p_offset: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown }
+        Returns: Json
+      }
+      fill_reconcile_enqueue: {
+        Args: { p_date: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Returns: undefined
+      }
+      fill_reconcile_lease: {
+        Args: { p_lease_s: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Returns: boolean
+      }
+      fill_reconcile_release: {
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Returns: undefined
+      }
+      fill_reconcile_take: {
+        Args: { p_today: unknown; p_lease_s: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown }
         Returns: Json
       }
       fill_report: {

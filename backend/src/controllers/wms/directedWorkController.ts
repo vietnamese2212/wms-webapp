@@ -21,7 +21,7 @@ import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from
 // Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này,
 // và lọc thêm theo mức %Date đã chốt của TỪNG DÒNG (luật khớp date vẫn nằm ở directedTasks)
 import { rotationSuggestionsFor, rotationConfigOf, type SuggestionGroup } from './outboundController'
-import { hasPickFace } from '../../services/loosePickFace'
+import { hasPickFace, pickFaceFirst } from '../../services/loosePickFace'
 
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
@@ -274,12 +274,10 @@ export async function getLooseRoute(req: Request, res: Response) {
       const list = (sug.get(it.id) ?? []).filter(s => !!s.location_code)
       const first = list[0]
       if (!first?.location_code) continue
-      // Lô ĐÚNG THỨ TỰ đã nằm ở ô nhặt lẻ chưa? Cùng `rot_date` = cùng lô theo nguyên tắc của kho
-      // (FEFO nói HSD, FIFO/LIFO nói NSX) ⇒ lấy ô nào cũng không phải "sai thứ tự", nên ưu tiên ô
-      // nhặt lẻ: đó mới là chỗ nhặt bằng tay được.
-      const atPickFace = list.find(s => s.is_pick_face && s.rot_date === first.rot_date)
-      const pick = atPickFace ?? first
-      const needFill = pickFaceMode && !atPickFace
+      // Lô ĐÚNG THỨ TỰ đã nằm ở ô nhặt lẻ chưa? (phép so ở `loosePickFace.ts`, dùng chung với cột
+      // "Vị trí lấy" của trang Nhặt lẻ — hai màn phải chỉ cùng một ô)
+      const pick = pickFaceFirst(list)[0]
+      const needFill = pickFaceMode && !pick.is_pick_face
       if (needFill && rotCfg.of(whId, it.material?.category ?? null).required) { blockedFill.set(it.id, first.location_code); continue }
       codeByItem.set(it.id, {
         code: pick.location_code!, pct_date: pick.pct_date, available: pick.available,

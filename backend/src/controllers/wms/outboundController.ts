@@ -36,7 +36,7 @@ import {
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
-import { hasPickFace, looseFillMessage } from '../../services/loosePickFace'
+import { hasPickFace, looseFillMessage, pickFaceFirst } from '../../services/loosePickFace'
 import {
   loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
   type AutoApplied, type PolicyCtx,
@@ -5497,7 +5497,12 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
       groups.push({ key: it.id, material_id: it.material_id, accept: e => palletMeetsDateRule(e, e.material, rule) })
     }
     const sugByKey = await rotationSuggestionsFor(groups, whIds, await rotationConfigOf(whIds))
-    return ok(res, Object.fromEntries([...sugByKey.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
+    // `?loose=1` — màn NHẶT LẺ hỏi: phần lẻ lấy bằng TAY nên ô đúng là VỊ TRÍ NHẶT LẺ giữ đúng lô
+    // (cùng phép so với bảng "Theo vị trí", `services/loosePickFace.ts`). Trang Xuất kho lấy nguyên
+    // pallet thì KHÔNG bật cờ này: rút pallet khỏi kho lẻ là lấy mất chỗ nhặt tay của người khác.
+    const looseView = String(req.query.loose ?? '') === '1'
+    return ok(res, Object.fromEntries([...sugByKey.entries()]
+      .map(([k, v]) => [k, (looseView ? pickFaceFirst(v) : v).slice(0, 2)])))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

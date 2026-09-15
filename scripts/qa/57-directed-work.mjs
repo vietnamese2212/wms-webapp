@@ -1356,6 +1356,15 @@ try {
         w3.st?.location_id === locPick && w3.st?.is_pick_face === true && !w3.m?.need_fill_from && scOk.s === 200,
         `lộ trình→${w3.st?.location_code ?? '(không có)'} ô_lẻ=${w3.st?.is_pick_face} need_fill=${w3.m?.need_fill_from ?? 'không'} quét=${scOk.s} ${err(scOk)}`)
 
+      // (d2) CỘT "VỊ TRÍ LẤY" CỦA TRANG NHẶT LẺ phải chỉ CÙNG một ô với bảng lộ trình (cùng câu hỏi,
+      // cùng luật) — trang Xuất kho lấy nguyên pallet thì KHÔNG bật cờ này (rút pallet khỏi kho lẻ
+      // là lấy mất chỗ nhặt tay của người khác).
+      const sgL = await api(`/wms/outbound/${tF.gdo}/pick-suggestions?loose=1`)
+      const firstL = (sgL.j?.data?.[itF.id] ?? [])[0]
+      check('[25p] Cột "Vị trí lấy" của màn Nhặt lẻ (?loose=1) cũng chỉ vào ô nhặt lẻ như bảng lộ trình',
+        sgL.s === 200 && firstL?.is_pick_face === true && firstL?.location_code === w3.st?.location_code,
+        `gợi ý→${firstL?.location_code ?? '(không có)'} ô_lẻ=${firstL?.is_pick_face} · lộ trình→${w3.st?.location_code}`)
+
       // (e) KHO CHƯA KHAI Ô NHẶT LẺ ⇒ KHÔNG tự bật luật (cùng khuôn "kho có vẽ cửa thì mới bắt cửa")
       await restWrite('Location', 'PATCH', `id=eq.${locPick}`, { is_pick_face: false, updated_at: nowIso() })
       const w4 = await routeF()

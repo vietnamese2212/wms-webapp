@@ -203,7 +203,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
   const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
   // Cột "Vị trí lấy" — top 2 vị trí FEFO trên màn (đồng bộ trang Xuất)
-  const { data: pickSug } = useGdoPickSuggestions(gdoId)
+  const { data: pickSug } = useGdoPickSuggestions(gdoId, true)   // màn nhặt lẻ → ưu tiên vị trí nhặt lẻ
   // ĐƯỜNG ĐI NHẶT Lẻ (user 14/09 "A → B → C sao cho hợp lý"): thứ tự ghé vị trí lấy từ cửa của chuyến,
   // BFS trên Sơ đồ kho — cùng phép đo với vòng đi xe nâng. Dòng hàng xếp theo thứ tự ghé; chưa có bản vẽ
   // thì giữ thứ tự cũ và dải đường đi nói thẳng "chưa có bản vẽ".

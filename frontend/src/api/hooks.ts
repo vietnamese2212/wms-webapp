@@ -3867,10 +3867,12 @@ export type ItemInventoryEntry = {
 // Gợi ý vị trí lấy FEFO theo mã hàng của 1 chuyến (cột "Vị trí lấy" — thủ kho xem trên màn).
 // Key prefix 'gdo' → realtime tự invalidate khi quét (reserve tồn đổi ⇒ gợi ý đổi).
 // Dùng chung type PickSuggestion khai ở phần Bảng chuẩn bị hàng (bên dưới).
-export function useGdoPickSuggestions(gdoId: string | undefined) {
+// `loose` = màn NHẶT LẺ (phần lẻ lấy bằng tay ⇒ ưu tiên VỊ TRÍ NHẶT LẺ giữ đúng lô). Trang Xuất kho
+// để mặc định: lấy nguyên pallet thì không nên rút hàng khỏi kho lẻ.
+export function useGdoPickSuggestions(gdoId: string | undefined, loose = false) {
   return useQuery({
-    queryKey: ['gdo', 'pick-suggestions', gdoId],
-    queryFn: () => apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions`)
+    queryKey: ['gdo', 'pick-suggestions', gdoId, loose],
+    queryFn: () => apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions${loose ? '?loose=1' : ''}`)
       .then(r => r.data.data as Record<string, PickSuggestion[]>),
     enabled: !!gdoId,
   })

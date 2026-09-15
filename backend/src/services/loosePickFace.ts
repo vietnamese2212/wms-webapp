@@ -18,14 +18,27 @@
 // Kho CHƯA khai vị trí nhặt lẻ nào thì KHÔNG có luật này — không tự bật hộ ai (cùng khuôn "kho có
 // vẽ cửa xuất thì mới bắt chọn cửa").
 
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/supabase'
 
 /** Kho đã khai vị trí nhặt lẻ chưa. */
 export async function hasPickFace(warehouseId: string | null | undefined): Promise<boolean> {
   if (!warehouseId) return false
-  const { data } = await supabase.from('Location').select('id')
+  const { data } = await db.from('Location').select('id')
     .eq('warehouse_id', warehouseId).eq('is_pick_face', true).eq('is_active', true).limit(1)
   return (data ?? []).length > 0
+}
+
+/**
+ * Đưa VỊ TRÍ NHẶT LẺ giữ ĐÚNG LÔ lên đầu danh sách gợi ý. "Đúng lô" = cùng `rot_date` với gợi ý
+ * đầu (FEFO nói HSD, FIFO/LIFO nói NSX) ⇒ lấy ô nào cũng KHÔNG phải sai thứ tự, nên chọn ô nhặt
+ * lẻ: đó mới là chỗ nhặt bằng tay được. Không có ô nào như vậy ⇒ giữ nguyên thứ tự (và caller nói
+ * "cần fill xuống"). MỘT hàm cho mọi cửa chỉ đường hàng lẻ — đừng chép lại phép so này.
+ */
+export function pickFaceFirst<T extends { is_pick_face: boolean; rot_date: string | null }>(list: T[]): T[] {
+  const first = list[0]
+  if (!first || first.is_pick_face) return list
+  const i = list.findIndex(s => s.is_pick_face && s.rot_date === first.rot_date)
+  return i < 0 ? list : [list[i], ...list.filter((_, k) => k !== i)]
 }
 
 /** Câu nói chung cho cả màn chỉ đường lẫn cửa quét — một chỗ sửa chữ. */

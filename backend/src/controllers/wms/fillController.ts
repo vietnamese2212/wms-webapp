@@ -12,7 +12,8 @@ import { rotationConfigOf } from './outboundController'
 import { availableOf, isPickEligible, rotationSortKey, type RotationEntry } from '../../utils/rotation'
 import { type MaterialShelfInfo } from '../../utils/shelfLife'
 import { qaHoldIds } from '../../services/qaStatus'
-import { fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
+import { dateRuleOf, palletMeetsDateRule, type DateRule } from '../../services/directedTasks'
 
 // ─── FILL HÀNG PHỤC VỤ NHẶT LẺ (v3 — user chốt 05/08) ───────────────────────
 // Nhặt lẻ lấy hàng bằng TAY ⇒ hàng phải nằm ở "vị trí nhặt lẻ" (cờ Location.is_pick_face).
@@ -86,6 +87,37 @@ const mayFill = (req: Request, action: string): boolean => {
 // (SQL), nên sửa mỗi con số thiếu sẽ ra màn hình "thiếu 1.068 mà không pallet nào để hạ" — bấm ra
 // lệnh cũng không được, tức vẫn đúng cái user hỏi. Tính ở TS còn gỡ được MỘT BẢN CHÉP TAY của luật
 // luân chuyển nằm trong SQL (`fefo_key`): thứ tự lấy hàng chỉ có một nguồn là `utils/rotation.ts`.
+/**
+ * Mức %Date của CÁC DÒNG nhặt lẻ trong ngày, gom theo mã (cùng bộ lọc chuyến với RPC `fill_demand`).
+ * Trả `null` cho mã có ÍT NHẤT một dòng chưa chốt mức ⇒ mã đó không ràng buộc lô nào.
+ */
+async function looseRulesOfDay(warehouseId: string, day: string, matIds: string[]): Promise<Map<string, DateRule[] | null>> {
+  const out = new Map<string, DateRule[] | null>()
+  if (!matIds.length) return out
+  const gdos = await fetchAllRowsParallel(() => supabase.from('GroupDeliveryOrder')
+    .select('id, status, awaiting_sap, plan_dropped')
+    .eq('warehouse_id', warehouseId).eq('delivery_date', day).order('id')) as unknown as
+    Array<{ id: string; status: string | null; awaiting_sap: boolean | null; plan_dropped: boolean | null }>
+  const gdoIds = gdos.filter(g => g.status !== 'CANCELLED' && !g.awaiting_sap && !g.plan_dropped).map(g => g.id)
+  if (!gdoIds.length) return out
+  const dos = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
+    .select('id').in('gdo_id', chunk).order('id')) as unknown as Array<{ id: string }>
+  if (!dos.length) return out
+  const items = await fetchAllByIdChunks(dos.map(d => d.id), chunk => supabase.from('OutboundItem')
+    .select('material_id, date_rule, date_required, status, loose_picking')
+    .in('do_id', chunk).gt('loose_picking', 0).order('id')) as unknown as
+    Array<{ material_id: string | null; date_rule: unknown; date_required: number | null; status: string | null }>
+  const want = new Set(matIds)
+  for (const it of items) {
+    if (!it.material_id || !want.has(it.material_id) || it.status === 'CANCELLED') continue
+    if (out.get(it.material_id) === null) continue                  // đã có dòng không ràng buộc
+    const rule = dateRuleOf(it)
+    if (!rule) { out.set(it.material_id, null); continue }
+    out.set(it.material_id, [...(out.get(it.material_id) ?? []), rule])
+  }
+  return out
+}
+
 const FILL_STATUSES = ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'] as const
 const MAX_SUGG = 40
 type FillSug = {
@@ -105,11 +137,17 @@ type FillEntry = RotationEntry & {
   material: (MaterialShelfInfo & { category?: string | null }) | null
 }
 
-async function withLotCheck(payload: FillDemandPayload, warehouseId: string): Promise<FillDemandPayload> {
+async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day: string): Promise<FillDemandPayload> {
   const rows = payload?.rows ?? []
   // Kho chưa khai ô nhặt lẻ nào ⇒ không có luật này (không tự bật hộ ai)
   if (!rows.length || !Number(payload?.pick_face_locations ?? 0)) return payload
   const matIds = [...new Set(rows.map(r => r.material_id).filter(Boolean))]
+  // MỨC %DATE THUỘC VỀ DÒNG ĐƠN — Fill cũng phải đọc (cửa thứ ba, vẫn lớp C19). Không đọc thì màn
+  // này đòi hạ một lô mà CHÍNH đơn không được phép lấy: đo Ba Vì 15/09, mã 510000155 lộ trình bảo
+  // "lấy ngay ở kho lẻ" (lô đạt mức ≥ 60 %) còn Fill lại bảo "hạ lô cũ hơn xuống" — lô đó rơi dưới
+  // mức nên hạ xuống cũng không ai lấy được. Gộp mức của các dòng cùng mã theo phép HỢP: pallet
+  // dùng được cho ÍT NHẤT một dòng là đáng fill; dòng chưa chốt mức ⇒ mã đó không ràng buộc gì.
+  const rulesByMat = await looseRulesOfDay(warehouseId, day, matIds)
   const [ents, qaHold, rotCfg, busyRaw] = await Promise.all([
     fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
       .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, location:Location!inner(location_code, warehouse_id, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)')
@@ -125,8 +163,12 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string): Pr
   for (const e of ents) byMat.set(e.material_id, [...(byMat.get(e.material_id) ?? []), e])
 
   for (const r of rows) {
-    const pool = byMat.get(r.material_id) ?? []
-    const principle = rotCfg.of(warehouseId, pool[0]?.material?.category ?? null).principle
+    const all = byMat.get(r.material_id) ?? []
+    const rules = rulesByMat.get(r.material_id)
+    // `rules === null` = có dòng chưa chốt mức ⇒ không ràng buộc; mảng rỗng = không có dòng nào (giữ nguyên)
+    const pool = rules == null ? all
+      : all.filter(e => rules.some(rule => palletMeetsDateRule(e, e.material, rule)))
+    const principle = rotCfg.of(warehouseId, all[0]?.material?.category ?? null).principle
     const keyOf = new Map(pool.map(e => [e.id, rotationSortKey(e, e.material, principle)]))
     const sorted = [...pool].sort((a, b) => {
       const ka = keyOf.get(a.id) ?? Infinity, kb = keyOf.get(b.id) ?? Infinity
@@ -182,7 +224,7 @@ export async function getFillDemand(req: Request, res: Response) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (fill hàng)')
       return fail(res, 500, 'DB_ERROR', error.message)
     }
-    return ok(res, await withLotCheck(data as FillDemandPayload, warehouse_id))
+    return ok(res, await withLotCheck(data as FillDemandPayload, warehouse_id, date || vnToday()))
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

@@ -56,6 +56,7 @@ async function cleanup(whId) {
   }
   for (const id of created.locs)    await restWrite('Location', 'DELETE', `id=eq.${id}`).catch(() => {})
   if (created.mat2) await restWrite('Material', 'DELETE', `id=eq.${created.mat2}`).catch(() => {})
+  if (created.mat3) await restWrite('Material', 'DELETE', `id=eq.${created.mat3}`).catch(() => {})
 }
 // Tàn dư của lần chạy hỏng giữa chừng (fixture phải TỰ HỒI PHỤC)
 for (const o of await restAll('FillOrder', `select=id&target_date=eq.${DAY}`))
@@ -237,6 +238,44 @@ try {
   check('1d. Kho lẻ có hàng nhưng SAI LÔ ⇒ vẫn báo thiếu VÀ vẫn có pallet để hạ (không phải ngõ cụt)',
     ok1 < oraclePF ? (Number(d1.row?.short_base) > 0 && (d1.row?.suggestions ?? []).length > 0) : true,
     `đúng lô=${ok1}/${oraclePF} thiếu=${d1.row?.short_base} gợi ý=${(d1.row?.suggestions ?? []).length} pallet`)
+
+  // ── 1e. MỨC %DATE CỦA DÒNG ĐƠN quyết định "lô đúng" (15/09) ───────────────
+  // Không đọc mức thì màn này đòi hạ một lô mà CHÍNH đơn không được phép lấy (đo Ba Vì: mã
+  // 510000155 — lộ trình bảo "lấy ngay ở kho lẻ" vì lô ở đó đạt ≥ 60 %, Fill lại bảo "hạ lô cũ
+  // hơn xuống", mà lô đó dưới mức nên hạ xuống cũng không ai lấy được).
+  {
+    const [m3] = await restWrite('Material', 'POST', null, {
+      id: randomUUID(), material_code: `${TAG}-M3`, material_description: 'QA fill date-rule',
+      short_name: 'QA fill date-rule', category: mat.category, shelf_life_days: 365,
+      created_at: nowIso(), updated_at: nowIso(),
+    })
+    created.mat3 = m3.id
+    const mk3 = async (code, qty, locId, prodOff, expOff) => {
+      const dt = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+      const [row] = await restWrite('InventoryEntry', 'POST', null, {
+        id: randomUUID(), pallet_code: `${TAG}-${code}`, material_id: m3.id, warehouse_id: whId,
+        location_id: locId, cartons_imported: qty, cartons_remaining: qty, cartons_reserved: 0,
+        status: 'IN_STOCK', production_date: dt(prodOff), expiry_date: dt(expOff),
+        import_date: nowIso(), created_at: nowIso(), updated_at: nowIso(),
+      })
+      created.entries.push(row.id)
+      return row
+    }
+    await mk3('OLD3', 100, locRsv.id, -355, 10)     // %Date ≈ 2,7 % — CŨ nhất nhưng dòng KHÔNG lấy được
+    await mk3('NEW3', 100, locPF.id, -5, 360)       // %Date ≈ 98,6 % — đạt mức, ĐANG Ở kho lẻ
+    const [it3] = await restWrite('OutboundItem', 'POST', null, {
+      id: randomUUID(), do_id: dlv.id, material_id: m3.id, material_code_raw: m3.material_code,
+      cartons_ordered: 50, cartons_scanned: 0, loose_picking: 50, status: 'PENDING',
+      date_rule: { kind: 'MIN_PCT', value: 60, source: 'MANUAL', set_at: nowIso() },
+      created_at: nowIso(), updated_at: nowIso(),
+    })
+    created.items.push(it3.id)
+    const dm3 = await api(`/wms/fill/demand?warehouse_id=${whId}&date=${DAY}`)
+    const r3 = (dm3.j?.data?.rows ?? []).find(x => x.material_id === m3.id)
+    check('1e. Lô ĐẠT MỨC của dòng đã nằm ở kho lẻ ⇒ KHÔNG đòi fill (dù có lô cũ hơn trên kệ)',
+      Number(r3?.short_base) === 0 && Number(r3?.pick_face_ok_base) >= 50,
+      `thiếu=${r3?.short_base} đúng lô=${r3?.pick_face_ok_base} gợi ý=${(r3?.suggestions ?? []).length}`)
+  }
 
   // ── 2. Gợi ý FEFO + vừa đủ ────────────────────────────────────────────────
   const sug = d1.row?.suggestions ?? []

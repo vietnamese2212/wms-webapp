@@ -10,12 +10,26 @@
  * File RIÊNG chứ không nhét vào `fillController`: service `autoFill` đã import fillController, gộp
  * vào đó là vòng import khép kín ngay tại lúc nạp module.
  */
-import { Request, Response } from 'express'
+import { NextFunction, Request, Response } from 'express'
 import { ok, fail } from '../../utils/response'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
-import { autoFillDay, vnToday } from '../../services/autoFill'
+import { autoFillDay, autoFillSafe, vnToday } from '../../services/autoFill'
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Chạy bộ tự ra lệnh TRƯỚC khi tính nhu cầu của trang Fill hàng — nếu không, chính người quan tâm
+ * nhất mở trang ra lại là người DUY NHẤT không kích hoạt nó (trang Việc cần làm và trang Nhặt lẻ
+ * đều có gọi). Đặt ở tầng ROUTE chứ không gọi từ `fillController`: service `autoFill` đã import
+ * fillController, gọi ngược lại là vòng import hai chiều.
+ * Chỉ chạy cho NGÀY HÔM NAY — người xem trước ngày mai không được kéo theo việc hạ hàng thật.
+ */
+export async function beforeDemand(req: Request, _res: Response, next: NextFunction) {
+  const wh = typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : null
+  const d = typeof req.query.date === 'string' ? req.query.date : ''
+  if (wh && (!d || d === vnToday())) await autoFillSafe(wh)
+  next()
+}
 
 /** POST /wms/fill/auto — body { warehouse_id, date? } */
 export async function runAutoFill(req: Request, res: Response) {

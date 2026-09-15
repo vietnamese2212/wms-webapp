@@ -288,7 +288,7 @@ router.post('/alerts/scan',                                   requirePerm('alert
 router.post('/alerts/:id/ack',                                requirePerm('alerts', 'ack'),   alerts.ackAlert)
 router.delete('/alerts/:id/ack',                              requirePerm('alerts', 'ack'),   alerts.unackAlert)
 
-router.get('/fill/demand',                                    requirePerm('fill', 'view'),    fill.getFillDemand)
+router.get('/fill/demand',                                    requirePerm('fill', 'view'),    autoFill.beforeDemand, fill.getFillDemand)
 router.get('/fill/candidates',                                requirePerm('fill', 'view'),    fill.getFillCandidates)
 router.get('/fill/orders',                                    requirePerm('fill', 'view'),    fill.listFillOrders)
 router.get('/fill/orders/:id',                                requirePerm('fill', 'view'),    fill.getFillOrder)

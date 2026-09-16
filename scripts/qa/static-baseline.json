@@ -54,6 +54,7 @@
   "axios_post_null_body": 0,
   "detail_blank_on_404": 0,
   "today_frozen_at_import": 0,
+  "list_param_join_without_empty_guard": 0,
   "route_without_permission": 3,
   "scan_formats_declared_outside_engine": 0,
   "tablist_center_blocks_scroll": 0,

@@ -881,6 +881,17 @@ const RULES = [
     count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
       (line) => /^const\s+\w*(TODAY|Today)\w*\s*(:[^=]+)?=\s*new Date\(\)/.test(line), s),
   },
+  // Bộ lọc nhiều-chọn: FilterBar coi `selected=[]` là "Tất cả" (chip không active, "Xóa tất cả" đưa về []),
+  // còn BE `parseListParam` coi `?x=` RỖNG là "KHÔNG giá trị nào" (hợp đồng gói 07). Gửi thẳng
+  // `x: arr.join(',')` là hai đầu hiểu ngược nhau ⇒ bỏ tick hết = bảng TRỐNG với câu "không khớp bộ lọc".
+  // Đo 16/09: tab Lệnh fill mất sạch lệnh sau khi bỏ tick "Chờ làm" (user: "Lệnh fill ko có dữ liệu?").
+  // Luật: mảng lọc lên query phải qua `arr.length ? arr.join(',') : undefined` hoặc `arr.join(',') || undefined`.
+  {
+    key: 'list_param_join_without_empty_guard',
+    label: 'tham số lọc dạng mảng gửi thẳng `key: arr.join(\',\')` không có guard rỗng — bỏ tick hết là bảng TRỐNG (FE coi rỗng = Tất cả, BE coi rỗng = không gì). Dùng `arr.join(\',\') || undefined`',
+    count: (s) => countMatches(['frontend/src/pages'], ['.tsx'],
+      (line) => /^\s*\w+:\s*[\w.]+\.join\(','\),?\s*$/.test(line), s),
+  },
   // "Mọi view mới phải có mặt trong phân quyền" (user chốt 19/08): route trang mới trong App.tsx
   // PHẢI bọc PermissionRoute/ExternalRoute/DashboardRoute. Baseline 3 = 3 route MỞ CHỦ ĐÍCH:
   // /wms/alerts (tab Cá nhân = feed của mình) · /settings (tài khoản cá nhân) · /wms/multi-scan

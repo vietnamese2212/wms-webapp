@@ -629,7 +629,9 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
   const { data, isLoading } = useFillOrders({
     warehouse_id: warehouseId,
     date_from: f.ordersFrom || undefined, date_to: f.ordersTo || undefined,
-    status: f.status.join(','),
+    // Bỏ tick hết = "Tất cả" (chuẩn FilterBar), KHÔNG gửi `status=` rỗng — BE coi rỗng là "không trạng
+    // thái nào" và trả bảng trống (user 16/09: "Lệnh fill ko có dữ liệu?"). Ratchet list_param_join_without_empty_guard.
+    status: f.status.join(',') || undefined,
     mine: f.mine ? '1' : undefined,
     search: f.search || undefined,
     page: f.page, page_size: f.pageSize,

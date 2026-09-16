@@ -14,6 +14,7 @@ import { useNavigate } from 'react-router-dom'
 import { MapPin, PenSquare, Search, X } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
@@ -185,26 +186,33 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
       {/* HÀNG LẺ NHẶT Ở KHO LẺ — nói ra ngay đầu bảng kèm ĐƯỜNG ĐI TIẾP (ra lệnh fill), đừng bắt
           người đọc tự suy "vậy giờ phải làm gì". Đỏ = kho tích bắt buộc (không nhặt được cho tới khi
           fill xong) · hổ phách = mới là lời khuyên. */}
-      {nFill > 0 && (
-        <div className={`shrink-0 border-b px-3 py-1.5 flex items-center gap-2 text-[11px] ${nBlocked > 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-          <span className="flex-1 min-w-0">
-            <b>{nFill} mã</b> {nBlocked > 0 ? 'PHẢI fill xuống vị trí nhặt lẻ mới nhặt được' : 'nên fill xuống vị trí nhặt lẻ'} — lô đúng thứ tự đang nằm trên kệ.
-          </span>
-          <button onClick={() => navigate('/wms/fill')}
-            className={`shrink-0 h-7 px-2 rounded text-white font-semibold ${nBlocked > 0 ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
-            Fill hàng ›
-          </button>
-        </div>
-      )}
-      {waitRows.length > 0 && (
-        <div className="shrink-0 border-b border-sky-200 bg-sky-50 px-3 py-1.5 flex items-center gap-2 text-[11px] text-sky-800">
-          <span className="flex-1 min-w-0">
-            <b>{waitRows.length} mã</b> đã có lệnh fill{waitCodes.size === 1 && waitCode ? <> <b className="font-mono">{waitCode}</b></> : null} — đang chờ hạ xuống ô nhặt lẻ, không cần ra lệnh nữa.
-          </span>
-          <button onClick={() => navigate(waitCodes.size === 1 && waitOrder ? `/wms/fill/orders/${waitOrder}` : '/wms/fill')}
-            className="shrink-0 h-7 px-2 rounded bg-sky-600 text-white font-semibold hover:bg-sky-700">
-            Xem lệnh ›
-          </button>
+      {(nFill > 0 || waitRows.length > 0) && (
+        // Chip + ⓘ thay hai băng chữ (user 16/09: "đưa thông tin vào tooltip info đi, thấy mấy cảnh báo
+        // mất hết cả màn hình") — màn này là BẢNG LỘ TRÌNH, chỗ trống phải để cho các điểm ghé.
+        <div className="shrink-0 border-b bg-white px-3 py-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+          {nFill > 0 && (
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${nBlocked > 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+              <b>{nFill} mã</b> {nBlocked > 0 ? 'phải fill trước' : 'nên fill xuống ô lẻ'}
+              <InfoTip className={nBlocked > 0 ? 'text-red-400 hover:text-red-700' : 'text-amber-500 hover:text-amber-700'} tip={close => (
+                <>
+                  <div>Lô đúng thứ tự đang nằm <b>trên kệ</b>, không phải ở vị trí nhặt lẻ.
+                  {nBlocked > 0 ? ' Kho tích "bắt buộc lấy đúng thứ tự" nên chưa fill xuống thì chưa nhặt được.' : ' Lấy ngay trên kệ vẫn được, nhưng đúng luồng là fill xuống rồi nhặt ở ô lẻ.'}</div>
+                  <button onClick={() => { close(); navigate('/wms/fill') }}
+                    className="mt-1 underline font-medium text-sky-700">Sang Fill hàng để ra lệnh ›</button>
+                </>)} />
+            </span>
+          )}
+          {waitRows.length > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-800">
+              <b>{waitRows.length} mã</b> chờ hạ{waitCodes.size === 1 && waitCode ? <> · <span className="font-mono">{waitCode}</span></> : null}
+              <InfoTip className="text-sky-400 hover:text-sky-700" tip={close => (
+                <>
+                  <div>Đã có lệnh fill cho các mã này, đang chờ người hạ xuống ô nhặt lẻ — <b>không cần ra lệnh nữa</b>.</div>
+                  <button onClick={() => { close(); navigate(waitCodes.size === 1 && waitOrder ? `/wms/fill/orders/${waitOrder}` : '/wms/fill') }}
+                    className="mt-1 underline font-medium text-sky-700">Xem lệnh ›</button>
+                </>)} />
+            </span>
+          )}
         </div>
       )}
 

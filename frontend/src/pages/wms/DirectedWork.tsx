@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes, CalendarClock, ExternalLink, Search } from 'lucide-react'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -658,20 +659,35 @@ export default function DirectedWork() {
             có biển số + cửa, trong khi NPP/số DO/tiến độ đều nằm sẵn trong DB. Mobile giữ ba mẩu
             cốt lõi, phần còn lại chỉ hiện từ sm (chuẩn mật độ: dữ liệu phải xuất hiện sớm). */}
         {/* Máy vừa sắp lại việc chưa ai đụng theo tồn mới (14/09) — phải NÓI RA, kẻo xe nâng thấy thứ tự đổi mà không biết vì sao */}
-        {(data?.auto_replanned ?? 0) > 0 && (
-          <div className="shrink-0 border-b bg-amber-50 px-3 py-1 text-[11px] text-amber-800">
-            Tồn kho vừa đổi — kế hoạch của {data?.auto_replanned} chuyến đã được sắp lại theo tồn hiện tại (việc đã hạ / đã đưa ra giữ nguyên).
-          </div>
-        )}
-        {/* Máy vừa tự đặt / thu hồi lệnh fill (15/09) — cùng luật với dải trên: máy làm gì dưới tay
-            người thì phải nói ra, kẻo lệnh tự mọc trong Hộp việc mà không ai biết từ đâu ra */}
-        {(data?.auto_fill?.created || data?.auto_fill?.recalled) ? (
-          <div className="shrink-0 border-b bg-sky-50 px-3 py-1 text-[11px] text-sky-900 flex flex-wrap items-center gap-x-2">
-            <span>
-              {(data.auto_fill.created ?? 0) > 0 && <>Hệ thống vừa ra <b>{data.auto_fill.created} dòng lệnh fill</b> hàng xuống kho lẻ{data.auto_fill.order_code ? <> ({data.auto_fill.order_code})</> : null} — chưa giao ai. </>}
-              {(data.auto_fill.recalled ?? 0) > 0 && <>Thu hồi <b>{data.auto_fill.recalled} dòng</b> không còn cần. </>}
-            </span>
-            <Link to="/wms/fill" onClick={anchorDirected} className="underline underline-offset-2 hover:text-sky-700">Mở Fill hàng ›</Link>
+        {/* Máy vừa tự đặt / thu hồi lệnh fill (15/09) — cùng luật: máy làm gì dưới tay người thì phải
+            nói ra. Nhưng NÓI RA ≠ CHIẾM CHỖ: hai dải chữ riêng ăn ~48 px của màn 360 và đẩy bảng
+            xuống (user 16/09: "đưa thông tin vào tooltip info đi, thấy mấy cảnh báo mất hết cả màn
+            hình"). Nay một hàng chip, chi tiết + đường đi tiếp nằm trong ⓘ. */}
+        {((data?.auto_replanned ?? 0) > 0 || data?.auto_fill?.created || data?.auto_fill?.recalled) ? (
+          <div className="shrink-0 border-b bg-white px-3 py-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+            {(data?.auto_replanned ?? 0) > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+                Kế hoạch <b>{data?.auto_replanned}</b> chuyến vừa sắp lại
+                <InfoTip className="text-amber-500 hover:text-amber-700"
+                  tip={<>Tồn kho vừa đổi nên máy sắp lại các việc <b>chưa ai đụng</b> theo tồn hiện tại. Việc đã hạ /
+                    đã đưa ra giữ nguyên, không ai mất phần đang làm dở.</>} />
+              </span>
+            )}
+            {(data?.auto_fill?.created || data?.auto_fill?.recalled) ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-900">
+                Lệnh fill: {(data.auto_fill.created ?? 0) > 0 && <><b>+{data.auto_fill.created}</b> dòng</>}
+                {(data.auto_fill.created ?? 0) > 0 && (data.auto_fill.recalled ?? 0) > 0 ? ' · ' : ''}
+                {(data.auto_fill.recalled ?? 0) > 0 && <>thu hồi <b>{data.auto_fill.recalled}</b></>}
+                <InfoTip className="text-sky-400 hover:text-sky-700" tip={
+                  <>
+                    <div>Hệ thống tự đối chiếu nhu cầu nhặt lẻ của ngày:
+                      {(data.auto_fill.created ?? 0) > 0 && <> vừa ra <b>{data.auto_fill.created} dòng</b> hạ hàng xuống kho lẻ{data.auto_fill.order_code ? <> ({data.auto_fill.order_code})</> : null} — chưa giao ai.</>}
+                      {(data.auto_fill.recalled ?? 0) > 0 && <> Thu hồi <b>{data.auto_fill.recalled} dòng</b> không còn cần.</>}
+                    </div>
+                    <Link to="/wms/fill" onClick={anchorDirected} className="mt-1 inline-block underline font-medium text-sky-700">Mở Fill hàng ›</Link>
+                  </>} />
+              </span>
+            ) : null}
           </div>
         ) : null}
         {focusTrip && (

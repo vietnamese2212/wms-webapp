@@ -21,6 +21,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { AssigneePicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
 import {
   useWarehouses, useFillDemand, useFillCandidates, useFillOrders, useFillReport,
@@ -344,60 +345,76 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         { label: 'Pallet cần hạ', value: nf(tot.pallets), accent: tot.pallets > 0 },
       ]} />
 
-      {data && data.pick_face_locations === 0 && (
-        <div className="mx-3 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-          Kho này <b>chưa khai vị trí nhặt lẻ nào</b> nên mọi mã đều hiện "thiếu". Vào <b>Vị trí kho</b> → lọc các vị trí
-          tầng dưới → nút <b>"Vị trí nhặt lẻ"</b> để khai hàng loạt, rồi quay lại đây.
-        </div>
-      )}
-      {/* MÃ BỊ LOẠI VÌ KHÔNG Ô LẺ NÀO NHẬN LOẠI (16/09) — RPC không đề xuất được thì phải NÓI RA, không lọc
-          im lặng: đo Ba Vì 15/09 mã 510000306 (FG02) cần 60 thùng mà trang hiện 8/9 mã, còn màn "Tối ưu
-          tuyến" thì đang giục "fill xuống ô lẻ" cho đúng mã đó ⇒ ngõ cụt (lớp C24). Gom theo Loại kho để
-          người khai biết phải mở ô lẻ cho loại nào. */}
-      {data && (data.excluded?.length ?? 0) > 0 && (
-        <div className="mx-3 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-          <b>{nf(data.excluded!.length)} mã</b> cần nhặt lẻ hôm nay nhưng kho <b>chưa có ô nhặt lẻ nào nhận Loại kho</b> của
-          chúng nên không đề xuất được — hàng lẻ sẽ phải lấy trên kệ:{' '}
-          {Object.entries(data.excluded!.reduce<Record<string, string[]>>((acc, x) => {
-            const k = x.category ?? '—'; (acc[k] ??= []).push(x.material_code ?? x.material_id); return acc
-          }, {})).map(([cat, codes]) => (
-            <span key={cat} className="inline-block mr-2"><b>{cat}</b>: <span className="font-mono">{codes.join(', ')}</span></span>
-          ))}
-          <span className="block mt-0.5">Khai thêm ô nhặt lẻ nhận loại đó ở <b>Vị trí kho</b> (cột Loại hàng của vị trí) rồi quay lại đây.</span>
-        </div>
-      )}
-      {/* MÃ CHƯA CHỐT %DATE — KHÔNG PHẢI MÃ THIẾU (user chốt 16/09: "chưa chốt thì không cần đưa yêu cầu, đầy đủ
-          rồi mới tới bước fill"). Bản cũ để nó lẫn trong bảng như mã thiếu thường nên người bấm "Đưa vào lệnh
-          fill" là chọn lô hộ một dòng chưa ai quyết. Tách ra băng riêng + đường sang Quy định date. */}
-      {data && (data.unset?.length ?? 0) > 0 && (
-        <div className="mx-3 mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
-          <b>{nf(data.unset!.length)} mã</b> có nhặt lẻ hôm nay nhưng dòng đơn <b>chưa chốt %Date</b> nên chưa đưa vào đề xuất
-          (chưa chốt thì chưa được lấy hàng):{' '}
-          <span className="font-mono">{data.unset!.map(x => x.material_code ?? x.material_id).join(', ')}</span>
-          <span className="block mt-0.5">
-            Chốt ở{' '}
-            <button type="button" className="underline font-medium text-sky-700" onClick={() => navigate('/wms/outbound/date-rules')}>
-              Quy định date
-            </button>
-            {' '}rồi quay lại — máy tự đề xuất, không cần bấm gì thêm.
-          </span>
-        </div>
-      )}
-      {/* NGƯỜI ĐÃ BÁC (user hỏi 16/09 "tại sao 363 và 022 lại có mặt ở Đề xuất?"): dòng máy đặt bị huỷ tay hôm nay
-          ⇒ máy không đặt lại, nhưng nhu cầu còn nên bản cũ vẫn liệt như mã thiếu thường. Nay tách ra đây kèm lý do;
-          "Hiện" để xem lại và đưa vào lệnh TAY nếu đổi ý (máy vẫn không tự đặt tới hết ngày). */}
-      {data && (data.vetoed?.length ?? 0) > 0 && (
-        <div className="mx-3 mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
-          <b>{nf(data.vetoed!.length)} mã</b> hôm nay <b>đã có người huỷ dòng máy đặt</b> nên máy không đặt lại, không đưa vào đề xuất:{' '}
-          {data.vetoed!.map(x => (
-            <span key={x.material_id} className="inline-block mr-2">
-              <span className="font-mono">{x.material_code ?? x.material_id}</span>
-              <span className="text-slate-500"> ({x.reason || 'không ghi lý do'}{x.at ? ` · ${formatTimestampTime(x.at)}` : ''})</span>
+      {/* MÃ KHÔNG NẰM TRONG BẢNG — mỗi lý do MỘT CHIP, chi tiết nằm trong ⓘ (user 16/09: "đưa thông tin
+          vào tooltip info đi, thấy mấy cảnh báo mất hết cả màn hình"). Bốn băng chữ cũ ăn ~230/780 px
+          của màn 360 và đẩy bảng — thứ người ta mở trang để xem — xuống dưới nếp gấp. Chip giữ đủ
+          CON SỐ + việc phải làm; danh sách mã, lý do, đường đi tiếp mở ra khi bấm ⓘ. */}
+      {data && ((data.pick_face_locations === 0) || (data.excluded?.length ?? 0) > 0
+        || (data.unset?.length ?? 0) > 0 || (data.vetoed?.length ?? 0) > 0) && (
+        <div className="mx-3 mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+          {data.pick_face_locations === 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+              Kho chưa khai vị trí nhặt lẻ
+              <InfoTip className="text-amber-500 hover:text-amber-700" tip={
+                <>Mọi mã đều hiện "thiếu" vì chưa có ô nào để hạ xuống. Vào <b>Vị trí kho</b> → lọc các vị trí tầng
+                dưới → nút <b>"Vị trí nhặt lẻ"</b> để khai hàng loạt, rồi quay lại đây.</>} />
             </span>
-          ))}
-          <button type="button" className="ml-1 underline font-medium text-sky-700" onClick={() => setShowVetoed(v => !v)}>
-            {showVetoed ? 'Ẩn lại' : 'Hiện để đưa vào lệnh tay'}
-          </button>
+          )}
+          {(data.excluded?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+              <b>{nf(data.excluded!.length)}</b> mã chưa có ô lẻ nhận loại
+              <InfoTip className="text-amber-500 hover:text-amber-700" tip={
+                <>
+                  <div>Cần nhặt lẻ hôm nay nhưng kho <b>chưa có ô nhặt lẻ nào nhận Loại kho</b> của chúng nên
+                  không đề xuất được — hàng lẻ sẽ phải lấy trên kệ:</div>
+                  <div className="mt-1">
+                    {Object.entries(data.excluded!.reduce<Record<string, string[]>>((acc, x) => {
+                      const k = x.category ?? '—'; (acc[k] ??= []).push(x.material_code ?? x.material_id); return acc
+                    }, {})).map(([cat, codes]) => (
+                      <div key={cat}><b>{cat}</b>: <span className="font-mono">{codes.join(', ')}</span></div>
+                    ))}
+                  </div>
+                  <div className="mt-1">Khai thêm ô nhặt lẻ nhận loại đó ở <b>Vị trí kho</b> (cột Loại hàng của vị trí).</div>
+                </>} />
+            </span>
+          )}
+          {(data.unset?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
+              <b>{nf(data.unset!.length)}</b> mã chưa chốt %Date
+              <InfoTip tip={close => (
+                <>
+                  <div>Có nhặt lẻ hôm nay nhưng dòng đơn <b>chưa chốt %Date</b> nên chưa đưa vào đề xuất — chưa
+                  chốt thì chưa được lấy hàng:</div>
+                  <div className="mt-1 font-mono">{data.unset!.map(x => x.material_code ?? x.material_id).join(', ')}</div>
+                  <button type="button" className="mt-1 underline font-medium text-sky-700"
+                    onClick={() => { close(); navigate('/wms/outbound/date-rules') }}>
+                    Chốt ở Quy định date ›
+                  </button>
+                  <div className="text-slate-500">Chốt xong máy tự đề xuất, không cần bấm gì thêm.</div>
+                </>)} />
+            </span>
+          )}
+          {(data.vetoed?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
+              <b>{nf(data.vetoed!.length)}</b> mã người đã bác
+              <InfoTip tip={close => (
+                <>
+                  <div>Hôm nay <b>đã có người huỷ dòng máy đặt</b> nên máy không đặt lại, không đưa vào đề xuất:</div>
+                  <div className="mt-1">
+                    {data.vetoed!.map(x => (
+                      <div key={x.material_id}>
+                        <span className="font-mono">{x.material_code ?? x.material_id}</span>
+                        <span className="text-slate-500"> — {x.reason || 'không ghi lý do'}{x.at ? ` · ${formatTimestampTime(x.at)}` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="mt-1 underline font-medium text-sky-700"
+                    onClick={() => { close(); setShowVetoed(v => !v) }}>
+                    {showVetoed ? 'Ẩn lại khỏi bảng' : 'Hiện để đưa vào lệnh tay ›'}
+                  </button>
+                </>)} />
+            </span>
+          )}
         </div>
       )}
 

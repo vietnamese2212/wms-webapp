@@ -36,8 +36,9 @@ import { randomUUID } from 'crypto'
 import { db } from '../lib/supabase'
 import {
   fillDemandOf, buildPickFaceIdx, takePickFace, ensureDayOrder,
-  type FillDemandRow, type DayOrder,
+  type FillDemandRow, type DayOrder, AUTO_ACTOR,
 } from '../controllers/wms/fillController'
+export { AUTO_ACTOR }
 import { resolveAutoFill, type WhTypeConfigRow } from '../utils/putaway'
 import { notifyEmployees } from './pushService'
 
@@ -46,7 +47,6 @@ const now = () => new Date().toISOString()
 export const vnToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const fmtDMY = (d: string) => { const [y, m, day] = d.slice(0, 10).split('-'); return `${day}/${m}/${y}` }
 
-export const AUTO_ACTOR = 'Hệ thống'
 /** Quét an toàn mỗi 30 phút (thứ trigger bỏ sót) · lease 90 giây (một lượt đối chiếu đo ~1–3 s) */
 const SWEEP_S = 30 * 60
 const LEASE_S = 90
@@ -68,7 +68,10 @@ const emptyResult = (): AutoFillResult => ({
 })
 /** Lý do huỷ do MÁY ghi — mọi lý do khác trên dòng máy đặt là NGƯỜI huỷ */
 const MACHINE_RECALL_REASON = 'Hệ thống thu hồi — nhu cầu nhặt lẻ không còn'
+/** Đơn đổi mức %Date sau khi máy đặt ⇒ lô đã đặt không còn được lấy (16/09) */
+const MACHINE_LOT_REASON = 'Hệ thống thu hồi — lô không còn đạt mức %Date của đơn'
 const CLOSE_REASON = 'Chốt ngày — chưa thực hiện'
+const MACHINE_REASONS = new Set([MACHINE_RECALL_REASON, MACHINE_LOT_REASON, CLOSE_REASON])
 
 interface OpenTask {
   id: string; material_id: string | null; required_date: string | null
@@ -147,8 +150,7 @@ export async function autoFillDay(warehouseId: string, day: string): Promise<Aut
     .eq('warehouse_id', warehouseId).eq('target_date', day).eq('status', 'CANCELLED').eq('created_by', AUTO_ACTOR)
   const vetoKeys = new Set<string>()
   for (const c of (cancelledRaw ?? []) as { material_id: string | null; required_date: string | null; cancel_reason: string | null }[]) {
-    const r = c.cancel_reason ?? ''
-    if (r === MACHINE_RECALL_REASON || r === CLOSE_REASON) continue
+    if (MACHINE_REASONS.has(c.cancel_reason ?? '')) continue
     if (c.material_id) vetoKeys.add(`${c.material_id}|${c.required_date ? String(c.required_date).slice(0, 10) : ''}`)
   }
 
@@ -240,6 +242,28 @@ async function reconcileDown(
     if (!r.material_id) continue
     needOf.set(r.material_id, Math.max(0, Number(r.demand_base ?? 0)
       - Number(r.pick_face_ok_base ?? 0) - Number(r.feed_pending_base ?? 0)))
+  }
+  // LÔ KHÔNG CÒN ĐẠT MỨC (16/09): đơn đổi mức %Date sau khi máy đã đặt ⇒ dòng máy mang NSX ngoài tập
+  // pallet đạt mức phải thu hồi NGAY trong lượt (về sàn = phần đã quét), không chờ "thừa" — bộ tính nhu
+  // cầu đã bỏ chúng khỏi "đang có lệnh" nên chiều TĂNG bên dưới sẽ đặt lô đúng cùng lượt này.
+  for (const r of rows) {
+    if (!r.material_id || !onFor(r.material_id) || !r.stale_dates?.length) continue
+    for (const l of openByMat.get(r.material_id) ?? []) {
+      if ((l.created_by ?? '') !== AUTO_ACTOR) continue
+      const d = l.required_date ? String(l.required_date).slice(0, 10) : null
+      if (!d || !r.stale_dates.includes(d)) continue
+      const floor = Number(l.qty_done_base ?? 0)
+      if (Number(l.qty_base) <= floor) continue
+      const { data } = await db.rpc('fill_task_reduce', {
+        p_task_id: l.id, p_target_qty: floor, p_reason: MACHINE_LOT_REASON, p_now: t,
+      } as never)
+      const out = data as { code?: string; freed?: number } | null
+      if (!out || (out.code !== 'REDUCED' && out.code !== 'CANCELLED')) continue
+      result.reduced++
+      if (out.code === 'CANCELLED') result.recalled++
+      touch(touched, l.assignee_id, l.fill_order_id, out.code === 'CANCELLED' ? 'recalled' : 'reduced')
+      l.qty_base = floor
+    }
   }
   // DUYỆT THEO DÒNG ĐANG MỞ, không theo danh sách nhu cầu: mã hết nhu cầu BIẾN MẤT khỏi danh sách
   // đó (RPC chỉ trả mã còn cần) nên duyệt kiểu kia là bỏ sót đúng những dòng đáng thu hồi nhất —

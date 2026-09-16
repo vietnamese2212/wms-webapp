@@ -709,6 +709,33 @@ try {
     again22.s === 200 && Number(again22.j?.data?.created ?? -1) === 0 && lines22b.length === lines22.length,
     `created=${again22.j?.data?.created} dòng ${lines22.length}→${lines22b.length}`)
 
+  // 22d2 (16/09 — đo thật trên Ba Vì): ĐƠN ĐỔI MỨC %Date SAU KHI MÁY ĐÃ ĐẶT. Dòng 363 chốt ≥ 60 % ⇒ máy đặt
+  // lô 66 %; người sửa thành ≥ 80 % ⇒ lô đó không còn được lấy nhưng dòng vẫn treo và "đang có lệnh" che
+  // hết nhu cầu ⇒ máy KHÔNG đặt lô đúng. Ở đây: máy đang giữ dòng lô pA (+pB); chốt EXACT = NSX pC ⇒ dòng
+  // cũ phải bị thu hồi với lý do MÁY, và dòng lô pC phải xuất hiện NGAY trong cùng lượt.
+  const staleBefore = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'EXACT', value: pC.date }, updated_at: nowIso() })
+  const dmStale = await demandOf()
+  const relot22 = await runAuto()
+  const afterAll = await restAll('FillTask',
+    `select=id,status,qty_base,required_date,cancel_reason,created_by&warehouse_id=eq.${whId}&target_date=eq.${DAY}&material_id=eq.${mat.id}`)
+  const stillOld = afterAll.filter(l => staleBefore.some(s => s.id === l.id))
+  const newC = afterAll.filter(l => l.status === 'PENDING' && String(l.required_date).slice(0, 10) === pC.date)
+  check('22d2. Đơn đổi mức ⇒ dòng máy đặt lô KHÔNG còn đạt mức bị THU HỒI (lý do máy) và lô ĐÚNG được đặt ngay cùng lượt',
+    relot22.s === 200
+      && Number(dmStale.row?.stale_pending_base ?? 0) > 0 && Number(dmStale.row?.short_base ?? 0) > 0
+      && stillOld.length > 0 && stillOld.every(l => l.status === 'CANCELLED' && /lô không còn đạt mức/.test(l.cancel_reason ?? ''))
+      && Number(relot22.j?.data?.recalled ?? 0) >= stillOld.length
+      && newC.length === 1 && Number(newC[0].qty_base) === pC.qty && newC[0].created_by === 'Hệ thống',
+    `stale=${dmStale.row?.stale_pending_base} thiếu=${dmStale.row?.short_base} cũ=${stillOld.map(l => l.status + ':' + (l.cancel_reason ?? '').slice(0, 30)).join('|')} thu_hồi=${relot22.j?.data?.recalled} lô_pC=${newC.length}×${newC[0]?.qty_base}`)
+  // 22d3. Lý do thu hồi này là CỦA MÁY ⇒ không bị hiểu thành "người đã bác": trả về FEFO, máy đặt lại lô pA bình thường
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'FEFO' }, updated_at: nowIso() })
+  const back22 = await runAuto()
+  const backA = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING' && String(l.required_date).slice(0, 10) === pA.date)
+  check('22d3. Trả về FEFO → máy đặt lại lô cũ (thu hồi vì đổi mức ≠ người bác), không nằm trong `vetoed`',
+    back22.s === 200 && backA.length === 1 && !(back22.j?.data?.vetoed ?? []).includes(mat.material_code),
+    `lô_pA=${backA.length} vetoed=${JSON.stringify(back22.j?.data?.vetoed ?? [])}`)
+
   // 22e. VIỆC LOOSE_FEED của bộ lập kế hoạch cũng là "hàng sắp xuống ô lẻ" — Fill phải trừ nó ra,
   // không thì cùng một nhu cầu bị hạ HAI lần (hai đường fill vốn mù với nhau tới 15/09).
   await cleanupOrders(whId)

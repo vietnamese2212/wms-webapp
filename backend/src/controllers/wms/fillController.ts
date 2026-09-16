@@ -119,6 +119,9 @@ async function looseRulesOfDay(warehouseId: string, day: string, matIds: string[
 }
 
 const FILL_STATUSES = ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'] as const
+/** Tên tác nhân MÁY ghi vào `created_by` — RPC `fill_task_reduce` cũng so đúng chuỗi này (migration 20260915b) */
+export const AUTO_ACTOR = 'Hệ thống'
+const nsxOf = (d: unknown): string | null => (d ? String(d).slice(0, 10) : null)
 const MAX_SUGG = 40
 type FillSug = {
   entry_id: string; pallet_code: string | null
@@ -133,6 +136,9 @@ export type FillDemandRow = {
   // (user chốt 16/09 "đúng kho theo NSX") nên màn hình in cột này, không in lot_date.
   lot_nsx?: string | null
   material_code?: string | null; material_name?: string | null; category?: string | null
+  // Dòng MÁY đặt của ngày mang NSX KHÔNG CÒN đạt mức %Date của đơn (đơn đổi mức sau khi máy đặt) — không
+  // được tính là "đang có lệnh" che nhu cầu; bộ đối chiếu thu hồi chúng theo `stale_dates` (16/09).
+  stale_pending_base?: number; stale_dates?: string[]
   // Phần nhu cầu đã có việc LOOSE_FEED lo — tách RIÊNG khỏi `pending_base` (gộp cả dòng FillTask)
   // để bộ đối chiếu tính được "nhu cầu còn phải phủ bằng lệnh fill" mà không phải trừ ngược.
   feed_pending_base?: number
@@ -180,8 +186,11 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
       Promise<Array<MaterialShelfInfo & { id: string; category: string | null }>>,
     qaHoldIds(),
     rotationConfigOf([warehouseId]),
-    // Pallet đã nằm trong một dòng lệnh fill đang treo thì không đề xuất lần hai (giữ đúng luật RPC)
-    supabase.from('FillTask').select('entry_id').eq('warehouse_id', warehouseId).eq('status', 'PENDING'),
+    // Dòng lệnh đang treo của kho: (a) pallet đã ghim thì không đề xuất lần hai (luật RPC); (b) dòng MÁY đặt
+    // của NGÀY này mà NSX không còn đạt mức của đơn ⇒ "lệnh cũ", không được che nhu cầu (xem dưới)
+    supabase.from('FillTask')
+      .select('entry_id, material_id, target_date, required_date, qty_base, qty_done_base, created_by')
+      .eq('warehouse_id', warehouseId).eq('status', 'PENDING'),
     // ⚠️ HAI ĐƯỜNG FILL PHẢI BIẾT NHAU (15/09). Việc `LOOSE_FEED` mà bộ lập kế hoạch đặt lúc Bắt đầu
     // chuyến cũng là "hạ hàng xuống ô nhặt lẻ", nhưng RPC `fill_demand` chỉ đếm `FillTask` ⇒ cùng một
     // nhu cầu bị tính hai lần và mã đó bị hạ hai lần. Chưa nổ suốt 6 tuần CHỈ vì chưa ai ra lệnh fill
@@ -193,7 +202,17 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
       .eq('warehouse_id', warehouseId).eq('kind', 'LOOSE_FEED').eq('status', 'PENDING')
       .eq('gdo.delivery_date', day),
   ])
-  const busy = new Set(((busyRaw.data ?? []) as { entry_id: string | null }[]).map(t => t.entry_id).filter(Boolean))
+  type OpenLine = {
+    entry_id: string | null; material_id: string | null; target_date: string | null; required_date: string | null
+    qty_base: number | null; qty_done_base: number | null; created_by: string | null
+  }
+  const openLines = (busyRaw.data ?? []) as unknown as OpenLine[]
+  const busy = new Set(openLines.map(t => t.entry_id).filter(Boolean))
+  const openByMat = new Map<string, OpenLine[]>()
+  for (const l of openLines) {
+    if (!l.material_id || nsxOf(l.target_date) !== day) continue
+    openByMat.set(l.material_id, [...(openByMat.get(l.material_id) ?? []), l])
+  }
   const feedPending = new Map<string, number>()
   for (const t of ((feedRaw.data ?? []) as { material_id: string | null; qty_base: number | null }[])) {
     if (!t.material_id) continue
@@ -226,9 +245,29 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     const ok = sorted
       .filter(e => e.location?.is_pick_face === true && isPickEligible(e, qaHold) && (keyOf.get(e.id) ?? null) === bestKey)
       .reduce((s, e) => s + availableOf(e), 0)
+    // LỆNH CŨ — ĐƠN ĐỔI MỨC SAU KHI MÁY ĐÃ ĐẶT (đo thật 16/09: dòng 363 chốt ≥ 60 % ⇒ máy đặt lô 27/06 (66 %);
+    // người sửa thành ≥ 80 % ⇒ lô đó không còn được lấy, nhưng dòng vẫn treo và "đang có lệnh" che hết
+    // nhu cầu ⇒ máy không đặt lô đúng, xe nâng đi hạ một pallet mà đơn không lấy được. Cùng lớp C17
+    // "trạng thái cũ ăn hết nhu cầu"). Dòng MÁY đặt mà NSX không nằm trong tập pallet ĐẠT MỨC ⇒ không tính
+    // là đang che; bộ đối chiếu đọc `stale_dates` để thu hồi ngay trong lượt. Dòng NGƯỜI đặt giữ nguyên
+    // (quyết định của người bất khả xâm phạm). `rules == null` (không ràng buộc) ⇒ không có gì là cũ.
+    const poolDates = rules == null ? null : new Set(pool.map(e => nsxOf(e.production_date)).filter(Boolean))
+    let stale = 0
+    const staleDates: string[] = []
+    if (poolDates) {
+      for (const l of openByMat.get(r.material_id) ?? []) {
+        if ((l.created_by ?? '') !== AUTO_ACTOR) continue
+        const d = nsxOf(l.required_date)
+        if (!d || poolDates.has(d)) continue
+        stale += Math.max(0, Number(l.qty_base ?? 0) - Number(l.qty_done_base ?? 0))
+        if (!staleDates.includes(d)) staleDates.push(d)
+      }
+    }
     const feed = feedPending.get(r.material_id) ?? 0
-    const pending = Number(r.pending_base ?? 0) + feed
+    const pending = Math.max(0, Number(r.pending_base ?? 0) - stale) + feed
     const short = Math.max(0, Number(r.demand_base ?? 0) - ok - pending)
+    r.stale_pending_base = stale
+    r.stale_dates = staleDates
     r.feed_pending_base = feed
     r.pick_face_ok_base = ok
     r.lot_date = bestKey == null ? null : new Date(bestKey).toISOString().slice(0, 10)

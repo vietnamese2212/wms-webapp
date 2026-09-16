@@ -634,7 +634,7 @@ try {
   await cleanupOrders(whId)                      // xoá lệnh của các cụm trên để phép trừ sạch
   const runAuto = () => api('/wms/fill/auto', 'POST', { warehouse_id: whId, date: DAY })
   const autoLines = async () => (await restAll('FillTask',
-    `select=id,material_id,qty_base,assignee_id,status,fill_order_id&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
+    `select=id,material_id,qty_base,assignee_id,status,fill_order_id,required_date&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
   const autoOrders = async () => (await restAll('FillOrder',
     `select=id,auto_created,created_by&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
 
@@ -863,10 +863,14 @@ try {
   const del26 = born26[0] ? await api(`/wms/fill/tasks/${born26[0].id}`, 'DELETE', { reason: 'QA — người bác' }) : { s: 0 }
   const re26 = await runAuto()
   const after26 = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
-  check('26a. Người huỷ tay dòng máy đặt (nhu cầu vẫn còn) → lượt sau máy KHÔNG đặt lại, nêu mã bị bác',
-    born26.length >= 1 && del26.s < 300 && re26.s === 200 && after26.length === 0
+  // Veto theo (mã, NSX): mã có hai dòng hai NSX (pA · pB) thì huỷ một dòng KHÔNG được kéo dòng NSX kia
+  // theo — lần chạy đầu 16/09 oracle đòi "0 dòng" và đỏ oan đúng chỗ máy làm đúng.
+  const vetoDate = born26[0]?.required_date ?? null
+  check('26a. Người huỷ tay dòng máy đặt (nhu cầu vẫn còn) → lượt sau máy KHÔNG đặt lại ĐÚNG (mã, NSX) đó, dòng NSX khác giữ nguyên',
+    born26.length >= 1 && del26.s < 300 && re26.s === 200
+      && after26.length === born26.length - 1 && !after26.some(l => l.required_date === vetoDate)
       && (re26.j?.data?.vetoed ?? []).includes(mat.material_code),
-    `đặt=${born26.length} huỷ=${del26.s} sau=${after26.length} vetoed=${JSON.stringify(re26.j?.data?.vetoed ?? [])}`)
+    `đặt=${born26.length} huỷ=${del26.s} sau=${after26.length} (kỳ vọng ${born26.length - 1}, không có NSX ${vetoDate}) vetoed=${JSON.stringify(re26.j?.data?.vetoed ?? [])}`)
 
   // 26b. …nhưng MÁY thu hồi (hết nhu cầu) rồi nhu cầu quay lại thì máy đặt lại được — thu hồi không
   // phải "người bác"; nhầm hai cái là bộ đối chiếu tự khoá tay mình sau lần thu hồi đầu tiên.

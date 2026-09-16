@@ -5144,6 +5144,8 @@ export interface FillDemandRow {
   pick_face_ok_base?: number; lot_date?: string | null
   /** NSX của lô đúng thứ tự — màn hình in cột này (`lot_date` là HẠN DÙNG, khoá FEFO) */
   lot_nsx?: string | null
+  /** Người đã huỷ tay dòng máy đặt cho mã này hôm nay — máy không đặt lại; màn tách khỏi bảng mặc định (16/09) */
+  veto?: { reason: string; at: string | null } | null
   // Phần nhu cầu đã có việc LOOSE_FEED lo (tách riêng khỏi `pending_base` gộp cả dòng lệnh fill)
   feed_pending_base?: number
   pending_base: number; pending_n: number; short_base: number
@@ -5156,6 +5158,8 @@ export interface FillDemandData {
   excluded?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
   /** Mã có nhặt lẻ hôm nay nhưng dòng đơn CHƯA CHỐT %Date — không phải mã thiếu, tách khỏi `rows` (16/09) */
   unset?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
+  /** Mã có người đã bác hôm nay (huỷ tay dòng máy đặt) — vẫn nằm trong `rows` kèm `veto`, màn tách ra băng riêng */
+  vetoed?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number; reason: string; at: string | null }[]
 }
 export function useFillDemand(params?: { warehouse_id: string; date: string }) {
   return useQuery({

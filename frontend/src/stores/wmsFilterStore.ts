@@ -675,6 +675,10 @@ export const useWmsFilterStore = create<WmsFilterState>()(
               ? { ...(def as object), ...(pv as object) }
               : (pv !== undefined ? pv : def)
         }
+        // Lệnh fill: MẶC ĐỊNH khi mở lại là "chưa làm" (user chốt 16/09: "lệnh đã kết thúc không nằm trong filter
+        // mặc định"). Bỏ tick hết trong phiên vẫn xem được tất cả, nhưng trạng thái rỗng KHÔNG được nhớ sang lần mở sau.
+        const fill = merged.fill as { status?: string[] } | undefined
+        if (fill && (!Array.isArray(fill.status) || fill.status.length === 0)) fill.status = ['PENDING']
         return merged as unknown as WmsFilterState
       },
     }

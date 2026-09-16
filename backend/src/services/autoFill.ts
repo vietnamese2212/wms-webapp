@@ -36,7 +36,7 @@ import { randomUUID } from 'crypto'
 import { db } from '../lib/supabase'
 import {
   fillDemandOf, buildPickFaceIdx, takePickFace, ensureDayOrder,
-  type FillDemandRow, type DayOrder, AUTO_ACTOR,
+  type FillDemandRow, type DayOrder, AUTO_ACTOR, MACHINE_RECALL_REASON, MACHINE_LOT_REASON, MACHINE_REASONS,
 } from '../controllers/wms/fillController'
 export { AUTO_ACTOR }
 import { resolveAutoFill, type WhTypeConfigRow } from '../utils/putaway'
@@ -66,12 +66,8 @@ export interface AutoFillResult {
 const emptyResult = (): AutoFillResult => ({
   created: 0, added: 0, reduced: 0, recalled: 0, closed: 0, order_code: null, unset: [], no_dest: [], vetoed: [],
 })
-/** Lý do huỷ do MÁY ghi — mọi lý do khác trên dòng máy đặt là NGƯỜI huỷ */
-const MACHINE_RECALL_REASON = 'Hệ thống thu hồi — nhu cầu nhặt lẻ không còn'
-/** Đơn đổi mức %Date sau khi máy đặt ⇒ lô đã đặt không còn được lấy (16/09) */
-const MACHINE_LOT_REASON = 'Hệ thống thu hồi — lô không còn đạt mức %Date của đơn'
-const CLOSE_REASON = 'Chốt ngày — chưa thực hiện'
-const MACHINE_REASONS = new Set([MACHINE_RECALL_REASON, MACHINE_LOT_REASON, CLOSE_REASON])
+// Lý do huỷ của MÁY (`MACHINE_*_REASON`, `CLOSE_REASON`) khai ở fillController — cửa HTTP Đề xuất cũng cần để
+// nhận diện "người đã bác" cùng một định nghĩa với bộ đối chiếu này.
 
 interface OpenTask {
   id: string; material_id: string | null; required_date: string | null

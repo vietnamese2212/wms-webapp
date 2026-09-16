@@ -121,6 +121,11 @@ async function looseRulesOfDay(warehouseId: string, day: string, matIds: string[
 const FILL_STATUSES = ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'] as const
 /** Tên tác nhân MÁY ghi vào `created_by` — RPC `fill_task_reduce` cũng so đúng chuỗi này (migration 20260915b) */
 export const AUTO_ACTOR = 'Hệ thống'
+/** Lý do huỷ do MÁY ghi — dòng máy đặt bị huỷ với lý do KHÁC = quyết định của NGƯỜI (veto trong ngày) */
+export const MACHINE_RECALL_REASON = 'Hệ thống thu hồi — nhu cầu nhặt lẻ không còn'
+export const MACHINE_LOT_REASON = 'Hệ thống thu hồi — lô không còn đạt mức %Date của đơn'
+export const CLOSE_REASON = 'Chốt ngày — chưa thực hiện'
+export const MACHINE_REASONS = new Set([MACHINE_RECALL_REASON, MACHINE_LOT_REASON, CLOSE_REASON])
 const nsxOf = (d: unknown): string | null => (d ? String(d).slice(0, 10) : null)
 const MAX_SUGG = 40
 type FillSug = {
@@ -139,6 +144,8 @@ export type FillDemandRow = {
   // Dòng MÁY đặt của ngày mang NSX KHÔNG CÒN đạt mức %Date của đơn (đơn đổi mức sau khi máy đặt) — không
   // được tính là "đang có lệnh" che nhu cầu; bộ đối chiếu thu hồi chúng theo `stale_dates` (16/09).
   stale_pending_base?: number; stale_dates?: string[]
+  // NGƯỜI ĐÃ BÁC hôm nay (huỷ tay dòng máy đặt với lý do riêng) — chỉ gắn ở cửa HTTP để màn hình tách dòng
+  veto?: { reason: string; at: string | null } | null
   // Phần nhu cầu đã có việc LOOSE_FEED lo — tách RIÊNG khỏi `pending_base` (gộp cả dòng FillTask)
   // để bộ đối chiếu tính được "nhu cầu còn phải phủ bằng lệnh fill" mà không phải trừ ngược.
   feed_pending_base?: number
@@ -150,7 +157,10 @@ export type FillUnsetMat = {
   material_id: string; material_code: string | null; material_name: string | null
   category: string | null; demand_base: number
 }
-export type FillDemandPayload = { rows?: FillDemandRow[]; pick_face_locations?: number; unset?: FillUnsetMat[] } | null
+export type FillVetoedMat = FillUnsetMat & { reason: string; at: string | null }
+export type FillDemandPayload = {
+  rows?: FillDemandRow[]; pick_face_locations?: number; unset?: FillUnsetMat[]; vetoed?: FillVetoedMat[]
+} | null
 type FillEntry = RotationEntry & {
   id: string; pallet_code: string | null; material_id: string; location_id: string | null; status: string
   location: { location_code: string | null; warehouse_id: string | null; is_pick_face: boolean | null } | null
@@ -384,6 +394,34 @@ export async function getFillDemand(req: Request, res: Response) {
         category: r.category ?? null, demand_base: Number(r.demand_base ?? 0),
       }))
       out.rows = out.rows.filter(r => !r.rule_unset)
+    }
+    // NGƯỜI ĐÃ BÁC (user hỏi 16/09 "tại sao 363 và 022 lại có mặt ở Đề xuất?"): dòng máy đặt bị huỷ tay hôm nay ⇒
+    // máy không đặt lại (luật vòng 4), nhưng nhu cầu vẫn còn nên bảng liệt như mã thiếu thường — người xem tưởng
+    // còn việc. Gắn `veto` lên dòng + trả `vetoed[]` để màn hình tách ra băng riêng (nêu lý do), vẫn hiện lại được
+    // khi người đổi ý và đưa vào lệnh tay. Cùng định nghĩa veto với bộ đối chiếu (`MACHINE_REASONS`).
+    if (out?.rows?.length) {
+      const day = date || vnToday()
+      const { data: cancelled } = await supabase.from('FillTask')
+        .select('material_id, cancel_reason, updated_at')
+        .eq('warehouse_id', warehouse_id).eq('target_date', day).eq('status', 'CANCELLED').eq('created_by', AUTO_ACTOR)
+        .order('updated_at', { ascending: false }).limit(1000)
+      const vetoByMat = new Map<string, { reason: string; at: string | null }>()
+      for (const c of (cancelled ?? []) as { material_id: string | null; cancel_reason: string | null; updated_at: string | null }[]) {
+        if (!c.material_id || MACHINE_REASONS.has(c.cancel_reason ?? '') || vetoByMat.has(c.material_id)) continue
+        vetoByMat.set(c.material_id, { reason: c.cancel_reason ?? '', at: c.updated_at })
+      }
+      if (vetoByMat.size) {
+        out.vetoed = []
+        for (const r of out.rows) {
+          const v = vetoByMat.get(r.material_id)
+          if (!v) continue
+          r.veto = v
+          out.vetoed.push({
+            material_id: r.material_id, material_code: r.material_code ?? null, material_name: r.material_name ?? null,
+            category: r.category ?? null, demand_base: Number(r.demand_base ?? 0), reason: v.reason, at: v.at,
+          })
+        }
+      }
     }
     return ok(res, out)
   } catch (e) {

@@ -11,7 +11,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowDownToLine, Plus, X, Rows3, AlignJustify, UserPlus, Info, CalendarSearch } from 'lucide-react'
-import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -21,7 +20,6 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
-import { FillScanOverlay } from './FillScanOverlay'
 import { AssigneePicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
 import {
   useWarehouses, useFillDemand, useFillCandidates, useFillOrders, useFillReport,
@@ -30,13 +28,11 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
-import { useWedgeScanner } from '@/hooks/useWedgeScanner'
-import { unlockAudio } from '@/utils/audio'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
-import { formatDate, formatTimestampDate } from '@/utils/formatters'
+import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
@@ -97,7 +93,6 @@ export default function FillPicking() {
   const canPlan    = can(perms, 'fill', 'plan')     // Ra lệnh fill (tab Đề xuất)
   const canCancel  = can(perms, 'fill', 'cancel')   // Hủy dòng/lệnh — quyền riêng (tách 05/08)
   const canAssign  = can(perms, 'fill', 'assign')
-  const canExecute = can(perms, 'fill', 'execute')
 
   // Công nhân (không có quyền lập kế hoạch) mở trang = vào THẲNG tab Lệnh fill — việc của họ
   // nằm ở đó (vị trí lấy/hạ + nút quét); tab Đề xuất là màn của người lập kế hoạch.
@@ -161,22 +156,9 @@ export default function FillPicking() {
     ] : []),
   ]
 
-  const [scanOpen, setScanOpen] = useState(false)
-  const [scanMounted, setScanMounted] = useState(false)
-  const [scanOrderId, setScanOrderId] = useState<string | undefined>(undefined)
-  const [pdaScan, setPdaScan] = useState<string | null>(null)
-  const openScan = (orderId?: string) => { setScanOrderId(orderId); setScanMounted(true); setScanOpen(true) }
-
-  // PDA: bóp cò NGAY TẠI TRANG (tab Lệnh fill, chưa mở màn quét) → mở màn quét chế độ SÚNG
-  // (không bật camera) và xử lý luôn tem vừa bắn — đồng bộ chuẩn Outbound/Nhập (user nhắc 05/08)
-  // Chỉ tab Lệnh fill mới có súng — tab khác TẮT HẲN máy đọc (enabled=false) để không nuốt/xoá
-  // chữ gõ nhanh trong dialog ra lệnh của tab Đề xuất (bug xe vãng lai 25/08).
-  useWedgeScanner(code => {
-    if (scanOpen || !whId || !canExecute) return
-    unlockAudio()
-    setPdaScan(code)
-    openScan(undefined)
-  }, f.tab === 'tasks' && !scanOpen)
+  // QUÉT THỰC HIỆN CHỈ CÓ TRONG TRANG LỆNH (user chốt 16/09: "bỏ quét thực hiện ở ngoài lệnh fill — phải mở
+  // vào đúng lệnh mới quét được"). Bản 05/08 cho quét ngay ở danh sách (nút toolbar · nút từng dòng · cò súng
+  // PDA) rồi tự dò dòng lệnh khớp tem; nay mọi cửa đó bỏ, người quét vào lệnh rồi bấm Quét ở đó.
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -210,17 +192,9 @@ export default function FillPicking() {
               <SearchInput value={f.search} onChange={v => setFillFilter({ search: v })}
                 placeholder="Tìm mã lệnh, mã hàng, người…" className="flex-1 min-w-[140px]" />
             )}
-            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08 "đưa action lên trên
-                nút ba chấm"). Quét thực hiện CHỈ đặt ở tab Lệnh fill — quét là thao tác trên
-                LỆNH; tab Đề xuất/Kết quả không có gì để quét. */}
+            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08). Không có nút Quét ở đây: quét là thao
+                tác TRONG một lệnh — mở lệnh rồi quét (user chốt 16/09). */}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
-              {canExecute && whId && f.tab === 'tasks' && (
-                <Button size="sm" className="h-9 sm:h-7 text-[11px]"
-                  title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh → soi vị trí đến → xác nhận hạ"
-                  onClick={() => openScan(undefined)}>
-                  <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
-                </Button>
-              )}
               <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
                 title="Mở trang Nhặt lẻ (nguồn của nhu cầu fill)"
                 onClick={() => navigate('/wms/loosepicking')}>
@@ -241,17 +215,12 @@ export default function FillPicking() {
         ) : f.tab === 'demand' ? (
           <DemandTab warehouseId={whId} date={f.date} onlyShort={f.onlyShort} cats={f.cats} dense={dense} canPlan={canPlan} canAssign={canAssign} />
         ) : f.tab === 'tasks' ? (
-          <OrdersTab warehouseId={whId} dense={dense} canCancel={canCancel} canExecute={canExecute} onScan={openScan} />
+          <OrdersTab warehouseId={whId} dense={dense} canCancel={canCancel} />
         ) : (
           <ReportTab warehouseId={whId} from={f.reportFrom} to={f.reportTo} dense={dense} />
         )}
       </div>
 
-      {scanMounted && (
-        <FillScanOverlay warehouseId={whId} orderId={scanOrderId} open={scanOpen} canAssign={canAssign}
-          pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
-          onClose={() => { setScanOpen(false); setPdaScan(null) }} />
-      )}
     </div>
   )
 }
@@ -279,12 +248,15 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
   // Chỉ định HIỆU LỰC của 1 dòng — mọi cột (pallet/SL hạ/date/vị trí lấy) + Ra lệnh đọc từ đây
   const eff = (r: FillDemandRow): EffSugg[] => overrides.get(r.material_id)?.sugg ?? r.suggestions
 
+  // Mã NGƯỜI ĐÃ BÁC hôm nay: ẩn khỏi bảng mặc định (băng riêng nêu lý do), bấm "Hiện" mới thấy để đưa lại vào lệnh tay
+  const [showVetoed, setShowVetoed] = useState(false)
   const rows = useMemo(() => {
     let all = data?.rows ?? []
+    if (!showVetoed) all = all.filter(r => !r.veto)
     if (onlyShort) all = all.filter(r => Number(r.short_base) > 0)
     if (cats.length) all = all.filter(r => r.category && cats.includes(r.category))
     return all
-  }, [data, onlyShort, cats])
+  }, [data, onlyShort, cats, showVetoed])
 
   // Tổng CROSS-MÃ: quy đổi per-mã rồi mới cộng (nhãn "SL (quy đổi)")
   const tot = useMemo(() => {
@@ -410,6 +382,23 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           </span>
         </div>
       )}
+      {/* NGƯỜI ĐÃ BÁC (user hỏi 16/09 "tại sao 363 và 022 lại có mặt ở Đề xuất?"): dòng máy đặt bị huỷ tay hôm nay
+          ⇒ máy không đặt lại, nhưng nhu cầu còn nên bản cũ vẫn liệt như mã thiếu thường. Nay tách ra đây kèm lý do;
+          "Hiện" để xem lại và đưa vào lệnh TAY nếu đổi ý (máy vẫn không tự đặt tới hết ngày). */}
+      {data && (data.vetoed?.length ?? 0) > 0 && (
+        <div className="mx-3 mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+          <b>{nf(data.vetoed!.length)} mã</b> hôm nay <b>đã có người huỷ dòng máy đặt</b> nên máy không đặt lại, không đưa vào đề xuất:{' '}
+          {data.vetoed!.map(x => (
+            <span key={x.material_id} className="inline-block mr-2">
+              <span className="font-mono">{x.material_code ?? x.material_id}</span>
+              <span className="text-slate-500"> ({x.reason || 'không ghi lý do'}{x.at ? ` · ${formatTimestampTime(x.at)}` : ''})</span>
+            </span>
+          ))}
+          <button type="button" className="ml-1 underline font-medium text-sky-700" onClick={() => setShowVetoed(v => !v)}>
+            {showVetoed ? 'Ẩn lại' : 'Hiện để đưa vào lệnh tay'}
+          </button>
+        </div>
+      )}
 
       {canPlan && (
         <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
@@ -498,7 +487,13 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                         })} />
                     )}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.material_code ?? '—'}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">
+                    {r.material_code ?? '—'}
+                    {r.veto && (
+                      <span className="ml-1 font-sans font-normal text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800"
+                        title={`Người đã huỷ dòng máy đặt hôm nay: ${r.veto.reason || 'không ghi lý do'}`}>Người đã bác</span>
+                    )}
+                  </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.material_name ?? ''}>
                     {r.material_name ?? <span className="text-slate-300">—</span>}
                   </TableCell>
@@ -636,9 +631,8 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
 }
 
 // ─── TAB 2 — LỆNH FILL (danh sách lệnh gom — mở dòng ra trang chi tiết) ──────
-function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
-  warehouseId: string; dense: boolean; canCancel: boolean; canExecute: boolean
-  onScan: (orderId: string) => void
+function OrdersTab({ warehouseId, dense, canCancel }: {
+  warehouseId: string; dense: boolean; canCancel: boolean
 }) {
   const navigate = useNavigate()
   const f = useWmsFilterStore(s => s.fill)
@@ -741,12 +735,6 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                       style={{ width: `${prog}%` }} />
                   </div>
                   <span className="text-[10px] tabular-nums font-semibold">{prog}%</span>
-                  {o.status === 'PENDING' && canExecute && (
-                    <Button size="sm" className="h-9 text-[11px] shrink-0"
-                      onClick={e => { e.stopPropagation(); onScan(o.id) }}>
-                      <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét
-                    </Button>
-                  )}
                 </div>
               </div>
             )
@@ -821,12 +809,6 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                     {o.status === 'PENDING' && (
                       <div className="flex items-center gap-0.5">
-                        {canExecute && (
-                          <button type="button" title="Quét thực hiện trong lệnh này" onClick={() => onScan(o.id)}
-                            className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
-                            <ScanIcon className="h-3.5 w-3.5" />
-                          </button>
-                        )}
                         {canCancel && (
                           <button type="button" title="Hủy các dòng còn treo của lệnh này" onClick={() => doCancel(o)}
                             className="px-1.5 py-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600">

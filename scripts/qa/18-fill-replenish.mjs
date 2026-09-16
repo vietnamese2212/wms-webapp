@@ -956,6 +956,14 @@ try {
       && after26.length === born26.length - 1 && !after26.some(l => l.required_date === vetoDate)
       && (re26.j?.data?.vetoed ?? []).includes(mat.material_code),
     `đặt=${born26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} huỷ=${del26.s} sau=${after26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|') || '—'} (kỳ vọng ${born26.length - 1} dòng, không có NSX ${vetoDate}) kq=${JSON.stringify(re26.j?.data ?? re26.j?.error)}`)
+  // 26a2 (16/09, user: "tại sao 363 và 022 lại có mặt ở Đề xuất?"): mã người đã bác phải được cửa HTTP đánh dấu
+  // (`row.veto` + `vetoed[]` kèm lý do) để màn tách khỏi bảng mặc định — cùng định nghĩa veto với bộ đối chiếu.
+  const dmVeto = await demandOf()
+  const vetoEntry = (dmVeto.all?.vetoed ?? []).find(v => v.material_id === mat.id)
+  check('26a2. Trang Đề xuất: mã người đã bác mang `veto` trên dòng và nằm trong `vetoed[]` kèm đúng lý do người ghi',
+    dmVeto.s === 200 && !!dmVeto.row?.veto && /người bác/.test(dmVeto.row?.veto?.reason ?? '')
+      && !!vetoEntry && vetoEntry.reason === 'QA — người bác' && Number(vetoEntry.demand_base) === LOOSE,
+    `veto=${JSON.stringify(dmVeto.row?.veto ?? null)} vetoed=${JSON.stringify((dmVeto.all?.vetoed ?? []).map(v => v.material_code + ':' + v.reason))}`)
 
   // 26b. …nhưng MÁY thu hồi (hết nhu cầu) rồi nhu cầu quay lại thì máy đặt lại được — thu hồi không
   // phải "người bác"; nhầm hai cái là bộ đối chiếu tự khoá tay mình sau lần thu hồi đầu tiên.

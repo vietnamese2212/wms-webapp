@@ -27,6 +27,101 @@ import { autoFillSafe } from '../../services/autoFill'
 const MODES = ['LOWER', 'MOVE', 'SCAN'] as const
 type Mode = typeof MODES[number]
 
+// ─── FILL KHO LẺ LÀ MỘT LOẠI VIỆC HẠ, KHÔNG PHẢI MỘT MÀN RIÊNG (user chốt 16/09) ───────────────
+// "hạ hàng: phải xem ở chỗ Cần hạ? và lại phải bật Fill hàng lên — mở nhiều chỗ quá."
+// Đo staging cùng ngày: mã 510000084 ngày 16/09 kho Ba Vì cần 10.176 hộp xuống ô lẻ, phép trừ
+// chia đúng làm hai (3.669 cho việc LOOSE_FEED của chuyến 95 → PIN ROBOT · 6.507 cho lệnh fill
+// F260916-01 → KHO 3 LẺ) nhưng KHÔNG màn nào nói cho biết màn kia đang lo phần còn lại — người
+// hạ xong tab "Cần hạ" tưởng mã đó đã xong. Số học đúng, tổ chức công việc thì sai.
+// Cách các WMS lớn làm (Manhattan Work Queue · SAP EWM Warehouse Order): bổ sung hàng xuống ô nhặt
+// là MỘT LOẠI việc nằm chung hàng đợi của người thực thi; màn "Replenishment" chỉ dành cho người
+// LẬP KẾ HOẠCH. Nay bảng xe nâng trả cả hai nguồn; trang Fill hàng giữ nguyên cho người ra lệnh.
+// Giữ dữ liệu TÁCH BẠCH (`wms_tasks` ≠ `FillTask`): gộp ở tầng TRÌNH BÀY thôi — hai bảng có luật
+// sinh/thu hồi/xác nhận khác nhau, trộn dữ liệu là mất cả hai luật.
+type FillBoardRow = {
+  id: string; fill_order_id: string; target_date: string | null
+  material_id: string; material_code: string | null; material_name: string | null
+  required_date: string | null; required_pallets: number | null; scanned_pallets: number | null
+  qty_base: number | null; qty_done_base: number | null
+  from_location_code: string | null; to_location_code: string | null
+  assignee_id: string | null; assignee_name: string | null; created_by: string | null
+  material?: { entry_unit: string | null; units_per_carton: number | null; base_unit: string | null } | null
+  order?: { order_code: string | null } | null
+}
+
+/**
+ * Dòng lệnh fill còn treo của kho, dựng THEO ĐÚNG hình dạng dòng bảng việc để FE không phải kể hai
+ * chuyện. `task_ids` rỗng + `can_confirm=false` là CỐ Ý: fill ghi tồn thật (chuyển pallet + khoá sức
+ * chứa) nên chỉ được đóng bằng QUÉT TEM, không bằng nút "✓ Xong" như việc của chuyến.
+ */
+async function fillRowsOfWarehouse(whId: string): Promise<Record<string, unknown>[]> {
+  const { data } = await supabase.from('FillTask')
+    .select(`id, fill_order_id, target_date, material_id, material_code, material_name,
+             required_date, required_pallets, scanned_pallets, qty_base, qty_done_base,
+             from_location_code, to_location_code, assignee_id, assignee_name, created_by,
+             material:Material!material_id(entry_unit, units_per_carton, base_unit),
+             order:FillOrder!fill_order_id!inner(order_code, status)`)
+    .eq('warehouse_id', whId).eq('status', 'PENDING').eq('order.status', 'PENDING')
+    .order('material_code').limit(500)
+  return ((data ?? []) as unknown as FillBoardRow[]).map(t => ({
+    group_key: `fill:${t.id}`,
+    task_ids: [],                  // không phải wms_task — nút ✓ Xong không áp dụng
+    seq: 0,
+    gdo_id: '',                    // không thuộc chuyến nào ⇒ "nhặt dọc đường" luôn coi là chuyến khác
+    group_code: null, license_plate: null, started_at: null,
+    delivery_date: t.target_date, dock_name: null,
+    kind: 'FILL',
+    current_code: null, from_code: t.from_location_code, level_no: null,
+    to_code: t.to_location_code, to_name: null, drop_name: null, dist_cells: null,
+    n_pallets: Number(t.required_pallets ?? 0), n_done: Number(t.scanned_pallets ?? 0),
+    qty_base: Math.max(0, Number(t.qty_base ?? 0) - Number(t.qty_done_base ?? 0)),
+    is_partial: false,
+    units_per_carton: t.material?.units_per_carton ?? null,
+    entry_unit: t.material?.entry_unit ?? null,
+    base_unit: t.material?.base_unit ?? null,
+    material_codes: [t.material_code], material_name: t.material_name,
+    materials: [{ id: t.material_id, code: t.material_code }],
+    pallet_codes: [], needs_lower: true, waiting_lower: false,
+    skipped: false, skip_reason: null,
+    claim_active: false, claimed_by: null, claimed_by_name: null,
+    combined_lower: false, stage_done: false, all_scanned: false,
+    last_at: null, done_by_name: null, can_confirm: false,
+    pallets: [], date_rules: [], date_required: null,
+    customer_name: null, do_codes: null, cs_note: null,
+    // ── riêng dòng fill ──
+    fill_task_id: t.id, fill_order_id: t.fill_order_id,
+    fill_order_code: t.order?.order_code ?? null,
+    fill_required_date: t.required_date,
+    fill_assignee_name: t.assignee_name,
+    fill_auto: (t.created_by ?? '') === 'Hệ thống',
+  }))
+}
+
+/**
+ * Chèn dòng fill vào bảng: CÙNG MỘT Ô thì đứng liền nhau (đi một lượt, khỏi quay lại), ô không trùng
+ * thì xuống cuối phần việc còn làm — trước các dòng đã xong/đã bỏ vốn luôn nằm cuối bảng.
+ * Không BFS ở đây: `from_location_code` của lệnh fill là ảnh chụp gợi ý lúc ra lệnh, đủ để gom ô chứ
+ * không đủ chắc để làm nền cho phép đo đường đi. Kho có khai bán kính "nhặt dọc đường" thì
+ * `reorderCrossTripPickup` chạy SAU sẽ tự kéo tiếp bằng BFS thật.
+ */
+function mergeFillRows(
+  rows: Record<string, unknown>[], fills: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  if (!fills.length) return rows
+  const open = rows.filter(r => !r.stage_done && !r.skipped)
+  const closed = rows.filter(r => r.stage_done || r.skipped)
+  const left = [...fills]
+  const out: Record<string, unknown>[] = []
+  for (const r of open) {
+    out.push(r)
+    const code = r.from_code
+    for (let i = left.length - 1; i >= 0; i--) {
+      if (code && left[i].from_code === code) out.push(...left.splice(i, 1))
+    }
+  }
+  return [...out, ...left, ...closed]
+}
+
 function scopeWhIds(req: Request): string[] | null {
   return req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
 }
@@ -64,10 +159,32 @@ export async function getBoard(req: Request, res: Response) {
     })
     if (error) return fail(res, error)
     const board = (data ?? { rows: [], totals: {}, unset_items: [] }) as {
-      rows?: RoutableRow[]; settings?: { cross_trip_pick_radius?: number }; auto_replanned?: number
+      rows?: RoutableRow[]
+      settings?: { cross_trip_pick_radius?: number; separate_lowering_forklift?: boolean }
+      auto_replanned?: number; fill_rows?: number
+      totals?: Record<string, number>
       auto_fill?: { created: number; recalled: number; order_code: string | null }
     }
     board.auto_replanned = drained.replanned
+
+    // FILL KHO LẺ = một loại việc hạ, hiện ngay trên bảng xe nâng ĐANG NHÌN (16/09): kho tách xe hạ
+    // riêng thì đó là "Cần hạ"; kho không tách thì tab Cần hạ bị ẩn nên phải rơi vào "Cần đưa ra" —
+    // nếu không, kho đó gộp xong vẫn chẳng thấy dòng fill nào và bản vá thành vô nghĩa với chính họ.
+    // Gác quyền ở đây như `getInbox`: không có quyền Fill thì không thấy dòng của module đó.
+    const sepLower = board.settings?.separate_lowering_forklift !== false
+    const fillBoardMode: Mode = sepLower ? 'LOWER' : 'MOVE'
+    if (mode === fillBoardMode && !gdoId
+        && (userHasPerm(req, 'fill', 'execute') || userHasPerm(req, 'fill', 'view'))) {
+      const fills = await fillRowsOfWarehouse(whId)
+      if (fills.length) {
+        board.rows = mergeFillRows(
+          (board.rows ?? []) as Record<string, unknown>[], fills,
+        ) as unknown as RoutableRow[]
+        board.fill_rows = fills.length
+        // Ô đếm "còn phải làm" của band phải cộng luôn, kẻo bảng 12 dòng mà band nói 10
+        if (board.totals) board.totals.pending = Number(board.totals.pending ?? 0) + fills.length
+      }
+    }
     // Máy vừa đặt việc dưới tay người thì phải NÓI RA (cùng luật với dải "đã sắp lại theo tồn")
     if (autoFill.created || autoFill.recalled) board.auto_fill = {
       created: autoFill.created, recalled: autoFill.recalled, order_code: autoFill.order_code,

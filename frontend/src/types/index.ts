@@ -816,7 +816,11 @@ export interface DirectedRow {
   started_at: string | null
   delivery_date: string | null    // ngày chuyến — để tách việc hôm nay với chuyến cũ còn dở
   dock_name: string | null
-  kind: 'PICK' | 'LOOSE_FEED'
+  // FILL = dòng lệnh fill kho lẻ, KHÔNG phải `wms_tasks` (16/09 — user: "hạ hàng phải xem ở Cần hạ
+  // rồi lại bật Fill hàng lên, mở nhiều chỗ quá"). Bổ sung hàng xuống ô nhặt là một LOẠI việc hạ
+  // trong cùng hàng đợi, đúng cách Manhattan/SAP EWM làm; trang Fill hàng còn lại cho người ra lệnh.
+  // Dòng FILL có `task_ids` rỗng + `can_confirm=false`: nó ghi tồn thật nên chỉ đóng bằng QUÉT TEM.
+  kind: 'PICK' | 'LOOSE_FEED' | 'FILL'
   item_id?: string | null          // dòng hàng (14/09) — tab Sắp quét: lối "Trừ tồn nhặt lẻ" trỏ thẳng dòng hàng
   current_code: string | null      // VỊ TRÍ HIỆN TẠI của pallet — kể cả đang trên kệ (user chốt 10/09)
   from_code: string | null
@@ -869,6 +873,13 @@ export interface DirectedRow {
   customer_name: string | null    // NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai
   do_codes: string | null
   cs_note: string | null          // ghi chú CS nguyên văn (máy không đọc, người đọc)
+  // ── chỉ có ở dòng kind='FILL' ──
+  fill_task_id?: string
+  fill_order_id?: string
+  fill_order_code?: string | null
+  fill_required_date?: string | null   // NSX của lô phải hạ (lệnh fill chỉ định theo DATE, không ghim tem)
+  fill_assignee_name?: string | null
+  fill_auto?: boolean                  // lệnh do hệ thống tự đặt theo nhu cầu trong ngày
 }
 // Một pallet trong nhóm việc. `mat_*` = shelflife của MÃ (và ngoại lệ theo NCC) — cặp với
 // `production_date`/`expiry_date`/`shelf_life_days` của LÔ để `computePctDate` cho ra đúng con số
@@ -913,6 +924,7 @@ export interface DirectedBoard {
   settings?: { separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number }
   trips?: DirectedTrip[]
   auto_replanned?: number     // số chuyến vừa được máy sắp lại theo tồn mới ngay trước lần tải này (14/09)
+  fill_rows?: number          // số dòng lệnh fill kho lẻ đang nằm chung bảng này (16/09)
   // Máy vừa tự đặt / thu hồi lệnh fill hàng nhặt lẻ ngay trước lần tải này (15/09)
   auto_fill?: { created: number; recalled: number; order_code: string | null }
   // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng

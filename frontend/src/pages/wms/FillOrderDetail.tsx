@@ -5,7 +5,7 @@
 // Bulk chạy SONG SONG per-dòng qua route PATCH/DELETE /fill/tasks/:id (chuẩn Promise.all).
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X, Bot, Lock } from 'lucide-react'
+import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X, Bot, Lock, Eye, EyeOff } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { backTarget } from '@/lib/returnTo'
@@ -85,6 +85,17 @@ export default function FillOrderDetail() {
   const order = data?.order
   const lines = useMemo(() => data?.lines ?? [], [data])
   const scans = data?.scans ?? []
+
+  // VIỆC XONG THÌ LÙI RA SAU (user chốt 16/09: "cái nào xong rồi thì mặc định ẩn đi để tập trung cái khác").
+  // Lệnh của NGÀY sống suốt ca nên dòng đã hạ + dòng máy thu hồi/người bác dồn lại rất nhanh — đo F260916-01:
+  // 7 dòng mà chỉ 2 còn làm được, 5 dòng kia là nhiễu che đúng thứ người đi hạ cần nhìn.
+  // Ẩn chứ KHÔNG bỏ: chip nói rõ còn bao nhiêu và mở lại được (lý do huỷ là thứ phải tra cứu được).
+  // Lệnh đã chốt/huỷ thì không còn dòng nào "còn làm" ⇒ hiện tất cả, kẻo mở ra thấy bảng trắng.
+  const [showDone, setShowDone] = useState(false)
+  const nPending = lines.filter(l => l.status === 'PENDING').length
+  const hideMode = !showDone && nPending > 0
+  const shown = hideMode ? lines.filter(l => l.status === 'PENDING') : lines
+  const nHidden = lines.length - shown.length
 
   // Badge "Cần đã giảm" (user chốt 06/08): đơn xuất giảm/hủy KHÔNG tự hủy lệnh treo (chủ đích)
   // → đối chiếu nhu cầu SỐNG (RPC fill_demand — MỘT nguồn công thức, không chép lại) với phần
@@ -266,7 +277,7 @@ export default function FillOrderDetail() {
         </div>
 
         <SummaryBand tiles={[
-          { label: 'Dòng mã', value: nf(lines.length) },
+          { label: 'Dòng còn làm / tổng', value: `${nf(nPending)} / ${nf(lines.length)}` },
           { label: 'Pallet đã hạ / cần', value: `${nf(tot.plDone)} / ${nf(tot.plReq)}`, accent: tot.plDone < tot.plReq },
           { label: `CẦN — ${QTY_CONVERTED_LABEL}`, value: nf(tot.req), tip: QTY_CONVERTED_TIP },
           { label: `ĐÃ HẠ — ${QTY_CONVERTED_LABEL}`, value: nf(tot.done), tip: QTY_CONVERTED_TIP },
@@ -313,13 +324,25 @@ export default function FillOrderDetail() {
           </p>
         )}
 
+        {(nHidden > 0 || (showDone && nPending > 0)) && (
+          <div className="px-3 pt-2 shrink-0">
+            <button type="button" onClick={() => setShowDone(s => !s)}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100">
+              {hideMode ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+              {hideMode
+                ? `Hiện ${nf(nHidden)} dòng đã xong / đã hủy`
+                : `Ẩn dòng đã xong / đã hủy — chỉ xem ${nf(nPending)} dòng còn làm`}
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {/* MOBILE = THẺ per dòng (user chốt 05/08): VỊ TRÍ LẤY → VỀ chữ to ngay view đầu,
               tick chọn để dùng thanh action; bảng đầy đủ cột giữ cho desktop từ sm. */}
           <div className="sm:hidden divide-y divide-slate-100">
-            {lines.length === 0 ? (
+            {shown.length === 0 ? (
               <p className="text-center py-8 text-xs text-slate-400">Lệnh không có dòng nào</p>
-            ) : lines.map(l => {
+            ) : shown.map(l => {
               const picked = sel.has(l.id)
               return (
                 <div key={l.id} className={`px-3 py-2.5 ${picked ? 'bg-sky-50' : ''}`}
@@ -388,9 +411,9 @@ export default function FillOrderDetail() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lines.length === 0 ? (
+              {shown.length === 0 ? (
                 <TableRow><TableCell colSpan={LINE_COLS.length} className="text-center py-8 text-xs text-slate-400">Lệnh không có dòng nào</TableCell></TableRow>
-              ) : lines.map(l => {
+              ) : shown.map(l => {
                 const picked = sel.has(l.id)
                 return (
                   <TableRow key={l.id} className={fillRowText(l.status)}>
@@ -492,7 +515,9 @@ export default function FillOrderDetail() {
             </Table>
           </div>
         </div>
-        <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">{lines.length} dòng mã · {scans.length} pallet đã quét</div>
+        <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
+          Đang xem {shown.length} / {lines.length} dòng mã{nHidden > 0 && ` (ẩn ${nHidden} dòng đã xong/đã hủy)`} · {scans.length} pallet đã quét
+        </div>
       </div>
 
       {/* Bulk: giao người / đổi vị trí đến cho các dòng đã chọn */}

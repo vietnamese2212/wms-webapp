@@ -29,6 +29,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
+import { FillScanOverlay } from './FillScanOverlay'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
 import { TaskDetailSheet, palletPct, palletDays, rowRule, anchorDirected, tripName } from '@/components/wms/TaskDetailSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
@@ -38,6 +39,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
 import { pctDateCls, type PctBands } from '@/utils/pctDateBands'
 import { qtyLabel } from '@/utils/qtyUnits'
+import { unlockAudio } from '@/utils/audio'
 import type { DirectedRow, WorkInbox, WorkInboxRow, DirectedSupervision, DirectedTrip } from '@/types'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
@@ -118,6 +120,11 @@ const SKIP_LABEL: Record<string, string> = {
 /** Trạng thái một dòng — chữ ngắn, đọc lướt được trên PDA. */
 function stateOf(r: DirectedRow, tab: BoardTab): { text: string; cls: string } {
   if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `hệ thống đã huỷ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
+  // Dòng fill đóng bằng QUÉT TEM, không bằng nút ✓ — nói thẳng ra để không ai đứng chờ một nút không có
+  if (r.kind === 'FILL') return {
+    text: `hạ xuống kho lẻ — quét tem${(r.n_done ?? 0) > 0 ? ` (đã quét ${nf(r.n_done ?? 0)}/${nf(r.n_pallets)})` : ''}`,
+    cls: 'text-sky-700',
+  }
   if (r.all_scanned) return { text: `✓ quét đủ${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}`, cls: 'text-green-600' }
   // Sắp quét gom theo Ô (14/09): nhóm 3 pallet mới quét 1 thì nói "đã quét 1/3", không phải im
   if (tab === 'SCAN' && (r.n_done ?? 0) > 0) return { text: `đã quét ${nf(r.n_done ?? 0)}/${nf(r.n_pallets)}`, cls: 'text-sky-700' }
@@ -201,6 +208,16 @@ function dateBits(r: DirectedRow) {
 
 /** YÊU CẦU date của dòng đơn ĐẶT CẠNH %Date thật của pallet — so bằng mắt, không phải nhớ. */
 function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: boolean }) {
+  // Lệnh fill chỉ định theo DATE của lô (không ghim tem) ⇒ đó chính là yêu cầu của dòng, in thẳng.
+  // Không có %Date thật để so vì chưa biết sẽ quét pallet nào — cửa quét mới chốt, và nó tự chặn sai date.
+  if (r.kind === 'FILL') return (
+    <div className="leading-tight">
+      {r.fill_required_date
+        ? <div className="text-[10px] font-semibold text-slate-700 no-underline">NSX {formatDate(r.fill_required_date, 'dd-MM-yy')}</div>
+        : <div className="text-[9px] text-slate-300 no-underline">mọi date</div>}
+      <div className="text-[9px] text-slate-400 no-underline">quét tem sẽ kiểm date</div>
+    </div>
+  )
   const { rule, measure, tone, nsx } = dateBits(r)
   return (
     <div className="leading-tight space-y-0.5">
@@ -225,6 +242,7 @@ type Fire = {
   confirm: (r: DirectedRow, stage: ConfirmStage) => void
   undo: (r: DirectedRow, stage: ConfirmStage) => void      // việc nhặt lẻ hỏi thêm một câu (hàng đưa xuống chưa?)
   claim: (r: DirectedRow, undo: boolean) => void
+  scanFill: (r: DirectedRow) => void                        // dòng lệnh fill — mở màn quét của ĐÚNG lệnh đó
 }
 const ACTION_TIP: Record<string, string> = {
   undo: 'Bỏ dấu ✓ vừa bấm (bấm nhầm) — việc quay lại hàng chờ',
@@ -232,9 +250,17 @@ const ACTION_TIP: Record<string, string> = {
   unclaim: 'Trả việc lại cho người khác',
   done: 'Xác nhận đã làm xong việc này',
 }
-function actionsFor(r: DirectedRow, tab: BoardTab, me: string | null, canConfirm: boolean, fire: Fire):
-  { actions: RowAction[]; heldByOther: string | null } {
+function actionsFor(r: DirectedRow, tab: BoardTab, me: string | null, canConfirm: boolean, fire: Fire,
+  canFill = false): { actions: RowAction[]; heldByOther: string | null } {
   const heldByOther = r.claim_active && r.claimed_by && r.claimed_by !== me ? (r.claimed_by_name ?? 'người khác') : null
+  // DÒNG FILL: một nút QUÉT, không có ✓ Xong. Fill chuyển pallet thật + khoá sức chứa ô đích nên phải
+  // đi qua cửa quét (RPC nguyên tử) — cho bấm "Xong" ở đây là mở một cửa ghi tồn không ai kiểm.
+  if (r.kind === 'FILL') {
+    return {
+      actions: canFill ? [{ key: 'scanfill', label: 'Quét', icon: ScanIcon, primary: true, onClick: () => fire.scanFill(r) }] : [],
+      heldByOther: null,
+    }
+  }
   if (tab === 'SCAN' || !canConfirm || r.skipped || r.all_scanned) return { actions: [], heldByOther }
   if (r.stage_done) {
     const stage = r.combined_lower ? 'BOTH' : tab
@@ -392,6 +418,10 @@ export default function DirectedWork() {
   const canConfirm = can(perms, 'directed_work', 'confirm')
   const canReplan = can(perms, 'directed_work', 'replan')     // vai giám sát → thấy khối Giám sát trong Hộp việc
   const canScan = can(perms, 'outbound', 'scan')
+  // Fill kho lẻ nằm CHUNG bảng từ 16/09 — quét thực hiện vẫn là quyền của module Fill (đo: 18/18 lái
+  // xe nâng đã có sẵn cả `directed_work.confirm` lẫn `fill.execute`, không phải cấp thêm cho ai)
+  const canFill = can(perms, 'fill', 'execute')
+  const canFillAssign = can(perms, 'fill', 'assign')   // màn quét cho "Nhận lệnh này" khi dòng của người khác
   // Băng "chưa khai quy định date" là VIỆC của người có quyền chốt — xe nâng chỉ cần biết dòng đó
   // đang chờ người khác, không cần lời hướng dẫn họ không làm được.
   const canSetDate = can(perms, 'outbound', 'set_date')
@@ -475,6 +505,8 @@ export default function DirectedWork() {
 
   // Nút QUÉT ngay trên bảng Sắp quét — dùng lại đúng màn quét của trang chuyến (một luồng, một luật)
   const [scanOpen, setScanOpen] = useState(false)
+  // …và màn quét của LỆNH FILL cho dòng fill nằm chung bảng (16/09)
+  const [fillScan, setFillScan] = useState<string | null>(null)
   // Tra tồn kho + vị trí của mã ngay trên dòng việc — cùng dialog với trang Chuẩn bị hàng
   const [invMat, setInvMat] = useState<PickedMat | null>(null)
   const { data: scanGdo } = useGDO(tab === 'SCAN' && canScan && f.gdoId ? f.gdoId : undefined)
@@ -548,6 +580,9 @@ export default function DirectedWork() {
       setLastRestore(false); confirmTasks.mutate({ task_ids: r.task_ids, stage, undo: true })
     },
     claim: (r, undo) => claimTasks.mutate({ task_ids: r.task_ids, undo }),
+    // Mở màn quét của ĐÚNG lệnh fill chứa dòng này — không bắt rời trang đi tìm lệnh (chính là việc
+    // user muốn bỏ: "phải bật Fill hàng lên"). Cùng component quét với trang lệnh, một luồng một luật.
+    scanFill: r => { if (r.fill_order_id) { unlockAudio(); setFillScan(r.fill_order_id) } },
   }
   const runUndo = (restore: boolean) => {
     if (!undoAsk) return
@@ -755,24 +790,27 @@ export default function DirectedWork() {
               const st = stateOf(r, boardTab)
               const first = r.group_key === nextKey
               const closed = r.stage_done || r.skipped
-              const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire)
+              const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire, canFill)
               const ord = ordOf.get(r.group_key)
-              const dest = tab === 'LOWER' ? (r.drop_name ?? r.to_name) : (r.to_name ?? r.to_code)
-              const where = tab === 'LOWER' ? r.from_code : r.current_code
+              const isFill = r.kind === 'FILL'
+              const dest = isFill ? r.to_code : tab === 'LOWER' ? (r.drop_name ?? r.to_name) : (r.to_name ?? r.to_code)
+              const where = isFill ? r.from_code : tab === 'LOWER' ? r.from_code : r.current_code
               const { rule, measure, tone, nsx } = dateBits(r)
               const hint = pickHint(r, boardTab)
               return (
                 // Bấm THẺ = mở chi tiết việc; nút bên trong tự chặn nổi bọt (panel chỉ để đọc nên
                 // bấm nhầm không hỏng gì, nhưng vẫn có dòng "Chi tiết ›" để người dùng biết bấm được).
-                <div key={r.group_key} onClick={() => setDetailKey(r.group_key)}
+                <div key={r.group_key} onClick={() => { if (r.kind !== 'FILL') setDetailKey(r.group_key) }}
                   className={`rounded-xl border p-3 space-y-1.5 ${closed ? 'border-slate-200 bg-slate-50 text-slate-400' : first ? 'border-sky-400 bg-sky-50 shadow-sm' : heldByOther ? 'border-slate-200 bg-white opacity-70' : 'border-slate-200 bg-white'}`}>
                   <div className="flex items-center justify-between gap-2 text-[10px]">
                     <span className={`font-semibold uppercase tracking-wide ${first ? 'text-sky-700' : closed ? 'text-slate-400' : 'text-slate-500'}`}>
                       {r.skipped ? 'Hệ thống đã huỷ' : r.stage_done ? 'Đã xong' : first ? 'Việc kế tiếp' : `#${ord ?? ''}`}
                     </span>
                     <span className="truncate text-slate-500">
-                      {tab === 'SCAN' ? null : <>{r.license_plate ?? r.group_code ?? '—'}{r.dock_name ? ` · ${r.dock_name}` : ''}</>}
-                      {isOldTrip(r.delivery_date) && <span className="text-amber-600"> · chuyến {formatDate(r.delivery_date!)}</span>}
+                      {r.kind === 'FILL'
+                        ? <span className="text-sky-700 font-semibold">Fill kho lẻ · {r.fill_order_code ?? ''}</span>
+                        : tab === 'SCAN' ? null : <>{r.license_plate ?? r.group_code ?? '—'}{r.dock_name ? ` · ${r.dock_name}` : ''}</>}
+                      {r.kind !== 'FILL' && isOldTrip(r.delivery_date) && <span className="text-amber-600"> · chuyến {formatDate(r.delivery_date!)}</span>}
                     </span>
                   </div>
                   {/* NƠI NHẬN · SỐ XE — người lấy hàng phải biết đang phục vụ ai, và dòng nào cũng phải
@@ -785,11 +823,18 @@ export default function DirectedWork() {
                     </div>
                   )}
                   <Step label="Date" big={first}>
-                    {rule
-                      ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
-                      : <span className="text-xs text-slate-400">chưa khai</span>}
-                    {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
-                    {nsx && <div className={`text-xs font-semibold ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}>NSX {nsx}</div>}
+                    {isFill ? (
+                      r.fill_required_date
+                        ? <><span className="font-semibold">NSX {formatDate(r.fill_required_date, 'dd-MM-yy')}</span>
+                            <div className="text-xs text-slate-500">quét tem sẽ kiểm date</div></>
+                        : <span className="text-xs text-slate-400">mọi date</span>
+                    ) : (<>
+                      {rule
+                        ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
+                        : <span className="text-xs text-slate-400">chưa khai</span>}
+                      {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
+                      {nsx && <div className={`text-xs font-semibold ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}>NSX {nsx}</div>}
+                    </>)}
                   </Step>
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
                     <span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{where ?? <span className="text-slate-300 font-sans font-normal">chưa có trên bản vẽ</span>}</span>
@@ -805,9 +850,10 @@ export default function DirectedWork() {
                     )}
                     <div className="mt-1"><StockButtons r={r} onPick={setInvMat} big /></div>
                   </Step>
-                  <Step label={tab === 'LOWER' ? 'Đặt xuống' : 'Tới'} big={first}>
+                  <Step label={tab === 'LOWER' || isFill ? 'Đặt xuống' : 'Tới'} big={first}>
                     <span className="font-semibold">{dest ?? <span className="text-slate-300 font-normal">—</span>}</span>
                     {r.kind === 'LOOSE_FEED' && <span className="ml-1 text-xs text-purple-600">nhặt lẻ</span>}
+                    {isFill && <span className="ml-1 text-xs text-sky-600">ô nhặt lẻ</span>}
                     {tab === 'SCAN' && looseLinkOf(r) && (
                       <Link to={looseLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
                         className="mt-1 flex items-center gap-1 text-xs text-purple-700 underline">
@@ -822,9 +868,10 @@ export default function DirectedWork() {
                     )}
                   </Step>
                   {/* "⏳ chờ xe hạ" là lời nói với XE CHUYỂN — trên thẻ của chính xe hạ thì đó là việc của họ, không phải chờ ai */}
-                  {(closed || heldByOther || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
+                  {(closed || heldByOther || isFill || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
                     <div className={`text-xs ${st.cls}`}>
                       {closed ? st.text : heldByOther ? `${heldByOther} đang làm` : st.text}
+                      {isFill && r.fill_assignee_name && <> · giao {r.fill_assignee_name}</>}
                     </div>
                   )}
                   {actions.length > 0 && (
@@ -839,9 +886,16 @@ export default function DirectedWork() {
                     </div>
                   )}
                   {/* KÍNH LÚP (user 14/09): tem pallet ghim · NSX · %Date từng pallet · hồ sơ chuyến — chỉ khi cần soi */}
+                  {isFill ? (
+                    <Link to={`/wms/fill/orders/${r.fill_order_id}`} onClick={e => { e.stopPropagation(); anchorDirected() }}
+                      className="flex items-center justify-end gap-1 text-[11px] text-sky-700 pt-0.5">
+                      <ExternalLink className="h-3.5 w-3.5" /> Mở lệnh fill
+                    </Link>
+                  ) : (
                   <div className="flex items-center justify-end gap-1 text-[11px] text-sky-700 pt-0.5">
                     <Search className="h-3.5 w-3.5" /> Soi chi tiết (tem pallet · NSX · %Date)
                   </div>
+                  )}
                 </div>
               )
             })}
@@ -893,14 +947,16 @@ export default function DirectedWork() {
                 const closed = r.stage_done || r.skipped
                 const dim = closed ? 'text-slate-400 line-through' : ''
                 const first = r.group_key === nextKey
-                const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire)
+                const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire, canFill)
                 const cell = 'px-2 py-1 text-[10px] whitespace-nowrap'
                 return (
                   // Bấm DÒNG = mở chi tiết việc (hồ sơ chuyến · từng tem + NSX + %Date · ghi chú CS).
                   // Nút bên trong tự chặn nổi bọt để không vừa bấm ✓ vừa mở panel.
-                  <TableRow key={r.group_key} onClick={() => setDetailKey(r.group_key)}
-                    title="Bấm để xem chi tiết việc này"
-                    className={`cursor-pointer ${dim} ${first ? 'bg-sky-50' : ''}`}>
+                  // Dòng fill không có hồ sơ chuyến / tem ghim để soi ⇒ không mở panel chi tiết (panel
+                  // trống còn tệ hơn không có nút); muốn xem thì mở thẳng lệnh fill ở cột thao tác.
+                  <TableRow key={r.group_key} onClick={() => { if (r.kind !== 'FILL') setDetailKey(r.group_key) }}
+                    title={r.kind === 'FILL' ? 'Dòng hạ hàng của lệnh fill — bấm Quét để thực hiện' : 'Bấm để xem chi tiết việc này'}
+                    className={`${r.kind === 'FILL' ? '' : 'cursor-pointer'} ${dim} ${first ? 'bg-sky-50' : ''}`}>
                     <TableCell className={`${cell} text-right font-semibold tabular-nums sticky left-0 z-10 ${first ? 'bg-sky-50' : 'bg-white'}`}>
                       {/* Việc đã xong / đã bỏ không mang số thứ tự nữa — nó không còn nằm trong đường đi */}
                       {r.skipped
@@ -917,6 +973,14 @@ export default function DirectedWork() {
                       <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>{st.text}</TableCell>
                     </>) : (<>
                       <TableCell className={cell}>
+                        {/* Dòng fill không thuộc chuyến nào — cột này nói nó là việc gì và của lệnh nào */}
+                        {r.kind === 'FILL' ? (<>
+                          <div className="font-semibold text-sky-700">Fill kho lẻ</div>
+                          <div className="text-[9px] text-slate-400 font-mono">
+                            {r.fill_order_code ?? '—'}{r.fill_auto ? ' · máy tạo' : ''}
+                          </div>
+                          {r.fill_assignee_name && <div className="text-[9px] text-slate-500 truncate no-underline">giao {r.fill_assignee_name}</div>}
+                        </>) : (<>
                         <div className="font-mono font-semibold">{tripName(r)}</div>
                         <div className="text-[9px] text-slate-400">
                           {r.dock_name ?? '—'}
@@ -927,6 +991,7 @@ export default function DirectedWork() {
                         </div>
                         {/* NƠI NHẬN: người lấy hàng phải biết mình đang phục vụ ai, không chỉ biết biển số */}
                         {r.customer_name && <div className="text-[9px] text-slate-500 truncate no-underline">{r.customer_name}</div>}
+                        </>)}
                       </TableCell>
                       {tab === 'LOWER' ? (<>
                         <TableCell className={cell}>
@@ -966,10 +1031,13 @@ export default function DirectedWork() {
                     </TableCell>
 
                     <TableCell className={cell}>
-                      {tab === 'LOWER'
-                        ? (r.drop_name ?? r.to_name ?? <span className="text-slate-300">—</span>)
-                        : (r.to_name ?? r.to_code ?? <span className="text-slate-300">—</span>)}
+                      {r.kind === 'FILL'
+                        ? <span className="font-mono">{r.to_code ?? <span className="text-slate-300 font-sans">—</span>}</span>
+                        : tab === 'LOWER'
+                          ? (r.drop_name ?? r.to_name ?? <span className="text-slate-300">—</span>)
+                          : (r.to_name ?? r.to_code ?? <span className="text-slate-300">—</span>)}
                       {r.kind === 'LOOSE_FEED' && <span className="ml-1 text-[9px] text-purple-600">nhặt lẻ</span>}
+                      {r.kind === 'FILL' && <span className="ml-1 text-[9px] text-sky-600">ô nhặt lẻ</span>}
                       {/* Hai bước, hai người: xe nâng ✓ = pallet về vị trí nhặt lẻ; thủ kho "Check nhặt lẻ" ở dòng hàng = trừ tồn */}
                       {tab === 'SCAN' && looseLinkOf(r) && (
                         <Link to={looseLinkOf(r)!} onClick={e => { e.stopPropagation(); anchorDirected() }}
@@ -989,11 +1057,19 @@ export default function DirectedWork() {
                       <TableCell className={`px-2 py-1 whitespace-nowrap sticky right-0 z-10 border-l border-slate-200 ${first ? 'bg-sky-50' : 'bg-white'}`}>
                         <div className="flex items-center gap-1">
                           {/* KÍNH LÚP — như nút "Xem tồn kho" bên Xuất: soi tem pallet ghim · NSX · %Date · hồ sơ chuyến */}
+                          {r.kind === 'FILL' ? (
+                            <Link to={`/wms/fill/orders/${r.fill_order_id}`} onClick={e => { e.stopPropagation(); anchorDirected() }}
+                              title="Mở lệnh fill chứa dòng này (đổi vị trí đến, giao người, huỷ dòng)"
+                              className="flex items-center justify-center h-7 w-7 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50 no-underline">
+                              <ExternalLink className="h-4 w-4" />
+                            </Link>
+                          ) : (
                           <button type="button" onClick={e => { e.stopPropagation(); setDetailKey(r.group_key) }}
                             title="Soi chi tiết việc: tem pallet gợi ý, NSX, %Date từng pallet, hồ sơ chuyến"
                             className="flex items-center justify-center h-7 w-7 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 no-underline">
                             <Search className="h-4 w-4" />
                           </button>
+                          )}
                           {actions.map(a => (
                             <Button key={a.key} size="sm" variant={a.primary ? 'default' : 'outline'}
                               className={`h-7 px-2 text-[10px] ${a.muted ? 'opacity-70' : ''}`} disabled={busy}
@@ -1030,10 +1106,15 @@ export default function DirectedWork() {
       </div>
 
       {scanOpen && scanGdo && <GdoScanSheet gdo={scanGdo} mode="outbound" onClose={() => setScanOpen(false)} />}
+      {/* Quét dòng fill NGAY TẠI ĐÂY — cùng màn quét của trang lệnh fill, không viết luồng quét thứ hai */}
+      {fillScan && f.warehouseId && (
+        <FillScanOverlay warehouseId={f.warehouseId} orderId={fillScan} open canAssign={canFillAssign}
+          onClose={() => setFillScan(null)} />
+      )}
       {detailRow && (
         <TaskDetailSheet row={detailRow} tab={boardTab} trip={tripOf.get(detailRow.gdo_id)} bands={pctBands}
           canOpenTrip={canOpenTrip} looseLink={looseLinkOf(detailRow)} busy={busy}
-          actions={actionsFor(detailRow, boardTab, me, canConfirm, fire).actions}
+          actions={actionsFor(detailRow, boardTab, me, canConfirm, fire, canFill).actions}
           onStock={setInvMat} onClose={() => setDetailKey(null)} />
       )}
       {/* HỎI MỘT CÂU khi bỏ dấu ✓ của việc nhặt lẻ — dialog giữa màn chỉ để xác nhận nhỏ (chuẩn UI) */}

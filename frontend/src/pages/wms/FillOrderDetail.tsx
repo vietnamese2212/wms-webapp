@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X, Bot, Lock } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { backTarget } from '@/lib/returnTo'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -231,42 +232,36 @@ export default function FillOrderDetail() {
                 : <span className="text-amber-700">chưa giao ai</span>}
               {order.closed_at && <> · chốt {formatDateTime(order.closed_at)}</>}
             </span>
-            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08 "đưa action lên trên
-                nút ba chấm") — người cầm điện thoại phải thấy đủ thao tác ngay */}
-            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents sm:ml-auto">
-              {canExecute && order.status === 'PENDING' && (
-                <Button size="sm" className="h-9 sm:h-7 text-[11px]"
-                  title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh trong lệnh này"
-                  onClick={() => { setScanMounted(true); setScanOpen(true) }}>
-                  <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
-                </Button>
-              )}
-              {canAssign && order.status === 'PENDING' && (
-                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
-                  disabled={assignOrder.isPending}
-                  title="Giao kế hoạch fill CẢ NGÀY này cho một người — dòng hệ thống thêm vào sau cũng thuộc về họ"
-                  onClick={() => { setVal(order.assignee_id ?? ''); setErr(''); setDlg('assign-order') }}>
-                  <UserPlus className="h-3.5 w-3.5 mr-1" /> Giao cả ngày
-                </Button>
-              )}
-              {canPlan && order.status === 'PENDING' && (
-                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
-                  disabled={closeOrder.isPending}
-                  title="Đóng sổ lệnh của ngày: dòng chưa thực hiện sẽ bị hủy kèm lý do (giữ vết để báo cáo)"
-                  onClick={doCloseOrder}>
-                  <Lock className="h-3.5 w-3.5 mr-1" /> {closeOrder.isPending ? 'Đang chốt…' : 'Chốt ngày'}
-                </Button>
-              )}
-              {canCancel && order.status === 'PENDING' && (
-                <Button size="sm" variant="outline"
-                  className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
-                  disabled={cancelOrder.isPending}
-                  title="Hủy toàn bộ dòng còn treo của lệnh này (dòng đã hạ giữ nguyên)"
-                  onClick={doCancelOrder}>
-                  <X className="h-3.5 w-3.5 mr-1" /> {cancelOrder.isPending ? 'Đang hủy…' : 'Hủy lệnh'}
-                </Button>
-              )}
-            </div>
+            {/* Cụm action = ActionCluster như header Xuất kho/Nhập kho (user 16/09: "header chiếm hết rồi còn đâu —
+                tỷ lệ table 80 / header 20"): desktop nút h-7 một hàng; mobile hai nút chính (Quét · Giao) hiện
+                thẳng, Chốt ngày / Hủy lệnh vào ⋮ — bốn nút h-9 xếp hai hàng như bản 05/08 là header ăn nửa màn. */}
+            {order.status === 'PENDING' && (
+              <div className="flex items-center gap-1.5 shrink-0 max-sm:w-full">
+                <ActionCluster items={[
+                  ...(canExecute ? [{
+                    key: 'scan', icon: ScanIcon, label: 'Quét thực hiện', primary: true, variant: 'default',
+                    tip: 'Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh trong lệnh này',
+                    onClick: () => { setScanMounted(true); setScanOpen(true) },
+                  } satisfies ActionItem] : []),
+                  ...(canAssign ? [{
+                    key: 'assign-order', icon: UserPlus, label: 'Giao cả ngày', primary: true, busy: assignOrder.isPending,
+                    tip: 'Giao kế hoạch fill CẢ NGÀY này cho một người — dòng hệ thống thêm vào sau cũng thuộc về họ',
+                    onClick: () => { setVal(order.assignee_id ?? ''); setErr(''); setDlg('assign-order') },
+                  } satisfies ActionItem] : []),
+                  ...(canPlan ? [{
+                    key: 'close', icon: Lock, label: 'Chốt ngày', busy: closeOrder.isPending,
+                    tip: 'Đóng sổ lệnh của ngày: dòng chưa thực hiện sẽ bị hủy kèm lý do (giữ vết để báo cáo)',
+                    onClick: doCloseOrder,
+                  } satisfies ActionItem] : []),
+                  ...(canCancel ? [{
+                    key: 'cancel', icon: X, label: 'Hủy lệnh', danger: true, busy: cancelOrder.isPending,
+                    className: 'border-red-200 text-red-600 hover:bg-red-50',
+                    tip: 'Hủy toàn bộ dòng còn treo của lệnh này (dòng đã hạ giữ nguyên)',
+                    onClick: doCancelOrder,
+                  } satisfies ActionItem] : []),
+                ]} />
+              </div>
+            )}
           </div>
         </div>
 

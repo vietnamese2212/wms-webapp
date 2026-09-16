@@ -185,6 +185,16 @@ export default function SlottingPlanDetail() {
               {plan.completed_at ? ` · đóng ${formatDateTime(plan.completed_at)} (${plan.completed_by ?? '—'})` : ''}
             </span>
             <span className="ml-auto flex items-center gap-1.5">
+              {/* QUÉT CHUYỂN VỊ TRÍ — nút CHÍNH của trang (user 16/09: "cái tôi cần là chuyển đúng vị trí").
+                  Trước đó chỉ có nút nhỏ trong ô "Từ vị trí" của TỪNG DÒNG còn chờ làm, nên kế hoạch mà
+                  phần lớn dòng đã xong/đã hết hàng thì gần như không thấy nút nào (Ba Vì 16/09: 52/54 dòng).
+                  Quét tem là BE tự chuyển sang ĐÚNG vị trí đích của lệnh, không ai chọn tay. */}
+              {canScanMove && plan.status === 'ACTIVE' && (
+                <Button size="sm" className="h-7 text-[11px]" onClick={openScan}
+                  title="Quét tem pallet đang ở vị trí nguồn — hệ thống tự chuyển sang đúng vị trí đích của lệnh">
+                  <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét chuyển vị trí
+                </Button>
+              )}
               <Button size="sm" variant="outline" className="h-7 text-[11px]"
                 title="In phiếu A4 gom theo vị trí đích — in đúng danh sách đang lọc trên màn"
                 onClick={() => {

@@ -892,6 +892,30 @@ const RULES = [
     count: (s) => countMatches(['frontend/src/pages'], ['.tsx'],
       (line) => /^\s*\w+:\s*[\w.]+\.join\(','\),?\s*$/.test(line), s),
   },
+  // Thanh thao tác CHỌN-NHIỀU chèn một <div> vào luồng (giữa toolbar/band và bảng) ⇒ tick dòng đầu là bảng
+  // co lại, dòng nhảy dưới con trỏ (user 16/09: "tick multi là hiện action lên, table không được resize").
+  // Chuẩn: pill NỔI `fixed` (FloatingActionBar / Tồn kho) hoặc nút h-7 đặt sẵn TRÊN HEADER (Xuất kho, DO SAP).
+  // Bắt: khối `<X>.size > 0 && (` với X là tên tập chọn, mà thẻ mở đầu ngay sau là <div> KHÔNG có `fixed`.
+  {
+    key: 'bulk_bar_inline_reflows_table',
+    label: 'thanh thao tác chọn-nhiều là <div> chèn vào luồng (không `fixed`) — bảng bị co khi tick; dùng FloatingActionBar hoặc nút trên header',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+        const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+        lines.forEach((line, i) => {
+          if (!/\b(sel|selected|picked|checked|checkedIds|selectedIds|selectedOrderIds|selection)\w*\.size > 0 && \($/.test(line)) return
+          for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+            const t = lines[j].trim()
+            if (!t || t.startsWith('//') || t.startsWith('{/*') || t.startsWith('/*') || t.startsWith('*')) continue
+            if (/^<div\b/.test(t) && !/\bfixed\b/.test(t)) { n++; if (s && s.length < 5) s.push(`${f.slice(ROOT.length + 1)}:${j + 1}`) }
+            break
+          }
+        })
+      }
+      return n
+    },
+  },
   // "Mọi view mới phải có mặt trong phân quyền" (user chốt 19/08): route trang mới trong App.tsx
   // PHẢI bọc PermissionRoute/ExternalRoute/DashboardRoute. Baseline 3 = 3 route MỞ CHỦ ĐÍCH:
   // /wms/alerts (tab Cá nhân = feed của mình) · /settings (tài khoản cá nhân) · /wms/multi-scan

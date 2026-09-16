@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { FillScanOverlay } from './FillScanOverlay'
 import { AssigneePicker, DestPicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText, RequiredDateBadge } from './fillShared'
@@ -276,44 +277,40 @@ export default function FillOrderDetail() {
           { label: `ĐÃ HẠ — ${QTY_CONVERTED_LABEL}`, value: nf(tot.done), tip: QTY_CONVERTED_TIP },
         ]} />
 
-        {canBulk && sel.size > 0 && (
-          <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
-            <span className="text-[11px] text-slate-500">
-              Đã chọn <b className="text-slate-700">{sel.size}</b> dòng ({pendingSel.length} đang treo)
-            </span>
-            {/* Nút THƯỜNG thay ActionCluster: cụm không có primary nên trên mobile ActionCluster
-                gom HẾT vào menu ⋮ — user bắt 05/08 "chọn nhiều không đủ action như trên browser".
-                Thao tác bulk phải thấy ĐỦ cả 3 nút ở mọi cỡ màn. */}
-            <span className="ml-auto flex items-center gap-1.5 flex-wrap">
-              {canAssign && (
-                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
-                  disabled={!pendingSel.length || busy}
-                  title="Giao các dòng đã chọn cho một người"
-                  onClick={() => { setVal(''); setErr(''); setDlg('assign') }}>
-                  <UserPlus className="h-3.5 w-3.5 mr-1" /> Giao cho
-                </Button>
-              )}
-              {canChangeDest && (
-                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
-                  disabled={!pendingSel.length || busy}
-                  title="Đổi vị trí nhặt lẻ sẽ hạ về cho các dòng đã chọn (vị trí phải nhận đúng Loại kho từng mã)"
-                  onClick={() => { setVal(''); setErr(''); setDlg('dest') }}>
-                  <MapPin className="h-3.5 w-3.5 mr-1" /> Đổi vị trí đến
-                </Button>
-              )}
-              {canCancel && (
-                <Button size="sm" variant="outline"
-                  className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
-                  disabled={!pendingSel.length || busy}
-                  title="Hủy các dòng đã chọn (giữ lại để tra cứu)"
-                  onClick={() => bulk(l => cancelTask.mutateAsync({ id: l.id }), pendingSel)}>
-                  <X className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang hủy…' : 'Hủy dòng'}
-                </Button>
-              )}
-            </span>
-          </div>
+        {/* Thanh thao tác chọn-nhiều = PILL NỔI giữa đáy (như Tồn kho), KHÔNG chèn hàng vào giữa band và bảng —
+            user 16/09: "tick multi là hiện action lên, table không được resize". Nút THƯỚNG thay ActionCluster
+            (cụm không có primary nên mobile gom hết vào ⋮ — user bắt 05/08): phải thấy đủ 3 nút ở mọi cỡ màn. */}
+        {canBulk && (
+          <FloatingActionBar count={sel.size} unit={`dòng · ${pendingSel.length} đang treo`}>
+            {canAssign && (
+              <Button size="sm" variant="outline" className={FLOATING_BTN}
+                disabled={!pendingSel.length || busy}
+                title="Giao các dòng đã chọn cho một người"
+                onClick={() => { setVal(''); setErr(''); setDlg('assign') }}>
+                <UserPlus className="h-3.5 w-3.5 mr-1" /> Giao cho
+              </Button>
+            )}
+            {canChangeDest && (
+              <Button size="sm" variant="outline" className={FLOATING_BTN}
+                disabled={!pendingSel.length || busy}
+                title="Đổi vị trí nhặt lẻ sẽ hạ về cho các dòng đã chọn (vị trí phải nhận đúng Loại kho từng mã)"
+                onClick={() => { setVal(''); setErr(''); setDlg('dest') }}>
+                <MapPin className="h-3.5 w-3.5 mr-1" /> Đổi vị trí đến
+              </Button>
+            )}
+            {canCancel && (
+              <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER}
+                disabled={!pendingSel.length || busy}
+                title="Hủy các dòng đã chọn (giữ lại để tra cứu)"
+                onClick={() => bulk(l => cancelTask.mutateAsync({ id: l.id }), pendingSel)}>
+                <X className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang hủy…' : 'Hủy dòng'}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" className="h-8 text-[11px] text-slate-300 hover:text-white hover:bg-slate-700"
+              title="Bỏ chọn" onClick={() => setSel(new Set())}>Bỏ chọn</Button>
+          </FloatingActionBar>
         )}
-        {err && <p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        {err &&<p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
         {dropInfo.size > 0 && (
           <p className="mx-3 mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 shrink-0">
             <b>{dropInfo.size} dòng</b> có nhu cầu ĐÃ GIẢM so với lúc ra lệnh (đơn xuất đổi/hủy) — hạ thừa chỉ chiếm chỗ

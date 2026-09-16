@@ -6,6 +6,7 @@ import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { isAdmin } from '@/config/permissions'
 import { Button } from '@/components/ui/button'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -295,21 +296,18 @@ export default function IntegrationKeys() {
           </Button>
         </div>
 
-        {/* Thanh bulk khi chọn nhiều */}
-        {selected.size > 0 && (
-          <div className="border-b bg-sky-50 px-3 py-2 flex items-center gap-2 flex-wrap text-[12px]">
-            <span className="font-medium text-sky-800">Đã chọn {selected.size}</span>
-            <Button size="sm" variant="outline" className="text-amber-700 border-amber-300" disabled={selActive.length === 0}
-              onClick={() => setConfirm({ action: 'revoke', ids: selActive.map(k => k.id) })}>
-              <Ban className="h-3.5 w-3.5 mr-1" /> Thu hồi ({selActive.length} đang dùng)
-            </Button>
-            <Button size="sm" variant="outline" className="text-red-700 border-red-300" disabled={selRevoked.length === 0}
-              onClick={() => setConfirm({ action: 'delete', ids: selRevoked.map(k => k.id) })}>
-              <Trash2 className="h-3.5 w-3.5 mr-1" /> Xóa ({selRevoked.length} đã thu hồi)
-            </Button>
-            <button className="text-slate-500 hover:underline ml-1" onClick={() => setSelected(new Set())}>Bỏ chọn</button>
-          </div>
-        )}
+        {/* Thanh chọn-nhiều = pill NỔI, không chèn hàng làm bảng co khi tick (user 16/09) */}
+        <FloatingActionBar count={selected.size} unit="key">
+          <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={selActive.length === 0}
+            onClick={() => setConfirm({ action: 'revoke', ids: selActive.map(k => k.id) })}>
+            <Ban className="h-3.5 w-3.5 mr-1" /> Thu hồi ({selActive.length} đang dùng)
+          </Button>
+          <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER} disabled={selRevoked.length === 0}
+            onClick={() => setConfirm({ action: 'delete', ids: selRevoked.map(k => k.id) })}>
+            <Trash2 className="h-3.5 w-3.5 mr-1" /> Xóa ({selRevoked.length} đã thu hồi)
+          </Button>
+          <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+        </FloatingActionBar>
 
         {/* Banner: key vừa tạo — hiện đầy đủ, có Chép */}
         {createdKey && (

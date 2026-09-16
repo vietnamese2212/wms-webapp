@@ -9,6 +9,7 @@ import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -4322,10 +4323,11 @@ export default function TMSBookings() {
             )}
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
-            {(canChangeDate || canDelete) && selectedOrderIds.size > 0 && (
-              <div className="flex items-center gap-2 w-full py-0.5 flex-wrap">
-                <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
-                <ActionCluster items={[
+            {/* Thanh chọn-nhiều = pill NỔI (như Tồn kho) — chèn một hàng vào toolbar là bảng co lại đúng lúc
+                đang tick (user 16/09: "table không được resize"). */}
+            {(canChangeDate || canDelete) && (
+              <FloatingActionBar count={selectedOrderIds.size} unit="đơn">
+                <ActionCluster className="w-auto shrink-0" items={[
                   ...(canChangeDate ? [{
                     key: 'change-date', icon: CalendarDays, label: 'Đổi ngày', tip: 'Đổi ngày giao cho các đơn đã chọn',
                     primary: true,
@@ -4333,16 +4335,16 @@ export default function TMSBookings() {
                   } satisfies ActionItem] : []),
                   ...(canDelete ? [{
                     key: 'bulk-delete', icon: Trash2, label: 'Xóa', tip: 'Xóa các đơn đã chọn (kèm slot xe chưa đặt lịch)',
-                    danger: true, className: 'text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700',
+                    danger: true, className: FLOATING_BTN_DANGER,
                     onClick: () => setBulkDeleteOpen(true),
                   } satisfies ActionItem] : []),
                   {
                     key: 'clear-selection', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn tất cả đơn đang chọn',
-                    className: 'text-slate-500',
+                    className: FLOATING_BTN,
                     onClick: () => setSelectedOrderIds(new Set()),
                   } satisfies ActionItem,
                 ]} />
-              </div>
+              </FloatingActionBar>
             )}
             {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
           </div>

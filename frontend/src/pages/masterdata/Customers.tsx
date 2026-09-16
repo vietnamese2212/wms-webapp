@@ -20,6 +20,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { FloatingActionBar } from '@/components/shared/FloatingActionBar'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -363,24 +364,21 @@ export default function Customers() {
           {listTab && <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>}
           {/* Chọn-tất-cả 2 mức: trang đang xem → cả bộ lọc. Mobile không có hàng tiêu đề nên ô
               chọn-tất-cả đứng ở đây (cùng luật trang Chốt %Date). */}
-          {listTab && picked.size > 0 && (
-            <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
-              <label className="flex items-center gap-1.5 sm:hidden">
-                <input type="checkbox" checked={allPicked} onChange={toggleAll} className="h-4 w-4 accent-sky-600" />
+          {/* Pill NỔI thay hàng chèn vào toolbar — hàng chèn làm bảng co khi vừa tick (user 16/09). */}
+          {listTab && (
+            <FloatingActionBar count={allFiltered ? total : picked.size}
+              unit={allFiltered ? 'khách theo bộ lọc hiện tại' : 'dòng trên trang'}>
+              <label className="flex items-center gap-1.5 sm:hidden text-[11px] text-slate-200">
+                <input type="checkbox" checked={allPicked} onChange={toggleAll} className="h-4 w-4 accent-sky-400" />
                 Chọn cả trang
               </label>
-              {allFiltered
-                ? <span className="text-sky-700 font-medium">Đang chọn cả {nf(total)} khách theo bộ lọc hiện tại.
-                    <button className="ml-1 underline" onClick={clearPick}>Bỏ chọn</button></span>
-                : <span>Đã chọn {nf(picked.size)} dòng trên trang.
-                    {total > rows.length && allPicked && (
-                      <button className="ml-1 text-sky-700 underline" onClick={() => setAllFiltered(true)}>
-                        Chọn cả {nf(total)} dòng theo bộ lọc
-                      </button>
-                    )}
-                    <button className="ml-2 underline" onClick={clearPick}>Bỏ chọn</button>
-                  </span>}
-            </div>
+              {!allFiltered && total > rows.length && allPicked && (
+                <button type="button" className="text-[11px] text-sky-300 underline" onClick={() => setAllFiltered(true)}>
+                  Chọn cả {nf(total)} dòng theo bộ lọc
+                </button>
+              )}
+              <button type="button" className="text-[11px] text-slate-300 hover:text-white underline" onClick={clearPick}>Bỏ chọn</button>
+            </FloatingActionBar>
           )}
           {err && <p className="text-[11px] text-red-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {err}</p>}
         </div>

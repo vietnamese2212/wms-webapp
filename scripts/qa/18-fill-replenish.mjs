@@ -654,7 +654,18 @@ try {
   // chạy hai lần không đẻ lệnh đôi · dòng chưa chốt %Date thì máy KHÔNG chọn lô hộ · hết nhu cầu
   // thì tự thu hồi. Bỏ bất kỳ cái nào trong bốn là máy đi hạ hàng không ai cần.
   await cleanupOrders(whId)                      // xoá lệnh của các cụm trên để phép trừ sạch
-  const runAuto = () => api('/wms/fill/auto', 'POST', { warehouse_id: whId, date: DAY })
+  // Kho là SÂN CHUNG: trình duyệt của người dùng thật đang mở Fill hàng / Việc cần làm cũng xả hàng đợi đối
+  // chiếu và giữ khoá kho 1–3 s ⇒ cửa bấm tay trả 409 BUSY thoáng qua (đo 16/09: 22g→23c đỏ dây chuyền rồi gói
+  // ngã ở `day1[0].id`, trong khi app đúng). Thử lại vài nhịp trước khi kết luận.
+  const runAuto = async () => {
+    let r = { s: 0, j: null }
+    for (let i = 0; i < 5; i++) {
+      r = await api('/wms/fill/auto', 'POST', { warehouse_id: whId, date: DAY })
+      if (r.s !== 409) return r
+      await new Promise(res => setTimeout(res, 6000))
+    }
+    return r
+  }
   const autoLines = async () => (await restAll('FillTask',
     `select=id,material_id,qty_base,assignee_id,status,fill_order_id,required_date&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
   const autoOrders = async () => (await restAll('FillOrder',
@@ -700,7 +711,7 @@ try {
       && qty22 === shortNow
       && lines22.every(l => l.assignee_id === null)
       && ords22.length === 1 && ords22[0].auto_created === true,
-    `thiếu=${shortNow} lệnh=${qty22} dòng=${lines22.length} gán=${lines22.filter(l => l.assignee_id).length} auto=${ords22[0]?.auto_created}`)
+    `thiếu=${shortNow} lệnh=${qty22} dòng=${lines22.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} gán=${lines22.filter(l => l.assignee_id).length} auto=${ords22[0]?.auto_created}`)
 
   // 22d. Chạy lại ⇒ KHÔNG đẻ lệnh thứ hai (phần đang treo đã trừ vào "thiếu"; unique gác nốt)
   const again22 = await runAuto()
@@ -712,29 +723,36 @@ try {
   // 22d2 (16/09 — đo thật trên Ba Vì): ĐƠN ĐỔI MỨC %Date SAU KHI MÁY ĐÃ ĐẶT. Dòng 363 chốt ≥ 60 % ⇒ máy đặt
   // lô 66 %; người sửa thành ≥ 80 % ⇒ lô đó không còn được lấy nhưng dòng vẫn treo và "đang có lệnh" che
   // hết nhu cầu ⇒ máy KHÔNG đặt lô đúng. Ở đây: máy đang giữ dòng lô pA (+pB); chốt EXACT = NSX pC ⇒ dòng
-  // cũ phải bị thu hồi với lý do MÁY, và dòng lô pC phải xuất hiện NGAY trong cùng lượt.
+  // cũ phải bị thu hồi với lý do MÁY, và dòng lô đúng phải xuất hiện NGAY trong cùng lượt.
+  // ⚠️ Tới đây pA và pC ĐÃ NẰM Ở Ô NHẶT LẺ (mục 9 và 12 quét chúng xuống locPF) — lần viết đầu 16/09 chốt
+  // EXACT = pC nên "lô đúng" đã có sẵn 60 ở dưới và máy ĐÚNG khi không hạ gì: đỏ oan. Dùng một pallet MỚI
+  // trên kệ (pD, mới hơn pC nhưng vẫn già hơn mọi tồn thật) để chắc chắn có thứ để hạ.
+  const pD = await mkPallet('D', 60, locRsv.id, 410)
   const staleBefore = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
-  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'EXACT', value: pC.date }, updated_at: nowIso() })
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'EXACT', value: pD.date }, updated_at: nowIso() })
   const dmStale = await demandOf()
   const relot22 = await runAuto()
   const afterAll = await restAll('FillTask',
     `select=id,status,qty_base,required_date,cancel_reason,created_by&warehouse_id=eq.${whId}&target_date=eq.${DAY}&material_id=eq.${mat.id}`)
   const stillOld = afterAll.filter(l => staleBefore.some(s => s.id === l.id))
-  const newC = afterAll.filter(l => l.status === 'PENDING' && String(l.required_date).slice(0, 10) === pC.date)
+  const newD = afterAll.filter(l => l.status === 'PENDING' && String(l.required_date).slice(0, 10) === pD.date)
   check('22d2. Đơn đổi mức ⇒ dòng máy đặt lô KHÔNG còn đạt mức bị THU HỒI (lý do máy) và lô ĐÚNG được đặt ngay cùng lượt',
     relot22.s === 200
       && Number(dmStale.row?.stale_pending_base ?? 0) > 0 && Number(dmStale.row?.short_base ?? 0) > 0
       && stillOld.length > 0 && stillOld.every(l => l.status === 'CANCELLED' && /lô không còn đạt mức/.test(l.cancel_reason ?? ''))
       && Number(relot22.j?.data?.recalled ?? 0) >= stillOld.length
-      && newC.length === 1 && Number(newC[0].qty_base) === pC.qty && newC[0].created_by === 'Hệ thống',
-    `stale=${dmStale.row?.stale_pending_base} thiếu=${dmStale.row?.short_base} cũ=${stillOld.map(l => l.status + ':' + (l.cancel_reason ?? '').slice(0, 30)).join('|')} thu_hồi=${relot22.j?.data?.recalled} lô_pC=${newC.length}×${newC[0]?.qty_base}`)
-  // 22d3. Lý do thu hồi này là CỦA MÁY ⇒ không bị hiểu thành "người đã bác": trả về FEFO, máy đặt lại lô pA bình thường
+      && newD.length === 1 && Number(newD[0].qty_base) === pD.qty && newD[0].created_by === 'Hệ thống',
+    `stale=${dmStale.row?.stale_pending_base} thiếu=${dmStale.row?.short_base} cũ=${stillOld.map(l => String(l.required_date).slice(0, 10) + ':' + l.status).join('|')} kq=${JSON.stringify(relot22.j?.data ?? relot22.j?.error)} lô_pD=${newD.length}×${newD[0]?.qty_base}`)
+  // 22d3. Lý do thu hồi này là CỦA MÁY ⇒ không bị hiểu thành "người đã bác": trả về FEFO, máy lại đặt được
+  // dòng cho các lô vừa bị thu hồi (pB còn trên kệ), `vetoed` rỗng. Dòng pD (vẫn đạt FEFO) GIỮ NGUYÊN.
   await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'FEFO' }, updated_at: nowIso() })
   const back22 = await runAuto()
-  const backA = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING' && String(l.required_date).slice(0, 10) === pA.date)
-  check('22d3. Trả về FEFO → máy đặt lại lô cũ (thu hồi vì đổi mức ≠ người bác), không nằm trong `vetoed`',
-    back22.s === 200 && backA.length === 1 && !(back22.j?.data?.vetoed ?? []).includes(mat.material_code),
-    `lô_pA=${backA.length} vetoed=${JSON.stringify(back22.j?.data?.vetoed ?? [])}`)
+  const back22Lines = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
+  const backB = back22Lines.filter(l => String(l.required_date).slice(0, 10) === pB.date)
+  const keptD = back22Lines.filter(l => String(l.required_date).slice(0, 10) === pD.date)
+  check('22d3. Trả về FEFO → máy đặt lại lô vừa thu hồi (thu hồi vì đổi mức ≠ người bác), dòng lô còn đạt giữ nguyên, không `vetoed`',
+    back22.s === 200 && backB.length === 1 && keptD.length === 1 && !(back22.j?.data?.vetoed ?? []).includes(mat.material_code),
+    `dòng=${back22Lines.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} kq=${JSON.stringify(back22.j?.data ?? back22.j?.error)}`)
 
   // 22e. VIỆC LOOSE_FEED của bộ lập kế hoạch cũng là "hàng sắp xuống ô lẻ" — Fill phải trừ nó ra,
   // không thì cùng một nhu cầu bị hạ HAI lần (hai đường fill vốn mù với nhau tới 15/09).
@@ -937,7 +955,7 @@ try {
     born26.length >= 1 && del26.s < 300 && re26.s === 200
       && after26.length === born26.length - 1 && !after26.some(l => l.required_date === vetoDate)
       && (re26.j?.data?.vetoed ?? []).includes(mat.material_code),
-    `đặt=${born26.length} huỷ=${del26.s} sau=${after26.length} (kỳ vọng ${born26.length - 1}, không có NSX ${vetoDate}) vetoed=${JSON.stringify(re26.j?.data?.vetoed ?? [])}`)
+    `đặt=${born26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} huỷ=${del26.s} sau=${after26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|') || '—'} (kỳ vọng ${born26.length - 1} dòng, không có NSX ${vetoDate}) kq=${JSON.stringify(re26.j?.data ?? re26.j?.error)}`)
 
   // 26b. …nhưng MÁY thu hồi (hết nhu cầu) rồi nhu cầu quay lại thì máy đặt lại được — thu hồi không
   // phải "người bác"; nhầm hai cái là bộ đối chiếu tự khoá tay mình sau lần thu hồi đầu tiên.

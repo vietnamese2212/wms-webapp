@@ -16,7 +16,7 @@
 //   • Kho không xe hạ riêng: một nút "Hạ & đưa ra", tab Cần hạ ẩn.
 //   • Tab Sắp quét có nút QUÉT ngay tại chỗ (thủ kho không phải sang Xuất kho → chuyến → Quét).
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { ListChecks, ArrowDownToLine, Truck, Check, Hand, Undo2, Inbox, ChevronRight, Boxes, CalendarClock, ExternalLink, Search } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -400,20 +400,21 @@ export default function DirectedWork() {
     if (!f.warehouseId && whs?.length === 1) setF({ warehouseId: (whs[0] as { id: string }).id })
   }, [whs, f.warehouseId, setF])
   // Chuông "được giao xe nâng" và các dòng Hộp việc trỏ tới đây kèm ?trip= / ?tab= — mở đúng chuyến, đúng bảng.
-  // ⚠ ÁP ĐÚNG MỘT LẦN CHO MỖI ĐƯỜNG DẪN. Bản đầu so `t !== f.tab` rồi ghi đè: vào trang bằng link có
-  // `?tab=` thì mỗi lần người dùng bấm tab khác, f.tab đổi ⇒ effect chạy lại ⇒ kéo NGƯỢC về tab của
-  // đường dẫn ⇒ "bấm một tab rồi tab khác không chọn được nữa" (user báo 12/09). Nhớ giá trị tham số
-  // ĐÃ ÁP: đổi link mới áp lại, còn bấm tab là quyền của người dùng.
+  // ⚠ ÁP ĐÚNG MỘT LẦN CHO MỖI LƯỢT ĐIỀU HƯỚNG — khoá theo `location.key`, KHÔNG theo giá trị tham số.
+  //  · khoá theo giá trị `f.tab`: bấm tab khác là bị kéo NGƯỢC về tab của đường dẫn (user báo 12/09);
+  //  · khoá theo chuỗi tham số: bấm dòng Hộp việc → bấm tab "Hộp việc" → bấm LẠI chính dòng đó thì URL
+  //    không đổi ⇒ effect bỏ qua ⇒ dòng đó chết cho tới khi bấm dòng khác (user báo 16/09).
+  // `location.key` sinh mới ở MỌI lượt điều hướng (kể cả replace về cùng URL) và đứng yên khi bấm tab.
   const [sp] = useSearchParams()
-  const appliedLink = useRef<string | null>(null)
+  const navKey = useLocation().key
+  const appliedNav = useRef<string | null>(null)
   useEffect(() => {
+    if (appliedNav.current === navKey) return
+    appliedNav.current = navKey
     const t = sp.get('tab'), trip = sp.get('trip')
-    const key = `${t ?? ''}|${trip ?? ''}`
-    if (appliedLink.current === key) return
-    appliedLink.current = key
     if (trip) setF({ gdoId: trip })
     if (t && ['INBOX', 'LOWER', 'MOVE', 'SCAN'].includes(t)) setF({ tab: t as Tab })
-  }, [sp, setF])
+  }, [navKey, sp, setF])
 
   const tab = (f.tab as Tab) ?? 'INBOX'
   const boardTab: BoardTab = tab === 'INBOX' ? 'MOVE' : tab
@@ -575,6 +576,23 @@ export default function DirectedWork() {
   const apiErr = (e: unknown) => (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   const emptyReason = !f.warehouseId ? 'Chọn kho để xem việc cần làm'
     : (tab === 'SCAN' && !f.gdoId) ? 'Chọn chuyến để xem thứ tự quét' : null
+  // …và cho chọn NGAY TẠI ĐÓ. Trước đây chỉ có câu chữ, còn ô chọn chuyến nằm trong nút "Lọc" —
+  // trên điện thoại (360 px) người quét đọc "Chọn chuyến" mà không thấy chỗ nào chọn được.
+  const emptyBlock = !emptyReason ? null : (
+    <div className="py-6 text-center text-[11px] text-slate-400">
+      <div>{emptyReason}</div>
+      {tab === 'SCAN' && !!f.warehouseId && !f.gdoId && tripOpts.length > 0 && (
+        <div className="mt-2 flex flex-wrap justify-center gap-1.5 px-2">
+          {tripOpts.map(o => (
+            <button key={o.value} type="button" onClick={() => setF({ gdoId: o.value })}
+              className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 text-[11px] font-medium text-sky-800 hover:bg-sky-100">
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 
   const cols = COLS[tab]
   return (
@@ -710,7 +728,7 @@ export default function DirectedWork() {
               </Button>
             )}
             {isLoading && <div className="py-6 text-center text-[11px] text-slate-400">Đang tải…</div>}
-            {!isLoading && emptyReason && <div className="py-6 text-center text-[11px] text-slate-400">{emptyReason}</div>}
+            {!isLoading && emptyBlock}
             {!isLoading && !emptyReason && rows.length === 0 && (
               <div className="py-6 text-center text-[11px] text-slate-400">
                 <div>Không có việc nào cho kho này.</div>
@@ -838,7 +856,7 @@ export default function DirectedWork() {
             </TableHeader>
             <TableBody>
               {isLoading && <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
-              {!isLoading && emptyReason && <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">{emptyReason}</TableCell></TableRow>}
+              {!isLoading && emptyBlock && <TableRow><TableCell colSpan={cols.length} className="px-2 py-0">{emptyBlock}</TableCell></TableRow>}
               {!isLoading && !emptyReason && rows.length === 0 && (
                 // KHÔNG khẳng định lý do (câu cũ nói thẳng "kho chạy chế độ Thủ công" — đo 10/09 thì cả ba
                 // vế đều SAI: kho đang Hướng dẫn, chuyến đã Bắt đầu, dòng đã chốt %Date; việc thiếu chỉ vì

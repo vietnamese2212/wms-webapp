@@ -1310,6 +1310,26 @@ try {
           && w1.m?.need_fill_from === w1.st?.location_code && !w1.un,
         `lộ trình→${w1.st?.location_code ?? '(không có)'} ô_lẻ=${w1.st?.is_pick_face} need_fill=${w1.m?.need_fill_from ?? 'KHÔNG CÓ'}`)
 
+      // (a2) ĐÃ CÓ LỆNH FILL TREO ⇒ lộ trình nói "chờ hạ", KHÔNG giục ra lệnh lần nữa (16/09, lớp C24).
+      // Vì sao phải gác: Fill hàng trừ phần đang treo khỏi "thiếu" ⇒ bấm "Fill hàng ›" sang tab Đề xuất
+      // thì mã này KHÔNG hiện ⇒ người đọc vào ngõ cụt. Đo Ba Vì 16/09: mã 510000219 có dòng F260916-01
+      // treo 2.280 mà bảng lộ trình vẫn ghi "nên fill xuống ô lẻ".
+      const rFill = await api('/wms/fill/orders', 'POST', {
+        warehouse_id: whId, target_date: vnDate(),
+        lines: [{ material_id: matP.id, required_date: pOld.production_date, qty_base: 240, required_pallets: 1 }],
+      })
+      const w1b = await routeF()
+      check('[25i2] Mã đã CÓ LỆNH FILL treo ⇒ lộ trình trả mã lệnh để màn nói "chờ hạ", không giục ra lệnh nữa',
+        rFill.s === 201 && w1b.m?.need_fill_from === w1b.st?.location_code && !!w1b.m?.fill_order_code
+          && Number(w1b.m?.fill_pending_base) > 0,
+        `ra_lệnh=${rFill.s} ${err(rFill)} need_fill=${w1b.m?.need_fill_from ?? 'KHÔNG'} lệnh=${w1b.m?.fill_order_code ?? 'KHÔNG CÓ'} treo=${w1b.m?.fill_pending_base}`)
+      // Dọn dòng lệnh vừa tạo để các phép sau đo đúng trạng thái "chưa ai lo"
+      const ordId = rFill.j?.data?.order_id ?? rFill.j?.data?.id ?? null
+      if (ordId) await api(`/wms/fill/orders/${ordId}`, 'DELETE').catch(() => {})
+      const w1c = await routeF()
+      check('[25i3] Huỷ lệnh fill ⇒ cảnh báo quay lại trạng thái "chưa ai lo" (không kẹt mã lệnh đã huỷ)',
+        !w1c.m?.fill_order_code, `lệnh=${w1c.m?.fill_order_code ?? 'không còn (đúng)'}`)
+
       // (b) KHO TÍCH BẮT BUỘC ⇒ CHẶN: không điểm ghé, nêu lý do + ô phải fill từ đó
       await setReq(true)
       const w2 = await routeF()

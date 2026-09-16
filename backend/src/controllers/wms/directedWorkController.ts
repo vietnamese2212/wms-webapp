@@ -203,10 +203,10 @@ export async function getLooseRoute(req: Request, res: Response) {
     const gdoId = String(req.query.gdo_id ?? '')
     if (badId(gdoId)) return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã chuyến')
     const { data: gdo, error: gErr } = await supabase.from('GroupDeliveryOrder')
-      .select('id, warehouse_id, dock_location_id').eq('id', gdoId).maybeSingle()
+      .select('id, warehouse_id, dock_location_id, delivery_date').eq('id', gdoId).maybeSingle()
     if (gErr) return fail(res, gErr)              // id rác trên cột uuid = 22P02 ⇒ 400, không phải "không tìm thấy"
     if (!gdo) return fail(res, 'Không tìm thấy chuyến', 404)
-    const g = gdo as { id: string; warehouse_id: string | null; dock_location_id: string | null }
+    const g = gdo as { id: string; warehouse_id: string | null; dock_location_id: string | null; delivery_date: string | null }
     const myWhs = scopeWhIds(req)
     if (myWhs && g.warehouse_id && !myWhs.includes(g.warehouse_id)) return fail(res, 'Chuyến thuộc kho ngoài phạm vi được giao', 403)
     const whId = g.warehouse_id
@@ -296,6 +296,31 @@ export async function getLooseRoute(req: Request, res: Response) {
         need_fill_from: needFill ? first.location_code : null,
       })
     }
+    // "Nên fill xuống ô lẻ" mà mã ĐÃ CÓ LỆNH FILL đang treo thì việc đã có người lo — giục ra lệnh lần
+    // nữa là đẩy người đọc vào ngõ cụt: bấm "Fill hàng ›" sang tab Đề xuất thì mã đó KHÔNG hiện (phần
+    // đang treo đã trừ vào "thiếu"), y như lớp lỗi C24 đã vá 15/09 cho ca "không ô nào nhận loại".
+    // Đo Ba Vì 16/09: mã 510000219 có dòng F260916-01 treo 2.280 mà lộ trình vẫn ghi "nên fill".
+    const fillDay = (g.delivery_date ?? '').slice(0, 10) || null
+    const needFillMats = [...new Set([...open]
+      .filter(it => codeByItem.get(it.id)?.need_fill_from || blockedFill.has(it.id))
+      .map(it => it.material_id).filter((x): x is string => !!x))]
+    const fillOfMat = new Map<string, { order_id: string; order_code: string | null; pending_base: number }>()
+    if (fillDay && needFillMats.length) {
+      const { data: fts } = await supabase.from('FillTask')
+        .select('material_id, qty_base, qty_done_base, fill_order_id, FillOrder!inner(id, order_code)')
+        .eq('warehouse_id', whId).eq('target_date', fillDay).eq('status', 'PENDING')
+        .in('material_id', needFillMats).limit(1000)
+      for (const r of (fts ?? []) as unknown as Array<{ material_id: string | null; qty_base: number | string
+        qty_done_base: number | string | null; fill_order_id: string; FillOrder: { order_code: string | null } | null }>) {
+        if (!r.material_id) continue
+        const left = Math.max(0, Number(r.qty_base) - Number(r.qty_done_base ?? 0))
+        const cur = fillOfMat.get(r.material_id)
+        fillOfMat.set(r.material_id, {
+          order_id: r.fill_order_id, order_code: r.FillOrder?.order_code ?? cur?.order_code ?? null,
+          pending_base: (cur?.pending_base ?? 0) + left,
+        })
+      }
+    }
     const codes = [...new Set([...codeByItem.values()].map(v => v.code))]
     const locRows = codes.length ? await fetchAllByIdChunks(codes, chunk => supabase.from('Location')
       .select('id, location_code, row, is_pick_face').eq('warehouse_id', whId).in('location_code', chunk).order('id')) as unknown as
@@ -311,6 +336,8 @@ export async function getLooseRoute(req: Request, res: Response) {
       // Ô đang giữ lô ĐÚNG THỨ TỰ, khi ô này không phải vị trí nhặt lẻ ⇒ "nên fill xuống rồi hãy
       // nhặt". CẢNH BÁO thôi (kho không tích bắt buộc); tích rồi thì dòng rơi sang `unlocated`.
       need_fill_from: string | null
+      // …và việc fill ấy ĐÃ CÓ LỆNH chưa: có rồi thì màn hình nói "chờ hạ", không giục ra lệnh lần nữa.
+      fill_order_id: string | null; fill_order_code: string | null; fill_pending_base: number
     }
     type Stop = { seq: number; location_id: string; location_code: string; is_pick_face: boolean; dist_from_prev_cells: number | null; materials: StopMat[] }
     const stops = new Map<string, Stop>()
@@ -323,21 +350,27 @@ export async function getLooseRoute(req: Request, res: Response) {
       // đoán: chờ hàng về (NO_STOCK) ↔ đổi mức / gỡ QA (NO_MATCH) ↔ fill xuống kho lẻ (NEED_FILL).
       reason: 'NO_STOCK' | 'NO_MATCH' | 'NEED_FILL'
       fill_from: string | null     // NEED_FILL: ô đang giữ lô đúng thứ tự, fill từ đó xuống
+      fill_order_id: string | null; fill_order_code: string | null; fill_pending_base: number
     }> = []
     for (const it of open) {
       const v = codeByItem.get(it.id)
       const loc = v ? locByCode.get(v.code) : null
       if (!v || !loc) {
         const blocked = blockedFill.has(it.id)
+        const fill = it.material_id ? fillOfMat.get(it.material_id) : undefined
         unlocated.push({
           item_id: it.id, material_id: it.material_id, material_code: it.material_code_raw,
           material_name: it.material?.short_name ?? null, units: it.material ?? null, remaining_base: remainingOf(it),
           reason: blocked ? 'NEED_FILL'
             : ruleOfItem.get(it.id) && (sug.get(`${it.id}#all`) ?? []).length ? 'NO_MATCH' : 'NO_STOCK',
           fill_from: blockedFill.get(it.id) ?? null,
+          fill_order_id: blocked ? fill?.order_id ?? null : null,
+          fill_order_code: blocked ? fill?.order_code ?? null : null,
+          fill_pending_base: blocked ? fill?.pending_base ?? 0 : 0,
         })
         continue
       }
+      const fill = v.need_fill_from && it.material_id ? fillOfMat.get(it.material_id) : undefined
       const leg = legOfLoc.get(loc.id) ?? -1
       const s = stops.get(loc.id) ?? {
         seq: seqOfLoc.get(loc.id) ?? 0, location_id: loc.id, location_code: loc.location_code, is_pick_face: loc.is_pick_face === true,
@@ -348,6 +381,7 @@ export async function getLooseRoute(req: Request, res: Response) {
         item_id: it.id, material_id: it.material_id!, material_code: it.material_code_raw, material_name: it.material?.short_name ?? null,
         units: it.material ?? null, remaining_base: pg.remaining, effective_base: pg.effective, scanned_base: pg.done, pct_date: v.pct_date, available: v.available,
         need_fill_from: v.need_fill_from,
+        fill_order_id: fill?.order_id ?? null, fill_order_code: fill?.order_code ?? null, fill_pending_base: fill?.pending_base ?? 0,
       })
       stops.set(loc.id, s)
     }

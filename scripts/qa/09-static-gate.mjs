@@ -916,6 +916,27 @@ const RULES = [
       return n
     },
   },
+  // ÁP THAM SỐ URL (?tab= ?trip= ?route=) phải khoá theo `useLocation().key` — MỘT lần cho mỗi LƯỢT
+  // ĐIỀU HƯỚNG. Hai cách khoá sai đều đã nổ trên tay người dùng, cả hai đều không sinh lỗi nào:
+  //  · khoá theo state đang hiển thị (`t !== f.tab`) ⇒ bấm tab khác bị kéo ngược (12/09);
+  //  · khoá theo GIÁ TRỊ tham số ⇒ bấm lại chính link đang mở thì React Router replace về cùng URL,
+  //    tham số không đổi, effect bỏ qua ⇒ link chết (16/09: Hộp việc → tab → bấm lại "Cần đưa ra").
+  {
+    key: 'url_param_applied_by_value',
+    label: 'ref "đã áp tham số URL" khoá theo GIÁ TRỊ tham số thay vì useLocation().key — bấm lại đúng link đang mở sẽ không có tác dụng',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        if (!/useSearchParams\s*\(/.test(src)) continue
+        if (!/\w*[Aa]pplied\w*\s*=\s*useRef/.test(src)) continue
+        if (/useLocation\s*\(\s*\)/.test(src)) continue
+        n++
+        if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+      }
+      return n
+    },
+  },
   // "Mọi view mới phải có mặt trong phân quyền" (user chốt 19/08): route trang mới trong App.tsx
   // PHẢI bọc PermissionRoute/ExternalRoute/DashboardRoute. Baseline 3 = 3 route MỞ CHỦ ĐÍCH:
   // /wms/alerts (tab Cá nhân = feed của mình) · /settings (tài khoản cá nhân) · /wms/multi-scan

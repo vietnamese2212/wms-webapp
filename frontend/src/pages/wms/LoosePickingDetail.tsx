@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
-import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare, CalendarClock, MapPin } from 'lucide-react'
@@ -560,14 +560,17 @@ export default function LoosePickingDetail() {
   const [hdrOpen,         setHdrOpen]         = useState(false)   // mobile: popup thông tin đơn (thanh mảnh + nút Info)
   const [pdaScan,         setPdaScan]         = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
   // THEO VỊ TRÍ CÔNG VIỆC (user 14/09): đường đi từ cửa qua từng ô + quét ngay tại đó. `?route=1` (link từ
-  // Việc cần làm) mở sẵn MỘT lần cho mỗi đường dẫn — không ghi đè khi người dùng đã đóng.
+  // Việc cần làm) mở sẵn MỘT lần cho mỗi LƯỢT ĐIỀU HƯỚNG — không ghi đè khi người dùng đã đóng, nhưng bấm
+  // lại chính link đó thì phải mở lại (khoá theo giá trị tham số = link chết ở lần bấm thứ hai, 16/09).
   const [showRoute,       setShowRoute]       = useState(false)
   const [searchParams] = useSearchParams()
+  const routeNavKey = useLocation().key
   const routeParamApplied = useRef<string | null>(null)
   useEffect(() => {
-    const key = `${id}:${searchParams.get('route') ?? ''}`
-    if (searchParams.get('route') === '1' && routeParamApplied.current !== key) { routeParamApplied.current = key; setShowRoute(true) }
-  }, [id, searchParams])
+    if (routeParamApplied.current === routeNavKey) return
+    routeParamApplied.current = routeNavKey
+    if (searchParams.get('route') === '1') setShowRoute(true)
+  }, [routeNavKey, searchParams])
 
   function toggleExpand(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })

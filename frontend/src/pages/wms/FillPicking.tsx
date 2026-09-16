@@ -20,6 +20,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { AssigneePicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
 import {
   useWarehouses, useFillDemand, useFillCandidates, useFillOrders, useFillReport,
@@ -400,17 +401,17 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         </div>
       )}
 
+      {/* Thanh này trước đây là một <div> đứng cố định giữa băng và bảng: chưa tick mã nào vẫn ăn ~90 px
+          của màn 360 và chìa ra một nút bấm không được. Nay là pill NỔI, chỉ hiện khi đã chọn (luật C28). */}
       {canPlan && (
-        <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
-          <span className="text-[11px] text-slate-500">
-            Đã chọn <b className="text-slate-700">{sel.size}</b> mã ·
-            {' '}{nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet sẽ vào lệnh fill của NGÀY (mỗi Loại kho một lệnh)
-          </span>
-          <Button size="sm" className="h-7 text-[11px] ml-auto" disabled={sel.size === 0 || createOrder.isPending}
+        <FloatingActionBar count={sel.size}
+          unit={`mã · ${nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet vào lệnh fill của NGÀY`}>
+          <Button size="sm" className={FLOATING_BTN} disabled={createOrder.isPending}
             onClick={() => { setErr(''); setAssignOpen(true) }}>
             <Plus className="h-3.5 w-3.5 mr-1" />{createOrder.isPending ? 'Đang lưu…' : 'Đưa vào lệnh fill'}
           </Button>
-        </div>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setSel(new Set())}>Bỏ chọn</Button>
+        </FloatingActionBar>
       )}
       {err && <p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
       {result && (

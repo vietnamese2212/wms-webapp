@@ -56,6 +56,7 @@
   "today_frozen_at_import": 0,
   "list_param_join_without_empty_guard": 0,
   "bulk_bar_inline_reflows_table": 0,
+  "url_param_applied_by_value": 0,
   "route_without_permission": 3,
   "scan_formats_declared_outside_engine": 0,
   "tablist_center_blocks_scroll": 0,

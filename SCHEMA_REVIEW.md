@@ -709,3 +709,10 @@ created_at, updated_at
   trong khi Nhặt lẻ vẫn thiếu; FE hiện băng hổ phách giục khai ô lẻ. (b) `fill_reconcile_take` DROP bản 4 tham số, tạo lại thêm
   `p_quiet_s int DEFAULT 20`: chỉ lấy dòng hàng đợi `queued_at <= now() − quiet` — một chuỗi quét PDA ở ô lẻ bơm hàng đợi liên tục, xả ngay
   là trả 2 s `fill_demand` cho TỪNG phát quét. Quét an toàn 30' không đổi. Gói 18 [24b1b] [27]. Đã áp staging 16/09, `npm run db:types` chạy lại.
+- `20260916b_work_inbox_slotting_live.sql` — **Hộp việc: dòng "Sắp xếp kho" đếm VIỆC CÒN LÀM ĐƯỢC.** Nhánh SLOTTING của `work_inbox`
+  lấy `SlottingPlan.n_lines` (số dòng lúc TẠO kế hoạch) nên giục "54 dòng chuyển pallet đang mở" trong khi trang kế hoạch — vốn đã suy
+  tiến độ SỐNG từ vị trí pallet (`deriveLineStatuses`) — chỉ còn **2 dòng làm được**: đo Kho Ba Vì 16/09 có 103/106 pallet đã xuất hết
+  hoặc không còn bản ghi (kế hoạch thứ hai: 3 → 1). Nay `JOIN LATERAL` đếm dòng còn ít nhất MỘT pallet sống chưa đứng ở `to_location_id`
+  (đúng định nghĩa PENDING/PARTIAL của controller); `n_open = 0` ⇒ kế hoạch không hiện trong Hộp việc nữa (đóng kế hoạch vẫn do người
+  quyết, máy chỉ thôi giục). Cùng chữ ký, CREATE OR REPLACE. Đo sau khi áp: 54→2 · 3→1, `work_inbox(null, …)` toàn phạm vi 67 ms.
+  Đã áp staging 16/09.

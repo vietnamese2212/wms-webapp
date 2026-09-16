@@ -34,10 +34,15 @@ function metres(cells: number | null | undefined, cellM: number | null | undefin
 
 // Ô lấy nằm TRÊN KỆ trong khi phần lẻ lẽ ra phải nhặt ở kho lẻ ⇒ nói ra, nhưng KHÔNG chặn (kho
 // chưa tích "bắt buộc lấy đúng thứ tự"). Chữ ngắn để vừa cột Vị trí ở 360 px, ý đầy đủ nằm ở tooltip.
-const FillHint = () => (
-  <div className="text-[9px] text-amber-700 pl-5" title="Hàng lẻ nên nhặt ở VỊ TRÍ NHẶT LẺ: ra lệnh fill lô này xuống kho lẻ rồi nhặt ở đó — lấy ngay trên kệ là leo tầng và để kho lẻ mãi giữ lô mới hơn.">
-    ⚠ nên fill xuống ô lẻ
-  </div>
+const FillHint = ({ orderCode }: { orderCode?: string | null }) => (orderCode
+  // Đã có lệnh fill treo ⇒ việc đã có người lo, chỉ còn chờ hạ. Giục "nên fill" lần nữa là đẩy người
+  // đọc sang tab Đề xuất — nơi mã này KHÔNG hiện (phần đang treo đã trừ vào "thiếu").
+  ? <div className="text-[9px] text-sky-700 pl-5" title={`Lệnh fill ${orderCode} đã đặt cho mã này, đang chờ người hạ xuống ô nhặt lẻ. Lấy tạm trên kệ được, nhưng đúng luồng là chờ hạ rồi nhặt ở ô lẻ.`}>
+      ⏳ đã có lệnh fill {orderCode} — chờ hạ
+    </div>
+  : <div className="text-[9px] text-amber-700 pl-5" title="Hàng lẻ nên nhặt ở VỊ TRÍ NHẶT LẺ: ra lệnh fill lô này xuống kho lẻ rồi nhặt ở đó — lấy ngay trên kệ là leo tầng và để kho lẻ mãi giữ lô mới hơn.">
+      ⚠ nên fill xuống ô lẻ
+    </div>
 )
 
 type Row = {
@@ -53,6 +58,9 @@ type Row = {
   //   need_fill = cảnh báo (vẫn ghé ô trên kệ được) · blocked_fill = kho tích "bắt buộc" ⇒ phải fill trước
   need_fill?: string | null
   blocked_fill?: boolean
+  // …và việc fill đó ĐÃ CÓ LỆNH đang chờ hạ chưa (16/09) — có rồi thì đừng giục ra lệnh lần nữa
+  fill_order_id?: string | null
+  fill_order_code?: string | null
 }
 
 // Thứ tự cột theo câu hỏi của người đi nhặt (user 14/09 "mã hàng rồi tới tên hàng chứ, bố trí khoa học vào"):
@@ -97,6 +105,7 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
         material_code: m.material_code, material_name: m.material_name, units: m.units,
         remaining: m.remaining_base, effective: m.effective_base, scanned: m.scanned_base, pct_date: m.pct_date, available: m.available,
         done: false, need_fill: m.need_fill_from ?? null,
+        fill_order_id: m.fill_order_id ?? null, fill_order_code: m.fill_order_code ?? null,
       }))
     })
     for (const u of route?.unlocated ?? []) out.push({
@@ -104,6 +113,7 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
       dist: null, material_code: u.material_code, material_name: u.material_name, units: u.units,
       remaining: u.remaining_base, effective: u.remaining_base, scanned: 0, pct_date: null, available: null, done: false,
       no_match: u.reason === 'NO_MATCH', blocked_fill: u.reason === 'NEED_FILL', need_fill: u.fill_from ?? null,
+      fill_order_id: u.fill_order_id ?? null, fill_order_code: u.fill_order_code ?? null,
     })
     for (const d of route?.done ?? []) out.push({
       key: d.item_id, item_id: d.item_id, material_id: d.material_id, stop_no: null, location_code: d.location_code, is_pick_face: false,
@@ -130,8 +140,15 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
   const wedgeArmed = !scan.open && scanAllowed && openRows.some(r => !noQr.has(r.item_id))
   useWedgeScanner(code => openScan(code), wedgeArmed)
 
-  const nFill = openRows.filter(r => r.need_fill || r.blocked_fill).length
-  const nBlocked = openRows.filter(r => r.blocked_fill).length
+  const fillRows = openRows.filter(r => r.need_fill || r.blocked_fill)
+  // Đã có lệnh fill treo = việc đang chạy, KHÔNG phải việc phải ra lệnh. Gộp chung hai thứ này là
+  // mời người đọc sang tab Đề xuất rồi thấy trang im lặng về chính mã đó (đo Ba Vì 16/09 — lớp C24).
+  const waitRows = fillRows.filter(r => r.fill_order_code)
+  const nFill = fillRows.length - waitRows.length
+  const nBlocked = fillRows.filter(r => r.blocked_fill && !r.fill_order_code).length
+  const waitOrder = waitRows[0]?.fill_order_id ?? null
+  const waitCode = waitRows[0]?.fill_order_code ?? null
+  const waitCodes = new Set(waitRows.map(r => r.fill_order_code))
 
   const tiles = [
     { label: 'Điểm ghé', value: nStops },
@@ -179,6 +196,17 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
           </button>
         </div>
       )}
+      {waitRows.length > 0 && (
+        <div className="shrink-0 border-b border-sky-200 bg-sky-50 px-3 py-1.5 flex items-center gap-2 text-[11px] text-sky-800">
+          <span className="flex-1 min-w-0">
+            <b>{waitRows.length} mã</b> đã có lệnh fill{waitCodes.size === 1 && waitCode ? <> <b className="font-mono">{waitCode}</b></> : null} — đang chờ hạ xuống ô nhặt lẻ, không cần ra lệnh nữa.
+          </span>
+          <button onClick={() => navigate(waitCodes.size === 1 && waitOrder ? `/wms/fill/orders/${waitOrder}` : '/wms/fill')}
+            className="shrink-0 h-7 px-2 rounded bg-sky-600 text-white font-semibold hover:bg-sky-700">
+            Xem lệnh ›
+          </button>
+        </div>
+      )}
 
       <div className="shrink-0"><SummaryBand tiles={tiles} /></div>
 
@@ -221,12 +249,12 @@ export function LooseRouteSheet({ gdo, onClose, canScan }: { gdo: GDO; onClose: 
                             {isNext && <span className="text-[9px] rounded-full bg-sky-600 text-white px-1.5">kế tiếp</span>}
                           </div>
                           {r.dist && <div className="text-[9px] text-slate-400 pl-5">{r.stop_no === 1 && startCode ? `${startCode} → ` : ''}{r.dist}</div>}
-                          {r.need_fill && <FillHint />}
+                          {r.need_fill && <FillHint orderCode={r.fill_order_code} />}
                         </div>
                       ) : (
                         <div className="leading-tight">
                           <span className="text-[10px] text-slate-400 pl-5">↳ cùng ô</span>
-                          {r.need_fill && <FillHint />}
+                          {r.need_fill && <FillHint orderCode={r.fill_order_code} />}
                         </div>
                       )}
                     </TableCell>

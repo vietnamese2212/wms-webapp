@@ -3890,6 +3890,8 @@ export interface LooseRouteMaterial {
   // Ô đang giữ lô ĐÚNG THỨ TỰ khi ô đó KHÔNG phải vị trí nhặt lẻ ⇒ "nên fill xuống rồi hãy nhặt"
   // (cảnh báo; kho tích "bắt buộc đúng thứ tự" thì dòng nằm ở `unlocated` với reason NEED_FILL).
   need_fill_from?: string | null
+  // Việc fill ấy ĐÃ CÓ LỆNH treo chưa (16/09) — có rồi thì màn nói "chờ hạ" thay vì giục ra lệnh
+  fill_order_id?: string | null; fill_order_code?: string | null; fill_pending_base?: number
 }
 /** Dòng đã lấy đủ phần lẻ — vẫn nằm cuối bảng lộ trình, gạch ngang (phòng bị quên) */
 export interface LooseRouteDone {
@@ -3912,6 +3914,7 @@ export interface LooseRoute {
     //             vị trí nhặt lẻ rồi mới nhặt được (services/loosePickFace.ts)
     reason?: 'NO_STOCK' | 'NO_MATCH' | 'NEED_FILL'
     fill_from?: string | null
+    fill_order_id?: string | null; fill_order_code?: string | null; fill_pending_base?: number
   }>
   done: LooseRouteDone[]
 }

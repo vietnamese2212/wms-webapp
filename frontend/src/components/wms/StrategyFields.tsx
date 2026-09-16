@@ -129,16 +129,20 @@ function EnforceTri({ state, whOn, onCycle }: { state: EnfState; whOn: boolean; 
   )
 }
 
-export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide }: {
+import type { ReactNode } from 'react'
+export interface StrategyProps {
   mode: 'warehouse' | 'type'
   value: StrategyValue
   /** Giá trị HIỆU LỰC của tầng kho — tầng loại dùng để in nhãn "— Theo kho (FEFO) —" */
   inherited: StrategyValue
   onPatch: (patch: Partial<StrategyValue>) => void
   idPrefix: string
-  /** Panel rộng (form 80% màn hình) → dàn nhóm thành LƯỚI 2 CỘT (user chốt: nhiều cột, khuôn nhất quán) */
-  wide?: boolean
-}) {
+}
+
+// Mọi helper của hai khu (XUẤT · NHẬP) dựng từ MỘT chỗ — thuần closure, không hook, nên hai component
+// gọi chung mà không lo thứ tự hook. Tách khu là để form đặt nhóm XUẤT liền nhau rồi mới tới NHẬP
+// (user chốt 16/09), không phải để hai bản luật.
+function buildCtx({ mode, value, inherited, onPatch, idPrefix }: StrategyProps) {
   const isType = mode === 'type'
   // Câu diễn giải luôn nói về CHIẾN THUẬT HIỆU LỰC (sau kế thừa), không phải riêng phần khai thêm
   const eff = isType ? resolveStrategy(inherited, value) : value
@@ -194,10 +198,17 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
     : <Switch id={id} checked={value[k] === true}
         onCheckedChange={c => onPatch({ [k]: c } as Partial<StrategyValue>)} />
 
+  return { isType, eff, dateLabel, enforced, enfCtl, sel, put, withInherit, own, boolCtl, value, inherited, onPatch, idPrefix }
+}
+
+/** Khu XUẤT: Lấy hàng · Nhặt lẻ · Chỉ dẫn công việc. Render FRAGMENT — form cha tự đặt vào lưới cùng các nhóm XUẤT riêng của nó. */
+export function OutboundStrategyFields(props: StrategyProps & { guidedExtra?: ReactNode }) {
+  const { own, value, inherited, sel, put, withInherit, isType, idPrefix, boolCtl, eff, onPatch, dateLabel } = buildCtx(props)
+  const { guidedExtra } = props
   return (
-    <div className={wide ? 'grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0' : 'space-y-3'}>
+    <>
       {/* ───────── XUẤT — Lấy hàng ───────── */}
-      <SettingsGroup title={<>XUẤT — Lấy hàng{own(value.rotation_principle ?? value.rotation_required)}</>}>
+      <SettingsGroup area="XUẤT" title={<>Lấy hàng{own(value.rotation_principle ?? value.rotation_required)}</>}>
         <SettingRow label="Thứ tự lấy hàng"
           desc={<>Khi hai pallet cùng {dateLabel}: app xếp tiếp theo khu gần cửa xuất → ô ít hàng nhất → tên vị trí (thang cố định).</>}>
           <SingleSelect
@@ -217,7 +228,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
       </SettingsGroup>
 
       {/* ───────── XUẤT — Nhặt lẻ tự sinh (24/08) ───────── */}
-      <SettingsGroup title={<>XUẤT — Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons ?? value.auto_fill)}</>}
+      <SettingsGroup area="XUẤT" title={<>Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons ?? value.auto_fill)}</>}
         tip={<>
           <b>Không nhặt lẻ</b> ép về 0 kể cả cột "Nhặt lẻ" ghi tay trong file upload kiểu cũ.
           Mã không khai quy cách thùng (CÁI/KG…): chế độ Phần lẻ luôn ra 0 — muốn nhặt lẻ loại đó
@@ -258,7 +269,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
       </SettingsGroup>
 
       {/* ───────── XUẤT — Chỉ dẫn công việc (Directed Work 1c, 10/09) ───────── */}
-      <SettingsGroup title={<>XUẤT — Chỉ dẫn công việc{own(value.work_mode ?? value.lower_from_level)}</>}
+      <SettingsGroup area="XUẤT" title={<>Chỉ dẫn công việc{own(value.work_mode ?? value.lower_from_level)}</>}
         tip={<>
           Bật <b>Hướng dẫn</b> thì bấm Bắt đầu chuyến là hệ thống chia hàng theo luật lấy hàng của kho
           và dựng 3 bảng ở menu <b>Việc cần làm</b> (Cần hạ · Cần đưa ra · Sắp quét). Kho phải là kho
@@ -290,10 +301,21 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
                 className="h-7 w-24 text-xs text-right" />
             } />
         )}
+        {/* Ô chỉ có ở tầng KHO (xe nâng, bán kính nhặt dọc đường) — form Kho truyền vào để chúng NẰM TRONG nhóm
+            Chỉ dẫn công việc thay vì làm hai hộp rời phía dưới (rà khu vực 16/09) */}
+        {(eff.work_mode ?? 'MANUAL') === 'GUIDED' && guidedExtra}
       </SettingsGroup>
+    </>
+  )
+}
 
+/** Khu NHẬP: Cất hàng · Ràng buộc vị trí. Render FRAGMENT như khu XUẤT. */
+export function InboundStrategyFields(props: StrategyProps) {
+  const { own, value, inherited, sel, put, withInherit, isType, idPrefix, boolCtl, eff, dateLabel, enfCtl, enforced, onPatch } = buildCtx(props)
+  return (
+    <>
       {/* ───────── NHẬP — thang 3 bước ───────── */}
-      <SettingsGroup title="NHẬP — Cất hàng (gợi ý vị trí)"
+      <SettingsGroup area="NHẬP" title="Cất hàng (gợi ý vị trí)"
         tip={<>
           {putawayExplain(eff)}
           <br /><br />
@@ -326,7 +348,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
       </SettingsGroup>
 
       {/* ───────── NHẬP — ràng buộc ───────── */}
-      <SettingsGroup title="NHẬP — Ràng buộc vị trí"
+      <SettingsGroup area="NHẬP" title="Ràng buộc vị trí"
         tip={<>
           Không tick <b>Bắt buộc</b> = chỉ <b>cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting, nhưng cất vẫn được và có ghi vết.
           Tick = <b>CHẶN</b> — chỉ người có quyền <b>Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
@@ -371,6 +393,6 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
             : <><b className="text-red-600">{enforced.length} luật</b> đang chặn thật khi cất hàng.</>}
         </div>
       </SettingsGroup>
-    </div>
+    </>
   )
 }

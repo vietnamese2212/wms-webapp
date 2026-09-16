@@ -5,6 +5,7 @@
   "untyped_supabase_import_files": 70,
   "mirror_helper_without_test": 0,
   "db_types_unknown_table": 8,
+  "settings_area_interleaved": 0,
   "background_error_500_hardcoded": 0,
   "hook_after_early_return": 0,
   "daterule_label_without_sap_level": 0,

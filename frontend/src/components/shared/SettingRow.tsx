@@ -10,17 +10,32 @@ import { InfoTip } from '@/components/shared/InfoTip'
  *   phong cách: mọi row cùng mép trái, không px lệch.
  * Áp cho MỌI form cấu hình (form Kho, tab Loại kho, Hệ thống, Kết nối ERP…) — đừng tự chế khung.
  */
-export function SettingsGroup({ title, tip, children, className }: {
+/**
+ * KHU VỰC của một nhóm cấu hình (user chốt 16/09: "đưa các hạng mục setting giống nhau về 1 khu vực —
+ * rule phải là theo khu vực kể cả khi xoá, thêm mới"). Nhóm nào thuộc khu vực nào khai bằng `area`,
+ * nhãn tiền tố ("XUẤT — ") in TỪ ĐÂY chứ không gõ tay trong `title` — một chỗ đổi chữ, và cổng tĩnh
+ * `settings_area_interleaved` đọc đúng thuộc tính này để bắt nhóm XUẤT lạc xuống giữa/sau nhóm NHẬP
+ * (đo 16/09: "Quy định date theo khách hàng" của XUẤT nằm cuối form Kho, sau hai nhóm NHẬP).
+ * Thứ tự khu vực trong MỌI form: XUẤT rồi NHẬP.
+ */
+export type SettingsArea = 'XUẤT' | 'NHẬP'
+export const SETTINGS_AREA_ORDER: readonly SettingsArea[] = ['XUẤT', 'NHẬP']
+
+export function SettingsGroup({ title, tip, children, className, area }: {
   title: React.ReactNode
   tip?: React.ReactNode
   children: React.ReactNode
   className?: string
+  /** Khu vực nghiệp vụ — in tiền tố "XUẤT — " / "NHẬP — " và là khoá để cổng tĩnh giữ các nhóm cùng khu đứng liền nhau */
+  area?: SettingsArea
 }) {
   return (
-    <div className={`rounded-md border border-slate-200 bg-white ${className ?? ''}`}>
+    <div className={`rounded-md border border-slate-200 bg-white ${className ?? ''}`} data-settings-area={area}>
       <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border-b border-slate-200 rounded-t-md">
         <span className="h-3 w-1 rounded-full bg-sky-500 shrink-0" />
-        <span className="text-[11px] font-bold uppercase tracking-wide text-sky-900 flex items-center gap-1 min-w-0">{title}</span>
+        <span className="text-[11px] font-bold uppercase tracking-wide text-sky-900 flex items-center gap-1 min-w-0">
+          {area ? <>{area} — </> : null}{title}
+        </span>
         {tip ? <InfoTip tip={tip} /> : null}
       </div>
       <div className="px-2.5 divide-y divide-slate-100">{children}</div>

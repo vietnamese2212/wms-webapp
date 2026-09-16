@@ -5150,6 +5150,8 @@ export interface FillDemandRow {
 }
 export interface FillDemandData {
   rows: FillDemandRow[]; pick_face_locations: number; error?: string
+  /** Mã CÓ nhu cầu nhặt lẻ nhưng kho không có ô nhặt lẻ nào nhận Loại kho của nó — RPC không đề xuất được, phải NÓI RA (16/09) */
+  excluded?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
 }
 export function useFillDemand(params?: { warehouse_id: string; date: string }) {
   return useQuery({

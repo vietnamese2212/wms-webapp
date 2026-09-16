@@ -325,6 +325,9 @@ interface FillFilters {
   cats: string[]                                 // tab Đề xuất: lọc Loại kho của mã
   reportFrom: string
   reportTo: string
+  // tab Lệnh fill: khoảng NGÀY XUẤT của lệnh (lệnh = sổ của một ngày nên đây là bộ lọc chính; rỗng = mọi ngày)
+  ordersFrom: string
+  ordersTo: string
   page: number
   pageSize: number
 }
@@ -570,7 +573,8 @@ function initialFilters() {
                     matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
     directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
-                    onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
+                    onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(),
+                    ordersFrom: '', ordersTo: '', page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },

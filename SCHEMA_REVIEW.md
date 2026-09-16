@@ -704,3 +704,8 @@ created_at, updated_at
   PENDING của mã trên MỌI ngày, nên khi máy đối chiếu cả ngày mai thì dòng của hôm nay trừ hết nhu cầu ngày mai ⇒ "thiếu 0" ⇒ không mở
   dòng nào cho mai (gói 18 [24b2] bắt ngay lượt đầu sau deploy). Mọi khoá khác của Fill vốn đã theo ngày; chỉ phép trừ này còn nhìn xuyên
   ngày. Cùng đợt phía TS `withLotCheck` lọc việc LOOSE_FEED theo `GroupDeliveryOrder.delivery_date` (embed `!inner`). Đã áp staging 15/09.
+- `20260916a_fill_demand_excluded_quiet.sql` — (a) `fill_demand` trả thêm `excluded[]` (mã có nhu cầu nhặt lẻ trong ngày nhưng KHÔNG ô nhặt
+  lẻ nào của kho nhận Loại kho của nó: material_id/code/name/category/demand_base) — trước đó CTE `serv` lọc âm thầm, tab Đề xuất trống dòng
+  trong khi Nhặt lẻ vẫn thiếu; FE hiện băng hổ phách giục khai ô lẻ. (b) `fill_reconcile_take` DROP bản 4 tham số, tạo lại thêm
+  `p_quiet_s int DEFAULT 20`: chỉ lấy dòng hàng đợi `queued_at <= now() − quiet` — một chuỗi quét PDA ở ô lẻ bơm hàng đợi liên tục, xả ngay
+  là trả 2 s `fill_demand` cho TỪNG phát quét. Quét an toàn 30' không đổi. Gói 18 [24b1b] [27]. Đã áp staging 16/09, `npm run db:types` chạy lại.

@@ -21,7 +21,7 @@ import { InfoTip } from '@/components/shared/InfoTip'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
-import { StrategyFields, STRATEGY_EMPTY, type StrategyValue } from '@/components/wms/StrategyFields'
+import { OutboundStrategyFields, InboundStrategyFields, STRATEGY_EMPTY, type StrategyValue } from '@/components/wms/StrategyFields'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
@@ -931,10 +931,14 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           </div>
             </div>
           </SettingsGroup>
-          <div className="grid gap-3 xl:grid-cols-2 items-start">
+          {/* KHU VỰC XUẤT — MỌI nhóm XUẤT đứng liền nhau, rồi mới tới khu NHẬP (user chốt 16/09: "đưa các hạng
+              mục setting giống nhau về 1 khu vực — rule theo khu vực kể cả khi xoá, thêm mới"; cổng tĩnh
+              `settings_area_interleaved` gác). Nhóm DÙNG CHUNG hai tầng lấy từ StrategyFields (khu XUẤT), nhóm
+              riêng tầng kho khai ngay đây. Thêm nhóm XUẤT mới → đặt TRONG lưới này, đừng nối vào cuối form. */}
+          <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
           {/* 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08) — độc lập, bật rule nào chấp hành
               rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}
-          <SettingsGroup title="XUẤT — Rule khi Bắt đầu chuyến">
+          <SettingsGroup area="XUẤT" title="Rule khi Bắt đầu chuyến">
             <SettingRow label="Rule 1 — Xe phải có ĐĂNG KÝ CỔNG"
               desc="Bắt đầu phải chọn xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay."
               tip={<>Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</>}
@@ -946,7 +950,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               htmlFor="wh-requireweigh"
               control={<Switch id="wh-requireweigh" checked={requireWeigh} onCheckedChange={setRequireWeigh} />} />
           </SettingsGroup>
-          <SettingsGroup title="XUẤT — Quét tem thùng">
+          <SettingsGroup area="XUẤT" title="Quét tem thùng">
             <SettingRow label="Quét tới THÙNG khi xuất"
               desc="Mặc định tắt. Bật thì chọn các Loại kho phải quét tem thùng tại kho này (đính kèm truy vết, không tính tồn theo thùng)."
               htmlFor="wh-cartonscan"
@@ -971,52 +975,35 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               )}
             </SettingRow>
           </SettingsGroup>
-          </div>
-          {/* CHIẾN THUẬT XUẤT/NHẬP MẶC ĐỊNH TOÀN KHO (14–15/08 + thang 3 bước 21/08).
-              Đây là phần DÙNG CHUNG cho cả kho; khai riêng cho từng Loại kho làm ở TAB LOẠI KHO
-              (user chốt 21/08) — cùng bộ control `components/wms/StrategyFields.tsx`. */}
-          <StrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} wide />
-          {/* XE HẠ RIÊNG — chỉ tầng KHO (xe nâng là nguồn lực của kho, không của loại hàng). Kho một xe
-              vừa hạ vừa chuyển mà để mặc định thì người đó phải đổi tab hai lần + bấm hai lần cho MỘT pallet,
-              và dòng bị khoá "chờ xe hạ" bởi chính mình (rà theo vai 12/09). */}
-          {(strat.work_mode ?? 'MANUAL') === 'GUIDED' && (
-            <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <input id="wh-sep-lower" type="checkbox" checked={sepLower}
-                onChange={e => setSepLower(e.target.checked)}
-                className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
-              <Label htmlFor="wh-sep-lower" className="text-sm cursor-pointer leading-snug">
-                Kho có xe nâng <b>hạ</b> riêng
-                <span className="block text-[11px] font-normal text-slate-500">
-                  Bật (mặc định): xe chuyển chờ xe hạ, hai bảng riêng. Tắt: một xe vừa hạ vừa chuyển — bảng
-                  “Cần đưa ra” gộp hai chặng thành một nút <b>Hạ &amp; đưa ra</b>, tab “Cần hạ” ẩn.
-                </span>
-              </Label>
-            </div>
-          )}
-          {/* NHẶT DỌC ĐƯỜNG (13/09) — chỉ có nghĩa khi kho có XE HẠ RIÊNG, vì chỉ bảng "Cần hạ" mới
-              chuyển pallet từ ô ra ĐIỂM ĐẶT DÃY rồi đi tiếp; bảng "Cần đưa ra" việc nào cũng kết
-              thúc tại cửa nên tổng quãng đường không phụ thuộc thứ tự. */}
-          {(strat.work_mode ?? 'MANUAL') === 'GUIDED' && sepLower && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 space-y-1">
-              <Label htmlFor="wh-pick-radius" className="text-sm leading-snug">Nhặt dọc đường — bán kính (số ô)</Label>
-              <div className="flex items-center gap-2">
-                <Input id="wh-pick-radius" type="number" min={0} max={200} className="h-8 w-24"
-                  value={pickRadius} onChange={e => setPickRadius(e.target.value)} placeholder="0" />
-                <span className="text-[11px] text-slate-500">0 = tắt (mặc định)</span>
-              </div>
-              <p className="text-[11px] text-slate-500 leading-snug">
-                Xe nâng đang đứng ở một điểm đặt dãy mà có việc của <b>chuyến khác</b> trong bán kính này thì
-                bảng “Cần hạ” đưa việc đó lên làm luôn, khỏi phải quay lại lần nữa. Thứ tự vẫn bám theo chuyến —
-                chỉ nhặt thêm việc nằm ngay trên đường đi.
-                <br />Đo trên bản vẽ Kho Ba Vì (1 ô ≈ 1,2 m, 8 chuyến × 10 việc): <b>12–24 ô</b> (≈ 14–29 m) tiết
-                kiệm <b>14 % quãng đường</b> mà xe vẫn rời cửa sớm hơn; khai lớn hơn không lợi thêm, khai nhỏ hơn
-                (4 ô) vẫn được ~10 %. Kho có hàng dồn trong vài dãy thì gần như không lợi gì — cứ để 0.
-              </p>
-            </div>
-          )}
+          {/* CHIẾN THUẬT XUẤT MẶC ĐỊNH TOÀN KHO (14–15/08 + thang 3 bước 21/08) — phần DÙNG CHUNG cho cả kho;
+              khai riêng cho từng Loại kho làm ở TAB LOẠI KHO (user chốt 21/08), cùng bộ control
+              `components/wms/StrategyFields.tsx`. Hai ô chỉ có ở tầng KHO (xe nâng là nguồn lực của kho, không
+              của loại hàng) truyền qua `guidedExtra` để nằm TRONG nhóm Chỉ dẫn công việc, không thành hộp rời. */}
+          <OutboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat}
+            guidedExtra={<>
+              {/* XE HẠ RIÊNG — kho một xe vừa hạ vừa chuyển mà để mặc định thì người đó phải đổi tab hai lần +
+                  bấm hai lần cho MỘT pallet, và dòng bị khoá "chờ xe hạ" bởi chính mình (rà theo vai 12/09). */}
+              <SettingRow label={<>Kho có xe nâng <b>hạ</b> riêng</>}
+                desc={<>Bật (mặc định): xe chuyển chờ xe hạ, hai bảng riêng. Tắt: một xe vừa hạ vừa chuyển — bảng
+                  “Cần đưa ra” gộp hai chặng thành một nút <b>Hạ &amp; đưa ra</b>, tab “Cần hạ” ẩn.</>}
+                htmlFor="wh-sep-lower"
+                control={<Switch id="wh-sep-lower" checked={sepLower} onCheckedChange={setSepLower} />} />
+              {/* NHẶT DỌC ĐƯỜNG (13/09) — chỉ có nghĩa khi kho có XE HẠ RIÊNG, vì chỉ bảng "Cần hạ" mới chuyển
+                  pallet từ ô ra ĐIỂM ĐẶT DÃY rồi đi tiếp; bảng "Cần đưa ra" việc nào cũng kết thúc tại cửa. */}
+              {sepLower && (
+                <SettingRow label="Nhặt dọc đường — bán kính (số ô)"
+                  desc={<>Xe nâng đứng ở một điểm đặt dãy mà có việc của <b>chuyến khác</b> trong bán kính này thì bảng
+                    “Cần hạ” đưa việc đó lên làm luôn. Thứ tự vẫn bám theo chuyến. <b>0 = tắt</b> (mặc định).</>}
+                  tip={<>Đo trên bản vẽ Kho Ba Vì (1 ô ≈ 1,2 m, 8 chuyến × 10 việc): <b>12–24 ô</b> (≈ 14–29 m) tiết
+                    kiệm <b>14 % quãng đường</b> mà xe vẫn rời cửa sớm hơn; khai lớn hơn không lợi thêm, khai nhỏ hơn
+                    (4 ô) vẫn được ~10 %. Kho có hàng dồn trong vài dãy thì gần như không lợi gì — cứ để 0.</>}
+                  control={<Input id="wh-pick-radius" type="number" min={0} max={200} className="h-7 w-24 text-xs text-right"
+                    value={pickRadius} onChange={e => setPickRadius(e.target.value)} placeholder="0" />} />
+              )}
+            </>} />
           {/* %DATE THEO KHÁCH HÀNG / KÊNH (user chốt 11/09) — CHỈ tầng kho: luật đi theo KHÁCH NHẬN,
               không theo loại hàng, nên không có bản khai riêng ở tab Loại kho. */}
-          <SettingsGroup title="XUẤT — Quy định date theo khách hàng"
+          <SettingsGroup area="XUẤT" title="Quy định date theo khách hàng"
             tip={<>
               Thay vì chốt tay từng dòng (production ~1.000 dòng/ngày), hệ thống lấy %Date mặc định từ
               danh mục <b>Khách hàng</b> (menu Cấu hình) theo mã ship-to của chuyến: %Date riêng của
@@ -1038,6 +1025,11 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
                 ]} />
             </SettingRow>
           </SettingsGroup>
+          </div>
+          {/* KHU VỰC NHẬP — sau khi hết mọi nhóm XUẤT */}
+          <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
+            <InboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} />
+          </div>
           {isEdit ? (
             <button type="button" onClick={() => onGotoTypes?.(wh.id)}
               className="w-full rounded-md border border-sky-200 bg-sky-50 px-2.5 py-2 text-left text-xs text-sky-800 hover:bg-sky-100">
@@ -1375,11 +1367,15 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
             <p className="text-[11px] text-amber-600">Cần quyền <b>Quản lý Kho</b> mới sửa được phần riêng của kho.</p>
           ) : (
             <>
-              <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-                <span className="flex items-center gap-1">
-                  <Label className="text-xs">NHẬP — Nhận diện &amp; tem</Label>
-                  <InfoTip tip="Ba luật này app đọc khi đang làm việc TẠI KHO (quét tem nhập, sinh tem) nên khai riêng theo kho được." />
-                </span>
+              {/* Khu XUẤT trước, khu NHẬP sau — cùng luật khu vực với form Kho (16/09). Nhóm "Nhận diện & tem"
+                  là NHẬP nên đứng cùng khu với Cất hàng / Ràng buộc, không chen lên trước các nhóm XUẤT. */}
+              <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
+                <OutboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
+                  onPatch={v => setStrat(s => ({ ...s, ...v }))} />
+              </div>
+              <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
+              <SettingsGroup area="NHẬP" title="Nhận diện &amp; tem"
+                tip="Ba luật này app đọc khi đang làm việc TẠI KHO (quét tem nhập, sinh tem) nên khai riêng theo kho được.">
                 {triRow('wt-ncc', isNccOv, setIsNccOv, 'Hàng NCC (QR đoạn 4 = mã NCC)', m.is_ncc_goods === true,
                   <>Quét nhập tem gạch dưới ( _ ): đoạn 4 của QR là <b>MÃ NCC</b> (tự nhận NCC) thay vì Máy sản xuất.</>)}
                 {triRow('wt-reqncc', reqNccOv, setReqNccOv, 'Bắt buộc có NCC khi nhập kho', m.requires_ncc === true,
@@ -1393,9 +1389,10 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
                     placeholder={m.batch_char || '—'}
                     onChange={e => setBatchOv(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
                 </div>
+              </SettingsGroup>
+                <InboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
+                  onPatch={v => setStrat(s => ({ ...s, ...v }))} />
               </div>
-              <StrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
-                onPatch={v => setStrat(s => ({ ...s, ...v }))} wide />
             </>
           )}
         </div>

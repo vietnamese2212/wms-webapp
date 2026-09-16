@@ -60,11 +60,15 @@ export interface AutoFillResult {
   order_code: string | null
   unset: string[]            // mã bỏ qua vì còn dòng CHƯA CHỐT %Date
   no_dest: string[]          // mã bỏ qua vì không còn ô nhặt lẻ trống nhận Loại kho đó
+  vetoed: string[]           // mã bỏ qua vì NGƯỜI đã huỷ dòng máy đặt cho (mã, NSX) đó trong ngày
   days?: string[]            // các ngày đã đối chiếu trong lượt này (đường hàng đợi)
 }
 const emptyResult = (): AutoFillResult => ({
-  created: 0, added: 0, reduced: 0, recalled: 0, closed: 0, order_code: null, unset: [], no_dest: [],
+  created: 0, added: 0, reduced: 0, recalled: 0, closed: 0, order_code: null, unset: [], no_dest: [], vetoed: [],
 })
+/** Lý do huỷ do MÁY ghi — mọi lý do khác trên dòng máy đặt là NGƯỜI huỷ */
+const MACHINE_RECALL_REASON = 'Hệ thống thu hồi — nhu cầu nhặt lẻ không còn'
+const CLOSE_REASON = 'Chốt ngày — chưa thực hiện'
 
 interface OpenTask {
   id: string; material_id: string | null; required_date: string | null
@@ -134,9 +138,23 @@ export async function autoFillDay(warehouseId: string, day: string): Promise<Aut
   const onFor = (materialId: string) =>
     resolveAutoFill(wh as unknown as Record<string, unknown>, typeRows, mats.get(materialId)?.category ?? null).enabled
 
+  // NGƯỜI ĐÃ BÁC THÌ MÁY KHÔNG ĐẶT LẠI (rà 16/09). Bản trước: người huỷ tay một dòng máy đặt mà nhu cầu
+  // vẫn còn ⇒ lượt sau máy đặt lại y nguyên — máy cãi người, và người không có cách nào thắng. Cùng
+  // ranh giới với "máy không hạ dòng người đặt": quyết định của người là bất khả xâm phạm trong ngày.
+  // Nhận diện = dòng máy đặt bị CANCELLED mà lý do KHÔNG phải của máy (thu hồi / chốt ngày).
+  const { data: cancelledRaw } = await db.from('FillTask')
+    .select('material_id, required_date, cancel_reason')
+    .eq('warehouse_id', warehouseId).eq('target_date', day).eq('status', 'CANCELLED').eq('created_by', AUTO_ACTOR)
+  const vetoKeys = new Set<string>()
+  for (const c of (cancelledRaw ?? []) as { material_id: string | null; required_date: string | null; cancel_reason: string | null }[]) {
+    const r = c.cancel_reason ?? ''
+    if (r === MACHINE_RECALL_REASON || r === CLOSE_REASON) continue
+    if (c.material_id) vetoKeys.add(`${c.material_id}|${c.required_date ? String(c.required_date).slice(0, 10) : ''}`)
+  }
+
   const touched: Touched = new Map()
   await reconcileDown(rows, openByMat, onFor, result, touched)
-  await reconcileUp(warehouseId, day, rows, openByMat, mats, onFor, result, touched)
+  await reconcileUp(warehouseId, day, rows, openByMat, mats, onFor, result, touched, vetoKeys)
   await notifyTouched(touched, day)
   return result
 }
@@ -168,7 +186,7 @@ export async function drainFillQueue(warehouseId: string | null | undefined): Pr
         agg.created += r.created; agg.added += r.added; agg.reduced += r.reduced
         agg.recalled += r.recalled; agg.closed += r.closed
         agg.order_code = agg.order_code ?? r.order_code
-        agg.unset.push(...r.unset); agg.no_dest.push(...r.no_dest)
+        agg.unset.push(...r.unset); agg.no_dest.push(...r.no_dest); agg.vetoed.push(...r.vetoed)
         agg.days.push(day)
       } catch (e) {
         // Lỗi một ngày (thường là DB quá tải) ⇒ trả dòng về hàng đợi để lượt sau soát lại, không nuốt
@@ -243,7 +261,7 @@ async function reconcileDown(
       if (cut <= 0) continue
       const { data } = await db.rpc('fill_task_reduce', {
         p_task_id: l.id, p_target_qty: Number(l.qty_base) - cut,
-        p_reason: 'Hệ thống thu hồi — nhu cầu nhặt lẻ không còn', p_now: t,
+        p_reason: MACHINE_RECALL_REASON, p_now: t,
       } as never)
       const out = data as { code?: string; freed?: number } | null
       if (!out || (out.code !== 'REDUCED' && out.code !== 'CANCELLED')) continue
@@ -260,7 +278,7 @@ async function reconcileDown(
 async function reconcileUp(
   warehouseId: string, day: string, rows: FillDemandRow[], openByMat: Map<string, OpenTask[]>,
   mats: Map<string, { code: string; name: string | null; category: string | null }>,
-  onFor: (id: string) => boolean, result: AutoFillResult, touched: Touched,
+  onFor: (id: string) => boolean, result: AutoFillResult, touched: Touched, vetoKeys: Set<string>,
 ): Promise<void> {
   const pending = rows.filter(r => r.material_id && onFor(r.material_id) && Number(r.short_base ?? 0) > 0)
   if (!pending.length && !rows.some(r => r.material_id && onFor(r.material_id) && r.rule_unset)) return
@@ -293,6 +311,11 @@ async function reconcileUp(
       if (left <= 0) break
       const qty = Math.min(left, group.reduce((s, x) => s + Number(x.avail ?? 0), 0))
       if (qty <= 0) continue
+      // Người đã huỷ dòng máy đặt cho đúng (mã, NSX) này hôm nay ⇒ máy không đặt lại, nói ra để màn biết
+      if (vetoKeys.has(`${r.material_id}|${reqDate ?? ''}`)) {
+        if (!result.vetoed.includes(mat.code)) result.vetoed.push(mat.code)
+        continue
+      }
 
       // CỘNG DỒN trước, TẠO sau. Đây chính là ca "đơn phát sinh" mà mô hình cũ đánh rơi: dòng cùng
       // (mã, NSX) đang treo ⇒ INSERT đụng khoá ⇒ bản cũ nuốt 23505 và phần tăng không bao giờ thành

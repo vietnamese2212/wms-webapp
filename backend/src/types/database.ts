@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-15T12:37:16.117Z · 98 bảng/view · 169 hàm · 0 enum
+// Sinh lúc 2026-09-16T03:20:41.641Z · 98 bảng/view · 169 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5038,7 +5038,7 @@ export type Database = {
         Returns: undefined
       }
       fill_reconcile_take: {
-        Args: { p_today: unknown; p_lease_s: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown }
+        Args: { p_today: unknown; p_lease_s: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown }
         Returns: Json
       }
       fill_report: {

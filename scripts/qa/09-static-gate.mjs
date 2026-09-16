@@ -118,6 +118,45 @@ function countDeadEndReturns(sampleOut) {
  * nên luật phải gác riêng: dùng `recordBackgroundFailure(...)` (tự phân biệt quá tải/hỏng thật).
  * Miễn trừ: chính `utils/response.ts` (nơi định nghĩa) và lưới cuối `app.ts` (UNCAUGHT = hỏng thật).
  */
+/**
+ * NHÓM CẤU HÌNH CÙNG KHU VỰC PHẢI ĐỨNG LIỀN NHAU, KHU VỰC THEO THỨ TỰ CỐ ĐỊNH XUẤT → NHẬP (user chốt 16/09:
+ * "đưa các hạng mục setting giống nhau về 1 khu vực — rule phải là theo khu vực kể cả khi xoá, thêm mới").
+ * Đo 16/09: form Kho có XUẤT · XUẤT · [XUẤT×3 · NHẬP×2 trong StrategyFields] · XUẤT (Quy định date theo
+ * khách hàng) — nhóm XUẤT mới thêm 11/09 rơi xuống dưới hai nhóm NHẬP vì ai viết sau cứ nối vào cuối.
+ * Quét theo TỪNG FILE .tsx: chuỗi khu vực theo thứ tự xuất hiện của `area="XUẤT"|"NHẬP"` (SettingsGroup)
+ * và của hai component chiến thuật (`<OutboundStrategyFields` = XUẤT · `<InboundStrategyFields` = NHẬP ·
+ * `<StrategyFields` = XUẤT rồi NHẬP). Vi phạm = một khu vực xuất hiện lại sau khi đã sang khu vực khác,
+ * hoặc NHẬP đứng trước XUẤT. Mỗi FORM một chuỗi: hai form trong cùng file được tách bằng dòng `</FormSheet>`.
+ */
+function countSettingsAreaInterleaved(sampleOut) {
+  const ORDER = ['XUẤT', 'NHẬP']
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
+    const src = readFileSync(f, 'utf8')
+    if (!/area="(XUẤT|NHẬP)"|StrategyFields/.test(src)) continue
+    for (const [fi, form] of src.split(/<\/FormSheet>/).entries()) {
+      const seq = []
+      const re = /area="(XUẤT|NHẬP)"|<(Outbound|Inbound)?StrategyFields\b/g
+      let m
+      while ((m = re.exec(form)) !== null) {
+        if (m[1]) seq.push(m[1])
+        else if (m[2] === 'Outbound') seq.push('XUẤT')
+        else if (m[2] === 'Inbound') seq.push('NHẬP')
+        else seq.push('XUẤT', 'NHẬP')
+      }
+      const compact = seq.filter((a, i) => a !== seq[i - 1])   // gộp liền kề cùng khu
+      const bad = compact.some((a, i) => compact.indexOf(a) !== i)                 // khu quay lại
+        || compact.some((a, i) => i > 0 && ORDER.indexOf(a) < ORDER.indexOf(compact[i - 1]))  // NHẬP trước XUẤT
+      if (bad) {
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${rel} (form #${fi + 1}): ${seq.join(' → ')}`)
+      }
+    }
+  }
+  return n
+}
+
 function countBackgroundError500(sampleOut) {
   let n = 0
   const SKIP = ['backend/src/utils/response.ts', 'backend/src/app.ts']
@@ -325,6 +364,11 @@ const RULES = [
   // Baseline 8 (đều trong outboundController): 4 điểm CHUYẾN = quickExportGDO · quickExportExistingGDO · startGDO ·
   // uncompleteGDO, + 4 điểm dòng hàng/DO đi kèm (item/DO status theo chuyến). Mẫu bắt rộng có chủ đích: thêm bất kỳ
   // chỗ nào là phải giải thích trước khi nâng baseline.
+  {
+    key: 'settings_area_interleaved',
+    label: 'form cấu hình có nhóm cùng KHU VỰC (XUẤT/NHẬP) không đứng liền nhau hoặc NHẬP đứng trước XUẤT — nhóm mới nối vào cuối làm rối khu vực',
+    count: countSettingsAreaInterleaved,
+  },
   {
     key: 'background_error_500_hardcoded',
     label: 'việc NỀN ghi error_logs với status 500 cứng — quá tải bị xử như app hỏng ⇒ cờ đỏ + email báo oan; dùng recordBackgroundFailure()',

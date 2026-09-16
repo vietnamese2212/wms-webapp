@@ -138,6 +138,11 @@ export default function FillPicking() {
         onChange: (v: string[]) => setFillFilter({ cats: v }) },
     ] : []),
     ...(f.tab === 'tasks' ? [
+      // Lệnh fill = SỔ CỦA MỘT NGÀY (15/09) nên ngày xuất là khoá tra cứu chính; user bắt 16/09 "tab Lệnh
+      // fill chưa có filter theo ngày". Rỗng = mọi ngày (hành vi cũ), không tự thu hẹp hộ ai.
+      { key: 'orange', label: 'Ngày xuất', type: 'daterange' as const,
+        from: f.ordersFrom, to: f.ordersTo,
+        onChange: (from: string, to: string) => setFillFilter({ ordersFrom: from, ordersTo: to }) },
       { key: 'status', label: 'Trạng thái', type: 'multi' as const, searchable: false,
         options: [
           { value: 'PENDING', label: 'Chờ làm' },
@@ -369,6 +374,22 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         <div className="mx-3 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
           Kho này <b>chưa khai vị trí nhặt lẻ nào</b> nên mọi mã đều hiện "thiếu". Vào <b>Vị trí kho</b> → lọc các vị trí
           tầng dưới → nút <b>"Vị trí nhặt lẻ"</b> để khai hàng loạt, rồi quay lại đây.
+        </div>
+      )}
+      {/* MÃ BỊ LOẠI VÌ KHÔNG Ô LẺ NÀO NHẬN LOẠI (16/09) — RPC không đề xuất được thì phải NÓI RA, không lọc
+          im lặng: đo Ba Vì 15/09 mã 510000306 (FG02) cần 60 thùng mà trang hiện 8/9 mã, còn màn "Tối ưu
+          tuyến" thì đang giục "fill xuống ô lẻ" cho đúng mã đó ⇒ ngõ cụt (lớp C24). Gom theo Loại kho để
+          người khai biết phải mở ô lẻ cho loại nào. */}
+      {data && (data.excluded?.length ?? 0) > 0 && (
+        <div className="mx-3 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          <b>{nf(data.excluded!.length)} mã</b> cần nhặt lẻ hôm nay nhưng kho <b>chưa có ô nhặt lẻ nào nhận Loại kho</b> của
+          chúng nên không đề xuất được — hàng lẻ sẽ phải lấy trên kệ:{' '}
+          {Object.entries(data.excluded!.reduce<Record<string, string[]>>((acc, x) => {
+            const k = x.category ?? '—'; (acc[k] ??= []).push(x.material_code ?? x.material_id); return acc
+          }, {})).map(([cat, codes]) => (
+            <span key={cat} className="inline-block mr-2"><b>{cat}</b>: <span className="font-mono">{codes.join(', ')}</span></span>
+          ))}
+          <span className="block mt-0.5">Khai thêm ô nhặt lẻ nhận loại đó ở <b>Vị trí kho</b> (cột Loại hàng của vị trí) rồi quay lại đây.</span>
         </div>
       )}
 
@@ -607,6 +628,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
   const { widths: colW, startResize, totalWidth } = useColumnResize('fill_order_col_widths', ORDER_COLS.map(c => c.w))
   const { data, isLoading } = useFillOrders({
     warehouse_id: warehouseId,
+    date_from: f.ordersFrom || undefined, date_to: f.ordersTo || undefined,
     status: f.status.join(','),
     mine: f.mine ? '1' : undefined,
     search: f.search || undefined,

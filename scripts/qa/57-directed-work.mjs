@@ -50,6 +50,16 @@ async function cleanup() {
     // `wms_replan_queue` KHÔNG có khoá ngoại (cột text) ⇒ xoá kho không kéo theo dòng hàng đợi, và
     // không ai xả được nữa vì xả theo kho đang mở bảng. Mỗi lượt chạy để lại 1 dòng rác (đo 14/09: 5 dòng).
     await restWrite('wms_replan_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    // Lệnh fill mồi ở [25i2] (kiểm "đã có lệnh fill ⇒ lộ trình nói chờ hạ"): huỷ lệnh chỉ đổi status,
+    // bản ghi vẫn trỏ Material/Warehouse fixture ⇒ FK chặn xoá kho ⇒ lượt sau 23505 ở chính fixture.
+    for (const o of await restAll('FillOrder', `select=id&warehouse_id=eq.${w.id}`)) {
+      await restWrite('FillTaskScan', 'DELETE', `fill_order_id=eq.${o.id}`).catch(() => {})
+      await restWrite('FillTask', 'DELETE', `fill_order_id=eq.${o.id}`).catch(() => {})
+      await restWrite('FillOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+    }
+    await restWrite('FillTask', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('fill_reconcile_state', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})

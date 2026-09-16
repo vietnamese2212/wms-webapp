@@ -12,7 +12,9 @@ import type { ReactNode } from 'react'
 export function FloatingActionBar({ count, unit, children }: { count: number; unit: string; children: ReactNode }) {
   if (count <= 0) return null
   return (
-    <div className="fixed bottom-16 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-16px)]
+    // Mobile: neo HAI MÉP (left-2 right-2) — phần tử `fixed` neo `left-1/2` chỉ được cấp nửa bề ngang màn để co
+    // giãn nên ở 360 px nó bó thành một cột dọc mỗi nút một hàng (đo 16/09). Từ `sm` mới về pill giữa đáy.
+    <div className="fixed bottom-16 lg:bottom-6 z-50 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-max sm:max-w-[calc(100vw-16px)]
       bg-slate-800 text-white rounded-2xl sm:rounded-full shadow-2xl px-3 sm:px-4 py-2
       flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-sm">
       <span className="text-slate-300 text-xs font-medium whitespace-nowrap">{count} {unit}</span>

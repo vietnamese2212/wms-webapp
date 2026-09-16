@@ -1333,12 +1333,51 @@ try {
         rFill.s === 201 && w1b.m?.need_fill_from === w1b.st?.location_code && !!w1b.m?.fill_order_code
           && Number(w1b.m?.fill_pending_base) > 0,
         `ra_lệnh=${rFill.s} ${err(rFill)} need_fill=${w1b.m?.need_fill_from ?? 'KHÔNG'} lệnh=${w1b.m?.fill_order_code ?? 'KHÔNG CÓ'} treo=${w1b.m?.fill_pending_base}`)
+      // (a3) FILL LÀ MỘT LOẠI VIỆC HẠ, KHÔNG PHẢI MÀN RIÊNG (16/09) — dòng lệnh fill phải nằm NGAY
+      // trên bảng xe nâng đang nhìn, kèm đủ thứ để làm việc (ô nguồn · ô đích · số pallet · mã lệnh)
+      // và KHÔNG được cho bấm "✓ Xong" (fill ghi tồn thật, chỉ đóng bằng quét tem).
+      // Vì sao gác: trước bản vá, cùng một nhu cầu nhặt lẻ bị xẻ hai màn — người hạ xong tab "Cần hạ"
+      // tưởng mã đó đã xong trong khi phần còn lại nằm ở lệnh fill mà không màn nào nhắc.
+      {
+        const bF = await board('LOWER')
+        const fr = (bF.j?.data?.rows ?? []).filter(x => x.kind === 'FILL')
+        const one = fr.find(x => x.material_codes?.includes(matP.material_code))
+        check('[27a] Dòng lệnh fill hiện NGAY trên bảng Cần hạ, đủ ô nguồn/đích + mã lệnh, KHÔNG có nút ✓ Xong',
+          bF.s === 200 && !!one && one.can_confirm === false && (one.task_ids ?? []).length === 0
+            && !!one.fill_order_id && !!one.to_code && Number(one.n_pallets) > 0,
+          `http=${bF.s} dòng_fill=${fr.length} can_confirm=${one?.can_confirm} task_ids=${(one?.task_ids ?? []).length} lệnh=${one?.fill_order_code ?? 'KHÔNG'} tới=${one?.to_code ?? 'KHÔNG'}`)
+        // Ô "Việc còn lại" phải cộng luôn phần fill — nhưng cộng theo PALLET, cùng đơn vị với chính
+        // nó (một dòng bảng gom nhiều việc cùng ô, nên "số dòng" là đơn vị khác). Đo bằng HIỆU:
+        // huỷ lệnh fill rồi đo lại, chênh lệch phải đúng bằng số pallet fill đang treo.
+        const pendWith = Number(bF.j?.data?.totals?.pending ?? -1)
+        const fillPl = fr.reduce((s, x) => s + Math.max(0, Number(x.n_pallets ?? 0) - Number(x.n_done ?? 0)), 0)
+        globalThis.__qa57fill = { pendWith, fillPl }
+        check('[27b] Dòng fill mang đủ số pallet phải hạ (đơn vị của ô "Việc còn lại")',
+          fillPl > 0 && pendWith >= fillPl, `pending=${pendWith} pallet_fill=${fillPl}`)
+        // Bảng "Sắp quét" của thủ kho là việc theo TEM của chuyến — không được lẫn dòng fill vào
+        const bS = await board('SCAN', `&gdo_id=${tF.gdo}`)
+        check('[27c] Bảng Sắp quét (thủ kho) KHÔNG lẫn dòng fill — đó là việc của xe nâng',
+          bS.s === 200 && (bS.j?.data?.rows ?? []).every(x => x.kind !== 'FILL'),
+          `http=${bS.s} lẫn=${(bS.j?.data?.rows ?? []).filter(x => x.kind === 'FILL').length}`)
+      }
+
       // Dọn dòng lệnh vừa tạo để các phép sau đo đúng trạng thái "chưa ai lo"
       const ordId = rFill.j?.data?.order_id ?? rFill.j?.data?.id ?? null
       if (ordId) await api(`/wms/fill/orders/${ordId}`, 'DELETE').catch(() => {})
       const w1c = await routeF()
       check('[25i3] Huỷ lệnh fill ⇒ cảnh báo quay lại trạng thái "chưa ai lo" (không kẹt mã lệnh đã huỷ)',
         !w1c.m?.fill_order_code, `lệnh=${w1c.m?.fill_order_code ?? 'không còn (đúng)'}`)
+
+      // [27d] …và ô "Việc còn lại" nhả đúng phần fill vừa huỷ. Đo bằng HIỆU nên không phụ thuộc số
+      // việc của chuyến (đang đổi theo từng phép kiểm trước đó) — chỉ đo đúng thứ vừa thay đổi.
+      {
+        const bAfter = await board('LOWER')
+        const pendNo = Number(bAfter.j?.data?.totals?.pending ?? -1)
+        const { pendWith = -1, fillPl = 0 } = globalThis.__qa57fill ?? {}
+        check('[27d] Huỷ lệnh fill ⇒ ô "Việc còn lại" nhả đúng số pallet fill (không trộn đơn vị đếm)',
+          (bAfter.j?.data?.rows ?? []).every(x => x.kind !== 'FILL') && pendWith - pendNo === fillPl,
+          `có_fill=${pendWith} hết_fill=${pendNo} chênh=${pendWith - pendNo} pallet_fill=${fillPl}`)
+      }
 
       // (b) KHO TÍCH BẮT BUỘC ⇒ CHẶN: không điểm ghé, nêu lý do + ô phải fill từ đó
       await setReq(true)

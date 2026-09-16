@@ -181,8 +181,12 @@ export async function getBoard(req: Request, res: Response) {
           (board.rows ?? []) as Record<string, unknown>[], fills,
         ) as unknown as RoutableRow[]
         board.fill_rows = fills.length
-        // Ô đếm "còn phải làm" của band phải cộng luôn, kẻo bảng 12 dòng mà band nói 10
-        if (board.totals) board.totals.pending = Number(board.totals.pending ?? 0) + fills.length
+        // Ô "Việc còn lại" của band đếm theo VIỆC (một dòng bảng gom nhiều việc cùng ô), không đếm
+        // theo DÒNG ⇒ cộng số PALLET CÒN PHẢI HẠ của lệnh fill, không cộng số dòng. Cộng nhầm đơn vị
+        // thì band và bảng nói hai con số mà không ai biết số nào đúng (gói 57 [27b] bắt ngay).
+        const fillPallets = fills.reduce((s, f) =>
+          s + Math.max(0, Number(f.n_pallets ?? 0) - Number(f.n_done ?? 0)), 0)
+        if (board.totals) board.totals.pending = Number(board.totals.pending ?? 0) + fillPallets
       }
     }
     // Máy vừa đặt việc dưới tay người thì phải NÓI RA (cùng luật với dải "đã sắp lại theo tồn")

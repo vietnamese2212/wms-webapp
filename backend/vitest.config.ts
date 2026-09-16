@@ -14,6 +14,12 @@ export default defineConfig({
     setupFiles: ['tests/setup.ts'],   // env giả cho module tạo client Supabase lúc import (CI không có .env)
     // mỗi test in ra seed khi đỏ → tái hiện bằng RNG_SEED=<seed> npm test
     reporters: 'default',
+    // Phép kiểm mirror chạy N=3000 input ngẫu nhiên nên tốn 1–3 giây MỖI file; trần mặc định
+    // 5 giây của vitest nằm quá sát. Đo 16/09: chạy trọn bộ 3 lượt thì 1 lượt ĐỎ với
+    // "Test timed out in 5000ms" — không sai kết quả, chỉ là hết giờ lúc máy bận (các file
+    // chạy song song). Đỏ kiểu này lên CI là email báo lỗi OAN, đúng lớp C18/C22.
+    // Nới trần, KHÔNG giảm N: số input ngẫu nhiên chính là giá trị của phép kiểm.
+    testTimeout: 30_000,
   },
   resolve: {
     alias: { '@': path.resolve(__dirname, '../frontend/src') },

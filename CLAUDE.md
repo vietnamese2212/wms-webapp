@@ -191,7 +191,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 ---
 ## Tech Stack
-- **Frontend:** React 18 + TS + Vite · Tailwind v3 + shadcn/ui · React Router v6 · TanStack Query · html5-qrcode · date-fns · Lucide. Supabase Realtime (`frontend/src/lib/supabase.ts`, anon key).
+- **Frontend:** React 18 + TS + Vite · Tailwind v3 + shadcn/ui · React Router v6 · TanStack Query · **quét QR = `BarcodeDetector` của trình duyệt, trượt thì rơi về `zxing-wasm`** (KHÔNG còn `html5-qrcode`/`qr-scanner` — gỡ 16/09 vì đã thay từ đợt 11/08 mà 2 gói vẫn nằm trong `package.json`) · `qrcode` chỉ để SINH tem · date-fns · Lucide. Supabase Realtime (`frontend/src/lib/supabase.ts`, anon key).
 - **Backend:** Node + Express + TS · `@supabase/supabase-js` service role (`backend/src/lib/supabase.ts`). JWT auth **đã implement** (`authController.ts`: bcrypt + `jwt.sign`; route bảo vệ bằng `requirePerm`/`requireAnyPerm`).
 - **Infra:** Supabase (PostgreSQL + Realtime) ×2: staging `bxxryrmpfabvjitqbdnw` (branch `dev` → Vercel Preview) + production LOF `svicyfquresxaigfxsdb` (branch `main` → Vercel Production) · backend serverless qua `api/index.ts`.
 

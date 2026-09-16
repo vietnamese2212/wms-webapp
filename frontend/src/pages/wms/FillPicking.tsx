@@ -260,6 +260,7 @@ export default function FillPicking() {
 function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssign }: {
   warehouseId: string; date: string; onlyShort: boolean; cats: string[]; dense: boolean; canPlan: boolean; canAssign: boolean
 }) {
+  const navigate = useNavigate()
   const { widths: colW, startResize, totalWidth } = useColumnResize('fill_demand_col_widths', DEMAND_COLS.map(c => c.w))
   const { data, isLoading } = useFillDemand({ warehouse_id: warehouseId, date })
   const createOrder = useCreateFillOrder()
@@ -392,6 +393,23 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           <span className="block mt-0.5">Khai thêm ô nhặt lẻ nhận loại đó ở <b>Vị trí kho</b> (cột Loại hàng của vị trí) rồi quay lại đây.</span>
         </div>
       )}
+      {/* MÃ CHƯA CHỐT %DATE — KHÔNG PHẢI MÃ THIẾU (user chốt 16/09: "chưa chốt thì không cần đưa yêu cầu, đầy đủ
+          rồi mới tới bước fill"). Bản cũ để nó lẫn trong bảng như mã thiếu thường nên người bấm "Đưa vào lệnh
+          fill" là chọn lô hộ một dòng chưa ai quyết. Tách ra băng riêng + đường sang Quy định date. */}
+      {data && (data.unset?.length ?? 0) > 0 && (
+        <div className="mx-3 mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+          <b>{nf(data.unset!.length)} mã</b> có nhặt lẻ hôm nay nhưng dòng đơn <b>chưa chốt %Date</b> nên chưa đưa vào đề xuất
+          (chưa chốt thì chưa được lấy hàng):{' '}
+          <span className="font-mono">{data.unset!.map(x => x.material_code ?? x.material_id).join(', ')}</span>
+          <span className="block mt-0.5">
+            Chốt ở{' '}
+            <button type="button" className="underline font-medium text-sky-700" onClick={() => navigate('/wms/outbound/date-rules')}>
+              Quy định date
+            </button>
+            {' '}rồi quay lại — máy tự đề xuất, không cần bấm gì thêm.
+          </span>
+        </div>
+      )}
 
       {canPlan && (
         <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
@@ -497,7 +515,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                     {qtyLabel(Number(r.pick_face_base), r)}
                     <span className="text-slate-400"> · {r.pick_face_pallets} pl</span>
                     {r.pick_face_ok_base != null && Number(r.pick_face_ok_base) < Number(r.pick_face_base) && (
-                      <div className="text-[9px] text-amber-700" title={`Chỉ ${qtyLabel(Number(r.pick_face_ok_base), r)} ở vị trí nhặt lẻ là lô ĐÚNG THỨ TỰ${r.lot_date ? ` (${r.lot_date})` : ''} — phần còn lại là lô khác, nhặt ở đó là lấy sai thứ tự.`}>
+                      <div className="text-[9px] text-amber-700" title={`Chỉ ${qtyLabel(Number(r.pick_face_ok_base), r)} ở vị trí nhặt lẻ là lô ĐÚNG THỨ TỰ${r.lot_nsx ? ` (NSX ${formatDate(r.lot_nsx)})` : ''} — phần còn lại là lô khác, nhặt ở đó là lấy sai thứ tự.`}>
                         đúng lô: {qtyLabel(Number(r.pick_face_ok_base), r)}
                       </div>
                     )}

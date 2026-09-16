@@ -216,6 +216,10 @@ export async function filterByPref(employeeIds: string[], prefKey: PrefKey): Pro
  */
 export async function notifyEmployees(
   employeeIds: string[], kind: string, prefKey: PrefKey, payload: PushPayload,
+  // `refreshUnread`: tin cùng đích CHƯA ĐỌC thì KHÔNG báo thêm (giữ luật 06/08) nhưng ĐẮP nội dung mới lên —
+  // dùng cho tin kể TRẠNG THÁI đang đổi (kế hoạch fill: "hạ 1 dòng" rồi 10 phút sau máy cộng 1 dòng, tin cũ
+  // nói chuyện đã lỗi thời; user chốt 16/09 "xử lý"). Tin kể SỰ KIỆN (giao việc) thì để mặc định.
+  opts?: { refreshUnread?: boolean },
 ): Promise<void> {
   try {
     const ids = [...new Set(employeeIds.filter(Boolean))]
@@ -242,6 +246,17 @@ export async function notifyEmployees(
       .select('employee_id')
     if (error) console.error('[push] ghi feed lỗi:', error.message)
     const freshIds = [...new Set(((inserted ?? []) as { employee_id: string }[]).map(r => r.employee_id))]
+    if (opts?.refreshUnread) {
+      const stale = ids.filter(id => !freshIds.includes(id))
+      if (stale.length) {
+        let up = supabase.from('user_notifications')
+          .update({ title: payload.title, body: payload.body, updated_at: t })
+          .in('employee_id', stale.slice(0, 300)).eq('kind', kind).is('read_at', null)
+        up = payload.url ? up.eq('url', payload.url) : up.is('url', null)
+        const { error: e2 } = await up
+        if (e2) console.error('[push] đắp tin chưa đọc lỗi:', e2.message)
+      }
+    }
     const pushIds = await filterByPref(freshIds, prefKey)
     if (pushIds.length) await sendPushToEmployees(pushIds, payload)
   } catch (e) { console.error('[push] notifyEmployees:', e) }

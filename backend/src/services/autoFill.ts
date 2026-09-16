@@ -386,7 +386,7 @@ async function notifyTouched(touched: Touched, day: string): Promise<void> {
       body: `Hệ thống ${parts.join(' · ')} theo đơn nhặt lẻ ngày ${fmtDMY(day)}`,
       url: `/wms/fill/orders/${t.orderId}`,
       tag: `fill-${t.orderId}`,
-    })
+    }, { refreshUnread: true })   // tin chưa đọc thì đắp nội dung mới, không để "hạ 1 dòng" đứng mãi khi máy đã cộng
   }
 }
 

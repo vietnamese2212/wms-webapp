@@ -183,6 +183,9 @@ try {
   const [item] = await restWrite('OutboundItem', 'POST', null, {
     id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
     cartons_ordered: LOOSE + 250, cartons_scanned: 0, loose_picking: LOOSE, status: 'PENDING',
+    // CHỐT %Date ngay từ fixture (16/09): mã có dòng CHƯA CHỐT nay bị tách khỏi bảng Đề xuất (user: "chưa
+    // chốt thì không cần đưa yêu cầu") — không chốt thì mọi phép đọc `row` bên dưới hụt.
+    date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
     created_at: nowIso(), updated_at: nowIso(),
   })
   created.items.push(item.id)
@@ -197,6 +200,7 @@ try {
   const [item2] = await restWrite('OutboundItem', 'POST', null, {
     id: randomUUID(), do_id: dlv.id, material_id: mat2.id, material_code_raw: mat2.material_code,
     cartons_ordered: 60, cartons_scanned: 0, loose_picking: 60, status: 'PENDING',
+    date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
     created_at: nowIso(), updated_at: nowIso(),
   })
   created.items.push(item2.id)
@@ -242,8 +246,26 @@ try {
     return keyed.filter(e => pfLocIds.has(e.location_id) && e.k === best)
       .reduce((s, e) => s + Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)), 0)
   }
+  // ORACLE NSX của lô đúng thứ tự — cùng phép sắp như trên, trả production_date của pallet đứng đầu
+  const lotNsxOracle = async () => {
+    const es = await restAll('InventoryEntry',
+      `select=cartons_remaining,cartons_reserved,production_date,expiry_date,shelf_life_days,qa_status_id,status&material_id=eq.${mat.id}&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)
+    const live = es.filter(e => ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'].includes(e.status)
+      && !(e.qa_status_id && qaHoldQA.has(e.qa_status_id))
+      && Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)) > 0)
+    const keyOf = e => e.expiry_date ? Date.parse(e.expiry_date)
+      : (e.production_date && (e.shelf_life_days ?? matFull?.shelf_life_days)
+        ? Date.parse(e.production_date) + Number(e.shelf_life_days ?? matFull.shelf_life_days) * 864e5 : null)
+    const keyed = live.map(e => ({ ...e, k: keyOf(e) })).filter(e => e.k != null).sort((a, b) => a.k - b.k)
+    return keyed[0]?.production_date ? String(keyed[0].production_date).slice(0, 10) : null
+  }
   const ok1 = await okAtPickFace()
   const d1 = await demandOf()
+  // 16/09 user: "đúng kho theo NSX" — tooltip "lô đúng thứ tự" từng in HẠN DÙNG (`lot_date` = khoá FEFO)
+  const nsx1 = await lotNsxOracle()
+  check('1a-nsx. `lot_nsx` = NSX của pallet đứng đầu thứ tự (lấy được), KHÔNG phải hạn dùng',
+    nsx1 != null && d1.row?.lot_nsx === nsx1 && d1.row?.lot_nsx !== d1.row?.lot_date,
+    `lot_nsx=${d1.row?.lot_nsx} oracle=${nsx1} lot_date(HSD)=${d1.row?.lot_date}`)
   check('1a. "Cần nhặt lẻ" khớp oracle', Number(d1.row?.demand_base) === LOOSE,
     `api=${d1.row?.demand_base} oracle=${LOOSE}`)
   check('1b. "Đang có ở vị trí nhặt lẻ" khớp oracle', Number(d1.row?.pick_face_base) === oraclePF,
@@ -657,6 +679,13 @@ try {
     unset22.s === 200 && Number(unset22.j?.data?.created ?? -1) === 0
       && (unset22.j?.data?.unset ?? []).includes(mat.material_code),
     `created=${unset22.j?.data?.created} unset=${JSON.stringify(unset22.j?.data?.unset ?? [])}`)
+  // 22b2 (16/09, user: "chưa chốt thì không cần đưa yêu cầu — đầy đủ mới tới bước fill"): mã chưa chốt
+  // KHÔNG nằm trong bảng Đề xuất như mã thiếu, mà tách sang `unset[]` để màn hình chỉ sang Quy định date.
+  const dmUnset = await demandOf()
+  check('22b2. Trang Đề xuất: mã chưa chốt %Date RỜI khỏi `rows`, nằm ở `unset[]` kèm mã + nhu cầu',
+    dmUnset.s === 200 && dmUnset.row == null
+      && (dmUnset.all?.unset ?? []).some(u => u.material_id === mat.id && u.material_code === mat.material_code && Number(u.demand_base) === LOOSE),
+    `row=${dmUnset.row ? 'CÒN' : 'rời'} unset=${JSON.stringify((dmUnset.all?.unset ?? []).map(u => u.material_code))}`)
 
   // 22c. Chốt mức → máy ra lệnh ĐÚNG phần thiếu mà trang Đề xuất đang hiện, KHÔNG gán ai
   await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { date_rule: { kind: 'FEFO' }, updated_at: nowIso() })
@@ -821,7 +850,18 @@ try {
     asg24.s === 200 && Number(grow24.j?.data?.added ?? 0) >= 1
       && notif24.some(n => n.url === `/wms/fill/orders/${day24?.id}`),
     `assign=${asg24.s} added=${grow24.j?.data?.added} notif=${notif24.length}`)
+  // 24d2 (16/09, user "xử lý"): tin CHƯA ĐỌC cùng lệnh không đẻ tin thứ hai (luật 06/08) NHƯNG phải đắp nội
+  // dung mới — bản cũ giữ "hạ 1 dòng" trong khi máy đã cộng, người đọc tin lỗi thời. Nhu cầu tụt về LOOSE
+  // ⇒ máy HẠ dòng vừa cộng ⇒ cùng một tin, body đổi.
+  const body24a = notif24.find(n => n.url === `/wms/fill/orders/${day24?.id}`)?.body ?? null
   await restWrite('OutboundItem', 'PATCH', `id=eq.${item.id}`, { loose_picking: LOOSE, updated_at: nowIso() })
+  const shrink24 = await runAuto()
+  const notif24b = await restAll('user_notifications',
+    `select=id,url,body,read_at&employee_id=eq.${emp23?.id}&kind=eq.FILL_CHANGED&url=eq.${encodeURIComponent(`/wms/fill/orders/${day24?.id}`)}`)
+  check('24d2. Máy HẠ dòng ở lượt sau ⇒ tin chưa đọc được ĐẮP nội dung mới (vẫn MỘT tin, body đổi, nói "hạ")',
+    Number(shrink24.j?.data?.reduced ?? 0) >= 1 && notif24b.length === 1
+      && body24a != null && notif24b[0].body !== body24a && /hạ/.test(notif24b[0].body ?? ''),
+    `reduced=${shrink24.j?.data?.reduced} tin=${notif24b.length} body_cũ="${String(body24a).slice(0, 40)}" body_mới="${String(notif24b[0]?.body ?? '').slice(0, 40)}"`)
   await restWrite('user_notifications', 'DELETE', `employee_id=eq.${emp23?.id}&kind=eq.FILL_CHANGED`).catch(() => {})
 
   // 24b. HÀNG ĐỢI THEO (kho, NGÀY XUẤT): đơn của NGÀY MAI đổi ⇒ trigger ghi (kho, mai) ⇒ lần đọc kế

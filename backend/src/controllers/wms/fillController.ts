@@ -129,13 +129,22 @@ export type FillDemandRow = {
   material_id: string; demand_base: number
   pending_base: number; short_base: number
   pick_face_base: number; pick_face_ok_base?: number; lot_date?: string | null
+  // NSX của lô đúng thứ tự — `lot_date` là khoá FEFO (= HẠN DÙNG), người kho lại nói chuyện bằng NSX
+  // (user chốt 16/09 "đúng kho theo NSX") nên màn hình in cột này, không in lot_date.
+  lot_nsx?: string | null
+  material_code?: string | null; material_name?: string | null; category?: string | null
   // Phần nhu cầu đã có việc LOOSE_FEED lo — tách RIÊNG khỏi `pending_base` (gộp cả dòng FillTask)
   // để bộ đối chiếu tính được "nhu cầu còn phải phủ bằng lệnh fill" mà không phải trừ ngược.
   feed_pending_base?: number
   rule_unset?: boolean
   suggestions?: FillSug[]
 }
-export type FillDemandPayload = { rows?: FillDemandRow[]; pick_face_locations?: number } | null
+/** Mã có nhặt lẻ hôm nay nhưng dòng đơn CHƯA CHỐT %Date — tách khỏi `rows` ở cửa HTTP (không phải mã thiếu) */
+export type FillUnsetMat = {
+  material_id: string; material_code: string | null; material_name: string | null
+  category: string | null; demand_base: number
+}
+export type FillDemandPayload = { rows?: FillDemandRow[]; pick_face_locations?: number; unset?: FillUnsetMat[] } | null
 type FillEntry = RotationEntry & {
   id: string; pallet_code: string | null; material_id: string; location_id: string | null; status: string
   location: { location_code: string | null; warehouse_id: string | null; is_pick_face: boolean | null } | null
@@ -212,7 +221,8 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     })
     // LÔ ĐÚNG THỨ TỰ = lô của pallet đứng đầu trong số LẤY ĐƯỢC (bỏ pallet QA giữ — pallet đó cửa
     // quét xuất không cho lấy nên nó không định nghĩa được "lô phải lấy").
-    const bestKey = keyOf.get(sorted.find(e => isPickEligible(e, qaHold))?.id ?? '') ?? null
+    const best = sorted.find(e => isPickEligible(e, qaHold))
+    const bestKey = best ? (keyOf.get(best.id) ?? null) : null
     const ok = sorted
       .filter(e => e.location?.is_pick_face === true && isPickEligible(e, qaHold) && (keyOf.get(e.id) ?? null) === bestKey)
       .reduce((s, e) => s + availableOf(e), 0)
@@ -222,6 +232,7 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     r.feed_pending_base = feed
     r.pick_face_ok_base = ok
     r.lot_date = bestKey == null ? null : new Date(bestKey).toISOString().slice(0, 10)
+    r.lot_nsx = best?.production_date ? String(best.production_date).slice(0, 10) : null
     r.pending_base = pending
     r.short_base = short
     // "Có dòng CHƯA CHỐT mức %Date" ≠ "không dòng nào ràng buộc". Với người xem thì cả hai đều là
@@ -321,7 +332,21 @@ export async function getFillDemand(req: Request, res: Response) {
       if (isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
       return fail(res, 500, 'DB_ERROR', error.message)
     }
-    return ok(res, await withLotCheck(data as FillDemandPayload, warehouse_id, date || vnToday()))
+    const out = await withLotCheck(data as FillDemandPayload, warehouse_id, date || vnToday())
+    // MÃ CHƯA CHỐT %DATE KHÔNG PHẢI MÃ THIẾU (user chốt 16/09: "chưa chốt thì không cần đưa yêu cầu — đầy đủ
+    // rồi mới tới bước fill"). Bản cũ để nó nằm lẫn trong bảng như mã thiếu thường ⇒ người bấm "Đưa vào lệnh
+    // fill" là chọn lô hộ một dòng chưa ai quyết (luật 10/09). Tách ra `unset[]` để màn hình NÓI RA và chỉ
+    // đường sang Quy định date — không lọc im lặng (cùng khuôn `excluded`). CHỈ ở cửa HTTP: bộ đối chiếu
+    // (`fillDemandOf`) vẫn nhận trọn `rows` để chiều HẠ còn thấy nhu cầu của mã đó (rút khỏi rows là nó
+    // coi nhu cầu = 0 và thu hồi nhầm dòng đang có).
+    if (out?.rows?.some(r => r.rule_unset)) {
+      out.unset = out.rows.filter(r => r.rule_unset).map(r => ({
+        material_id: r.material_id, material_code: r.material_code ?? null, material_name: r.material_name ?? null,
+        category: r.category ?? null, demand_base: Number(r.demand_base ?? 0),
+      }))
+      out.rows = out.rows.filter(r => !r.rule_unset)
+    }
+    return ok(res, out)
   } catch (e) {
     // Bước tính "đúng lô" kéo tồn của các mã đang cần ⇒ lúc DB bận có thể chạm trần câu lệnh.
     // Đó là QUÁ TẢI, không phải lỗi lập trình: trả 503 kèm hướng dẫn (và không thổi cờ "lỗi BE").

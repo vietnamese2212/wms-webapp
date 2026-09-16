@@ -5142,6 +5142,8 @@ export interface FillDemandRow {
   // Trong số đang có ở kho lẻ, bao nhiêu là ĐÚNG LÔ theo nguyên tắc luân chuyển (15/09) — `short_base`
   // tính theo số này, vì nhặt lẻ lấy lô khác là vi phạm chính luật kho đang chạy.
   pick_face_ok_base?: number; lot_date?: string | null
+  /** NSX của lô đúng thứ tự — màn hình in cột này (`lot_date` là HẠN DÙNG, khoá FEFO) */
+  lot_nsx?: string | null
   // Phần nhu cầu đã có việc LOOSE_FEED lo (tách riêng khỏi `pending_base` gộp cả dòng lệnh fill)
   feed_pending_base?: number
   pending_base: number; pending_n: number; short_base: number
@@ -5152,6 +5154,8 @@ export interface FillDemandData {
   rows: FillDemandRow[]; pick_face_locations: number; error?: string
   /** Mã CÓ nhu cầu nhặt lẻ nhưng kho không có ô nhặt lẻ nào nhận Loại kho của nó — RPC không đề xuất được, phải NÓI RA (16/09) */
   excluded?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
+  /** Mã có nhặt lẻ hôm nay nhưng dòng đơn CHƯA CHỐT %Date — không phải mã thiếu, tách khỏi `rows` (16/09) */
+  unset?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
 }
 export function useFillDemand(params?: { warehouse_id: string; date: string }) {
   return useQuery({

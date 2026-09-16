@@ -945,12 +945,16 @@ try {
   await cleanupOrders(whId)
   await runAuto()
   const born26 = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
-  const del26 = born26[0] ? await api(`/wms/fill/tasks/${born26[0].id}`, 'DELETE', { reason: 'QA — người bác' }) : { s: 0 }
+  // Huỷ dòng lô ĐỨNG ĐẦU thứ tự (NSX cũ nhất): máy đi FEFO nên đó là lô nó sẽ đụng tới trước ⇒ đường veto chắc
+  // chắn được kích. Huỷ dòng lô mới hơn thì máy bù nhu cầu bằng lô cũ trước và không bao giờ tới lô đã bác —
+  // `vetoed` rỗng dù máy đúng (run 6 ngày 16/09 đỏ oan vì lấy born26[0] theo thứ tự id ngẫu nhiên).
+  const target26 = [...born26].sort((a, b) => String(a.required_date).localeCompare(String(b.required_date)))[0]
+  const del26 = target26 ? await api(`/wms/fill/tasks/${target26.id}`, 'DELETE', { reason: 'QA — người bác' }) : { s: 0 }
   const re26 = await runAuto()
   const after26 = (await autoLines()).filter(l => l.material_id === mat.id && l.status === 'PENDING')
-  // Veto theo (mã, NSX): mã có hai dòng hai NSX (pA · pB) thì huỷ một dòng KHÔNG được kéo dòng NSX kia
-  // theo — lần chạy đầu 16/09 oracle đòi "0 dòng" và đỏ oan đúng chỗ máy làm đúng.
-  const vetoDate = born26[0]?.required_date ?? null
+  // Veto theo (mã, NSX): mã có hai dòng hai NSX thì huỷ một dòng KHÔNG được kéo dòng NSX kia theo — lần chạy
+  // đầu 16/09 oracle đòi "0 dòng" và đỏ oan đúng chỗ máy làm đúng.
+  const vetoDate = target26?.required_date ?? null
   check('26a. Người huỷ tay dòng máy đặt (nhu cầu vẫn còn) → lượt sau máy KHÔNG đặt lại ĐÚNG (mã, NSX) đó, dòng NSX khác giữ nguyên',
     born26.length >= 1 && del26.s < 300 && re26.s === 200
       && after26.length === born26.length - 1 && !after26.some(l => l.required_date === vetoDate)

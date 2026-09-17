@@ -24,6 +24,19 @@ const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho
 const err = r => `${r.j?.error?.code ?? ''} ${(r.j?.error?.message ?? '').slice(0, 110)}`.trim()
 const dPlus = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 
+// Xoá CÓ THỬ LẠI và KHÔNG nuốt câu lỗi. Bản cũ bọc `.catch(() => {})` khắp nơi nên khi staging chậm
+// (đo 17/09: cùng lượt có một phép 504) một lệnh dọn hỏng là fixture ở lại, [18] đỏ, mà không ai lần
+// ra được vì lỗi đã bị nuốt — phải bỏ lớp che mới thấy `23503 … referenced from "GroupDeliveryOrder"`.
+async function delRetry(tbl, filter) {
+  for (let i = 0; i < 3; i++) {
+    try { return await restWrite(tbl, 'DELETE', filter) }
+    catch (e) {
+      if (i === 2) { console.log(`⚠ dọn ${tbl} (${filter}) hỏng: ${String(e).slice(0, 200)}`); return null }
+      await new Promise(r => setTimeout(r, 400 * (i + 1)))
+    }
+  }
+}
+
 async function cleanup() {
   for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=like.${T}*`)) {
     // Chuyến ĐÃ HOÀN THÀNH tự sinh lệnh chuyển kho, và `TmsOrder.transfer_gdo_id` KHÔNG có CASCADE
@@ -34,14 +47,14 @@ async function cleanup() {
       await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
     }
     await restWrite('ProductionImport', 'PATCH', `from_gdo_id=eq.${g.id}`, { from_gdo_id: null }).catch(() => {})
-    await restWrite('wms_tasks', 'DELETE', `gdo_id=eq.${g.id}`).catch(() => {})
+    await delRetry('wms_tasks', `gdo_id=eq.${g.id}`)
     for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)) {
       for (const it of await restAll('OutboundItem', `select=id&do_id=eq.${d.id}`))
         await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${it.id}`).catch(() => {})
-      await restWrite('OutboundItem', 'DELETE', `do_id=eq.${d.id}`).catch(() => {})
+      await delRetry('OutboundItem', `do_id=eq.${d.id}`)
     }
-    await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`).catch(() => {})
-    await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`).catch(() => {})
+    await delRetry('OutboundDelivery', `gdo_id=eq.${g.id}`)
+    await delRetry('GroupDeliveryOrder', `id=eq.${g.id}`)
   }
   for (const w of await restAll('Warehouse', `select=id&code=like.${T}*`)) {
     // Chuyến Hoàn thành ⇒ tự sinh lệnh chuyển kho + DÒNG KẾ HOẠCH NHẬP ở kho đích; dòng đó trỏ
@@ -63,9 +76,9 @@ async function cleanup() {
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
-    await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await delRetry('Location', `warehouse_id=eq.${w.id}`)
     await restWrite('WarehouseZone', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})   // khu tạo ở [26]
-    await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
+    await delRetry('Warehouse', `id=eq.${w.id}`)
   }
   for (const m of await restAll('Material', `select=id&material_code=like.${T}*`))
     await restWrite('Material', 'DELETE', `id=eq.${m.id}`).catch(() => {})

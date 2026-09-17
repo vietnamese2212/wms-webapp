@@ -75,7 +75,7 @@ const SOURCE_OPTS = [
 const KIND_OPTS = [
   { value: 'MIN_PCT',  label: '≥ % hạn dùng' },
   { value: 'MIN_DAYS', label: '≥ số ngày còn lại' },
-  { value: 'FEFO',     label: 'Không đòi mốc' },
+  { value: 'FEFO',     label: 'Theo quy định kho' },
   { value: 'EXACT',    label: 'Chỉ định' },
   { value: 'SPLIT',    label: 'Chia phần theo SL' },
 ]

@@ -1543,6 +1543,47 @@ try {
     await restWrite('WarehouseZone', 'DELETE', `id=eq.${zone.id}`).catch(() => {})
   }
 
+  // ═══ [28] HÀNG KHÔNG CÓ DATE VẪN PHẢI CÓ VIỆC (user chốt 17/09) ══════════════════════════════
+  // "POSM hay loại hàng nào k có date nếu để trên kệ thì cũng cần phải hạ xuống chứ nhỉ? — bỏ ra
+  // khỏi việc cần làm ko ổn nhé."
+  // Luật đã có (thang ưu tiên bậc 3: mã không đo được date ⇒ hệ thống tự đặt quy tắc, nguồn SYSTEM,
+  // lý do NO_SHELF_LIFE) và gói 58 [10i] gác chỗ ĐẶT quy tắc — nhưng KHÔNG gói nào gác hệ quả mà
+  // user quan tâm: dòng đó có thật sự SINH VIỆC trên bảng "Cần hạ" hay không. Dòng để trống quy tắc
+  // thì `planGdoTasks` bỏ qua, nên nếu bậc 3 hỏng, POSM sẽ lặng lẽ biến mất khỏi Việc cần làm —
+  // không lỗi nào nổ, chỉ là hàng nằm trên kệ không ai được giao đi hạ.
+  {
+    const [matNS] = await restWrite('Material', 'POST', null, {
+      id: randomUUID(), material_code: `${T}-MNOSL`, material_description: 'QA POSM không hạn dùng',
+      short_name: 'QA POSM', category: CAT_A, base_unit: 'CS', cartons_per_pallet: 100,
+      shelf_life_days: null, is_active: true, created_at: nowIso(), updated_at: nowIso(),
+    })
+    await restWrite('InventoryEntry', 'POST', null, {
+      id: randomUUID(), pallet_code: `${T}-POSM_T3`, material_id: matNS.id, warehouse_id: whId,
+      location_id: far.T3, cartons_imported: 100, cartons_remaining: 100, cartons_reserved: 0,
+      status: 'IN_STOCK', production_date: dPlus(-40), expiry_date: null,
+      import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+    })
+    const tNS = await mkTrip('TPOSM')
+    const [itNS] = await restWrite('OutboundItem', 'POST', null, {
+      id: randomUUID(), do_id: tNS.do, material_id: matNS.id, material_code_raw: matNS.material_code,
+      cartons_ordered: 100, cartons_scanned: 0, status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+    })
+    // KHÔNG chốt date tay — để đúng đường máy tự đặt phải chạy
+    const rSt = await startTrip(tNS.gdo, {
+      license_plate: '51CPOSM1', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [],
+    })
+    const bNS = await board('LOWER')
+    const rowNS = (bNS.j?.data?.rows ?? []).find(x => (x.material_codes ?? []).includes(matNS.material_code))
+    check('[28a] Mã KHÔNG có hạn dùng (POSM) vẫn SINH VIỆC hạ — không bị loại khỏi Việc cần làm',
+      rSt.s === 200 && bNS.s === 200 && !!rowNS && Number(rowNS.n_pallets) > 0,
+      `start=${rSt.s} ${err(rSt)} dòng=${rowNS ? `${rowNS.n_pallets} pallet ở ${rowNS.from_code}` : 'KHÔNG CÓ'}`)
+    const itAfter = (await restAll('OutboundItem', `select=date_rule&id=eq.${itNS.id}`))[0]
+    check('[28b] …vì hệ thống tự đặt quy tắc cho nó (nguồn SYSTEM, lý do NO_SHELF_LIFE), không để trống',
+      itAfter?.date_rule?.kind === 'FEFO' && itAfter?.date_rule?.source === 'SYSTEM'
+        && itAfter?.date_rule?.reason === 'NO_SHELF_LIFE',
+      `rule=${JSON.stringify(itAfter?.date_rule ?? null)}`)
+  }
+
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════
   const allTasks = await restAll('wms_tasks', `select=id,gdo_id,item_id,qty_base,status&warehouse_id=eq.${whId}`)
   const openByItem = new Map()

@@ -152,7 +152,7 @@ function RuleTable({ drafts, onChange, cats, inheritNote }: {
                     <option value="">— chưa khai —</option>
                     <option value="MIN_PCT">≥ % hạn dùng</option>
                     <option value="MIN_DAYS">≥ số ngày còn lại</option>
-                    <option value="FEFO">Không đòi mốc</option>
+                    <option value="FEFO">Theo quy định date của kho</option>
                   </select>
                 </td>
                 <td className="px-2 py-1.5">
@@ -694,7 +694,7 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
                     className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm">
                     <option value="MIN_PCT">≥ % hạn dùng</option>
                     <option value="MIN_DAYS">≥ số ngày còn lại</option>
-                    <option value="FEFO">Không đòi mốc</option>
+                    <option value="FEFO">Theo quy định date của kho</option>
                     <option value="">— Xoá mức của loại này —</option>
                   </select>
                 </div>

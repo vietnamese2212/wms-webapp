@@ -21,7 +21,7 @@ import { CalendarClock, Boxes, AlertTriangle, Wand2 } from 'lucide-react'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useSetItemsDateRule, useInventoryByMaterial, useCheckDateRule, type DateRuleStock } from '@/api/hooks'
+import { useSetItemsDateRule, useInventoryByMaterial, useCheckDateRule, useWarehouses, type DateRuleStock } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { qtyLabel, qtyEntryDecimal, qtyEntryText, qtyFromEntryBase, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { isQaHeld } from '@/utils/qaHold'
@@ -54,11 +54,24 @@ const MAX_PARTS = 10   // khớp CHECK `date_rule_valid()` ở DB
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
-// "FEFO" KHÔNG quyết định thứ tự lấy hàng — thứ tự do NGUYÊN TẮC LUÂN CHUYỂN của kho quyết
-// (utils/rotation.ts, khai ở form Kho / Loại kho). Ở đây nó chỉ có nghĩa "không đòi mốc nào", nên
-// nhãn phải nói đúng thế: kho đặt LIFO mà nhãn ghi "hạn ngắn nhất trước" là nói dối người đọc.
-const simpleText = (k: SimpleRuleKind, v: unknown): string =>
-  k === 'FEFO' ? 'Không đòi mốc'
+// NHÃN CỦA `FEFO` = "THEO QUY ĐỊNH KHO", KHÔNG PHẢI "không đòi mốc" (user chốt 17/09: "User phải
+// vào lựa chọn: Theo quy định date của kho, loại kho — ví dụ theo FEFO thì làm theo FEFO").
+//
+// Vì sao đổi: "Không đòi mốc" đọc ra thành "dòng này không có quy định gì", nên nó biến một LỰA
+// CHỌN HỢP LỆ thành cái cửa để đi vòng qua bước chốt date — đo staging 17/09: 56/56 dòng mang nhãn
+// đó đều là mã FG01 CÓ hạn dùng, không một dòng nào thuộc ca mã-không-đo-được (ca mà nó sinh ra để
+// phục vụ). Thực chất dòng đó VẪN theo một quy định: NGUYÊN TẮC LUÂN CHUYỂN khai ở Cài đặt kho /
+// Loại kho (FEFO · FIFO · LIFO, `utils/rotation.ts`) — máy vẫn ghim pallet theo đúng nguyên tắc ấy.
+//
+// Nhãn KHÔNG ghi "hạn ngắn nhất trước": thứ tự do cấu hình kho quyết, kho đặt LIFO mà nhãn nói FEFO
+// là màn hình nói dối. Nơi nào BIẾT nguyên tắc của kho thì truyền `principle` để in kèm.
+export const ROTATION_TEXT: Record<string, string> = {
+  FEFO: 'FEFO — hạn ngắn lấy trước',
+  FIFO: 'FIFO — vào trước lấy trước',
+  LIFO: 'LIFO — vào sau lấy trước',
+}
+const simpleText = (k: SimpleRuleKind, v: unknown, principle?: string | null): string =>
+  k === 'FEFO' ? (principle ? `Theo quy định kho · ${principle}` : 'Theo quy định kho')
     : k === 'MIN_PCT' ? `≥ ${Number(v ?? 0)} %`
       : k === 'MIN_DAYS' ? `còn ≥ ${Number(v ?? 0)} ngày`
         : `Chỉ định ${String(v ?? '')}`
@@ -88,7 +101,7 @@ export function dateRuleLabel(
       text: (r.parts ?? []).map(p => `${qtyEntryText(Number(p.qty_base), units)} ${simpleText(p.kind, p.value)}`).join(' · ') || 'Chia phần',
       cls: 'bg-indigo-100 text-indigo-700', source, review,
     }
-  if (r.kind === 'FEFO') return { text: 'Không đòi mốc', cls: 'bg-slate-100 text-slate-600', source, review }
+  if (r.kind === 'FEFO') return { text: 'Theo quy định kho', cls: 'bg-slate-100 text-slate-600', source, review }
   if (r.kind === 'MIN_PCT') return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700', source, review }
   if (r.kind === 'MIN_DAYS') return { text: `còn ≥ ${Number(r.value ?? 0)} ngày`, cls: 'bg-teal-100 text-teal-700', source, review }
   return { text: `Chỉ định ${String(r.value ?? '')}`, cls: 'bg-purple-100 text-purple-700', source, review }
@@ -124,7 +137,7 @@ export function dateRuleCols(
  */
 export function masterRuleLabel(r: DateRule | null | undefined): { text: string; cls: string } | null {
   if (!r) return null
-  if (r.kind === 'FEFO')     return { text: 'Không đòi mốc', cls: 'bg-slate-100 text-slate-600' }
+  if (r.kind === 'FEFO')     return { text: 'Theo quy định kho', cls: 'bg-slate-100 text-slate-600' }
   if (r.kind === 'MIN_PCT')  return { text: `≥ ${Number(r.value ?? 0)} %`, cls: 'bg-sky-100 text-sky-700' }
   if (r.kind === 'MIN_DAYS') return { text: `còn ≥ ${Number(r.value ?? 0)} ngày`, cls: 'bg-teal-100 text-teal-700' }
   return { text: String(r.kind), cls: 'bg-slate-100 text-slate-600' }
@@ -280,6 +293,17 @@ export function SetDateRuleSheet(p: {
     // Muốn áp cho ít dòng hơn thì bỏ tick, rẻ hơn nhiều so với tick lại từ đầu.
     setChecked(new Set(p.targets.map(t => t.item_id)))
   }, [p.open, p.targets])
+
+  // NGUYÊN TẮC LUÂN CHUYỂN của kho — để lựa chọn "Theo quy định date của kho" nói ra nó là quy định
+  // NÀO (user 17/09: "ví dụ theo FEFO thì làm theo fefo"). Không có kho / chưa khai ⇒ không đoán,
+  // chỉ in câu chung; nói bừa "FEFO" cho kho đặt LIFO còn tệ hơn im lặng.
+  const { data: whList } = useWarehouses(true)
+  const rotation = useMemo(() => {
+    const w = (whList as { id: string; rotation_principle?: string | null }[] | undefined)
+      ?.find(x => x.id === p.warehouseId)
+    const k = String(w?.rotation_principle ?? '').toUpperCase()
+    return ROTATION_TEXT[k] ?? null
+  }, [whList, p.warehouseId])
 
   const uniq = (vals: (string | null | undefined)[]) =>
     [...new Set(vals.map(v => String(v ?? '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'))
@@ -477,9 +501,17 @@ export function SetDateRuleSheet(p: {
               className="h-9 sm:h-8 rounded-md border border-slate-300 bg-white px-2 text-[12px]">
               <option value="MIN_PCT">≥ % hạn dùng</option>
               <option value="MIN_DAYS">≥ số ngày còn lại</option>
-              <option value="FEFO">Không đòi mốc</option>
+              <option value="FEFO">Theo quy định date của kho / loại kho</option>
               <option value="EXACT">Chỉ định NSX / HSD / lô / tem</option>
             </select>
+            {/* Chọn "Theo quy định date của kho" thì không có số để gõ — thay vào đó NÓI RA nó là
+                quy định nào, kẻo người chốt tưởng mình vừa bỏ trống mốc date. */}
+            {bulkKind === 'FEFO' && (
+              <span className="text-[11px] text-slate-500">
+                {rotation ? <>lấy theo <b className="text-slate-700">{rotation}</b> (khai ở Cài đặt kho)</>
+                  : <>lấy theo nguyên tắc luân chuyển khai ở Cài đặt kho / Loại kho</>}
+              </span>
+            )}
             {bulkKind !== 'FEFO' && (
               <div className="relative">
                 <Input value={bulkVal} onChange={e => setBulkVal(e.target.value)}
@@ -715,7 +747,7 @@ function RuleCell({ parts, onChange, remaining, units, partOk }: {
             <option value="">— chưa khai —</option>
             <option value="MIN_PCT">≥ % hạn</option>
             <option value="MIN_DAYS">≥ số ngày</option>
-            <option value="FEFO">Không đòi mốc</option>
+            <option value="FEFO">Theo quy định date của kho / loại kho</option>
             <option value="EXACT">Chỉ định</option>
           </select>
           {(p.kind === 'MIN_PCT' || p.kind === 'MIN_DAYS') && (

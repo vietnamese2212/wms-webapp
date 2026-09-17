@@ -7,7 +7,7 @@
 //   • "Lấy PALLET NÀO trong ô này?" — đo staging 13/09: 16/18 việc đang chờ có ô còn nhiều pallet
 //     cùng mã (nhiều nhất 13 pallet), 8/18 ca các pallet đó khác NSX. Kế hoạch đã ghim đúng pallet;
 //     người đi lấy phải đọc được cái ghim đó, nếu không thì lấy pallet mặt ngoài là chuyện đương nhiên.
-//   • "Đúng date chưa?" — yêu cầu của dòng đơn (Không đòi mốc · ≥ 60 % · còn ≥ 35 ngày) đặt CẠNH
+//   • "Đúng date chưa?" — yêu cầu của dòng đơn (Theo quy định kho · ≥ 60 % · còn ≥ 35 ngày) đặt CẠNH
 //     %Date thật của từng pallet, để so bằng mắt chứ không phải nhớ.
 //   • "Giao cho ai, chuyến còn bao nhiêu?" — NPP · số DO · ghi chú CS · tiến độ dòng hàng.
 //

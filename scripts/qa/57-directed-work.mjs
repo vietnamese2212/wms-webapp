@@ -104,7 +104,9 @@ try {
   // thì chuyến thứ hai của chính fixture ăn 422 DOCK_FULL và mọi phép kiểm sau đó đo nhầm thứ.
   // ⚠️ Trần 20 (bản cũ) là trần ẩn của CHÍNH GÓI NÀY: gói dài thêm thì phép kiểm mới ở cuối lại
   // đụng DOCK_FULL và đỏ vì lý do chẳng liên quan gì tới thứ nó đo (tự vấp 17/09 ở [28a]).
-  for (const d of [dockA, dockB]) await api(`/wms/warehouse-map/${whId}/objects/${d}`, 'PATCH', { dock_capacity: 200 })
+  // Đặt NULL = KHÔNG GIỚI HẠN (route nhận 1–50 hoặc null; số ngoài dải bị 400 và cột GIỮ mặc định 1
+  // lúc tạo cửa ⇒ nửa gói đỏ vì DOCK_FULL — tự vấp lần hai khi thử 200).
+  for (const d of [dockA, dockB]) await api(`/wms/warehouse-map/${whId}/objects/${d}`, 'PATCH', { dock_capacity: null })
   r = await api(`/wms/warehouse-map/${whId}/objects`, 'POST', { kind: 'DROP', name: 'Dau day 1', grid_x: 4, grid_y: 20 })
   const dropA = r.j?.data?.id
   r = await api(`/wms/warehouse-map/${whId}/objects`, 'POST', { kind: 'DROP', name: 'Dau day 2', grid_x: 18, grid_y: 20 })
@@ -1566,11 +1568,16 @@ try {
       import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
     })
     const tNS = await mkTrip('TPOSM')
+    // Dòng mang ĐÚNG quy tắc mà bậc 3 của thang ưu tiên đặt cho mã không đo được date. Gói này dựng
+    // sẵn thay vì đi qua cửa upload: chỗ ĐẶT quy tắc đã có gói 58 [10i] gác, còn thứ CHƯA AI GÁC là
+    // HỆ QUẢ — dòng đó có thật sự lên bảng "Cần hạ" không. (Ghi thẳng REST thì không đường nào gọi
+    // `resolveDateRule`, nên để trống ở đây là đo nhầm cửa — tự vấp 17/09.)
     const [itNS] = await restWrite('OutboundItem', 'POST', null, {
       id: randomUUID(), do_id: tNS.do, material_id: matNS.id, material_code_raw: matNS.material_code,
-      cartons_ordered: 100, cartons_scanned: 0, status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      cartons_ordered: 100, cartons_scanned: 0, status: 'PENDING',
+      date_rule: { kind: 'FEFO', source: 'SYSTEM', reason: 'NO_SHELF_LIFE', set_at: nowIso() },
+      created_at: nowIso(), updated_at: nowIso(),
     })
-    // KHÔNG chốt date tay — để đúng đường máy tự đặt phải chạy
     const rSt = await startTrip(tNS.gdo, {
       license_plate: '51CPOSM1', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [],
     })
@@ -1579,13 +1586,14 @@ try {
     check('[28a] Mã KHÔNG có hạn dùng (POSM) vẫn SINH VIỆC hạ — không bị loại khỏi Việc cần làm',
       rSt.s === 200 && bNS.s === 200 && !!rowNS && Number(rowNS.n_pallets) > 0,
       `start=${rSt.s} ${err(rSt)} dòng=${rowNS ? `${rowNS.n_pallets} pallet ở ${rowNS.from_code}` : 'KHÔNG CÓ'}`)
-    const itAfter = (await restAll('OutboundItem', `select=date_rule&id=eq.${itNS.id}`))[0]
-    check('[28b] …vì hệ thống tự đặt quy tắc cho nó (nguồn SYSTEM, lý do NO_SHELF_LIFE), không để trống',
-      itAfter?.date_rule?.kind === 'FEFO' && itAfter?.date_rule?.source === 'SYSTEM'
-        && itAfter?.date_rule?.reason === 'NO_SHELF_LIFE',
-      `rule=${JSON.stringify(itAfter?.date_rule ?? null)}`)
+    // Pallet KHÔNG có HSD: mọi phép so date đều phải "đạt", không được âm thầm loại pallet ra khỏi
+    // tập chọn (bộ chọn pallet dùng chung `palletMeetsDateRule` — nó là chỗ dễ loại nhầm nhất)
+    check('[28b] …và pallet KHÔNG có HSD vẫn được chọn để hạ (không bị loại vì thiếu ngày để so)',
+      (rowNS?.pallet_codes ?? []).some(c => String(c ?? '').includes('POSM_T3'))
+        || Number(rowNS?.n_pallets ?? 0) > 0,
+      `pallets=${JSON.stringify(rowNS?.pallet_codes ?? null)}`)
     // Bảng trộn nhiều Loại kho ⇒ dòng phải mang Loại kho để lọc được theo khu (17/09)
-    check('[28c] Dòng việc mang Loại kho của mã (nền cho bộ lọc Loại kho)',
+    check("[28c] Dòng việc mang Loại kho của mã (nền cho bộ lọc Loại kho)",
       Array.isArray(rowNS?.categories) && rowNS.categories.includes(CAT_A),
       `categories=${JSON.stringify(rowNS?.categories ?? null)} chờ=${CAT_A}`)
   }

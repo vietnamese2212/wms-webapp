@@ -1370,6 +1370,20 @@ try {
             { assignee_id: null, assignee_name: null, updated_at: nowIso() })
         }
 
+        // BADGE ĐẾM TRÊN TAB (17/09) — số phải ĐÚNG Ở MỌI CHỖ ĐANG ĐỨNG. Bản đầu chỉ nạp dòng fill ở
+        // tab gộp nên đứng ở "Cần đưa ra" thì badge "Cần hạ" thiếu mất phần fill: con số đổi theo chỗ
+        // đang đứng thì không số nào tin được.
+        {
+          const bM = await board('MOVE')
+          check('[27f] Badge tab "Cần hạ" đếm ĐỦ cả phần fill kể cả khi đang đứng ở tab khác',
+            Number(bM.j?.data?.totals?.fill_pending ?? -1) === fillPl
+              && Number(bM.j?.data?.totals?.to_lower ?? 0) >= fillPl,
+            `fill_pending=${bM.j?.data?.totals?.fill_pending} to_lower=${bM.j?.data?.totals?.to_lower} pallet_fill=${fillPl}`)
+          check('[27g] …nhưng DÒNG fill không lẫn vào bảng "Cần đưa ra" (mỗi việc một bảng)',
+            (bM.j?.data?.rows ?? []).every(x => x.kind !== 'FILL'),
+            `lẫn=${(bM.j?.data?.rows ?? []).filter(x => x.kind === 'FILL').length}`)
+        }
+
         // Bảng "Sắp quét" của thủ kho là việc theo TEM của chuyến — không được lẫn dòng fill vào
         const bS = await board('SCAN', `&gdo_id=${tF.gdo}`)
         check('[27c] Bảng Sắp quét (thủ kho) KHÔNG lẫn dòng fill — đó là việc của xe nâng',

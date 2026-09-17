@@ -923,7 +923,9 @@ export interface DirectedTrip {
 }
 export interface DirectedBoard {
   rows: DirectedRow[]
-  totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number }
+  // `to_lower`/`to_move` ĐÃ gồm phần lệnh fill (đếm theo PALLET như mọi ô khác) để badge trên tab
+  // đúng ở mọi chỗ đang đứng; `fill_pending` tách riêng cho ai cần biết phần nào là fill
+  totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number; fill_pending?: number }
   settings?: { separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number }
   trips?: DirectedTrip[]
   auto_replanned?: number     // số chuyến vừa được máy sắp lại theo tồn mới ngay trước lần tải này (14/09)

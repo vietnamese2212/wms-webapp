@@ -178,19 +178,27 @@ export async function getBoard(req: Request, res: Response) {
     // Gác quyền ở đây như `getInbox`: không có quyền Fill thì không thấy dòng của module đó.
     const sepLower = board.settings?.separate_lowering_forklift !== false
     const fillBoardMode: Mode = sepLower ? 'LOWER' : 'MOVE'
-    if (mode === fillBoardMode && !gdoId
-        && (userHasPerm(req, 'fill', 'execute') || userHasPerm(req, 'fill', 'view'))) {
+    if (!gdoId && (userHasPerm(req, 'fill', 'execute') || userHasPerm(req, 'fill', 'view'))) {
+      // Nạp ở MỌI tab, không chỉ tab gộp: badge đếm trên tab phải đúng CẢ KHI đang đứng ở tab khác
+      // (17/09) — người mở "Cần đưa ra" vẫn phải thấy "Cần hạ 22" gồm cả phần fill, nếu không thì
+      // con số trên tab đổi tuỳ chỗ đang đứng, và số nào cũng không tin được.
       const fills = await fillRowsOfWarehouse(whId)
-      if (fills.length) {
+      // Ô "Việc còn lại" của band đếm theo VIỆC (một dòng bảng gom nhiều việc cùng ô), không đếm
+      // theo DÒNG ⇒ cộng số PALLET CÒN PHẢI HẠ của lệnh fill, không cộng số dòng. Cộng nhầm đơn vị
+      // thì band và bảng nói hai con số mà không ai biết số nào đúng (gói 57 [27b] bắt ngay).
+      const fillPallets = fills.reduce((s, f) =>
+        s + Math.max(0, Number(f.n_pallets ?? 0) - Number(f.n_done ?? 0)), 0)
+      if (board.totals) {
+        board.totals.fill_pending = fillPallets
+        // Badge tab: phần fill thuộc về tab mà xe nâng đang nhìn để hạ
+        const key = fillBoardMode === 'LOWER' ? 'to_lower' : 'to_move'
+        board.totals[key] = Number(board.totals[key] ?? 0) + fillPallets
+      }
+      if (mode === fillBoardMode && fills.length) {
         board.rows = mergeFillRows(
           (board.rows ?? []) as Record<string, unknown>[], fills,
         ) as unknown as RoutableRow[]
         board.fill_rows = fills.length
-        // Ô "Việc còn lại" của band đếm theo VIỆC (một dòng bảng gom nhiều việc cùng ô), không đếm
-        // theo DÒNG ⇒ cộng số PALLET CÒN PHẢI HẠ của lệnh fill, không cộng số dòng. Cộng nhầm đơn vị
-        // thì band và bảng nói hai con số mà không ai biết số nào đúng (gói 57 [27b] bắt ngay).
-        const fillPallets = fills.reduce((s, f) =>
-          s + Math.max(0, Number(f.n_pallets ?? 0) - Number(f.n_done ?? 0)), 0)
         if (board.totals) board.totals.pending = Number(board.totals.pending ?? 0) + fillPallets
       }
     }

@@ -292,6 +292,11 @@ interface DirectedWorkFilters {
   tab: 'INBOX' | 'LOWER' | 'MOVE' | 'SCAN'   // INBOX = hộp việc theo người (đợt C, 12/09) — mặc định cho người mới
   gdoId: string
   mine: boolean
+  // Phạm vi của bảng "Cần hạ" (17/09, user: "tại sao k tạo switch việc chung, việc riêng"): rổ việc
+  // hạ là CHUNG toàn kho, nhưng trong đó có hai loại việc riêng — việc ai đó đã bấm "Nhận" (giữ mềm
+  // 10 phút) và dòng lệnh fill đã giao tên (giữ cả ngày). Bảng "Cần đưa ra" có bộ lọc riêng (`mine`,
+  // lọc ở BE theo người được gán lúc Bắt đầu chuyến) nên KHÔNG dùng chung field này.
+  scope: 'all' | 'mine' | 'free'
   hideDone: boolean
 }
 interface DashboardFilters {
@@ -571,7 +576,7 @@ function initialFilters() {
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
     dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[],
                     matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
-    directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, hideDone: false },
+    directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, scope: 'all' as const, hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(),
                     ordersFrom: '', ordersTo: '', page: 1, pageSize: 100 },

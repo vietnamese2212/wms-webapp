@@ -470,7 +470,11 @@ export default function DirectedWork() {
   const confirmTasks = useConfirmTasks()
   const claimTasks = useClaimTasks()
   const { data, isLoading } = useDirectedBoard(f.warehouseId, boardTab, {
-    enabled: tab !== 'INBOX',
+    // CHẠY CẢ Ở HỘP VIỆC (17/09): badge đếm trên tab "Cần hạ"/"Cần đưa ra" lấy số từ đây, mà Hộp
+    // việc lại là tab MỞ ĐẦU — không nạp thì đúng lúc cần thấy số nhất lại không có số nào. Đổi lại
+    // một lời gọi: bù lại, bấm sang tab vai là có dữ liệu ngay, và hàng đợi sắp-lại-theo-tồn +
+    // tự-ra-lệnh-fill có thêm một cửa xả. Chưa chọn kho thì vẫn không gọi.
+    enabled: !!f.warehouseId,
     gdoId: tab === 'SCAN' ? (f.gdoId || null) : null,
     // "Của tôi" chỉ có nghĩa ở bảng xe chuyển (việc gắn theo người được giao lúc Bắt đầu)
     driverId: tab === 'MOVE' && f.mine ? (me ?? null) : null,
@@ -485,10 +489,24 @@ export default function DirectedWork() {
   }, [sepLower, tab, setF])
   const tabs = TABS.filter(x => sepLower || x.key !== 'LOWER')
 
+  // VIỆC RIÊNG TRONG RỔ CHUNG (17/09, user: "tại sao k tạo switch việc chung, việc riêng"):
+  // rổ "Cần hạ" là của cả kho, nhưng trong đó có hai thứ đã có chủ — việc ai đó bấm "Nhận" (giữ mềm
+  // 10 phút) và dòng lệnh fill đã giao tên (giữ cả ngày). Lọc ở CLIENT vì cả hai dấu hiệu đã nằm sẵn
+  // trên dòng; gọi thêm API chỉ để lọc lại đúng thứ mình đang cầm là thừa một round-trip.
+  // ⚠️ Lọc KHÔNG được đụng việc đã xong/đã bỏ: chúng ở lại bảng để đối chiếu (luật 10/09) và người
+  // vừa làm xong phải còn thấy việc mình vừa ✓ dù nó không còn "của tôi" theo nghĩa đang cầm.
+  const isMineRow = (r: DirectedRow) =>
+    (r.claim_active && !!r.claimed_by && r.claimed_by === me) || (!!r.fill_assignee_id && r.fill_assignee_id === me)
+  const isFreeRow = (r: DirectedRow) => !r.claim_active && !r.fill_assignee_id
   const rows = useMemo(() => {
-    const all = data?.rows ?? []
-    return f.hideDone ? all.filter(r => !r.stage_done && !r.skipped) : all
-  }, [data, f.hideDone])
+    let all = data?.rows ?? []
+    if (f.hideDone) all = all.filter(r => !r.stage_done && !r.skipped)
+    if (tab === 'LOWER' && f.scope !== 'all') {
+      all = all.filter(r => r.stage_done || r.skipped || (f.scope === 'mine' ? isMineRow(r) : isFreeRow(r)))
+    }
+    return all
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, f.hideDone, f.scope, tab, me])
 
   // STT = THỨ TỰ ĐI TRÊN BẢNG NÀY, đánh lại 1..n theo đúng trình tự dòng đang hiện.
   // KHÔNG in `seq` thô: seq đếm theo TỪNG chuyến, và một dòng bảng gom nhiều việc cùng ô (STT lấy
@@ -549,6 +567,14 @@ export default function DirectedWork() {
   // Trang chuyến gác bằng quyền `outbound` — xe nâng thuần không vào được, đừng mời họ bấm vào 403
   const canOpenTrip = can(perms, 'outbound', 'view')
 
+  // Số đếm cho chính hai lựa chọn của switch — đếm trên TOÀN BỘ việc chưa xong của bảng, không đếm
+  // trên `rows` (đã bị chính bộ lọc cắt) kẻo chọn "của tôi" xong là ô "chưa ai nhận" tụt về 0.
+  const scopeCount = useMemo(() => {
+    const open = (data?.rows ?? []).filter(r => !r.stage_done && !r.skipped)
+    return { mine: open.filter(isMineRow).length, free: open.filter(isFreeRow).length }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, me])
+
   const filterDefs: FilterDef[] = [
     { key: 'wh', label: 'Kho', type: 'single', pinned: true, allLabel: tab === 'INBOX' ? 'Mọi kho được giao' : 'Chọn kho…',
       options: (whs ?? []).map(w => ({ value: (w as { id: string }).id, label: (w as { id: string; name?: string }).name ?? '' })),
@@ -561,6 +587,17 @@ export default function DirectedWork() {
       key: 'mine', label: 'Phạm vi', type: 'single' as const, pinned: true, allLabel: 'Của tôi (mặc định)',
       options: [{ value: 'all', label: 'Tất cả việc trong kho' }],
       value: f.mine ? '' : 'all', onChange: (v: string) => setF({ mine: v !== 'all' }),
+    }] : []),
+    // Bảng "Cần hạ" là rổ CHUNG nên mặc định "Tất cả" — đảo mặc định thành "của tôi" ở đây là sai:
+    // kho một hai xe nâng thì không ai bấm "Nhận", bộ lọc rỗng và người vào ca tưởng mình hết việc.
+    ...(tab === 'LOWER' ? [{
+      key: 'scope', label: 'Phạm vi', type: 'single' as const, pinned: true, allLabel: 'Tất cả (mặc định)',
+      options: [
+        { value: 'mine', label: `Việc của tôi${scopeCount.mine ? ` (${scopeCount.mine})` : ''}` },
+        { value: 'free', label: `Việc chung chưa ai nhận${scopeCount.free ? ` (${scopeCount.free})` : ''}` },
+      ],
+      value: f.scope === 'all' ? '' : f.scope,
+      onChange: (v: string) => setF({ scope: (v || 'all') as 'all' | 'mine' | 'free' }),
     }] : []),
     ...(tab !== 'INBOX' ? [{
       key: 'done', label: 'Việc đã xong', type: 'single' as const, allLabel: 'Hiện (mặc định — để đối chiếu)',
@@ -625,6 +662,15 @@ export default function DirectedWork() {
   })), [data])
   // Số việc CỦA TÔI lên nhãn tab — mở trang là biết còn bao nhiêu, không cần vào tab
   const mineCount = inbox.data?.counts?.mine ?? 0
+  // Số trên từng tab. `to_lower`/`to_move` đến từ RPC nên đếm TOÀN KHO (không phụ thuộc tab đang mở)
+  // và BE đã cộng sẵn phần lệnh fill vào tab mà xe nâng nhìn để hạ.
+  const tabBadge = (k: Tab): number => {
+    const t = data?.totals ?? {}
+    if (k === 'INBOX') return mineCount
+    if (k === 'LOWER') return Number(t.to_lower ?? 0)
+    if (k === 'MOVE') return Number(t.to_move ?? 0)
+    return 0   // Sắp quét: theo TỪNG chuyến, một con số chung ở đây sẽ nói sai
+  }
   const apiErr = (e: unknown) => (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   const emptyReason = !f.warehouseId ? 'Chọn kho để xem việc cần làm'
     : (tab === 'SCAN' && !f.gdoId) ? 'Chọn chuyến để xem thứ tự quét' : null
@@ -668,8 +714,14 @@ export default function DirectedWork() {
                   className={`flex items-center justify-center sm:justify-start gap-1 rounded-md px-1 sm:px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
                     tab === x.key ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                   <x.icon className="hidden sm:block h-3.5 w-3.5" /> {x.label}
-                  {x.key === 'INBOX' && mineCount > 0 && (
-                    <span className={`ml-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${tab === 'INBOX' ? 'bg-white/25 text-white' : 'bg-red-500 text-white'}`}>{mineCount}</span>
+                  {/* ĐẾM SỐ TRÊN TỪNG TAB (17/09, user: "còn việc chưa hoàn thành thì có cảnh báo màu
+                      đỏ dạng đếm số nhỉ?"). Đỏ khi tab đó CÒN việc mà mình đang đứng chỗ khác — tab
+                      đang mở thì bảng đã nói rồi, badge hạ tông để khỏi kêu vào mặt người đang làm.
+                      Số của "Cần hạ"/"Cần đưa ra" lấy từ `totals` (đếm theo VIỆC, đã gồm pallet fill)
+                      nên đúng ở mọi chỗ đang đứng; tab "Sắp quét" không có số vì nó theo từng chuyến. */}
+                  {tabBadge(x.key) > 0 && (
+                    <span className={`ml-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${
+                      tab === x.key ? 'bg-white/25 text-white' : 'bg-red-500 text-white'}`}>{nf(tabBadge(x.key))}</span>
                   )}
                 </button>
               ))}

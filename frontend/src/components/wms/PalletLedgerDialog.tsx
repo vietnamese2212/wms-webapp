@@ -42,9 +42,13 @@ const KIND: Record<string, { label: string; cls: string }> = {
 }
 const kindOf = (k: string) => KIND[k] ?? { label: k, cls: 'bg-slate-100 text-slate-600' }
 
-/** Số lượng của dòng — base thì qua `qtyLabel` (luật một nguồn), sổ đóng gói ghi thùng thì nói "thùng". */
+/**
+ * Số lượng của dòng — MỌI nguồn đều là BASE, in qua `qtyLabel` (luật một nguồn: "N thùng + M hộp").
+ * ⚠️ Bản đầu 17/09 tin cái TÊN cột `packing_logs.qty_cartons` mà in thẳng "6.720 thùng" cho pallet
+ * 140 thùng — sai gấp 48 lần. Cột đó lưu BASE; đơn vị phải đọc ở chỗ GHI vào cột, không đọc ở tên.
+ */
 function qtyOf(e: PalletLedgerEvent, units: MatUnits | null): string | null {
-  if (e.qty_cartons != null) return `${nf(Number(e.qty_cartons))} thùng`
+  if (e.qty_cartons != null) return `${nf(Number(e.qty_cartons))} thùng`   // dự phòng: hiện chưa nguồn nào dùng
   if (e.qty_base == null) return null
   const n = Number(e.qty_base)
   const s = qtyLabel(Math.abs(n), units ?? {})

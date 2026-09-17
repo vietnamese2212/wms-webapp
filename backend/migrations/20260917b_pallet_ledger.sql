@@ -21,9 +21,13 @@
 --   · MB51 khoá theo mã hàng × plant × kho; sổ này khoá theo TEM PALLET (mịn hơn một bậc — SAP chỉ
 --     xuống tới pallet khi dùng Handling Unit).
 --
--- ĐƠN VỊ SỐ LƯỢNG: trả `qty_base` (mọi nguồn đã theo base unit) và RIÊNG `qty_cartons` cho sổ đóng
--- gói (nguồn duy nhất ghi theo THÙNG). KHÔNG quy đổi trong SQL — quy đổi là luật của `qtyUnits`
--- (BE⇄FE mirror), chép xuống đây là đẻ bản thứ ba.
+-- ĐƠN VỊ SỐ LƯỢNG: MỌI nguồn đều đã là BASE — trả đúng một trường `qty_base`, FE in qua `qtyLabel`
+-- (luật một nguồn, BE⇄FE mirror). KHÔNG quy đổi trong SQL.
+-- ⚠️ BẪY ĐÃ DẪM PHẢI ngay bản đầu 17/09: cột `packing_logs.qty_cartons` TÊN là "thùng" nhưng GIÁ TRỊ
+-- là BASE (xem `packingController`: "qty_cartons lưu SỐ BASE như mọi số lượng trong app"). Bản đầu
+-- tin cái tên nên in "6.720 thùng" cho pallet 140 thùng — sai gấp 48 lần, và người đọc sổ không có
+-- cách nào biết. Đây là lớp lỗi đã có trong sổ (`packing-qty-unit-mixup`, 06/09) — đọc TÊN cột để
+-- suy ra đơn vị là cách sai; phải đọc chỗ GHI vào cột đó.
 -- ============================================================================
 
 BEGIN;
@@ -54,8 +58,8 @@ BEGIN
            pl.packed_by_name         AS actor,
            NULL::text                AS from_code,
            NULL::text                AS to_code,
-           NULL::numeric             AS qty_base,
-           pl.qty_cartons            AS qty_cartons,
+           pl.qty_cartons            AS qty_base,   -- cột tên "cartons" nhưng GIÁ TRỊ là base (xem đầu file)
+           NULL::numeric             AS qty_cartons, -- giữ ô này rỗng: không nguồn nào ghi theo thùng
            pl.warehouse_id           AS warehouse_id,
            NULLIF(pl.machine_code,'') AS ref,
            pl.note                   AS note

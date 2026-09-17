@@ -130,6 +130,19 @@ let runB = null
     `http=${ok1.s} qty=${ok1.j?.data?.qty_cartons}`)
   const r2 = await api(`/wms/packing-logs/${id}/close`, 'POST', { qty_cartons: 54 })
   check('Đóng pallet lần 2 → 409 NOT_OPEN', r2.s === 409 && r2.j?.error?.code === 'NOT_OPEN', `http=${r2.s} code=${r2.j?.error?.code}`)
+
+  // [7b] ĐƠN VỊ CỦA SỐ TRÊN SỔ — lớp lỗi LẶP (`packing-qty-unit-mixup`, 06/09; tái phát 17/09 khi
+  // dựng Sổ pallet): cột `packing_logs.qty_cartons` TÊN là "thùng" nhưng GIÁ TRỊ là BASE. Màn nào
+  // đọc theo TÊN cột sẽ in sai gấp `units_per_carton` lần mà không lỗi nào nổ. Sổ pallet phải trả
+  // đúng ô `qty_base`, và ô `qty_cartons` phải RỖNG — không nguồn nào trong app ghi theo thùng.
+  const pal = (await restAll('packing_logs', `select=pallet_code&id=eq.${id}`))[0]?.pallet_code
+  if (pal) {
+    const led = await api(`/wms/inventory/pallet-ledger?pallet_code=${encodeURIComponent(pal)}`)
+    const pk = (led.j?.data?.events ?? []).find(x => x.kind === 'PACKED')
+    check('[7b] Sổ pallet đọc số sổ đóng gói là BASE (không tin cái tên cột "cartons")',
+      led.s === 200 && !!pk && Number(pk.qty_base) === 54 && pk.qty_cartons == null,
+      `http=${led.s} qty_base=${pk?.qty_base} qty_cartons=${pk?.qty_cartons} · chờ base=54, thùng=rỗng`)
+  }
 }
 
 // [8] HỦY TRANG có pallet → 409 RUN_HAS_PALLETS (bảo toàn sổ)

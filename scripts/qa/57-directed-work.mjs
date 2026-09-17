@@ -102,7 +102,9 @@ try {
   const dockB = r.j?.data?.id
   // Sức chứa rộng: gói này KHÔNG kiểm lại luật SUẤT CỬA (đó là việc của gói 56). Để mặc định 1 xe
   // thì chuyến thứ hai của chính fixture ăn 422 DOCK_FULL và mọi phép kiểm sau đó đo nhầm thứ.
-  for (const d of [dockA, dockB]) await api(`/wms/warehouse-map/${whId}/objects/${d}`, 'PATCH', { dock_capacity: 20 })
+  // ⚠️ Trần 20 (bản cũ) là trần ẩn của CHÍNH GÓI NÀY: gói dài thêm thì phép kiểm mới ở cuối lại
+  // đụng DOCK_FULL và đỏ vì lý do chẳng liên quan gì tới thứ nó đo (tự vấp 17/09 ở [28a]).
+  for (const d of [dockA, dockB]) await api(`/wms/warehouse-map/${whId}/objects/${d}`, 'PATCH', { dock_capacity: 200 })
   r = await api(`/wms/warehouse-map/${whId}/objects`, 'POST', { kind: 'DROP', name: 'Dau day 1', grid_x: 4, grid_y: 20 })
   const dropA = r.j?.data?.id
   r = await api(`/wms/warehouse-map/${whId}/objects`, 'POST', { kind: 'DROP', name: 'Dau day 2', grid_x: 18, grid_y: 20 })

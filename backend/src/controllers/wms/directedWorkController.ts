@@ -206,6 +206,27 @@ export async function getBoard(req: Request, res: Response) {
     if (autoFill.created || autoFill.recalled) board.auto_fill = {
       created: autoFill.created, recalled: autoFill.recalled, order_code: autoFill.order_code,
     }
+    // LOẠI KHO CỦA TỪNG DÒNG (17/09, user: "vậy có lẽ cần thêm filter về Loại kho nhé") — bảng nay
+    // trộn FG01 với POSM (hàng không date vẫn sinh việc), mà xe nâng thường chạy theo khu. Ghép ở
+    // TS chứ không sửa RPC: object mỗi dòng đã chạm trần 100 tham số của `jsonb_build_object` một
+    // lần (20260914c), và đây là một câu SELECT theo tập mã — rẻ hơn nhiều so với đụng lại RPC.
+    // Mảng vì một dòng có thể gom nhiều mã (ô nhiều mã cùng chuyến, cùng đích).
+    {
+      const rows = (board.rows ?? []) as unknown as Array<{ materials?: { id: string }[]; categories?: string[] }>
+      const ids = [...new Set(rows.flatMap(r => (r.materials ?? []).map(m => m?.id).filter(Boolean) as string[]))]
+      if (ids.length) {
+        const mats = await fetchAllByIdChunks(ids, chunk =>
+          supabase.from('Material').select('id, category').in('id', chunk).order('id')) as unknown as
+          Array<{ id: string; category: string | null }>
+        const catOf = new Map(mats.map(m => [m.id, m.category]))
+        for (const r of rows) {
+          r.categories = [...new Set((r.materials ?? [])
+            .map(m => catOf.get(m?.id ?? '') ?? null)
+            .filter((c): c is string => !!c))]
+        }
+      }
+    }
+
     // NHẶT DỌC ĐƯỜNG (13/09) — chỉ bảng "Cần hạ", chỉ khi kho khai bán kính. Ở bảng "Cần đưa ra"
     // mỗi việc đều kết thúc tại cửa nên tổng quãng đường KHÔNG phụ thuộc thứ tự; sắp lại ở đó chỉ
     // làm người ta nhảy chuyến mà không được gì. Sắp ở BACKEND vì BFS trên lưới 200×200 thuộc về

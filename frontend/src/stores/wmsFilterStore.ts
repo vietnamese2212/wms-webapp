@@ -297,6 +297,7 @@ interface DirectedWorkFilters {
   // 10 phút) và dòng lệnh fill đã giao tên (giữ cả ngày). Bảng "Cần đưa ra" có bộ lọc riêng (`mine`,
   // lọc ở BE theo người được gán lúc Bắt đầu chuyến) nên KHÔNG dùng chung field này.
   scope: 'all' | 'mine' | 'free'
+  cats: string[]            // lọc Loại kho của mã trong dòng việc (17/09) — chọn NHIỀU loại
   hideDone: boolean
 }
 interface DashboardFilters {
@@ -576,7 +577,8 @@ function initialFilters() {
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
     dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[],
                     matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
-    directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, scope: 'all' as const, hideDone: false },
+    directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, scope: 'all' as const,
+                    cats: [] as string[], hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(),
                     ordersFrom: '', ordersTo: '', page: 1, pageSize: 100 },

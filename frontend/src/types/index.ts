@@ -844,6 +844,8 @@ export interface DirectedRow {
   // CẶP id+mã dựng trong SQL (12/09) — nút "Tồn" cần material_id, mà hai mảng agg rời nhau không
   // bảo đảm cùng thứ tự nên ghép theo chỉ số sẽ tra nhầm mã ở ô chứa nhiều mã
   materials: { id: string; code: string | null }[]
+  // Loại kho của (các) mã trong dòng — BE ghép ở TS (17/09) để lọc theo khu; mảng vì ô có thể nhiều mã
+  categories?: string[]
   material_name: string | null
   pallet_codes: (string | null)[]
   needs_lower: boolean

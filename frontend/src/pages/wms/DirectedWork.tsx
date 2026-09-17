@@ -501,12 +501,15 @@ export default function DirectedWork() {
   const rows = useMemo(() => {
     let all = data?.rows ?? []
     if (f.hideDone) all = all.filter(r => !r.stage_done && !r.skipped)
+    // Loại kho: dòng gom nhiều mã thì GIAO ≥ 1 là thấy — cùng luật với chuyến chở lẫn loại hàng
+    // (`categoryAllowed`), đừng đòi mọi mã trong ô cùng loại mới hiện.
+    if (f.cats.length) all = all.filter(r => (r.categories ?? []).some(c => f.cats.includes(c)))
     if (tab === 'LOWER' && f.scope !== 'all') {
       all = all.filter(r => r.stage_done || r.skipped || (f.scope === 'mine' ? isMineRow(r) : isFreeRow(r)))
     }
     return all
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, f.hideDone, f.scope, tab, me])
+  }, [data, f.hideDone, f.scope, f.cats, tab, me])
 
   // STT = THỨ TỰ ĐI TRÊN BẢNG NÀY, đánh lại 1..n theo đúng trình tự dòng đang hiện.
   // KHÔNG in `seq` thô: seq đếm theo TỪNG chuyến, và một dòng bảng gom nhiều việc cùng ô (STT lấy
@@ -569,6 +572,13 @@ export default function DirectedWork() {
 
   // Số đếm cho chính hai lựa chọn của switch — đếm trên TOÀN BỘ việc chưa xong của bảng, không đếm
   // trên `rows` (đã bị chính bộ lọc cắt) kẻo chọn "của tôi" xong là ô "chưa ai nhận" tụt về 0.
+  // Loại kho CÓ MẶT trong bảng — đọc từ dòng chưa lọc để menu không tự rỗng đi khi đang lọc
+  const catOpts = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of data?.rows ?? []) for (const c of r.categories ?? []) s.add(c)
+    return [...s].sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [data])
+
   const scopeCount = useMemo(() => {
     const open = (data?.rows ?? []).filter(r => !r.stage_done && !r.skipped)
     return { mine: open.filter(isMineRow).length, free: open.filter(isFreeRow).length }
@@ -592,6 +602,14 @@ export default function DirectedWork() {
     // (user chốt 17/09: "Tôi muốn switch chứ ko phải là filter"). Chip lọc phải bấm mở menu mới biết
     // có những lựa chọn nào; đây là thứ xe nâng lật qua lật lại suốt ca nên cả ba lựa chọn + số của
     // từng cái phải nhìn thấy mà không bấm nhát nào. Xem <ScopeSwitch> dưới bảng tab.
+    // LOẠI KHO — chọn NHIỀU (user 17/09: "filter dạng multi đc nha"). Option lấy từ CHÍNH các dòng
+    // đang có, không lấy cả danh mục: xe nâng chỉ cần lọc thứ trước mặt, và loại không có việc nào
+    // mà vẫn hiện trong menu thì tick vào ra bảng trắng.
+    ...(tab !== 'INBOX' && catOpts.length > 1 ? [{
+      key: 'cat', label: 'Loại kho', type: 'multi' as const, searchable: false, pinned: true,
+      options: catOpts.map(c => ({ value: c, label: c })), selected: f.cats,
+      onChange: (v: string[]) => setF({ cats: v }),
+    }] : []),
     ...(tab !== 'INBOX' ? [{
       key: 'done', label: 'Việc đã xong', type: 'single' as const, allLabel: 'Hiện (mặc định — để đối chiếu)',
       options: [{ value: 'hide', label: 'Ẩn việc đã xong' }],

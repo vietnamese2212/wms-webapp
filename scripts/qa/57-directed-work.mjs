@@ -1582,6 +1582,10 @@ try {
       itAfter?.date_rule?.kind === 'FEFO' && itAfter?.date_rule?.source === 'SYSTEM'
         && itAfter?.date_rule?.reason === 'NO_SHELF_LIFE',
       `rule=${JSON.stringify(itAfter?.date_rule ?? null)}`)
+    // Bảng trộn nhiều Loại kho ⇒ dòng phải mang Loại kho để lọc được theo khu (17/09)
+    check('[28c] Dòng việc mang Loại kho của mã (nền cho bộ lọc Loại kho)',
+      Array.isArray(rowNS?.categories) && rowNS.categories.includes(CAT_A),
+      `categories=${JSON.stringify(rowNS?.categories ?? null)} chờ=${CAT_A}`)
   }
 
   // ═══ [17] BẤT BIẾN CHUNG ═════════════════════════════════════════════════════════════════════

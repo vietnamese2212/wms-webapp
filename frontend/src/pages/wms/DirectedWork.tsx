@@ -685,6 +685,22 @@ export default function DirectedWork() {
     </div>
   )
 
+  // RỖNG VÌ BỘ LỌC ≠ RỖNG VÌ KHO HẾT VIỆC. Câu "Không có việc nào cho kho này — kiểm kho đã bật
+  // Hướng dẫn chưa…" là đúng khi kho thật sự không có việc, nhưng đem nói lúc người ta vừa gạt switch
+  // sang "Của tôi" thì nó đẩy người đọc đi kiểm ba thứ không liên quan (đo thật 17/09: kho đang có
+  // 16 việc). Nói đúng lý do và mở sẵn lối ra.
+  const scopeOpenTotal = scopeCount.mine + scopeCount.free
+  const scopeEmpty = tab === 'LOWER' && f.scope !== 'all' && rows.length === 0 && scopeOpenTotal > 0
+  const scopeEmptyBlock = !scopeEmpty ? null : (
+    <div className="py-6 text-center text-[11px] text-slate-400">
+      <div>Không có việc nào trong phạm vi <b>{f.scope === 'mine' ? 'Của tôi' : 'Chưa ai nhận'}</b>.</div>
+      <button type="button" onClick={() => setF({ scope: 'all' })}
+        className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-medium text-sky-800 hover:bg-sky-100">
+        Xem tất cả {nf(scopeOpenTotal)} việc của kho
+      </button>
+    </div>
+  )
+
   const cols = COLS[tab]
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -868,7 +884,8 @@ export default function DirectedWork() {
             )}
             {isLoading && <div className="py-6 text-center text-[11px] text-slate-400">Đang tải…</div>}
             {!isLoading && emptyBlock}
-            {!isLoading && !emptyReason && rows.length === 0 && (
+            {!isLoading && scopeEmptyBlock}
+            {!isLoading && !emptyReason && !scopeEmpty && rows.length === 0 && (
               <div className="py-6 text-center text-[11px] text-slate-400">
                 <div>Không có việc nào cho kho này.</div>
                 <div className="mt-1 text-slate-500">Kiểm: kho bật <b>Hướng dẫn</b> chưa · chuyến đã <b>Bắt đầu</b> chưa · dòng hàng đã <b>khai quy định date</b> chưa.</div>
@@ -1014,7 +1031,8 @@ export default function DirectedWork() {
             <TableBody>
               {isLoading && <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
               {!isLoading && emptyBlock && <TableRow><TableCell colSpan={cols.length} className="px-2 py-0">{emptyBlock}</TableCell></TableRow>}
-              {!isLoading && !emptyReason && rows.length === 0 && (
+              {!isLoading && scopeEmptyBlock && <TableRow><TableCell colSpan={cols.length} className="px-2 py-0">{scopeEmptyBlock}</TableCell></TableRow>}
+              {!isLoading && !emptyReason && !scopeEmpty && rows.length === 0 && (
                 // KHÔNG khẳng định lý do (câu cũ nói thẳng "kho chạy chế độ Thủ công" — đo 10/09 thì cả ba
                 // vế đều SAI: kho đang Hướng dẫn, chuyến đã Bắt đầu, dòng đã chốt %Date; việc thiếu chỉ vì
                 // cờ bật SAU khi chuyến bắt đầu nên không ai sắp lại). Nêu 3 chỗ cần kiểm + đường phục hồi.

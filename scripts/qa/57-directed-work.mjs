@@ -1354,6 +1354,22 @@ try {
         globalThis.__qa57fill = { pendWith, fillPl }
         check('[27b] Dòng fill mang đủ số pallet phải hạ (đơn vị của ô "Việc còn lại")',
           fillPl > 0 && pendWith >= fillPl, `pending=${pendWith} pallet_fill=${fillPl}`)
+        // LỆNH GIAO TÊN = việc RIÊNG trong rổ chung. Bảng phải mang THEO ID người được giao, vì cửa
+        // quét trả 409 NOT_YOUR_TASK cho người khác — thiếu id thì màn chỉ có tên và không phân biệt
+        // nổi "của tôi" với "của người khác", người ta soi xong tem mới biết mình không làm được.
+        if (one?.fill_task_id) {
+          const meId = (await api('/auth/me')).j?.data?.user?.id ?? null
+          await restWrite('FillTask', 'PATCH', `id=eq.${one.fill_task_id}`,
+            { assignee_id: meId, assignee_name: 'QA57 Người giữ lệnh', updated_at: nowIso() })
+          const bA = await board('LOWER')
+          const rowA = (bA.j?.data?.rows ?? []).find(x => x.fill_task_id === one.fill_task_id)
+          check('[27e] Lệnh fill giao cho ai thì bảng mang theo ID người đó (để nói TRƯỚC, không để bấm rồi mới 409)',
+            !!meId && rowA?.fill_assignee_id === meId && !!rowA?.fill_assignee_name,
+            `id=${rowA?.fill_assignee_id ?? 'KHÔNG CÓ'} tên=${rowA?.fill_assignee_name ?? 'KHÔNG CÓ'}`)
+          await restWrite('FillTask', 'PATCH', `id=eq.${one.fill_task_id}`,
+            { assignee_id: null, assignee_name: null, updated_at: nowIso() })
+        }
+
         // Bảng "Sắp quét" của thủ kho là việc theo TEM của chuyến — không được lẫn dòng fill vào
         const bS = await board('SCAN', `&gdo_id=${tF.gdo}`)
         check('[27c] Bảng Sắp quét (thủ kho) KHÔNG lẫn dòng fill — đó là việc của xe nâng',

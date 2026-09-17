@@ -92,6 +92,11 @@ async function fillRowsOfWarehouse(whId: string): Promise<Record<string, unknown
     fill_task_id: t.id, fill_order_id: t.fill_order_id,
     fill_order_code: t.order?.order_code ?? null,
     fill_required_date: t.required_date,
+    // Lệnh fill GIAO ĐƯỢC cả ngày cho một người ⇒ dòng đó là việc RIÊNG nằm trong rổ chung. Phải trả
+    // cả ID (không chỉ tên) để bảng biết "của tôi" hay "của người khác": cửa quét trả 409
+    // NOT_YOUR_TASK cho dòng của người khác, nên bảng không nói trước là mời người ta soi xong tem
+    // mới biết mình không làm được — đúng lớp lỗi "bấm rồi mới biết" đã cấm ở dialog Bắt đầu chuyến.
+    fill_assignee_id: t.assignee_id,
     fill_assignee_name: t.assignee_name,
     fill_auto: (t.created_by ?? '') === 'Hệ thống',
   }))

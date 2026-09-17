@@ -118,12 +118,20 @@ const SKIP_LABEL: Record<string, string> = {
 }
 
 /** Trạng thái một dòng — chữ ngắn, đọc lướt được trên PDA. */
-function stateOf(r: DirectedRow, tab: BoardTab): { text: string; cls: string } {
+function stateOf(r: DirectedRow, tab: BoardTab, me?: string | null): { text: string; cls: string } {
   if (r.skipped) return { text: SKIP_LABEL[r.skip_reason ?? ''] ?? `hệ thống đã huỷ — ${r.skip_reason ?? 'kế hoạch đổi'}`, cls: 'text-slate-400' }
-  // Dòng fill đóng bằng QUÉT TEM, không bằng nút ✓ — nói thẳng ra để không ai đứng chờ một nút không có
-  if (r.kind === 'FILL') return {
-    text: `hạ xuống kho lẻ — quét tem${(r.n_done ?? 0) > 0 ? ` (đã quét ${nf(r.n_done ?? 0)}/${nf(r.n_pallets)})` : ''}`,
-    cls: 'text-sky-700',
+  // Dòng fill đóng bằng QUÉT TEM, không bằng nút ✓ — nói thẳng ra để không ai đứng chờ một nút không có.
+  // LỆNH ĐÃ GIAO TÊN = việc RIÊNG nằm trong rổ chung: cửa quét trả 409 NOT_YOUR_TASK cho người khác
+  // (chỉ ai có `fill.assign` mới nhận lại được) ⇒ phải nói TRƯỚC, đừng để soi xong tem mới biết.
+  if (r.kind === 'FILL') {
+    const mine = !!r.fill_assignee_id && !!me && r.fill_assignee_id === me
+    const other = !!r.fill_assignee_id && r.fill_assignee_id !== me
+    const done = (r.n_done ?? 0) > 0 ? ` · đã quét ${nf(r.n_done ?? 0)}/${nf(r.n_pallets)}` : ''
+    if (other) return { text: `đã giao ${r.fill_assignee_name ?? 'người khác'} — cần quyền nhận lệnh để làm thay${done}`, cls: 'text-amber-700' }
+    return {
+      text: `${mine ? 'giao cho bạn — ' : ''}hạ xuống kho lẻ, quét tem${done}`,
+      cls: mine ? 'text-sky-800 font-medium' : 'text-sky-700',
+    }
   }
   if (r.all_scanned) return { text: `✓ quét đủ${r.last_at ? ` ${formatTimestampTime(r.last_at)}` : ''}`, cls: 'text-green-600' }
   // Sắp quét gom theo Ô (14/09): nhóm 3 pallet mới quét 1 thì nói "đã quét 1/3", không phải im
@@ -256,8 +264,14 @@ function actionsFor(r: DirectedRow, tab: BoardTab, me: string | null, canConfirm
   // DÒNG FILL: một nút QUÉT, không có ✓ Xong. Fill chuyển pallet thật + khoá sức chứa ô đích nên phải
   // đi qua cửa quét (RPC nguyên tử) — cho bấm "Xong" ở đây là mở một cửa ghi tồn không ai kiểm.
   if (r.kind === 'FILL') {
+    // Giao người khác ⇒ nút MỜ (không khoá — luật 12/09: đừng lấy việc của người này làm điều kiện
+    // cho nút của người kia; ai có `fill.assign` vẫn nhận lại được ngay trong màn quét).
+    const other = !!r.fill_assignee_id && r.fill_assignee_id !== me
     return {
-      actions: canFill ? [{ key: 'scanfill', label: 'Quét', icon: ScanIcon, primary: true, onClick: () => fire.scanFill(r) }] : [],
+      actions: canFill ? [{
+        key: 'scanfill', label: 'Quét', icon: ScanIcon, primary: true, muted: other,
+        onClick: () => fire.scanFill(r),
+      }] : [],
       heldByOther: null,
     }
   }
@@ -787,7 +801,7 @@ export default function DirectedWork() {
               </div>
             )}
             {rows.map(r => {
-              const st = stateOf(r, boardTab)
+              const st = stateOf(r, boardTab, me)
               const first = r.group_key === nextKey
               const closed = r.stage_done || r.skipped
               const { actions, heldByOther } = actionsFor(r, boardTab, me, canConfirm, fire, canFill)
@@ -871,7 +885,6 @@ export default function DirectedWork() {
                   {(closed || heldByOther || isFill || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
                     <div className={`text-xs ${st.cls}`}>
                       {closed ? st.text : heldByOther ? `${heldByOther} đang làm` : st.text}
-                      {isFill && r.fill_assignee_name && <> · giao {r.fill_assignee_name}</>}
                     </div>
                   )}
                   {actions.length > 0 && (
@@ -942,7 +955,7 @@ export default function DirectedWork() {
                 </TableCell></TableRow>
               )}
               {rows.map(r => {
-                const st = stateOf(r, boardTab)
+                const st = stateOf(r, boardTab, me)
                 // Xong = GẠCH NGANG + xám, vẫn ở lại bảng (user chốt "phòng bị quên")
                 const closed = r.stage_done || r.skipped
                 const dim = closed ? 'text-slate-400 line-through' : ''
@@ -979,7 +992,7 @@ export default function DirectedWork() {
                           <div className="text-[9px] text-slate-400 font-mono">
                             {r.fill_order_code ?? '—'}{r.fill_auto ? ' · máy tạo' : ''}
                           </div>
-                          {r.fill_assignee_name && <div className="text-[9px] text-slate-500 truncate no-underline">giao {r.fill_assignee_name}</div>}
+                          {/* Ai được giao thì nói ở cột "Đi tới" cùng trạng thái (khỏi in tên hai lần) */}
                         </>) : (<>
                         <div className="font-mono font-semibold">{tripName(r)}</div>
                         <div className="text-[9px] text-slate-400">
@@ -998,6 +1011,8 @@ export default function DirectedWork() {
                           <div className="font-mono">{r.from_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</div>
                           {/* Ai hạ, lúc mấy giờ — người sau nhìn vào phải biết việc đã xong do ai (user chốt) */}
                           {closed && <div className={`text-[9px] no-underline ${r.skipped ? 'text-slate-400' : 'text-green-600'}`}>{st.text}</div>}
+                          {/* Dòng fill: nói TRƯỚC là lệnh đã giao ai (cửa quét 409 với người khác) */}
+                          {r.kind === 'FILL' && <div className={`text-[9px] no-underline ${st.cls}`}>{st.text}</div>}
                           {heldByOther && !r.stage_done && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
                         </TableCell>
                         <TableCell className={`${cell} text-right tabular-nums`}>{r.level_no ?? '—'}</TableCell>

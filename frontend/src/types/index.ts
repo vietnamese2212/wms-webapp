@@ -878,6 +878,9 @@ export interface DirectedRow {
   fill_order_id?: string
   fill_order_code?: string | null
   fill_required_date?: string | null   // NSX của lô phải hạ (lệnh fill chỉ định theo DATE, không ghim tem)
+  // Lệnh fill giao cả ngày cho một người ⇒ dòng RIÊNG trong rổ chung; cửa quét 409 NOT_YOUR_TASK với
+  // người khác (chỉ ai có `fill.assign` mới nhận lại được) nên bảng phải nói trước, đừng để bấm rồi mới biết
+  fill_assignee_id?: string | null
   fill_assignee_name?: string | null
   fill_auto?: boolean                  // lệnh do hệ thống tự đặt theo nhu cầu trong ngày
 }

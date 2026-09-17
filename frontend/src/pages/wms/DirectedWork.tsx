@@ -588,17 +588,10 @@ export default function DirectedWork() {
       options: [{ value: 'all', label: 'Tất cả việc trong kho' }],
       value: f.mine ? '' : 'all', onChange: (v: string) => setF({ mine: v !== 'all' }),
     }] : []),
-    // Bảng "Cần hạ" là rổ CHUNG nên mặc định "Tất cả" — đảo mặc định thành "của tôi" ở đây là sai:
-    // kho một hai xe nâng thì không ai bấm "Nhận", bộ lọc rỗng và người vào ca tưởng mình hết việc.
-    ...(tab === 'LOWER' ? [{
-      key: 'scope', label: 'Phạm vi', type: 'single' as const, pinned: true, allLabel: 'Tất cả (mặc định)',
-      options: [
-        { value: 'mine', label: `Việc của tôi${scopeCount.mine ? ` (${scopeCount.mine})` : ''}` },
-        { value: 'free', label: `Việc chung chưa ai nhận${scopeCount.free ? ` (${scopeCount.free})` : ''}` },
-      ],
-      value: f.scope === 'all' ? '' : f.scope,
-      onChange: (v: string) => setF({ scope: (v || 'all') as 'all' | 'mine' | 'free' }),
-    }] : []),
+    // ⚠ Phạm vi của bảng "Cần hạ" KHÔNG nằm trong FilterBar — nó là SWITCH hiện sẵn ngay trên bảng
+    // (user chốt 17/09: "Tôi muốn switch chứ ko phải là filter"). Chip lọc phải bấm mở menu mới biết
+    // có những lựa chọn nào; đây là thứ xe nâng lật qua lật lại suốt ca nên cả ba lựa chọn + số của
+    // từng cái phải nhìn thấy mà không bấm nhát nào. Xem <ScopeSwitch> dưới bảng tab.
     ...(tab !== 'INBOX' ? [{
       key: 'done', label: 'Việc đã xong', type: 'single' as const, allLabel: 'Hiện (mặc định — để đối chiếu)',
       options: [{ value: 'hide', label: 'Ẩn việc đã xong' }],
@@ -746,6 +739,33 @@ export default function DirectedWork() {
             {canReplan && !f.warehouseId && (
               <p className="px-3 pb-3 text-[11px] text-slate-400">Chọn một kho để xem khối Giám sát (ai đang làm · chờ hạ lâu nhất · % làm đúng kế hoạch).</p>
             )}
+          </div>
+        )}
+
+        {/* SWITCH PHẠM VI (17/09) — rổ "Cần hạ" là của cả kho, nhưng trong đó có việc đã có chủ:
+            ai đó bấm "Nhận" (giữ mềm 10 phút) · dòng lệnh fill đã giao tên (giữ cả ngày).
+            Số nằm NGAY trên nút để biết bấm sang có gì mà không phải bấm thử.
+            Mặc định "Tất cả" — đảo sang "của tôi" là sai: kho một hai xe nâng thì không ai bấm
+            Nhận, ô đó rỗng và người vào ca tưởng mình hết việc (cùng lớp "khoá tay nhau" lặp 3 lần). */}
+        {tab === 'LOWER' && (
+          <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-2">
+            <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Phạm vi</span>
+            <div className="grid grid-cols-3 gap-1 w-full sm:flex sm:w-auto">
+              {([
+                { k: 'all',  label: 'Tất cả',      n: scopeCount.mine + scopeCount.free, tip: 'Mọi việc hạ của kho' },
+                { k: 'mine', label: 'Của tôi',     n: scopeCount.mine, tip: 'Việc bạn đã bấm Nhận + dòng lệnh fill giao cho bạn' },
+                { k: 'free', label: 'Chưa ai nhận', n: scopeCount.free, tip: 'Việc chung chưa có ai cầm — cứ làm, không cần xin' },
+              ] as const).map(o => (
+                <button key={o.k} type="button" title={o.tip}
+                  onClick={() => setF({ scope: o.k })}
+                  className={`flex items-center justify-center gap-1.5 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
+                    f.scope === o.k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {o.label}
+                  <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${
+                    f.scope === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

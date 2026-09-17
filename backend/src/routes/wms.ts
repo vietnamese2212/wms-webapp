@@ -203,6 +203,9 @@ router.get('/inventory/stocktake-entries',         requirePerm('stocktake', 'vie
 router.get('/inventory/stocktake-log',             requirePerm('stocktake', 'view'), inventory.stocktakeLog)       // lịch sử kiểm (phải trước /:id)
 // Lịch sử chuyển vị trí — tab Lịch sử của màn Chuyển vị trí (người chuyển xem được, không đòi quyền kiểm kê)
 router.get('/inventory/move-log',                  requireAnyPerm(['inventory', 'move_location'], ['stocktake', 'view']), inventory.moveLog)
+// SỔ PALLET (17/09) — "pallet này ai đã tác động vào": hợp nhất 7 sổ sẵn có, chỉ ĐỌC.
+// Ai đang làm việc trong kho đều tra được; controller vẫn cắt phạm vi kho + loại hàng.
+router.get('/inventory/pallet-ledger',             requireAnyPerm(['inventory', 'view'], ['directed_work', 'view'], ['stocktake', 'view']), inventory.palletLedger)
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), inventory.uploadExcel)

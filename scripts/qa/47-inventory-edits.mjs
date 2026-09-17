@@ -179,6 +179,37 @@ const entryOf = async c => (await restAll('InventoryEntry',
   check('[16] Mã bán theo thùng: điều chỉnh số lẻ → 422 (luật số nguyên)', r.s === 422, `s=${r.s}`)
 }
 
+// ═══ 6b. SỔ PALLET — "tem này ai đã tác động vào" (17/09) ═══════════════════
+// User 17/09 hỏi có thứ gì na ná MB51 của SAP cho pallet ID không. App không có sổ hợp nhất — mỗi
+// nghiệp vụ một bảng — nên `pallet_ledger` ghép 7 nguồn lại. ORACLE: làm THẬT vài tác động lên một
+// tem rồi đòi sổ kể lại ĐỦ và ĐÚNG THỨ TỰ, kèm TÊN người; đọc qua chính endpoint người dùng đọc.
+{
+  const p = await mkPallet(L1.id)
+  const e = await entryOf(p)
+  const upc = num(MAT.units_per_carton)
+  await api(`/wms/inventory/${e.id}/adjust`, 'PATCH', { adjustment: -upc, note: `${T} soi sổ` })
+  await api('/wms/inventory/bulk-location', 'PATCH', { ids: [e.id], location_id: L2.id })
+
+  const r = await api(`/wms/inventory/pallet-ledger?pallet_code=${encodeURIComponent(p)}`)
+  const evs = r.j?.data?.events ?? []
+  const kinds = evs.map(x => x.kind)
+  check('[12b] Sổ pallet kể lại ĐỦ các tác động vừa làm (vào sổ tồn · điều chỉnh · chuyển vị trí)',
+    r.s === 200 && kinds.includes('RECEIVED') && kinds.includes('ADJUSTED') && kinds.includes('MOVED'),
+    `http=${r.s} ${evs.length} dòng: ${kinds.join(', ') || 'rỗng'}`)
+  const mv = evs.find(x => x.kind === 'MOVED')
+  check('[12c] Dòng chuyển vị trí nói ĐÚNG từ ô nào → tới ô nào và AI làm',
+    !!mv && mv.to_code === L2.location_code && !!mv.actor,
+    `${mv?.from_code ?? '?'} → ${mv?.to_code ?? '?'} · ai=${mv?.actor ?? 'TRỐNG'} · chờ tới ${L2.location_code}`)
+  const adj = evs.find(x => x.kind === 'ADJUSTED')
+  check('[12d] Dòng điều chỉnh mang số lượng ÂM đúng bằng phần đã trừ (đơn vị BASE)',
+    !!adj && num(adj.qty_base) === -upc, `qty_base=${adj?.qty_base} · chờ ${-upc}`)
+  check('[12e] Sổ sắp theo THỜI GIAN tăng dần (đọc như một câu chuyện, không phải đống dòng)',
+    evs.every((x, i) => i === 0 || new Date(evs[i - 1].at) <= new Date(x.at)),
+    evs.map(x => `${x.kind}@${String(x.at).slice(11, 19)}`).join(' '))
+  check('[12f] Tem không tồn tại → sổ rỗng, không nổ lỗi', (await api('/wms/inventory/pallet-ledger?pallet_code=KHONGCOTEMNAY_' + T)).s === 200)
+  check('[12g] Thiếu tem → 400 (không trả cả kho)', (await api('/wms/inventory/pallet-ledger?pallet_code=')).s === 400)
+}
+
 // ═══ 7. KIỂM KÊ 1 PALLET + GỠ CỜ LỆCH ═══════════════════════════════════════
 {
   const p = await mkPallet(L1.id)

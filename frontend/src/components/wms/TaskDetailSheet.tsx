@@ -12,8 +12,10 @@
 //   • "Giao cho ai, chuyến còn bao nhiêu?" — NPP · số DO · ghi chú CS · tiến độ dòng hàng.
 //
 // %Date đi qua `computePctDate` của `utils/shelfLife` (BE⇄FE mirror) — KHÔNG tự so ngày ở đây.
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Boxes, ExternalLink } from 'lucide-react'
+import { PalletLedgerDialog } from '@/components/wms/PalletLedgerDialog'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { dateRuleLabel } from '@/components/wms/SetDateRuleSheet'
@@ -114,6 +116,7 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
   const mats = (row.materials ?? []).filter(m => m?.id)
   const pallets = row.pallets ?? []
   const claim = claimNote(row, me ?? null)
+  const [ledger, setLedger] = useState<string | null>(null)   // sổ pallet mở từ danh sách tem
   // Khoá tra sổ chuyển vị trí: một pallet thì tra đúng tem, nhóm nhiều pallet thì tra theo Ô NGUỒN
   // (ô tra được vì sổ lưu cả `location_from_code`) — tra bằng tem đầu danh sách là kể thiếu.
   const moveKey = pallets.length === 1 ? (pallets[0].code ?? null) : (row.from_code ?? null)
@@ -257,7 +260,15 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
                       return (
                         <tr key={p.task_id} className={`border-t border-slate-100 ${off ? 'text-slate-400' : ''}`}>
                           <td className="px-1 py-1">
-                            <div className={`font-mono text-[10px] font-semibold break-all ${off ? 'line-through' : ''}`}>{p.code ?? '—'}</div>
+                            {/* Tem = NÚT mở sổ pallet (17/09): "tem này ai đã tác động vào" — trả lời
+                                ngay tại chỗ đang đứng, không phải sang trang Tồn kho tìm lại. */}
+                            {p.code ? (
+                              <button type="button" onClick={() => setLedger(p.code as string)}
+                                title="Xem lịch sử: ai đã tác động vào pallet này"
+                                className={`text-left font-mono text-[10px] font-semibold break-all underline decoration-dotted underline-offset-2 hover:text-sky-700 ${off ? 'line-through' : ''}`}>
+                                {p.code}
+                              </button>
+                            ) : <span className="text-[10px] text-slate-300">—</span>}
                             <div className="text-[9px] text-slate-400">
                               {p.loc_code ?? '—'}{p.level_no != null ? ` · tầng ${p.level_no}` : ''}
                               {p.done ? ' · đã quét' : p.skipped ? ' · đã bỏ' : ''}
@@ -312,6 +323,7 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
           </div>
         )}
       </SheetContent>
+      {ledger && <PalletLedgerDialog palletCode={ledger} onClose={() => setLedger(null)} />}
     </Sheet>
   )
 }

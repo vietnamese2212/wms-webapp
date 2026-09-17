@@ -46,6 +46,15 @@ import { applyMasterToOpenOrders, APPLY_MASTER_CAP } from '../../services/dateRu
 
 const now = () => new Date().toISOString()
 
+/**
+ * NGƯỜI ĐANG ĐĂNG NHẬP, dạng UUID — dùng làm người thực hiện khi client không gửi `employee_id`.
+ * Các cột vết (`OutboundScanEntry.scanned_by`…) có KHOÁ NGOẠI tới `Employee(id)` nên chỉ nhận UUID;
+ * trả null khi token không mang id hợp lệ, để vết thiếu chứ không làm hỏng lượt ghi nghiệp vụ.
+ */
+const UUID_ACTOR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const actorUuid = (req: Request): string | null =>
+  UUID_ACTOR.test(req.user?.sub ?? '') ? (req.user?.sub as string) : null
+
 // XÓA theo tập id: filter `.in()` nằm trên URL nên phải CHUNK 300 (đo 27/07 trên PostgREST staging:
 // 300 id = URL 11KB OK · 400 id đứt kết nối · 700 id → 400 Bad Request). Chuyến nhiều NPP / upload
 // lại file lớn dễ vượt ngưỡng này.
@@ -6390,7 +6399,11 @@ export async function scanItem(req: Request, res: Response) {
       rotation_override_reason: rotationOverride,
       pct_date,
       is_loose_picking: !!loose_picking_mode,
-      scanned_by: resolved_employee_id, scanned_at: t,
+      // AI QUÉT — lấy từ body, THIẾU thì rơi về người đang đăng nhập (17/09). `employee_id` do
+      // CLIENT gửi nên bundle cũ / tích hợp / script không gửi là mất vết mà không ai thấy: đo
+      // staging 17/09 **288/288 dòng quét xuất không có tên người**. Sổ pallet trả lời câu "ai
+      // tác động vào hàng" mà đúng bước làm tồn giảm nhiều nhất lại trống thì sổ vô dụng.
+      scanned_by: resolved_employee_id ?? actorUuid(req), scanned_at: t,
       created_at: t, updated_at: t,
     })
     if (insertErr) {
@@ -6784,6 +6797,7 @@ export async function manualLooseItem(req: Request, res: Response) {
         id: randomUUID(), item_id: itemId, inventory_entry_id: invEntry.id,
         pallet_code: matCode, cartons_scanned: newQty,
         is_loose_picking: true, loose_confirmed: false,
+        scanned_by: actorUuid(req),   // cửa ghi số TAY (hàng không tem) — trước 17/09 không ghi ai cả
         scanned_at: t, created_at: t, updated_at: t,
       })
     }

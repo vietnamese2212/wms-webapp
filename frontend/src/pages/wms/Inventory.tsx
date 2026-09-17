@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
 import type { AxiosError } from 'axios'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload, BadgeCheck, Factory, MapPin, Tag, CalendarDays } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload, BadgeCheck, Factory, MapPin, Tag, CalendarDays, History } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { useNavigate } from 'react-router-dom'
@@ -32,6 +32,7 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { PutawayOption, putawayBlocked, type PutawayLocRow } from '@/components/wms/PutawayOption'
 import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { PalletLedgerDialog } from '@/components/wms/PalletLedgerDialog'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { InventoryStatusBadge, inventoryStatusInfo } from '@/lib/statusMaps'
 import { parseCodeFields } from '@/components/shared/palletLabel'
@@ -1571,6 +1572,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const [adjNote, setAdjNote]         = useState('')
   const [showAdj, setShowAdj]         = useState(false)
   const [showLog, setShowLog]         = useState(false)
+  const [ledger, setLedger]           = useState<string | null>(null)   // sổ pallet (17/09)
   const [adjError, setAdjError]       = useState('')
   const { mutate: adjust, isPending } = useAdjustInventory()
   const { data: adjLog }              = useAdjustmentLog(e.id)
@@ -1785,6 +1787,16 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
             </div>
           ))}
 
+          {/* SỔ PALLET (17/09) — "tem này ai đã tác động vào": gộp nhập · chuyển ô · kiểm kê ·
+              điều chỉnh · dồn/tách · fill · xuất · nhật ký việc. Đặt NGAY TRÊN lịch sử điều chỉnh
+              vì điều chỉnh chỉ là MỘT trong các đường đó; khối cũ giữ nguyên (xem nhanh, 1 cú bấm). */}
+          <button
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
+            onClick={() => setLedger(e.pallet_code)}
+          >
+            <History className="h-3 w-3" /> Lịch sử pallet
+          </button>
+
           {/* Lịch sử điều chỉnh */}
           {adjLog && adjLog.length > 0 && (
             <div>
@@ -1817,6 +1829,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
           )}
         </div>
       </div>
+      {ledger && <PalletLedgerDialog palletCode={ledger} onClose={() => setLedger(null)} />}
     </div>
   )
 }

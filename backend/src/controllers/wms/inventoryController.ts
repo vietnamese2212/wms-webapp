@@ -1550,6 +1550,43 @@ export async function moveLog(req: Request, res: Response) {
   return ok(res, { rows: data ?? [], total: count ?? 0, page: pageNum, page_size: pageSize, date_from: dfrom, date_to: dto })
 }
 
+/**
+ * SỔ PALLET — GET /wms/inventory/pallet-ledger?pallet_code=  (17/09)
+ *
+ * User hỏi: *"ghi nhận pallet đó có lịch sử như thế nào — được ai tác động vào?"* (đối chiếu MB51
+ * của SAP). App không có sổ hợp nhất: mỗi nghiệp vụ một bảng. RPC `pallet_ledger` ghép 7 nguồn sẵn
+ * có lại, KHÔNG đẻ bảng mới và không đổi đường ghi nào — xem đầu file migration 20260917b.
+ *
+ * Quyền: ai đang làm việc trong kho đều tra được (Tồn kho · Việc cần làm · Kiểm kho), nhưng dữ liệu
+ * vẫn CẮT theo phạm vi kho + loại hàng như mọi đường đọc khác.
+ */
+export async function palletLedger(req: Request, res: Response) {
+  const raw = String((req.query.pallet_code ?? '') as string)
+  if (!raw.trim()) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu mã tem pallet')
+  if (raw.length > 200) return fail(res, 400, 'VALIDATION_ERROR', 'Mã tem quá dài')
+  if (searchLooksLikeInjection(raw)) return fail(res, 400, 'INVALID_INPUT', SEARCH_INVALID_MSG)
+  // Tem V2 mang đệm SPACE bên trong và DB lưu ĐÚNG như quét ra ⇒ chỉ trim ngoài (helper tập trung)
+  const code = normalizeQR(raw)
+
+  // Phạm vi RỖNG ≠ không giới hạn (memory `empty-scope-means-unlimited`)
+  const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+  if (scope !== null && !scope.length)
+    return ok(res, { pallet_code: code, entries: [], events: [] })
+
+  const { data, error } = await supabase.rpc('pallet_ledger', {
+    p_pallet_code: code, p_warehouse_ids: scope, p_limit: 400,
+  })
+  if (error) return fail(res, error)
+  const out = (data ?? { entries: [], events: [] }) as {
+    entries?: { category?: string | null }[]; events?: unknown[]
+  }
+  // Loại hàng: pallet thuộc đúng một mã ⇒ kiểm một lần trên bản ghi tồn, null-inclusive
+  if ((out.entries ?? []).length
+      && !(out.entries ?? []).some(e => categoryAllowed(req, e?.category ?? null)))
+    return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+  return ok(res, out)
+}
+
 export async function unflagEntry(req: Request, res: Response) {
   if (!(await guardEntriesScope(req, res, [req.params.id]))) return
   const now = new Date().toISOString()

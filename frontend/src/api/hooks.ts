@@ -1859,6 +1859,50 @@ export function useAdjustmentLog(entryId: string) {
   })
 }
 
+/** Một tác động lên pallet — hình dạng CHUNG mà `pallet_ledger` quy mọi nguồn về. */
+export interface PalletLedgerEvent {
+  grp: 'STOCK' | 'TASK'          // STOCK = hàng thật sự bị động vào · TASK = việc được giao/nhận/huỷ
+  at: string
+  kind: string                   // PACKED · RECEIVED · MOVED · COUNTED · ADJUSTED · MERGED · SPLIT · UNGROUPED · UNDONE · FILLED · PICKED · TASK_*
+  actor: string | null           // tên người; null = đường ghi không mang người (upload / script / dữ liệu cũ)
+  from_code: string | null
+  to_code: string | null
+  qty_base: number | null        // mọi nguồn theo BASE…
+  qty_cartons: number | null     // …trừ sổ đóng gói ghi theo THÙNG (không quy đổi trong SQL)
+  warehouse_id: string | null
+  ref: string | null             // chứng từ liên quan: Số xe · mã lệnh fill · máy SX
+  note: string | null
+}
+export interface PalletLedgerEntry {
+  entry_id: string; status: string | null
+  warehouse_id: string | null; warehouse_name: string | null; location_code: string | null
+  material_code: string | null; material_name: string | null; category: string | null
+  entry_unit: string | null; base_unit: string | null; units_per_carton: number | null
+  cartons_imported: number | null; cartons_remaining: number | null
+  production_date: string | null; expiry_date: string | null; batch: string | null; import_date: string | null
+}
+export interface PalletLedger {
+  pallet_code: string
+  entries: PalletLedgerEntry[]
+  events: PalletLedgerEvent[]
+}
+
+/**
+ * SỔ PALLET (17/09) — "tem này ai đã tác động vào, lúc nào". Hợp nhất 7 sổ sẵn có ở máy chủ
+ * (nhập · chuyển ô · kiểm kê · điều chỉnh · dồn/tách · fill · xuất · nhật ký việc), KHÔNG có bảng
+ * mới nào. `grp` tách "tác động lên HÀNG" với "nhật ký VIỆC" — xem `pallet_ledger` để biết vì sao.
+ */
+export function usePalletLedger(palletCode: string | null) {
+  return useQuery({
+    queryKey: ['pallet-ledger', palletCode],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inventory/pallet-ledger', { params: { pallet_code: palletCode } })
+      return data.data as PalletLedger
+    },
+    enabled: !!palletCode,
+  })
+}
+
 export function useBulkUpdateInventoryQA() {
   const qc = useQueryClient()
   return useMutation({

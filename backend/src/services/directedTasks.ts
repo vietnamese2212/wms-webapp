@@ -27,6 +27,7 @@ import {
 } from '../utils/rotation'
 import { resolveRotation, resolveWorkMode, type WhTypeConfigRow } from '../utils/putaway'
 import { qaHoldIds, qaNotHeldFilter } from './qaStatus'
+import { logPalletMoves, type MovedPallet } from './palletMoveLog'
 import { qtyLabel, type MatUnits } from '../utils/qtyUnits'
 
 // `InventoryEntry.updated_by` là KHOÁ NGOẠI tới `Employee(id)` — ghi TÊN vào là 23503. Mọi cửa
@@ -1152,6 +1153,10 @@ export async function confirmTasks(
   // kế tiếp nhận mặc định false) nên pallet chỉ được ghi lại MỘT lần.
   const looseMoves = todo.filter(x => x.kind === 'LOOSE_FEED' && x.entry_id
     && (undo ? restore && x.from_location_id : x.to_location_id))
+  // Vết cho SỔ CHUYỂN VỊ TRÍ (17/09) — gom theo ô ĐÍCH rồi ghi một lượt sau vòng lặp. Xem
+  // `services/palletMoveLog.ts`: nút ✓ Xong là cửa DUY NHẤT trong app đổi chỗ pallet chỉ bằng một
+  // nhát bấm (không quét tem), nên nó càng phải để lại dòng tra cứu được.
+  const logByDest = new Map<string, MovedPallet[]>()
   for (const r of looseMoves) {
     const dest = undo ? r.from_location_id : r.to_location_id
     const { data: mv, error: mvErr } = await supabase.rpc('move_pallets_to_location', {
@@ -1176,7 +1181,23 @@ export async function confirmTasks(
       }
     }
     movedPallets++
+    if (dest) {
+      const arr = logByDest.get(dest) ?? []
+      // Hoàn tác thì hai đầu đảo chiều: pallet đang ở ô nhặt lẻ, quay về ô cũ.
+      arr.push({
+        entry_id: r.entry_id as string,
+        from_location_id: undo ? r.to_location_id : r.from_location_id,
+        from_location_code: undo ? null : r.from_location_code,
+      })
+      logByDest.set(dest, arr)
+    }
   }
+  for (const [dest, moved] of logByDest)
+    await logPalletMoves({
+      moved, to_location_id: dest, actor_id: UUID_RE.test(actorId ?? '') ? actorId : null, actor_name: actor,
+      note: undo ? 'Hoàn tác ✓ Xong — ghi pallet về ô cũ (Việc cần làm)' : 'Hạ xuống kho lẻ — ✓ Xong ở Việc cần làm',
+      where: '/wms/directed/tasks/confirm',
+    })
 
   // CAS trên chính cột mốc giờ: hai người bấm cùng lúc thì chỉ một lượt khớp `is null`, lượt kia
   // trả 0 dòng ⇒ không ghi đè mốc, không ghi sổ lần hai.

@@ -6,6 +6,7 @@
 // (StocktakeLog có location_changed_to — gồm cả kiểm-kê-đổi-vị-trí), đủ kho/loại/người/từ ô→đến ô.
 // KHO của danh sách vị trí = KHO CỦA PALLET vừa quét (không theo bối cảnh Header — pallet là vật lý).
 import { useEffect, useRef, useState } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { QRScanner } from '@/components/shared/QRScanner'
 import { useLocationsReal, useBulkTransferLocation, useMoveLog, useWarehouses, type MoveLogRow } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -65,6 +66,20 @@ interface MovedRow { pallet: string; from: string; to: string; at: string }
 
 export default function MoveLocation() {
   const [tab, setTab] = useState<'scan' | 'history'>('scan')
+  // Link sâu "xem lịch sử chuyển của pallet này" (17/09) — từ panel chi tiết việc ở Việc cần làm:
+  // `?tab=history&pallet=<tem>`. Áp MỘT lần cho mỗi LƯỢT ĐIỀU HƯỚNG (khoá theo `location.key`, không
+  // theo giá trị tham số — lớp lỗi C29: bấm lại chính link đó thì URL không đổi và link chết).
+  const [sp] = useSearchParams()
+  const navKey = useLocation().key
+  const setMoveLog = useWmsFilterStore(s => s.setMoveLog)
+  const applied = useRef<string | null>(null)
+  useEffect(() => {
+    if (applied.current === navKey) return
+    applied.current = navKey
+    if (sp.get('tab') === 'history') setTab('history')
+    const pallet = sp.get('pallet')
+    if (pallet) setMoveLog({ search: pallet, page: 1 })
+  }, [navKey, sp, setMoveLog])
   return (
     <div className="flex flex-col h-full sm:p-3">
       {/* 2 tab pill — cùng khuôn StocktakeTabs (tab nội bộ, không đổi route) */}

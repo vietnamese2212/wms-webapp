@@ -17,6 +17,7 @@ import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
+import { logPalletMoves } from '../../services/palletMoveLog'
 import { putawayEnforces } from '../../utils/putaway'
 
 // Quyền duyệt cất khác quy tắc — MỘT quyền cho cả app (`inbound.putaway_override`), không đẻ thêm
@@ -1079,56 +1080,38 @@ export async function bulkTransferLocation(req: Request, res: Response) {
       case 'MAXMAT':    return fail(res, 422, 'PUTAWAY_VIOLATION',
         `Vị trí sẽ có ${parts[1] ?? ''} mã, kho giới hạn ${parts[2] ?? ''} mã cho một vị trí.`)
       default: {
-        // 1 lần chuyển vị trí = 1 lượt kiểm kê của pallet (màn Chuyển vị trí quét QR): ghi
-        // StocktakeLog append-only (chỉ xác nhận pallet có mặt — physical_qty null, không đếm SL)
-        // + stocktake_at để tab Tổng hợp KK/Luân phiên ABC tính "đã kiểm". Ghi SAU khi move đã
-        // commit; lỗi ghi log KHÔNG làm hỏng lượt chuyển (cùng cách stocktakeEntry).
-        if (countAsStocktake) {
-          try {
-            type MovingSnap = {
-              id: string; pallet_code: string; location_id: string | null; cartons_remaining: number | null
-              material_id: string | null
-              material?: { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
-              location?: { location_code?: string } | null
-            }
-            const dest = destLoc as { warehouse_id?: string | null; location_code?: string | null; categories?: string[] | null } | null
-            const rows = (moving as unknown as MovingSnap[]).map(en => ({
-              id: randomUUID(),
-              entry_id: en.id,
-              pallet_code: en.pallet_code,
-              location_id,                              // vị trí ĐÍCH — nơi pallet thực đứng lúc kiểm
-              location_code: dest?.location_code ?? null,
-              warehouse_id: dest?.warehouse_id ?? null,
-              categories: dest?.categories ?? null,
-              material_id: en.material_id,
-              material_code: en.material?.material_code ?? null,
-              short_name: en.material?.short_name ?? null,
-              base_unit: en.material?.base_unit ?? null,
-              entry_unit: en.material?.entry_unit ?? null,
-              units_per_carton: en.material?.units_per_carton ?? null,
-              app_qty: Number(en.cartons_remaining ?? 0),
-              physical_qty: null,
-              diff: null,
-              is_flagged: false,
-              note: 'Kiểm kê qua chuyển vị trí (quét QR)',
-              location_changed_to: en.location_id !== location_id ? location_id : null,
-              location_from_id:   en.location_id,
-              location_from_code: en.location?.location_code ?? null,
-              counted_by: updatedBy,
-              counted_by_name: req.user?.name ?? null,
-              counted_at: now, created_at: now, updated_at: now,
-            }))
-            if (rows.length > 0) {
-              const { error: logErr } = await supabase.from('StocktakeLog').insert(rows)
-              if (logErr) throw new Error(logErr.message)
-              const stPatch: Record<string, unknown> = { stocktake_at: now, updated_at: now }
-              if (updatedBy) stPatch.stocktake_by = updatedBy
-              await updateEntriesByIds(ids, stPatch)
-            }
-          } catch (e) {
-            console.error('StocktakeLog (move) insert failed:', (e as Error).message)
-          }
+        // SỔ CHUYỂN VỊ TRÍ — MỘT sổ cho mọi cửa đổi ô (17/09, `services/palletMoveLog.ts`). Trước đó
+        // chỉ nhánh QUÉT QR ghi, nên **chuyển vị trí HÀNG LOẠT ở chính trang này không để lại dòng
+        // nào** — tab Lịch sử của màn Chuyển vị trí trống đúng ở cửa người ta dùng nhiều thứ hai.
+        // Khác nhau giữa hai nhánh chỉ còn ở `mark_stocktake`: quét tem = có người nhìn thấy pallet
+        // ⇒ tính một lượt kiểm kê; chọn tay trên màn hình thì KHÔNG (không được xoá hạn kiểm của
+        // pallet bằng một cú bấm).
+        type MovingSnap = {
+          id: string; pallet_code: string; location_id: string | null; cartons_remaining: number | null
+          material_id: string | null
+          material?: { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
+          location?: { location_code?: string } | null
         }
+        await logPalletMoves({
+          moved: (moving as unknown as MovingSnap[]).map(en => ({
+            entry_id: en.id,
+            from_location_id: en.location_id,
+            from_location_code: en.location?.location_code ?? null,
+            pallet_code: en.pallet_code,
+            material_id: en.material_id,
+            material_code: en.material?.material_code ?? null,
+            short_name: en.material?.short_name ?? null,
+            base_unit: en.material?.base_unit ?? null,
+            entry_unit: en.material?.entry_unit ?? null,
+            units_per_carton: en.material?.units_per_carton ?? null,
+            app_qty: Number(en.cartons_remaining ?? 0),
+          })),
+          to_location_id: location_id,
+          actor_id: updatedBy, actor_name: req.user?.name ?? null,
+          note: countAsStocktake ? 'Kiểm kê qua chuyển vị trí (quét QR)' : 'Chuyển vị trí hàng loạt (trang Tồn kho)',
+          where: '/wms/inventory/bulk-location',
+          mark_stocktake: countAsStocktake, at: now,
+        })
         // `moving` = các pallet THẬT SỰ tìm thấy theo ids (id lạ không nằm trong đây) — đếm ý định
         // là nói dối người dùng, xem ghi chú ở `updateEntriesCount`.
         return ok(res, { updated: (moving as unknown[]).length, location_code: parts[1] ?? '', putaway_warning: put.warning, stocktake_logged: countAsStocktake })

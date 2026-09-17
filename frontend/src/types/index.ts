@@ -858,6 +858,12 @@ export interface DirectedRow {
   claim_active: boolean
   claimed_by: string | null
   claimed_by_name: string | null
+  // GIỜ nhận (17/09, user: "phải biết được ai là người nhận, nhận lúc nào") — khoá mềm tự nhả sau
+  // 10 phút, không nói ra thì việc rời tay người ta mà không ai hiểu vì sao
+  claimed_at?: string | null
+  // Người được GÁN làm xe chuyển của chuyến (gán lúc Bắt đầu) — chuỗi nối bằng dấu phẩy. Nền cho
+  // switch Phạm vi "Của tôi / Tất cả" ở bảng Cần đưa ra: lọc tại chỗ, đếm được CẢ HAI phía.
+  driver_ids?: string | null
   // Kho KHÔNG có xe hạ riêng: dòng chờ hạ ở bảng xe chuyển là MỘT việc "Hạ & đưa ra"
   combined_lower: boolean
   stage_done: boolean              // xong Ở CHẶNG NÀY ⇒ gạch ngang, vẫn ở lại bảng

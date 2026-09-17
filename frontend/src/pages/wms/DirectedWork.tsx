@@ -31,7 +31,7 @@ import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox,
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { FillScanOverlay } from './FillScanOverlay'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
-import { TaskDetailSheet, palletPct, palletDays, rowRule, anchorDirected, tripName } from '@/components/wms/TaskDetailSheet'
+import { TaskDetailSheet, palletPct, palletDays, rowRule, anchorDirected, tripName, claimNote } from '@/components/wms/TaskDetailSheet'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -476,8 +476,11 @@ export default function DirectedWork() {
     // tự-ra-lệnh-fill có thêm một cửa xả. Chưa chọn kho thì vẫn không gọi.
     enabled: !!f.warehouseId,
     gdoId: tab === 'SCAN' ? (f.gdoId || null) : null,
-    // "Của tôi" chỉ có nghĩa ở bảng xe chuyển (việc gắn theo người được giao lúc Bắt đầu)
-    driverId: tab === 'MOVE' && f.mine ? (me ?? null) : null,
+    // KHÔNG lọc theo người ở MÁY CHỦ nữa (17/09): bảng "Cần đưa ra" lọc "của tôi" tại chỗ như bảng
+    // "Cần hạ", nhờ `driver_ids` RPC trả về. Lọc ở máy chủ thì mỗi lần gạt switch là một round-trip
+    // VÀ không bao giờ biết phía bên kia có bao nhiêu việc — mà con số đó mới là thứ khiến người ta
+    // gạt sang xem. `p_driver_id` vẫn còn ở RPC cho bundle PWA cũ.
+    driverId: null,
   })
   // Hộp việc: kho bỏ trống = mọi kho trong phạm vi (người quản lý nhiều kho nhìn một lượt)
   const inbox = useWorkInbox(f.warehouseId || null, tab === 'INBOX')
@@ -498,6 +501,13 @@ export default function DirectedWork() {
   const isMineRow = (r: DirectedRow) =>
     (r.claim_active && !!r.claimed_by && r.claimed_by === me) || (!!r.fill_assignee_id && r.fill_assignee_id === me)
   const isFreeRow = (r: DirectedRow) => !r.claim_active && !r.fill_assignee_id
+  // "CỦA TÔI" Ở BẢNG CẦN ĐƯA RA = CHUYẾN TÔI ĐƯỢC GÁN (17/09, user: *"tôi hiểu nó là việc gán tên
+  // đúng không? gán tên khi bắt đầu"* — đúng: `forklift_driver_ids` khai lúc Bắt đầu chuyến, sửa
+  // được ở "Sửa thông tin xe"). KHÁC hẳn "của tôi" ở bảng Cần hạ (việc tự bấm Nhận, giữ 10 phút)
+  // nên giữ hai field riêng — cùng một chữ mà chung một biến là lần sau sửa một bên hỏng bên kia.
+  // Dòng fill lọt vào bảng này khi kho không tách xe hạ ⇒ tính theo người được giao lệnh.
+  const isMyTripRow = (r: DirectedRow) =>
+    (!!me && (r.driver_ids ?? '').split(',').includes(me)) || (!!r.fill_assignee_id && r.fill_assignee_id === me)
   const rows = useMemo(() => {
     let all = data?.rows ?? []
     if (f.hideDone) all = all.filter(r => !r.stage_done && !r.skipped)
@@ -507,9 +517,12 @@ export default function DirectedWork() {
     if (tab === 'LOWER' && f.scope !== 'all') {
       all = all.filter(r => r.stage_done || r.skipped || (f.scope === 'mine' ? isMineRow(r) : isFreeRow(r)))
     }
+    // Việc đã xong / đã bỏ ở lại bảng như mọi bộ lọc khác (luật 10/09) — người vừa làm xong phải còn
+    // thấy dấu ✓ của mình.
+    if (tab === 'MOVE' && f.mine) all = all.filter(r => r.stage_done || r.skipped || isMyTripRow(r))
     return all
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, f.hideDone, f.scope, f.cats, tab, me])
+  }, [data, f.hideDone, f.scope, f.mine, f.cats, tab, me])
 
   // STT = THỨ TỰ ĐI TRÊN BẢNG NÀY, đánh lại 1..n theo đúng trình tự dòng đang hiện.
   // KHÔNG in `seq` thô: seq đếm theo TỪNG chuyến, và một dòng bảng gom nhiều việc cùng ô (STT lấy
@@ -581,7 +594,12 @@ export default function DirectedWork() {
 
   const scopeCount = useMemo(() => {
     const open = (data?.rows ?? []).filter(r => !r.stage_done && !r.skipped)
-    return { mine: open.filter(isMineRow).length, free: open.filter(isFreeRow).length }
+    return {
+      all: open.length,
+      mine: open.filter(isMineRow).length,
+      free: open.filter(isFreeRow).length,
+      myTrip: open.filter(isMyTripRow).length,   // bảng Cần đưa ra: chuyến tôi được gán
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, me])
 
@@ -593,12 +611,7 @@ export default function DirectedWork() {
       key: 'trip', label: 'Chuyến', type: 'single' as const, pinned: true, allLabel: 'Chọn chuyến…',
       options: tripOpts, value: f.gdoId, onChange: (v: string) => setF({ gdoId: v }),
     }] : []),
-    ...(tab === 'MOVE' ? [{
-      key: 'mine', label: 'Phạm vi', type: 'single' as const, pinned: true, allLabel: 'Của tôi (mặc định)',
-      options: [{ value: 'all', label: 'Tất cả việc trong kho' }],
-      value: f.mine ? '' : 'all', onChange: (v: string) => setF({ mine: v !== 'all' }),
-    }] : []),
-    // ⚠ Phạm vi của bảng "Cần hạ" KHÔNG nằm trong FilterBar — nó là SWITCH hiện sẵn ngay trên bảng
+    // ⚠ Phạm vi của bảng "Cần hạ" và "Cần đưa ra" KHÔNG nằm trong FilterBar — nó là SWITCH hiện sẵn ngay trên bảng
     // (user chốt 17/09: "Tôi muốn switch chứ ko phải là filter"). Chip lọc phải bấm mở menu mới biết
     // có những lựa chọn nào; đây là thứ xe nâng lật qua lật lại suốt ca nên cả ba lựa chọn + số của
     // từng cái phải nhìn thấy mà không bấm nhát nào. Xem <ScopeSwitch> dưới bảng tab.
@@ -707,12 +720,13 @@ export default function DirectedWork() {
   // Hướng dẫn chưa…" là đúng khi kho thật sự không có việc, nhưng đem nói lúc người ta vừa gạt switch
   // sang "Của tôi" thì nó đẩy người đọc đi kiểm ba thứ không liên quan (đo thật 17/09: kho đang có
   // 16 việc). Nói đúng lý do và mở sẵn lối ra.
-  const scopeOpenTotal = scopeCount.mine + scopeCount.free
-  const scopeEmpty = tab === 'LOWER' && f.scope !== 'all' && rows.length === 0 && scopeOpenTotal > 0
+  const scopeOpenTotal = tab === 'MOVE' ? scopeCount.all : scopeCount.mine + scopeCount.free
+  const scopeEmpty = rows.length === 0 && scopeOpenTotal > 0
+    && ((tab === 'LOWER' && f.scope !== 'all') || (tab === 'MOVE' && f.mine))
   const scopeEmptyBlock = !scopeEmpty ? null : (
     <div className="py-6 text-center text-[11px] text-slate-400">
-      <div>Không có việc nào trong phạm vi <b>{f.scope === 'mine' ? 'Của tôi' : 'Chưa ai nhận'}</b>.</div>
-      <button type="button" onClick={() => setF({ scope: 'all' })}
+      <div>Không có việc nào trong phạm vi <b>{tab === 'MOVE' || f.scope === 'mine' ? 'Của tôi' : 'Chưa ai nhận'}</b>.</div>
+      <button type="button" onClick={() => setF(tab === 'MOVE' ? { mine: false } : { scope: 'all' })}
         className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-medium text-sky-800 hover:bg-sky-100">
         Xem tất cả {nf(scopeOpenTotal)} việc của kho
       </button>
@@ -781,25 +795,47 @@ export default function DirectedWork() {
             Số nằm NGAY trên nút để biết bấm sang có gì mà không phải bấm thử.
             Mặc định "Tất cả" — đảo sang "của tôi" là sai: kho một hai xe nâng thì không ai bấm
             Nhận, ô đó rỗng và người vào ca tưởng mình hết việc (cùng lớp "khoá tay nhau" lặp 3 lần). */}
-        {tab === 'LOWER' && (
+        {/* Bảng "Cần đưa ra" dùng CÙNG kiểu switch nhưng chỉ HAI lựa chọn, vì ở đây không có khái niệm
+            "chưa ai nhận": mọi việc đều thuộc một chuyến đã gán xe chuyển lúc Bắt đầu. Trước 17/09 nó
+            là chip trong nút "Lọc", mặc định "của tôi" — tức người ta không nhìn thấy mình đang xem
+            một phần, và muốn xem chung phải mở menu mới biết có lựa chọn đó. */}
+        {(tab === 'LOWER' || tab === 'MOVE') && (
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-2">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Phạm vi</span>
-            <div className="grid grid-cols-3 gap-1 w-full sm:flex sm:w-auto">
-              {([
-                { k: 'all',  label: 'Tất cả',      n: scopeCount.mine + scopeCount.free, tip: 'Mọi việc hạ của kho' },
-                { k: 'mine', label: 'Của tôi',     n: scopeCount.mine, tip: 'Việc bạn đã bấm Nhận + dòng lệnh fill giao cho bạn' },
-                { k: 'free', label: 'Chưa ai nhận', n: scopeCount.free, tip: 'Việc chung chưa có ai cầm — cứ làm, không cần xin' },
-              ] as const).map(o => (
-                <button key={o.k} type="button" title={o.tip}
-                  onClick={() => setF({ scope: o.k })}
-                  className={`flex items-center justify-center gap-1.5 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
-                    f.scope === o.k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  {o.label}
-                  <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${
-                    f.scope === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
-                </button>
-              ))}
-            </div>
+            {tab === 'LOWER' ? (
+              <div className="grid grid-cols-3 gap-1 w-full sm:flex sm:w-auto">
+                {([
+                  { k: 'all',  label: 'Tất cả',      n: scopeCount.mine + scopeCount.free, tip: 'Mọi việc hạ của kho' },
+                  { k: 'mine', label: 'Của tôi',     n: scopeCount.mine, tip: 'Việc bạn đã bấm Nhận + dòng lệnh fill giao cho bạn' },
+                  { k: 'free', label: 'Chưa ai nhận', n: scopeCount.free, tip: 'Việc chung chưa có ai cầm — cứ làm, không cần xin' },
+                ] as const).map(o => (
+                  <button key={o.k} type="button" title={o.tip}
+                    onClick={() => setF({ scope: o.k })}
+                    className={`flex items-center justify-center gap-1.5 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
+                      f.scope === o.k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                    {o.label}
+                    <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${
+                      f.scope === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-1 w-full sm:flex sm:w-auto">
+                {([
+                  { mine: true,  label: 'Của tôi', n: scopeCount.myTrip, tip: 'Việc của các chuyến bạn được gán làm xe chuyển (gán lúc Bắt đầu chuyến)' },
+                  { mine: false, label: 'Tất cả',  n: scopeCount.all,    tip: 'Mọi việc đưa ra của kho, kể cả chuyến giao người khác' },
+                ] as const).map(o => (
+                  <button key={String(o.mine)} type="button" title={o.tip}
+                    onClick={() => setF({ mine: o.mine })}
+                    className={`flex items-center justify-center gap-1.5 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
+                      f.mine === o.mine ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                    {o.label}
+                    <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${
+                      f.mine === o.mine ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -993,8 +1029,13 @@ export default function DirectedWork() {
                   {/* "⏳ chờ xe hạ" là lời nói với XE CHUYỂN — trên thẻ của chính xe hạ thì đó là việc của họ, không phải chờ ai */}
                   {(closed || heldByOther || isFill || (tab === 'MOVE' && (r.waiting_lower || r.combined_lower))) && (
                     <div className={`text-xs ${st.cls}`}>
-                      {closed ? st.text : heldByOther ? `${heldByOther} đang làm` : st.text}
+                      {closed ? st.text : heldByOther ? (claimNote(r, me)?.text ?? `${heldByOther} đang làm`) : st.text}
                     </div>
+                  )}
+                  {/* Việc MÌNH đang cầm: nói rõ nhận lúc nào — khoá mềm 10 phút tự nhả, im lặng thì
+                      việc rời tay mà người đang làm không hiểu vì sao (17/09) */}
+                  {!closed && claimNote(r, me)?.mine && (
+                    <div className="text-xs text-sky-700">{claimNote(r, me)!.text}</div>
                   )}
                   {actions.length > 0 && (
                     <div className="flex gap-2 pt-1">
@@ -1130,7 +1171,11 @@ export default function DirectedWork() {
                               {st.text}
                             </div>
                           )}
-                          {heldByOther && !r.stage_done && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
+                          {!r.stage_done && claimNote(r, me) && (
+                            <div className={`text-[9px] no-underline ${claimNote(r, me)!.mine ? 'text-sky-700' : 'text-slate-500'}`}>
+                              {claimNote(r, me)!.text}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className={`${cell} text-right tabular-nums`}>{r.level_no ?? '—'}</TableCell>
                         <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
@@ -1142,7 +1187,11 @@ export default function DirectedWork() {
                         <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                         <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>
                           {st.text}
-                          {heldByOther && !r.stage_done && !r.skipped && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
+                          {!r.stage_done && !r.skipped && claimNote(r, me) && (
+                            <div className={`text-[9px] no-underline ${claimNote(r, me)!.mine ? 'text-sky-700' : 'text-slate-500'}`}>
+                              {claimNote(r, me)!.text}
+                            </div>
+                          )}
                         </TableCell>
                       </>)}
                     </>)}
@@ -1245,7 +1294,7 @@ export default function DirectedWork() {
       )}
       {detailRow && (
         <TaskDetailSheet row={detailRow} tab={boardTab} trip={tripOf.get(detailRow.gdo_id)} bands={pctBands}
-          canOpenTrip={canOpenTrip} looseLink={looseLinkOf(detailRow)} busy={busy}
+          canOpenTrip={canOpenTrip} looseLink={looseLinkOf(detailRow)} me={me} busy={busy}
           actions={actionsFor(detailRow, boardTab, me, canConfirm, fire, canFill).actions}
           onStock={setInvMat} onClose={() => setDetailKey(null)} />
       )}

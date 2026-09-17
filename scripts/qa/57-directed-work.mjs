@@ -518,6 +518,25 @@ try {
     const mineRow = (b.j?.data?.rows ?? []).find(x => x.group_key === claimGroup.group_key)
     check('[12f4] Bảng hiện đúng người vừa nhận (tên, không phải id)',
       !!mineRow && mineRow.claim_active === true && !!mineRow.claimed_by_name && mineRow.claimed_by !== 'qa57-other', mineRow ? `${mineRow.claimed_by_name}` : 'không thấy dòng')
+    // AI NHẬN + NHẬN LÚC NÀO (user 17/09) — khoá mềm 10 phút TỰ NHẢ, nên thiếu giờ nhận thì việc rời
+    // tay người đang làm mà không ai hiểu vì sao. Giờ phải là giờ THẬT (trong vài phút gần đây), không
+    // phải một mốc bất kỳ: bản đầu RPC không trả cột này ra, màn chỉ có tên.
+    {
+      const at = mineRow?.claimed_at ? Date.parse(mineRow.claimed_at) : NaN
+      const lech = Number.isFinite(at) ? Math.abs(Date.now() - at) / 60_000 : null
+      check('[29d] Bảng nói NHẬN LÚC NÀO, không chỉ nói ai (giờ thật, lệch < 10 phút)',
+        lech != null && lech < 10, `claimed_at=${mineRow?.claimed_at ?? 'KHÔNG CÓ'} lệch=${lech == null ? '—' : lech.toFixed(1)} phút`)
+    }
+    // "CỦA TÔI" Ở BẢNG CẦN ĐƯA RA = chuyến tôi được gán lúc Bắt đầu. Switch Phạm vi lọc TẠI CHỖ và
+    // đếm cả hai phía, nên bảng phải mang theo danh sách người được gán — lọc ở máy chủ (`p_driver_id`)
+    // thì không bao giờ biết phía bên kia có bao nhiêu việc.
+    if (drvId) {
+      const bM = await board('MOVE', `&gdo_id=${t7.gdo}`)
+      const rowM = (bM.j?.data?.rows ?? [])[0]
+      check('[29e] Bảng "Cần đưa ra" mang theo người được gán làm xe chuyển (nền cho switch Của tôi / Tất cả)',
+        !!rowM && String(rowM.driver_ids ?? '').split(',').includes(drvId),
+        `driver_ids=${rowM?.driver_ids ?? 'KHÔNG CÓ'} chờ chứa ${drvId}`)
+    }
     r = await api('/wms/directed/tasks/claim', 'POST', { task_ids: cIds, undo: true })
     check('[12f5] Bỏ nhận → nhả đủ nhóm', r.s === 200 && r.j?.data?.changed === cIds.length, `http=${r.s} changed=${r.j?.data?.changed}`)
     const evc = await restAll('wms_task_events', `select=event&task_id=eq.${cIds[0]}&event=in.(CLAIMED,UNCLAIMED)`)
@@ -942,6 +961,31 @@ try {
       const xuoi = await locOf(t.entry_id)
       check('[21h] Cờ restore gửi kèm lúc XÁC NHẬN bị bỏ qua — pallet vẫn về vị trí nhặt lẻ',
         r.s === 200 && xuoi === t.to_location_id, `http=${r.s} pallet ở ${xuoi}`)
+
+      // ═══ [29] BẤM "✓ XONG" PHẢI ĐỂ LẠI VẾT TRA CỨU ĐƯỢC (user 17/09) ═══════════════════════
+      // *"Khi bấm nút Xong — nghĩa là chuyển vị trí luôn đúng không, vậy có lịch sử nào xem được
+      // việc chuyển vị trí này không — phòng tình huống bấm Xong lung tung rồi hàng hoá chạy loạn."*
+      // App đã có sổ (tab Lịch sử màn Chuyển vị trí = StocktakeLog có `location_changed_to`), nhưng
+      // nút này KHÔNG ghi vào đó ⇒ pallet đổi ô chỉ bằng một nhát bấm mà không dòng nào tra được.
+      // ORACLE: đọc qua CHÍNH endpoint người dùng xem (`/wms/inventory/move-log`), không đọc bảng thô —
+      // ghi được vào DB mà sổ không hiện (lệch kho/loại/ngày) thì với người dùng là vẫn không có gì.
+      {
+        const pal = (await restAll('InventoryEntry', `select=pallet_code&id=eq.${t.entry_id}`))[0]?.pallet_code ?? ''
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+        const ml = await api(`/wms/inventory/move-log?warehouse_id=${whId}&date_from=${today}&date_to=${today}`
+          + `&search=${encodeURIComponent(pal)}&page_size=200`)
+        const logs = ml.j?.data?.rows ?? []
+        const xuong = logs.find(x => x.location_changed_to === t.to_location_id && x.location_from_id === truoc)
+        check('[29a] "✓ Xong" việc nhặt lẻ ĐỂ LẠI VẾT trong sổ Lịch sử chuyển vị trí (từ ô nào → ô nào)',
+          ml.s === 200 && !!xuong,
+          `http=${ml.s} ${logs.length} dòng cho tem ${pal} · chờ ${truoc} → ${t.to_location_id}`)
+        check('[29b] …vết ghi ĐÚNG NGƯỜI bấm (không có tên thì sổ không truy được ai làm)',
+          !!xuong?.counted_by_name, `counted_by_name=${xuong?.counted_by_name ?? 'TRỐNG'}`)
+        // Hoàn tác có restore cũng là một lần hàng đổi chỗ ⇒ phải có vết chiều ngược lại
+        check('[29c] Hoàn tác kèm restore (ghi pallet về ô cũ) cũng có vết riêng, không lặng lẽ',
+          logs.some(x => x.location_changed_to === truoc && x.location_from_id === t.to_location_id),
+          logs.map(x => `${x.location_from_code ?? '?'}→${x.location_code ?? '?'}`).join(' · ') || 'không dòng nào')
+      }
     }
     await api(`/wms/outbound/${tLF.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }

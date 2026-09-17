@@ -79,9 +79,24 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 )
 const dash = <span className="text-slate-300">—</span>
 
-export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink, actions, busy, onStock, onClose }: {
+/**
+ * AI ĐANG CẦM VIỆC NÀY — tên + GIỜ NHẬN (17/09, user: *"Nhận việc: phải biết được ai là người nhận,
+ * nhận lúc nào"*). Khoá mềm tự nhả sau 10 phút, nên thiếu giờ thì việc rời tay người ta mà không ai
+ * hiểu vì sao; có giờ thì nhìn một cái là biết vừa nhận hay sắp hết hạn. Đặt ở đây (không ở trang)
+ * để bảng, thẻ và panel chi tiết kể CÙNG một câu.
+ */
+export function claimNote(r: DirectedRow, me: string | null): { mine: boolean; text: string } | null {
+  if (!r.claim_active || !r.claimed_by) return null
+  const at = r.claimed_at ? formatTimestampTime(r.claimed_at) : null
+  const mine = r.claimed_by === me
+  const who = mine ? 'Bạn' : (r.claimed_by_name ?? 'Người khác')
+  return { mine, text: at ? `${who} nhận lúc ${at}` : `${who} đang làm` }
+}
+
+export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink, me, actions, busy, onStock, onClose }: {
   row: DirectedRow
   tab: 'LOWER' | 'MOVE' | 'SCAN'
+  me?: string | null
   trip: DirectedTrip | undefined
   bands: PctBands
   canOpenTrip: boolean
@@ -98,6 +113,10 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
   const where = tab === 'LOWER' ? row.from_code : row.current_code
   const mats = (row.materials ?? []).filter(m => m?.id)
   const pallets = row.pallets ?? []
+  const claim = claimNote(row, me ?? null)
+  // Khoá tra sổ chuyển vị trí: một pallet thì tra đúng tem, nhóm nhiều pallet thì tra theo Ô NGUỒN
+  // (ô tra được vì sổ lưu cả `location_from_code`) — tra bằng tem đầu danh sách là kể thiếu.
+  const moveKey = pallets.length === 1 ? (pallets[0].code ?? null) : (row.from_code ?? null)
 
   return (
     <Sheet open onOpenChange={v => { if (!v) onClose() }}>
@@ -153,6 +172,44 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
                   </Link>
                 )}
               </div>
+            )}
+          </Section>
+
+          {/* AI ĐANG LÀM / ĐÃ LÀM (17/09) — user: *"Nhận việc: phải biết được ai là người nhận, nhận
+              lúc nào"* và *"bấm Xong nghĩa là gì … phòng bấm Xong lung tung rồi hàng hoá chạy loạn"*.
+              Dữ liệu vốn có trong DB, chỉ chưa màn nào nói ra. Với việc NHẶT LẺ thì ✓ Xong có GHI TỒN
+              (pallet chuyển sang ô kho lẻ) nên nói rõ điều đó + mở thẳng sổ chuyển vị trí. */}
+          <Section title="Người làm">
+            <Row label="Đang cầm">
+              {claim
+                ? <span className={claim.mine ? 'text-sky-700 font-medium' : 'text-slate-700'}>{claim.text}</span>
+                : <span className="text-slate-400">chưa ai bấm Nhận — việc chung, cứ làm</span>}
+            </Row>
+            {row.stage_done && (
+              <Row label={tab === 'LOWER' ? 'Đã hạ' : 'Đã đưa ra'}>
+                {row.last_at ? formatTimestampTime(row.last_at) : dash}
+                {row.done_by_name && <span className="text-slate-500"> · {row.done_by_name}</span>}
+              </Row>
+            )}
+            {row.kind === 'LOOSE_FEED' && (
+              <>
+                <Row label="Nút ✓ Xong">
+                  <span className="text-purple-700">chuyển pallet trong sổ tồn về vị trí nhặt lẻ</span>
+                  <span className="text-slate-500"> — bấm nhầm thì bấm “Bỏ dấu ✓”, máy hỏi hàng đã đưa xuống chưa rồi ghi lại về ô cũ.</span>
+                </Row>
+                <Link to={`/wms/move-location?tab=history${moveKey ? `&pallet=${encodeURIComponent(moveKey)}` : ''}`}
+                  onClick={() => { anchorDirected(); onClose() }}
+                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline">
+                  <ExternalLink className="h-3 w-3" />
+                  {pallets.length === 1 ? 'Lịch sử chuyển vị trí của pallet này' : 'Lịch sử chuyển vị trí từ ô này'}
+                </Link>
+              </>
+            )}
+            {row.kind === 'PICK' && (
+              <Row label="Nút ✓ Xong">
+                <span className="text-slate-600">chỉ đóng mốc giờ cho việc này</span>
+                <span className="text-slate-500"> — tồn kho chỉ đổi khi thủ kho quét tem ở cửa xuất.</span>
+              </Row>
             )}
           </Section>
 

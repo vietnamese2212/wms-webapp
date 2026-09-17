@@ -9,6 +9,7 @@ import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
 import { zoneAccepts, zonesOverlap, eligibleRankedZones, bandOfIndex, type Band } from '../../utils/slottingBands'
 import { invalidatePutawayZones } from '../../services/putawayContext'
+import { logPalletMoves } from '../../services/palletMoveLog'
 import { getMonitorCacheSeconds } from '../../utils/settings'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
@@ -1059,6 +1060,24 @@ export async function scanMovePlanPallet(req: Request, res: Response) {
     if (parts[0] === 'INACTIVE')  return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí đích không hoạt động')
     if (parts[0] === 'FULL')      return fail(res, 400, 'LOCATION_FULL',
       `Đích ${parts[2] ?? line.to_location_code ?? ''} đã đầy — bỏ qua, quét pallet khác`)
+
+    // Vết vào SỔ CHUYỂN VỊ TRÍ dùng chung (17/09) — trước đó cửa này đổi ô pallet mà tab Lịch sử
+    // của màn Chuyển vị trí không có dòng nào: người tra "pallet này ai chuyển, từ đâu" chỉ thấy
+    // khoảng trống. Xem `services/palletMoveLog.ts`.
+    await logPalletMoves({
+      moved: [{
+        entry_id: candidate.id,
+        from_location_id: candidate.location_id,          // chụp TRƯỚC khi RPC đổi ô
+        from_location_code: line.from_location_code,
+        pallet_code: code,
+        material_code: line.material_code,
+        short_name: line.material_name,
+      }],
+      to_location_id: line.to_location_id,
+      actor_id: updatedBy, actor_name: req.user?.name ?? null,
+      note: 'Quét chuyển vị trí — kế hoạch Tối ưu vị trí',
+      where: '/wms/slotting/plans/:id/scan-move',
+    })
 
     // Tiến độ dòng sau khi chuyển (để hiện "x/N" trên màn quét)
     const { count: doneCnt } = await supabase.from('InventoryEntry')

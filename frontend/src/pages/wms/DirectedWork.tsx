@@ -127,7 +127,9 @@ function stateOf(r: DirectedRow, tab: BoardTab, me?: string | null): { text: str
     const mine = !!r.fill_assignee_id && !!me && r.fill_assignee_id === me
     const other = !!r.fill_assignee_id && r.fill_assignee_id !== me
     const done = (r.n_done ?? 0) > 0 ? ` · đã quét ${nf(r.n_done ?? 0)}/${nf(r.n_pallets)}` : ''
-    if (other) return { text: `đã giao ${r.fill_assignee_name ?? 'người khác'} — cần quyền nhận lệnh để làm thay${done}`, cls: 'text-amber-700' }
+    // Ô bảng hẹp ⇒ chữ trên dòng phải NGẮN, phần giải thích vào tooltip (cùng luật "băng mang con số,
+    // diễn giải vào ⓘ" chốt 16/09) — câu dài ở đây bị cắt giữa chừng, đọc ra nửa nghĩa còn tệ hơn.
+    if (other) return { text: `đã giao ${r.fill_assignee_name ?? 'người khác'}${done}`, cls: 'text-amber-700' }
     return {
       text: `${mine ? 'giao cho bạn — ' : ''}hạ xuống kho lẻ, quét tem${done}`,
       cls: mine ? 'text-sky-800 font-medium' : 'text-sky-700',
@@ -1012,7 +1014,14 @@ export default function DirectedWork() {
                           {/* Ai hạ, lúc mấy giờ — người sau nhìn vào phải biết việc đã xong do ai (user chốt) */}
                           {closed && <div className={`text-[9px] no-underline ${r.skipped ? 'text-slate-400' : 'text-green-600'}`}>{st.text}</div>}
                           {/* Dòng fill: nói TRƯỚC là lệnh đã giao ai (cửa quét 409 với người khác) */}
-                          {r.kind === 'FILL' && <div className={`text-[9px] no-underline ${st.cls}`}>{st.text}</div>}
+                          {r.kind === 'FILL' && (
+                            <div className={`text-[9px] no-underline ${st.cls}`}
+                              title={r.fill_assignee_id && r.fill_assignee_id !== me
+                                ? `Dòng lệnh này đã giao cho ${r.fill_assignee_name ?? 'người khác'}. Quét được nhưng máy chủ sẽ hỏi lại — chỉ người có quyền "Giao lệnh" mới nhận lại được để làm thay.`
+                                : 'Hạ pallet xuống vị trí nhặt lẻ rồi quét tem để ghi nhận (máy kiểm đúng mã + đúng date)'}>
+                              {st.text}
+                            </div>
+                          )}
                           {heldByOther && !r.stage_done && <div className="text-[9px] text-slate-500 no-underline">{heldByOther} đang làm</div>}
                         </TableCell>
                         <TableCell className={`${cell} text-right tabular-nums`}>{r.level_no ?? '—'}</TableCell>

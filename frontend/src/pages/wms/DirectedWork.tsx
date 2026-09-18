@@ -594,11 +594,17 @@ export default function DirectedWork() {
 
   const scopeCount = useMemo(() => {
     const open = (data?.rows ?? []).filter(r => !r.stage_done && !r.skipped)
+    // ĐẾM THEO VIỆC, KHÔNG THEO DÒNG — một dòng gom nhiều việc CÙNG Ô, nên đếm dòng thì switch nói
+    // "Tất cả 16" ngay dưới badge tab "Cần hạ 21": hai số cho cùng một thứ, sát nhau, khác nhau
+    // (đo Ba Vì 18/09: 21 việc / 15 dòng + 1 dòng fill). Dòng FILL không có `task_ids` nên đếm
+    // bằng số PALLET còn phải hạ — cùng luật với ô band "Việc còn lại" (gói 57 [27b]).
+    const n = (r: DirectedRow) => (r.task_ids?.length || r.n_pallets || 1)
+    const sum = (list: DirectedRow[]) => list.reduce((s, r) => s + n(r), 0)
     return {
-      all: open.length,
-      mine: open.filter(isMineRow).length,
-      free: open.filter(isFreeRow).length,
-      myTrip: open.filter(isMyTripRow).length,   // bảng Cần đưa ra: chuyến tôi được gán
+      all: sum(open),
+      mine: sum(open.filter(isMineRow)),
+      free: sum(open.filter(isFreeRow)),
+      myTrip: sum(open.filter(isMyTripRow)),   // bảng Cần đưa ra: chuyến tôi được gán
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, me])
@@ -1272,7 +1278,9 @@ export default function DirectedWork() {
 
         <div className="shrink-0 border-t bg-white px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-3 flex-wrap sm:rounded-b-xl">
           <span>{nf(rows.length)} dòng việc</span>
-          {(t.pending ?? 0) > 0 && <span className="text-slate-400">· còn {nf(t.pending ?? 0)} việc chưa xong</span>}
+          {/* `t.pending` là tổng của CẢ KHO (mọi bảng vai), không riêng bảng đang mở — phải nói ra,
+              kẻo đứng ở tab "Cần hạ 21" mà chân trang ghi 23 thì đọc thành hai số cho một thứ. */}
+          {(t.pending ?? 0) > 0 && <span className="text-slate-400">· cả kho còn {nf(t.pending ?? 0)} việc chưa xong</span>}
           {(t.skipped ?? 0) > 0 && <span className="text-slate-400">· {nf(t.skipped ?? 0)} việc hệ thống đã huỷ (quét pallet khác / kế hoạch đổi)</span>}
           {confirmTasks.isError && <span className="text-red-600">· {apiErr(confirmTasks.error) ?? 'Không ghi được — thử lại'}</span>}
           {claimTasks.isError && <span className="text-red-600">· {apiErr(claimTasks.error) ?? 'Không nhận được — thử lại'}</span>}

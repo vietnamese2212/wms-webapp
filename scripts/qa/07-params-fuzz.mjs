@@ -418,6 +418,44 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
     notBlocked.length ? notBlocked.slice(0, 3).join(' | ') : `${HOST.length * PAYLOAD.length} lượt đều 400`)
 }
 
+// ── 7b) KÝ TỰ NUL + BODY SAI KIỂU → 400, KHÔNG 5xx (bug thật 18/09) ──
+// Hai ca fuzz bắt được trong đợt kiểm 18/09, cùng họ với mục 7 nhưng khác CỬA:
+//   • `?pallet_code=%00abc` → Postgres không lưu nổi   ⇒ nổ ở tầng driver ⇒ 500.
+//   • `actor_name: 12345` (SỐ) ở PATCH adjust → `.trim()` ném TypeError ⇒ 500 UNCAUGHT — đúng lớp
+//     "body sai kiểu" mà `validate` sinh ra để chặn, nhưng route CŨ chưa khai schema.
+// Lưới: ký tự điều khiển chặn ở middleware CHUNG (query + body); route adjust khai zod.
+{
+  const NUL = [
+    '/wms/inventory/pallet-ledger?pallet_code=%00abc',
+    '/wms/inventory?search=%00',
+    '/masterdata/materials?search=a%00b',
+  ]
+  const bad = [], notBlocked = []
+  for (const p of NUL) {
+    const r = await api(p)
+    if (r.s >= 500) bad.push(`${p} = ${r.s}`)
+    else if (r.s !== 400) notBlocked.push(`${p} = ${r.s}`)
+  }
+  chk(bad.length === 0, 'ký tự NUL (%00) trong tham số → không 5xx',
+    bad.length ? bad.join(' | ') : `${NUL.length} lượt sạch`)
+  chk(notBlocked.length === 0, 'ký tự NUL (%00) → chặn bằng 400 ở lưới chung',
+    notBlocked.length ? notBlocked.join(' | ') : 'đều 400')
+
+  const FAKE = '00000000-0000-0000-0000-000000000000'
+  const BODIES = [
+    ['actor_name là SỐ', { adjustment: -1, actor_name: 12345, qty_semantics: 'base' }],
+    ['adjustment là CHỮ', { adjustment: 'nhiều', qty_semantics: 'base' }],
+    ['note là object', { adjustment: -1, note: { a: 1 }, qty_semantics: 'base' }],
+  ]
+  const badBody = []
+  for (const [label, body] of BODIES) {
+    const r = await api(`/wms/inventory/${FAKE}/adjust`, 'PATCH', body)
+    if (r.s >= 500) badBody.push(`${label} = ${r.s}`)
+  }
+  chk(badBody.length === 0, 'thân yêu cầu SAI KIỂU ở PATCH adjust → không 5xx (ép kiểu tại rìa)',
+    badBody.length ? badBody.join(' | ') : `${BODIES.length} ca sạch`)
+}
+
 // ── 8) Ô TỔNG TỒN KHO: phần TÁCH ĐƠN VỊ phải cộng lại ĐÚNG BẰNG tổng (21/08) ──
 // Ô "SL (quy đổi)" gộp nhiều đơn vị vật lý (đo Bàu Bàng 132.762.662 mà 131,2 triệu là EA) nên từ
 // 21/08 tile hiện thêm dòng "gồm những gì". Nếu phần tách LỆCH tổng thì user thấy 2 con số đá nhau

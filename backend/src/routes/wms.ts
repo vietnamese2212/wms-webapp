@@ -217,7 +217,18 @@ router.patch('/inventory/bulk-ncc',               requirePerm('inventory', 'upda
 router.patch('/inventory/bulk-location',          requirePerm('inventory', 'move_location'), inventory.bulkTransferLocation)
 router.patch('/inventory/bulk-material',          requirePerm('inventory', 'recode'), inventory.bulkTransferMaterial)
 router.patch('/inventory/bulk-production-date',   requirePerm('inventory', 'update_prod_date'), inventory.bulkUpdateProductionDate)
-router.patch('/inventory/:id/adjust',             requirePerm('inventory', 'adjust'), inventory.adjustInventory)
+// Ép kiểu TẠI RÌA (18/09): `actor_name` là SỐ thì `.trim()` trong controller ném TypeError ⇒ 500
+// UNCAUGHT (fuzz bắt được). Đúng lớp lỗi "body sai kiểu" mà `validate` sinh ra để chặn — khai schema
+// rẻ hơn kiểm kiểu tay ở từng dòng, và chặn TRƯỚC khi vào controller.
+router.patch('/inventory/:id/adjust',             requirePerm('inventory', 'adjust'),
+  validate({ body: z.object({
+    adjustment: z.number().finite(),
+    note: zText(0, 500).optional().nullable(),
+    actor_name: zText(0, 200).optional().nullable(),
+    employee_id: zText(0, 100).optional().nullable(),
+    stocktake_by: zText(0, 100).optional().nullable(),
+    qty_semantics: zText(0, 20).optional(),
+  }).passthrough() }), inventory.adjustInventory)
 router.get('/inventory/:id/adjustment-log',       inventory.listAdjustmentLog)
 router.patch('/inventory/:id/unflag',             requirePerm('stocktake', 'complete'), inventory.unflagEntry)
 router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan'), inventory.stocktakeEntry)

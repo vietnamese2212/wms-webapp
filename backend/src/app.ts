@@ -124,11 +124,21 @@ app.get('/api/health', async (_req, res) => {
 // chứa chuỗi hình dạng ngày mà không phải ngày, chặn nó là báo oan.
 const DATE_PARAM = /(^|_)(date|dates|from|to)$/i
 const DAY_SHAPE = /^\d{4}-\d{2}-\d{2}$/
+// eslint-disable-next-line no-control-regex
+const CTRL_CHAR = /[ --]/
 app.use('/api', (req, res, next) => {
   for (const [key, raw] of Object.entries(req.query)) {
     for (const v of (Array.isArray(raw) ? raw : [raw])) {
       if (typeof v !== 'string') continue
       const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)   // không dội lại ký tự lạ của client
+      // KÝ TỰ NUL (%00) — Postgres KHÔNG lưu nổi ` ` trong text, mọi tham số mang nó đều nổ ở
+      // tầng driver ⇒ 500 (đo 18/09: `pallet-ledger?pallet_code=%00abc`). Không có nghiệp vụ nào cần
+      // ký tự điều khiển trong tham số, nên chặn ở lưới CHUNG thay vì vá từng route — cùng lý lẽ với
+      // lưới ngày và lưới injection đứng ngay đây.
+      if (CTRL_CHAR.test(v)) {
+        return res.status(400).json({ success: false, error: { code: 'BAD_PARAM',
+          message: `Giá trị của tham số "${safeKey}" chứa ký tự điều khiển không hợp lệ.` } })
+      }
       if (searchLooksLikeInjection(v)) {
         return res.status(400).json({ success: false, error: { code: 'BAD_PARAM',
           message: `Giá trị của tham số "${safeKey}" chứa mẫu ký tự bị hệ thống bảo mật chặn.` } })
@@ -163,6 +173,17 @@ app.use('/api', (req, res, next) => {
         const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)
         return res.status(400).json({ success: false, error: { code: 'BAD_DATE',
           message: `Ngày ở trường "${safeKey}" không có thật (${v}).` } })
+      }
+    }
+    // Ký tự NUL trong THÂN — cùng luật với query ở trên. "Đã phủ cả query lẫn body chưa?" là câu
+    // hỏi bắt buộc mỗi khi thêm một lưới chặn đầu vào (bài học 15/09).
+    for (const [key, raw] of Object.entries(body as Record<string, unknown>)) {
+      const vals = Array.isArray(raw) ? raw.slice(0, 100) : [raw]
+      for (const v of vals) {
+        if (typeof v !== 'string' || !CTRL_CHAR.test(v)) continue
+        const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)
+        return res.status(400).json({ success: false, error: { code: 'BAD_PARAM',
+          message: `Giá trị của trường "${safeKey}" chứa ký tự điều khiển không hợp lệ.` } })
       }
     }
   }

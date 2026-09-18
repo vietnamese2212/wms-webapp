@@ -166,15 +166,21 @@ function countSettingsAreaInterleaved(sampleOut) {
 // `location_write_without_move_rpc` chỉ hỏi "có đi qua RPC không", KHÔNG hỏi "có để lại vết không"
 // ⇒ lưới thủng đúng chỗ có bug. Cả hai RPC đều KHÔNG tự ghi `StocktakeLog` (đã soi prosrc).
 // Baseline 0: file nào gọi RPC chuyển ô thì phải gọi `logPalletMoves` trong CHÍNH file đó.
+// Cửa THỨ SÁU lộ ra ngay sau khi vá 5 cửa đầu: `palletOpsController` DỒN pallet kéo tem con sang ô
+// của tem đích bằng cách ghi THẲNG `location_id` (không qua RPC) ⇒ bản ratchet đầu, vốn chỉ soi lời
+// gọi RPC, không nhìn thấy. Nên câu hỏi phải là "cửa này có ĐỔI Ô pallet không", không phải "cửa này
+// có gọi RPC không" — bắt cả hai hình dạng.
 function countMoveWithoutLedger(sampleOut) {
   let n = 0
   const MOVE_RPC = /rpc\(\s*['"](move_pallets_to_location|fill_scan_apply)['"]/
+  // ghi thẳng cột: `.update({ … location_id: … })` trên InventoryEntry
+  const RAW_WRITE = /\.update\(\s*\{[^}]*\blocation_id\s*:/
   for (const f of filesOf('backend/src', ['.ts'])) {
     const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
     if (rel === 'backend/src/services/palletMoveLog.ts') continue
     const src = readFileSync(f, 'utf8')
     const lines = src.split(/\r?\n/)
-    const hit = lines.findIndex(l => !/^\s*(\/\/|\*|\/\*)/.test(l) && MOVE_RPC.test(l))
+    const hit = lines.findIndex(l => !/^\s*(\/\/|\*|\/\*)/.test(l) && (MOVE_RPC.test(l) || RAW_WRITE.test(l)))
     if (hit < 0) continue
     if (/\blogPalletMoves\s*\(/.test(src)) continue
     n++
@@ -402,7 +408,7 @@ const RULES = [
   },
   {
     key: 'move_without_ledger',
-    label: 'cửa CHUYỂN Ô pallet (rpc move_pallets_to_location / fill_scan_apply) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
+    label: 'cửa ĐỔI Ô pallet (rpc move_pallets_to_location / fill_scan_apply, hoặc ghi thẳng location_id) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
     count: countMoveWithoutLedger,
   },
   {

@@ -425,7 +425,7 @@ try {
   // KHÔNG tự ghi sổ trong SQL (đã soi prosrc), nên vết phải do controller ghi.
   const mvLog9 = await restAll('StocktakeLog',
     `select=entry_id,location_from_id,location_changed_to,counted_by_name,note&entry_id=eq.${pA.id}&location_changed_to=eq.${locPF.id}`)
-  check('9e. Lần hạ này để lại VẾT trong sổ Chuyển vị trí (từ ô nguồn → ô nhặt lẻ, có tên người)',
+  check('9f. Lần hạ này để lại VẾT trong sổ Chuyển vị trí (từ ô nguồn → ô nhặt lẻ, có tên người)',
     mvLog9.length >= 1 && mvLog9[0].location_from_id === before?.location_id && !!mvLog9[0].counted_by_name,
     `dòng=${mvLog9.length} từ=${mvLog9[0]?.location_from_id === before?.location_id ? 'đúng ô nguồn' : mvLog9[0]?.location_from_id ?? '—'} ai=${mvLog9[0]?.counted_by_name ?? 'TRỐNG'}`)
   // 15/09 — LỆNH LÀ SỔ CỦA CẢ NGÀY: hạ xong dòng cuối KHÔNG đóng lệnh. Tự đóng thì 10h sáng đóng,

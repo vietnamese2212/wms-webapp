@@ -10,6 +10,8 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
 import { isDay } from '../../utils/dates'
 import { safeFilterValue } from '../../utils/search'
+import { logPalletMoves } from '../../services/palletMoveLog'
+import { actorUuid } from '../../utils/actor'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
@@ -122,6 +124,25 @@ export async function mergePallets(req: Request, res: Response) {
     if (uErr) return fail(res, uErr.message, 500)
 
     await logOp(req, 'MERGE', children, [target], { count: kids.length, prev }, ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]))
+    // SỔ CHUYỂN VỊ TRÍ — dồn pallet KÉO tem con sang ô của tem đích (chính vì thế ngay trên đây có
+    // `guardPutawayBatch`: đội ngũ vốn coi đây là một lần CẤT HÀNG thật). Cửa này nằm ngoài tầm
+    // nhìn của sổ vì nó ghi thẳng `location_id`, không qua RPC chuyển ô — nên tab Lịch sử của màn
+    // Chuyển vị trí không trả lời được "sao pallet của tôi sang ô khác" khi thủ phạm là một lần dồn.
+    // KHÔNG trùng với dòng MERGED của Sổ pallet: dòng đó để TRỐNG ô đi/ô đến, dòng này mới nói
+    // từ ô nào sang ô nào. Helper tự bỏ qua tem đã đứng sẵn ở ô đích.
+    if (tgt.location_id) {
+      await logPalletMoves({
+        moved: kids.map((k: any) => ({
+          entry_id: k.id, from_location_id: k.location_id ?? null,
+          pallet_code: k.pallet_code, material_id: k.material_id ?? null,
+          app_qty: Number(k.cartons_remaining ?? 0),
+        })),
+        to_location_id: tgt.location_id,
+        actor_id: actorUuid(req), actor_name: req.user?.name ?? null,
+        note: `Dồn pallet về tem ${target}`,
+        where: '/wms/pallet-ops/merge', at: now,
+      })
+    }
     return ok(res, { target, merged: kids.length, putaway_warning: putawayWarning })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }

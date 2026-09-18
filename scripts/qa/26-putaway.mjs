@@ -33,6 +33,11 @@ let whId = null, whBackup = null
 // sót 2 phiếu OPEN trên staging. Quét theo `notes` là lưới phòng thủ, id chỉ là đường nhanh.
 async function sweepByTag() {
   for (const o of await restAll('ProductionImport', `select=id&notes=like.*${TAG}*`)) {
+    // Sổ chuyển vị trí (từ 17/09): chuyển vị trí hàng loạt ghi dòng `StocktakeLog`. FK entry_id là
+    // ON DELETE SET NULL nên xoá pallet KHÔNG hỏng, dòng sổ chỉ ở lại thành bản ghi ma — xoá lúc
+    // còn tra được theo entry_id.
+    for (const e of await restAll('InventoryEntry', `select=id&import_order_id=eq.${o.id}`))
+      await restWrite('StocktakeLog', 'DELETE', `entry_id=eq.${e.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${o.id}`)
     await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`)
   }

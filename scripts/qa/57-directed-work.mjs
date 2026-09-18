@@ -73,6 +73,10 @@ async function cleanup() {
     await restWrite('FillTask', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('fill_reconcile_state', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    // Sổ chuyển vị trí: "✓ Xong" việc NHẶT LẺ ghi dòng `StocktakeLog` (từ 17/09). FK entry_id là
+    // ON DELETE SET NULL nên xoá pallet KHÔNG hỏng — nhưng dòng sổ ở lại thành bản ghi ma trỏ vào
+    // một kho đã biến mất. Xoá theo warehouse_id, TRƯỚC khi xoá pallet/kho.
+    await restWrite('StocktakeLog', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     // Quyền kho cấp TẠM cho lái xe nâng fixture ([0e]) — không xoá thì người thật giữ quyền một kho
     // đã biến mất, và FK chặn xoá kho.

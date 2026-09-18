@@ -105,6 +105,10 @@ async function wipe() {
   // Tồn kho + phiếu nhập
   for (const e of await restAll('InventoryEntry', `select=id&pallet_code=like.${T}*`)) {
     await restWrite('InventoryAdjustmentLog', 'DELETE', `entry_id=eq.${e.id}`).catch(() => {})
+    // Sổ chuyển vị trí: quét thực hiện kế hoạch Tối ưu vị trí ghi dòng `StocktakeLog` (từ 17/09).
+    // FK entry_id là ON DELETE SET NULL nên xoá pallet KHÔNG hỏng, dòng sổ chỉ lặng lẽ ở lại thành
+    // bản ghi ma — xoá lúc còn tra được theo entry_id.
+    await restWrite('StocktakeLog', 'DELETE', `entry_id=eq.${e.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `id=eq.${e.id}`).catch(() => {})
   }
   for (const p of await restAll('ProductionImport', `select=id&notes=like.*${T}*`)) {

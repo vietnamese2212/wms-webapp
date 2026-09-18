@@ -157,6 +157,32 @@ function countSettingsAreaInterleaved(sampleOut) {
   return n
 }
 
+// CỬA CHUYỂN Ô PALLET MÀ KHÔNG GHI SỔ (18/09) — lớp lỗi "hai cửa cùng một sổ mà khác luật".
+// 17/09 dựng `services/palletMoveLog.ts` với lời hứa "MỌI cửa đổi ô của pallet gọi CHUNG hàm này",
+// nhưng chỉ nối 3 cửa. Đo 18/09: 5 cửa gọi RPC chuyển ô, 2 cửa KHÔNG ghi dòng nào —
+//   · outboundController — chỗ đặt PHẦN DƯ khi quét xuất (pallet bị "mổ" rồi mang sang ô khác)
+//   · fillController     — quét thực hiện lệnh fill (hạ pallet từ kệ xuống ô nhặt lẻ)
+// tức đúng hai lần chuyển ô THƯỜNG XUYÊN NHẤT trong ca lại vắng mặt khỏi sổ. Ratchet cũ
+// `location_write_without_move_rpc` chỉ hỏi "có đi qua RPC không", KHÔNG hỏi "có để lại vết không"
+// ⇒ lưới thủng đúng chỗ có bug. Cả hai RPC đều KHÔNG tự ghi `StocktakeLog` (đã soi prosrc).
+// Baseline 0: file nào gọi RPC chuyển ô thì phải gọi `logPalletMoves` trong CHÍNH file đó.
+function countMoveWithoutLedger(sampleOut) {
+  let n = 0
+  const MOVE_RPC = /rpc\(\s*['"](move_pallets_to_location|fill_scan_apply)['"]/
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
+    if (rel === 'backend/src/services/palletMoveLog.ts') continue
+    const src = readFileSync(f, 'utf8')
+    const lines = src.split(/\r?\n/)
+    const hit = lines.findIndex(l => !/^\s*(\/\/|\*|\/\*)/.test(l) && MOVE_RPC.test(l))
+    if (hit < 0) continue
+    if (/\blogPalletMoves\s*\(/.test(src)) continue
+    n++
+    if (sampleOut && sampleOut.length < 5) sampleOut.push(`${rel}:${hit + 1}`)
+  }
+  return n
+}
+
 function countBackgroundError500(sampleOut) {
   let n = 0
   const SKIP = ['backend/src/utils/response.ts', 'backend/src/app.ts']
@@ -373,6 +399,11 @@ const RULES = [
     key: 'background_error_500_hardcoded',
     label: 'việc NỀN ghi error_logs với status 500 cứng — quá tải bị xử như app hỏng ⇒ cờ đỏ + email báo oan; dùng recordBackgroundFailure()',
     count: countBackgroundError500,
+  },
+  {
+    key: 'move_without_ledger',
+    label: 'cửa CHUYỂN Ô pallet (rpc move_pallets_to_location / fill_scan_apply) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
+    count: countMoveWithoutLedger,
   },
   {
     key: 'hook_after_early_return',

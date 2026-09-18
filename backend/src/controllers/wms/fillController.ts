@@ -14,6 +14,7 @@ import { type MaterialShelfInfo } from '../../utils/shelfLife'
 import { qaHoldIds } from '../../services/qaStatus'
 import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { dateRuleOf, palletMeetsDateRule, type DateRule } from '../../services/directedTasks'
+import { logPalletMoves } from '../../services/palletMoveLog'
 
 // ─── FILL HÀNG PHỤC VỤ NHẶT LẺ (v3 — user chốt 05/08) ───────────────────────
 // Nhặt lẻ lấy hàng bằng TAY ⇒ hàng phải nằm ở "vị trí nhặt lẻ" (cờ Location.is_pick_face).
@@ -1118,6 +1119,25 @@ export async function scanFill(req: Request, res: Response) {
     const r = (applied ?? {}) as { code?: string; task?: Record<string, unknown>; scanned_qty?: number; order_status?: string }
     switch (r.code) {
       case 'OK':
+        // SỔ CHUYỂN VỊ TRÍ — hạ pallet từ kệ xuống ô nhặt lẻ LÀ một lần đổi chỗ thật, và là lần
+        // đổi chỗ thường xuyên nhất trong ca. Cửa này bị bỏ quên lúc dựng sổ 17/09 (lời hứa "mọi
+        // cửa gọi chung" mới nối 3/5 cửa) ⇒ tab Lịch sử của màn Chuyển vị trí im lặng về đúng
+        // việc mà lệnh fill sinh ra. `mark_stocktake` = false: người quét tem CỦA PALLET để thực
+        // hiện lệnh, không phải đi kiểm kê ô — không được xoá hạn kiểm kê (ranh giới ở palletMoveLog).
+        await logPalletMoves({
+          moved: [{
+            entry_id: entry.id,
+            from_location_id: entry.location_id,
+            from_location_code: entry.loc?.location_code ?? null,
+            pallet_code: entry.pallet_code,
+            material_id: entry.material_id,
+            app_qty: Number(entry.cartons_remaining ?? 0),
+          }],
+          to_location_id: destId,
+          actor_id: me, actor_name: meName,
+          note: 'Quét thực hiện lệnh fill (hạ xuống vị trí nhặt lẻ)',
+          where: '/wms/fill/scan', at: now(),
+        })
         return ok(res, { task: { ...(r.task ?? {}), ...(unit ?? {}) }, entry: entryOut, moved: true,
           scanned_qty: r.scanned_qty, order_status: r.order_status,
           done: (r.task?.status === 'DONE') })

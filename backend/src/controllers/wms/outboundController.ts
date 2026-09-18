@@ -21,6 +21,7 @@ import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../ut
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
+import { logPalletMoves } from '../../services/palletMoveLog'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
@@ -352,6 +353,8 @@ const KEEP_LOCATION = 'KEEP'   // sentinel FE gửi khi user chọn "giữ chỗ
 
 async function moveLeftoverPallet(
   invId: string, locationId: string, updatedBy: string | null, t: string,
+  from: { location_id: string | null; pallet_code?: string | null } = { location_id: null },
+  actorName: string | null = null,
 ): Promise<string | null> {
   const vnDate = new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const { data: result, error } = await supabase.rpc('move_pallets_to_location', {
@@ -364,7 +367,19 @@ async function moveLeftoverPallet(
     case 'NOT_FOUND': return 'Không tìm thấy vị trí đã chọn'
     case 'INACTIVE':  return 'Vị trí đã chọn đang ngưng sử dụng'
     case 'FULL':      return `Vị trí ${parts[2] ?? ''} vừa hết chỗ (còn ${parts[1] ?? 0} slot) — chọn vị trí khác`
-    default:          return null
+    default:
+      // SỔ CHUYỂN VỊ TRÍ — pallet bị "mổ" rồi mang phần dư sang ô khác LÀ một lần đổi chỗ thật;
+      // chính vì nó mà cột location_id được đụng tới ở luồng xuất (chốt 30/07). Cửa này bị bỏ quên
+      // lúc dựng sổ 17/09 ⇒ hàng dư đi đâu không ai tra được. Ghi SAU khi RPC báo thành công.
+      // `mark_stocktake` = false: người quét tem để XUẤT hàng, không phải đi kiểm kê ô.
+      await logPalletMoves({
+        moved: [{ entry_id: invId, from_location_id: from.location_id, pallet_code: from.pallet_code ?? null }],
+        to_location_id: locationId,
+        actor_id: updatedBy, actor_name: actorName,
+        note: 'Đặt phần còn lại của pallet khi quét xuất',
+        where: '/wms/outbound/scan', at: t,
+      })
+      return null
   }
 }
 
@@ -6440,7 +6455,8 @@ export async function scanItem(req: Request, res: Response) {
     // không bao giờ để lại trạng thái "đã trừ tồn mà không biết hàng dư nằm đâu".
     const applyLeftoverMove = async (revert: () => Promise<unknown>): Promise<string | null> => {
       if (!moveLeftoverTo) return null
-      const err = await moveLeftoverPallet(inv.id, moveLeftoverTo, resolved_employee_id ?? null, t)
+      const err = await moveLeftoverPallet(inv.id, moveLeftoverTo, resolved_employee_id ?? actorUuid(req), t,
+        { location_id: inv.location_id ?? null, pallet_code: inv.pallet_code ?? qr }, req.user?.name ?? null)
       if (!err) return null
       await revert()
       await supabase.from('OutboundScanEntry').delete().eq('id', scanId)

@@ -68,6 +68,10 @@ async function cleanup(whId) {
   if (created.gdo) await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${created.gdo}`).catch(() => {})
   for (const id of created.entries) {
     await restWrite('FillTaskScan', 'DELETE', `entry_id=eq.${id}`).catch(() => {})
+    // Sổ chuyển vị trí (18/09): quét fill nay để lại dòng `StocktakeLog`. FK là ON DELETE SET NULL
+    // nên xoá pallet KHÔNG hỏng, nhưng dòng sổ ở lại thành bản ghi ma (mất cả entry lẫn vị trí) —
+    // xoá TRƯỚC khi xoá pallet, lúc còn tra được theo entry_id.
+    await restWrite('StocktakeLog', 'DELETE', `entry_id=eq.${id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `id=eq.${id}`).catch(() => {})
   }
   for (const id of created.locs)    await restWrite('Location', 'DELETE', `id=eq.${id}`).catch(() => {})
@@ -415,6 +419,15 @@ try {
   check('9d. Có VẾT QUÉT (FillTaskScan) đúng tem đúng SL', scans9.length === 1
     && scans9[0].entry_id === pA.id && Number(scans9[0].qty_base) === 60,
     `scans=${scans9.length}`)
+  // SỔ CHUYỂN VỊ TRÍ (18/09) — hạ pallet xuống ô nhặt lẻ là lần đổi chỗ THƯỜNG XUYÊN NHẤT trong ca,
+  // nhưng cửa này bị bỏ quên lúc dựng sổ 17/09 (lời hứa "mọi cửa ghi chung một sổ" mới nối 3/5 cửa)
+  // ⇒ tab Lịch sử của màn Chuyển vị trí im lặng về đúng việc mà lệnh fill sinh ra. `fill_scan_apply`
+  // KHÔNG tự ghi sổ trong SQL (đã soi prosrc), nên vết phải do controller ghi.
+  const mvLog9 = await restAll('StocktakeLog',
+    `select=entry_id,location_from_id,location_changed_to,counted_by_name,note&entry_id=eq.${pA.id}&location_changed_to=eq.${locPF.id}`)
+  check('9e. Lần hạ này để lại VẾT trong sổ Chuyển vị trí (từ ô nguồn → ô nhặt lẻ, có tên người)',
+    mvLog9.length >= 1 && mvLog9[0].location_from_id === before?.location_id && !!mvLog9[0].counted_by_name,
+    `dòng=${mvLog9.length} từ=${mvLog9[0]?.location_from_id === before?.location_id ? 'đúng ô nguồn' : mvLog9[0]?.location_from_id ?? '—'} ai=${mvLog9[0]?.counted_by_name ?? 'TRỐNG'}`)
   // 15/09 — LỆNH LÀ SỔ CỦA CẢ NGÀY: hạ xong dòng cuối KHÔNG đóng lệnh. Tự đóng thì 10h sáng đóng,
   // 11h có đơn mới là phải mở lại một chứng từ đã đóng. Đóng sổ là việc của 'Chốt ngày'.
   check('9e. Hạ xong dòng cuối, lệnh của NGÀY vẫn ĐANG MỞ (chỉ chốt ngày mới đóng)',

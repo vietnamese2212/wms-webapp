@@ -97,10 +97,23 @@ try {
   // Khai sẵn cả hai để gói MIỄN NHIỄM với work_mode của kho dùng chung: gói này đo KHOÁ DÒNG lúc
   // quét, không đo chỉ dẫn công việc. Đo thật 12/09 — một tài khoản mô phỏng bật GUIDED cho Ba Vì
   // rồi không trả về, thế là gói đỏ 8 phép mà không phép nào dính dáng tới chuyện đó.
-  // Phạm vi TOÀN QUỐC để qua cửa "người này có được giao kho của chuyến không".
-  const [drvEmp] = await restAll('Employee',
-    'select=id,name&is_active=is.true&warehouse_scope=eq.NATIONAL&limit=1')
+  // LÁI XE NÂNG PHẢI MANG CỜ CHỨC DANH (18/09) — trước đó gói mượn một tài khoản phạm vi TOÀN QUỐC
+  // cho tiện qua cửa "người này có được giao kho của chuyến không". Từ khi `validForkliftIds` gác
+  // thêm tầng VAI TRÒ (`JobTitle.is_forklift_driver`), tài khoản đó bị chối 400 BAD_ID ⇒ KHÔNG mở
+  // được chuyến nào, và 8 phép kiểm sau đó đỏ với thông báo lạc đề ("Chuyến chưa Bắt đầu").
+  // Bài học: thêm một cờ VAI TRÒ là đổi điều kiện của MỌI fixture đang bịa ra vai đó — phải quét
+  // hết các gói, đừng chỉ vá gói đang chạy (gói 57 [0e] đã vá cùng lý do, gói này bị bỏ sót).
+  // Ba Vì có sẵn lái xe nâng thật nên chỉ cần CHỌN ĐÚNG người, không phải cấp quyền tạm.
+  const drvJts = await restAll('JobTitle', 'select=id&is_forklift_driver=is.true')
+  const whAcc = await restAll('UserWarehouseAccess', `select=employee_id&warehouse_id=eq.${WH.id}`)
+  const accSet = new Set((whAcc ?? []).map(a => a.employee_id))
+  const drvCands = drvJts.length
+    ? await restAll('Employee',
+        `select=id,name,warehouse_scope&is_active=is.true&job_title_id=in.(${drvJts.map(j => j.id).join(',')})&limit=50`)
+    : []
+  const drvEmp = drvCands.find(e => e.warehouse_scope === 'NATIONAL' || accSet.has(e.id)) ?? null
   const drvId = drvEmp?.id ?? null
+  if (!drvId) console.log('  ⚠ kho fixture không có lái xe nâng nào MANG CỜ chức danh — chuyến sẽ không Bắt đầu được')
 
   // Mở 1 chuyến ĐANG XUẤT (qua rule cổng + cân của kho)
   let plateSeq = 0

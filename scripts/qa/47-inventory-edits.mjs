@@ -110,12 +110,14 @@ const entryOf = async c => (await restAll('InventoryEntry',
   // gửi, nên mọi đường không-qua-form để lại pallet và dòng sổ KHÔNG TÊN. Kiểm cả hai vết cùng lúc:
   // cột trên pallet và dòng trong sổ Chuyển vị trí.
   {
-    const eSau = await entryOf(p1)
+    // Hỏi RIÊNG cột `updated_by` — `entryOf` không select cột này (lượt đầu viết phép kiểm tôi
+    // dựa vào nó nên đọc ra `undefined` rồi tưởng app sai; oracle phải tự hỏi đúng cột nó cần).
+    const [eSau] = await restAll('InventoryEntry', `select=updated_by&id=eq.${e1.id}`)
     const mv = await restAll('StocktakeLog',
       `select=counted_by,counted_by_name&entry_id=eq.${e1.id}&location_changed_to=eq.${L2.id}`)
     check('[4b] Chuyển vị trí hàng loạt ghi ĐÚNG người dù client không gửi employee_id',
-      !!eSau.updated_by && mv.length >= 1 && !!mv[0].counted_by,
-      `pallet=${eSau.updated_by ?? 'TRỐNG'} · sổ=${mv[0]?.counted_by_name ?? 'TRỐNG'}`)
+      !!eSau?.updated_by && mv.length >= 1 && !!mv[0].counted_by,
+      `pallet=${eSau?.updated_by ?? 'TRỐNG'} · sổ=${mv[0]?.counted_by_name ?? 'TRỐNG'}`)
   }
 
   // hồi quy 06/09: ô đích thuộc KHO KHÁC → phải chặn, và pallet KHÔNG được xê dịch

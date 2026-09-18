@@ -237,7 +237,11 @@ try {
   check('[3a] Kho Hướng dẫn thiếu xe nâng chuyển → 422 FORKLIFT_REQUIRED',
     r.s === 422 && r.j?.error?.code === 'FORKLIFT_REQUIRED', `http=${r.s} ${err(r)}`)
   r = await startTrip(t2.gdo, { license_plate: '51C22222', dock_location_id: dockA, forklift_driver_ids: ['khong-co-nguoi-nay'] })
-  check('[3b] Id nhân sự lạ → 400 (không im lặng bỏ qua)', r.s === 400, `http=${r.s} ${err(r)}`)
+  // Mã phải nói ĐÚNG lý do: id có thật nhưng không tìm ra người ⇒ EMPLOYEE_NOT_FOUND, KHÔNG phải
+  // BAD_ID (BAD_ID dành cho id SAI DẠNG). 18/09 cả 5 lý do từ chối đều gộp vào BAD_ID nên khi gói
+  // 46 đỏ vì sai VAI TRÒ, thông báo chỉ nói "BAD_ID" — mất cả buổi mới lần ra.
+  check('[3b] Id nhân sự lạ → 400 EMPLOYEE_NOT_FOUND (không im lặng bỏ qua, mã nói đúng lý do)',
+    r.s === 400 && r.j?.error?.code === 'EMPLOYEE_NOT_FOUND', `http=${r.s} ${err(r)}`)
   // [3c] VAI TRÒ (18/09) — người có thật, đúng phạm vi kho, nhưng KHÔNG mang chức danh lái xe nâng.
   // Trước bản vá cửa này chỉ gác "có thật" + "đúng kho" ⇒ Admin và tài khoản mô phỏng đứng tên lái
   // xe nâng của 3 chuyến đang xuất thật trên staging: bảng "Cần đưa ra" giao việc cho người không
@@ -245,8 +249,9 @@ try {
   // gác mới là luật, gọi thẳng API vẫn ghi được.
   if (nonDrvId) {
     r = await startTrip(t2.gdo, { license_plate: '51C22222', dock_location_id: dockA, forklift_driver_ids: [nonDrvId] })
-    check('[3c] Người KHÔNG phải chức danh lái xe nâng → 400, nêu TÊN người bị loại',
-      r.s === 400 && /lái xe nâng/i.test(String(r.j?.error?.message ?? '')), `http=${r.s} ${err(r)}`)
+    check('[3c] Người KHÔNG phải chức danh lái xe nâng → 400 NOT_FORKLIFT, nêu TÊN người bị loại',
+      r.s === 400 && r.j?.error?.code === 'NOT_FORKLIFT'
+        && /lái xe nâng/i.test(String(r.j?.error?.message ?? '')), `http=${r.s} ${err(r)}`)
   } else check('[3c] Người KHÔNG phải chức danh lái xe nâng → 400', false, 'không tìm được nhân sự để thử')
 
   // ═══ [4] DÒNG CHƯA CHỐT %DATE → KHÔNG CÓ VIỆC (điểm user nhấn mạnh nhất) ═════════════════════

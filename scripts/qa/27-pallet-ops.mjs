@@ -37,11 +37,16 @@ async function cleanup() {
     await restWrite('PalletOperation', 'DELETE', `source_codes=ov.${encodeURIComponent(list)}`).catch(() => {})
     await restWrite('PalletOperation', 'DELETE', `target_codes=ov.${encodeURIComponent(list)}`).catch(() => {})
   }
+  // Sổ chuyển vị trí: DỒN pallet kéo tem con sang ô của tem đích ⇒ ghi `StocktakeLog` (từ 18/09).
+  // FK entry_id là ON DELETE SET NULL nên xoá pallet KHÔNG hỏng, dòng sổ chỉ ở lại thành bản ghi ma.
+  // Quét theo TAG trong pallet_code (cột được ghi thẳng vào sổ) để bắt cả pallet con API tự tạo.
+  await restWrite('StocktakeLog', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
   // Entry: quét theo TAG trong mã (bắt luôn pallet CON do API tạo mà gói không track được id)
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
   for (const id of created.locs) await restWrite('Location', 'DELETE', `id=eq.${id}`).catch(() => {})
 }
 // Tàn dư lần chạy hỏng giữa chừng → dọn trước (fixture tự hồi phục)
+await restWrite('StocktakeLog', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
 await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
 for (const o of await restAll('Location', `select=id&location_code=like.${TAG}-*`))
   await restWrite('Location', 'DELETE', `id=eq.${o.id}`)

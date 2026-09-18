@@ -2815,18 +2815,18 @@ const MAX_FORKLIFT_DRIVERS = 20   // trần khai rõ: một chuyến không có 
 // không im lặng bỏ qua — bảng việc lọc theo danh sách này nên sai một id là mất người nhận việc).
 async function validForkliftIds(
   ids: unknown, legacyId: string | undefined, warehouseId: string | null,
-): Promise<{ ids: string[]; names: string | null } | { error: string }> {
+): Promise<{ ids: string[]; names: string | null } | { error: string; code: string }> {
   const raw = Array.isArray(ids) ? ids : (legacyId ? [legacyId] : [])
   const list = [...new Set(raw.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(s => s.trim()))]
   if (!list.length) return { ids: [], names: null }
-  if (list.length > MAX_FORKLIFT_DRIVERS) return { error: `Tối đa ${MAX_FORKLIFT_DRIVERS} người lái xe nâng cho một chuyến` }
-  if (list.some(id => id.length > 100 || searchLooksLikeInjection(id))) return { error: 'Mã nhân sự không hợp lệ' }
+  if (list.length > MAX_FORKLIFT_DRIVERS) return { error: `Tối đa ${MAX_FORKLIFT_DRIVERS} người lái xe nâng cho một chuyến`, code: 'TOO_MANY_FORKLIFT' }
+  if (list.some(id => id.length > 100 || searchLooksLikeInjection(id))) return { error: 'Mã nhân sự không hợp lệ', code: 'BAD_ID' }
   const { data, error } = await supabase.from('Employee')
     .select('id, name, warehouse_scope, job_title_id').in('id', list).eq('is_active', true).limit(MAX_FORKLIFT_DRIVERS)
   if (error) throw error
   const found = (data ?? []) as { id: string; name: string | null; warehouse_scope: string | null; job_title_id: string | null }[]
   const missing = list.filter(id => !found.some(f => f.id === id))
-  if (missing.length) return { error: 'Có người không còn làm việc hoặc không tồn tại — chọn lại' }
+  if (missing.length) return { error: 'Có người không còn làm việc hoặc không tồn tại — chọn lại', code: 'EMPLOYEE_NOT_FOUND' }
   // VAI TRÒ đọc theo CỜ `JobTitle.is_forklift_driver`, KHÔNG so tên tiếng Việt (luật 14/08).
   // Trước 18/09 cửa này chỉ gác "có thật" + "đúng kho" ⇒ Admin và tài khoản mô phỏng lọt vào
   // `forklift_driver_ids` của 3 chuyến đang xuất: bảng "Cần đưa ra" giao việc cho người không lái
@@ -2840,7 +2840,7 @@ async function validForkliftIds(
   const okJt = new Set((jts ?? []).filter(j => j.is_forklift_driver).map(j => j.id))
   const notDriver = found.filter(f => !f.job_title_id || !okJt.has(f.job_title_id))
   if (notDriver.length) {
-    return { error: `${notDriver.map(o => o.name ?? o.id).join(', ')} không phải chức danh lái xe nâng — tick "Là chức danh lái xe nâng" ở Chức danh nếu đúng người` }
+    return { error: `${notDriver.map(o => o.name ?? o.id).join(', ')} không phải chức danh lái xe nâng — tick "Là chức danh lái xe nâng" ở Chức danh nếu đúng người`, code: 'NOT_FORKLIFT' }
   }
   // Phạm vi kho của nhân sự nằm ở bảng `UserWarehouseAccess` (KHÔNG phải cột trên Employee).
   // Người phạm vi toàn quốc thì kho nào cũng làm được.
@@ -2851,7 +2851,7 @@ async function validForkliftIds(
         .select('employee_id').eq('warehouse_id', warehouseId).in('employee_id', assigned.map(f => f.id)).limit(MAX_FORKLIFT_DRIVERS)
       const okIds = new Set(((acc ?? []) as { employee_id: string }[]).map(a => a.employee_id))
       const outside = assigned.filter(f => !okIds.has(f.id))
-      if (outside.length) return { error: `${outside.map(o => o.name ?? o.id).join(', ')} không được giao kho của chuyến này` }
+      if (outside.length) return { error: `${outside.map(o => o.name ?? o.id).join(', ')} không được giao kho của chuyến này`, code: 'FORKLIFT_OUT_OF_SCOPE' }
     }
   }
   const byId = new Map(found.map(f => [f.id, f.name ?? '']))
@@ -2965,7 +2965,7 @@ export async function startGDO(req: Request, res: Response) {
     // bảng "Cần đưa ra" lọc việc theo danh sách này, không có ai thì kế hoạch sinh ra mà không ai
     // nhận. Kho Thủ công giữ nguyên: tuỳ chọn như hôm nay. "Xuất luôn" không đi qua đây.
     const startDrivers = await validForkliftIds(forklift_driver_ids, forklift_driver_id, startWhId)
-    if ('error' in startDrivers) return fail(res, 400, 'BAD_ID', startDrivers.error)
+    if ('error' in startDrivers) return fail(res, 400, startDrivers.code, startDrivers.error)
     const startWorkMode = await workModeOfGdo(startWhId, (cur as { warehouse?: Record<string, unknown> | null } | null)?.warehouse ?? null, (cur as { warehouse_type?: string | null } | null)?.warehouse_type ?? null)
     if (startWorkMode === 'GUIDED' && !startDrivers.ids.length)
       return fail(res, 422, 'FORKLIFT_REQUIRED', 'Kho này chạy chế độ Hướng dẫn — chọn ít nhất một người lái xe nâng chuyển để giao việc lấy hàng.')
@@ -3165,7 +3165,7 @@ export async function updateTransport(req: Request, res: Response) {
     const utDrivers = forklift_driver_ids !== undefined || forklift_driver_id !== undefined
       ? await validForkliftIds(forklift_driver_ids, forklift_driver_id, utGdoRow.warehouse_id)
       : { ids: utGdoRow.forklift_driver_ids ?? [], names: null as string | null }
-    if ('error' in utDrivers) return fail(res, 400, 'BAD_ID', utDrivers.error)
+    if ('error' in utDrivers) return fail(res, 400, utDrivers.code, utDrivers.error)
     if (forklift_driver_ids !== undefined && !utDrivers.ids.length) {
       const utMode = await workModeOfGdo(utGdoRow.warehouse_id, utGdoRow.warehouse, utGdoRow.warehouse_type)
       if (utMode === 'GUIDED') {

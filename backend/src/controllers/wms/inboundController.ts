@@ -1393,8 +1393,10 @@ export async function scanQR(req: Request, res: Response) {
             cartons_before: before,
             cartons_after:  after,
             note:           `Nhập trả về từ phiếu transfer ${importCode}`,
-            actor_name:     null,
-            actor_id:       employee_id ?? null,
+            // CÙNG BẢNG với dòng "Điều chỉnh tồn" đã vá 18/09 nhưng là cửa KHÁC — và cửa này còn
+            // để `actor_name` NULL CỨNG, tức dòng sổ chắc chắn không có tên dù ai làm.
+            actor_name:     req.user?.name ?? null,
+            actor_id:       resolveActorId(req, employee_id),
             adjusted_at:    now,
           })
           if (logErr) console.error('[scanQR merge] Ghi InventoryAdjustmentLog thất bại:', logErr.message)

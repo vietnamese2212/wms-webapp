@@ -74,5 +74,6 @@
   "upload_without_preflight": 0,
   "password_rule_hand_rolled": 0,
   "upload_without_merge_expand": 0,
-  "move_without_ledger": 0
+  "move_without_ledger": 0,
+  "actor_column_from_body": 0
 }

@@ -407,6 +407,18 @@ const RULES = [
     count: countBackgroundError500,
   },
   {
+    key: 'actor_column_from_body',
+    label: 'cột vết (*_by / actor_id / counted_by) gán THẲNG từ trường của thân request — phải qua resolveActorId() để rơi về người đăng nhập khi client không gửi',
+    // Lớp C31 đã nổ BỐN lần: `scanned_by` (17/09) · `actor_name` điều chỉnh tồn (18/09) ·
+    // `ProductionImport.updated_by` (18/09, còn GHI NULL ĐÈ) · và 7 cửa còn lại của Tồn kho/Nhập kho
+    // chỉ lộ ra khi user hỏi "còn gì chưa fix". Ba lần đầu đều vá thủ công rồi quên quét phần còn
+    // lại — đúng lý do phải máy hoá. Form luôn gửi nên THỬ TAY KHÔNG BAO GIỜ THẤY; chỉ bundle cũ,
+    // script, tích hợp mới lộ. Baseline 0.
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\b(updated_by|created_by|actor_id|counted_by|scanned_by|stocktake_by|operated_by)\b\s*[:=]\s*(employee_id|req\.body|body)\b/.test(line), s),
+  },
+  {
     key: 'move_without_ledger',
     label: 'cửa ĐỔI Ô pallet (rpc move_pallets_to_location / fill_scan_apply, hoặc ghi thẳng location_id) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
     count: countMoveWithoutLedger,

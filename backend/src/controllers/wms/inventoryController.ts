@@ -18,6 +18,7 @@ import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
 import { logPalletMoves } from '../../services/palletMoveLog'
+import { resolveActorId } from '../../utils/actor'
 import { putawayEnforces } from '../../utils/putaway'
 
 // Quyền duyệt cất khác quy tắc — MỘT quyền cho cả app (`inbound.putaway_override`), không đẻ thêm
@@ -968,7 +969,9 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+  // AI SỬA — client gửi thì tin client, KHÔNG gửi thì rơi về người đăng nhập (C31).
+  // Chỉ gán khi BIẾT CHẮC: ghi null sẽ ĐÈ MẤT tên cũ (đúng bẫy đã vá ở phiếu nhập 18/09).
+  { const by = resolveActorId(req, employee_id); if (by) patch.updated_by = by }
 
   const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
   if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
@@ -994,7 +997,9 @@ export async function bulkUpdateNcc(req: Request, res: Response) {
     shelf_life_days: (shelf_life_days != null && Number(shelf_life_days) > 0) ? Number(shelf_life_days) : null,
     updated_at: now, update_date: vnDate,
   }
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+  // AI SỬA — client gửi thì tin client, KHÔNG gửi thì rơi về người đăng nhập (C31).
+  // Chỉ gán khi BIẾT CHẮC: ghi null sẽ ĐÈ MẤT tên cũ (đúng bẫy đã vá ở phiếu nhập 18/09).
+  { const by = resolveActorId(req, employee_id); if (by) patch.updated_by = by }
 
   const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
   if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
@@ -1017,8 +1022,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const updatedBy = (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id))
-    ? employee_id : null
+  const updatedBy = resolveActorId(req, employee_id)
 
   // QUY TẮC CẤT HÀNG — cửa này từng đi thẳng xuống RPC, nên kho bật "bắt buộc" vẫn dồn được pallet
   // vào ô cấm nhận hàng / ô nhặt lẻ / vượt số mã. Lọc ở picker chỉ là gợi ý; chặn thật nằm ở đây.
@@ -1151,7 +1155,9 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+  // AI SỬA — client gửi thì tin client, KHÔNG gửi thì rơi về người đăng nhập (C31).
+  // Chỉ gán khi BIẾT CHẮC: ghi null sẽ ĐÈ MẤT tên cũ (đúng bẫy đã vá ở phiếu nhập 18/09).
+  { const by = resolveActorId(req, employee_id); if (by) patch.updated_by = by }
 
   const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
   if (up.error) return fail(res, 500, 'DB_ERROR', up.error)
@@ -1215,10 +1221,9 @@ export async function stocktakeEntry(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const patch: Record<string, unknown> = { stocktake_at: now, updated_at: now, update_date: vnDate }
 
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) {
-    patch.stocktake_by = employee_id
-    patch.updated_by   = employee_id
-  }
+  // AI KIỂM — client gửi thì tin client (thủ kho kiểm hộ), KHÔNG gửi thì rơi về người đăng nhập.
+  // Đây là lượt QUÉT TEM thật nên `stocktake_by` phải có người: nó là căn cứ của tab Luân phiên ABC.
+  { const by = resolveActorId(req, employee_id); if (by) { patch.stocktake_by = by; patch.updated_by = by } }
 
   // Đổi vị trí khi kiểm: nạp vị trí mới 1 lần — sync cả warehouse_id (cột lọc theo kho) + dùng lại cho snapshot log
   type SnapLoc = { location_code?: string; warehouse_id?: string; categories?: string[] | null }
@@ -1283,7 +1288,9 @@ export async function stocktakeEntry(req: Request, res: Response) {
       // Snapshot ô NGUỒN (20/08) — tab Lịch sử chuyển vị trí cần "từ ô nào → đến ô nào"
       location_from_id:   existing.location_id ?? null,
       location_from_code: fromLocCode,
-      counted_by: (patch.stocktake_by as string | undefined) ?? null,
+      // Hai vết của CÙNG một lượt kiểm mà lấy từ hai nguồn: tên theo JWT, id theo thân request —
+      // đúng hình dạng đã vá ở phiếu nhập 18/09. Nay cả hai cùng một nguồn.
+      counted_by: resolveActorId(req, patch.stocktake_by),
       counted_by_name: req.user?.name ?? null,
       counted_at: now,
       created_at: now,
@@ -1621,7 +1628,9 @@ export async function bulkUpdateProductionDate(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { production_date, updated_at: now, update_date: vnDate }
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+  // AI SỬA — client gửi thì tin client, KHÔNG gửi thì rơi về người đăng nhập (C31).
+  // Chỉ gán khi BIẾT CHẮC: ghi null sẽ ĐÈ MẤT tên cũ (đúng bẫy đã vá ở phiếu nhập 18/09).
+  { const by = resolveActorId(req, employee_id); if (by) patch.updated_by = by }
 
   const up = await updateEntriesCount(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
   if (up.error) return fail(res, 500, 'DB_ERROR', up.error)

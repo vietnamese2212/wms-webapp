@@ -105,6 +105,18 @@ const entryOf = async c => (await restAll('InventoryEntry',
 
   let r = await api('/wms/inventory/bulk-location', 'PATCH', { ids: [e1.id], location_id: L2.id })
   check('[4] Chuyển pallet sang ô khác CÙNG KHO → được', r.s === 200 && (await entryOf(p1)).location_id === L2.id, `s=${r.s}`)
+  // [4b] AI CHUYỂN — lời gọi trên CỐ Ý không gửi `employee_id` (bundle PWA cũ / script / tích hợp
+  // đều thế). Lớp C31 đã nổ BỐN lần; riêng nhóm cửa HÀNG LOẠT của Tồn kho chỉ ghi người khi client
+  // gửi, nên mọi đường không-qua-form để lại pallet và dòng sổ KHÔNG TÊN. Kiểm cả hai vết cùng lúc:
+  // cột trên pallet và dòng trong sổ Chuyển vị trí.
+  {
+    const eSau = await entryOf(p1)
+    const mv = await restAll('StocktakeLog',
+      `select=counted_by,counted_by_name&entry_id=eq.${e1.id}&location_changed_to=eq.${L2.id}`)
+    check('[4b] Chuyển vị trí hàng loạt ghi ĐÚNG người dù client không gửi employee_id',
+      !!eSau.updated_by && mv.length >= 1 && !!mv[0].counted_by,
+      `pallet=${eSau.updated_by ?? 'TRỐNG'} · sổ=${mv[0]?.counted_by_name ?? 'TRỐNG'}`)
+  }
 
   // hồi quy 06/09: ô đích thuộc KHO KHÁC → phải chặn, và pallet KHÔNG được xê dịch
   r = await api('/wms/inventory/bulk-location', 'PATCH', { ids: [e1.id], location_id: LOTHER.id })

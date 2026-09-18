@@ -671,6 +671,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const [deptId,     setDeptId]     = useState(jt?.department_id ?? '')
   const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
   const [isDriver,   setIsDriver]   = useState(jt?.is_driver     ?? false)
+  const [isForklift, setIsForklift] = useState(jt?.is_forklift_driver ?? false)
   const [landing,    setLanding]    = useState<string>(jt?.landing_page ?? '')   // '' = Tổng quan
   const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
 
@@ -720,7 +721,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     const cleanPerms = Object.fromEntries(
       Object.entries(modulePerms).filter((e): e is [string, string[]] => e[1] !== undefined)
     )
-    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver, landing_page: landing || null }
+    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver, is_forklift_driver: isForklift, landing_page: landing || null }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
@@ -895,6 +896,18 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             <Label htmlFor="jt-driver" className="text-sm cursor-pointer leading-snug">
               Là chức danh tài xế
               <span className="block text-[11px] font-normal text-slate-500">Tài khoản mang chức danh này được gán xe và mở màn hình tài xế (chỉ có tác dụng khi phòng ban là đơn vị vận tải).</span>
+            </Label>
+          </div>
+          {/* Cờ lái xe nâng (18/09) — thay việc so tên chức danh chứa "lái xe nâng". Cờ này quyết định
+              CẢ ô chọn lúc Bắt đầu chuyến LẪN cửa gác của máy chủ, nên bỏ tick là người đó không nhận
+              được việc xe nâng nữa. */}
+          <div className="flex items-start gap-2">
+            <input id="jt-forklift" type="checkbox" checked={isForklift}
+              onChange={e => setIsForklift(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
+            <Label htmlFor="jt-forklift" className="text-sm cursor-pointer leading-snug">
+              Là chức danh lái xe nâng
+              <span className="block text-[11px] font-normal text-slate-500">Chỉ người mang chức danh có tick này mới chọn được vào ô “Lái xe nâng” lúc Bắt đầu chuyến, và mới nhận việc ở bảng “Cần đưa ra”.</span>
             </Label>
           </div>
           {/* Trang mở đầu theo chức danh (12/09): lái xe nâng đăng nhập là thấy việc của mình, không đi

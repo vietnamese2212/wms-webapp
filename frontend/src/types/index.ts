@@ -49,6 +49,7 @@ export interface JobTitle {
   parent_id:          string | null
   in_chart?:          boolean
   is_driver?:         boolean      // chức danh TÀI XẾ — cờ thay việc so tên 'Lái xe'
+  is_forklift_driver?: boolean     // chức danh LÁI XE NÂNG — cờ thay việc so tên chứa 'lái xe nâng'
   landing_page?:      string | null // trang mở đầu sau đăng nhập (null = Tổng quan)
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>

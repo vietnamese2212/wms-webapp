@@ -74,6 +74,9 @@ async function cleanup() {
     await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('fill_reconcile_state', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    // Quyền kho cấp TẠM cho lái xe nâng fixture ([0e]) — không xoá thì người thật giữ quyền một kho
+    // đã biến mất, và FK chặn xoá kho.
+    await restWrite('UserWarehouseAccess', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_maps', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await delRetry('Location', `warehouse_id=eq.${w.id}`)
@@ -166,12 +169,22 @@ try {
   check('[0d] 4 pallet — FEFO cố ý NGƯỢC thứ tự vị trí (HSD ngắn nhất ở dãy xa, tầng cao)',
     !!pLow.id && !!pFar3.id && !!pNear1.id && !!pNear2.id)
 
-  // Nhân sự lái xe nâng thuộc kho
-  // Phạm vi TOÀN QUỐC để qua được cửa kiểm "người này có được giao kho của chuyến không"
-  // (kho fixture vừa tạo nên không ai được gán riêng).
-  const [emp] = await restAll('Employee', 'select=id,name&is_active=is.true&warehouse_scope=eq.NATIONAL&limit=1')
+  // Nhân sự lái xe nâng thuộc kho — từ 18/09 máy chủ gác VAI TRÒ (cờ `JobTitle.is_forklift_driver`),
+  // nên fixture phải lấy người CÓ CỜ chứ không lấy bừa một tài khoản toàn quốc. Đo staging 18/09:
+  // 18/18 lái xe nâng đều phạm vi ASSIGNED ⇒ cấp TẠM quyền kho fixture cho họ (cleanup xoá lại),
+  // thay vì mượn một tài khoản toàn quốc không phải lái xe nâng.
+  const drvJts = await restAll('JobTitle', 'select=id&is_forklift_driver=is.true')
+  const [emp] = drvJts.length
+    ? await restAll('Employee', `select=id,name&is_active=is.true&job_title_id=in.(${drvJts.map(j => j.id).join(',')})&limit=1`)
+    : []
   const drvId = emp?.id ?? null
-  check('[0e] Có nhân sự phạm vi toàn quốc để làm lái xe nâng', !!drvId, drvId ? emp.name : 'KHÔNG TÌM THẤY — các phép kiểm sau sẽ sai')
+  check('[0e] Có nhân sự mang chức danh LÁI XE NÂNG (cờ, không so tên)', !!drvId,
+    drvId ? emp.name : 'KHÔNG TÌM THẤY — tick "Là chức danh lái xe nâng" ở danh mục Chức danh')
+  if (drvId) await restWrite('UserWarehouseAccess', 'POST', null,
+    { id: randomUUID(), employee_id: drvId, warehouse_id: whId }).catch(() => {})
+  // Người KHÔNG phải lái xe nâng — để kiểm cửa gác ở [3c]
+  const [nonDrv] = await restAll('Employee', 'select=id,name&is_active=is.true&warehouse_scope=eq.NATIONAL&limit=1')
+  const nonDrvId = nonDrv?.id ?? null
 
   const mkTrip = async (suffix, cat = CAT_A) => {
     const [g] = await restWrite('GroupDeliveryOrder', 'POST', null, {
@@ -221,6 +234,16 @@ try {
     r.s === 422 && r.j?.error?.code === 'FORKLIFT_REQUIRED', `http=${r.s} ${err(r)}`)
   r = await startTrip(t2.gdo, { license_plate: '51C22222', dock_location_id: dockA, forklift_driver_ids: ['khong-co-nguoi-nay'] })
   check('[3b] Id nhân sự lạ → 400 (không im lặng bỏ qua)', r.s === 400, `http=${r.s} ${err(r)}`)
+  // [3c] VAI TRÒ (18/09) — người có thật, đúng phạm vi kho, nhưng KHÔNG mang chức danh lái xe nâng.
+  // Trước bản vá cửa này chỉ gác "có thật" + "đúng kho" ⇒ Admin và tài khoản mô phỏng đứng tên lái
+  // xe nâng của 3 chuyến đang xuất thật trên staging: bảng "Cần đưa ra" giao việc cho người không
+  // lái xe nâng, khối Giám sát đếm sai công cả kho. Ô chọn trên màn có lọc — nhưng lọc là gợi ý,
+  // gác mới là luật, gọi thẳng API vẫn ghi được.
+  if (nonDrvId) {
+    r = await startTrip(t2.gdo, { license_plate: '51C22222', dock_location_id: dockA, forklift_driver_ids: [nonDrvId] })
+    check('[3c] Người KHÔNG phải chức danh lái xe nâng → 400, nêu TÊN người bị loại',
+      r.s === 400 && /lái xe nâng/i.test(String(r.j?.error?.message ?? '')), `http=${r.s} ${err(r)}`)
+  } else check('[3c] Người KHÔNG phải chức danh lái xe nâng → 400', false, 'không tìm được nhân sự để thử')
 
   // ═══ [4] DÒNG CHƯA CHỐT %DATE → KHÔNG CÓ VIỆC (điểm user nhấn mạnh nhất) ═════════════════════
   r = await startTrip(t2.gdo, { license_plate: '51C22222', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })

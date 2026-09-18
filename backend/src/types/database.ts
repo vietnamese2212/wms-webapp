@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-16T03:20:41.641Z · 98 bảng/view · 169 hàm · 0 enum
+// Sinh lúc 2026-09-18T04:34:15.518Z · 98 bảng/view · 170 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -887,6 +887,7 @@ export type Database = {
           in_chart: boolean
           is_driver: boolean
           landing_page: string | null
+          is_forklift_driver: boolean
         }
         Insert: {
           id: string
@@ -902,6 +903,7 @@ export type Database = {
           in_chart?: boolean
           is_driver?: boolean
           landing_page?: string | null
+          is_forklift_driver?: boolean
         }
         Update: {
           id?: string
@@ -917,6 +919,7 @@ export type Database = {
           in_chart?: boolean
           is_driver?: boolean
           landing_page?: string | null
+          is_forklift_driver?: boolean
         }
         Relationships: []
       }
@@ -5308,6 +5311,10 @@ export type Database = {
       packing_runs_received: {
         Args: { run_id: unknown }
         Returns: Record<string, unknown>[]
+      }
+      pallet_ledger: {
+        Args: { p_warehouse_ids: unknown; arg4?: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Returns: Json
       }
       pallet_op_material_code: {
         Args: { p_source: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown }

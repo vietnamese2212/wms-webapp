@@ -4712,7 +4712,9 @@ export function useWarehouseEmployees(warehouse_id?: string | null) {
       const { data } = await apiClient.get('/wms/outbound/employees', {
         params: warehouse_id ? { warehouse_id } : undefined,
       })
-      return data.data as { id: string; name: string; employee_code: string; job_title?: string | null }[]
+      // `is_forklift_driver` = cờ chức danh (JobTitle) do BE trả — ô chọn lái xe nâng lọc theo cờ này,
+      // KHÔNG so tên chức danh (đổi tên danh mục là ô chọn rỗng mà không lỗi nào nổ).
+      return data.data as { id: string; name: string; employee_code: string; job_title?: string | null; is_forklift_driver?: boolean }[]
     },
   })
 }

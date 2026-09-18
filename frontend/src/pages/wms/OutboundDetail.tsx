@@ -95,10 +95,15 @@ function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }
 
 // ─── Tag multi-picker (employee dropdown + removable tags) ───
 
-type EmpOption = { id: string; name: string; employee_code?: string; job_title?: string | null }
+type EmpOption = {
+  id: string; name: string; employee_code?: string; job_title?: string | null
+  is_forklift_driver?: boolean
+}
 
-// Lái xe nâng = nhân viên có chức danh CHỨA "lái xe nâng" (không phân biệt hoa thường)
-const isForkliftDriver = (e: EmpOption) => (e.job_title ?? '').toLowerCase().includes('lái xe nâng')
+// Lái xe nâng = CỜ `JobTitle.is_forklift_driver` do BE trả (18/09) — trước đó so tên chức danh chứa
+// "lái xe nâng", vừa là luật chép ở FE vừa hỏng âm thầm khi danh mục đổi tên. Cùng một cờ gác ở
+// `validForkliftIds` phía máy chủ, nên ô chọn và cửa ghi không bao giờ nói hai chuyện.
+const isForkliftDriver = (e: EmpOption) => e.is_forklift_driver === true
 
 // Dropdown tìm kiếm chung (portal VÀO node Dialog qua usePopoverAnchor) — có ô tìm theo tên / mã NV
 function PersonSearchMenu({ options, onPick, placeholder }: {

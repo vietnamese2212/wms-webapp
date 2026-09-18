@@ -771,10 +771,17 @@ const RULES = [
   // Department.is_carrier, migration 20260814_role_flags). Baseline 0.
   {
     key: 'role_by_vietnamese_name',
-    label: "quyết định vai trò bằng so TÊN tiếng Việt ('Lái xe' / 'Đơn vị vận tải') — phải đọc cờ is_driver / is_carrier",
+    label: "quyết định vai trò bằng so TÊN tiếng Việt ('Lái xe' / 'Đơn vị vận tải' / 'lái xe nâng') — phải đọc cờ is_driver / is_carrier / is_forklift_driver",
+    // 18/09 mở rộng bắt 'lái xe nâng': ô chọn lúc Bắt đầu chuyến lọc bằng
+    // `job_title.toLowerCase().includes('lái xe nâng')` suốt từ đợt 1c — đúng lớp lỗi 14/08 nhưng
+    // lưới cũ chỉ liệt kê 2 chuỗi nên nó sống thêm 8 ngày. Nay đọc cờ `JobTitle.is_forklift_driver`.
+    // CHỈ bắt dạng SO SÁNH (=== / .includes), KHÔNG bắt chữ hiển thị (nhãn, placeholder) — cùng một
+    // cụm từ nhưng một bên là luật, một bên là tiếng Việt cho người đọc.
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
-        && /[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line), s),
+        && (/[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line)
+            || /\.includes\(\s*['"]lái xe nâng['"]/i.test(line)
+            || /[=!]==\s*['"]lái xe nâng['"]/i.test(line)), s),
   },
   {
     key: 'rotation_rule_hand_rolled',

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
-import { supabase } from '../../lib/supabase'
+import { supabase, db } from '../../lib/supabase'
 import { ok, fail, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
@@ -2807,11 +2807,26 @@ async function validForkliftIds(
   if (list.length > MAX_FORKLIFT_DRIVERS) return { error: `Tối đa ${MAX_FORKLIFT_DRIVERS} người lái xe nâng cho một chuyến` }
   if (list.some(id => id.length > 100 || searchLooksLikeInjection(id))) return { error: 'Mã nhân sự không hợp lệ' }
   const { data, error } = await supabase.from('Employee')
-    .select('id, name, warehouse_scope').in('id', list).eq('is_active', true).limit(MAX_FORKLIFT_DRIVERS)
+    .select('id, name, warehouse_scope, job_title_id').in('id', list).eq('is_active', true).limit(MAX_FORKLIFT_DRIVERS)
   if (error) throw error
-  const found = (data ?? []) as { id: string; name: string | null; warehouse_scope: string | null }[]
+  const found = (data ?? []) as { id: string; name: string | null; warehouse_scope: string | null; job_title_id: string | null }[]
   const missing = list.filter(id => !found.some(f => f.id === id))
   if (missing.length) return { error: 'Có người không còn làm việc hoặc không tồn tại — chọn lại' }
+  // VAI TRÒ đọc theo CỜ `JobTitle.is_forklift_driver`, KHÔNG so tên tiếng Việt (luật 14/08).
+  // Trước 18/09 cửa này chỉ gác "có thật" + "đúng kho" ⇒ Admin và tài khoản mô phỏng lọt vào
+  // `forklift_driver_ids` của 3 chuyến đang xuất: bảng "Cần đưa ra" giao việc cho người không lái
+  // xe nâng, và khối Giám sát → "theo người" đếm sai công cả kho. Ô chọn trên màn có lọc nhưng lọc
+  // ở FE thì gọi thẳng API vẫn ghi được — lọc là gợi ý, gác mới là luật.
+  const jtIds = [...new Set(found.map(f => f.job_title_id).filter((x): x is string => !!x))]
+  const { data: jts } = jtIds.length
+    // ≤ MAX_FORKLIFT_DRIVERS chức danh (jtIds rút từ chính `list` đã kẹp trần) — không dính cap 1000
+    ? await db.from('JobTitle').select('id, is_forklift_driver').in('id', jtIds).limit(MAX_FORKLIFT_DRIVERS)
+    : { data: [] as { id: string; is_forklift_driver: boolean }[] }
+  const okJt = new Set((jts ?? []).filter(j => j.is_forklift_driver).map(j => j.id))
+  const notDriver = found.filter(f => !f.job_title_id || !okJt.has(f.job_title_id))
+  if (notDriver.length) {
+    return { error: `${notDriver.map(o => o.name ?? o.id).join(', ')} không phải chức danh lái xe nâng — tick "Là chức danh lái xe nâng" ở Chức danh nếu đúng người` }
+  }
   // Phạm vi kho của nhân sự nằm ở bảng `UserWarehouseAccess` (KHÔNG phải cột trên Employee).
   // Người phạm vi toàn quốc thì kho nào cũng làm được.
   if (warehouseId) {
@@ -3303,16 +3318,22 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
       return q
     })
     const emps = data as { id: string; name: string; employee_code: string; job_title_id: string | null }[]
-    // Kèm tên chức danh (để FE lọc "lái xe nâng" theo chức danh)
+    // Kèm tên chức danh (hiển thị) + CỜ lái xe nâng (để FE lọc ô chọn). FE từng lọc bằng cách so tên
+    // chứa "lái xe nâng" — đổi tên chức danh trong danh mục là ô chọn rỗng mà không lỗi nào nổ; cờ
+    // `is_forklift_driver` nay là nguồn DUY NHẤT, dùng chung với cửa gác `validForkliftIds`.
     const jtIds = [...new Set(emps.map(e => e.job_title_id).filter(Boolean))] as string[]
     const { data: jts } = jtIds.length
-      ? await supabase.from('JobTitle').select('id, name').in('id', jtIds)
-      : { data: [] as { id: string; name: string }[] }
-    const jtMap = new Map((jts ?? []).map((j: { id: string; name: string }) => [j.id, j.name]))
-    const result = emps.map(e => ({
-      id: e.id, name: e.name, employee_code: e.employee_code,
-      job_title: e.job_title_id ? jtMap.get(e.job_title_id) ?? null : null,
-    }))
+      ? await db.from('JobTitle').select('id, name, is_forklift_driver').in('id', jtIds)
+      : { data: [] as { id: string; name: string; is_forklift_driver: boolean }[] }
+    const jtMap = new Map((jts ?? []).map(j => [j.id, j]))
+    const result = emps.map(e => {
+      const jt = e.job_title_id ? jtMap.get(e.job_title_id) : undefined
+      return {
+        id: e.id, name: e.name, employee_code: e.employee_code,
+        job_title: jt?.name ?? null,
+        is_forklift_driver: jt?.is_forklift_driver === true,
+      }
+    })
     return ok(res, result)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }

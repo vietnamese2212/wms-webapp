@@ -206,6 +206,12 @@ const entryOf = async c => (await restAll('InventoryEntry',
   check('[12e] Sổ sắp theo THỜI GIAN tăng dần (đọc như một câu chuyện, không phải đống dòng)',
     evs.every((x, i) => i === 0 || new Date(evs[i - 1].at) <= new Date(x.at)),
     evs.map(x => `${x.kind}@${String(x.at).slice(11, 19)}`).join(' '))
+  // [12h] AI ĐIỀU CHỈNH — lời gọi ở [12b] CỐ Ý không gửi `actor_name`/`employee_id` (bundle PWA cũ,
+  // script, tích hợp đều thế). Trước 18/09 dòng vết ghi TRỐNG người, mà điều chỉnh tồn là thao tác
+  // đổi thẳng số tồn — chỗ cần biết "ai làm" nhất. Lưới cũ kiểm `actor` cho dòng MOVED ([12c]) mà
+  // bỏ qua dòng ADJUSTED, đúng chỗ lọt. Cùng lớp đã vá cho `OutboundScanEntry.scanned_by` 17/09.
+  check('[12h] Dòng điều chỉnh có TÊN người dù client không gửi actor_name (rơi về người đăng nhập)',
+    !!adj && !!adj.actor, `ai=${adj?.actor ?? 'TRỐNG'}`)
   check('[12f] Tem không tồn tại → sổ rỗng, không nổ lỗi', (await api('/wms/inventory/pallet-ledger?pallet_code=KHONGCOTEMNAY_' + T)).s === 200)
   check('[12g] Thiếu tem → 400 (không trả cả kho)', (await api('/wms/inventory/pallet-ledger?pallet_code=')).s === 400)
 }

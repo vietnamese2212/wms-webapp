@@ -859,13 +859,20 @@ export async function adjustInventory(req: Request, res: Response) {
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const isValidUUID = (s?: string) => !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
-  const updatedBy: string | null = isValidUUID(employee_id) && employee_id ? employee_id : null
+  // AI ĐIỀU CHỈNH — client gửi thì tin client (màn cho chọn NGƯỜI khác, vd thủ kho ghi hộ), KHÔNG
+  // gửi thì rơi về NGƯỜI ĐANG ĐĂNG NHẬP. Trước 18/09 chỉ đọc body ⇒ mọi đường không qua form
+  // (bundle PWA cũ, script, tích hợp) ghi dòng điều chỉnh KHÔNG TÊN — mà đây là thao tác đổi thẳng
+  // số tồn, chỗ cần biết "ai làm" nhất. Cùng lớp lỗi đã vá cho `OutboundScanEntry.scanned_by` 17/09.
+  const updatedBy: string | null = isValidUUID(employee_id) && employee_id
+    ? employee_id
+    : (isValidUUID(req.user?.sub) ? (req.user?.sub as string) : null)
+  const actorName: string | null = actor_name?.trim() || req.user?.name || null
 
   // NGUYÊN TỬ: gộp cập-nhật-tồn + ghi-AdjustmentLog trong 1 transaction (RPC row-lock).
   // Chống mất dòng log khi request bị 504 xen giữa 2 bước (test tải 23/07) + bỏ bão CAS-retry.
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('adjust_inventory_atomic', {
     p_entry_id: id, p_delta: adjustment, p_note: note?.trim() || null,
-    p_actor_name: actor_name?.trim() || null, p_actor_id: updatedBy,
+    p_actor_name: actorName, p_actor_id: updatedBy,
     p_stocktake_by: stocktake_by || null, p_now: now, p_vn_date: vnDate, p_updated_by: updatedBy,
   })
   if (!rpcErr) {
@@ -903,7 +910,7 @@ export async function adjustInventory(req: Request, res: Response) {
       update_date:       vnDate,
     }
     if (stocktake_by) { patch.stocktake_by = stocktake_by; patch.stocktake_at = now }
-    if (isValidUUID(employee_id)) patch.updated_by = employee_id
+    if (updatedBy) patch.updated_by = updatedBy
 
     const { data: updated, error: updateErr } = await supabase.from('InventoryEntry')
       .update(patch)
@@ -921,8 +928,8 @@ export async function adjustInventory(req: Request, res: Response) {
         cartons_before: cartonsBeforeAdjust,
         cartons_after:  newRemaining,
         note:           note?.trim() || null,
-        actor_name:     actor_name?.trim() || null,
-        actor_id:       isValidUUID(employee_id) ? employee_id : null,
+        actor_name:     actorName,
+        actor_id:       updatedBy,
         adjusted_at:    now,
       })
       if (logErr) console.error('[adjustInventory] Ghi InventoryAdjustmentLog thất bại:', logErr.message)

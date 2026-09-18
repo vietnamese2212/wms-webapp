@@ -49,10 +49,28 @@ function routeOf(res: Response | undefined): string {
  * Vẫn GHI (rule chết câm còn nguy hơn — bài học 06/08), nhưng quá tải ghi 503 để digest đếm vào
  * overload thay vì cờ đỏ; lỗi thật (hàm không tồn tại, cột sai…) giữ nguyên 500.
  */
+// ĐUA DỮ LIỆU — bản ghi mà việc nền đang trỏ tới bị XOÁ/ĐỔI ngay giữa lượt chạy (khoá ngoại 23503,
+// trùng khoá 23505). Đo 18/09: `planGdoTasks` ngã với `wms_tasks_item_id_fkey` đúng lúc dòng hàng
+// bị dựng lại — đường derive của Kế hoạch xuất XOÁ+TẠO LẠI dòng cho chuyến PENDING, nên ca này là
+// chuyện thường, KHÔNG phải hỏng. Cùng lý lẽ với quá tải: lượt sau tự đúng ⇒ vẫn GHI để còn thấy,
+// nhưng 503 + mã `*_RACE` để digest không dựng cờ đỏ và không gửi email báo hỏng oan (lớp C25).
+const RACE_CODES = ['23503', '23505']
+const isDataRace = (e: unknown): boolean => {
+  const c = (e as { code?: unknown } | null)?.code
+  return typeof c === 'string' && RACE_CODES.includes(c)
+    || /violates foreign key constraint|duplicate key value/i.test(String((e as Error)?.message ?? ''))
+}
+
+/** Phân loại lỗi của việc NỀN — hàm thuần để test được (đơn vị `tests/unit/backgroundFailure`). */
+export function classifyBackgroundFailure(e: unknown, code: string): { status: number; code: string; suffix: string } {
+  if (isQueryTimeout(e)) return { status: 503, code: `${code}_OVERLOAD`, suffix: ' — QUÁ TẢI, bỏ qua vòng này' }
+  if (isDataRace(e)) return { status: 503, code: `${code}_RACE`, suffix: ' — dữ liệu vừa đổi dưới chân, lượt sau tự đúng' }
+  return { status: 500, code, suffix: '' }
+}
+
 export function recordBackgroundFailure(message: string, code: string, where: string, e: unknown): void {
-  const overload = isQueryTimeout(e)
-  recordServerError('be', `${message}${overload ? ' — QUÁ TẢI, bỏ qua vòng này' : ''}`,
-    overload ? 503 : 500, overload ? `${code}_OVERLOAD` : code, where)
+  const c = classifyBackgroundFailure(e, code)
+  recordServerError('be', `${message}${c.suffix}`, c.status, c.code, where)
 }
 
 export function recordServerError(source: 'be', message: string, status: number | undefined, code: string | undefined, url: string): void

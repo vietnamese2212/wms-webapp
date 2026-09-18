@@ -204,8 +204,13 @@ let LOC1 = null, LOC10 = null
       (r.s === 200 || r.s === 204) && conLai === 1, `s=${r.s} · còn ${conLai} pallet`)
 
     r = await api(`/wms/inbound-orders/${order.id}/complete`, 'POST', {})
-    let st = (await restAll('ProductionImport', `select=status&id=eq.${order.id}`))[0]
+    let st = (await restAll('ProductionImport', `select=status,updated_by&id=eq.${order.id}`))[0]
     check('[22] Hoàn thành phiếu nhập → trạng thái đóng', r.s === 200 && st.status !== 'OPEN', `s=${r.s} · ${st.status}`)
+    // AI HOÀN THÀNH — nút này gọi API KHÔNG kèm thân request, nên bản cũ (`req.body.updated_by ??
+    // null`) vừa không ghi được tên, vừa GHI NULL ĐÈ tên cũ. Đo 18/09: 0/22.986 phiếu đã hoàn
+    // thành có người, dù cột là khoá ngoại Employee và được select ra để hiện "Người sửa".
+    check('[22b] Phiếu ghi ĐÚNG người hoàn thành dù client không gửi gì (rơi về người đăng nhập)',
+      !!st?.updated_by, `updated_by=${st?.updated_by ?? 'TRỐNG'}`)
 
     const e1 = (await restAll('InventoryEntry', `select=id&import_order_id=eq.${order.id}`))[0]
     if (e1) {

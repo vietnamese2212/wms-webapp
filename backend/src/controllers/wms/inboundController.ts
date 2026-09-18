@@ -18,6 +18,7 @@ import { getInboundEditWindowDays, getReceiptRatingCfg } from '../../utils/setti
 import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
 import { putawayEnforces } from '../../utils/putaway'
 import type { MaterialShelfInfo } from '../../utils/shelfLife'
+import { resolveActorId } from '../../utils/actor'
 
 // Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
 // (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
@@ -859,7 +860,8 @@ export async function updateOrder(req: Request, res: Response) {
     if (shift_id        !== undefined) patch.shift_id = shift_id
     if (import_date     !== undefined) patch.import_date = import_date
     if (notes           !== undefined) patch.notes = notes
-    if (updated_by      !== undefined) patch.updated_by = updated_by
+    // Sửa phiếu LUÔN ghi người sửa (FE không gửi trường này) — không còn phụ thuộc client có gửi hay không.
+    patch.updated_by = resolveActorId(req, updated_by)
 
     const { data: updated, error } = await supabase
       .from('ProductionImport').update(patch).eq('id', req.params.id).select(ORDER_SELECT).maybeSingle()
@@ -922,7 +924,9 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
 
     const changed = location_id !== (order as any).location_id
-    const patch: Record<string, unknown> = { location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() }
+    // `location_history` ngay dòng dưới đã đọc `req.user`; cột `updated_by` cạnh nó thì đọc thân
+    // request — hai vết của CÙNG một thao tác lấy từ hai nguồn, nên một cái có tên một cái không.
+    const patch: Record<string, unknown> = { location_id, updated_by: resolveActorId(req, updated_by), updated_at: new Date().toISOString() }
     if (changed) patch.location_history = appendLocHistory(order, location.location_code, 'detail', req.user)
 
     const { data: updated, error } = await supabase
@@ -974,7 +978,12 @@ export async function completeOrder(req: Request, res: Response) {
     // cascade (TmsOrder DONE / GDO DELIVERED) chạy ĐÚNG 1 lần (tránh xử lý trùng).
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
+      // AI HOÀN THÀNH — FE gọi nút này KHÔNG kèm thân request, nên bản cũ (`req.body.updated_by
+      // ?? null`) vừa không bao giờ ghi được tên, vừa GHI NULL ĐÈ lên tên đã có. Đo 18/09:
+      // 0/22.986 phiếu ĐÃ HOÀN THÀNH có người, trong khi `created_by` đầy 22.983 — tức chỉ đường
+      // cập nhật mất vết. Cột này là khoá ngoại Employee và được SELECT ra `updated_by_emp` để
+      // hiện "Người sửa", nên nó vốn được thiết kế để hiện tên. Rơi về người đang đăng nhập.
+      .update({ status: 'COMPLETED', updated_by: resolveActorId(req, req.body?.updated_by), updated_at: nowTs })
       .eq('id', req.params.id)
       .neq('status', 'COMPLETED')
       .select(ORDER_SELECT).maybeSingle()
@@ -1039,7 +1048,7 @@ export async function uncompleteOrder(req: Request, res: Response) {
     const nowTs = new Date().toISOString()
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'OPEN', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
+      .update({ status: 'OPEN', updated_by: resolveActorId(req, req.body?.updated_by), updated_at: nowTs })
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
@@ -1372,7 +1381,7 @@ export async function scanQR(req: Request, res: Response) {
           status:            'IN_STOCK',
           updated_at:        now,
           update_date:       vnDate(),
-          updated_by:        employee_id ?? null,
+          updated_by:        resolveActorId(req, employee_id),
         }).eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
         if (uErr) return fail(res, 500, 'DB_ERROR', uErr.message)
         if (upd?.length) {
@@ -1537,8 +1546,8 @@ export async function scanQR(req: Request, res: Response) {
       batch:              parsed.batch,                                                        // tem V2: mã lô nguyên văn
       expiry_date:        parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null,  // tem V2: HSD tường minh (Date UTC từ thành phần — không lệch ngày)
       import_order_id:    order_id,
-      created_by:         employee_id ?? null,
-      updated_by:         employee_id ?? null,
+      created_by:         resolveActorId(req, employee_id),
+      updated_by:         resolveActorId(req, employee_id),
       status:             'IN_STOCK',
       ncc_id:             resolvedNcc,
       shelf_life_days:    resolvedShelf,
@@ -1723,7 +1732,7 @@ export async function scanManual(req: Request, res: Response) {
             warehouse_id:      warehouseId,
             update_date:       vnDate(),
             updated_at:        now,
-            updated_by:        employee_id ?? null,
+            updated_by:        resolveActorId(req, employee_id),
           })
           .eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
         if (updErr) throw updErr
@@ -1743,8 +1752,8 @@ export async function scanManual(req: Request, res: Response) {
             cartons_remaining: cartonsNum,
             stack_layer:       1,
             import_order_id:   order_id,
-            created_by:        employee_id ?? null,
-            updated_by:        employee_id ?? null,
+            created_by:        resolveActorId(req, employee_id),
+            updated_by:        resolveActorId(req, employee_id),
             status:            'IN_STOCK',
             import_date:       vnDate(),
             update_date:       vnDate(),

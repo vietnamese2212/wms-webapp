@@ -58,6 +58,7 @@ import { isQtyLike } from '@/utils/inventoryMode'
 import { parseVnNumber as parseVnNumberShared } from '@/utils/vnNumber'
 import { splitCategories } from '@/utils/categoryScope'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2152,7 +2153,7 @@ function MaterialSummaryBand({ filter, orderIds }: { filter?: Record<string, str
                   )
                 })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={6} className="px-2 py-4 text-center text-xs text-slate-400">Không khớp “{q.trim()}”</td></tr>
+                  <TableEmptyRow colSpan={6}>Không khớp “{q.trim()}”</TableEmptyRow>
                 )}
               </tbody>
             </table>
@@ -3813,7 +3814,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                   </thead>
                   <tbody>
                     {mergedRows.length === 0 ? (
-                      <tr><td colSpan={6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                      <TableEmptyRow colSpan={6}>Chưa có hàng hóa</TableEmptyRow>
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'

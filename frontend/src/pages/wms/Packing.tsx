@@ -585,9 +585,9 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
         </TableHeader>
         <TableBody>
           {loading ? (
-            <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+            <TableEmptyRow colSpan={N}>Đang tải…</TableEmptyRow>
           ) : runs.length === 0 ? (
-            <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">{emptyText}</TableCell></TableRow>
+            <TableEmptyRow colSpan={N}>{emptyText}</TableEmptyRow>
           ) : runs.map(r => {
             // list/board không còn trả pallet rows (payload 2,2MB dữ liệu lớn) — đếm bằng pallet_count server
             const palletN = Number(r.pallet_count ?? r.pallets?.length ?? 0)
@@ -1917,7 +1917,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
               <TableEmptyRow colSpan={LOG_COLS.length}>Chưa có dòng sổ nào khớp bộ lọc</TableEmptyRow>
             ) : rows.map(r => (

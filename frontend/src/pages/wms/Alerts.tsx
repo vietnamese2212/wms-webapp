@@ -154,7 +154,7 @@ function PersonalTab({ tabBar }: { tabBar: ReactNode }) {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+                <TableEmptyRow colSpan={5}>Đang tải…</TableEmptyRow>
               ) : rows.length === 0 ? (
                 <TableEmptyRow colSpan={5}>Chưa có thông báo nào cho bạn</TableEmptyRow>
               ) : rows.map(n => (
@@ -334,11 +334,11 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">Đang quét cảnh báo…</TableCell></TableRow>
+                <TableEmptyRow colSpan={COLS.length}>Đang quét cảnh báo…</TableEmptyRow>
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">
+                <TableEmptyRow colSpan={COLS.length}>
                   {f.status === 'open' ? 'Không có cảnh báo nào đang mở 🎉' : 'Không có cảnh báo khớp bộ lọc'}
-                </TableCell></TableRow>
+</TableEmptyRow>
               ) : rows.map(a => {
                 const acked = !!a.ack_at && !a.resolved_at
                 const picked = sel.has(a.id)

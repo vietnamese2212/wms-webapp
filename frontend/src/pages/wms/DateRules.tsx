@@ -34,6 +34,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
@@ -252,11 +253,11 @@ export default function DateRules() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading && <TableRow><TableCell colSpan={COLS.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
+              {isLoading && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
               {!isLoading && !rows.length && (
-                <TableRow><TableCell colSpan={COLS.length} className="px-2 py-6 text-center text-[11px] text-slate-400">
+                <TableEmptyRow colSpan={COLS.length}>
                   Không có dòng hàng nào trong khoảng ngày này.
-                </TableCell></TableRow>
+</TableEmptyRow>
               )}
               {rows.map(r => {
                 const u = unitsOf(r)

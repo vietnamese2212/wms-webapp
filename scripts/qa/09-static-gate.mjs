@@ -435,11 +435,14 @@ const RULES = [
     label: 'dòng "trống" viết tay trong <td colSpan> — bảng rộng cuộn ngang thì câu chữ căn giữa nằm NGOÀI màn 360 px; dùng <TableEmptyRow>',
     // Đo 19/09 (vai thủ kho, 360 px): Fill hàng td rỗng rộng 1.646 px, Lịch sử chuyển vị trí 1.170 px ⇒
     // "Không mã nào thiếu…" đứng ở x≈820, người dùng thấy bảng TRẮNG. 12 trang cùng khuôn đã chuyển
-    // sang components/shared/TableEmptyRow.tsx (sticky-left). Baseline = 6 dòng còn lại nằm trong bảng
-    // nhỏ luôn vừa màn (khối Giám sát của Việc cần làm · bảng con TMS · KPI theo kho) — không được TĂNG.
+    // sang components/shared/TableEmptyRow.tsx (sticky-left) — lượt 2 cùng ngày quét hết 56 dòng (kể cả
+    // "Đang tải…" và khối nhiều dòng) nên baseline 0.
+    // Bắt theo THẺ MỞ (`colSpan` + `text-center`), KHÔNG theo câu chữ: bản đầu bắt "Không/Chưa" trên cùng
+    // dòng nên mù với khối viết nhiều dòng (tab Đề xuất Fill hàng, Quy định date, Cảnh báo) và cả dòng
+    // "Đang tải…" — cùng bệnh "phép kiểm mù theo chiều" (07/09).
     count: (s) => countMatches(['frontend/src'], ['.tsx'],
       (line, f) => !/TableEmptyRow\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
-        && /<(TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*>[^<]*(Không|Chưa|không)/.test(line), s),
+        && /<(TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*\btext-center\b/.test(line), s),
   },
   {
     key: 'move_without_ledger',

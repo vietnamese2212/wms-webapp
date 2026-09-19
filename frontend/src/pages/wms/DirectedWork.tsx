@@ -41,6 +41,7 @@ import { pctDateCls, type PctBands } from '@/utils/pctDateBands'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { unlockAudio } from '@/utils/audio'
 import type { DirectedRow, WorkInbox, WorkInboxRow, DirectedSupervision, DirectedTrip } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
@@ -1104,14 +1105,14 @@ export default function DirectedWork() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading && <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
+              {isLoading && <TableEmptyRow colSpan={cols.length}>Đang tải…</TableEmptyRow>}
               {!isLoading && emptyBlock && <TableRow><TableCell colSpan={cols.length} className="px-2 py-0">{emptyBlock}</TableCell></TableRow>}
               {!isLoading && scopeEmptyBlock && <TableRow><TableCell colSpan={cols.length} className="px-2 py-0">{scopeEmptyBlock}</TableCell></TableRow>}
               {!isLoading && !emptyReason && !scopeEmpty && rows.length === 0 && (
                 // KHÔNG khẳng định lý do (câu cũ nói thẳng "kho chạy chế độ Thủ công" — đo 10/09 thì cả ba
                 // vế đều SAI: kho đang Hướng dẫn, chuyến đã Bắt đầu, dòng đã chốt %Date; việc thiếu chỉ vì
                 // cờ bật SAU khi chuyến bắt đầu nên không ai sắp lại). Nêu 3 chỗ cần kiểm + đường phục hồi.
-                <TableRow><TableCell colSpan={cols.length} className="px-2 py-6 text-center text-[11px] text-slate-400">
+                <TableEmptyRow colSpan={cols.length}>
                   <div>Không có việc nào cho kho này.</div>
                   <div className="mt-1 text-slate-500">
                     Kiểm lần lượt: kho đã bật <b>Chế độ làm việc = Hướng dẫn</b> chưa · có chuyến nào đã <b>Bắt đầu</b> chưa · dòng hàng đã <b>khai quy định date</b> chưa.
@@ -1119,7 +1120,7 @@ export default function DirectedWork() {
                   <div className="text-slate-500">
                     Đủ cả ba mà vẫn trống (hay vừa bật Hướng dẫn khi chuyến đã chạy) → mở trang chuyến, bấm <b>↻ Sắp lại kế hoạch</b>.
                   </div>
-                </TableCell></TableRow>
+</TableEmptyRow>
               )}
               {rows.map(r => {
                 const st = stateOf(r, boardTab, me)

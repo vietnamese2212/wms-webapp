@@ -30,6 +30,7 @@ import { computePctDate } from '@/utils/shelfLife'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
@@ -500,19 +501,15 @@ export default function StocktakeDashboard() {
                 </TableHeader>
                 <TableBody>
                   {isFetching && entries.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
-                    </TableRow>
+                    <TableEmptyRow colSpan={STK_COLS.length}>Đang tải…</TableEmptyRow>
                   ) : entries.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">
-                        {view === 'problem'   ? 'Không có pallet cần xử lý 🎉'
-                          : view === 'checked'   ? 'Chưa có pallet nào được kiểm trong đợt này'
-                          : view === 'flagged'   ? 'Không có chênh lệch trong đợt này 🎉'
-                          : view === 'unchecked' ? 'Tất cả pallet đã được kiểm 🎉'
-                          : 'Không có dữ liệu'}
-                      </TableCell>
-                    </TableRow>
+                    <TableEmptyRow colSpan={STK_COLS.length}>
+                      {view === 'problem'   ? 'Không có pallet cần xử lý 🎉'
+                        : view === 'checked'   ? 'Chưa có pallet nào được kiểm trong đợt này'
+                        : view === 'flagged'   ? 'Không có chênh lệch trong đợt này 🎉'
+                        : view === 'unchecked' ? 'Tất cả pallet đã được kiểm 🎉'
+                        : 'Không có dữ liệu'}
+                    </TableEmptyRow>
                   ) : entries.map(e => {
                     const diff    = parseDiff(e.stocktake_flag_note)
                     const checked = isCheckedInRange(e, rangeStart, rangeEnd)

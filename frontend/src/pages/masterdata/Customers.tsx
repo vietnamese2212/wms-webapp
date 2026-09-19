@@ -40,6 +40,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate } from '@/utils/formatters'
 import type { DateRule } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 
@@ -122,9 +123,9 @@ function RuleTable({ drafts, onChange, cats, inheritNote }: {
           </thead>
           <tbody>
             {!drafts.length && (
-              <tr><td colSpan={4} className="px-2 py-3 text-center text-[11px] text-slate-400">
+              <TableEmptyRow colSpan={4}>
                 Chưa khai mức nào{inheritNote ? ` — ${inheritNote}` : ''}
-              </td></tr>
+</TableEmptyRow>
             )}
             {drafts.map((d, i) => (
               <tr key={i} className="border-b last:border-0 align-top">
@@ -413,12 +414,12 @@ export default function Customers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {isLoading && <TableRow><TableCell colSpan={COLS.length} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
+                  {isLoading && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
                   {!isLoading && !rows.length && (
-                    <TableRow><TableCell colSpan={COLS.length} className="px-2 py-6 text-center text-[11px] text-slate-400">
+                    <TableEmptyRow colSpan={COLS.length}>
                       Chưa có khách hàng nào khớp bộ lọc.
                       {canImport && <> Bấm <b>Nạp từ SAP</b> để đưa mã ship-to đã dùng thật vào danh mục.</>}
-                    </TableCell></TableRow>
+</TableEmptyRow>
                   )}
                   {rows.map(r => {
                     // Mức của CHÍNH khách; không có dòng nào thì hiện mức THỪA HƯỞNG từ kênh (mờ hơn)
@@ -842,7 +843,7 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && <TableRow><TableCell colSpan={8} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
+                {isLoading && <TableEmptyRow colSpan={8}>Đang tải…</TableEmptyRow>}
                 {rows.map((r: CustomerCandidate) => (
                   <TableRow key={r.ship_to_code} className={r.exists_already ? 'text-slate-400' : ''}>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -924,7 +925,7 @@ function ChannelsTab({ canEdit, onEdit }: {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && <TableRow><TableCell colSpan={5} className="px-2 py-6 text-center text-[11px] text-slate-400">Đang tải…</TableCell></TableRow>}
+          {isLoading && <TableEmptyRow colSpan={5}>Đang tải…</TableEmptyRow>}
           {rows.map(c => (
             <TableRow key={c.id}>
               <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{c.value}</TableCell>

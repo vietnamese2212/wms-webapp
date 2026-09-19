@@ -486,11 +486,11 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={DEMAND_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={DEMAND_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={DEMAND_COLS.length} className="text-center py-8 text-xs text-slate-400">
+              <TableEmptyRow colSpan={DEMAND_COLS.length}>
                 {onlyShort ? 'Không mã nào thiếu hàng ở vị trí nhặt lẻ — không cần fill' : 'Ngày này không có nhặt lẻ'}
-              </TableCell></TableRow>
+</TableEmptyRow>
             ) : rows.map(r => {
               const short = Number(r.short_base)
               const picked = sel.has(r.material_id)
@@ -778,7 +778,7 @@ function OrdersTab({ warehouseId, dense, canCancel }: {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={ORDER_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={ORDER_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
               <TableEmptyRow colSpan={ORDER_COLS.length}>Chưa có lệnh fill nào khớp bộ lọc</TableEmptyRow>
             ) : rows.map(o => {
@@ -990,9 +990,9 @@ function ReportTab({ warehouseId, from, to, dense }: {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={REPORT_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={REPORT_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={REPORT_COLS.length} className="text-center py-8 text-xs text-slate-400">Khoảng ngày này chưa có lệnh fill</TableCell></TableRow>
+              <TableEmptyRow colSpan={REPORT_COLS.length}>Khoảng ngày này chưa có lệnh fill</TableEmptyRow>
             ) : rows.map(r => (
               <TableRow key={r.assignee_id ?? '__none__'} className={r.rate >= 100 ? 'text-[#4A90D9]' : r.done_n > 0 ? 'text-[#D8891C]' : ''}>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate sticky left-0 z-10 bg-white font-medium" title={r.assignee_name}>

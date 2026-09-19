@@ -236,7 +236,7 @@ export default function StocktakeHistory() {
           </TableHeader>
           <TableBody>
             {isFetching && rows.length === 0 ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
               <TableEmptyRow colSpan={LOG_COLS.length}>Chưa có lượt kiểm nào trong khoảng ngày này</TableEmptyRow>
             ) : rows.map(r => {

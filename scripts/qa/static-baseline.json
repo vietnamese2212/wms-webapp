@@ -77,5 +77,5 @@
   "move_without_ledger": 0,
   "actor_column_from_body": 0,
   "entry_decimal_beside_unit_label": 0,
-  "empty_row_centered_in_wide_td": 6
+  "empty_row_centered_in_wide_td": 0
 }

@@ -18,6 +18,7 @@ import { useCycleCount, type CycleCountRow } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 const ABC_BADGE: Record<string, string> = {
@@ -154,13 +155,13 @@ export default function StocktakeCycle() {
             </TableHeader>
             <TableBody>
               {!f.warehouseId ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">Chọn KHO để xem đề xuất kiểm kê luân phiên</TableCell></TableRow>
+                <TableEmptyRow colSpan={COLS.length}>Chọn KHO để xem đề xuất kiểm kê luân phiên</TableEmptyRow>
               ) : isLoading ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tính hạng ABC + tra lịch sử kiểm…</TableCell></TableRow>
+                <TableEmptyRow colSpan={COLS.length}>Đang tính hạng ABC + tra lịch sử kiểm…</TableEmptyRow>
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">
+                <TableEmptyRow colSpan={COLS.length}>
                   {f.dueOnly ? 'Không có mã nào đến hạn kiểm 🎉 (bỏ lọc "Chỉ mã đến hạn" để xem tất cả)' : 'Không có mã nào khớp bộ lọc'}
-                </TableCell></TableRow>
+</TableEmptyRow>
               ) : rows.map(r => {
                 const picked = sel.has(r.material_id)
                 const due = dueLabel(r)

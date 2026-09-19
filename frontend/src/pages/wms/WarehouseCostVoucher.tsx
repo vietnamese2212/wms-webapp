@@ -27,6 +27,7 @@ import { useCostVoucher, useSaveCostVoucher, useLockCostPeriod, type CostItem } 
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { money, parseMoney, warehouseKeyOf, SHARED_KEY } from './costShared'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 /** `raw` = chữ đang hiện trong ô Khoản mục; `cost_item` rỗng = chưa khớp danh mục (dòng đỏ). */
 type Row = { key: string; id?: string; cost_item: string; raw: string; amount: number; note: string }
@@ -316,13 +317,13 @@ export default function WarehouseCostVoucher() {
                 )
               })}
               {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={5} className="px-2 py-8 text-center text-[11px] text-slate-400">
+                <TableEmptyRow colSpan={5}>
                   Phiếu chưa có khoản chi phí nào.
                   {!readOnly && <> Bấm <b>Thêm dòng</b> rồi gõ, hoặc dán thẳng bảng Excel vào ô <b>Khoản mục</b>.
                     {/* Phiếu là NHÓM của các dòng — chưa lưu dòng nào thì nó chưa tồn tại, nói rõ
                         kẻo người dùng tạo phiếu xong rời trang rồi đi tìm nó trong danh sách */}
                     <div className="mt-1 text-slate-400">Phiếu chỉ xuất hiện ở danh sách sau khi <b>Lưu</b> ít nhất một khoản mục.</div></>}
-                </td></tr>
+</TableEmptyRow>
               )}
               {!isLoading && !readOnly && (
                 <tr className="border-t border-slate-100">

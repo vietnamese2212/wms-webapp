@@ -233,7 +233,7 @@ export function LeaveSection() {
           </thead>
           <tbody className={`divide-y divide-slate-100 ${dense ? '[&_td]:py-1' : '[&_td]:py-2'}`}>
             {isLoading ? (
-              <tr><td colSpan={11} className="text-center text-slate-400 py-6">Đang tải…</td></tr>
+              <TableEmptyRow colSpan={11}>Đang tải…</TableEmptyRow>
             ) : leaves.length === 0 ? (
               <TableEmptyRow colSpan={11}>Không có đơn nghỉ</TableEmptyRow>
             ) : leaves.map(l => {

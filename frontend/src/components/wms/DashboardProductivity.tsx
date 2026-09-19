@@ -15,6 +15,7 @@ import { useProductivity, type ProductivityRow } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate } from '@/utils/formatters'
 import { tonsPerWorkDay, tonsPerWorkHour, otRate, costPerTon, fmtNum, fmtPct } from '@/utils/productivity'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // "Hôm nay" phải là HÀM (màn kho mở qua đêm sẽ giữ ngày hôm qua — ratchet today_frozen_at_import)
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -324,9 +325,9 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
                 <tr key={i}><td colSpan={14} className="px-2 py-1"><Skeleton className={`h-5 rounded ${sk}`} /></td></tr>
               ))}
               {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={14} className="px-2 py-4 text-center text-[11px] text-slate-400">
+                <TableEmptyRow colSpan={14}>
                   {allRows.length > 0 ? 'Không kho nào phát sinh nhập/xuất, chấm công hay chi phí trong kỳ.' : 'Không có kho nào trong phạm vi.'}
-                </td></tr>
+</TableEmptyRow>
               )}
               {!isLoading && rows.map((r: ProductivityRow) => {
                 const rate = otRate(r)

@@ -698,7 +698,7 @@ function HistoryTab() {
           </TableHeader>
           <TableBody>
             {isFetching && rows.length === 0 ? (
-              <TableRow><TableCell colSpan={MOVE_COLS.length} className="text-center text-xs text-slate-400 py-8 whitespace-nowrap">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={MOVE_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
               <TableEmptyRow colSpan={MOVE_COLS.length}>Chưa có lượt chuyển nào trong khoảng ngày này</TableEmptyRow>
             ) : rows.map(r => (

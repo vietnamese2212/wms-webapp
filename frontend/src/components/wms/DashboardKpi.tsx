@@ -30,6 +30,7 @@ import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
 import { fmtNum } from '@/utils/productivity'
 import { KpiLineChart, KpiChartLegend, bucketLabel, fmtValue, ragOf, RAG_HEX, type ChartPoint } from '@/components/wms/KpiLineChart'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // ── Ngày / tuần / tháng / năm — helper ở utils/kpiPeriods.ts (dùng chung với hook tách đoạn) ──
 import {
@@ -911,7 +912,7 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {d.by_warehouse.length === 0 && <tr><td colSpan={tableDefs.length + 1} className="px-2 py-4 text-center text-[11px] text-slate-400">Không kho nào có số liệu trong kỳ.</td></tr>}
+                {d.by_warehouse.length === 0 && <TableEmptyRow colSpan={tableDefs.length + 1}>Không kho nào có số liệu trong kỳ.</TableEmptyRow>}
                 {d.by_warehouse.map(w => {
                   const byId = new Map(w.kpis.map(k => [k.id, k]))
                   return (

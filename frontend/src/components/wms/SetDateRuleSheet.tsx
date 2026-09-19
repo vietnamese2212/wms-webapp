@@ -26,6 +26,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { qtyLabel, qtyEntryDecimal, qtyEntryText, qtyFromEntryBase, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { isQaHeld } from '@/utils/qaHold'
 import type { DateRule, DateRuleKind, SimpleRuleKind } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 export interface DateRuleTarget {
   item_id: string
@@ -608,9 +609,9 @@ export function SetDateRuleSheet(p: {
             </thead>
             <tbody>
               {view.length === 0 && (
-                <tr><td colSpan={11} className="px-2 py-6 text-center text-[11px] text-slate-400">
+                <TableEmptyRow colSpan={11}>
                   Không có dòng nào khớp bộ lọc.
-                </td></tr>
+</TableEmptyRow>
               )}
               {view.map(t => {
                 const { ps, warn, partOk } = renderRule(t)

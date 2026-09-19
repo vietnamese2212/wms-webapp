@@ -341,7 +341,7 @@ export default function IntegrationKeys() {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={9} className="px-2 py-6 text-center text-slate-400 text-xs">Đang tải…</TableCell></TableRow>
+                <TableEmptyRow colSpan={9}>Đang tải…</TableEmptyRow>
               ) : keys.length === 0 ? (
                 <TableEmptyRow colSpan={9}>Chưa có API key nào. Bấm "Tạo key" để cấp cho ERP.</TableEmptyRow>
               ) : keys.map(k => {

@@ -30,6 +30,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { SHARED_KEY, monthOpts, monthAdd, periodAdd, monthSpan, MAX_SPAN_MONTHS, money, voucherPath } from './costShared'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const DEFAULT_BACK = 14    // 15 kỳ tính cả tháng này
 const DEFAULT_AHEAD = 3    // khai trước kỳ tới
@@ -356,7 +357,7 @@ function VoucherTable({ rows, loading, onOpen, canEdit, onCreate }: {
           </tr>
         ))}
         {!loading && rows.length === 0 && (
-          <tr><td colSpan={8} className="px-2 py-8 text-center">
+          <TableEmptyRow colSpan={8}>
             <div className="text-[11px] text-slate-400">Kỳ đang chọn chưa có phiếu chi phí nào.</div>
             {canEdit && onCreate && (
               // Trạng thái rỗng phải có ĐƯỜNG ĐI NGAY TẠI ĐÓ, đừng bắt người dùng đi dò nút trên toolbar
@@ -365,7 +366,7 @@ function VoucherTable({ rows, loading, onOpen, canEdit, onCreate }: {
                 <FilePlus2 className="h-3.5 w-3.5" /> Tạo phiếu chi phí
               </button>
             )}
-          </td></tr>
+</TableEmptyRow>
         )}
       </tbody>
     </table>
@@ -424,9 +425,9 @@ function LineTable({ rows, loading, onOpen }: {
           </tr>
         ))}
         {!loading && rows.length === 0 && (
-          <tr><td colSpan={7} className="px-2 py-8 text-center text-[11px] text-slate-400">
+          <TableEmptyRow colSpan={7}>
             Không có dòng chi phí nào khớp bộ lọc.
-          </td></tr>
+</TableEmptyRow>
         )}
       </tbody>
     </table>

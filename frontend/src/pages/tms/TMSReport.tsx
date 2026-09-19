@@ -18,6 +18,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import type { AxiosError } from 'axios'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const TH = 'text-[9px] font-medium text-slate-500 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
@@ -232,15 +233,11 @@ export default function TMSReport() {
           </TableHeader>
           <TableBody className={dense ? '' : '[&_td]:!py-2.5'}>
             {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">Đang tải...</TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={COLS.length}>Đang tải...</TableEmptyRow>
             ) : filteredRows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">
-                  {dateFrom && dateTo ? 'Không có dữ liệu' : 'Chọn khoảng ngày để xem báo cáo'}
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={COLS.length}>
+                {dateFrom && dateTo ? 'Không có dữ liệu' : 'Chọn khoảng ngày để xem báo cáo'}
+              </TableEmptyRow>
             ) : filteredRows.map((row, i) => {
               const canEditPo = !!row.plan_line_id && canEditPoPerm
               return (

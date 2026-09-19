@@ -273,7 +273,11 @@ export async function createDoSap(req: Request, res: Response) {
     if (!fields.od_number || !fields.od_item) return fail(res, 'Thiếu Delivery (DO) hoặc Item', 400)
     {
       const plants = await allowedPlants(req)
-      if (plants && (!fields.plant || !plantAllowed(plants, fields.plant))) return fail(res, PLANT_FORBIDDEN, 403)
+      // Thiếu plant ≠ plant ngoài phạm vi: người phạm vi kho thêm DO tay mà bỏ trống Nhà máy từng nhận 403
+      // "ngoài phạm vi" (ca đêm 20/09, NV SAP TP) — đi tìm lỗi phân quyền trong khi chỉ thiếu một ô. 400 + tên ô + gợi ý.
+      if (plants && !fields.plant)
+        return fail(res, 400, 'PLANT_REQUIRED', `Thiếu Nhà máy (plant) — tài khoản phạm vi kho phải khai plant của kho mình${plants.length ? `: ${plants.join(', ')}` : ' (kho được gán chưa khai mã plant SAP)'}`)
+      if (plants && !plantAllowed(plants, fields.plant)) return fail(res, PLANT_FORBIDDEN, 403)
     }
     // Chặn trùng (od_number, od_item) — bảng có unique index
     const { data: dup } = await supabase.from('erp_outbound_orders').select('id')

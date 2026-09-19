@@ -162,6 +162,17 @@ let runB = null
   check('Tổng sản lượng chốt = Σ thùng pallet (54) + đếm pallet = 1',
     Number(okR?.j?.data?.qty_total) === 54 && Number(okR?.j?.data?.pallet_count) === 1,
     `qty_total=${okR?.j?.data?.qty_total} pallets=${okR?.j?.data?.pallet_count}`)
+  // [9b] "SL (quy đổi)" = THÙNG quy đổi per mã, KHÔNG phải base thô (ca đêm 20/09: pallet 190 thùng in "4.560").
+  // Đọc lại trang qua GET detail: qty_conv = qty_total ÷ quy cách của chính mã đó (mã không entry ⇒ bằng base).
+  {
+    const d = await api(`/wms/packing-runs/${runA?.id}`)
+    const mat = (await restAll('Material', `select=units_per_carton,entry_unit&material_code=eq.${encodeURIComponent(d.j?.data?.material_code ?? '')}`))[0]
+    const upc = Number(mat?.units_per_carton ?? 0)
+    const expect = mat?.entry_unit && upc > 0 ? Math.round(54 / upc * 1000) / 1000 : 54
+    check('[9b] Trang sổ trả qty_conv = thùng quy đổi theo quy cách mã (nhãn "SL (quy đổi)" không còn đội số base)',
+      d.s === 200 && Number(d.j?.data?.qty_conv) === expect,
+      `http=${d.s} qty_conv=${d.j?.data?.qty_conv} qty_total=${d.j?.data?.qty_total} upc=${upc} entry=${mat?.entry_unit ?? '—'} chờ=${expect}`)
+  }
 }
 
 // [10] Trang ĐÃ ĐÓNG không nhận quét nữa: đóng nốt trang B + trang M9 → quét mã đó lại bị RUN_REQUIRED

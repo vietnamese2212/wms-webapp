@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { normalizeQR, parseInboundQR } from '../../utils/qrParser'
 import { fetchAllByIdChunks } from '../../utils/pagination'
+import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { activeMachineCodes } from './machineController'
 import { getRetentionDays, getPackingMaxMaterials } from '../../utils/settings'
 
@@ -446,7 +447,9 @@ export async function updateLog(req: Request, res: Response) {
 // Giờ bắt đầu; bấm "Giờ kết thúc" → CLOSED + tính TỔNG SẢN LƯỢNG = Σ thùng pallet đã ghi.
 // Quét tem chỉ được khi trang đang MỞ (gate ở openLog). Quyền: packing.open_run.
 
-type RunAgg = { pallet_count: number; pallet_open: number; qty_sum: number }
+// qty_sum = Σ BASE (hộp) — đúng như cột lưu. qty_conv = Σ THÙNG QUY ĐỔI per mã (`qtyEntryDecimal`) — thứ
+// màn hình dán nhãn "SL (quy đổi)"; trước 20/09 FE in thẳng qty_sum dưới nhãn đó (pallet 190 thùng → "4.560").
+type RunAgg = { pallet_count: number; pallet_open: number; qty_sum: number; qty_conv: number }
 
 // Σ thùng + đếm pallet SỐNG (không tính CANCELLED) của các trang — dùng cho board/list/close
 // full=false (mặc định — list/board): CHỈ kéo 3 cột đếm/cộng, KHÔNG trả pallets về client.
@@ -457,16 +460,27 @@ async function aggRuns(runIds: string[], full = false): Promise<Map<string, RunA
   const out = new Map<string, RunAgg & { pallets: LogRow[] }>()
   if (!runIds.length) return out
   const logs = await fetchAllByIdChunks(runIds, chunk =>
-    supabase.from('packing_logs').select(full ? '*' : 'run_id, status, qty_cartons')
+    supabase.from('packing_logs').select(full ? '*' : 'run_id, status, qty_cartons, material_code')
       .in('run_id', chunk).neq('status', 'CANCELLED').order('open_scan_at'))
+  // Quy cách từng mã để quy đổi hộp → thùng (một trang có thể nhiều mã, mỗi mã một hệ số)
+  const codes = [...new Set((logs as { material_code?: string | null }[]).map(l => l.material_code).filter((c): c is string => !!c))]
+  const units = new Map<string, MatUnits>()
+  if (codes.length) {
+    const mats = await fetchAllByIdChunks(codes, chunk =>
+      supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', chunk).order('material_code'))
+    for (const m of mats as (MatUnits & { material_code: string })[]) units.set(m.material_code, m)
+  }
   for (const l of logs as (LogRow & { run_id: string })[]) {
-    const a = out.get(l.run_id) ?? { pallet_count: 0, pallet_open: 0, qty_sum: 0, pallets: [] }
+    const a = out.get(l.run_id) ?? { pallet_count: 0, pallet_open: 0, qty_sum: 0, qty_conv: 0, pallets: [] }
     a.pallet_count++
     if (l.status === 'OPEN') a.pallet_open++
-    a.qty_sum += Number(l.qty_cartons ?? 0)
+    const q = Number(l.qty_cartons ?? 0)
+    a.qty_sum += q
+    a.qty_conv += qtyEntryDecimal(q, units.get(l.material_code ?? '') ?? null)
     a.pallets.push(l)
     out.set(l.run_id, a)
   }
+  for (const a of out.values()) a.qty_conv = Math.round(a.qty_conv * 1000) / 1000
   return out
 }
 
@@ -502,7 +516,7 @@ export async function getRunBoard(req: Request, res: Response) {
     const a = agg.get(r.id as string)
     const v = rc.get(r.id as string)
     return {
-      ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0,
+      ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0, qty_conv: a?.qty_conv ?? 0,
       received_count: v?.recv ?? 0, recv_diff_count: v?.diff ?? 0, recv_total: a?.pallet_count ?? 0,
     }
   }))
@@ -524,6 +538,7 @@ export async function getRun(req: Request, res: Response) {
     ...run,
     pallet_count: live ? (a?.pallet_count ?? 0) : (run.pallet_count ?? a?.pallet_count ?? 0),
     qty_total: live ? (a?.qty_sum ?? 0) : (run.qty_total ?? a?.qty_sum ?? 0),
+    qty_conv: a?.qty_conv ?? 0,
     pallet_open: a?.pallet_open ?? 0,
     pallets: a?.pallets ?? [],
   })
@@ -586,6 +601,7 @@ export async function listRuns(req: Request, res: Response) {
     // mẫu số cho symbol = pallet SỐNG (trang CLOSED giữ pallet_count đã CHỐT, có thể lệch nếu sau đó hủy pallet)
     ;(r as Record<string, unknown>).recv_total = a?.pallet_count ?? 0
     ;(r as Record<string, unknown>).recv_diff_count = v?.diff ?? 0
+    ;(r as Record<string, unknown>).qty_conv = a?.qty_conv ?? 0   // thùng quy đổi — tính sống cả trang đã đóng (cột lưu chỉ có base)
     if (r.status === 'OPEN' && a) { r.qty_total = a.qty_sum; r.pallet_count = a.pallet_count }
     else if (a && r.pallet_count == null) { r.qty_total = r.qty_total ?? a.qty_sum; r.pallet_count = a.pallet_count }
     else if (!a && r.pallet_count == null) r.pallet_count = 0

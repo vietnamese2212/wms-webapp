@@ -33,7 +33,7 @@ import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { normalizeQR } from '@/utils/qr'
 import { QtyInput } from '@/components/shared/QtyInput'
-import { qtyLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -644,7 +644,8 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                     <RecvSymbol recv={Number(r.received_count ?? 0)} total={Number(r.recv_total ?? palletN)} diff={Number(r.recv_diff_count ?? 0)} />
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_total ?? 0).toLocaleString('vi-VN')}</TableCell>
+                  {/* nhãn cột là "SL (quy đổi)" = THÙNG quy đổi — không in qty_total (base) dưới nhãn đó (ca đêm 20/09: pallet 190 thùng in "4.560") */}
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_conv ?? 0).toLocaleString('vi-VN')}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
                     {isoToHHMM(r.start_at)}<span className="text-slate-400 font-normal"> → </span>
                     {r.end_at ? (
@@ -1484,7 +1485,8 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
         'Kho đã nhập': r.received_count ?? 0,
         'Kho chưa nhập': Math.max(0, Number(r.recv_total ?? r.pallet_count ?? 0) - Number(r.received_count ?? 0)),
         'Pallet lệch SL': r.recv_diff_count ?? 0,
-        'Tổng sản lượng (SL quy đổi)': r.qty_total ?? '',
+        'Tổng sản lượng (SL quy đổi)': r.qty_conv ?? '',
+        'Tổng sản lượng (base)': r.qty_total ?? '',
         'Người mở': r.opened_by_name ?? '',
         'Người đóng': r.closed_by_name ?? '',
         'Ghi chú': r.note ?? '',
@@ -1514,7 +1516,7 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
         { label: 'Đang mở', value: openCount.toLocaleString('vi-VN'), accent: openCount > 0 },
         { label: 'Trang sổ (bộ lọc)', value: total.toLocaleString('vi-VN') },
         { label: 'Pallet (trang này)', value: rows.reduce((s, r) => s + Number(r.pallet_count ?? 0), 0).toLocaleString('vi-VN') },
-        { label: QTY_CONVERTED_LABEL, tip: QTY_CONVERTED_TIP, value: rows.reduce((s, r) => s + Number(r.qty_total ?? 0), 0).toLocaleString('vi-VN') },
+        { label: QTY_CONVERTED_LABEL, tip: QTY_CONVERTED_TIP, value: rows.reduce((s, r) => s + Number(r.qty_conv ?? 0), 0).toLocaleString('vi-VN') },
       ]} />
 
       <RunGroupedTable runs={rows} loading={isLoading} h={h}
@@ -1895,7 +1897,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
         { label: 'Kho đã nhận', value: (data?.received_count ?? 0).toLocaleString('vi-VN') },
         { label: 'Chưa nhận (SX đã tạo)', value: (data?.missing_count ?? 0).toLocaleString('vi-VN'), accent: (data?.missing_count ?? 0) > 0 },
         { label: 'Lệch SL sổ ↔ kho', value: (data?.diff_count ?? 0).toLocaleString('vi-VN'), accent: (data?.diff_count ?? 0) > 0 },
-        { label: QTY_CONVERTED_LABEL, tip: QTY_CONVERTED_TIP, value: closed.reduce((s, r) => s + Number(r.qty_cartons ?? 0), 0).toLocaleString('vi-VN') },
+        { label: QTY_CONVERTED_LABEL, tip: QTY_CONVERTED_TIP, value: closed.reduce((s, r) => s + qtyEntryDecimal(Number(r.qty_cartons ?? 0), matUnit.get(r.material_code ?? '')), 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
         { label: 'Giờ nhập tay (trang)', value: closed.length ? `${manualN}/${closed.length}` : '0' },
       ]} />
 

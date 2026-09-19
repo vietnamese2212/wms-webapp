@@ -1014,7 +1014,8 @@ export default function DirectedWork() {
                   </Step>
                   <Step label={tab === 'SCAN' ? 'Ở' : 'Đi tới'} big={first}>
                     <span className={`font-mono font-semibold ${closed ? 'line-through' : ''}`}>{where ?? <span className="text-slate-300 font-sans font-normal">chưa có trên bản vẽ</span>}</span>
-                    {r.level_no != null && r.level_no > 1 && <span className="text-xs text-slate-500"> · tầng {r.level_no}</span>}
+                    {/* "tầng" là của Ô NGUỒN — pallet đã hạ xuống điểm đặt dãy thì in "điểm đặt dãy 1 · tầng 3" là vô nghĩa (ca đêm 20/09) */}
+                    {r.waiting_lower && r.level_no != null && r.level_no > 1 && <span className="text-xs text-slate-500"> · tầng {r.level_no}</span>}
                   </Step>
                   <Step label={tab === 'LOWER' ? 'Hạ' : tab === 'MOVE' ? 'Đưa' : 'Lấy'} big={first}>
                     <span className="font-semibold tabular-nums">{nf(r.n_pallets)}</span> <span className="text-slate-500">pallet</span>
@@ -1148,7 +1149,7 @@ export default function DirectedWork() {
                     {tab === 'SCAN' ? (<>
                       <TableCell className={cell}>
                         <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
-                        {r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
+                        {r.waiting_lower && r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                       </TableCell>
                       <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                       <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>{st.text}</TableCell>
@@ -1199,7 +1200,7 @@ export default function DirectedWork() {
                       </>) : (<>
                         <TableCell className={cell}>
                           <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
-                          {r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
+                          {r.waiting_lower && r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                         </TableCell>
                         <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
                         <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>

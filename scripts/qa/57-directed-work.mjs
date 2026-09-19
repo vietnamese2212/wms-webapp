@@ -1594,6 +1594,20 @@ try {
       })
       check('[25n] Kho bắt buộc + dòng chốt "≥ 80 %": quét ĐÚNG pallet đạt mức KHÔNG bị 422 sai thứ tự',
         scRot.s === 200, `http=${scRot.s} ${err(scRot)}`)
+      // C19 tái phát lần 2 (ca đêm 20/09): pallet DƯỚI mức đã chốt vẫn quét được 200 + trừ tồn vì hai cửa
+      // quét chỉ soi `date_required` của VL06O, còn kiểm luân chuyển coi pallet sớm hơn là "đúng thứ tự".
+      // Cửa xem trước lẫn cửa ghi đều phải từ chối, nêu số đo + mức + nguồn mức.
+      const scLowChk = await api(`/wms/outbound/${tC.gdo}/items/${itC.id}/check-scan`, 'POST', { qr_code: `${T}-ROT_LOW` })
+      check('[25p1] Xem trước pallet 2,7 % trên dòng chốt "≥ 80 %" → 400 DATE_RULE_BELOW nêu %Date + mức',
+        scLowChk.s === 400 && scLowChk.j?.error?.code === 'DATE_RULE_BELOW' && /80 %/.test(scLowChk.j?.error?.message ?? ''),
+        `http=${scLowChk.s} ${err(scLowChk)}`)
+      const scLow = await api(`/wms/outbound/${tC.gdo}/items/${itC.id}/scan`, 'POST', {
+        qr_code: `${T}-ROT_LOW`, cartons_override: 24, leftover_location_id: 'KEEP',
+      })
+      const lowAfter = (await restAll('InventoryEntry', `select=cartons_remaining&pallet_code=eq.${T}-ROT_LOW`))[0]
+      check('[25p2] Quét GHI pallet dưới mức → 400 DATE_RULE_BELOW, tồn pallet KHÔNG đổi (oracle đọc lại DB)',
+        scLow.s === 400 && scLow.j?.error?.code === 'DATE_RULE_BELOW' && Number(lowAfter?.cartons_remaining) === 200,
+        `http=${scLow.s} ${err(scLow)} remaining=${lowAfter?.cartons_remaining}`)
 
       await setReq(false)
       for (const g of [tF.gdo, tC.gdo]) await api(`/wms/outbound/${g}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})

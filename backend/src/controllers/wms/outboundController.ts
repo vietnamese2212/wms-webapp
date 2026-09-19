@@ -7,7 +7,7 @@ import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventor
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
-import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
+import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
 import {
   PICKABLE_STATUSES, asRotationPrinciple, isPickEligible, isRotationViolation, isRotationReason,
   rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
@@ -34,6 +34,7 @@ import { notifyEmployees } from '../../services/pushService'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
   servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, palletMeetsDateRule, MAX_DATE_CHECK, MAX_RULE_PARTS,
+  type DateRulePallet,
   type DateRule, type DateRulePart,
 } from '../../services/directedTasks'
 import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
@@ -152,6 +153,26 @@ function futureDateError(deliveryDate?: string | null): string | null {
 // khác màn hình ⇒ chặn cả hai, đừng để nhặt lẻ thành cửa sau.
 // Kho Thủ công (`work_mode` khác GUIDED) giữ nguyên hành vi cũ — không bắt chốt.
 type DateRuleGateItem = { date_rule?: unknown; date_required?: number | null; material_code_raw?: string | null }
+
+// CỬA QUÉT PHẢI ĐỌC CHÍNH MỨC ĐÃ CHỐT (C19 tái phát lần 2, đo ca đêm 20/09): dòng theo kênh BHX chốt
+// "≥ 80 %" mà thủ kho soạn hàng lẻ từ pallet 78 % vẫn 200 + trừ tồn, `rotation_violation=false` —
+// vì hai cửa quét chỉ soi `date_required` của VL06O (trống 100 % trên dữ liệu thật), còn kiểm luân
+// chuyển chỉ hỏi "có LỘT thứ tự pallet tốt nhất không" nên pallet KHÔNG ĐẠT (sớm hơn) lại được coi là
+// đúng thứ tự. 14/09 đã vá CHỈ ĐƯỜNG đọc rule; cửa trừ tồn — cửa duy nhất làm hàng rời kho — vẫn mù.
+// Luật diễn giải vẫn là `palletMeetsDateRule` (một nguồn), đây chỉ là chỗ GỌI nó ở cửa ghi + cửa xem
+// trước. Giảm/hoàn không đi qua đây (luật là "không xuất dưới mức", không phải "không sửa sai").
+const DATE_RULE_SOURCE_LABEL: Record<string, string> = { CHANNEL: 'theo kênh', CUSTOMER: 'theo khách', SYSTEM: 'hệ thống đặt', MANUAL: 'chốt tay' }
+function dateRuleBelowError(inv: DateRulePallet, mat: MaterialShelfInfo | null, item: DateRuleGateItem, qr: string): string | null {
+  const rule = dateRuleOf(item)
+  if (!rule || rule.kind === 'FEFO') return null
+  if (palletMeetsDateRule(inv, mat, rule)) return null
+  const pct = computePctDate(inv, mat), days = computeDaysLeft(inv, mat)
+  const measured = rule.kind === 'MIN_DAYS'
+    ? (days == null ? 'không đo được hạn dùng' : `còn ${days} ngày`)
+    : (pct == null ? 'không đo được %Date' : `%Date còn ${Math.floor(pct)} %`)
+  const src = DATE_RULE_SOURCE_LABEL[String(rule.source ?? 'MANUAL')] ?? 'chốt tay'
+  return `Pallet "${qr}" ${measured} — dưới mức đã chốt cho dòng này (${describeDateRule(rule)}, ${src}). Lấy pallet đạt mức theo cột "Vị trí lấy" / Việc cần làm; muốn xuất pallet này thì đổi mức ở Quy định date trước.`
+}
 function dateRuleGateError(
   gdo: unknown, item: DateRuleGateItem, what: 'lấy hàng' | 'nhặt lẻ',
 ): string | null {
@@ -6155,6 +6176,9 @@ export async function checkScanItem(req: Request, res: Response) {
         return fail(res, `%Date còn lại: ${Math.floor(pct)}% < yêu cầu ${dateReqPct}%`, 400)
       }
     }
+    // Mức đã chốt trên dòng (tay / khách / kênh) — báo ngay ở bước xem trước, cùng luật với cửa ghi
+    { const belowErr = dateRuleBelowError(inv as DateRulePallet, mat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
+      if (belowErr) return fail(res, 400, 'DATE_RULE_BELOW', belowErr) }
 
     // Kiểm luân chuyển (FEFO/FIFO/LIFO theo cấu hình kho) — ở đây CHỈ báo cáo, không chặn: đây là
     // bước xem trước để FE hiện cảnh báo / hỏi lý do. Cửa chặn thật nằm ở scanItem (gọi thẳng API
@@ -6302,6 +6326,9 @@ export async function scanItem(req: Request, res: Response) {
         return fail(res, `%Date còn lại: ${Math.floor(pctRaw)}% < yêu cầu ${dateReqPct}%`, 400)
       }
     }
+    // Mức đã chốt trên dòng (tay / khách / kênh) — CỬA GHI: gọi thẳng API vẫn phải qua đây
+    { const belowErr = dateRuleBelowError(inv as DateRulePallet, shelfMat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
+      if (belowErr) return fail(res, 400, 'DATE_RULE_BELOW', belowErr) }
 
     if (item.material_id && inv.material_id !== item.material_id) {
       return await materialMismatchFail(res, qr, inv.material_id ?? null, item.material_id)

@@ -2519,7 +2519,7 @@ export type TraceRun = {
   material_code: string | null; material_codes: string[] | null; machine_code: string | null
   warehouse_id: string | null; warehouse_name: string | null; warehouse_nmsx: string | null
   start_at: string | null; end_at: string | null
-  qty_total: number | null; pallet_count: number | null; status: string
+  qty_total: number | null; qty_conv?: number | null; pallet_count: number | null; status: string
   opened_by_name: string | null
 }
 export type CartonMatch = {
@@ -7183,7 +7183,8 @@ export interface PackingRun {
   machine_code: string
   start_at: string
   end_at: string | null
-  qty_total: number | null
+  qty_total: number | null           // Σ BASE (hộp) — cột lưu
+  qty_conv?: number | null           // Σ thùng quy đổi per mã (BE tính sống) — thứ hiện dưới nhãn "SL (quy đổi)"
   pallet_count: number | null
   status: 'OPEN' | 'CLOSED' | 'CANCELLED'
   opened_by_name: string | null

@@ -32,6 +32,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import type { Material } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // ─── Label data ───────────────────────────────────────────────
 type LabelData = {
@@ -1298,7 +1299,7 @@ export default function PalletLabels() {
                 {!auReady ? (
                   <tr><td colSpan={10} className="px-2 py-10 text-center text-slate-400">Chọn đủ <b>Kho + Loại hàng + Tên hàng + Chu kỳ</b> hoặc quét/nhập mã pallet để tra cứu</td></tr>
                 ) : auditSummary.length === 0 ? (
-                  <tr><td colSpan={10} className="px-2 py-10 text-center text-slate-400">Không có pallet nào khớp trong tồn kho</td></tr>
+                  <TableEmptyRow colSpan={10}>Không có pallet nào khớp trong tồn kho</TableEmptyRow>
                 ) : auditSummary.map(g => (
                   <Fragment key={g.qr}>
                     <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => setAuOpen(auOpen === g.qr ? null : g.qr)}>
@@ -1425,7 +1426,7 @@ export default function PalletLabels() {
                 {!histReady ? (
                   <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chọn <b>Khoảng ngày</b> ở thanh lọc trên, hoặc <b>tìm / quét mã pallet</b> (≥3 ký tự) ở ô tìm kiếm — tránh tải quá nhiều dữ liệu</td></tr>
                 ) : histBatches.length === 0 ? (
-                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Không có lệnh in nào khớp điều kiện đã chọn</td></tr>
+                  <TableEmptyRow colSpan={canReprint ? 9 : 8}>Không có lệnh in nào khớp điều kiện đã chọn</TableEmptyRow>
                 ) : histBatches.map(b => {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]

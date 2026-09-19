@@ -35,6 +35,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
@@ -779,7 +780,7 @@ function OrdersTab({ warehouseId, dense, canCancel }: {
             {isLoading ? (
               <TableRow><TableCell colSpan={ORDER_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={ORDER_COLS.length} className="text-center py-8 text-xs text-slate-400">Chưa có lệnh fill nào khớp bộ lọc</TableCell></TableRow>
+              <TableEmptyRow colSpan={ORDER_COLS.length}>Chưa có lệnh fill nào khớp bộ lọc</TableEmptyRow>
             ) : rows.map(o => {
               const prog = o.pallets_req > 0 ? Math.min(100, Math.round(o.pallets_done * 100 / o.pallets_req)) : 0
               return (

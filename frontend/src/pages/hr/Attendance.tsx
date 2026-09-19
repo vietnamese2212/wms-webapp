@@ -27,6 +27,7 @@ import { formatDate } from '@/utils/formatters'
 import { getHoliday } from '@/utils/vnHolidays'
 import { LeaveSection, CreateLeaveDialog } from './LeaveManagement'
 import { ATTENDANCE_KINDS, shiftOptions, shiftLabel, shiftShort, shiftCell } from '@/config/shifts'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // Ca làm việc: MỘT nguồn ở config/shifts.ts (mã · nhãn · thứ tự · màu) — xem ghi chú ở file đó
 const KINDS = shiftOptions(ATTENDANCE_KINDS)
@@ -517,7 +518,7 @@ function MatrixTable({ emps, dates, isWorkDay, dense }: { emps: MatrixRow[]; dat
         </thead>
         <tbody className="divide-y divide-slate-100">
           {emps.length === 0 ? (
-            <tr><td colSpan={dates.length + 5} className="text-center text-slate-400 py-6">Không có nhân viên phù hợp</td></tr>
+            <TableEmptyRow colSpan={dates.length + 5}>Không có nhân viên phù hợp</TableEmptyRow>
           ) : emps.map(g => (
             <tr key={g.id} className="hover:bg-slate-50/60">
               <td className={`px-2 ${pad} sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700 whitespace-nowrap max-w-[160px] truncate`} title={g.name}>{g.name}</td>
@@ -574,7 +575,7 @@ function AttTable({ rows, onDelete, showName, dense }: { rows: AttendanceRow[]; 
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
-            <tr><td colSpan={showName ? 11 : 8} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <TableEmptyRow colSpan={showName ? 11 : 8}>Chưa có dữ liệu</TableEmptyRow>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
               {showName && <td className={`px-2 ${pad} font-medium text-slate-700 sticky left-0 z-10 bg-white max-w-[160px] truncate`} title={r.employee?.name ?? ''}>{r.employee?.name ?? '—'}</td>}

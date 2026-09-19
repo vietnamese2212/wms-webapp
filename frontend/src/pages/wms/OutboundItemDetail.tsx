@@ -63,7 +63,7 @@ function ProgressBar({ scanned, ordered, looseUnconfirmed = 0, mat }: { scanned:
         )}
       </div>
       <span className={`text-sm tabular-nums font-medium ${totalPct >= 100 && looseUnconfirmed === 0 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {qtyEntryText(scanned, mat)}/{qtyEntryText(ordered, mat)} {qtyUnitLabel(mat)}
+        {qtyLabel(scanned, mat)} / {qtyLabel(ordered, mat)}
       </span>
     </div>
   )
@@ -715,7 +715,7 @@ export default function OutboundItemDetail() {
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${itemStatusText(item.status)}`}>
       <span className="flex items-center gap-1">
         <Package className="h-3 w-3 text-slate-400 shrink-0" />
-        <span className="font-medium">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+        <span className="font-medium">{qtyLabel(item.cartons_ordered, item.material)}</span>
         {item.boxes_display > 0 && (
           <span className="ml-1">· <span className="font-medium">{item.boxes_display}</span> hộp</span>
         )}

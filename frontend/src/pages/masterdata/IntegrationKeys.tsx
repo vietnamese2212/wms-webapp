@@ -15,6 +15,7 @@ import { SettingLabel } from '@/components/shared/SettingsForm'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatDateTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 interface ApiKeyRow {
   id: string; name: string; key: string | null; key_prefix: string | null; scopes: string[]
@@ -342,7 +343,7 @@ export default function IntegrationKeys() {
               {isLoading ? (
                 <TableRow><TableCell colSpan={9} className="px-2 py-6 text-center text-slate-400 text-xs">Đang tải…</TableCell></TableRow>
               ) : keys.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="px-2 py-6 text-center text-slate-400 text-xs">Chưa có API key nào. Bấm "Tạo key" để cấp cho ERP.</TableCell></TableRow>
+                <TableEmptyRow colSpan={9}>Chưa có API key nào. Bấm "Tạo key" để cấp cho ERP.</TableEmptyRow>
               ) : keys.map(k => {
                 const isRev = !!revealed[k.id]
                 return (

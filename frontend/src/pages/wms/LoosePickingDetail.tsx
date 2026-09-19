@@ -413,7 +413,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                                 {s.pct_date != null && (
                                   <span className={`ml-1 font-bold tabular-nums ${pctDateCls(s.pct_date, pctBands)}`}>{s.pct_date}%</span>
                                 )}
-                                <span className="ml-1 text-slate-400 tabular-nums">{qtyEntryText(s.available, item.material)}th</span>
+                                <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, item.material)}</span>
                               </div>
                             ))}
                           </div>

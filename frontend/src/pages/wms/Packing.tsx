@@ -41,6 +41,7 @@ import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ── Filter "Tháng sản xuất" (user 13/08 — dặn "chọn cẩn thận") ───────────────────
@@ -1918,7 +1919,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
             {isLoading ? (
               <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center py-8 text-xs text-slate-400">Chưa có dòng sổ nào khớp bộ lọc</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Chưa có dòng sổ nào khớp bộ lọc</TableEmptyRow>
             ) : rows.map(r => (
               <TableRow key={r.id} className={r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
                 {/* Thao tác Ở ĐẦU row + sticky (user chốt 12/08) */}

@@ -13,7 +13,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useInventoryByMaterial, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
 import { pctDateCls } from '@/utils/pctDateBands'
-import { qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+// qtyLabel, KHÔNG qtyEntryText: đây là số của MỘT mã ⇒ luật base-unit đòi "N thùng + M hộp".
+// Bản 12/09 in "16.345,667 thùng" cho mã 48 hộp/thùng — 0,667 thùng là 32 hộp, người kho không
+// đọc ra được (C2 tái phát 19/09, ratchet `entry_decimal_beside_unit_label` gác).
+import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { isQaHeld } from '@/utils/qaHold'
 
 export function MaterialStockDialog({ materialId, materialCode, materialName, mat, warehouseId, onClose }: {
@@ -55,7 +58,7 @@ export function MaterialStockDialog({ materialId, materialCode, materialName, ma
           <DialogTitle className="text-sm font-semibold">
             <span className="font-mono">{materialCode}</span> · {materialName}
           </DialogTitle>
-          <p className="text-xs text-slate-500 mt-0.5">Tồn kho theo %Date · lấy thấp trước · {inv.length} pallet · {qtyEntryText(total, mat)} {qtyUnitLabel(mat)}</p>
+          <p className="text-xs text-slate-500 mt-0.5">Tồn kho theo %Date · lấy thấp trước · {inv.length} pallet · {qtyLabel(total, mat)}</p>
         </DialogHeader>
         <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
           {isLoading ? (
@@ -88,8 +91,7 @@ export function MaterialStockDialog({ materialId, materialCode, materialName, ma
                         </TableCell>
                         <TableCell className="px-3 py-1.5"><span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span></TableCell>
                         <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, mat)}</span>
-                          <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
+                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyLabel(row.cartons, mat)}</span>
                           <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-slate-400">{open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</TableCell>
@@ -97,7 +99,7 @@ export function MaterialStockDialog({ materialId, materialCode, materialName, ma
                       {open && row.entries.map(e => (
                         <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
                           <TableCell className="px-3 py-1 pl-7" colSpan={2}><span className="font-mono text-[10px] font-semibold text-slate-600">{e.pallet_code}</span></TableCell>
-                          <TableCell className="px-3 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-blue-700">{qtyEntryText(e.available, mat)}</span><span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span></TableCell>
+                          <TableCell className="px-3 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-blue-700">{qtyLabel(e.available, mat)}</span></TableCell>
                           <TableCell className="px-2 py-1" />
                         </TableRow>
                       ))}

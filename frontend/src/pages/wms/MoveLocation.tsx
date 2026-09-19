@@ -40,6 +40,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 interface MoveEntryData {
   id:                string
@@ -699,7 +700,7 @@ function HistoryTab() {
             {isFetching && rows.length === 0 ? (
               <TableRow><TableCell colSpan={MOVE_COLS.length} className="text-center text-xs text-slate-400 py-8 whitespace-nowrap">Đang tải…</TableCell></TableRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={MOVE_COLS.length} className="text-center text-xs text-slate-400 py-8 whitespace-nowrap">Chưa có lượt chuyển nào trong khoảng ngày này</TableCell></TableRow>
+              <TableEmptyRow colSpan={MOVE_COLS.length}>Chưa có lượt chuyển nào trong khoảng ngày này</TableEmptyRow>
             ) : rows.map(r => (
               <TableRow key={r.id}>
                 <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">

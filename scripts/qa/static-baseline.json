@@ -75,5 +75,7 @@
   "password_rule_hand_rolled": 0,
   "upload_without_merge_expand": 0,
   "move_without_ledger": 0,
-  "actor_column_from_body": 0
+  "actor_column_from_body": 0,
+  "entry_decimal_beside_unit_label": 0,
+  "empty_row_centered_in_wide_td": 6
 }

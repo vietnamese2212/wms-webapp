@@ -24,6 +24,7 @@ import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyEntryText, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
 import { rowText } from '@/lib/rowStatus'
 import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const LOG_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'at',     label: 'Thời gian kiểm', w: 140 },
@@ -237,7 +238,7 @@ export default function StocktakeHistory() {
             {isFetching && rows.length === 0 ? (
               <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell></TableRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Chưa có lượt kiểm nào trong khoảng ngày này</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Chưa có lượt kiểm nào trong khoảng ngày này</TableEmptyRow>
             ) : rows.map(r => {
               const stickyBg = 'bg-white'
               return (

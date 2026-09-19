@@ -43,7 +43,7 @@ function ProgressBar({ scanned, target, mat }: { scanned: number; target: number
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
       <span className={`text-sm tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {qtyEntryText(scanned, mat)}/{qtyEntryText(target, mat)} {qtyUnitLabel(mat)}
+        {qtyLabel(scanned, mat)} / {qtyLabel(target, mat)}
       </span>
     </div>
   )
@@ -302,7 +302,7 @@ function ScanDialog({ item, gdoId, warehouseId, onClose, pdaMode = false, initia
                   mat={item.material}
                   onChange={b => setPendingCartons(String(b))}
                 />
-                <span className="text-sm text-slate-400 whitespace-nowrap">/ còn {qtyEntryText(remaining, item.material)} {qtyUnitLabel(item.material)}</span>
+                <span className="text-sm text-slate-400 whitespace-nowrap">/ còn {qtyLabel(remaining, item.material)}</span>
               </div>
               {hasEntry(item.material) && (
                 <p className="text-xs text-slate-500 tabular-nums">
@@ -585,7 +585,7 @@ export default function LoosePickingItemDetail() {
       </span>
       <span className="flex items-center gap-1">
         <Package className="h-3 w-3 text-slate-400 shrink-0" />
-        Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+        Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(item.cartons_ordered, item.material)}</span>
       </span>
       {doCode && (
         <span><span className="text-slate-400">DO:</span> <span className="font-mono break-all text-slate-600">{doCode}</span></span>

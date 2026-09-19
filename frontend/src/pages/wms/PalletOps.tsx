@@ -30,6 +30,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 type Tab = 'merge' | 'split' | 'history'
 
@@ -301,7 +302,7 @@ export default function PalletOps() {
                   {!opWh ? (
                     <tr><td colSpan={9} className="px-2 py-10 text-center text-amber-600">Chọn <b>Kho</b> để xem lịch sử dồn/tách (tránh tải quá nhiều dữ liệu)</td></tr>
                   ) : ops.length === 0 ? (
-                    <tr><td colSpan={9} className="px-2 py-10 text-center text-slate-400">Chưa có thao tác dồn/tách nào{(hSearch || hType || opCat || hFrom || hTo) ? ' khớp bộ lọc' : ''}</td></tr>
+                    <TableEmptyRow colSpan={9}>Chưa có thao tác dồn/tách nào{(hSearch || hType || opCat || hFrom || hTo) ? ' khớp bộ lọc' : ''}</TableEmptyRow>
                   ) : ops.map(o => {
                     const aCode = (o.target_codes?.[0] || o.source_codes?.[0] || '')
                     const matName = matByCode.get(materialCodeOf(aCode))?.short_name ?? materialCodeOf(aCode) ?? '—'

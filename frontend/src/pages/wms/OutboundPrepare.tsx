@@ -15,7 +15,7 @@ import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import { qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
@@ -309,7 +309,7 @@ export default function OutboundPrepare() {
                       <span className="text-[12px] font-bold tabular-nums text-sky-700">{r.pallets_remaining || '—'}</span>
                       {r.cartons_per_pallet > 0 && <span className="text-[9px] text-slate-400 ml-0.5">pl</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-slate-700">{qtyEntryText(r.cartons_remaining, r)}</span><span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(r)}</span></TableCell>
+                    <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-slate-700">{qtyLabel(r.cartons_remaining, r)}</span></TableCell>
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                       {sug ? (
                         <span className={`text-[10px] tabular-nums ${short ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>

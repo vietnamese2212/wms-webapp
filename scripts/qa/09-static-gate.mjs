@@ -419,6 +419,29 @@ const RULES = [
         && /\b(updated_by|created_by|actor_id|counted_by|scanned_by|stocktake_by|operated_by)\b\s*[:=]\s*(employee_id|req\.body|body)\b/.test(line), s),
   },
   {
+    key: 'entry_decimal_beside_unit_label',
+    label: 'số THÙNG THẬP PHÂN (qtyEntryText) in kèm nhãn đơn vị của MỘT mã — luật base-unit đòi qtyLabel "N thùng + M hộp"',
+    // Lớp C2 tái phát 19/09 khi soi màn bằng vai thủ kho: cột "Vị trí lấy" in "76,438th" cho pallet
+    // mà bảng Tối ưu tuyến in "76 thùng + 21 hộp"; dialog tra tồn in "16.345,667 thùng". 0,438 thùng
+    // là 21 hộp — người kho không đọc ra được, và hai màn nói hai số cho cùng một pallet. qtyEntryText
+    // CHỈ dành cho cột số hẹp có tiêu đề "Thùng" hoặc ô tổng cross-mã "SL (quy đổi)"; hễ đứng cạnh
+    // nhãn đơn vị (qtyUnitLabel / chữ "th"/"thùng") là đang in số của một mã ⇒ phải qtyLabel. Baseline 0.
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && (/qtyEntryText\([^)]*\)[^\n]*qtyUnitLabel\(/.test(line) || /qtyEntryText\([^)]*\)\}\s*(th|thùng)\b/.test(line)), s),
+  },
+  {
+    key: 'empty_row_centered_in_wide_td',
+    label: 'dòng "trống" viết tay trong <td colSpan> — bảng rộng cuộn ngang thì câu chữ căn giữa nằm NGOÀI màn 360 px; dùng <TableEmptyRow>',
+    // Đo 19/09 (vai thủ kho, 360 px): Fill hàng td rỗng rộng 1.646 px, Lịch sử chuyển vị trí 1.170 px ⇒
+    // "Không mã nào thiếu…" đứng ở x≈820, người dùng thấy bảng TRẮNG. 12 trang cùng khuôn đã chuyển
+    // sang components/shared/TableEmptyRow.tsx (sticky-left). Baseline = 6 dòng còn lại nằm trong bảng
+    // nhỏ luôn vừa màn (khối Giám sát của Việc cần làm · bảng con TMS · KPI theo kho) — không được TĂNG.
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line, f) => !/TableEmptyRow\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && /<(TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*>[^<]*(Không|Chưa|không)/.test(line), s),
+  },
+  {
     key: 'move_without_ledger',
     label: 'cửa ĐỔI Ô pallet (rpc move_pallets_to_location / fill_scan_apply, hoặc ghi thẳng location_id) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
     count: countMoveWithoutLedger,

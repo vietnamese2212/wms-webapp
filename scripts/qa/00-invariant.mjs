@@ -17,6 +17,16 @@ console.log('── GÓI INVARIANT (read-only) ──')
 const neg = await restAll('InventoryEntry', 'select=id,pallet_code,cartons_remaining&cartons_remaining=lt.0')
 check('Tồn kho không âm', neg.length === 0, neg.length ? `${neg.length} dòng ÂM, vd ${neg[0].pallet_code}=${neg[0].cartons_remaining}` : '')
 
+// 1b. Trạng thái pallet KHỚP số còn — `status = EXPORTED` mà `cartons_remaining > 0` là hai cột nói
+// hai chuyện: Dashboard đếm theo số còn (9.178) còn Tồn kho/sức chứa đếm theo status (9.092) nên hai
+// màn cạnh nhau ra hai con số cho CÙNG một kho (đo 19/09: 86 pallet ở ô nhặt lẻ Ba Vì còn nguyên
+// 6.720 hộp mà mang EXPORTED — không đường ghi nào của app tạo ra, chỉ có seed/script; nhưng app
+// không có lưới nào phát hiện). Mọi RPC ghi tồn đều tự suy status từ số còn, nên ca này = có ai ghi
+// tắt. Kèm mã pallet để finish() phân biệt rác fixture.
+const ghost = await restAll('InventoryEntry', 'select=id,pallet_code,cartons_remaining&status=eq.EXPORTED&cartons_remaining=gt.0')
+check('Pallet EXPORTED không còn số (status khớp cartons_remaining)', ghost.length === 0,
+  ghost.length ? `${ghost.length} pallet — vd ${ghost.slice(0, 3).map(g => `${g.pallet_code}=${g.cartons_remaining}`).join(', ')}` : '')
+
 // 2. Không xuất quá kế hoạch (so 2 cột — client-side)
 const items = await restAll('OutboundItem', 'select=id,material_code_raw,cartons_ordered,cartons_scanned&cartons_scanned=gt.0')
 const over = items.filter(i => Number(i.cartons_scanned) > Number(i.cartons_ordered))

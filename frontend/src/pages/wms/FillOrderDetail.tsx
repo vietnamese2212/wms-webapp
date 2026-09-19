@@ -26,6 +26,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { qtyEntryDecimal } from '@/utils/qtyUnits'
 import { formatDate, formatDateTime, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
 
@@ -412,7 +413,7 @@ export default function FillOrderDetail() {
             </TableHeader>
             <TableBody>
               {shown.length === 0 ? (
-                <TableRow><TableCell colSpan={LINE_COLS.length} className="text-center py-8 text-xs text-slate-400">Lệnh không có dòng nào</TableCell></TableRow>
+                <TableEmptyRow colSpan={LINE_COLS.length}>Lệnh không có dòng nào</TableEmptyRow>
               ) : shown.map(l => {
                 const picked = sel.has(l.id)
                 return (
@@ -487,7 +488,7 @@ export default function FillOrderDetail() {
               </TableHeader>
               <TableBody>
                 {scans.length === 0 ? (
-                  <TableRow><TableCell colSpan={SCAN_COLS.length} className="text-center py-4 text-xs text-slate-400">Chưa quét pallet nào</TableCell></TableRow>
+                  <TableEmptyRow colSpan={SCAN_COLS.length}>Chưa quét pallet nào</TableEmptyRow>
                 ) : scans.map(s => {
                   const line = lines.find(l => l.id === s.task_id)
                   return (

@@ -20,6 +20,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const RULE_LABEL: Record<string, string> = {
   EXPIRY:     'Tồn cận date',
@@ -155,7 +156,7 @@ function PersonalTab({ tabBar }: { tabBar: ReactNode }) {
               {isLoading ? (
                 <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Chưa có thông báo nào cho bạn</TableCell></TableRow>
+                <TableEmptyRow colSpan={5}>Chưa có thông báo nào cho bạn</TableEmptyRow>
               ) : rows.map(n => (
                 <TableRow key={n.id} className={`${n.url ? 'cursor-pointer' : ''} ${n.read_at ? 'text-slate-400' : 'text-slate-800'} hover:bg-slate-50`}
                   onClick={() => { if (!n.read_at) markRead.mutate([n.id]); if (n.url) navigate(n.url) }}>

@@ -1277,7 +1277,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                               {s.pct_date != null && (
                                 <span className={`ml-1 font-bold tabular-nums ${pctDateCls(s.pct_date, pctBands)}`}>{s.pct_date}%</span>
                               )}
-                              <span className="ml-1 text-slate-400 tabular-nums">{qtyEntryText(s.available, item.material)}th</span>
+                              {/* qtyLabel, không "76,438th": bảng Tối ưu tuyến in "76 thùng + 21 hộp" cho cùng pallet — hai màn phải nói một số (C2, 19/09) */}
+                              <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, item.material)}</span>
                             </div>
                           ))}
                         </div>

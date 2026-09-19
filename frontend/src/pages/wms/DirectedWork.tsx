@@ -636,7 +636,15 @@ export default function DirectedWork() {
     }] : []),
   ]
 
-  const t = data?.totals ?? {}
+  // SỐ TOÀN KHO KHÔNG ĐƯỢC ĐỔI THEO CHỖ ĐANG ĐỨNG (19/09): ở tab Sắp quét, `data` là board THEO CHUYẾN
+  // (mode SCAN + gdo) — chưa chọn chuyến thì RPC trả toàn số 0, chọn rồi thì trả số của MỘT chuyến.
+  // Bản 17/09 lấy badge tab "Cần hạ"/"Cần đưa ra" và band từ chính `data` nên vào Sắp quét là badge
+  // BIẾN MẤT (0 → không vẽ) và band in "Việc còn lại 0" ngay trên danh sách 7 chuyến đang chạy; chọn
+  // một chuyến thì badge nhảy 21 → 5. Cùng lớp "kho một hai xe nâng thấy bộ lọc rỗng tưởng hết việc".
+  // `allTrips` (board MOVE toàn kho, đã nạp sẵn để dựng ô chọn chuyến) mới là nguồn cho số toàn kho;
+  // band khi ĐÃ chọn chuyến vẫn theo chuyến (nó nói rõ "Chuyến 1").
+  const whole = (tab === 'SCAN' ? allTrips?.totals : data?.totals) ?? {}
+  const t = (tab === 'SCAN' && !f.gdoId ? allTrips?.totals : data?.totals) ?? {}
   const unset = data?.unset_items ?? []
   // Tách chuyến CŨ còn dở ra khỏi việc hôm nay: chuyến bỏ dở từ tháng trước vẫn IN_PROGRESS nên
   // ngày nào băng vàng cũng kêu về dữ liệu cũ — cảnh báo kêu hằng ngày thì người ta thôi đọc.
@@ -695,10 +703,9 @@ export default function DirectedWork() {
   // Số trên từng tab. `to_lower`/`to_move` đến từ RPC nên đếm TOÀN KHO (không phụ thuộc tab đang mở)
   // và BE đã cộng sẵn phần lệnh fill vào tab mà xe nâng nhìn để hạ.
   const tabBadge = (k: Tab): number => {
-    const t = data?.totals ?? {}
     if (k === 'INBOX') return mineCount
-    if (k === 'LOWER') return Number(t.to_lower ?? 0)
-    if (k === 'MOVE') return Number(t.to_move ?? 0)
+    if (k === 'LOWER') return Number(whole.to_lower ?? 0)
+    if (k === 'MOVE') return Number(whole.to_move ?? 0)
     return 0   // Sắp quét: theo TỪNG chuyến, một con số chung ở đây sẽ nói sai
   }
   const apiErr = (e: unknown) => (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -969,13 +976,16 @@ export default function DirectedWork() {
                   className={`rounded-xl border p-3 space-y-1.5 ${closed ? 'border-slate-200 bg-slate-50 text-slate-400' : first ? 'border-sky-400 bg-sky-50 shadow-sm' : heldByOther ? 'border-slate-200 bg-white opacity-70' : 'border-slate-200 bg-white'}`}>
                   <div className="flex items-center justify-between gap-2 text-[10px]">
                     <span className={`font-semibold uppercase tracking-wide ${first ? 'text-sky-700' : closed ? 'text-slate-400' : 'text-slate-500'}`}>
-                      {r.skipped ? 'Hệ thống đã huỷ' : r.stage_done ? 'Đã xong' : first ? 'Việc kế tiếp' : `#${ord ?? ''}`}
+                      {/* Ở tab Cần hạ, mốc xong là "đã hạ" — band bên trên vẫn đếm "Đã xong 0" (việc chỉ xong khi đưa ra),
+                          nên thẻ in "ĐÃ XONG" là hai chữ cho hai mốc khác nhau trên cùng một màn (19/09) */}
+                      {r.skipped ? 'Hệ thống đã huỷ' : r.stage_done ? (tab === 'LOWER' ? 'Đã hạ' : 'Đã xong') : first ? 'Việc kế tiếp' : `#${ord ?? ''}`}
                     </span>
                     <span className="truncate text-slate-500">
                       {r.kind === 'FILL'
                         ? <span className="text-sky-700 font-semibold">Fill kho lẻ · {r.fill_order_code ?? ''}</span>
                         : tab === 'SCAN' ? null : <>{r.license_plate ?? r.group_code ?? '—'}{r.dock_name ? ` · ${r.dock_name}` : ''}</>}
-                      {r.kind !== 'FILL' && isOldTrip(r.delivery_date) && <span className="text-amber-600"> · chuyến {formatDate(r.delivery_date!)}</span>}
+                      {/* Tab Sắp quét không in biển (băng hồ sơ chuyến đã nói) ⇒ không có gì đứng trước dấu "·" — bỏ dấu kẻo thẻ mở đầu bằng "· chuyến …" */}
+                      {r.kind !== 'FILL' && isOldTrip(r.delivery_date) && <span className="text-amber-600">{tab === 'SCAN' ? '' : ' · '}chuyến {formatDate(r.delivery_date!)}</span>}
                     </span>
                   </div>
                   {/* NƠI NHẬN · SỐ XE — người lấy hàng phải biết đang phục vụ ai, và dòng nào cũng phải

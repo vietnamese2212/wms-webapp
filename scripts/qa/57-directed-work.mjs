@@ -1653,7 +1653,9 @@ try {
       // (h) HAI PALLET CÙNG KẾ HOẠCH CỦA MỘT CHUYẾN — quét cái hạn xa hơn trước KHÔNG phải vi phạm luân chuyển
       // (ca đêm 20/09: 6/9 "vi phạm" là thủ kho quét đúng các pallet app ghim, theo thứ tự đường đi của bảng;
       // kho bật bắt buộc thì cửa quét 422 đúng pallet app vừa chỉ). "Tốt nhất" chỉ so với pallet NGOÀI kế hoạch.
-      const pGood2 = await mkD('EXP_OK2', near.T1, 150, -215)   // hạn xa hơn pGood 50 ngày
+      // Hai pallet MỚI hạn NGẮN hơn pGood (pGood có thể còn bị việc của tD giữ chỗ mềm) — FEFO ghim S1 rồi S2 cho 400
+      const pS1 = await mkD('EXP_S1', far.T3, 60, -305)
+      const pGood2 = await mkD('EXP_S2', near.T1, 80, -285)     // hạn xa hơn S1 20 ngày — quét cái này TRƯỚC
       const tE = await mkTrip('TSEQ')
       const [itE] = await restWrite('OutboundItem', 'POST', null, {
         id: randomUUID(), do_id: tE.do, material_id: matD.id, material_code_raw: matD.material_code,
@@ -1663,7 +1665,7 @@ try {
       })
       await startTrip(tE.gdo, { license_plate: '51C25263', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
       const tasksE = await restAll('wms_tasks', `select=pallet_code&gdo_id=eq.${tE.gdo}&status=eq.PENDING`)
-      const bothPlanned = tasksE.some(t => t.pallet_code === pGood.pallet_code) && tasksE.some(t => t.pallet_code === pGood2.pallet_code)
+      const bothPlanned = tasksE.some(t => t.pallet_code === pS1.pallet_code) && tasksE.some(t => t.pallet_code === pGood2.pallet_code)
       await setReq(true)
       const scSeqChk = await api(`/wms/outbound/${tE.gdo}/items/${itE.id}/check-scan`, 'POST', { qr_code: pGood2.pallet_code })
       const scSeq = await api(`/wms/outbound/${tE.gdo}/items/${itE.id}/scan`, 'POST', { qr_code: pGood2.pallet_code, cartons_override: 200 })

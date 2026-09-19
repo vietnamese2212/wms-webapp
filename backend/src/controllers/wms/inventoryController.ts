@@ -239,30 +239,28 @@ async function fetchAllInventory(select: string, params: FilterParams, datePctId
     return rows
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cq = applyInventoryFilters(supabase.from('InventoryEntry').select(select, { count: 'exact', head: true }), params)
-  const { count, error: cErr } = await cq
-  if (cErr) throw new Error(cErr.message)
-  const n = count ?? 0
-  if (n === 0) return []
-
+  // PHÂN TRANG THEO KHOÁ (keyset), TUẦN TỰ — không đếm trước, không OFFSET, không bắn 10 câu song song.
+  // Vì sao (19/09, bậc full gói 53 [3a]): xuất tồn Ba Vì 9.000 pallet = 1 HEAD count + 10 câu
+  // `ORDER BY id OFFSET n LIMIT 1000` bắn CÙNG LÚC vào pool ~10 khe của PostgREST; câu OFFSET 9.000
+  // phải sắp và bỏ qua 9.000 dòng kèm join Material/Location, nên dưới tải một câu chạm trần
+  // statement timeout → cả cú xuất 503 dù máy rảnh chỉ mất 6,8 s. Keyset `id > last` đi theo
+  // index, mỗi trang nhẹ như trang đầu, và chạy tuần tự nên không tự giành khe với chính mình.
   const PAGE = 1000
-  const reqs = []
-  for (let p = 0; p * PAGE < n; p++) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const q = applyInventoryFilters(supabase.from('InventoryEntry').select(select), params)
-      .order('id', { ascending: true })
-      .range(p * PAGE, p * PAGE + PAGE - 1)
-    reqs.push(q)
-  }
-  const results = await Promise.all(reqs)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows: any[] = []
-  for (const r of results) {
+  let lastId: string | null = null
+  for (;;) {
+    let q = applyInventoryFilters(supabase.from('InventoryEntry').select(select), params)
+      .order('id', { ascending: true })
+      .limit(PAGE)
+    if (lastId !== null) q = q.gt('id', lastId)
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((r as any).error) throw new Error((r as any).error.message)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rows.push(...((r as any).data ?? []))
+    const batch = (data ?? []) as any[]
+    rows.push(...batch)
+    if (batch.length < PAGE) break
+    lastId = String(batch[batch.length - 1].id)
   }
   return rows
 }

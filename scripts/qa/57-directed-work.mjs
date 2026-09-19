@@ -22,7 +22,9 @@ await login()
 const nowIso = () => new Date().toISOString()
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const err = r => `${r.j?.error?.code ?? ''} ${(r.j?.error?.message ?? '').slice(0, 110)}`.trim()
-const dPlus = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+// Ngày theo GIỜ VIỆT NAM — bản cũ dùng `new Date()` + toISOString (UTC): chạy 00:00–07:00 VN thì dPlus(1) = "hôm nay"
+// ⇒ [23c3] "dòng ngày MAI" thành dòng hôm nay và thấy 21 đối thủ (đỏ oan ca đêm 20/09 — công cụ có múi giờ riêng)
+const dPlus = n => { const d = new Date(Date.now() + 7 * 3600_000); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 
 // Xoá CÓ THỬ LẠI và KHÔNG nuốt câu lỗi. Bản cũ bọc `.catch(() => {})` khắp nơi nên khi staging chậm
 // (đo 17/09: cùng lượt có một phép 504) một lệnh dọn hỏng là fixture ở lại, [18] đỏ, mà không ai lần
@@ -1598,19 +1600,78 @@ try {
       // quét chỉ soi `date_required` của VL06O, còn kiểm luân chuyển coi pallet sớm hơn là "đúng thứ tự".
       // Cửa xem trước lẫn cửa ghi đều phải từ chối, nêu số đo + mức + nguồn mức.
       const scLowChk = await api(`/wms/outbound/${tC.gdo}/items/${itC.id}/check-scan`, 'POST', { qr_code: `${T}-ROT_LOW` })
-      check('[25p1] Xem trước pallet 2,7 % trên dòng chốt "≥ 80 %" → 400 DATE_RULE_BELOW nêu %Date + mức',
+      check('[25q1] Xem trước pallet 2,7 % trên dòng chốt "≥ 80 %" → 400 DATE_RULE_BELOW nêu %Date + mức',
         scLowChk.s === 400 && scLowChk.j?.error?.code === 'DATE_RULE_BELOW' && /80 %/.test(scLowChk.j?.error?.message ?? ''),
         `http=${scLowChk.s} ${err(scLowChk)}`)
       const scLow = await api(`/wms/outbound/${tC.gdo}/items/${itC.id}/scan`, 'POST', {
         qr_code: `${T}-ROT_LOW`, cartons_override: 24, leftover_location_id: 'KEEP',
       })
       const lowAfter = (await restAll('InventoryEntry', `select=cartons_remaining&pallet_code=eq.${T}-ROT_LOW`))[0]
-      check('[25p2] Quét GHI pallet dưới mức → 400 DATE_RULE_BELOW, tồn pallet KHÔNG đổi (oracle đọc lại DB)',
+      check('[25q2] Quét GHI pallet dưới mức → 400 DATE_RULE_BELOW, tồn pallet KHÔNG đổi (oracle đọc lại DB)',
         scLow.s === 400 && scLow.j?.error?.code === 'DATE_RULE_BELOW' && Number(lowAfter?.cartons_remaining) === 200,
         `http=${scLow.s} ${err(scLow)} remaining=${lowAfter?.cartons_remaining}`)
 
       await setReq(false)
-      for (const g of [tF.gdo, tC.gdo]) await api(`/wms/outbound/${g}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+
+      // (g) HẾT HẠN THÌ KHÔNG LẤY (ca đêm 20/09): FEFO xếp pallet QUÁ HẠN lên đầu ⇒ bộ sinh việc chỉ tới nó và
+      // cửa quét cho qua — xe 04 Ba Vì chở 2 pallet FG02 HSD 06/09 + 12/09 đi ngày 20/09. Mã riêng để không dính
+      // pool của matC.
+      const [matD] = await restWrite('Material', 'POST', null, {
+        id: randomUUID(), material_code: `${T}-MEXP`, material_description: 'QA expired', short_name: 'QA exp',
+        category: CAT_A, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 24,
+        cartons_per_pallet: 100, shelf_life_days: 365, is_active: true, created_at: nowIso(), updated_at: nowIso(),
+      })
+      const mkD = async (code, locId, expDays, prodOff) => (await restWrite('InventoryEntry', 'POST', null, {
+        id: randomUUID(), pallet_code: `${T}-${code}`, material_id: matD.id, warehouse_id: whId,
+        location_id: locId, cartons_imported: 200, cartons_remaining: 200, cartons_reserved: 0,
+        status: 'IN_STOCK', production_date: dPlus(prodOff), expiry_date: dPlus(expDays),
+        import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+      }))[0]
+      const pExp  = await mkD('EXP_OLD', near.T1, -3, -368)     // HẾT HẠN 3 ngày — FEFO thuần sẽ xếp lên ĐẦU
+      const pGood = await mkD('EXP_OK', far.T3, 100, -265)      // còn 100 ngày
+      const tD = await mkTrip('TEXP')
+      const [itD] = await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: tD.do, material_id: matD.id, material_code_raw: matD.material_code,
+        cartons_ordered: 200, cartons_scanned: 0, loose_picking: 0,
+        date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      })
+      await startTrip(tD.gdo, { license_plate: '51C25262', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+      const tasksD = await restAll('wms_tasks', `select=pallet_code&gdo_id=eq.${tD.gdo}&status=eq.PENDING`)
+      check('[25r1] Bộ sinh việc KHÔNG ghim pallet đã hết hạn dù FEFO xếp nó lên đầu — ghim pallet còn hạn',
+        tasksD.length >= 1 && tasksD.every(t => t.pallet_code !== pExp.pallet_code) && tasksD.some(t => t.pallet_code === pGood.pallet_code),
+        `ghim=${tasksD.map(t => t.pallet_code).join(',') || '(không có)'}`)
+      const scExpChk = await api(`/wms/outbound/${tD.gdo}/items/${itD.id}/check-scan`, 'POST', { qr_code: pExp.pallet_code })
+      const scExp = await api(`/wms/outbound/${tD.gdo}/items/${itD.id}/scan`, 'POST', { qr_code: pExp.pallet_code, cartons_override: 24, leftover_location_id: 'KEEP' })
+      const expAfter = (await restAll('InventoryEntry', `select=cartons_remaining&id=eq.${pExp.id}`))[0]
+      check('[25r2] Quét pallet HẾT HẠN → 400 EXPIRED ở CẢ xem trước lẫn ghi, nêu HSD, tồn không đổi',
+        scExpChk.s === 400 && scExpChk.j?.error?.code === 'EXPIRED' && scExp.s === 400 && scExp.j?.error?.code === 'EXPIRED'
+          && /HSD/.test(scExp.j?.error?.message ?? '') && Number(expAfter?.cartons_remaining) === 200,
+        `check=${scExpChk.s}/${scExpChk.j?.error?.code} scan=${scExp.s}/${scExp.j?.error?.code} ${err(scExp)} remaining=${expAfter?.cartons_remaining}`)
+      await api(`/wms/outbound/${tD.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+
+      // (h) HAI PALLET CÙNG KẾ HOẠCH CỦA MỘT CHUYẾN — quét cái hạn xa hơn trước KHÔNG phải vi phạm luân chuyển
+      // (ca đêm 20/09: 6/9 "vi phạm" là thủ kho quét đúng các pallet app ghim, theo thứ tự đường đi của bảng;
+      // kho bật bắt buộc thì cửa quét 422 đúng pallet app vừa chỉ). "Tốt nhất" chỉ so với pallet NGOÀI kế hoạch.
+      const pGood2 = await mkD('EXP_OK2', near.T1, 150, -215)   // hạn xa hơn pGood 50 ngày
+      const tE = await mkTrip('TSEQ')
+      const [itE] = await restWrite('OutboundItem', 'POST', null, {
+        id: randomUUID(), do_id: tE.do, material_id: matD.id, material_code_raw: matD.material_code,
+        cartons_ordered: 400, cartons_scanned: 0, loose_picking: 0,
+        date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() },
+        status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+      })
+      await startTrip(tE.gdo, { license_plate: '51C25263', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+      const tasksE = await restAll('wms_tasks', `select=pallet_code&gdo_id=eq.${tE.gdo}&status=eq.PENDING`)
+      const bothPlanned = tasksE.some(t => t.pallet_code === pGood.pallet_code) && tasksE.some(t => t.pallet_code === pGood2.pallet_code)
+      await setReq(true)
+      const scSeqChk = await api(`/wms/outbound/${tE.gdo}/items/${itE.id}/check-scan`, 'POST', { qr_code: pGood2.pallet_code })
+      const scSeq = await api(`/wms/outbound/${tE.gdo}/items/${itE.id}/scan`, 'POST', { qr_code: pGood2.pallet_code, cartons_override: 200 })
+      await setReq(false)
+      check('[25s] Kho bắt buộc + 2 pallet cùng kế hoạch chuyến: quét pallet hạn XA hơn trước → không vi phạm, không 422',
+        bothPlanned && scSeqChk.s === 200 && scSeqChk.j?.data?.rotation?.violation === false && scSeq.s === 200,
+        `ghim cả hai=${bothPlanned} check=${scSeqChk.s} violation=${scSeqChk.j?.data?.rotation?.violation} scan=${scSeq.s} ${err(scSeq)}`)
+      for (const g of [tF.gdo, tC.gdo, tE.gdo]) await api(`/wms/outbound/${g}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
     }
     await api(`/wms/outbound/${tR.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }

@@ -22,7 +22,7 @@ import { supabase } from '../lib/supabase'
 import { recordServerError, recordBackgroundFailure } from '../utils/response'
 import { computeDaysLeft, computePctDate, type MaterialShelfInfo } from '../utils/shelfLife'
 import {
-  PICKABLE_STATUSES, isPickEligible, availableOf, rotationSortKey,
+  PICKABLE_STATUSES, isPickEligible, isExpired, availableOf, rotationSortKey,
   type RotationEntry, type RotationPrinciple,
 } from '../utils/rotation'
 import { resolveRotation, resolveWorkMode, type WhTypeConfigRow } from '../utils/putaway'
@@ -450,7 +450,8 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
     const mat = it.material ?? null
     const rot = resolveRotation(gdo.warehouse, typeRows, mat?.category ?? null)
     const principle: RotationPrinciple = rot.principle
-    let pool = (byMat.get(it.material_id ?? '') ?? []).filter(c => matchesRule(c, mat, n.rule) && freeOf(c) > 0)
+    // pallet HẾT HẠN không bao giờ vào kế hoạch (FEFO xếp nó lên đầu — ca đêm 20/09 xe 04 chở 2 pallet quá hạn)
+    let pool = (byMat.get(it.material_id ?? '') ?? []).filter(c => !isExpired(c, mat) && matchesRule(c, mat, n.rule) && freeOf(c) > 0)
     if (!pool.length) {
       // KHÔNG CÓ PALLET NÀO ĐẠT MỨC ⇒ dòng này KHÔNG có việc. Phải NÓI RA: cửa chốt tay đã gác
       // (422 DATE_RULE_NO_STOCK) nhưng mức KẾ THỪA TỪ SAP (`date_required`) không đi qua cửa đó —
@@ -822,7 +823,7 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
     const used = new Map<string, number>()
     const free = (c: Cand) => availableOf(c) - (used.get(c.id) ?? 0)
     const parts = rulePartsOf(rule, need).map(p => {
-      const cand = pool.filter(c => matchesRule(c, it.material, p.rule) && free(c) > 0)
+      const cand = pool.filter(c => !isExpired(c, it.material) && matchesRule(c, it.material, p.rule) && free(c) > 0)
       let left = p.qty, got = 0, pallets = 0
       for (const c of cand) {
         if (left <= 0) break
@@ -853,7 +854,7 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
       competing_base: rivals.reduce((s, x) => s + x.need, 0),
       rule_pool_base: (() => {
         const rules = rulePartsOf(rule, Math.max(need, 1)).map(p => p.rule)
-        return pool.filter(c => rules.some(pr => matchesRule(c, it.material, pr))).reduce((s, c) => s + availableOf(c), 0)
+        return pool.filter(c => !isExpired(c, it.material) && rules.some(pr => matchesRule(c, it.material, pr))).reduce((s, c) => s + availableOf(c), 0)
       })(),
     }
   })

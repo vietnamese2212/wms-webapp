@@ -7,9 +7,9 @@ import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventor
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
-import { computePctDate, computeDaysLeft, effectiveExpiryMs, type MaterialShelfInfo } from '../../utils/shelfLife'
+import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
 import {
-  PICKABLE_STATUSES, asRotationPrinciple, isPickEligible, isExpired, isRotationViolation, isRotationReason,
+  PICKABLE_STATUSES, asRotationPrinciple, isPickEligible, isRotationViolation, isRotationReason,
   rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationCheck, type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
@@ -162,15 +162,8 @@ type DateRuleGateItem = { date_rule?: unknown; date_required?: number | null; ma
 // Luật diễn giải vẫn là `palletMeetsDateRule` (một nguồn), đây chỉ là chỗ GỌI nó ở cửa ghi + cửa xem
 // trước. Giảm/hoàn không đi qua đây (luật là "không xuất dưới mức", không phải "không sửa sai").
 const DATE_RULE_SOURCE_LABEL: Record<string, string> = { CHANNEL: 'theo kênh', CUSTOMER: 'theo khách', SYSTEM: 'hệ thống đặt', MANUAL: 'chốt tay' }
-// HẾT HẠN THÌ KHÔNG XUẤT — luật tuyệt đối, không van xả (ca đêm 20/09: xe 04 chở 2 pallet FG02 HSD 06/09 + 12/09
-// đi ngày 20/09 vì FEFO xếp hạn sớm nhất lên đầu và không cửa nào hỏi "đã quá hạn chưa"). Hàng quá hạn đi đường
-// QA giữ / huỷ, không đi đường xuất bán.
-function expiredError(inv: DateRulePallet, mat: MaterialShelfInfo | null, qr: string): string | null {
-  const exp = effectiveExpiryMs(inv, mat)
-  if (exp == null || exp > Date.now()) return null
-  const d = new Date(exp).toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
-  return `Pallet "${qr}" đã HẾT HẠN (HSD ${d}) — không xuất cho khách. Chuyển QA giữ / huỷ theo quy trình.`
-}
+// (Ca đêm 20/09 từng chặn pallet HẾT HẠN ở cửa quét — user hoàn lại cùng ngày: "có trường hợp xuất huỷ thì vẫn xuất".
+//  Dòng đòi mức tự chặn pallet 0 % qua dateRuleBelowError; dòng không đòi mốc lấy được. Xem utils/rotation.ts.)
 /** Tập pallet đã được ghim cho CHÍNH chuyến này (việc PICK còn treo) — loại khỏi phép so "pallet phải lấy trước" */
 async function plannedEntryIdsOf(gdoId: string): Promise<Set<string>> {
   const { data } = await supabase.from('wms_tasks').select('entry_id').eq('gdo_id', gdoId).eq('status', 'PENDING').eq('kind', 'PICK').limit(1000)
@@ -5396,7 +5389,7 @@ export async function rotationSuggestionsFor(
   type Agg = FefoSuggestion & { rot_key: number | null; pick_rank: number }
   const eligibleByMat = new Map<string, SuggestionEntry[]>()
   for (const e of (entries ?? [])) {
-    if (!isPickEligible(e, qaHold, e.material, nowMs)) continue   // hết hạn thì không gợi ý (20/09)
+    if (!isPickEligible(e, qaHold)) continue
     eligibleByMat.set(e.material_id, [...(eligibleByMat.get(e.material_id) ?? []), e])
   }
   for (const g of groups) {
@@ -5518,7 +5511,7 @@ async function rotationCheckOf(args: {
   let bestKey: number | null = null
   for (const r of rows) {
     if (exclude?.has(r.id)) continue
-    if (!isPickEligible(r, qaHold, material)) continue   // hết hạn không phải "pallet phải lấy trước" (20/09)
+    if (!isPickEligible(r, qaHold)) continue
     // Dòng có quy tắc date: pallet không đạt sẽ bị chặn lúc quét cho dòng này → loại khỏi tập so
     // sánh, "pallet tốt nhất" = tốt nhất TRONG SỐ lấy được.
     if (rule && !palletMeetsDateRule(r, material, rule)) continue
@@ -6199,9 +6192,7 @@ export async function checkScanItem(req: Request, res: Response) {
       }
     }
     // Mức đã chốt trên dòng (tay / khách / kênh) — báo ngay ở bước xem trước, cùng luật với cửa ghi
-    { const expErr = expiredError(inv as DateRulePallet, mat as MaterialShelfInfo | null, qr)
-      if (expErr) return fail(res, 400, 'EXPIRED', expErr)
-      const belowErr = dateRuleBelowError(inv as DateRulePallet, mat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
+    { const belowErr = dateRuleBelowError(inv as DateRulePallet, mat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
       if (belowErr) return fail(res, 400, 'DATE_RULE_BELOW', belowErr) }
 
     // Kiểm luân chuyển (FEFO/FIFO/LIFO theo cấu hình kho) — ở đây CHỈ báo cáo, không chặn: đây là
@@ -6353,9 +6344,7 @@ export async function scanItem(req: Request, res: Response) {
       }
     }
     // Mức đã chốt trên dòng (tay / khách / kênh) — CỬA GHI: gọi thẳng API vẫn phải qua đây
-    { const expErr = expiredError(inv as DateRulePallet, shelfMat as MaterialShelfInfo | null, qr)
-      if (expErr) return fail(res, 400, 'EXPIRED', expErr)
-      const belowErr = dateRuleBelowError(inv as DateRulePallet, shelfMat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
+    { const belowErr = dateRuleBelowError(inv as DateRulePallet, shelfMat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
       if (belowErr) return fail(res, 400, 'DATE_RULE_BELOW', belowErr) }
 
     if (item.material_id && inv.material_id !== item.material_id) {

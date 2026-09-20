@@ -509,9 +509,21 @@ export default function DirectedWork() {
   // Dòng fill lọt vào bảng này khi kho không tách xe hạ ⇒ tính theo người được giao lệnh.
   const isMyTripRow = (r: DirectedRow) =>
     (!!me && (r.driver_ids ?? '').split(',').includes(me)) || (!!r.fill_assignee_id && r.fill_assignee_id === me)
+  // CHUYẾN TREO (ca đêm mô phỏng 20/09): chuyến Bắt đầu quá 12 giờ mà việc còn treo (xe đã rời kho từ lâu — 29FL05 của
+  // 16/09 vẫn "đứng Cửa sca") xếp theo `started_at` nên chiếm 5 dòng ĐẦU bảng và "Việc kế tiếp" của xe nâng vào ca,
+  // trước cả xe THẬT vừa vào cổng. Đẩy xuống dưới xe mới (vẫn ở trên việc đã xong) + chip đỏ "treo N giờ".
+  // `started_at` là timestamp không múi giờ ghi theo UTC ⇒ thiếu 'Z' thì trình duyệt đọc theo giờ máy, lệch 7 giờ.
+  const staleHours = (r: { started_at?: string | null }) => {
+    const s = r.started_at; if (!s) return 0
+    const t = Date.parse(/Z$|[+-]\d\d:\d\d$/.test(s) ? s : s + 'Z')
+    return isNaN(t) ? 0 : Math.floor((Date.now() - t) / 3600_000)
+  }
+  const isStaleTrip = (r: { started_at?: string | null; kind?: string }) => r.kind !== 'FILL' && staleHours(r) >= 12
   const rows = useMemo(() => {
     let all = data?.rows ?? []
     if (f.hideDone) all = all.filter(r => !r.stage_done && !r.skipped)
+    // Chuyến treo xuống dưới xe mới; việc đã xong/đã bỏ vẫn ở cuối như RPC đã sắp (sort ổn định giữ thứ tự trong nhóm)
+    all = [...all].sort((a, b) => ((a.stage_done || a.skipped) ? 2 : isStaleTrip(a) ? 1 : 0) - ((b.stage_done || b.skipped) ? 2 : isStaleTrip(b) ? 1 : 0))
     // Loại kho: dòng gom nhiều mã thì GIAO ≥ 1 là thấy — cùng luật với chuyến chở lẫn loại hàng
     // (`categoryAllowed`), đừng đòi mọi mã trong ô cùng loại mới hiện.
     if (f.cats.length) all = all.filter(r => (r.categories ?? []).some(c => f.cats.includes(c)))
@@ -987,6 +999,7 @@ export default function DirectedWork() {
                         : tab === 'SCAN' ? null : <>{r.license_plate ?? r.group_code ?? '—'}{r.dock_name ? ` · ${r.dock_name}` : ''}</>}
                       {/* Tab Sắp quét không in biển (băng hồ sơ chuyến đã nói) ⇒ không có gì đứng trước dấu "·" — bỏ dấu kẻo thẻ mở đầu bằng "· chuyến …" */}
                       {r.kind !== 'FILL' && isOldTrip(r.delivery_date) && <span className="text-amber-600">{tab === 'SCAN' ? '' : ' · '}chuyến {formatDate(r.delivery_date!)}</span>}
+                      {isStaleTrip(r) && !closed && <span className="text-red-600 font-semibold"> · treo {staleHours(r)} giờ</span>}
                     </span>
                   </div>
                   {/* NƠI NHẬN · SỐ XE — người lấy hàng phải biết đang phục vụ ai, và dòng nào cũng phải
@@ -1170,6 +1183,7 @@ export default function DirectedWork() {
                           {isOldTrip(r.delivery_date) && (
                             <span className="text-amber-600 no-underline"> · chuyến {formatDate(r.delivery_date!)}</span>
                           )}
+                          {isStaleTrip(r) && !closed && <span className="text-red-600 font-semibold no-underline"> · treo {staleHours(r)} giờ</span>}
                         </div>
                         {/* NƠI NHẬN: người lấy hàng phải biết mình đang phục vụ ai, không chỉ biết biển số */}
                         {r.customer_name && <div className="text-[9px] text-slate-500 truncate no-underline">{r.customer_name}</div>}

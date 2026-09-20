@@ -54,17 +54,13 @@ export function availableOf(e: RotationEntry): number {
 // pallet, quét thì xuất được mà gợi ý/kế hoạch bảo "hết hàng" (đo Ba Vì: 8.760 pallet bị tính là
 // kẹt trong khi chỉ 5 pallet bị giữ thật). Bắt truyền tham số để mọi điểm gọi phải lấy bộ id từ
 // `services/qaStatus.ts` — thiếu là lỗi BIÊN DỊCH chứ không âm thầm sai.
-// ⚠️ HẾT HẠN = KHÔNG LẤY (ca đêm 20/09): FEFO xếp "hạn sớm nhất đi trước" nên pallet ĐÃ QUÁ HẠN đứng đầu
-// hàng — bộ sinh việc chỉ đường tới nó, cửa quét cho qua, xe chở hàng hết hạn ra khỏi kho không một lời
-// (đo Ba Vì: 2 pallet FG02 HSD 06/09 + 12/09 xuất ngày 20/09, pct_date = 0). Truyền `material` để đo được
-// HSD của tem V1 (NSX + shelf-life); không truyền = giữ hành vi cũ ở chỗ chưa có quy cách trong tay.
-export function isExpired(e: RotationEntry, material: MaterialShelfInfo | null | undefined, nowMs: number = Date.now()): boolean {
-  const exp = effectiveExpiryMs(e, material)
-  return exp != null && exp <= nowMs
-}
-export function isPickEligible(e: RotationEntry, qaHold: ReadonlySet<string>, material?: MaterialShelfInfo | null, nowMs: number = Date.now()): boolean {
+// HÀNG HẾT HẠN VẪN LẤY ĐƯỢC (user chốt 20/09: "cứ cho phép xuất hàng hết hạn — có trường hợp xuất huỷ"): ca đêm mô
+// phỏng 20/09 từng vá thành "quá hạn = loại khỏi kế hoạch + cửa quét 400 EXPIRED" rồi HOÀN LẠI cùng ngày. FEFO xếp
+// pallet hạn sớm nhất (kể cả đã quá hạn) lên đầu là CHỦ ĐÍCH: dòng đòi mức (MIN_PCT/MIN_DAYS) tự loại pallet 0 % qua
+// `matchesRule`; dòng "không đòi mốc" (xuất huỷ, trả hàng) phải lấy được pallet đó. ĐỪNG thêm lại cửa chặn hết hạn ở đây
+// hay ở scanItem — gói 57 [25r1][25r2] khoá quyết định này.
+export function isPickEligible(e: RotationEntry, qaHold: ReadonlySet<string>): boolean {
   if (e.qa_status_id && qaHold.has(e.qa_status_id)) return false
-  if (material !== undefined && isExpired(e, material, nowMs)) return false
   return availableOf(e) > 0
 }
 

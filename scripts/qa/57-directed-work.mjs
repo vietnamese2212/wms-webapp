@@ -1613,9 +1613,10 @@ try {
 
       await setReq(false)
 
-      // (g) HẾT HẠN THÌ KHÔNG LẤY (ca đêm 20/09): FEFO xếp pallet QUÁ HẠN lên đầu ⇒ bộ sinh việc chỉ tới nó và
-      // cửa quét cho qua — xe 04 Ba Vì chở 2 pallet FG02 HSD 06/09 + 12/09 đi ngày 20/09. Mã riêng để không dính
-      // pool của matC.
+      // (g) HẾT HẠN VẪN LẤY ĐƯỢC — QUYẾT ĐỊNH CỦA USER 20/09 ("cứ cho phép xuất hàng hết hạn, có trường hợp xuất huỷ"):
+      // ca đêm 20/09 từng vá thành chặn (loại khỏi kế hoạch + 400 EXPIRED) rồi hoàn lại cùng ngày. Phép kiểm này KHOÁ
+      // quyết định đó: dòng "không đòi mốc" FEFO ghim pallet quá hạn LÊN ĐẦU và cửa quét cho qua. Mã riêng để không
+      // dính pool của matC.
       const [matD] = await restWrite('Material', 'POST', null, {
         id: randomUUID(), material_code: `${T}-MEXP`, material_description: 'QA expired', short_name: 'QA exp',
         category: CAT_A, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 24,
@@ -1638,16 +1639,15 @@ try {
       })
       await startTrip(tD.gdo, { license_plate: '51C25262', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
       const tasksD = await restAll('wms_tasks', `select=pallet_code&gdo_id=eq.${tD.gdo}&status=eq.PENDING`)
-      check('[25r1] Bộ sinh việc KHÔNG ghim pallet đã hết hạn dù FEFO xếp nó lên đầu — ghim pallet còn hạn',
-        tasksD.length >= 1 && tasksD.every(t => t.pallet_code !== pExp.pallet_code) && tasksD.some(t => t.pallet_code === pGood.pallet_code),
-        `ghim=${tasksD.map(t => t.pallet_code).join(',') || '(không có)'}`)
+      check('[25r1] Dòng "không đòi mốc": FEFO ghim pallet ĐÃ QUÁ HẠN lên đầu (xuất huỷ vẫn phải lấy được — user 20/09)',
+        tasksD.length === 1 && tasksD[0].pallet_code === pExp.pallet_code,
+        `ghim=${tasksD.map(t => t.pallet_code).join(',') || '(không có)'} · còn hạn=${pGood.pallet_code}`)
       const scExpChk = await api(`/wms/outbound/${tD.gdo}/items/${itD.id}/check-scan`, 'POST', { qr_code: pExp.pallet_code })
       const scExp = await api(`/wms/outbound/${tD.gdo}/items/${itD.id}/scan`, 'POST', { qr_code: pExp.pallet_code, cartons_override: 24, leftover_location_id: 'KEEP' })
       const expAfter = (await restAll('InventoryEntry', `select=cartons_remaining&id=eq.${pExp.id}`))[0]
-      check('[25r2] Quét pallet HẾT HẠN → 400 EXPIRED ở CẢ xem trước lẫn ghi, nêu HSD, tồn không đổi',
-        scExpChk.s === 400 && scExpChk.j?.error?.code === 'EXPIRED' && scExp.s === 400 && scExp.j?.error?.code === 'EXPIRED'
-          && /HSD/.test(scExp.j?.error?.message ?? '') && Number(expAfter?.cartons_remaining) === 200,
-        `check=${scExpChk.s}/${scExpChk.j?.error?.code} scan=${scExp.s}/${scExp.j?.error?.code} ${err(scExp)} remaining=${expAfter?.cartons_remaining}`)
+      check('[25r2] Quét pallet HẾT HẠN cho dòng không đòi mốc → 200 ở cả xem trước lẫn ghi, tồn trừ đúng 24 (KHÔNG chặn — quyết định user 20/09)',
+        scExpChk.s === 200 && scExp.s === 200 && Number(expAfter?.cartons_remaining) === 176,
+        `check=${scExpChk.s} ${err(scExpChk)} scan=${scExp.s} ${err(scExp)} remaining=${expAfter?.cartons_remaining}`)
       await api(`/wms/outbound/${tD.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
 
       // (h) HAI PALLET CÙNG KẾ HOẠCH CỦA MỘT CHUYẾN — quét cái hạn xa hơn trước KHÔNG phải vi phạm luân chuyển

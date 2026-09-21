@@ -22,6 +22,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   useForklifts, useCreateForklift, useUpdateForklift, useDeleteForklift,
@@ -115,6 +116,16 @@ const BOARD_BADGE: Record<string, { cls: string; label: string }> = {
 const boardBadge = (v: ForkliftBoardVehicle) =>
   !v.log ? BOARD_BADGE.none : v.log.status === 'IDLE' ? BOARD_BADGE.idle : v.log.issue_count > 0 ? BOARD_BADGE.issue : BOARD_BADGE.ok
 
+// Key = đúng giá trị `forklift.tab` trong store (khớp PAGE_TABS['/wms/forklift'])
+const FORKLIFT_TABS = [
+  { key: 'board',    label: 'Check list ngày',  icon: ClipboardCheck },
+  { key: 'report',   label: 'Báo cáo vận hành', icon: BarChart2 },
+  { key: 'matrix',   label: 'Ma trận check',    icon: Grid3X3 },
+  { key: 'summary',  label: 'Tổng hợp xe',      icon: TableIcon },
+  { key: 'detail',   label: 'Chi tiết ngày',    icon: ListChecks },
+  { key: 'settings', label: 'Cài đặt',          icon: Settings2 },
+] as const
+
 export default function Forklift() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
@@ -126,6 +137,9 @@ export default function Forklift() {
 
   const f = useWmsFilterStore(s => s.forklift)
   const setF = useWmsFilterStore(s => s.setForklift)
+  const permTabs = useMemo(() => FORKLIFT_TABS.filter(t => showSettings || t.key !== 'settings'), [showSettings])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/forklift', permTabs, f.tab, k => setF({ tab: k }))
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const whOpts = (warehouses as { id: string; name?: string; code?: string }[])
     .map(w => ({ value: w.id, label: w.name ?? w.id, sub: w.code }))
@@ -139,12 +153,9 @@ export default function Forklift() {
               <ForkliftIcon className="h-4 w-4 text-slate-500" /> Xe nâng
             </span>
             <TabsList className="h-8 max-w-full overflow-x-auto">
-              <TabsTrigger value="board" className="gap-1.5 text-xs"><ClipboardCheck className="h-3.5 w-3.5" /> Check list ngày</TabsTrigger>
-              <TabsTrigger value="report" className="gap-1.5 text-xs"><BarChart2 className="h-3.5 w-3.5" /> Báo cáo vận hành</TabsTrigger>
-              <TabsTrigger value="matrix" className="gap-1.5 text-xs"><Grid3X3 className="h-3.5 w-3.5" /> Ma trận check</TabsTrigger>
-              <TabsTrigger value="summary" className="gap-1.5 text-xs"><TableIcon className="h-3.5 w-3.5" /> Tổng hợp xe</TabsTrigger>
-              <TabsTrigger value="detail" className="gap-1.5 text-xs"><ListChecks className="h-3.5 w-3.5" /> Chi tiết ngày</TabsTrigger>
-              {showSettings && <TabsTrigger value="settings" className="gap-1.5 text-xs"><Settings2 className="h-3.5 w-3.5" /> Cài đặt</TabsTrigger>}
+              {tabs.map(t => (
+                <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>
+              ))}
             </TabsList>
           </div>
 

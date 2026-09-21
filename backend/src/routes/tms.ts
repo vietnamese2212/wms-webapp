@@ -20,8 +20,20 @@ const requireTmsView = requireAnyPerm(
   ['tms_vehicles', 'view'],
 )
 
+// Danh mục Loại xe còn nuôi ô "Loại xe" của form Đăng ký cổng — vai chỉ có gate_registration (bảo vệ)
+// từng nhận 403 ở cả hai cửa đọc nên form hiện ô Loại xe RỖNG (đo 21/09 bằng token vai thật). Chỉ mở
+// hai cửa ĐỌC danh mục, không mở cửa ghi.
+const requireTmsOrGateView = requireAnyPerm(
+  ['tms_plan', 'view'],
+  ['tms_vehicle_types', 'view'],
+  ['tms_slots', 'view'],
+  ['tms_companies', 'view'],
+  ['tms_vehicles', 'view'],
+  ['gate_registration', 'view'],
+)
+
 // VehicleType (Loại xe)
-router.get('/vehicle-types',     requireTmsView,                               vehicleType.listVehicleTypes)
+router.get('/vehicle-types',     requireTmsOrGateView,                         vehicleType.listVehicleTypes)
 router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'create'),   vehicleType.createVehicleType)
 router.put('/vehicle-types/reorder', requirePerm('tms_vehicle_types', 'edit'), vehicleType.reorderVehicleTypes)  // ĐẶT TRƯỚC /:id
 router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'edit'),   vehicleType.updateVehicleType)
@@ -63,7 +75,7 @@ router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms_plan', 'revoke
 router.delete('/vehicle-slots/:id',              requirePerm('tms_plan', 'add_vehicle'), vehicleSlot.deleteVehicleSlot)
 
 // SlotTemplate (Khung giờ)
-router.get('/slot-templates/vehicle-types', requireTmsView,                    slotTemplate.getVehicleTypesByWarehouse)
+router.get('/slot-templates/vehicle-types', requireTmsOrGateView,              slotTemplate.getVehicleTypesByWarehouse)
 router.get('/slot-templates/apply-info', requirePerm('tms_slots', 'view'),     slotTemplate.getSlotApplyInfo)
 router.get('/slot-templates',        requirePerm('tms_slots', 'view'),         slotTemplate.listSlotTemplates)
 router.post('/slot-templates/batch', requirePerm('tms_slots', 'create'),       slotTemplate.batchUpsertSlotTemplates)

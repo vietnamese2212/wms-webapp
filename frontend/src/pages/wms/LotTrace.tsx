@@ -25,6 +25,7 @@ import { saveWorkbook } from '@/utils/saveExcel'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { apiClient } from '@/api/client'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import {
   useLotTrace, useMaterials, useInvestigatePreview, useCreateInvestigation, useSystemSettings,
   useTraceInvestigations, useTraceInvestigation, useTraceRuns, useTraceRunPallets, useTraceSuggest,
@@ -47,6 +48,11 @@ const apiErrMsg = (e: unknown) =>
 const ts = (s: string | null | undefined) => s ? `${formatTimestampDate(s, true)} ${formatTimestampTime(s)}` : '—'
 
 type Tab = 'trace' | 'carton'
+// key = khoá cấu hình điện thoại ('/wms/trace#<key>' — config/mobileSurface.ts)
+const TABS: readonly { key: Tab; label: string }[] = [
+  { key: 'trace',  label: 'Truy xuất lô' },
+  { key: 'carton', label: 'Truy xuất theo thùng' },
+]
 
 export default function LotTrace() {
   const user = useAuthStore(s => s.user)
@@ -54,6 +60,8 @@ export default function LotTrace() {
   const canExport = can(perms, 'traceability', 'export')
   const canInvestigate = can(perms, 'traceability', 'investigate')
   const [tab, setTab] = useState<Tab>('trace')
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/trace', TABS, tab, setTab)
 
   const TabBtn = ({ k, label }: { k: Tab; label: string }) => (
     <button
@@ -72,8 +80,7 @@ export default function LotTrace() {
           </span>
           <span className="flex-1" />
           <div className="flex items-center gap-1 flex-wrap">
-            <TabBtn k="trace" label="Truy xuất lô" />
-            <TabBtn k="carton" label="Truy xuất theo thùng" />
+            {tabs.map(t => <TabBtn key={t.key} k={t.key} label={t.label} />)}
           </div>
         </div>
         {tab === 'trace' && <TraceTab canExport={canExport} />}

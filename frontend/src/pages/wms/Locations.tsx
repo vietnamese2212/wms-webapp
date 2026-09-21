@@ -4,6 +4,7 @@ import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers } from 'lucide-react'
 import { InfoTip } from '@/components/shared/InfoTip'
+import { toast } from '@/components/ui/use-toast'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { LocationScanButton } from '@/components/wms/LocationScanButton'
@@ -394,8 +395,11 @@ export default function Locations() {
     try {
       await deleteLocation.mutateAsync(deleteTarget.id)
       setDeleteTarget(null)
-    } catch {
-      setDeleteTarget(null)
+    } catch (e) {
+      // Bản cũ nuốt lỗi rồi đóng dialog ⇒ xoá hỏng (ô còn hàng / còn việc treo → 409) nhìn y hệt xoá xong (rà 21/09).
+      // Dialog GIỮ MỞ, lý do hiện bằng toast (dialog xác nhận không có ô lỗi riêng).
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      toast({ title: msg ?? 'Không xoá được vị trí', variant: 'destructive' })
     }
   }
 

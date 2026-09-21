@@ -16,6 +16,7 @@ import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingNum, SettingSaveBar }
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useAlerts, useAckAlert, useScanAlerts, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -82,11 +83,19 @@ export default function Alerts() {
   const wanted = urlTab === 'personal' || urlTab === 'general' ? urlTab : f.tab
   const tab: 'personal' | 'general' | 'thresholds' =
     (wanted === 'general' && !canAlerts) || (wanted === 'thresholds' && !canTh) ? 'personal' : wanted
+  // Key khớp PAGE_TABS['/wms/alerts'] — đã lọc theo quyền sẵn có
+  const permTabs = useMemo(() => [
+    { key: 'personal' as const, label: 'Cá nhân' },
+    ...(canAlerts ? [{ key: 'general' as const, label: 'Thông báo chung' }] : []),
+    ...(canTh ? [{ key: 'thresholds' as const, label: 'Cài đặt ngưỡng' }] : []),
+  ], [canAlerts, canTh])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/alerts', permTabs, tab, k => setF({ tab: k }))
 
   const tabBar = (
     <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
       <BellRing className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
-      {([['personal', 'Cá nhân', true], ['general', 'Thông báo chung', canAlerts], ['thresholds', 'Cài đặt ngưỡng', canTh]] as const).map(([k, label, show]) => show && (
+      {tabs.map(({ key: k, label }) => (
         <button key={k} type="button"
           onClick={() => { window.history.replaceState(null, '', '/wms/alerts'); setF({ tab: k }) }}
           className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors ${

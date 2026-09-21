@@ -22,6 +22,7 @@ import {
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { materialCodeOf } from '@/utils/qr'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
@@ -52,6 +53,14 @@ export default function PalletOps() {
     if (initTab === 'history') return 'history'
     return canMergeTab ? 'merge' : canSplit ? 'split' : 'history'   // tab đầu tiên có quyền
   })
+  // key = khoá cấu hình điện thoại ('/wms/pallet-ops#<key>' — config/mobileSurface.ts)
+  const permTabs = useMemo(() => ([
+    canMergeTab && { key: 'merge' as const,   label: 'Dồn (gom nhóm)', icon: Layers },
+    canSplit    && { key: 'split' as const,   label: 'Tách số lượng',  icon: Scissors },
+    { key: 'history' as const, label: 'Lịch sử', icon: History },
+  ] as const).filter((t): t is Exclude<typeof t, false> => !!t), [canMergeTab, canSplit])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/pallet-ops', permTabs, tab, setTab)
   const [scanFor, setScanFor] = useState<null | 'target' | 'child' | 'source' | 'history'>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -236,12 +245,8 @@ export default function PalletOps() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5"><Layers className="h-4 w-4 text-slate-500" />Dồn / Tách pallet</span>
             <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-              {canMergeTab && <button onClick={() => { setTab('merge'); setMsg(null) }}
-                className={`px-3 py-1 inline-flex items-center gap-1 transition-colors ${tab === 'merge' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Layers className="h-3 w-3" />Dồn (gom nhóm)</button>}
-              {canSplit && <button onClick={() => { setTab('split'); setMsg(null) }}
-                className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'split' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Scissors className="h-3 w-3" />Tách số lượng</button>}
-              <button onClick={() => { setTab('history'); setMsg(null) }}
-                className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Lịch sử</button>
+              {tabs.map((t, i) => <button key={t.key} onClick={() => { setTab(t.key); setMsg(null) }}
+                className={`px-3 py-1 ${i > 0 ? 'border-l border-slate-200 ' : ''}inline-flex items-center gap-1 transition-colors ${tab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><t.icon className="h-3 w-3" />{t.label}</button>)}
             </div>
           </div>
         </div>

@@ -23,7 +23,7 @@ import {
   useInboundOrders, useCreateInboundOrder,
   useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
   useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
-  useEmployeeRecords, useWarehouseZones,
+  useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
@@ -396,17 +396,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined, search: matTerm || undefined, limit: 50 }, !!subType)
   const materials    = useMemo(() => materialsRaw.filter(m => !m.is_non_stock), [materialsRaw])
 
-  // Chỉ cần id nhân sự của CHÍNH người đang đăng nhập → tìm trên server theo tên.
-  // Trước đây nạp TOÀN BỘ nhân sự đang hoạt động chỉ để dò 1 dòng: đo 28/07 = 1.230KB với
-  // 1.539 người, và ~830 B/dòng nghĩa là 5.400 người đã vượt trần 4,5MB của Vercel.
-  const { data: meEmployees = [] } = useEmployeeRecords(
-    user?.name ? { is_active: 'true', search: user.name } : undefined,
-  )
-  type EmpItem = { id: string; name: string; employee_code: string }
-  const importedByEmpId = useMemo(
-    () => (meEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
-    [meEmployees, user?.name]
-  )
+  // Người nhập mặc định = CHÍNH người đang đăng nhập. `user.id` ĐÃ LÀ id bảng Employee (authController
+  // phát token từ Employee) — bản cũ đi vòng gọi /masterdata/employees?search=<tên> để tìm lại chính
+  // mình, mà cửa đó đòi employees.view nên lái xe nâng/thủ kho nhận 403 và phiếu nhập ghi imported_by
+  // RỖNG không ai thấy (đo 21/09 bằng vai thật). Không tra gì nữa: 0 request, không dính quyền.
+  const importedByEmpId = user?.id ?? ''
 
   useEffect(() => {
     if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return

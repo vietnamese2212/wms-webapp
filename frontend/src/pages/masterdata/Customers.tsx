@@ -35,6 +35,7 @@ import {
   type MasterRuleRow, type DateRuleCategory,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -43,6 +44,9 @@ import type { DateRule } from '@/types'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
+
+// 2 tab cấp trang — key khớp PAGE_TABS['/masterdata/customers'] (config/mobileSurface.ts)
+const PAGE_TAB_DEFS = [{ key: 'list', label: 'Khách hàng' }, { key: 'channels', label: 'Kênh' }] as const
 
 const COLS = [
   { id: 'pick',  label: '',                 w: 36 },
@@ -331,6 +335,8 @@ export default function Customers() {
   ] : []
 
   const listTab = f.tab !== 'channels'
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const pageTabs = useMobileTabs('/masterdata/customers', PAGE_TAB_DEFS, f.tab, k => setF({ tab: k }))
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -342,7 +348,7 @@ export default function Customers() {
             </h1>
             {/* 2 tab: danh sách khách · danh mục kênh */}
             <div className="flex rounded-md border border-slate-200 p-0.5 shrink-0">
-              {([['list', 'Khách hàng'], ['channels', 'Kênh']] as const).map(([k, lb]) => (
+              {pageTabs.map(({ key: k, label: lb }) => (
                 <button key={k} onClick={() => setF({ tab: k })}
                   className={`rounded px-2 py-1 text-xs transition-colors ${f.tab === k ? 'bg-sky-100 text-sky-700 font-medium' : 'text-slate-500 hover:text-slate-700'}`}>
                   {lb}

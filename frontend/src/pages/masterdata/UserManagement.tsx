@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import {
   useDepartments, useJobTitles, useEmployeesPaged,
   useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useUnlockAccount, useAdminAudit, useWarehouses, useWarehouseTypes,
@@ -1071,10 +1072,21 @@ export default function UserManagement() {
   const auditTotal = auditPage?.total ?? 0
   const auditPages = Math.max(1, Math.ceil(auditTotal / AUDIT_PAGE_SIZE))
 
+  // Dải tab đã lọc theo quyền (Nhật ký cần user_admin.audit_log) — key khớp PAGE_TABS['/masterdata/users']
+  const [tab, setTab] = useState('employees')
+  const permTabs = useMemo(() => [
+    { key: 'employees',   label: 'Nhân viên', icon: User2 },
+    { key: 'departments', label: 'Phòng ban', icon: Building2 },
+    { key: 'job-titles',  label: 'Chức danh', icon: Briefcase },
+    ...(canAudit ? [{ key: 'audit', label: 'Nhật ký', icon: History }] : []),
+  ], [canAudit])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/masterdata/users', permTabs, tab, setTab)
+
   return (
     // Full-width như các module chuẩn (bỏ max-w-7xl mx-auto — user 19/08 "fit màn hình")
     <div className="flex flex-col h-full p-2 sm:p-3 gap-1.5 w-full">
-      <Tabs defaultValue="employees" className="flex flex-col flex-1 min-h-0">
+      <Tabs value={tab} onValueChange={setTab} className="flex flex-col flex-1 min-h-0">
         {/* Tiêu đề + tab trên CÙNG 1 hàng để tối ưu chiều cao, dành đất cho bảng */}
         <div className="shrink-0 flex items-center gap-3 mb-1.5">
           <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
@@ -1082,20 +1094,11 @@ export default function UserManagement() {
             <span className="hidden md:inline">Quản lý nhân sự &amp; phân quyền</span>
           </h1>
           <TabsList className="shrink-0">
-            <TabsTrigger value="employees" className="gap-1.5">
-              <User2 className="h-3.5 w-3.5" /> Nhân viên
-            </TabsTrigger>
-            <TabsTrigger value="departments" className="gap-1.5">
-              <Building2 className="h-3.5 w-3.5" /> Phòng ban
-            </TabsTrigger>
-            <TabsTrigger value="job-titles" className="gap-1.5">
-              <Briefcase className="h-3.5 w-3.5" /> Chức danh
-            </TabsTrigger>
-            {canAudit && (
-              <TabsTrigger value="audit" className="gap-1.5">
-                <History className="h-3.5 w-3.5" /> Nhật ký
+            {tabs.map(t => (
+              <TabsTrigger key={t.key} value={t.key} className="gap-1.5">
+                <t.icon className="h-3.5 w-3.5" /> {t.label}
               </TabsTrigger>
-            )}
+            ))}
           </TabsList>
         </div>
 

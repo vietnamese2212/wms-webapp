@@ -6,8 +6,20 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { isAdmin, type ModulePermissions } from '@/config/permissions'
-import { NAV_GROUPS, isSection, visibleEntries, type NavItem, type NavSection } from '@/config/navigation'
+import { NAV_GROUPS, isSection, visibleEntries, type NavEntry, type NavItem, type NavSection } from '@/config/navigation'
 import { DevCredit } from '@/components/shared/DevCredit'
+import { useMobileSurface } from '@/hooks/useMobileSurface'
+
+/** Lớp thứ hai sau quyền: bỏ trang superadmin đã ẩn khỏi điện thoại (cờ mobile_surface, 21/09); nhóm rỗng thì bỏ hẳn. */
+function dropHidden(entries: NavEntry[], isHidden: (k: string) => boolean): NavEntry[] {
+  const out: NavEntry[] = []
+  for (const e of entries) {
+    if (!isSection(e)) { if (!isHidden(e.to)) out.push(e); continue }
+    const kids = e.items.filter(i => !isHidden(i.to))
+    if (kids.length) out.push({ ...e, items: kids })
+  }
+  return out
+}
 
 /** Một trang trên drawer — dùng lại cho cả mục lẻ lẫn mục trong nhóm chức năng. */
 function MobileLink({ item, nested = false }: { item: NavItem; nested?: boolean }) {
@@ -60,6 +72,7 @@ export function MobileNav() {
   const { user } = useAuthStore()
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
   const admin = isAdmin(user)
+  const { isHidden } = useMobileSurface()
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
   // Nhóm phụ ĐẦU TIÊN (không phải vận hành, không phải Tổng quan) → chèn vạch ngăn để ưu tiên vận hành
   const firstSecondaryLabel = NAV_GROUPS.find(g => !g.operational && g.label !== NAV_GROUPS[0].label)?.label
@@ -80,7 +93,7 @@ export function MobileNav() {
       {/* Nav — vận hành (WMS/TMS/HR) lên đầu, ngăn cách với nhóm phụ (Báo cáo/Cấu hình/Quản trị) */}
       <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-5">
         {NAV_GROUPS.map((group) => {
-          const entries = visibleEntries(group.items, modulePerms, admin)
+          const entries = dropHidden(visibleEntries(group.items, modulePerms, admin), isHidden)
           if (entries.length === 0) return null
           const isFirstSecondary = group.label === firstSecondaryLabel
           return (

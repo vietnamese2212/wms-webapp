@@ -28,6 +28,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { FillScanOverlay } from './FillScanOverlay'
 import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
@@ -491,7 +492,9 @@ export default function DirectedWork() {
   useEffect(() => {
     if (!sepLower && tab === 'LOWER') setF({ tab: 'MOVE' })
   }, [sepLower, tab, setF])
-  const tabs = TABS.filter(x => sepLower || x.key !== 'LOWER')
+  const permTabs = useMemo(() => TABS.filter(x => sepLower || x.key !== 'LOWER'), [sepLower])
+  // Lớp thứ hai: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09) — tab đang đứng bị ẩn thì tự về tab đầu còn hiện
+  const tabs = useMobileTabs('/wms/directed', permTabs, tab, k => setF({ tab: k }))
 
   // VIỆC RIÊNG TRONG RỔ CHUNG (17/09, user: "tại sao k tạo switch việc chung, việc riêng"):
   // rổ "Cần hạ" là của cả kho, nhưng trong đó có hai thứ đã có chủ — việc ai đó bấm "Nhận" (giữ mềm

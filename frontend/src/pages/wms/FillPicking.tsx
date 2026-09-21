@@ -30,6 +30,7 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
@@ -39,6 +40,13 @@ import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
+
+// Key = đúng giá trị `fill.tab` trong store (khớp PAGE_TABS['/wms/fill'])
+const FILL_TABS = [
+  { key: 'demand', label: 'Đề xuất' },
+  { key: 'tasks',  label: 'Lệnh fill' },
+  { key: 'report', label: 'Kết quả' },
+] as const
 
 const DEMAND_COLS = [
   { id: 'sel',     label: '',                 w: 36 },
@@ -103,6 +111,8 @@ export default function FillPicking() {
     if (perms && !canPlan && f.tab === 'demand') setFill({ tab: 'tasks' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canPlan])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/fill', FILL_TABS, f.tab, k => setFill({ tab: k }))
 
   const [dense, setDense] = useState(() => localStorage.getItem('fill_density') !== 'comfortable')
   const toggleDensity = () =>
@@ -175,12 +185,10 @@ export default function FillPicking() {
               <ArrowDownToLine className="h-4 w-4 text-sky-600" /> Fill hàng
             </h1>
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-medium shrink-0">
-              <button className={`px-2.5 py-1 ${f.tab === 'demand' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setFill({ tab: 'demand' })}>Đề xuất</button>
-              <button className={`px-2.5 py-1 border-l border-slate-200 ${f.tab === 'tasks' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setFill({ tab: 'tasks' })}>Lệnh fill</button>
-              <button className={`px-2.5 py-1 border-l border-slate-200 ${f.tab === 'report' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setFill({ tab: 'report' })}>Kết quả</button>
+              {tabs.map((t, i) => (
+                <button key={t.key} className={`px-2.5 py-1 ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.tab === t.key ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => setFill({ tab: t.key })}>{t.label}</button>
+              ))}
             </div>
             {/* NGÀY XUẤT là THAM SỐ của phép tính (RPC nhận đúng 1 ngày), không phải bộ lọc phụ →
                 để ngay trên toolbar cho thấy rõ đang tính cho ngày nào, thay vì giấu trong chip lọc */}
@@ -706,8 +714,9 @@ function OrdersTab({ warehouseId, dense, canCancel }: {
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {/* MOBILE = THẺ VIỆC (user chốt 05/08: "thông tin và thao tác ở VỊ TRÍ NÀO phải hiện
-            ngay view đầu tiên") — vị trí LẤY → VỀ chữ to, nút Quét ngay trên thẻ; bảng đầy đủ
-            cột giữ nguyên cho desktop từ breakpoint sm. */}
+            ngay view đầu tiên") — vị trí LẤY → VỀ chữ to; bảng đầy đủ cột giữ nguyên cho desktop từ
+            breakpoint sm. Thẻ CỐ Ý KHÔNG có nút Quét (user chốt 16/09 vòng 5: "phải mở vào đúng lệnh
+            mới quét được") — bấm thẻ mở trang lệnh, quét ở đó. Đừng thêm lại. */}
         <div className="sm:hidden divide-y divide-slate-100">
           {isLoading ? (
             <p className="text-center py-8 text-xs text-slate-400">Đang tải…</p>

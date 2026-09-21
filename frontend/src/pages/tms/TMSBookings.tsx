@@ -10,6 +10,7 @@ import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -3874,6 +3875,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+// key = khoá cấu hình điện thoại ('/tms/bookings#<key>' — config/mobileSurface.ts) = giá trị `tab` trong store
+const BOOKING_TABS: readonly { key: 'main' | 'transfer'; label: string }[] = [
+  { key: 'main',     label: 'Kế hoạch' },
+  { key: 'transfer', label: 'Chuyển kho' },
+]
+
 export default function TMSBookings() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
@@ -3911,6 +3918,9 @@ export default function TMSBookings() {
   // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
   const setActiveTab = (t: 'main' | 'transfer') => setTf({ tab: t })
   const activeTab: 'main' | 'transfer' = (tf.tab === 'transfer' && !canConfirmReceipt) ? 'main' : tf.tab
+  const permTabs = useMemo(() => canConfirmReceipt ? BOOKING_TABS : BOOKING_TABS.filter(t => t.key === 'main'), [canConfirmReceipt])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const bookingTabs = useMobileTabs('/tms/bookings', permTabs, activeTab, setActiveTab)
 
   useEffect(() => { setSelectedOrderIds(new Set()) }, [dateFrom, dateTo, warehouseId])
   const [createOpen, setCreateOpen] = useState(false)
@@ -4271,14 +4281,12 @@ export default function TMSBookings() {
             {/* Toggle 2 tab chỉ hiện khi có quyền nhận hàng chuyển kho — không có quyền thì chỉ xem Kế hoạch (#1) */}
             {canConfirmReceipt && (
               <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-                <button
-                  onClick={() => setActiveTab('main')}
-                  className={`px-3 py-1 transition-colors ${activeTab === 'main' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                >Kế hoạch</button>
-                <button
-                  onClick={() => setActiveTab('transfer')}
-                  className={`px-3 py-1 transition-colors border-l border-slate-200 ${activeTab === 'transfer' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                >Chuyển kho</button>
+                {bookingTabs.map((t, i) => (
+                  <button key={t.key}
+                    onClick={() => setActiveTab(t.key)}
+                    className={`px-3 py-1 transition-colors ${i > 0 ? 'border-l border-slate-200 ' : ''}${activeTab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  >{t.label}</button>
+                ))}
               </div>
             )}
           </div>

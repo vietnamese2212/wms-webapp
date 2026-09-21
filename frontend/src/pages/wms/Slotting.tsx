@@ -30,6 +30,7 @@ import {
 } from '@/api/hooks'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
@@ -86,6 +87,13 @@ const PRINCIPLE_OPTS = [
 ]
 const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
+// Key = đúng giá trị `slotting.tab` trong store (khớp PAGE_TABS['/wms/slotting'])
+const SLOTTING_TABS = [
+  { key: 'analysis', label: 'Phân tích ABC' },
+  { key: 'plans',    label: 'Kế hoạch sắp xếp' },
+  { key: 'config',   label: 'Cài đặt' },
+] as const
+
 export default function Slotting() {
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
@@ -99,6 +107,9 @@ export default function Slotting() {
   // ?? 'FULL': state persist cũ (trước khi thêm field) không có palletKind
   const palletKind = rawPalletKind ?? 'FULL'
   const setSlotting = useWmsFilterStore(s => s.setSlotting)
+  const permTabs = useMemo(() => SLOTTING_TABS.filter(t => canConfigure || t.key !== 'config'), [canConfigure])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/slotting', permTabs, tab, k => setSlotting({ tab: k }))
 
   const { data: rawWarehouses = [] } = useScopedWarehouses(true)
   const warehouses = rawWarehouses as { id: string; name: string }[]
@@ -166,14 +177,10 @@ export default function Slotting() {
             </h1>
             {/* Tabs */}
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-medium shrink-0">
-              <button className={`px-2.5 py-1 ${tab === 'analysis' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setSlotting({ tab: 'analysis' })}>Phân tích ABC</button>
-              <button className={`px-2.5 py-1 border-l border-slate-200 ${tab === 'plans' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setSlotting({ tab: 'plans' })}>Kế hoạch sắp xếp</button>
-              {canConfigure && (
-                <button className={`px-2.5 py-1 border-l border-slate-200 ${tab === 'config' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                  onClick={() => setSlotting({ tab: 'config' })}>Cài đặt</button>
-              )}
+              {tabs.map((t, i) => (
+                <button key={t.key} className={`px-2.5 py-1 ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => setSlotting({ tab: t.key })}>{t.label}</button>
+              ))}
             </div>
             {tab === 'analysis' && (
               <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, tên hàng…" className="flex-1 min-w-[140px]" />

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
@@ -8,6 +8,8 @@ import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
+import { MobileSurfaceSettings } from '@/components/wms/MobileSurfaceSettings'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -273,7 +275,7 @@ function HolidayEditor({ value, onChange, readOnly }: {
   )
 }
 
-function SystemTab({ canManage }: { canManage: boolean }) {
+function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutateAsync: save, isPending } = useUpdateSystemSetting()
   const [err, setErr] = useState('')
@@ -592,6 +594,9 @@ function SystemTab({ canManage }: { canManage: boolean }) {
               </div>
             </div>
           </SettingGroup>
+
+          {/* Bố cục điện thoại (21/09) — cờ riêng, chỉ superadmin ghi; tự lưu, không đi chung thanh Lưu bên dưới */}
+          <MobileSurfaceSettings canEdit={superadmin} />
         </div>
       </div>
 
@@ -1685,17 +1690,18 @@ export default function WMSSettings() {
   const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
   const canManageMachine   = admin || can(perms, 'wms_settings', 'manage_machine')
   const canManageSystem    = admin || can(perms, 'wms_settings', 'manage_system')
-  const visibleTabs = [
-    canManageWarehouse && 'warehouses',
-    canManageType      && 'types',
-    canManageUnit      && 'units',
-    canManageZone      && 'zones',
-    canManageShift     && 'shifts',
-    canManageQA        && 'qa',
-    canManageMachine   && 'machines',
-    canManageSystem    && 'system',
-  ].filter(Boolean) as string[]
-  const defaultTab = visibleTabs[0]
+  // key = khoá cấu hình điện thoại ('/wms/settings#<key>' — config/mobileSurface.ts)
+  const permTabs = useMemo(() => ([
+    canManageWarehouse && { key: 'warehouses', label: 'Kho',          icon: Warehouse },
+    canManageType      && { key: 'types',      label: 'Loại kho',     icon: Tag },
+    canManageUnit      && { key: 'units',      label: 'Đơn vị tính',  icon: Ruler },
+    canManageZone      && { key: 'zones',      label: 'Khu vực',      icon: MapPin },
+    canManageShift     && { key: 'shifts',     label: 'Ca nhập',      icon: Clock },
+    canManageQA        && { key: 'qa',         label: 'QA',           icon: ShieldCheck },
+    canManageMachine   && { key: 'machines',   label: 'Máy',          icon: Cog },
+    canManageSystem    && { key: 'system',     label: 'Hệ thống',     icon: SlidersHorizontal },
+  ] as const).filter((t): t is Exclude<typeof t, false> => !!t), [canManageWarehouse, canManageType, canManageUnit, canManageZone, canManageShift, canManageQA, canManageMachine, canManageSystem])
+  const defaultTab = permTabs[0]?.key
 
   // Kho
   const { data: allWh = [], isLoading: loadingWh } = useWarehouses(false)
@@ -1876,7 +1882,9 @@ export default function WMSSettings() {
 
   // Tab điều khiển được: link trong form Kho nhảy thẳng sang tab Loại kho đã lọc sẵn kho đó
   const [tab, setTab] = useState(defaultTab ?? 'warehouses')
-  const stratWh = (allWh as WhRow[]).find(w => w.id === typeWhFilter) ?? null
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/settings', permTabs, tab, setTab)
+  const stratWh =(allWh as WhRow[]).find(w => w.id === typeWhFilter) ?? null
   // Mặc định TOÀN KHO để panel in được "— Theo kho (FEFO) —" đúng giá trị đang chạy
   const stratWhValue: StrategyValue = {
     ...stratOf(stratWh ?? {}),
@@ -1946,14 +1954,9 @@ export default function WMSSettings() {
             <Settings2 className="h-4 w-4 text-slate-500" /> Cài đặt WMS
           </span>
           <TabsList className="h-8 max-w-full overflow-x-auto">
-            {canManageWarehouse && <TabsTrigger value="warehouses" className="gap-1.5 text-xs"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>}
-            {canManageType      && <TabsTrigger value="types"      className="gap-1.5 text-xs"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>}
-            {canManageUnit      && <TabsTrigger value="units"      className="gap-1.5 text-xs"><Ruler    className="h-3.5 w-3.5" /> Đơn vị tính</TabsTrigger>}
-            {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
-            {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
-            {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
-            {canManageMachine   && <TabsTrigger value="machines"   className="gap-1.5 text-xs"><Cog className="h-3.5 w-3.5" /> Máy</TabsTrigger>}
-            {canManageSystem    && <TabsTrigger value="system"     className="gap-1.5 text-xs"><SlidersHorizontal className="h-3.5 w-3.5" /> Hệ thống</TabsTrigger>}
+            {tabs.map(t => (
+              <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
@@ -2374,7 +2377,7 @@ export default function WMSSettings() {
 
         {/* ── Tab: Hệ thống (cờ SystemSetting) ── */}
         <TabsContent value="system" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
-          <SystemTab canManage={canManageSystem} />
+          <SystemTab canManage={canManageSystem} superadmin={admin} />
         </TabsContent>
       </Tabs>
       )}

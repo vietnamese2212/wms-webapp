@@ -750,9 +750,12 @@ export default function LoosePickingDetail() {
       {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung gọn, cao theo thực tế ── */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
 
-        {/* Row 1: back + code + status + ⓘ + cụm action (1 dòng, không wrap — cụm action bọc shrink-0) */}
-        <div className="flex items-center gap-x-2 gap-y-1.5">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        {/* Row 1: back + code + status + ⓘ + cụm action. Mobile: mã chuyến chiếm NGUYÊN hàng, cụm nút
+            xuống hàng riêng — trang này có HAI nút primary (Tối ưu tuyến + Quét QR) nên hàng không wrap
+            ép mã còn 0 px và bẻ DỌC 20 ký tự, header cao 300 px (đo 360/390 ngày 21/09; Xuất kho đã
+            chữa cùng bệnh 02/09 bằng đúng khuôn này). */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 max-sm:w-full max-sm:flex-none">
             <button onClick={() => navigate(backTarget('/wms/loosepicking'))}
               className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
               <ArrowLeft className="h-4 w-4" />

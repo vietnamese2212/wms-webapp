@@ -104,6 +104,31 @@ function isAlertThresholds(v: unknown): boolean {
 // Validator chuyển về utils/settings.ts (08/09) để tab KPI đọc cùng ngưỡng `low` — một nguồn.
 const isPctDateBands = (v: unknown): boolean => parsePctDateBands(v) !== null
 
+// - mobile_surface (21/09, user chốt "module nào — kể cả tab nhỏ — hiện trên điện thoại do superadmin
+//   cấu hình"): { hidden: string[], bottom_nav: string[] | null }.
+//     hidden     = khoá TRANG ("/wms/fill") hoặc TAB ("/wms/fill#report") bị ẨN khỏi bottom-nav / drawer /
+//                  dải tab khi màn < lg. CHỈ ẨN, KHÔNG chặn route — deep-link từ thông báo vẫn mở được;
+//                  chặn là việc của phân quyền. Toàn đơn vị (không theo chức danh).
+//     bottom_nav = thứ tự ≤ 6 trang trên thanh dưới; null = thứ tự mặc định trong code.
+//   Sổ khoá hợp lệ nằm ở FE (config/mobileSurface.ts — registry sinh từ NAV_GROUPS + tab tĩnh từng trang);
+//   BE chỉ kiểm HÌNH DẠNG, khoá lạ FE tự bỏ qua. Mặc định {hidden:[], bottom_nav:null} = hành vi cũ.
+//   Ghi CHỈ superadmin (SUPERADMIN_ONLY_SETTINGS) — không đi ké wms_settings.manage_system.
+const MOBILE_SURFACE_MAX_HIDDEN = 400
+const MOBILE_SURFACE_MAX_BOTTOM = 6
+function isMobileSurface(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'hidden' && k !== 'bottom_nav')) return false
+  const key = (s: unknown) => typeof s === 'string' && /^\/[A-Za-z0-9/_-]*(#[A-Za-z0-9/_-]+)?$/.test(s) && s.length <= 120
+  if (!Array.isArray(o.hidden) || o.hidden.length > MOBILE_SURFACE_MAX_HIDDEN || !o.hidden.every(key)) return false
+  if (new Set(o.hidden as string[]).size !== o.hidden.length) return false
+  if (o.bottom_nav === null || o.bottom_nav === undefined) return true
+  if (!Array.isArray(o.bottom_nav) || o.bottom_nav.length > MOBILE_SURFACE_MAX_BOTTOM) return false
+  if (!o.bottom_nav.every(s => key(s) && !String(s).includes('#'))) return false
+  return new Set(o.bottom_nav as string[]).size === o.bottom_nav.length
+}
+const SUPERADMIN_ONLY_SETTINGS = new Set(['mobile_surface'])
+
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
   pct_date_bands: { validate: isPctDateBands, hint: '{ good: number, low: number } với 0 < low ≤ good ≤ 100 — %Date > good xanh, > low vàng, còn lại đỏ' },
@@ -153,6 +178,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   org_profile: {
     validate: v => parseOrgProfile(v) !== null,
     hint: '{ contact_email, nmsx_alias: {CŨ:MỚI}, assumed_carton_mm: {l,w,h} } — nhận diện & tham số riêng của đơn vị',
+  },
+  mobile_surface: {
+    validate: isMobileSurface,
+    hint: '{ hidden: ["/wms/fill", "/wms/fill#report", …] (≤ 400 khoá, không trùng), bottom_nav: ["/wms/directed", …] (≤ 6 trang) | null } — chỉ superadmin ghi',
   },
 }
 
@@ -206,6 +235,10 @@ export async function updateSetting(req: Request, res: Response) {
   const { value } = req.body as { value: unknown }
   const known = KNOWN_SETTINGS[key]
   if (!known) return fail(res, 400, 'UNKNOWN_SETTING', `Cờ "${key}" không có trong sổ cờ hệ thống`)
+  // Cờ bố cục điện thoại đổi menu của CẢ đơn vị — user chốt 21/09 "config bởi superadmin", đọc cột
+  // Employee.is_superadmin (không so tên), không đi ké manage_system.
+  if (SUPERADMIN_ONLY_SETTINGS.has(key) && req.user?.is_superadmin !== true)
+    return fail(res, 403, 'SUPERADMIN_ONLY', `Cờ "${key}" chỉ superadmin mới được sửa`)
   if (!known.validate(value)) return fail(res, 400, 'INVALID_VALUE', `Giá trị không hợp lệ cho cờ "${key}" — cần ${known.hint}`)
 
   const { data: before } = await supabase.from('SystemSetting').select('value').eq('key', key).maybeSingle()

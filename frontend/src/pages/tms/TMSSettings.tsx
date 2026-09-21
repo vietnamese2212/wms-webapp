@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
@@ -26,6 +26,7 @@ import {
   useTmsVehicles, useTmsVehiclesPaged, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
@@ -519,6 +520,15 @@ export default function TMSSettings() {
     : showCompaniesTab ? 'companies'
     : 'vehicles'
   const [tab, setTab] = useState(defaultTab)
+  // key = khoá cấu hình điện thoại ('/tms/settings#<key>' — config/mobileSurface.ts) = value của TabsTrigger
+  const permTabs = useMemo(() => ([
+    showVtTab        && { key: 'vehicle-types' as const,  label: 'Loại xe',    icon: Truck },
+    showSlotsTab     && { key: 'slot-templates' as const, label: 'Khung giờ',  icon: Clock },
+    showCompaniesTab && { key: 'companies' as const,      label: 'ĐVVT / NCC', icon: Building2 },
+    showVehiclesTab  && { key: 'vehicles' as const,       label: 'Xe',         icon: Truck },
+  ] as const).filter((t): t is Exclude<typeof t, false> => !!t), [showVtTab, showSlotsTab, showCompaniesTab, showVehiclesTab])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/tms/settings', permTabs, tab, setTab)
 
   // Warehouse selector — context cho tab Khung giờ. Scope theo phân quyền Kho + Loại kho
   // của user (rule: chỉ thấy/cài khung giờ trong phạm vi được phân).
@@ -689,10 +699,7 @@ export default function TMSSettings() {
             <Settings2 className="h-4 w-4 text-slate-500" /> Cài đặt TMS
           </span>
           <TabsList className="h-8 max-w-full overflow-x-auto">
-            {showVtTab        && <TabsTrigger value="vehicle-types"  className="gap-1.5 text-xs"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>}
-            {showSlotsTab     && <TabsTrigger value="slot-templates" className="gap-1.5 text-xs"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>}
-            {showCompaniesTab && <TabsTrigger value="companies"      className="gap-1.5 text-xs"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>}
-            {showVehiclesTab  && <TabsTrigger value="vehicles"       className="gap-1.5 text-xs"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>}
+            {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
           </TabsList>
         </div>
 

@@ -27,6 +27,7 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -241,6 +242,14 @@ function MatPicker({ value, label, category, onPick }: {
   )
 }
 
+// Nhãn + icon từng tab (key = giá trị state `tab`, khớp PAGE_TABS['/wms/pallet-labels'])
+const LABEL_TAB_META: Record<'generate' | 'history' | 'reprint' | 'audit', { label: string; icon: typeof Printer | null }> = {
+  generate: { label: 'Sinh tem mới',      icon: null },
+  history:  { label: 'Lịch sử in',        icon: Printer },
+  reprint:  { label: 'In lại từ tồn kho', icon: null },
+  audit:    { label: 'Truy cứu',          icon: History },
+}
+
 export default function PalletLabels() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
@@ -259,6 +268,13 @@ export default function PalletLabels() {
   const tabAllowed: Record<LabelTab, boolean> = { generate: canGenerate, history: canHistory, reprint: canReprint, audit: canAudit }
   const firstTab = (['generate', 'history', 'reprint', 'audit'] as LabelTab[]).find(t => tabAllowed[t]) ?? 'generate'
   const [tab, setTab] = useState<LabelTab>(firstTab)
+  // Key khớp PAGE_TABS['/wms/pallet-labels'] — đã lọc theo quyền từng tab
+  const permTabs = useMemo(
+    () => (['generate', 'history', 'reprint', 'audit'] as LabelTab[]).filter(t => tabAllowed[t]).map(t => ({ key: t })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canGenerate, canHistory, canReprint, canAudit])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/pallet-labels', permTabs, tab, setTab)
   const [scanFor, setScanFor] = useState<null | 'reprint' | 'audit'>(null)
   function handleScanned(code: string) {
     const c = code.trim()
@@ -901,14 +917,15 @@ export default function PalletLabels() {
             <QrCode className="h-4 w-4 text-slate-500" /> In tem pallet
           </span>
           <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-            {canGenerate && <button onClick={() => setTab('generate')}
-              className={`px-3 py-1 transition-colors ${tab === 'generate' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Sinh tem mới</button>}
-            {canHistory && <button onClick={() => setTab('history')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Printer className="h-3 w-3" />Lịch sử in</button>}
-            {canReprint && <button onClick={() => setTab('reprint')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors ${tab === 'reprint' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>In lại từ tồn kho</button>}
-            {canAudit && <button onClick={() => setTab('audit')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>}
+            {tabs.map((t, i) => {
+              const { label, icon: Icon } = LABEL_TAB_META[t.key]
+              return (
+                <button key={t.key} onClick={() => setTab(t.key)}
+                  className={`px-3 py-1 transition-colors ${i > 0 ? 'border-l border-slate-200 ' : ''}${Icon ? 'inline-flex items-center gap-1 ' : ''}${tab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                  {Icon && <Icon className="h-3 w-3" />}{label}
+                </button>
+              )
+            })}
           </div>
           {tab === 'history' ? (
             <SearchInput value={histSearch} onChange={setHistSearch}

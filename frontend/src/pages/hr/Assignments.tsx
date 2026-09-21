@@ -29,6 +29,7 @@ import {
   type SheetDetail, type LayoutRow,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
@@ -69,6 +70,14 @@ export default function Assignments() {
   const canManageShiftRules = admin || can(perms, 'work_assignment', 'manage_shift_rules')
 
   const [tab, setTab] = useState<'daily' | 'layout' | 'rules'>('daily')
+  // Dải tab đã lọc theo quyền — key khớp PAGE_TABS['/hr/assignments'] (config/mobileSurface.ts)
+  const permTabs = useMemo(() => [
+    { key: 'daily' as const, label: 'Phân công' },
+    ...(canManageLayout     ? [{ key: 'layout' as const, label: 'Layout' }]     : []),
+    ...(canManageShiftRules ? [{ key: 'rules'  as const, label: 'Quy tắc ca' }] : []),
+  ], [canManageLayout, canManageShiftRules])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/hr/assignments', permTabs, tab, setTab)
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -76,9 +85,9 @@ export default function Assignments() {
         <div className="border-b border-slate-200 px-3 py-2.5 sm:rounded-t-xl flex items-center gap-3">
           <h1 className="text-base font-semibold text-slate-800">Phân công lịch làm việc</h1>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-            <button onClick={() => setTab('daily')} className={`px-3 py-1.5 ${tab === 'daily' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Phân công</button>
-            {canManageLayout && <button onClick={() => setTab('layout')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'layout' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Layout</button>}
-            {canManageShiftRules && <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy tắc ca</button>}
+            {tabs.map((t, i) => (
+              <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+            ))}
           </div>
         </div>
         <div className="flex-1 min-h-0 flex flex-col">

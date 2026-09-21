@@ -11,6 +11,7 @@ import { QRScanner } from '@/components/shared/QRScanner'
 import { useLocationsReal, useBulkTransferLocation, useMoveLog, useWarehouses, type MoveLogRow } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -65,8 +66,16 @@ type ResultState =
 
 interface MovedRow { pallet: string; from: string; to: string; at: string }
 
+// key = khoá cấu hình điện thoại ('/wms/move-location#<key>' — config/mobileSurface.ts)
+const TABS = [
+  { key: 'scan',    label: 'Chuyển vị trí', icon: Move },
+  { key: 'history', label: 'Lịch sử',       icon: History },
+] as const
+
 export default function MoveLocation() {
   const [tab, setTab] = useState<'scan' | 'history'>('scan')
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/move-location', TABS, tab, setTab)
   // Link sâu "xem lịch sử chuyển của pallet này" (17/09) — từ panel chi tiết việc ở Việc cần làm:
   // `?tab=history&pallet=<tem>`. Áp MỘT lần cho mỗi LƯỢT ĐIỀU HƯỚNG (khoá theo `location.key`, không
   // theo giá trị tham số — lớp lỗi C29: bấm lại chính link đó thì URL không đổi và link chết).
@@ -85,8 +94,7 @@ export default function MoveLocation() {
     <div className="flex flex-col h-full sm:p-3">
       {/* 2 tab pill — cùng khuôn StocktakeTabs (tab nội bộ, không đổi route) */}
       <div className="flex gap-1 px-3 pt-2 pb-2 sm:px-0 sm:pt-0 shrink-0">
-        <TabBtn active={tab === 'scan'} onClick={() => setTab('scan')} icon={<Move className="h-3.5 w-3.5" />} label="Chuyển vị trí" />
-        <TabBtn active={tab === 'history'} onClick={() => setTab('history')} icon={<History className="h-3.5 w-3.5" />} label="Lịch sử" />
+        {tabs.map(t => <TabBtn key={t.key} active={tab === t.key} onClick={() => setTab(t.key)} icon={<t.icon className="h-3.5 w-3.5" />} label={t.label} />)}
       </div>
       {tab === 'scan' ? <ScanTab /> : <HistoryTab />}
     </div>

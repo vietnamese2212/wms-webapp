@@ -11,6 +11,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardStats, type DashboardStats } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { DashboardProductivity } from '@/components/wms/DashboardProductivity'
@@ -98,7 +99,7 @@ export default function Dashboard() {
   // Tab "Năng suất" (27/08) là NGOẠI LỆ: nó theo KHOẢNG NGÀY tự chọn nên có lời gọi riêng và
   // chỉ chạy khi người dùng bấm vào (component chỉ mount ở tab đó) — các tab kia vẫn dùng chung
   // một lần lấy số liệu đã cache như cũ.
-  const TABS = [
+  const TABS = useMemo(() => [
     { key: 'all',   label: 'Tổng quan' },
     { key: 'in',    label: 'Nhập' },
     { key: 'out',   label: 'Xuất' },
@@ -106,9 +107,11 @@ export default function Dashboard() {
     { key: 'prod',  label: 'Năng suất' },
     { key: 'svc',   label: 'Dịch vụ' },
     { key: 'kpi',   label: 'KPI' },
-  ] as const
+  ] as const, [])
   type TabKey = typeof TABS[number]['key']
   const [tab, setTab] = useState<TabKey>('all')
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/', TABS, tab, setTab)
   // Ba tab BÁO CÁO (Năng suất, Dịch vụ, KPI) chạy theo khoảng ngày riêng và thay CẢ trang — các
   // khối "ảnh chụp hôm nay" bên dưới không hiện ở đó.
   const isReport = tab === 'prod' || tab === 'svc' || tab === 'kpi'
@@ -143,7 +146,7 @@ export default function Dashboard() {
             tách thành CHIP rời tự xuống hàng, mọi tab thấy đủ và nhãn giữ một dòng; desktop giữ
             nguyên dải liền. */}
         <div className="mt-1.5 flex flex-wrap gap-1 text-[11px] font-medium sm:w-fit sm:flex-nowrap sm:gap-0 sm:rounded-lg sm:border sm:border-slate-200 sm:dark:border-slate-700 sm:overflow-hidden">
-          {TABS.map(({ key, label }) => (
+          {tabs.map(({ key, label }) => (
             <button key={key} type="button" onClick={() => setTab(key)}
               className={`whitespace-nowrap rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1.5 transition-colors sm:rounded-none sm:border-0 sm:border-l sm:first:border-l-0 sm:py-1 ${
                 tab === key

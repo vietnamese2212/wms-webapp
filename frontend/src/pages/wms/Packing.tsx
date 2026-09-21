@@ -9,6 +9,7 @@ import type { AxiosError } from 'axios'
 import { NotebookPen, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
+import { toast } from '@/components/ui/use-toast'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -30,6 +31,7 @@ import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { normalizeQR } from '@/utils/qr'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -343,6 +345,10 @@ export default function Packing() {
   const [cancelRunTarget, setCancelRunTarget] = useState<PackingRun | null>(null)
   const [detailRunId, setDetailRunId] = useState<string | null>(null)
   const [banner, setBanner] = useState('')
+  // Lỗi từ 7 FormSheet (validate + API) từng chỉ đổ vào banner CỦA TRANG — trên điện thoại FormSheet phủ
+  // kín màn nên người bấm Lưu không thấy gì xảy ra (rà 21/09). Toast nổi TRÊN sheet (z cao hơn) nên
+  // đưa lỗi lên toast cho cả hai cỡ màn; banner giữ lại để còn đọc sau khi đóng sheet.
+  const sheetErr = (msg: string) => { setBanner(msg); toast({ title: msg, variant: 'destructive' }) }
 
   function handleScan(raw: string) {
     playBeep()
@@ -385,11 +391,19 @@ export default function Packing() {
     onClosePallet: setCloseTarget, onEditPallet: setEditTarget, onCancelPallet: setCancelTarget,
   }
 
+  // 12/08 user chốt: tab "Trang sổ" GIỐNG HỆT "Đóng gói" → gộp làm 1 (filter trạng thái/ngày + export nằm luôn ở Đóng gói).
+  // Key khớp PAGE_TABS['/wms/packing']; UI coi mọi giá trị ≠ 'log' là board.
+  const permTabs = useMemo(() => [
+    { key: 'board' as const, label: `Đóng gói${openRuns.length ? ` (${openRuns.length} đang mở)` : ''}` },
+    { key: 'log' as const,   label: 'Sổ pallet' },
+  ], [openRuns.length])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/packing', permTabs, f.tab === 'log' ? 'log' : 'board', k => setF({ tab: k }))
+
   const tabBar = (
     <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl overflow-x-auto">
       <NotebookPen className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
-      {/* 12/08 user chốt: tab "Trang sổ" GIỐNG HỆT "Đóng gói" → gộp làm 1 (filter trạng thái/ngày + export nằm luôn ở Đóng gói) */}
-      {([['board', `Đóng gói${openRuns.length ? ` (${openRuns.length} đang mở)` : ''}`], ['log', 'Sổ pallet']] as const).map(([k, label]) => (
+      {tabs.map(({ key: k, label }) => (
         <button key={k} type="button" onClick={() => setF({ tab: k })}
           className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
             (f.tab === k || (k === 'board' && f.tab !== 'log')) ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -449,28 +463,28 @@ export default function Packing() {
             setShowScan(true)
             setTimeout(() => scannerRef.current?.resume(), 50)
           }}
-          onError={setBanner} />
+          onError={sheetErr} />
       )}
       {closeTarget && (
-        <CloseSheet log={closeTarget} onDone={() => setCloseTarget(null)} onError={setBanner} />
+        <CloseSheet log={closeTarget} onDone={() => setCloseTarget(null)} onError={sheetErr} />
       )}
       {editTarget && (
-        <EditSheet log={editTarget} onDone={() => setEditTarget(null)} onError={setBanner} />
+        <EditSheet log={editTarget} onDone={() => setEditTarget(null)} onError={sheetErr} />
       )}
       {cancelTarget && (
-        <CancelConfirm log={cancelTarget} onDone={() => setCancelTarget(null)} onError={setBanner} />
+        <CancelConfirm log={cancelTarget} onDone={() => setCancelTarget(null)} onError={sheetErr} />
       )}
       {openRunForm && (
-        <OpenRunSheet whOpts={whOpts} onDone={() => setOpenRunForm(false)} onError={setBanner} />
+        <OpenRunSheet whOpts={whOpts} onDone={() => setOpenRunForm(false)} onError={sheetErr} />
       )}
       {closeRunTarget && (
-        <CloseRunSheet run={closeRunTarget} onDone={() => setCloseRunTarget(null)} onError={setBanner} />
+        <CloseRunSheet run={closeRunTarget} onDone={() => setCloseRunTarget(null)} onError={sheetErr} />
       )}
       {editRunTarget && (
-        <RunEditSheet run={editRunTarget} onDone={() => setEditRunTarget(null)} onError={setBanner} />
+        <RunEditSheet run={editRunTarget} onDone={() => setEditRunTarget(null)} onError={sheetErr} />
       )}
       {cancelRunTarget && (
-        <RunCancelConfirm run={cancelRunTarget} onDone={() => setCancelRunTarget(null)} onError={setBanner} />
+        <RunCancelConfirm run={cancelRunTarget} onDone={() => setCancelRunTarget(null)} onError={sheetErr} />
       )}
       {detailRunId && (
         <RunDetailSheet id={detailRunId} h={runHandlers} onDone={() => setDetailRunId(null)} />

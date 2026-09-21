@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { Tag, Plus, Upload, Pencil, Trash2, X, Check, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
 import { RowCheck } from '@/components/shared/RowCheck'
+import { toast } from '@/components/ui/use-toast'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -391,6 +392,13 @@ export default function Materials() {
     }
   }
 
+  // Lỗi xoá/sửa hàng loạt PHẢI NÓI RA: bản cũ `try/finally` không `catch` nên xoá hỏng (23503 đang được
+  // dùng, 403…) nhìn y hệt xoá xong — dialog đóng, dòng vẫn còn (rà 21/09). Dialog GIỮ MỞ khi lỗi.
+  const failToast = (e: unknown, fallback: string) => {
+    const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+    toast({ title: msg ?? fallback, variant: 'destructive' })
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return
     setDeleting(true)
@@ -398,10 +406,9 @@ export default function Materials() {
       await deleteMaterial.mutateAsync(deleteTarget.id)
       setSelected(s => { const n = new Set(s); n.delete(deleteTarget.id); return n })
       if (detailMat?.id === deleteTarget.id) setDetailMat(null)
-    } finally {
-      setDeleting(false)
       setDeleteTarget(null)
-    }
+    } catch (e) { failToast(e, 'Không xoá được mã hàng') }
+    finally { setDeleting(false) }
   }
 
   async function handleBulkDelete() {
@@ -410,9 +417,8 @@ export default function Materials() {
       await Promise.all([...selected].map(id => deleteMaterial.mutateAsync(id)))
       setSelected(new Set())
       setBulkDeleteOpen(false)
-    } finally {
-      setBulkDeleting(false)
-    }
+    } catch (e) { failToast(e, 'Có mã không xoá được — danh sách đã tải lại, kiểm tra mã còn lại') }
+    finally { setBulkDeleting(false) }
   }
 
   async function handleBulkNoQr() {
@@ -421,9 +427,8 @@ export default function Materials() {
       await Promise.all([...selected].map(id => updateMaterial.mutateAsync({ id, no_qr_tracking: true })))
       setSelected(new Set())
       setBulkQrOpen(false)
-    } finally {
-      setBulkQrSaving(false)
-    }
+    } catch (e) { failToast(e, 'Có mã không cập nhật được cờ Không QR') }
+    finally { setBulkQrSaving(false) }
   }
 
   const bulkPackHasChange = !!(bulkPack.l || bulkPack.w || bulkPack.h || bulkPack.layers || bulkPack.onTop)
@@ -442,9 +447,8 @@ export default function Materials() {
       setSelected(new Set())
       setBulkPackOpen(false)
       setBulkPack({ l: '', w: '', h: '', layers: '', onTop: '' })
-    } finally {
-      setBulkPackSaving(false)
-    }
+    } catch (e) { failToast(e, 'Có mã không cập nhật được quy cách xếp xe') }
+    finally { setBulkPackSaving(false) }
   }
 
   function toggleSelect(id: string) {

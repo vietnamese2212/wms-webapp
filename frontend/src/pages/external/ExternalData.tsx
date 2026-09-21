@@ -10,6 +10,7 @@ import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -44,8 +45,8 @@ const TABS: { key: TabKey; label: string; module: ModuleKey; action?: string }[]
 ]
 
 // Header trang: tiêu đề "Dữ liệu bên ngoài" NẰM TRÊN, BAO các tab (DO SAP / Kế hoạch xuất / Cần xử lý).
-function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => void; perms: ModulePermissions | null }) {
-  const visible = TABS.filter(t => can(perms, t.module, t.action ?? 'view'))
+// `tabs` = danh sách đã lọc quyền + cờ điện thoại (shell tính, để hook đứng trước các return sớm).
+function TabBar({ tab, setTab, tabs: visible }: { tab: TabKey; setTab: (t: TabKey) => void; tabs: typeof TABS }) {
   return (
     <div className="border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
       <div className="flex items-center gap-1.5 mb-1.5">
@@ -128,7 +129,11 @@ export default function ExternalData() {
   const urlTabDef = urlTab ? TABS.find(t => t.key === urlTab) : null
   const initialTab = urlTabDef && can(perms, urlTabDef.module, urlTabDef.action ?? 'view') ? urlTabDef.key : firstTab
   const [tab, setTab] = useState<TabKey>(initialTab)
-  const tabBar = <TabBar tab={tab} setTab={setTab} perms={perms} />
+  // key = khoá cấu hình điện thoại ('/external/do-sap#<key>' — config/mobileSurface.ts)
+  const permTabs = useMemo(() => TABS.filter(t => can(perms, t.module, t.action ?? 'view')), [perms])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/external/do-sap', permTabs, tab, setTab)
+  const tabBar = <TabBar tab={tab} setTab={setTab} tabs={tabs} />
   if (tab === 'reconcile') return <ReconcileTab tabBar={tabBar} />
   if (tab === 'khvc') return <KhvcTab tabBar={tabBar} />
   return <DoSapTab tabBar={tabBar} />

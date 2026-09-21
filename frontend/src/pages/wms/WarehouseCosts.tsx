@@ -26,6 +26,7 @@ import {
   useCopyPrevCosts, useLockCostPeriod, useUploadCosts, type CostItem, type CostVoucher,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -34,6 +35,11 @@ import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const DEFAULT_BACK = 14    // 15 kỳ tính cả tháng này
 const DEFAULT_AHEAD = 3    // khai trước kỳ tới
+// key = khoá cấu hình điện thoại ('/wms/warehouse-costs#<key>' — config/mobileSurface.ts) = giá trị `view` trong store
+const VIEW_TABS: readonly { key: 'voucher' | 'line'; label: string }[] = [
+  { key: 'voucher', label: 'Phiếu' },
+  { key: 'line',    label: 'Dòng chi phí' },
+]
 
 function apiErr(e: unknown): string {
   const m = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -61,6 +67,8 @@ export default function WarehouseCosts() {
     : monthSpan(from0, to) > MAX_SPAN_MONTHS ? periodAdd(to, -(MAX_SPAN_MONTHS - 1))
     : from0
   const isVoucherView = f.view !== 'line'
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const viewTabs = useMobileTabs('/wms/warehouse-costs', VIEW_TABS, isVoucherView ? 'voucher' : 'line', k => setF({ view: k, page: 1 }))
   /** Kỳ "đang đứng" cho các thao tác gắn với MỘT kỳ (chép tháng trước, upload, chốt kỳ, tạo phiếu). */
   const focusPeriod = from === to ? to : monthAdd(0)
 
@@ -217,7 +225,7 @@ export default function WarehouseCosts() {
             </span>
             {/* Đổi GÓC NHÌN (không phải bộ lọc dữ liệu) — cùng kiểu tab chủ đề của Dashboard */}
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-medium shrink-0">
-              {([['voucher', 'Phiếu'], ['line', 'Dòng chi phí']] as const).map(([k, label]) => (
+              {viewTabs.map(({ key: k, label }) => (
                 <button key={k} type="button" onClick={() => setF({ view: k, page: 1 })}
                   className={`px-2.5 py-1 border-l first:border-l-0 border-slate-200 ${
                     (k === 'voucher') === isVoucherView ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>

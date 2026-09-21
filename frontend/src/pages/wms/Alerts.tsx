@@ -330,7 +330,9 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
               <TableRow>
                 {COLS.map((c, i) => (
                   <TableHead key={c.id}
-                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    // Cột THAO TÁC ghim mép PHẢI: bảng rộng ~1.470 px nên nút "Đã biết" đứng ngoài màn (đo x≈1.500 ở 1280
+                    // và ngoài tầm với trên điện thoại) — người vào trang này là để bấm nút đó (rà 21/09)
+                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'act' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                     {c.id === 'sel' && canAck ? (
                       <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={allSel}
                         onChange={e => setSel(e.target.checked ? new Set(selectable.map(a => a.id)) : new Set())} />
@@ -390,7 +392,7 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={a.ack_by ?? ''}>
                       {a.ack_at ? `${a.ack_by ?? ''} · ${formatTimestampDate(a.ack_at, true)}` : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <TableCell className={`px-2 py-1 whitespace-nowrap sticky right-0 z-10 border-l border-slate-200 ${picked ? 'bg-sky-50' : 'bg-white'}`}>
                       {canAck && !a.resolved_at && (
                         <button type="button"
                           title={acked ? 'Bỏ đánh dấu đã biết (hiện lại trong danh sách mặc định)' : 'Đã biết — ẩn khỏi danh sách mặc định (điều kiện hết sẽ tự đóng)'}

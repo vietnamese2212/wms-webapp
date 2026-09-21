@@ -8,7 +8,7 @@ import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
-import { MobileSurfaceSettings, msfDraftOf, msfDirty, msfValueOf, type MobileSurfaceDraft } from '@/components/wms/MobileSurfaceSettings'
+import { MobileSurfaceSettings, msfDraftOf, msfDirty as isMsfDirty, msfValueOf, type MobileSurfaceDraft } from '@/components/wms/MobileSurfaceSettings'
 import { parseMobileSurface } from '@/config/mobileSurface'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { Switch } from '@/components/ui/switch'
@@ -366,10 +366,10 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const rateDirty  = draftRate !== srvRate
   // Bố cục điện thoại chỉ superadmin ghi (BE 403 SUPERADMIN_ONLY) — khối đó chỉ cho sửa khi superadmin nên dirty
   // chỉ có thể true với superadmin; vẫn đi chung một nút Lưu (user 21/09: hai nút Lưu trên một tab gây hiểu nhầm "đã lưu").
-  const msfChanged = msfDirty(draftMsf, srvMsf)
+  const msfDirty   = isMsfDirty(draftMsf, srvMsf)
   // Cờ nào có ô nhập thì PHẢI có mặt ở đây — thiếu là đổi riêng cờ đó nút Lưu vẫn mờ, người dùng
   // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao bị bỏ quên).
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty || msfChanged
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty || msfDirty
 
   async function applyChanges() {
     setErr('')
@@ -447,8 +447,8 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
       if (rateDirty)  await save({ key: 'receipt_rating', value: { mode: draftRate } })
-      if (msfChanged) await save({ key: 'mobile_surface', value: msfValueOf(draftMsf) })
-      toast({ title: msfChanged ? 'Đã lưu cấu hình hệ thống — bố cục điện thoại áp cho mọi người khi tải lại app' : 'Đã lưu cấu hình hệ thống' })
+      if (msfDirty)   await save({ key: 'mobile_surface', value: msfValueOf(draftMsf) })
+      toast({ title: msfDirty ? 'Đã lưu cấu hình hệ thống — bố cục điện thoại áp cho mọi người khi tải lại app' : 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
   const resetDraft = () => { syncDrafts(); setErr('') }

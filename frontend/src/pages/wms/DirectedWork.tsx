@@ -917,10 +917,12 @@ export default function DirectedWork() {
             <span className="font-mono font-semibold">{tripName(focusTrip)}</span>
             {focusTrip.customers && <span className="truncate max-w-[55%] sm:max-w-none"><b>{focusTrip.customers}</b></span>}
             <span className="tabular-nums">{nf(focusTrip.lines_done)}/{nf(focusTrip.lines_total)} dòng quét đủ</span>
-            <span className="hidden sm:inline text-slate-500 tabular-nums">còn {nf(focusTrip.tasks_pending)} việc</span>
-            {focusTrip.dock_name && <span className="hidden sm:inline text-slate-500">{focusTrip.dock_name}</span>}
-            <span className="hidden sm:inline text-slate-500 tabular-nums">{nf(focusTrip.n_do)} DO</span>
-            {focusTrip.started_at && <span className="hidden sm:inline text-slate-500">bắt đầu {formatTimestampTime(focusTrip.started_at)}</span>}
+            {/* Số liệu vận hành hiện ở MỌI cỡ màn (rà 21/09) — người cầm điện thoại là người đang làm chuyến này,
+                giấu "còn n việc / cửa / giờ bắt đầu" khỏi họ là giấu đúng thứ cần; hàng flex-wrap tự xuống dòng */}
+            <span className="text-slate-500 tabular-nums">còn {nf(focusTrip.tasks_pending)} việc</span>
+            {focusTrip.dock_name && <span className="text-slate-500">{focusTrip.dock_name}</span>}
+            <span className="text-slate-500 tabular-nums">{nf(focusTrip.n_do)} DO</span>
+            {focusTrip.started_at && <span className="text-slate-500">bắt đầu {formatTimestampTime(focusTrip.started_at)}</span>}
             {focusTrip.lines_unset > 0 && <span className="text-amber-700 tabular-nums">{nf(focusTrip.lines_unset)} dòng chưa khai date</span>}
           </div>
         )}

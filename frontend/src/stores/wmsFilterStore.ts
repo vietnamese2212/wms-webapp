@@ -666,7 +666,10 @@ export const useWmsFilterStore = create<WmsFilterState>()(
     }),
     {
       name: 'wms-filters-v10',
-      storage: createJSONStorage(() => sessionStorage),
+      // localStorage (đổi 21/09 từ sessionStorage): PWA trên điện thoại bị hệ điều hành đóng ngầm khi
+      // chuyển app là mất TRỌN sessionStorage — thủ kho mở lại app thì chuyến đang quét, kho đang chọn,
+      // ngày đang lọc về hết mặc định. Key vẫn gắn user.id qua scopedPersist nên không dính sang người khác.
+      storage: createJSONStorage(() => localStorage),
       // Deep-merge TỪNG slice qua default: dữ liệu persist shape CŨ (thiếu field mới, vd locationIds)
       // sẽ được lấp bằng default → tránh crash khi đọc field chưa có (màn trắng). Setter giữ từ current.
       merge: (persisted, current) => {

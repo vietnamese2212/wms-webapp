@@ -29,7 +29,9 @@ export function ScanOverlay({ title, icon, onClose, footer, children }: {
         {icon ?? <ScanIcon className="h-4 w-4 text-sky-400 shrink-0" />}
         <p className="text-sm font-semibold">{title}</p>
         <button type="button" onClick={onClose}
-          className="ml-auto h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/10">
+          aria-label="Đóng màn quét"
+          // 44 px vừa ngón tay (rà 21/09); -my-1.5 giữ thanh tiêu đề cao như cũ
+          className="ml-auto h-11 w-11 -my-1.5 inline-flex items-center justify-center rounded-md hover:bg-white/10">
           <X className="h-5 w-5" />
         </button>
       </div>

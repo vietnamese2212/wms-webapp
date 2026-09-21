@@ -1765,7 +1765,8 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
             <TableHeader>
               <TableRow>
                 {RC_COLS.map((c, i) => (
-                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  // Cột "Xử lý" ghim mép PHẢI: bảng ~1.460 px, ba nút Áp SAP / Giữ WMS đứng ngoài màn (rà 21/09)
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'action' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                     {c.label}
                     <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
                       className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
@@ -1801,7 +1802,7 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
                         : <div className="leading-tight"><span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-green-100 text-green-700">Đã xử lý</span>
                           {r.resolution && <div className="text-[9px] text-slate-400 mt-0.5">{r.resolution === 'apply' ? 'Áp SAP' : r.resolution === 'keep' ? 'Giữ WMS' : 'Tay'} · {r.resolved_by ?? ''}</div>}</div>}
                     </TableCell>
-                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap`}>
+                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-200`}>
                       {isOpen && canResolve ? (
                         <div className="flex items-center gap-1 flex-wrap">
                           {canApply && (

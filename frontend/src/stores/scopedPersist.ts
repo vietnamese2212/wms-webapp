@@ -29,7 +29,7 @@ function applyScope(uid: string | null) {
   if (uid === currentUid) return
   currentUid = uid
 
-  // Filters (sessionStorage, ephemeral): reset default → nạp filter riêng của user nếu có.
+  // Filters (localStorage từ 21/09 — PWA bị đóng ngầm không còn mất chuyến đang quét): reset default → nạp filter riêng của user nếu có.
   useWmsFilterStore.getState().reset()
   useWmsFilterStore.persist.setOptions({ name: keyFor(FILTER_BASE, uid) })
   const filtersReady = useWmsFilterStore.persist.rehydrate()

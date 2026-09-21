@@ -1,4 +1,5 @@
 import React from 'react'
+import { InfoTip } from './InfoTip'
 
 /**
  * SummaryBand — dải tile tổng hợp kiểu Manhattan SCALE Insight
@@ -38,7 +39,16 @@ export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; 
         <div key={i} title={t.tip ?? t.label}
           style={lastSpan && i === tiles.length - 1 ? { gridColumn: `span ${lastSpan}` } : undefined}
           className={`sm:flex-1 min-w-0 sm:min-w-[84px] flex flex-col justify-between text-center border-white/10 border-b border-r sm:!border-0 ${compact ? 'px-2 py-0.5 sm:px-3' : `px-2 ${tight ? 'py-0.5' : 'py-1'} sm:px-3 sm:py-1.5`}`}>
-          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight sm:truncate">{t.label}</div>
+          {/* Diễn giải = ⓘ bấm được (rà 21/09): `title=` chỉ hiện khi rê chuột, điện thoại không có chuột nên
+              "SL (quy đổi)" đứng đó không ai giải nghĩa được; InfoTip dưới sm mở tấm trượt đáy. Vẫn giữ title cho desktop. */}
+          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 min-w-0">
+            <span className="sm:truncate min-w-0">{t.label}</span>
+            {t.tip && (
+              <span className="shrink-0 [&_button]:text-sky-200/70 [&_button:hover]:text-white [&_svg]:h-3 [&_svg]:w-3" onClick={e => e.stopPropagation()}>
+                <InfoTip tip={t.tip} />
+              </span>
+            )}
+          </div>
           <div className={`font-semibold leading-tight tabular-nums whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}
           </div>

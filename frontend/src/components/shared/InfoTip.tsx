@@ -58,7 +58,9 @@ export function InfoTip({ tip, side = 'bottom', className }: {
           type="button"
           aria-label="Giải thích"
           onClick={e => { e.preventDefault(); e.stopPropagation(); setOpen(true) }}
-          className={`shrink-0 cursor-help text-slate-400 hover:text-sky-600 ${className ?? ''}`}
+          // Điểm chạm 44 px (rà 21/09): icon 16 px giữ chỗ 16 px trong bố cục (h-11 − m-3.5×2 = 16),
+          // nhưng vùng bấm phủ 44 px — ngón tay không phải nhắm vào một chấm.
+          className={`shrink-0 cursor-help text-slate-400 hover:text-sky-600 inline-flex items-center justify-center h-11 w-11 -m-3.5 ${className ?? ''}`}
         >
           <Info className="h-4 w-4" />
         </button>

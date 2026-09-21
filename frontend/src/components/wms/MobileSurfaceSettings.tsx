@@ -31,7 +31,7 @@ function Tick({ checked, indeterminate, disabled, onChange, title }: {
 }) {
   return (
     <input type="checkbox" checked={checked} disabled={disabled} title={title}
-      ref={el => { if (el) el.indeterminate = !!indeterminate && !checked }}
+      ref={el => { if (el) el.indeterminate = !!indeterminate }}
       onChange={e => onChange(e.target.checked)}
       className="h-4 w-4 shrink-0 rounded border-slate-300 accent-sky-600 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed" />
   )
@@ -53,9 +53,14 @@ export function MobileSurfaceSettings({ canEdit }: { canEdit: boolean }) {
   const dirty = !sameList([...hidden].sort(), [...srv.hidden].sort()) || !sameList(bottomShown, srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)
 
   const setKey = (k: string, show: boolean) => setHidden(prev => { const n = new Set(prev); if (show) n.delete(k); else n.add(k); return n })
-  const togglePage = (p: MobilePageDef, show: boolean) => {
-    setKey(p.to, show)
-    if (!show) setBottom(prev => prev.filter(x => x !== p.to))   // trang ẩn thì không còn trên thanh dưới
+  // Ô tick CHA ba trạng thái: tắt → bật trang (tab giữ nguyên) · tick dở (một phần tab tắt) → bật lại MỌI tab · đủ → tắt trang
+  const togglePage = (p: MobilePageDef) => {
+    const pageOn = !hidden.has(p.to)
+    const offTabs = p.tabs.filter(t => hidden.has(tabKey(p.to, t.key)))
+    if (!pageOn) { setKey(p.to, true); return }
+    if (offTabs.length) { setHidden(prev => { const n = new Set(prev); for (const t of offTabs) n.delete(tabKey(p.to, t.key)); return n }); return }
+    setKey(p.to, false)
+    setBottom(prev => prev.filter(x => x !== p.to))   // trang ẩn thì không còn trên thanh dưới
   }
   const toggleBottom = (to: string, on: boolean) => setBottom(prev => {
     const list = prev.filter(x => !hidden.has(x))
@@ -119,8 +124,9 @@ export function MobileSurfaceSettings({ canEdit }: { canEdit: boolean }) {
                       {/* Dòng CHA = trang */}
                       <div className="grid grid-cols-[1fr_auto] items-center gap-2">
                         <label className={`flex items-center gap-2 min-w-0 ${canEdit ? 'cursor-pointer' : ''}`}>
-                          <Tick checked={pageOn} indeterminate={pageOn && offTabs > 0 && offTabs < p.tabs.length} disabled={!canEdit}
-                            onChange={v => togglePage(p, v)} />
+                          <Tick checked={pageOn && offTabs === 0} indeterminate={pageOn && offTabs > 0} disabled={!canEdit}
+                            title={pageOn && offTabs > 0 ? `${offTabs} tab đang tắt — bấm để bật lại hết` : undefined}
+                            onChange={() => togglePage(p)} />
                           <Icon className={`h-3.5 w-3.5 shrink-0 ${pageOn ? 'text-slate-500' : 'text-slate-300'}`} />
                           <span className={`text-xs truncate ${pageOn ? 'text-slate-800 font-medium' : 'text-slate-400 line-through'}`}>{p.label}</span>
                         </label>

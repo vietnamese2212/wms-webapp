@@ -1,29 +1,39 @@
 // CẤU HÌNH BỀ MẶT ĐIỆN THOẠI — superadmin chọn TRANG / TAB nào hiện trên điện thoại và 6 ô thanh dưới
 // (user chốt 21/09/2026: "module nào — kể cả tab nhỏ — hiện trên điện thoại do superadmin config";
 // ẨN chứ không chặn route; toàn đơn vị). Registry: config/mobileSurface.ts · cờ: SystemSetting
-// `mobile_surface` (BE gác superadmin). Tự lưu riêng (không đi chung thanh Lưu của tab Hệ thống) vì
-// cờ này chỉ superadmin ghi — người có manage_system nhìn thấy nhưng không sửa được.
+// `mobile_surface` (BE gác superadmin).
 //
 // HÌNH THỨC = CÂY CHECKBOX CHA–CON (user chốt 21/09 vòng 2: "cho tôi dạng checkbox hết đi — dạng cha con
 // module-tab"; bản đầu dùng Switch + chip bị bác "xấu quá"): mỗi TRANG một dòng có ô tick (tick dở khi
 // một phần tab tắt), TAB là dòng con thụt vào cũng ô tick; cột phải "Thanh dưới" cũng là ô tick kèm số
 // thứ tự — tick theo thứ tự nào thì ô đứng theo thứ tự đó, ↑↓ để đổi chỗ.
-import { useEffect, useMemo, useState } from 'react'
+//
+// LƯU ĐI CHUNG THANH "LƯU THAY ĐỔI" CỦA TAB HỆ THỐNG (user hỏi 21/09 vòng 3: "cái này có cần lưu không?"):
+// bản đầu khối này có nút Lưu RIÊNG nằm cuối khối, bị thanh Lưu dính đáy của tab che mất, trong khi thanh
+// đó vẫn in "Đã lưu" — hai nút Lưu trên một màn thì người dùng tin cái đang nhìn thấy. Nay component là
+// CONTROLLED: nháp + dirty + lưu do SystemTab (WMSSettings.tsx) cầm, cùng một nút với mọi cờ khác.
+import { useMemo } from 'react'
 import { ArrowDown, ArrowUp, Smartphone } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { SettingsGroup } from '@/components/shared/SettingRow'
-import { useSystemSettings, useUpdateSystemSetting } from '@/api/hooks'
-import { toast } from '@/components/ui/use-toast'
 import {
   MOBILE_PAGES, BOTTOM_NAV_DEFAULT, BOTTOM_NAV_MAX, BOTTOM_NAV_SHORT_LABEL,
-  parseMobileSurface, tabKey, type MobilePageDef, type MobileSurface,
+  tabKey, type MobilePageDef, type MobileSurface,
 } from '@/config/mobileSurface'
 
-const apiMsg = (e: unknown) => {
-  const err = e as { response?: { data?: { error?: { message?: string } } }; message?: string }
-  return err?.response?.data?.error?.message ?? err?.message ?? 'Lỗi không xác định'
-}
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+
+/** Nháp trên màn — `hidden` = khoá trang/tab đang tắt, `bottom` = thứ tự ô thanh dưới (có thể chứa trang đã tắt, lọc khi dùng). */
+export interface MobileSurfaceDraft { hidden: string[]; bottom: string[] }
+
+export const msfDraftOf = (srv: MobileSurface): MobileSurfaceDraft => ({ hidden: [...srv.hidden], bottom: [...(srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)] })
+const shownBottom = (d: MobileSurfaceDraft) => d.bottom.filter(to => !d.hidden.includes(to)).slice(0, BOTTOM_NAV_MAX)
+export const msfDirty = (d: MobileSurfaceDraft, srv: MobileSurface) =>
+  !sameList([...d.hidden].sort(), [...srv.hidden].sort()) || !sameList(shownBottom(d), srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)
+/** Giá trị gửi lên cờ — thanh dưới trùng mặc định thì ghi null để đơn vị khác đổi mặc định vẫn hưởng. */
+export const msfValueOf = (d: MobileSurfaceDraft): MobileSurface => {
+  const bottom_nav = shownBottom(d)
+  return { hidden: [...d.hidden], bottom_nav: sameList(bottom_nav, BOTTOM_NAV_DEFAULT) ? null : bottom_nav }
+}
 
 /** Ô tick chuẩn của cây (native checkbox — có indeterminate, bàn phím, 16 px vừa tay). */
 function Tick({ checked, indeterminate, disabled, onChange, title }: {
@@ -37,30 +47,25 @@ function Tick({ checked, indeterminate, disabled, onChange, title }: {
   )
 }
 
-export function MobileSurfaceSettings({ canEdit }: { canEdit: boolean }) {
-  const { data: settings = [] } = useSystemSettings()
-  const { mutateAsync: save, isPending } = useUpdateSystemSetting()
-  const row = settings.find(s => s.key === 'mobile_surface')
-  const srv = useMemo(() => parseMobileSurface(row?.value), [row?.value])
+export function MobileSurfaceSettings({ canEdit, value, onChange }: {
+  canEdit: boolean
+  value: MobileSurfaceDraft
+  onChange: (next: MobileSurfaceDraft) => void
+}) {
+  const hidden = useMemo(() => new Set(value.hidden), [value.hidden])
+  const bottomShown = shownBottom(value)
 
-  const [hidden, setHidden] = useState<Set<string>>(new Set(srv.hidden))
-  const [bottom, setBottom] = useState<string[]>(srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)
-  const [err, setErr] = useState('')
-  const srvKey = JSON.stringify(srv)
-  useEffect(() => { setHidden(new Set(srv.hidden)); setBottom(srv.bottom_nav ?? BOTTOM_NAV_DEFAULT) }, [srvKey]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const bottomShown = bottom.filter(to => !hidden.has(to))
-  const dirty = !sameList([...hidden].sort(), [...srv.hidden].sort()) || !sameList(bottomShown, srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)
-
-  const setKey = (k: string, show: boolean) => setHidden(prev => { const n = new Set(prev); if (show) n.delete(k); else n.add(k); return n })
+  const setHidden = (f: (prev: Set<string>) => Set<string>) => onChange({ ...value, hidden: [...f(new Set(value.hidden))] })
+  const setBottom = (f: (prev: string[]) => string[]) => onChange({ ...value, bottom: f(value.bottom) })
+  const setKey = (k: string, show: boolean) => setHidden(prev => { if (show) prev.delete(k); else prev.add(k); return prev })
   // Ô tick CHA ba trạng thái: tắt → bật trang (tab giữ nguyên) · tick dở (một phần tab tắt) → bật lại MỌI tab · đủ → tắt trang
   const togglePage = (p: MobilePageDef) => {
     const pageOn = !hidden.has(p.to)
     const offTabs = p.tabs.filter(t => hidden.has(tabKey(p.to, t.key)))
     if (!pageOn) { setKey(p.to, true); return }
-    if (offTabs.length) { setHidden(prev => { const n = new Set(prev); for (const t of offTabs) n.delete(tabKey(p.to, t.key)); return n }); return }
-    setKey(p.to, false)
-    setBottom(prev => prev.filter(x => x !== p.to))   // trang ẩn thì không còn trên thanh dưới
+    if (offTabs.length) { setHidden(prev => { for (const t of offTabs) prev.delete(tabKey(p.to, t.key)); return prev }); return }
+    // tắt trang = rời luôn thanh dưới, một lần onChange cho cả hai
+    onChange({ hidden: [...value.hidden, p.to], bottom: value.bottom.filter(x => x !== p.to) })
   }
   const toggleBottom = (to: string, on: boolean) => setBottom(prev => {
     const list = prev.filter(x => !hidden.has(x))
@@ -73,15 +78,6 @@ export function MobileSurfaceSettings({ canEdit }: { canEdit: boolean }) {
     const n = [...list]; [n[i], n[j]] = [n[j], n[i]]; return n
   })
 
-  const apply = async () => {
-    setErr('')
-    const bottom_nav = bottomShown.slice(0, BOTTOM_NAV_MAX)
-    const value: MobileSurface = { hidden: [...hidden], bottom_nav: sameList(bottom_nav, BOTTOM_NAV_DEFAULT) ? null : bottom_nav }
-    try { await save({ key: 'mobile_surface', value }); toast({ title: 'Đã lưu bố cục điện thoại — áp cho mọi người khi tải lại app' }) }
-    catch (e) { setErr(apiMsg(e)) }
-  }
-  const reset = () => { setHidden(new Set(srv.hidden)); setBottom(srv.bottom_nav ?? BOTTOM_NAV_DEFAULT); setErr('') }
-
   const hiddenPages = MOBILE_PAGES.filter(p => hidden.has(p.to)).length
   const hiddenTabs = MOBILE_PAGES.reduce((n, p) => n + (hidden.has(p.to) ? 0 : p.tabs.filter(t => hidden.has(tabKey(p.to, t.key))).length), 0)
   const groups = useMemo(() => {
@@ -93,23 +89,23 @@ export function MobileSurfaceSettings({ canEdit }: { canEdit: boolean }) {
   return (
     <SettingsGroup
       title={<span className="flex items-center gap-1.5"><Smartphone className="h-3.5 w-3.5" /> Điện thoại — trang & tab hiển thị</span>}
-      tip={<>Chỉ áp cho màn nhỏ hơn 1024 px (điện thoại / PDA). Bỏ tick một trang thì nó <b>biến mất khỏi menu ☰ và thanh dưới</b>; bỏ tick một tab thì tab đó biến mất khỏi dải tab của trang — nhưng <b>không chặn</b>: người có quyền vẫn mở được qua link từ thông báo hay "Về Việc cần làm". Muốn cấm hẳn thì dùng phân quyền. Cấu hình áp cho <b>cả đơn vị</b>, chỉ superadmin sửa.</>}
+      tip={<>Chỉ áp cho màn nhỏ hơn 1024 px (điện thoại / PDA). Bỏ tick một trang thì nó <b>biến mất khỏi menu ☰ và thanh dưới</b>; bỏ tick một tab thì tab đó biến mất khỏi dải tab của trang — nhưng <b>không chặn</b>: người có quyền vẫn mở được qua link từ thông báo hay "Về Việc cần làm". Muốn cấm hẳn thì dùng phân quyền. Cấu hình áp cho <b>cả đơn vị</b>, chỉ superadmin sửa. Thay đổi ở đây lưu bằng nút <b>Lưu thay đổi</b> ở đáy tab, cùng với các cờ khác.</>}
       className="sm:col-span-2 xl:col-span-3">
-      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 my-2">{err}</p>}
-
       <div className="py-2">
         <p className="text-[11px] text-slate-500 leading-snug">
-          Cột <b>Hiện</b>: trang / tab có bày ra trên điện thoại không (tick dở = một phần tab đang tắt). Cột <b>Thanh dưới</b>: tối đa {BOTTOM_NAV_MAX} ô,
-          số = thứ tự từ trái sang phải, tick theo thứ tự nào thì ô xếp theo thứ tự đó (↑↓ để đổi chỗ). Mỗi người chỉ thấy thứ mình có quyền.
+          Ô tick <b>bên trái</b> mỗi dòng = trang / tab có bày ra trên điện thoại không (tick dở = một phần tab đang tắt).
+          Cột <b>Thanh dưới</b> bên phải = trang có đứng trên thanh điều hướng đáy màn không: tối đa {BOTTOM_NAV_MAX} ô, số là thứ tự
+          từ trái sang phải, tick theo thứ tự nào thì ô xếp theo thứ tự đó (↑↓ để đổi chỗ). Mỗi người chỉ thấy thứ mình có quyền.
           {(hiddenPages || hiddenTabs) ? <> · Đang tắt <b>{hiddenPages}</b> trang, <b>{hiddenTabs}</b> tab.</> : null}
+          {' '}· Thanh dưới: <b>{bottomShown.length}/{BOTTOM_NAV_MAX}</b> ô.
         </p>
 
         <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {groups.map(([group, pages]) => (
             <div key={group} className="rounded-md border border-slate-200 overflow-hidden bg-white">
-              <div className="grid grid-cols-[1fr_auto] items-center px-2 py-1 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                <span>{group}</span>
-                <span className="text-right">Hiện · Thanh dưới</span>
+              <div className="grid grid-cols-[1fr_92px] items-center px-2 py-1 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className="truncate">Hiện · {group}</span>
+                <span className="text-right" title={`Tối đa ${BOTTOM_NAV_MAX} ô; số = thứ tự trái → phải`}>Thanh dưới</span>
               </div>
               <div className="divide-y divide-slate-100">
                 {pages.map(p => {
@@ -165,15 +161,7 @@ export function MobileSurfaceSettings({ canEdit }: { canEdit: boolean }) {
           ))}
         </div>
       </div>
-
-      {canEdit && (
-        <div className="py-2 flex items-center justify-end gap-2">
-          {dirty && <span className="text-[11px] text-amber-600 mr-auto">Có thay đổi chưa lưu · thanh dưới: {bottomShown.length}/{BOTTOM_NAV_MAX} ô</span>}
-          <Button size="sm" variant="outline" className="h-8" disabled={!dirty || isPending} onClick={reset}>Hoàn lại</Button>
-          <Button size="sm" className="h-8" disabled={!dirty || isPending} onClick={apply}>{isPending ? 'Đang lưu…' : 'Lưu bố cục điện thoại'}</Button>
-        </div>
-      )}
-      {!canEdit && <p className="py-2 text-[11px] text-slate-400">Chỉ superadmin sửa được phần này.</p>}
+      {!canEdit && <p className="pb-2 text-[11px] text-slate-400">Chỉ superadmin sửa được phần này.</p>}
     </SettingsGroup>
   )
 }

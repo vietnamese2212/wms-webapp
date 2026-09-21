@@ -8,7 +8,8 @@ import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
-import { MobileSurfaceSettings } from '@/components/wms/MobileSurfaceSettings'
+import { MobileSurfaceSettings, msfDraftOf, msfDirty, msfValueOf, type MobileSurfaceDraft } from '@/components/wms/MobileSurfaceSettings'
+import { parseMobileSurface } from '@/config/mobileSurface'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -293,6 +294,8 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const holRow   = settings.find(s => s.key === 'vn_holidays')
   const stdRow   = settings.find(s => s.key === 'standard_work_hours')
   const rateRow  = settings.find(s => s.key === 'receipt_rating')
+  const msfRow   = settings.find(s => s.key === 'mobile_surface')
+  const srvMsf   = parseMobileSurface(msfRow?.value)
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -333,13 +336,15 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
   const [draftStd, setDraftStd] = useState(String(srvStd))
   const [draftRate, setDraftRate] = useState<string>(srvRate)
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvMon, srvRate])
+  const [draftMsf, setDraftMsf] = useState<MobileSurfaceDraft>(msfDraftOf(srvMsf))
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvMon, srvRate, srvMsf])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
     setDraftStd(String(srvStd)); setDraftDash(String(srvDash)); setDraftMon(String(srvMon)); setDraftRate(srvRate)
+    setDraftMsf(msfDraftOf(srvMsf))
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -359,9 +364,12 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
   const stdDirty   = draftStd !== String(srvStd)
   const rateDirty  = draftRate !== srvRate
+  // Bố cục điện thoại chỉ superadmin ghi (BE 403 SUPERADMIN_ONLY) — khối đó chỉ cho sửa khi superadmin nên dirty
+  // chỉ có thể true với superadmin; vẫn đi chung một nút Lưu (user 21/09: hai nút Lưu trên một tab gây hiểu nhầm "đã lưu").
+  const msfChanged = msfDirty(draftMsf, srvMsf)
   // Cờ nào có ô nhập thì PHẢI có mặt ở đây — thiếu là đổi riêng cờ đó nút Lưu vẫn mờ, người dùng
   // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao bị bỏ quên).
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty || msfChanged
 
   async function applyChanges() {
     setErr('')
@@ -439,7 +447,8 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
       if (rateDirty)  await save({ key: 'receipt_rating', value: { mode: draftRate } })
-      toast({ title: 'Đã lưu cấu hình hệ thống' })
+      if (msfChanged) await save({ key: 'mobile_surface', value: msfValueOf(draftMsf) })
+      toast({ title: msfChanged ? 'Đã lưu cấu hình hệ thống — bố cục điện thoại áp cho mọi người khi tải lại app' : 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
   const resetDraft = () => { syncDrafts(); setErr('') }
@@ -595,8 +604,8 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
             </div>
           </SettingGroup>
 
-          {/* Bố cục điện thoại (21/09) — cờ riêng, chỉ superadmin ghi; tự lưu, không đi chung thanh Lưu bên dưới */}
-          <MobileSurfaceSettings canEdit={superadmin} />
+          {/* Bố cục điện thoại (21/09) — cờ riêng, chỉ superadmin ghi; nháp đi CHUNG thanh Lưu bên dưới */}
+          <MobileSurfaceSettings canEdit={superadmin} value={draftMsf} onChange={setDraftMsf} />
         </div>
       </div>
 

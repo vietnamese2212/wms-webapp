@@ -26,13 +26,15 @@ const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.
 export interface MobileSurfaceDraft { hidden: string[]; bottom: string[] }
 
 export const msfDraftOf = (srv: MobileSurface): MobileSurfaceDraft => ({ hidden: [...srv.hidden], bottom: [...(srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)] })
-const shownBottom = (d: MobileSurfaceDraft) => d.bottom.filter(to => !d.hidden.includes(to)).slice(0, BOTTOM_NAV_MAX)
+// KHÔNG cắt `slice(0, MAX)` ở đây: BOTTOM_NAV_DEFAULT cố ý dài hơn MAX (ô dự phòng khi người dùng thiếu quyền một
+// ô) — cắt trước khi so với mặc định là "dirty" ngay lúc mở trang (đo Preview 21/09: thanh đáy báo chưa lưu khi chưa đụng gì).
+const shownBottom = (d: MobileSurfaceDraft) => d.bottom.filter(to => !d.hidden.includes(to))
 export const msfDirty = (d: MobileSurfaceDraft, srv: MobileSurface) =>
   !sameList([...d.hidden].sort(), [...srv.hidden].sort()) || !sameList(shownBottom(d), srv.bottom_nav ?? BOTTOM_NAV_DEFAULT)
 /** Giá trị gửi lên cờ — thanh dưới trùng mặc định thì ghi null để đơn vị khác đổi mặc định vẫn hưởng. */
 export const msfValueOf = (d: MobileSurfaceDraft): MobileSurface => {
-  const bottom_nav = shownBottom(d)
-  return { hidden: [...d.hidden], bottom_nav: sameList(bottom_nav, BOTTOM_NAV_DEFAULT) ? null : bottom_nav }
+  const shown = shownBottom(d)
+  return { hidden: [...d.hidden], bottom_nav: sameList(shown, BOTTOM_NAV_DEFAULT) ? null : shown.slice(0, BOTTOM_NAV_MAX) }
 }
 
 /** Ô tick chuẩn của cây (native checkbox — có indeterminate, bàn phím, 16 px vừa tay). */

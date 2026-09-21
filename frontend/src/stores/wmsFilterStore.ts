@@ -114,6 +114,8 @@ interface LocationsFilters {
   noOutMode: FlagMode       // slot_no_out — không lấy hàng đi (hàng kẹt)
   page: number
   pageSize: number
+  // Tab trang Vị trí kho (21/09, user: "Sơ đồ kho là một tab của Vị trí thì hợp lý hơn"): 'list' danh mục · 'map' bản vẽ
+  tab: 'list' | 'map'
 }
 export type StocktakeView = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 interface StocktakeFilters {
@@ -590,7 +592,7 @@ function initialFilters() {
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
     moveLog:          { warehouseId: '', category: '', dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 100 },
-    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, noInMode: '' as FlagMode, noOutMode: '' as FlagMode, page: 1, pageSize: 200 },
+    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, noInMode: '' as FlagMode, noOutMode: '' as FlagMode, page: 1, pageSize: 200, tab: 'list' as const },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',

@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, Map as MapIcon, ListChecks, CalendarClock, Store,
+  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, ListChecks, CalendarClock, Store,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -87,14 +87,9 @@ export const NAV_GROUPS: NavGroup[] = [
           { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Kiểm kê',           module: 'stocktake' },
         ],
       },
-      {
-        label: 'Bố trí kho', icon: MapIcon,
-        items: [
-          // Bản vẽ 2D của kho (08/09) — không dùng chữ "Layout": Phân công đã có tab Layout = mẫu phân công nhân sự
-          { to: '/wms/warehouse-map', icon: MapIcon, label: 'Sơ đồ kho',     module: 'warehouse_map' },
-          { to: '/wms/slotting',      icon: Boxes,   label: 'Tối ưu vị trí', module: 'slotting' },
-        ],
-      },
+      // Sơ đồ kho (bản vẽ 2D, 08/09) từ 21/09 là TAB của trang Vị trí kho (menu Cấu hình) — user: "bản vẽ là của
+      // chính các vị trí". Nhóm "Bố trí kho" còn một mục nên trả về phẳng (không gom nhóm cho một mục).
+      { to: '/wms/slotting',   icon: Boxes,    label: 'Tối ưu vị trí',    module: 'slotting' },
       { to: '/wms/forklift',   icon: Forklift, label: 'Xe nâng',          module: 'forklift' },
       { to: '/wms/multi-scan', icon: ScanIcon, label: 'Quét loạt (test)', adminOnly: true },
     ],

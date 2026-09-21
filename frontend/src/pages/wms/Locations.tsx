@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import * as XLSX from 'xlsx'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
+// Sơ đồ kho là chunk riêng (kéo theo Three.js cho góc nhìn 3D) — chỉ tải khi mở tab
+const WarehouseMap = lazy(() => import('./WarehouseMap'))
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers, Map as MapIcon, List } from 'lucide-react'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { toast } from '@/components/ui/use-toast'
 import { formatDateTime } from '@/utils/formatters'
@@ -151,6 +155,27 @@ export default function Locations() {
   const locFilter = useWmsFilterStore(s => s.locations)
   const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode, noOutMode } = locFilter
   const setLocations = useWmsFilterStore(s => s.setLocations)
+
+  // ── TAB: Danh mục vị trí · Sơ đồ kho (21/09, user: "Sơ đồ kho là một tab của tính năng Vị trí thì hợp lý hơn") ──
+  // Sơ đồ giữ module quyền riêng `warehouse_map` (có action edit); không có quyền thì tab không hiện.
+  // `?tab=map` (route cũ /wms/warehouse-map chuyển hướng tới) áp theo `location.key` — MỘT lần mỗi lượt điều hướng,
+  // không áp theo giá trị tham số kẻo bấm tab khác bị kéo ngược (lớp C29).
+  const canMap = can(perms, 'warehouse_map', 'view')
+  const permTabs = useMemo(() => [
+    { key: 'list' as const, label: 'Danh mục vị trí' },
+    ...(canMap ? [{ key: 'map' as const, label: 'Sơ đồ kho' }] : []),
+  ], [canMap])
+  const tab: 'list' | 'map' = locFilter.tab === 'map' && canMap ? 'map' : 'list'
+  const tabs = useMobileTabs('/wms/locations', permTabs, tab, k => setLocations({ tab: k === 'map' ? 'map' : 'list' }))
+  const routerLoc = useLocation()
+  const appliedKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (appliedKey.current === routerLoc.key) return
+    appliedKey.current = routerLoc.key
+    const t = new URLSearchParams(routerLoc.search).get('tab')
+    if (t === 'map' || t === 'list') setLocations({ tab: t })
+  }, [routerLoc.key, routerLoc.search, setLocations])
+
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
   const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
   const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode, noOutMode }
@@ -513,11 +538,30 @@ export default function Locations() {
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Dải tab (chỉ hiện khi có ≥2 tab — người không có quyền Sơ đồ kho thấy trang y như cũ) */}
+      {tabs.length > 1 && (
+        <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl overflow-x-auto">
+          <MapPin className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
+          {tabs.map(({ key: k, label }) => (
+            <button key={k} type="button" onClick={() => setLocations({ tab: k === 'map' ? 'map' : 'list' })}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors whitespace-nowrap inline-flex items-center gap-1 ${
+                tab === k ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+              {k === 'map' ? <MapIcon className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}{label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'map' ? (
+        <Suspense fallback={<div className="flex-1 grid place-items-center text-xs text-slate-400">Đang tải sơ đồ…</div>}>
+          <WarehouseMap embedded />
+        </Suspense>
+      ) : (<>
       {/* Toolbar */}
-      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
+      <div className={`border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 ${tabs.length > 1 ? '' : 'sm:rounded-t-xl'}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
-            <MapPin className="h-4 w-4 text-slate-500" /> Vị trí kho
+            {tabs.length > 1 ? null : <MapPin className="h-4 w-4 text-slate-500" />} Vị trí kho
           </span>
           <SearchInput value={search} onChange={v => setLocationsFilter({ search: v })} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
@@ -773,6 +817,7 @@ export default function Locations() {
         onPageSize={n => setLocations({ pageSize: n, page: 1 })}>
         {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {allFiltered ? totalRows : selected.size} đang chọn</span>}
       </ListFooter>
+      </>)}
      </div>
 
       {/* ── Thanh thao tác hàng loạt (hiện khi có dòng được chọn) ───────────── */}

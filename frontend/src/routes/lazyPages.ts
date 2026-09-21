@@ -41,7 +41,6 @@ const alertsPage         = () => import('@/pages/wms/Alerts')
 const stocktakeCycle     = () => import('@/pages/wms/StocktakeCycle')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
-const warehouseMap       = () => import('@/pages/wms/WarehouseMap')
 const directedWork       = () => import('@/pages/wms/DirectedWork')
 const dateRules          = () => import('@/pages/wms/DateRules')
 const warehouseCosts     = () => import('@/pages/wms/WarehouseCosts')
@@ -94,7 +93,6 @@ export const Pages = {
   StocktakeCycle: lazyRetry(stocktakeCycle),
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
-  WarehouseMap: lazyRetry(warehouseMap),
   DirectedWork: lazyRetry(directedWork),
   DateRules: lazyRetry(dateRules),
   WarehouseCosts: lazyRetry(warehouseCosts),
@@ -149,7 +147,6 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/stocktake': stocktake,
   '/wms/move-location': moveLocation,
   '/wms/slotting': slotting,
-  '/wms/warehouse-map': warehouseMap,
   '/wms/fill': fillPicking,
   '/wms/forklift': forklift,
   '/wms/stocktake/summary': stocktakeDashboard,

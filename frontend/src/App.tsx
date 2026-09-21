@@ -12,7 +12,7 @@ import Login from '@/pages/Login'
 const {
   Dashboard, Inventory, Inbound, InboundDetail,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
-  Slotting, SlottingPlanDetail, WarehouseMap, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
+  Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
   Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, MoveLocation, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
@@ -132,7 +132,8 @@ export default function App() {
 
         {/* WMS — slotting (tối ưu vị trí) */}
         <Route path="/wms/slotting"           element={<PermissionRoute module="slotting"><Slotting /></PermissionRoute>} />
-        <Route path="/wms/warehouse-map"      element={<PermissionRoute module="warehouse_map"><WarehouseMap /></PermissionRoute>} />
+        {/* Sơ đồ kho là TAB của Vị trí kho từ 21/09 — giữ route cũ làm chuyển hướng cho link đã phát (thông báo, hướng dẫn) */}
+        <Route path="/wms/warehouse-map"      element={<PermissionRoute module="warehouse_map"><Navigate to="/wms/locations?tab=map" replace /></PermissionRoute>} />
         {/* Chốt %Date — màn nv SAP soi CẢ NGÀY rồi input hàng loạt (user chốt 10/09) */}
         <Route path="/wms/outbound/date-rules" element={<PermissionRoute module="outbound" action="set_date"><DateRules /></PermissionRoute>} />
         <Route path="/wms/directed"           element={<PermissionRoute module="directed_work"><DirectedWork /></PermissionRoute>} />

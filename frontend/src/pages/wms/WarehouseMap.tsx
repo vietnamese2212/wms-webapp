@@ -132,7 +132,10 @@ function useIsLg() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-export default function WarehouseMap() {
+// `embedded` (21/09): Sơ đồ kho là TAB "Sơ đồ" của trang Vị trí kho — trang cha đã có khung card + dải tab
+// nên bản nhúng bỏ đệm/card/tiêu đề riêng, chỉ giữ toolbar + band + canvas. Route cũ /wms/warehouse-map
+// chuyển hướng về /wms/locations?tab=map (link trong thông báo/hướng dẫn cũ vẫn mở đúng chỗ).
+export default function WarehouseMap({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate()
   const isLg = useIsLg()
   const user = useAuthStore(s => s.user)
@@ -694,14 +697,16 @@ export default function WarehouseMap() {
   const noFrame = !!data && !data.map
 
   return (
-    <div className="flex flex-col h-full sm:p-3">
-      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+    <div className={embedded ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col h-full sm:p-3'}>
+      <div className={embedded ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm'}>
         {/* Toolbar */}
-        <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
+        <div className={`border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 ${embedded ? '' : 'sm:rounded-t-xl'}`}>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
-              <MapIcon className="h-4 w-4 text-sky-600" /> Sơ đồ kho
-            </h1>
+            {!embedded && (
+              <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
+                <MapIcon className="h-4 w-4 text-sky-600" /> Sơ đồ kho
+              </h1>
+            )}
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tem pallet / mã hàng → nháy ô…" className="flex-1 min-w-[160px]" />
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
               <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>

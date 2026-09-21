@@ -51,6 +51,7 @@ export const PAGE_TABS: Record<string, MobileTabDef[]> = {
   '/hr/attendance': [{ key: 'me', label: 'Của tôi' }, { key: 'leave', label: 'Nghỉ phép' }, { key: 'team', label: 'Bảng công' }],
   '/hr/assignments': [{ key: 'daily', label: 'Phân công' }, { key: 'layout', label: 'Layout' }, { key: 'rules', label: 'Quy tắc ca' }],
   '/masterdata/customers': [{ key: 'list', label: 'Khách hàng' }, { key: 'channels', label: 'Kênh' }],
+  '/wms/locations': [{ key: 'list', label: 'Danh mục vị trí' }, { key: 'map', label: 'Sơ đồ kho' }],
   '/masterdata/users': [{ key: 'employees', label: 'Nhân viên' }, { key: 'departments', label: 'Phòng ban' }, { key: 'job-titles', label: 'Chức danh' }, { key: 'audit', label: 'Nhật ký' }],
   '/wms/settings': [
     { key: 'warehouses', label: 'Kho' }, { key: 'types', label: 'Loại kho' }, { key: 'units', label: 'Đơn vị tính' }, { key: 'zones', label: 'Khu vực' },
@@ -74,7 +75,7 @@ export const BOTTOM_NAV_SHORT_LABEL: Record<string, string> = {
   '/tms/bookings': 'Kế hoạch', '/tms/gate': 'Đăng ký', '/': 'Dashboard',
   '/wms/move-location': 'Chuyển VT', '/wms/stocktake': 'Kiểm kê', '/wms/fill': 'Fill', '/wms/packing': 'Sổ ĐG',
   '/wms/inventory': 'Tồn kho', '/wms/alerts': 'Thông báo', '/hr/attendance': 'Chấm công', '/wms/forklift': 'Xe nâng',
-  '/wms/pallet-ops': 'Dồn/Tách', '/wms/pallet-labels': 'In tem', '/wms/weigh-tickets': 'Cân xe', '/wms/warehouse-map': 'Sơ đồ',
+  '/wms/pallet-ops': 'Dồn/Tách', '/wms/pallet-labels': 'In tem', '/wms/weigh-tickets': 'Cân xe', '/wms/locations': 'Vị trí',
   '/wms/outbound/date-rules': 'Quy định date', '/wms/outbound/scan-log': 'LS quét', '/wms/control-tower': 'Giám sát',
 }
 /** Thứ tự mặc định thanh dưới (giữ nguyên bản 12/09) — dùng khi cờ `bottom_nav` = null. */

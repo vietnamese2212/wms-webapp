@@ -60,6 +60,8 @@ export async function uploadZsd02(req: Request, res: Response) {
       `Ngoài phạm vi kho — file ZSD02 chứa dòng của: ${scope.outside.join(', ')}. Chỉ upload file của kho được giao.`, 403)
 
     const st = out.stats
+    // đếm THẲNG dòng chưa OD — `so_rows − od_rows` lệch khi một SO item tách nhiều OD (4 dòng trong file mẫu)
+    const soWithoutOd = out.so.filter(r => !r.od_number).length
     const unitErrors = [...out.unitErrs.values()].map(u => `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`)
     const warnings = [...out.warnings]
     if (st.unknown_dvvt.length) warnings.push(`ĐVVT không khớp danh mục (khai vào Cài đặt TMS → ĐVVT hoặc thêm mã tương ứng ở ô "Mã khác"): ${st.unknown_dvvt.join(' · ')}`)
@@ -91,7 +93,7 @@ export async function uploadZsd02(req: Request, res: Response) {
       const extra: PreflightExtra[] = [
         { label: 'Dòng CÓ OD → sổ OD', value: st.od_rows },
         { label: 'Số OD trong file', value: st.od_numbers },
-        { label: 'Dòng CHƯA OD → chỉ sổ SO', value: st.so_rows - st.od_rows },
+        { label: 'Dòng CHƯA OD → chỉ sổ SO', value: soWithoutOd },
         { label: 'Số SO trong file', value: st.so_numbers },
         ...(st.cancelled ? [{ label: 'Dòng SAP đã huỷ', value: st.cancelled }] : []),
         ...(st.not_loadable ? [{ label: 'Dòng KHÔNG lên xe (trả về · chiết khấu · chưa phân loại)', value: st.not_loadable, warn: true }] : []),
@@ -202,7 +204,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     return ok(res, {
       rows: st.rows, skipped_no_key: st.skipped,
       od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length },
-      so: { rows: st.so_rows, orders: st.so_numbers, without_od: st.so_rows - st.od_rows, inserted: soInserted, updated: soUpdated, noop: soNoop, obsoleted: soObsoleted, unresolved: st.so_unresolved, cancelled: st.cancelled },
+      so: { rows: st.so_rows, orders: st.so_numbers, without_od: soWithoutOd, inserted: soInserted, updated: soUpdated, noop: soNoop, obsoleted: soObsoleted, unresolved: st.so_unresolved, cancelled: st.cancelled },
       flows: st.flows, not_loadable: st.not_loadable,
       routes: routesWritten, customers,
       sap_unmapped: scope.unmapped,

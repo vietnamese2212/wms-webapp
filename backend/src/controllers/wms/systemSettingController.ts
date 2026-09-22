@@ -11,6 +11,7 @@ import {
   parseMonitorCacheSeconds,
   parseStandardWorkHours,
   parsePctDateBands,
+  parseSapDoSource,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -159,6 +160,9 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
     validate: v => parseDashboardCacheSeconds(v) !== null,
     hint: 'số giây 0–3600 (0 = tắt cache, tính sống mỗi lần mở trang chủ)',
   },
+  // Nguồn nạp dòng DO SAP (22/09): BOTH = nhận cả VL06O lẫn ZSD02 (mặc định, giai đoạn đối chiếu) ·
+  // ZSD02 = nguồn duy nhất, cửa VL06O 409 · VL06O = đường lui. Hai nguồn ghi cùng sổ theo khoá (od, item).
+  sap_do_source: { validate: v => parseSapDoSource(v) !== null, hint: "'BOTH' | 'ZSD02' | 'VL06O'" },
   monitor_cache_seconds: {
     validate: v => parseMonitorCacheSeconds(v) !== null,
     hint: 'số giây 0–3600 cho Giám sát vận hành + Slotting (0 = tắt cache, tính sống mỗi lần)',

@@ -59,6 +59,8 @@ export async function login() {
 // Vé realtime (JWT Supabase role=authenticated) có được cấp không — từ 02/09 realtime đi kênh Broadcast
 // RIÊNG TƯ nên thiếu vé (SUPABASE_JWT_SECRET chưa cấu hình) = realtime chết CÂM, không rơi về anon nữa.
 export function realtimeTokenIssued() { return !!realtimeToken }
+// Token đăng nhập hiện tại — cho gói cần gửi multipart (upload file) bằng fetch thô thay `api()` (JSON).
+export const authToken = () => token
 // Vé thô — CHỈ cho gói 40-exposure-live (đóng vai "người trong công ty cầm vé gọi thẳng Supabase").
 export function realtimeTokenValue() { return realtimeToken }
 // Anon key + URL Supabase như bundle FE đang phát ra (frontend/.env; CI có thể đưa qua env VITE_*).

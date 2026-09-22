@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-18T04:34:15.518Z · 98 bảng/view · 170 hàm · 0 enum
+// Sinh lúc 2026-09-22T04:44:03.430Z · 100 bảng/view · 171 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -100,6 +100,14 @@ export type Database = {
           updated_at: string
           created_by: string | null
           updated_by: string | null
+          ward_code: string | null
+          region_code: string | null
+          region_name: string | null
+          sales_district: string | null
+          sales_office: string | null
+          address: string | null
+          sold_to_code: string | null
+          search_term: string | null
         }
         Insert: {
           id: string
@@ -114,6 +122,14 @@ export type Database = {
           updated_at?: string
           created_by?: string | null
           updated_by?: string | null
+          ward_code?: string | null
+          region_code?: string | null
+          region_name?: string | null
+          sales_district?: string | null
+          sales_office?: string | null
+          address?: string | null
+          sold_to_code?: string | null
+          search_term?: string | null
         }
         Update: {
           id?: string
@@ -128,6 +144,14 @@ export type Database = {
           updated_at?: string
           created_by?: string | null
           updated_by?: string | null
+          ward_code?: string | null
+          region_code?: string | null
+          region_name?: string | null
+          sales_district?: string | null
+          sales_office?: string | null
+          address?: string | null
+          sold_to_code?: string | null
+          search_term?: string | null
         }
         Relationships: []
       }
@@ -3111,6 +3135,35 @@ export type Database = {
           sync_status: string
           last_synced_at: string | null
           manual_edited_at: string | null
+          so_number: string | null
+          so_item: string | null
+          so_type: string | null
+          item_category: string | null
+          flow: string | null
+          delivery_date: string | null
+          sales_org: string | null
+          dist_channel: string | null
+          sold_to_code: string | null
+          ward_code: string | null
+          region_code: string | null
+          sales_district: string | null
+          route_code: string | null
+          route_name: string | null
+          dvvt_code: string | null
+          dvvt_raw: string | null
+          driver_name: string | null
+          sap_dispatch_status: string | null
+          qty_so_sales: number | null
+          qty_issued_base: number | null
+          gross_weight_kg: number | null
+          sap_pallets: number | null
+          sap_m3: number | null
+          mat_doc: string | null
+          billing_no: string | null
+          so_created_at: string | null
+          od_created_at: string | null
+          approval_status: string | null
+          customer_ref: string | null
         }
         Insert: {
           id: string
@@ -3142,6 +3195,35 @@ export type Database = {
           sync_status?: string
           last_synced_at?: string | null
           manual_edited_at?: string | null
+          so_number?: string | null
+          so_item?: string | null
+          so_type?: string | null
+          item_category?: string | null
+          flow?: string | null
+          delivery_date?: string | null
+          sales_org?: string | null
+          dist_channel?: string | null
+          sold_to_code?: string | null
+          ward_code?: string | null
+          region_code?: string | null
+          sales_district?: string | null
+          route_code?: string | null
+          route_name?: string | null
+          dvvt_code?: string | null
+          dvvt_raw?: string | null
+          driver_name?: string | null
+          sap_dispatch_status?: string | null
+          qty_so_sales?: number | null
+          qty_issued_base?: number | null
+          gross_weight_kg?: number | null
+          sap_pallets?: number | null
+          sap_m3?: number | null
+          mat_doc?: string | null
+          billing_no?: string | null
+          so_created_at?: string | null
+          od_created_at?: string | null
+          approval_status?: string | null
+          customer_ref?: string | null
         }
         Update: {
           id?: string
@@ -3173,6 +3255,164 @@ export type Database = {
           sync_status?: string
           last_synced_at?: string | null
           manual_edited_at?: string | null
+          so_number?: string | null
+          so_item?: string | null
+          so_type?: string | null
+          item_category?: string | null
+          flow?: string | null
+          delivery_date?: string | null
+          sales_org?: string | null
+          dist_channel?: string | null
+          sold_to_code?: string | null
+          ward_code?: string | null
+          region_code?: string | null
+          sales_district?: string | null
+          route_code?: string | null
+          route_name?: string | null
+          dvvt_code?: string | null
+          dvvt_raw?: string | null
+          driver_name?: string | null
+          sap_dispatch_status?: string | null
+          qty_so_sales?: number | null
+          qty_issued_base?: number | null
+          gross_weight_kg?: number | null
+          sap_pallets?: number | null
+          sap_m3?: number | null
+          mat_doc?: string | null
+          billing_no?: string | null
+          so_created_at?: string | null
+          od_created_at?: string | null
+          approval_status?: string | null
+          customer_ref?: string | null
+        }
+        Relationships: []
+      }
+      erp_so_lines: {
+        Row: {
+          id: string
+          so_number: string
+          so_item: string
+          od_number: string | null
+          material_code: string | null
+          material_name: string | null
+          qty_so_sales: number | null
+          sales_unit: string | null
+          qty_so_cartons: number | null
+          qty_so_base: number | null
+          qty_base_derived: boolean
+          derive_source: string | null
+          qty_unresolved: boolean
+          base_unit: string | null
+          ship_to_code: string | null
+          ship_to_name: string | null
+          sold_to_code: string | null
+          plant: string | null
+          storage_location: string | null
+          delivery_date: string | null
+          flow: string | null
+          so_type: string | null
+          item_category: string | null
+          status: string
+          cancel_reason: string | null
+          approval_status: string | null
+          ward_code: string | null
+          region_code: string | null
+          route_code: string | null
+          route_name: string | null
+          sap_pallets: number | null
+          sap_m3: number | null
+          gross_weight_kg: number | null
+          note_delivery: string | null
+          sync_status: string
+          source: string
+          raw: Json | null
+          uploaded_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          so_number: string
+          so_item: string
+          od_number?: string | null
+          material_code?: string | null
+          material_name?: string | null
+          qty_so_sales?: number | null
+          sales_unit?: string | null
+          qty_so_cartons?: number | null
+          qty_so_base?: number | null
+          qty_base_derived?: boolean
+          derive_source?: string | null
+          qty_unresolved?: boolean
+          base_unit?: string | null
+          ship_to_code?: string | null
+          ship_to_name?: string | null
+          sold_to_code?: string | null
+          plant?: string | null
+          storage_location?: string | null
+          delivery_date?: string | null
+          flow?: string | null
+          so_type?: string | null
+          item_category?: string | null
+          status?: string
+          cancel_reason?: string | null
+          approval_status?: string | null
+          ward_code?: string | null
+          region_code?: string | null
+          route_code?: string | null
+          route_name?: string | null
+          sap_pallets?: number | null
+          sap_m3?: number | null
+          gross_weight_kg?: number | null
+          note_delivery?: string | null
+          sync_status?: string
+          source?: string
+          raw?: Json | null
+          uploaded_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          so_number?: string
+          so_item?: string
+          od_number?: string | null
+          material_code?: string | null
+          material_name?: string | null
+          qty_so_sales?: number | null
+          sales_unit?: string | null
+          qty_so_cartons?: number | null
+          qty_so_base?: number | null
+          qty_base_derived?: boolean
+          derive_source?: string | null
+          qty_unresolved?: boolean
+          base_unit?: string | null
+          ship_to_code?: string | null
+          ship_to_name?: string | null
+          sold_to_code?: string | null
+          plant?: string | null
+          storage_location?: string | null
+          delivery_date?: string | null
+          flow?: string | null
+          so_type?: string | null
+          item_category?: string | null
+          status?: string
+          cancel_reason?: string | null
+          approval_status?: string | null
+          ward_code?: string | null
+          region_code?: string | null
+          route_code?: string | null
+          route_name?: string | null
+          sap_pallets?: number | null
+          sap_m3?: number | null
+          gross_weight_kg?: number | null
+          note_delivery?: string | null
+          sync_status?: string
+          source?: string
+          raw?: Json | null
+          uploaded_by?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -4035,6 +4275,33 @@ export type Database = {
           resolution?: string | null
           resolved_by?: string | null
           resolved_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sap_route: {
+        Row: {
+          route_code: string
+          route_name: string
+          plant: string | null
+          ward_code: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          route_code: string
+          route_name: string
+          plant?: string | null
+          ward_code?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          route_code?: string
+          route_name?: string
+          plant?: string | null
+          ward_code?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -4998,6 +5265,10 @@ export type Database = {
       }
       directed_supervision: {
         Args: { p_days: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Returns: Json
+      }
+      erp_so_lines_summary: {
+        Args: { p_to: unknown; p_status: unknown; p_q?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown }
         Returns: Json
       }
       fill_candidates: {

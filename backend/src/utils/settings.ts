@@ -213,6 +213,18 @@ export function parseReceiptRating(raw: unknown): ReceiptRatingCfg | null {
 }
 export const getReceiptRatingCfg = () => readSetting('receipt_rating', RECEIPT_RATING_DEFAULT, parseReceiptRating)
 
+// ── sap_do_source — NGUỒN nạp dòng DO của SAP (22/09, plan TMS_DISPATCH đợt 0) ──────
+// 'BOTH' (mặc định = hành vi cũ): nhận cả VL06O lẫn ZSD02 — giai đoạn đối chiếu hai nguồn cùng ngày.
+// 'ZSD02': ZSD02 là nguồn duy nhất, cửa VL06O trả 409 SOURCE_DISABLED (code giữ làm đường lui).
+// 'VL06O': đường lui — tắt cửa ZSD02. Hai nguồn ghi CÙNG sổ `erp_outbound_orders` theo khoá (od, item);
+// chạy song song lâu dài là "hai cửa cùng một sổ khác luật" nên công tắc này là để CẮT, không để sống chung.
+export const SAP_DO_SOURCES = ['BOTH', 'ZSD02', 'VL06O'] as const
+export type SapDoSource = typeof SAP_DO_SOURCES[number]
+export const SAP_DO_SOURCE_DEFAULT: SapDoSource = 'BOTH'
+export const parseSapDoSource = (raw: unknown): SapDoSource | null =>
+  typeof raw === 'string' && (SAP_DO_SOURCES as readonly string[]).includes(raw) ? (raw as SapDoSource) : null
+export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_DEFAULT, parseSapDoSource)
+
 // ── pct_date_bands — thang màu %Date toàn app (xanh > good, vàng > low, còn lại đỏ) ──
 // Cờ này có từ trước ở systemSettingController (validator `isPctDateBands`); getter đặt ở đây để tab
 // KPI dùng `low` làm ngưỡng "tồn cận date" — cùng con số người dùng đang thấy đỏ ở trang Tồn kho.

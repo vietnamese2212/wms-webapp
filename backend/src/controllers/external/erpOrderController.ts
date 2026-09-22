@@ -9,6 +9,8 @@ import { safeFilterValue } from '../../utils/search'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
+import { parseListParam } from '../../utils/httpQuery'
+import { isFlow } from '../../services/zsd02Parse'
 
 const now = () => new Date().toISOString()
 
@@ -50,7 +52,7 @@ const STR_FIELDS = [
 // NATIONAL/superadmin → null (không giới hạn). ASSIGNED → tập plant của các kho được gán. Dòng plant NULL vẫn qua
 // (quy ước null-inclusive của mọi lát cắt); riêng THÊM TAY thì phải khai plant thuộc phạm vi (không thì tài khoản
 // kho lẻ tạo được dòng "không nhà máy" rồi reconcile kéo vào đơn của kho khác).
-async function allowedPlants(req: Request): Promise<string[] | null> {
+export async function allowedPlants(req: Request): Promise<string[] | null> {
   if (req.user?.is_superadmin === true || req.user?.warehouse_scope === 'NATIONAL') return null
   const ids = req.user?.warehouse_ids ?? []
   const out = new Set<string>()
@@ -60,9 +62,9 @@ async function allowedPlants(req: Request): Promise<string[] | null> {
   }
   return [...out]
 }
-const plantAllowed = (plants: string[] | null, plant: unknown): boolean =>
+export const plantAllowed = (plants: string[] | null, plant: unknown): boolean =>
   plants === null || plant == null || plant === '' || plants.includes(String(plant).trim().toUpperCase())
-const plantOrFilter = (plants: string[]): string =>
+export const plantOrFilter = (plants: string[]): string =>
   plants.length ? `plant.is.null,plant.in.(${plants.map(p => JSON.stringify(p)).join(',')})` : 'plant.is.null'
 const PLANT_FORBIDDEN = 'Nhà máy (plant) ngoài phạm vi kho được phân quyền'
 
@@ -76,9 +78,16 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/do-sap — list phân trang + filter + search (?q, od_number, material_code, ship_to_code, plant, source, batch, in_plan, page, page_size)
 export async function listDoSap(req: Request, res: Response) {
   try {
-    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan, used } = req.query as Record<string, string>
+    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan, used,
+      flow, dispatch, delivery_from, delivery_to } = req.query as Record<string, string>
+    // Bộ lọc cột ZSD02 (22/09): flow (SALE/STO/…; CSV — `?flow=` rỗng = KHÔNG dòng nào, luật parseListParam) ·
+    // dispatch (ASSIGNED/UNASSIGNED) · khoảng Ngày giao (delivery_date)
+    // Whitelist theo FLOWS rồi ghép chuỗi `flow.in.(…)` — giá trị chỉ còn 7 mã cố định, không có ký tự lạ lọt vào filter
+    const flows = parseListParam(flow)?.filter(isFlow) ?? null
+    const dispatchStatus = dispatch === 'ASSIGNED' || dispatch === 'UNASSIGNED' ? dispatch : ''
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
+    if (flows && !flows.length) return ok(res, { items: [], total: 0, page, page_size: pageSize })
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
     const gteFrom = date_from ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : ''
     const lteTo   = date_to   ? new Date(`${date_to}T23:59:59.999+07:00`).toISOString() : ''
@@ -179,6 +188,10 @@ export async function listDoSap(req: Request, res: Response) {
     if (plant)         query = query.eq('plant', plant)
     if (source)        query = query.eq('source', source)
     if (batch)         query = query.ilike('batch', `%${safeFilterValue(batch)}%`)
+    if (flows?.length) query = query.or(`flow.in.(${flows.join(',')})`)   // đã whitelist ở trên
+    if (dispatchStatus) query = query.eq('sap_dispatch_status', dispatchStatus)
+    if (delivery_from) query = query.gte('delivery_date', delivery_from)
+    if (delivery_to)   query = query.lte('delivery_date', delivery_to)
     if (searchOr) query = query.or(searchOr)
     if (restrictOds) query = query.in('od_number', restrictOds)
     const plants = await allowedPlants(req)
@@ -255,13 +268,14 @@ export async function listDoSap(req: Request, res: Response) {
 export async function doSapFacets(req: Request, res: Response) {
   try {
     // Phân trang né cap-1000: .limit(5000) KHÔNG vượt cap PostgREST (~1000) → facet thiếu giá trị khi bảng >1000 dòng
-    const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').order('id'))
+    const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name, flow').order('id'))
     const allowed = await allowedPlants(req)
     const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].filter(p => plantAllowed(allowed, p)).sort()
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()
+    const flows = [...new Set((data ?? []).map(r => r.flow).filter(Boolean))].sort()
     const shiptos = [...new Map((data ?? []).filter(r => r.ship_to_code).map(r => [r.ship_to_code, r.ship_to_name])).entries()]
       .map(([code, name]) => ({ code, name })).sort((a, b) => String(a.code).localeCompare(String(b.code)))
-    return ok(res, { plants, sources, shiptos })
+    return ok(res, { plants, sources, shiptos, flows })
   } catch (e) { return fail(res, String(e)) }
 }
 

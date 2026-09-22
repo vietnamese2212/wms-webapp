@@ -28,6 +28,9 @@ import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 import { expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
+import { cellStr, cellNum, parseExcelDate } from '../../utils/excelCells'
+import { getSapDoSource } from '../../utils/settings'
+import { notLoadableDos, FLOW_LABEL } from '../../services/sapFlow'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
 import { guardPutaway } from '../../services/putawayContext'
 import { notifyEmployees } from '../../services/pushService'
@@ -67,13 +70,8 @@ async function deleteByIdsChunked(table: string, ids: string[]): Promise<void> {
   }
 }
 
-// Chuẩn hóa ô Excel: chuỗi trim (rỗng → null) · số (rỗng/NaN → null). Dùng cho parse VL06O raw.
-const cellStr = (v: any): string | null => { const s = String(v ?? '').trim(); return s || null }
-const cellNum = (v: any): number | null => {
-  if (v === '' || v == null) return null
-  const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''))
-  return Number.isFinite(n) ? n : null
-}
+// Chuẩn hóa ô Excel (cellStr / cellNum / parseExcelDate) — chuyển sang utils/excelCells.ts (22/09) để cửa nạp
+// ZSD02 dùng chung mà bộ parse của nó vẫn là hàm thuần test được; import ở đầu file.
 
 // ─── Warehouse-scope cho route GHI (mirror guardGateScope/guardInboundScope) ────
 // NATIONAL → null (toàn quyền). Khác → danh sách kho được gán cho user.
@@ -623,30 +621,7 @@ function validateGroupCode(gc: string): string | null {
   return null
 }
 
-function parseExcelDate(val: any): string | null {
-  if (!val) return null
-  if (typeof val === 'number') {
-    const d = XLSX.SSF.parse_date_code(val)
-    if (!d) return null
-    const date = new Date(Date.UTC(d.y, d.m - 1, d.d))
-    return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
-  }
-  const s = String(val).trim()
-  if (!s) return null
-  // dd/mm/yyyy (Vietnamese default — JS Date() would misread as mm/dd)
-  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (dmy) {
-    const [dd, mm, yy] = [parseInt(dmy[1]), parseInt(dmy[2]), parseInt(dmy[3])]
-    const date = new Date(Date.UTC(yy, mm - 1, dd))
-    if (isNaN(date.getTime())) return null
-    // Date.UTC TRÀN ÂM THẦM: 32/13/2026 → 01/02/2027 (ngày SAI mà không báo lỗi). Ngày không tồn
-    // tại trên lịch phải trả null để controller báo "ngày không hợp lệ" thay vì ghi ngày lệch.
-    if (date.getUTCFullYear() !== yy || date.getUTCMonth() !== mm - 1 || date.getUTCDate() !== dd) return null
-    return date.toISOString().slice(0, 10)
-  }
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
-}
+// parseExcelDate → utils/excelCells.ts (22/09), import ở đầu file.
 
 function isExcludedFromCount(item: any): boolean {
   return item.material?.no_qr_tracking === true
@@ -4377,8 +4352,67 @@ type ErpRawLine = {
 
 // Upload VL06O (SAP) → tầng RAW. Giữ NGUYÊN tên cột SAP (map theo header) — endpoint SAP tương lai
 // dump ra là ingest được ngay; cột `raw` jsonb ôm TOÀN BỘ dòng gốc (an toàn cột thêm sau).
+// ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") — dùng chung VL06O + ZSD02 ──
+// Dòng SAP mang mã `plant` + `storage_location` (KHÔNG phải Warehouse.code) → map qua 2 cột khai per kho
+// `Warehouse.sap_plant` / `sap_storage_locations` (migration 20260726_warehouse_sap_mapping). Khớp (plant, sloc)
+// trước, không thấy thì khớp theo plant. Dòng map ĐƯỢC mà kho ngoài phạm vi → caller CHẶN (all-or-nothing);
+// dòng KHÔNG map được kho nào → cho qua + đếm cảnh báo (fail-open có chủ đích: fail-closed sẽ chặn upload
+// tới khi khai đủ map = chặn vận hành).
+export async function sapScopeCheck(req: Request, records: { plant?: unknown; storage_location?: unknown }[]): Promise<{ outside: string[]; unmapped: number }> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return { outside: [], unmapped: 0 }
+  const { data: whMapRows } = await supabase.from('Warehouse')
+    .select('id, code, name, sap_plant, sap_storage_locations').not('sap_plant', 'is', null)
+  const whMap = (whMapRows ?? []) as { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null }[]
+  const norm = (v: unknown) => String(v ?? '').trim().toUpperCase()
+  const resolveWh = (plant: unknown, sloc: unknown) => {
+    const p = norm(plant), s = norm(sloc)
+    if (!p) return null
+    const byPair = whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).some(x => norm(x) === s))
+    if (byPair) return byPair
+    return whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).length === 0) ?? null
+  }
+  const outside = new Map<string, string>()   // kho ngoài phạm vi → nhãn
+  let unmapped = 0
+  for (const r of records) {
+    const wh = resolveWh(r.plant, r.storage_location)
+    if (!wh) { unmapped++; continue }
+    if (!scope.includes(wh.id)) outside.set(wh.id, `${wh.name} (plant ${norm(r.plant)}${norm(r.storage_location) ? `/${norm(r.storage_location)}` : ''})`)
+  }
+  return { outside: [...outside.values()], unmapped }
+}
+
+// ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU (user chốt 03/08: "realtime kích hoạt trở lại khi đủ dữ liệu") ──
+// Dữ liệu SAP vừa về → xe nào trong Kế hoạch xuất trỏ tới DO đó mà đang chờ thì derive lại NGAY.
+// Chỉ replan xe THẬT SỰ đang chờ (không quét cả kế hoạch): 1 file có thể chạm hàng trăm DO. Lỗi ở đây
+// KHÔNG làm hỏng upload cốt lõi (trả null + log). Dùng chung VL06O + ZSD02.
+export async function activateAwaitingForDos(req: Request, fileDos: Iterable<string>, where: string): Promise<Record<string, unknown> | null> {
+  try {
+    const khLines = await fetchAllByIdChunks([...fileDos], chunk => supabase.from('khvc_lines')
+      .select('group_code').in('do_no', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as { group_code: string }[]
+    const gcs = [...new Set((khLines ?? []).map(l => l.group_code).filter(Boolean))]
+    const waiting: string[] = []
+    for (let i = 0; i < gcs.length; i += 300) {
+      const { data } = await supabase.from('GroupDeliveryOrder').select('group_code')
+        .in('group_code', gcs.slice(i, i + 300)).eq('awaiting_sap', true)
+      for (const g of ((data ?? []) as { group_code: string }[])) waiting.push(g.group_code)
+    }
+    // Xe có dòng kế hoạch mà CHƯA hề có chuyến (up KH lúc chưa có dữ liệu SAP, chuyến vỏ dựng hụt) — cũng derive
+    const known = new Set<string>()
+    for (let i = 0; i < gcs.length; i += 300) {
+      const { data } = await supabase.from('GroupDeliveryOrder').select('group_code').in('group_code', gcs.slice(i, i + 300))
+      for (const g of ((data ?? []) as { group_code: string }[])) known.add(g.group_code)
+    }
+    const target = [...new Set([...waiting, ...gcs.filter(gc => !known.has(gc))])]
+    return target.length ? await replanKhvcGroups(req, target) : null
+  } catch (e) { console.error(`[${where}] kích hoạt chuyến chờ:`, e); return null }
+}
+
 export async function uploadVl06o(req: Request, res: Response) {
   try {
+    // Công tắc nguồn (22/09): ZSD02 đã là nguồn duy nhất thì cửa này đóng — hai nguồn ghi cùng sổ theo khoá (od, item).
+    if ((await getSapDoSource()) === 'ZSD02') return fail(res, 409, 'SOURCE_DISABLED',
+      'Nguồn DO SAP đang đặt là ZSD02 — nạp file ZSD02 thay cho VL06O (đổi cờ "Nguồn DO SAP" ở Cài đặt WMS → Hệ thống nếu cần đường lui).')
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const wb = readWorkbookSafe(req.file.buffer)
     if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
@@ -4459,37 +4493,11 @@ export async function uploadVl06o(req: Request, res: Response) {
     }
     if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
 
-    // ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") ──
-    // Dòng VL06O mang mã SAP `plant` + `storage_location` (KHÔNG phải Warehouse.code) → map qua 2 cột
-    // khai per kho `Warehouse.sap_plant` / `sap_storage_locations` (migration 20260726_warehouse_sap_mapping).
-    // Khớp (plant, sloc) trước, không thấy thì khớp theo plant. Dòng map ĐƯỢC mà kho ngoài phạm vi → CHẶN
-    // (all-or-nothing: chưa ghi gì). Dòng KHÔNG map được kho nào → cho qua + đếm cảnh báo (fail-open có
-    // chủ đích: fail-closed sẽ chặn upload tới khi khai đủ map = chặn vận hành).
-    let sapUnmapped = 0
-    {
-      const scope = scopeWhIds(req)
-      if (scope !== null) {
-        const { data: whMapRows } = await supabase.from('Warehouse')
-          .select('id, code, name, sap_plant, sap_storage_locations').not('sap_plant', 'is', null)
-        const whMap = (whMapRows ?? []) as { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null }[]
-        const norm = (v: unknown) => String(v ?? '').trim().toUpperCase()
-        const resolveWh = (plant: unknown, sloc: unknown) => {
-          const p = norm(plant), s = norm(sloc)
-          if (!p) return null
-          const byPair = whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).some(x => norm(x) === s))
-          if (byPair) return byPair
-          return whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).length === 0) ?? null
-        }
-        const outside = new Map<string, string>()   // kho ngoài phạm vi → nhãn
-        for (const r of records) {
-          const wh = resolveWh(r.plant, r.storage_location)
-          if (!wh) { sapUnmapped++; continue }
-          if (!scope.includes(wh.id)) outside.set(wh.id, `${wh.name} (plant ${norm(r.plant)}${norm(r.storage_location) ? `/${norm(r.storage_location)}` : ''})`)
-        }
-        if (outside.size) return fail(res,
-          `Ngoài phạm vi kho — file VL06O chứa dòng của: ${[...outside.values()].join(', ')}. Chỉ upload file của kho được giao.`, 403)
-      }
-    }
+    // ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") — dùng chung với cửa ZSD02 (22/09) ──
+    const sapScope = await sapScopeCheck(req, records)
+    if (sapScope.outside.length) return fail(res,
+      `Ngoài phạm vi kho — file VL06O chứa dòng của: ${sapScope.outside.join(', ')}. Chỉ upload file của kho được giao.`, 403)
+    const sapUnmapped = sapScope.unmapped
 
     // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
     if (isPreflight(req)) {
@@ -4610,29 +4618,8 @@ export async function uploadVl06o(req: Request, res: Response) {
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadVl06o:', e) }
     }
 
-    // ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU (user chốt 03/08: "realtime kích hoạt trở lại khi đủ dữ liệu") ──
-    // Dữ liệu vừa về → xe nào trong Kế hoạch xuất trỏ tới DO đó mà đang chờ thì derive lại NGAY.
-    // Chỉ replan xe THẬT SỰ đang chờ (không quét cả kế hoạch): 1 file VL06O có thể chạm hàng trăm DO.
-    let activated: Record<string, unknown> | null = null
-    try {
-      const khLines = await fetchAllByIdChunks([...fileDos], chunk => supabase.from('khvc_lines')
-        .select('group_code').in('do_no', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as { group_code: string }[]
-      const gcs = [...new Set((khLines ?? []).map(l => l.group_code).filter(Boolean))]
-      const waiting: string[] = []
-      for (let i = 0; i < gcs.length; i += 300) {
-        const { data } = await supabase.from('GroupDeliveryOrder').select('group_code')
-          .in('group_code', gcs.slice(i, i + 300)).eq('awaiting_sap', true)
-        for (const g of ((data ?? []) as { group_code: string }[])) waiting.push(g.group_code)
-      }
-      // Xe có dòng kế hoạch mà CHƯA hề có chuyến (up KH lúc chưa có VL06O, chuyến vỏ dựng hụt) — cũng derive
-      const known = new Set<string>()
-      for (let i = 0; i < gcs.length; i += 300) {
-        const { data } = await supabase.from('GroupDeliveryOrder').select('group_code').in('group_code', gcs.slice(i, i + 300))
-        for (const g of ((data ?? []) as { group_code: string }[])) known.add(g.group_code)
-      }
-      const target = [...new Set([...waiting, ...gcs.filter(gc => !known.has(gc))])]
-      if (target.length) activated = await replanKhvcGroups(req, target)
-    } catch (e) { console.error('[uploadVl06o] kích hoạt chuyến chờ:', e) }
+    // ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU — dùng chung với cửa ZSD02 (22/09) ──
+    const activated = await activateAwaitingForDos(req, fileDos, 'uploadVl06o')
 
     const deliveries = new Set(records.map(r => r.od_number)).size
     // Nhắc khai map SAP→kho: còn dòng chưa map được thì phần đó CHƯA được siết theo kho
@@ -5149,6 +5136,15 @@ export async function uploadKhvc(req: Request, res: Response) {
             const msg = slotHeldBlockingDate(held, fileDate)
             if (msg) addErr(gc, msg)
           }
+        }
+      }
+      // ⭐ DO KHÔNG LÊN XE (ZSD02 22/09): flow RETURN (trả pallet/trả hàng = chiều nhập) · DISCOUNT (không có hàng) ·
+      // UNKNOWN (mã SAP chưa phân loại). VL06O không mang cột này nên trước đây file điều vận có DO trả về vẫn sinh chuyến.
+      {
+        const bad = await notLoadableDos([...allDos])
+        for (const k of khvcRows) {
+          const f = bad.get(k.do_no)
+          if (f) addErr(k.group_code, `DO ${k.do_no} là dòng ${FLOW_LABEL[f] ?? f} theo SAP — không lên xe được`)
         }
       }
       if (perGc.size) {

@@ -3444,6 +3444,63 @@ export function useUploadVl06o() {
   })
 }
 
+// ZSD02 (22/09): nguồn DO thay VL06O — dòng CÓ OD vào sổ OD (`erp_outbound_orders`), MỌI dòng vào sổ SO (`erp_so_lines`).
+export interface Zsd02UploadResult {
+  rows: number; skipped_no_key: number
+  od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number }
+  so: { rows: number; orders: number; without_od: number; inserted: number; updated: number; noop: number; obsoleted: number; unresolved: number; cancelled: number }
+  flows: Record<string, number>; not_loadable: number
+  routes: number; customers: { created: number; filled: number; conflicts: number } | null
+  sap_unmapped: number; warning_count: number; warnings: string[]
+}
+export function useUploadZsd02() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
+      guardUploadSize(file)
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
+      }).then(r => r.data.data)
+    },
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return
+      for (const key of [['do-sap'], ['do-sap-facets'], ['so-lines'], ['so-lines-summary'], ['customers'], ['gdos']]) qc.invalidateQueries({ queryKey: key })
+    },
+  })
+}
+
+// Sổ SO (tab "Chưa có OD") — dòng ZSD02 chưa có OD; số base là DẪN XUẤT (cờ qty_base_derived / derive_source), không lên xe được.
+export interface SoLineRow {
+  id: string; so_number: string; so_item: string; od_number: string | null
+  material_code: string | null; material_name: string | null
+  qty_so_sales: number | null; sales_unit: string | null; qty_so_cartons: number | null
+  qty_so_base: number | null; qty_base_derived: boolean; derive_source: string | null; qty_unresolved: boolean; base_unit: string | null
+  ship_to_code: string | null; ship_to_name: string | null; sold_to_code: string | null
+  plant: string | null; storage_location: string | null; delivery_date: string | null
+  flow: string | null; so_type: string | null; item_category: string | null
+  status: 'OPEN' | 'HAS_OD' | 'CANCELLED'; cancel_reason: string | null; approval_status: string | null
+  ward_code: string | null; region_code: string | null; route_code: string | null; route_name: string | null
+  sap_pallets: number | null; sap_m3: number | null; gross_weight_kg: number | null; note_delivery: string | null
+  source: string; uploaded_by: string | null; created_at: string; updated_at: string
+  loadable?: boolean
+}
+export interface SoLinesSummary { rows: number; open: number; has_od: number; cancelled: number; unresolved: number; not_loadable: number; so_numbers: number; ship_tos: number; sap_pallets: number; kg: number }
+export function useSoLines(params: Record<string, string | number | undefined>, enabled = true) {
+  return useQuery({
+    queryKey: ['so-lines', params],
+    queryFn: async () => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
+      const r = await apiClient.get(`/external/so-lines?${qs.toString()}`)
+      return r.data.data as { items: SoLineRow[]; total: number; page: number; page_size: number; summary: SoLinesSummary }
+    },
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
 // ĐỢT 3: Up KHVC (join raw theo DO → sinh GDO/DO/Item) → refetch danh sách chuyến.
 // DO luôn bắt buộc: thiếu DO khớp VL06O → BE chặn toàn bộ (MISSING_DO); xuất tay không DO dùng "Tạo đơn".
 export function useUploadKhvc() {
@@ -3476,6 +3533,12 @@ export interface DoSapRow {
   used?: boolean; unit_mismatch?: boolean   // enrich từ BE list (đã sinh chuyến? / lệch đơn vị vs Material)
   in_plan?: boolean; plan_group_code?: string | null; plan_group_count?: number; plan_export_date?: string | null   // kế hoạch VC gắn với DO
   mat_units?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null   // quy cách mã (Material master) — tách Thùng+Hộp khi sửa qty_base
+  // Cột ZSD02 (22/09) — VL06O để trống
+  so_number?: string | null; so_type?: string | null; item_category?: string | null; flow?: string | null
+  delivery_date?: string | null; ward_code?: string | null; region_code?: string | null; route_code?: string | null; route_name?: string | null
+  dvvt_code?: string | null; dvvt_raw?: string | null; driver_name?: string | null; sap_dispatch_status?: 'ASSIGNED' | 'UNASSIGNED' | null
+  qty_so_sales?: number | null; qty_issued_base?: number | null; gross_weight_kg?: number | null; sap_pallets?: number | null; sap_m3?: number | null
+  mat_doc?: string | null; billing_no?: string | null
 }
 export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({
@@ -3493,7 +3556,7 @@ export function useDoSapOrders(params: Record<string, string | number | undefine
 export function useDoSapFacets() {
   return useQuery({
     queryKey: ['do-sap-facets'],
-    queryFn: async () => (await apiClient.get('/external/do-sap/facets')).data.data as { plants: string[]; sources: string[]; shiptos: { code: string; name: string }[] },
+    queryFn: async () => (await apiClient.get('/external/do-sap/facets')).data.data as { plants: string[]; sources: string[]; shiptos: { code: string; name: string }[]; flows?: string[] },
   })
 }
 // DO SAP mutations invalidate CHÉO: ['khvc'] (cột "Trong DO SAP") + reconcile keys + ['gdos']

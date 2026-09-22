@@ -25,8 +25,11 @@ import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
   useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc, useBulkDateKhvc,
   useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
-  type DoSapRow, type KhvcRow, type ReconcileTask,
+  useSoLines, useSystemSettings,
+  type DoSapRow, type KhvcRow, type ReconcileTask, type SoLineRow,
 } from '@/api/hooks'
+import { StatusBadge as ToneBadge, type BadgeTone } from '@/components/shared/StatusBadge'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { apiClient } from '@/api/client'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -37,9 +40,10 @@ import { VcUploadDialog, type VcUploadMode } from './VcUploadDialog'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
-type TabKey = 'dosap' | 'khvc' | 'reconcile'
+type TabKey = 'dosap' | 'solines' | 'khvc' | 'reconcile'
 const TABS: { key: TabKey; label: string; module: ModuleKey; action?: string }[] = [
   { key: 'dosap',     label: 'DO SAP', module: 'external_do_sap' },
+  { key: 'solines',   label: 'Chưa có OD', module: 'external_do_sap' },   // sổ SO từ ZSD02 (22/09) — dòng SO chưa có OD, chỉ để nhìn trước tải
   { key: 'khvc',      label: 'Kế hoạch xuất', module: 'external_khvc' },
   { key: 'reconcile', label: 'Cần xử lý', module: 'outbound', action: 'reconcile' },
 ]
@@ -83,6 +87,14 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'shipto',     label: 'Ship-to' },
   { id: 'plant',      label: 'Plant' },
   { id: 'storage',    label: 'Kho' },
+  // Cột ZSD02 (22/09) — VL06O để trống. Phường = khoá cước; ĐP xe = SAP đã gắn biển hay chưa (đối soát với kế hoạch app)
+  { id: 'flow',       label: 'Phân loại' },
+  { id: 'ddate',      label: 'Ngày giao' },
+  { id: 'ward',       label: 'Phường (tuyến)' },
+  { id: 'dvvt',       label: 'ĐVVT SAP' },
+  { id: 'dispatch',   label: 'ĐP xe SAP' },
+  { id: 'kg',         label: 'KL (kg)', align: 'right' },
+  { id: 'pal',        label: 'Pallet SAP', align: 'right' },
   { id: 'batch',      label: 'Batch' },
   { id: 'pct',        label: '%Date', align: 'right' },
   { id: 'status',     label: 'Tình trạng' },
@@ -92,7 +104,7 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 150, 95, 80, 110]
+const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 90, 80, 120, 75, 85, 75, 75, 100, 70, 90, 65, 150, 95, 80, 110]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -101,10 +113,11 @@ function num(v: number | null | undefined) {
 
 function SourceBadge({ source }: { source: string | null }) {
   const v = (source ?? '').toUpperCase()
-  const cls = v === 'SAP' ? 'bg-sky-100 text-sky-700'
+  const cls = v === 'SAP' || v === 'ZSD02' ? 'bg-sky-100 text-sky-700'
     : v === 'MANUAL' ? 'bg-amber-100 text-amber-700'
     : 'bg-slate-100 text-slate-600'
-  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`}>{source ?? '—'}</span>
+  // Nhãn: mã nguồn 'EXCEL' là VL06O từ thời chỉ có một file — in tên báo cáo để đứng cạnh ZSD02 không gây hiểu nhầm
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={source ?? undefined}>{SOURCE_VI[v] ?? source ?? '—'}</span>
 }
 
 function StatusBadge({ used, syncStatus }: { used: boolean | undefined; syncStatus: string | null | undefined }) {
@@ -136,8 +149,31 @@ export default function ExternalData() {
   const tabBar = <TabBar tab={tab} setTab={setTab} tabs={tabs} />
   if (tab === 'reconcile') return <ReconcileTab tabBar={tabBar} />
   if (tab === 'khvc') return <KhvcTab tabBar={tabBar} />
+  if (tab === 'solines') return <SoLinesTab tabBar={tabBar} />
   return <DoSapTab tabBar={tabBar} />
 }
+
+// ─── Phân loại dòng SAP (flow) — nhãn tiếng Việt MỘT chỗ; tone theo nghĩa (trả về/chiết khấu không lên xe = đỏ/xám) ──
+const FLOW_VI: Record<string, { label: string; tone: BadgeTone }> = {
+  SALE:     { label: 'Bán hàng',       tone: 'green' },
+  STO:      { label: 'Chuyển kho',     tone: 'sky' },
+  INTERNAL: { label: 'Nội bộ',         tone: 'purple' },
+  PALLET:   { label: 'Pallet đi cùng', tone: 'slate' },
+  RETURN:   { label: 'Trả về',         tone: 'red' },
+  DISCOUNT: { label: 'Chiết khấu',     tone: 'slate' },
+  UNKNOWN:  { label: 'Chưa phân loại', tone: 'amber' },
+}
+const FLOW_OPTS = Object.entries(FLOW_VI).map(([value, v]) => ({ value, label: v.label }))
+function FlowBadge({ flow }: { flow: string | null | undefined }) {
+  if (!flow) return <span className="text-slate-300">—</span>
+  const f = FLOW_VI[flow] ?? { label: flow, tone: 'slate' as BadgeTone }
+  return <ToneBadge tone={f.tone} title={flow}>{f.label}</ToneBadge>
+}
+const DISPATCH_VI: Record<string, { label: string; tone: BadgeTone }> = {
+  ASSIGNED:   { label: 'Đã gắn xe',   tone: 'green' },
+  UNASSIGNED: { label: 'Chưa gắn xe', tone: 'amber' },
+}
+const SOURCE_VI: Record<string, string> = { EXCEL: 'VL06O', ZSD02: 'ZSD02', MANUAL: 'Tay', SAP: 'SAP API' }
 
 // ─── Tab DO SAP (raw erp_outbound_orders) ─────────────────────────────────────
 function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
@@ -150,6 +186,10 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
   const { doSap: f, setDoSap } = useWmsFilterStore()
   const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, used: fUsed, page, pageSize } = f
+  const fFlow = f.flow ?? [], fDispatch = f.dispatch ?? '', fDelivFrom = f.deliveryFrom ?? '', fDelivTo = f.deliveryTo ?? ''
+  // Công tắc nguồn DO SAP (Cài đặt WMS → Hệ thống): BOTH = hai nút · ZSD02 = ẩn nút VL06O · VL06O = ẩn nút ZSD02
+  const { data: sysSettings } = useSystemSettings()
+  const sapSrc = (() => { const v = sysSettings?.find(s => s.key === 'sap_do_source')?.value; return v === 'ZSD02' || v === 'VL06O' ? v : 'BOTH' })()
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
@@ -160,7 +200,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // Nút nạp nguồn: ai import được bên Xuất, hoặc ai được tạo dữ liệu SAP tại chính trang này
   const canUploadVl06o = can(perms, 'outbound', 'import') || can(perms, 'external_do_sap', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v4', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v5', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -176,9 +216,14 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     od_number:     fOd.trim() || undefined,
     in_plan:       fInPlan || undefined,
     used:          fUsed || undefined,
+    // danh sách RỖNG thì KHÔNG gửi (`flow=` rỗng BE hiểu là "không gì" — lớp C27)
+    flow:          fFlow.length ? fFlow.join(',') : undefined,
+    dispatch:      fDispatch || undefined,
+    delivery_from: fDelivFrom || undefined,
+    delivery_to:   fDelivTo || undefined,
     page,
     page_size:     pageSize,
-  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, page, pageSize])
+  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, page, pageSize])
 
   const { data, isLoading, isError, error } = useDoSapOrders(params, hasDate)
   const items = data?.items ?? []
@@ -187,7 +232,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const planWarn = data?.plan_filter_warning
 
   // Đổi filter/search/pageSize → về trang 1 (filterKey KHÔNG gồm page để tránh vòng lặp)
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
@@ -212,6 +257,15 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     { key: 'used', label: 'Chuyến Xuất', type: 'single', allLabel: 'Tất cả', value: fUsed,
       options: [{ value: '1', label: 'Còn trong chuyến' }, { value: '0', label: 'Không có chuyến' }],
       onChange: v => setDoSap({ used: v === '__all__' ? '' : v }) },
+    // Cột ZSD02 (22/09)
+    { key: 'delivery', label: 'Ngày giao', type: 'daterange', from: fDelivFrom, to: fDelivTo,
+      onChange: (from, to) => setDoSap({ deliveryFrom: from, deliveryTo: to }) },
+    { key: 'flow', label: 'Phân loại', type: 'multi', selected: fFlow, searchable: false,
+      options: (facets?.flows?.length ? facets.flows : Object.keys(FLOW_VI)).map(v => ({ value: v, label: FLOW_VI[v]?.label ?? v })),
+      onChange: v => setDoSap({ flow: v }) },
+    { key: 'dispatch', label: 'ĐP xe SAP', type: 'single', allLabel: 'Tất cả', value: fDispatch,
+      options: [{ value: 'ASSIGNED', label: 'Đã gắn xe' }, { value: 'UNASSIGNED', label: 'Chưa gắn xe' }],
+      onChange: v => setDoSap({ dispatch: v === '__all__' ? '' : v }) },
   ]
 
   // Selection theo trang hiện tại
@@ -272,9 +326,18 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         'Tên ship-to': x.ship_to_name ?? '',
         'Plant': x.plant ?? '',
         'Kho': x.storage_location ?? '',
+        'Phân loại': x.flow ? (FLOW_VI[x.flow]?.label ?? x.flow) : '',
+        'Ngày giao': x.delivery_date ?? '',
+        'Phường (tuyến)': x.ward_code ?? '',
+        'Mã Route': x.route_code ?? '',
+        'ĐVVT SAP': x.dvvt_code ?? x.dvvt_raw ?? '',
+        'Biển số SAP': x.license_plate ?? '',
+        'ĐP xe SAP': x.sap_dispatch_status ? (DISPATCH_VI[x.sap_dispatch_status]?.label ?? x.sap_dispatch_status) : '',
+        'KL (kg)': x.gross_weight_kg ?? '',
+        'Pallet SAP': x.sap_pallets ?? '',
         'Batch': x.batch ?? '',
         '%Date': x.pct_date_req ?? '',
-        'Nguồn': x.source ?? '',
+        'Nguồn': SOURCE_VI[(x.source ?? '').toUpperCase()] ?? x.source ?? '',
         'Tình trạng': x.sync_status === 'OBSOLETE' ? 'SAP đã bỏ' : x.used ? 'Đã dùng' : 'Chưa dùng',
         'Cập nhật': x.updated_at ? formatTimestampDate(x.updated_at, true) : '',
       }))
@@ -311,8 +374,15 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           </button>
           {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
           {/* Upload = việc thuần PC (chọn file Excel) → ẩn trên mobile như các nút Upload khác của app */}
-          {canUploadVl06o && (
-            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('vl06o')}>
+          {canUploadVl06o && sapSrc !== 'VL06O' && (
+            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('zsd02')}
+              title="Báo cáo SAP ZSD02 (mức dòng SO/OD) — nguồn DO thay VL06O; dòng chưa có OD vào tab Chưa có OD">
+              <Upload className="h-3.5 w-3.5 mr-1" /> Up ZSD02
+            </Button>
+          )}
+          {canUploadVl06o && sapSrc !== 'ZSD02' && (
+            <Button size="sm" variant={sapSrc === 'BOTH' ? 'outline' : 'default'} className={`hidden sm:inline-flex h-7 shrink-0 ${sapSrc === 'BOTH' ? '' : 'bg-blue-600 hover:bg-blue-700'}`} onClick={() => setUpDialog('vl06o')}
+              title={sapSrc === 'BOTH' ? 'Giai đoạn đối chiếu: nạp cả VL06O lẫn ZSD02 cùng ngày' : undefined}>
               <Upload className="h-3.5 w-3.5 mr-1" /> Up VL06O
             </Button>
           )}
@@ -422,6 +492,23 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.plant || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.storage_location || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><FlowBadge flow={r.flow} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ?? undefined}>
+                      {r.ward_code ? <div className="leading-tight"><div>{r.ward_code}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`} title={r.dvvt_raw ?? undefined}>
+                      {r.dvvt_code ? <span className="font-mono font-semibold">{r.dvvt_code}</span>
+                        : r.dvvt_raw ? <ToneBadge tone="amber" title="ĐVVT trong SAP không khớp danh mục — khai mã khác ở Cài đặt TMS → ĐVVT">{r.dvvt_raw}</ToneBadge>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      {r.sap_dispatch_status && DISPATCH_VI[r.sap_dispatch_status]
+                        ? <ToneBadge tone={DISPATCH_VI[r.sap_dispatch_status].tone} title={r.license_plate ? `Biển SAP: ${r.license_plate}` : undefined}>{DISPATCH_VI[r.sap_dispatch_status].label}</ToneBadge>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.gross_weight_kg != null ? num(Math.round(Number(r.gross_weight_kg))) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_pallets != null ? Number(r.sap_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.batch || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.pct_date_req != null ? `${r.pct_date_req}%` : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><StatusBadge used={r.used} syncStatus={r.sync_status} /></TableCell>
@@ -467,6 +554,195 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         />
       )}
       {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} />}
+    </div>
+  )
+}
+
+// ─── Tab "Chưa có OD" — sổ SO từ ZSD02 (22/09) ────────────────────────────────
+// Dòng SO mà SAP CHƯA tạo OD: KHÔNG lên xe được (không có khoá OD ⇒ không có dòng hàng, không có tem để quét).
+// Việc của tab: nhìn trước tải ngày mai theo kho × tuyến để đặt xe với ĐVVT. Số base ở đây là DẪN XUẤT
+// (SAP để "OD Qty (Base Unit)" = 0 cho dòng này) — nhãn "quy đổi" nói rõ; SL bán giữ nguyên số SAP.
+const SO_COLS: { id: string; label: string; align?: 'right' }[] = [
+  { id: 'so',       label: 'SO' },
+  { id: 'item',     label: 'Item' },
+  { id: 'status',   label: 'Trạng thái' },
+  { id: 'material', label: 'Mã hàng' },
+  { id: 'mat_name', label: 'Tên hàng' },
+  { id: 'qty',      label: 'SL bán (SAP)', align: 'right' },
+  { id: 'base',     label: 'SL gốc (quy đổi)', align: 'right' },
+  { id: 'cartons',  label: 'Thùng (SAP)', align: 'right' },
+  { id: 'kg',       label: 'KL (kg)', align: 'right' },
+  { id: 'pal',      label: 'Pallet SAP', align: 'right' },
+  { id: 'ddate',    label: 'Ngày giao' },
+  { id: 'shipto',   label: 'Ship-to' },
+  { id: 'ward',     label: 'Phường (tuyến)' },
+  { id: 'plant',    label: 'Plant' },
+  { id: 'flow',     label: 'Phân loại' },
+  { id: 'od',       label: 'OD' },
+  { id: 'updated',  label: 'Cập nhật' },
+]
+const SO_COL_DEFAULTS = [110, 50, 90, 100, 160, 100, 120, 90, 80, 80, 85, 135, 120, 60, 95, 100, 100]
+const SO_STATUS_VI: Record<string, { label: string; tone: BadgeTone }> = {
+  OPEN:      { label: 'Chưa có OD', tone: 'amber' },
+  HAS_OD:    { label: 'Đã có OD',   tone: 'green' },
+  CANCELLED: { label: 'SAP huỷ',    tone: 'red' },
+}
+const SO_STATUS_OPTS = Object.entries(SO_STATUS_VI).map(([value, v]) => ({ value, label: v.label }))
+
+function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
+  const { soLines: f, setSoLines } = useWmsFilterStore()
+  const { search, dateFrom, dateTo, plant, status, flow, page, pageSize } = f
+  const [dense, setDense] = useState(() => localStorage.getItem('solines_density') !== 'comfortable')
+  const { widths: colW, startResize, totalWidth } = useColumnResize('solines_col_widths_v1', SO_COL_DEFAULTS)
+  const { data: facets } = useDoSapFacets()
+  const hasDate = !!(dateFrom || dateTo)
+
+  const params = useMemo(() => ({
+    q: search.trim() || undefined,
+    date_from: dateFrom || undefined, date_to: dateTo || undefined,
+    plant: plant || undefined,
+    // rỗng = KHÔNG gửi: BE mặc định OPEN; FE muốn "tất cả" thì tick đủ 3 — không gửi `status=` rỗng (lớp C27)
+    status: status.length ? status.join(',') : undefined,
+    flow: flow.length ? flow.join(',') : undefined,
+    page, page_size: pageSize,
+  }), [search, dateFrom, dateTo, plant, status, flow, page, pageSize])
+  const { data, isLoading, isError, error } = useSoLines(params, hasDate)
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const sum = data?.summary
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, plant, status, flow, pageSize })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setSoLines({ page: 1 }) }, [filterKey])
+
+  const filterDefs: FilterDef[] = [
+    { key: 'date', label: 'Ngày giao', type: 'daterange', from: dateFrom, to: dateTo, onChange: (from, to) => setSoLines({ dateFrom: from, dateTo: to }) },
+    { key: 'status', label: 'Trạng thái', type: 'multi', selected: status, options: SO_STATUS_OPTS, searchable: false, onChange: v => setSoLines({ status: v }) },
+    { key: 'plant', label: 'Plant', type: 'single', allLabel: 'Tất cả plant', value: plant,
+      options: (facets?.plants ?? []).map(p => ({ value: p, label: p })), onChange: v => setSoLines({ plant: v === '__all__' ? '' : v }) },
+    { key: 'flow', label: 'Phân loại', type: 'multi', selected: flow, options: FLOW_OPTS, searchable: false, onChange: v => setSoLines({ flow: v }) },
+  ]
+  const cellPad = dense ? 'py-1' : 'py-2.5'
+  const tomorrow = () => { const d = new Date(Date.now() + 86400000); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) }
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {tabBar}
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchInput value={search} onChange={v => setSoLines({ search: v })} placeholder="Tìm SO, mã hàng, tên hàng, ship-to…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <button type="button" onClick={() => { localStorage.setItem('solines_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        <FilterBar defs={filterDefs} />
+      </div>
+
+      <SummaryBand tiles={[
+        { label: 'Dòng', value: (sum?.rows ?? total).toLocaleString('vi-VN') },
+        { label: 'Chưa có OD', value: (sum?.open ?? 0).toLocaleString('vi-VN'), accent: (sum?.open ?? 0) > 0, tip: 'Dòng SO mà SAP chưa tạo OD — chưa lên xe được, chỉ để nhìn trước tải' },
+        { label: 'Số SO', value: (sum?.so_numbers ?? 0).toLocaleString('vi-VN') },
+        { label: 'Ship-to', value: (sum?.ship_tos ?? 0).toLocaleString('vi-VN') },
+        { label: 'Pallet SAP', value: (sum?.sap_pallets ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ SL SO PALLET theo SAP của dòng chưa có OD — tham chiếu để đặt xe; pallet thật tính theo master lúc lên chuyến' },
+        { label: 'Tấn', value: ((sum?.kg ?? 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ Gross Weight (kg ÷ 1.000) của dòng chưa có OD' },
+        { label: 'Không quy đổi', value: (sum?.unresolved ?? 0).toLocaleString('vi-VN'), accent: (sum?.unresolved ?? 0) > 0, tip: 'Dòng không suy được số gốc: mã chưa có trong danh mục hoặc thiếu quy cách Thùng — khai ở trang Mã hàng' },
+        ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
+      ]} />
+
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {!hasDate ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
+            <Database className="h-10 w-10 opacity-30" />
+            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày giao</b> để xem dòng SO chưa có OD</p>
+            <p className="text-xs">Dòng ở đây là đơn SAP đã nhận nhưng <b>chưa tạo OD</b> — chưa lên xe được, dùng để đặt xe trước với ĐVVT.</p>
+            <div className="flex gap-2 mt-2">
+              <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setSoLines({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>Hôm nay</Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setSoLines({ dateFrom: tomorrow(), dateTo: tomorrow() })}>Ngày mai</Button>
+            </div>
+          </div>
+        ) : isLoading ? (
+          <TableSkeleton cols={12} rows={12} />
+        ) : isError ? (
+          <div className="p-6 text-center text-sm text-red-500">{apiError(error, 'Lỗi tải sổ SO. Vui lòng thử lại.')}</div>
+        ) : (
+          <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+            <TableHeader>
+              <TableRow>
+                {SO_COLS.map((c, i) => (
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.length === 0 && (
+                <TableEmptyRow colSpan={SO_COLS.length}>
+                  {status.length === 1 && status[0] === 'OPEN'
+                    ? 'Không có dòng SO nào chưa có OD trong khoảng ngày này — mở bộ lọc Trạng thái để xem cả dòng đã có OD / SAP huỷ.'
+                    : 'Không có dòng SO nào khớp bộ lọc.'}
+                </TableEmptyRow>
+              )}
+              {items.map((r: SoLineRow) => {
+                const st = SO_STATUS_VI[r.status] ?? { label: r.status, tone: 'slate' as BadgeTone }
+                const notLoadable = r.loadable === false
+                return (
+                  <TableRow key={r.id} className={r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white`}>{r.so_number}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.so_item}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><ToneBadge tone={st.tone} title={r.cancel_reason ?? undefined}>{st.label}</ToneBadge></TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.material_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.material_name ?? undefined}>{r.material_name || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>
+                      {r.qty_so_sales != null ? <>{num(r.qty_so_sales)}{r.sales_unit && <span className="text-slate-400"> {r.sales_unit}</span>}</> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-semibold tabular-nums text-right whitespace-nowrap`}>
+                      {r.qty_unresolved
+                        ? <ToneBadge tone="amber" title="Không suy được số gốc — mã chưa có trong danh mục hoặc thiếu quy cách Thùng">không quy đổi được</ToneBadge>
+                        : r.qty_so_base != null
+                          ? <span title={r.qty_base_derived ? `Số DẪN XUẤT (${r.derive_source === 'FILE' ? 'hệ số quan sát từ dòng có OD cùng mã trong file' : 'hệ số Thùng của Mã hàng'}) — SAP không cho số gốc ở dòng chưa có OD` : 'Số gốc của SAP (đơn vị bán = đơn vị gốc)'}>
+                              {num(r.qty_so_base)}{r.base_unit && <span className="text-slate-400 font-normal"> {r.base_unit}</span>}
+                              {r.qty_base_derived && <span className="ml-1 text-[9px] text-amber-600 font-normal">≈</span>}
+                            </span>
+                          : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.qty_so_cartons != null ? Number(r.qty_so_cartons).toLocaleString('vi-VN', { maximumFractionDigits: 3 }) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.gross_weight_kg != null ? num(Math.round(Number(r.gross_weight_kg))) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_pallets != null ? Number(r.sap_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
+                      {r.ship_to_code ? <div className="leading-tight"><div className="font-mono">{r.ship_to_code}</div>{r.ship_to_name && <div className="text-[9px] text-slate-400 truncate" title={r.ship_to_name}>{r.ship_to_name}</div>}</div> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ?? undefined}>
+                      {r.ward_code ? <div className="leading-tight"><div>{r.ward_code}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.plant || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><FlowBadge flow={r.flow} />{notLoadable && r.status !== 'CANCELLED' && <span className="ml-1 text-[9px] text-slate-400">không lên xe</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.od_number || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      <div className="leading-tight">
+                        <div className="text-[10px] text-slate-600">{r.uploaded_by ?? <span className="text-slate-300">—</span>}</div>
+                        <div className="text-[9px] text-slate-400">{r.updated_at ? formatTimestampDate(r.updated_at, true) : ''}</div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setSoLines({ page: p })} />
+      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setSoLines({ pageSize: n })}
+        right="Dòng chưa có OD chỉ để nhìn trước tải — lên xe phải chờ SAP tạo OD (tab DO SAP)" />
+     </div>
     </div>
   )
 }

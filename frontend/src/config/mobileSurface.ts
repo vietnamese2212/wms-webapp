@@ -45,7 +45,7 @@ export const PAGE_TABS: Record<string, MobileTabDef[]> = {
   ],
   '/wms/trace': [{ key: 'trace', label: 'Truy xuất lô' }, { key: 'carton', label: 'Truy xuất theo thùng' }],
   '/wms/warehouse-costs': [{ key: 'voucher', label: 'Phiếu' }, { key: 'line', label: 'Dòng chi phí' }],
-  '/external/do-sap': [{ key: 'dosap', label: 'DO SAP' }, { key: 'khvc', label: 'Kế hoạch xuất' }, { key: 'reconcile', label: 'Cần xử lý' }],
+  '/external/do-sap': [{ key: 'dosap', label: 'DO SAP' }, { key: 'solines', label: 'Chưa có OD' }, { key: 'khvc', label: 'Kế hoạch xuất' }, { key: 'reconcile', label: 'Cần xử lý' }],
   '/tms/bookings': [{ key: 'main', label: 'Kế hoạch' }, { key: 'transfer', label: 'Chuyển kho' }],
   '/tms/settings': [{ key: 'vehicle-types', label: 'Loại xe' }, { key: 'slot-templates', label: 'Khung giờ' }, { key: 'companies', label: 'ĐVVT / NCC' }, { key: 'vehicles', label: 'Xe' }],
   '/hr/attendance': [{ key: 'me', label: 'Của tôi' }, { key: 'leave', label: 'Nghỉ phép' }, { key: 'team', label: 'Bảng công' }],

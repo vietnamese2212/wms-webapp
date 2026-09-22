@@ -8,6 +8,7 @@ import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { replanKhvcGroups, looseHeldGdoIds } from '../wms/outboundController'
+import { notLoadableDos, FLOW_LABEL } from '../../services/sapFlow'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate } from '../../utils/bookingGuards'
@@ -361,6 +362,11 @@ export async function createKhvc(req: Request, res: Response) {
     const { data: dup } = await supabase.from('khvc_lines').select('id')
       .eq('group_code', fields.group_code).eq('do_no', fields.do_no).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
+    // DO KHÔNG LÊN XE (ZSD02 22/09): trả pallet/trả hàng là chiều NHẬP, chiết khấu không có hàng, mã chưa phân loại chưa biết —
+    // VL06O không có thông tin này nên trước đây không chặn được. Dòng flow NULL (VL06O) vẫn qua.
+    const badFlow = await notLoadableDos([String(fields.do_no)])
+    if (badFlow.size) return fail(res,
+      `DO ${fields.do_no} là dòng ${FLOW_LABEL[badFlow.get(String(fields.do_no)) ?? ''] ?? badFlow.get(String(fields.do_no))} theo SAP — không lên xe được (Kế hoạch xuất chỉ nhận dòng bán hàng / chuyển kho / nội bộ / pallet đi cùng)`, 400)
     const awaitingData = await doMissingInRaw(String(fields.do_no))   // chỉ để BÁO, không chặn
     // NGÀY XUẤT LÀ THUỘC TÍNH CẤP XE (1 xe vật lý chạy 1 ngày): thêm DO vào xe ĐÃ CÓ thì phải theo
     // ngày của xe. Không ép thì xe mang 2 ngày và ngày chuyến phụ thuộc dòng nào đứng đầu — probe

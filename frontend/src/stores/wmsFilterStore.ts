@@ -389,6 +389,21 @@ interface DoSapFilters {
   od: string
   inPlan: string     // '' tất cả | '1' trong kế hoạch | '0' ngoài kế hoạch
   used: string       // '' tất cả | '1' còn trong chuyến Xuất | '0' không (tìm DO có KH nhưng chuyến đã xóa)
+  flow: string[]     // ZSD02 (22/09): phân loại dòng SALE/STO/INTERNAL/RETURN/DISCOUNT/PALLET/UNKNOWN
+  dispatch: string   // '' | 'ASSIGNED' | 'UNASSIGNED' — trạng thái điều phối xe theo SAP
+  deliveryFrom: string   // khoảng Ngày giao (delivery_date) — độc lập với Ngày nạp
+  deliveryTo: string
+  page: number
+  pageSize: number
+}
+// Sổ SO — tab "Chưa có OD" (dòng ZSD02 chưa có OD), lọc theo Ngày giao
+interface SoLinesFilters {
+  search: string
+  dateFrom: string   // Ngày giao (delivery_date); mặc định RỖNG → trang nhắc chọn
+  dateTo: string
+  plant: string
+  status: string[]   // OPEN | HAS_OD | CANCELLED — mặc định ['OPEN']
+  flow: string[]
   page: number
   pageSize: number
 }
@@ -486,9 +501,11 @@ interface WmsFilterState {
   attendanceMy:      AttendanceMyFilters
   leave:             LeaveFilters
   doSap:             DoSapFilters
+  soLines:           SoLinesFilters
   khvc:              KhvcFilters
   reconcile:         ReconcileFilters
   setDoSap:             (f: Partial<DoSapFilters>)             => void
+  setSoLines:           (f: Partial<SoLinesFilters>)           => void
   setKhvc:              (f: Partial<KhvcFilters>)              => void
   setReconcile:         (f: Partial<ReconcileFilters>)         => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
@@ -614,7 +631,8 @@ function initialFilters() {
     // nghỉ mỗi lần mở trang; vài trăm nhân sự × vài năm là vượt trần 10.000 dòng → trang chết hẳn
     // (400 "thu hẹp khoảng ngày") chứ không chỉ chậm. Cần xem năm cũ thì tự nới khoảng ngày.
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
-    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', page: 1, pageSize: 50 },
+    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
+    soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
@@ -661,7 +679,10 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setAttendanceTeam:   (f) => set(s => ({ attendanceTeam:   { ...s.attendanceTeam,   ...f } })),
       setAttendanceMy:     (f) => set(s => ({ attendanceMy:     { ...s.attendanceMy,     ...f } })),
       setLeave:            (f) => set(s => ({ leave:            { ...s.leave,            ...f } })),
-      setDoSap:            (f) => set(s => ({ doSap:            { ...s.doSap,            ...f } })),
+      // `...DOSAP_DEFAULT` trước: bản lưu localStorage từ trước 22/09 thiếu flow/dispatch/deliveryFrom → spread rồi
+      // đọc `.flow.length` là TRẮNG TRANG (cùng bẫy `merge` của Fill 16/09)
+      setDoSap:            (f) => set(s => ({ doSap:            { ...initialFilters().doSap, ...s.doSap, ...f } })),
+      setSoLines:          (f) => set(s => ({ soLines:          { ...initialFilters().soLines, ...s.soLines, ...f } })),
       setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
       setReconcile:        (f) => set(s => ({ reconcile:        { ...s.reconcile,        ...f } })),
       reset:               ()  => set(() => initialFilters()),

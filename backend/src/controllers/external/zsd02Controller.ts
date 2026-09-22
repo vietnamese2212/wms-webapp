@@ -70,6 +70,50 @@ export async function uploadZsd02(req: Request, res: Response) {
     if (scope.unmapped > 0) warnings.push(`${scope.unmapped} dòng không xác định được kho từ Plant/Sloc SAP — khai "Plant SAP" cho kho ở Cài đặt WMS → tab Kho để chặn được file của kho khác.`)
     if (st.so_unresolved > 0) warnings.push(`${st.so_unresolved} dòng SO chưa có OD không quy đổi được đơn vị gốc (mã chưa có trong danh mục hoặc thiếu quy cách Thùng) — sổ SO để trống số base cho các dòng đó.`)
 
+    // ── SO SÁNH VỚI SỔ ĐANG CÓ — làm TRƯỚC kiểm-trước (kiểm lại 22/09: nạp lại đúng file đã nạp mà bảng kiểm-trước
+    // in "Sẽ thêm 3.050 · Sẽ cập nhật 0" trong khi ghi thật là NO-OP toàn bộ — ô đếm phải nói đúng thêm / cập nhật /
+    // không đổi / SAP đã bỏ, cùng một phép so mà đường ghi dùng; chỉ ĐỌC, chưa ghi gì) ──
+    // SỔ OD: giữ id · NO-OP theo bizHash · OBSOLETE dòng SAP bỏ trong DO có mặt
+    const odNumbers = [...new Set(out.od.map(r => String(r.od_number)))]
+    const priorOd = await fetchAllByIdChunks(odNumbers, chunk => db.from('erp_outbound_orders')
+      .select('id, od_number, od_item, sync_status, ' + ZSD02_BIZ.join(', '))
+      .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string; sync_status: string | null })[]
+    const priorByKey = new Map(priorOd.map(p => [`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p, ZSD02_BIZ) }]))
+    let odInserted = 0, odUpdated = 0, odNoop = 0
+    const odWrite: (OdRecord & { id: string })[] = []
+    const updatedKeys: OdKey[] = []
+    for (const rec of out.od) {
+      const prior = priorByKey.get(`${rec.od_number}__${rec.od_item}`)
+      if (!prior) { odWrite.push({ id: randomUUID(), ...rec }); odInserted++; continue }
+      if (prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) { odNoop++; continue }
+      odWrite.push({ id: prior.id, ...rec, manual_edited_at: null }); odUpdated++
+      updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
+    }
+    const fileKeys = new Set(out.od.map(r => `${r.od_number}__${r.od_item}`))
+    const fileDos = new Set(odNumbers)
+    const removedKeys: OdKey[] = []
+    for (const p of priorOd) {
+      const k = `${p.od_number}__${p.od_item}`
+      if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
+        removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
+    }
+    // SỔ SO: cùng khuôn theo khoá (so_number, so_item)
+    const soNumbers = [...new Set(out.so.map(r => String(r.so_number)))]
+    const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
+      .select('id, so_number, so_item, sync_status, ' + SO_BIZ.join(', '))
+      .in('so_number', chunk).order('id')) as (Record<string, unknown> & { id: string; so_number: string; so_item: string; sync_status: string })[]
+    const priorSoByKey = new Map(priorSo.map(p => [`${p.so_number}__${p.so_item}`, { id: p.id, hash: bizHash(p, SO_BIZ) }]))
+    let soInserted = 0, soUpdated = 0, soNoop = 0
+    const soWrite: (typeof out.so[number] & { id: string })[] = []
+    for (const rec of out.so) {
+      const prior = priorSoByKey.get(`${rec.so_number}__${rec.so_item}`)
+      if (!prior) { soWrite.push({ id: randomUUID(), ...rec }); soInserted++; continue }
+      if (prior.hash === bizHash(rec as Record<string, unknown>, SO_BIZ)) { soNoop++; continue }
+      soWrite.push({ id: prior.id, ...rec }); soUpdated++
+    }
+    const soFileKeys = new Set(out.so.map(r => `${r.so_number}__${r.so_item}`))
+    const soObsoleteIds = priorSo.filter(p => !soFileKeys.has(`${p.so_number}__${p.so_item}`) && p.sync_status !== 'OBSOLETE').map(p => p.id)
+
     // ── PREFLIGHT: kiểm + báo cáo, KHÔNG ghi ──
     if (isPreflight(req)) {
       const dos = [...new Set(out.od.map(r => String(r.od_number)))]
@@ -105,9 +149,12 @@ export async function uploadZsd02(req: Request, res: Response) {
         ...(scope.unmapped ? [{ label: 'Dòng không map được kho SAP', value: scope.unmapped, warn: true }] : []),
         ...(dosOnTrips.size ? [{ label: 'DO đã lên chuyến', value: dosOnTrips.size, warn: true }] : []),
         ...(tripsInProgress ? [{ label: 'Chuyến ĐANG XUẤT bị ảnh hưởng', value: tripsInProgress, warn: true }] : []),
+        // so với sổ đang có — để "nạp lại file cũ" hiện 0 thêm / 0 cập nhật / N không đổi thay vì "Sẽ thêm N"
+        ...(odNoop + soNoop ? [{ label: 'Không đổi (đã có y hệt)', value: odNoop + soNoop }] : []),
+        ...(removedKeys.length + soObsoleteIds.length ? [{ label: 'Dòng SAP đã bỏ → OBSOLETE', value: removedKeys.length + soObsoleteIds.length, warn: true }] : []),
         { label: 'Phân loại', value: Object.entries(st.flows).map(([k, v]) => `${k} ${v}`).join(' · ') },
       ]
-      return ok(res, buildPreflight({ unit: 'dòng', total: st.rows, toInsert: st.od_rows + st.so_rows, skipped: st.skipped, errors: unitErrors, warnings, extra }))
+      return ok(res, buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated, skipped: st.skipped, errors: unitErrors, warnings, extra }))
     }
 
     if (out.unitErrs.size) {
@@ -118,64 +165,25 @@ export async function uploadZsd02(req: Request, res: Response) {
       })
     }
 
-    // ── SỔ OD: nạp có so sánh (giữ id · NO-OP · OBSOLETE dòng SAP bỏ trong DO có mặt) ──
-    const odNumbers = [...new Set(out.od.map(r => String(r.od_number)))]
-    const priorOd = await fetchAllByIdChunks(odNumbers, chunk => db.from('erp_outbound_orders')
-      .select('id, od_number, od_item, sync_status, ' + ZSD02_BIZ.join(', '))
-      .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string; sync_status: string | null })[]
-    const priorByKey = new Map(priorOd.map(p => [`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p, ZSD02_BIZ) }]))
-    let odInserted = 0, odUpdated = 0, odNoop = 0
-    const odWrite: (OdRecord & { id: string })[] = []
-    const updatedKeys: OdKey[] = []
-    for (const rec of out.od) {
-      const prior = priorByKey.get(`${rec.od_number}__${rec.od_item}`)
-      if (!prior) { odWrite.push({ id: randomUUID(), ...rec }); odInserted++; continue }
-      if (prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) { odNoop++; continue }
-      odWrite.push({ id: prior.id, ...rec, manual_edited_at: null }); odUpdated++
-      updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
-    }
+    // ── GHI SỔ OD (đã phân loại ở trên) — chunk 500, OBSOLETE dòng SAP bỏ ──
     for (let i = 0; i < odWrite.length; i += CHUNK) {
       const { error } = await db.from('erp_outbound_orders').upsert(odWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
       if (error) throw new Error(error.message)
-    }
-    const fileKeys = new Set(out.od.map(r => `${r.od_number}__${r.od_item}`))
-    const fileDos = new Set(odNumbers)
-    const removedKeys: OdKey[] = []
-    for (const p of priorOd) {
-      const k = `${p.od_number}__${p.od_item}`
-      if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
-        removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
     }
     if (removedKeys.length) {
       await Promise.all(removedKeys.map(k => db.from('erp_outbound_orders')
         .update({ sync_status: 'OBSOLETE', updated_at: t }).eq('od_number', k.od_number).eq('od_item', k.od_item)))
     }
 
-    // ── SỔ SO: cùng khuôn theo khoá (so_number, so_item) ──
-    const soNumbers = [...new Set(out.so.map(r => String(r.so_number)))]
-    const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
-      .select('id, so_number, so_item, sync_status, ' + SO_BIZ.join(', '))
-      .in('so_number', chunk).order('id')) as (Record<string, unknown> & { id: string; so_number: string; so_item: string; sync_status: string })[]
-    const priorSoByKey = new Map(priorSo.map(p => [`${p.so_number}__${p.so_item}`, { id: p.id, hash: bizHash(p, SO_BIZ) }]))
-    let soInserted = 0, soUpdated = 0, soNoop = 0
-    const soWrite: (typeof out.so[number] & { id: string })[] = []
-    for (const rec of out.so) {
-      const prior = priorSoByKey.get(`${rec.so_number}__${rec.so_item}`)
-      if (!prior) { soWrite.push({ id: randomUUID(), ...rec }); soInserted++; continue }
-      if (prior.hash === bizHash(rec as Record<string, unknown>, SO_BIZ)) { soNoop++; continue }
-      soWrite.push({ id: prior.id, ...rec }); soUpdated++
-    }
+    // ── GHI SỔ SO ──
     for (let i = 0; i < soWrite.length; i += CHUNK) {
       const { error } = await db.from('erp_so_lines').upsert(soWrite.slice(i, i + CHUNK), { onConflict: 'so_number,so_item' })
       if (error) throw new Error(error.message)
     }
-    const soFileKeys = new Set(out.so.map(r => `${r.so_number}__${r.so_item}`))
-    let soObsoleted = 0
-    for (const p of priorSo) {
-      if (!soFileKeys.has(`${p.so_number}__${p.so_item}`) && p.sync_status !== 'OBSOLETE') {
-        soObsoleted++
-        await db.from('erp_so_lines').update({ sync_status: 'OBSOLETE', updated_at: t }).eq('id', p.id)
-      }
+    const soObsoleted = soObsoleteIds.length
+    for (let i = 0; i < soObsoleteIds.length; i += 300) {
+      const { error } = await db.from('erp_so_lines').update({ sync_status: 'OBSOLETE', updated_at: t }).in('id', soObsoleteIds.slice(i, i + 300))
+      if (error) throw new Error(error.message)
     }
 
     // ── Tuyến SAP + địa lý khách hàng (AUGMENT — lỗi không làm hỏng upload cốt lõi) ──

@@ -71,7 +71,14 @@ export function UploadPreflightPanel({ report, fileName, busy, onCancel, onConfi
       </div>
 
       {/* Kết luận: bấm Xác nhận thì ĐIỀU GÌ xảy ra */}
-      {blocked ? (
+      {blocked && nErr === 0 ? (
+        // File hợp lệ nhưng KHÔNG tạo thay đổi nào (nạp lại đúng file đã nạp) — là thông tin, không phải lỗi:
+        // hộp đỏ "Không thể nhập" khiến người nạp đi tìm lỗi ở chỗ không có lỗi (kiểm lại 22/09).
+        <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-700 flex gap-2 shrink-0">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>File không có gì mới so với dữ liệu đang có — không có {report.unit} nào cần ghi. Không cần bấm Xác nhận.</span>
+        </div>
+      ) : blocked ? (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2 shrink-0">
           <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
           <span>
@@ -153,7 +160,7 @@ export function UploadPreflightPanel({ report, fileName, busy, onCancel, onConfi
         <Button size="sm" variant="outline" onClick={onCancel} disabled={busy} className="h-8 text-xs ml-auto">Huỷ</Button>
         <Button size="sm" onClick={onConfirm} disabled={busy || blocked} className="h-8 text-xs gap-1.5">
           {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {busy ? 'Đang ghi…' : blocked ? 'Không thể nhập' : `Xác nhận nhập ${report.will_write.toLocaleString('vi-VN')} ${report.unit}`}
+          {busy ? 'Đang ghi…' : blocked ? (nErr === 0 ? 'Không có gì mới' : 'Không thể nhập') : `Xác nhận nhập ${report.will_write.toLocaleString('vi-VN')} ${report.unit}`}
         </Button>
       </div>
     </div>

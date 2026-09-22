@@ -120,6 +120,13 @@ try {
     doList.s === 200 && doList.j?.data?.items?.some(r => r.od_number === OD3) && !doList.j?.data?.items?.some(r => r.od_number === OD1), `http=${doList.s} n=${doList.j?.data?.items?.length}`)
 
   // ── [3] Idempotent + hai nguồn cùng sổ ──
+  // 3a0 (kiểm lại 22/09): bảng KIỂM-TRƯỚC phải so với sổ đang có — nạp lại đúng file đã nạp thì "Sẽ thêm 0 · Sẽ cập nhật 0 ·
+  // Không đổi 5", không phải "Sẽ thêm 5" (bản đầu đếm cả file, ghi thật lại NO-OP ⇒ màn hình nói một đằng máy làm một nẻo).
+  const pf2 = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS))
+  const noopTile = pf2.j?.data?.extra?.find(e => /Không đổi/.test(e.label))
+  check('3a0. Kiểm-trước lần 2 (file y hệt) = to_insert 0 · to_update 0 · ô "Không đổi" = 5 dòng (2 OD + 3 SO)',
+    pf2.s === 200 && pf2.j?.data?.to_insert === 0 && pf2.j?.data?.to_update === 0 && Number(noopTile?.value) === 5,
+    `http=${pf2.s} ins=${pf2.j?.data?.to_insert} upd=${pf2.j?.data?.to_update} noop=${noopTile?.value}`)
   const again = await upload('/external/do-sap/upload-zsd02', xlsxOf(ROWS))
   const d2 = again.j?.data
   check('3a. Upload lại cùng file = NO-OP toàn bộ (không đổi id/updated_at)', again.s === 200 && d2?.od?.noop === 2 && d2?.so?.noop === 3 && d2?.od?.inserted === 0 && d2?.so?.inserted === 0,
@@ -127,6 +134,11 @@ try {
   const od1id = od1?.id
   const vl = [{ Delivery: OD1, Item: '10', Material: FIX.MAT_POOL, 'Item Description': 'x', 'Delivery Quantity': 11, 'Sales Unit': hasEntry ? 'CAR' : bu,
     'Actual delivery qty': 11 * factor, 'Base Unit of Measure': bu, 'Ship-to Party': SHIPTO, 'Name ship-to party': 'QA59', Plant: PLANT, 'Storage Location': 'FG01' }]
+  // 3b0: cửa VL06O cùng khuôn — dòng OD1 đã có nhưng SL đổi ⇒ kiểm-trước phải nói "Sẽ cập nhật 1 · Sẽ thêm 0"
+  const vlPf = await upload('/wms/outbound/upload-vl06o?preflight=1', xlsxOf(vl), 'vl06o.xlsx')
+  check('3b0. Kiểm-trước VL06O với dòng đã có nhưng SL đổi = to_insert 0 · to_update 1',
+    vlPf.s === 200 && vlPf.j?.data?.to_insert === 0 && vlPf.j?.data?.to_update === 1,
+    `http=${vlPf.s} ins=${vlPf.j?.data?.to_insert} upd=${vlPf.j?.data?.to_update}`)
   const vlUp = await upload('/wms/outbound/upload-vl06o', xlsxOf(vl), 'vl06o.xlsx')
   const od1b = (await restAll('erp_outbound_orders', `select=id,qty_base,route_code,ward_code,dvvt_code,flow,delivery_date,source&od_number=eq.${OD1}`))[0]
   check('3b. VL06O nạp SAU đè số lượng nhưng KHÔNG xoá cột ZSD02-only (route/ward/dvvt/flow/ngày giao), giữ id',

@@ -4499,59 +4499,8 @@ export async function uploadVl06o(req: Request, res: Response) {
       `Ngoài phạm vi kho — file VL06O chứa dòng của: ${sapScope.outside.join(', ')}. Chỉ upload file của kho được giao.`, 403)
     const sapUnmapped = sapScope.unmapped
 
-    // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
-    if (isPreflight(req)) {
-      const dos = [...new Set(records.map(r => String(r.od_number)))]
-      const found: { gdo_id: string; delivery_code: string | null }[] = []
-      for (let i = 0; i < dos.length; i += 40) {
-        const orExpr = dos.slice(i, i + 40).map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
-        const { data } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').or(orExpr)
-        for (const d of ((data ?? []) as { gdo_id: string; delivery_code: string | null }[])) found.push(d)
-      }
-      const dosSet = new Set(dos)
-      const dosOnTrips = new Set<string>()
-      const relevantGdos = new Set<string>()
-      for (const d of found) {
-        const toks = String(d.delivery_code ?? '').split(/,\s*/).map(x => x.trim()).filter(t => dosSet.has(t))
-        if (toks.length) { toks.forEach(t => dosOnTrips.add(t)); relevantGdos.add(d.gdo_id) }
-      }
-      let tripsInProgress = 0, scannedItems = 0
-      const gdoIds = [...relevantGdos]
-      if (gdoIds.length) {
-        const { data: gs } = await supabase.from('GroupDeliveryOrder').select('id, status').in('id', gdoIds)
-        tripsInProgress = ((gs ?? []) as { status: string }[]).filter(g => g.status === 'IN_PROGRESS' || g.status === 'PAUSED').length
-        const dvs = await fetchAllByIdChunks(gdoIds, c => supabase.from('OutboundDelivery').select('id').in('gdo_id', c).order('id')) as { id: string }[]
-        const dvIds = (dvs ?? []).map(x => x.id)
-        const its = await fetchAllByIdChunks(dvIds, c => supabase.from('OutboundItem').select('cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
-        scannedItems = (its ?? []).filter(i => Number(i.cartons_scanned) > 0).length
-      }
-      // Báo cáo CHUẨN (utils/uploadPreflight) — cùng khuôn với mọi upload khác. Lỗi đơn vị lệch hệ
-      // thống là lỗi CHẶN (all-or-nothing) nên đưa vào errors → nút Xác nhận tự tắt.
-      return ok(res, buildPreflight({
-        unit: 'dòng', total: rows.length, toInsert: records.length, skipped: skippedNoKey,
-        errors: [...unitErrs.values()].map(u =>
-          `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`),
-        warnings,
-        extra: [
-          { label: 'Số DO trong file', value: dos.length },
-          ...(sapUnmapped ? [{ label: 'Dòng không map được kho SAP', value: sapUnmapped, warn: true }] : []),
-          ...(dosOnTrips.size ? [{ label: 'DO đã lên chuyến', value: dosOnTrips.size, warn: true }] : []),
-          ...(tripsInProgress ? [{ label: 'Chuyến ĐANG XUẤT bị ảnh hưởng', value: tripsInProgress, warn: true }] : []),
-          ...(scannedItems ? [{ label: 'Dòng đã quét thực tế', value: scannedItems, warn: true }] : []),
-        ],
-      }))
-    }
-
-    // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
-    if (unitErrs.size) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'UNIT_MISMATCH', message: `${unitErrs.size} mã có đơn vị không khớp hệ thống — sửa Đơn vị ở trang Mã hàng rồi up lại.` },
-        unit_errors: [...unitErrs.values()],
-      })
-    }
-
-    // ── Nạp CÓ SO SÁNH (ingest-with-comparison) — thay "upsert mù" ──
+    // ── Nạp CÓ SO SÁNH (ingest-with-comparison) — thay "upsert mù"; phân loại TRƯỚC kiểm-trước để bảng
+    // kiểm-trước nói đúng thêm / cập nhật / không đổi (kiểm lại 22/09: nạp lại file cũ mà in "Sẽ thêm N"). Chỉ ĐỌC. ──
     // (1) Vá churn PK: pre-fetch (od,item)→id, GIỮ id cũ khi UPDATE, randomUUID CHỈ khi INSERT.
     // (2) Idempotent: dòng y hệt (hash cột nghiệp vụ đã chuẩn hóa) = NO-OP → không ghi, không đổi id/updated_at.
     // (3) KHÔNG auto-OBSOLETE (v2.3): dòng vắng khỏi file để NGUYÊN — up tay chỉ cộng thêm/sửa.
@@ -4585,14 +4534,6 @@ export async function uploadVl06o(req: Request, res: Response) {
       updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
 
-    // Upsert theo (od_number, od_item) — CHỈ dòng INSERT/UPDATE; chunk 500 (KHÔNG ghi tuần tự)
-    const CHUNK = 500
-    for (let i = 0; i < toWrite.length; i += CHUNK) {
-      const { error } = await supabase.from('erp_outbound_orders')
-        .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
-      if (error) throw new Error(error.message)
-    }
-
     // ── Phát hiện dòng THIẾU trong DO CÓ MẶT (v2.3: VL06O luôn xuất trọn dòng của DO) ──
     // DO có trong file → dòng ACTIVE cũ của DO đó KHÔNG có trong file = SAP đã bỏ dòng → OBSOLETE (KHÔNG hard-delete,
     // giữ raw cho post-back; derive/engine bỏ qua OBSOLETE). DO cả-DO-vắng = mơ hồ → ĐỂ NGUYÊN (post-back gác).
@@ -4603,6 +4544,68 @@ export async function uploadVl06o(req: Request, res: Response) {
       const k = `${p.od_number}__${p.od_item}`
       if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
         removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
+    }
+
+    // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
+    if (isPreflight(req)) {
+      const dos = odNumbers
+      const found: { gdo_id: string; delivery_code: string | null }[] = []
+      for (let i = 0; i < dos.length; i += 40) {
+        const orExpr = dos.slice(i, i + 40).map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
+        const { data } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').or(orExpr)
+        for (const d of ((data ?? []) as { gdo_id: string; delivery_code: string | null }[])) found.push(d)
+      }
+      const dosSet = new Set(dos)
+      const dosOnTrips = new Set<string>()
+      const relevantGdos = new Set<string>()
+      for (const d of found) {
+        const toks = String(d.delivery_code ?? '').split(/,\s*/).map(x => x.trim()).filter(t => dosSet.has(t))
+        if (toks.length) { toks.forEach(t => dosOnTrips.add(t)); relevantGdos.add(d.gdo_id) }
+      }
+      let tripsInProgress = 0, scannedItems = 0
+      const gdoIds = [...relevantGdos]
+      if (gdoIds.length) {
+        const { data: gs } = await supabase.from('GroupDeliveryOrder').select('id, status').in('id', gdoIds)
+        tripsInProgress = ((gs ?? []) as { status: string }[]).filter(g => g.status === 'IN_PROGRESS' || g.status === 'PAUSED').length
+        const dvs = await fetchAllByIdChunks(gdoIds, c => supabase.from('OutboundDelivery').select('id').in('gdo_id', c).order('id')) as { id: string }[]
+        const dvIds = (dvs ?? []).map(x => x.id)
+        const its = await fetchAllByIdChunks(dvIds, c => supabase.from('OutboundItem').select('cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
+        scannedItems = (its ?? []).filter(i => Number(i.cartons_scanned) > 0).length
+      }
+      // Báo cáo CHUẨN (utils/uploadPreflight) — cùng khuôn với mọi upload khác. Lỗi đơn vị lệch hệ
+      // thống là lỗi CHẶN (all-or-nothing) nên đưa vào errors → nút Xác nhận tự tắt.
+      return ok(res, buildPreflight({
+        unit: 'dòng', total: rows.length, toInsert: inserted, toUpdate: updated, skipped: skippedNoKey,
+        errors: [...unitErrs.values()].map(u =>
+          `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`),
+        warnings,
+        extra: [
+          { label: 'Số DO trong file', value: dos.length },
+          ...(noop ? [{ label: 'Không đổi (đã có y hệt)', value: noop }] : []),
+          ...(removedKeys.length ? [{ label: 'Dòng SAP đã bỏ → OBSOLETE', value: removedKeys.length, warn: true }] : []),
+          ...(sapUnmapped ? [{ label: 'Dòng không map được kho SAP', value: sapUnmapped, warn: true }] : []),
+          ...(dosOnTrips.size ? [{ label: 'DO đã lên chuyến', value: dosOnTrips.size, warn: true }] : []),
+          ...(tripsInProgress ? [{ label: 'Chuyến ĐANG XUẤT bị ảnh hưởng', value: tripsInProgress, warn: true }] : []),
+          ...(scannedItems ? [{ label: 'Dòng đã quét thực tế', value: scannedItems, warn: true }] : []),
+        ],
+      }))
+    }
+
+    // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
+    if (unitErrs.size) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'UNIT_MISMATCH', message: `${unitErrs.size} mã có đơn vị không khớp hệ thống — sửa Đơn vị ở trang Mã hàng rồi up lại.` },
+        unit_errors: [...unitErrs.values()],
+      })
+    }
+
+    // ── GHI (đã phân loại ở trên): upsert theo (od_number, od_item) — CHỈ dòng INSERT/UPDATE; chunk 500 ──
+    const CHUNK = 500
+    for (let i = 0; i < toWrite.length; i += CHUNK) {
+      const { error } = await supabase.from('erp_outbound_orders')
+        .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
+      if (error) throw new Error(error.message)
     }
     if (removedKeys.length) {
       await Promise.all(removedKeys.map(k => supabase.from('erp_outbound_orders')

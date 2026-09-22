@@ -68,7 +68,7 @@ async function cleanup() {
   }
   await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC}`).catch(() => {})
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${OD1},${OD3})`)
-  await restWrite('erp_so_lines', 'DELETE', `so_number=like.QA59SO%`)
+  await restWrite('erp_so_lines', 'DELETE', `so_number=like.QA59SO*`)
   await restWrite('sap_route', 'DELETE', `route_code=eq.${ROUTE}`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIPTO}&auto_created=is.true`).catch(() => {})
   await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
@@ -81,7 +81,7 @@ try {
   const pf = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS))
   check('1a. Preflight 200, 0 lỗi, có ô "Dòng CHƯA OD → chỉ sổ SO" = 1', pf.s === 200 && pf.j?.data?.errors_total === 0
     && pf.j?.data?.extra?.some(e => /CHƯA OD/.test(e.label) && Number(e.value) === 1), `http=${pf.s} errors=${pf.j?.data?.errors_total} extra=${JSON.stringify(pf.j?.data?.extra ?? []).slice(0, 200)}`)
-  check('1b. Preflight KHÔNG ghi gì', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO%`)).length === 0)
+  check('1b. Preflight KHÔNG ghi gì', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0)
   const up = await upload('/external/do-sap/upload-zsd02', xlsxOf(ROWS))
   const d = up.j?.data
   check('1c. Ghi thật: sổ OD 2 dòng (OD1 + OD3), sổ SO 3 dòng, 1 dòng chưa OD', up.s === 200 && d?.od?.inserted === 2 && d?.so?.inserted === 3 && d?.so?.without_od === 1,
@@ -160,7 +160,7 @@ try {
   check('5c. Cờ trả về BOTH', (await api('/wms/settings')).j?.data?.find(s => s.key === 'sap_do_source')?.value === 'BOTH')
 } finally {
   await cleanup()
-  check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO%`)).length === 0
+  check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0
     && (await restAll('erp_outbound_orders', `select=id&od_number=in.(${OD1},${OD3})`)).length === 0)
 }
 finish(PACK)

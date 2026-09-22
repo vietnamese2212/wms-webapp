@@ -269,7 +269,11 @@ Kết quả gắn lên `GroupDeliveryOrder` (cột `freight_estimated`, `freight
 
 ## 11. LỘ TRÌNH — checklist verify được
 
-### Đợt 0 — ZSD02 thay VL06O + master (≈ 1 tuần)
+### Đợt 0 — ZSD02 thay VL06O + master (≈ 1 tuần) — **TRẠNG THÁI 22/09: lên `dev` (dbe2e76c → 96267b86), Preview đã kiểm**
+> Xong: 1 · 2 · 3 · 4 · 5 · 7 · 8 · 10 (gói QA 59: 22/22) · 11. Dữ liệu: `sap_plant` Bàu Bàng ✔ (migration); ĐVVT khớp theo TÊN bỏ dấu nên chưa cần alias — còn RATRACO và "Vãng Lai" chưa có trong danh mục.
+> **Chưa làm:** mục 6 (tab đối chiếu VL06O ↔ ZSD02 — cần user cấp cặp file cùng ngày) · mục 9 phần "thêm dòng xe theo bảng cước" (dời sang đợt 1 cùng `VehicleType` mở rộng).
+> **Đo trên Preview:** lát 1 ngày 1.561 dòng (1,4 MB) qua UI: kiểm-trước 5,6 s, ghi 9,7 s → 1.489 OD · 1.561 SO (72 chưa OD) · 144 khách tự sinh có phường · 138 tuyến; tab Chưa có OD 71 dòng OPEN, 360 px không tràn. File TRỌN 25 ngày (3,5 MB): Node 12 s/200, nhưng **trình duyệt không nhận phản hồi** (net::ERR_FAILED) — việc mở: hạ trần FE 4 MB → ~3 MB kèm hướng dẫn "lọc theo ngày trước khi xuất", hoặc đo lại cửa Vercel với body ~3,5 MB.
+> **Master lệch thật lộ khi nạp:** mã 610000036 master BAG ↔ SAP EA (0 tồn, 0 dòng đơn — kiểm-trước CHẶN đúng luật, user sửa master) · 16–20 mã lệch khối lượng > 5 %.
 1. Migration `20260922_zsd02_source.sql`: cột mới `erp_outbound_orders` + index · bảng `erp_so_lines` · `sap_route` · `Customer` 8 cột · `VehicleType` 8 cột · seed `sap_flow_map` · `SystemSetting.sap_do_source` vào `KNOWN_SETTINGS` (`utils/settings.ts`) → **kiểm tra:** apply staging, `npm run db:types`, `SCHEMA_REVIEW.md`; migration RAISE nếu `erp_outbound_orders` có dòng `qty_base IS NULL` bất thường.
 2. `utils/sapUnits.ts` (BE+FE) + `utils/loadCalc.ts` (BE+FE) + `normDvvt` + `flowOf()` → **kiểm tra:** `tests/mirror/sapUnits`, `tests/mirror/loadCalc` (9 mã đo thật: 510000219 → 4,965 kg/thùng, 190 thùng/pallet), `tests/unit/zsd02Parse` chạy trên **file mẫu thật**: 6.916 dòng OD · 1.135 dòng SO · Σ`qty_base` OD = 51.948.685 · 0 dòng chưa OD lọt vào sổ OD · 16 CANCELLED · flow đếm đúng bảng 4.3.
 3. `uploadZsd02` (controller external hoặc outbound, `validate()` query) + route + FE nút "Up ZSD02" trong `VcUploadDialog` (mode thứ 3) → **kiểm tra:** preflight in đủ 8 ô mục 4.1; commit trên staging với file mẫu: `inserted/updated/noop` khớp; up lần 2 = 100 % NO-OP; up VL06O sau đó → cột `route_code` còn nguyên.

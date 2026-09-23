@@ -89,28 +89,20 @@ export const zTariffCreate = z.object({
   from_warehouse_id: zId, transport_company_id: zId, vehicle_model_id: zId,
   ward_code: zText(1, 120), price: zMoney, distance_km: z.number().finite().min(0).nullable().optional(),
   province_new: zText(0, 120).nullable().optional(), ward_raw: zText(0, 120).nullable().optional(), ...zEff,
-}).strict()
-export const zTariffUpdate = z.object({
+})export const zTariffUpdate = z.object({
   ward_code: zText(1, 120).optional(), price: zMoney.optional(), distance_km: z.number().finite().min(0).nullable().optional(),
   province_new: zText(0, 120).nullable().optional(), ...zEff,
-}).strict()
-export const zSurchargeCreate = z.object({
+})export const zSurchargeCreate = z.object({
   from_warehouse_id: zId, transport_company_id: zId, vehicle_model_id: zId.nullable().optional(),
   kind: zText(1, 40), amount: zMoney, per: z.enum(['PER_STOP', 'PER_TRIP', 'PER_PALLET', 'PER_TON']),
   count_mode: z.enum(['ALL_STOPS', 'EXTRA_STOPS']).optional(), min_stops: z.number().int().min(1).max(50).optional(), ...zEff,
-}).strict()
-export const zSurchargeUpdate = zSurchargeCreate.omit({ from_warehouse_id: true, transport_company_id: true }).partial().strict()
-export const zAllocationCreate = z.object({
+})export const zSurchargeUpdate = zSurchargeCreate.omit({ from_warehouse_id: true, transport_company_id: true }).partial()export const zAllocationCreate = z.object({
   from_warehouse_id: zId, area_kind: z.enum(['WARD', 'REGION']), area_code: zText(1, 120), transport_company_id: zId,
   priority: z.number().int().min(1).max(99).optional(), ...zEff,
-}).strict()
-export const zAllocationUpdate = z.object({ priority: z.number().int().min(1).max(99).optional(), ...zEff }).strict()
-export const zShareCreate = z.object({
+})export const zAllocationUpdate = z.object({ priority: z.number().int().min(1).max(99).optional(), ...zEff })export const zShareCreate = z.object({
   from_warehouse_id: zId, transport_company_id: zId, share_pct: z.number().finite().gt(0).max(100),
   basis: z.enum(['TRIPS', 'PALLETS', 'TONS']).optional(), ...zEff,
-}).strict()
-export const zShareUpdate = z.object({ share_pct: z.number().finite().gt(0).max(100).optional(), basis: z.enum(['TRIPS', 'PALLETS', 'TONS']).optional(), ...zEff }).strict()
-export const zListQuery = z.object({
+})export const zShareUpdate = z.object({ share_pct: z.number().finite().gt(0).max(100).optional(), basis: z.enum(['TRIPS', 'PALLETS', 'TONS']).optional(), ...zEff })export const zListQuery = z.object({
   warehouse_id: zId.optional(), company_id: zId.optional(), model_id: zId.optional(), ward: zText(0, 120).optional(),
   active_on: zDay.optional(), q: zText(0, 120).optional(), page: zIntFromQuery.optional(), pageSize: zIntFromQuery.optional(),
 }).passthrough()

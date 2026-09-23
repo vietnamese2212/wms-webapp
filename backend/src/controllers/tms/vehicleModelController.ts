@@ -26,7 +26,8 @@ const zPosInt = z.number().int().positive()
 const zPosNum = z.number().finite().positive()
 const nullable = <T extends z.ZodTypeAny>(s: T) => s.nullable().optional()
 
-/** Thân chung Thêm / Sửa — mọi cột sức chứa nullable (null = không giới hạn / chưa khai). */
+/** Thân chung Thêm / Sửa — mọi cột sức chứa nullable (null = không giới hạn / chưa khai).
+ *  KHÔNG `.strict()`: client (và bộ QA) gửi kèm cờ chung `qty_semantics` trong mọi thân ghi — zod mặc định bỏ khoá lạ. */
 const vehicleModelBody = {
   name:               zText(1, 160),
   parent_type_id:     nullable(zId),
@@ -45,10 +46,7 @@ const vehicleModelBody = {
 export const zVehicleModelCreate = z.object({ sap_code: zText(1, 20), ...vehicleModelBody }).partial({
   parent_type_id: true, temp_mode: true, max_pallets: true, max_tons: true, max_m3: true, max_drops: true,
   allow_mix_channels: true, tariff_unit: true, underload_pct: true, is_active: true, sort_order: true, capacity_mode: true,
-}).strict()
-export const zVehicleModelUpdate = z.object(vehicleModelBody).partial().strict()
-export const zAssignParent = z.object({ ids: z.array(zId).min(1).max(200), parent_type_id: zId.nullable() }).strict()
-
+})export const zVehicleModelUpdate = z.object(vehicleModelBody).partial()export const zAssignParent = z.object({ ids: z.array(zId).min(1).max(200), parent_type_id: zId.nullable() })
 /** Cha phải là VehicleType có thật — gán vào id rác thì dòng con "có cha" mà kho không đặt được khung giờ nào. */
 async function parentExists(id: string): Promise<boolean> {
   const { data } = await db.from('VehicleType').select('id').eq('id', id).maybeSingle()

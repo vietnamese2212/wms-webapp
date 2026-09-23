@@ -109,7 +109,7 @@ try {
     pf.s === 200 && pf.j?.data?.to_insert === 1 && pf.j?.data?.to_update === 1 && pf.j?.data?.errors_total === 0 && pf.j?.data?.extra?.some(e => /chưa thấy trong SAP/.test(e.label)),
     `http=${pf.s} ins=${pf.j?.data?.to_insert} upd=${pf.j?.data?.to_update}`)
   const wr = await upload('/tms/freight/tariffs/upload', good, { warehouse_id: WH })
-  const t1b = (await restAll('freight_tariff', `select=id,price&id=eq.${tId}`))[0]
+  const t1b = tId ? (await restAll('freight_tariff', `select=id,price&id=eq.${tId}`))[0] : null
   check('2e2. Ghi thật: inserted 1 · updated 1 · dòng cũ GIỮ id, giá đè 270.000', wr.s === 200 && wr.j?.data?.inserted === 1 && wr.j?.data?.updated === 1 && Number(t1b?.price) === 270000,
     `http=${wr.s} ins=${wr.j?.data?.inserted} upd=${wr.j?.data?.updated} price=${t1b?.price}`)
   const pf2 = await upload('/tms/freight/tariffs/upload?preflight=1', good, { warehouse_id: WH })

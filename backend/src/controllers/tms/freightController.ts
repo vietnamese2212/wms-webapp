@@ -144,7 +144,10 @@ export async function listTariffs(req: Request, res: Response) {
     if (qy.ward) q = q.ilike('ward_code', `%${safeSearch(qy.ward)}%`)
     if (qy.active_on) q = q.lte('effective_from', qy.active_on).or(`effective_to.is.null,effective_to.gte.${qy.active_on}`).eq('is_active', true)
     if (qy.q) { const s = safeSearch(qy.q); if (s) q = q.or(`ward_code.ilike.%${s}%,province_new.ilike.%${s}%,ward_raw.ilike.%${s}%`) }
-    const { data, error, count } = await q.order('ward_code').order('effective_from', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1)
+    // Thứ tự đọc được: kho → phường → ĐVVT → giá tăng dần (đơn giá pallet đứng trước cước trọn chuyến) → hiệu lực mới nhất.
+    // Trước 23/09 chỉ sắp theo phường nên trong một phường các dòng ĐVVT/dòng xe xếp theo uuid = lộn xộn (soi sau khi nạp 5.526 dòng).
+    const { data, error, count } = await q.order('from_warehouse_id').order('ward_code').order('transport_company_id').order('price').order('effective_from', { ascending: false })
+      .range((page - 1) * pageSize, page * pageSize - 1)
     if (error) return fail(res, error)
     const rows = (data ?? []) as TariffRow[]
     const m = await nameMaps(rows.map(r => r.from_warehouse_id))

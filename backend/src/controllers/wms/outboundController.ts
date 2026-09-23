@@ -1012,7 +1012,10 @@ async function enrichGdos(data: any[]): Promise<any[]> {
         const stored = Number(i.pallets_estimated ?? 0)
         if (stored > 0) return stored
         const cpp = effCartonsPerPallet((i.material ?? null) as MatPalletUnits | null, g.warehouse_id ?? null)
-        return cpp > 0 ? qEntry(i, i.cartons_ordered) / cpp : 0
+        if (cpp > 0) return qEntry(i, i.cartons_ordered) / cpp
+        // Master thiếu Thùng/Pallet → số SAP của đúng (OD, mã) — CÙNG nguồn với cột Tải (23/09: cột Pallet in 9 còn Tải in 13/17 cho một xe)
+        const ref = sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw))
+        return ref?.sap_pallets != null && ref.sap_pallets > 0 ? Number(ref.sap_pallets) : 0
       }
       for (const i of gdoItems) {
         const material_code = i.material_code_raw ?? '(?)'

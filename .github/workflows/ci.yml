@@ -51,18 +51,52 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     # 11/09: ngày 10/09 có 30 lượt push ⇒ 30 lượt qa-smoke nối đuôi, 5 lượt đỏ = 5 email cho cùng một
-    # trạng thái staging. Push mới thì HUỶ lượt cũ đang chờ Preview (lượt bị huỷ không gửi email, và
-    # kết quả của nó cũng vô nghĩa vì Preview đã đổi commit). Bước thu hồi tài khoản vẫn chạy (always()).
-    concurrency: { group: qa-smoke-dev, cancel-in-progress: true }
+    # trạng thái staging ⇒ push mới thì bỏ lượt cũ đang chờ Preview (kết quả của nó cũng vô nghĩa vì
+    # Preview đã đổi commit). Bước thu hồi tài khoản vẫn chạy (always()).
+    #
+    # 23/09 — ĐỔI CÁCH BỎ: `cancel-in-progress: true` làm lượt cũ kết thúc với trạng thái **cancelled**,
+    # và cả LƯỢT CHẠY mang kết luận "cancelled" dù job `static` đã XANH (đo thật: lượt 850). Chú thích cũ
+    # khẳng định "lượt bị huỷ không gửi email" — đó là một GIẢ ĐỊNH chưa ai kiểm, mà hộp thư người dùng
+    # mới là nơi trả lời. Thay vì đoán: QUEUE (`cancel-in-progress: false`) rồi để lượt cũ TỰ NHẬN RA mình
+    # đã cũ và thoát 0 kèm ::notice ⇒ kết luận **success**, không còn trạng thái nào để GitHub báo động.
+    # Queue vẫn giữ nguyên điều cần giữ: KHÔNG BAO GIỜ hai bộ smoke cùng bắn vào staging một lúc.
+    # CÒN HỞ (nói thẳng): GitHub chỉ giữ MỘT lượt ở hàng chờ mỗi nhóm — push cái thứ BA khi cái thứ hai
+    # còn đang chờ thì cái thứ hai vẫn bị huỷ. Hai push liên tiếp (ca thường gặp) nay sạch; ba push dồn
+    # trong vài phút thì còn một lượt "cancelled". Gom commit trước khi push vẫn là cách rẻ nhất.
+    concurrency: { group: qa-smoke-dev, cancel-in-progress: false }
     env:
       PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with: { node-version: 22 }   # 22 = có WebSocket native; supabase-js v2.105 ném lỗi lúc createClient trên Node 20 (CI đỏ 11/09)
-      - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
+      # Tới lượt mình mà nhánh đã chạy tiếp ⇒ lượt này vô nghĩa (Preview chỉ giữ commit MỚI NHẤT).
+      # Thoát SẠCH thay vì để bị huỷ: lượt "cancelled" là thứ GitHub có thể gửi email, "success" thì không.
+      - name: Bỏ qua nếu đã có commit mới hơn trên nhánh
+        id: stale
         run: |
+          head=$(git ls-remote origin "$GITHUB_REF" | cut -f1)
+          if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Bỏ qua QA smoke::commit này (${GITHUB_SHA:0:8}) không còn là đầu nhánh (${head:0:8}) — Preview đã đổi, kết quả sẽ vô nghĩa. Lượt của commit mới sẽ kiểm."
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
+        id: wait
+        if: steps.stale.outputs.stale == 'false'
+        # Phải hỏi "mình còn mới không?" TRONG vòng chờ, không chỉ lúc bắt đầu: người ta push tiếp
+        # lúc vòng này đang chạy thì Vercel dựng commit MỚI, nên SHA của lượt này KHÔNG BAO GIỜ lên
+        # nữa ⇒ ngồi đủ 12 phút rồi ::error = ĐỎ OAN, tệ hơn cả bị huỷ.
+        run: |
+          echo "stale=false" >> "$GITHUB_OUTPUT"
           for i in $(seq 1 72); do
+            head=$(git ls-remote origin "$GITHUB_REF" | cut -f1)
+            if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
+              echo "stale=true" >> "$GITHUB_OUTPUT"
+              echo "::notice title=Bỏ qua QA smoke::nhánh đã chạy tiếp tới ${head:0:8} trong lúc chờ — Preview không còn mang commit này. Lượt của commit mới sẽ kiểm."
+              exit 0
+            fi
             sha=$(curl -s --max-time 15 "$PREVIEW_URL/api/version" | grep -o '"sha":"[a-f0-9]*"' | cut -d'"' -f4 || true)
             echo "lần $i: preview=$sha cần=$GITHUB_SHA"
             if [ "$sha" = "$GITHUB_SHA" ]; then echo "Preview ĐÃ live đúng commit"; exit 0; fi
@@ -71,6 +105,7 @@ jobs:
           echo "::error::Preview không lên đúng commit sau 12 phút (Vercel build fail?)"; exit 1
       - name: Dựng env cho bộ QA (từ secret — thiếu thì skip có chủ đích)
         id: qaenv
+        if: steps.stale.outputs.stale == 'false' && steps.wait.outputs.stale == 'false'
         run: |
           if [ -z "${{ secrets.QA_DATABASE_URL }}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"

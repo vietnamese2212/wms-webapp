@@ -123,7 +123,7 @@ function TariffForm({ row, whs, companies, models, defaultWh, onClose }: {
           <SingleSelect options={companies} value={co} onChange={setCo} placeholder="Chọn ĐVVT…" disabled={!!row} /></div>
         <div><Label className="text-xs">Dòng xe (mã SAP) *</Label>
           <SingleSelect options={models.map(m => ({ value: m.id, label: modelLabel(m) }))} value={vm} onChange={setVm} placeholder="Chọn dòng xe…" disabled={!!row} />
-          {model && <p className="mt-1 text-[11px] text-slate-500">Tính cước: <b>{model.tariff_unit === 'PER_PALLET' ? 'theo pallet (làm tròn lên)' : 'trọn chuyến'}</b>{model.parent ? ` · cha ${model.parent.code}` : ' · CHƯA GÁN CHA — điều vận chưa dùng được dòng này'}</p>}</div>
+          {model && <p className="mt-1 text-[11px] text-slate-500">Tính cước: <b>{model.tariff_unit === 'PER_PALLET' ? 'theo pallet (làm tròn lên)' : 'trọn chuyến'}</b>{model.parent ? ` · dòng xe cha: ${model.parent.name}` : ' · CHƯA GÁN CHA — điều vận chưa dùng được dòng này'}</p>}</div>
         <div className="grid grid-cols-2 gap-2">
           <div><Label className="text-xs">Phường/Xã (mới) *</Label><Input value={ward} onChange={e => setWard(e.target.value)} placeholder="HN-Phúc Lợi" className="h-9" />
             <p className="mt-1 text-[10px] text-slate-400">Ghi đúng "Tên Phường" của SAP (Tỉnh-Phường) để khớp khách hàng.</p></div>

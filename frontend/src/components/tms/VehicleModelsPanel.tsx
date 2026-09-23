@@ -137,8 +137,8 @@ function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parent
 
 export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreate: boolean; canEdit: boolean; canDelete: boolean }) {
   const { data: parentsRaw = [] } = useVehicleTypes()
-  const parents = useMemo(() => parentsRaw.filter(p => p.is_active).map(p => ({ value: p.id, label: `${p.code} · ${p.name}` })), [parentsRaw])
-  const parentOpts = useMemo(() => [{ value: NONE, label: 'Chưa gán cha' }, ...parentsRaw.map(p => ({ value: p.id, label: `${p.code} · ${p.name}` }))], [parentsRaw])
+  const parents = useMemo(() => parentsRaw.filter(p => p.is_active).map(p => ({ value: p.id, label: p.name })), [parentsRaw])
+  const parentOpts = useMemo(() => [{ value: NONE, label: 'Chưa gán cha' }, ...parentsRaw.map(p => ({ value: p.id, label: p.name }))], [parentsRaw])
   const { data, isLoading } = useVehicleModels()
   const items = data?.items ?? []
   const assign = useAssignVehicleModelParent(), del = useDeleteVehicleModel()
@@ -196,7 +196,8 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       case 'pick':   return canEdit ? <input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} className="h-3.5 w-3.5 accent-sky-600" /> : null
       case 'sap':    return <span className="font-mono font-semibold">{m.sap_code}</span>
       case 'name':   return <span className="font-medium">{m.name}</span>
-      case 'parent': return m.parent ? <><span className="font-mono">{m.parent.code}</span> <span className="opacity-80">{m.parent.name}</span></> : <StatusBadge tone="amber">Chưa gán</StatusBadge>
+      // Chỉ TÊN cha (mã để tooltip) — in cả "CONTSCA XE CONTAINER SCA" là lặp một ý hai lần (user 23/09: "kỳ cục quá")
+      case 'parent': return m.parent ? <span title={m.parent.code}>{m.parent.name}</span> : <StatusBadge tone="amber">Chưa gán</StatusBadge>
       case 'temp':   return m.temp_mode ? TEMP_LABEL[m.temp_mode] : <span className="text-slate-300">—</span>
       case 'cap':    return capText(m) ?? <span className="text-slate-300">—</span>
       case 'unit':   return m.tariff_unit === 'PER_PALLET' ? 'Pallet (làm tròn lên)' : 'Trọn chuyến'
@@ -265,7 +266,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       </div>
       <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0 flex items-center gap-2 flex-wrap">
         <span className="whitespace-nowrap">1–{rows.length} / {items.length} dòng xe con</span>
-        <span className="flex-1 min-w-0 truncate text-slate-400">Cha do máy gợi ý theo tên (cont → CONT/CONTSCA · ≤ 6 pallet → XE4PALLET · pallet → XEPALLET · lạnh/kết hợp → XESCA · còn lại → XEXA) — tick dòng sai rồi bấm Gán cha</span>
+        <span className="flex-1 min-w-0 truncate text-slate-400">Cha do máy gợi ý theo tên (cont → Xe container / container SCA · ≤ 6 pallet → Xe 4 pallet · pallet → Xe pallet · lạnh, kết hợp → Xe SCA · còn lại → Xe xá) — tick dòng sai rồi bấm Gán cha</span>
       </div>
 
       {canEdit && picked.size > 0 && (

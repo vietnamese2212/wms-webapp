@@ -184,17 +184,13 @@ ZSD02 là Z-report, không phải object chuẩn. Ba đường (đã trình bày
 
 ### 5.2 `sap_route` (mới, tham chiếu) — `route_code` PK · `route_name` · `plant` · `ward_code`. Nạp từ ZSD02 (231 dòng), chỉ để hiển thị/gom nhóm; cước **không** khoá theo đây (5 cặp (plant, phường) có 2 route → khoá theo phường ổn hơn).
 
-### 5.3 `VehicleType` — mở rộng theo bảng cước thật
-| Cột mới | Nghĩa | Mặc định (= hành vi cũ) |
-|---|---|---|
-| `sap_vehicle_code` | "Mã xe SAP" 9100000xx | null |
-| `capacity_mode` | `PALLET` \| `TON` (quyết định tải đo bằng gì) | `is_pallet_truck ? PALLET : TON` |
-| `max_pallets` · `max_tons` · `max_m3` | sức chứa | null = không giới hạn (engine không tự ghép vào dòng xe null) |
-| `max_drops` | số điểm giao tối đa | null |
-| `allow_mix_channels` | cho trộn kênh (BHX + NPP) | true |
-| `tariff_unit` | `PER_PALLET` \| `PER_TRIP` | `PER_TRIP` |
-| `underload_pct` | dưới % này = Non tải | 70 |
-Danh mục cần bổ sung dòng theo bảng cước (Xe 4/16/17 pallet · tải 1,25/2,5/3,5/5/8/15 tấn lạnh/nóng) — **dữ liệu**, upload cùng file cước (mã SAP là khoá tạo/khớp).
+### 5.3 Dòng xe CHA – CON (user chốt 23/09 — thay bản "mở rộng `VehicleType` 8 cột")
+> *"Các dòng xe hiện tại trở thành CHA, dưới cha có nhiều dòng CON — ở đó mới có mã SAP, tên dòng xe. Kho chỉ quan tâm dòng cha để booking, đăng ký xe; chỉ điều vận mới quan tâm dòng con để làm shipment, ghép chuyến."*
+
+- **CHA = `VehicleType` giữ NGUYÊN** (7 mã: XE4PALLET · XEPALLET · XEXA · XESCA · CONT · CONTXK · CONTSCA). Mọi chỗ kho đang dùng — khung giờ (`SlotTemplate/DeliverySlot.vehicle_type_id`), đăng ký cổng, Kế hoạch xuất cột "Loại xuất" (`khvc_lines.veh_type`), `TmsOrder.vehicle_type`, danh mục Xe — **không đổi một dòng**.
+- **CON = bảng mới `vehicle_model`** (migration `20260923_vehicle_model_freight`): `sap_code` UNIQUE (9100000xx) · `name` · `parent_type_id` → `VehicleType` (**NULL = chưa gán cha**, hiện băng "n dòng con chưa gán cha" ở Cài đặt TMS → Loại xe; kho không bấm được gì với dòng chưa gán) · `temp_mode` HOT/COLD/MIXED/DRY (suy từ tên: nóng/lạnh/kết hợp/khô) · `capacity_mode` PALLET/TON · `max_pallets` · `max_tons` · `max_m3` · `max_drops` · `allow_mix_channels` · `tariff_unit` PER_PALLET/PER_TRIP (mặc định theo `capacity_mode`) · `underload_pct` (70) · `is_active` · `sort_order`. **Seed 60 dòng theo bảng mã SAP user gửi 23/09** (sức chứa parse từ tên: "Xe 16 Pallet" → 16 pallet · "Xe tải 3,5 tấn (lạnh)" → 3,5 tấn COLD; hai mã 910000032 và 910000048 cùng tên "Xe 15 Pallet" — giữ cả hai, khoá là mã).
+- Điều vận / cước / engine ghép **chỉ nói chuyện bằng dòng CON**; xác nhận kế hoạch ⇒ `khvc_lines.veh_type` = mã CHA của dòng con (kho booking đúng như hôm nay) + cột mới `khvc_lines.vehicle_model_id` để chuyến nhớ dòng con đã chọn.
+- Dòng CON chưa gán CHA thì engine không ghép vào (không biết kho đặt khung giờ loại nào).
 
 ### 5.4 `TransportCompany.alias_codes` — điền theo đo: `DA ← {Đông Á, ĐÔNG Á}` · `HA ← {HAI AN, Hải An, HẢI AN}` · `VÃNG LAI ← {Vãng Lai}` · `RATRACO`, `KGT`, `BMT`, `PAQ`, `ALCA`, `HN` khớp `code`. `normDvvt` = trim + upper + bỏ dấu.
 
@@ -204,20 +200,35 @@ Danh mục cần bổ sung dòng theo bảng cước (Xe 4/16/17 pallet · tải
 
 ## 6. CƯỚC VẬN CHUYỂN (Đợt 1)
 
-### 6.1 Bảng
-- `freight_tariff`: `id` · `transport_company_id` · `vehicle_type_id` · `from_warehouse_id` · `ward_code` · `price numeric` · `distance_km` · `province_old` · `district_old` · `province_new` (4 cột địa danh giữ nguyên văn file) · `effective_from date` · `effective_to date null` · `is_active` · audit. **Unique (company, vehicle_type, from_warehouse, ward_code, effective_from)**. Không xoá cứng — hết hiệu lực bằng `effective_to`.
-- `freight_surcharge`: `id` · `kind` (`DROP_POINT` \| `WAITING` \| `OTHER`, LookupValue) · `transport_company_id null` · `vehicle_type_id null` · `amount` · `per` (`PER_DROP|PER_TRIP|PER_HOUR`) · hiệu lực. Phí rớt điểm: **chưa thấy trong bảng cước** — khai riêng ở đây.
+### 6.0 Bốn điều user chốt 23/09
+1. **Xe pallet: đơn giá × số pallet LÀM TRÒN LÊN** (không có pallet tối thiểu).
+2. **Rớt điểm tính theo THỰC TẾ chuyến**: giao 1 điểm = không có; từ 2 điểm = mỗi điểm một khoản theo hợp đồng của ĐVVT đó. (Mặc định đếm MỌI điểm khi ≥ 2 — `count_mode = ALL_STOPS`; hợp đồng nào chỉ tính điểm thứ 2 trở đi thì khai `EXTRA_STOPS`.)
+3. **Bảng cước theo TỪNG (kho xuất × ĐVVT)** — kể cả rớt điểm khác nhau, một số ĐVVT có thêm bốc xếp… ⇒ mọi khoản đều khoá thêm `from_warehouse_id`; phụ phí là danh mục mở (`LookupValue freight_surcharge_kind`: DROP_POINT · LOADING · WAITING · OTHER — thêm loại mới không cần code).
+4. **Chọn ĐVVT = tỷ lệ phân tuyến CỐ ĐỊNH TRƯỚC, rồi mới tới rẻ nhất**: khu vực A ưu tiên ĐVVT này, khu vực B ưu tiên ĐVVT kia; cộng thêm tỷ trọng theo ĐVVT trên tổng (vd ĐVVT 1 = 30 %, ĐVVT 2 = 25 %). Bảng cấu hình RIÊNG (6.4). Lúc lập tỷ lệ đã cân cước rồi, nên engine chỉ theo thứ tự: ưu tiên khu vực → ĐVVT còn thiếu tỷ trọng → rẻ nhất.
+
+### 6.1 Bảng (migration `20260923_vehicle_model_freight`)
+- `freight_tariff`: `id` · `from_warehouse_id` · `transport_company_id` · `vehicle_model_id` (dòng CON) · `ward_code` · `price numeric` · `distance_km` · `province_old` · `district_old` · `province_new` · `ward_raw` (địa danh nguyên văn file) · `effective_from date` · `effective_to date null` · `is_active` · audit. **Unique (kho, ĐVVT, dòng con, ward_code, effective_from)**. Không xoá cứng — hết hiệu lực bằng `effective_to`.
+- `freight_surcharge`: `id` · `from_warehouse_id` · `transport_company_id` · `vehicle_model_id null` (= mọi dòng con của ĐVVT đó) · `kind` (LookupValue `freight_surcharge_kind`) · `amount` · `per` (`PER_STOP|PER_TRIP|PER_PALLET|PER_TON`) · `count_mode` (`ALL_STOPS|EXTRA_STOPS`, chỉ nghĩa với PER_STOP) · `min_stops` (mặc định 2) · hiệu lực · `note`. **Unique (kho, ĐVVT, dòng con, kind, effective_from)**.
 
 ### 6.2 Upload cước = đúng cột file thật
 `Tỉnh/TP(Cũ) · Quận/Huyện(Cũ) · Tỉnh/TP(Mới) · Phường/Xã(Mới) · Cự ly(Km) · DVVT · Loại xe · Cước (VND) · Mã xe SAP` (+ cột **Kho xuất** thêm vào mẫu — file bạn gửi là bảng của một kho; thiếu thì chọn kho lúc upload). Parse theo tên; DVVT qua `normDvvt`; Loại xe khớp `sap_vehicle_code` trước, tên sau; phường khớp `ward_code` đã thấy trong ZSD02 (chưa thấy → cảnh báo, vẫn nhận). Preflight 2 pha; ghi lô 500; dòng trùng khoá = đè giá (idempotent).
 
 ### 6.3 Tra cước một chuyến — `services/freight.ts` (thuần TS, có test)
 ```
-tariff = tìm (dvvt, dòng xe, kho xuất, ward của điểm đến XA NHẤT theo km) hiệu lực tại ngày giao
-PER_PALLET: pallet_billed = ceil(Σ pallets(line))  (làm tròn LÊN, tối thiểu = max_pallets nếu ĐVVT tính trọn xe — cấu hình `min_billed_pallets` trên tariff, mặc định = làm tròn lên)
+tariff = tìm (kho xuất, ĐVVT, dòng CON, ward của điểm đến XA NHẤT theo km) hiệu lực tại ngày giao
+PER_PALLET: price × ceil(Σ pallets(line))        (làm tròn LÊN — user chốt 23/09, không có pallet tối thiểu)
 PER_TRIP  : price
-+ drop_fee × (số ship-to − 1) + phụ phí khác
++ rớt điểm: stops = số ship-to phân biệt; stops < min_stops (2) ⇒ 0;
+            ALL_STOPS ⇒ amount × stops · EXTRA_STOPS ⇒ amount × (stops − min_stops + 1)
++ phụ phí khác của (kho, ĐVVT[, dòng con]) theo `per`
 ```
+Thiếu giá tuyến / thiếu dòng con / dòng con chưa gán cha ⇒ `null` + lý do, KHÔNG đoán.
+
+### 6.4 Phân tuyến ĐVVT — bảng cấu hình riêng `carrier_allocation` (user chốt 23/09)
+- **Ưu tiên theo khu vực**: `from_warehouse_id` · `area_kind` (`WARD` phường \| `REGION` tỉnh/vùng theo `Customer.region_code`) · `area_code` · `transport_company_id` · `priority` (1 = ưu tiên nhất) · hiệu lực. Nhiều ĐVVT cho một khu vực = thứ tự dự phòng.
+- **Tỷ trọng**: `carrier_share_target`: `from_warehouse_id` · `transport_company_id` · `share_pct` · `basis` (`TRIPS` số chuyến \| `PALLETS` \| `TONS`, mặc định TRIPS) · `period` (`MONTH`) · hiệu lực. Σ share của một kho ≤ 100 (phần còn lại = tự do).
+- Engine chọn ĐVVT cho một chuyến nháp: (1) ĐVVT có ưu tiên khu vực của điểm đến xa nhất (WARD trước REGION), theo `priority`; (2) trong số đó, ĐVVT đang **dưới** tỷ trọng tháng lên trước (đo trên chuyến đã xác nhận trong kỳ); (3) hoà ⇒ cước thấp nhất; (4) ĐVVT không có cước cho dòng con/tuyến ⇒ bỏ qua và ghi lý do. Trang Điều vận hiện cột "vì sao chọn ĐVVT này".
+- UI: trang **Cước vận chuyển** (menu TMS) 3 tab — *Bảng cước* · *Phụ phí* · *Phân tuyến ĐVVT* (ưu tiên khu vực + tỷ trọng, kèm ô đếm "đã đạt x/y % tháng này").
 Kết quả gắn lên `GroupDeliveryOrder` (cột `freight_estimated`, `freight_tariff_id`, `freight_detail jsonb`) — tính lúc **Xác nhận kế hoạch** và tính lại lúc **Hoàn thành** (chuyến thật). Chuyến không có cước khớp → `freight_estimated = null` + lý do (thiếu giá tuyến/dòng xe) hiện ở cột.
 
 ---
@@ -254,7 +265,8 @@ Kết quả gắn lên `GroupDeliveryOrder` (cột `freight_estimated`, `freight
 | `SystemSetting.sap_do_source` (`BOTH|ZSD02|VL06O`) | Cài đặt WMS → Hệ thống | `wms_settings.manage_system` | `BOTH` ✔ |
 | `LookupValue sap_flow_map` | Cài đặt WMS → Hệ thống (bảng nhỏ) | `manage_system` | seed theo 4.3 ✔ |
 | `Warehouse.sap_plant` (khai 2101) | Cài đặt WMS → Kho (ô đã có) | `manage_warehouse` | dữ liệu, không code |
-| `VehicleType.*` 8 cột (5.3) | Cài đặt TMS → Loại xe (form) | `tms_vehicle_types.edit` | null/PER_TRIP/70 ✔ |
+| `vehicle_model` (dòng CON, 5.3) — gán cha · sức chứa · tariff_unit · underload | Cài đặt TMS → Loại xe → mở rộng dòng cha / băng "chưa gán cha" | `tms_vehicle_types.edit` | seed 60 dòng, cha NULL ⇒ engine bỏ qua, kho không thấy gì khác ✔ |
+| `carrier_allocation` / `carrier_share_target` (6.4) | Cước vận chuyển → tab Phân tuyến ĐVVT | `freight.manage` | rỗng = chọn theo rẻ nhất ✔ |
 | `TransportCompany.alias_codes` | Cài đặt TMS → ĐVVT (ô chip đã có) | `tms_companies.edit` | rỗng ✔ |
 | `Customer` 8 cột địa lý | Khách hàng → form + cột | `customers.edit` (upload tự điền ô trống) | null ✔ |
 | `freight_tariff` / `freight_surcharge` | trang **Cước vận chuyển** (menu TMS) | `freight.manage` | không có = chuyến không cước, không chặn ✔ |

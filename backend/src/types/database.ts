@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-22T04:44:03.430Z · 100 bảng/view · 171 hàm · 0 enum
+// Sinh lúc 2026-09-23T03:26:04.808Z · 105 bảng/view · 171 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -611,6 +611,10 @@ export type Database = {
           dock_location_id: string | null
           dock_assigned_at: string | null
           forklift_driver_ids: string[] | null
+          vehicle_model_id: string | null
+          freight_estimated: number | null
+          freight_tariff_id: string | null
+          freight_detail: Json | null
         }
         Insert: {
           id: string
@@ -656,6 +660,10 @@ export type Database = {
           dock_location_id?: string | null
           dock_assigned_at?: string | null
           forklift_driver_ids?: string[] | null
+          vehicle_model_id?: string | null
+          freight_estimated?: number | null
+          freight_tariff_id?: string | null
+          freight_detail?: Json | null
         }
         Update: {
           id?: string
@@ -701,6 +709,10 @@ export type Database = {
           dock_location_id?: string | null
           dock_assigned_at?: string | null
           forklift_driver_ids?: string[] | null
+          vehicle_model_id?: string | null
+          freight_estimated?: number | null
+          freight_tariff_id?: string | null
+          freight_detail?: Json | null
         }
         Relationships: []
       }
@@ -3047,6 +3059,108 @@ export type Database = {
         }
         Relationships: []
       }
+      carrier_allocation: {
+        Row: {
+          id: string
+          from_warehouse_id: string
+          area_kind: string
+          area_code: string
+          transport_company_id: string
+          priority: number
+          effective_from: string
+          effective_to: string | null
+          is_active: boolean
+          note: string | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          from_warehouse_id: string
+          area_kind: string
+          area_code: string
+          transport_company_id: string
+          priority?: number
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          from_warehouse_id?: string
+          area_kind?: string
+          area_code?: string
+          transport_company_id?: string
+          priority?: number
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      carrier_share_target: {
+        Row: {
+          id: string
+          from_warehouse_id: string
+          transport_company_id: string
+          share_pct: number
+          basis: string
+          period: string
+          effective_from: string
+          effective_to: string | null
+          is_active: boolean
+          note: string | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          from_warehouse_id: string
+          transport_company_id: string
+          share_pct: number
+          basis?: string
+          period?: string
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          from_warehouse_id?: string
+          transport_company_id?: string
+          share_pct?: number
+          basis?: string
+          period?: string
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       dashboard_cache: {
         Row: {
           key: string
@@ -3602,6 +3716,132 @@ export type Database = {
         }
         Relationships: []
       }
+      freight_surcharge: {
+        Row: {
+          id: string
+          from_warehouse_id: string
+          transport_company_id: string
+          vehicle_model_id: string | null
+          kind: string
+          amount: number
+          per: string
+          count_mode: string
+          min_stops: number
+          effective_from: string
+          effective_to: string | null
+          is_active: boolean
+          note: string | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          from_warehouse_id: string
+          transport_company_id: string
+          vehicle_model_id?: string | null
+          kind: string
+          amount: number
+          per?: string
+          count_mode?: string
+          min_stops?: number
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          from_warehouse_id?: string
+          transport_company_id?: string
+          vehicle_model_id?: string | null
+          kind?: string
+          amount?: number
+          per?: string
+          count_mode?: string
+          min_stops?: number
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      freight_tariff: {
+        Row: {
+          id: string
+          from_warehouse_id: string
+          transport_company_id: string
+          vehicle_model_id: string
+          ward_code: string
+          price: number
+          distance_km: number | null
+          province_old: string | null
+          district_old: string | null
+          province_new: string | null
+          ward_raw: string | null
+          effective_from: string
+          effective_to: string | null
+          is_active: boolean
+          note: string | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          from_warehouse_id: string
+          transport_company_id: string
+          vehicle_model_id: string
+          ward_code: string
+          price: number
+          distance_km?: number | null
+          province_old?: string | null
+          district_old?: string | null
+          province_new?: string | null
+          ward_raw?: string | null
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          from_warehouse_id?: string
+          transport_company_id?: string
+          vehicle_model_id?: string
+          ward_code?: string
+          price?: number
+          distance_km?: number | null
+          province_old?: string | null
+          district_old?: string | null
+          province_new?: string | null
+          ward_raw?: string | null
+          effective_from?: string
+          effective_to?: string | null
+          is_active?: boolean
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       gate_registrations: {
         Row: {
           id: string
@@ -3822,6 +4062,7 @@ export type Database = {
           updated_at: string
           manual_edited_at: string | null
           booking_category: string | null
+          vehicle_model_id: string | null
         }
         Insert: {
           id: string
@@ -3844,6 +4085,7 @@ export type Database = {
           updated_at: string
           manual_edited_at?: string | null
           booking_category?: string | null
+          vehicle_model_id?: string | null
         }
         Update: {
           id?: string
@@ -3866,6 +4108,7 @@ export type Database = {
           updated_at?: string
           manual_edited_at?: string | null
           booking_category?: string | null
+          vehicle_model_id?: string | null
         }
         Relationships: []
       }
@@ -4394,6 +4637,72 @@ export type Database = {
           read_at?: string | null
           created_at?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      vehicle_model: {
+        Row: {
+          id: string
+          sap_code: string
+          name: string
+          parent_type_id: string | null
+          temp_mode: string | null
+          capacity_mode: string
+          max_pallets: number | null
+          max_tons: number | null
+          max_m3: number | null
+          max_drops: number | null
+          allow_mix_channels: boolean
+          tariff_unit: string
+          underload_pct: number
+          is_active: boolean
+          sort_order: number
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          sap_code: string
+          name: string
+          parent_type_id?: string | null
+          temp_mode?: string | null
+          capacity_mode?: string
+          max_pallets?: number | null
+          max_tons?: number | null
+          max_m3?: number | null
+          max_drops?: number | null
+          allow_mix_channels?: boolean
+          tariff_unit?: string
+          underload_pct?: number
+          is_active?: boolean
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          sap_code?: string
+          name?: string
+          parent_type_id?: string | null
+          temp_mode?: string | null
+          capacity_mode?: string
+          max_pallets?: number | null
+          max_tons?: number | null
+          max_m3?: number | null
+          max_drops?: number | null
+          allow_mix_channels?: boolean
+          tariff_unit?: string
+          underload_pct?: number
+          is_active?: boolean
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
         }
         Relationships: []
       }

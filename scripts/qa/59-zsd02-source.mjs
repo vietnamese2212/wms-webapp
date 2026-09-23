@@ -115,6 +115,20 @@ try {
   check('2i. GET /external/so-lines liệt kê dòng chưa OD + summary.open ≥ 1 + cờ loadable',
     soList.s === 200 && soList.j?.data?.items?.some(r => r.so_number === SO2 && r.loadable === true) && Number(soList.j?.data?.summary?.open) >= 1,
     `http=${soList.s} n=${soList.j?.data?.items?.length} sum=${JSON.stringify(soList.j?.data?.summary ?? {}).slice(0, 160)}`)
+  // 2i2 (23/09, soi bằng mắt trên Preview): ô tổng là BẢN TÓM TẮT CỦA DANH SÁCH — cộng đúng tập ĐANG LỌC.
+  // Bản đầu cộng sap_pallets/kg với FILTER (WHERE status='OPEN') cứng trong RPC, còn rows/so_numbers/ship_tos
+  // thì theo bộ lọc ⇒ lọc "Đã có OD" cho ra bảng 1.489 dòng bên cạnh "PALLET SAP 0 · TẤN 0", đè lên chính cột
+  // Pallet SAP của từng dòng đang in 0,68. Oracle = cộng lại TỪ CHÍNH CÁC DÒNG endpoint vừa trả.
+  const soHas = await api(`/external/so-lines?date_from=${DELIV}&date_to=${DELIV}&status=HAS_OD&q=QA59`)
+  const it = soHas.j?.data?.items ?? []
+  const sHas = soHas.j?.data?.summary ?? {}
+  const palTay = Math.round(it.reduce((a, r) => a + Number(r.sap_pallets ?? 0), 0) * 10) / 10
+  const kgTay = Math.round(it.reduce((a, r) => a + Number(r.gross_weight_kg ?? 0), 0) * 10) / 10
+  check('2i2. Lọc Trạng thái=Đã có OD → ô tổng Pallet SAP / Tấn cộng ĐÚNG các dòng đang lọc (không cứng ở OPEN)',
+    soHas.s === 200 && it.length >= 1 && palTay > 0
+    && Math.abs(Number(sHas.sap_pallets ?? -1) - palTay) < 0.05 && Math.abs(Number(sHas.kg ?? -1) - kgTay) < 0.5,
+    `n=${it.length} band={pallet:${sHas.sap_pallets},kg:${sHas.kg}} cộng-tay={pallet:${palTay},kg:${kgTay}}`)
+
   const doList = await api(`/external/do-sap?flow=RETURN&delivery_from=${DELIV}&delivery_to=${DELIV}&date_from=${todayVN}&date_to=${todayVN}`)
   check('2j. GET /external/do-sap lọc flow=RETURN + khoảng Ngày giao → thấy OD3, không thấy OD1',
     doList.s === 200 && doList.j?.data?.items?.some(r => r.od_number === OD3) && !doList.j?.data?.items?.some(r => r.od_number === OD1), `http=${doList.s} n=${doList.j?.data?.items?.length}`)

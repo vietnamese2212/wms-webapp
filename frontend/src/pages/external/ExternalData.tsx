@@ -647,8 +647,8 @@ function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
         { label: 'Chưa có OD', value: (sum?.open ?? 0).toLocaleString('vi-VN'), accent: (sum?.open ?? 0) > 0, tip: 'Dòng SO mà SAP chưa tạo OD — chưa lên xe được, chỉ để nhìn trước tải' },
         { label: 'Số SO', value: (sum?.so_numbers ?? 0).toLocaleString('vi-VN') },
         { label: 'Ship-to', value: (sum?.ship_tos ?? 0).toLocaleString('vi-VN') },
-        { label: 'Pallet SAP', value: (sum?.sap_pallets ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ SL SO PALLET theo SAP của dòng chưa có OD — tham chiếu để đặt xe; pallet thật tính theo master lúc lên chuyến' },
-        { label: 'Tấn', value: ((sum?.kg ?? 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ Gross Weight (kg ÷ 1.000) của dòng chưa có OD' },
+        { label: 'Pallet SAP', value: (sum?.sap_pallets ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ SL SO PALLET theo SAP của CÁC DÒNG ĐANG LỌC — tham chiếu để đặt xe; pallet thật tính theo master lúc lên chuyến' },
+        { label: 'Tấn', value: ((sum?.kg ?? 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ Gross Weight (kg ÷ 1.000) của các dòng đang lọc' },
         { label: 'Không quy đổi', value: (sum?.unresolved ?? 0).toLocaleString('vi-VN'), accent: (sum?.unresolved ?? 0) > 0, tip: 'Dòng không suy được số gốc: mã chưa có trong danh mục hoặc thiếu quy cách Thùng — khai ở trang Mã hàng' },
         ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
       ]} />

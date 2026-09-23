@@ -46,7 +46,9 @@ const vehicleModelBody = {
 export const zVehicleModelCreate = z.object({ sap_code: zText(1, 20), ...vehicleModelBody }).partial({
   parent_type_id: true, temp_mode: true, max_pallets: true, max_tons: true, max_m3: true, max_drops: true,
   allow_mix_channels: true, tariff_unit: true, underload_pct: true, is_active: true, sort_order: true, capacity_mode: true,
-})export const zVehicleModelUpdate = z.object(vehicleModelBody).partial()export const zAssignParent = z.object({ ids: z.array(zId).min(1).max(200), parent_type_id: zId.nullable() })
+})
+export const zVehicleModelUpdate = z.object(vehicleModelBody).partial()
+export const zAssignParent = z.object({ ids: z.array(zId).min(1).max(200), parent_type_id: zId.nullable() })
 /** Cha phải là VehicleType có thật — gán vào id rác thì dòng con "có cha" mà kho không đặt được khung giờ nào. */
 async function parentExists(id: string): Promise<boolean> {
   const { data } = await db.from('VehicleType').select('id').eq('id', id).maybeSingle()

@@ -25,7 +25,7 @@ const XEPALLET = parents.find(p => p.code === 'XEPALLET')
 // [6] dòng xe con trên Kế hoạch xuất → chuyến → cước dự tính: Số xe đúng dạng Mãkho_X_ddmmyy_stt của kho QR (Ba Vì)
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const [qy, qm, qd] = today.split('-')
-const GC6 = `${FIX.WH_QR.code}_X_${qd}${qm}${qy.slice(2)}_QA60`
+const GC6 = `${FIX.WH_QR.code}_X_${qd}${qm}${qy.slice(2)}_98`   // stt PHẢI là số (validation derive) — 98 để không đụng xe thật
 const DO6 = 'QA60DO1', SHIP6 = 'QA60SHIP'
 const BK_CAT = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order&limit=1'))[0]?.value ?? null
 const nowIso = () => new Date().toISOString()
@@ -198,7 +198,8 @@ try {
     const mat = (await restAll('Material', `select=units_per_carton,cartons_per_pallet&material_code=eq.${FIX.MAT_POOL}`))[0]
     const qty = 100
     const expectPallets = (qty / Number(mat.units_per_carton)) / Number(mat.cartons_per_pallet)
-    const expectFreight = 270000 * Math.ceil(expectPallets - 1e-9)
+    // + phụ phí BỐC XẾP 150.000 trọn chuyến của đúng dòng xe này ([3c]); rớt điểm [3a] KHÔNG tính vì chuyến 1 điểm giao (< min_stops 2)
+    const expectFreight = 270000 * Math.ceil(expectPallets - 1e-9) + 150000
     // Seed: DO raw có phường WARD1 (như ZSD02 điền) + khách hàng cùng phường
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: DO6, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
@@ -215,7 +216,7 @@ try {
     const gdo6 = (await restAll('GroupDeliveryOrder', `select=id,status,vehicle_model_id,freight_estimated,freight_tariff_id,freight_detail&group_code=eq.${GC6}`))[0]
     check('6b. Thêm dòng KH xuất có dòng xe con → 201; chuyến sinh ra MANG vehicle_model_id', mk.s === 201 && !!gdo6 && gdo6.vehicle_model_id === vmId,
       `http=${mk.s} ${mk.j?.error?.message ?? ''} gdo=${gdo6 ? gdo6.vehicle_model_id === vmId : 'none'}`)
-    check(`6c. Cước dự tính tự tính khi dội kế hoạch = ${expectFreight.toLocaleString('vi-VN')} (270.000 × ceil(${expectPallets.toFixed(4)} pallet)), tariff_id = dòng cước WARD1, basis PLAN`,
+    check(`6c. Cước dự tính tự tính khi dội kế hoạch = ${expectFreight.toLocaleString('vi-VN')} (270.000 × ceil(${expectPallets.toFixed(4)} pallet) + bốc xếp 150.000; rớt điểm 0 vì 1 điểm), tariff_id = dòng cước WARD1, basis PLAN`,
       !!gdo6 && Number(gdo6.freight_estimated) === expectFreight && gdo6.freight_tariff_id === tId && gdo6.freight_detail?.basis === 'PLAN' && gdo6.freight_detail?.ward === WARD1,
       `freight=${gdo6?.freight_estimated} tariff=${gdo6?.freight_tariff_id === tId} reason=${gdo6?.freight_detail?.reason ?? '—'} ward=${gdo6?.freight_detail?.ward}`)
     const listK = await api(`/external/khvc?group_code_eq=${encodeURIComponent(GC6)}&page_size=10`)

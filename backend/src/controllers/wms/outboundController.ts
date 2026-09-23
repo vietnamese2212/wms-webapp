@@ -7,7 +7,7 @@ import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventor
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { loadOf, sumLoads, type LoadMat } from '../../utils/loadCalc'
 import { loadUtilization } from '../../services/freight'
-import { estimateFreightSafely } from '../../services/freightEstimate'
+import { estimateFreightSafely, sapLoadRefs, sapRefKey } from '../../services/freightEstimate'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
@@ -955,6 +955,9 @@ async function enrichGdos(data: any[]): Promise<any[]> {
     const vmRows = vmIds.length ? await fetchAllByIdChunks(vmIds, chunk => supabase.from('vehicle_model')
       .select('id, sap_code, name, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct').in('id', chunk).order('id')) : []
     const vmById = new Map<string, any>(vmRows.map((v: any) => [v.id, v]))
+    // Số tham chiếu SAP theo (OD, mã) — tải rơi về đây khi master thiếu quy cách (cùng luật với freightEstimate)
+    const sapRefs = await sapLoadRefs((dos ?? []).map((d: any) => d.delivery_code).filter(Boolean))
+    const doCodeById = new Map<string, string | null>((dos ?? []).map((d: any) => [d.id, d.delivery_code ?? null]))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
     const gdoModeById = new Map<string, string | null>((data ?? []).map((g: any) => [g.id, g.warehouse?.inventory_mode ?? null]))
@@ -1038,7 +1041,8 @@ async function enrichGdos(data: any[]): Promise<any[]> {
 
       // Tải THẬT của chuyến theo master (pallet thập phân + tấn) → % tải so sức chứa dòng xe con. Cột trên list tính
       // SỐNG (không đọc freight_detail) để đổi dòng hàng là đổi ngay; cước thì đọc cột đã ghi (cần bảng cước).
-      const loads = gdoItems.map((i: any) => loadOf(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null, null))
+      const loads = gdoItems.map((i: any) => loadOf(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null,
+        sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw)) ?? null))
       const loadSum = sumLoads(loads)
       const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
       const tons = loadSum.kg == null ? null : Math.round(loadSum.kg) / 1000

@@ -14,7 +14,7 @@
  */
 import { db } from '../lib/supabase'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../utils/pagination'
-import { loadOf, sumLoads, type LoadMat } from '../utils/loadCalc'
+import { loadOf, sumLoads, type LoadMat, type LoadRef } from '../utils/loadCalc'
 import { normDvvt } from '../utils/sapUnits'
 import { makeDvvtResolver } from './sapFlow'
 import {
@@ -46,7 +46,30 @@ export interface FreightDetail {
 
 type GdoRow = { id: string; group_code: string; warehouse_id: string | null; dvvt: string | null; vehicle_model_id: string | null; delivery_date: string | null; status: string; shipto_party: string | null }
 type VmRow = { id: string; sap_code: string; name: string; tariff_unit: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; underload_pct: number | null }
-type ItemRow = { do_id: string; cartons_ordered: number | string | null; cartons_scanned: number | string | null; material: LoadMat | null }
+type ItemRow = { do_id: string; material_code_raw: string | null; cartons_ordered: number | string | null; cartons_scanned: number | string | null; material: LoadMat | null }
+
+/**
+ * Số THAM CHIẾU của SAP theo (OD, mã hàng): Σ sap_pallets · Σ gross_weight_kg của các dòng OD còn sống. `loadOf` chỉ dùng khi
+ * master thiếu quy cách (cartons_per_pallet / weight_kg) — đo 23/09 trên lát ZSD02 07/09: 4/5 chuyến demo có ≥1 mã thiếu
+ * cartons_per_pallet, không rơi về SAP thì cả chuyến "không đo được tải" dù SAP đã ghi pallet từng dòng.
+ */
+export async function sapLoadRefs(odNos: string[]): Promise<Map<string, LoadRef>> {
+  const out = new Map<string, LoadRef>()
+  const ods = uniq(odNos.filter(Boolean))
+  if (!ods.length) return out
+  const rows = await fetchAllByIdChunks(ods, c => db.from('erp_outbound_orders')
+    .select('od_number, material_code, sap_pallets, gross_weight_kg, sync_status').in('od_number', c).neq('sync_status', 'OBSOLETE').order('od_number')) as { od_number: string; material_code: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null }[]
+  for (const r of rows) {
+    const k = `${r.od_number}|${String(r.material_code ?? '').trim()}`
+    const cur = out.get(k) ?? { sap_pallets: null, gross_weight_kg: null }
+    const p = Number(r.sap_pallets), w = Number(r.gross_weight_kg)
+    if (Number.isFinite(p) && p > 0) cur.sap_pallets = (cur.sap_pallets ?? 0) + p
+    if (Number.isFinite(w) && w > 0) cur.gross_weight_kg = (cur.gross_weight_kg ?? 0) + w
+    out.set(k, cur)
+  }
+  return out
+}
+export const sapRefKey = (od: string | null | undefined, materialCode: string | null | undefined) => `${od ?? ''}|${String(materialCode ?? '').trim()}`
 type TariffRow = TariffLike & { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string }
 type SurRow = SurchargeLike & { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string | null; per: SurchargePer; count_mode: StopCountMode }
 
@@ -79,7 +102,7 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
   const dos = await fetchAllByIdChunks(ids, c => db.from('OutboundDelivery').select('id, gdo_id, delivery_code').in('gdo_id', c).order('id')) as { id: string; gdo_id: string; delivery_code: string | null }[]
   const doIds = dos.map(d => d.id)
   const items = doIds.length ? await fetchAllByIdChunks(doIds, c => db.from('OutboundItem')
-    .select('do_id, cartons_ordered, cartons_scanned, material:Material!material_id(base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, weight_kg, is_pallet_carrier, is_non_stock)')
+    .select('do_id, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, weight_kg, is_pallet_carrier, is_non_stock)')
     .in('do_id', c).order('id')) as unknown as ItemRow[] : []
   const dosByGdo = new Map<string, typeof dos>()
   for (const d of dos) { const l = dosByGdo.get(d.gdo_id) ?? []; l.push(d); dosByGdo.set(d.gdo_id, l) }
@@ -88,8 +111,11 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
 
   // ── Phường + ship-to theo OD (ZSD02 điền ward_code; VL06O không có → tra Customer theo ship-to) ──
   const odNos = uniq(dos.map(d => d.delivery_code).filter((x): x is string => !!x))
-  const odRows = odNos.length ? await fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders')
-    .select('od_number, ward_code, ship_to_code, sync_status').in('od_number', c).neq('sync_status', 'OBSOLETE').order('od_number')) as { od_number: string; ward_code: string | null; ship_to_code: string | null }[] : []
+  const [odRows, refs] = await Promise.all([
+    odNos.length ? fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders')
+      .select('od_number, ward_code, ship_to_code, sync_status').in('od_number', c).neq('sync_status', 'OBSOLETE').order('od_number')) as Promise<{ od_number: string; ward_code: string | null; ship_to_code: string | null }[]> : Promise.resolve([]),
+    sapLoadRefs(odNos),
+  ])
   const wardByOd = new Map<string, string>(), shiptoByOd = new Map<string, string>()
   for (const r of odRows) {
     if (r.ward_code && !wardByOd.has(r.od_number)) wardByOd.set(r.od_number, r.ward_code)
@@ -107,12 +133,12 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
   const pres: Pre[] = gdos.map(g => {
     const basis: 'PLAN' | 'ACTUAL' = opts.basis === 'ACTUAL' || (opts.basis !== 'PLAN' && g.status === 'COMPLETED') ? 'ACTUAL' : 'PLAN'
     const gDos = dosByGdo.get(g.id) ?? []
-    const gItems = gDos.flatMap(d => itemsByDo.get(d.id) ?? [])
-    const loads = gItems.map(i => {
+    const loads = gDos.flatMap(d => (itemsByDo.get(d.id) ?? []).map(i => {
       const scanned = num(i.cartons_scanned)
       const qty = basis === 'ACTUAL' && scanned > 0 ? scanned : num(i.cartons_ordered)
-      return loadOf(qty, i.material, g.warehouse_id, null)
-    })
+      // master thiếu quy cách → rơi về số SAP của đúng (OD, mã) — kèm nguồn 'SAP' trong loadOf
+      return loadOf(qty, i.material, g.warehouse_id, refs.get(sapRefKey(d.delivery_code, i.material_code_raw)) ?? null)
+    }))
     const sum = sumLoads(loads)
     const wards: string[] = [], shiptos: string[] = []
     for (const d of gDos) {

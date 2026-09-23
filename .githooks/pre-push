@@ -15,6 +15,7 @@
 ZERO=0000000000000000000000000000000000000000
 RUN=0
 DOCS_ONLY=1
+ALL_FILES=''
 
 while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
   [ -z "$LOCAL_SHA" ] && continue
@@ -23,9 +24,13 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
   RUN=1
   if [ "$REMOTE_SHA" = "$ZERO" ]; then
     DOCS_ONLY=0                                    # nhánh mới: không suy được dải, cứ chạy
+    ALL_FILES="$ALL_FILES
+backend/ frontend/"                                # không suy được dải ⇒ biên dịch cả hai
   else
     FILES=$(git diff --name-only "$REMOTE_SHA" "$LOCAL_SHA" 2>/dev/null)
     [ -z "$FILES" ] && continue
+    ALL_FILES="$ALL_FILES
+$FILES"
     # chỉ bỏ qua khi MỌI file đổi là tài liệu — cổng tĩnh/test/độ phủ chỉ đọc
     # backend/src · frontend/src · scripts/qa · package*.json, nên .md không đổi được kết quả
     if printf '%s\n' "$FILES" | grep -qvE '(^docs/|\.md$)'; then
@@ -41,16 +46,36 @@ if [ "$DOCS_ONLY" = "1" ]; then
   exit 0
 fi
 
-echo "[pre-push] cổng rẻ (cổng tĩnh · npm audit · npm test · ratchet độ phủ) — ~35 giây…"
-if node scripts/qa/run-all.mjs --tier fast --offline; then
-  echo "[pre-push] XANH — cho push"
-  exit 0
-fi
+fail() {
+  cat <<MSG
 
-cat <<'MSG'
-
-[pre-push] ĐỎ — KHÔNG push.
-  Đây chính là thứ sẽ làm job `static` trên GitHub đỏ và gửi email báo lỗi.
+[pre-push] ĐỎ ở bước: $1 — KHÔNG push.
+  Đây chính là thứ sẽ làm job \`static\` trên GitHub đỏ và gửi email báo lỗi.
   Sửa rồi push lại. Cần push gấp dù đang đỏ:  git push --no-verify
 MSG
-exit 1
+  exit 1
+}
+
+echo "[pre-push] cổng rẻ (cổng tĩnh · npm audit · npm test · ratchet độ phủ) — ~35 giây…"
+node scripts/qa/run-all.mjs --tier fast --offline || fail "bậc fast (offline)"
+
+# ── BIÊN DỊCH (thêm 23/09 — user báo email đỏ lần thứ NĂM) ──
+# Job `static` của CI chạy 4 bước trên RỒI MỚI `tsc --noEmit` BE + FE + `npm run build`.
+# Hook bản 15/09 dừng ở bước 4 ⇒ commit KHÔNG BIÊN DỊCH ĐƯỢC vẫn qua cửa: đo thật 23/09,
+# `a1fedf38` (gỡ `.strict()` làm mất một dấu xuống dòng) đỏ job static, `5396dc75` sửa sau
+# ĐÚNG MỘT PHÚT — email vẫn gửi. Cổng chặn ít hơn cổng trên runner thì phần chênh lệch
+# chính là phần đi thẳng vào hộp thư.
+# Chạy có chọn: chỉ biên dịch bên nào có file đổi (BE 14s · FE 30s, đo 23/09).
+echo "$ALL_FILES" | grep -qE '^backend/' && {
+  echo "[pre-push] tsc backend… (~14 giây)"
+  (cd backend && npx tsc --noEmit) || fail "backend tsc --noEmit"
+}
+echo "$ALL_FILES" | grep -qE '^frontend/' && {
+  echo "[pre-push] tsc frontend… (~30 giây)"
+  (cd frontend && npx tsc --noEmit) || fail "frontend tsc --noEmit"
+}
+
+# CÒN HỞ: `npm run build` của FE (bundle) vẫn chỉ chạy trên runner — tsc bắt gần hết lớp lỗi
+# biên dịch, còn lỗi chỉ lộ lúc đóng gói (vite/plugin) thì hiếm và build đắt gấp nhiều lần.
+echo "[pre-push] XANH — cho push"
+exit 0

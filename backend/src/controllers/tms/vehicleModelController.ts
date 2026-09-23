@@ -6,7 +6,7 @@
  * CHA = `VehicleType` (7 mã, giữ nguyên — controller vehicleTypeController). CON mang `sap_code` 9100000xx,
  * sức chứa (pallet/tấn/m3/điểm giao), đơn vị tính cước, ngưỡng Non tải. `parent_type_id` NULL = chưa gán cha:
  * điều vận KHÔNG ghép vào dòng đó (không biết kho đặt khung giờ loại nào) — UI hiện băng "n dòng chưa gán cha".
- * Quyền dùng lại module `tms_vehicle_types` (cùng tab Loại xe ở Cài đặt TMS) — cha con là một danh mục.
+ * Quyền dùng lại module `tms_vehicle_types` (tab "Mã dòng xe" ở Cài đặt TMS, cạnh tab Loại xe) — cha con là một danh mục.
  */
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'

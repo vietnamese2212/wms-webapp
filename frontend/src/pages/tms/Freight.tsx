@@ -420,7 +420,7 @@ export default function Freight() {
 
         {unassigned > 0 && canManage && (
           <div className="px-3 py-1.5 text-[11px] text-amber-800 bg-amber-50 border-b border-amber-200">
-            <b>{nf(unassigned)}</b> dòng xe con chưa gán dòng xe cha — điều vận chưa ghép được vào các dòng đó. Gán ở Cài đặt TMS → Loại xe.
+            <b>{nf(unassigned)}</b> dòng xe con chưa gán dòng xe cha — điều vận chưa ghép được vào các dòng đó. Gán ở Cài đặt TMS → Mã dòng xe.
           </div>
         )}
 

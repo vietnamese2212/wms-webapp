@@ -1,9 +1,9 @@
-// DÒNG XE CON (mã SAP) dưới danh mục dòng xe CHA — Cài đặt TMS → Loại xe (user chốt 23/09/2026).
+// TAB "MÃ DÒNG XE" — dòng xe CON mang mã SAP, Cài đặt TMS (user chốt 23/09: "cho dòng xe con mở 1 tab là Mã dòng xe").
 //
 // "Các dòng xe hiện tại trở thành CHA, dưới cha có nhiều dòng CON — ở đó mới có mã SAP, tên dòng xe. Kho chỉ quan
 //  tâm dòng cha để booking, đăng ký xe; điều vận mới quan tâm dòng con để làm shipment, ghép chuyến."
-// Việc thường làm nhất sau seed 60 dòng là GÁN CHA: tick nhiều dòng → một nút "Gán cha"; dòng chưa gán đứng đầu
-// bảng kèm băng đếm, vì engine ghép bỏ qua dòng chưa gán (không biết kho đặt khung giờ loại nào).
+// Chuẩn list page (skill table-format): toolbar + FilterBar + SummaryBand + bảng cột kéo giãn, cột đầu ghim, footer đếm.
+// Cha do migration 20260923b GỢI Ý theo tên (user: "tự gán đi, sai tôi vào sửa") — tick nhiều → "Gán cha" để sửa hàng loạt.
 import { useMemo, useState } from 'react'
 import { Plus, Pencil, Trash2, Link2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -13,28 +13,54 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
-import { InfoTip } from '@/components/shared/InfoTip'
 import { toast } from '@/components/ui/use-toast'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { formatTimestampDate } from '@/utils/formatters'
 import {
   useVehicleTypes, useVehicleModels, useCreateVehicleModel, useUpdateVehicleModel, useAssignVehicleModelParent, useDeleteVehicleModel,
   type VehicleModel, type VehicleModelPatch, type VehicleModelTemp,
 } from '@/api/hooks'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được'
+const nf = (n: number) => n.toLocaleString('vi-VN')
 const TEMP_LABEL: Record<VehicleModelTemp, string> = { HOT: 'Nóng', COLD: 'Lạnh', MIXED: 'Kết hợp', DRY: 'Khô' }
-const TH = 'px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap'
+const NONE = '__none__'
+const TH = 'text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+
+// Cột: NGHIỆP VỤ đứng trước, cột phụ (điểm giao, sửa) ra sau — phone thấy phần chính không phải kéo ngang
+const COLS = [
+  { id: 'pick',   label: '',                 w: 36 },
+  { id: 'sap',    label: 'Mã SAP',           w: 100 },
+  { id: 'name',   label: 'Tên dòng xe',      w: 230 },
+  { id: 'parent', label: 'Dòng xe cha',      w: 190 },
+  { id: 'temp',   label: 'Nhiệt',            w: 80 },
+  { id: 'cap',    label: 'Sức chứa',         w: 130 },
+  { id: 'unit',   label: 'Tính cước',        w: 150 },
+  { id: 'under',  label: 'Non tải <',        w: 78 },
+  { id: 'mix',    label: 'Trộn kênh',        w: 80 },
+  { id: 'drops',  label: 'Điểm giao tối đa', w: 110 },
+  { id: 'act',    label: 'Trạng thái',       w: 90 },
+  { id: 'upd',    label: 'Sửa',              w: 110 },
+  { id: 'ops',    label: '',                 w: 64 },
+]
+
 const capText = (m: VehicleModel) => {
   const parts: string[] = []
   if (m.max_pallets) parts.push(`${m.max_pallets} pallet`)
   if (m.max_tons) parts.push(`${Number(m.max_tons).toLocaleString('vi-VN')} tấn`)
   if (m.max_m3) parts.push(`${Number(m.max_m3).toLocaleString('vi-VN')} m³`)
-  return parts.length ? parts.join(' · ') : '—'
+  return parts.length ? parts.join(' · ') : null
 }
 
 function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parents: { value: string; label: string }[]; onClose: () => void }) {
@@ -90,7 +116,7 @@ function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parent
             <SingleSelect searchable={false} value={capMode} onChange={v => { const cm = v as 'PALLET' | 'TON'; setCapMode(cm); setUnit(cm === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP') }}
               options={[{ value: 'PALLET', label: 'Pallet (xe pallet)' }, { value: 'TON', label: 'Tấn (xe xá / cont)' }]} /></div>
         </div>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div><Label className="text-xs">Pallet tối đa</Label><Input type="number" min={1} value={pallets} onChange={e => setPallets(e.target.value)} className="h-9 tabular-nums" /></div>
           <div><Label className="text-xs">Tấn tối đa</Label><Input type="number" min={0.1} step={0.1} value={tons} onChange={e => setTons(e.target.value)} className="h-9 tabular-nums" /></div>
           <div><Label className="text-xs">m³ tối đa</Label><Input type="number" min={0.1} step={0.1} value={m3} onChange={e => setM3(e.target.value)} className="h-9 tabular-nums" /></div>
@@ -112,21 +138,30 @@ function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parent
 export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreate: boolean; canEdit: boolean; canDelete: boolean }) {
   const { data: parentsRaw = [] } = useVehicleTypes()
   const parents = useMemo(() => parentsRaw.filter(p => p.is_active).map(p => ({ value: p.id, label: `${p.code} · ${p.name}` })), [parentsRaw])
+  const parentOpts = useMemo(() => [{ value: NONE, label: 'Chưa gán cha' }, ...parentsRaw.map(p => ({ value: p.id, label: `${p.code} · ${p.name}` }))], [parentsRaw])
   const { data, isLoading } = useVehicleModels()
   const items = data?.items ?? []
-  const unassigned = data?.unassigned ?? 0
   const assign = useAssignVehicleModelParent(), del = useDeleteVehicleModel()
+  const f = useWmsFilterStore(s => s.vehicleModels)
+  const setF = useWmsFilterStore(s => s.setVehicleModels)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('vehicle_models_col_widths', COLS.map(c => c.w))
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [form, setForm] = useState<{ row: VehicleModel | null } | null>(null)
   const [assignDlg, setAssignDlg] = useState(false)
   const [assignTo, setAssignTo] = useState('')
-  const [onlyUnassigned, setOnlyUnassigned] = useState(false)
 
-  // Dòng chưa gán cha lên đầu (việc phải làm), rồi theo cha, rồi thứ tự seed
+  // Lọc client (danh mục 60 dòng, cố định) — chưa gán cha lên đầu (việc phải làm), rồi theo cha, rồi thứ tự seed
   const rows = useMemo(() => {
-    const list = onlyUnassigned ? items.filter(m => !m.parent_type_id) : items
+    const q = f.search.trim().toLowerCase()
+    const list = items.filter(m =>
+      (!q || m.sap_code.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+      && (!f.parents.length || f.parents.includes(m.parent_type_id ?? NONE))
+      && (!f.temps.length || f.temps.includes(m.temp_mode ?? NONE))
+      && (!f.status || (f.status === 'active') === m.is_active)
+      && (!f.capMode || m.capacity_mode === f.capMode))
     return [...list].sort((a, b) => Number(!!a.parent_type_id) - Number(!!b.parent_type_id) || (a.parent?.code ?? '').localeCompare(b.parent?.code ?? '') || a.sort_order - b.sort_order)
-  }, [items, onlyUnassigned])
+  }, [items, f])
+  const filtering = !!(f.search || f.parents.length || f.temps.length || f.status || f.capMode)
   const toggle = (id: string) => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
   const allPicked = rows.length > 0 && rows.every(r => picked.has(r.id))
   const doAssign = async () => {
@@ -137,50 +172,101 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
     } catch (e) { toast({ variant: 'destructive', title: 'Không gán được', description: apiMsg(e) }) }
   }
 
+  const filterDefs: FilterDef[] = [
+    { key: 'parent', label: 'Dòng xe cha', type: 'multi', selected: f.parents, onChange: v => setF({ parents: v }), options: parentOpts },
+    { key: 'temp', label: 'Nhiệt', type: 'multi', selected: f.temps, onChange: v => setF({ temps: v }), searchable: false,
+      options: [...(Object.keys(TEMP_LABEL) as VehicleModelTemp[]).map(k => ({ value: k, label: TEMP_LABEL[k] })), { value: NONE, label: 'Chưa khai' }] },
+    { key: 'cap', label: 'Đo tải', type: 'single', value: f.capMode, onChange: v => setF({ capMode: v }), options: [{ value: 'PALLET', label: 'Pallet' }, { value: 'TON', label: 'Tấn' }] },
+    { key: 'status', label: 'Trạng thái', type: 'single', value: f.status, onChange: v => setF({ status: v }), options: [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }] },
+  ]
+  const unassigned = items.filter(m => !m.parent_type_id && m.is_active).length
+  const tiles = [
+    { label: 'Dòng xe con', value: filtering ? `${nf(rows.length)} / ${nf(items.length)}` : nf(items.length) },
+    { label: 'Chưa gán cha', value: nf(unassigned), danger: unassigned > 0, tip: 'Dòng chưa gán cha thì điều vận không ghép chuyến vào — kho không biết booking khung giờ loại nào' },
+    { label: 'Xe pallet', value: nf(items.filter(m => m.capacity_mode === 'PALLET' && m.is_active).length), tip: 'Đo tải bằng pallet, cước theo pallet làm tròn lên' },
+    { label: 'Xe tấn / cont', value: nf(items.filter(m => m.capacity_mode === 'TON' && m.is_active).length), tip: 'Đo tải bằng tấn, cước trọn chuyến' },
+    { label: 'Tạm dừng', value: nf(items.filter(m => !m.is_active).length) },
+  ]
+  const actions: ActionItem[] = canCreate
+    ? [{ key: 'add', icon: Plus, label: 'Thêm dòng con', tip: 'Thêm dòng xe con mang mã SAP', primary: true, variant: 'default', onClick: () => setForm({ row: null }) }]
+    : []
+
+  const cell = (m: VehicleModel, id: string) => {
+    switch (id) {
+      case 'pick':   return canEdit ? <input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} className="h-3.5 w-3.5 accent-sky-600" /> : null
+      case 'sap':    return <span className="font-mono font-semibold">{m.sap_code}</span>
+      case 'name':   return <span className="font-medium">{m.name}</span>
+      case 'parent': return m.parent ? <><span className="font-mono">{m.parent.code}</span> <span className="opacity-80">{m.parent.name}</span></> : <StatusBadge tone="amber">Chưa gán</StatusBadge>
+      case 'temp':   return m.temp_mode ? TEMP_LABEL[m.temp_mode] : <span className="text-slate-300">—</span>
+      case 'cap':    return capText(m) ?? <span className="text-slate-300">—</span>
+      case 'unit':   return m.tariff_unit === 'PER_PALLET' ? 'Pallet (làm tròn lên)' : 'Trọn chuyến'
+      case 'under':  return <span className="tabular-nums">{m.underload_pct} %</span>
+      case 'mix':    return m.allow_mix_channels ? 'Có' : 'Không'
+      case 'drops':  return m.max_drops ?? <span className="text-slate-300">—</span>
+      case 'act':    return <StatusBadge tone={m.is_active ? 'green' : 'slate'}>{m.is_active ? 'Hoạt động' : 'Tạm dừng'}</StatusBadge>
+      case 'upd':    return <div className="leading-tight"><div className="text-slate-600 truncate max-w-[100px]">{m.updated_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(m.updated_at, true)}</div></div>
+      case 'ops':    return (canEdit || canDelete) ? (
+        <div className="flex items-center gap-0.5">
+          {canEdit && <button className="text-slate-400 hover:text-blue-500 p-1" title="Sửa" onClick={e => { e.stopPropagation(); setForm({ row: m }) }}><Pencil className="h-3.5 w-3.5" /></button>}
+          {canDelete && <button className="text-slate-400 hover:text-red-500 p-1" title="Xoá" onClick={e => { e.stopPropagation(); if (confirm(`Xoá dòng xe "${m.sap_code} · ${m.name}"?`)) del.mutate(m.id, { onError: er => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(er) }) }) }}><Trash2 className="h-3.5 w-3.5" /></button>}
+        </div>) : null
+      default: return null
+    }
+  }
+  // Cột ghim trái: tick + Mã SAP (giữ ngữ cảnh khi cuộn ngang trên phone)
+  const stickyLeft = (i: number) => (i === 0 ? 'sticky left-0 z-10' : i === 1 ? `sticky z-10` : '')
+  const stickyStyle = (i: number) => (i === 1 ? { left: colW[0] } : undefined)
+
   return (
-    <div className="border-t mt-2">
-      <div className="flex items-center gap-2 bg-slate-100 border-b px-3 py-1.5 flex-wrap">
-        <span className="h-4 w-1 rounded bg-sky-500" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 flex-1 min-w-0">Dòng xe con — mã SAP ({items.length})</span>
-        <InfoTip tip="Dòng xe con mang mã SAP 9100000xx, sức chứa và cách tính cước — chỉ điều vận (ghép chuyến, tính cước) dùng. Kho vẫn booking khung giờ và đăng ký cổng theo dòng xe cha. Dòng chưa gán cha thì điều vận không ghép vào." />
-        {unassigned > 0 && <button type="button" onClick={() => setOnlyUnassigned(v => !v)}
-          className={`h-6 px-2 rounded-full text-[10px] font-medium border ${onlyUnassigned ? 'bg-amber-600 text-white border-amber-600' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
-          {unassigned} chưa gán cha</button>}
-        {canCreate && <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setForm({ row: null })}><Plus className="h-3.5 w-3.5" />Thêm dòng con</Button>}
+    <>
+      <div className="border-b px-3 py-1.5 space-y-1 sm:space-y-1.5 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm mã SAP, tên dòng xe…" className="flex-1 min-w-[160px]" />
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+            <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+            <ActionCluster items={actions} mobileInline />
+          </div>
+        </div>
+        <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
       </div>
-      <Table className="min-w-full">
-        <TableHeader><TableRow>
-          {canEdit && <TableHead className={`${TH} w-7`}><input type="checkbox" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(rows.map(r => r.id)))} className="h-3.5 w-3.5 accent-sky-600" /></TableHead>}
-          {['Mã SAP', 'Tên dòng xe', 'Dòng xe cha', 'Nhiệt', 'Sức chứa', 'Tính cước', 'Non tải <', 'Trộn kênh', 'Trạng thái'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
-          {(canEdit || canDelete) && <TableHead className={`${TH} w-16`} />}
-        </TableRow></TableHeader>
-        <TableBody>
-          {isLoading && <TableEmptyRow colSpan={11}>Đang tải…</TableEmptyRow>}
-          {!isLoading && !rows.length && <TableEmptyRow colSpan={11}>{onlyUnassigned ? 'Mọi dòng xe con đã có cha.' : 'Chưa có dòng xe con nào.'}</TableEmptyRow>}
-          {rows.map(m => (
-            <TableRow key={m.id} className={`${m.is_active ? '' : 'text-slate-400'} ${!m.parent_type_id && m.is_active ? 'bg-amber-50/40' : ''}`}>
-              {canEdit && <TableCell className={TD}><input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} className="h-3.5 w-3.5 accent-sky-600" /></TableCell>}
-              <TableCell className={`${TD} font-mono font-semibold`}>{m.sap_code}</TableCell>
-              <TableCell className={`${TD} font-medium`}>{m.name}</TableCell>
-              <TableCell className={TD}>{m.parent ? <><span className="font-mono">{m.parent.code}</span> <span className="text-slate-500">{m.parent.name}</span></> : <StatusBadge tone="amber">Chưa gán</StatusBadge>}</TableCell>
-              <TableCell className={TD}>{m.temp_mode ? TEMP_LABEL[m.temp_mode] : <span className="text-slate-300">—</span>}</TableCell>
-              <TableCell className={`${TD} tabular-nums`}>{capText(m)}</TableCell>
-              <TableCell className={TD}>{m.tariff_unit === 'PER_PALLET' ? 'Pallet (làm tròn lên)' : 'Trọn chuyến'}</TableCell>
-              <TableCell className={`${TD} text-right tabular-nums`}>{m.underload_pct} %</TableCell>
-              <TableCell className={TD}>{m.allow_mix_channels ? 'Có' : 'Không'}</TableCell>
-              <TableCell className={TD}><StatusBadge tone={m.is_active ? 'green' : 'slate'}>{m.is_active ? 'Hoạt động' : 'Tạm dừng'}</StatusBadge></TableCell>
-              {(canEdit || canDelete) && (
-                <TableCell className={TD}>
-                  <div className="flex items-center gap-0.5">
-                    {canEdit && <button className="text-slate-400 hover:text-blue-500 p-1" title="Sửa" onClick={() => setForm({ row: m })}><Pencil className="h-3.5 w-3.5" /></button>}
-                    {canDelete && <button className="text-slate-400 hover:text-red-500 p-1" title="Xoá" onClick={() => { if (confirm(`Xoá dòng xe "${m.sap_code} · ${m.name}"?`)) del.mutate(m.id, { onError: e => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(e) }) }) }}><Trash2 className="h-3.5 w-3.5" /></button>}
-                  </div>
-                </TableCell>
-              )}
+      <SummaryBand tiles={tiles} />
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"
+          style={{ width: totalWidth, minWidth: '100%' }}>
+          <colgroup>{COLS.map((c, i) => <col key={c.id} style={{ width: colW[i] }} />)}</colgroup>
+          <TableHeader>
+            <TableRow>
+              {COLS.map((c, i) => (
+                <TableHead key={c.id} className={`${TH} ${stickyLeft(i)} bg-slate-50 ${i <= 1 ? 'z-20' : ''}`} style={stickyStyle(i)}>
+                  {c.id === 'pick'
+                    ? (canEdit && <input type="checkbox" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(rows.map(r => r.id)))} className="h-3.5 w-3.5 accent-sky-600" />)
+                    : c.label}
+                  <span onPointerDown={e => startResize(i, e)} className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70" />
+                </TableHead>
+              ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {isLoading && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
+            {!isLoading && !rows.length && (
+              <TableEmptyRow colSpan={COLS.length}>{filtering ? 'Không có dòng xe khớp bộ lọc.' : 'Chưa có dòng xe con nào.'}</TableEmptyRow>
+            )}
+            {rows.map(m => (
+              <TableRow key={m.id} className={`${m.is_active ? '' : 'text-slate-400 line-through'} ${picked.has(m.id) ? 'bg-sky-50' : ''}`}>
+                {COLS.map((c, i) => (
+                  <TableCell key={c.id} className={`${TD} ${stickyLeft(i)} ${i <= 1 ? (picked.has(m.id) ? 'bg-sky-50' : 'bg-white') : ''}`} style={stickyStyle(i)}>
+                    {cell(m, c.id)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0 flex items-center gap-2 flex-wrap">
+        <span className="whitespace-nowrap">1–{rows.length} / {items.length} dòng xe con</span>
+        <span className="flex-1 min-w-0 truncate text-slate-400">Cha do máy gợi ý theo tên (cont → CONT/CONTSCA · ≤ 6 pallet → XE4PALLET · pallet → XEPALLET · lạnh/kết hợp → XESCA · còn lại → XEXA) — tick dòng sai rồi bấm Gán cha</span>
+      </div>
 
       {canEdit && picked.size > 0 && (
         <FloatingActionBar count={picked.size} unit="dòng xe">
@@ -202,6 +288,6 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
         </Dialog>
       )}
       {form && <ModelForm row={form.row} parents={parents} onClose={() => setForm(null)} />}
-    </div>
+    </>
   )
 }

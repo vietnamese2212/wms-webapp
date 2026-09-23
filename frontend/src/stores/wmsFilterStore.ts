@@ -397,6 +397,14 @@ interface DoSapFilters {
   pageSize: number
 }
 // Sổ SO — tab "Chưa có OD" (dòng ZSD02 chưa có OD), lọc theo Ngày giao
+// Cài đặt TMS → tab Mã dòng xe (23/09): dòng xe con mang mã SAP
+interface VehicleModelFilters {
+  search: string
+  parents: string[]      // id VehicleType; '__none__' = chưa gán cha
+  temps: string[]        // HOT | COLD | MIXED | DRY | '__none__'
+  status: string         // '' | 'active' | 'inactive'
+  capMode: string        // '' | 'PALLET' | 'TON'
+}
 // Cước vận chuyển (23/09): bộ lọc dùng chung 3 tab — kho xuất · ĐVVT · dòng xe · tìm phường
 interface FreightFilters {
   tab: 'tariffs' | 'surcharges' | 'allocation'
@@ -514,6 +522,8 @@ interface WmsFilterState {
   soLines:           SoLinesFilters
   freight:           FreightFilters
   setFreight:           (f: Partial<FreightFilters>)           => void
+  vehicleModels:     VehicleModelFilters
+  setVehicleModels:     (f: Partial<VehicleModelFilters>)      => void
   khvc:              KhvcFilters
   reconcile:         ReconcileFilters
   setDoSap:             (f: Partial<DoSapFilters>)             => void
@@ -646,6 +656,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
+    vehicleModels: { search: '', parents: [], temps: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
@@ -697,6 +708,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setDoSap:            (f) => set(s => ({ doSap:            { ...initialFilters().doSap, ...s.doSap, ...f } })),
       setSoLines:          (f) => set(s => ({ soLines:          { ...initialFilters().soLines, ...s.soLines, ...f } })),
       setFreight:          (f) => set(s => ({ freight:          { ...initialFilters().freight, ...s.freight, ...f } })),
+      setVehicleModels:    (f) => set(s => ({ vehicleModels:    { ...initialFilters().vehicleModels, ...s.vehicleModels, ...f } })),
       setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
       setReconcile:        (f) => set(s => ({ reconcile:        { ...s.reconcile,        ...f } })),
       reset:               ()  => set(() => initialFilters()),

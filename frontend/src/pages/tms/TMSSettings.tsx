@@ -524,6 +524,8 @@ export default function TMSSettings() {
   // key = khoá cấu hình điện thoại ('/tms/settings#<key>' — config/mobileSurface.ts) = value của TabsTrigger
   const permTabs = useMemo(() => ([
     showVtTab        && { key: 'vehicle-types' as const,  label: 'Loại xe',    icon: Truck },
+    // Dòng xe CON mang mã SAP (user 23/09: "cho dòng xe con mở 1 tab là Mã dòng xe") — cùng quyền với cha
+    showVtTab        && { key: 'vehicle-models' as const, label: 'Mã dòng xe', icon: Truck },
     showSlotsTab     && { key: 'slot-templates' as const, label: 'Khung giờ',  icon: Clock },
     showCompaniesTab && { key: 'companies' as const,      label: 'ĐVVT / NCC', icon: Building2 },
     showVehiclesTab  && { key: 'vehicles' as const,       label: 'Xe',         icon: Truck },
@@ -811,8 +813,6 @@ export default function TMSSettings() {
                     </TableBody>
                   </Table>
               )}
-              {/* Dòng xe CON mang mã SAP (23/09) — cùng tab với cha: một danh mục hai tầng */}
-              <VehicleModelsPanel canCreate={vtCreate} canEdit={vtEdit} canDelete={vtDelete} />
             </div>
             {detailVT && (
               <aside className="hidden lg:block w-56 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
@@ -833,6 +833,11 @@ export default function TMSSettings() {
             )}
           </div>
           <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{shownVT.length} / {vehicleTypes.length} loại xe</div>
+        </TabsContent>
+
+        {/* ── Tab: Mã dòng xe (dòng xe CON mang mã SAP — điều vận dùng để ghép chuyến / tính cước) ── */}
+        <TabsContent value="vehicle-models" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <VehicleModelsPanel canCreate={vtCreate} canEdit={vtEdit} canDelete={vtDelete} />
         </TabsContent>
 
         {/* ── Tab: Khung giờ ── */}

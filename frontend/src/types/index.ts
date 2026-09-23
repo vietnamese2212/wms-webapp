@@ -732,6 +732,19 @@ export interface GDO {
   total_loose_base?:   number
   qty_unit?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
   item_breakdown?:  GDOItemBreakdown[]
+  // Dòng xe CON (mã SAP) + tải + cước dự tính (đợt 1 TMS điều vận, 23/09) — enrich từ listGDOs / cột trên GDO
+  vehicle_model_id?: string | null
+  vehicle_model?: { id: string; sap_code: string; name: string; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | null } | null
+  load?: { pallets: number | null; tons: number | null; incomplete: number; basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number } | null
+  freight_estimated?: number | string | null
+  freight_tariff_id?: string | null
+  freight_detail?: {
+    computed_at: string; basis: 'PLAN' | 'ACTUAL'; unit: 'PER_PALLET' | 'PER_TRIP' | null
+    total: number | null; base: number | null; billed_pallets: number | null
+    surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]
+    ward: string | null; wards: string[]; stops: number; pallets: number | null; tons: number | null; incomplete: number
+    reason: string | null
+  } | null
   // Workflow fields
   assigned_at?:        string | null
   assigned_by?:        string | null

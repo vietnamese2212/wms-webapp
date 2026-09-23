@@ -3600,6 +3600,8 @@ export interface KhvcRow {
   npp: string | null; veh_type: string | null; dvvt: string | null
   priority: string | null; cs: string | null; note: string | null
   booking_category: string | null   // CỬA đặt lịch — 1 Số xe chỉ 1 giá trị (trigger DB gác); chỉ dùng cho khung giờ
+  vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng tính cước/tải (23/09)
+  vehicle_model?: { id: string; sap_code: string; name: string } | null   // enrich từ BE list
   export_date: string | null; source: string | null; sync_status: string | null
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO

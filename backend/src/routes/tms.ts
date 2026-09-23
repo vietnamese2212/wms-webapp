@@ -59,6 +59,8 @@ router.post('/freight/tariffs',           requirePerm('freight', 'manage'), vali
 router.put('/freight/tariffs/:id',        requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zTariffUpdate }),      freight.updateTariff)
 router.delete('/freight/tariffs/:id',     requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteTariff)
 // Phụ phí (rớt điểm · bốc xếp · chờ · khác) theo kho × ĐVVT [× dòng xe]
+router.post('/freight/recompute',         requirePerm('freight', 'manage'), validate({ body: freight.zRecompute }),                           freight.recomputeFreight)   // tính lại cước dự tính cho chuyến trong khoảng ngày
+
 router.get('/freight/surcharges',         requirePerm('freight', 'view'),   validate({ query: freight.zListQuery }),                          freight.listSurcharges)
 router.post('/freight/surcharges',        requirePerm('freight', 'manage'), validate({ body: freight.zSurchargeCreate }),                     freight.createSurcharge)
 router.put('/freight/surcharges/:id',     requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zSurchargeUpdate }),   freight.updateSurcharge)

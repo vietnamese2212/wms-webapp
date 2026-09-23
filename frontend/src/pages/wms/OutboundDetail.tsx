@@ -1995,6 +1995,25 @@ export default function OutboundDetail() {
             <span className="font-mono font-semibold break-all" title={gdo.delivery_codes!.join(' · ')}>{gdo.delivery_codes!.join(' · ')}</span>
           </span>
         )}
+        {/* Dòng xe CON · tải · cước dự tính (đợt 1 TMS điều vận 23/09) — đọc từ enrich của list/detail, không tính lại ở FE */}
+        {gdo.vehicle_model && (
+          <span className="flex items-center gap-1" title={`Dòng xe con ${gdo.vehicle_model.sap_code}`}>
+            <span className="text-slate-400 shrink-0">Xe</span>
+            <span>{gdo.vehicle_model.name}</span>
+          </span>
+        )}
+        {gdo.load?.pct != null && (
+          <span className="flex items-center gap-1" title={`Tải ${gdo.load.used} / ${gdo.load.cap} ${gdo.load.basis === 'TON' ? 'tấn' : 'pallet'}${gdo.load.underload ? ` — NON TẢI (dưới ${gdo.load.underload_pct} %)` : ''}`}>
+            <span className="text-slate-400 shrink-0">Tải</span>
+            <span className={`font-semibold tabular-nums ${gdo.load.underload ? 'text-red-600' : 'text-green-700'}`}>{gdo.load.pct.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} %</span>
+          </span>
+        )}
+        {gdo.freight_estimated != null && (
+          <span className="flex items-center gap-1" title={[gdo.freight_detail?.basis === 'ACTUAL' ? 'Theo thực xuất' : 'Theo kế hoạch', gdo.freight_detail?.ward ? `phường ${gdo.freight_detail.ward}` : null, gdo.freight_detail ? `${gdo.freight_detail.stops} điểm giao` : null, ...(gdo.freight_detail?.surcharges ?? []).map(s => `${s.kind === 'DROP_POINT' ? 'rớt điểm' : s.kind} ${s.qty}× = ${s.total.toLocaleString('vi-VN')}`)].filter(Boolean).join(' · ')}>
+            <span className="text-slate-400 shrink-0">Cước</span>
+            <span className="font-semibold tabular-nums">{Number(gdo.freight_estimated).toLocaleString('vi-VN')} ₫</span>
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <Package className="h-3 w-3 text-slate-400 shrink-0" />
           <span className="font-medium">{totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span> thùng

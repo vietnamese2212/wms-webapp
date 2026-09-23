@@ -58,6 +58,37 @@ export interface FreightResult {
 
 const round0 = (x: number) => Math.round(x)
 
+// ── TẢI / NON TẢI (đợt 1 mục 15): so tải thật của chuyến với sức chứa dòng xe CON ──
+export interface CapacityLike {
+  capacity_mode: string | null      // 'PALLET' | 'TON'
+  max_pallets: number | null
+  max_tons: number | string | null
+  underload_pct: number | null      // ngưỡng Non tải (%), mặc định 70
+}
+export interface LoadUtil {
+  basis: 'PALLET' | 'TON' | null    // đo theo pallet hay tấn — theo capacity_mode của dòng xe, thiếu sức chứa → null
+  used: number | null               // pallet (thập phân) hoặc tấn
+  cap: number | null
+  pct: number | null                // % tải, làm tròn 1 chữ số
+  underload: boolean | null         // pct < underload_pct; null khi không đo được
+  underload_pct: number
+}
+const DEFAULT_UNDERLOAD_PCT = 70
+/** % tải = tải thật ÷ sức chứa dòng xe. Không đo được (thiếu sức chứa hay thiếu tải) ⇒ null, KHÔNG đoán. */
+export function loadUtilization(model: CapacityLike | null | undefined, pallets: number | null, tons: number | null): LoadUtil {
+  const up = Number(model?.underload_pct)
+  const underload_pct = Number.isFinite(up) && up > 0 ? up : DEFAULT_UNDERLOAD_PCT
+  const empty: LoadUtil = { basis: null, used: null, cap: null, pct: null, underload: null, underload_pct }
+  if (!model) return empty
+  const maxP = Number(model.max_pallets), maxT = Number(model.max_tons)
+  const byTon = model.capacity_mode === 'TON' || !(Number.isFinite(maxP) && maxP > 0)
+  const cap = byTon ? maxT : maxP
+  const used = byTon ? tons : pallets
+  if (!Number.isFinite(cap) || cap <= 0 || used == null || !Number.isFinite(used)) return { ...empty, basis: byTon ? 'TON' : 'PALLET', used: used ?? null, cap: Number.isFinite(cap) && cap > 0 ? cap : null }
+  const pct = Math.round((used / cap) * 1000) / 10
+  return { basis: byTon ? 'TON' : 'PALLET', used, cap, pct, underload: pct < underload_pct, underload_pct }
+}
+
 /** Hàng có hiệu lực tại ngày `day` (YYYY-MM-DD so chuỗi được vì cùng dạng ISO). */
 export function effectiveAt<T extends { effective_from: string; effective_to: string | null; is_active?: boolean }>(rows: T[], day: string): T[] {
   return rows.filter(r => (r.is_active ?? true) && r.effective_from <= day && (r.effective_to == null || r.effective_to >= day))

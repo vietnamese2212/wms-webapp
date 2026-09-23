@@ -5,6 +5,9 @@ import { supabase, db } from '../../lib/supabase'
 import { ok, fail, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
+import { loadOf, sumLoads, type LoadMat } from '../../utils/loadCalc'
+import { loadUtilization } from '../../services/freight'
+import { estimateFreightSafely } from '../../services/freightEstimate'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
@@ -944,8 +947,14 @@ async function enrichGdos(data: any[]): Promise<any[]> {
     const doIds = (dos ?? []).map((d: any) => d.id)
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_pallet_carrier)')
+      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_pallet_carrier, is_non_stock, weight_kg)')
       .in('do_id', chunk).order('id'))
+
+    // Dòng xe CON của chuyến (23/09) — tên + sức chứa để in cột Tải / Non tải; freight_* đi thẳng từ select('*')
+    const vmIds = [...new Set((data ?? []).map((g: any) => g.vehicle_model_id).filter(Boolean))] as string[]
+    const vmRows = vmIds.length ? await fetchAllByIdChunks(vmIds, chunk => supabase.from('vehicle_model')
+      .select('id, sap_code, name, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct').in('id', chunk).order('id')) : []
+    const vmById = new Map<string, any>(vmRows.map((v: any) => [v.id, v]))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
     const gdoModeById = new Map<string, string | null>((data ?? []).map((g: any) => [g.id, g.warehouse?.inventory_mode ?? null]))
@@ -1027,8 +1036,18 @@ async function enrichGdos(data: any[]): Promise<any[]> {
         ? { base_unit: uniformMat.base_unit ?? null, entry_unit: uniformMat.entry_unit ?? null, units_per_carton: uniformMat.units_per_carton ?? null }
         : null
 
+      // Tải THẬT của chuyến theo master (pallet thập phân + tấn) → % tải so sức chứa dòng xe con. Cột trên list tính
+      // SỐNG (không đọc freight_detail) để đổi dòng hàng là đổi ngay; cước thì đọc cột đã ghi (cần bảng cước).
+      const loads = gdoItems.map((i: any) => loadOf(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null, null))
+      const loadSum = sumLoads(loads)
+      const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
+      const tons = loadSum.kg == null ? null : Math.round(loadSum.kg) / 1000
+      const util = loadUtilization(vm, loadSum.pallets, tons)
+
       return {
         ...g,
+        vehicle_model: vm ? { id: vm.id, sap_code: vm.sap_code, name: vm.name, capacity_mode: vm.capacity_mode, max_pallets: vm.max_pallets, max_tons: vm.max_tons, tariff_unit: vm.tariff_unit, underload_pct: vm.underload_pct } : null,
+        load: { pallets: loadSum.pallets, tons, incomplete: loadSum.incomplete, ...util },
         do_count:          gdoDOs.length,
         distributor_names: distributorNames as string[],
         delivery_codes:    deliveryCodes as string[],
@@ -1798,6 +1817,7 @@ export async function quickExportGDO(req: Request, res: Response) {
         .update({ status: 'COMPLETED', completed_at: tEnd, scan_completed_at: tEnd, updated_by: actor, updated_at: tEnd })
         .eq('id', gdoId).neq('status', 'COMPLETED'),
     ])
+    await estimateFreightSafely([gdoId], 'ACTUAL')
     await maybeAutoCreateTransferOrder(gdoId, tEnd)
 
     const result = await fetchGDOFull(gdoId)
@@ -1956,6 +1976,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
         .update({ status: 'COMPLETED', completed_at: tEnd, scan_completed_at: tEnd, updated_by: actor, updated_at: tEnd })
         .eq('id', gdoId).neq('status', 'COMPLETED').select('id'),
     ])
+    await estimateFreightSafely([gdoId], 'ACTUAL')
     if ((winRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(gdoId, tEnd)
     return ok(res, await fetchGDOFull(gdoId))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
@@ -2654,6 +2675,8 @@ export async function patchGDO(req: Request, res: Response) {
     if (status === 'COMPLETED') upd = upd.neq('status', 'COMPLETED')
     const { data: updRows, error } = await upd.select('id')
     if (error) return fail(res, error)
+    // Hoàn thành → tính lại cước theo THỰC XUẤT (pallet/tấn từ số đã quét) — augment, không chặn
+    if (status === 'COMPLETED' && (updRows ?? []).length) await estimateFreightSafely([req.params.id], 'ACTUAL')
 
     if (status === 'COMPLETED' && (updRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(req.params.id, t)
     // Chuyến chốt sổ ⇒ việc còn treo hết hiệu lực. Việc ĐÃ XONG giữ nguyên: đó là vết ai làm gì lúc
@@ -3400,7 +3423,7 @@ async function mergePausedGDO(
   loosePol: LooseResolver,   // policy 2 tầng (24/08) — OFF ép 0 cả cột "Nhặt lẻ" ghi tay
   // %Date theo Khách hàng/Kênh (11/09) — CHỈ áp cho dòng MỚI thêm vào chuyến tạm dừng; dòng cũ giữ
   // nguyên quy tắc đang có (merge là thêm hàng, không phải cơ hội để viết lại quyết định cũ).
-  dateCtx?: { ctx: PolicyCtx; shipto: string | null; actor: string | null; out: AutoApplied[] },
+  dateCtx?: { ctx: PolicyCtx; shipto: string | null; actor: string | null; out: AutoApplied[]; vehicleModelId?: string | null },
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
@@ -3483,7 +3506,7 @@ async function mergePausedGDO(
 
   // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
   await supabase.from('GroupDeliveryOrder')
-    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
+    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, ...(dateCtx && 'vehicleModelId' in dateCtx ? { vehicle_model_id: dateCtx.vehicleModelId ?? null } : {}), updated_at: t })
     .eq('id', gdoId)
 
   // Upsert DO (1/NPP) + items — item cũ được re-point về DO canonical (do_id trong fields)
@@ -4050,6 +4073,8 @@ async function processVehicleGroups(
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const priority = String(groupRows[0]['Ưu tiên'] ?? groupRows[0]['Uu tien'] ?? '').trim() || null   // ĐỢT 3: ưu tiên chuyến (KHVC)
       const transport_note = String(groupRows[0]['Note'] ?? groupRows[0]['Ghi chú'] ?? '').trim() || null // ĐỢT 3: ghi chú điều vận (KHVC, cấp chuyến)
+      // Dòng xe CON (23/09) — uuid đã validate ở cửa ghi khvc_lines (CRUD/upload); chỉ luồng KHVC có, luồng cũ để null
+      const vehicle_model_id = String(groupRows[0]['Dòng xe con'] ?? '').trim() || null
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
       const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null
 
@@ -4089,7 +4114,7 @@ async function processVehicleGroups(
           group_code, delivery_date, planned_date,
           resolved_warehouse_id, dvvt, loai_kho,
           byNpp, matMap, autoLoosePallet, uploadLoosePol,
-          { ctx: policyCtx, shipto: resolvedShipto, actor: req.user?.name ?? null, out: autoApplied },
+          { ctx: policyCtx, shipto: resolvedShipto, actor: req.user?.name ?? null, out: autoApplied, vehicleModelId: vehicle_model_id },
         )
         if (resolvedShipto) {
           await supabase.from('GroupDeliveryOrder')
@@ -4162,7 +4187,7 @@ async function processVehicleGroups(
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, origin: gdoOrigin, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, vehicle_model_id, origin: gdoOrigin, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
         created.push({ group_code, id: gdoId, created: true, preserved_assignment: assignedGcs.has(group_code) })
@@ -4181,6 +4206,7 @@ async function processVehicleGroups(
         shipto_party: resolvedShipto,   // cột > khớp Tên NPP > ship-to đã gán tay (upload đè không làm mất)
         priority,                       // ĐỢT 3: ưu tiên chuyến (null = không đặt)
         transport_note,                 // ĐỢT 3: ghi chú điều vận (null = không có)
+        vehicle_model_id,               // dòng xe CON (mã SAP) — cước/tải tính theo nó (23/09)
         origin: gdoOrigin,              // 'SAP' (KHVC) khóa sửa kế hoạch trên đơn · 'EXCEL' như cũ
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
@@ -4305,6 +4331,13 @@ async function processVehicleGroups(
     // Cờ CHỜ DỮ LIỆU: đặt cho xe còn DO thiếu, gỡ cho xe vừa đủ dữ liệu (+ ghi sổ sự kiện)
     const awaitingResult = await applyAwaitingState(req, awaitingByGc ?? new Map(), [...byVehicle.keys()], prevGdoState)
 
+    // CƯỚC DỰ TÍNH + TẢI theo kế hoạch (đợt 1 mục 15, 23/09) — AUGMENT: chuyến vừa dựng/ghi đè/merge đều tính lại;
+    // thiếu bảng cước hay chưa chọn dòng xe con thì ghi lý do, không chặn.
+    if (autoLoosePallet) {
+      const freightIds = created.filter(c => c.id && !c.skipped).map(c => c.id as string)
+      if (freightIds.length) await estimateFreightSafely(freightIds, 'PLAN')
+    }
+
     // KẾ HOẠCH VC tự sinh theo Số xe (chỉ luồng KHVC/SAP — kho không làm SAP vẫn up tay bên TMS như cũ)
     let tmsSync: Awaited<ReturnType<typeof syncTmsPlanFromKhvc>> | null = null
     if (autoLoosePallet) {
@@ -4319,7 +4352,7 @@ async function processVehicleGroups(
     if (autoLoosePallet && planFp && planFp.size && healDepth < 2) {
       try {
         const fresh = await fetchAllByIdChunks([...planFp.keys()], chunk => supabase.from('khvc_lines')
-          .select('group_code, do_no, export_date, npp, veh_type, dvvt')
+          .select('group_code, do_no, export_date, npp, veh_type, dvvt, vehicle_model_id')
           .in('group_code', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as PlanFpRow[]
         const nowFp = planFingerprints(fresh ?? [])
         const drifted = [...planFp.keys()].filter(gc => (nowFp.get(gc) ?? '') !== (planFp.get(gc) ?? ''))
@@ -4644,20 +4677,21 @@ export async function uploadVl06o(req: Request, res: Response) {
 type KhvcPlanRow = {
   group_code: string; do_no: string; npp: string; export_date: unknown
   veh_type: string; dvvt: string; priority: string; cs: string; note: string
+  vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng để tính cước/tải (23/09)
 }
 // DẤU VÂN TAY KẾ HOẠCH của 1 Số xe — dùng để phát hiện "kế hoạch đã đổi TRONG LÚC đang dội xuống".
 // Hai người cùng sửa 1 xe (hoặc upload đè trong lúc người kia thêm DO): lượt chạy sau đọc kế hoạch
 // TRƯỚC khi lượt kia ghi xong ⇒ chuyến dựng theo bản kế hoạch CŨ và đứng im như vậy (đo T2: 2/24 xe
 // lệch số lượng). Kế hoạch trong DB vẫn đúng — chỉ bản dẫn xuất bị cũ, và không có gì tự sửa.
 // Chốt: so vân tay TRƯỚC/SAU khi dội; khác nhau ⇒ dội lại đúng những xe đó (có chặn độ sâu).
-type PlanFpRow = { group_code: string; do_no: string; export_date?: unknown; npp?: string | null; veh_type?: string | null; dvvt?: string | null }
+type PlanFpRow = { group_code: string; do_no: string; export_date?: unknown; npp?: string | null; veh_type?: string | null; dvvt?: string | null; vehicle_model_id?: string | null }
 function planFingerprints(rows: PlanFpRow[]): Map<string, string> {
   const byGc = new Map<string, string[]>()
   for (const r of rows) {
     const gc = String(r.group_code ?? ''); if (!gc) continue
     const a = byGc.get(gc) ?? []
     a.push([String(r.do_no ?? ''), String(parseExcelDate(r.export_date) ?? ''),
-            String(r.npp ?? '').trim(), String(r.veh_type ?? '').trim(), String(r.dvvt ?? '').trim()].join('|'))
+            String(r.npp ?? '').trim(), String(r.veh_type ?? '').trim(), String(r.dvvt ?? '').trim(), String(r.vehicle_model_id ?? '')].join('|'))
     byGc.set(gc, a)
   }
   const out = new Map<string, string>()
@@ -4723,6 +4757,7 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
         'Hộp':     hasEntry(mat) ? sp.base  : 0,
         'Nhặt lẻ': 0,   // loose TÍNH AUTO theo pallet ở processVehicleGroups (trên qty base ĐÃ GỘP, chống thổi khi 1 mã nhiều dòng)
         'Loại xuất': k.veh_type,
+        'Dòng xe con': k.vehicle_model_id ?? '',   // uuid vehicle_model — cấp xe, đọc ở groupRows[0] như DVVT
         'Ưu tiên': k.priority,
         'CS phụ trách': k.cs,
         'Note': k.note,
@@ -4754,9 +4789,9 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   const actor = req.user?.name || 'KHVC-EDIT'
   const t = now()
 
-  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null }
+  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null; vehicle_model_id: string | null }
   const lines = (await fetchAllByIdChunks(gcs, chunk => supabase.from('khvc_lines')
-    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status')
+    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status, vehicle_model_id')
     .in('group_code', chunk).order('id')) as KLine[])
     .filter(l => (l.sync_status ?? 'ACTIVE') !== 'OBSOLETE')
   const gcWithLines = new Set(lines.map(l => l.group_code))
@@ -4836,6 +4871,7 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
     const khvcRows: KhvcPlanRow[] = lines.filter(l => replanGcs.includes(l.group_code)).map(l => ({
       group_code: l.group_code, do_no: l.do_no, npp: l.npp ?? '', export_date: l.export_date,
       veh_type: l.veh_type ?? '', dvvt: l.dvvt ?? '', priority: l.priority ?? '', cs: l.cs ?? '', note: l.note ?? '',
+      vehicle_model_id: l.vehicle_model_id ?? null,
     }))
     const { byVehicle, missingDos, awaitingByGc } = await buildKhvcByVehicle(khvcRows)
     if (missingDos.size) {
@@ -4924,7 +4960,7 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; booking_category: string; raw: Record<string, any> }
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; booking_category: string; vehicle_sap: string; vehicle_model_id: string | null; raw: Record<string, any> }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
     // Dòng BỊ BỎ (thiếu Số xe hoặc DO) phải ĐẾM ĐƯỢC và báo ra, không bỏ im lặng: người nạp đang
@@ -4961,6 +4997,9 @@ export async function uploadKhvc(req: Request, res: Response) {
         // Nhận cả biến thể tiêu đề hay gặp: có dấu * (đánh dấu bắt buộc), không dấu tiếng Việt.
         booking_category: String(r['Loại kho booking'] ?? r['Loại kho booking *'] ?? r['Loai kho booking']
           ?? r['Loai kho booking *'] ?? r['Cửa booking'] ?? r['Cua booking'] ?? '').trim(),
+        // DÒNG XE CON (23/09) — cột TÙY CHỌN mang mã SAP 9100000xx (đúng chữ "Mã xe SAP" của bảng cước); resolve → id ở dưới
+        vehicle_sap: String(r['Mã xe SAP'] ?? r['Ma xe SAP'] ?? r['Dòng xe con'] ?? r['Dong xe con'] ?? '').replace(/\.0$/, '').trim(),
+        vehicle_model_id: null,
         raw: r,
       })
     }
@@ -5172,6 +5211,38 @@ export async function uploadKhvc(req: Request, res: Response) {
       for (const k of khvcRows) k.booking_category = validByUpper.get(k.booking_category.toUpperCase()) ?? k.booking_category
     }
 
+    // ── DÒNG XE CON theo mã SAP (tùy chọn, 23/09): có khai thì phải đúng danh mục + 1 Số xe 1 dòng xe; không khai → null ──
+    {
+      const saps = [...new Set(khvcRows.map(k => k.vehicle_sap).filter(Boolean))]
+      if (saps.length) {
+        const { data: vms } = await supabase.from('vehicle_model').select('id, sap_code, is_active').in('sap_code', saps.slice(0, 300))
+        const vmBySap = new Map(((vms ?? []) as { id: string; sap_code: string; is_active: boolean }[]).map(m => [String(m.sap_code).trim(), m]))
+        const perGc = new Map<string, string[]>()
+        const addErr = (gc: string, msg: string) => perGc.set(gc, [...(perGc.get(gc) ?? []), msg])
+        const byGc = new Map<string, Set<string>>()
+        for (const k of khvcRows) {
+          if (!k.vehicle_sap) continue
+          const m = vmBySap.get(k.vehicle_sap)
+          if (!m) { addErr(k.group_code, `Mã xe SAP "${k.vehicle_sap}" không có trong danh mục dòng xe (Cài đặt TMS → Mã dòng xe)`); continue }
+          if (!m.is_active) { addErr(k.group_code, `Dòng xe mã SAP "${k.vehicle_sap}" đang tạm dừng`); continue }
+          k.vehicle_model_id = m.id
+          const s = byGc.get(k.group_code) ?? new Set<string>(); s.add(k.vehicle_sap); byGc.set(k.group_code, s)
+        }
+        for (const [gc, s] of byGc) if (s.size > 1) addErr(gc, `khai ${s.size} mã xe SAP khác nhau (${[...s].join(' + ')}) — 1 Số xe chỉ 1 dòng xe`)
+        // Dòng của xe không khai mã (cột trống) thì theo dòng có khai — không bắt điền đủ mọi dòng
+        for (const k of khvcRows) if (!k.vehicle_model_id) { const s = byGc.get(k.group_code); if (s?.size === 1) k.vehicle_model_id = vmBySap.get([...s][0])?.id ?? null }
+        if (perGc.size) {
+          const errors = [...perGc].flatMap(([gc, msgs]) => msgs.map(m => `Số xe ${gc} — ${m}`))
+          if (isPreflight(req)) return ok(res, buildPreflight({ unit: 'chuyến', total: new Set(khvcRows.map(k => k.group_code)).size, errors, extra: preflightExtra }))
+          return res.status(400).json({
+            success: false,
+            error: { code: 'VEHICLE_MODEL_INVALID', message: `File có ${perGc.size} Số xe khai sai "Mã xe SAP" — không upload` },
+            validation_errors: [...perGc].map(([group_code, errs]) => ({ group_code, errors: errs })),
+          })
+        }
+      }
+    }
+
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
     // Churn-safe: (group_code, do_no)→id nạp Ở TRÊN (cùng lượt với gác cửa), GIỮ id cũ khi up lại
     // (không đổi PK). Upsert chunk 500.
@@ -5183,6 +5254,8 @@ export async function uploadKhvc(req: Request, res: Response) {
       npp: k.npp || null, veh_type: k.veh_type || null, dvvt: k.dvvt || null,
       priority: k.priority || null, cs: k.cs || null, note: k.note || null,
       booking_category: k.booking_category || null,
+      // File không có cột Mã xe SAP → GIỮ dòng xe con đã chọn tay ở tab Kế hoạch xuất (up lại file không xoá lựa chọn)
+      ...(k.vehicle_sap ? { vehicle_model_id: k.vehicle_model_id } : {}),
       export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
       raw: k.raw, uploaded_by: khActor, updated_at: khNow, manual_edited_at: null,   // upload đè lại → gỡ cờ sửa tay
     }))

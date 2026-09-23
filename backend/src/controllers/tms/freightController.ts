@@ -20,6 +20,7 @@ import { parseVnNumber } from '../../utils/vnNumber'
 import { normDvvt } from '../../utils/sapUnits'
 import { makeDvvtResolver } from '../../services/sapFlow'
 import { effectiveAt } from '../../services/freight'
+import { estimateFreightForGdos } from '../../services/freightEstimate'
 import { z, zText, zId, zDay, zBool, zIntFromQuery } from '../../middlewares/validate'
 import { safeSearch } from '../../utils/search'
 import type { Database } from '../../types/database'
@@ -367,6 +368,34 @@ export async function uploadTariffs(req: Request, res: Response) {
       if (error) throw new Error(error.message)
     }
     return ok(res, { rows: parsed.rows.length, inserted: toInsert, updated: toUpdate, noop, warnings: warnings.slice(0, 50), errors: [] })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ═══ TÍNH LẠI CƯỚC DỰ TÍNH CHO CHUYẾN (đợt 1 mục 15) ════════════════════════════════════════════════════
+// Bảng cước / phụ phí thường nạp SAU khi kế hoạch đã sinh chuyến (23/09: 5.526 dòng sơ bộ nạp lên khi chuyến đã nằm sẵn)
+// → cần một cửa bấm tay tính lại theo khoảng ngày giao. Đường tự động vẫn ở derive (mỗi lần dội kế hoạch) và Hoàn thành.
+export const zRecompute = z.object({
+  warehouse_id: zId.optional(), date_from: zDay, date_to: zDay,
+})
+export async function recomputeFreight(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zRecompute>
+    if (b.date_to < b.date_from) return fail(res, 'Đến ngày phải ≥ Từ ngày', 400)
+    const span = (new Date(`${b.date_to}T00:00:00Z`).getTime() - new Date(`${b.date_from}T00:00:00Z`).getTime()) / 86_400_000
+    if (span > 62) return fail(res, 'Khoảng ngày tối đa 62 ngày cho một lần tính lại', 400)
+    let q = db.from('GroupDeliveryOrder').select('id').gte('delivery_date', b.date_from).lte('delivery_date', b.date_to).neq('status', 'CANCELLED').order('id')
+    if (b.warehouse_id) {
+      if (!whAllowed(req, b.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+      q = q.eq('warehouse_id', b.warehouse_id)
+    } else {
+      const s = scopeWhIds(req)
+      if (s !== null) { if (!s.length) return ok(res, { gdos: 0, updated: 0, priced: 0, unpriced: 0 }); q = q.in('warehouse_id', s.slice(0, 300)) }
+    }
+    const CAP = 2000
+    const rows = await fetchAllRowsParallel(() => q) as { id: string }[]
+    if (rows.length > CAP) return fail(res, 400, 'TOO_MANY_TRIPS', `${rows.length} chuyến trong khoảng — vượt trần ${CAP} một lần tính. Thu hẹp khoảng ngày hoặc chọn kho.`)
+    const r = await estimateFreightForGdos(rows.map(x => x.id), { basis: 'AUTO' })
+    return ok(res, { gdos: rows.length, updated: r.updated, priced: r.priced, unpriced: r.unpriced })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

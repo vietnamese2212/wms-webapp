@@ -63,8 +63,9 @@ function downloadKhvcTemplate(sampleCategory: string) {
   const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
   // "Loại kho booking" = CỬA xe đậu để đặt khung giờ — BẮT BUỘC, và 1 Số xe chỉ được 1 giá trị
   // (xe chở lẫn nhiều loại vẫn chỉ đậu 1 cửa; khai lệch nhau trong cùng Số xe → từ chối cả file).
-  const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại kho booking', 'Loại xe', 'DVVT', 'Ưu tiên', 'CS phụ trách', 'Note']
-  const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', sampleCategory, 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
+  // "Mã xe SAP" (23/09) = dòng xe CON 9100000xx — TÙY CHỌN, dùng để tính cước/tải; để trống thì giữ lựa chọn tay ở tab Kế hoạch xuất
+  const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại kho booking', 'Loại xe', 'Mã xe SAP', 'DVVT', 'Ưu tiên', 'CS phụ trách', 'Note']
+  const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', sampleCategory, 'Xe Pallet', '910000030', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
   const ws = XLSX.utils.aoa_to_sheet([headers, ex])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')

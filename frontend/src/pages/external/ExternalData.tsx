@@ -25,7 +25,7 @@ import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
   useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc, useBulkDateKhvc,
   useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
-  useSoLines, useSystemSettings,
+  useSoLines, useSystemSettings, useVehicleModels,
   type DoSapRow, type KhvcRow, type ReconcileTask, type SoLineRow,
 } from '@/api/hooks'
 import { StatusBadge as ToneBadge, type BadgeTone } from '@/components/shared/StatusBadge'
@@ -1171,6 +1171,7 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'npp',       label: 'NPP' },
   { id: 'bkcat',     label: 'Cửa booking' },
   { id: 'veh_type',  label: 'Loại xe' },
+  { id: 'model',     label: 'Dòng xe con' },   // mã SAP 9100000xx — cấp xe, tính cước/tải (23/09)
   { id: 'dvvt',      label: 'ĐVVT' },
   { id: 'priority',  label: 'Ưu tiên' },
   { id: 'cs',        label: 'CS' },
@@ -1182,7 +1183,7 @@ const KH_COLS: { id: string; label: string }[] = [
 ]
 // PHẢI đủ 1 số cho MỖI cột của KH_COLS (thiếu 1 số → mọi cột từ đó trở đi lệch nhãn, cột cuối
 // rộng `undefined` và totalWidth tính thiếu → kéo giãn cột cuối cho ra NaN). Thêm cột = thêm số.
-const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 90, 70, 70, 95, 90, 110, 80, 110]
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 130, 90, 70, 70, 95, 90, 110, 80, 110]
 
 function TripBadge({ materialized, gdoStatus, gdoDate, exportDate }: { materialized?: boolean; gdoStatus?: string | null; gdoDate?: string | null; exportDate?: string | null }) {
   if (!materialized) {
@@ -1225,7 +1226,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const [showUpload, setShowUpload] = useState(false)                      // nạp KH điều vận (chuyển về đây 02/08)
   const canUploadKhvc = can(perms, 'outbound', 'import') || can(perms, 'external_khvc', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v3', KH_COL_DEFAULTS)   // v3: thêm cột Dòng xe con (23/09)
   const { data: facets } = useKhvcFacets()
   // Cần MỘT trong hai khoảng ngày (nạp HOẶC xuất) mới tải — điều vận thường tìm theo NGÀY XE CHẠY
   const hasDate = !!(dateFrom || dateTo || exportFrom || exportTo)
@@ -1421,6 +1422,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                       {r.booking_category || <span className="text-amber-600" title="Chưa chốt cửa đặt lịch — nạp lại KH có cột &quot;Loại kho booking&quot; hoặc sửa tại đây">chưa chốt</span>}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.vehicle_model ? `${r.vehicle_model.sap_code} · ${r.vehicle_model.name}` : undefined}>
+                      {r.vehicle_model ? r.vehicle_model.name : <span className="text-amber-600" title="Chưa chọn dòng xe con — chuyến sẽ không có cước dự tính / % tải. Sửa Số xe để chọn.">chưa chọn</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dvvt || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.priority || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.cs || <span className="text-slate-300">—</span>}</TableCell>
@@ -1548,7 +1552,7 @@ function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: s
 // ─── Sửa cả Số xe (bảng gom mọi DO cùng group_code) — mirror DoSapDoEditor ────
 // Mở như 1 chứng từ điều vận: mỗi dòng = 1 DO trên xe; sửa inline mọi field điều vận;
 // thêm DO vào xe / xóa DO khỏi xe ngay trong bảng; xóa hết dòng + Lưu = XÓA CẢ SỐ XE.
-const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category'] as const
+const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category', 'vehicle_model_id'] as const
 // Ô NHẬP THEO DÒNG — KHÁC danh sách trên (danh sách trên là các field mang theo khi lưu).
 // `booking_category` KHÔNG có ô theo dòng: cửa đặt lịch là thuộc tính CẤP XE, 1 ô duy nhất đặt
 // ngoài bảng. Nhét nó vào mảng render thì (a) đẻ ra ô cho từng DO — mời gọi khai lệch nhau, đúng
@@ -1556,13 +1560,14 @@ const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'c
 // thêm 1 cột. Cả 3 đã xảy ra thật (bắt bằng Playwright 04/08). Thêm field mới mà user gõ theo
 // từng DO thì thêm vào ĐÂY và thêm <th>; field cấp xe thì chỉ thêm ở KHVC_FIELDS.
 type KhvcField = (typeof KHVC_FIELDS)[number]
-const KHVC_ROW_FIELDS: KhvcField[] = KHVC_FIELDS.filter(f => f !== 'booking_category')
+// `vehicle_model_id` (dòng xe CON, 23/09) cũng là thuộc tính CẤP XE — cùng lối với booking_category: 1 ô ngoài bảng.
+const KHVC_ROW_FIELDS: KhvcField[] = KHVC_FIELDS.filter(f => f !== 'booking_category' && f !== 'vehicle_model_id')
 type KhvcDraft = Record<(typeof KHVC_FIELDS)[number], string>
 type KhvcNewLine = KhvcDraft & { key: string; group_code: string; do_no: string }
 const khvcDraftOf = (r: KhvcRow): KhvcDraft => ({
   warehouse_code: s(r.warehouse_code), npp: s(r.npp), veh_type: s(r.veh_type), dvvt: s(r.dvvt),
   priority: s(r.priority), cs: s(r.cs), export_date: s(r.export_date), note: s(r.note),
-  booking_category: s(r.booking_category),
+  booking_category: s(r.booking_category), vehicle_model_id: s(r.vehicle_model_id),
 })
 function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }: {
   groupCodes: string[]
@@ -1596,6 +1601,8 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   // Danh mục Loại kho theo SCOPE user (không dùng hook gốc — tránh cho chọn loại ngoài quyền)
   const { data: whTypes = [] } = useScopedWhTypes()
   const whTypeOpts = useMemo(() => whTypes.map(t => ({ value: t.value, label: t.value })), [whTypes])
+  // Dòng xe CON đang hoạt động — nhãn "mã SAP · tên"; dòng cùng CHA với Loại xe của xe xếp lên đầu (gợi ý, không chặn)
+  const { data: vmData } = useVehicleModels({ is_active: true })
   const update = useUpdateKhvc()
   const create = useCreateKhvc()
   const bulkDel = useBulkDeleteKhvc()
@@ -1625,6 +1632,19 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   // Cửa đang áp cho xe = giá trị của dòng còn sống ĐẦU TIÊN (mọi dòng luôn bằng nhau — rule 1 xe 1 cửa)
   const bookingCat = (remaining.map(r => draft[r.id]?.booking_category).find(Boolean)
     ?? added.map(l => l.booking_category).find(Boolean) ?? '') as string
+  // Dòng xe con đang áp cho xe — cùng luật cấp xe (mọi dòng bằng nhau; BE đồng bộ cả xe khi đổi)
+  const vehicleModelId = (remaining.map(r => draft[r.id]?.vehicle_model_id).find(Boolean)
+    ?? added.map(l => l.vehicle_model_id).find(Boolean) ?? '') as string
+  const vehTypeOfXe = (remaining.map(r => draft[r.id]?.veh_type).find(Boolean) ?? '') as string
+  const vehicleModelOpts = useMemo(() => {
+    const items = vmData?.items ?? []
+    const norm = (x: string) => x.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+    const vt = norm(vehTypeOfXe)
+    const sameParent = (m: typeof items[number]) => !!vt && !!m.parent && (norm(m.parent.name) === vt || norm(m.parent.code) === vt)
+    return [...items]
+      .sort((a, b) => Number(sameParent(b)) - Number(sameParent(a)) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name))
+      .map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}${m.parent ? '' : ' (chưa gán cha)'}` }))
+  }, [vmData, vehTypeOfXe])
   const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
 
   function addLine() {
@@ -1635,6 +1655,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
       priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
       booking_category: s(base?.booking_category),   // 1 xe 1 cửa → dòng mới KẾ THỪA cửa của xe
+      vehicle_model_id: s(base?.vehicle_model_id),   // 1 xe 1 dòng xe con — kế thừa y như cửa
     }])
   }
   const patchLine = (key: string, p: Partial<KhvcNewLine>) =>
@@ -1690,7 +1711,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
           work.push({ key: crypto.randomUUID(), group_code: g, do_no: '',
             warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
             priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
-            booking_category: s(base?.booking_category) })
+            booking_category: s(base?.booking_category), vehicle_model_id: s(base?.vehicle_model_id) })
           pos = work.length - 1
         }
         const cols = line.split('\t')
@@ -1747,14 +1768,14 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             group_code: r.group_code, do_no: r.do_no,
             warehouse_code: n(d.warehouse_code), npp: n(d.npp), veh_type: n(d.veh_type), dvvt: n(d.dvvt),
             priority: n(d.priority), cs: n(d.cs), export_date: n(d.export_date), note: n(d.note),
-            booking_category: n(d.booking_category),
+            booking_category: n(d.booking_category), vehicle_model_id: n(d.vehicle_model_id),
           })
         }),
         ...validAdded.map(l => create.mutateAsync({
           group_code: l.group_code, do_no: l.do_no.trim(),
           warehouse_code: n(l.warehouse_code), npp: n(l.npp), veh_type: n(l.veh_type), dvvt: n(l.dvvt),
           priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note),
-          booking_category: n(l.booking_category), source: 'MANUAL',
+          booking_category: n(l.booking_category), vehicle_model_id: n(l.vehicle_model_id), source: 'MANUAL',
         })),
       ])
       if (blockedNote) { setRemoved(new Set()); setAdded([]); setErrMsg(blockedNote) }
@@ -1816,6 +1837,33 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             />
           </div>
           <span className="text-[10px] text-slate-500">Cả xe dùng 1 cửa — đổi ở đây áp cho MỌI DO của xe. Xe đang giữ khung giờ của cửa khác thì phải nhả khung trước.</span>
+        </div>
+      )}
+      {/* DÒNG XE CON (mã SAP) = thuộc tính CẤP XE thứ hai (23/09): kho booking theo dòng CHA ("Loại xe"), điều vận chọn
+          dòng CON để app tính cước (bảng cước khoá theo dòng con) và % tải (Non tải). Cùng luật 1 ô cho cả xe. */}
+      {!multi && !isLoading && (rows.length > 0 || added.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <span className="text-xs font-medium text-slate-600">Dòng xe con (mã SAP)</span>
+          <div className="w-72">
+            <SingleSelect
+              options={vehicleModelOpts}
+              value={vehicleModelId}
+              placeholder="Chưa chọn — chuyến không có cước/tải"
+              disabled={!canEdit}
+              onChange={v => {
+                setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, vehicle_model_id: v }])))
+                setAdded(prev => prev.map(l => ({ ...l, vehicle_model_id: v })))
+              }}
+            />
+          </div>
+          {vehicleModelId && canEdit && (
+            <button type="button" className="text-[10px] text-slate-500 hover:text-red-600 hover:underline !min-h-0 !min-w-0"
+              onClick={() => {
+                setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, vehicle_model_id: '' }])))
+                setAdded(prev => prev.map(l => ({ ...l, vehicle_model_id: '' })))
+              }}>Bỏ chọn</button>
+          )}
+          <span className="text-[10px] text-slate-500">Dòng cùng dòng xe cha với &quot;Loại xe&quot; xếp trên. Chọn xong Lưu → chuyến bên Xuất kho hiện Tải và Cước dự tính.</span>
         </div>
       )}
       {isLoading ? (

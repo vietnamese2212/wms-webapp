@@ -127,6 +127,10 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 118, align: 'right' },
   { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 118, align: 'right' },
   { id: 'pallets',   label: 'Pallet',        w: 72,  align: 'right' },
+  // Đợt 1 TMS điều vận (23/09): dòng xe CON đã chọn ở Kế hoạch xuất · % tải so sức chứa (Non tải) · cước dự tính theo bảng cước
+  { id: 'model',     label: 'Dòng xe con',   w: 130 },
+  { id: 'load',      label: 'Tải',           w: 104, align: 'right' },
+  { id: 'freight',   label: 'Cước dự tính',  w: 104, align: 'right' },
   { id: 'warehouse', label: 'Kho xuất',      w: 110 },
   { id: 'exptype',   label: 'Loại xe',       w: 100 },
   { id: 'whtype',    label: 'Loại kho',      w: 96 },
@@ -171,6 +175,36 @@ function GdoQty({ base, decimal, unit, zeroDash }: {
     <span title="Thùng quy đổi (đơn nhiều mã khác đơn vị)">
       <span className="text-[10px] font-semibold tabular-nums">{d.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
       <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+    </span>
+  )
+}
+
+// Tải của chuyến so sức chứa dòng xe con: "12/16 pl · 75 %"; dưới ngưỡng Non tải → đỏ. Không đo được → nói vì sao.
+function GdoLoad({ load }: { load: GDO['load'] }) {
+  if (!load) return <span className="text-slate-300">—</span>
+  const unit = load.basis === 'TON' ? 't' : 'pl'
+  const used = load.used == null ? null : Number(load.used).toLocaleString('vi-VN', { maximumFractionDigits: load.basis === 'TON' ? 2 : 1 })
+  if (load.pct == null) {
+    const why = load.basis == null ? 'Chưa chọn dòng xe con nên chưa so được tải' : load.used == null ? `Không đo được tải (${load.incomplete} dòng hàng thiếu quy cách trong master)` : 'Dòng xe con chưa khai sức chứa'
+    return <span className="text-slate-300" title={why}>{used != null ? `${used} ${unit}` : '—'}</span>
+  }
+  const pctTxt = `${load.pct.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} %`
+  return (
+    <span title={`${used} / ${load.cap} ${unit} · ${pctTxt}${load.underload ? ` — NON TẢI (dưới ${load.underload_pct} %)` : ''}${load.incomplete ? ` · ${load.incomplete} dòng thiếu quy cách` : ''}`}>
+      <span className="text-[10px] tabular-nums">{used}/{load.cap} <span className="text-[9px] text-slate-400">{unit}</span></span>
+      <span className={`ml-1 text-[9px] px-1 py-0.5 rounded font-semibold tabular-nums ${load.underload ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{pctTxt}</span>
+    </span>
+  )
+}
+// Cước dự tính đã ghi trên chuyến (bảng cước × pallet làm tròn lên / trọn chuyến + rớt điểm). Chưa có → lý do trong tooltip.
+function GdoFreight({ gdo }: { gdo: GDO }) {
+  const v = gdo.freight_estimated == null ? null : Number(gdo.freight_estimated)
+  const d = gdo.freight_detail
+  if (v == null) return <span className="text-slate-300" title={d?.reason ?? (gdo.vehicle_model_id ? 'Chưa tính cước — bấm "Tính lại cước" ở trang Cước vận chuyển' : 'Chưa chọn dòng xe con')}>—</span>
+  const parts = [d?.unit === 'PER_PALLET' ? `${(d.billed_pallets ?? 0).toLocaleString('vi-VN')} pallet × đơn giá` : 'trọn chuyến', ...(d?.surcharges ?? []).map(s => `${s.kind === 'DROP_POINT' ? 'rớt điểm' : s.kind} ${s.qty}× = ${s.total.toLocaleString('vi-VN')}`)]
+  return (
+    <span className="text-[10px] font-semibold tabular-nums" title={`${d?.basis === 'ACTUAL' ? 'Theo thực xuất' : 'Theo kế hoạch'} · phường ${d?.ward ?? '—'} · ${d?.stops ?? 0} điểm giao · ${parts.join(' · ')}`}>
+      {v.toLocaleString('vi-VN')}<span className="text-[9px] text-slate-400 ml-0.5">₫</span>
     </span>
   )
 }
@@ -271,7 +305,8 @@ export default function Outbound() {
   const [moveErrs, setMoveErrs] = useState<string[]>([])
   const [moveOk, setMoveOk] = useState<string | null>(null)
   const isDesktop = useIsDesktop()
-  const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths', OUTBOUND_COL_DEFAULTS)
+  // v2 (23/09): thêm 3 cột giữa bảng — độ rộng lưu theo CHỈ SỐ nên phải đổi khoá, kẻo cột cũ đội nhãn cột mới
+  const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths_v2', OUTBOUND_COL_DEFAULTS)
   function toggleDensity() {
     setDense(d => { localStorage.setItem('outbound_density', d ? 'comfortable' : 'compact'); return !d })
   }
@@ -1092,6 +1127,13 @@ function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = tru
         <span className="text-[10px] font-semibold tabular-nums">{fmtPallets(gdo.total_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {gdo.vehicle_model
+          ? <span className="text-[10px] truncate block" title={`${gdo.vehicle_model.sap_code} · ${gdo.vehicle_model.name}`}>{gdo.vehicle_model.name}</span>
+          : <span className="text-slate-300" title="Chưa chọn dòng xe con — chọn ở tab Kế hoạch xuất (Dữ liệu bên ngoài)">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap"><GdoLoad load={gdo.load} /></TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap"><GdoFreight gdo={gdo} /></TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.warehouse?.name ?? '—'}</span>
       </TableCell>

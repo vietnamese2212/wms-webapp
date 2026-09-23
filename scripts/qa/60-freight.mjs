@@ -5,6 +5,8 @@
 //       all-or-nothing, kiểm-trước phải nói đúng thêm / đè giá / không đổi.
 //   [3] Phụ phí theo kho × ĐVVT, loại phải có trong danh mục; rớt điểm có min_stops + count_mode.
 //   [4] Phân tuyến: ưu tiên khu vực + tỷ trọng, Σ tỷ trọng một kho ≤ 100 %.
+//   [6] (23/09 mục 15) Dòng xe con khai ở Kế hoạch xuất dội xuống chuyến; cước dự tính tự tính khi dội, tính lại qua
+//       POST /tms/freight/recompute; oracle độc lập = giá bảng cước × ceil(pallet từ master); Non tải theo underload_pct.
 // Fixture QA60_*: dựng qua API thật, dọn bằng PostgREST.
 import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE, authToken, check, finish } from './lib.mjs'
 
@@ -20,6 +22,13 @@ const DA = cos.find(c => c.code === 'DA'), HA = cos.find(c => c.code === 'HA')
 if (!DA || !HA) throw new Error('Fixture: cần ĐVVT DA và HA trong danh mục TransportCompany')
 const parents = (await api('/tms/vehicle-types')).j?.data ?? []
 const XEPALLET = parents.find(p => p.code === 'XEPALLET')
+// [6] dòng xe con trên Kế hoạch xuất → chuyến → cước dự tính: Số xe đúng dạng Mãkho_X_ddmmyy_stt của kho QR (Ba Vì)
+const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const [qy, qm, qd] = today.split('-')
+const GC6 = `${FIX.WH_QR.code}_X_${qd}${qm}${qy.slice(2)}_QA60`
+const DO6 = 'QA60DO1', SHIP6 = 'QA60SHIP'
+const BK_CAT = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order&limit=1'))[0]?.value ?? null
+const nowIso = () => new Date().toISOString()
 
 async function upload(path, buf, extra = {}) {
   const fd = new FormData(); fd.append('file', new Blob([buf]), 'cuoc.xlsx')
@@ -34,7 +43,35 @@ const tariffRow = (o) => ({
   'DVVT': o.dvvt ?? 'Đông Á', 'Loại xe': 'QA60 Xe 9 Pallet', 'Cước (VND)': o.price, 'Mã xe SAP': o.sap ?? SAP,
 })
 
+// Dọn fixture kế hoạch/chuyến của [6] (khuôn gói 12: con trước cha; chuyến plan_dropped KHÔNG tự xoá nên phải dọn tay)
+async function cleanupPlan() {
+  const gdos = await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC6}`)
+  const gids = gdos.map(g => g.id)
+  if (gids.length) {
+    const csv = `(${gids.join(',')})`
+    const dos = await restAll('OutboundDelivery', `select=id&gdo_id=in.${csv}`)
+    if (dos.length) {
+      const doCsv = `(${dos.map(d => d.id).join(',')})`
+      const items = await restAll('OutboundItem', `select=id&do_id=in.${doCsv}`)
+      if (items.length) await restWrite('OutboundScanEntry', 'DELETE', `item_id=in.(${items.map(i => i.id).join(',')})`).catch(() => {})
+      await restWrite('OutboundItem', 'DELETE', `do_id=in.${doCsv}`).catch(() => {})
+      await restWrite('OutboundDelivery', 'DELETE', `gdo_id=in.${csv}`).catch(() => {})
+    }
+    await restWrite('wms_tasks', 'DELETE', `gdo_id=in.${csv}`).catch(() => {})
+    await restWrite('GroupDeliveryOrder', 'DELETE', `id=in.${csv}`).catch(() => {})
+  }
+  await restWrite('reconcile_tasks', 'DELETE', `group_code=eq.${GC6}`).catch(() => {})
+  await restWrite('outbound_events', 'DELETE', `group_code=eq.${GC6}`).catch(() => {})
+  for (const o of await restAll('TmsOrder', `select=id&order_code=eq.${GC6}`)) {
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+  }
+  await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC6}`).catch(() => {})
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${DO6}`).catch(() => {})
+  await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIP6}`).catch(() => {})
+}
 async function cleanup() {
+  await cleanupPlan()
   const vm = await restAll('vehicle_model', `select=id&sap_code=like.QA60*`)
   const ids = vm.map(v => v.id)
   if (ids.length) {
@@ -154,6 +191,62 @@ try {
   check('4d. GET allocations: 1 ưu tiên QA60 (effective_now) + 2 tỷ trọng QA60', al.s === 200
     && (al.j?.data?.allocations ?? []).filter(x => x.area_code === WARD1 && x.effective_now).length === 1
     && (al.j?.data?.shares ?? []).filter(x => x.note === 'QA60').length === 2, `http=${al.s}`)
+
+  // ── [6] Dòng xe con trên Kế hoạch xuất → chuyến → cước dự tính + tải (đợt 1 mục 15, 23/09) ──
+  // Oracle độc lập: cước = giá bảng cước WARD1 (270.000, upload ở [2e2]) × ceil(pallet), pallet = (qty/upc)/cpp từ master.
+  {
+    const mat = (await restAll('Material', `select=units_per_carton,cartons_per_pallet&material_code=eq.${FIX.MAT_POOL}`))[0]
+    const qty = 100
+    const expectPallets = (qty / Number(mat.units_per_carton)) / Number(mat.cartons_per_pallet)
+    const expectFreight = 270000 * Math.ceil(expectPallets - 1e-9)
+    // Seed: DO raw có phường WARD1 (như ZSD02 điền) + khách hàng cùng phường
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: DO6, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
+      ship_to_code: SHIP6, ship_to_name: 'QA60 NPP', ward_code: WARD1, plant: (await restAll('Warehouse', `select=sap_plant&id=eq.${WH}`))[0]?.sap_plant ?? null,
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP6, name: 'QA60 NPP', ward_code: WARD1, is_active: true, auto_created: true, updated_at: nowIso() }).catch(() => {})
+    const vtName = XEPALLET?.name ?? (await restAll('VehicleType', 'select=name&is_active=eq.true&order=name&limit=1'))[0]?.name
+
+    const badVm = await api('/external/khvc', 'POST', { group_code: GC6, do_no: DO6, npp: 'QA60 NPP', export_date: today, veh_type: vtName, dvvt: 'Đông Á', booking_category: BK_CAT, vehicle_model_id: 'khong-phai-uuid' })
+    check('6a. Thêm dòng KH xuất với dòng xe con RÁC → 400 (không 500 22P02)', badVm.s === 400, `http=${badVm.s} ${badVm.j?.error?.message?.slice(0, 80) ?? ''}`)
+    const mk = await api('/external/khvc', 'POST', { group_code: GC6, do_no: DO6, npp: 'QA60 NPP', export_date: today, veh_type: vtName, dvvt: 'Đông Á', booking_category: BK_CAT, vehicle_model_id: vmId })
+    const khId = mk.j?.data?.id
+    const gdo6 = (await restAll('GroupDeliveryOrder', `select=id,status,vehicle_model_id,freight_estimated,freight_tariff_id,freight_detail&group_code=eq.${GC6}`))[0]
+    check('6b. Thêm dòng KH xuất có dòng xe con → 201; chuyến sinh ra MANG vehicle_model_id', mk.s === 201 && !!gdo6 && gdo6.vehicle_model_id === vmId,
+      `http=${mk.s} ${mk.j?.error?.message ?? ''} gdo=${gdo6 ? gdo6.vehicle_model_id === vmId : 'none'}`)
+    check(`6c. Cước dự tính tự tính khi dội kế hoạch = ${expectFreight.toLocaleString('vi-VN')} (270.000 × ceil(${expectPallets.toFixed(4)} pallet)), tariff_id = dòng cước WARD1, basis PLAN`,
+      !!gdo6 && Number(gdo6.freight_estimated) === expectFreight && gdo6.freight_tariff_id === tId && gdo6.freight_detail?.basis === 'PLAN' && gdo6.freight_detail?.ward === WARD1,
+      `freight=${gdo6?.freight_estimated} tariff=${gdo6?.freight_tariff_id === tId} reason=${gdo6?.freight_detail?.reason ?? '—'} ward=${gdo6?.freight_detail?.ward}`)
+    const listK = await api(`/external/khvc?group_code_eq=${encodeURIComponent(GC6)}&page_size=10`)
+    const row6 = (listK.j?.data?.items ?? []).find(x => x.do_no === DO6)
+    check('6d. GET khvc: dòng mang vehicle_model {sap_code, name} để bảng in tên (không in uuid)', listK.s === 200 && row6?.vehicle_model?.sap_code === SAP, `http=${listK.s} vm=${JSON.stringify(row6?.vehicle_model ?? null)}`)
+    const listG = await api(`/wms/outbound?page=1&limit=50&date=${today}&warehouse_id=${WH}`)
+    const g6 = (listG.j?.data?.items ?? []).find(x => x.group_code === GC6)
+    check('6e. GET outbound (list phân trang): chuyến có vehicle_model.name · load.pct (so sức chứa 9 pallet) · freight_estimated',
+      listG.s === 200 && g6?.vehicle_model?.sap_code === SAP && g6?.load?.basis === 'PALLET' && Number(g6?.load?.cap) === 9 && g6?.load?.pct != null && Number(g6?.freight_estimated) === expectFreight,
+      `http=${listG.s} vm=${g6?.vehicle_model?.sap_code} load=${JSON.stringify(g6?.load ?? null)} freight=${g6?.freight_estimated}`)
+    check('6e2. Chuyến 0,02 pallet trên xe 9 pallet ⇒ NON TẢI (pct < 60 đã đặt ở 1d2)', g6?.load?.underload === true && Number(g6?.load?.underload_pct) === 60, `load=${JSON.stringify(g6?.load ?? null)}`)
+
+    // Bỏ dòng xe con → chuyến mất cước, lý do nói rõ "Chưa chọn dòng xe con"
+    const un = await api(`/external/khvc/${khId}`, 'PUT', { group_code: GC6, do_no: DO6, npp: 'QA60 NPP', export_date: today, veh_type: vtName, dvvt: 'Đông Á', booking_category: BK_CAT, vehicle_model_id: null })
+    const gdo6b = (await restAll('GroupDeliveryOrder', `select=id,vehicle_model_id,freight_estimated,freight_detail&group_code=eq.${GC6}`))[0]
+    check('6f. PUT bỏ dòng xe con → chuyến vehicle_model_id NULL, cước NULL kèm lý do "Chưa chọn dòng xe con"',
+      un.s === 200 && gdo6b?.vehicle_model_id === null && gdo6b?.freight_estimated === null && /Chưa chọn dòng xe con/.test(gdo6b?.freight_detail?.reason ?? ''),
+      `http=${un.s} vm=${gdo6b?.vehicle_model_id} freight=${gdo6b?.freight_estimated} reason=${gdo6b?.freight_detail?.reason?.slice(0, 60)}`)
+    const re = await api(`/external/khvc/${khId}`, 'PUT', { group_code: GC6, do_no: DO6, npp: 'QA60 NPP', export_date: today, veh_type: vtName, dvvt: 'Đông Á', booking_category: BK_CAT, vehicle_model_id: vmId })
+    const ev = await restAll('outbound_events', `select=event_type&group_code=eq.${GC6}&event_type=eq.PLAN_VEHICLE_MODEL_CHANGED`)
+    check('6g. PUT chọn lại → 200 + sổ sự kiện PLAN_VEHICLE_MODEL_CHANGED ghi 2 lượt (bỏ · chọn lại)', re.s === 200 && ev.length === 2, `http=${re.s} events=${ev.length}`)
+
+    // Tính lại theo khoảng ngày (bảng cước nạp sau kế hoạch) — đúng quyền freight.manage
+    const rc = await api('/tms/freight/recompute', 'POST', { warehouse_id: WH, date_from: today, date_to: today })
+    const gdo6c = (await restAll('GroupDeliveryOrder', `select=freight_estimated,freight_detail&group_code=eq.${GC6}`))[0]
+    check('6h. POST /tms/freight/recompute → 200, đếm ≥1 chuyến, chuyến QA60 có lại cước đúng oracle', rc.s === 200 && Number(rc.j?.data?.gdos) >= 1 && Number(gdo6c?.freight_estimated) === expectFreight,
+      `http=${rc.s} gdos=${rc.j?.data?.gdos} priced=${rc.j?.data?.priced} freight=${gdo6c?.freight_estimated}`)
+    const rcBad = await api('/tms/freight/recompute', 'POST', { warehouse_id: WH, date_from: '2026-01-01', date_to: '2026-06-30' })
+    check('6h2. recompute khoảng > 62 ngày → 400', rcBad.s === 400, `http=${rcBad.s}`)
+    await cleanupPlan()
+  }
 
   // ── [5] Xoá có gác ──
   const dm = await api(`/tms/vehicle-models/${vmId}`, 'DELETE')

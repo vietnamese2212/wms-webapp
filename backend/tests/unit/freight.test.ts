@@ -1,6 +1,24 @@
 // Cước một chuyến — bất biến theo 4 điều user chốt 23/09 (plan TMS_DISPATCH 6.0/6.3).
 import { describe, it, expect } from 'vitest'
-import { computeFreight, stopFeeQty, billedPallets, pickTariff, farthestWard, type TariffLike, type SurchargeLike } from '../../src/services/freight'
+import { computeFreight, stopFeeQty, billedPallets, pickTariff, farthestWard, loadUtilization, type TariffLike, type SurchargeLike } from '../../src/services/freight'
+
+describe('tải / Non tải — % tải so sức chứa dòng xe con (đợt 1 mục 15)', () => {
+  const pal16 = { capacity_mode: 'PALLET', max_pallets: 16, max_tons: null, underload_pct: 70 }
+  const ton5  = { capacity_mode: 'TON', max_pallets: null, max_tons: '5', underload_pct: null }
+  it('xe pallet đo theo pallet: 12/16 = 75 % không Non tải · 10,4/16 = 65 % Non tải (ngưỡng 70)', () => {
+    expect(loadUtilization(pal16, 12, 9)).toMatchObject({ basis: 'PALLET', used: 12, cap: 16, pct: 75, underload: false })
+    expect(loadUtilization(pal16, 10.4, 9)).toMatchObject({ pct: 65, underload: true })
+  })
+  it('xe tấn đo theo tấn (max_tons là chuỗi numeric từ DB), ngưỡng mặc định 70 khi null', () => {
+    expect(loadUtilization(ton5, 12, 4.2)).toMatchObject({ basis: 'TON', used: 4.2, cap: 5, pct: 84, underload: false, underload_pct: 70 })
+    expect(loadUtilization(ton5, 12, 3)).toMatchObject({ pct: 60, underload: true })
+  })
+  it('không đo được thì null, KHÔNG đoán: thiếu dòng xe · thiếu tải · dòng xe không khai sức chứa', () => {
+    expect(loadUtilization(null, 12, 9).pct).toBeNull()
+    expect(loadUtilization(pal16, null, 9)).toMatchObject({ basis: 'PALLET', pct: null, underload: null })
+    expect(loadUtilization({ capacity_mode: 'TON', max_pallets: null, max_tons: null, underload_pct: 70 }, 12, 9)).toMatchObject({ pct: null, cap: null })
+  })
+})
 
 const tariff = (over: Partial<TariffLike> = {}): TariffLike =>
   ({ id: 't1', price: 250_000, ward_code: 'HN-Phú Lương', distance_km: 40, effective_from: '2026-09-01', effective_to: null, ...over })

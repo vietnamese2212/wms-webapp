@@ -26,6 +26,7 @@ import {
   useTmsVehicles, useTmsVehiclesPaged, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { VehicleModelsPanel } from '@/components/tms/VehicleModelsPanel'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -810,6 +811,8 @@ export default function TMSSettings() {
                     </TableBody>
                   </Table>
               )}
+              {/* Dòng xe CON mang mã SAP (23/09) — cùng tab với cha: một danh mục hai tầng */}
+              <VehicleModelsPanel canCreate={vtCreate} canEdit={vtEdit} canDelete={vtDelete} />
             </div>
             {detailVT && (
               <aside className="hidden lg:block w-56 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">

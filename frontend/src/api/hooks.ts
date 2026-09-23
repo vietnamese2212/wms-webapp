@@ -5548,6 +5548,182 @@ export function useDeleteVehicleType() {
   })
 }
 
+// ─── DÒNG XE CON (vehicle_model, mã SAP 9100000xx) — cha = VehicleType (23/09) ───────────────────────
+export type VehicleModelTemp = 'HOT' | 'COLD' | 'MIXED' | 'DRY'
+export interface VehicleModel {
+  id: string; sap_code: string; name: string
+  parent_type_id: string | null
+  parent: { code: string; name: string } | null
+  temp_mode: VehicleModelTemp | null
+  capacity_mode: 'PALLET' | 'TON'
+  max_pallets: number | null; max_tons: number | null; max_m3: number | null; max_drops: number | null
+  allow_mix_channels: boolean
+  tariff_unit: 'PER_PALLET' | 'PER_TRIP'
+  underload_pct: number
+  is_active: boolean; sort_order: number
+  created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
+}
+export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by'>>
+export function useVehicleModels(params?: { parent_type_id?: string; unassigned?: boolean; is_active?: boolean }) {
+  return useQuery({
+    queryKey: ['vehicle-models', params ?? null],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      if (params?.parent_type_id) q.parent_type_id = params.parent_type_id
+      if (params?.unassigned) q.unassigned = '1'
+      if (params?.is_active !== undefined) q.is_active = String(params.is_active)
+      const { data } = await apiClient.get('/tms/vehicle-models', { params: q })
+      return data.data as { items: VehicleModel[]; unassigned: number }
+    },
+  })
+}
+export function useCreateVehicleModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: VehicleModelPatch & { sap_code: string; name: string }) => apiClient.post('/tms/vehicle-models', body).then(r => r.data.data as VehicleModel),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+export function useUpdateVehicleModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: VehicleModelPatch & { id: string }) => apiClient.put(`/tms/vehicle-models/${id}`, body).then(r => r.data.data as VehicleModel),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+/** Gán (hoặc gỡ: parent_type_id null) cha cho nhiều dòng con một lượt. */
+export function useAssignVehicleModelParent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids: string[]; parent_type_id: string | null }) => apiClient.patch('/tms/vehicle-models/assign-parent', body).then(r => r.data.data as { updated: number; missing: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+export function useDeleteVehicleModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-models/${id}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+
+// ─── CƯỚC VẬN CHUYỂN (đợt 1 TMS điều vận, 23/09) ──────────────────────────────────────────────────
+type FreightRef = { warehouse: { code: string; name: string } | null; company: { code: string; name: string } | null; model: { sap_code: string; name: string; tariff_unit: string; parent_type_id: string | null } | null }
+type Effective = { effective_from: string; effective_to: string | null; is_active: boolean; note: string | null; created_at: string; updated_at: string; created_by: string | null; updated_by: string | null }
+export interface FreightTariff extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string
+  ward_code: string; price: number; distance_km: number | null
+  province_old: string | null; district_old: string | null; province_new: string | null; ward_raw: string | null
+}
+export type SurchargePer = 'PER_STOP' | 'PER_TRIP' | 'PER_PALLET' | 'PER_TON'
+export interface FreightSurcharge extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string | null
+  kind: string; amount: number; per: SurchargePer; count_mode: 'ALL_STOPS' | 'EXTRA_STOPS'; min_stops: number
+}
+export interface SurchargeKind { value: string; label: string; default_per: SurchargePer }
+export interface CarrierAllocation extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; area_kind: 'WARD' | 'REGION'; area_code: string; transport_company_id: string; priority: number; effective_now: boolean
+}
+export interface CarrierShare extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; transport_company_id: string; share_pct: number; basis: 'TRIPS' | 'PALLETS' | 'TONS'; period: 'MONTH'; effective_now: boolean
+}
+export type FreightListParams = { warehouse_id?: string; company_id?: string; model_id?: string; ward?: string; active_on?: string; q?: string; page?: number; pageSize?: number }
+const freightParams = (p: FreightListParams) => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined && v !== '' && v !== null).map(([k, v]) => [k, String(v)]))
+const invalidateFreight = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: ['freight-tariffs'] }); qc.invalidateQueries({ queryKey: ['freight-surcharges'] }); qc.invalidateQueries({ queryKey: ['freight-allocations'] })
+}
+export function useFreightTariffs(p: FreightListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['freight-tariffs', p], enabled, placeholderData: keepPreviousData, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/tms/freight/tariffs', { params: freightParams(p) })).data.data as { items: FreightTariff[]; total: number; page: number; pageSize: number },
+  })
+}
+export type FreightTariffBody = { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string; ward_code: string; price: number; distance_km?: number | null; province_new?: string | null; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveFreightTariff() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<FreightTariffBody> & { id?: string }) =>
+      (id ? apiClient.put(`/tms/freight/tariffs/${id}`, body) : apiClient.post('/tms/freight/tariffs', body)).then(r => r.data.data as FreightTariff),
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteFreightTariff() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/tariffs/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+/** Upload bảng cước 2 pha (chuẩn UploadExcelDialog). `warehouse_id` dùng khi file không có cột "Kho xuất". */
+export function useUploadFreightTariffs() {
+  const qc = useQueryClient()
+  return useMutation<UploadResult & Partial<UploadPreflight>, unknown, { file: File; preflight: boolean; warehouse_id?: string; effective_from?: string }>({
+    mutationFn: ({ file, preflight, warehouse_id, effective_from }) => {
+      guardUploadSize(file)
+      const fd = new FormData(); fd.append('file', file)
+      if (warehouse_id) fd.append('warehouse_id', warehouse_id)
+      if (effective_from) fd.append('effective_from', effective_from)
+      return apiClient.post(`/tms/freight/tariffs/upload${preflight ? '?preflight=1' : ''}`, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }).then(r => r.data.data)
+    },
+    onSuccess: (_d, v) => { if (!v.preflight) invalidateFreight(qc) },
+  })
+}
+export function useFreightSurcharges(p: FreightListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['freight-surcharges', p], enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/tms/freight/surcharges', { params: freightParams(p) })).data.data as { items: FreightSurcharge[]; kinds: SurchargeKind[] },
+  })
+}
+export type FreightSurchargeBody = { from_warehouse_id: string; transport_company_id: string; vehicle_model_id?: string | null; kind: string; amount: number; per: SurchargePer; count_mode?: 'ALL_STOPS' | 'EXTRA_STOPS'; min_stops?: number; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveFreightSurcharge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<FreightSurchargeBody> & { id?: string }) => {
+      if (id) { const { from_warehouse_id: _w, transport_company_id: _c, ...rest } = body; return apiClient.put(`/tms/freight/surcharges/${id}`, rest).then(r => r.data.data as FreightSurcharge) }
+      return apiClient.post('/tms/freight/surcharges', body).then(r => r.data.data as FreightSurcharge)
+    },
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteFreightSurcharge() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/surcharges/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+export function useCarrierAllocations(p: FreightListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['freight-allocations', p], enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/tms/freight/allocations', { params: freightParams(p) })).data.data as { allocations: CarrierAllocation[]; shares: CarrierShare[] },
+  })
+}
+export type CarrierAllocationBody = { from_warehouse_id: string; area_kind: 'WARD' | 'REGION'; area_code: string; transport_company_id: string; priority?: number; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveCarrierAllocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<CarrierAllocationBody> & { id?: string }) => {
+      if (id) { const { priority, effective_from, effective_to, is_active, note } = body; return apiClient.put(`/tms/freight/allocations/${id}`, { priority, effective_from, effective_to, is_active, note }).then(r => r.data.data as CarrierAllocation) }
+      return apiClient.post('/tms/freight/allocations', body).then(r => r.data.data as CarrierAllocation)
+    },
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteCarrierAllocation() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/allocations/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+export type CarrierShareBody = { from_warehouse_id: string; transport_company_id: string; share_pct: number; basis?: 'TRIPS' | 'PALLETS' | 'TONS'; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveCarrierShare() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<CarrierShareBody> & { id?: string }) => {
+      if (id) { const { share_pct, basis, effective_from, effective_to, is_active, note } = body; return apiClient.put(`/tms/freight/shares/${id}`, { share_pct, basis, effective_from, effective_to, is_active, note }).then(r => r.data.data as CarrierShare) }
+      return apiClient.post('/tms/freight/shares', body).then(r => r.data.data as CarrierShare)
+    },
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteCarrierShare() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/shares/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+
 export function useSlotTemplates(params?: { warehouse_id?: string; vehicle_type_id?: string }) {
   return useQuery({
     queryKey: ['tms-slot-templates', params],

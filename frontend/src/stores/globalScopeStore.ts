@@ -68,6 +68,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setGateRegistration({ fWarehouse: wid })
     s.setInboundReport({ warehouseId: wid })
     s.setTmsBookings({ warehouseId: wid, page: 1 })
+    s.setFreight({ warehouseId: wid, page: 1 })   // Cước vận chuyển: bảng cước khoá theo kho XUẤT
     s.setControlTower({ warehouse_ids: one(wid) })
     // đổi Kho ⇒ lọc PHỤ THUỘC KHO (khu vực / vị trí thuộc kho cũ) phải reset kèm
     s.setLocations({ warehouseId: wid, zoneFilter: [], page: 1 })

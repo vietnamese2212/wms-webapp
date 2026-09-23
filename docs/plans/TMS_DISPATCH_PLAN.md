@@ -299,7 +299,9 @@ Kết quả gắn lên `GroupDeliveryOrder` (cột `freight_estimated`, `freight
 10. Gói QA mới **`59-zsd02-source.mjs`**: up ZSD02 fixture (QA59_*) 3 ca (có OD · chưa OD · RETURN) → sổ đúng · derive chuyến từ OD ZSD02 = cùng `cartons_ordered` như derive từ VL06O cùng số · VL06O sau ZSD02 không xoá cột · `sap_do_source='ZSD02'` → VL06O 409 · dọn sạch. Ratchet độ phủ xanh. `--tier fast` xanh.
 11. CLAUDE.md: hàng `external_do_sap` + đoạn "ZSD02 thay VL06O"; docs/plans/README.md thêm dòng.
 
-### Đợt 1 — Cước + tải (≈ 1 tuần)
+### Đợt 1 — Cước + tải (≈ 1 tuần) — **TRẠNG THÁI 23/09: phần cước + dòng xe cha–con lên `dev`**
+> Xong: migration `20260923_vehicle_model_freight` (vehicle_model seed 60 · freight_tariff · freight_surcharge · carrier_allocation · carrier_share_target · cột móc nối) · BE `vehicleModelController` + `freightController` (CRUD + upload 2 pha) + `services/freight.ts` (8 test) · FE trang **Cước vận chuyển** 3 tab + khối **Dòng xe con** trong Cài đặt TMS → Loại xe (tick nhiều → Gán cha) · module quyền `freight` (view/manage/export) · gói QA 60 · CLAUDE.md.
+> **Chưa làm (mục 15):** cột cước dự tính + tải/Non tải trên chuyến và báo cáo Non tải — cần `khvc_lines.vehicle_model_id` được điền (điều vận chọn dòng con ở Kế hoạch xuất hoặc engine đợt 2); dữ liệu bảng cước thật chờ user upload; 60 dòng con chờ gán cha (user quyết mapping).
 12. Migration `freight_tariff` + `freight_surcharge` + cột `GroupDeliveryOrder.freight_*` → kiểm tra như trên.
 13. Trang **Cước vận chuyển** (list chuẩn `table-format`, FormSheet, upload 2 pha theo cột file thật) + module quyền `freight` → **kiểm tra:** upload file cước user gửi → n dòng, dòng xe chưa có → tạo theo `sap_vehicle_code`; up lần 2 = đè giá không nhân đôi.
 14. `services/freight.ts` + test đơn vị (PER_PALLET làm tròn lên, PER_TRIP, rớt điểm, hiệu lực theo ngày, thiếu giá → null có lý do) → cột "Cước dự tính" trên Xuất kho/Kế hoạch VC; tính lại lúc Hoàn thành.

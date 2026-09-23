@@ -98,6 +98,7 @@ const FULL = [
   qa('57-directed-work.mjs'),       // Việc cần làm (10/09)
   qa('58-customer-date-rule.mjs'),  // %Date theo Khách hàng / Kênh: master không lan ngược, khách chưa kênh ⇒ không cấp (11/09)
   qa('59-zsd02-source.mjs'),        // ZSD02 thay VL06O: dòng chưa OD KHÔNG vào sổ OD · base suy 3 bậc · flow RETURN không lên xe · công tắc nguồn (22/09)
+  qa('60-freight.mjs'),             // Cước vận chuyển + dòng xe cha–con: khoá cước 409, upload 2 pha all-or-nothing, phụ phí theo danh mục, Σ tỷ trọng ≤ 100 (23/09)
   qa('08-perm-coverage.mjs'),       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   qa('00-invariant.mjs'),           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [qa('03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])), qa('00-invariant.mjs')] : []),

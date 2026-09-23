@@ -69,6 +69,11 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
   erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5)
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
+  vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
+  freight_tariff:        [['freight-tariffs']],                  // bảng cước
+  freight_surcharge:     [['freight-surcharges']],               // phụ phí
+  carrier_allocation:    [['freight-allocations']],              // ưu tiên ĐVVT theo khu vực
+  carrier_share_target:  [['freight-allocations']],              // tỷ trọng ĐVVT
   outbound_events:     [['gdo-events']],
   khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],

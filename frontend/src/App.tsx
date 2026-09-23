@@ -15,7 +15,7 @@ const {
   Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
   Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, MoveLocation, PalletLabels, PalletOps, MultiScanTest,
-  WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
+  WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration, Freight,
   LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, IntegrationKeys, Materials, Customers, ExternalData, Settings,
 } = Pages
@@ -192,6 +192,10 @@ export default function App() {
         <Route
           path="/masterdata/customers"
           element={<PermissionRoute module="customers"><Customers /></PermissionRoute>}
+        />
+        <Route
+          path="/tms/freight"
+          element={<PermissionRoute module="freight"><Freight /></PermissionRoute>}
         />
 
         <Route path="/settings" element={<Settings />} />

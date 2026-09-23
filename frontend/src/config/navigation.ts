@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, ListChecks, CalendarClock, Store,
+  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, ListChecks, CalendarClock, Store, Banknote,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -99,6 +99,7 @@ export const NAV_GROUPS: NavGroup[] = [
     operational: true,
     items: [
       { to: '/tms/bookings',      icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms_plan' },
+      { to: '/tms/freight',       icon: Banknote,      label: 'Cước vận chuyển', module: 'freight' },
       { to: '/tms/gate',          icon: ShieldCheck,   label: 'Đăng ký cổng', module: 'gate_registration' },
       { to: '/wms/weigh-tickets', icon: Scale,         label: 'Phiếu cân',    module: 'weigh_station' },
     ],

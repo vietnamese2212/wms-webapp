@@ -397,6 +397,16 @@ interface DoSapFilters {
   pageSize: number
 }
 // Sổ SO — tab "Chưa có OD" (dòng ZSD02 chưa có OD), lọc theo Ngày giao
+// Cước vận chuyển (23/09): bộ lọc dùng chung 3 tab — kho xuất · ĐVVT · dòng xe · tìm phường
+interface FreightFilters {
+  tab: 'tariffs' | 'surcharges' | 'allocation'
+  warehouseId: string
+  companyId: string
+  modelId: string
+  search: string
+  page: number
+  pageSize: number
+}
 interface SoLinesFilters {
   search: string
   dateFrom: string   // Ngày giao (delivery_date); mặc định RỖNG → trang nhắc chọn
@@ -502,6 +512,8 @@ interface WmsFilterState {
   leave:             LeaveFilters
   doSap:             DoSapFilters
   soLines:           SoLinesFilters
+  freight:           FreightFilters
+  setFreight:           (f: Partial<FreightFilters>)           => void
   khvc:              KhvcFilters
   reconcile:         ReconcileFilters
   setDoSap:             (f: Partial<DoSapFilters>)             => void
@@ -633,6 +645,7 @@ function initialFilters() {
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
+    freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
@@ -683,6 +696,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       // đọc `.flow.length` là TRẮNG TRANG (cùng bẫy `merge` của Fill 16/09)
       setDoSap:            (f) => set(s => ({ doSap:            { ...initialFilters().doSap, ...s.doSap, ...f } })),
       setSoLines:          (f) => set(s => ({ soLines:          { ...initialFilters().soLines, ...s.soLines, ...f } })),
+      setFreight:          (f) => set(s => ({ freight:          { ...initialFilters().freight, ...s.freight, ...f } })),
       setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
       setReconcile:        (f) => set(s => ({ reconcile:        { ...s.reconcile,        ...f } })),
       reset:               ()  => set(() => initialFilters()),

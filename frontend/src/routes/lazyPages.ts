@@ -65,6 +65,7 @@ const wmsSettings = () => import('@/pages/wms/WMSSettings')
 const tmsSettings = () => import('@/pages/tms/TMSSettings')
 const tmsBookings = () => import('@/pages/tms/TMSBookings')
 const tmsReport   = () => import('@/pages/tms/TMSReport')
+const freight     = () => import('@/pages/tms/Freight')
 const gateRegistration = () => import('@/pages/tms/GateRegistration')
 const leaveManagement = () => import('@/pages/hr/LeaveManagement')
 const assignments = () => import('@/pages/hr/Assignments')
@@ -117,6 +118,7 @@ export const Pages = {
   TMSSettings: lazyRetry(tmsSettings),
   TMSBookings: lazyRetry(tmsBookings),
   TMSReport: lazyRetry(tmsReport),
+  Freight: lazyRetry(freight),
   GateRegistration: lazyRetry(gateRegistration),
   LeaveManagement: lazyRetry(leaveManagement),
   Assignments: lazyRetry(assignments),
@@ -154,6 +156,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/settings': wmsSettings,
   '/tms/bookings': tmsBookings,
   '/tms/reports': tmsReport,
+  '/tms/freight': freight,
   '/tms/gate': gateRegistration,
   '/tms/settings': tmsSettings,
   '/hr/assignments': assignments,

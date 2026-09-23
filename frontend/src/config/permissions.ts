@@ -186,10 +186,18 @@ export const MODULES = {
     page: 'Cài đặt TMS',
     tab:  'Loại xe',
     actions: {
-      view:   'Xem danh sách',
-      create: 'Thêm loại xe',
-      edit:   'Sửa loại xe',
-      delete: 'Xóa loại xe',
+      view:   'Xem danh sách (dòng xe cha + dòng xe con mã SAP)',
+      create: 'Thêm loại xe / dòng xe con',
+      edit:   'Sửa loại xe · gán cha cho dòng xe con · sức chứa',
+      delete: 'Xóa loại xe / dòng xe con',
+    },
+  },
+  freight: {
+    page: 'Cước vận chuyển',
+    actions: {
+      view:   'Xem bảng cước · phụ phí · phân tuyến ĐVVT',
+      manage: 'Thêm / sửa / kết thúc hiệu lực · upload bảng cước · khai phụ phí · phân tuyến và tỷ trọng ĐVVT',
+      export: 'Xuất Excel bảng cước / cước tháng theo ĐVVT',
     },
   },
   tms_slots: {

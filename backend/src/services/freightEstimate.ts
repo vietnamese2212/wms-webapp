@@ -63,13 +63,23 @@ export async function sapLoadRefs(odNos: string[]): Promise<Map<string, LoadRef>
     const k = `${r.od_number}|${String(r.material_code ?? '').trim()}`
     const cur = out.get(k) ?? { sap_pallets: null, gross_weight_kg: null }
     const p = Number(r.sap_pallets), w = Number(r.gross_weight_kg)
-    if (Number.isFinite(p) && p > 0) cur.sap_pallets = (cur.sap_pallets ?? 0) + p
+    // SAP ghi 0 pallet là MỘT CÂU TRẢ LỜI (POSM/vật phẩm đi kèm không chiếm pallet riêng), khác với null = không biết
+    if (r.sap_pallets != null && Number.isFinite(p) && p >= 0) cur.sap_pallets = (cur.sap_pallets ?? 0) + p
     if (Number.isFinite(w) && w > 0) cur.gross_weight_kg = (cur.gross_weight_kg ?? 0) + w
     out.set(k, cur)
   }
   return out
 }
 export const sapRefKey = (od: string | null | undefined, materialCode: string | null | undefined) => `${od ?? ''}|${String(materialCode ?? '').trim()}`
+/**
+ * `loadOf` + một nấc cuối: master thiếu quy cách mà SAP nói RÕ "0 pallet" (POSM đi kèm, đo 07/09: 720000116/123 = 0 pallet, 120 kg)
+ * thì nhận 0 với nguồn SAP thay vì "không đo được" — không nhận thì cả chuyến mất cột tải/cước vì một hộp kệ trưng bày.
+ */
+export function loadOfWithSap(qtyBase: number, mat: LoadMat | null | undefined, warehouseId: string | null | undefined, ref: LoadRef | null | undefined) {
+  const r = loadOf(qtyBase, mat, warehouseId, ref ?? null)
+  if (r.pallets == null && ref?.sap_pallets === 0) return { ...r, pallets: 0, pallets_source: 'SAP' as const }
+  return r
+}
 type TariffRow = TariffLike & { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string }
 type SurRow = SurchargeLike & { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string | null; per: SurchargePer; count_mode: StopCountMode }
 
@@ -137,7 +147,7 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
       const scanned = num(i.cartons_scanned)
       const qty = basis === 'ACTUAL' && scanned > 0 ? scanned : num(i.cartons_ordered)
       // master thiếu quy cách → rơi về số SAP của đúng (OD, mã) — kèm nguồn 'SAP' trong loadOf
-      return loadOf(qty, i.material, g.warehouse_id, refs.get(sapRefKey(d.delivery_code, i.material_code_raw)) ?? null)
+      return loadOfWithSap(qty, i.material, g.warehouse_id, refs.get(sapRefKey(d.delivery_code, i.material_code_raw)))
     }))
     const sum = sumLoads(loads)
     const wards: string[] = [], shiptos: string[] = []

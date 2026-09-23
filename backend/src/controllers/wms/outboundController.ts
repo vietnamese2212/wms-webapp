@@ -5,9 +5,9 @@ import { supabase, db } from '../../lib/supabase'
 import { ok, fail, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
-import { loadOf, sumLoads, type LoadMat } from '../../utils/loadCalc'
+import { sumLoads, type LoadMat } from '../../utils/loadCalc'
 import { loadUtilization } from '../../services/freight'
-import { estimateFreightSafely, sapLoadRefs, sapRefKey } from '../../services/freightEstimate'
+import { estimateFreightSafely, sapLoadRefs, sapRefKey, loadOfWithSap } from '../../services/freightEstimate'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
@@ -1041,8 +1041,8 @@ async function enrichGdos(data: any[]): Promise<any[]> {
 
       // Tải THẬT của chuyến theo master (pallet thập phân + tấn) → % tải so sức chứa dòng xe con. Cột trên list tính
       // SỐNG (không đọc freight_detail) để đổi dòng hàng là đổi ngay; cước thì đọc cột đã ghi (cần bảng cước).
-      const loads = gdoItems.map((i: any) => loadOf(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null,
-        sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw)) ?? null))
+      const loads = gdoItems.map((i: any) => loadOfWithSap(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null,
+        sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw))))
       const loadSum = sumLoads(loads)
       const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
       const tons = loadSum.kg == null ? null : Math.round(loadSum.kg) / 1000

@@ -47,10 +47,11 @@ export async function listTransportCompanies(req: Request, res: Response) {
 
 export async function createTransportCompany(req: Request, res: Response) {
   try {
-    const { code, name, type, contact_name, contact_phone, alias_codes } = req.body as {
-      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string; alias_codes?: unknown
+    const { code, name, type, contact_name, contact_phone, alias_codes, tender_required } = req.body as {
+      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string; alias_codes?: unknown; tender_required?: unknown
     }
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
+    if (tender_required !== undefined && typeof tender_required !== 'boolean') return fail(res, 'tender_required phải là true/false', 400)
     const codeU = code.toUpperCase().trim()
     const aliasArr = normAlias(alias_codes).filter(c => c !== codeU)
     const clash = await findCodeClash([codeU, ...aliasArr])
@@ -62,6 +63,7 @@ export async function createTransportCompany(req: Request, res: Response) {
       .insert({
         id: randomUUID(), code: codeU, name: name.trim(),
         type: type ?? 'ĐVVT', alias_codes: aliasArr,
+        tender_required: tender_required === true,   // ĐVVT cần phản hồi khi chào chuyến (Điều vận) — mặc định không
         contact_name: contact_name?.trim() ?? null,
         contact_phone: contact_phone?.trim() ?? null,
         is_active: true, created_at: now, updated_at: now,
@@ -81,10 +83,12 @@ export async function updateTransportCompany(req: Request, res: Response) {
     // ĐVVT user: chỉ được sửa công ty của mình
     if (userNccId && id !== userNccId)
       return fail(res, 'Bạn không có quyền chỉnh sửa ĐVVT này', 403)
-    const { name, type, contact_name, contact_phone, is_active, alias_codes } = req.body as {
-      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: unknown
+    const { name, type, contact_name, contact_phone, is_active, alias_codes, tender_required } = req.body as {
+      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: unknown; tender_required?: unknown
     }
+    if (tender_required !== undefined && typeof tender_required !== 'boolean') return fail(res, 'tender_required phải là true/false', 400)
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
+    if (tender_required !== undefined) updates.tender_required = tender_required
     if (name          !== undefined) updates.name          = name.trim()
     if (type          !== undefined) updates.type          = type
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null

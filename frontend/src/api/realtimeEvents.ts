@@ -74,6 +74,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   freight_surcharge:     [['freight-surcharges']],               // phụ phí
   carrier_allocation:    [['freight-allocations']],              // ưu tiên ĐVVT theo khu vực
   carrier_share_target:  [['freight-allocations']],              // tỷ trọng ĐVVT
+  dispatch_plan:         [['dispatch-plans'], ['dispatch-plan']], // kế hoạch ghép chuyến nháp (24/09)
+  dispatch_trip:         [['dispatch-plan']],
   outbound_events:     [['gdo-events']],
   khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],

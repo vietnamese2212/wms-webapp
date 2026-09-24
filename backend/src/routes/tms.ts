@@ -2,6 +2,7 @@ import { Router } from 'express'
 import * as vehicleType      from '../controllers/tms/vehicleTypeController'
 import * as vehicleModel     from '../controllers/tms/vehicleModelController'
 import * as freight          from '../controllers/tms/freightController'
+import * as dispatch         from '../controllers/tms/dispatchController'
 import { validate, zIdParam, z } from '../middlewares/validate'
 import { excelUpload } from '../middlewares/excelUpload'
 import * as slotTemplate     from '../controllers/tms/slotTemplateController'
@@ -73,6 +74,18 @@ router.delete('/freight/allocations/:id', requirePerm('freight', 'manage'), vali
 router.post('/freight/shares',            requirePerm('freight', 'manage'), validate({ body: freight.zShareCreate }),                         freight.createShare)
 router.put('/freight/shares/:id',         requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zShareUpdate }),       freight.updateShare)
 router.delete('/freight/shares/:id',      requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteShare)
+
+// ── ĐIỀU VẬN — kế hoạch ghép chuyến NHÁP (đợt 2, 24/09) — module quyền riêng `dispatch`: view · plan · confirm · export ──
+// Máy đề xuất (POST plan) → người sửa nháp (PATCH trip · move-od) → Xác nhận = ghi khvc_lines → dội xuống chuyến như upload KH tay.
+router.get('/dispatch/plans',                 requirePerm('dispatch', 'view'),    validate({ query: dispatch.zListQuery }),                     dispatch.listPlans)
+router.get('/dispatch/plans/:id',             requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlan)
+router.post('/dispatch/plan',                 requirePerm('dispatch', 'plan'),    validate({ body: dispatch.zPlanBody }),                        dispatch.createPlan)
+router.patch('/dispatch/trips/:id',           requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zTripPatch }),     dispatch.updateTrip)
+router.post('/dispatch/trips/:id/move-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMoveOd }),        dispatch.moveOd)
+router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.confirmPlan)
+router.post('/dispatch/trips/:id/settle',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.settleTrip)    // chốt MỘT xe (kế hoạch đang chờ ĐVVT)
+router.post('/dispatch/trips/:id/respond',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zRespond }),       dispatch.respondTrip)   // ghi ĐVVT nhận / từ chối
+router.delete('/dispatch/plans/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.discardPlan)
 
 // DeliverySlot
 router.get('/slots',           requirePerm('tms_plan', 'view'),                slot.listSlots)

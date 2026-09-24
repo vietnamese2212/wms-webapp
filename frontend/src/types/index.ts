@@ -523,6 +523,7 @@ export interface TransportCompany {
   name:          string
   type:          'ĐVVT' | 'NCC'
   alias_codes?:  string[] | null
+  tender_required?: boolean        // ĐVVT cần phản hồi khi Điều vận chào chuyến (false = điều vận tự chốt, đổi tay)
   contact_name:  string | null
   contact_phone: string | null
   is_active:     boolean

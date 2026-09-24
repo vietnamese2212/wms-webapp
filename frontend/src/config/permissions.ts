@@ -200,6 +200,15 @@ export const MODULES = {
       export: 'Xuất Excel bảng cước / cước tháng theo ĐVVT',
     },
   },
+  dispatch: {
+    page: 'Điều vận',
+    actions: {
+      view:    'Xem pool OD chưa xếp xe + kế hoạch ghép chuyến nháp / đã xác nhận',
+      plan:    'Lập kế hoạch (chạy máy ghép) · sửa nháp: đổi dòng xe / ĐVVT · chuyển OD giữa xe · bỏ nháp',
+      confirm: 'Xác nhận kế hoạch → ghi vào Kế hoạch xuất (sinh chuyến + lệnh VC như upload tay)',
+      export:  'Xuất Excel kế hoạch ghép chuyến (định dạng file KH điều vận)',
+    },
+  },
   tms_slots: {
     page: 'Cài đặt TMS',
     tab:  'Khung giờ',

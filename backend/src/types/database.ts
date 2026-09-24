@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-23T03:26:04.808Z · 105 bảng/view · 171 hàm · 0 enum
+// Sinh lúc 2026-09-24T03:55:28.804Z · 108 bảng/view · 171 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2221,6 +2221,7 @@ export type Database = {
           updated_by: string | null
           type: string | null
           alias_codes: string[]
+          tender_required: boolean
         }
         Insert: {
           id: string
@@ -2235,6 +2236,7 @@ export type Database = {
           updated_by?: string | null
           type?: string | null
           alias_codes?: string[]
+          tender_required?: boolean
         }
         Update: {
           id?: string
@@ -2249,6 +2251,7 @@ export type Database = {
           updated_by?: string | null
           type?: string | null
           alias_codes?: string[]
+          tender_required?: boolean
         }
         Relationships: []
       }
@@ -2404,6 +2407,9 @@ export type Database = {
           separate_lowering_forklift: boolean
           cross_trip_pick_radius: number
           auto_fill: boolean
+          dispatch_max_drops: number
+          dispatch_allow_mix_channels: boolean
+          dispatch_underload_pct: number | null
         }
         Insert: {
           id: string
@@ -2448,6 +2454,9 @@ export type Database = {
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
           auto_fill?: boolean
+          dispatch_max_drops?: number
+          dispatch_allow_mix_channels?: boolean
+          dispatch_underload_pct?: number | null
         }
         Update: {
           id?: string
@@ -2492,6 +2501,9 @@ export type Database = {
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
           auto_fill?: boolean
+          dispatch_max_drops?: number
+          dispatch_allow_mix_channels?: boolean
+          dispatch_underload_pct?: number | null
         }
         Relationships: []
       }
@@ -3215,6 +3227,186 @@ export type Database = {
           updated_at?: string
           created_by?: string | null
           updated_by?: string | null
+        }
+        Relationships: []
+      }
+      dispatch_plan: {
+        Row: {
+          id: string
+          warehouse_id: string
+          plan_date: string
+          status: string
+          params: Json
+          summary: Json
+          unplanned: Json
+          engine_version: string | null
+          created_by: string | null
+          confirmed_by: string | null
+          confirmed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          plan_date: string
+          status?: string
+          params?: Json
+          summary?: Json
+          unplanned?: Json
+          engine_version?: string | null
+          created_by?: string | null
+          confirmed_by?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          plan_date?: string
+          status?: string
+          params?: Json
+          summary?: Json
+          unplanned?: Json
+          engine_version?: string | null
+          created_by?: string | null
+          confirmed_by?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      dispatch_trip: {
+        Row: {
+          id: string
+          plan_id: string
+          seq: number
+          group_code: string
+          vehicle_model_id: string | null
+          transport_company_id: string | null
+          stops: number
+          wards: string[]
+          pallets: number | null
+          tons: number | null
+          load_pct: number | null
+          underload: boolean
+          oversize: boolean
+          freight_estimated: number | null
+          detail: Json
+          manual_edited: boolean
+          created_at: string
+          updated_at: string
+          status: string
+          tendered_at: string | null
+          responded_at: string | null
+          response_by: string | null
+          response_note: string | null
+          confirmed_at: string | null
+        }
+        Insert: {
+          id: string
+          plan_id: string
+          seq: number
+          group_code: string
+          vehicle_model_id?: string | null
+          transport_company_id?: string | null
+          stops?: number
+          wards?: string[]
+          pallets?: number | null
+          tons?: number | null
+          load_pct?: number | null
+          underload?: boolean
+          oversize?: boolean
+          freight_estimated?: number | null
+          detail?: Json
+          manual_edited?: boolean
+          created_at?: string
+          updated_at: string
+          status?: string
+          tendered_at?: string | null
+          responded_at?: string | null
+          response_by?: string | null
+          response_note?: string | null
+          confirmed_at?: string | null
+        }
+        Update: {
+          id?: string
+          plan_id?: string
+          seq?: number
+          group_code?: string
+          vehicle_model_id?: string | null
+          transport_company_id?: string | null
+          stops?: number
+          wards?: string[]
+          pallets?: number | null
+          tons?: number | null
+          load_pct?: number | null
+          underload?: boolean
+          oversize?: boolean
+          freight_estimated?: number | null
+          detail?: Json
+          manual_edited?: boolean
+          created_at?: string
+          updated_at?: string
+          status?: string
+          tendered_at?: string | null
+          responded_at?: string | null
+          response_by?: string | null
+          response_note?: string | null
+          confirmed_at?: string | null
+        }
+        Relationships: []
+      }
+      dispatch_trip_od: {
+        Row: {
+          id: string
+          trip_id: string
+          od_number: string
+          ship_to_code: string | null
+          ship_to_name: string | null
+          ward_code: string | null
+          pallets: number | null
+          tons: number | null
+          lines: number
+          part_index: number | null
+          part_of: number | null
+          material_codes: string[]
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          trip_id: string
+          od_number: string
+          ship_to_code?: string | null
+          ship_to_name?: string | null
+          ward_code?: string | null
+          pallets?: number | null
+          tons?: number | null
+          lines?: number
+          part_index?: number | null
+          part_of?: number | null
+          material_codes?: string[]
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          trip_id?: string
+          od_number?: string
+          ship_to_code?: string | null
+          ship_to_name?: string | null
+          ward_code?: string | null
+          pallets?: number | null
+          tons?: number | null
+          lines?: number
+          part_index?: number | null
+          part_of?: number | null
+          material_codes?: string[]
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }

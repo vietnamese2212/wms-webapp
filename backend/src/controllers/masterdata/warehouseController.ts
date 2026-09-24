@@ -30,6 +30,21 @@ function asPickRadius(v: unknown): number {
   const n = Math.trunc(Number(v))
   return Number.isFinite(n) ? Math.min(200, Math.max(0, n)) : 0
 }
+// ĐIỀU VẬN (20260924) — tham số cấp KHO cho engine ghép chuyến: kẹp đúng CHECK ở DB (1..20 điểm giao; Non tải 1..100 hoặc NULL = theo dòng xe)
+function asMaxDrops(v: unknown): number {
+  const n = Math.trunc(Number(v))
+  return Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 3
+}
+function asUnderloadPct(v: unknown): number | null {
+  if (v === null || v === '' || v === undefined) return null
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? Math.min(100, Math.round(n * 10) / 10) : null
+}
+function applyDispatchBody(body: Record<string, unknown>, target: Record<string, unknown>) {
+  if (body.dispatch_max_drops !== undefined)          target.dispatch_max_drops = asMaxDrops(body.dispatch_max_drops)
+  if (body.dispatch_allow_mix_channels !== undefined) target.dispatch_allow_mix_channels = Boolean(body.dispatch_allow_mix_channels)
+  if (body.dispatch_underload_pct !== undefined)      target.dispatch_underload_pct = asUnderloadPct(body.dispatch_underload_pct)
+}
 
 function extractCount(arr: unknown): number {
   if (Array.isArray(arr) && arr.length > 0) return (arr[0] as { count: number }).count ?? 0
@@ -281,6 +296,7 @@ export async function createWarehouse(req: Request, res: Response) {
     if (require_gate_on_start !== undefined)  row.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (separate_lowering_forklift !== undefined) row.separate_lowering_forklift = Boolean(separate_lowering_forklift)   // kho có xe hạ riêng? (20260912f)
     if (req.body.cross_trip_pick_radius !== undefined) row.cross_trip_pick_radius = asPickRadius(req.body.cross_trip_pick_radius)  // nhặt dọc đường (20260913d)
+    applyDispatchBody(req.body, row)   // điều vận: điểm giao tối đa · trộn kênh · ngưỡng Non tải kho (20260924)
     if (rotation_principle !== undefined)     row.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      row.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     if (scan_code_types !== undefined)        row.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
@@ -356,6 +372,7 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (require_gate_on_start !== undefined)  patch.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (separate_lowering_forklift !== undefined) patch.separate_lowering_forklift = Boolean(separate_lowering_forklift)   // kho có xe hạ riêng? (20260912f)
     if (req.body.cross_trip_pick_radius !== undefined) patch.cross_trip_pick_radius = asPickRadius(req.body.cross_trip_pick_radius)  // nhặt dọc đường (20260913d)
+    applyDispatchBody(req.body, patch)   // điều vận (20260924)
     if (rotation_principle !== undefined)     patch.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      patch.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     if (scan_code_types !== undefined)        patch.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)

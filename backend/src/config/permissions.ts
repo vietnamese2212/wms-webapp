@@ -15,6 +15,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt', 'export'],
   tms_vehicle_types: ['view', 'create', 'edit', 'delete'],
   freight:           ['view', 'manage', 'export'],   // Cước vận chuyển: bảng cước · phụ phí · phân tuyến ĐVVT (20260923)
+  dispatch:          ['view', 'plan', 'confirm', 'export'],   // Điều vận: kế hoạch ghép chuyến nháp → Xác nhận ghi Kế hoạch xuất (20260924)
   tms_slots:         ['view', 'create', 'edit', 'delete'],
   tms_companies:     ['view', 'create', 'edit', 'delete'],
   tms_vehicles:      ['view', 'create', 'edit', 'delete'],

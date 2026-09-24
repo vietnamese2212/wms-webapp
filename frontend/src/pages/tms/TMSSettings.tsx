@@ -330,6 +330,7 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   const [contact,  setContact]  = useState(co?.contact_name  ?? '')
   const [phone,    setPhone]    = useState(co?.contact_phone ?? '')
   const [isActive, setIsActive] = useState(co?.is_active ?? true)
+  const [tenderRequired, setTenderRequired] = useState(co?.tender_required === true)
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateTransportCompany()
@@ -339,11 +340,12 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   function handleSubmit() {
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
+    const tender_required = type === 'ĐVVT' && tenderRequired
     if (isEdit) {
-      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive, alias_codes: aliasCodes },
+      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive, alias_codes: aliasCodes, tender_required },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, alias_codes: aliasCodes },
+      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, alias_codes: aliasCodes, tender_required },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -382,6 +384,18 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
           <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
         <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
           <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" /></div>
+        {type === 'ĐVVT' && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-2.5 space-y-1">
+            <div className="flex items-center gap-2">
+              <Switch id="co-tender" checked={tenderRequired} onCheckedChange={setTenderRequired} />
+              <Label htmlFor="co-tender" className="text-sm cursor-pointer">Cần ĐVVT phản hồi khi chào chuyến (Điều vận)</Label>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-snug">
+              <b>Bật</b>: xe ghép cho ĐVVT này chờ ĐVVT <i>nhận</i> / <i>từ chối</i> rồi mới vào Kế hoạch xuất — từ chối thì điều vận đổi ĐVVT và chốt lại.
+              <b> Tắt</b> (mặc định): xác nhận là vào Kế hoạch xuất ngay; muốn đổi ĐVVT thì điều vận sửa tay ở tab Kế hoạch xuất.
+            </p>
+          </div>
+        )}
         {isEdit && <div className="flex items-center gap-2">
           <Switch id="co-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
@@ -1068,6 +1082,7 @@ export default function TMSSettings() {
                 <div><span className="text-slate-400">Người LH:</span> <span className="font-medium">{detailCo.contact_name ?? '—'}</span></div>
                 <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{detailCo.contact_phone ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailCo.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                {detailCo.type !== 'NCC' && <div><span className="text-slate-400">Chào chuyến:</span> <span className="font-medium">{detailCo.tender_required ? 'Cần ĐVVT phản hồi' : 'Điều vận tự chốt'}</span></div>}
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
                   <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailCo.created_by ?? '—'}</span></div>

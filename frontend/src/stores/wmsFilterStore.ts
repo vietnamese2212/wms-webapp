@@ -415,6 +415,13 @@ interface FreightFilters {
   page: number
   pageSize: number
 }
+// Điều vận (24/09): kho × ngày giao đang lập; kế hoạch đang mở
+interface DispatchFilters {
+  warehouseId: string
+  planDate: string       // '' → trang mặc định NGÀY MAI (điều vận xếp xe cho hôm sau)
+  planId: string         // kế hoạch đang mở ('' = bản nháp mới nhất của kho×ngày)
+  onlyUnderload: boolean
+}
 interface SoLinesFilters {
   search: string
   dateFrom: string   // Ngày giao (delivery_date); mặc định RỖNG → trang nhắc chọn
@@ -522,6 +529,8 @@ interface WmsFilterState {
   soLines:           SoLinesFilters
   freight:           FreightFilters
   setFreight:           (f: Partial<FreightFilters>)           => void
+  dispatch:          DispatchFilters
+  setDispatch:          (f: Partial<DispatchFilters>)          => void
   vehicleModels:     VehicleModelFilters
   setVehicleModels:     (f: Partial<VehicleModelFilters>)      => void
   khvc:              KhvcFilters
@@ -656,6 +665,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
+    dispatch: { warehouseId: '', planDate: '', planId: '', onlyUnderload: false },
     vehicleModels: { search: '', parents: [], temps: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
@@ -708,6 +718,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setDoSap:            (f) => set(s => ({ doSap:            { ...initialFilters().doSap, ...s.doSap, ...f } })),
       setSoLines:          (f) => set(s => ({ soLines:          { ...initialFilters().soLines, ...s.soLines, ...f } })),
       setFreight:          (f) => set(s => ({ freight:          { ...initialFilters().freight, ...s.freight, ...f } })),
+      setDispatch:         (f) => set(s => ({ dispatch:         { ...initialFilters().dispatch, ...s.dispatch, ...f } })),
       setVehicleModels:    (f) => set(s => ({ vehicleModels:    { ...initialFilters().vehicleModels, ...s.vehicleModels, ...f } })),
       setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
       setReconcile:        (f) => set(s => ({ reconcile:        { ...s.reconcile,        ...f } })),

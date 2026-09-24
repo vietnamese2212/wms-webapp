@@ -177,8 +177,25 @@ export default function Dispatch() {
     const open = plan.trips.filter(t => tripStatus(t) === 'DRAFT')
     const noCarrier = open.filter(t => !t.transport_company_id).length
     const noFreight = open.filter(t => t.freight_estimated == null).length
+    // OD nằm ở HAI xe thì cửa Xác nhận trả 422 OD_SPLIT_ACROSS_TRIPS — nói TRƯỚC, đừng để bấm rồi
+    // mới biết. Đo 24/09: engine tách OD vượt tải theo dòng hàng nên ca này xảy ra ở CẢ hai kho
+    // (Ba Vì 1 OD, Bàu Bàng 4 OD) — tức gần như mọi kế hoạch đều vướng ngay lần xác nhận đầu.
+    const odTrips = new Map<string, string[]>()
+    for (const t of open) for (const od of new Set(t.ods.map(o => o.od_number))) odTrips.set(od, [...(odTrips.get(od) ?? []), t.group_code])
+    const split = [...odTrips].filter(([, g]) => g.length > 1)
     const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '']
       .filter(Boolean).join(' · ')
+    if (split.length) {
+      window.alert(
+        `KHÔNG xác nhận được: ${split.length} OD đang nằm ở hai xe\n\n` +
+        split.slice(0, 5).map(([od, g]) => `  • ${od}: ${g.join(' + ')}`).join('\n') +
+        (split.length > 5 ? `\n  … và ${split.length - 5} OD nữa` : '') +
+        `\n\nApp chưa tách một DO ra hai xe. Máy tách vì OD vượt sức chứa xe lớn nhất.\n` +
+        `Cách xử lý: mở panel một trong hai xe → chuyển OD đó sang xe kia để gom về MỘT xe ` +
+        `(xe sẽ báo Vượt tải — vẫn xác nhận được), hoặc tách DO ở SAP trước.`,
+      )
+      return
+    }
     const q = [
       tenderCount
         ? `Xác nhận ${n} xe ngày ${formatDate(plan.plan_date)}: ${n - tenderCount} xe vào Kế hoạch xuất ngay, ${tenderCount} xe CHỜ ĐVVT phản hồi (ĐVVT có cờ "cần phản hồi").`
@@ -189,9 +206,15 @@ export default function Dispatch() {
     if (!window.confirm(q)) return
     confirm.mutateAsync(plan.id).then(r => {
       toast({
-        title: r.tendered ? `Đã ghi ${r.trips} xe vào Kế hoạch xuất · ${r.tendered} xe chờ ĐVVT phản hồi` : `Đã ghi ${r.lines} dòng Kế hoạch xuất cho ${r.trips} xe`,
-        description: r.replan_error ? `Kế hoạch đã lưu nhưng chuyến chưa dội xuống: ${r.replan_error}` : r.tendered ? `Xe chờ: ${r.tendered_group_codes.join(', ')} — ghi "ĐVVT nhận / từ chối" trong panel từng xe.` : 'Chuyến bên Xuất kho + lệnh VC bên Kế hoạch VC đã sinh.',
-        variant: r.replan_error ? 'destructive' : undefined,
+        // ⚠️ KHÔNG khẳng định "chuyến đã sinh" khi chưa đo được. Đường dội xuống có thể TỪ CHỐI TRỌN GÓI
+        // mà không ném lỗi (derive_failed) — trước 24/09 câu này vẫn in "đã sinh" trong khi thực tế 0/50.
+        title: r.derive_failed
+          ? `Đã ghi ${r.lines} dòng Kế hoạch xuất — nhưng CHƯA sinh được chuyến nào`
+          : r.tendered ? `Đã ghi ${r.trips} xe vào Kế hoạch xuất · ${r.tendered} xe chờ ĐVVT phản hồi` : `Đã ghi ${r.lines} dòng Kế hoạch xuất cho ${r.trips} xe`,
+        description: r.derive_failed
+          ? `${r.derive_message ?? 'đường sinh chuyến từ chối kế hoạch'} — kế hoạch nằm ở tab Kế hoạch xuất, sửa chỗ bị từ chối rồi chuyến sẽ tự dội xuống.`
+          : r.replan_error ? `Kế hoạch đã lưu nhưng chuyến chưa dội xuống: ${r.replan_error}` : r.tendered ? `Xe chờ: ${r.tendered_group_codes.join(', ')} — ghi "ĐVVT nhận / từ chối" trong panel từng xe.` : 'Chuyến bên Xuất kho + lệnh VC bên Kế hoạch VC đã sinh.',
+        variant: r.replan_error || r.derive_failed ? 'destructive' : undefined,
       })
     }).catch(e => err(e, 'Không xác nhận được'))
   }
@@ -204,7 +227,11 @@ export default function Dispatch() {
   const doSettle = (t: DispatchTrip) => {
     const tender = needsTender(t)
     if (!window.confirm(tender ? `Chào xe ${t.group_code} cho ${t.detail.carrier?.name ?? 'ĐVVT'} — xe sẽ CHỜ ĐVVT phản hồi.` : `Chốt xe ${t.group_code} vào Kế hoạch xuất ngay (ĐVVT không cần phản hồi)?`)) return
-    settle.mutateAsync(t.id).then(r => toast({ title: r.trip_status === 'TENDERED' ? `Xe ${r.group_code} đang chờ ĐVVT phản hồi` : `Xe ${r.group_code} đã vào Kế hoạch xuất`, description: r.replan_error ?? undefined, variant: r.replan_error ? 'destructive' : undefined })).catch(e => err(e, 'Không chốt được xe'))
+    settle.mutateAsync(t.id).then(r => toast({
+      title: r.derive_failed ? `Xe ${r.group_code}: đã ghi kế hoạch nhưng CHƯA sinh được chuyến` : r.trip_status === 'TENDERED' ? `Xe ${r.group_code} đang chờ ĐVVT phản hồi` : `Xe ${r.group_code} đã vào Kế hoạch xuất`,
+      description: r.derive_failed ? (r.derive_message ?? undefined) : (r.replan_error ?? undefined),
+      variant: r.replan_error || r.derive_failed ? 'destructive' : undefined,
+    })).catch(e => err(e, 'Không chốt được xe'))
   }
   const doRespond = (t: DispatchTrip, accept: boolean) => {
     let note: string | undefined

@@ -294,6 +294,34 @@ try {
     `http=${cf5.s} ${JSON.stringify(cf5.j?.data ?? cf5.j?.error)}`)
   const kh5 = await restAll('khvc_lines', `select=do_no&group_code=like.${PREFIX}*`)
   check('5b. Kế hoạch xuất có đủ 3 dòng OD của hai xe', kh5.length === 3, `n=${kh5.length}`)
+
+  // ── [8] MÃ HÀNG LẠ: chặn TRƯỚC khi ghi, không "thành công" rồi 0 chuyến (kiểm app 24/09) ──────────
+  // VÌ SAO: 5 % dòng OD của SAP trỏ mã chưa đồng bộ sang WMS (đo staging: 4 mã ⇒ 47 OD Ba Vì + 19 OD
+  // Bàu Bàng). Đường `replanKhvcGroups` → derive validate mã hàng rồi từ chối TRỌN GÓI, nhưng nó
+  // KHÔNG ném lỗi — nó trả `{derive:{success:false}}` mà trước 24/09 không ai đọc ⇒ API trả 200,
+  // màn hình in "Chuyến bên Xuất kho + lệnh VC đã sinh", thực tế 0/50 chuyến. Lớp C5 "trả 200 im lặng".
+  await cleanupTrips()
+  await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
+  const OD4 = 'QA61OD4', MAT_LA = 'QA61MAKHONGCO'
+  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, updated_at: nowIso() })
+  await restWrite('erp_outbound_orders', 'POST', null, {
+    id: crypto.randomUUID(), od_number: OD4, od_item: '10', material_code: MAT_LA, qty_base: 2 * perPallet,
+    ship_to_code: 'QA61SHIP4', ship_to_name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null,
+    delivery_date: DAY, flow: 'SALE', sap_pallets: 2, source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+  })
+  const matGone = (await restAll('Material', `select=material_code&material_code=eq.${MAT_LA}`)).length === 0
+  check('8a. Fixture: mã hàng của OD4 KHÔNG có trong danh mục Mã hàng', matGone, matGone ? MAT_LA : 'mã lại có thật — đổi tên fixture')
+  const p8 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const cf8 = await api(`/tms/dispatch/plans/${p8.j?.data?.id}/confirm`, 'POST', {})
+  check('8b. Xác nhận kế hoạch có mã hàng LẠ → 422 MATERIAL_UNKNOWN, KHÔNG phải 200 im lặng',
+    cf8.s === 422 && cf8.j?.error?.code === 'MATERIAL_UNKNOWN',
+    `http=${cf8.s} code=${cf8.j?.error?.code ?? '-'} ${String(cf8.j?.error?.message ?? '').slice(0, 120)}`)
+  check('8c. Thông điệp nêu ĐÍCH DANH mã phải khai (người dùng biết làm gì tiếp)',
+    String(cf8.j?.error?.message ?? '').includes(MAT_LA), String(cf8.j?.error?.message ?? '').slice(0, 140))
+  const kh8 = await restAll('khvc_lines', `select=do_no&group_code=like.${PREFIX}*`)
+  check('8d. Bị chặn thì KHÔNG ghi dòng Kế hoạch xuất nào (không có trạng thái nửa vời)', kh8.length === 0, `n=${kh8.length}`)
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${OD4}`).catch(() => {})
+  await restWrite('Customer', 'DELETE', `ship_to_code=eq.QA61SHIP4`).catch(() => {})
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

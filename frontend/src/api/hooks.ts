@@ -5943,11 +5943,11 @@ export function useMoveDispatchOd() {
 export function useConfirmDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; lines: number; group_codes: string[]; replan: Record<string, unknown> | null; replan_error: string | null }),
+    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; lines: number; group_codes: string[]; replan: Record<string, unknown> | null; replan_error: string | null; derive_failed: boolean; derive_message: string | null }),
     onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
   })
 }
-type TripSettleResult = { trip_id: string; group_code: string; trip_status: DispatchTripStatus; plan_status: DispatchPlan['status']; lines?: number; replan_error?: string | null }
+type TripSettleResult = { trip_id: string; group_code: string; trip_status: DispatchTripStatus; plan_status: DispatchPlan['status']; lines?: number; replan_error?: string | null; derive_failed?: boolean; derive_message?: string | null }
 /** Chốt MỘT xe của kế hoạch đang chờ ĐVVT (xe nháp / xe bị từ chối đã đổi ĐVVT): ĐVVT không cần phản hồi ⇒ vào Kế hoạch xuất ngay, cần ⇒ chờ. */
 export function useSettleDispatchTrip() {
   const qc = useQueryClient()

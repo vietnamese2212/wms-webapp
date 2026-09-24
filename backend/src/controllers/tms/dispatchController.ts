@@ -566,6 +566,25 @@ async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr |
   const gcs = subset.map(t => t.group_code)
   const usedGc = (await fetchAllByIdChunks(gcs, c => db.from('khvc_lines').select('group_code').in('group_code', c).neq('sync_status', 'OBSOLETE').order('group_code'))) as { group_code: string }[]
   if (usedGc.length) return { err: [`Số xe ${uniq(usedGc.map(x => x.group_code)).slice(0, 5).join(', ')} đã có trong Kế hoạch xuất — lập lại kế hoạch để lấy STT mới.`, 409, 'GROUP_CODE_TAKEN'] }
+  // MÃ HÀNG PHẢI CÓ TRONG DANH MỤC — chặn TẠI ĐÂY thay vì để đường derive từ chối sau khi đã ghi.
+  // Vì sao (đo 24/09): 5 % dòng OD của SAP trỏ tới mã chưa đồng bộ sang WMS (4 mã: 810000020 ·
+  // 510000442 · 510000444 · 510000440 ⇒ 47 OD Ba Vì + 19 OD Bàu Bàng). Đường `replanKhvcGroups`
+  // → derive validate mã hàng và từ chối TRỌN GÓI ("18 chuyến xe lỗi — không upload"), nên xác nhận
+  // 50 xe xong ra **0 chuyến** trong khi API vẫn trả 200. Chặn trước khi ghi thì không có trạng thái
+  // nửa vời (kế hoạch đã vào sổ mà không chuyến nào), và người dùng biết ĐÍCH DANH mã phải khai.
+  const odMats = (await fetchAllByIdChunks(subOds, c => db.from('erp_outbound_orders')
+    .select('od_number, material_code').in('od_number', c).eq('sync_status', 'ACTIVE').order('od_number'))) as { od_number: string; material_code: string | null }[]
+  const wantMats = uniq(odMats.map(r => r.material_code).filter((x): x is string => !!x))
+  if (wantMats.length) {
+    const haveMats = new Set(((await fetchAllByIdChunks(wantMats, c => db.from('Material')
+      .select('material_code').in('material_code', c).order('material_code'))) as { material_code: string }[]).map(m => m.material_code))
+    const missing = wantMats.filter(m => !haveMats.has(m))
+    if (missing.length) {
+      const odOf = new Map(subset.flatMap(t => t.ods.map(o => [o.od_number, t.group_code] as const)))
+      const hitGc = uniq(odMats.filter(r => r.material_code && missing.includes(r.material_code)).map(r => odOf.get(r.od_number)).filter((x): x is string => !!x))
+      return { err: [`${missing.length} mã hàng chưa có trong danh mục Mã hàng: ${missing.slice(0, 6).join(', ')} — ${hitGc.length} xe vướng (${hitGc.slice(0, 4).join(', ')}). Khai mã ở Cài đặt → Mã hàng rồi xác nhận lại; nếu không, kế hoạch ghi vào sổ mà KHÔNG sinh được chuyến nào.`, 422, 'MATERIAL_UNKNOWN'] }
+    }
+  }
   return null
 }
 
@@ -593,7 +612,18 @@ async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTr
   if (error) throw error
   let replan: Record<string, unknown> | null = null, replan_error: string | null = null
   try { replan = await replanKhvcGroups(req, gcs) } catch (e) { replan_error = String(e); console.error('[dispatch confirm] replan:', e) }
-  return { lines: rows.length, group_codes: gcs, replan, replan_error }
+  // KHÔNG ĐƯỢC BÁO THÀNH CÔNG KHI CHUYẾN KHÔNG SINH RA. `replanKhvcGroups` không NÉM lỗi khi đường
+  // derive từ chối — nó trả về một object lồng `{derive:{success:false,…}}` mà trước nay không ai đọc,
+  // nên API trả 200 kèm `replan_error: null` trong khi thực tế 0/50 chuyến được tạo (đo 24/09).
+  // Đây là lớp C5 "trả 200 im lặng". Gác `tripGuards` ở trên chặn ca thường gặp (mã hàng lạ);
+  // chỗ này bắt MỌI lý do từ chối còn lại để màn hình còn nói được.
+  const derive = (replan as { derive?: { success?: boolean; error?: { message?: string } } } | null)?.derive
+  const derive_failed = !!derive && derive.success === false
+  const derive_message = derive_failed
+    ? String(derive.error?.message ?? 'đường sinh chuyến từ chối kế hoạch')
+    : null
+  if (derive_failed) console.error('[dispatch confirm] derive từ chối:', JSON.stringify(derive).slice(0, 500))
+  return { lines: rows.length, group_codes: gcs, replan, replan_error, derive_failed, derive_message }
 }
 
 /** ĐVVT của chuyến có cần phản hồi không — đọc CỜ HIỆN TẠI của danh mục, không tin bản chụp trong detail lúc lập. */
@@ -628,10 +658,10 @@ export async function confirmPlan(req: Request, res: Response) {
     const direct = trips.filter(t => !t.transport_company_id || !flags.get(t.transport_company_id))
     const tender = trips.filter(t => t.transport_company_id && flags.get(t.transport_company_id))
     await markTendered(tender)
-    const w = direct.length ? await writeTrips(req, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null }
+    const w = direct.length ? await writeTrips(req, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
-    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error })
+    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -654,7 +684,7 @@ export async function settleTrip(req: Request, res: Response) {
     if (needs) await markTendered([trip]); else w = await writeTrips(req, full, wh, [trip])
     const status = await syncPlanStatus(plan, req.user?.name ?? null)
     await writeSummary(plan)
-    return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null })
+    return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null, derive_failed: w?.derive_failed ?? false, derive_message: w?.derive_message ?? null })
   } catch (e) { return failAny(res, e) }
 }
 

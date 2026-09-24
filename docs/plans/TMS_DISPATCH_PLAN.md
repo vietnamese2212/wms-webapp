@@ -249,6 +249,12 @@ Kết quả gắn lên `GroupDeliveryOrder` (cột `freight_estimated`, `freight
 
 Đo trước khi tin: chạy engine trên chính file mẫu (627 chuyến SAP đã xếp) → so **số chuyến / pallet trung bình / cước tổng** máy vs người; mục tiêu đợt 2 = không tệ hơn người ở cả ba số, in bảng so sánh trong plan.
 
+**Trạng thái 24/09 — ĐÃ LÊN DEV (đợt 2 + 2b):** engine + controller + trang `/tms/dispatch` + QA 61 (42 phép) + 32 test đơn vị. Khác plan ở ba chỗ, có lý do:
+- Xe lớn nhất để xếp = trong số dòng xe **CÓ CƯỚC cho phường của cụm** (gói 61 bắt: xếp vào cont 30 pallet không ai chào giá ⇒ chuyến không ĐVVT/không cước).
+- Chọn ĐVVT: phân tuyến → dưới tỷ trọng (cộng dồn ngay trong lượt) → rẻ nhất → mã (tỷ trọng đứng TRƯỚC rẻ nhất, theo user chốt 23/09 "phân tuyến cố định trước").
+- **Vòng đời xe + công tắc "ĐVVT cần phản hồi"** (user chốt 24/09 chiều, đề xuất benchmark A3): `TransportCompany.tender_required` FALSE ⇒ Xác nhận ghi thẳng KH xuất, đổi tay ở tab KH xuất; TRUE ⇒ xe `TENDERED` chờ ĐVVT nhận/từ chối (`POST /trips/:id/respond`, đợt A điều vận ghi thay) → từ chối ⇒ đổi ĐVVT ⇒ `POST /trips/:id/settle` chốt lẻ. Kế hoạch `DRAFT → TENDERED → CONFIRMED`, MỘT kế hoạch đang mở mỗi kho×ngày.
+- Chưa: đo máy vs người trên file mẫu (A5) · nhiệt/không đi chung (A1) · MIN/MAX (A2) · link chào chuyến (tầng B).
+
 ---
 
 ## 8. ĐỐI SOÁT & BÁO CÁO (Đợt 3)
@@ -270,12 +276,13 @@ Kết quả gắn lên `GroupDeliveryOrder` (cột `freight_estimated`, `freight
 | `TransportCompany.alias_codes` | Cài đặt TMS → ĐVVT (ô chip đã có) | `tms_companies.edit` | rỗng ✔ |
 | `Customer` 8 cột địa lý | Khách hàng → form + cột | `customers.edit` (upload tự điền ô trống) | null ✔ |
 | `freight_tariff` / `freight_surcharge` | trang **Cước vận chuyển** (menu TMS) | `freight.manage` | không có = chuyến không cước, không chặn ✔ |
-| `Warehouse.dispatch_*` (Đợt 2: ngưỡng Non tải kho, ĐVVT ưu tiên) | Cài đặt WMS → Kho, nhóm "XUẤT — Điều vận" | `manage_warehouse` | null = dùng dòng xe ✔ |
+| `Warehouse.dispatch_max_drops` (3) · `dispatch_allow_mix_channels` (false) · `dispatch_underload_pct` (Đợt 2) | Cài đặt WMS → Kho, nhóm "XUẤT — Điều vận" (CHỈ theo kho, không theo Loại kho — ghép chuyến là việc của cả kho) | `manage_warehouse` | 3 điểm · không trộn kênh · null = theo dòng xe ✔ |
+| `TransportCompany.tender_required` (Đợt 2b — ĐVVT cần phản hồi khi chào chuyến) | Cài đặt TMS → ĐVVT/NCC → form, switch chỉ hiện với loại ĐVVT (+ dòng "Chào chuyến" ở pane chi tiết) | `tms_companies.edit` | FALSE = Xác nhận ghi thẳng Kế hoạch xuất, đổi tay ở tab KH xuất ✔ |
 
 ## 10. QUYỀN (đủ 5 việc mỗi action)
 - `external_do_sap`: dùng lại `create` cho Up ZSD02; thêm **`compare`** (tab đối chiếu, tạm) — hoặc dùng `view`. Tab "Chưa có OD" dùng `view`.
 - Module mới **`freight`**: `view` · `manage` (CRUD + upload cước) · `export`.
-- Module mới **`dispatch`** (Đợt 2): `view` (pool + kế hoạch) · `plan` (chạy engine, sửa nháp) · `confirm` (ghi Kế hoạch xuất — cũng cần `external_khvc.create` ở BE qua `requireAnyPerm`) · `export`.
+- Module mới **`dispatch`** (Đợt 2, đã lên 24/09): `view` (pool + kế hoạch) · `plan` (chạy engine, sửa nháp, bỏ nháp) · `confirm` (Xác nhận ghi Kế hoạch xuất · chốt lẻ xe `settle` · ghi ĐVVT nhận/từ chối `respond`) · `export`. (Không đòi thêm `external_khvc.create` — `confirm` là quyền riêng của điều vận, khvc_lines ghi với `source: 'DISPATCH'`.)
 
 ---
 

@@ -548,8 +548,14 @@ export async function createShare(req: Request, res: Response) {
     const from = b.effective_from ?? todayVN()
     if (!effOk(from, b.effective_to)) return fail(res, 'Hiệu lực đến phải ≥ hiệu lực từ', 400)
     // Σ tỷ trọng đang hiệu lực của kho ≤ 100 — vượt là bảng tự mâu thuẫn, engine không chia được
+    // ĐẾM CẢ dòng của CHÍNH ĐVVT đang thêm. Bản cũ loại nó ra — nhưng unique key là (kho, ĐVVT,
+    // hiệu lực TỪ) nên THÊM dòng thứ hai cho cùng ĐVVT với ngày hiệu lực khác là hợp lệ, và khi đó
+    // phần đang giữ của chính nó biến mất khỏi phép tính ⇒ Σ vượt 100 mà cửa vẫn cho qua, rồi engine
+    // gặp HAI mục tiêu cho một ĐVVT và lấy đại dòng đầu. Cửa PUT vốn đã loại theo ID (đúng: sửa thì
+    // thay chính dòng đó) — nay POST không còn nói khác PUT. Muốn đổi mức sang kỳ mới thì đặt
+    // `effective_to` cho dòng cũ trước, đúng khuôn của bảng cước.
     const { data: others } = await db.from('carrier_share_target').select('transport_company_id, share_pct, effective_from, effective_to, is_active').eq('from_warehouse_id', b.from_warehouse_id)
-    const sum = effectiveAt((others ?? []).filter(o => o.transport_company_id !== b.transport_company_id), from).reduce((a, o) => a + Number(o.share_pct), 0)
+    const sum = effectiveAt(others ?? [], from).reduce((a, o) => a + Number(o.share_pct), 0)
     if (sum + b.share_pct > 100.0001) return fail(res, `Tổng tỷ trọng của kho sẽ là ${(sum + b.share_pct).toFixed(1)} % > 100 % (các ĐVVT khác đang giữ ${sum.toFixed(1)} %)`, 400)
     const actor = req.user?.name || null
     const rec: ShareInsert = {

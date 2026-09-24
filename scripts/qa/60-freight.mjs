@@ -178,19 +178,43 @@ try {
   check('4a2. Cùng (kho·cấp·khu vực·ĐVVT·hiệu lực) lần hai → 409', a1d.s === 409, `http=${a1d.s}`)
   const au = await api(`/tms/freight/allocations/${aId}`, 'PUT', { priority: 2 })
   check('4b. PUT priority → 200', au.s === 200 && au.j?.data?.priority === 2, `http=${au.s}`)
-  const sh1 = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, share_pct: 60, note: 'QA60' })
-  const shId = sh1.j?.data?.id
-  check('4c. POST tỷ trọng DA 60 % → 201', sh1.s === 201 && !!shId, `http=${sh1.s} ${sh1.j?.error?.message ?? ''}`)
-  const sh2bad = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: HA.id, share_pct: 50, note: 'QA60' })
-  check('4c2. HA 50 % khi DA đã 60 % → 400 (Σ > 100 %)', sh2bad.s === 400 && /100/.test(sh2bad.j?.error?.message ?? ''), `http=${sh2bad.s} msg=${sh2bad.j?.error?.message?.slice(0, 80)}`)
-  const sh2 = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: HA.id, share_pct: 40, note: 'QA60' })
-  check('4c3. HA 40 % → 201 (Σ = 100 %)', sh2.s === 201, `http=${sh2.s}`)
-  const shUp = await api(`/tms/freight/shares/${shId}`, 'PUT', { share_pct: 70 })
-  check('4c4. PUT DA lên 70 % → 400 (Σ 110 %)', shUp.s === 400, `http=${shUp.s}`)
+  // Tỷ trọng ĐVVT: kho Ba Vì là kho THẬT và tỷ trọng là CẤU HÌNH THẬT (user khai 24/09) ⇒ KHÔNG
+  // được giả định kho còn trống 100 %. Bản cũ gõ cứng 60 + 40 nên đỏ ngay hôm có người khai thật —
+  // đúng lớp "gói QA đụng dữ liệu dùng chung". Nay ĐO chỗ trống rồi kiểm chính LUẬT Σ ≤ 100.
+  const sh0 = await api(`/tms/freight/allocations?warehouse_id=${WH}`)
+  const realShares = (sh0.j?.data?.shares ?? []).filter(x => x.effective_now && x.note !== 'QA60')
+  const sumReal = realShares.reduce((a, x) => a + Number(x.share_pct), 0)
+  const room = Math.round((100 - sumReal) * 10) / 10
+  // ĐVVT fixture phải là ĐVVT CHƯA có dòng tỷ trọng thật ở kho này: dựng lên ĐVVT đã khai thật thì
+  // đụng unique (kho, ĐVVT, hiệu lực từ) và làm lệch phép tính Σ.
+  const busy = new Set(realShares.map(x => x.transport_company_id))
+  const freeCos = (await restAll('TransportCompany', 'select=id,code,name&is_active=is.true&order=code&limit=200')).filter(c => !busy.has(c.id))
+  let shId = null, sh2 = { j: {} }, nQa = 0
+  if (room < 2 || freeCos.length < 2) {
+    check(`4c. bỏ qua fixture tỷ trọng — kho đã khai thật ${sumReal} % (chỗ trống ${room} %), ĐVVT còn trống ${freeCos.length}`, true, 'không còn chỗ dựng ca kiểm Σ ≤ 100')
+  } else {
+    const [C1, C2] = freeCos
+    const p1 = Math.round((room - 1) * 10) / 10       // chừa đúng 1 % cho bước sau
+    const sh1 = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: C1.id, share_pct: p1, note: 'QA60' })
+    shId = sh1.j?.data?.id
+    check(`4c. POST tỷ trọng ${C1.code} ${p1} % (chỗ trống ${room} %, kho đã khai thật ${sumReal} %) → 201`, sh1.s === 201 && !!shId, `http=${sh1.s} ${sh1.j?.error?.message ?? ''}`)
+    const sh2bad = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: C2.id, share_pct: 2, note: 'QA60' })
+    check(`4c2. ${C2.code} 2 % khi chỗ trống chỉ còn 1 % → 400 (Σ > 100 %)`, sh2bad.s === 400 && /100/.test(sh2bad.j?.error?.message ?? ''), `http=${sh2bad.s} msg=${sh2bad.j?.error?.message?.slice(0, 80)}`)
+    sh2 = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: C2.id, share_pct: 1, note: 'QA60' })
+    check(`4c3. ${C2.code} 1 % → 201 (Σ = đúng 100 %)`, sh2.s === 201, `http=${sh2.s}`)
+    const shUp = await api(`/tms/freight/shares/${shId}`, 'PUT', { share_pct: Math.round((p1 + 1) * 10) / 10 })
+    check(`4c4. PUT ${C1.code} lên ${Math.round((p1 + 1) * 10) / 10} % → 400 (Σ > 100 %)`, shUp.s === 400, `http=${shUp.s}`)
+    // Cửa POST phải đếm CẢ dòng của chính ĐVVT đó: thêm dòng thứ hai cho C1 (ngày hiệu lực khác) mà
+    // bỏ qua phần nó đang giữ thì Σ vượt 100 âm thầm và engine gặp hai mục tiêu cho một ĐVVT.
+    const dup = await api('/tms/freight/shares', 'POST', { from_warehouse_id: WH, transport_company_id: C1.id, share_pct: p1, effective_from: '2026-12-01', note: 'QA60' })
+    check(`4c5. Thêm dòng THỨ HAI cho ${C1.code} (ngày hiệu lực khác) → 400, không bỏ qua phần nó đang giữ`, dup.s === 400, `http=${dup.s} msg=${dup.j?.error?.message?.slice(0, 90) ?? ''}`)
+    if (dup.j?.data?.id) await api(`/tms/freight/shares/${dup.j.data.id}`, 'DELETE')
+    nQa = 2
+  }
   const al = await api(`/tms/freight/allocations?warehouse_id=${WH}`)
-  check('4d. GET allocations: 1 ưu tiên QA60 (effective_now) + 2 tỷ trọng QA60', al.s === 200
+  check(`4d. GET allocations: 1 ưu tiên QA60 (effective_now) + ${nQa} tỷ trọng QA60`, al.s === 200
     && (al.j?.data?.allocations ?? []).filter(x => x.area_code === WARD1 && x.effective_now).length === 1
-    && (al.j?.data?.shares ?? []).filter(x => x.note === 'QA60').length === 2, `http=${al.s}`)
+    && (al.j?.data?.shares ?? []).filter(x => x.note === 'QA60').length === nQa, `http=${al.s}`)
 
   // ── [6] Dòng xe con trên Kế hoạch xuất → chuyến → cước dự tính + tải (đợt 1 mục 15, 23/09) ──
   // Oracle độc lập: cước = giá bảng cước WARD1 (270.000, upload ở [2e2]) × ceil(pallet), pallet = (qty/upc)/cpp từ master.
@@ -259,8 +283,10 @@ try {
   for (const r of await restAll('freight_tariff', `select=id&ward_code=like.QA60*`)) await api(`/tms/freight/tariffs/${r.id}`, 'DELETE')
   const ds = await api(`/tms/freight/surcharges/${sId}`, 'DELETE'); await api(`/tms/freight/surcharges/${s2.j?.data?.id}`, 'DELETE')
   const da = await api(`/tms/freight/allocations/${aId}`, 'DELETE')
-  const dsh = await api(`/tms/freight/shares/${shId}`, 'DELETE'); await api(`/tms/freight/shares/${sh2.j?.data?.id}`, 'DELETE')
-  check('5c. DELETE phụ phí / ưu tiên / tỷ trọng → 200', ds.s === 200 && da.s === 200 && dsh.s === 200, `s=${ds.s} a=${da.s} sh=${dsh.s}`)
+  // shId null = đã bỏ qua fixture tỷ trọng ở [4c] vì kho khai kín 100 % — không kết luận về DELETE tỷ trọng
+  const dsh = shId ? await api(`/tms/freight/shares/${shId}`, 'DELETE') : { s: null }
+  if (sh2.j?.data?.id) await api(`/tms/freight/shares/${sh2.j.data.id}`, 'DELETE')
+  check('5c. DELETE phụ phí / ưu tiên / tỷ trọng → 200', ds.s === 200 && da.s === 200 && (shId ? dsh.s === 200 : true), `s=${ds.s} a=${da.s} sh=${dsh.s ?? '(bỏ qua)'}`)
   const dm2 = await api(`/tms/vehicle-models/${vmId}`, 'DELETE')
   check('5d. DELETE dòng xe sau khi gỡ hết tham chiếu → 200', dm2.s === 200, `http=${dm2.s} ${dm2.j?.error?.message ?? ''}`)
 } finally {

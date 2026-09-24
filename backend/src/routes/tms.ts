@@ -49,6 +49,7 @@ router.delete('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'delete'), 
 router.get('/vehicle-models',                     requireTmsOrGateView,                                 vehicleModel.listVehicleModels)
 router.post('/vehicle-models',                    requirePerm('tms_vehicle_types', 'create'), validate({ body: vehicleModel.zVehicleModelCreate }), vehicleModel.createVehicleModel)
 router.patch('/vehicle-models/assign-parent',     requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignParent }),       vehicleModel.assignParent)   // TRƯỚC /:id
+router.patch('/vehicle-models/assign-conditions', requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignConditions }),   vehicleModel.assignConditions) // TRƯỚC /:id
 router.put('/vehicle-models/:id',                 requirePerm('tms_vehicle_types', 'edit'),   validate({ params: zIdParam, body: vehicleModel.zVehicleModelUpdate }), vehicleModel.updateVehicleModel)
 router.delete('/vehicle-models/:id',              requirePerm('tms_vehicle_types', 'delete'), validate({ params: zIdParam }),                        vehicleModel.deleteVehicleModel)
 

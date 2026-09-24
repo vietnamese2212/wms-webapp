@@ -3,25 +3,46 @@ import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
-import { invalidateWhTypeMetaCache, type WhTypeMeta } from '../../utils/warehouseTypeMeta'
+import { invalidateWhTypeMetaCache, getStorageConditionByCategory, type WhTypeMeta } from '../../utils/warehouseTypeMeta'
 
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
   return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
 
-// meta = cờ hành vi per-giá-trị (hiện dùng cho warehouse_type — xem utils/warehouseTypeMeta).
-// Chỉ nhận đúng các key đã biết, ép kiểu — không cho client nhét jsonb tùy ý.
-function sanitizeMeta(raw: unknown): WhTypeMeta | null {
+/** meta của danh mục ĐIỀU KIỆN BẢO QUẢN (type='storage_condition', 24/09): nhãn tiếng Việt + dải nhiệt để hiển thị. */
+export interface StorageConditionMeta { label?: string; temp_min?: number | null; temp_max?: number | null; badge_color?: string }
+type LookupMeta = WhTypeMeta & StorageConditionMeta
+
+// meta = cờ hành vi per-giá-trị. Chỉ nhận đúng các key đã biết CỦA TỪNG DANH MỤC, ép kiểu — không cho
+// client nhét jsonb tùy ý, và không để key của danh mục này lọt sang danh mục khác.
+// ⚠️ THÊM DANH MỤC MỚI CÓ meta THÌ PHẢI KHAI KEY Ở ĐÂY: key lạ bị vứt ÂM THẦM (không lỗi, không cảnh
+// báo) — đúng lớp lỗi "cột không khai là rơi khỏi raw" của bộ đọc ZSD02 (C36, 24/09).
+function sanitizeMeta(raw: unknown, type?: string): LookupMeta | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
-  const out: WhTypeMeta = {}
+  const out: LookupMeta = {}
+  if (typeof o.badge_color === 'string') out.badge_color = o.badge_color.trim()
+  if (type === 'storage_condition') {
+    if (typeof o.label === 'string') out.label = o.label.trim().slice(0, 60)
+    const temp = (v: unknown): number | null | undefined => {
+      if (v === null || v === '') return null
+      const n = Number(v)
+      return typeof v === 'number' || typeof v === 'string' ? (Number.isFinite(n) ? n : undefined) : undefined
+    }
+    const lo = temp(o.temp_min), hi = temp(o.temp_max)
+    if (lo !== undefined) out.temp_min = lo
+    if (hi !== undefined) out.temp_max = hi
+    return out
+  }
   if (typeof o.is_ncc_goods === 'boolean') out.is_ncc_goods = o.is_ncc_goods
   if (typeof o.requires_shelf_life === 'boolean') out.requires_shelf_life = o.requires_shelf_life
   if (typeof o.requires_pallet_per_ea === 'boolean') out.requires_pallet_per_ea = o.requires_pallet_per_ea
   if (typeof o.requires_ncc === 'boolean') out.requires_ncc = o.requires_ncc
   if (typeof o.batch_char === 'string') out.batch_char = o.batch_char.trim().toUpperCase().slice(0, 1)
-  if (typeof o.badge_color === 'string') out.badge_color = o.badge_color.trim()
+  // Loại kho khai điều kiện bảo quản của hàng thuộc loại đó; chuỗi rỗng = gỡ khai (về "không ràng buộc").
+  if (typeof o.storage_condition === 'string') out.storage_condition = o.storage_condition.trim() || null
+  else if (o.storage_condition === null) out.storage_condition = null
   return out
 }
 
@@ -58,7 +79,7 @@ export async function addLookup(req: Request, res: Response) {
   const actor = req.user?.name || null
   const { data, error } = await supabase
     .from('LookupValue')
-    .insert({ id: randomUUID(), type, value: value.trim(), sort_order: nextSort, meta: sanitizeMeta(meta) ?? {}, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
+    .insert({ id: randomUUID(), type, value: value.trim(), sort_order: nextSort, meta: sanitizeMeta(meta, type) ?? {}, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
     .select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by')
     .single()
 
@@ -116,7 +137,7 @@ export async function updateLookup(req: Request, res: Response) {
   }
 
   const patch: Record<string, unknown> = { value: newValue, updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
-  const cleanMeta = sanitizeMeta(meta)
+  const cleanMeta = sanitizeMeta(meta, cur.type)
   if (cleanMeta) patch.meta = cleanMeta
 
   const { data, error } = await supabase
@@ -315,6 +336,19 @@ export async function deleteLookup(req: Request, res: Response) {
   // hàng dùng" của tab ĐVT ⇒ mã hàng mất đơn vị gốc, đụng thẳng lõi số lượng (gói QA 49 phép [45]).
   if (lk.type === 'unit_of_measure') {
     return fail(res, 'Đơn vị tính phải xoá ở tab Đơn vị tính (Cài đặt WMS) — nơi có kiểm "đang được mã hàng nào dùng"', 403)
+  }
+  // Điều kiện bảo quản đang được Loại kho hoặc dòng xe khai ⇒ xoá là để lại mã mồ côi: hàng mất ràng
+  // buộc nhiệt, xe khai phục vụ một mã không còn trong danh mục (đúng lớp lỗi "tên ma" của Loại kho).
+  if (lk.type === 'storage_condition' && lk.value) {
+    const v = lk.value as string
+    const cats = [...(await getStorageConditionByCategory()).entries()].filter(([, c]) => c === v).map(([cat]) => cat)
+    const { count: veh } = await supabase.from('vehicle_model')
+      .select('id', { count: 'exact', head: true }).contains('storage_conditions', [v])
+    const used = cats.length + (veh ?? 0)
+    if (used > 0) {
+      const parts = [cats.length ? `${cats.length} Loại kho (${cats.join(', ')})` : '', veh ? `${veh} dòng xe` : ''].filter(Boolean)
+      return fail(res, `Điều kiện bảo quản "${v}" đang được dùng ở ${parts.join(' · ')} — gỡ khai ở đó trước khi xoá.`, 409)
+    }
   }
   if (lk.type === 'warehouse_type' && lk.value) {
     const v = lk.value as string

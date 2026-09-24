@@ -28,6 +28,16 @@ const mat = (await restAll('Material', `select=units_per_carton,cartons_per_pall
 const perPallet = Number(mat.units_per_carton) * Number(mat.cartons_per_pallet)
 const PAL = [4, 3, 3]           // OD1 4 pallet W1 · OD2 3 pallet W1 · OD3 3 pallet W2 ⇒ xe 1 = OD1+OD2 (7/9) · xe 2 = OD3 (3/9 Non tải, gộp vào xe 1 thì 10 > 9)
 const PRICE_DA = 200_000, PRICE_HA = 250_000
+// [7] Điều kiện bảo quản (24/09): mã QA riêng nên KHÔNG dòng xe thật nào phục vụ ⇒ đo được cả hai chiều
+// (khai cho xe QA ⇒ chọn được; gỡ ⇒ không xe nào phục vụ). Loại kho của mã fixture là DỮ LIỆU DÙNG CHUNG
+// trên staging nên meta gốc phải được ghi nhớ và trả lại trong cleanup — cleanup chạy cả ở ĐẦU gói.
+const COND = 'QA61C'
+const MAT_CAT = FIX.MAT_POOL_CAT
+let catRow = null, CAT_META0 = null
+if (MAT_CAT) {
+  catRow = (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(MAT_CAT)}`))[0] ?? null
+  CAT_META0 = catRow ? { ...(catRow.meta ?? {}) } : null
+}
 
 async function cleanupTrips() {
   const gdos = await restAll('GroupDeliveryOrder', `select=id&group_code=like.${PREFIX}*`)
@@ -56,6 +66,10 @@ async function cleanupTrips() {
 }
 async function cleanup() {
   await cleanupTrips()
+  // Trả Loại kho về meta GỐC trước tiên: để sót `storage_condition` của QA thì mọi kế hoạch điều vận sau đó
+  // không tìm được dòng xe nào phục vụ — hỏng cho cả phiên khác đang dùng staging.
+  if (catRow && CAT_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${catRow.id}`, { meta: CAT_META0 }).catch(() => {})
+  await restWrite('LookupValue', 'DELETE', `type=eq.storage_condition&value=eq.${COND}`).catch(() => {})
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA61*`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=like.QA61*`).catch(() => {})
   await restWrite('freight_tariff', 'DELETE', `ward_code=like.QA61*`).catch(() => {})
@@ -212,6 +226,63 @@ try {
   const dc2 = await api(`/tms/dispatch/plans/${p3.j?.data?.id}`, 'DELETE')
   check('4c. Bỏ lần hai → 409', dc2.s === 409, `http=${dc2.s}`)
 
+  // ── [7] ĐIỀU KIỆN BẢO QUẢN (user chốt 24/09: lạnh âm · 2–8 · 15–25 · thường) ──
+  // Hàng lấy điều kiện theo LOẠI KHO (Cài đặt WMS), xe khai chở được mức nào (Cài đặt TMS) → engine khớp hai bên.
+  {
+    const mk = await api('/wms/lookup', 'POST', { type: 'storage_condition', value: COND, meta: { label: 'QA61 2 – 8 °C', temp_min: 2, temp_max: 8, badge_color: 'sky' } })
+    const saved = (await restAll('LookupValue', `select=meta&type=eq.storage_condition&value=eq.${COND}`))[0]
+    check('7a. Thêm điều kiện bảo quản → 200 và meta GIỮ NGUYÊN nhãn + dải nhiệt (bộ lọc meta của LookupValue vứt khoá lạ nếu quên khai)',
+      mk.s === 200 && saved?.meta?.label === 'QA61 2 – 8 °C' && Number(saved?.meta?.temp_min) === 2 && Number(saved?.meta?.temp_max) === 8,
+      `http=${mk.s} meta=${JSON.stringify(saved?.meta ?? null)}`)
+
+    const badC = await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: ['KHONG_CO_THAT'] })
+    check('7b. Khai điều kiện KHÔNG có trong danh mục → 400 STORAGE_CONDITION_INVALID (không để mã mồ côi làm engine loại xe âm thầm)',
+      badC.s === 400 && badC.j?.error?.code === 'STORAGE_CONDITION_INVALID', `http=${badC.s} code=${badC.j?.error?.code}`)
+
+    const before = (await api('/tms/vehicle-models')).j?.data?.unconditioned
+    const okC = await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [COND] })
+    const listVm = await api('/tms/vehicle-models')
+    const mine = (listVm.j?.data?.items ?? []).find(m => m.id === vmId)
+    check('7c. Khai hàng loạt → updated 1 · dòng xe mang đúng mã · ô đếm "chưa khai" giảm 1',
+      okC.s === 200 && okC.j?.data?.updated === 1 && JSON.stringify(mine?.storage_conditions) === JSON.stringify([COND]) && listVm.j?.data?.unconditioned === before - 1,
+      `http=${okC.s} conds=${JSON.stringify(mine?.storage_conditions)} unconditioned ${before}→${listVm.j?.data?.unconditioned}`)
+
+    if (catRow) {
+      // Loại kho của mã fixture khai điều kiện ⇒ hàng "đòi" mức đó; chỉ dòng xe QA phục vụ nên nó phải được chọn
+      const setCat = await api(`/wms/lookup/${catRow.id}`, 'PUT', { value: catRow.value, meta: { ...CAT_META0, storage_condition: COND } })
+      const catNow = (await restAll('LookupValue', `select=meta&id=eq.${catRow.id}`))[0]
+      check('7d. Loại kho khai điều kiện bảo quản → 200 và meta giữ CẢ cờ cũ lẫn khoá mới (không đè mất cấu hình đang chạy)',
+        setCat.s === 200 && catNow?.meta?.storage_condition === COND && catNow?.meta?.badge_color === CAT_META0.badge_color,
+        `http=${setCat.s} meta=${JSON.stringify(catNow?.meta ?? null)}`)
+
+      await cleanupTrips()
+      const pc = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+      const tr = (pc.j?.data?.trips ?? [])
+      check('7e. Lập kế hoạch: mọi xe đều là dòng xe PHỤC VỤ được mức đó, và chuyến mang điều kiện của hàng',
+        pc.s === 201 && tr.length > 0 && tr.every(t => t.vehicle_model_id === vmId) && tr.every(t => JSON.stringify(t.detail?.conditions) === JSON.stringify([COND])),
+        `http=${pc.s} trips=${tr.length} vm=${[...new Set(tr.map(t => t.detail?.vehicle_model?.sap_code))].join(',')} conds=${JSON.stringify(tr[0]?.detail?.conditions)}`)
+
+      // Gỡ khai khỏi dòng xe QA ⇒ KHÔNG dòng xe nào phục vụ mức QA ⇒ phải nói thẳng thiếu mức nào, không im lặng
+      await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: ['AMBIENT'] })
+      await cleanupTrips()
+      const pn = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+      const tn = (pn.j?.data?.trips ?? [])
+      check('7f. Không dòng xe nào phục vụ mức hàng đòi → chuyến KHÔNG có dòng xe, cảnh báo gọi đúng TÊN mức + chỉ chỗ khai',
+        pn.s === 201 && tn.length > 0 && tn.every(t => !t.vehicle_model_id) && /QA61 2 – 8 °C/.test(tn[0]?.detail?.warnings?.join(' ') ?? '') && /Mã dòng xe/.test(tn[0]?.detail?.warnings?.join(' ') ?? ''),
+        `http=${pn.s} trips=${tn.length} vm=${tn[0]?.vehicle_model_id} warn=${(tn[0]?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
+      await cleanupTrips()
+
+      const condRow = (await restAll('LookupValue', `select=id&type=eq.storage_condition&value=eq.${COND}`))[0]
+      const delUsed = await api(`/wms/lookup/${condRow.id}`, 'DELETE')
+      check('7g. Xoá điều kiện đang được Loại kho dùng → 409 nêu rõ nơi đang dùng (không để lại mã mồ côi)',
+        delUsed.s === 409 && /Loại kho/.test(delUsed.j?.error?.message ?? ''), `http=${delUsed.s} msg=${delUsed.j?.error?.message?.slice(0, 90)}`)
+      await api(`/wms/lookup/${catRow.id}`, 'PUT', { value: catRow.value, meta: { ...CAT_META0, storage_condition: null } })
+      await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [] })
+      const delFree = await api(`/wms/lookup/${condRow.id}`, 'DELETE')
+      check('7h. Gỡ khai hai bên rồi xoá → 200', delFree.s === 200, `http=${delFree.s} ${delFree.j?.error?.message ?? ''}`)
+    }
+  }
+
   // ── [5] Tắt cờ HA → Xác nhận là vào thẳng (hành vi mặc định — không phản hồi, muốn đổi thì sửa tay) ──
   await cleanupTrips()
   await api(`/tms/transport-companies/${HA.id}`, 'PUT', { tender_required: false })
@@ -230,6 +301,10 @@ try {
     + (await restAll('erp_outbound_orders', `select=id&od_number=like.QA61*`)).length
     + (await restAll('vehicle_model', `select=id&sap_code=like.QA61*`)).length
   const ha = (await restAll('TransportCompany', `select=tender_required&id=eq.${HA.id}`))[0]
-  check('9. Dọn sạch fixture QA61 + trả cờ HA về giá trị ban đầu', left === 0 && ha?.tender_required === HA_FLAG0, `còn ${left} · HA=${ha?.tender_required} (gốc ${HA_FLAG0})`)
+  const catBack = catRow ? (await restAll('LookupValue', `select=meta&id=eq.${catRow.id}`))[0] : null
+  const condLeft = (await restAll('LookupValue', `select=id&type=eq.storage_condition&value=eq.${COND}`)).length
+  check('9. Dọn sạch fixture QA61 + trả cờ HA và meta Loại kho về như cũ', left === 0 && ha?.tender_required === HA_FLAG0 && condLeft === 0
+    && (!catRow || JSON.stringify(catBack?.meta ?? {}) === JSON.stringify(CAT_META0 ?? {})),
+    `còn ${left} · HA=${ha?.tender_required} (gốc ${HA_FLAG0}) · danh mục QA còn ${condLeft} · loại kho ${JSON.stringify(catBack?.meta ?? null)}`)
 }
 finish(PACK)

@@ -24,11 +24,12 @@ import { ok, fail, type PgLikeError } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
 import { normDvvt } from '../../utils/sapUnits'
+import { getStorageConditionByCategory } from '../../utils/warehouseTypeMeta'
 import { makeDvvtResolver } from '../../services/sapFlow'
 import { loadOfWithSap } from '../../services/freightEstimate'
 import { effectiveAt } from '../../services/freight'
 import {
-  runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, pickBookingCategory, sumLines,
+  runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, pickBookingCategory, sumLines, servesConditions,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis,
 } from '../../services/dispatchEngine'
@@ -100,7 +101,7 @@ async function loadWarehouse(id: string): Promise<WhRow | null> {
 
 async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
   const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes] = await Promise.all([
-    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct, max_drops, is_active').eq('is_active', true).order('sap_code'),
+    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct, max_drops, storage_conditions, is_active').eq('is_active', true).order('sap_code'),
     db.from('VehicleType').select('id, name'),
     wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
       .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
@@ -113,13 +114,14 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
   ])
   for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
   const vtName = new Map(((vtRes.data ?? []) as { id: string; name: string }[]).map(v => [v.id, v.name]))
-  const models: EngineModel[] = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | string | null; max_drops: number | null; is_active: boolean }[]).map(m => ({
+  const models: EngineModel[] = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | string | null; max_drops: number | null; storage_conditions: string[] | null; is_active: boolean }[]).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
     parent_type_name: m.parent_type_id ? (vtName.get(m.parent_type_id) ?? null) : null,
     capacity_mode: m.capacity_mode === 'TON' ? 'TON' : m.capacity_mode === 'PALLET' ? 'PALLET' : null,
     max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons),
     tariff_unit: m.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET',
-    underload_pct: numOrNull(m.underload_pct), serve_categories: null, max_drops: numOrNull(m.max_drops), is_active: m.is_active,
+    underload_pct: numOrNull(m.underload_pct), max_drops: numOrNull(m.max_drops), is_active: m.is_active,
+    serve_conditions: (m.storage_conditions ?? []).filter(Boolean),   // rỗng = chở được mọi điều kiện
   }))
   const allocations = ((allocRes.data ?? []) as EngineAllocation[]).map(a => ({ ...a, priority: Number(a.priority) }))
   const shareRows = effectiveAt(((shareRes.data ?? []) as (EngineShareTarget & { effective_from: string; effective_to: string | null; is_active: boolean })[]), day)
@@ -158,7 +160,7 @@ type PoolRow = { od_number: string; od_item: string; material_code: string | nul
 type MatRow = LoadMat & { material_code: string; category: string | null }
 type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean }
 
-async function loadPool(wh: WhRow, day: string): Promise<{ ods: EngineOd[]; in_plan: { od_number: string; group_code: string }[] }> {
+async function loadPool(wh: WhRow, day: string, condByCat: Map<string, string>): Promise<{ ods: EngineOd[]; in_plan: { od_number: string; group_code: string }[] }> {
   const rows = (await fetchAllRowsParallel(() => db.from('erp_outbound_orders')
     .select('od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, ward_code, region_code, flow, sap_pallets, gross_weight_kg, storage_location')
     .eq('plant', wh.sap_plant ?? '').eq('delivery_date', day).eq('sync_status', 'ACTIVE').not('od_number', 'is', null).order('od_number').order('od_item'))) as PoolRow[]
@@ -186,7 +188,9 @@ async function loadPool(wh: WhRow, day: string): Promise<{ ods: EngineOd[]; in_p
       const mat = r.material_code ? matBy.get(r.material_code) ?? null : null
       const q = Number(r.qty_base) || 0
       const l = loadOfWithSap(q, mat, wh.id, { sap_pallets: numOrNull(r.sap_pallets), gross_weight_kg: numOrNull(r.gross_weight_kg) })
-      return { material_code: r.material_code ?? '?', qty_base: q, pallets: l.pallets, kg: l.kg, category: mat?.category ?? null }
+      const cat = mat?.category ?? null
+      // Điều kiện bảo quản THEO LOẠI KHO (Cài đặt WMS → Loại kho). Loại chưa khai ⇒ null ⇒ không ràng buộc dòng xe.
+      return { material_code: r.material_code ?? '?', qty_base: q, pallets: l.pallets, kg: l.kg, category: cat, condition: (cat && condByCat.get(cat)) || null }
     })
     ods.push({
       od_number: od, ship_to_code: first.ship_to_code, ship_to_name: first.ship_to_name,
@@ -197,6 +201,18 @@ async function loadPool(wh: WhRow, day: string): Promise<{ ods: EngineOd[]; in_p
     })
   }
   return { ods, in_plan: [...inPlan].map(([od_number, group_code]) => ({ od_number, group_code })) }
+}
+
+/** Danh mục điều kiện bảo quản: mã → nhãn tiếng Việt. Engine chỉ dùng để VIẾT CÂU cảnh báo, không dùng để quyết định. */
+async function loadConditionLabels(): Promise<Record<string, string>> {
+  const { data, error } = await db.from('LookupValue').select('value, meta').eq('type', 'storage_condition').order('sort_order')
+  if (error) throw error
+  const out: Record<string, string> = {}
+  for (const r of (data ?? []) as { value: string; meta: unknown }[]) {
+    const label = (r.meta as { label?: unknown } | null)?.label
+    out[r.value] = typeof label === 'string' && label.trim() ? label.trim() : r.value
+  }
+  return out
 }
 
 /** STT bắt đầu = max STT đã có trong Kế hoạch xuất của kho×ngày + 1 (Số xe không được trùng xe thật). */
@@ -210,7 +226,7 @@ async function nextSeq(prefix: string): Promise<number> {
 // ── Ghi / đọc bản nháp ─────────────────────────────────────────────────────────────────────────────────
 function tripDetail(t: DispatchTrip) {
   return {
-    freight: t.freight, load: t.load, categories: t.categories, booking_category: t.booking_category, cluster: t.cluster,
+    freight: t.freight, load: t.load, categories: t.categories, conditions: t.conditions, booking_category: t.booking_category, cluster: t.cluster,
     carrier_reasons: t.carrier_reasons, warnings: t.warnings, merge_hint: t.merge_hint,
     vehicle_model: t.vehicle_model ? { id: t.vehicle_model.id, sap_code: t.vehicle_model.sap_code, name: t.vehicle_model.name, parent_type_name: t.vehicle_model.parent_type_name } : null,
     carrier: t.carrier ? { id: t.carrier.id, code: t.carrier.code, name: t.carrier.name, tender_required: t.carrier.tender_required === true } : null,
@@ -305,7 +321,8 @@ export async function createPlan(req: Request, res: Response) {
     const { data: open } = await db.from('dispatch_plan').select('id, status').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('status', 'TENDERED').maybeSingle()
     if (open) return fail(res, 409, 'PLAN_TENDERED_EXISTS', 'Kho × ngày này đang có kế hoạch chờ ĐVVT phản hồi — ghi phản hồi (nhận / từ chối) hoặc bỏ các xe chờ trước khi lập lại.')
 
-    const { ods, in_plan } = await loadPool(wh, b.plan_date)
+    const [condByCat, condition_labels] = await Promise.all([getStorageConditionByCategory(), loadConditionLabels()])
+    const { ods, in_plan } = await loadPool(wh, b.plan_date, condByCat)
     const wards = uniq(ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const refs = await loadRefs(wh.id, b.plan_date, wards)
     const share_actual = await loadShareActual(wh.id, b.plan_date, refs.carriers)
@@ -318,7 +335,7 @@ export async function createPlan(req: Request, res: Response) {
       code_prefix: prefix,
       start_seq: await nextSeq(prefix),
     }
-    const result = runDispatch({ ods, ...refs, share_actual, params })
+    const result = runDispatch({ ods, ...refs, share_actual, condition_labels, params })
 
     // MỘT bản nháp mỗi kho×ngày: nháp cũ (kể cả người đã sửa) bị thay — người bấm "Lập kế hoạch" là chủ ý chạy lại
     const { error: delErr } = await db.from('dispatch_plan').delete().eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('status', 'DRAFT')
@@ -410,15 +427,16 @@ async function loadTrip(req: Request, tripId: string, opts: { editable?: boolean
 }
 const loadDraftTrip = (req: Request, tripId: string) => loadTrip(req, tripId, { editable: true })
 
-async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null) {
+async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null, condLabels: Record<string, string> = {}) {
   const params = (plan.params ?? {}) as { day?: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number }
   const ctx = buildCtx({ ods: [], ...refs, share_actual: {}, params: { day: plan.plan_date, max_drops: params.max_drops ?? 3, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1 } })
   const model = modelId ? refs.models.find(m => m.id === modelId) ?? null : null
   const carrier = carrierId ? refs.carriers.find(c => c.id === carrierId) ?? null : null
-  const lines = trip.ods.map(o => ({ material_code: '', qty_base: 0, pallets: o.pallets == null ? null : Number(o.pallets), kg: o.tons == null ? null : Number(o.tons) * 1000, category: null }))
+  const lines = trip.ods.map(o => ({ material_code: '', qty_base: 0, pallets: o.pallets == null ? null : Number(o.pallets), kg: o.tons == null ? null : Number(o.tons) * 1000, category: null, condition: null }))
   const sum = sumLines(lines)
   const wards = uniq(trip.ods.map(o => o.ward_code).filter((x): x is string => !!x))
   const stops = Math.max(uniq(trip.ods.map(o => o.ship_to_code ?? o.od_number)).length, 1)
+  const prev = detailOf(trip)
   const warnings: string[] = []
   let freight: TripFreight
   if (!model) freight = { total: null, base: null, billed_pallets: null, unit: null, tariff_id: null, ward: null, surcharges: [], reason: 'Chưa chọn dòng xe con' }
@@ -427,7 +445,11 @@ async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, 
   const load = tripLoad(model, sum.pallets, sum.tons, whUnderloadPct ?? params.underload_pct ?? null)
   if (model && load.pct != null && load.pct > 100) warnings.push(`Vượt sức chứa dòng xe ${model.name} (${load.pct}%)`)
   if (model && model.max_drops != null && stops > model.max_drops) warnings.push(`Vượt số điểm giao của dòng xe (${stops} > ${model.max_drops})`)
-  const prev = detailOf(trip)
+  // Người tự chọn dòng xe thì KHÔNG chặn (đây là bản nháp, người quyết) — nhưng phải nói ra khi xe không phục vụ đủ
+  // điều kiện bảo quản của hàng trên xe, kẻo hàng lạnh lên xe thường mà màn hình im lặng.
+  const conds = (prev.conditions ?? []).filter(Boolean)
+  if (model && conds.length && !servesConditions(model, conds))
+    warnings.push(`Dòng xe ${model.name} không phục vụ điều kiện bảo quản ${conds.map(c => condLabels[c] ?? c).join(' + ')}`)
   const detail: Detail = {
     ...prev, freight, load, warnings, merge_hint: null,
     carrier_reasons: carrier ? ['Người điều vận chọn'] : [],
@@ -455,7 +477,7 @@ export async function updateTrip(req: Request, res: Response) {
     const { plan, trip } = got
     const wh = await loadWarehouse(plan.warehouse_id)
     const wards = uniq(trip.ods.map(o => o.ward_code).filter((x): x is string => !!x))
-    const refs = await loadRefs(plan.warehouse_id, plan.plan_date, wards)
+    const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels()])
     const modelId = b.vehicle_model_id === undefined ? trip.vehicle_model_id : b.vehicle_model_id
     const carrierId = b.transport_company_id === undefined ? trip.transport_company_id : b.transport_company_id
     if (modelId && !refs.models.some(m => m.id === modelId)) return fail(res, 400, 'VEHICLE_MODEL_INVALID', 'Dòng xe con không tồn tại, đang ngừng dùng hoặc chưa gán dòng xe cha')
@@ -465,7 +487,7 @@ export async function updateTrip(req: Request, res: Response) {
       if (!co) return fail(res, 400, 'CARRIER_INVALID', 'ĐVVT không tồn tại')
       refs.carriers.push(co as EngineCarrier)
     }
-    const updated = await repriceTrip(plan, trip, modelId, carrierId, refs, numOrNull(wh?.dispatch_underload_pct))
+    const updated = await repriceTrip(plan, trip, modelId, carrierId, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
     await writeSummary(plan)
     return ok(res, updated)
   } catch (e) { return failAny(res, e) }
@@ -506,10 +528,10 @@ export async function moveOd(req: Request, res: Response) {
 
     const wh = await loadWarehouse(plan.warehouse_id)
     const allWards = uniq([...src.ods.map(o => o.ward_code)].filter((x): x is string => !!x))
-    const refs = await loadRefs(plan.warehouse_id, plan.plan_date, allWards)
+    const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, allWards), loadConditionLabels()])
     // nguồn: còn OD thì tính lại, hết OD thì xoá chuyến
     const srcLeft = src.ods.filter(o => o.od_number !== b.od_number)
-    if (srcLeft.length) await repriceTrip(plan, { ...src, ods: srcLeft }, src.vehicle_model_id, src.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct))
+    if (srcLeft.length) await repriceTrip(plan, { ...src, ods: srcLeft }, src.vehicle_model_id, src.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
     else { const { error } = await db.from('dispatch_trip').delete().eq('id', src.id); if (error) throw error }
     // đích
     const tgTrip = (await db.from('dispatch_trip').select('*').eq('id', targetId).maybeSingle()).data as TripRow | null
@@ -517,7 +539,7 @@ export async function moveOd(req: Request, res: Response) {
       const tgOds = ((await db.from('dispatch_trip_od').select('*').eq('trip_id', targetId).order('od_number')).data ?? []) as TripOdRow[]
       const tgWards = uniq(tgOds.map(o => o.ward_code).filter((x): x is string => !!x))
       const refs2 = tgWards.every(w => allWards.includes(w)) ? refs : await loadRefs(plan.warehouse_id, plan.plan_date, uniq([...allWards, ...tgWards]))
-      await repriceTrip(plan, { ...tgTrip, ods: tgOds }, tgTrip.vehicle_model_id, tgTrip.transport_company_id, refs2, numOrNull(wh?.dispatch_underload_pct))
+      await repriceTrip(plan, { ...tgTrip, ods: tgOds }, tgTrip.vehicle_model_id, tgTrip.transport_company_id, refs2, numOrNull(wh?.dispatch_underload_pct), condLabels)
     }
     await writeSummary(plan)
     return ok(res, await readPlan(plan.id))

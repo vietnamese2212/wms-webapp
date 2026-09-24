@@ -32,6 +32,9 @@ const vehicleModelBody = {
   name:               zText(1, 160),
   parent_type_id:     nullable(zId),
   temp_mode:          nullable(z.enum(TEMP_MODES)),
+  // Điều kiện bảo quản xe chở được (mã trong LookupValue type='storage_condition'). RỖNG = mọi điều kiện,
+  // cùng quy ước `Location.categories` — nên dòng xe cũ không khai vẫn ghép chuyến như trước.
+  storage_conditions: z.array(zText(1, 40)).max(20).optional(),
   capacity_mode:      z.enum(CAPACITY_MODES),
   max_pallets:        nullable(zPosInt),
   max_tons:           nullable(zPosNum),
@@ -49,6 +52,17 @@ export const zVehicleModelCreate = z.object({ sap_code: zText(1, 20), ...vehicle
 })
 export const zVehicleModelUpdate = z.object(vehicleModelBody).partial()
 export const zAssignParent = z.object({ ids: z.array(zId).min(1).max(200), parent_type_id: zId.nullable() })
+export const zAssignConditions = z.object({ ids: z.array(zId).min(1).max(200), storage_conditions: z.array(zText(1, 40)).max(20) })
+
+/** Mã điều kiện bảo quản phải CÓ TRONG DANH MỤC — khai mã lạ thì engine loại dòng xe đó khỏi mọi chuyến mà không ai hiểu vì sao. */
+async function unknownConditions(codes: string[]): Promise<string[]> {
+  const want = [...new Set(codes.filter(Boolean))]
+  if (!want.length) return []
+  const { data, error } = await db.from('LookupValue').select('value').eq('type', 'storage_condition')
+  if (error) throw error
+  const have = new Set((data ?? []).map(r => r.value))
+  return want.filter(c => !have.has(c))
+}
 /** Cha phải là VehicleType có thật — gán vào id rác thì dòng con "có cha" mà kho không đặt được khung giờ nào. */
 async function parentExists(id: string): Promise<boolean> {
   const { data } = await db.from('VehicleType').select('id').eq('id', id).maybeSingle()
@@ -68,7 +82,13 @@ export async function listVehicleModels(req: Request, res: Response) {
     if (error) return fail(res, error)
     const pmap = new Map((parents.data ?? []).map(p => [p.id, { code: p.code, name: p.name }]))
     const rows = (data ?? []).map(r => ({ ...r, parent: r.parent_type_id ? pmap.get(r.parent_type_id) ?? null : null }))
-    return ok(res, { items: rows, unassigned: rows.filter(r => !r.parent_type_id && r.is_active).length })
+    return ok(res, {
+      items: rows,
+      unassigned: rows.filter(r => !r.parent_type_id && r.is_active).length,
+      // Dòng xe chưa khai điều kiện = đang được coi là chở được MỌI điều kiện. Không sai, nhưng phải nói ra
+      // (băng cảnh báo) kẻo hàng lạnh lên xe thường mà màn hình im lặng.
+      unconditioned: rows.filter(r => r.is_active && !(r.storage_conditions ?? []).length).length,
+    })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -76,11 +96,14 @@ export async function createVehicleModel(req: Request, res: Response) {
   try {
     const body = req.body as z.infer<typeof zVehicleModelCreate>
     if (body.parent_type_id && !(await parentExists(body.parent_type_id))) return fail(res, 'Dòng xe cha không tồn tại', 400)
+    const badC = await unknownConditions(body.storage_conditions ?? [])
+    if (badC.length) return fail(res, 400, 'STORAGE_CONDITION_INVALID', `Điều kiện bảo quản không có trong danh mục: ${badC.join(', ')}`)
     const capacity_mode = body.capacity_mode ?? (body.max_pallets ? 'PALLET' : 'TON')
     const actor = req.user?.name || null
     const rec: VehicleModelInsert = {
       id: randomUUID(), sap_code: body.sap_code, name: body.name,
       parent_type_id: body.parent_type_id ?? null, temp_mode: body.temp_mode ?? null,
+      storage_conditions: body.storage_conditions ?? [],
       capacity_mode, max_pallets: body.max_pallets ?? null, max_tons: body.max_tons ?? null, max_m3: body.max_m3 ?? null,
       max_drops: body.max_drops ?? null, allow_mix_channels: body.allow_mix_channels ?? true,
       tariff_unit: body.tariff_unit ?? (capacity_mode === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP'),
@@ -98,6 +121,8 @@ export async function updateVehicleModel(req: Request, res: Response) {
     const { id } = req.params
     const body = req.body as z.infer<typeof zVehicleModelUpdate>
     if (body.parent_type_id && !(await parentExists(body.parent_type_id))) return fail(res, 'Dòng xe cha không tồn tại', 400)
+    const badC = await unknownConditions(body.storage_conditions ?? [])
+    if (badC.length) return fail(res, 400, 'STORAGE_CONDITION_INVALID', `Điều kiện bảo quản không có trong danh mục: ${badC.join(', ')}`)
     const patch: Partial<VehicleModelRow> = { ...body, updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     const { data, error } = await db.from('vehicle_model').update(patch).eq('id', id).select().maybeSingle()
     if (error) return fail(res, error)
@@ -114,6 +139,20 @@ export async function assignParent(req: Request, res: Response) {
     if (parent_type_id && !(await parentExists(parent_type_id))) return fail(res, 'Dòng xe cha không tồn tại', 400)
     const { data, error } = await db.from('vehicle_model')
       .update({ parent_type_id, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+      .in('id', ids.slice(0, 200)).select('id')
+    if (error) return fail(res, error)
+    return ok(res, { updated: data?.length ?? 0, missing: ids.length - (data?.length ?? 0) })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// PATCH /tms/vehicle-models/assign-conditions — khai điều kiện bảo quản cho NHIỀU dòng xe một lượt (60 dòng, khai lẻ là 60 nhát bấm).
+export async function assignConditions(req: Request, res: Response) {
+  try {
+    const { ids, storage_conditions } = req.body as z.infer<typeof zAssignConditions>
+    const bad = await unknownConditions(storage_conditions)
+    if (bad.length) return fail(res, 400, 'STORAGE_CONDITION_INVALID', `Điều kiện bảo quản không có trong danh mục: ${bad.join(', ')}`)
+    const { data, error } = await db.from('vehicle_model')
+      .update({ storage_conditions: [...new Set(storage_conditions)], updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .in('id', ids.slice(0, 200)).select('id')
     if (error) return fail(res, error)
     return ok(res, { updated: data?.length ?? 0, missing: ids.length - (data?.length ?? 0) })

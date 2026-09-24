@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown, Thermometer } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -36,8 +36,10 @@ import {
   useSystemSettings, useUpdateSystemSetting,
   useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
+  useStorageConditions, useAddStorageCondition, useUpdateStorageCondition, useDeleteStorageCondition, conditionLabel,
+  useVehicleModels,
   useWhTypeConfigs, useSaveWhTypeConfigs, type WhTypeConfig,
-  type WarehouseZone, type UnitRow, type UnitRole,
+  type WarehouseZone, type UnitRow, type UnitRole, type StorageConditionRow,
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -1266,6 +1268,8 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
   const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
+  const [storageCond, setStorageCond] = useState(m.storage_condition ?? '')   // điều kiện bảo quản của hàng loại này (24/09)
+  const { data: conditions = [] } = useStorageConditions()
   const [err, setErr] = useState('')
 
   // ── Phần RIÊNG KHO ĐANG CHỌN (warehouse_type_configs) ──
@@ -1297,6 +1301,7 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
     const meta: WhTypeMeta = {
       ...m,
       requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa, badge_color: badge,
+      storage_condition: storageCond || null,
     }
     const cfgNext: WhTypeConfig = {
       type_code: name, ...strat,
@@ -1393,6 +1398,17 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
               <>Mã hàng thuộc loại này phải khai HSD (số ngày) — dùng tính %Date. Kiểm ngay ở form <b>Mã hàng</b> nên áp chung mọi kho.</>)}
             {flagRow('wt-palletea', reqPalletEa, setReqPalletEa, 'Bắt buộc Pallet/EA',
               <>Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet. Kiểm ở form <b>Mã hàng</b> nên áp chung mọi kho.</>)}
+          </div>
+
+          {/* Điều kiện bảo quản của HÀNG thuộc loại này (24/09) — dùng chung mọi kho: hàng lạnh thì kho nào cũng lạnh.
+              Để trống = chưa khai = điều vận không ràng buộc dòng xe nào (mặc định, hành vi trước khi có tính năng). */}
+          <div className="space-y-1">
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Điều kiện bảo quản</Label>
+              <InfoTip tip={<>Hàng thuộc loại kho này cần bảo quản ở mức nào. Điều vận chỉ ghép lên <b>dòng xe phục vụ được mức đó</b> (khai ở Cài đặt TMS → Mã dòng xe). Để trống = không ràng buộc. Danh mục các mức: tab <b>ĐK bảo quản</b>.</>} />
+            </span>
+            <SingleSelect searchable={false} value={storageCond} onChange={setStorageCond}
+              options={[{ value: '', label: '— Chưa khai (không ràng buộc) —' }, ...conditions.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]} />
           </div>
 
           <div className="space-y-1">
@@ -1723,6 +1739,152 @@ function UnitTab({ canManage }: { canManage: boolean }) {
   )
 }
 
+// ─── ĐIỀU KIỆN BẢO QUẢN (storage_condition) — user chốt 24/09: "lạnh âm, 2-8 độ, 15-25 độ và thường" ──
+// Danh mục DÙNG CHUNG: Loại kho khai hàng thuộc mức nào (form Loại kho), dòng xe khai chở được mức nào
+// (Cài đặt TMS → Mã dòng xe) → engine điều vận khớp hai bên. Sửa ở ĐÂY là sửa cho cả hai.
+function StorageConditionDialog({ row, open, onClose }: { row: StorageConditionRow | null; open: boolean; onClose: () => void }) {
+  const isEdit = !!row
+  const [value, setValue] = useState(row?.value ?? '')
+  const [label, setLabel] = useState(row?.meta?.label ?? '')
+  const [tmin, setTmin] = useState(row?.meta?.temp_min == null ? '' : String(row.meta.temp_min))
+  const [tmax, setTmax] = useState(row?.meta?.temp_max == null ? '' : String(row.meta.temp_max))
+  const [err, setErr] = useState('')
+  const { mutate: add, isPending: adding } = useAddStorageCondition()
+  const { mutate: update, isPending: updating } = useUpdateStorageCondition()
+  const isPending = adding || updating
+
+  function handleSubmit() {
+    setErr('')
+    const code = value.trim().toUpperCase()
+    if (!code) { setErr('Mã điều kiện là bắt buộc (vd FROZEN, CHILL)'); return }
+    const num = (s: string) => (s.trim() === '' ? null : Number(s))
+    if ([tmin, tmax].some(s => s.trim() !== '' && !Number.isFinite(Number(s)))) { setErr('Nhiệt độ phải là số'); return }
+    const meta = { label: label.trim() || undefined, temp_min: num(tmin), temp_max: num(tmax) }
+    const opts = { onSuccess: onClose, onError: (e: unknown) => setErr(apiMsg(e)) }
+    if (isEdit) update({ id: row.id, value: code, meta }, opts)
+    else add({ value: code, meta }, opts)
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa điều kiện bảo quản' : 'Thêm điều kiện bảo quản'} widthClass="sm:max-w-lg" footer={<>
+      <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+      <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>{isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}</Button>
+    </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <div className="space-y-1">
+          <Label className="text-xs">Mã điều kiện *</Label>
+          <Input value={value} onChange={e => setValue(e.target.value.toUpperCase())} placeholder="FROZEN, CHILL, COOL, AMBIENT" disabled={isEdit}
+            onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }} />
+          <p className="text-[10px] text-slate-400">Mã kỹ thuật, dùng để khớp hàng với xe. {isEdit && 'Không đổi mã sau khi tạo (Loại kho và dòng xe đang khai theo mã này).'}</p>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Tên hiển thị</Label>
+          <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Lạnh âm · 2 – 8 °C · Thường" />
+          <p className="text-[10px] text-slate-400">Tên người dùng đọc trên màn hình; để trống thì hiện chính mã.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1"><Label className="text-xs">Từ (°C)</Label>
+            <Input type="number" value={tmin} onChange={e => setTmin(e.target.value)} placeholder="-18" className="tabular-nums" /></div>
+          <div className="space-y-1"><Label className="text-xs">Đến (°C)</Label>
+            <Input type="number" value={tmax} onChange={e => setTmax(e.target.value)} placeholder="-25" className="tabular-nums" /></div>
+        </div>
+        <p className="text-[10px] text-slate-400">Dải nhiệt chỉ để người đọc hiểu, máy không tính theo số này — khớp hàng với xe làm theo MÃ.</p>
+      </div>
+    </FormSheet>
+  )
+}
+
+function StorageConditionTab({ canManage }: { canManage: boolean }) {
+  const { data: rows = [], isLoading } = useStorageConditions()
+  const { data: types = [] } = useWarehouseTypes()
+  const { mutate: del, isPending: deleting } = useDeleteStorageCondition()
+  const { data: vmRes } = useVehicleModels()
+  const [editing, setEditing] = useState<StorageConditionRow | null>(null)
+  const [showDlg, setShowDlg] = useState(false)
+
+  const usage = (code: string) => ({
+    cats: types.filter(t => t.meta?.storage_condition === code).map(t => t.value),
+    vehicles: (vmRes?.items ?? []).filter(m => (m.storage_conditions ?? []).includes(code)).length,
+  })
+  const rangeText = (r: StorageConditionRow) => {
+    const { temp_min: lo, temp_max: hi } = r.meta ?? {}
+    if (lo == null && hi == null) return null
+    if (lo != null && hi != null) return `${lo} … ${hi} °C`
+    return `${lo ?? hi} °C`
+  }
+  function handleDelete(r: StorageConditionRow) {
+    if (!confirm(`Xoá điều kiện bảo quản "${conditionLabel(r)}"?`)) return
+    del(r.id, { onError: e => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(e) }) })
+  }
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">{rows.length} điều kiện · dùng chung cho Loại kho (hàng) và Mã dòng xe (xe)</p>
+        <InfoTip tip={<div className="space-y-1">
+          <p><b>Hàng</b> lấy điều kiện theo <b>Loại kho</b> — khai ở tab Loại kho, nút bút chì.</p>
+          <p><b>Xe</b> khai chở được những mức nào — Cài đặt TMS → Mã dòng xe.</p>
+          <p>Điều vận chỉ ghép hàng lên xe phục vụ đủ mức của hàng. Chưa khai ở bên nào thì bên đó không bị ràng buộc.</p>
+        </div>} />
+        {canManage && (
+          <ActionCluster className="shrink-0" items={[{
+            key: 'add', icon: Plus, label: 'Thêm điều kiện', tip: 'Thêm một mức bảo quản mới',
+            primary: true, variant: 'default', onClick: () => { setEditing(null); setShowDlg(true) },
+          } satisfies ActionItem]} />
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+          rows.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 space-y-2">
+              <Thermometer className="h-10 w-10 mx-auto opacity-30" />
+              <p className="text-sm">Chưa có điều kiện bảo quản nào</p>
+              {canManage && <p className="text-xs">Nhấn "Thêm điều kiện" để tạo (vd Lạnh âm, 2 – 8 °C, Thường)</p>}
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên hiển thị</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Dải nhiệt</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại kho dùng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Dòng xe chở được</TableHead>
+                  {canManage && <TableHead className="px-2 py-1.5 w-16" />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map(r => {
+                  const u = usage(r.value)
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-700 whitespace-nowrap">{r.value}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{r.meta?.label || <span className="text-slate-300">—</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap tabular-nums">{rangeText(r) ?? <span className="text-slate-300">—</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{u.cats.length ? u.cats.join(', ') : <span className="text-amber-600">chưa Loại kho nào</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{u.vehicles ? `${u.vehicles} dòng xe` : <span className="text-amber-600">chưa dòng xe nào</span>}</TableCell>
+                      {canManage && (
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <div className="flex items-center gap-0.5">
+                            <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" onClick={() => { setEditing(r); setShowDlg(true) }}><Pencil className="h-3.5 w-3.5" /></button>
+                            <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting} onClick={() => handleDelete(r)}><Trash2 className="h-3.5 w-3.5" /></button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )
+        }
+      </div>
+      {showDlg && <StorageConditionDialog row={editing} open={showDlg} onClose={() => setShowDlg(false)} />}
+    </>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function WMSSettings() {
@@ -1742,6 +1904,7 @@ export default function WMSSettings() {
   const permTabs = useMemo(() => ([
     canManageWarehouse && { key: 'warehouses', label: 'Kho',          icon: Warehouse },
     canManageType      && { key: 'types',      label: 'Loại kho',     icon: Tag },
+    canManageType      && { key: 'storage',    label: 'ĐK bảo quản',  icon: Thermometer },
     canManageUnit      && { key: 'units',      label: 'Đơn vị tính',  icon: Ruler },
     canManageZone      && { key: 'zones',      label: 'Khu vực',      icon: MapPin },
     canManageShift     && { key: 'shifts',     label: 'Ca nhập',      icon: Clock },
@@ -1856,6 +2019,7 @@ export default function WMSSettings() {
   // Detail panel state
   const [detailWh,   setDetailWh]   = useState<WhRow | null>(null)
   const [detailType, setDetailType] = useState<{ id: string; value: string; meta?: WhTypeMeta | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
+  const { data: storageConds = [] } = useStorageConditions()   // nhãn điều kiện bảo quản cho pane chi tiết Loại kho
   const [detailZone, setDetailZone] = useState<WarehouseZone | null>(null)
 
   // Khu vực kho — lọc theo warehouse_scope của user
@@ -2275,6 +2439,10 @@ export default function WMSSettings() {
                   <div><span className="text-slate-400">Bắt buộc Pallet/EA:</span> <span className="font-medium">{detailType.meta?.requires_pallet_per_ea ? 'Có' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc NCC khi nhập:</span> <span className="font-medium">{detailType.meta?.requires_ncc ? 'Có (chặn lưu thiếu NCC)' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Ký tự mã lô:</span> <span className="font-medium">{detailType.meta?.batch_char || '— (chọn Máy tay)'}</span></div>
+                  <div><span className="text-slate-400">Điều kiện bảo quản:</span>{' '}
+                    <span className="font-medium">{detailType.meta?.storage_condition
+                      ? conditionLabel(storageConds.find(c => c.value === detailType.meta?.storage_condition), detailType.meta.storage_condition)
+                      : <span className="text-amber-600">chưa khai (không ràng buộc dòng xe)</span>}</span></div>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
@@ -2287,6 +2455,11 @@ export default function WMSSettings() {
             )}
           </div>
           <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{orderedTypes.length} / {orderedTypes.length} loại kho</div>
+        </TabsContent>
+
+        {/* ── Tab: Điều kiện bảo quản (danh mục dùng chung cho Loại kho và Mã dòng xe) ── */}
+        <TabsContent value="storage" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <StorageConditionTab canManage={canManageType} />
         </TabsContent>
 
         {/* ── Tab: Đơn vị tính ── */}

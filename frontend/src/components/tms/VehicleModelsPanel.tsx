@@ -5,7 +5,7 @@
 // Chuẩn list page (skill table-format): toolbar + FilterBar + SummaryBand + bảng cột kéo giãn, cột đầu ghim, footer đếm.
 // Cha do migration 20260923b GỢI Ý theo tên (user: "tự gán đi, sai tôi vào sửa") — tick nhiều → "Gán cha" để sửa hàng loạt.
 import { useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Link2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Link2, Thermometer } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -28,7 +28,8 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate } from '@/utils/formatters'
 import {
   useVehicleTypes, useVehicleModels, useCreateVehicleModel, useUpdateVehicleModel, useAssignVehicleModelParent, useDeleteVehicleModel,
-  type VehicleModel, type VehicleModelPatch, type VehicleModelTemp,
+  useStorageConditions, useAssignVehicleModelConditions, conditionLabel,
+  type VehicleModel, type VehicleModelPatch, type VehicleModelTemp, type StorageConditionRow,
 } from '@/api/hooks'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được'
@@ -45,6 +46,7 @@ const COLS = [
   { id: 'name',   label: 'Tên dòng xe',      w: 230 },
   { id: 'parent', label: 'Dòng xe cha',      w: 190 },
   { id: 'temp',   label: 'Nhiệt',            w: 80 },
+  { id: 'cond',   label: 'Điều kiện bảo quản', w: 200 },
   { id: 'cap',    label: 'Sức chứa',         w: 130 },
   { id: 'unit',   label: 'Tính cước',        w: 150 },
   { id: 'under',  label: 'Non tải <',        w: 78 },
@@ -63,12 +65,36 @@ const capText = (m: VehicleModel) => {
   return parts.length ? parts.join(' · ') : null
 }
 
-function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parents: { value: string; label: string }[]; onClose: () => void }) {
+/** Chọn NHIỀU điều kiện bảo quản bằng chip bấm — không dùng dropdown vì form này là panel Radix (dropdown phải portal),
+ *  và ngón tay bấm chip dễ hơn mở menu. Rỗng = xe chở được mọi điều kiện (nói thẳng dưới ô). */
+function ConditionPicker({ all, value, onChange }: { all: StorageConditionRow[]; value: string[]; onChange: (v: string[]) => void }) {
+  const toggle = (code: string) => onChange(value.includes(code) ? value.filter(c => c !== code) : [...value, code])
+  if (!all.length) return <p className="text-[11px] text-amber-700">Chưa có danh mục điều kiện bảo quản — khai ở Cài đặt WMS → Điều kiện bảo quản.</p>
+  return (
+    <>
+      <div className="flex flex-wrap gap-1.5">
+        {all.map(c => {
+          const on = value.includes(c.value)
+          return (
+            <button key={c.id} type="button" onClick={() => toggle(c.value)} aria-pressed={on}
+              className={`h-11 sm:h-9 px-2.5 rounded border text-xs font-medium transition-colors ${on ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {conditionLabel(c)}
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-[10px] text-slate-500 mt-1">{value.length ? 'Chỉ hàng thuộc các mức đã chọn mới được ghép lên dòng xe này.' : 'Chưa chọn mức nào = xe chở được MỌI điều kiện (hành vi cũ).'}</p>
+    </>
+  )
+}
+
+function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | null; parents: { value: string; label: string }[]; conditions: StorageConditionRow[]; onClose: () => void }) {
   const create = useCreateVehicleModel(), update = useUpdateVehicleModel()
   const [sap, setSap] = useState(row?.sap_code ?? '')
   const [name, setName] = useState(row?.name ?? '')
   const [parent, setParent] = useState(row?.parent_type_id ?? '')
   const [temp, setTemp] = useState<VehicleModelTemp | ''>(row?.temp_mode ?? '')
+  const [conds, setConds] = useState<string[]>(row?.storage_conditions ?? [])
   const [capMode, setCapMode] = useState<'PALLET' | 'TON'>(row?.capacity_mode ?? 'TON')
   const [pallets, setPallets] = useState(row?.max_pallets == null ? '' : String(row.max_pallets))
   const [tons, setTons] = useState(row?.max_tons == null ? '' : String(row.max_tons))
@@ -84,7 +110,7 @@ function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parent
   const submit = async () => {
     setErr('')
     const body: VehicleModelPatch = {
-      name: name.trim(), parent_type_id: parent || null, temp_mode: temp || null, capacity_mode: capMode,
+      name: name.trim(), parent_type_id: parent || null, temp_mode: temp || null, storage_conditions: conds, capacity_mode: capMode,
       max_pallets: numOrNull(pallets), max_tons: numOrNull(tons), max_m3: numOrNull(m3), max_drops: numOrNull(drops),
       allow_mix_channels: mix, tariff_unit: unit, underload_pct: Number(under) || 0, is_active: active,
     }
@@ -116,6 +142,8 @@ function ModelForm({ row, parents, onClose }: { row: VehicleModel | null; parent
             <SingleSelect searchable={false} value={capMode} onChange={v => { const cm = v as 'PALLET' | 'TON'; setCapMode(cm); setUnit(cm === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP') }}
               options={[{ value: 'PALLET', label: 'Pallet (xe pallet)' }, { value: 'TON', label: 'Tấn (xe xá / cont)' }]} /></div>
         </div>
+        <div><Label className="text-xs">Điều kiện bảo quản xe chở được</Label>
+          <ConditionPicker all={conditions} value={conds} onChange={setConds} /></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div><Label className="text-xs">Pallet tối đa</Label><Input type="number" min={1} value={pallets} onChange={e => setPallets(e.target.value)} className="h-9 tabular-nums" /></div>
           <div><Label className="text-xs">Tấn tối đa</Label><Input type="number" min={0.1} step={0.1} value={tons} onChange={e => setTons(e.target.value)} className="h-9 tabular-nums" /></div>
@@ -142,13 +170,19 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
   const { data, isLoading } = useVehicleModels()
   const items = data?.items ?? []
   const assign = useAssignVehicleModelParent(), del = useDeleteVehicleModel()
+  const { data: conditions = [] } = useStorageConditions()
+  const condBy = useMemo(() => new Map(conditions.map(c => [c.value, c])), [conditions])
+  const assignCond = useAssignVehicleModelConditions()
   const f = useWmsFilterStore(s => s.vehicleModels)
   const setF = useWmsFilterStore(s => s.setVehicleModels)
-  const { widths: colW, startResize, totalWidth } = useColumnResize('vehicle_models_col_widths', COLS.map(c => c.w))
+  // _v2: thêm cột Điều kiện bảo quản ⇒ bề rộng đã lưu của người dùng lệch một cột nếu giữ khoá cũ
+  const { widths: colW, startResize, totalWidth } = useColumnResize('vehicle_models_col_widths_v2', COLS.map(c => c.w))
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [form, setForm] = useState<{ row: VehicleModel | null } | null>(null)
   const [assignDlg, setAssignDlg] = useState(false)
   const [assignTo, setAssignTo] = useState('')
+  const [condDlg, setCondDlg] = useState(false)
+  const [condPick, setCondPick] = useState<string[]>([])
 
   // Lọc client (danh mục 60 dòng, cố định) — chưa gán cha lên đầu (việc phải làm), rồi theo cha, rồi thứ tự seed
   const rows = useMemo(() => {
@@ -171,6 +205,13 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       setPicked(new Set()); setAssignDlg(false); setAssignTo('')
     } catch (e) { toast({ variant: 'destructive', title: 'Không gán được', description: apiMsg(e) }) }
   }
+  const doAssignCond = async () => {
+    try {
+      const r = await assignCond.mutateAsync({ ids: [...picked], storage_conditions: condPick })
+      toast({ title: `Đã khai điều kiện bảo quản cho ${r.updated} dòng xe`, description: condPick.length ? condPick.map(c => conditionLabel(condBy.get(c), c)).join(' · ') : 'Gỡ khai — xe chở được mọi điều kiện' })
+      setPicked(new Set()); setCondDlg(false); setCondPick([])
+    } catch (e) { toast({ variant: 'destructive', title: 'Không khai được', description: apiMsg(e) }) }
+  }
 
   const filterDefs: FilterDef[] = [
     { key: 'parent', label: 'Dòng xe cha', type: 'multi', selected: f.parents, onChange: v => setF({ parents: v }), options: parentOpts },
@@ -180,9 +221,11 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
     { key: 'status', label: 'Trạng thái', type: 'single', value: f.status, onChange: v => setF({ status: v }), options: [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }] },
   ]
   const unassigned = items.filter(m => !m.parent_type_id && m.is_active).length
+  const unconditioned = data?.unconditioned ?? items.filter(m => m.is_active && !(m.storage_conditions ?? []).length).length
   const tiles = [
     { label: 'Dòng xe con', value: filtering ? `${nf(rows.length)} / ${nf(items.length)}` : nf(items.length) },
     { label: 'Chưa gán cha', value: nf(unassigned), danger: unassigned > 0, tip: 'Dòng chưa gán cha thì điều vận không ghép chuyến vào — kho không biết booking khung giờ loại nào' },
+    { label: 'Chưa khai ĐK bảo quản', value: nf(unconditioned), danger: unconditioned > 0, tip: 'Dòng chưa khai đang được coi là chở được MỌI điều kiện — hàng lạnh có thể lên xe thường mà máy không cản' },
     { label: 'Xe pallet', value: nf(items.filter(m => m.capacity_mode === 'PALLET' && m.is_active).length), tip: 'Đo tải bằng pallet, cước theo pallet làm tròn lên' },
     { label: 'Xe tấn / cont', value: nf(items.filter(m => m.capacity_mode === 'TON' && m.is_active).length), tip: 'Đo tải bằng tấn, cước trọn chuyến' },
     { label: 'Tạm dừng', value: nf(items.filter(m => !m.is_active).length) },
@@ -199,6 +242,9 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       // Chỉ TÊN cha (mã để tooltip) — in cả "CONTSCA XE CONTAINER SCA" là lặp một ý hai lần (user 23/09: "kỳ cục quá")
       case 'parent': return m.parent ? <span title={m.parent.code}>{m.parent.name}</span> : <StatusBadge tone="amber">Chưa gán</StatusBadge>
       case 'temp':   return m.temp_mode ? TEMP_LABEL[m.temp_mode] : <span className="text-slate-300">—</span>
+      case 'cond':   return (m.storage_conditions ?? []).length
+        ? <span title={m.storage_conditions.map(c => conditionLabel(condBy.get(c), c)).join(' · ')}>{m.storage_conditions.map(c => conditionLabel(condBy.get(c), c)).join(' · ')}</span>
+        : <span className="text-amber-600" title="Chưa khai = xe được coi là chở được mọi điều kiện">Mọi điều kiện</span>
       case 'cap':    return capText(m) ?? <span className="text-slate-300">—</span>
       case 'unit':   return m.tariff_unit === 'PER_PALLET' ? 'Pallet (làm tròn lên)' : 'Trọn chuyến'
       case 'under':  return <span className="tabular-nums">{m.underload_pct} %</span>
@@ -272,8 +318,22 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       {canEdit && picked.size > 0 && (
         <FloatingActionBar count={picked.size} unit="dòng xe">
           <Button size="sm" variant="outline" className={`${FLOATING_BTN} gap-1`} onClick={() => setAssignDlg(true)}><Link2 className="h-3.5 w-3.5" />Gán cha</Button>
+          <Button size="sm" variant="outline" className={`${FLOATING_BTN} gap-1`} onClick={() => { setCondPick([]); setCondDlg(true) }}><Thermometer className="h-3.5 w-3.5" />Điều kiện bảo quản</Button>
           <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setPicked(new Set())}>Bỏ chọn</Button>
         </FloatingActionBar>
+      )}
+      {condDlg && (
+        <Dialog open onOpenChange={v => { if (!v) setCondDlg(false) }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader><DialogTitle className="text-base">Điều kiện bảo quản cho {picked.size} dòng xe</DialogTitle></DialogHeader>
+            <ConditionPicker all={conditions} value={condPick} onChange={setCondPick} />
+            <p className="text-[11px] text-slate-500">Ghi ĐÈ danh sách hiện có của các dòng xe đã chọn.</p>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setCondDlg(false)}>Huỷ</Button>
+              <Button size="sm" onClick={doAssignCond} disabled={assignCond.isPending}>{assignCond.isPending ? 'Đang lưu…' : 'Khai'}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
       {assignDlg && (
         <Dialog open onOpenChange={v => { if (!v) setAssignDlg(false) }}>
@@ -288,7 +348,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
           </DialogContent>
         </Dialog>
       )}
-      {form && <ModelForm row={form.row} parents={parents} onClose={() => setForm(null)} />}
+      {form && <ModelForm row={form.row} parents={parents} conditions={conditions} onClose={() => setForm(null)} />}
     </>
   )
 }

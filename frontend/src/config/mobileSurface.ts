@@ -55,7 +55,7 @@ export const PAGE_TABS: Record<string, MobileTabDef[]> = {
   '/wms/locations': [{ key: 'list', label: 'Danh mục vị trí' }, { key: 'map', label: 'Sơ đồ kho' }],
   '/masterdata/users': [{ key: 'employees', label: 'Nhân viên' }, { key: 'departments', label: 'Phòng ban' }, { key: 'job-titles', label: 'Chức danh' }, { key: 'audit', label: 'Nhật ký' }],
   '/wms/settings': [
-    { key: 'warehouses', label: 'Kho' }, { key: 'types', label: 'Loại kho' }, { key: 'units', label: 'Đơn vị tính' }, { key: 'zones', label: 'Khu vực' },
+    { key: 'warehouses', label: 'Kho' }, { key: 'types', label: 'Loại kho' }, { key: 'storage', label: 'ĐK bảo quản' }, { key: 'units', label: 'Đơn vị tính' }, { key: 'zones', label: 'Khu vực' },
     { key: 'shifts', label: 'Ca nhập' }, { key: 'qa', label: 'QA' }, { key: 'machines', label: 'Máy' }, { key: 'system', label: 'Hệ thống' },
   ],
 }

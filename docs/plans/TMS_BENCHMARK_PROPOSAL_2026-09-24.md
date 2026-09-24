@@ -85,8 +85,27 @@ Giữ engine hiện có (xếp lớn-trước, hạ xe rẻ nhất, gộp Non t�
   Bài học: cước theo pallet của xe to RẺ HƠN/pallet nên "rẻ nhất" đưa 0,5 pallet lên xe 34 pallet — không ĐVVT nào nhận giá đó cho chuyến như vậy. Cước ba bậc cao hơn 28 % **trên bảng sơ bộ tôi ước tính**, không phải kết luận về tiền; so máy vs người (627 chuyến SAP) chỉ có nghĩa khi bảng cước thật thay bảng sơ bộ. UI Playwright 1280/360: 0 lỗi console, không tràn ngang, panel xe 359 px ở 360.
 - **Chưa (chờ user chốt câu 2–3 mục 5):** A1 hàng không đi chung theo nhiệt (Material chưa có temp class) · A2 MIN/MAX theo ĐVVT × vùng × tháng · A5 so máy vs người trên 627 chuyến SAP (cần bảng cước thật).
 
-## 5. Câu hỏi để chốt
-1. Đi theo **A → B → C** đúng thứ tự trên? Hay ưu tiên B3 (đối soát hoá đơn ĐVVT) trước B1 (tender)?
-2. A2: hợp đồng ĐVVT của LOF có ghi **tối thiểu/tối đa chuyến hoặc pallet theo tháng** không? Có thì khai theo vùng hay theo kho?
-3. C2: khách nào đang có **khung giờ nhận cố định** (BHX/KA)? Nếu nhiều thì C2 nên lên trước C1.
-4. Ba điểm còn mở của đợt 2 (đã hỏi 24/09 sáng): tách một OD ra hai xe · tỷ trọng đo theo chuyến/pallet/tấn · số điểm giao tối đa và trộn kênh theo kho — hiện lấy mặc định: không tách (trừ OD lớn hơn xe lớn nhất, và phải gom lại trước khi xác nhận) · theo `basis` từng dòng mục tiêu (mặc định số chuyến) · 3 điểm, không trộn kênh, chỉnh ở form Kho.
+## 5. Câu hỏi để chốt — USER ĐÃ TRẢ LỜI 24/09 chiều (vòng 2)
+
+| Hỏi | User trả lời | Hệ quả cho plan |
+|---|---|---|
+| 1. B1 tender hay B3 đối soát trước? | "ok, đây là test mà" (duyệt thứ tự tôi đề xuất) | **B3 trước B1.** Lý do đo được: cước dự tính đã tự tính cho MỌI chuyến sinh từ Kế hoạch xuất nên B3 không đòi ai đổi thói quen, còn B1 đòi bên NGOÀI đổi cách làm; và B3 là cách duy nhất kiểm được bảng cước thật |
+| 2. Hợp đồng ĐVVT có MIN/MAX tháng? | **"ko có"** | **BỎ HẲN A2.** Chỉ dùng `carrier_share_target` (tỷ trọng %) đã có. Không thêm cột `min_trips/max_trips` |
+| 3. Khách nào có khung giờ nhận cố định? | **"Theo chuyến chứ ko cố định"** | **BỎ HẲN C2** (khung giờ trên `Customer`). Khung giờ là chỉ dẫn TỪNG ĐƠN, sống trong ghi chú CS như hiện nay. Khớp số đo: ghi chú giao hàng SAP có 675/1.649 dòng có chữ nhưng chỉ 33 dòng nhắc giờ, và đều dạng "giao sáng thứ 3 8/9", "trước 11h" — lệnh của một đơn, không phải master của khách |
+| 4. Ba điểm mở đợt 2 | không phản đối | Giữ mặc định đang chạy |
+| 5. Phân loại nhiệt (A1) | **"config kho đi và config khớp với xe"** + 4 mức **lạnh âm · 2–8 °C · 15–25 °C · thường** + "tạo 1 điều kiện bảo quản ở wms setting" | **A1 đổi thiết kế** — xem mục 6 |
+
+Số đo kèm theo (staging 24/09), để lần sau khỏi hỏi lại: tỷ trọng ĐVVT THẬT theo OD — Ba Vì `HA 34,0 % · ALCA 27,9 % · DA 23,1 % · chưa gắn 15,0 %`; Bàu Bàng `HN 47,3 % · PAQ 25,3 % · BMT 12,1 %` (còn lại < 5 %). `carrier_share_target` và `carrier_allocation` đang **rỗng**, nên engine mới chỉ chạy nhánh "rẻ nhất" — khai 6 dòng tỷ trọng theo đúng số trên là đủ thay cho cả A2.
+
+## 6. ĐIỀU KIỆN BẢO QUẢN — thay cho A1 (user chốt 24/09 chiều)
+
+Bốn mức user khai: **Lạnh âm · 2–8 °C · 15–25 °C · Thường**. Mô hình chọn: **một danh mục dùng chung cho HÀNG và XE**, không đẻ bảng mới, không thêm cột trên 2.740 mã hàng.
+
+1. **Danh mục** `LookupValue type='storage_condition'` (4 mức, `meta` = nhãn + dải nhiệt + màu) — khai ở **Cài đặt WMS**, quyền `wms_settings.manage_type`.
+2. **Hàng thừa kế theo LOẠI KHO**: `LookupValue warehouse_type.meta.storage_condition`. Đúng ý "config kho": khai 5 dòng thay vì 2.740 mã, và khu vực/vị trí đã gắn Loại kho nên tự thừa kế. Cột riêng trên `Material` chỉ thêm khi có ca hàng lạnh nằm lẫn trong một Loại kho thường.
+3. **Xe khai phục vụ được mức nào**: `vehicle_model.storage_conditions text[]` (rỗng = mọi mức, cùng quy ước `Location.categories`).
+4. **Engine**: mọi điều kiện của hàng trên chuyến phải NẰM TRONG danh sách xe phục vụ. Trượt ⇒ loại dòng xe đó, cảnh báo nói rõ thiếu mức nào.
+
+**Mặc định = hành vi cũ**: 5 Loại kho CỐ Ý để trống (chưa khai = không ràng buộc). Đoán hộ "FG02 là hàng lạnh" rồi ghi vào master là đúng lớp lỗi app này đã cấm — người khai một lần trên màn, có vết. Xe thì tự khai được vì **tên dòng xe đã nói rõ nhiệt** (đo 60 dòng: 13 "(lạnh)" · 13 "(nóng)" · 4 cont "(khô)" · 11 "kết hợp nóng/lạnh" · 19 "Xe N Pallet" không ghi) ⇒ backfill: lạnh → lạnh âm + 2–8 + 15–25 · kết hợp → cả 4 · còn lại → thường.
+
+**Giản lược đã biết:** xe một khoang khai nhiều mức (xe lạnh đặt được nhiều setpoint) vẫn được phép chở lẫn hai mức trong một chuyến. Chặt hơn thì phải mô hình hoá KHOANG — chưa có ca thật, chưa làm.

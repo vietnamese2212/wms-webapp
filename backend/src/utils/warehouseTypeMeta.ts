@@ -13,6 +13,10 @@ export interface WhTypeMeta {
   requires_ncc?: boolean          // Nhập kho bắt buộc có NCC (quét/nhập tay/upload tồn — chuyển kho kế thừa, không chặn)
   batch_char?: string             // ký tự cố định thế chỗ Máy trong mã lô khi sinh tem V2
   badge_color?: string
+  // Điều kiện bảo quản của hàng thuộc Loại kho này (mã trong LookupValue type='storage_condition', 24/09).
+  // THIẾU/rỗng = CHƯA KHAI = không ràng buộc gì — engine điều vận không loại dòng xe nào.
+  // CỐ Ý dùng chung mọi kho (không nằm trong WH_TYPE_META_COLS): hàng lạnh thì kho nào cũng lạnh.
+  storage_condition?: string | null
 }
 
 // Phòng hộ khi meta chưa seed (migration chưa apply) — đúng hardcode cũ
@@ -45,6 +49,19 @@ export async function getWhTypeMetaMap(): Promise<Map<string, WhTypeMeta>> {
 }
 
 export function invalidateWhTypeMetaCache() { _cache = null; _whCache.clear() }
+
+/**
+ * Loại kho → ĐIỀU KIỆN BẢO QUẢN (24/09). Chỉ trả những loại ĐÃ KHAI; loại chưa khai vắng mặt trong map
+ * ⇒ nơi gọi hiểu là "không ràng buộc", đúng mặc định = hành vi trước khi có tính năng này.
+ */
+export async function getStorageConditionByCategory(): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  for (const [cat, meta] of (await getWhTypeMetaMap()).entries()) {
+    const c = typeof meta.storage_condition === 'string' ? meta.storage_condition.trim() : ''
+    if (c) out.set(cat, c)
+  }
+  return out
+}
 
 // ─── 3 cờ VẬN HÀNH khai riêng được theo từng kho (21/08) ──────────────────────
 // Tên · Màu · Bắt buộc HSD · Bắt buộc Pallet/EA vẫn DÙNG CHUNG (2 cờ sau ràng buộc hồ sơ mã hàng,

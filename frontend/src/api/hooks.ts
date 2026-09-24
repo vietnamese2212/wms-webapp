@@ -1537,6 +1537,45 @@ export function useReorderWarehouseTypes() {
   })
 }
 
+// ─── Điều kiện bảo quản (storage_condition) — danh mục dùng CHUNG cho hàng (theo Loại kho) và xe (24/09) ──
+// Dùng chính cửa /wms/lookup như Loại kho: queryKey ['lookup', type] nên realtime LookupValue tự bắt.
+export type StorageConditionRow = { id: string; value: string; sort_order: number; meta?: { label?: string; temp_min?: number | null; temp_max?: number | null; badge_color?: string } | null }
+export type StorageConditionInput = { value: string; meta?: StorageConditionRow['meta'] }
+/** Nhãn hiển thị: nhãn khai trong danh mục, thiếu thì rơi về chính mã (không bịa chữ). */
+export const conditionLabel = (r: StorageConditionRow | undefined, code?: string) => r?.meta?.label?.trim() || r?.value || code || '—'
+
+export function useStorageConditions() {
+  return useQuery({
+    queryKey: ['lookup', 'storage_condition'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/lookup', { params: { type: 'storage_condition' } })
+      return data.data as StorageConditionRow[]
+    },
+  })
+}
+export function useAddStorageCondition() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: StorageConditionInput) => apiClient.post('/wms/lookup', { type: 'storage_condition', ...input }).then(r => r.data.data as StorageConditionRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'storage_condition'] }),
+  })
+}
+export function useUpdateStorageCondition() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: StorageConditionInput & { id: string }) => apiClient.put(`/wms/lookup/${id}`, input).then(r => r.data.data as StorageConditionRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'storage_condition'] }),
+  })
+}
+export function useDeleteStorageCondition() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/lookup/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'storage_condition'] }),
+  })
+}
+
 // ─── Đơn vị tính (unit_of_measure) — danh mục Base/Entry Unit (tab Cài đặt WMS) ──
 export type UnitRole = 'base' | 'entry' | 'both'
 export type UnitRow = { id: string; value: string; sort_order: number; meta?: { role?: UnitRole; label?: string } | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
@@ -5561,6 +5600,7 @@ export interface VehicleModel {
   parent_type_id: string | null
   parent: { code: string; name: string } | null
   temp_mode: VehicleModelTemp | null
+  storage_conditions: string[]      // điều kiện bảo quản xe chở được; RỖNG = mọi điều kiện (24/09)
   capacity_mode: 'PALLET' | 'TON'
   max_pallets: number | null; max_tons: number | null; max_m3: number | null; max_drops: number | null
   allow_mix_channels: boolean
@@ -5580,7 +5620,7 @@ export function useVehicleModels(params?: { parent_type_id?: string; unassigned?
       if (params?.unassigned) q.unassigned = '1'
       if (params?.is_active !== undefined) q.is_active = String(params.is_active)
       const { data } = await apiClient.get('/tms/vehicle-models', { params: q })
-      return data.data as { items: VehicleModel[]; unassigned: number }
+      return data.data as { items: VehicleModel[]; unassigned: number; unconditioned: number }
     },
   })
 }
@@ -5603,6 +5643,14 @@ export function useAssignVehicleModelParent() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { ids: string[]; parent_type_id: string | null }) => apiClient.patch('/tms/vehicle-models/assign-parent', body).then(r => r.data.data as { updated: number; missing: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+/** Khai điều kiện bảo quản cho NHIỀU dòng xe một lượt (60 dòng, khai lẻ là 60 nhát bấm). */
+export function useAssignVehicleModelConditions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids: string[]; storage_conditions: string[] }) => apiClient.patch('/tms/vehicle-models/assign-conditions', body).then(r => r.data.data as { updated: number; missing: number }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
   })
 }
@@ -5829,7 +5877,7 @@ export interface DispatchTripOd {
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
-  categories: string[]; booking_category: string | null; cluster: string
+  categories: string[]; conditions?: string[]; booking_category: string | null; cluster: string
   carrier_reasons: string[]; warnings: string[]; merge_hint: string | null
   vehicle_model: { id: string; sap_code: string; name: string; parent_type_name: string | null } | null
   carrier: { id: string; code: string; name: string; tender_required?: boolean } | null

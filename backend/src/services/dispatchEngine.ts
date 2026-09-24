@@ -11,7 +11,9 @@
  *  3. Chọn dòng xe: xếp lớn-trước (first-fit-decreasing) vào xe LỚN NHẤT để tối thiểu số chuyến, rồi mỗi chuyến HẠ về dòng
  *     xe RẺ NHẤT còn vừa tải (theo cước tuyến thật). OD lớn hơn xe lớn nhất → tách theo DÒNG HÀNG NGUYÊN, phần dư sang xe kế;
  *     một dòng hàng lớn hơn xe lớn nhất → chuyến riêng gắn cờ `oversize`.
- *  4. Dòng xe phải phục vụ ĐỦ loại hàng của chuyến (`serve_categories` rỗng = mọi loại).
+ *  4. ĐIỀU KIỆN BẢO QUẢN (24/09): mọi điều kiện của hàng trên chuyến phải nằm trong danh sách dòng xe phục vụ
+ *     (`serve_conditions` rỗng = mọi điều kiện). Điều kiện của hàng lấy theo LOẠI KHO (Cài đặt WMS), của xe khai ở
+ *     danh mục Mã dòng xe — cả hai đều là DỮ LIỆU, engine không biết "lạnh" hay "thường" nghĩa là gì.
  *  5. Chuyến dưới ngưỡng Non tải → cờ `underload` + gợi ý gộp với chuyến cùng vùng.
  *  6. ĐVVT: ưu tiên khu vực của phường xa nhất (WARD trước REGION, theo priority) → ĐVVT đang DƯỚI tỷ trọng kỳ → cước thấp
  *     nhất → mã ĐVVT (ổn định). Tỷ trọng cộng dồn NGAY trong lượt ghép để chuyến sau thấy chuyến trước.
@@ -24,7 +26,11 @@ import {
 } from './freight'
 
 // ── Kiểu đầu vào ──
-export interface EngineLine { material_code: string; qty_base: number; pallets: number | null; kg: number | null; category: string | null }
+export interface EngineLine {
+  material_code: string; qty_base: number; pallets: number | null; kg: number | null
+  category: string | null      // Loại kho của mã hàng — quyết cửa đặt lịch (booking_category) + nhãn "chở lẫn"
+  condition: string | null     // điều kiện bảo quản suy từ Loại kho; null = chưa khai = không ràng buộc
+}
 export interface EngineOd {
   od_number: string
   ship_to_code: string | null
@@ -45,7 +51,7 @@ export interface EngineModel {
   max_tons: number | null
   tariff_unit: TariffUnit
   underload_pct: number | null
-  serve_categories: string[] | null // rỗng/null = mọi loại
+  serve_conditions: string[] | null // điều kiện bảo quản xe phục vụ được; rỗng/null = mọi điều kiện
   max_drops: number | null          // null = theo kho
   is_active: boolean
 }
@@ -73,6 +79,7 @@ export interface EngineInput {
   allocations: EngineAllocation[]
   share_targets: EngineShareTarget[]
   share_actual: Record<string, ShareActual>   // theo transport_company_id — chuyến ĐÃ XÁC NHẬN trong kỳ
+  condition_labels?: Record<string, string>   // mã điều kiện bảo quản → nhãn tiếng Việt, CHỈ để viết câu cảnh báo
   params: EngineParams
 }
 
@@ -101,6 +108,7 @@ export interface DispatchTrip {
   pallets: number | null
   tons: number | null
   categories: string[]
+  conditions: string[]               // điều kiện bảo quản của hàng trên xe (suy từ Loại kho); rỗng = chưa khai
   booking_category: string | null    // loại hàng chiếm tải lớn nhất — cửa đặt lịch (1 xe = 1 cửa)
   load: LoadUtil
   underload: boolean
@@ -176,12 +184,14 @@ export function fits(m: EngineModel, pallets: number | null, tons: number | null
   if (c.tons != null && tons != null && tons > c.tons + 1e-9) return false
   return true
 }
-function servesAll(m: EngineModel, cats: string[]): boolean {
-  const sv = (m.serve_categories ?? []).filter(Boolean)
+/** Luật 4: xe khai rỗng = chở được mọi điều kiện (cùng quy ước `Location.categories` của app). */
+export function servesConditions(m: EngineModel, conds: string[]): boolean {
+  const sv = (m.serve_conditions ?? []).filter(Boolean)
   if (!sv.length) return true
-  return cats.every(c => sv.includes(c))
+  return conds.every(c => sv.includes(c))
 }
 const catsOf = (lines: EngineLine[]): string[] => uniq(lines.map(l => l.category).filter((c): c is string => !!c)).sort(cmp)
+const condsOf = (lines: EngineLine[]): string[] => uniq(lines.map(l => l.condition).filter((c): c is string => !!c)).sort(cmp)
 
 // ── Thùng xếp (bin) trong lúc ghép ──
 interface Bin { key: string; mkey: string; units: Unit[]; pallets: number; tons: number }
@@ -191,7 +201,12 @@ const withUnits = (b: Bin, units: Unit[]): Bin => {
   const all = [...b.units, ...units]
   return { ...b, units: all, pallets: r3(all.reduce((s, u) => s + (u.pallets ?? 0), 0)), tons: r3(all.reduce((s, u) => s + (u.tons ?? 0), 0)) }
 }
-const binFits = (big: EngineModel, b: Bin, maxDrops: number) => fits(big, b.pallets, b.tons) && binStops(b) <= maxDrops
+/** Bin xếp được không: vừa xe lớn nhất · không vượt điểm giao · VÀ có ít nhất một dòng xe phục vụ đủ điều kiện bảo quản
+ *  của cả bin. Vế cuối làm hàng lạnh tự tách khỏi hàng thường khi đội xe không có xe kết hợp — thay vì gom chung rồi
+ *  bế tắc ở bước chọn xe. Có xe kết hợp thì vẫn gom như cũ (đó là lý do đội xe có xe "kết hợp nóng / lạnh"). */
+const binFits = (models: EngineModel[], big: EngineModel, b: Bin, maxDrops: number) =>
+  fits(big, b.pallets, b.tons) && binStops(b) <= maxDrops
+  && models.some(m => servesConditions(m, condsOf(b.units.flatMap(u => u.lines))))
 
 /** Luật 3 (tách): OD vượt xe lớn nhất → cắt theo dòng hàng nguyên (lớn trước), mỗi phần ≤ sức chứa; dòng đơn lẻ vượt → phần riêng `oversize`. */
 export function splitOversize(od: EngineOd, big: EngineModel): Unit[] {
@@ -294,7 +309,7 @@ function chooseCarrier(ctx: Ctx, model: EngineModel, wards: string[], region: st
 
 interface Assigned {
   model: EngineModel | null; carrier: EngineCarrier | null; freight: TripFreight; reasons: string[]; warnings: string[]
-  cats: string[]; wards: string[]; stops: number; pallets: number | null; tons: number | null; oversize: boolean
+  cats: string[]; conds: string[]; wards: string[]; stops: number; pallets: number | null; tons: number | null; oversize: boolean
 }
 /** Luật 3 (hạ xe) + 6: với một bin đã xếp, chọn (dòng xe, ĐVVT) theo ba bậc:
  *  (1) trong các dòng xe CHỞ ĐỦ TẢI (không Non tải) có cước ⇒ rẻ nhất; (2) không dòng xe nào đủ tải ⇒ dòng xe NHỎ NHẤT còn vừa
@@ -303,13 +318,15 @@ interface Assigned {
  *  73 Non tải) — không ĐVVT nào nhận giá đó cho chuyến như vậy, và điều vận không bao giờ xếp thế. */
 function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, underPct: (m: EngineModel) => number): Assigned {
   const cats = catsOf(b.units.flatMap(u => u.lines))
+  const conds = condsOf(b.units.flatMap(u => u.lines))
+  const condLabel = (c: string) => ctx.input.condition_labels?.[c] ?? c
   const wards = binWards(b).filter(w => w !== '?')
   const stops = binStops(b)
   const region = b.units[0]?.od.region_code ?? null
   const pAll = b.units.every(u => u.pallets != null) ? r3(b.pallets) : null
   const tAll = b.units.every(u => u.tons != null) ? r3(b.tons) : null
   const oversize = b.units.some(u => u.oversize)
-  const cands = ctx.models.filter(m => servesAll(m, cats) && (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
+  const cands = ctx.models.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
     .sort((a, c) => (numOr(a.max_pallets, 1e9) - numOr(c.max_pallets, 1e9)) || (numOr(a.max_tons, 1e9) - numOr(c.max_tons, 1e9)) || cmp(a.sap_code, c.sap_code))
   const warnings: string[] = []
   const priced: { model: EngineModel; opt: PriceOpt; full: boolean }[] = []
@@ -330,13 +347,19 @@ function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, un
   }
   if (best) {
     if (pool === priced && priced.length) best.opt.reasons.push(`Không dòng xe nào chở đủ tải (dưới ${underPct(best.model)}%) — chọn dòng xe nhỏ nhất còn vừa có cước`)
-    return { model: best.model, carrier: best.opt.carrier, freight: best.opt.freight, reasons: best.opt.reasons, warnings, cats, wards, stops, pallets: pAll, tons: tAll, oversize }
+    return { model: best.model, carrier: best.opt.carrier, freight: best.opt.freight, reasons: best.opt.reasons, warnings, cats, conds, wards, stops, pallets: pAll, tons: tAll, oversize }
   }
   const m0 = cands[0] ?? null
-  if (!m0) warnings.push(cats.length ? `Không dòng xe nào vừa tải và phục vụ loại ${cats.join('+')}` : 'Không dòng xe nào vừa tải')
-  else warnings.push('Chưa có bảng cước cho tuyến/dòng xe này ở mọi ĐVVT — chọn dòng xe nhỏ nhất còn vừa tải')
+  if (!m0) {
+    // Nói THẲNG cái gì chặn: thiếu xe phục vụ điều kiện bảo quản là ca người dùng sửa được ngay (khai thêm dòng xe),
+    // khác hẳn "không xe nào vừa tải" (phải tách chuyến). Phân biệt bằng cách thử bỏ ràng buộc điều kiện.
+    const fitIgnoringConds = ctx.models.some(m => (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
+    warnings.push(conds.length && fitIgnoringConds
+      ? `Không dòng xe nào phục vụ điều kiện bảo quản ${conds.map(condLabel).join(' + ')} — khai ở Cài đặt TMS → Mã dòng xe`
+      : 'Không dòng xe nào vừa tải')
+  } else warnings.push('Chưa có bảng cước cho tuyến/dòng xe này ở mọi ĐVVT — chọn dòng xe nhỏ nhất còn vừa tải')
   const freight: TripFreight = { total: null, base: null, billed_pallets: pAll != null ? billedPallets(pAll) : null, unit: m0?.tariff_unit ?? null, tariff_id: null, ward: wards[0] ?? null, surcharges: [], reason: warnings[warnings.length - 1] }
-  return { model: m0, carrier: null, freight, reasons: [], warnings, cats, wards, stops, pallets: pAll, tons: tAll, oversize }
+  return { model: m0, carrier: null, freight, reasons: [], warnings, cats, conds, wards, stops, pallets: pAll, tons: tAll, oversize }
 }
 
 export function runDispatch(input: EngineInput): DispatchResult {
@@ -384,7 +407,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     for (const u of us) {
       const mkey = mergeKey(u.od, P.allow_mix_channels)
       if (u.oversize) { local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
-      const b = local.find(x => !x.units.some(y => y.oversize) && binFits(big, withUnits(x, [u]), P.max_drops))
+      const b = local.find(x => !x.units.some(y => y.oversize) && binFits(models, big, withUnits(x, [u]), P.max_drops))
       if (b) { const nb = withUnits(b, [u]); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
       else local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
     }
@@ -404,7 +427,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
       const cSrc = costOf(src).freight.total
       const targets = bins.filter(t => t !== src && t.mkey === src.mkey && !t.units.some(u => u.oversize))
         .map(t => ({ t, merged: withUnits(t, src.units) }))
-        .filter(x => binFits(bigFor(x.merged.units.map(u => u.od.ward_code)), x.merged, P.max_drops))
+        .filter(x => binFits(models, bigFor(x.merged.units.map(u => u.od.ward_code)), x.merged, P.max_drops))
         .map(x => { const cT = costOf(x.t).freight.total, cM = costOf(x.merged).freight.total; return { ...x, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
         .filter(x => x.ok)
         .sort((a, b) => ((a.cM ?? Infinity) - (b.cM ?? Infinity)) || (b.t.pallets - a.t.pallets) || cmp(a.t.key, b.t.key))
@@ -433,7 +456,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key,
       vehicle_model: a.model, carrier: a.carrier,
       ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code) })),
-      wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
+      wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
       warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : [])],
       merge_hint: null,

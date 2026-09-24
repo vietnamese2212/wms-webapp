@@ -8,7 +8,7 @@ import {
 
 const model = (o: Partial<EngineModel> & { id: string }): EngineModel => ({
   sap_code: o.id, name: o.id, parent_type_name: 'XE PALLET', capacity_mode: 'PALLET', max_pallets: 9, max_tons: null,
-  tariff_unit: 'PER_PALLET', underload_pct: 70, serve_categories: null, max_drops: null, is_active: true, ...o,
+  tariff_unit: 'PER_PALLET', underload_pct: 70, serve_conditions: null, max_drops: null, is_active: true, ...o,
 })
 const M9 = model({ id: 'M9' })
 const M16 = model({ id: 'M16', max_pallets: 16 })
@@ -16,7 +16,7 @@ const A: EngineCarrier = { id: 'A', code: 'A', name: 'ĐVVT A' }
 const B: EngineCarrier = { id: 'B', code: 'B', name: 'ĐVVT B' }
 const tariff = (carrier: string, m: string, ward: string, price: number, km: number | null = 10): EngineTariff =>
   ({ id: `${carrier}|${m}|${ward}`, transport_company_id: carrier, vehicle_model_id: m, ward_code: ward, price, distance_km: km, effective_from: '2026-01-01', effective_to: null, is_active: true })
-const line = (pallets: number, over: Partial<EngineLine> = {}): EngineLine => ({ material_code: 'M1', qty_base: 1, pallets, kg: pallets * 500, category: 'FG01', ...over })
+const line = (pallets: number, over: Partial<EngineLine> = {}): EngineLine => ({ material_code: 'M1', qty_base: 1, pallets, kg: pallets * 500, category: 'FG01', condition: null, ...over })
 const od = (n: string, ward: string, pallets: number, over: Partial<EngineOd> = {}): EngineOd => ({
   od_number: n, ship_to_code: `S${n}`, ship_to_name: null, ward_code: ward, region_code: 'R1', channel: null, internal_wh: null, scan_mode: false, flow: 'SALE',
   lines: [line(pallets)], ...over,
@@ -229,11 +229,54 @@ describe('OD không lên xe — lý do nói thẳng', () => {
     const r = runDispatch(input([od('1', 'W1', 2)], { models: [model({ id: 'X', parent_type_name: null })] }))
     expect(r.trips).toHaveLength(0); expect(r.unplanned[0].reason).toMatch(/gán cha/)
   })
-  it('dòng xe không phục vụ loại hàng ⇒ không chọn dòng xe đó', () => {
-    const cold = model({ id: 'COLD', serve_categories: ['SCA'] })
-    const r = runDispatch(input([od('1', 'W1', 2)], { models: [cold], tariffs: [tariff('A', 'COLD', 'W1', 50_000)] }))
+})
+
+// ── Luật 4 — ĐIỀU KIỆN BẢO QUẢN (user chốt 24/09: lạnh âm · 2–8 · 15–25 · thường) ──
+describe('luật 4 — điều kiện bảo quản: hàng theo Loại kho, xe khai phục vụ được mức nào', () => {
+  const AMB = model({ id: 'AMB', serve_conditions: ['AMBIENT'] })
+  const COLD = model({ id: 'COLD', serve_conditions: ['FROZEN', 'CHILL', 'COOL'] })
+  const MIX = model({ id: 'MIX', serve_conditions: ['FROZEN', 'CHILL', 'COOL', 'AMBIENT'] })
+  const T = (m: string, w = 'W1', p = 100_000) => tariff('A', m, w, p)
+  const chilled = (n: string, ward: string, pallets: number) => od(n, ward, 0, { lines: [line(pallets, { category: 'FG02', condition: 'CHILL' })] })
+  const ambient = (n: string, ward: string, pallets: number) => od(n, ward, 0, { lines: [line(pallets, { category: 'FG01', condition: 'AMBIENT' })] })
+  const labels = { CHILL: '2 – 8 °C', AMBIENT: 'Thường' }
+
+  it('hàng 2–8 °C chỉ lên xe lạnh, không lên xe thường dù xe thường rẻ hơn', () => {
+    const r = runDispatch(input([chilled('1', 'W1', 8)], { models: [AMB, COLD], tariffs: [T('AMB', 'W1', 50_000), T('COLD')] }))
+    expect(r.trips[0].vehicle_model?.id).toBe('COLD')
+    expect(r.trips[0].conditions).toEqual(['CHILL'])
+  })
+  it('không xe nào phục vụ điều kiện ⇒ cảnh báo gọi ĐÚNG TÊN mức và chỉ chỗ khai, không im lặng', () => {
+    const r = runDispatch(input([chilled('1', 'W1', 8)], { models: [AMB], tariffs: [T('AMB')], condition_labels: labels }))
     expect(r.trips[0].vehicle_model).toBeNull()
-    expect(r.trips[0].warnings.join(' ')).toMatch(/phục vụ loại FG01/)
+    expect(r.trips[0].warnings.join(' ')).toMatch(/phục vụ điều kiện bảo quản 2 – 8 °C/)
+    expect(r.trips[0].warnings.join(' ')).toMatch(/Mã dòng xe/)
+  })
+  it('vượt tải thì vẫn báo "không vừa tải", KHÔNG đổ tại điều kiện bảo quản', () => {
+    const r = runDispatch(input([chilled('1', 'W1', 40)], { models: [COLD], tariffs: [T('COLD')], condition_labels: labels }))
+    expect(r.trips[0].warnings.join(' ')).toMatch(/không vừa tải|lớn hơn xe lớn nhất/i)
+  })
+  it('lạnh + thường cùng phường: CÓ xe kết hợp ⇒ một chuyến; KHÔNG có ⇒ TỰ TÁCH hai chuyến (không bế tắc)', () => {
+    const ods = [chilled('1', 'W1', 3), ambient('2', 'W1', 3)]
+    const withMix = runDispatch(input(ods, { models: [AMB, COLD, MIX], tariffs: [T('AMB'), T('COLD'), T('MIX')] }))
+    expect(withMix.trips).toHaveLength(1)
+    expect(withMix.trips[0].vehicle_model?.id).toBe('MIX')
+    expect(withMix.trips[0].conditions).toEqual(['AMBIENT', 'CHILL'])
+    const noMix = runDispatch(input(ods, { models: [AMB, COLD], tariffs: [T('AMB'), T('COLD')] }))
+    expect(noMix.trips).toHaveLength(2)
+    expect(noMix.trips.map(t => t.vehicle_model?.id).sort()).toEqual(['AMB', 'COLD'])
+    expect(noMix.trips.every(t => t.conditions.length === 1)).toBe(true)
+  })
+  it('gộp chuyến Non tải cùng vùng cũng không được trộn hai điều kiện khi thiếu xe kết hợp', () => {
+    const r = runDispatch(input([chilled('1', 'W1', 2), ambient('2', 'W2', 2)], { models: [AMB, COLD], tariffs: [T('AMB', 'W1'), T('COLD', 'W1'), T('AMB', 'W2'), T('COLD', 'W2')] }))
+    expect(r.trips).toHaveLength(2)
+  })
+  it('tương thích ngược: xe khai RỖNG = chở mọi điều kiện · Loại kho chưa khai ⇒ hàng không ràng buộc gì', () => {
+    const blank = model({ id: 'BLANK' })
+    expect(runDispatch(input([chilled('1', 'W1', 8)], { models: [blank], tariffs: [T('BLANK')] })).trips[0].vehicle_model?.id).toBe('BLANK')
+    const r = runDispatch(input([od('1', 'W1', 8)], { models: [AMB, COLD], tariffs: [T('AMB', 'W1', 50_000), T('COLD')] }))
+    expect(r.trips[0].vehicle_model?.id).toBe('AMB')     // hàng chưa khai điều kiện ⇒ rẻ nhất như trước
+    expect(r.trips[0].conditions).toEqual([])
   })
 })
 

@@ -26,7 +26,8 @@ import { toast } from '@/components/ui/use-toast'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan,
   useSettleDispatchTrip, useRespondDispatchTrip,
-  useVehicleModels, useTransportCompanies, type DispatchPlan, type DispatchTrip, type DispatchTripStatus,
+  useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
+  type DispatchPlan, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -101,6 +102,8 @@ export default function Dispatch() {
   const { data: modelsRes } = useVehicleModels({ is_active: true })
   const models = (modelsRes?.items ?? []).filter(m => m.parent)
   const { data: companiesRaw = [] } = useTransportCompanies(true, 'ĐVVT')
+  const { data: conditions = [] } = useStorageConditions()
+  const condBy = useMemo(() => new Map(conditions.map(c => [c.value, c])), [conditions])
   // cờ "cần phản hồi" đọc từ danh mục HIỆN TẠI (bản chụp trong detail lúc lập có thể cũ)
   const tenderBy = useMemo(() => new Map(companiesRaw.map(c => [c.id, c.tender_required === true])), [companiesRaw])
   const needsTender = (t: DispatchTrip) => t.transport_company_id ? (tenderBy.get(t.transport_company_id) ?? t.detail.carrier?.tender_required === true) : false
@@ -284,7 +287,7 @@ export default function Dispatch() {
       <Sheet open={!!openTrip} onOpenChange={o => !o && setOpenTripId(null)}>
         <SheetContent side="right" className="w-full sm:max-w-lg p-0 flex flex-col">
           {openTrip && plan && (
-            <TripPane trip={openTrip} plan={plan} editable={!!isOpen && canPlan && EDITABLE.includes(tripStatus(openTrip))} canConfirm={canConfirm} needsTender={needsTender(openTrip)}
+            <TripPane trip={openTrip} plan={plan} editable={!!isOpen && canPlan && EDITABLE.includes(tripStatus(openTrip))} canConfirm={canConfirm} needsTender={needsTender(openTrip)} condBy={condBy}
               models={models.map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
               companies={companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))}
               onModel={v => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_id: v || null }).catch(e => err(e, 'Không đổi được dòng xe'))}
@@ -303,8 +306,9 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return <div className="flex gap-2 text-xs py-1 border-b border-slate-100 last:border-0"><span className="w-32 shrink-0 text-slate-400">{k}</span><span className="min-w-0 font-medium text-slate-700 break-words">{v}</span></div>
 }
 
-function TripPane({ trip: t, plan, editable, canConfirm, needsTender, models, companies, onModel, onCarrier, onMove, onSettle, onRespond, busy }: {
+function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, models, companies, onModel, onCarrier, onMove, onSettle, onRespond, busy }: {
   trip: DispatchTrip; plan: DispatchPlan; editable: boolean; canConfirm: boolean; needsTender: boolean
+  condBy: Map<string, StorageConditionRow>
   models: { value: string; label: string; sub?: string }[]; companies: { value: string; label: string; sub?: string }[]
   onModel: (v: string) => void; onCarrier: (v: string) => void; onMove: (od: string, toTripId: string) => void
   onSettle: () => void; onRespond: (accept: boolean) => void; busy: boolean
@@ -364,6 +368,7 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, models, co
             {d.freight.surcharges.map((x, i) => <Row key={i} k={`Phụ phí ${x.kind}`} v={`${vnd(x.unit_amount)} × ${x.qty} = ${vnd(x.total)}`} />)}
             {d.freight.ward && <Row k="Phường tính cước" v={d.freight.ward} />}
             {d.booking_category && <Row k="Loại kho booking" v={<>{d.booking_category}{d.categories.length > 1 && <span className="text-slate-500 font-normal"> · chở lẫn {d.categories.join('+')}</span>}</>} />}
+            {!!d.conditions?.length && <Row k="Điều kiện bảo quản" v={<>{d.conditions.map(c => conditionLabel(condBy.get(c), c)).join(' + ')}<span className="text-slate-500 font-normal"> · dòng xe phải phục vụ đủ các mức này</span></>} />}
             {d.warnings.map((w, i) => <div key={i} className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1"><AlertTriangle className="inline h-3 w-3 mr-1" />{w}</div>)}
             {d.merge_hint && <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">{d.merge_hint}</div>}
           </div>

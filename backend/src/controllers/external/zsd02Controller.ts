@@ -18,7 +18,7 @@ import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { sapScopeCheck, activateAwaitingForDos } from '../wms/outboundController'
 import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
 import { upsertCustomerGeo } from '../../services/customerGeo'
-import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
+import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, RAW_VERSION, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
 import { allowedPlants, plantOrFilter } from './erpOrderController'
 
 const now = () => new Date().toISOString()
@@ -75,17 +75,25 @@ export async function uploadZsd02(req: Request, res: Response) {
     // không đổi / SAP đã bỏ, cùng một phép so mà đường ghi dùng; chỉ ĐỌC, chưa ghi gì) ──
     // SỔ OD: giữ id · NO-OP theo bizHash · OBSOLETE dòng SAP bỏ trong DO có mặt
     const odNumbers = [...new Set(out.od.map(r => String(r.od_number)))]
+    // `raw_v` = raw->>'_v': dòng NO-OP mà hình dạng `raw` cũ (thiếu 26 cột chỉ sống trong raw, 24/09) thì ghi lại
+    // RIÊNG raw GIỮ updated_at — không tính "cập nhật", không kích reconcile (nghiệp vụ không đổi).
+    type PriorRow = Record<string, unknown> & { id: string; sync_status: string | null; updated_at: string | null; raw_v: string | null }
+    const rawStale = (p: PriorRow) => String(p.raw_v ?? '') !== String(RAW_VERSION)
     const priorOd = await fetchAllByIdChunks(odNumbers, chunk => db.from('erp_outbound_orders')
-      .select('id, od_number, od_item, sync_status, ' + ZSD02_BIZ.join(', '))
-      .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string; sync_status: string | null })[]
-    const priorByKey = new Map(priorOd.map(p => [`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p, ZSD02_BIZ) }]))
-    let odInserted = 0, odUpdated = 0, odNoop = 0
+      .select('id, od_number, od_item, sync_status, updated_at, raw_v:raw->>_v, ' + ZSD02_BIZ.join(', '))
+      .in('od_number', chunk).order('id')) as unknown as (PriorRow & { od_number: string; od_item: string })[]
+    const priorByKey = new Map(priorOd.map(p => [`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p, ZSD02_BIZ), updated_at: p.updated_at, stale: rawStale(p) }]))
+    let odInserted = 0, odUpdated = 0, odNoop = 0, rawRefreshed = 0
     const odWrite: (OdRecord & { id: string })[] = []
     const updatedKeys: OdKey[] = []
     for (const rec of out.od) {
       const prior = priorByKey.get(`${rec.od_number}__${rec.od_item}`)
       if (!prior) { odWrite.push({ id: randomUUID(), ...rec }); odInserted++; continue }
-      if (prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) { odNoop++; continue }
+      if (prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) {
+        odNoop++
+        if (prior.stale && !isPreflight(req)) { odWrite.push({ id: prior.id, ...rec, updated_at: prior.updated_at ?? rec.updated_at }); rawRefreshed++ }
+        continue
+      }
       odWrite.push({ id: prior.id, ...rec, manual_edited_at: null }); odUpdated++
       updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
@@ -100,15 +108,19 @@ export async function uploadZsd02(req: Request, res: Response) {
     // SỔ SO: cùng khuôn theo khoá (so_number, so_item)
     const soNumbers = [...new Set(out.so.map(r => String(r.so_number)))]
     const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
-      .select('id, so_number, so_item, sync_status, ' + SO_BIZ.join(', '))
-      .in('so_number', chunk).order('id')) as (Record<string, unknown> & { id: string; so_number: string; so_item: string; sync_status: string })[]
-    const priorSoByKey = new Map(priorSo.map(p => [`${p.so_number}__${p.so_item}`, { id: p.id, hash: bizHash(p, SO_BIZ) }]))
+      .select('id, so_number, so_item, sync_status, updated_at, raw_v:raw->>_v, ' + SO_BIZ.join(', '))
+      .in('so_number', chunk).order('id')) as unknown as (PriorRow & { so_number: string; so_item: string; sync_status: string })[]
+    const priorSoByKey = new Map(priorSo.map(p => [`${p.so_number}__${p.so_item}`, { id: p.id, hash: bizHash(p, SO_BIZ), updated_at: p.updated_at, stale: rawStale(p) }]))
     let soInserted = 0, soUpdated = 0, soNoop = 0
     const soWrite: (typeof out.so[number] & { id: string })[] = []
     for (const rec of out.so) {
       const prior = priorSoByKey.get(`${rec.so_number}__${rec.so_item}`)
       if (!prior) { soWrite.push({ id: randomUUID(), ...rec }); soInserted++; continue }
-      if (prior.hash === bizHash(rec as Record<string, unknown>, SO_BIZ)) { soNoop++; continue }
+      if (prior.hash === bizHash(rec as Record<string, unknown>, SO_BIZ)) {
+        soNoop++
+        if (prior.stale && !isPreflight(req)) { soWrite.push({ id: prior.id, ...rec, updated_at: prior.updated_at ?? rec.updated_at }); rawRefreshed++ }
+        continue
+      }
       soWrite.push({ id: prior.id, ...rec }); soUpdated++
     }
     const soFileKeys = new Set(out.so.map(r => `${r.so_number}__${r.so_item}`))
@@ -212,6 +224,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     return ok(res, {
       rows: st.rows, skipped_no_key: st.skipped,
       od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length },
+      raw_refreshed: rawRefreshed,
       so: { rows: st.so_rows, orders: st.so_numbers, without_od: soWithoutOd, inserted: soInserted, updated: soUpdated, noop: soNoop, obsoleted: soObsoleted, unresolved: st.so_unresolved, cancelled: st.cancelled },
       flows: st.flows, not_loadable: st.not_loadable,
       routes: routesWritten, customers,

@@ -81,8 +81,39 @@ export const ZSD02_FIELDS: FieldDef[] = [
   { key: 'gross_weight',  label: 'Gross Weight',                       aliases: ['Trọng lượng', 'Weight'] },
   { key: 'date_pct',      label: 'Date (%)',                           aliases: ['Date pct', '%Date'] },
   { key: 'date_days',     label: 'Date (Ngày)',                        aliases: ['Date days'] },
+  // ── 26 cột KHÔNG có cột riêng trong sổ — chỉ sống trong `raw` (panel chi tiết dòng đọc từ đó). Khai để
+  // `parseSheetByHeader` giữ lại: bộ đọc chỉ dựng object từ cột ĐÃ MAP, cột không khai là mất hẳn khỏi `raw`
+  // (đo 24/09: 54/79 header được khai, "Số lượng còn lại chưa xuất / nhập"… rơi mất dù plan hứa "nằm trong raw").
+  { key: 'division',      label: 'Division',                           aliases: [] },
+  { key: 'order_system',  label: 'Hệ thống đặt hàng',                  aliases: ['Order System'] },
+  { key: 'customer_ref_date', label: 'Customer Reference date',        aliases: [] },
+  { key: 'plant_name',    label: 'Plant Description',                  aliases: ['Tên nhà máy'] },
+  { key: 'sloc_name',     label: 'Sloc Description',                   aliases: [] },
+  { key: 'issued_car',    label: 'SL THÙNG đã xuất / nhập',            aliases: [] },
+  { key: 'remain_qty',    label: 'Số lượng còn lại chưa xuất / nhập',  aliases: [] },
+  { key: 'remain_car',    label: 'Số lượng THÙNG còn lại chưa xuất / nhập', aliases: [] },
+  { key: 'delivery_method', label: 'Phương thức giao hàng',            aliases: ['Shipping Condition'] },
+  { key: 'invoice_no',    label: 'Số hóa đơn',                         aliases: ['Số hoá đơn', 'Invoice No'] },
+  { key: 'billing_date',  label: 'Billing date',                       aliases: [] },
+  { key: 'order_reason',  label: 'Order reason/Lý do đơn',             aliases: ['Order reason', 'Lý do đơn'] },
+  { key: 'created_by',    label: 'Created by',                         aliases: [] },
+  { key: 'created_on',    label: 'Created on',                         aliases: [] },
+  { key: 'approved_at',   label: 'Thời gian duyệt đơn',                aliases: [] },
+  { key: 'billing_created', label: 'Thời gian tạo Billing',            aliases: [] },
+  { key: 'issued_pallets', label: 'SL PALLET đã xuất / nhập',          aliases: [] },
+  { key: 'remain_pallets', label: 'Số lượng PALLET còn lại chưa xuất / nhập', aliases: [] },
+  { key: 'issued_m3',     label: 'SL M3 đã xuất / nhập',               aliases: [] },
+  { key: 'remain_m3',     label: 'Số lượng M3 còn lại chưa xuất / nhập', aliases: [] },
+  { key: 'revenue_gross', label: 'Doanh số Gross',                     aliases: [] },
+  { key: 'revenue_net',   label: 'Doanh số NET',                       aliases: [] },
+  { key: 'io_no',         label: 'Số IO',                              aliases: [] },
+  { key: 'cont_seal',     label: 'Số Cont/ Số Seal',                   aliases: ['Số Cont', 'Số Seal'] },
+  { key: 'approver',      label: 'Người duyệt đơn hàng',               aliases: ['Người duyệt'] },
+  { key: 'sales_group',   label: 'Sales Group',                        aliases: [] },
 ]
 export const ZSD02_REQUIRED_LABELS = ZSD02_FIELDS.filter(f => f.required).map(f => f.label)
+/** Cột NGÀY trong `raw` — Excel cho serial (45912) nên chuẩn về 'YYYY-MM-DD' trước khi lưu, panel chi tiết in thẳng được. */
+export const ZSD02_RAW_DATE_KEYS = ['delivery_date', 'so_created', 'od_created', 'customer_ref_date', 'billing_date', 'created_on', 'approved_at', 'billing_created'] as const
 
 export type Zsd02Mat = LoadMat & { material_code: string; short_name?: string | null }
 export interface Zsd02Ctx {
@@ -122,6 +153,18 @@ export interface Zsd02Parsed {
 }
 
 const asJson = (v: unknown): Json => v as unknown as Json
+/** Phiên bản hình dạng `raw` — dòng NO-OP mà `raw._v` cũ hơn thì cửa nạp ghi lại RIÊNG `raw` (giữ updated_at),
+ *  để sổ đã nạp trước bản vá cũng có đủ 79 cột cho panel chi tiết. Tăng khi đổi cách dựng raw. */
+export const RAW_VERSION = 2
+/** `raw` lưu trọn dòng theo key field; ô ngày về 'YYYY-MM-DD', ô trống bỏ (không lưu 26 chuỗi rỗng mỗi dòng). */
+function rawOf(r: Record<string, unknown>): Json {
+  const out: Record<string, unknown> = { _v: RAW_VERSION }
+  for (const [k, v] of Object.entries(r)) {
+    if (v === '' || v == null) continue
+    out[k] = (ZSD02_RAW_DATE_KEYS as readonly string[]).includes(k) ? (parseExcelDate(v) ?? v) : v
+  }
+  return asJson(out)
+}
 const upper = (s: string | null) => (s ? s.toUpperCase() : null)
 const round3 = (x: number) => Math.round(x * 1000) / 1000
 
@@ -252,7 +295,7 @@ export function parseZsd02(rows: Record<string, unknown>[], ctx: Zsd02Ctx): Zsd0
           mat_doc: cellStr(r.mat_doc), billing_no: cellStr(r.billing),
           so_created_at: parseExcelDate(r.so_created), od_created_at: parseExcelDate(r.od_created),
           approval_status: cellStr(r.approval), customer_ref: cellStr(r.customer_ref),
-          source: 'ZSD02', raw: asJson(r), uploaded_by: ctx.actor, sync_status: 'ACTIVE', last_synced_at: t, updated_at: t,
+          source: 'ZSD02', raw: rawOf(r), uploaded_by: ctx.actor, sync_status: 'ACTIVE', last_synced_at: t, updated_at: t,
         })
       }
     }
@@ -289,7 +332,7 @@ export function parseZsd02(rows: Record<string, unknown>[], ctx: Zsd02Ctx): Zsd0
       ward_code: ward, region_code: region.code, route_code: routeCode, route_name: routeName,
       sap_pallets: cellNum(r.so_pallets), sap_m3: cellNum(r.so_m3), gross_weight_kg: gwKg,
       note_delivery: cellStr(r.note_delivery),
-      sync_status: 'ACTIVE', source: 'ZSD02', raw: asJson(r), uploaded_by: ctx.actor, updated_at: t,
+      sync_status: 'ACTIVE', source: 'ZSD02', raw: rawOf(r), uploaded_by: ctx.actor, updated_at: t,
     })
   }
 

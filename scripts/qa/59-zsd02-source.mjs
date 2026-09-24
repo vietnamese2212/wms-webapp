@@ -97,6 +97,9 @@ try {
     && Number(od1?.gross_weight_kg) === 50 && od1?.sap_dispatch_status === 'UNASSIGNED' && od1?.source === 'ZSD02',
     `flow=${od1?.flow} dd=${od1?.delivery_date} ward=${od1?.ward_code} route=${od1?.route_code} kg=${od1?.gross_weight_kg} disp=${od1?.sap_dispatch_status} src=${od1?.source}`)
   if (dvvtDa) check('2c. ĐVVT "Đông Á" khớp danh mục → dvvt_code DA (raw giữ nguyên văn)', od1?.dvvt_code === 'DA' && od1?.dvvt_raw === 'Đông Á', `code=${od1?.dvvt_code} raw=${od1?.dvvt_raw}`)
+  // 2c2 (24/09): `raw` mang phiên bản hình dạng + ô ngày đã về YYYY-MM-DD — panel chi tiết dòng đọc 26 cột chỉ sống trong raw từ đây
+  check('2c2. raw._v = 2 · raw.delivery_date đã chuẩn hoá YYYY-MM-DD', Number(od1?.raw?._v) === 2 && od1?.raw?.delivery_date === DELIV,
+    `_v=${od1?.raw?._v} raw.delivery_date=${od1?.raw?.delivery_date}`)
   const so2 = (await restAll('erp_so_lines', `select=*&so_number=eq.${SO2}`))[0]
   check('2d. Sổ SO: dòng chưa OD OPEN · od_number NULL · base DẪN XUẤT = 5 × hệ số · derive_source FILE (hệ số quan sát từ OD1 cùng mã) · cờ derived',
     !!so2 && so2.status === 'OPEN' && so2.od_number === null && Number(so2.qty_so_base) === 5 * factor && so2.qty_base_derived === true

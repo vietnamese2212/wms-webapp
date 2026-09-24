@@ -37,6 +37,8 @@ import { can, type ModulePermissions, type ModuleKey } from '@/config/permission
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { VcUploadDialog, type VcUploadMode } from './VcUploadDialog'
+import { SapLineDetailSheet } from './SapLineDetailSheet'
+import { FLOW_VI, DISPATCH_VI, SOURCE_VI, SO_STATUS_VI } from './sapLabels'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
@@ -76,27 +78,33 @@ function TabBar({ tab, setTab, tabs: visible }: { tab: TabKey; setTab: (t: TabKe
 const TODAY_VN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // ─── Cột bảng ─────────────────────────────────────────────────────────────────
+// User chốt 24/09: bảng giữ cột QUAN TRỌNG (SO/PO · Sold-to · Ship-to · Tuyến · Ghi chú…), phần còn lại của
+// 79 cột ZSD02 đọc ở panel chi tiết (bấm dòng → SapLineDetailSheet).
 const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'sel',        label: '' },
   { id: 'od_number',  label: 'DO' },
   { id: 'od_item',    label: 'Item' },
+  { id: 'so',         label: 'SO/PO SAP' },
   { id: 'material',   label: 'Mã hàng' },
   { id: 'mat_name',   label: 'Tên hàng' },
   { id: 'qty_sales',  label: 'SL bán', align: 'right' },
   { id: 'qty_base',   label: 'SL gốc', align: 'right' },
+  { id: 'soldto',     label: 'Sold-to' },
   { id: 'shipto',     label: 'Ship-to' },
   { id: 'plant',      label: 'Plant' },
   { id: 'storage',    label: 'Kho' },
   // Cột ZSD02 (22/09) — VL06O để trống. Phường = khoá cước; ĐP xe = SAP đã gắn biển hay chưa (đối soát với kế hoạch app)
   { id: 'flow',       label: 'Phân loại' },
   { id: 'ddate',      label: 'Ngày giao' },
-  { id: 'ward',       label: 'Phường (tuyến)' },
+  { id: 'ward',       label: 'Phường' },
+  { id: 'route',      label: 'Tuyến' },
   { id: 'dvvt',       label: 'ĐVVT SAP' },
   { id: 'dispatch',   label: 'ĐP xe SAP' },
   { id: 'kg',         label: 'KL (kg)', align: 'right' },
   { id: 'pal',        label: 'Pallet SAP', align: 'right' },
   { id: 'batch',      label: 'Batch' },
   { id: 'pct',        label: '%Date', align: 'right' },
+  { id: 'note',       label: 'Ghi chú' },
   { id: 'status',     label: 'Tình trạng' },
   { id: 'unit',       label: 'Lệch ĐV' },
   { id: 'plan_veh',   label: 'Số xe (KH)' },
@@ -104,7 +112,7 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 90, 80, 120, 75, 85, 75, 75, 100, 70, 90, 65, 150, 95, 80, 110]
+const COL_DEFAULTS = [40, 110, 55, 100, 110, 160, 90, 90, 95, 135, 70, 90, 90, 80, 110, 150, 75, 85, 75, 75, 100, 70, 160, 90, 65, 150, 95, 80, 110]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -153,27 +161,13 @@ export default function ExternalData() {
   return <DoSapTab tabBar={tabBar} />
 }
 
-// ─── Phân loại dòng SAP (flow) — nhãn tiếng Việt MỘT chỗ; tone theo nghĩa (trả về/chiết khấu không lên xe = đỏ/xám) ──
-const FLOW_VI: Record<string, { label: string; tone: BadgeTone }> = {
-  SALE:     { label: 'Bán hàng',       tone: 'green' },
-  STO:      { label: 'Chuyển kho',     tone: 'sky' },
-  INTERNAL: { label: 'Nội bộ',         tone: 'purple' },
-  PALLET:   { label: 'Pallet đi cùng', tone: 'slate' },
-  RETURN:   { label: 'Trả về',         tone: 'red' },
-  DISCOUNT: { label: 'Chiết khấu',     tone: 'slate' },
-  UNKNOWN:  { label: 'Chưa phân loại', tone: 'amber' },
-}
+// ─── Phân loại dòng SAP (flow) — nhãn ở ./sapLabels (dùng chung với panel chi tiết) ──
 const FLOW_OPTS = Object.entries(FLOW_VI).map(([value, v]) => ({ value, label: v.label }))
 function FlowBadge({ flow }: { flow: string | null | undefined }) {
   if (!flow) return <span className="text-slate-300">—</span>
   const f = FLOW_VI[flow] ?? { label: flow, tone: 'slate' as BadgeTone }
   return <ToneBadge tone={f.tone} title={flow}>{f.label}</ToneBadge>
 }
-const DISPATCH_VI: Record<string, { label: string; tone: BadgeTone }> = {
-  ASSIGNED:   { label: 'Đã gắn xe',   tone: 'green' },
-  UNASSIGNED: { label: 'Chưa gắn xe', tone: 'amber' },
-}
-const SOURCE_VI: Record<string, string> = { EXCEL: 'VL06O', ZSD02: 'ZSD02', MANUAL: 'Tay', SAP: 'SAP API' }
 
 // ─── Tab DO SAP (raw erp_outbound_orders) ─────────────────────────────────────
 function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
@@ -193,6 +187,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [detail, setDetail]         = useState<DoSapRow | null>(null)   // bấm dòng → panel chi tiết (mọi cột ZSD02 còn lại)
   const [doEditor, setDoEditor]     = useState<string[] | null>(null)   // sửa cả DO — danh sách od_number (bảng gom mọi mã cùng DO)
   const [exporting, setExporting]   = useState(false)
   const [exportErr, setExportErr]   = useState('')
@@ -200,7 +195,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // Nút nạp nguồn: ai import được bên Xuất, hoặc ai được tạo dữ liệu SAP tại chính trang này
   const canUploadVl06o = can(perms, 'outbound', 'import') || can(perms, 'external_do_sap', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v5', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v6', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -316,27 +311,32 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       const rows = all.slice(0, CAP).map(x => ({
         'DO': x.od_number,
         'Item': x.od_item,
+        'SO/PO SAP': x.so_number ?? '',
         'Mã hàng': x.material_code ?? '',
         'Tên hàng': x.material_name ?? '',
         'SL bán': x.qty_sales ?? '',
         'ĐV bán': x.sales_unit ?? '',
         'SL gốc': x.qty_base ?? '',
         'ĐV gốc': x.base_unit ?? '',
+        'Sold-to': x.sold_to_code ?? '',
         'Ship-to': x.ship_to_code ?? '',
         'Tên ship-to': x.ship_to_name ?? '',
         'Plant': x.plant ?? '',
         'Kho': x.storage_location ?? '',
         'Phân loại': x.flow ? (FLOW_VI[x.flow]?.label ?? x.flow) : '',
         'Ngày giao': x.delivery_date ?? '',
-        'Phường (tuyến)': x.ward_code ?? '',
+        'Phường': x.ward_code ?? '',
         'Mã Route': x.route_code ?? '',
+        'Tuyến': x.route_name ?? '',
         'ĐVVT SAP': x.dvvt_code ?? x.dvvt_raw ?? '',
         'Biển số SAP': x.license_plate ?? '',
         'ĐP xe SAP': x.sap_dispatch_status ? (DISPATCH_VI[x.sap_dispatch_status]?.label ?? x.sap_dispatch_status) : '',
         'KL (kg)': x.gross_weight_kg ?? '',
         'Pallet SAP': x.sap_pallets ?? '',
-        'Batch': x.batch ?? '',
+        'Batch': x.batch ?? x.batch_so ?? '',
         '%Date': x.pct_date_req ?? '',
+        'Ghi chú giao hàng': x.note_delivery ?? '',
+        'Ghi chú hoá đơn': x.note_invoice ?? '',
         'Nguồn': SOURCE_VI[(x.source ?? '').toUpperCase()] ?? x.source ?? '',
         'Tình trạng': x.sync_status === 'OBSOLETE' ? 'SAP đã bỏ' : x.used ? 'Đã dùng' : 'Chưa dùng',
         'Cập nhật': x.updated_at ? formatTimestampDate(x.updated_at, true) : '',
@@ -462,7 +462,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                 const isSel = selected.has(r.id)
                 const cellPad = dense ? 'py-1' : 'py-2.5'
                 return (
-                  <TableRow key={r.id} className={isSel ? 'bg-sky-50' : ''}>
+                  <TableRow key={r.id} className={`cursor-pointer ${isSel ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r)}>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap sticky left-0 z-10 ${isSel ? 'bg-sky-50' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
                       <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600 cursor-pointer align-middle"
                         checked={isSel} onChange={() => toggleOne(r.id)} />
@@ -474,6 +474,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                       )}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.od_item || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`} title={r.so_type ? `Loại ${r.so_type}` : undefined}>{r.so_number || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.material_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.material_name ?? undefined}>{r.material_name || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>
@@ -482,6 +483,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-semibold tabular-nums text-right whitespace-nowrap`}>
                       {r.qty_base != null ? <>{num(r.qty_base)}{r.base_unit && <span className="text-slate-400 font-normal"> {r.base_unit}</span>}</> : <span className="text-slate-300">—</span>}
                     </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.sold_to_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
                       {r.ship_to_code ? (
                         <div className="leading-tight">
@@ -494,8 +496,11 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.storage_location || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><FlowBadge flow={r.flow} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ?? undefined}>
-                      {r.ward_code ? <div className="leading-tight"><div>{r.ward_code}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div> : <span className="text-slate-300">—</span>}
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.ward_code ?? undefined}>{r.ward_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ? `${r.route_code ?? ''} ${r.route_name}`.trim() : undefined}>
+                      {r.route_name || r.route_code
+                        ? <div className="leading-tight"><div className="truncate">{r.route_name || <span className="text-slate-300">—</span>}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div>
+                        : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`} title={r.dvvt_raw ?? undefined}>
                       {r.dvvt_code ? <span className="font-mono font-semibold">{r.dvvt_code}</span>
@@ -509,8 +514,14 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.gross_weight_kg != null ? num(Math.round(Number(r.gross_weight_kg))) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_pallets != null ? Number(r.sap_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.batch || <span className="text-slate-300">—</span>}</TableCell>
+                    {/* VL06O ghi `batch`, ZSD02 ghi `batch_so` (SO-Batch) — cột in cái nào có (bản cũ chỉ đọc `batch` nên dòng ZSD02 luôn "—") */}
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.batch || r.batch_so || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.pct_date_req != null ? `${r.pct_date_req}%` : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={[r.note_delivery, r.note_invoice].filter(Boolean).join('\n') || undefined}>
+                      {r.note_delivery || r.note_invoice
+                        ? <div className="leading-tight"><div className="truncate">{r.note_delivery || <span className="text-slate-300">—</span>}</div>{r.note_invoice && <div className="text-[9px] text-slate-400 truncate">HĐ: {r.note_invoice}</div>}</div>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><StatusBadge used={r.used} syncStatus={r.sync_status} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
                       {r.unit_mismatch
@@ -554,6 +565,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         />
       )}
       {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} />}
+      <SapLineDetailSheet row={detail} kind="od" onClose={() => setDetail(null)} />
     </div>
   )
 }
@@ -574,26 +586,25 @@ const SO_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'kg',       label: 'KL (kg)', align: 'right' },
   { id: 'pal',      label: 'Pallet SAP', align: 'right' },
   { id: 'ddate',    label: 'Ngày giao' },
+  { id: 'soldto',   label: 'Sold-to' },
   { id: 'shipto',   label: 'Ship-to' },
-  { id: 'ward',     label: 'Phường (tuyến)' },
+  { id: 'ward',     label: 'Phường' },
+  { id: 'route',    label: 'Tuyến' },
   { id: 'plant',    label: 'Plant' },
   { id: 'flow',     label: 'Phân loại' },
+  { id: 'note',     label: 'Ghi chú' },
   { id: 'od',       label: 'OD' },
   { id: 'updated',  label: 'Cập nhật' },
 ]
-const SO_COL_DEFAULTS = [110, 50, 90, 100, 160, 100, 120, 90, 80, 80, 85, 135, 120, 60, 95, 100, 100]
-const SO_STATUS_VI: Record<string, { label: string; tone: BadgeTone }> = {
-  OPEN:      { label: 'Chưa có OD', tone: 'amber' },
-  HAS_OD:    { label: 'Đã có OD',   tone: 'green' },
-  CANCELLED: { label: 'SAP huỷ',    tone: 'red' },
-}
+const SO_COL_DEFAULTS = [110, 50, 90, 100, 160, 100, 120, 90, 80, 80, 85, 95, 135, 110, 150, 60, 95, 160, 100, 100]
 const SO_STATUS_OPTS = Object.entries(SO_STATUS_VI).map(([value, v]) => ({ value, label: v.label }))
 
 function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
   const { soLines: f, setSoLines } = useWmsFilterStore()
   const { search, dateFrom, dateTo, plant, status, flow, page, pageSize } = f
   const [dense, setDense] = useState(() => localStorage.getItem('solines_density') !== 'comfortable')
-  const { widths: colW, startResize, totalWidth } = useColumnResize('solines_col_widths_v1', SO_COL_DEFAULTS)
+  const [detail, setDetail] = useState<SoLineRow | null>(null)   // bấm dòng → panel chi tiết
+  const { widths: colW, startResize, totalWidth } = useColumnResize('solines_col_widths_v2', SO_COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
   const hasDate = !!(dateFrom || dateTo)
 
@@ -694,7 +705,7 @@ function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
                 const st = SO_STATUS_VI[r.status] ?? { label: r.status, tone: 'slate' as BadgeTone }
                 const notLoadable = r.loadable === false
                 return (
-                  <TableRow key={r.id} className={r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
+                  <TableRow key={r.id} className={`cursor-pointer ${r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}`} onClick={() => setDetail(r)}>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white`}>{r.so_number}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.so_item}</TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><ToneBadge tone={st.tone} title={r.cancel_reason ?? undefined}>{st.label}</ToneBadge></TableCell>
@@ -717,14 +728,19 @@ function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.gross_weight_kg != null ? num(Math.round(Number(r.gross_weight_kg))) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_pallets != null ? Number(r.sap_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.sold_to_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
                       {r.ship_to_code ? <div className="leading-tight"><div className="font-mono">{r.ship_to_code}</div>{r.ship_to_name && <div className="text-[9px] text-slate-400 truncate" title={r.ship_to_name}>{r.ship_to_name}</div>}</div> : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ?? undefined}>
-                      {r.ward_code ? <div className="leading-tight"><div>{r.ward_code}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div> : <span className="text-slate-300">—</span>}
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.ward_code ?? undefined}>{r.ward_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ? `${r.route_code ?? ''} ${r.route_name}`.trim() : undefined}>
+                      {r.route_name || r.route_code
+                        ? <div className="leading-tight"><div className="truncate">{r.route_name || <span className="text-slate-300">—</span>}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div>
+                        : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.plant || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><FlowBadge flow={r.flow} />{notLoadable && r.status !== 'CANCELLED' && <span className="ml-1 text-[9px] text-slate-400">không lên xe</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.note_delivery ?? undefined}>{r.note_delivery || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.od_number || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
                       <div className="leading-tight">
@@ -743,6 +759,7 @@ function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
       <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setSoLines({ pageSize: n })}
         right="Dòng chưa có OD chỉ để nhìn trước tải — lên xe phải chờ SAP tạo OD (tab DO SAP)" />
      </div>
+      <SapLineDetailSheet row={detail} kind="so" onClose={() => setDetail(null)} />
     </div>
   )
 }

@@ -89,6 +89,11 @@ describe.skipIf(!HAS_SAMPLE)('zsd02Parse — file mẫu SAP 01–25/09/2026 (s�
     const parsed = parseSheetByHeader(ws, ZSD02_FIELDS)
     expect(parsed.missingRequired).toEqual([])
     expect(parsed.rows).toHaveLength(8051)
+    // MỌI header của file phải được khai — cột không khai là RƠI khỏi `raw` (bộ đọc chỉ dựng object từ cột đã map),
+    // panel chi tiết dòng không có gì để in. Đo 24/09: 54/79 header được khai trước bản vá.
+    const headers = (XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' }) as unknown[][])[0].filter(h => String(h).trim())
+    expect(headers).toHaveLength(79)
+    expect(Object.keys(parsed.rows[0])).toHaveLength(headers.length)
     const out = parseZsd02(parsed.rows, ctx)
     expect(out.stats.skipped).toBe(0)
     expect(out.od).toHaveLength(6916)

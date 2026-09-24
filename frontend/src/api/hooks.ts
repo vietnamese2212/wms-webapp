@@ -3485,6 +3485,7 @@ export interface SoLineRow {
   sap_pallets: number | null; sap_m3: number | null; gross_weight_kg: number | null; note_delivery: string | null
   source: string; uploaded_by: string | null; created_at: string; updated_at: string
   loadable?: boolean
+  raw?: Record<string, unknown> | null   // trọn dòng file nguồn (panel chi tiết đọc cột không có cột riêng)
 }
 export interface SoLinesSummary { rows: number; open: number; has_od: number; cancelled: number; unresolved: number; not_loadable: number; so_numbers: number; ship_tos: number; sap_pallets: number; kg: number }
 export function useSoLines(params: Record<string, string | number | undefined>, enabled = true) {
@@ -3539,6 +3540,9 @@ export interface DoSapRow {
   dvvt_code?: string | null; dvvt_raw?: string | null; driver_name?: string | null; sap_dispatch_status?: 'ASSIGNED' | 'UNASSIGNED' | null
   qty_so_sales?: number | null; qty_issued_base?: number | null; gross_weight_kg?: number | null; sap_pallets?: number | null; sap_m3?: number | null
   mat_doc?: string | null; billing_no?: string | null
+  so_item?: string | null; sold_to_code?: string | null; sales_org?: string | null; dist_channel?: string | null; sales_district?: string | null
+  so_created_at?: string | null; od_created_at?: string | null; approval_status?: string | null; customer_ref?: string | null
+  raw?: Record<string, unknown> | null   // trọn dòng file nguồn theo key bộ đọc — 26 cột ZSD02 không có cột riêng chỉ sống ở đây (panel chi tiết)
 }
 export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({

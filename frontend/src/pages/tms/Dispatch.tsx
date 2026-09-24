@@ -61,19 +61,25 @@ const tripStatus = (t: DispatchTrip): DispatchTripStatus => t.status ?? 'DRAFT'
 // tới đó", chứ không bắt người kéo ngang 61 dòng để tự tìm.
 // ⚠ CHỈ tính trên xe NGƯỜI CÒN SỬA ĐƯỢC (DRAFT/DECLINED): xe đã vào Kế hoạch xuất mà thiếu cước thì
 // đây không phải chỗ chữa, đếm vào là giục một việc không làm được.
+// ⚠ `todo` = NGƯỜI ĐÓNG ĐƯỢC. "Chưa có cước" và "Có cảnh báo" thì không: 12 xe ở Ba Vì thiếu cước vì
+// bảng cước không có (phường × dòng xe) đó — gán ĐVVT xong vẫn thiếu. Nếu đếm chúng vào "Cần xử lý"
+// thì bộ đếm KHÔNG BAO GIỜ về 0, và một bộ đếm không về 0 được dạy người ta bỏ qua nó (đo thật 24/09:
+// áp ĐVVT cho 12 xe xong, "Cần xử lý" vẫn đứng nguyên 12). Chúng vẫn là chip lọc và vẫn hiện dưới số
+// xe — chỉ không giả vờ là việc phải làm. Trước khi Xác nhận thì hộp thoại nói lại, đó mới đúng chỗ.
 type IssueKey = 'declined' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'under' | 'warn'
-const ISSUES: { key: IssueKey; label: string; tip: string; test: (t: DispatchTrip) => boolean }[] = [
-  { key: 'declined',  label: 'ĐVVT từ chối',   tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"',                     test: t => tripStatus(t) === 'DECLINED' },
-  { key: 'nomodel',   label: 'Chưa có dòng xe', tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => !t.vehicle_model_id },
-  { key: 'nocarrier', label: 'Chưa có ĐVVT',   tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => !t.transport_company_id },
-  { key: 'nofreight', label: 'Chưa có cước',   tip: 'Xác nhận vẫn được, nhưng chuyến sẽ không có cước dự tính',       test: t => t.freight_estimated == null },
-  { key: 'over',      label: 'Vượt tải',       tip: 'OD lớn hơn xe lớn nhất — tách bớt OD sang xe khác',              test: t => t.oversize },
-  { key: 'under',     label: 'Non tải',        tip: 'Dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết', test: t => t.underload },
-  { key: 'warn',      label: 'Có cảnh báo',    tip: 'Máy ghi lại chỗ nó không tự xử được — đọc cột Ghi chú máy',      test: t => t.detail.warnings.length > 0 },
+const ISSUES: { key: IssueKey; label: string; tip: string; todo: boolean; test: (t: DispatchTrip) => boolean }[] = [
+  { key: 'declined',  label: 'ĐVVT từ chối',   todo: true,  tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"',                     test: t => tripStatus(t) === 'DECLINED' },
+  { key: 'nomodel',   label: 'Chưa có dòng xe', todo: true, tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => !t.vehicle_model_id },
+  { key: 'nocarrier', label: 'Chưa có ĐVVT',   todo: true,  tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => !t.transport_company_id },
+  { key: 'over',      label: 'Vượt tải',       todo: true,  tip: 'OD lớn hơn xe lớn nhất — tách bớt OD sang xe khác',              test: t => t.oversize },
+  { key: 'under',     label: 'Non tải',        todo: true,  tip: 'Dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết', test: t => t.underload },
+  { key: 'nofreight', label: 'Chưa có cước',   todo: false, tip: 'Thường vì bảng cước chưa có tuyến + dòng xe này — xác nhận vẫn được, chuyến sẽ không có cước dự tính', test: t => t.freight_estimated == null },
+  { key: 'warn',      label: 'Có cảnh báo',    todo: false, tip: 'Máy ghi lại chỗ nó không tự xử được — đọc cột Ghi chú máy',      test: t => t.detail.warnings.length > 0 },
 ]
+const TODO_KEYS = new Set(ISSUES.filter(i => i.todo).map(i => i.key))
 const issuesOf = (t: DispatchTrip): IssueKey[] =>
   EDITABLE.includes(tripStatus(t)) ? ISSUES.filter(i => i.test(t)).map(i => i.key) : []
-const needsWork = (t: DispatchTrip) => issuesOf(t).length > 0
+const needsWork = (t: DispatchTrip) => issuesOf(t).some(k => TODO_KEYS.has(k))
 
 // Cột Trạng thái nói CÙNG MỘT TỪ ("Nháp") cho mọi dòng khi kế hoạch còn nháp — 105 px × 61 dòng cho
 // một thông tin không phân biệt được gì, trong khi thứ người soát cần lại nằm ngoài màn. Nên nó chỉ
@@ -301,7 +307,7 @@ export default function Dispatch() {
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 flex-wrap">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
             {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
-               { k: 'todo', label: 'Cần xử lý', n: todoN, tip: 'Xe người còn sửa được mà máy chưa khép kín — làm hết là xác nhận được' },
+               { k: 'todo', label: 'Cần xử lý', n: todoN, tip: 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
                ...ISSUES.filter(i => issueN[i.key] > 0).map(i => ({ k: i.key as string, label: i.label, n: issueN[i.key], tip: i.tip })),
               ]).map(o => (
               <button key={o.k || 'all'} type="button" title={o.tip} onClick={() => setF({ issue: o.k })}
@@ -313,7 +319,7 @@ export default function Dispatch() {
                 <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${f.issue === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
               </button>
             ))}
-            {todoN === 0 && <span className="text-[11px] text-green-700 font-medium">✓ Máy đã khép kín — không còn xe nào chờ người quyết</span>}
+            {todoN === 0 && <span className="text-[11px] text-green-700 font-medium">✓ Không còn xe nào chờ người quyết{issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}</span>}
             <div className="ml-auto flex items-center gap-2 shrink-0">
               {pickable.length > 0 && (
                 <button type="button" className="text-[11px] text-sky-700 hover:underline whitespace-nowrap"
@@ -384,7 +390,7 @@ export default function Dispatch() {
                           )}
                           <span className="font-mono font-semibold">{t.group_code}</span>{t.manual_edited && <span className="ml-1 text-amber-600" title="Người đã sửa chuyến này">✎</span>}
                           {iss.length > 0 && (
-                            <span className={`block truncate text-[9px] font-medium ${iss[0] === 'declined' || iss[0] === 'over' ? 'text-red-600' : 'text-amber-700'}`}
+                            <span className={`block truncate text-[9px] font-medium ${iss[0] === 'declined' || iss[0] === 'over' ? 'text-red-600' : TODO_KEYS.has(iss[0]) ? 'text-amber-700' : 'text-slate-400'}`}
                               title={iss.map(k => ISSUE_SHORT[k]).join(' · ')}>
                               ⚠ {iss.slice(0, 2).map(k => ISSUE_SHORT[k]).join(' · ')}{iss.length > 2 ? ` +${iss.length - 2}` : ''}
                             </span>

@@ -252,6 +252,18 @@ describe('luật 4 — điều kiện bảo quản: hàng theo Loại kho, xe kh
     expect(r.trips[0].warnings.join(' ')).toMatch(/phục vụ điều kiện bảo quản 2 – 8 °C/)
     expect(r.trips[0].warnings.join(' ')).toMatch(/Mã dòng xe/)
   })
+  it('ĐÃ khai xe lạnh nhưng đội xe lạnh quá nhỏ ⇒ bảo TÁCH CHUYẾN kèm số, KHÔNG giục đi khai thêm', () => {
+    // Ca thật ở Ba Vì 07/09 sau khi khai FG02 = 2–8 °C: 31,564 pallet hàng lạnh, xe lạnh lớn nhất 30 pallet.
+    // Giục "khai ở Cài đặt TMS" ở đây là mời người ta tick bừa xe thường thành xe lạnh.
+    const AMB16 = model({ id: 'AMB16', max_pallets: 16, serve_conditions: ['AMBIENT'] })   // xe thường CHỞ ĐƯỢC 12 pallet, xe lạnh thì không
+    const r = runDispatch(input([chilled('1', 'W1', 12)], { models: [AMB16, COLD], tariffs: [T('AMB16', 'W1', 50_000), T('COLD')], condition_labels: labels }))
+    const w = r.trips[0].warnings.join(' ')
+    expect(r.trips[0].vehicle_model).toBeNull()
+    expect(w).toMatch(/lớn nhất chỉ 9 pallet/)
+    expect(w).toMatch(/12 pallet/)
+    expect(w).toMatch(/tách chuyến/)
+    expect(w).not.toMatch(/Mã dòng xe/)
+  })
   it('vượt tải thì vẫn báo "không vừa tải", KHÔNG đổ tại điều kiện bảo quản', () => {
     const r = runDispatch(input([chilled('1', 'W1', 40)], { models: [COLD], tariffs: [T('COLD')], condition_labels: labels }))
     expect(r.trips[0].warnings.join(' ')).toMatch(/không vừa tải|lớn hơn xe lớn nhất/i)

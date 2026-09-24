@@ -136,6 +136,16 @@ const uniq = <T,>(a: T[]) => [...new Set(a)]
 const numOr = (v: unknown, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d }
 const LOADABLE = new Set(['SALE', 'STO', 'INTERNAL', 'PALLET'])
 
+const vnNum = (n: number) => Number(n.toFixed(3)).toLocaleString('vi-VN')
+/** "30 pallet / 15 tấn" — sức chứa LỚN NHẤT trong một nhóm dòng xe. Câu cảnh báo phải nói ra SỐ, không nói suông. */
+const capText = (ms: EngineModel[]) => {
+  const p = Math.max(0, ...ms.map(m => numOr(m.max_pallets, 0)))
+  const t = Math.max(0, ...ms.map(m => numOr(m.max_tons, 0)))
+  return [p > 0 ? `${vnNum(p)} pallet` : '', t > 0 ? `${vnNum(t)} tấn` : ''].filter(Boolean).join(' / ') || 'chưa khai sức chứa'
+}
+const loadText = (p: number | null, t: number | null) =>
+  [p != null ? `${vnNum(p)} pallet` : '', t != null ? `${vnNum(t)} tấn` : ''].filter(Boolean).join(' / ') || 'không đo được tải'
+
 // ── Đơn vị xếp: một OD hoặc một PHẦN OD (tách theo dòng hàng nguyên) ──
 interface Unit {
   od: EngineOd
@@ -351,12 +361,18 @@ function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, un
   }
   const m0 = cands[0] ?? null
   if (!m0) {
-    // Nói THẲNG cái gì chặn: thiếu xe phục vụ điều kiện bảo quản là ca người dùng sửa được ngay (khai thêm dòng xe),
-    // khác hẳn "không xe nào vừa tải" (phải tách chuyến). Phân biệt bằng cách thử bỏ ràng buộc điều kiện.
+    // Nói THẲNG cái gì chặn, vì BA nguyên nhân dưới đây đòi BA việc khác hẳn nhau. Quan trọng nhất: đừng
+    // giục "khai ở Cài đặt TMS" khi đội xe phục vụ mức đó ĐÃ khai mà chỉ là không đủ lớn — người làm theo
+    // lời giục sẽ tick bừa xe thường thành xe lạnh, tức đẩy hàng lạnh lên xe không có lạnh. Đo Ba Vì 07/09
+    // sau khi khai FG02 = 2–8 °C: đúng 1 chuyến rơi vào ca này (31,564 pallet, xe lạnh lớn nhất 30 pallet).
+    const serving = conds.length ? ctx.models.filter(m => servesConditions(m, conds)) : ctx.models
     const fitIgnoringConds = ctx.models.some(m => (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
-    warnings.push(conds.length && fitIgnoringConds
-      ? `Không dòng xe nào phục vụ điều kiện bảo quản ${conds.map(condLabel).join(' + ')} — khai ở Cài đặt TMS → Mã dòng xe`
-      : 'Không dòng xe nào vừa tải')
+    const condText = conds.map(condLabel).join(' + ')
+    if (!conds.length || !fitIgnoringConds) warnings.push('Không dòng xe nào vừa tải')
+    else if (!serving.length) warnings.push(`Không dòng xe nào phục vụ điều kiện bảo quản ${condText} — khai ở Cài đặt TMS → Mã dòng xe`)
+    else if (serving.some(m => oversize || fits(m, pAll, tAll)))
+      warnings.push(`Dòng xe phục vụ điều kiện bảo quản ${condText} chở được tải này nhưng không dòng nào đi được ${stops} điểm giao — tách chuyến`)
+    else warnings.push(`Dòng xe phục vụ điều kiện bảo quản ${condText} lớn nhất chỉ ${capText(serving)} — chuyến này ${loadText(pAll, tAll)}, phải tách chuyến`)
   } else warnings.push('Chưa có bảng cước cho tuyến/dòng xe này ở mọi ĐVVT — chọn dòng xe nhỏ nhất còn vừa tải')
   const freight: TripFreight = { total: null, base: null, billed_pallets: pAll != null ? billedPallets(pAll) : null, unit: m0?.tariff_unit ?? null, tariff_id: null, ward: wards[0] ?? null, surcharges: [], reason: warnings[warnings.length - 1] }
   return { model: m0, carrier: null, freight, reasons: [], warnings, cats, conds, wards, stops, pallets: pAll, tons: tAll, oversize }

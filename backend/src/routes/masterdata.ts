@@ -5,9 +5,11 @@ import * as manufacturer from '../controllers/masterdata/manufacturerController'
 import * as material    from '../controllers/masterdata/materialController'
 import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as machine     from '../controllers/wms/machineController'
+import * as customer    from '../controllers/masterdata/customerController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
+import { validate, zText, z } from '../middlewares/validate'
 import multer from 'multer'
 
 const router = Router()
@@ -21,17 +23,72 @@ const upload = multer({
 // Warehouse
 router.get('/warehouses',        warehouse.listWarehouses)
 router.post('/warehouses',       requirePerm('wms_settings', 'manage_warehouse'), warehouse.createWarehouse)
+// Cờ khai riêng 3 cờ vận hành của MỌI kho (màn In tem: 1 lệnh in gồm tem của nhiều kho nên không
+// hỏi được theo từng kho). Hở đọc như /machines, /wms/settings — metadata nhãn tem, người in tem
+// không có quyền wms_settings. PHẢI đứng TRƯỚC '/warehouses/:id' kẻo bị hiểu là id.
+router.get('/warehouses/type-flag-overrides', warehouse.listWhTypeFlagOverrides)
 router.get('/warehouses/:id',    warehouse.getWarehouse)
 router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
 router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)
+// LOẠI KHO CỦA TỪNG KHO (user chốt 21/08: loại kho thuộc về kho, không có danh mục chung để quản)
+// → nhận CẢ HAI quyền: manage_warehouse (đây là cấu hình của kho) và manage_type (tab Loại kho chỉ
+// mở cho quyền này — gate cứng một bên thì nút chính của tab 403 với bên kia).
+router.get('/warehouses/:id/type-configs', warehouse.getWarehouseTypeConfigs)
+router.put('/warehouses/:id/type-configs',
+  requireAnyPerm(['wms_settings', 'manage_warehouse'], ['wms_settings', 'manage_type']),
+  warehouse.putWarehouseTypeConfigs)
+
+// Khách hàng / Nơi nhận (20260911) — khoá ship-to của SAP; nuôi %Date tự động + luật Chuyển kho.
+// MỌI route tĩnh ("seed-candidates", "seed", "bulk") phải đứng TRƯỚC `/:id` kẻo bị nuốt làm id.
+router.get('/customers',                  requirePerm('customers', 'view'),   customer.listCustomers)
+router.get('/customers/seed-candidates',  requirePerm('customers', 'import'), customer.customerSeedCandidates)
+router.post('/customers/seed',            requirePerm('customers', 'import'), customer.seedCustomers)      // ?preflight=1 = chỉ đếm
+router.patch('/customers/bulk',           requirePerm('customers', 'edit'),   customer.bulkUpdateCustomers) // setup nhanh nhiều dòng
+// Đặt 1 mức cho nhiều khách. `ids` XOR `filter` kiểm ở controller (phụ thuộc lẫn nhau), còn hình
+// dạng từng trường chặn ngay ở đây: `value` sai kiểu đi thẳng xuống Postgres là 500 thay vì 400.
+router.patch('/customers/bulk-rule',      requirePerm('customers', 'edit'),
+  validate({ body: z.object({
+    ids: z.array(zText(1, 100)).max(500).optional(),
+    filter: z.record(z.string(), z.unknown()).optional(),
+    category: zText(1, 30).nullable().optional(),
+    kind: z.enum(['FEFO', 'MIN_PCT', 'MIN_DAYS', '']).nullable().optional(),
+    value: z.union([z.number(), z.string(), z.null()]).optional(),
+  }) }), customer.bulkSetDateRule)
+router.post('/customers',                 requirePerm('customers', 'edit'),   customer.createCustomer)
+router.put('/customers/:id',              requirePerm('customers', 'edit'),   customer.updateCustomer)
+router.delete('/customers/:id',           requirePerm('customers', 'edit'),   customer.deactivateCustomer) // ngừng (mềm)
+// Kênh khách hàng — quyền RIÊNG, không đi ké wms_settings.manage_type (đó là taxonomy Loại kho)
+router.get('/customer-channels',          customer.listCustomerChannels)      // hở đọc: ô chọn kênh ở nhiều màn
+router.put('/customer-channels/:id',      requirePerm('customers', 'manage_channel'), customer.updateCustomerChannel)
+
+// Mức Quy định date theo (khách|kênh) × loại hàng — MỘT bảng dùng chung hai scope, nhưng HAI route
+// để mỗi cái gate ĐÚNG quyền sở hữu nó: gộp `requireAnyPerm` sẽ cho người chỉ có `edit` sửa luôn
+// mức của KÊNH (ảnh hưởng mọi khách trong kênh) — đúng bẫy "gộp quyền" của skill add-permission.
+// Hình dạng payload dùng chung hai scope — nhưng `validate(...)` phải nằm NGAY trên dòng route để
+// cổng tĩnh soi được (và để người đọc thấy ngay route này có gác đầu vào hay không).
+const RULE_SET = {
+  params: z.object({ key: zText(1, 100) }),
+  body: z.object({
+    rules: z.array(z.object({
+      category: zText(1, 30).nullable().optional(),
+      kind: z.enum(['FEFO', 'MIN_PCT', 'MIN_DAYS']),
+      value: z.union([z.number(), z.string(), z.null()]).optional(),
+    })).max(20),
+  }),
+}
+router.get('/date-rules/categories',    requirePerm('customers', 'view'),           customer.dateRuleCategories)
+router.put('/date-rules/CUSTOMER/:key', requirePerm('customers', 'edit'),           validate(RULE_SET), customer.replaceDateRules('CUSTOMER'))
+router.put('/date-rules/CHANNEL/:key',  requirePerm('customers', 'manage_channel'), validate(RULE_SET), customer.replaceDateRules('CHANNEL'))
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
 router.get('/locations',             location.listLocations)    // ?warehouse_id=&sub_code= (thêm ?page= = 1 trang)
 router.get('/locations/summary',     location.listLocationsSummary)   // 4 ô SummaryBand (phải trước /:id)
+router.get('/locations/resolve',     location.resolveLocation)  // quét tem vị trí → 1 dòng (phải trước /:id)
 router.post('/locations',            requirePerm('locations', 'create'), location.createLocation)
 router.post('/locations/upload',     requirePerm('locations', 'import'), upload.single('file'), location.uploadExcel)  // phải trước /:id
 router.patch('/locations/bulk-flag', requirePerm('locations', 'edit'), location.bulkFlagLocations)  // gắn/bỏ cờ cần-kiểm hàng loạt (phải trước /:id)
+router.get('/locations/:id/contents', location.getLocationContents)   // "ô này đang chứa gì" (phải trước /:id)
 router.get('/locations/:id',         location.getLocation)
 router.put('/locations/:id',         requirePerm('locations', 'edit'), location.updateLocation)
 router.delete('/locations/:id',      requirePerm('locations', 'delete'), location.deleteLocation)
@@ -82,11 +139,14 @@ router.put('/job-titles/:id',       requirePerm('user_admin', 'manage_roles'), d
 router.patch('/job-titles/:id/parent', requirePerm('user_admin', 'manage_roles'), department.setJobTitleParent)
 
 // Employee (tài khoản người dùng + phân quyền)
+// Nhật ký quản trị — đặt TRƯỚC /employees/:id để không bị nuốt làm id
+router.get('/admin-audit',          requirePerm('user_admin', 'audit_log'), employee.listAdminAudit)
 router.get('/employees',            requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.listEmployees)
 router.post('/employees',           requirePerm('user_admin', 'create'), employee.createEmployee)
 router.get('/employees/:id',        requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.getEmployee)
 router.patch('/employees/:id',              requirePerm('user_admin', 'edit'), employee.updateEmployee)
 router.patch('/employees/:id/set-password', requirePerm('user_admin', 'set_password'), employee.setPassword)
+router.delete('/employees/:id/lock',        requirePerm('user_admin', 'unlock'),       employee.unlockAccount)
 router.put('/employees/:id/warehouses',     requirePerm('user_admin', 'edit'), employee.setWarehouseAccess)
 router.patch('/employees/:id/manager',      requirePerm('user_admin', 'manage_roles'), employee.setManager)
 router.delete('/employees/:id',             requirePerm('user_admin', 'delete'), employee.deleteEmployee)

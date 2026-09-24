@@ -7,6 +7,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { Boxes, Plus, Trash2, RefreshCw, AlertTriangle } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
+import { PlanScanOverlay } from './PlanScanOverlay'
+import { unlockAudio } from '@/utils/audio'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -20,14 +23,14 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
-  useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useUpdateSlottingLocationConfig,
+  useWarehouseZones, useUpdateSlottingZoneConfig,
   type WarehouseZone,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
   type SlottingLevel, type SlottingPrinciple, type SlottingWarning, type SlottingImpact,
 } from '@/api/hooks'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
@@ -39,9 +42,9 @@ function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
 }
 
-// ABC badge: A = nhặt nhiều (ưu tiên cao nhất)
+// ABC badge: A = nhặt nhiều (ưu tiên cao nhất) — cùng hệ sky, A đậm hơn B (không nền đặc kiểu button)
 const ABC_BADGE: Record<string, string> = {
-  A: 'bg-sky-600 text-white',
+  A: 'bg-sky-200 text-sky-800',
   B: 'bg-sky-100 text-sky-700',
   C: 'bg-slate-100 text-slate-500',
 }
@@ -84,6 +87,13 @@ const PRINCIPLE_OPTS = [
 ]
 const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
+// Key = đúng giá trị `slotting.tab` trong store (khớp PAGE_TABS['/wms/slotting'])
+const SLOTTING_TABS = [
+  { key: 'analysis', label: 'Phân tích ABC' },
+  { key: 'plans',    label: 'Kế hoạch sắp xếp' },
+  { key: 'config',   label: 'Cài đặt' },
+] as const
+
 export default function Slotting() {
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
@@ -97,6 +107,9 @@ export default function Slotting() {
   // ?? 'FULL': state persist cũ (trước khi thêm field) không có palletKind
   const palletKind = rawPalletKind ?? 'FULL'
   const setSlotting = useWmsFilterStore(s => s.setSlotting)
+  const permTabs = useMemo(() => SLOTTING_TABS.filter(t => canConfigure || t.key !== 'config'), [canConfigure])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/slotting', permTabs, tab, k => setSlotting({ tab: k }))
 
   const { data: rawWarehouses = [] } = useScopedWarehouses(true)
   const warehouses = rawWarehouses as { id: string; name: string }[]
@@ -164,14 +177,10 @@ export default function Slotting() {
             </h1>
             {/* Tabs */}
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-medium shrink-0">
-              <button className={`px-2.5 py-1 ${tab === 'analysis' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setSlotting({ tab: 'analysis' })}>Phân tích ABC</button>
-              <button className={`px-2.5 py-1 border-l border-slate-200 ${tab === 'plans' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setSlotting({ tab: 'plans' })}>Kế hoạch sắp xếp</button>
-              {canConfigure && (
-                <button className={`px-2.5 py-1 border-l border-slate-200 ${tab === 'config' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                  onClick={() => setSlotting({ tab: 'config' })}>Cài đặt</button>
-              )}
+              {tabs.map((t, i) => (
+                <button key={t.key} className={`px-2.5 py-1 ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => setSlotting({ tab: t.key })}>{t.label}</button>
+              ))}
             </div>
             {tab === 'analysis' && (
               <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, tên hàng…" className="flex-1 min-w-[140px]" />
@@ -195,7 +204,7 @@ export default function Slotting() {
             page={matPage} pageSize={matPageSize} onPage={setMatPage} onPageSize={n => { setMatPageSize(n); setMatPage(1) }} />}
         {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} canDelete={canDelete} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
-          ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
+          ? <ConfigTab warehouseId={effectiveWhId} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
       </div>
 
@@ -565,7 +574,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
 // ─── Tab Cài đặt (quyền slotting.configure) — cấu hình slotting per KHU ───────
 // Hạng nhặt (1 = gần cửa xuất nhất) + Luồng cửa. Loại kho của khu/mã quản ở chỗ cũ
 // (Cài đặt WMS / Mã hàng) — khu SCA = tạo Loại kho riêng rồi gán khu + mã (user chốt v3).
-function ConfigTab({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
+function ConfigTab({ warehouseId }: { warehouseId: string }) {
   const { data: zones = [], isLoading } = useWarehouseZones(warehouseId || undefined)
   const { mutate: updateCfg, isPending } = useUpdateSlottingZoneConfig()
   const [err, setErr] = useState('')
@@ -592,7 +601,14 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
       {/* Hướng dẫn nén 1 dòng — rê chuột xem đủ (bảng chiếm ~80%, user 18/07) */}
       <div className="px-3 py-1 text-[10px] text-slate-500 border-b bg-slate-50 truncate" title={guide}>{guide}</div>
       {err && <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-      <LocationConfig warehouseId={warehouseId} categories={categories} />
+      {/* Cờ "Không đưa hàng vào" / "Không lấy hàng đi" khai ở trang Vị trí kho (18/08): ở đó
+          tick được từng dòng HOẶC áp cho cả bộ lọc, có cột + bộ lọc riêng để soi lại. Khối chọn
+          nhiều ở đây là đường khai THỨ HAI cho cùng 2 cờ — bỏ để chỉ còn một chỗ khai. */}
+      <p className="px-3 py-1.5 border-b text-[10px] text-slate-500">
+        Vị trí đặc biệt (<b>Không đưa hàng vào</b> · <b>Không lấy hàng đi</b>) khai ở trang{' '}
+        <Link to="/wms/locations" className="underline font-medium text-sky-700">Vị trí kho</Link>
+        {' '}— tick vị trí rồi bấm nút tương ứng, hoặc áp cho cả bộ lọc đang xem.
+      </p>
       {isLoading ? (
         <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
       ) : (
@@ -640,80 +656,25 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
   )
 }
 
-// Cấu hình VỊ TRÍ (user 18/07): 2 danh sách chọn dropdown per kho —
-// "KHÔNG đưa hàng vào" (kho tạm: không làm đích + hàng ở đó luôn bị kéo đi trước)
-// và "KHÔNG lấy hàng đi" (hàng kẹt không bốc được: loại khỏi nguồn tính toán).
-function LocationConfig({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
-  const { data: locations = [], isLoading } = useLocationsReal({ warehouse_id: warehouseId }, !!warehouseId)
-  const { mutate: save, isPending } = useUpdateSlottingLocationConfig()
-  const [noIn, setNoIn] = useState<string[]>([])
-  const [noOut, setNoOut] = useState<string[]>([])
-  const [dirty, setDirty] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [err, setErr] = useState('')
-
-  type LocRow = { id: string; location_code: string; categories?: string[] | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
-  const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
-
-  // Nạp trạng thái hiện tại từ TOÀN BỘ vị trí của kho (không theo filter Loại kho) —
-  // nút Lưu là replace-all per kho: nếu chỉ nạp vị trí trong filter sẽ XÓA NHẦM cờ của vị trí đang bị ẩn
-  useEffect(() => {
-    if (dirty) return
-    setNoIn(locs.filter(l => l.slot_no_in).map(l => l.id))
-    setNoOut(locs.filter(l => l.slot_no_out).map(l => l.id))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locations, warehouseId])
-  useEffect(() => { setDirty(false); setMsg(''); setErr('') }, [warehouseId])
-
-  // Option theo filter Loại kho phía trên (user 18/07): vị trí đúng loại + vị trí CHƯA khai loại;
-  // vị trí ĐÃ chọn luôn hiện (kể cả ngoài filter) để còn bỏ chọn được
-  const optionsFor = (selectedIds: string[]) => {
-    const sel = new Set(selectedIds)
-    return locs
-      .filter(l => categories.length === 0 || !l.categories?.length || l.categories.some(c => categories.includes(c)) || sel.has(l.id))
-      .map(l => ({ value: l.id, label: l.categories?.length ? `${l.location_code} · ${l.categories.join(', ')}` : l.location_code }))
-  }
-
-  function handleSave() {
-    setMsg(''); setErr('')
-    save({ warehouse_id: warehouseId, no_in_ids: noIn, no_out_ids: noOut }, {
-      onSuccess: r => { setDirty(false); setMsg(`Đã lưu: ${r.no_in} vị trí không đưa hàng vào · ${r.no_out} vị trí không lấy hàng đi`) },
-      onError: e => setErr(apiMsg(e)),
-    })
-  }
-
-  return (
-    // NÉN 1 hàng (bảng khu chiếm ~80% — user 18/07): nhãn + dropdown + Lưu nằm ngang, mô tả trong tooltip
-    <div className="px-3 py-1.5 border-b space-y-1">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 shrink-0">Vị trí đặc biệt</span>
-        <span className="text-[10px] text-slate-500 shrink-0" title="Kho tạm — không làm đích, hàng nằm đó luôn bị kéo đi">Không đưa hàng vào:</span>
-        <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn)}
-          selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} selectedFirst />
-        <span className="text-[10px] text-slate-500 shrink-0" title="Hàng kẹt/không bốc được — loại khỏi nguồn tính toán, vẫn tính chiếm chỗ">Không lấy hàng đi:</span>
-        <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut)}
-          selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} selectedFirst />
-        <Button size="sm" className="h-7 text-[11px] !min-h-0" onClick={handleSave} disabled={isPending || !dirty}>
-          {isPending ? 'Đang lưu…' : 'Lưu vị trí'}
-        </Button>
-        {isLoading && <span className="text-[10px] text-slate-400">Đang tải…</span>}
-      </div>
-      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{err}</p>}
-      {msg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">{msg}</p>}
-    </div>
-  )
-}
 
 // ─── Tab Kế hoạch ──────────────────────────────────────────────────────────────
-// Nút Quét thực hiện KHÔNG đặt ở tab danh sách (user bỏ 19/07 — "ở ngoài không có tác dụng gì"),
-// chỉ nằm trong trang chi tiết kế hoạch (cuối ô Từ vị trí từng dòng).
+// Nút Quét chuyển vị trí ĐÃ QUAY LẠI tab danh sách (user 16/09: "nút quét chuyển vị trí không có ở
+// giao diện tối ưu vị trí à — cái tôi cần là chuyển đúng vị trí"). Hồi 19/07 nó bị bỏ vì "ở ngoài
+// không có tác dụng gì"; khác biệt bây giờ: nút đứng TRÊN TỪNG DÒNG kế hoạch nên quét là quét cho
+// đúng kế hoạch đó, và người đi chuyển hàng không phải mở trang chi tiết mới bắt đầu làm được.
+// Quét tem → BE tự chuyển sang ĐÚNG vị trí đích của lệnh (khoá sức chứa), không ai chọn vị trí tay.
 function PlansTab({ warehouseId, canPlan, canDelete, onOpen }: {
   warehouseId: string; canPlan: boolean; canDelete: boolean; onOpen: (id: string) => void
 }) {
   const { data: plans = [], isLoading, error } = useSlottingPlans(warehouseId || undefined)
   const { mutate: deletePlan, isPending: deleting } = useDeleteSlottingPlan()
   const [delErr, setDelErr] = useState('')
+  const user = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  // Quyền của việc CHUYỂN VỊ TRÍ pallet (cross-module — nút nằm ở Slotting, route BE gác đúng quyền này)
+  const canScanMove = isAdmin(user) || can(perms, 'inventory', 'move_location')
+  const [scanPlan, setScanPlan] = useState<SlottingPlanRow | null>(null)
+  const [scanOpen, setScanOpen] = useState(false)
 
   function handleDelete(p: SlottingPlanRow) {
     if (!confirm(`Xóa kế hoạch "${p.name}" (${p.n_lines} dòng)?\nChỉ xóa bản kế hoạch — pallet đã chuyển KHÔNG bị hoàn tác.`)) return
@@ -728,6 +689,10 @@ function PlansTab({ warehouseId, canPlan, canDelete, onOpen }: {
 
   return (
     <>
+      {scanPlan && (
+        <PlanScanOverlay plan={{ id: scanPlan.id, name: scanPlan.name, warehouse_id: warehouseId }}
+          open={scanOpen} onClose={() => setScanOpen(false)} />
+      )}
       <SummaryBand tiles={tiles} />
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {delErr && <div className="m-3 p-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded">{delErr}</div>}
@@ -753,6 +718,7 @@ function PlansTab({ warehouseId, canPlan, canDelete, onOpen }: {
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nguyên tắc</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người tạo</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày tạo</TableHead>
+                {canScanMove && <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Thực hiện</TableHead>}
                 {canDelete && <TableHead className="px-2 py-1.5 w-10 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
               </TableRow>
             </TableHeader>
@@ -780,6 +746,18 @@ function PlansTab({ warehouseId, canPlan, canDelete, onOpen }: {
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.principle ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{p.created_by ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(p.created_at, true)}</TableCell>
+                    {canScanMove && (
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                        {p.status === 'ACTIVE' ? (
+                          <button
+                            className="inline-flex items-center gap-1 rounded border border-sky-200 bg-sky-50 px-1.5 py-1 text-[10px] font-medium text-sky-700 hover:bg-sky-100"
+                            title="Quét tem pallet đang ở vị trí nguồn — hệ thống tự chuyển sang đúng vị trí đích của lệnh"
+                            onClick={e => { e.stopPropagation(); unlockAudio(); setScanPlan(p); setScanOpen(true) }}>
+                            <ScanIcon className="h-3.5 w-3.5" /> Quét chuyển
+                          </button>
+                        ) : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                    )}
                     {canDelete && (
                       <TableCell className="px-2 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-100">
                         <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting}

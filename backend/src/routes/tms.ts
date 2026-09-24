@@ -1,5 +1,10 @@
 import { Router } from 'express'
 import * as vehicleType      from '../controllers/tms/vehicleTypeController'
+import * as vehicleModel     from '../controllers/tms/vehicleModelController'
+import * as freight          from '../controllers/tms/freightController'
+import * as dispatch         from '../controllers/tms/dispatchController'
+import { validate, zIdParam, z } from '../middlewares/validate'
+import { excelUpload } from '../middlewares/excelUpload'
 import * as slotTemplate     from '../controllers/tms/slotTemplateController'
 import * as slot             from '../controllers/tms/slotController'
 import * as order            from '../controllers/tms/orderController'
@@ -20,12 +25,68 @@ const requireTmsView = requireAnyPerm(
   ['tms_vehicles', 'view'],
 )
 
+// Danh mục Loại xe còn nuôi ô "Loại xe" của form Đăng ký cổng — vai chỉ có gate_registration (bảo vệ)
+// từng nhận 403 ở cả hai cửa đọc nên form hiện ô Loại xe RỖNG (đo 21/09 bằng token vai thật). Chỉ mở
+// hai cửa ĐỌC danh mục, không mở cửa ghi.
+const requireTmsOrGateView = requireAnyPerm(
+  ['tms_plan', 'view'],
+  ['tms_vehicle_types', 'view'],
+  ['tms_slots', 'view'],
+  ['tms_companies', 'view'],
+  ['tms_vehicles', 'view'],
+  ['gate_registration', 'view'],
+)
+
 // VehicleType (Loại xe)
-router.get('/vehicle-types',     requireTmsView,                               vehicleType.listVehicleTypes)
+router.get('/vehicle-types',     requireTmsOrGateView,                         vehicleType.listVehicleTypes)
 router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'create'),   vehicleType.createVehicleType)
 router.put('/vehicle-types/reorder', requirePerm('tms_vehicle_types', 'edit'), vehicleType.reorderVehicleTypes)  // ĐẶT TRƯỚC /:id
 router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'edit'),   vehicleType.updateVehicleType)
 router.delete('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'delete'), vehicleType.deleteVehicleType)
+
+// vehicle_model (DÒNG XE CON mang mã SAP — 23/09; cha = VehicleType). Cùng module quyền với cha: một danh mục hai tầng.
+// Cửa đọc mở như cha (điều vận + Kế hoạch xuất cần) — cửa ghi theo action riêng.
+router.get('/vehicle-models',                     requireTmsOrGateView,                                 vehicleModel.listVehicleModels)
+router.post('/vehicle-models',                    requirePerm('tms_vehicle_types', 'create'), validate({ body: vehicleModel.zVehicleModelCreate }), vehicleModel.createVehicleModel)
+router.patch('/vehicle-models/assign-parent',     requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignParent }),       vehicleModel.assignParent)   // TRƯỚC /:id
+router.patch('/vehicle-models/assign-conditions', requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignConditions }),   vehicleModel.assignConditions) // TRƯỚC /:id
+router.put('/vehicle-models/:id',                 requirePerm('tms_vehicle_types', 'edit'),   validate({ params: zIdParam, body: vehicleModel.zVehicleModelUpdate }), vehicleModel.updateVehicleModel)
+router.delete('/vehicle-models/:id',              requirePerm('tms_vehicle_types', 'delete'), validate({ params: zIdParam }),                        vehicleModel.deleteVehicleModel)
+
+// ── CƯỚC VẬN CHUYỂN (đợt 1 TMS điều vận, 23/09) — module quyền riêng `freight`: view · manage · export ──
+// Bảng cước (kho xuất × ĐVVT × dòng xe con × phường) — phân trang server; upload 2 pha đúng cột file thật
+router.get('/freight/tariffs',            requirePerm('freight', 'view'),   validate({ query: freight.zListQuery }),                          freight.listTariffs)
+router.post('/freight/tariffs/upload',    requirePerm('freight', 'manage'), validate({ query: z.object({ preflight: z.enum(['1']).optional() }).passthrough() }), excelUpload.single('file'), freight.uploadTariffs)
+router.post('/freight/tariffs',           requirePerm('freight', 'manage'), validate({ body: freight.zTariffCreate }),                        freight.createTariff)
+router.put('/freight/tariffs/:id',        requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zTariffUpdate }),      freight.updateTariff)
+router.delete('/freight/tariffs/:id',     requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteTariff)
+// Phụ phí (rớt điểm · bốc xếp · chờ · khác) theo kho × ĐVVT [× dòng xe]
+router.post('/freight/recompute',         requirePerm('freight', 'manage'), validate({ body: freight.zRecompute }),                           freight.recomputeFreight)   // tính lại cước dự tính cho chuyến trong khoảng ngày
+
+router.get('/freight/surcharges',         requirePerm('freight', 'view'),   validate({ query: freight.zListQuery }),                          freight.listSurcharges)
+router.post('/freight/surcharges',        requirePerm('freight', 'manage'), validate({ body: freight.zSurchargeCreate }),                     freight.createSurcharge)
+router.put('/freight/surcharges/:id',     requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zSurchargeUpdate }),   freight.updateSurcharge)
+router.delete('/freight/surcharges/:id',  requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteSurcharge)
+// Phân tuyến ĐVVT: ưu tiên theo khu vực + tỷ trọng theo kỳ
+router.get('/freight/allocations',        requirePerm('freight', 'view'),   validate({ query: freight.zListQuery }),                          freight.listAllocations)
+router.post('/freight/allocations',       requirePerm('freight', 'manage'), validate({ body: freight.zAllocationCreate }),                    freight.createAllocation)
+router.put('/freight/allocations/:id',    requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zAllocationUpdate }),  freight.updateAllocation)
+router.delete('/freight/allocations/:id', requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteAllocation)
+router.post('/freight/shares',            requirePerm('freight', 'manage'), validate({ body: freight.zShareCreate }),                         freight.createShare)
+router.put('/freight/shares/:id',         requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zShareUpdate }),       freight.updateShare)
+router.delete('/freight/shares/:id',      requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteShare)
+
+// ── ĐIỀU VẬN — kế hoạch ghép chuyến NHÁP (đợt 2, 24/09) — module quyền riêng `dispatch`: view · plan · confirm · export ──
+// Máy đề xuất (POST plan) → người sửa nháp (PATCH trip · move-od) → Xác nhận = ghi khvc_lines → dội xuống chuyến như upload KH tay.
+router.get('/dispatch/plans',                 requirePerm('dispatch', 'view'),    validate({ query: dispatch.zListQuery }),                     dispatch.listPlans)
+router.get('/dispatch/plans/:id',             requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlan)
+router.post('/dispatch/plan',                 requirePerm('dispatch', 'plan'),    validate({ body: dispatch.zPlanBody }),                        dispatch.createPlan)
+router.patch('/dispatch/trips/:id',           requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zTripPatch }),     dispatch.updateTrip)
+router.post('/dispatch/trips/:id/move-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMoveOd }),        dispatch.moveOd)
+router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.confirmPlan)
+router.post('/dispatch/trips/:id/settle',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.settleTrip)    // chốt MỘT xe (kế hoạch đang chờ ĐVVT)
+router.post('/dispatch/trips/:id/respond',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zRespond }),       dispatch.respondTrip)   // ghi ĐVVT nhận / từ chối
+router.delete('/dispatch/plans/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.discardPlan)
 
 // DeliverySlot
 router.get('/slots',           requirePerm('tms_plan', 'view'),                slot.listSlots)
@@ -43,6 +104,9 @@ router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_d
 router.get('/orders/:id/transfer-goods',       requirePerm('tms_plan', 'view'),          order.getTransferGoods)
 router.get('/orders/:id/plan-goods',           requirePerm('tms_plan', 'view'),          order.getPlanGoods)     // dòng hàng lệnh xuất (KH xuất + VL06O) — read-only cho booking
 router.post('/orders/:id/confirm-receipt',      requirePerm('tms_plan', 'confirm_receipt'), order.confirmTransferReceipt)
+// Chấm sao chuyến giao: ai xác nhận nhận hàng thì người đó chấm — không đẻ quyền mới
+router.get ('/orders/:id/receipt-rating',       requirePerm('tms_plan', 'confirm_receipt'), order.getReceiptRating)
+router.post('/orders/:id/receipt-rating',       requirePerm('tms_plan', 'confirm_receipt'), order.rateTransferReceipt)
 router.post('/orders/:id/cancel-receipt',       requirePerm('tms_plan', 'confirm_receipt'), order.cancelTransferReceipt)
 router.post('/orders/:id/create-one-inbound',   requirePerm('tms_plan', 'confirm_receipt'), order.createOneInbound)
 router.post('/orders/:id/self-complete',        requirePerm('tms_plan', 'confirm_receipt'), order.selfCompleteTransfer)
@@ -60,7 +124,7 @@ router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms_plan', 'revoke
 router.delete('/vehicle-slots/:id',              requirePerm('tms_plan', 'add_vehicle'), vehicleSlot.deleteVehicleSlot)
 
 // SlotTemplate (Khung giờ)
-router.get('/slot-templates/vehicle-types', requireTmsView,                    slotTemplate.getVehicleTypesByWarehouse)
+router.get('/slot-templates/vehicle-types', requireTmsOrGateView,              slotTemplate.getVehicleTypesByWarehouse)
 router.get('/slot-templates/apply-info', requirePerm('tms_slots', 'view'),     slotTemplate.getSlotApplyInfo)
 router.get('/slot-templates',        requirePerm('tms_slots', 'view'),         slotTemplate.listSlotTemplates)
 router.post('/slot-templates/batch', requirePerm('tms_slots', 'create'),       slotTemplate.batchUpsertSlotTemplates)

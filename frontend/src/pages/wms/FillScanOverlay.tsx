@@ -12,10 +12,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { useQueryClient } from '@tanstack/react-query'
-import { QrCode, X, MapPin } from 'lucide-react'
+import { X, MapPin } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { apiClient } from '@/api/client'
 import { usePickFaceLocations, type FillTaskRow } from '@/api/hooks'
@@ -25,6 +27,7 @@ import { normalizeQR } from '@/utils/qr'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 import { RequiredDateBadge } from './fillShared'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 type ApiErr = AxiosError<{ error: { code?: string; message: string } }>
 const errOf = (e: unknown) => (e as ApiErr)?.response?.data?.error
@@ -46,6 +49,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
 }) {
   const qc = useQueryClient()
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(warehouseId)
   const busyRef = useRef(false)
   // Bắn 1 phát súng = chuyển hẳn chế độ súng cả lượt mở (camera unmount; listener súng độc lập)
   const [gunMode, setGunMode] = useState(false)
@@ -159,7 +163,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
   return (
     <div className={`fixed inset-0 z-50 bg-black flex flex-col ${open ? '' : 'hidden'}`}>
       <div className="flex items-center gap-2 px-3 py-2 shrink-0">
-        <QrCode className="h-4 w-4 text-sky-400 shrink-0" />
+        <ScanIcon className="h-4 w-4 text-sky-400 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold text-white truncate">
             Quét thực hiện — Fill hàng{orderId ? ' (trong lệnh đang mở)' : ''}
@@ -181,7 +185,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
             <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Xác nhận hạ</p>
           </div>
         ) : (
-          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} stopOnScan />
+          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} stopOnScan codeTypes={codeTypes} />
         )}
       </div>
       <div className="shrink-0 p-3 space-y-2">
@@ -231,12 +235,25 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
                 <label className="text-[10px] text-slate-500 flex items-center gap-1">
                   <MapPin className="h-3 w-3" /> Vị trí đến (đổi được)
                 </label>
-                <SingleSelect
-                  value={destSel}
-                  onChange={setDestSel}
-                  options={destLocs.map(l => ({ value: l.id, label: `${l.location_code} (${l.max_pallets} pl)` }))}
-                  placeholder={prev.dest.code ?? 'Chọn vị trí…'}
-                />
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 min-w-0">
+                    <SingleSelect
+                      value={destSel}
+                      onChange={setDestSel}
+                      options={destLocs.map(l => ({ value: l.id, label: `${l.location_code} (${l.max_pallets} pl)` }))}
+                      placeholder={prev.dest.code ?? 'Chọn vị trí…'}
+                    />
+                  </div>
+                  {/* Fill chỉ hạ vào ô NHẶT LẺ → chặn ngay tại màn quét, đừng để người quét đẩy xe
+                      tới ô đó rồi mới ăn từ chối ở bước Xác nhận hạ. */}
+                  <LocationScanButton
+                    warehouseId={warehouseId}
+                    materialId={prev.task.material_id}
+                    disabled={saving}
+                    validate={loc => loc.is_pick_face ? null : `Ô ${loc.location_code} không phải vị trí nhặt lẻ`}
+                    onPicked={loc => setDestSel(loc.id)}
+                  />
+                </div>
               </div>
               <Button size="sm" variant="outline" className="h-9 text-[11px] shrink-0" onClick={skip} disabled={saving}>
                 Bỏ qua

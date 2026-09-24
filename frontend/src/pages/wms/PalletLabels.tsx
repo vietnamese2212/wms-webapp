@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { QrCode, Printer, Trash2, AlertTriangle, History, X, Search } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,10 +14,10 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
-import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { useWhTypeMetaMapFor, useIsNccAt } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
-import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import {
   useWarehouses, useMaterials, useMaterialsByCodes, useMaterialsByIds, useInventoryEntries, useInventoryFacets, type MaterialLite,
   useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
@@ -24,12 +25,15 @@ import {
 } from '@/api/hooks'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import type { Material } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // ─── Label data ───────────────────────────────────────────────
 type LabelData = {
@@ -49,6 +53,16 @@ type LabelData = {
   seq: string           // "001"
   batch?: string          // tem V2 (`;`): mã lô (khớp kế toán); rỗng với V1
   expiryDisplay?: string  // tem V2: HSD dd/MM/yyyy; rỗng với V1
+  /**
+   * Kho ĐANG GIỮ pallet của tem (In lại) — dùng để tra cờ theo kho + ghi vết log in.
+   * Tem SINH MỚI để trống CHỦ ĐÍCH: pallet chưa nhập kho nào, NMSX chỉ là nơi sản xuất (và người
+   * in được phép chọn NMSX ngoài kho mình được gán — gửi lên sẽ bị guard scope 403 oan).
+   */
+  warehouseId?: string | null
+  // Đoạn 4 in ra là ô "NCC" hay ô "Máy" — CHỐT TẠI ĐÂY, không để component tem tự tra.
+  // Cờ is_ncc_goods khai riêng được theo KHO (21/08) mà một lệnh in gộp tem của nhiều kho, nên
+  // component tem không biết hỏi cờ của kho nào; chỗ dựng dữ liệu thì biết kho của từng tem.
+  isNcc: boolean
 }
 
 type WarehouseLite = { id: string; code: string; name: string; warehouse_type?: string | null; nmsx_code?: string | null }
@@ -105,7 +119,6 @@ function QRImg({ value, px = 320 }: { value: string; px?: number }) {
 
 // ─── 1 tem (1/4 A4 = 105mm × 148.5mm) ─────────────────────────
 function PalletLabel({ d }: { d: LabelData }) {
-  const whTypeMeta = useWhTypeMetaMap()   // cờ is_ncc_goods per-Loại kho (ô NCC vs Máy trên tem V1)
   return (
     <div className="pl-label flex flex-col border border-dashed border-slate-300 p-[3.5mm] overflow-hidden">
       {/* QR — chiếm phần lớn (hút khoảng trống thừa), căn giữa */}
@@ -161,7 +174,7 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
           <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
-        {isNccCategory(d.category, whTypeMeta) ? (
+        {d.isNcc ? (
           <div className="border-r border-black flex flex-col">
             <div className="text-[8pt] font-semibold leading-tight">NCC</div>
             <div className="h-[9mm] flex items-center justify-center overflow-hidden px-0.5">
@@ -229,6 +242,14 @@ function MatPicker({ value, label, category, onPick }: {
   )
 }
 
+// Nhãn + icon từng tab (key = giá trị state `tab`, khớp PAGE_TABS['/wms/pallet-labels'])
+const LABEL_TAB_META: Record<'generate' | 'history' | 'reprint' | 'audit', { label: string; icon: typeof Printer | null }> = {
+  generate: { label: 'Sinh tem mới',      icon: null },
+  history:  { label: 'Lịch sử in',        icon: Printer },
+  reprint:  { label: 'In lại từ tồn kho', icon: null },
+  audit:    { label: 'Truy cứu',          icon: History },
+}
+
 export default function PalletLabels() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
@@ -247,6 +268,13 @@ export default function PalletLabels() {
   const tabAllowed: Record<LabelTab, boolean> = { generate: canGenerate, history: canHistory, reprint: canReprint, audit: canAudit }
   const firstTab = (['generate', 'history', 'reprint', 'audit'] as LabelTab[]).find(t => tabAllowed[t]) ?? 'generate'
   const [tab, setTab] = useState<LabelTab>(firstTab)
+  // Key khớp PAGE_TABS['/wms/pallet-labels'] — đã lọc theo quyền từng tab
+  const permTabs = useMemo(
+    () => (['generate', 'history', 'reprint', 'audit'] as LabelTab[]).filter(t => tabAllowed[t]).map(t => ({ key: t })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canGenerate, canHistory, canReprint, canAudit])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/pallet-labels', permTabs, tab, setTab)
   const [scanFor, setScanFor] = useState<null | 'reprint' | 'audit'>(null)
   function handleScanned(code: string) {
     const c = code.trim()
@@ -265,6 +293,10 @@ export default function PalletLabels() {
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as WarehouseLite[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
+  // Bối cảnh toàn cục ở Header (nếu đang chọn) ưu tiên hơn snapshot filter đã nhớ của trang
+  const gScope = useGlobalScopeStore.getState()
+  const gWhOk = gScope.warehouseId && (!allowedWhIds || allowedWhIds.has(gScope.warehouseId)) ? gScope.warehouseId : ''
+  const gCats = gScope.whType ? [gScope.whType] : null
   // NMSX = mã nmsx_code của kho tổng (B/D…) theo Cài đặt WMS → Kho. Chỉ kho có nmsx_code mới chọn được;
   // thêm "O — Gia công ngoài" (không thuộc kho nào) cho hàng gia công từ ngoài về.
   const nmsxOptions = (warehouses as WarehouseLite[]).filter(w => w.warehouse_type !== 'NPP' && !!(w.nmsx_code ?? '').trim())
@@ -293,13 +325,22 @@ export default function PalletLabels() {
 
   // Danh mục NCC (đoạn 4 cho hàng nhập NCC)
   const { data: companies = [] } = useTransportCompanies(true)
-  const whTypeMeta = useWhTypeMetaMap()   // cờ hành vi per-Loại kho (is_ncc_goods + batch_char)
+  // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
+  const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
+  // Cờ hiệu lực TẠI KHO NMSX đang chọn — kho khai riêng được (21/08). Dùng cho form Sinh tem
+  // (một lần sinh = một kho NMSX duy nhất).
+  const whTypeMeta = useWhTypeMetaMapFor(nmsxWarehouseId)
+  // Còn In lại / Lịch sử in / Truy cứu hiển thị dữ liệu của NHIỀU kho cùng lúc ⇒ tra cờ theo kho
+  // của TỪNG DÒNG, không theo "kho đang chọn".
+  const isNccAt = useIsNccAt()
   const nccList = (companies as { id: string; code: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccOptions = nccList.map(c => ({ value: c.code, label: c.name, sub: c.code }))
   const nccNameByCode = useMemo(() => new Map(nccList.map(c => [c.code, c.name])), [nccList])
-  // Đoạn 4 hiển thị: hàng NCC → TÊN NCC (tra theo mã); thành phẩm → Máy như cũ
-  const seg4Display = (category: string | null | undefined, seg4Val: string | null | undefined) =>
-    isNccCategory(category, whTypeMeta) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
+  // Đoạn 4 hiển thị: hàng NCC → TÊN NCC (tra theo mã); thành phẩm → Máy như cũ.
+  // `whId` = kho của DÒNG đang hiển thị (cờ khai riêng theo kho); bỏ trống = theo danh mục chung
+  // (nhãn ô chọn/facet không thuộc kho nào).
+  const seg4Display = (category: string | null | undefined, seg4Val: string | null | undefined, whId?: string | null) =>
+    isNccAt(whId ?? null, category) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
   // Loại hàng đang chọn quyết định đoạn 4 (cờ is_ncc_goods): không NCC → Máy; NCC → mã NCC
   const genCategory = mat?.category ?? genCat
   const genIsNcc = isNccCategory(genCategory, whTypeMeta)
@@ -308,8 +349,6 @@ export default function PalletLabels() {
   const seg4 = genIsNcc ? nccCode : machine                                   // giá trị vào QR (đoạn 4)
   const seg4Name = genIsNcc ? (nccList.find(c => c.code === nccCode)?.name ?? '') : ''
 
-  // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
-  const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
   // DANH MỤC MÁY theo kho NMSX (user 13/08): kho có khai máy → ô Máy thành dropdown PHẢI chọn;
   // chưa khai (hoặc NMSX 'O'/trống) → điền tự do như cũ. Chỉ áp form V1 hàng thành phẩm (không NCC).
   const { data: nmsxMachines } = useMachines(nmsxWarehouseId ?? undefined)
@@ -320,11 +359,17 @@ export default function PalletLabels() {
     if (nmsxMachineOpts.length && machine && !nmsxMachineOpts.some(o => o.value === machine)) setMachine('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nmsxMachineOpts])
-  // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho
+  // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho.
+  // BASE UNIT: định mức cartons_per_pallet = THÙNG VẬT LÝ → nhân units_per_carton ra BASE, y như màn
+  // quét nhập (InboundScanSheet). Cột PalletLabelPrint.qty là BASE — tab "In lại từ tồn kho" điền
+  // cartons_imported (base) và Sổ đóng gói kế thừa số này, nên điền thùng ở đây là trộn 2 đơn vị
+  // trong cùng một cột: tem của cùng một pallet in ra 2 số khác nhau tuỳ tab, và sổ đóng gói ghi
+  // sai 48 lần → cờ "lệch SL sổ ↔ kho" báo oan.
   useEffect(() => {
     if (!mat) return
     const eff = effCartonsPerPallet(mat, nmsxWarehouseId)
-    setQty(eff > 0 ? String(eff) : '')
+    const upc = hasEntry(mat as MatUnits) ? Number(mat.units_per_carton) : 1
+    setQty(eff > 0 ? String(eff * upc) : '')
   }, [mat, nmsxWarehouseId])
 
   // Tem V2: HSD tự tính = NSX + hạn dùng mã (shelf_life_days), user sửa tay thì ngừng đè
@@ -376,6 +421,7 @@ export default function PalletLabels() {
           seq: String(seq).padStart(3, '0'),
           batch,
           expiryDisplay: hsdDisp,
+          isNcc: genIsNcc,
         })
       }
       return out
@@ -401,10 +447,11 @@ export default function PalletLabels() {
         machine: clean(seg4),
         nccName: seg4Name,
         seq,
+        isNcc: genIsNcc,
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar, entryDateV2])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar, entryDateV2, genIsNcc])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
   const genPrefix = isV2Format
@@ -442,12 +489,15 @@ export default function PalletLabels() {
       seq: f.seq,
       batch: batch || undefined,
       expiryDisplay: expiryDisplay || undefined,
+      warehouseId: e.warehouse_id ?? null,
+      // Cờ theo KHO CỦA CHÍNH PALLET (không phải kho đang lọc) — in lại có thể gộp nhiều kho
+      isNcc: isNccAt(e.warehouse_id ?? null, e.material?.category ?? null),
     }
   }
 
   // ── In lại từ tồn kho — filter Kho/Loại hàng/Tên hàng/Chu kỳ/Máy → multi-select Mã pallet ──
-  const [rpWh, setRpWh]             = useState<string>(SAVED.rpWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
-  const [rpCats, setRpCats]         = useState<string[]>(SAVED.rpCats ?? [])
+  const [rpWh, setRpWh]             = useState<string>(gWhOk || SAVED.rpWh || (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [rpCats, setRpCats]         = useState<string[]>(gCats ?? SAVED.rpCats ?? [])
   const [rpMatIds, setRpMatIds]     = useState<string[]>(SAVED.rpMatIds ?? [])
   const [rpCycles, setRpCycles]     = useState<string[]>(SAVED.rpCycles ?? [])
   const [rpMachines, setRpMachines] = useState<string[]>(SAVED.rpMachines ?? [])
@@ -517,8 +567,8 @@ export default function PalletLabels() {
   const rpAlreadyPrinted = pickedCodes.filter(c => (rpPrintCount.get(c) ?? 0) > 0)
 
   // ── Truy cứu — BASE = TỒN KHO (LEFT JOIN số lần in); pallet chưa in vẫn hiện count 0 ──
-  const [auWh, setAuWh]             = useState<string>(SAVED.auWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
-  const [auCats, setAuCats]         = useState<string[]>(SAVED.auCats ?? [])
+  const [auWh, setAuWh]             = useState<string>(gWhOk || SAVED.auWh || (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [auCats, setAuCats]         = useState<string[]>(gCats ?? SAVED.auCats ?? [])
   const [auMatIds, setAuMatIds]     = useState<string[]>(SAVED.auMatIds ?? [])
   const [auCycles, setAuCycles]     = useState<string[]>(SAVED.auCycles ?? [])
   const [auMachines, setAuMachines] = useState<string[]>(SAVED.auMachines ?? [])
@@ -571,6 +621,7 @@ export default function PalletLabels() {
     const events = (auEventMap.get(e.pallet_code) ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
     return {
       qr: e.pallet_code as string,
+      warehouse_id: (e.warehouse_id ?? null) as string | null,   // tra cờ NCC theo kho của pallet
       material_code: e.material?.material_code ?? f.materialCode ?? null,
       short_name: (e.material?.short_name ?? null) as string | null,
       category: (e.material?.category ?? null) as string | null,
@@ -646,6 +697,11 @@ export default function PalletLabels() {
         qr_code: normalizeQR(l.qr), material_code: l.materialCode, material_id: l.materialId ?? null,
         category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx,
         qty: l.qty === '' ? null : l.qty,
+        // Kho của tem (In lại: kho đang giữ pallet; Sinh mới: null — xem LabelData.warehouseId).
+        // Trước 21/08 FE không gửi field này ⇒ cột luôn NULL, kéo theo (a) không tra được cờ
+        // is_ncc_goods theo kho khi in lại, (b) guard scope kho ở BE `if (l.warehouse_id && …)`
+        // không bao giờ nổ.
+        warehouse_id: l.warehouseId ?? null,
       })),
     })
     setPrintLabels(items)
@@ -736,6 +792,8 @@ export default function PalletLabels() {
   function logRowToLabel(r: PalletPrintRow): LabelData {
     const f = parseCodeFields(r.qr_code)   // đúng cả 2 format (V1 `_` / V2 `;`)
     const mat = r.material_code ? matByCode.get(r.material_code) : undefined
+    // Kho của TỪNG TEM (một lệnh in có thể gộp tem nhiều kho) — cờ is_ncc_goods khai riêng theo kho
+    const rIsNcc = isNccAt(r.warehouse_id ?? null, r.category ?? mat?.category)
     return {
       key: r.qr_code, qr: r.qr_code,
       dateDisplay: f.dateDisplay || '—',
@@ -748,10 +806,12 @@ export default function PalletLabels() {
       qty: r.qty ?? '',
       cycle: r.cycle ?? f.cycle,
       machine: r.machine ?? f.machine,
-      nccName: isNccCategory(r.category ?? mat?.category, whTypeMeta) ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
+      nccName: rIsNcc ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
       seq: r.seq ?? f.seq,
       batch: f.batch || undefined,
       expiryDisplay: f.expiryDisplay || undefined,
+      warehouseId: r.warehouse_id ?? null,
+      isNcc: rIsNcc,
     }
   }
   // Chọn in lại: 1 LỆNH GOM (single) HOẶC nhiều TEM — loại trừ lẫn nhau
@@ -857,14 +917,15 @@ export default function PalletLabels() {
             <QrCode className="h-4 w-4 text-slate-500" /> In tem pallet
           </span>
           <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-            {canGenerate && <button onClick={() => setTab('generate')}
-              className={`px-3 py-1 transition-colors ${tab === 'generate' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Sinh tem mới</button>}
-            {canHistory && <button onClick={() => setTab('history')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Printer className="h-3 w-3" />Lịch sử in</button>}
-            {canReprint && <button onClick={() => setTab('reprint')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors ${tab === 'reprint' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>In lại từ tồn kho</button>}
-            {canAudit && <button onClick={() => setTab('audit')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>}
+            {tabs.map((t, i) => {
+              const { label, icon: Icon } = LABEL_TAB_META[t.key]
+              return (
+                <button key={t.key} onClick={() => setTab(t.key)}
+                  className={`px-3 py-1 transition-colors ${i > 0 ? 'border-l border-slate-200 ' : ''}${Icon ? 'inline-flex items-center gap-1 ' : ''}${tab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                  {Icon && <Icon className="h-3 w-3" />}{label}
+                </button>
+              )
+            })}
           </div>
           {tab === 'history' ? (
             <SearchInput value={histSearch} onChange={setHistSearch}
@@ -1154,7 +1215,7 @@ export default function PalletLabels() {
                     <Input className="pl-7 h-8 text-sm" placeholder="Gõ mã rồi Enter, hoặc bấm quét →" value={palletQ} onChange={e => setPalletQ(e.target.value)} onKeyDown={onScanEnter} />
                   </div>
                   <ActionCluster className="shrink-0" items={[{
-                    key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để thêm nhanh vào danh sách in lại', primary: true,
+                    key: 'scan', icon: ScanIcon, label: 'Quét QR', tip: 'Quét QR mã pallet để thêm nhanh vào danh sách in lại', primary: true,
                     onClick: () => setScanFor('reprint'),
                   } satisfies ActionItem]} />
                 </div>
@@ -1217,7 +1278,7 @@ export default function PalletLabels() {
                     <Input className="pl-7 h-8 text-sm" placeholder="Gõ mã pallet, hoặc bấm quét →" value={auQr} onChange={e => setAuQr(e.target.value)} />
                   </div>
                   <ActionCluster className="shrink-0" items={[{
-                    key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để truy cứu lịch sử in', primary: true,
+                    key: 'scan', icon: ScanIcon, label: 'Quét QR', tip: 'Quét QR mã pallet để truy cứu lịch sử in', primary: true,
                     onClick: () => setScanFor('audit'),
                   } satisfies ActionItem]} />
                 </div>
@@ -1253,9 +1314,9 @@ export default function PalletLabels() {
               </thead>
               <tbody>
                 {!auReady ? (
-                  <tr><td colSpan={10} className="px-2 py-10 text-center text-slate-400">Chọn đủ <b>Kho + Loại hàng + Tên hàng + Chu kỳ</b> hoặc quét/nhập mã pallet để tra cứu</td></tr>
+                  <TableEmptyRow colSpan={10}>Chọn đủ <b>Kho + Loại hàng + Tên hàng + Chu kỳ</b> hoặc quét/nhập mã pallet để tra cứu</TableEmptyRow>
                 ) : auditSummary.length === 0 ? (
-                  <tr><td colSpan={10} className="px-2 py-10 text-center text-slate-400">Không có pallet nào khớp trong tồn kho</td></tr>
+                  <TableEmptyRow colSpan={10}>Không có pallet nào khớp trong tồn kho</TableEmptyRow>
                 ) : auditSummary.map(g => (
                   <Fragment key={g.qr}>
                     <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => setAuOpen(auOpen === g.qr ? null : g.qr)}>
@@ -1264,7 +1325,7 @@ export default function PalletLabels() {
                       <td className="px-2 py-1 whitespace-nowrap">{g.category ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.nmsx ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.cycle ?? '—'}</td>
-                      {(() => { const s = isNccCategory(g.category, whTypeMeta) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—'); return (
+                      {(() => { const s = isNccAt(g.warehouse_id, g.category) ? (g.ncc_name || seg4Display(g.category, g.machine, g.warehouse_id)) : (g.machine ?? '—'); return (
                       <td className="px-2 py-1 whitespace-nowrap" title={s}>{s}</td>
                       ) })()}
                       <td className="px-2 py-1 whitespace-nowrap">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</td>
@@ -1308,7 +1369,7 @@ export default function PalletLabels() {
                                       </span>
                                       <span className="tabular-nums">{formatTimestampDate(ev.created_at, true)} {formatTimestampTime(ev.created_at)}</span>
                                       <span className="text-slate-500">· {ev.printed_by_name ?? '—'}</span>
-                                      {ev.qty != null && <span className="text-slate-400">· {ev.qty} thùng</span>}
+                                      {ev.qty != null && <span className="text-slate-400">· {qtyLabel(Number(ev.qty), g.mat)}</span>}
                                     </div>
                                   ))}
                                 </div>
@@ -1380,14 +1441,14 @@ export default function PalletLabels() {
               </thead>
               <tbody>
                 {!histReady ? (
-                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chọn <b>Khoảng ngày</b> ở thanh lọc trên, hoặc <b>tìm / quét mã pallet</b> (≥3 ký tự) ở ô tìm kiếm — tránh tải quá nhiều dữ liệu</td></tr>
+                  <TableEmptyRow colSpan={canReprint ? 9 : 8}>Chọn <b>Khoảng ngày</b> ở thanh lọc trên, hoặc <b>tìm / quét mã pallet</b> (≥3 ký tự) ở ô tìm kiếm — tránh tải quá nhiều dữ liệu</TableEmptyRow>
                 ) : histBatches.length === 0 ? (
-                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Không có lệnh in nào khớp điều kiện đã chọn</td></tr>
+                  <TableEmptyRow colSpan={canReprint ? 9 : 8}>Không có lệnh in nào khớp điều kiện đã chọn</TableEmptyRow>
                 ) : histBatches.map(b => {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]
                   const cycs  = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
-                  const macs  = [...new Set(b.rows.map(r => seg4Display(r.category, r.machine)).filter(v => v && v !== '—'))]
+                  const macs  = [...new Set(b.rows.map(r => seg4Display(r.category, r.machine, r.warehouse_id)).filter(v => v && v !== '—'))]
                   const open  = histOpen.has(b.key)
                   const pinBg = histSelBatch === b.key ? 'bg-sky-50' : 'bg-white'
                   return (
@@ -1421,7 +1482,7 @@ export default function PalletLabels() {
                                 <label key={r.id} className="flex items-center gap-2 text-[10px] cursor-pointer hover:bg-slate-50 rounded px-1 py-0.5">
                                   {canReprint && <input type="checkbox" checked={histSelTems.has(r.id)} onChange={() => toggleHistTem(r.id)} />}
                                   <span className="font-mono font-semibold text-blue-600">{r.qr_code}</span>
-                                  {r.qty != null && <span className="text-slate-400">· {r.qty} thùng</span>}
+                                  {r.qty != null && <span className="text-slate-400">· {qtyLabel(Number(r.qty), matByCode.get(r.material_code ?? '') as MatUnits | undefined)}</span>}
                                 </label>
                               ))}
                             </div>

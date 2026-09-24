@@ -41,6 +41,11 @@ const alertsPage         = () => import('@/pages/wms/Alerts')
 const stocktakeCycle     = () => import('@/pages/wms/StocktakeCycle')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
+const directedWork       = () => import('@/pages/wms/DirectedWork')
+const dateRules          = () => import('@/pages/wms/DateRules')
+const warehouseCosts     = () => import('@/pages/wms/WarehouseCosts')
+const lotTrace           = () => import('@/pages/wms/LotTrace')
+const warehouseCostVoucher = () => import('@/pages/wms/WarehouseCostVoucher')
 const forklift           = () => import('@/pages/wms/Forklift')
 const packing            = () => import('@/pages/wms/Packing')
 const fillPicking        = () => import('@/pages/wms/FillPicking')
@@ -50,6 +55,7 @@ const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
 const locations          = () => import('@/pages/wms/Locations')
 const stocktake          = () => import('@/pages/wms/Stocktake')
+const moveLocation       = () => import('@/pages/wms/MoveLocation')
 const stocktakeDashboard = () => import('@/pages/wms/StocktakeDashboard')
 const stocktakeHistory   = () => import('@/pages/wms/StocktakeHistory')
 const palletLabels       = () => import('@/pages/wms/PalletLabels')
@@ -59,6 +65,8 @@ const wmsSettings = () => import('@/pages/wms/WMSSettings')
 const tmsSettings = () => import('@/pages/tms/TMSSettings')
 const tmsBookings = () => import('@/pages/tms/TMSBookings')
 const tmsReport   = () => import('@/pages/tms/TMSReport')
+const freight     = () => import('@/pages/tms/Freight')
+const dispatch    = () => import('@/pages/tms/Dispatch')
 const gateRegistration = () => import('@/pages/tms/GateRegistration')
 const leaveManagement = () => import('@/pages/hr/LeaveManagement')
 const assignments = () => import('@/pages/hr/Assignments')
@@ -67,6 +75,7 @@ const orgChart = () => import('@/pages/hr/OrgChart')
 const userManagement = () => import('@/pages/masterdata/UserManagement')
 const integrationKeys = () => import('@/pages/masterdata/IntegrationKeys')
 const materials      = () => import('@/pages/masterdata/Materials')
+const customers      = () => import('@/pages/masterdata/Customers')
 const externalData   = () => import('@/pages/external/ExternalData')
 const settings = () => import('@/pages/Settings')
 
@@ -86,6 +95,11 @@ export const Pages = {
   StocktakeCycle: lazyRetry(stocktakeCycle),
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
+  DirectedWork: lazyRetry(directedWork),
+  DateRules: lazyRetry(dateRules),
+  WarehouseCosts: lazyRetry(warehouseCosts),
+  LotTrace: lazyRetry(lotTrace),
+  WarehouseCostVoucher: lazyRetry(warehouseCostVoucher),
   Forklift: lazyRetry(forklift),
   Packing: lazyRetry(packing),
   FillPicking: lazyRetry(fillPicking),
@@ -95,6 +109,7 @@ export const Pages = {
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),
   Locations: lazyRetry(locations),
   Stocktake: lazyRetry(stocktake),
+  MoveLocation: lazyRetry(moveLocation),
   StocktakeDashboard: lazyRetry(stocktakeDashboard),
   StocktakeHistory: lazyRetry(stocktakeHistory),
   PalletLabels: lazyRetry(palletLabels),
@@ -104,6 +119,8 @@ export const Pages = {
   TMSSettings: lazyRetry(tmsSettings),
   TMSBookings: lazyRetry(tmsBookings),
   TMSReport: lazyRetry(tmsReport),
+  Freight: lazyRetry(freight),
+  Dispatch: lazyRetry(dispatch),
   GateRegistration: lazyRetry(gateRegistration),
   LeaveManagement: lazyRetry(leaveManagement),
   Assignments: lazyRetry(assignments),
@@ -112,6 +129,7 @@ export const Pages = {
   UserManagement: lazyRetry(userManagement),
   IntegrationKeys: lazyRetry(integrationKeys),
   Materials: lazyRetry(materials),
+  Customers: lazyRetry(customers),
   ExternalData: lazyRetry(externalData),
   Settings: lazyRetry(settings),
 }
@@ -131,6 +149,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/loosepicking': loosePicking,
   '/wms/locations': locations,
   '/wms/stocktake': stocktake,
+  '/wms/move-location': moveLocation,
   '/wms/slotting': slotting,
   '/wms/fill': fillPicking,
   '/wms/forklift': forklift,
@@ -139,12 +158,15 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/settings': wmsSettings,
   '/tms/bookings': tmsBookings,
   '/tms/reports': tmsReport,
+  '/tms/freight': freight,
+  '/tms/dispatch': dispatch,
   '/tms/gate': gateRegistration,
   '/tms/settings': tmsSettings,
   '/hr/assignments': assignments,
   '/hr/attendance': attendance,
   '/hr/org': orgChart,
   '/masterdata/materials': materials,
+  '/masterdata/customers': customers,
   '/masterdata/users': userManagement,
   '/masterdata/integration-keys': integrationKeys,
   '/external/do-sap': externalData,

@@ -1,37 +1,49 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown, Thermometer } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
+import { StatusBadge } from '@/components/shared/StatusBadge'
+import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
+import { MobileSurfaceSettings, msfDraftOf, msfDirty as isMsfDirty, msfValueOf, type MobileSurfaceDraft } from '@/components/wms/MobileSurfaceSettings'
+import { parseMobileSurface } from '@/config/mobileSurface'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
+import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from '@/components/ui/use-toast'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
-import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import type { ScanCodeTypes } from '@/utils/scanEngine'
+import { InfoTip } from '@/components/shared/InfoTip'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { OutboundStrategyFields, InboundStrategyFields, STRATEGY_EMPTY, type StrategyValue } from '@/components/wms/StrategyFields'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
-  useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
+  useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType,
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   useSystemSettings, useUpdateSystemSetting,
   useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
-  type WarehouseZone, type UnitRow, type UnitRole,
+  useStorageConditions, useAddStorageCondition, useUpdateStorageCondition, useDeleteStorageCondition, conditionLabel,
+  useVehicleModels,
+  useWhTypeConfigs, useSaveWhTypeConfigs, type WhTypeConfig,
+  type WarehouseZone, type UnitRow, type UnitRole, type StorageConditionRow,
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { WH_BADGE_COLORS, whTypeBadgeCls, type WhTypeMeta } from '@/utils/cargoCategory'
 import { computedHolidaysOf } from '@/utils/vnHolidays'
@@ -45,6 +57,12 @@ function apiMsg(err: unknown) {
 
 // `sub` để NGẮN — trong lưới 3 cột menu chỉ rộng ~450px, chuỗi dài sẽ nuốt chỗ của nhãn chính.
 // Ví dụ đầy đủ nằm ở tooltip ⓘ của nhãn (chuẩn form cấu hình: diễn giải vào tooltip).
+// Nguồn nạp dòng DO SAP (22/09) — mirror SAP_DO_SOURCES của BE (utils/settings.ts)
+const SAP_SRC_OPTS = [
+  { value: 'BOTH',  label: 'VL06O + ZSD02 (đối chiếu)', sub: 'nhận cả hai — giai đoạn chuyển' },
+  { value: 'ZSD02', label: 'Chỉ ZSD02',                 sub: 'cửa VL06O đóng (409)' },
+  { value: 'VL06O', label: 'Chỉ VL06O (đường lui)',     sub: 'cửa ZSD02 đóng' },
+]
 const LABEL_FORMAT_OPTS = [
   { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_…' },
   { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã;QA;Lô;NSX;HSD…' },
@@ -83,6 +101,9 @@ const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30 }
 const CYC_DEFAULT = { A: 7, B: 30, C: 90, window_days: 30 }
 const INB_WINDOW_DEFAULT = 2
 const PACK_MAX_DEFAULT = 10
+// mirror DASHBOARD_CACHE_SECONDS_DEFAULT của BE (utils/settings.ts)
+const DASH_CACHE_DEFAULT = 300
+const MON_CACHE_DEFAULT = 30    // mirror MONITOR_CACHE_SECONDS_DEFAULT của BE
 function numRec<T extends Record<string, number>>(v: unknown, def: T): T {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return { ...def }
   const o = v as Record<string, unknown>
@@ -263,7 +284,7 @@ function HolidayEditor({ value, onChange, readOnly }: {
   )
 }
 
-function SystemTab({ canManage }: { canManage: boolean }) {
+function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutateAsync: save, isPending } = useUpdateSystemSetting()
   const [err, setErr] = useState('')
@@ -275,9 +296,16 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const cycRow   = settings.find(s => s.key === 'cycle_count')
   const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
   const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
+  const dashRow  = settings.find(s => s.key === 'dashboard_cache_seconds')
+  const monRow   = settings.find(s => s.key === 'monitor_cache_seconds')
   const orgRow   = settings.find(s => s.key === 'org_profile')
   const holRow   = settings.find(s => s.key === 'vn_holidays')
   const stdRow   = settings.find(s => s.key === 'standard_work_hours')
+  const rateRow  = settings.find(s => s.key === 'receipt_rating')
+  const msfRow   = settings.find(s => s.key === 'mobile_surface')
+  const sapSrcRow = settings.find(s => s.key === 'sap_do_source')
+  const srvMsf   = parseMobileSurface(msfRow?.value)
+  const srvSapSrc = sapSrcRow?.value === 'ZSD02' || sapSrcRow?.value === 'VL06O' ? sapSrcRow.value : 'BOTH'
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -285,10 +313,20 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const srvCyc   = numRec(cycRow?.value, CYC_DEFAULT)
   const srvInb   = Number(inbRow?.value) > 0 ? Number(inbRow?.value) : INB_WINDOW_DEFAULT
   const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
+  // 0 là giá trị HỢP LỆ (tắt cache) nên phải kiểm kiểu, không dùng `> 0` như các cờ khác
+  const srvDash  = typeof dashRow?.value === 'number' && dashRow.value >= 0 && dashRow.value <= 3600
+    ? dashRow.value : DASH_CACHE_DEFAULT
+  const srvMon   = typeof monRow?.value === 'number' && monRow.value >= 0 && monRow.value <= 3600
+    ? monRow.value : MON_CACHE_DEFAULT
   const srvOrg   = parseOrg(orgRow?.value)
   const srvHol   = parseHolidays(holRow?.value)
   // giờ công chuẩn: mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT của BE
   const srvStd   = typeof stdRow?.value === 'number' && stdRow.value >= 1 && stdRow.value <= 24 ? stdRow.value : 8
+  // Chấm sao chuyến giao: mặc định 'optional' = mirror RECEIPT_RATING_DEFAULT của BE
+  const srvRate  = (() => {
+    const m = (rateRow?.value as { mode?: unknown } | null | undefined)?.mode
+    return m === 'off' || m === 'required' ? m : 'optional'
+  })()
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
@@ -298,6 +336,8 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftCyc,   setDraftCyc]   = useState<Record<string, string>>(recToStr(srvCyc))
   const [draftInb,   setDraftInb]   = useState(String(srvInb))
   const [draftPack,  setDraftPack]  = useState(String(srvPack))
+  const [draftDash,  setDraftDash]  = useState(String(srvDash))
+  const [draftMon,   setDraftMon]   = useState(String(srvMon))
   const orgToDraft = (o: OrgProfileValue): OrgProfileDraft => ({
     contact_email: o.contact_email, nmsx_alias: aliasToStr(o.nmsx_alias),
     l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
@@ -305,13 +345,17 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
   const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
   const [draftStd, setDraftStd] = useState(String(srvStd))
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd])
+  const [draftRate, setDraftRate] = useState<string>(srvRate)
+  const [draftMsf, setDraftMsf] = useState<MobileSurfaceDraft>(msfDraftOf(srvMsf))
+  const [draftSapSrc, setDraftSapSrc] = useState<string>(srvSapSrc)
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvMon, srvRate, srvMsf, srvSapSrc])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
-    setDraftStd(String(srvStd))
+    setDraftStd(String(srvStd)); setDraftDash(String(srvDash)); setDraftMon(String(srvMon)); setDraftRate(srvRate)
+    setDraftMsf(msfDraftOf(srvMsf)); setDraftSapSrc(srvSapSrc)
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -325,10 +369,19 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const cycDirty   = JSON.stringify(draftCyc) !== JSON.stringify(recToStr(srvCyc))
   const inbDirty   = draftInb !== String(srvInb)
   const packDirty  = draftPack !== String(srvPack)
+  const dashDirty  = draftDash !== String(srvDash)
+  const monDirty   = draftMon !== String(srvMon)
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
   const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
   const stdDirty   = draftStd !== String(srvStd)
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty || stdDirty
+  const rateDirty  = draftRate !== srvRate
+  // Bố cục điện thoại chỉ superadmin ghi (BE 403 SUPERADMIN_ONLY) — khối đó chỉ cho sửa khi superadmin nên dirty
+  // chỉ có thể true với superadmin; vẫn đi chung một nút Lưu (user 21/09: hai nút Lưu trên một tab gây hiểu nhầm "đã lưu").
+  const msfDirty   = isMsfDirty(draftMsf, srvMsf)
+  const sapSrcDirty = draftSapSrc !== srvSapSrc
+  // Cờ nào có ô nhập thì PHẢI có mặt ở đây — thiếu là đổi riêng cờ đó nút Lưu vẫn mờ, người dùng
+  // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao bị bỏ quên).
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty || msfDirty || sapSrcDirty
 
   async function applyChanges() {
     setErr('')
@@ -354,6 +407,19 @@ function SystemTab({ canManage }: { canManage: boolean }) {
     if (packDirty) {
       pack = intIn(draftPack, 1, 50)
       if (!pack) return setErr('Sổ đóng gói: tối đa mã / trang sổ trong khoảng 1–50 (số nguyên).')
+    }
+    let dash: number | null = null
+    if (dashDirty) {
+      // intIn không nhận 0; 0 = TẮT cache là lựa chọn hợp lệ nên kiểm tay
+      const n = Number(draftDash)
+      if (!Number.isInteger(n) || n < 0 || n > 3600) return setErr('Dashboard: tuổi số liệu 0–3600 giây (0 = tắt cache).')
+      dash = n
+    }
+    let mon: number | null = null
+    if (monDirty) {
+      const n = Number(draftMon)
+      if (!Number.isInteger(n) || n < 0 || n > 3600) return setErr('Giám sát: tuổi số liệu 0–3600 giây (0 = tắt cache).')
+      mon = n
     }
     let org: OrgProfileValue | null = null
     if (orgDirty) {
@@ -387,10 +453,15 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (cyc)        await save({ key: 'cycle_count', value: cyc })
       if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
       if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
+      if (dash !== null) await save({ key: 'dashboard_cache_seconds', value: dash })
+      if (mon !== null)  await save({ key: 'monitor_cache_seconds', value: mon })
       if (std)        await save({ key: 'standard_work_hours', value: std })
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
-      toast({ title: 'Đã lưu cấu hình hệ thống' })
+      if (rateDirty)  await save({ key: 'receipt_rating', value: { mode: draftRate } })
+      if (msfDirty)   await save({ key: 'mobile_surface', value: msfValueOf(draftMsf) })
+      if (sapSrcDirty) await save({ key: 'sap_do_source', value: draftSapSrc })
+      toast({ title: msfDirty ? 'Đã lưu cấu hình hệ thống — bố cục điện thoại áp cho mọi người khi tải lại app' : 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
   const resetDraft = () => { syncDrafts(); setErr('') }
@@ -416,6 +487,12 @@ function SystemTab({ canManage }: { canManage: boolean }) {
                 Dấu phẩy là chuẩn VN, khớp file Excel (vd 1,5 kg · 0,00005).</>}>
               <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
                 onChange={setDraftDec} searchable={false} triggerClassName="w-full" />
+            </SettingField>
+            <SettingField label="Nguồn DO SAP"
+              tip={<>Báo cáo SAP nào nuôi sổ DO (Dữ liệu bên ngoài → DO SAP). <b>ZSD02</b> mang đủ tuyến, phường, ĐVVT, biển số, khối lượng, pallet và cả dòng SO chưa có OD (tab "Chưa có OD"); <b>VL06O</b> chỉ có dòng OD.<br />
+                Hai nguồn ghi CÙNG sổ theo khoá (DO, Item). Giai đoạn chuyển: để <b>VL06O + ZSD02</b>, nạp cả hai cùng ngày để đối chiếu; đủ 5 ngày không lệch thì chuyển <b>Chỉ ZSD02</b> — cửa VL06O trả 409 để không ai nạp nhầm.</>}>
+              <SingleSelect options={SAP_SRC_OPTS} value={draftSapSrc}
+                onChange={setDraftSapSrc} searchable={false} triggerClassName="w-full" />
             </SettingField>
           </SettingGroup>
 
@@ -475,6 +552,42 @@ function SystemTab({ canManage }: { canManage: boolean }) {
             </SettingField>
           </SettingGroup>
 
+          {/* Dashboard là trang AI CŨNG mở đầu tiên và số liệu của nó là tổng hợp TOÀN CÔNG TY —
+              đo 21/08 dưới tải ghi đồng thời: p50 28,3s, có lượt 500. Dùng lại kết quả trong n giây. */}
+          <SettingGroup readOnly={!canManage} title="Dashboard" meta={dashRow}>
+            <SettingField label="Tuổi số liệu tối đa"
+              tip="Số liệu trang chủ là tổng hợp toàn công ty (quét cả tồn kho + chuyến xuất) nên rất nặng khi nhiều người cùng mở. App dùng lại kết quả trong khoảng thời gian này thay vì tính lại mỗi lần. Đặt 0 = luôn tính sống (chậm khi đông người dùng).">
+              <div className="w-24"><SettingNum unit="giây" value={draftDash} onChange={setDraftDash} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Giám sát vận hành + Slotting: 2 màn DUY NHẤT còn gãy dưới tải (đo 29/08, diễn tập 100
+              người ở Ba Vì + Bàu Bàng — 500 vì quá hạn tính, trong khi mọi màn khác chịu được 28
+              người). Giám sát vận hành lại mở thường trực trên TV nên vừa là nạn nhân vừa là NGUỒN tải. */}
+          <SettingGroup readOnly={!canManage} title="Màn giám sát" meta={monRow}>
+            <SettingField label="Tuổi số liệu tối đa"
+              tip="Áp cho Giám sát vận hành và Tối ưu vị trí (Slotting) — hai màn tổng hợp nặng nhất. App dùng lại kết quả trong khoảng thời gian này thay vì tính lại mỗi lần mở, nên nhiều người xem cùng lúc cũng chỉ tính một lần. Đặt 0 = luôn tính sống (hai màn này sẽ báo lỗi khi đông người).">
+              <div className="w-24"><SettingNum unit="giây" value={draftMon} onChange={setDraftMon} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Kho NHẬN chấm sao chuyến giao lúc xác nhận đơn — thước đo chất lượng phục vụ mà
+              fill rate không nói được (hàng móp, chứng từ thiếu, xe trễ). */}
+          <SettingGroup readOnly={!canManage} title="Đánh giá chuyến giao" meta={rateRow}>
+            <SettingField label="Kho nhận chấm sao"
+              tip="Hiện ô chấm sao (1–5) trên panel nhận hàng chuyển kho. 'Bắt buộc' = chưa chấm thì chưa hoàn thành được phiếu nhận. Chấm từ 3 sao trở xuống phải chọn lý do (thiếu hàng / sai hàng / hư hỏng / trễ giờ / chứng từ / khác).">
+              <div className="w-48">
+                <SingleSelect searchable={false} disabled={!canManage} triggerClassName="w-full"
+                  options={[
+                    { value: 'off', label: 'Tắt' },
+                    { value: 'optional', label: 'Có, không bắt buộc' },
+                    { value: 'required', label: 'Bắt buộc trước khi hoàn thành' },
+                  ]}
+                  value={draftRate} onChange={setDraftRate} />
+              </div>
+            </SettingField>
+          </SettingGroup>
+
           <SettingGroup readOnly={!canManage} title="Sổ đóng gói" meta={packRow}>
             <SettingField label="Số mã tối đa / trang sổ" tip="Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
               <div className="w-20"><SettingNum unit="mã" value={draftPack} onChange={setDraftPack} /></div>
@@ -509,6 +622,9 @@ function SystemTab({ canManage }: { canManage: boolean }) {
               </div>
             </div>
           </SettingGroup>
+
+          {/* Bố cục điện thoại (21/09) — cờ riêng, chỉ superadmin ghi; nháp đi CHUNG thanh Lưu bên dưới */}
+          <MobileSurfaceSettings canEdit={superadmin} value={draftMsf} onChange={setDraftMsf} />
         </div>
       </div>
 
@@ -520,7 +636,53 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhTypeOpt { value: string; label?: string | null }
+
+const STRAT_FIELDS = [
+  'rotation_principle', 'rotation_required', 'putaway_priority', 'putaway_date_mix',
+  'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full',
+  'putaway_single_ncc', 'putaway_enforced', 'putaway_same_mat_date_pref', 'putaway_fallback',
+  'loose_mode', 'loose_max_cartons',
+  'auto_fill',   // tự ra lệnh fill hàng nhặt lẻ (15/09) — 2 tầng Kho + Loại kho
+  // Chỉ dẫn công việc (Directed Work 1c, 10/09) — 2 tầng như mọi cờ trên. Thiếu ở đây thì cả tính
+  // năng "Việc cần làm" không có đường nào bật từ trong app.
+  'work_mode', 'lower_from_level',
+] as const
+
+const stratOf = (r: Partial<Record<typeof STRAT_FIELDS[number], unknown>>): StrategyValue =>
+  Object.fromEntries(STRAT_FIELDS.map(k => [k, r[k] ?? null])) as unknown as StrategyValue
+
+const nOwnStrat = (v: StrategyValue) => STRAT_FIELDS.filter(k => v[k] !== null && v[k] !== undefined).length
+// Số mục kho khai RIÊNG cho một loại = chiến thuật + 3 cờ vận hành
+const nOwnCfg = (r: WhTypeConfig | undefined | null) =>
+  r ? nOwnStrat(stratOf(r)) + [r.is_ncc_goods, r.requires_ncc, r.batch_char || null]
+    .filter(v => v !== null && v !== undefined).length : 0
+
+// Kho MỚI chưa có id nên chưa gọi được API gán loại ⇒ chỉ chọn kho NGUỒN để copy nguyên tập loại
+// + chiến thuật riêng ("Copy format loại kho"). Không copy = backend gán đủ mọi loại (kho 0 loại
+// sẽ chặn oan mọi form). Sửa từng loại làm ở TAB LOẠI KHO, không nhét vào form Kho.
+function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
+  copyFrom: string; setCopyFrom: (v: string) => void; whList: WhRow[]; selfId?: string
+}) {
+  return (
+    <div className="space-y-1">
+      <span className="flex items-center gap-1">
+        <Label className="text-xs">Loại kho kho này vận hành</Label>
+        <InfoTip tip={<>Kho mới mặc định nhận <b>tất cả</b> Loại kho đang có, chiến thuật theo mặc định toàn kho ở trên. Chọn một kho để <b>copy nguyên</b> tập loại + chiến thuật riêng của kho đó. Tạo xong vào tab <b>Loại kho</b> để chỉnh từng loại.</>} />
+      </span>
+      <SingleSelect
+        value={copyFrom} onChange={setCopyFrom} triggerClassName="h-8"
+        options={[
+          { value: '', label: '— Tất cả Loại kho (mặc định) —' },
+          ...whList.filter(w => w.id !== selfId).map(w => ({ value: w.id, label: w.name, sub: w.code })),
+        ]}
+      />
+    </div>
+  )
+}
+
+
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_underload_pct?: number | string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -538,13 +700,36 @@ const INV_MODE_META: Record<InvMode, { label: string; desc: string; badge: strin
 }
 const invModeMeta = (m: string) => INV_MODE_META[(m as InvMode)] ?? INV_MODE_META.QR
 
-function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolean; onClose: () => void }) {
+// Loại mã camera giải, theo TỪNG KHO (Warehouse.scan_code_types — migration 20260821e; user chốt
+// 21/08: "kho nào chỉ bắt QR, kho nào chỉ bắt barcode, kho nào bắt cả 2"). Tập format thật nằm ở
+// utils/scanEngine (một nguồn) — đây chỉ là nhãn hiển thị.
+const SCAN_CODE_OPTS = [{ value: 'QR', label: 'Tem QR' }, { value: 'BARCODE', label: 'Mã vạch (1D)' }]
+// Tick độc lập 2 loại ↔ giá trị lưu DB: cả 2 = BOTH, một cái = chính nó. Suy MỘT CHIỀU từ list nên
+// không bao giờ có 2 state lệch nhau.
+const scanListOf = (v: string | null | undefined): string[] => {
+  const s = String(v ?? 'BOTH').toUpperCase()
+  return s === 'QR' ? ['QR'] : s === 'BARCODE' ? ['BARCODE'] : ['QR', 'BARCODE']
+}
+const scanValueOf = (list: string[]): ScanCodeTypes =>
+  list.length >= 2 ? 'BOTH' : list[0] === 'BARCODE' ? 'BARCODE' : 'QR'
+const SCAN_CODE_META: Record<ScanCodeTypes, { label: string; desc: string; badge: string }> = {
+  QR:      { label: "Chỉ tem QR",    desc: "Camera bỏ qua mã vạch — không giải thì không thể đọc sai (kho chỉ dùng tem pallet)", badge: "border-green-400 text-green-700 bg-green-50" },
+  BARCODE: { label: "Chỉ mã vạch",   desc: "Chỉ giải mã vạch 1D — KHÔNG quét được tem pallet QR nữa", badge: "border-amber-400 text-amber-700 bg-amber-50" },
+  BOTH:    { label: "Cả hai",        desc: "Giải cả tem QR và mã vạch 1D (mặc định)", badge: "border-sky-400 text-sky-700 bg-sky-50" },
+}
+
+function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
+  wh: WhRow | null; open: boolean; onClose: () => void
+  /** Mở tab Loại kho, lọc sẵn kho này (chiến thuật riêng theo loại khai ở đó) */
+  onGotoTypes?: (whId: string) => void
+}) {
   const isEdit = !!wh
   const [code,          setCode]          = useState(wh?.code ?? '')
   const [name,          setName]          = useState(wh?.name ?? '')
   const [address,       setAddress]       = useState(wh?.address ?? '')
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
+  const [scanCodeList,  setScanCodeList]  = useState<string[]>(() => scanListOf(wh?.scan_code_types))
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
@@ -552,11 +737,45 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   // 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08): rule 1 đăng ký cổng · rule 2 cân — độc lập,
   // bật rule nào chấp hành rule đó, bật cả 2 phải đủ cả 2. Miễn trừ = quyền outbound.weigh_waive.
   const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
+  // Kho có xe nâng HẠ riêng? (12/09) — mặc định CÓ = hành vi cũ; kho một xe vừa hạ vừa chuyển tắt đi
+  const [sepLower,      setSepLower]      = useState(wh?.separate_lowering_forklift !== false)
+  // NHẶT DỌC ĐƯỜNG (13/09) — bán kính theo Ô LƯỚI, 0 = tắt. Giữ dạng CHUỖI để xoá trắng ô được.
+  const [pickRadius,    setPickRadius]    = useState(String(wh?.cross_trip_pick_radius ?? 0))
+  // ĐIỀU VẬN (24/09) — tham số CẤP KHO cho engine ghép chuyến (chỉ theo kho: một chuyến chở lẫn loại, không có bản theo Loại kho).
+  // Ô số giữ dạng CHUỖI để xoá trắng được; ngưỡng Non tải rỗng = theo dòng xe.
+  const [dispMaxDrops,  setDispMaxDrops]  = useState(String(wh?.dispatch_max_drops ?? 3))
+  const [dispMix,       setDispMix]       = useState(wh?.dispatch_allow_mix_channels === true)
+  const [dispUnderload, setDispUnderload] = useState(wh?.dispatch_underload_pct == null ? '' : String(wh.dispatch_underload_pct))
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
-  // Nguyên tắc luân chuyển (14/08): thứ tự lấy hàng + có BẮT BUỘC hay chỉ cảnh báo.
-  // Mặc định FEFO + không bắt buộc = đúng hành vi trước đây, kho không tick thì không đổi gì.
-  const [rotPrinciple,  setRotPrinciple]  = useState<string>(wh?.rotation_principle ?? 'FEFO')
-  const [rotRequired,   setRotRequired]   = useState(wh?.rotation_required === true)
+  // %DATE THEO KHÁCH HÀNG / KÊNH (11/09) — chỉ tầng KHO (luật theo KHÁCH, không theo loại hàng).
+  // Mặc định OFF cho mọi kho đang chạy: áp tự động là đổi hành vi, không tự bật hộ ai.
+  const [dateRulePolicy, setDateRulePolicy] = useState(wh?.date_rule_policy ?? 'OFF')
+  // CHIẾN THUẬT MẶC ĐỊNH TOÀN KHO — xuất (14/08) + nhập (15/08) + thang 3 bước (21/08).
+  // Gom vào MỘT object vì đúng bộ field này còn được khai lại ở tầng LOẠI KHO (StrategyFields
+  // dùng chung 2 tầng); tách 12 useState rồi chép sang tầng kia là đẻ bản thứ hai.
+  const [strat, setStrat] = useState<StrategyValue>({
+    rotation_principle:         wh?.rotation_principle ?? 'FEFO',
+    rotation_required:          wh?.rotation_required === true,
+    putaway_priority:           wh?.putaway_priority ?? 'CONSOLIDATE',
+    putaway_date_mix:           wh?.putaway_date_mix ?? 'ANY',
+    putaway_block_pick_face:    wh?.putaway_block_pick_face === true,
+    putaway_block_qa_hold:      wh?.putaway_block_qa_hold === true,
+    putaway_block_full:         wh?.putaway_block_full === true,
+    putaway_single_ncc:         wh?.putaway_single_ncc === true,
+    putaway_enforced:           Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced! : [],
+    putaway_enforced_off:       null,   // chỉ tầng LOẠI mới có (ép 1 luật của kho về chỉ-cảnh-báo)
+    putaway_same_mat_date_pref: wh?.putaway_same_mat_date_pref ?? 'NONE',
+    putaway_fallback:           wh?.putaway_fallback ?? 'BY_CODE',
+    loose_mode:                 wh?.loose_mode ?? 'REMAINDER',
+    loose_max_cartons:          wh?.loose_max_cartons ?? null,
+    auto_fill:                  wh?.auto_fill === true,
+    work_mode:                  wh?.work_mode ?? 'MANUAL',
+    lower_from_level:           wh?.lower_from_level ?? 2,
+  })
+  const scanCodes = scanValueOf(scanCodeList)
+  const patchStrat = (p: Partial<StrategyValue>) => setStrat(s => ({ ...s, ...p }))
+  // Kho mới: copy nguyên tập loại + chiến thuật riêng từ kho khác (sửa từng loại ở TAB LOẠI KHO)
+  const [copyFrom, setCopyFrom] = useState('')
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -584,24 +803,70 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     const parent_warehouse_id = parentId === '__none__' ? null : parentId
     if (cartonScan && cartonCats.length === 0) { setErr('Bật quét tới thùng thì chọn ít nhất 1 Loại kho phải quét'); return }
+    if (scanCodeList.length === 0) { setErr('Camera quét loại mã: phải chọn ít nhất 1 loại (bỏ hết thì camera không đọc được gì)'); return }
     const carton_scan_override = cartonScan
     const carton_scan_categories = cartonScan ? cartonCats : null
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
+    const putaway = {
+      putaway_priority: strat.putaway_priority ?? 'CONSOLIDATE',
+      putaway_date_mix: strat.putaway_date_mix ?? 'ANY',
+      putaway_block_pick_face: strat.putaway_block_pick_face === true,
+      putaway_block_qa_hold: strat.putaway_block_qa_hold === true,
+      putaway_block_full: strat.putaway_block_full === true,
+      putaway_single_ncc: strat.putaway_single_ncc === true,
+      putaway_enforced: strat.putaway_enforced ?? [],
+      putaway_same_mat_date_pref: strat.putaway_same_mat_date_pref ?? 'NONE',
+      putaway_fallback: strat.putaway_fallback ?? 'BY_CODE',
+    }
+    const looseMax = strat.loose_max_cartons
+    if (looseMax !== null && (!Number.isFinite(looseMax) || looseMax < 1 || looseMax > 100000))
+      { setErr('Trần nhặt lẻ (thùng) phải là số 1–100.000 (để trống = không chặn)'); return }
+    const lowerLvl = strat.lower_from_level
+    if (lowerLvl !== null && (!Number.isFinite(lowerLvl) || lowerLvl < 1 || lowerLvl > 50))
+      { setErr('Tầng bắt đầu cần xe hạ phải là số 1–50'); return }
+    const rot = {
+      rotation_principle: strat.rotation_principle ?? 'FEFO', rotation_required: strat.rotation_required === true,
+      loose_mode: strat.loose_mode ?? 'REMAINDER', loose_max_cartons: looseMax,
+      auto_fill: strat.auto_fill === true,   // tự ra lệnh fill hàng nhặt lẻ (15/09)
+      // Chỉ dẫn công việc (Directed Work 1c) — BE gác điều kiện bật Hướng dẫn (kho QR + đã vẽ Sơ đồ kho)
+      work_mode: strat.work_mode ?? 'MANUAL', lower_from_level: lowerLvl ?? 2,
+    }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
-        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), ...rot, ...putaway },
+        {
+          // Bật/tắt "Áp %Date tự động" đã ghi thẳng vào đơn đang mở — phải NÓI RA số dòng vừa đổi,
+          // không thì lại đúng cảnh "bấm Lưu xong không thấy gì xảy ra" (user 12/09).
+          onSuccess: (saved) => {
+            const a = saved?.date_rule_applied
+            if (a && (a.updated > 0 || a.note)) toast({
+              title: a.updated > 0
+                ? `Đã áp %Date cho ${a.updated.toLocaleString('vi-VN')} dòng hàng đang mở`
+                : 'Chưa áp được cho đơn đang mở',
+              description: a.note ?? [
+                a.applied ? `${a.applied} dòng nhận mức theo khách / kênh` : '',
+                a.cleared ? `${a.cleared} dòng gỡ mức máy đã áp` : '',
+                a.kept_manual ? `${a.kept_manual} dòng giữ nguyên vì đã chốt tay` : '',
+                a.trips_replanned ? `${a.trips_replanned} chuyến đang xuất đã sắp lại việc` : '',
+              ].filter(Boolean).join(' · '),
+            })
+            onClose()
+          },
+          onError: e => setErr(apiMsg(e)),
+        }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
   }
 
   return (
-    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa kho' : 'Thêm kho'} widthClass="sm:max-w-lg" footer={<>
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa kho' : 'Thêm kho'}
+      // Form kho có nhiều nhóm cấu hình → panel 80% màn hình + dàn cột, đỡ cuộn dài (user chốt 21/08)
+      widthClass="sm:max-w-[80vw]" footer={<>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
           <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
@@ -609,17 +874,21 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
         </>}>
         <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          {/* Panel rộng 80% ⇒ dàn LƯỚI thay vì một cột dài: cùng số field mà nhìn hết trong 1 màn.
+              Khung nhóm = SettingsGroup (khuôn AppSheet 24/08 — band tiêu đề đậm màu thống nhất). */}
+          <SettingsGroup title="Thông tin kho">
+            <div className="py-2 grid gap-x-3 gap-y-2 sm:grid-cols-2 xl:grid-cols-3 items-start">
           <div className="space-y-1">
             <Label className="text-xs">Mã kho *</Label>
-            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="BV, BB, HN…" disabled={isEdit} />
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="BV, BB, HN…" disabled={isEdit} className="h-8 text-sm" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Tên kho *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Kho Ba Vì, Kho Bàu Bàng…" />
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Kho Ba Vì, Kho Bàu Bàng…" className="h-8 text-sm" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Địa chỉ</Label>
-            <Input value={address} onChange={e => setAddress(e.target.value)} />
+            <Input value={address} onChange={e => setAddress(e.target.value)} className="h-8 text-sm" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Chức năng kho *</Label>
@@ -648,25 +917,45 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <p className="text-[10px] text-slate-400">{INV_MODE_META[invMode].desc}</p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Trực thuộc kho (kho phụ nội bộ)</Label>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Camera quét loại mã *</Label>
+              <InfoTip tip={<>Tick những loại mã camera ở kho này được phép đọc. Mã vạch 1D (EAN/Code128…) <b>không có mã sửa lỗi</b> như QR nên vạch mờ có thể đọc ra số không có thật — kho chỉ dùng tem QR thì bỏ tick <b>Mã vạch</b>, không giải thì không thể đọc sai, lại đỡ pin. Kho có hàng NCC dán mã vạch trên thùng thì tick cả hai. Bỏ tick hết = camera không đọc được gì nên không lưu được.</>} />
+            </span>
+            {/* Checkbox dropdown: 2 loại mã tick ĐỘC LẬP (đúng bản chất "camera đọc những gì"),
+                searchable=false vì chỉ 2 dòng + ô search autoFocus bị focus-trap của Dialog giật. */}
+            <MultiSelectFilter label="Loại mã" searchable={false} options={SCAN_CODE_OPTS}
+              selected={scanCodeList} onChange={setScanCodeList} width="w-full" />
+            <p className="text-[10px] text-slate-400">{SCAN_CODE_META[scanCodes].desc}</p>
+          </div>
+          <div className="space-y-1">
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Trực thuộc kho (kho phụ nội bộ)</Label>
+              <InfoTip tip={<>Kho phụ (tổ sản xuất tại site) chỉ giao dịch với kho parent: nhận chuyển kho từ parent, xuất trả parent, xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</>} />
+            </span>
             <SingleSelect options={parentOpts} value={parentId} onChange={setParentId}
               placeholder="— Kho thường (không trực thuộc) —" searchPlaceholder="Tìm kho…" triggerClassName="h-8 w-full text-sm" />
-            <p className="text-[10px] text-slate-400">Kho phụ (tổ sản xuất tại site) chỉ giao dịch với kho parent: nhận chuyển kho từ parent, xuất trả parent, xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Mã ship-to phụ</Label>
-            <Input value={shiptoCodes} onChange={e => setShiptoCodes(e.target.value.toUpperCase())} placeholder="vd: 20000018, 20000019" />
-            <p className="text-[10px] text-slate-400">Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</p>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Mã ship-to phụ</Label>
+              <InfoTip tip={<>Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</>} />
+            </span>
+            <Input value={shiptoCodes} onChange={e => setShiptoCodes(e.target.value.toUpperCase())} placeholder="vd: 20000018, 20000019" className="h-8 text-sm" />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Mã NMSX (kho tổng)</Label>
-            <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
-            <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Mã NMSX (kho tổng)</Label>
+              <InfoTip tip={<>Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</>} />
+            </span>
+            <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} className="h-8 text-sm" />
           </div>
           {/* Map SAP → kho: để CHẶN upload VL06O của kho khác (user chốt 26/07). File VL06O mang mã SAP
               Plant/Storage Location, không phải mã kho app → phải khai ở đây mới siết được theo kho. */}
-          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Mã SAP của kho (để chặn upload VL06O của kho khác)</Label>
+          <div className="space-y-1 sm:col-span-2 xl:col-span-1">
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Mã SAP của kho</Label>
+              <InfoTip tip={<>Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</>} />
+            </span>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-[10px] text-slate-500">Plant SAP</Label>
@@ -677,77 +966,141 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 <Input value={sapSlocs} onChange={e => setSapSlocs(e.target.value.toUpperCase())} placeholder="vd: FG01, FG02" className="h-8 text-sm" />
               </div>
             </div>
-            <p className="text-[10px] text-slate-400">Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</p>
           </div>
+            </div>
+          </SettingsGroup>
+          {/* KHU VỰC XUẤT — MỌI nhóm XUẤT đứng liền nhau, rồi mới tới khu NHẬP (user chốt 16/09: "đưa các hạng
+              mục setting giống nhau về 1 khu vực — rule theo khu vực kể cả khi xoá, thêm mới"; cổng tĩnh
+              `settings_area_interleaved` gác). Nhóm DÙNG CHUNG hai tầng lấy từ StrategyFields (khu XUẤT), nhóm
+              riêng tầng kho khai ngay đây. Thêm nhóm XUẤT mới → đặt TRONG lưới này, đừng nối vào cuối form. */}
+          <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
           {/* 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08) — độc lập, bật rule nào chấp hành
               rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}
-          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Rule khi Bắt đầu chuyến xuất</Label>
-            <label htmlFor="wh-requiregate" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <input id="wh-requiregate" type="checkbox" checked={requireGate} onChange={e => setRequireGate(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Rule 1 — Xe phải có ĐĂNG KÝ CỔNG</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Bắt đầu phải chọn chuyến xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay. Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</span>
-              </span>
-            </label>
-            <label htmlFor="wh-requireweigh" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <input id="wh-requireweigh" type="checkbox" checked={requireWeigh} onChange={e => setRequireWeigh(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</span>
-              </span>
-            </label>
-          </div>
-          {/* Nguyên tắc luân chuyển (14/08) — thứ tự lấy hàng của kho + có siết hay không.
-              Mặc định FEFO + chỉ cảnh báo = hành vi cũ, không kho nào bị đổi khi lên bản này. */}
-          <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Nguyên tắc luân chuyển (thứ tự lấy hàng)</Label>
-            <SingleSelect
-              value={rotPrinciple} onChange={setRotPrinciple}
-              options={[
-                { value: 'FEFO', label: 'FEFO — hạn dùng ngắn nhất đi trước', sub: 'mặc định, hợp hàng có HSD' },
-                { value: 'FIFO', label: 'FIFO — hàng vào trước đi trước',      sub: 'hợp bao bì/vật tư không HSD' },
-                { value: 'LIFO', label: 'LIFO — hàng vào sau đi trước',        sub: 'ít dùng, chỉ khi nghiệp vụ yêu cầu' },
-              ]}
-            />
-            <label htmlFor="wh-rotrequired" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <input id="wh-rotrequired" type="checkbox" checked={rotRequired} onChange={e => setRotRequired(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Bắt buộc lấy đúng thứ tự</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</span>
-              </span>
-            </label>
-          </div>
-          <div className="space-y-1.5">
-            <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-              <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="min-w-0">
-                <span className="block text-xs font-medium text-slate-700">Quét tới THÙNG khi xuất</span>
-                <span className="block text-[11px] text-slate-400 leading-snug">Mặc định TẮT. Bật thì chọn các Loại kho phải quét tem thùng TẠI KHO NÀY (đính kèm truy vết, không tính tồn theo thùng). Mỗi kho chọn độc lập.</span>
-              </span>
-            </label>
-            {cartonScan && (
-              <div className="pl-6 space-y-1">
-                <Label className="text-xs">Loại kho phải quét thùng ở kho này *</Label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {whTypesForCarton.map(t => (
-                    <label key={t.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-[12px] cursor-pointer ${cartonCats.includes(t.value) ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
-                      <input type="checkbox" className="h-3.5 w-3.5 accent-blue-600" checked={cartonCats.includes(t.value)}
-                        onChange={() => setCartonCats(p => p.includes(t.value) ? p.filter(x => x !== t.value) : [...p, t.value])} />
-                      {t.value}
-                    </label>
-                  ))}
+          <SettingsGroup area="XUẤT" title="Rule khi Bắt đầu chuyến">
+            <SettingRow label="Rule 1 — Xe phải có ĐĂNG KÝ CỔNG"
+              desc="Bắt đầu phải chọn xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay."
+              tip={<>Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</>}
+              htmlFor="wh-requiregate"
+              control={<Switch id="wh-requiregate" checked={requireGate} onCheckedChange={setRequireGate} />} />
+            <SettingRow label="Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)"
+              desc="Biển xe phải khớp 1 phiếu cân chưa hoàn thành của hôm nay — phiếu tự gắn chuyến để đối chiếu KL."
+              tip={<>Xe không cân được (hỏng cân…) → duyệt <b>Bỏ qua cân</b> trên chuyến như rule 1.</>}
+              htmlFor="wh-requireweigh"
+              control={<Switch id="wh-requireweigh" checked={requireWeigh} onCheckedChange={setRequireWeigh} />} />
+          </SettingsGroup>
+          <SettingsGroup area="XUẤT" title="Quét tem thùng">
+            <SettingRow label="Quét tới THÙNG khi xuất"
+              desc="Mặc định tắt. Bật thì chọn các Loại kho phải quét tem thùng tại kho này (đính kèm truy vết, không tính tồn theo thùng)."
+              htmlFor="wh-cartonscan"
+              control={<Switch id="wh-cartonscan" checked={cartonScan} onCheckedChange={setCartonScan} />}>
+              {cartonScan && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Loại kho phải quét thùng ở kho này *</Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {whTypesForCarton.map(t => (
+                      <label key={t.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-[12px] cursor-pointer ${cartonCats.includes(t.value) ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
+                        <input type="checkbox" className="h-3.5 w-3.5 accent-blue-600" checked={cartonCats.includes(t.value)}
+                          onChange={() => setCartonCats(p => p.includes(t.value) ? p.filter(x => x !== t.value) : [...p, t.value])} />
+                        {t.value}
+                      </label>
+                    ))}
+                  </div>
+                  <Label className="text-xs pt-1 block">Quét đủ thùng</Label>
+                  <SingleSelect options={CARTON_REQUIRE_OPTS} value={cartonRequire} onChange={setCartonRequire}
+                    triggerClassName="h-8 w-full text-sm" />
+                  <p className="text-[10px] text-slate-400">Bắt buộc: khi Hoàn thành chuyến, mỗi pallet đã quét phải đính đủ tem thùng khớp mã (bằng số thùng của pallet) — thiếu sẽ bị chặn kèm danh sách pallet.</p>
                 </div>
-                <Label className="text-xs pt-1 block">Quét đủ thùng</Label>
-                <SingleSelect options={CARTON_REQUIRE_OPTS} value={cartonRequire} onChange={setCartonRequire}
-                  triggerClassName="h-8 w-full text-sm" />
-                <p className="text-[10px] text-slate-400">Bắt buộc: khi Hoàn thành chuyến, mỗi pallet đã quét phải đính đủ tem thùng khớp mã (bằng số thùng của pallet) — thiếu sẽ bị chặn kèm danh sách pallet.</p>
-              </div>
-            )}
+              )}
+            </SettingRow>
+          </SettingsGroup>
+          {/* CHIẾN THUẬT XUẤT MẶC ĐỊNH TOÀN KHO (14–15/08 + thang 3 bước 21/08) — phần DÙNG CHUNG cho cả kho;
+              khai riêng cho từng Loại kho làm ở TAB LOẠI KHO (user chốt 21/08), cùng bộ control
+              `components/wms/StrategyFields.tsx`. Hai ô chỉ có ở tầng KHO (xe nâng là nguồn lực của kho, không
+              của loại hàng) truyền qua `guidedExtra` để nằm TRONG nhóm Chỉ dẫn công việc, không thành hộp rời. */}
+          <OutboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat}
+            guidedExtra={<>
+              {/* XE HẠ RIÊNG — kho một xe vừa hạ vừa chuyển mà để mặc định thì người đó phải đổi tab hai lần +
+                  bấm hai lần cho MỘT pallet, và dòng bị khoá "chờ xe hạ" bởi chính mình (rà theo vai 12/09). */}
+              <SettingRow label={<>Kho có xe nâng <b>hạ</b> riêng</>}
+                desc={<>Bật (mặc định): xe chuyển chờ xe hạ, hai bảng riêng. Tắt: một xe vừa hạ vừa chuyển — bảng
+                  “Cần đưa ra” gộp hai chặng thành một nút <b>Hạ &amp; đưa ra</b>, tab “Cần hạ” ẩn.</>}
+                htmlFor="wh-sep-lower"
+                control={<Switch id="wh-sep-lower" checked={sepLower} onCheckedChange={setSepLower} />} />
+              {/* NHẶT DỌC ĐƯỜNG (13/09) — chỉ có nghĩa khi kho có XE HẠ RIÊNG, vì chỉ bảng "Cần hạ" mới chuyển
+                  pallet từ ô ra ĐIỂM ĐẶT DÃY rồi đi tiếp; bảng "Cần đưa ra" việc nào cũng kết thúc tại cửa. */}
+              {sepLower && (
+                <SettingRow label="Nhặt dọc đường — bán kính (số ô)"
+                  desc={<>Xe nâng đứng ở một điểm đặt dãy mà có việc của <b>chuyến khác</b> trong bán kính này thì bảng
+                    “Cần hạ” đưa việc đó lên làm luôn. Thứ tự vẫn bám theo chuyến. <b>0 = tắt</b> (mặc định).</>}
+                  tip={<>Đo trên bản vẽ Kho Ba Vì (1 ô ≈ 1,2 m, 8 chuyến × 10 việc): <b>12–24 ô</b> (≈ 14–29 m) tiết
+                    kiệm <b>14 % quãng đường</b> mà xe vẫn rời cửa sớm hơn; khai lớn hơn không lợi thêm, khai nhỏ hơn
+                    (4 ô) vẫn được ~10 %. Kho có hàng dồn trong vài dãy thì gần như không lợi gì — cứ để 0.</>}
+                  control={<Input id="wh-pick-radius" type="number" min={0} max={200} className="h-7 w-24 text-xs text-right"
+                    value={pickRadius} onChange={e => setPickRadius(e.target.value)} placeholder="0" />} />
+              )}
+            </>} />
+          {/* ĐIỀU VẬN (24/09) — tham số cho máy ghép chuyến (trang Điều vận). CHỈ tầng kho: ghép chuyến là việc của cả kho,
+              một chuyến chở lẫn loại hàng nên không có bản khai theo Loại kho. Mặc định = 3 điểm · không trộn kênh · Non tải theo dòng xe. */}
+          <SettingsGroup area="XUẤT" title="Điều vận — ghép chuyến">
+            <SettingRow label="Điểm giao tối đa một chuyến"
+              desc="Máy chỉ gộp thêm khách vào chuyến khi tổng số điểm giao không vượt số này (1–20)."
+              tip={<>Nhiều điểm giao = ít chuyến hơn nhưng phụ phí rớt điểm cao hơn và xe về muộn hơn. Máy so cước thật trước khi gộp — gộp mà đắt hơn đi hai chuyến thì không gộp.</>}
+              control={<Input id="wh-disp-drops" type="number" min={1} max={20} className="h-7 w-24 text-xs text-right"
+                value={dispMaxDrops} onChange={e => setDispMaxDrops(e.target.value)} placeholder="3" />} />
+            <SettingRow label="Cho trộn kênh khách trên một xe"
+              desc="Tắt (mặc định) = NPP, BHX, KA… đi xe riêng dù cùng phường. Bật = máy được ghép khách khác kênh vào cùng chuyến."
+              htmlFor="wh-disp-mix"
+              control={<Switch id="wh-disp-mix" checked={dispMix} onCheckedChange={setDispMix} />} />
+            <SettingRow label="Ngưỡng Non tải của kho (%)"
+              desc="Chuyến dưới ngưỡng này bị gắn Non tải và máy cố gộp. Để trống = dùng ngưỡng khai trên từng dòng xe con."
+              control={<Input id="wh-disp-underload" type="number" min={1} max={100} className="h-7 w-24 text-xs text-right"
+                value={dispUnderload} onChange={e => setDispUnderload(e.target.value)} placeholder="theo dòng xe" />} />
+          </SettingsGroup>
+          {/* %DATE THEO KHÁCH HÀNG / KÊNH (user chốt 11/09) — CHỈ tầng kho: luật đi theo KHÁCH NHẬN,
+              không theo loại hàng, nên không có bản khai riêng ở tab Loại kho. */}
+          <SettingsGroup area="XUẤT" title="Quy định date theo khách hàng"
+            tip={<>
+              Thay vì chốt tay từng dòng (production ~1.000 dòng/ngày), hệ thống lấy %Date mặc định từ
+              danh mục <b>Khách hàng</b> (menu Cấu hình) theo mã ship-to của chuyến: %Date riêng của
+              khách trước, không có thì lấy mức của <b>Kênh</b> (Kho tổng / NPP / BHX / KA / MT…).
+              <br /><br />
+              Dòng đã <b>chốt tay</b> và dòng có <b>%Date của VL06O</b> không bao giờ bị đè. Khách chưa
+              có trong danh mục hoặc <b>chưa phân kênh</b> thì KHÔNG được cấp %Date tự động — máy không đoán.
+              <br /><br />
+              Bật (hoặc tắt) ở đây <b>áp ngay</b> cho cả đơn đang mở của kho này, rồi báo lại số dòng vừa đổi.
+              Bật cũng có nghĩa kho này <b>đi theo quy định date</b>: dòng chưa khai thì không quét / không nhặt lẻ được.
+            </>}>
+            <SettingRow label="Áp %Date tự động"
+              desc={<>Ghi chú của CS là chỗ <b>người</b> phải đọc — chọn "chỉ dòng không có ghi chú" để máy tránh đúng những dòng đó.</>}>
+              <SingleSelect value={dateRulePolicy} onChange={setDateRulePolicy} triggerClassName="h-8"
+                options={[
+                  { value: 'OFF',     label: 'Tắt',                       sub: 'mặc định — thủ kho chốt tay như hiện nay' },
+                  { value: 'NO_NOTE', label: 'Chỉ dòng KHÔNG có ghi chú CS', sub: 'khuyên dùng — dòng có ghi chú để người đọc rồi chốt' },
+                  { value: 'ALL',     label: 'Áp toàn bộ',                sub: 'mọi dòng chưa chốt tay, kể cả dòng có ghi chú CS' },
+                ]} />
+            </SettingRow>
+          </SettingsGroup>
           </div>
+          {/* KHU VỰC NHẬP — sau khi hết mọi nhóm XUẤT */}
+          <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
+            <InboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} />
+          </div>
+          {isEdit ? (
+            <button type="button" onClick={() => onGotoTypes?.(wh.id)}
+              className="w-full rounded-md border border-sky-200 bg-sky-50 px-2.5 py-2 text-left text-xs text-sky-800 hover:bg-sky-100">
+              <span className="font-medium">Loại kho &amp; chiến thuật riêng của kho này →</span>
+              <span className="block text-[10px] text-sky-700/80 mt-0.5">
+                Mở tab <b>Loại kho</b> đã lọc sẵn kho này: chọn loại kho này vận hành, khai chiến thuật
+                khác mặc định cho từng loại (vd thành phẩm FEFO, nguyên liệu FIFO).
+              </span>
+            </button>
+          ) : (
+            <CopyTypesField copyFrom={copyFrom} setCopyFrom={setCopyFrom}
+              whList={allWhForParent as WhRow[]} />
+          )}
           {isEdit && (
             <div className="flex items-center gap-2">
-              <input id="wh-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Switch id="wh-active" checked={isActive} onCheckedChange={setIsActive} />
               <Label htmlFor="wh-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
             </div>
           )}
@@ -874,7 +1227,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
 
           {isEdit && (
             <div className="flex items-center gap-2">
-              <input id="zone-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Switch id="zone-active" checked={isActive} onCheckedChange={setIsActive} />
               <Label htmlFor="zone-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
             </div>
           )}
@@ -894,40 +1247,70 @@ const RENAMED_LABELS: Record<string, string> = {
   inbound_plan_lines: 'KH nhập', ProductionImport: 'Phiếu nhập',
 }
 
-function TypeDialog({ type, open, onClose }: {
+// LOẠI KHO = DANH MỤC CHUNG + SETTING RIÊNG TỪNG KHO (user chốt 21/08 vòng cuối).
+// Tạo loại kho xong thì MỌI kho đều có nó; mở từ tab Loại kho khi đang đứng trong một kho.
+//   • Cột TRÁI  — dùng chung mọi kho: tên · màu · bắt buộc HSD · bắt buộc Pallet/EA
+//     (2 cờ sau ràng buộc HỒ SƠ MÃ HÀNG, mà mã hàng dùng chung toàn hệ thống nên không tách được)
+//   • Cột PHẢI  — riêng kho đang chọn: 3 cờ vận hành + chiến thuật xuất/nhập, để trống = kế thừa
+function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh, savingCfg, onSaveCfg }: {
   type: { id: string; value: string; meta?: WhTypeMeta | null } | null; open: boolean; onClose: () => void
+  whName: string
+  whStrat: StrategyValue                    // mặc định của kho — in "— Theo kho (FEFO) —"
+  cfgRow: WhTypeConfig | null               // cấu hình riêng của (kho, loại) đang có
+  canManageWh: boolean
+  savingCfg: boolean
+  onSaveCfg: (code: string, next: WhTypeConfig, renamedFrom: string | null, onDone: () => void) => void
 }) {
   const isEdit = !!type
   const m = type?.meta ?? {}
+  // ── Phần DÙNG CHUNG MỌI KHO (LookupValue) ──
   const [value, setValue] = useState(type?.value ?? '')
-  // Cờ hành vi per-loại (LookupValue.meta) — thay các hardcode tên loại cũ
-  const [isNcc,      setIsNcc]      = useState(m.is_ncc_goods ?? false)
   const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
-  const [reqNcc,     setReqNcc]     = useState(m.requires_ncc ?? false)
-  const [useBatchChar, setUseBatchChar] = useState(!!(m.batch_char ?? '').trim())      // tick = loại dùng ký tự cố định
-  const [batchChar,  setBatchChar]  = useState(m.batch_char ?? '')
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
+  const [storageCond, setStorageCond] = useState(m.storage_condition ?? '')   // điều kiện bảo quản của hàng loại này (24/09)
+  const { data: conditions = [] } = useStorageConditions()
   const [err, setErr] = useState('')
+
+  // ── Phần RIÊNG KHO ĐANG CHỌN (warehouse_type_configs) ──
+  const [strat, setStrat] = useState<StrategyValue>(cfgRow ? stratOf(cfgRow) : STRATEGY_EMPTY)
+  const [isNccOv,  setIsNccOv]  = useState<boolean | null>(cfgRow?.is_ncc_goods ?? null)
+  const [reqNccOv, setReqNccOv] = useState<boolean | null>(cfgRow?.requires_ncc ?? null)
+  const [batchOv,  setBatchOv]  = useState<string>(cfgRow?.batch_char ?? '')
+  // Dep = NỘI DUNG: `cfgRow` dựng mới mỗi lần cha render nên dep theo ref sẽ reset ô đang sửa
+  const cfgKey = cfgRow ? JSON.stringify(cfgRow) : ''
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setStrat(cfgRow ? stratOf(cfgRow) : STRATEGY_EMPTY)
+    setIsNccOv(cfgRow?.is_ncc_goods ?? null); setReqNccOv(cfgRow?.requires_ncc ?? null)
+    setBatchOv(cfgRow?.batch_char ?? '')
+  }, [cfgKey, open])
+  const nOwn = nOwnStrat(strat) + [isNccOv, reqNccOv, batchOv || null].filter(v => v !== null && v !== undefined).length
 
   const { mutate: add,    isPending: adding    } = useAddWarehouseType()
   const { mutate: update, isPending: updating  } = useUpdateWarehouseType()
-  const isPending = adding || updating
+  const isPending = adding || updating || savingCfg
 
   function handleSubmit() {
     setErr('')
     const name = value.trim()
     if (!name) { setErr('Tên loại kho là bắt buộc'); return }
-    if (useBatchChar && !batchChar.trim()) { setErr('Đã tick dùng ký tự mã lô — nhập 1 ký tự (vd K)'); return }
+    if (batchOv && !/^[A-Z0-9]$/.test(batchOv)) { setErr('Ký tự mã lô phải là 1 chữ cái hoặc số'); return }
+    // Giữ nguyên các cờ CHUNG khác (is_ncc_goods / requires_ncc / batch_char ở danh mục) — chúng là
+    // mặc định cho mọi kho, form này chỉ sửa 2 cờ hồ sơ mã hàng + màu.
     const meta: WhTypeMeta = {
-      is_ncc_goods: isNcc, requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa,
-      requires_ncc: reqNcc,
-      batch_char: useBatchChar ? batchChar.trim().toUpperCase().slice(0, 1) : '', badge_color: badge,
+      ...m,
+      requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa, badge_color: badge,
+      storage_condition: storageCond || null,
+    }
+    const cfgNext: WhTypeConfig = {
+      type_code: name, ...strat,
+      is_ncc_goods: isNccOv, requires_ncc: reqNccOv, batch_char: batchOv || null,
     }
     if (isEdit) {
       // Đổi TÊN = cascade toàn DB (Material/Vị trí/Khu vực/quyền NV/khung giờ/đơn hàng…) — xác nhận trước
       if (name !== type.value && !confirm(
-        `Đổi tên loại kho "${type.value}" → "${name}"?\n\nMọi dữ liệu đang dùng tên cũ (mã hàng, vị trí, khu vực, quyền nhân viên, khung giờ TMS, đơn hàng, phiếu nhập…) sẽ được cập nhật đồng bộ theo tên mới.`
+        `Đổi tên loại kho "${type.value}" → "${name}"?\n\nMọi dữ liệu đang dùng tên cũ (mã hàng, vị trí, khu vực, quyền nhân viên, khung giờ TMS, đơn hàng, phiếu nhập…) sẽ được cập nhật đồng bộ theo tên mới, ở TẤT CẢ các kho.`
       )) return
       update({ id: type.id, value: name, meta }, {
         onSuccess: data => {
@@ -936,74 +1319,96 @@ function TypeDialog({ type, open, onClose }: {
               .map(([t, n]) => `${RENAMED_LABELS[t] ?? t}: ${n}`)
             toast({ title: `Đã đổi tên "${type.value}" → "${name}"`,
               description: parts.length ? `Cập nhật đồng bộ — ${parts.join(' · ')}` : 'Chưa có dữ liệu nào dùng tên cũ' })
-          } else {
-            toast({ title: `Đã lưu loại kho "${name}"` })
           }
-          onClose()
+          onSaveCfg(name, cfgNext, name !== type.value ? type.value : null, onClose)
         },
         onError: e => setErr(apiMsg(e)),
       })
     } else {
       add({ value: name, meta }, {
-        onSuccess: () => { toast({ title: `Đã tạo loại kho "${name}"` }); onClose() },
+        onSuccess: () => {
+          toast({ title: `Đã tạo loại kho "${name}"`, description: 'Mọi kho đều nhận loại này — setting riêng khai theo từng kho' })
+          onSaveCfg(name, cfgNext, null, onClose)
+        },
         onError: e => setErr(apiMsg(e)),
       })
     }
   }
 
-  const flagRow = (id: string, checked: boolean, onChange: (v: boolean) => void, label: string, hint: string) => (
-    <label htmlFor={id} className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-      <input id={id} type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-      <span className="min-w-0">
-        <span className="block text-xs font-medium text-slate-700">{label}</span>
-        <span className="block text-[11px] text-slate-400 leading-snug">{hint}</span>
+  // Diễn giải trong ⓘ (17/08) — ⓘ đứng NGOÀI <label> để bấm nó không lật switch.
+  // Khuôn AppSheet 24/08: tên đậm trái · Switch phải cùng hàng.
+  const flagRow = (id: string, checked: boolean, onChange: (v: boolean) => void, label: string, hint: React.ReactNode) => (
+    <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+      <label htmlFor={id} className="flex-1 min-w-0 cursor-pointer">
+        <span className="text-xs font-semibold text-slate-800">{label}</span>
+      </label>
+      <InfoTip tip={hint} />
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+    </div>
+  )
+  // Cờ RIÊNG kho: 3 trạng thái — "Theo mặc định chung" / Có / Không
+  const triRow = (id: string, val: boolean | null, onChange: (v: boolean | null) => void, label: string, base: boolean, hint: React.ReactNode) => (
+    <div className="py-1">
+      <span className="flex items-center gap-1">
+        <span className="text-[11px] font-semibold text-slate-800">{label}{val !== null && <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700">riêng</span>}</span>
+        <InfoTip tip={hint} />
       </span>
-    </label>
+      <SingleSelect value={val === null ? '__inherit__' : val ? '1' : '0'}
+        onChange={v => onChange(v === '__inherit__' ? null : v === '1')}
+        triggerClassName="h-7 text-[11px]"
+        options={[
+          { value: '__inherit__', label: `— Mặc định chung (${base ? 'Có' : 'Không'}) —` },
+          { value: '1', label: 'Có' }, { value: '0', label: 'Không' },
+        ]} />
+    </div>
   )
 
   return (
-    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa loại kho' : 'Thêm loại kho'} widthClass="sm:max-w-lg" footer={<>
+    <FormSheet open={open} onClose={onClose}
+      title={isEdit ? <>Loại kho <span className="font-mono">{type.value}</span> tại {whName}</> : <>Thêm loại kho</>}
+      description={isEdit
+        ? <>Bên trái áp cho <b>mọi kho</b> · bên phải chỉ áp cho <b>{whName}</b></>
+        : <>Tạo xong <b>mọi kho đều có</b> loại này — setting bên phải khai riêng cho {whName}</>}
+      widthClass="sm:max-w-[80vw]" footer={<>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
           <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </>}>
-        <div className="space-y-3">
+      <div className="grid gap-4 lg:grid-cols-[minmax(280px,0.8fr)_2fr]">
+        <div className="space-y-3 min-w-0">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          <div className="flex items-center gap-1.5 border-b pb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Dùng chung mọi kho</span>
+            <InfoTip tip={<>Loại kho là danh mục chung: tạo một lần thì <b>mọi kho đều có</b>. Tên và 2 luật dưới đây ràng buộc <b>hồ sơ mã hàng</b> — mà mã hàng dùng chung toàn hệ thống nên không tách theo kho được.</>} />
+          </div>
           <div className="space-y-1">
             <Label className="text-xs">Tên loại kho *</Label>
             <Input value={value} onChange={e => setValue(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
               placeholder="Thành phẩm, Nguyên liệu, Vật tư…" />
             {isEdit && value.trim() !== type.value && (
-              <p className="text-[11px] text-amber-600">Đổi tên sẽ cập nhật đồng bộ TOÀN BỘ dữ liệu đang dùng tên cũ.</p>
+              <p className="text-[11px] text-amber-600">Đổi tên sẽ cập nhật đồng bộ TOÀN BỘ dữ liệu đang dùng tên cũ, ở mọi kho.</p>
             )}
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs">Hành vi</Label>
-            {flagRow('wt-ncc', isNcc, setIsNcc, 'Hàng NCC',
-              'Quét nhập tem gạch dưới ( _ ): đoạn 4 của QR là MÃ NCC (tự nhận NCC) thay vì Máy sản xuất')}
+            <Label className="text-xs">Ràng buộc hồ sơ mã hàng</Label>
             {flagRow('wt-shelf', reqShelf, setReqShelf, 'Bắt buộc HSD',
-              'Mã hàng thuộc loại này phải khai HSD (ngày) — dùng tính %Date')}
+              <>Mã hàng thuộc loại này phải khai HSD (số ngày) — dùng tính %Date. Kiểm ngay ở form <b>Mã hàng</b> nên áp chung mọi kho.</>)}
             {flagRow('wt-palletea', reqPalletEa, setReqPalletEa, 'Bắt buộc Pallet/EA',
-              'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
-            {flagRow('wt-reqncc', reqNcc, setReqNcc, 'Bắt buộc có NCC khi nhập kho',
-              'Chặn lưu pallet thiếu NCC ở quét nhập, nhập tay và upload tồn kho. Chuyển kho kế thừa NCC từ pallet gốc, không chặn.')}
+              <>Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet. Kiểm ở form <b>Mã hàng</b> nên áp chung mọi kho.</>)}
           </div>
 
-          <div className="space-y-1.5">
-            {flagRow('wt-batchchar', useBatchChar, v => { setUseBatchChar(v); if (!v) setBatchChar('') },
-              'Ký tự mã lô cố định (tem chấm phẩy ; )',
-              'Sinh tem V2: dùng 1 ký tự cố định của Loại kho thế chỗ Máy trong mã lô — vd điền K thì mã lô ra SI260311K021. Bỏ tick = chọn Máy tay khi sinh tem (Thành phẩm).')}
-            {useBatchChar && (
-              <div className="flex items-center gap-2 pl-6">
-                <Label className="text-xs shrink-0">Ký tự của loại này *</Label>
-                <Input value={batchChar} maxLength={1} className="w-14 uppercase text-center"
-                  autoFocus={!batchChar}
-                  onChange={e => setBatchChar(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
-              </div>
-            )}
+          {/* Điều kiện bảo quản của HÀNG thuộc loại này (24/09) — dùng chung mọi kho: hàng lạnh thì kho nào cũng lạnh.
+              Để trống = chưa khai = điều vận không ràng buộc dòng xe nào (mặc định, hành vi trước khi có tính năng). */}
+          <div className="space-y-1">
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Điều kiện bảo quản</Label>
+              <InfoTip tip={<>Hàng thuộc loại kho này cần bảo quản ở mức nào. Điều vận chỉ ghép lên <b>dòng xe phục vụ được mức đó</b> (khai ở Cài đặt TMS → Mã dòng xe). Để trống = không ràng buộc. Danh mục các mức: tab <b>ĐK bảo quản</b>.</>} />
+            </span>
+            <SingleSelect searchable={false} value={storageCond} onChange={setStorageCond}
+              options={[{ value: '', label: '— Chưa khai (không ràng buộc) —' }, ...conditions.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]} />
           </div>
 
           <div className="space-y-1">
@@ -1019,6 +1424,48 @@ function TypeDialog({ type, open, onClose }: {
             </div>
           </div>
         </div>
+
+        {/* Setting RIÊNG của kho đang chọn */}
+        <div className="space-y-3 min-w-0 lg:border-l lg:pl-4">
+          <div className="flex items-center gap-1.5 border-b pb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">Riêng tại {whName}</span>
+            {nOwn > 0 && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700">{nOwn} khai riêng</span>}
+            <InfoTip tip={<>Chỉ áp cho <b>{whName}</b>. Ô để “Theo kho / Mặc định chung” = chạy theo mặc định, kho khác không đổi theo.</>} />
+          </div>
+          {!canManageWh ? (
+            <p className="text-[11px] text-amber-600">Cần quyền <b>Quản lý Kho</b> mới sửa được phần riêng của kho.</p>
+          ) : (
+            <>
+              {/* Khu XUẤT trước, khu NHẬP sau — cùng luật khu vực với form Kho (16/09). Nhóm "Nhận diện & tem"
+                  là NHẬP nên đứng cùng khu với Cất hàng / Ràng buộc, không chen lên trước các nhóm XUẤT. */}
+              <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
+                <OutboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
+                  onPatch={v => setStrat(s => ({ ...s, ...v }))} />
+              </div>
+              <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
+              <SettingsGroup area="NHẬP" title="Nhận diện &amp; tem"
+                tip="Ba luật này app đọc khi đang làm việc TẠI KHO (quét tem nhập, sinh tem) nên khai riêng theo kho được.">
+                {triRow('wt-ncc', isNccOv, setIsNccOv, 'Hàng NCC (QR đoạn 4 = mã NCC)', m.is_ncc_goods === true,
+                  <>Quét nhập tem gạch dưới ( _ ): đoạn 4 của QR là <b>MÃ NCC</b> (tự nhận NCC) thay vì Máy sản xuất.</>)}
+                {triRow('wt-reqncc', reqNccOv, setReqNccOv, 'Bắt buộc có NCC khi nhập kho', m.requires_ncc === true,
+                  <>Chặn lưu pallet thiếu NCC ở quét nhập, nhập tay và upload tồn kho. Chuyển kho kế thừa NCC từ pallet gốc, không chặn.</>)}
+                <div className="rounded-md px-1 py-1">
+                  <span className="flex items-center gap-1">
+                    <span className="text-[11px] text-slate-500">Ký tự mã lô (tem chấm phẩy ; ){batchOv && <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700">riêng</span>}</span>
+                    <InfoTip tip={<>Sinh tem V2: 1 ký tự cố định thế chỗ Máy trong mã lô — vd điền K thì mã lô ra SI260311K021. Để trống = theo mặc định chung ({m.batch_char || 'chọn Máy tay'}).</>} />
+                  </span>
+                  <Input value={batchOv} maxLength={1} className="h-7 w-20 uppercase text-center text-[11px]"
+                    placeholder={m.batch_char || '—'}
+                    onChange={e => setBatchOv(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
+                </div>
+              </SettingsGroup>
+                <InboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
+                  onPatch={v => setStrat(s => ({ ...s, ...v }))} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </FormSheet>
   )
 }
@@ -1085,7 +1532,7 @@ function MetaDialog({ kind, row, open, onClose }: {
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
-              <input id="meta-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Switch id="meta-active" checked={isActive} onCheckedChange={setIsActive} />
               <Label htmlFor="meta-active" className="text-sm cursor-pointer">Đang sử dụng</Label>
             </div>
           )}
@@ -1132,9 +1579,9 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
                       <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{r.name}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{r.display_order}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
-                        <Badge variant={r.is_active ? 'default' : 'secondary'} className="text-xs">
+                        <StatusBadge tone={r.is_active ? 'green' : 'slate'}>
                           {r.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                        </Badge>
+                        </StatusBadge>
                       </TableCell>
                       {canManage && (
                         <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1292,6 +1739,152 @@ function UnitTab({ canManage }: { canManage: boolean }) {
   )
 }
 
+// ─── ĐIỀU KIỆN BẢO QUẢN (storage_condition) — user chốt 24/09: "lạnh âm, 2-8 độ, 15-25 độ và thường" ──
+// Danh mục DÙNG CHUNG: Loại kho khai hàng thuộc mức nào (form Loại kho), dòng xe khai chở được mức nào
+// (Cài đặt TMS → Mã dòng xe) → engine điều vận khớp hai bên. Sửa ở ĐÂY là sửa cho cả hai.
+function StorageConditionDialog({ row, open, onClose }: { row: StorageConditionRow | null; open: boolean; onClose: () => void }) {
+  const isEdit = !!row
+  const [value, setValue] = useState(row?.value ?? '')
+  const [label, setLabel] = useState(row?.meta?.label ?? '')
+  const [tmin, setTmin] = useState(row?.meta?.temp_min == null ? '' : String(row.meta.temp_min))
+  const [tmax, setTmax] = useState(row?.meta?.temp_max == null ? '' : String(row.meta.temp_max))
+  const [err, setErr] = useState('')
+  const { mutate: add, isPending: adding } = useAddStorageCondition()
+  const { mutate: update, isPending: updating } = useUpdateStorageCondition()
+  const isPending = adding || updating
+
+  function handleSubmit() {
+    setErr('')
+    const code = value.trim().toUpperCase()
+    if (!code) { setErr('Mã điều kiện là bắt buộc (vd FROZEN, CHILL)'); return }
+    const num = (s: string) => (s.trim() === '' ? null : Number(s))
+    if ([tmin, tmax].some(s => s.trim() !== '' && !Number.isFinite(Number(s)))) { setErr('Nhiệt độ phải là số'); return }
+    const meta = { label: label.trim() || undefined, temp_min: num(tmin), temp_max: num(tmax) }
+    const opts = { onSuccess: onClose, onError: (e: unknown) => setErr(apiMsg(e)) }
+    if (isEdit) update({ id: row.id, value: code, meta }, opts)
+    else add({ value: code, meta }, opts)
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa điều kiện bảo quản' : 'Thêm điều kiện bảo quản'} widthClass="sm:max-w-lg" footer={<>
+      <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+      <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>{isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}</Button>
+    </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <div className="space-y-1">
+          <Label className="text-xs">Mã điều kiện *</Label>
+          <Input value={value} onChange={e => setValue(e.target.value.toUpperCase())} placeholder="FROZEN, CHILL, COOL, AMBIENT" disabled={isEdit}
+            onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }} />
+          <p className="text-[10px] text-slate-400">Mã kỹ thuật, dùng để khớp hàng với xe. {isEdit && 'Không đổi mã sau khi tạo (Loại kho và dòng xe đang khai theo mã này).'}</p>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Tên hiển thị</Label>
+          <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Lạnh âm · 2 – 8 °C · Thường" />
+          <p className="text-[10px] text-slate-400">Tên người dùng đọc trên màn hình; để trống thì hiện chính mã.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1"><Label className="text-xs">Từ (°C)</Label>
+            <Input type="number" value={tmin} onChange={e => setTmin(e.target.value)} placeholder="-18" className="tabular-nums" /></div>
+          <div className="space-y-1"><Label className="text-xs">Đến (°C)</Label>
+            <Input type="number" value={tmax} onChange={e => setTmax(e.target.value)} placeholder="-25" className="tabular-nums" /></div>
+        </div>
+        <p className="text-[10px] text-slate-400">Dải nhiệt chỉ để người đọc hiểu, máy không tính theo số này — khớp hàng với xe làm theo MÃ.</p>
+      </div>
+    </FormSheet>
+  )
+}
+
+function StorageConditionTab({ canManage }: { canManage: boolean }) {
+  const { data: rows = [], isLoading } = useStorageConditions()
+  const { data: types = [] } = useWarehouseTypes()
+  const { mutate: del, isPending: deleting } = useDeleteStorageCondition()
+  const { data: vmRes } = useVehicleModels()
+  const [editing, setEditing] = useState<StorageConditionRow | null>(null)
+  const [showDlg, setShowDlg] = useState(false)
+
+  const usage = (code: string) => ({
+    cats: types.filter(t => t.meta?.storage_condition === code).map(t => t.value),
+    vehicles: (vmRes?.items ?? []).filter(m => (m.storage_conditions ?? []).includes(code)).length,
+  })
+  const rangeText = (r: StorageConditionRow) => {
+    const { temp_min: lo, temp_max: hi } = r.meta ?? {}
+    if (lo == null && hi == null) return null
+    if (lo != null && hi != null) return `${lo} … ${hi} °C`
+    return `${lo ?? hi} °C`
+  }
+  function handleDelete(r: StorageConditionRow) {
+    if (!confirm(`Xoá điều kiện bảo quản "${conditionLabel(r)}"?`)) return
+    del(r.id, { onError: e => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(e) }) })
+  }
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">{rows.length} điều kiện · dùng chung cho Loại kho (hàng) và Mã dòng xe (xe)</p>
+        <InfoTip tip={<div className="space-y-1">
+          <p><b>Hàng</b> lấy điều kiện theo <b>Loại kho</b> — khai ở tab Loại kho, nút bút chì.</p>
+          <p><b>Xe</b> khai chở được những mức nào — Cài đặt TMS → Mã dòng xe.</p>
+          <p>Điều vận chỉ ghép hàng lên xe phục vụ đủ mức của hàng. Chưa khai ở bên nào thì bên đó không bị ràng buộc.</p>
+        </div>} />
+        {canManage && (
+          <ActionCluster className="shrink-0" items={[{
+            key: 'add', icon: Plus, label: 'Thêm điều kiện', tip: 'Thêm một mức bảo quản mới',
+            primary: true, variant: 'default', onClick: () => { setEditing(null); setShowDlg(true) },
+          } satisfies ActionItem]} />
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+          rows.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 space-y-2">
+              <Thermometer className="h-10 w-10 mx-auto opacity-30" />
+              <p className="text-sm">Chưa có điều kiện bảo quản nào</p>
+              {canManage && <p className="text-xs">Nhấn "Thêm điều kiện" để tạo (vd Lạnh âm, 2 – 8 °C, Thường)</p>}
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên hiển thị</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Dải nhiệt</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại kho dùng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Dòng xe chở được</TableHead>
+                  {canManage && <TableHead className="px-2 py-1.5 w-16" />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map(r => {
+                  const u = usage(r.value)
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-700 whitespace-nowrap">{r.value}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{r.meta?.label || <span className="text-slate-300">—</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap tabular-nums">{rangeText(r) ?? <span className="text-slate-300">—</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{u.cats.length ? u.cats.join(', ') : <span className="text-amber-600">chưa Loại kho nào</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{u.vehicles ? `${u.vehicles} dòng xe` : <span className="text-amber-600">chưa dòng xe nào</span>}</TableCell>
+                      {canManage && (
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <div className="flex items-center gap-0.5">
+                            <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" onClick={() => { setEditing(r); setShowDlg(true) }}><Pencil className="h-3.5 w-3.5" /></button>
+                            <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting} onClick={() => handleDelete(r)}><Trash2 className="h-3.5 w-3.5" /></button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )
+        }
+      </div>
+      {showDlg && <StorageConditionDialog row={editing} open={showDlg} onClose={() => setShowDlg(false)} />}
+    </>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function WMSSettings() {
@@ -1307,17 +1900,19 @@ export default function WMSSettings() {
   const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
   const canManageMachine   = admin || can(perms, 'wms_settings', 'manage_machine')
   const canManageSystem    = admin || can(perms, 'wms_settings', 'manage_system')
-  const visibleTabs = [
-    canManageWarehouse && 'warehouses',
-    canManageType      && 'types',
-    canManageUnit      && 'units',
-    canManageZone      && 'zones',
-    canManageShift     && 'shifts',
-    canManageQA        && 'qa',
-    canManageMachine   && 'machines',
-    canManageSystem    && 'system',
-  ].filter(Boolean) as string[]
-  const defaultTab = visibleTabs[0]
+  // key = khoá cấu hình điện thoại ('/wms/settings#<key>' — config/mobileSurface.ts)
+  const permTabs = useMemo(() => ([
+    canManageWarehouse && { key: 'warehouses', label: 'Kho',          icon: Warehouse },
+    canManageType      && { key: 'types',      label: 'Loại kho',     icon: Tag },
+    canManageType      && { key: 'storage',    label: 'ĐK bảo quản',  icon: Thermometer },
+    canManageUnit      && { key: 'units',      label: 'Đơn vị tính',  icon: Ruler },
+    canManageZone      && { key: 'zones',      label: 'Khu vực',      icon: MapPin },
+    canManageShift     && { key: 'shifts',     label: 'Ca nhập',      icon: Clock },
+    canManageQA        && { key: 'qa',         label: 'QA',           icon: ShieldCheck },
+    canManageMachine   && { key: 'machines',   label: 'Máy',          icon: Cog },
+    canManageSystem    && { key: 'system',     label: 'Hệ thống',     icon: SlidersHorizontal },
+  ] as const).filter((t): t is Exclude<typeof t, false> => !!t), [canManageWarehouse, canManageType, canManageUnit, canManageZone, canManageShift, canManageQA, canManageMachine, canManageSystem])
+  const defaultTab = permTabs[0]?.key
 
   // Kho
   const { data: allWh = [], isLoading: loadingWh } = useWarehouses(false)
@@ -1327,46 +1922,104 @@ export default function WMSSettings() {
 
   // Loại kho
   const { data: warehouseTypes = [], isLoading: loadingTypes } = useWarehouseTypes()
-  const { mutate: deleteType, isPending: deletingType }  = useDeleteWarehouseType()
+  const { mutate: deleteType, isPending: deletingType } = useDeleteWarehouseType()
   const [editingType, setEditingType] = useState<{ id: string; value: string; meta?: WhTypeMeta | null } | null>(null)
   const [showTypeDlg, setShowTypeDlg] = useState(false)
 
+  // Tab Loại kho ĐỨNG TRONG MỘT KHO (21/08): Ba Vì có FG01/FG02/RM01…, An Sơn chỉ có Kho thành
+  // phẩm / Kho quà tặng — không có màn "danh mục dùng chung" để quản lẻ.
+  const [typeWhFilter, setTypeWhFilter] = useState(() => useGlobalScopeStore.getState().warehouseId || '')
+  const { data: whTypeCfgs = [] } = useWhTypeConfigs(typeWhFilter || null)
+  const { mutate: saveWhTypeCfgs, isPending: savingWhTypeCfgs } = useSaveWhTypeConfigs()
+  const cfgRowMap = new Map((whTypeCfgs as WhTypeConfig[]).map(r => [r.type_code, r]))
+  const whTypeCfgMap: Record<string, StrategyValue | undefined> = Object.fromEntries(
+    (whTypeCfgs as WhTypeConfig[]).map(r => [r.type_code, stratOf(r)]))
+
   // Kéo-thả sắp thứ tự loại kho (kiểu AppSheet: grip + chỉ báo trên/dưới theo nửa dòng)
   type TypeRow = { id: string; value: string; meta?: WhTypeMeta | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
-  const reorderTypes = useReorderWarehouseTypes()
   const [orderedTypes, setOrderedTypes] = useState<TypeRow[]>([])
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [overType, setOverType] = useState<{ idx: number; below: boolean } | null>(null)
+  // Bảng chỉ liệt kê loại kho ĐANG CHỌN KHO ĐÓ VẬN HÀNH, xếp theo thứ tự riêng của kho.
+  const sortForWh = (list: TypeRow[]) => {
+    if (!typeWhFilter) return []
+    return list.filter(t => cfgRowMap.has(t.value))
+      .map((t, i) => ({ t, i })).sort((a, b) => {
+        const sa = cfgRowMap.get(a.t.value)?.sort_order ?? null, sb = cfgRowMap.get(b.t.value)?.sort_order ?? null
+        if (sa !== sb) return sa === null ? 1 : sb === null ? -1 : sa - sb
+        return a.i - b.i
+      }).map(x => x.t)
+  }
   // Đồng bộ từ server khi KHÔNG đang kéo (sau reorder, refetch sẽ cập nhật đúng thứ tự).
   // Dep = chuỗi NỘI DUNG ổn định (KHÔNG dùng ref mảng — fallback [] đổi ref mỗi render → loop vô hạn).
   // Phải gồm cả value + meta: đổi tên/cờ giữ nguyên id — chỉ key theo id thì bảng kẹt bản cũ tới khi F5.
   const typesKey = (warehouseTypes as TypeRow[]).map(t => `${t.id}|${t.value}|${JSON.stringify(t.meta ?? {})}`).join(',')
+  const cfgOrderKey = `${typeWhFilter}|${(whTypeCfgs as WhTypeConfig[]).map(r => `${r.type_code}:${r.sort_order ?? ''}`).join(',')}`
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (dragIdx !== null) return
-    setOrderedTypes(warehouseTypes as TypeRow[])
+    setOrderedTypes(sortForWh(warehouseTypes as TypeRow[]))
     // Pane detail đang mở cũng nhận bản mới (giữ theo id)
     setDetailType(prev => prev ? ((warehouseTypes as TypeRow[]).find(t => t.id === prev.id) ?? null) : null)
-  }, [typesKey, dragIdx])
+  }, [typesKey, dragIdx, cfgOrderKey])
+  // Kéo = đổi thứ tự loại kho RIÊNG của kho đang chọn
+  const canDragType = () => !!typeWhFilter && (canManageWarehouse || canManageType)
   function dropType() {
     const from = dragIdx, ov = overType
     setDragIdx(null); setOverType(null)
     if (from === null || !ov) return
     let toIdx = ov.below ? ov.idx + 1 : ov.idx
     if (from < toIdx) toIdx--               // bù lại do đã splice phần tử kéo
-    if (toIdx === from) return
+    moveTypeTo(from, toIdx)
+  }
+  // Touch (điện thoại/tablet) KHÔNG kéo-thả HTML5 được → nút ▲▼ là đường đổi thứ tự tương đương
+  function moveTypeTo(from: number, to: number) {
+    if (to === from || to < 0 || to >= orderedTypes.length) return
     const next = [...orderedTypes]
     const [moved] = next.splice(from, 1)
-    next.splice(toIdx, 0, moved)
+    next.splice(to, 0, moved)
     setOrderedTypes(next)
-    reorderTypes.mutate(next.map(t => t.id), {
-      onError: e => { toast({ variant: 'destructive', title: 'Không lưu được thứ tự', description: apiMsg(e) }); setOrderedTypes(warehouseTypes as TypeRow[]) },
+    saveWhTypeCfgs({ id: typeWhFilter, items: buildWhTypeItems(next) }, {
+      onError: e => {
+        toast({ variant: 'destructive', title: 'Không lưu được thứ tự', description: apiMsg(e) })
+        setOrderedTypes(sortForWh(warehouseTypes as TypeRow[]))
+      },
     })
+  }
+
+  // Xoá loại kho = xoá khỏi DANH MỤC ⇒ mọi kho mất loại này (BE chặn 409 nếu còn dữ liệu dùng,
+  // và tự dọn setting riêng của mọi kho).
+  function removeType(t: { id: string; value: string }) {
+    if (!confirm(`Xoá loại kho "${t.value}"?\n\nLoại kho là danh mục dùng chung — xoá là MỌI KHO đều mất loại này, kèm setting riêng từng kho. Còn mã hàng / vị trí / chuyến nào đang dùng thì app sẽ chặn.`)) return
+    deleteType(t.id, {
+      onSuccess: () => setDetailType(prev => prev?.id === t.id ? null : prev),
+      onError: e => toast({ variant: 'destructive', title: 'Không xoá được loại kho', description: apiMsg(e) }),
+    })
+  }
+
+  // API type-configs THAY NGUYÊN TẬP loại của kho ⇒ mọi lần lưu đều phải dựng lại CẢ BỘ từ bản đang
+  // có; thứ tự đánh lại 1..n theo đúng danh sách đang hiện. `patch` = thay đổi của một loại (chiến
+  // thuật mới / bỏ khỏi kho / vừa đổi tên).
+  function buildWhTypeItems(order: TypeRow[], patch?: { code: string; next: StrategyValue | null }): WhTypeConfig[] {
+    const by = new Map(cfgRowMap)
+    if (patch) {
+      if (patch.next) by.set(patch.code, { ...(by.get(patch.code) ?? {}), type_code: patch.code, ...patch.next })
+      else by.delete(patch.code)
+    }
+    const items: WhTypeConfig[] = []
+    let k = 0
+    for (const t of order) {
+      const r = by.get(t.value)
+      if (r) { items.push({ ...r, sort_order: ++k }); by.delete(t.value) }
+    }
+    for (const r of by.values()) items.push(r)     // loại không nằm trong danh sách hiện — giữ nguyên
+    return items
   }
 
   // Detail panel state
   const [detailWh,   setDetailWh]   = useState<WhRow | null>(null)
   const [detailType, setDetailType] = useState<{ id: string; value: string; meta?: WhTypeMeta | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
+  const { data: storageConds = [] } = useStorageConditions()   // nhãn điều kiện bảo quản cho pane chi tiết Loại kho
   const [detailZone, setDetailZone] = useState<WarehouseZone | null>(null)
 
   // Khu vực kho — lọc theo warehouse_scope của user
@@ -1377,7 +2030,7 @@ export default function WMSSettings() {
   const zoneAccessWh = (admin || user?.warehouse_scope !== 'ASSIGNED')
     ? activeWh
     : activeWh.filter(w => (user?.warehouse_ids ?? []).includes(w.id))
-  const [selectedWhId, setSelectedWhId] = useState('')
+  const [selectedWhId, setSelectedWhId] = useState(() => useGlobalScopeStore.getState().warehouseId)
   const effectiveWhId = selectedWhId || zoneAccessWh[0]?.id || ''
   const { data: zones = [], isLoading: loadingZones } = useWarehouseZones(effectiveWhId || undefined)
   const { mutate: deleteZone, isPending: deletingZone } = useDeleteWarehouseZone()
@@ -1439,6 +2092,55 @@ export default function WMSSettings() {
       options: [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }] },
   ]
 
+  // Tab điều khiển được: link trong form Kho nhảy thẳng sang tab Loại kho đã lọc sẵn kho đó
+  const [tab, setTab] = useState(defaultTab ?? 'warehouses')
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/settings', permTabs, tab, setTab)
+  const stratWh =(allWh as WhRow[]).find(w => w.id === typeWhFilter) ?? null
+  // Mặc định TOÀN KHO để panel in được "— Theo kho (FEFO) —" đúng giá trị đang chạy
+  const stratWhValue: StrategyValue = {
+    ...stratOf(stratWh ?? {}),
+    rotation_principle:         stratWh?.rotation_principle ?? 'FEFO',
+    rotation_required:          stratWh?.rotation_required === true,
+    putaway_priority:           stratWh?.putaway_priority ?? 'CONSOLIDATE',
+    putaway_date_mix:           stratWh?.putaway_date_mix ?? 'ANY',
+    putaway_enforced:           stratWh?.putaway_enforced ?? [],
+    putaway_same_mat_date_pref: stratWh?.putaway_same_mat_date_pref ?? 'NONE',
+    putaway_fallback:           stratWh?.putaway_fallback ?? 'BY_CODE',
+    putaway_block_pick_face:    stratWh?.putaway_block_pick_face === true,
+    putaway_block_qa_hold:      stratWh?.putaway_block_qa_hold === true,
+    putaway_block_full:         stratWh?.putaway_block_full === true,
+    putaway_single_ncc:         stratWh?.putaway_single_ncc === true,
+    loose_mode:                 stratWh?.loose_mode ?? 'REMAINDER',
+    loose_max_cartons:          stratWh?.loose_max_cartons ?? null,
+    auto_fill:                  stratWh?.auto_fill === true,
+  }
+  // Lưu setting RIÊNG của (kho, loại) — gọi từ dialog sau khi phần danh mục chung đã lưu.
+  // renamedFrom: vừa đổi tên loại ⇒ cascade đã đổi type_code, phải dựng payload theo tên MỚI.
+  function saveTypeStrategy(code: string, next: WhTypeConfig, renamedFrom: string | null, onDone: () => void) {
+    if (!typeWhFilter) { onDone(); return }
+    const order = renamedFrom
+      ? orderedTypes.map(t => (t.value === renamedFrom ? { ...t, value: code } : t))
+      : orderedTypes
+    const by = new Map(cfgRowMap)
+    if (renamedFrom && renamedFrom !== code) {
+      const old = by.get(renamedFrom)
+      by.delete(renamedFrom)
+      if (old) by.set(code, { ...old, type_code: code })
+    }
+    const items: WhTypeConfig[] = []
+    let k = 0
+    for (const t of [...order, ...(by.has(code) || order.some(t => t.value === code) ? [] : [{ value: code } as TypeRow])]) {
+      const cur = t.value === code ? { ...(by.get(code) ?? {}), ...next, type_code: code } : by.get(t.value)
+      if (cur) { items.push({ ...cur, sort_order: ++k }); by.delete(t.value) }
+    }
+    for (const r of by.values()) items.push(r)
+    saveWhTypeCfgs({ id: typeWhFilter, items }, {
+      onSuccess: onDone,
+      onError: e => toast({ variant: 'destructive', title: 'Không lưu được vào kho', description: apiMsg(e) }),
+    })
+  }
+
   function handleDeleteWh(wh: WhRow) {
     if (!confirm(`Xóa kho "${wh.name}"?\nChỉ xóa được kho chưa có vị trí nào.`)) return
     deleteWh(wh.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được kho', description: apiMsg(e) }) })
@@ -1457,21 +2159,16 @@ export default function WMSSettings() {
           Bạn chưa được cấp quyền quản lý mục nào trong Cài đặt WMS.
         </div>
       ) : (
-      <Tabs defaultValue={defaultTab} className="flex flex-col flex-1 min-h-0">
+      <Tabs value={tab} onValueChange={setTab} className="flex flex-col flex-1 min-h-0">
         {/* Phần trên gọn 1 hàng (tiêu đề + tab) — bảng chiếm toàn bộ phần còn lại */}
         <div className="border-b bg-white px-3 py-2 shrink-0 flex items-center gap-2 flex-wrap sm:rounded-t-xl">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <Settings2 className="h-4 w-4 text-slate-500" /> Cài đặt WMS
           </span>
           <TabsList className="h-8 max-w-full overflow-x-auto">
-            {canManageWarehouse && <TabsTrigger value="warehouses" className="gap-1.5 text-xs"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>}
-            {canManageType      && <TabsTrigger value="types"      className="gap-1.5 text-xs"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>}
-            {canManageUnit      && <TabsTrigger value="units"      className="gap-1.5 text-xs"><Ruler    className="h-3.5 w-3.5" /> Đơn vị tính</TabsTrigger>}
-            {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
-            {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
-            {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
-            {canManageMachine   && <TabsTrigger value="machines"   className="gap-1.5 text-xs"><Cog className="h-3.5 w-3.5" /> Máy</TabsTrigger>}
-            {canManageSystem    && <TabsTrigger value="system"     className="gap-1.5 text-xs"><SlidersHorizontal className="h-3.5 w-3.5" /> Hệ thống</TabsTrigger>}
+            {tabs.map(t => (
+              <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
@@ -1480,6 +2177,7 @@ export default function WMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={whFilterDefs} />
+            <FilterSheetButton defs={whFilterDefs} className="sm:hidden" />
             {canManageWarehouse && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add', icon: Plus, label: 'Thêm kho', tip: 'Thêm kho mới',
@@ -1497,14 +2195,16 @@ export default function WMSSettings() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        {/* Cột NGHIỆP VỤ đứng trước, cột thường-rỗng (NMSX/Ship-to phụ) ra sau —
+                            phone 390px thấy ngay Tên/Chức năng/Quản tồn không phải kéo ngang (đợt UI 24/08) */}
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">NMSX</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to phụ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên kho</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Chức năng</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Quản tồn</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Địa chỉ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">NMSX</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to phụ</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Địa chỉ</TableHead>
                         {canManageWarehouse && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
@@ -1514,32 +2214,33 @@ export default function WMSSettings() {
                           className={`cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.code}</TableCell>
-                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
-                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">
                             {wh.name}
                             {wh.parent_warehouse_id && (
-                              <Badge variant="outline" className="ml-1.5 text-[9px] border-violet-400 text-violet-700 bg-violet-50">
+                              <StatusBadge tone="purple" className="ml-1.5">
                                 Nội bộ · {(allWh as WhRow[]).find(p => p.id === wh.parent_warehouse_id)?.code ?? '?'}
-                              </Badge>
+                              </StatusBadge>
                             )}
                           </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
-                            <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
+                            <StatusBadge tone={wh.warehouse_type === 'NPP' ? 'amber' : 'blue'}>
                               {wh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant="outline" className={`text-[10px] ${invModeMeta(wh.inventory_mode).badge}`}>
                               {invModeMeta(wh.inventory_mode).label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{wh.address ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
-                            <Badge variant={wh.is_active ? 'default' : 'secondary'} className="text-xs">
+                            {/* Hết badge nền đặc kiểu button — trạng thái = StatusBadge soft chuẩn toàn app */}
+                            <StatusBadge tone={wh.is_active ? 'green' : 'slate'}>
                               {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{wh.address ?? '—'}</TableCell>
                           {canManageWarehouse && (
                             <TableCell className="px-2 py-1 whitespace-nowrap">
                               <div className="flex items-center gap-0.5">
@@ -1589,13 +2290,25 @@ export default function WMSSettings() {
 
         {/* ── Tab: Loại kho ── */}
         <TabsContent value="types" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          {/* Loại kho LÀ CỦA TỪNG KHO (21/08): chọn kho rồi mới thấy danh sách loại của kho đó */}
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 shrink-0">Kho</span>
+            <div className="w-64 max-w-full">
+              <SingleSelect value={typeWhFilter} onChange={setTypeWhFilter} triggerClassName="h-8"
+                options={[{ value: '', label: '— Chọn kho —' },
+                  ...(allWh as WhRow[]).map(w => ({ value: w.id, label: w.name, sub: w.code }))]} />
+            </div>
+            <InfoTip tip={<><b>Tên loại kho là danh mục dùng chung</b> — tạo một lần thì mọi kho đều có. Chọn kho ở đây để khai <b>setting riêng của kho đó</b> cho từng loại: thứ tự, chiến thuật xuất / nhập, luật nhận diện NCC &amp; tem. Ô nào để trống là chạy theo mặc định của chính kho đó.</>} />
+          </div>
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">
-              {canManageType ? <>Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự (áp cho cây Đăng ký cổng)</> : 'Danh mục loại kho'}
+              {typeWhFilter
+                ? <>Setting loại kho của <b>{stratWh?.name ?? 'kho này'}</b> — kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> đổi thứ tự (chỉ kho này), bút chì mở cấu hình</>
+                : 'Chọn kho để khai setting riêng của kho đó'}
             </p>
-            {canManageType && (
+            {canManageType && !!typeWhFilter && (
               <ActionCluster className="shrink-0" items={[{
-                key: 'add', icon: Plus, label: 'Thêm loại kho', tip: 'Thêm loại kho mới',
+                key: 'add', icon: Plus, label: 'Thêm loại kho', tip: 'Tạo loại kho mới — mọi kho đều nhận',
                 primary: true, variant: 'default',
                 onClick: () => { setEditingType(null); setShowTypeDlg(true) },
               } satisfies ActionItem]} />
@@ -1605,18 +2318,25 @@ export default function WMSSettings() {
           <div className="flex-1 min-h-0 flex">
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {loadingTypes ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
-                warehouseTypes.length === 0 ? (
+                !typeWhFilter ? (
+                  <div className="p-12 text-center text-slate-400 space-y-2">
+                    <Warehouse className="h-10 w-10 mx-auto opacity-30" />
+                    <p className="text-sm">Chọn một kho ở trên</p>
+                    <p className="text-xs">Loại kho dùng chung mọi kho — chọn kho để khai setting riêng của kho đó</p>
+                  </div>
+                ) : orderedTypes.length === 0 ? (
                   <div className="p-12 text-center text-slate-400 space-y-2">
                     <Tag className="h-10 w-10 mx-auto opacity-30" />
                     <p className="text-sm">Chưa có loại kho nào</p>
-                    {canManageType && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
+                    {canManageType && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại đầu tiên (mọi kho đều nhận)</p>}
                   </div>
                 ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          {canManageType && <TableHead className="px-2 py-1.5 w-8" />}
+                          {canManageType && <TableHead className="px-2 py-1.5 w-14" />}
                           <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên loại kho</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-40">Chiến thuật xuất / nhập</TableHead>
                           {canManageType && <TableHead className="px-2 py-1.5 w-16" />}
                         </TableRow>
                       </TableHeader>
@@ -1625,40 +2345,74 @@ export default function WMSSettings() {
                           const isOver = overType?.idx === idx && dragIdx !== null && dragIdx !== idx
                           return (
                           <TableRow key={t.id}
-                            draggable={canManageType}
+                            draggable={canDragType()}
                             onDragStart={() => setDragIdx(idx)}
-                            onDragOver={canManageType ? (e => {
+                            onDragOver={canDragType() ? (e => {
                               e.preventDefault()
                               const r = e.currentTarget.getBoundingClientRect()
                               const below = (e.clientY - r.top) > r.height / 2
                               if (overType?.idx !== idx || overType?.below !== below) setOverType({ idx, below })
                             }) : undefined}
-                            onDrop={canManageType ? (e => { e.preventDefault(); dropType() }) : undefined}
+                            onDrop={canDragType() ? (e => { e.preventDefault(); dropType() }) : undefined}
                             onDragEnd={() => { setDragIdx(null); setOverType(null) }}
                             className={`cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragIdx === idx ? 'opacity-40' : ''} ${isOver && !overType?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overType?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                             onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
                             {canManageType && (
-                              <TableCell className="px-2 py-1 w-8 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
-                                <GripVertical className="h-4 w-4" />
+                              <TableCell className="px-1 py-1 w-14" onClick={e => e.stopPropagation()}>
+                                {/* Kéo-thả (chuột) + nút ▲▼ (touch không drag HTML5 được — cùng một đường lưu) */}
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-slate-300 cursor-grab active:cursor-grabbing" title="Kéo để đổi thứ tự loại kho của kho này">
+                                    <GripVertical className="h-4 w-4" />
+                                  </span>
+                                  <span className="flex flex-col">
+                                    <button type="button" disabled={idx === 0} onClick={() => moveTypeTo(idx, idx - 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển lên">
+                                      <ChevronUp className="h-3 w-3" />
+                                    </button>
+                                    <button type="button" disabled={idx === orderedTypes.length - 1} onClick={() => moveTypeTo(idx, idx + 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển xuống">
+                                      <ChevronDown className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                </div>
                               </TableCell>
                             )}
                             <TableCell className="px-2 py-1 whitespace-nowrap">
                               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${whTypeBadgeCls(t.value, new Map([[t.value, t.meta ?? {}]]))}`}>{t.value}</span>
+                              {/* Cờ HIỆU LỰC tại kho đang chọn = danh mục chung + phần kho khai riêng */}
                               <span className="ml-1.5 text-[9px] text-slate-400">
-                                {[t.meta?.is_ncc_goods && 'NCC', t.meta?.requires_shelf_life && 'HSD', t.meta?.requires_pallet_per_ea && 'Pallet/EA',
-                                  t.meta?.requires_ncc && 'NCC bắt buộc', t.meta?.batch_char && `Mã lô: ${t.meta.batch_char}`].filter(Boolean).join(' · ')}
+                                {(() => {
+                                  const c = cfgRowMap.get(t.value)
+                                  const eff = {
+                                    ncc:   c?.is_ncc_goods ?? t.meta?.is_ncc_goods,
+                                    rncc:  c?.requires_ncc ?? t.meta?.requires_ncc,
+                                    batch: c?.batch_char || t.meta?.batch_char,
+                                  }
+                                  return [eff.ncc && 'NCC', t.meta?.requires_shelf_life && 'HSD',
+                                    t.meta?.requires_pallet_per_ea && 'Pallet/EA', eff.rncc && 'NCC bắt buộc',
+                                    eff.batch && `Mã lô: ${eff.batch}`].filter(Boolean).join(' · ')
+                                })()}
                               </span>
+                            </TableCell>
+                            {/* CHỈ HIỂN THỊ trạng thái (user chốt 21/08) — sửa ở dialog bút chì */}
+                            <TableCell className="px-2 py-1 whitespace-nowrap text-[10px]">
+                              {nOwnCfg(cfgRowMap.get(t.value)) > 0
+                                ? <span className="font-medium text-sky-700">Riêng · {nOwnCfg(cfgRowMap.get(t.value))} mục</span>
+                                : <span className="text-slate-400">Theo kho</span>}
                             </TableCell>
                             {canManageType && (
                               <TableCell className="px-2 py-1 whitespace-nowrap">
                                 <div className="flex items-center gap-0.5">
                                   <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
+                                    title={`Cấu hình loại ${t.value} tại ${stratWh?.name ?? 'kho này'}`}
                                     onClick={e => { e.stopPropagation(); setEditingType({ id: t.id, value: t.value, meta: t.meta }); setShowTypeDlg(true) }}>
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
+                                  {/* Gỡ khỏi KHO NÀY (dữ liệu cũ giữ nguyên) — không phải xoá loại khỏi hệ thống */}
                                   <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
                                     disabled={deletingType}
-                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id, { onSuccess: () => setDetailType(prev => prev?.id === t.id ? null : prev), onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được loại kho', description: apiMsg(e2) }) }) }}>
+                                    title={`Xoá loại kho ${t.value} (áp cho mọi kho)`}
+                                    onClick={e => { e.stopPropagation(); removeType(t) }}>
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
@@ -1679,12 +2433,16 @@ export default function WMSSettings() {
                   <button onClick={() => setDetailType(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Hành vi</p>
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Hành vi (danh mục — mọi kho)</p>
                   <div><span className="text-slate-400">Hàng NCC:</span> <span className="font-medium">{detailType.meta?.is_ncc_goods ? 'Có (QR đoạn 4 = mã NCC)' : 'Không (đoạn 4 = Máy)'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc HSD:</span> <span className="font-medium">{detailType.meta?.requires_shelf_life ? 'Có' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc Pallet/EA:</span> <span className="font-medium">{detailType.meta?.requires_pallet_per_ea ? 'Có' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc NCC khi nhập:</span> <span className="font-medium">{detailType.meta?.requires_ncc ? 'Có (chặn lưu thiếu NCC)' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Ký tự mã lô:</span> <span className="font-medium">{detailType.meta?.batch_char || '— (chọn Máy tay)'}</span></div>
+                  <div><span className="text-slate-400">Điều kiện bảo quản:</span>{' '}
+                    <span className="font-medium">{detailType.meta?.storage_condition
+                      ? conditionLabel(storageConds.find(c => c.value === detailType.meta?.storage_condition), detailType.meta.storage_condition)
+                      : <span className="text-amber-600">chưa khai (không ràng buộc dòng xe)</span>}</span></div>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
@@ -1697,6 +2455,11 @@ export default function WMSSettings() {
             )}
           </div>
           <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{orderedTypes.length} / {orderedTypes.length} loại kho</div>
+        </TabsContent>
+
+        {/* ── Tab: Điều kiện bảo quản (danh mục dùng chung cho Loại kho và Mã dòng xe) ── */}
+        <TabsContent value="storage" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <StorageConditionTab canManage={canManageType} />
         </TabsContent>
 
         {/* ── Tab: Đơn vị tính ── */}
@@ -1719,6 +2482,7 @@ export default function WMSSettings() {
               <>
                 <SearchInput value={zoneSearch} onChange={setZoneSearch} placeholder="Tìm mã, tên khu vực…" className="flex-1 min-w-[140px]" />
                 <FilterBar defs={zoneFilterDefs} />
+                <FilterSheetButton defs={zoneFilterDefs} className="sm:hidden" />
               </>
             )}
             {canManageZone && (
@@ -1766,9 +2530,9 @@ export default function WMSSettings() {
                           <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.categories?.length ? z.categories.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{z.max_pallets != null ? z.max_pallets.toLocaleString('vi-VN') : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
-                            <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
+                            <StatusBadge tone={z.is_active ? 'green' : 'slate'}>
                               {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {canManageZone && (
                             <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1834,16 +2598,21 @@ export default function WMSSettings() {
 
         {/* ── Tab: Hệ thống (cờ SystemSetting) ── */}
         <TabsContent value="system" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
-          <SystemTab canManage={canManageSystem} />
+          <SystemTab canManage={canManageSystem} superadmin={admin} />
         </TabsContent>
       </Tabs>
       )}
 
       {showWhDlg && (
-        <WarehouseDialog wh={editingWh} open={showWhDlg} onClose={() => setShowWhDlg(false)} />
+        <WarehouseDialog wh={editingWh} open={showWhDlg} onClose={() => setShowWhDlg(false)}
+          onGotoTypes={id => { setShowWhDlg(false); setTypeWhFilter(id); setTab('types') }} />
       )}
-      {showTypeDlg && (
-        <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
+      {showTypeDlg && stratWh && (
+        <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)}
+          whName={stratWh.name} whStrat={stratWhValue}
+          cfgRow={editingType ? (cfgRowMap.get(editingType.value) ?? null) : null}
+          canManageWh={canManageWarehouse} savingCfg={savingWhTypeCfgs}
+          onSaveCfg={saveTypeStrategy} />
       )}
       {showZoneDlg && (
         <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={scopedWhTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
@@ -1863,7 +2632,7 @@ export default function WMSSettings() {
 // Máy THUỘC Kho — mỗi kho danh mục riêng. Kho có máy → Sổ đóng gói (mở/sửa trang) + Sinh tem
 // (theo NMSX) PHẢI chọn trong danh mục (BE 422 MACHINE_INVALID); kho chưa khai → điền tự do.
 function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses: { id: string; name: string; code?: string }[] }) {
-  const [whId, setWhId] = useState('')
+  const [whId, setWhId] = useState(() => useGlobalScopeStore.getState().warehouseId)
   const [search, setSearch] = useState('')
   const { data: machines = [], isLoading } = useMachines(whId || undefined)
   const { mutate: deleteM, isPending: deleting } = useDeleteMachine()
@@ -1928,9 +2697,9 @@ function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses:
                   <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800 whitespace-nowrap">{m.code}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{m.note || <span className="text-slate-300">—</span>}</TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <Badge variant={m.is_active ? 'default' : 'secondary'} className="text-xs">
+                    <StatusBadge tone={m.is_active ? 'green' : 'slate'}>
                       {m.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                    </Badge>
+                    </StatusBadge>
                   </TableCell>
                   {canManage && (
                     <TableCell className="px-2 py-1 whitespace-nowrap">

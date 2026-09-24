@@ -4,10 +4,13 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, qtyLabel, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, CalendarCheck, ShieldX, FileSpreadsheet, X, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -39,11 +42,13 @@ import {
   fetchMaterialsByCodes, type MaterialLite,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
+  useReceiptRating,
   useActiveImportsByGdo, useCreateOneInbound,
   useCompleteInboundOrder, useScanManualPallet, useMaterialSummary, useMaterialSummaryByFilter,
   useCancelInboundOrder, useDeletePalletEntry,
   type TransferOrder,
 } from '@/api/hooks'
+import { ReceiptRatingDialog } from '@/components/tms/ReceiptRatingDialog'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -51,7 +56,10 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
+import { parseVnNumber as parseVnNumberShared } from '@/utils/vnNumber'
+import { splitCategories } from '@/utils/categoryScope'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1162,20 +1170,12 @@ function parsePriority(val: unknown): boolean {
   return String(val ?? '').trim().toLowerCase() === 'x'
 }
 
-// Chuẩn số VN: dấu CHẤM = ngăn nghìn, dấu PHẨY = thập phân (1.234,56).
+// Chuẩn số VN — luật nằm MỘT chỗ ở utils/vnNumber.ts (mirror BE). Bản chép tay cũ ở đây thiếu
+// nhánh "một chấm + đúng 3 chữ số = ngăn nghìn" nên `1.234` thùng đọc thành 1,234 (11/09).
 // Trả null nếu ô trống, NaN nếu không phải số (để báo lỗi thay vì nuốt im lặng).
 function parseVnNumber(val: unknown): number | null {
   if (val == null || val === '') return null
-  if (typeof val === 'number') return val
-  let s = String(val).trim().replace(/\s/g, '')
-  if (!s) return null
-  const commas = (s.match(/,/g) ?? []).length
-  const dots   = (s.match(/\./g) ?? []).length
-  if (commas && dots)    s = s.replace(/\./g, '').replace(',', '.') // 1.234,56 → 1234.56
-  else if (commas > 1)   s = s.replace(/,/g, '')                    // 1,234,567 (kiểu US) → 1234567
-  else if (commas === 1) s = s.replace(',', '.')                    // 15,462 → 15.462
-  else if (dots > 1)     s = s.replace(/\./g, '')                   // 1.234.567 (nghìn VN) → 1234567
-  return Number(s)
+  return parseVnNumberShared(val) ?? NaN
 }
 
 function parseDirection(val: unknown): string {
@@ -2154,7 +2154,7 @@ function MaterialSummaryBand({ filter, orderIds }: { filter?: Record<string, str
                   )
                 })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={6} className="px-2 py-4 text-center text-xs text-slate-400">Không khớp “{q.trim()}”</td></tr>
+                  <TableEmptyRow colSpan={6}>Không khớp “{q.trim()}”</TableEmptyRow>
                 )}
               </tbody>
             </table>
@@ -2295,6 +2295,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [expandedMats, setExpandedMats] = useState<Set<string>>(new Set())
   const [showUpdate, setShowUpdate]     = useState(false)
   const [confirmErr, setConfirmErr]     = useState('')
+  const [showRate, setShowRate]         = useState(false)
+  // Việc "hoàn thành" đang chờ CHẤM SAO xong mới chạy (user chốt 02/09: bấm Hoàn thành là hiện ô
+  // chấm sao ngay, không để thành nút riêng ai nhớ mới bấm). null = ô chấm sao mở độc lập.
+  const [rateThen, setRateThen]         = useState<(() => void) | null>(null)
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
   const { mutateAsync: selfComplete,   isPending: selfCompleting } = useSelfCompleteTransfer()
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
@@ -2483,6 +2487,22 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   })
   const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
 
+  // Đánh giá sao chuyến giao — chỉ hỏi khi lệnh là CHUYỂN KHO và đơn vị không tắt tính năng
+  const ratingQ = useReceiptRating(
+    order?.id && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') ? order.id : null)
+  const ratingMode = ratingQ.data?.mode ?? 'optional'
+  const ratedStars = ratingQ.data?.rating?.stars ?? 0
+  // MỘT nguồn từ BE: gộp "chuyến có người nhận tích nhận" + "mình có phải kho nhận không".
+  // FE tự suy luận lại là chắc chắn có ngày lệch với luật của BE.
+  const ratable = ratingQ.data?.can_rate !== false
+  // Cửa CHẶN trước mọi đường hoàn thành phiếu nhận: chưa chấm sao (và đơn vị không tắt) → mở ô chấm
+  // sao, lưu xong mới chạy việc hoàn thành; optional cho "Bỏ qua", required thì không. Đã chấm rồi
+  // (hoặc chuyến không thuộc diện chấm — SELF/khách ngoài) → chạy thẳng.
+  function withRating(run: () => void) {
+    if (ratable && ratingMode !== 'off' && !ratedStars) { setRateThen(() => run); setShowRate(true) }
+    else run()
+  }
+
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const headerActions: ActionItem[] = []
   if (canConfirmReceipt && tStatus === 'IN_TRANSIT')
@@ -2509,6 +2529,18 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
           setConfirmErr(msg ?? (isSelf ? 'Lỗi hoàn thành giao hàng' : 'Lỗi xác nhận nhận hàng'))
         }
       },
+    })
+  // Chấm sao: hiện từ lúc BẮT ĐẦU NHẬN trở đi (đã thấy hàng) và cả sau khi đã giao xong — người
+  // nhận thường phát hiện hàng móp/thiếu chứng từ lúc đang xếp, không phải lúc bấm xác nhận.
+  if (canConfirmReceipt && ratable && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') && ratingMode !== 'off')
+    headerActions.push({
+      key: 'rate', icon: Star,
+      label: ratedStars ? `${ratedStars}★` : 'Đánh giá',
+      tip: ratedStars
+        ? `Đã chấm ${ratedStars} sao — bấm để sửa`
+        : 'Chấm sao chuyến giao (hàng · chứng từ · giờ xe)' + (ratingMode === 'required' ? ' — bắt buộc trước khi hoàn thành phiếu nhận' : ''),
+      className: ratedStars ? 'border-amber-300 text-amber-600 hover:bg-amber-50' : undefined,
+      onClick: () => setShowRate(true),
     })
   if (canConfirmReceipt && tStatus === 'RECEIVING') {
     // Kho nhận QTY/QTY_DATE: nhận nhanh cả lô theo đúng số xuất (NSX kế thừa từ tem quét ở kho nguồn)
@@ -2603,7 +2635,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                 <Button variant="outline" size="sm" onClick={() => setCompleteConfirm(null)}>Hủy</Button>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white"
                   disabled={rowBusy === impId}
-                  onClick={() => { setCompleteConfirm(null); handleCompleteOne(impId) }}>
+                  onClick={() => { setCompleteConfirm(null); withRating(() => { void handleCompleteOne(impId) }) }}>
                   {rowBusy === impId ? 'Đang lưu…' : 'Hoàn thành'}
                 </Button>
               </DialogFooter>
@@ -2611,6 +2643,12 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
           </Dialog>
         )
       })()}
+      {order && showRate && (
+        <ReceiptRatingDialog orderId={order.id} open={showRate}
+          onClose={() => { setShowRate(false); setRateThen(null) }}
+          onSaved={rateThen ? () => { const run = rateThen; setShowRate(false); setRateThen(null); run() } : undefined}
+          onSkip={rateThen && ratingMode !== 'required' ? () => { const run = rateThen; setShowRate(false); setRateThen(null); run() } : undefined} />
+      )}
       {bulkConfirm && (() => {
         const targets = activeImports.filter(ai => ai.status === 'OPEN')
         const matName = new Map(goods.map(g => [g.material_id, g.material_code ?? '—']))
@@ -2658,7 +2696,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               <DialogFooter className="gap-2">
                 <Button variant="outline" size="sm" disabled={bulkRunning} onClick={() => setBulkConfirm(false)}>Hủy</Button>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={bulkRunning}
-                  onClick={receiveAllPerPlan}>
+                  onClick={() => withRating(() => { void receiveAllPerPlan() })}>
                   {bulkRunning ? 'Đang nhận…' : `Nhận & hoàn thành ${targets.length} phiếu`}
                 </Button>
               </DialogFooter>
@@ -2926,7 +2964,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                         <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-center whitespace-nowrap">✓ Đã xong</span>
                                       ) : canReceiveNow ? (
                                         <>
-                                          {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (QrCode) */}
+                                          {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (ScanIcon) */}
                                           {isNoQr ? (
                                             !imp.posm_entry_id && canScan && (
                                               <div className="flex items-center gap-1">
@@ -2945,7 +2983,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                             canScan && (
                                               <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1"
                                                 onClick={() => setScanImportId(imp.id)}>
-                                                <QrCode className="h-3 w-3" /> Quét
+                                                <ScanIcon className="h-3 w-3" /> Quét
                                               </Button>
                                             )
                                           )}
@@ -3138,9 +3176,8 @@ const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolea
   { label: '', resize: false },                    // actions
 ]
 // Loại kho của 1 chuyến/lệnh có thể là chuỗi GHÉP nhiều loại ('FG01+PM01' = xe chở lẫn) — tách ra
-// để so khớp theo GIAO ≥1 (mirror wt_cats() bên SQL + splitCategories() bên BE). Đừng tự split('+').
-const splitCats = (raw?: string | null): string[] =>
-  String(raw ?? '').split('+').map(s => s.trim()).filter(Boolean)
+// để so khớp theo GIAO ≥1. Luật tách nằm ở utils/categoryScope.ts (mirror BE + wt_cats() SQL).
+const splitCats = splitCategories
 
 // Ô tìm tại máy (tab Chuyển kho): bỏ dấu + không phân biệt hoa thường, khớp cách server tìm (unaccent)
 const normSearch = (v: string) => v.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
@@ -3778,7 +3815,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                   </thead>
                   <tbody>
                     {mergedRows.length === 0 ? (
-                      <tr><td colSpan={6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                      <TableEmptyRow colSpan={6}>Chưa có hàng hóa</TableEmptyRow>
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'
@@ -3838,6 +3875,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+// key = khoá cấu hình điện thoại ('/tms/bookings#<key>' — config/mobileSurface.ts) = giá trị `tab` trong store
+const BOOKING_TABS: readonly { key: 'main' | 'transfer'; label: string }[] = [
+  { key: 'main',     label: 'Kế hoạch' },
+  { key: 'transfer', label: 'Chuyển kho' },
+]
+
 export default function TMSBookings() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
@@ -3875,6 +3918,9 @@ export default function TMSBookings() {
   // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
   const setActiveTab = (t: 'main' | 'transfer') => setTf({ tab: t })
   const activeTab: 'main' | 'transfer' = (tf.tab === 'transfer' && !canConfirmReceipt) ? 'main' : tf.tab
+  const permTabs = useMemo(() => canConfirmReceipt ? BOOKING_TABS : BOOKING_TABS.filter(t => t.key === 'main'), [canConfirmReceipt])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const bookingTabs = useMobileTabs('/tms/bookings', permTabs, activeTab, setActiveTab)
 
   useEffect(() => { setSelectedOrderIds(new Set()) }, [dateFrom, dateTo, warehouseId])
   const [createOpen, setCreateOpen] = useState(false)
@@ -4230,18 +4276,17 @@ export default function TMSBookings() {
         {/* flex-wrap: mobile cụm ActionCluster (w-full) xuống dòng riêng thay vì tràn */}
         <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
+            {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08) — toggle tab Kế hoạch/Chuyển kho vẫn giữ */}
+            <span className="hidden sm:inline text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
             {/* Toggle 2 tab chỉ hiện khi có quyền nhận hàng chuyển kho — không có quyền thì chỉ xem Kế hoạch (#1) */}
             {canConfirmReceipt && (
               <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-                <button
-                  onClick={() => setActiveTab('main')}
-                  className={`px-3 py-1 transition-colors ${activeTab === 'main' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                >Kế hoạch</button>
-                <button
-                  onClick={() => setActiveTab('transfer')}
-                  className={`px-3 py-1 transition-colors border-l border-slate-200 ${activeTab === 'transfer' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                >Chuyển kho</button>
+                {bookingTabs.map((t, i) => (
+                  <button key={t.key}
+                    onClick={() => setActiveTab(t.key)}
+                    className={`px-3 py-1 transition-colors ${i > 0 ? 'border-l border-slate-200 ' : ''}${activeTab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  >{t.label}</button>
+                ))}
               </div>
             )}
           </div>
@@ -4287,10 +4332,11 @@ export default function TMSBookings() {
             )}
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
-            {(canChangeDate || canDelete) && selectedOrderIds.size > 0 && (
-              <div className="flex items-center gap-2 w-full py-0.5 flex-wrap">
-                <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
-                <ActionCluster items={[
+            {/* Thanh chọn-nhiều = pill NỔI (như Tồn kho) — chèn một hàng vào toolbar là bảng co lại đúng lúc
+                đang tick (user 16/09: "table không được resize"). */}
+            {(canChangeDate || canDelete) && (
+              <FloatingActionBar count={selectedOrderIds.size} unit="đơn">
+                <ActionCluster className="w-auto shrink-0" items={[
                   ...(canChangeDate ? [{
                     key: 'change-date', icon: CalendarDays, label: 'Đổi ngày', tip: 'Đổi ngày giao cho các đơn đã chọn',
                     primary: true,
@@ -4298,16 +4344,16 @@ export default function TMSBookings() {
                   } satisfies ActionItem] : []),
                   ...(canDelete ? [{
                     key: 'bulk-delete', icon: Trash2, label: 'Xóa', tip: 'Xóa các đơn đã chọn (kèm slot xe chưa đặt lịch)',
-                    danger: true, className: 'text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700',
+                    danger: true, className: FLOATING_BTN_DANGER,
                     onClick: () => setBulkDeleteOpen(true),
                   } satisfies ActionItem] : []),
                   {
                     key: 'clear-selection', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn tất cả đơn đang chọn',
-                    className: 'text-slate-500',
+                    className: FLOATING_BTN,
                     onClick: () => setSelectedOrderIds(new Set()),
                   } satisfies ActionItem,
                 ]} />
-              </div>
+              </FloatingActionBar>
             )}
             {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
           </div>
@@ -4520,14 +4566,26 @@ export default function TMSBookings() {
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
+                    {/* User chốt 02/09: xe ĐÃ đặt khung giờ → icon lịch-đã-chốt MÀU ĐỎ (nhìn là biết, bấm vẫn
+                        sửa được); xe CHƯA đặt → icon xe nổi bật để mắt dồn vào việc còn phải làm. */}
                     {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot, order) && (
-                      <button
-                        onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
-                        className="text-blue-400 hover:text-blue-600 p-1 rounded"
-                        title="Đặt khung giờ"
-                      >
-                        <Truck className="h-3.5 w-3.5" />
-                      </button>
+                      vslot.status === 'BOOKED' ? (
+                        <button
+                          onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
+                          className="text-red-500 hover:text-red-700 p-1 rounded"
+                          title={`Đã đặt khung giờ${vslot.slot ? ` ${vslot.slot.time_from.slice(0, 5)}–${vslot.slot.time_to.slice(0, 5)}` : ''} — bấm để sửa`}
+                        >
+                          <CalendarCheck className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
+                          className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-1 rounded"
+                          title="Chưa đặt khung giờ — bấm để đặt"
+                        >
+                          <Truck className="h-4 w-4" />
+                        </button>
+                      )
                     )}
                   </TableCell>
 

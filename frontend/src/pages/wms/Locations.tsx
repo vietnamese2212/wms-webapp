@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import * as XLSX from 'xlsx'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
+// Sơ đồ kho là chunk riêng (kéo theo Three.js cho góc nhìn 3D) — chỉ tải khi mở tab
+const WarehouseMap = lazy(() => import('./WarehouseMap'))
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers, Map as MapIcon, List } from 'lucide-react'
+import { InfoTip } from '@/components/shared/InfoTip'
+import { toast } from '@/components/ui/use-toast'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { LocationPrintArea, LOC_PRINT_CSS, buildLocationLabels, type LocLabelData } from '@/components/wms/locationLabel'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -47,10 +55,16 @@ interface RealLocation {
   row:          string
   shelf:        string
   max_pallets:        number
+  // Trần số MÃ được để chung trong ô (26/08) — null = KHÔNG GIỚI HẠN (mặc định).
+  // Khai theo TỪNG vị trí, không kế thừa kho/loại kho: nơi chứa chung ("Ngoài đường", "Mặt đất")
+  // nằm cùng khu + cùng loại hàng với kệ thường nên không tầng nào của kho tách được chúng.
+  max_materials:      number | null
   used_slots:         number
   is_active:          boolean
   requires_stocktake: boolean
   is_pick_face:       boolean   // vị trí NHẶT LẺ (với tay tới được) — nguồn của tính năng Fill hàng
+  slot_no_in:         boolean | null   // KHÔNG đưa hàng vào (kho tạm/ngoài đường) — mất gợi ý cất + Slotting kéo hàng ra
+  slot_no_out:        boolean | null   // KHÔNG lấy hàng đi (hàng kẹt) — Slotting loại khỏi nguồn
   warehouse:          { id: string; code: string; name: string }
   created_at?:        string
   updated_at?:        string
@@ -67,7 +81,7 @@ interface WhWithCount {
   _count:     { locations: number }
 }
 
-const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '', max_materials: '' }
 
 const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',   label: '',                w: 34 },
@@ -76,26 +90,95 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'zone',    label: 'Khu vực kho',     w: 150 },
   { id: 'loc',     label: 'Vị trí',          w: 160 },
   { id: 'pick',    label: 'Nhặt lẻ',         w: 80 },
+  { id: 'noin',    label: 'Không đưa hàng vào', w: 130 },
+  { id: 'noout',   label: 'Không lấy hàng đi', w: 125 },
   { id: 'stock',   label: 'Cần check hàng ngày', w: 130 },
   { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
+  // Cùng họ "giới hạn của ô" với Sức chứa nên đứng cạnh nhau (26/08)
+  { id: 'maxmat',  label: 'Số mã tối đa',    w: 105, align: 'right' },
   { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
   { id: 'status',  label: 'Trạng thái',      w: 100 },
   { id: 'actions', label: '',                w: 64 },
 ]
 const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
 
-// Lựa chọn cho 2 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
+// Gắn/bỏ cờ HÀNG LOẠT — mỗi chế độ khai MỘT chỗ (trước đây là 5 chuỗi ternary lồng song song,
+// thêm cờ thứ 4 là phải nhớ sửa đủ 5 nơi).
+const BULK_MODES = {
+  stocktake: {
+    title: 'Cờ cần kiểm kê hàng loạt', tone: 'text-red-500', btn: 'bg-red-600 hover:bg-red-700',
+    on: 'Gắn cờ cần check', off: 'Bỏ cờ',
+    field: 'requires_stocktake' as const,
+    desc: 'Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.',
+  },
+  pickface: {
+    title: 'Khai vị trí nhặt lẻ hàng loạt', tone: 'text-sky-600', btn: 'bg-sky-600 hover:bg-sky-700',
+    on: 'Khai vị trí nhặt lẻ', off: 'Bỏ khai',
+    field: 'is_pick_face' as const,
+    desc: 'Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.',
+  },
+  noin: {
+    title: 'Không đưa hàng vào — hàng loạt', tone: 'text-red-500', btn: 'bg-red-600 hover:bg-red-700',
+    on: 'Đánh dấu không đưa hàng vào', off: 'Bỏ đánh dấu',
+    field: 'slot_no_in' as const,
+    desc: 'Dùng cho kho tạm / ngoài đường: KHÔNG gợi ý khi cất hàng (xuống cuối danh sách chọn) và Slotting luôn lên kế hoạch kéo hàng ra. Mặc định vẫn chọn tay được khi cần — muốn CHẶN hẳn thì tick "Bắt buộc" ở quy tắc cất hàng trong form Kho (Cài đặt WMS).',
+  },
+  noout: {
+    title: 'Không lấy hàng đi — hàng loạt', tone: 'text-amber-600', btn: 'bg-amber-600 hover:bg-amber-700',
+    on: 'Đánh dấu không lấy hàng đi', off: 'Bỏ đánh dấu',
+    field: 'slot_no_out' as const,
+    desc: 'Hàng kẹt / không bốc được. CHỈ Slotting đọc cờ này: hàng ở đây bị loại khỏi nguồn tính toán nên kế hoạch không sinh lệnh dời hàng đi, nhưng ô vẫn tính chiếm chỗ. KHÔNG chặn xuất kho / nhặt lẻ / fill.',
+  },
+} as const
+type BulkMode = keyof typeof BULK_MODES
+
+// Lựa chọn cho 3 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
 const FLAG_OPTS = [{ value: 'yes', label: 'Có' }, { value: 'no', label: 'Chưa' }]
+
+// 4 cờ của một vị trí — nhãn ngắn trên form, DIỄN GIẢI đầy đủ trong ⓘ (mỗi cờ nói rõ module nào
+// đổi hành vi, vì đọc nhãn suông không đoán ra được). Khai ở module-level: component khai trong
+// thân component cha làm ô nhập mất focus sau 1 ký tự (ratchet component_defined_inside_component).
+const LOC_FLAG_FIELDS = [
+  { key: 'stocktake', label: 'Cần kiểm kê hàng ngày',
+    tip: <>Vị trí lọt vào chế độ <b>“chỉ vị trí cần kiểm”</b> của trang Kiểm kho và khối <b>“Vị trí quan trọng”</b> ở Tổng hợp kiểm kê. Không ảnh hưởng nhập / xuất / gợi ý cất hàng.</> },
+  { key: 'pickface', label: 'Vị trí nhặt lẻ',
+    tip: <>Chỗ công nhân <b>với tay lấy hàng được</b> (tầng dưới / khu để sàn). Trang <b>Fill hàng</b> dựa vào đây để biết hàng dưới đủ hay thiếu, và chỉ đổ hàng vào ô nhặt lẻ. Nếu form Kho bật luật <b>“Không cất pallet nguyên vào vị trí nhặt lẻ”</b> thì pallet nguyên bị cảnh báo/chặn cất vào đây.</> },
+  { key: 'noin', label: 'Không đưa hàng vào',
+    tip: <>Kho tạm / ngoài đường. Có tác dụng <b>ngay, không cần bật gì thêm</b>: mất gợi ý ★, rơi xuống <b>cuối</b> danh sách chọn vị trí ở cả 4 màn cất hàng, và <b>Slotting không bao giờ lấy làm đích</b> — ngược lại còn <b>ưu tiên kéo hàng ở đây ra</b> kho chuẩn. Mặc định vẫn chọn tay được (có ghi vết); chỉ khi form Kho tick <b>“Bắt buộc”</b> cho luật này mới chặn hẳn. <b>Không</b> chặn lấy hàng ra.</> },
+  { key: 'noout', label: 'Không lấy hàng đi',
+    tip: <>Hàng kẹt / không bốc được. <b>Chỉ Slotting</b> đọc cờ này: hàng ở đây bị loại khỏi <b>nguồn</b> tính toán nên kế hoạch không sinh lệnh dời hàng đi, nhưng ô <b>vẫn tính chiếm chỗ</b>. <b>Không</b> chặn xuất kho / nhặt lẻ / fill — quét lấy hàng bình thường.</> },
+] as const
 
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const locFilter = useWmsFilterStore(s => s.locations)
-  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode } = locFilter
+  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode, noOutMode } = locFilter
   const setLocations = useWmsFilterStore(s => s.setLocations)
+
+  // ── TAB: Danh mục vị trí · Sơ đồ kho (21/09, user: "Sơ đồ kho là một tab của tính năng Vị trí thì hợp lý hơn") ──
+  // Sơ đồ giữ module quyền riêng `warehouse_map` (có action edit); không có quyền thì tab không hiện.
+  // `?tab=map` (route cũ /wms/warehouse-map chuyển hướng tới) áp theo `location.key` — MỘT lần mỗi lượt điều hướng,
+  // không áp theo giá trị tham số kẻo bấm tab khác bị kéo ngược (lớp C29).
+  const canMap = can(perms, 'warehouse_map', 'view')
+  const permTabs = useMemo(() => [
+    { key: 'list' as const, label: 'Danh mục vị trí' },
+    ...(canMap ? [{ key: 'map' as const, label: 'Sơ đồ kho' }] : []),
+  ], [canMap])
+  const tab: 'list' | 'map' = locFilter.tab === 'map' && canMap ? 'map' : 'list'
+  const tabs = useMobileTabs('/wms/locations', permTabs, tab, k => setLocations({ tab: k === 'map' ? 'map' : 'list' }))
+  const routerLoc = useLocation()
+  const appliedKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (appliedKey.current === routerLoc.key) return
+    appliedKey.current = routerLoc.key
+    const t = new URLSearchParams(routerLoc.search).get('tab')
+    if (t === 'map' || t === 'list') setLocations({ tab: t })
+  }, [routerLoc.key, routerLoc.search, setLocations])
+
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
   const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
-  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode }
+  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode, noOutMode }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -120,11 +203,17 @@ export default function Locations() {
   const [editIsActive,         setEditIsActive]         = useState(true)
   const [editRequiresStocktake, setEditRequiresStocktake] = useState(false)
   const [editIsPickFace,        setEditIsPickFace]        = useState(false)
+  const [editSlotNoIn,          setEditSlotNoIn]          = useState(false)
+  const [editSlotNoOut,         setEditSlotNoOut]         = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
-  // Dialog gắn/bỏ cờ HÀNG LOẠT — 2 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface' (vị trí nhặt lẻ)
-  const [bulkMode,      setBulkMode]      = useState<'stocktake' | 'pickface' | null>(null)
+  // Dialog gắn/bỏ cờ HÀNG LOẠT — 3 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface'
+  // (vị trí nhặt lẻ) | 'noin' (không đưa hàng vào — kho tạm/ngoài đường, dùng cho quy tắc cất hàng)
+  // 'maxmat' KHÔNG nằm trong BULK_MODES: 4 chế độ kia là cờ boolean (bật/tắt), còn đây là
+  // khai một CON SỐ (hoặc xoá số = không giới hạn) nên dialog + payload đi nhánh riêng.
+  const [bulkMode,      setBulkMode]      = useState<BulkMode | 'maxmat' | null>(null)
+  const [maxMatInput,   setMaxMatInput]   = useState('')
   // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
   // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
   // đã phân trang server nên client không có đủ id (và nhồi nghìn id qua URL là vỡ — id-list-url-limits).
@@ -147,9 +236,10 @@ export default function Locations() {
   const listParams = useMemo(() => warehouseId ? {
     warehouse_id: warehouseId, category: catFilter || undefined, search,
     zones: zoneFilter.length ? zoneFilter : undefined,
-    flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode),
+    flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode), slot_no_in: modeVal(noInMode),
+    slot_no_out: modeVal(noOutMode),
     include_inactive: statusFilter.includes('inactive'),
-  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode])
+  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode, noInMode, noOutMode])
   const { data: pageData, isLoading } = useLocationsPaged(
     listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
   const { data: locSummary } = useLocationsSummary(listParams)
@@ -169,10 +259,26 @@ export default function Locations() {
   const bulkFlag        = useBulkFlagLocations()
   const uploadLocations = useUploadLocationsExcel()
 
+  // Khai TRẦN SỐ MÃ hàng loạt (26/08). `value === null` = gỡ giới hạn — phải gửi null TƯỜNG MINH,
+  // không phải bỏ field (BE hiểu vắng field là "đừng đụng cột này").
+  async function applyBulkMaxMat(value: number | null) {
+    setBulkErr('')
+    try {
+      await bulkFlag.mutateAsync(allFiltered
+        ? { by_filter: true, filter: listParams ?? {}, max_materials: value }
+        : { ids: [...selected], max_materials: value })
+      setBulkMode(null)
+      setSelected(new Set())
+      setAllFiltered(false)
+    } catch (e: unknown) {
+      setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
+    }
+  }
+
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      const cờ = bulkMode === 'pickface' ? { is_pick_face: flag } : { requires_stocktake: flag }
+      const cờ = { [BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].field]: flag }
       await bulkFlag.mutateAsync(allFiltered
         // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
         ? { by_filter: true, filter: listParams ?? {}, ...cờ }
@@ -198,7 +304,7 @@ export default function Locations() {
     setSelected(allPageSelected ? new Set() : new Set(locations.map(l => l.id)))
   }
   useEffect(() => { setSelected(new Set()); setAllFiltered(false) },
-    [warehouseId, catFilter, zoneFilter, search, flagMode, pickFaceMode, statusFilter, locFilter.page])
+    [warehouseId, catFilter, zoneFilter, search, flagMode, pickFaceMode, noInMode, statusFilter, locFilter.page])
 
   // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
   const filtered = locations
@@ -225,6 +331,9 @@ export default function Locations() {
     ? [(selectedWh.nmsx_code?.trim() || selectedWh.code), form.sub_code, form.row, form.shelf].filter(Boolean).join('_')
     : null
 
+  // Ô TRỐNG thì đổi được Khu / Dãy / Tầng (mã ghép lại, giữ id) — có hàng thì khoá và NÓI lý do (14/09)
+  const canRename = dialogMode === 'edit' && !!editing && editing.used_slots === 0
+
   // ── Handlers: location ───────────────────────────────────────
   function setField(k: keyof typeof EMPTY_FORM, v: string) {
     setForm(f => ({ ...f, [k]: v }))
@@ -247,10 +356,13 @@ export default function Locations() {
       row:          loc.row,
       shelf:        loc.shelf,
       max_pallets:  String(loc.max_pallets),
+      max_materials: loc.max_materials != null ? String(loc.max_materials) : '',
     })
     setEditIsActive(loc.is_active)
     setEditRequiresStocktake(loc.requires_stocktake ?? false)
     setEditIsPickFace(loc.is_pick_face ?? false)
+    setEditSlotNoIn(loc.slot_no_in ?? false)
+    setEditSlotNoOut(loc.slot_no_out ?? false)
     setFormError('')
     setDialogMode('edit')
   }
@@ -274,15 +386,26 @@ export default function Locations() {
           row:          form.row.trim(),
           shelf:        form.shelf.trim() || undefined,
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
+          max_materials: form.max_materials.trim() ? Number(form.max_materials) : null,
         })
       } else if (editing) {
+        // Chỉ gửi Khu/Dãy/Tầng khi ĐỔI (ô trống) — gửi kèm khi không đổi là bắt BE kiểm khu/tồn vô ích
+        const sub = form.sub_code.trim().toUpperCase(), row = form.row.trim(), shelf = form.shelf.trim()
+        const renamed = canRename && (sub !== editing.sub_code || row !== editing.row || shelf !== (editing.shelf ?? ''))
+        if (renamed && (!sub || !row)) { setFormError('Khu vực và vị trí là bắt buộc'); return }
         await updateLocation.mutateAsync({
           id:                 editing.id,
+          ...(renamed ? { sub_code: sub, row, shelf } : {}),
           sub_name:           form.sub_name.trim() || undefined,
           max_pallets:        form.max_pallets ? Number(form.max_pallets) : undefined,
+          // Ô trống phải gửi `null` TƯỜNG MINH = "gỡ giới hạn". Gửi `undefined` thì BE hiểu là
+          // "đừng đụng cột này" ⇒ xoá số trong ô rồi bấm Lưu sẽ không có tác dụng gì.
+          max_materials:      form.max_materials.trim() ? Number(form.max_materials) : null,
           is_active:          editIsActive,
           requires_stocktake: editRequiresStocktake,
           is_pick_face:       editIsPickFace,
+          slot_no_in:         editSlotNoIn,
+          slot_no_out:        editSlotNoOut,
         })
       }
       closeDialog()
@@ -297,8 +420,11 @@ export default function Locations() {
     try {
       await deleteLocation.mutateAsync(deleteTarget.id)
       setDeleteTarget(null)
-    } catch {
-      setDeleteTarget(null)
+    } catch (e) {
+      // Bản cũ nuốt lỗi rồi đóng dialog ⇒ xoá hỏng (ô còn hàng / còn việc treo → 409) nhìn y hệt xoá xong (rà 21/09).
+      // Dialog GIỮ MỞ, lý do hiện bằng toast (dialog xác nhận không có ô lỗi riêng).
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      toast({ title: msg ?? 'Không xoá được vị trí', variant: 'destructive' })
     }
   }
 
@@ -325,6 +451,10 @@ export default function Locations() {
       onChange: v => setLocationsFilter({ flagMode: v as FlagMode }) },
     { key: 'pick_face', label: 'Vị trí nhặt lẻ', type: 'single', options: FLAG_OPTS, value: pickFaceMode,
       onChange: v => setLocationsFilter({ pickFaceMode: v as FlagMode }) },
+    { key: 'slot_no_in', label: 'Không đưa hàng vào', type: 'single', options: FLAG_OPTS, value: noInMode,
+      onChange: v => setLocationsFilter({ noInMode: v as FlagMode }) },
+    { key: 'slot_no_out', label: 'Không lấy hàng đi', type: 'single', options: FLAG_OPTS, value: noOutMode,
+      onChange: v => setLocationsFilter({ noOutMode: v as FlagMode }) },
   ]
 
   // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`
@@ -351,14 +481,42 @@ export default function Locations() {
     try { await doExportExcel(await fetchAllFiltered()) } finally { setExporting(false) }
   }
 
+  // ─── In tem vị trí (điều kiện để quét vị trí dùng được) ────────────────────────────────────────
+  // In theo BỘ LỌC đang áp (không nhồi id vào URL — luật id-list-url-limits). Ảnh QR sinh xong
+  // TRƯỚC khi in nên không có cuộc đua "in ra ô trống".
+  const [labels, setLabels] = useState<LocLabelData[]>([])
+  const [printing, setPrinting] = useState(false)
+  const [printErr, setPrintErr] = useState('')
+  const PRINT_CAP = 500
+  async function printLabels() {
+    setPrinting(true); setPrintErr('')
+    try {
+      const rows = (await fetchAllFiltered()).filter(l => l.is_active !== false)
+      if (!rows.length) { setPrintErr('Không có vị trí nào trong bộ lọc hiện tại'); return }
+      // Cap có BÁO, không cắt âm thầm: 1.500 tem = 188 trang A4 và 1.500 ảnh QR trong DOM.
+      if (rows.length > PRINT_CAP) {
+        setPrintErr(`Bộ lọc đang có ${rows.length} vị trí — in tối đa ${PRINT_CAP} tem/lượt. Hãy lọc theo Khu để in từng khu.`)
+        return
+      }
+      setLabels(await buildLocationLabels(rows))
+      // 1 nhịp cho React commit vùng in rồi mới gọi hộp thoại in
+      setTimeout(() => window.print(), 50)
+    } catch {
+      setPrintErr('Không tải được danh sách vị trí để in')
+    } finally { setPrinting(false) }
+  }
+
   function doExportExcel(rowsToExport: RealLocation[]) {
     // 4 cột Khu/Dãy/Tầng/Kiểu để file xuất ra UPLOAD LẠI được (round-trip, chuẩn upload-download mục E)
     const sheet = rowsToExport.map(l => ({
       'Kho': l.warehouse?.name ?? '', 'Loại': (l.categories ?? []).join(', '),
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
-      'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
-      'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
+      'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets,
+      'Số mã tối đa': l.max_materials ?? '', 'Đang dùng': l.used_slots,
+      'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '',
+      'Không đưa hàng vào': l.slot_no_in ? 'x' : '', 'Không lấy hàng đi': l.slot_no_out ? 'x' : '',
+      'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
     }))
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
@@ -368,8 +526,8 @@ export default function Locations() {
 
   // Mẫu upload: dòng 1 = nhãn (dấu * = bắt buộc), dòng 2 = key, dòng 3 = ví dụ (ghi đè bằng dữ liệu thật)
   function downloadLocationTemplate() {
-    const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Kiểu']
-    const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'sub_type']
+    const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Số mã tối đa', 'Kiểu']
+    const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'max_materials', 'sub_type']
     const ex     = ['20000016', 'TP1', '1', 'T1', 2, '']
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
@@ -380,14 +538,41 @@ export default function Locations() {
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Dải tab (chỉ hiện khi có ≥2 tab — người không có quyền Sơ đồ kho thấy trang y như cũ) */}
+      {tabs.length > 1 && (
+        <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl overflow-x-auto">
+          <MapPin className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
+          {tabs.map(({ key: k, label }) => (
+            <button key={k} type="button" onClick={() => setLocations({ tab: k === 'map' ? 'map' : 'list' })}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors whitespace-nowrap inline-flex items-center gap-1 ${
+                tab === k ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+              {k === 'map' ? <MapIcon className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}{label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'map' ? (
+        <Suspense fallback={<div className="flex-1 grid place-items-center text-xs text-slate-400">Đang tải sơ đồ…</div>}>
+          <WarehouseMap embedded />
+        </Suspense>
+      ) : (<>
       {/* Toolbar */}
-      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
+      <div className={`border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 ${tabs.length > 1 ? '' : 'sm:rounded-t-xl'}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
-            <MapPin className="h-4 w-4 text-slate-500" /> Vị trí kho
+            {tabs.length > 1 ? null : <MapPin className="h-4 w-4 text-slate-500" />} Vị trí kho
           </span>
           <SearchInput value={search} onChange={v => setLocationsFilter({ search: v })} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Quét tem ô → nhảy thẳng tới đúng dòng đó trong danh mục (xem/sửa cấu hình ô, đặt cờ
+              nhặt lẻ/cần kiểm). Đổ vào ô TÌM chứ không mở form: trang này là danh mục, thao tác
+              tiếp theo do người dùng chọn. */}
+          <LocationScanButton
+            purpose="lookup"   // chỉ đổ mã vào ô tìm — ô đầy/ngưng dùng vẫn phải tra được
+            warehouseId={locFilter.warehouseId || null}
+            onPicked={loc => setLocationsFilter({ search: loc.location_code })}
+          />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews module="locations" currentFilters={viewSnapshot} activeId={activeViewId}
@@ -405,6 +590,14 @@ export default function Locations() {
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
               disabled: !totalRows || exporting, busy: exporting,
               onClick: exportExcel,
+            } satisfies ActionItem] : []),
+            // In tem vị trí = quyền RIÊNG (không đi ké export/edit): sinh vật phẩm dán lên kệ,
+            // in sai/thiếu là công nhân quét ra ô khác.
+            ...(can(perms, 'locations', 'print_label') ? [{
+              key: 'print', icon: Printer, label: 'In tem',
+              tip: `In tem QR vị trí theo bộ lọc đang áp (8 tem/A4, tối đa ${PRINT_CAP} tem mỗi lượt)`,
+              disabled: !totalRows || printing, busy: printing,
+              onClick: printLabels,
             } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'import') ? [{
               key: 'upload', icon: Upload, label: 'Upload', tip: 'Upload Excel tạo vị trí hàng loạt (dựng kho mới)',
@@ -502,6 +695,22 @@ export default function Locations() {
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1">
+                        {loc.slot_no_in
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200"
+                                  title="Không đưa hàng vào (kho tạm / ngoài đường) — không gợi ý khi cất, Slotting luôn kéo hàng ra">
+                              <Ban className="h-2.5 w-2.5" />Cấm
+                            </span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {loc.slot_no_out
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                                  title="Không lấy hàng đi (hàng kẹt) — Slotting loại khỏi nguồn, ô vẫn tính chiếm chỗ. Không chặn xuất kho">
+                              <Lock className="h-2.5 w-2.5" />Kẹt
+                            </span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
                         {loc.requires_stocktake
                           ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-700"
                                   title="Vị trí phải kiểm kê hàng ngày">
@@ -511,6 +720,14 @@ export default function Locations() {
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                         {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>
+                      </TableCell>
+                      {/* Số mã tối đa: để trống = KHÔNG GIỚI HẠN. Viết hẳn chữ "Không giới hạn"
+                          thay vì dấu "—" — cột này là LUẬT CHẶN, đọc nhầm ô trống thành "chưa khai
+                          nên chắc có luật gì đó" là hiểu ngược hẳn ý nghĩa. */}
+                      <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
+                        {loc.max_materials != null
+                          ? <span className="font-semibold">{loc.max_materials} <span className="text-slate-400 font-normal">mã</span></span>
+                          : <span className="text-slate-300 font-normal">Không giới hạn</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
                         <span className={isFull ? 'text-blue-600 font-semibold' : isPartial ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
@@ -580,6 +797,8 @@ export default function Locations() {
               <div><span className="text-slate-400">Đang dùng:</span> <span className="font-semibold">{selectedLoc.used_slots} pallet</span></div>
               <div><span className="text-slate-400">Cần check hàng ngày:</span> <span className="font-medium">{selectedLoc.requires_stocktake ? 'Có' : 'Không'}</span></div>
               <div><span className="text-slate-400">Vị trí nhặt lẻ:</span> <span className="font-medium">{selectedLoc.is_pick_face ? 'Có' : 'Không'}</span></div>
+              <div><span className="text-slate-400">Không đưa hàng vào:</span> <span className={`font-medium ${selectedLoc.slot_no_in ? 'text-red-600' : ''}`}>{selectedLoc.slot_no_in ? 'Có' : 'Không'}</span></div>
+              <div><span className="text-slate-400">Không lấy hàng đi:</span> <span className={`font-medium ${selectedLoc.slot_no_out ? 'text-red-600' : ''}`}>{selectedLoc.slot_no_out ? 'Có' : 'Không'}</span></div>
               <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedLoc.is_active ? 'Hoạt động' : 'Đã xóa'}</span></div>
               <div className="border-t pt-2 mt-2 space-y-1.5">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Thông tin tạo/sửa</p>
@@ -598,6 +817,7 @@ export default function Locations() {
         onPageSize={n => setLocations({ pageSize: n, page: 1 })}>
         {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {allFiltered ? totalRows : selected.size} đang chọn</span>}
       </ListFooter>
+      </>)}
      </div>
 
       {/* ── Thanh thao tác hàng loạt (hiện khi có dòng được chọn) ───────────── */}
@@ -616,9 +836,21 @@ export default function Locations() {
             className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
             <Hand className="h-3.5 w-3.5" />Vị trí nhặt lẻ
           </button>
+          <button onClick={() => { setBulkErr(''); setBulkMode('noin') }}
+            className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
+            <Ban className="h-3.5 w-3.5" />Không đưa hàng vào
+          </button>
+          <button onClick={() => { setBulkErr(''); setBulkMode('noout') }}
+            className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
+            <Lock className="h-3.5 w-3.5" />Không lấy hàng đi
+          </button>
           <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
             className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
             <Flag className="h-3.5 w-3.5" />Cần kiểm kê
+          </button>
+          <button onClick={() => { setBulkErr(''); setMaxMatInput(''); setBulkMode('maxmat') }}
+            className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200 transition-colors">
+            <Layers className="h-3.5 w-3.5" />Số mã tối đa
           </button>
           <button onClick={() => { setSelected(new Set()); setAllFiltered(false) }} className="text-slate-400 hover:text-white ml-1">
             <X className="h-3.5 w-3.5" />
@@ -642,11 +874,14 @@ export default function Locations() {
         }
       >
           <div className="space-y-3">
-            {/* ── Edit: thông tin read-only ── */}
+            {/* ── Edit: mã hiện tại + vì sao đổi được / không (user 14/09: khoá im lặng là không hợp lý) ── */}
             {dialogMode === 'edit' && editing && (
               <div className="bg-slate-50 rounded px-3 py-2 space-y-0.5">
-                <p className="text-[10px] text-slate-500">Vị trí · {editing.warehouse.name}</p>
+                <p className="text-[10px] text-slate-500">Vị trí · {editing.warehouse.name} <span className="text-slate-400">(kho không đổi được — pallet thuộc kho)</span></p>
                 <p className="font-mono font-semibold text-sm">{editing.location_code}</p>
+                {canRename
+                  ? <p className="text-[10px] text-slate-500">Ô đang trống — đổi được Khu vực / Vị trí / Tầng bên dưới; mã sẽ ghép lại, giữ nguyên toạ độ Sơ đồ kho và các cờ.</p>
+                  : <p className="text-[10px] text-amber-700">Đang có {editing.used_slots} pallet nên Khu vực / Vị trí / Tầng khoá — chuyển hết hàng đi rồi mới đổi mã (tem QR dán kệ sẽ hết hiệu lực).</p>}
               </div>
             )}
 
@@ -664,8 +899,8 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Khu vực kho (chỉ add) — Loại kho KẾ THỪA từ khu, không chọn tay ── */}
-            {dialogMode === 'add' && (
+            {/* ── Khu vực kho (add, hoặc edit khi ô trống) — Loại kho KẾ THỪA từ khu, không chọn tay ── */}
+            {(dialogMode === 'add' || canRename) && (
               <div>
                 <Label className="text-xs">Khu vực kho <span className="text-red-500">*</span></Label>
                 <Select value={form.sub_code || '__none__'}
@@ -698,8 +933,8 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Loại kho (edit) — read-only, kế thừa từ khu ── */}
-            {dialogMode === 'edit' && editing && (
+            {/* ── Loại kho (edit, ô có hàng) — read-only, kế thừa từ khu; ô trống thì đã hiện theo khu đang chọn ở trên ── */}
+            {dialogMode === 'edit' && editing && !canRename && (
               <div>
                 <Label className="text-xs">Loại kho <span className="text-slate-400">(kế thừa từ Khu vực)</span></Label>
                 <p className="text-sm font-medium text-slate-700 mt-1">{editing.categories?.length ? editing.categories.join(', ') : '—'}</p>
@@ -717,8 +952,8 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Vị trí + Tầng (chỉ add) ── */}
-            {dialogMode === 'add' && (
+            {/* ── Vị trí + Tầng (add, hoặc edit khi ô trống) ── */}
+            {(dialogMode === 'add' || canRename) && (
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Label className="text-xs">Vị trí <span className="text-red-500">*</span></Label>
@@ -733,11 +968,14 @@ export default function Locations() {
               </div>
             )}
 
-            {/* ── Preview mã vị trí ── */}
-            {dialogMode === 'add' && locationPreview && (
-              <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2">
-                <p className="text-[10px] text-blue-500 mb-0.5">Mã vị trí sẽ là</p>
-                <p className="font-mono font-semibold text-sm text-blue-700">{locationPreview}</p>
+            {/* ── Preview mã vị trí (add: luôn; edit: chỉ khi mã ĐỔI, kèm nhắc in lại tem) ── */}
+            {locationPreview && (dialogMode === 'add' || (canRename && editing && locationPreview !== editing.location_code)) && (
+              <div className={`border rounded px-3 py-2 ${dialogMode === 'add' ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+                <p className={`text-[10px] mb-0.5 ${dialogMode === 'add' ? 'text-blue-500' : 'text-amber-700'}`}>
+                  {dialogMode === 'add' ? 'Mã vị trí sẽ là' : `Mã đổi từ ${editing?.location_code} thành`}
+                </p>
+                <p className={`font-mono font-semibold text-sm ${dialogMode === 'add' ? 'text-blue-700' : 'text-amber-800'}`}>{locationPreview}</p>
+                {dialogMode === 'edit' && <p className="text-[10px] text-amber-700 mt-0.5">Tem QR đang dán kệ mang mã cũ — in lại tem sau khi lưu (Vị trí kho → In tem).</p>}
               </div>
             )}
 
@@ -746,6 +984,24 @@ export default function Locations() {
               <Label className="text-xs">Sức chứa Pallet tối đa</Label>
               <Input className="h-8 text-sm mt-1" type="number" min="0" placeholder="VD: 4"
                 value={form.max_pallets} onChange={e => setField('max_pallets', e.target.value)} />
+            </div>
+
+            {/* ── Số mã tối đa (26/08) ── khai theo TỪNG vị trí, không kế thừa kho/loại kho */}
+            <div>
+              <Label className="text-xs flex items-center gap-1">
+                Số mã tối đa trong vị trí
+                <InfoTip tip={<>
+                  Số <b>mã hàng khác nhau</b> được để chung trong ô này. Để trống = <b>không giới hạn</b> —
+                  dùng cho nơi chứa chung như <b>Ngoài đường</b>, <b>Mặt đất</b>, <b>Kho lẻ</b>.
+                  Kệ thường thì khai 1–2 để tránh xếp lẫn.
+                  <br /><br />
+                  Vượt trần thì <b>chặn hẳn hay chỉ cảnh báo</b> là do kho quyết định:
+                  Cài đặt WMS → form Kho → quy tắc <b>“Số mã tối đa trong một vị trí”</b>.
+                </>} />
+              </Label>
+              <Input className="h-8 text-sm mt-1" type="number" min="1" max="1000"
+                placeholder="Để trống = không giới hạn"
+                value={form.max_materials} onChange={e => setField('max_materials', e.target.value)} />
             </div>
 
             {/* ── Trạng thái + Kiểm kê hàng ngày (chỉ edit) ── */}
@@ -764,26 +1020,35 @@ export default function Locations() {
                     {editIsActive ? 'Đang hoạt động — nhấn để vô hiệu hoá' : 'Đã vô hiệu hoá — nhấn để kích hoạt lại'}
                   </button>
                 </div>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editRequiresStocktake}
-                    onChange={e => setEditRequiresStocktake(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer"
-                  />
-                  <span className="text-xs text-slate-600">Cần kiểm kê hàng ngày</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editIsPickFace}
-                    onChange={e => setEditIsPickFace(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer"
-                  />
-                  <span className="text-xs text-slate-600">
-                    Vị trí nhặt lẻ <span className="text-slate-400">(với tay lấy hàng được — dùng cho Fill hàng)</span>
-                  </span>
-                </label>
+                {/* Diễn giải nằm trong ⓘ (user chốt 17/08) — chữ xám dài dưới mỗi ô đẩy nút Lưu
+                    khỏi màn hình. ⓘ là ANH EM của <label>, không nằm trong: bấm ⓘ không lật ô tick. */}
+                {LOC_FLAG_FIELDS.map(f => (
+                  <div key={f.key} className="flex items-center gap-1.5">
+                    <label className="flex items-center gap-2 cursor-pointer select-none min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={f.key === 'stocktake' ? editRequiresStocktake
+                          : f.key === 'pickface' ? editIsPickFace
+                          : f.key === 'noin' ? editSlotNoIn : editSlotNoOut}
+                        onChange={e => (f.key === 'stocktake' ? setEditRequiresStocktake
+                          : f.key === 'pickface' ? setEditIsPickFace
+                          : f.key === 'noin' ? setEditSlotNoIn : setEditSlotNoOut)(e.target.checked)}
+                        className="h-3.5 w-3.5 cursor-pointer shrink-0"
+                      />
+                      <span className="text-xs text-slate-600 truncate">{f.label}</span>
+                    </label>
+                    <InfoTip tip={f.tip} />
+                  </div>
+                ))}
+                {/* 2 cờ này KHÔNG nên đi cùng nhau — nói ra tại chỗ thay vì để người dùng phát
+                    hiện qua việc kế hoạch Slotting cứ đòi dọn hàng của lệnh Fill (đo 17/08). */}
+                {editIsPickFace && editSlotNoIn && (
+                  <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-snug text-amber-700">
+                    <b>Hai cờ này đá nhau.</b> Vị trí nhặt lẻ là nơi lệnh <b>Fill hàng</b> hạ hàng xuống, còn
+                    “Không đưa hàng vào” nghĩa là kho tạm. Nếu ý là <b>cấm cất pallet nguyên</b> vào đây thì
+                    đã có luật riêng: Cài đặt WMS → form Kho → <b>“Không cất pallet nguyên vào vị trí nhặt lẻ”</b>.
+                  </p>
+                )}
               </div>
             )}
 
@@ -793,33 +1058,70 @@ export default function Locations() {
           </div>
       </FormSheet>
 
-      {/* Gắn / bỏ cờ hàng loạt — cần-kiểm kê HOẶC vị trí nhặt lẻ */}
-      <Dialog open={bulkMode !== null} onOpenChange={open => !open && setBulkMode(null)}>
+      {/* Khai TRẦN SỐ MÃ hàng loạt — nhánh riêng vì đây là con số, không phải cờ bật/tắt */}
+      <Dialog open={bulkMode === 'maxmat'} onOpenChange={open => !open && setBulkMode(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-1.5">
-              {bulkMode === 'pickface'
-                ? <><Hand className="h-4 w-4 text-sky-600" /> Khai vị trí nhặt lẻ hàng loạt</>
-                : <><Flag className="h-4 w-4 text-red-500" /> Cờ cần kiểm kê hàng loạt</>}
+              <Layers className="h-4 w-4 text-emerald-600" />Số mã tối đa — hàng loạt
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600">
             Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
             {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
-            {bulkMode === 'pickface'
-              ? ' Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.'
-              : ' Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.'}
+          </p>
+          <div>
+            <Label className="text-xs">Số mã hàng khác nhau được để chung trong một vị trí</Label>
+            <Input className="h-9 text-sm mt-1" type="number" min="1" max="1000" placeholder="VD: 2"
+              value={maxMatInput} onChange={e => setMaxMatInput(e.target.value)} autoFocus />
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              Kệ thường thường khai <b>1–2</b>. Nơi chứa chung (Ngoài đường, Mặt đất, Kho lẻ) thì
+              bấm <b>“Bỏ giới hạn”</b> — đó cũng là mặc định của mọi vị trí.
+            </p>
+          </div>
+          {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
+            <Button variant="outline" size="sm" className="border-slate-300"
+              onClick={() => applyBulkMaxMat(null)} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? '…' : 'Bỏ giới hạn'}
+            </Button>
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => applyBulkMaxMat(Number(maxMatInput))}
+              disabled={bulkFlag.isPending || !maxMatInput.trim() || !(Number(maxMatInput) >= 1)}>
+              {bulkFlag.isPending ? 'Đang lưu…' : 'Áp dụng'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Gắn / bỏ cờ hàng loạt — cần-kiểm kê HOẶC vị trí nhặt lẻ */}
+      <Dialog open={bulkMode !== null && bulkMode !== 'maxmat'} onOpenChange={open => !open && setBulkMode(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-1.5">
+              {bulkMode === 'pickface' ? <Hand className="h-4 w-4 text-sky-600" />
+                : bulkMode === 'noin' ? <Ban className="h-4 w-4 text-red-500" />
+                : bulkMode === 'noout' ? <Lock className="h-4 w-4 text-amber-600" />
+                : <Flag className="h-4 w-4 text-red-500" />}
+              {BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].title}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
+            {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
+            {' ' + BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].desc}
           </p>
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
             <Button variant="outline" size="sm" className="border-slate-300"
               onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? '…' : bulkMode === 'pickface' ? 'Bỏ khai' : 'Bỏ cờ'}
+              {bulkFlag.isPending ? '…' : BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].off}
             </Button>
-            <Button size="sm" className={bulkMode === 'pickface' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-red-600 hover:bg-red-700'}
+            <Button size="sm" className={BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].btn}
               onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? 'Đang lưu…' : bulkMode === 'pickface' ? 'Khai vị trí nhặt lẻ' : 'Gắn cờ cần check'}
+              {bulkFlag.isPending ? 'Đang lưu…' : BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].on}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -858,6 +1160,17 @@ export default function Locations() {
           onUpload={(file, preflight) => uploadLocations.mutateAsync({ file, preflight })}
         />
       )}
+
+      {/* In tem vị trí: lỗi/cảnh báo hiện NGAY trên màn (banner đỏ inline, không chỉ console) */}
+      {printErr && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[120] max-w-[92vw] rounded-lg border border-red-300 bg-red-50 px-3 py-2 shadow-lg">
+          <p className="text-xs text-red-700">{printErr}
+            <button type="button" className="ml-2 text-red-400 hover:text-red-700" onClick={() => setPrintErr('')}>✕</button>
+          </p>
+        </div>
+      )}
+      <style>{LOC_PRINT_CSS}</style>
+      <LocationPrintArea labels={labels} />
     </div>
   )
 }

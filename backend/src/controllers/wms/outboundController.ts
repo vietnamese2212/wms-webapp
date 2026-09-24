@@ -1,34 +1,67 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
-import { supabase } from '../../lib/supabase'
-import { ok, fail } from '../../utils/response'
+import { supabase, db } from '../../lib/supabase'
+import { ok, fail, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
+import { sumLoads, type LoadMat } from '../../utils/loadCalc'
+import { loadUtilization } from '../../services/freight'
+import { estimateFreightSafely, sapLoadRefs, sapRefKey, loadOfWithSap } from '../../services/freightEstimate'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
-import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
+import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
 import {
   PICKABLE_STATUSES, asRotationPrinciple, isPickEligible, isRotationViolation, isRotationReason,
   rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationCheck, type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
+import { resolveRotation, resolveLoosePolicy, resolveWorkMode, type RotationConfig, type WhTypeConfigRow, type LoosePolicy } from '../../utils/putaway'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeFilterValue, safeSearch } from '../../utils/search'
+import { safeFilterValue, safeSearch, searchLooksLikeInjection } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
+import { logPalletMoves } from '../../services/palletMoveLog'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
-import { expandMergedCells } from '../../utils/excelHeader'
+import { expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
+import { cellStr, cellNum, parseExcelDate } from '../../utils/excelCells'
+import { getSapDoSource } from '../../utils/settings'
+import { notLoadableDos, FLOW_LABEL } from '../../services/sapFlow'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
+import { guardPutaway } from '../../services/putawayContext'
+import { notifyEmployees } from '../../services/pushService'
+import {
+  planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
+  servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, palletMeetsDateRule, MAX_DATE_CHECK, MAX_RULE_PARTS,
+  type DateRulePallet,
+  type DateRule, type DateRulePart,
+} from '../../services/directedTasks'
+import { qaHoldIds, qaNotHeldFilter } from '../../services/qaStatus'
+import { pickFaceAcceptor, looseFillMessage, pickFaceFirst } from '../../services/loosePickFace'
+import { autoFillSafe } from '../../services/autoFill'
+import {
+  loadPolicyCtx, resolveDateRule, ensureCustomers, flagNoStock, normShipto, asDateRulePolicy, MAX_MIN_DAYS,
+  type AutoApplied, type PolicyCtx,
+} from '../../services/dateRulePolicy'
+import { applyMasterToOpenOrders, APPLY_MASTER_CAP } from '../../services/dateRuleApply'
 
 const now = () => new Date().toISOString()
+
+/**
+ * NGƯỜI ĐANG ĐĂNG NHẬP, dạng UUID — dùng làm người thực hiện khi client không gửi `employee_id`.
+ * Các cột vết (`OutboundScanEntry.scanned_by`…) có KHOÁ NGOẠI tới `Employee(id)` nên chỉ nhận UUID;
+ * trả null khi token không mang id hợp lệ, để vết thiếu chứ không làm hỏng lượt ghi nghiệp vụ.
+ */
+const UUID_ACTOR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const actorUuid = (req: Request): string | null =>
+  UUID_ACTOR.test(req.user?.sub ?? '') ? (req.user?.sub as string) : null
 
 // XÓA theo tập id: filter `.in()` nằm trên URL nên phải CHUNK 300 (đo 27/07 trên PostgREST staging:
 // 300 id = URL 11KB OK · 400 id đứt kết nối · 700 id → 400 Bad Request). Chuyến nhiều NPP / upload
@@ -40,13 +73,8 @@ async function deleteByIdsChunked(table: string, ids: string[]): Promise<void> {
   }
 }
 
-// Chuẩn hóa ô Excel: chuỗi trim (rỗng → null) · số (rỗng/NaN → null). Dùng cho parse VL06O raw.
-const cellStr = (v: any): string | null => { const s = String(v ?? '').trim(); return s || null }
-const cellNum = (v: any): number | null => {
-  if (v === '' || v == null) return null
-  const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''))
-  return Number.isFinite(n) ? n : null
-}
+// Chuẩn hóa ô Excel (cellStr / cellNum / parseExcelDate) — chuyển sang utils/excelCells.ts (22/09) để cửa nạp
+// ZSD02 dùng chung mà bộ parse của nó vẫn là hàm thuần test được; import ở đầu file.
 
 // ─── Warehouse-scope cho route GHI (mirror guardGateScope/guardInboundScope) ────
 // NATIONAL → null (toàn quyền). Khác → danh sách kho được gán cho user.
@@ -58,6 +86,17 @@ function inScope(req: Request, whId: string | null | undefined): boolean {
   const scope = scopeWhIds(req)
   if (scope === null) return true
   return !!whId && scope.includes(whId)
+}
+// Chống IDOR (kiểm định 02/09): dòng hàng trên URL phải THUỘC chuyến trên URL. Scope kho chỉ kiểm trên GDO, nên
+// itemId của kho khác ghép với gdoId hợp lệ của mình là ghi số / hoàn tồn vào kho khác. Ràng ngay trong câu SELECT
+// bằng embed `!inner()` (chỉ lọc, KHÔNG trả cột — đo PostgREST 02/09: select=* vẫn 20 cột, không có key `do`)
+// ⇒ dòng hàng lệch chuyến = 404 "Không tìm thấy mặt hàng" như dòng không tồn tại, 0 request thêm. QA gói 41 gác 8 route.
+const ITEM_IN_GDO = 'do:OutboundDelivery!do_id!inner()'
+function itemOfGdo(itemId: string, gdoId: string, cols = '*') {
+  // Kiểu: parser select của supabase-js không đọc được chuỗi GHÉP ĐỘNG (ParserError) → khai kiểu như `select('*')`
+  // mà 8 chỗ gọi vốn dùng (client chưa có generic Database nên '*' = dòng lỏng, không đổi hành vi kiểu cũ).
+  const sel: string = `${cols}, ${ITEM_IN_GDO}`
+  return supabase.from('OutboundItem').select(sel as '*').eq('id', itemId).eq('do.gdo_id', gdoId).single()
 }
 // Chặn 403 nếu chuyến (GDO) không thuộc kho trong phạm vi user (fetch warehouse_id của GDO).
 async function guardGdoScope(req: Request, res: Response, gdoId: string): Promise<boolean> {
@@ -105,6 +144,64 @@ function futureDateError(deliveryDate?: string | null): string | null {
   const [y, m, dd] = d.split('-')
   return `Đơn có Ngày xuất ${dd}/${m}/${y} (tương lai) — hôm nay chưa được quét/xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn (chuyến SAP: tab Kế hoạch xuất · chuyến thường: Sửa đơn/Chuyển ngày).`
 }
+
+// CHỐT %DATE TRƯỚC KHI LẤY HÀNG — CHỈ kho Hướng dẫn (user chốt 10/09).
+// Kho GUIDED chạy theo KẾ HOẠCH sinh từ %Date đã chốt: dòng chưa chốt thì KHÔNG có việc nào được
+// lập, nên ai lấy hàng lúc đó là lấy theo cảm tính — đúng thứ user sợ ("trong nghĩ là mặc định đi
+// làm, sau đó mới update thì sẽ là làm sai"). Trước 10/09 cửa quét chỉ soi `date_required` của
+// VL06O nên chốt tay hoàn toàn KHÔNG gác gì.
+// XUẤT và NHẶT LẺ là MỘT (user: "bản chất nó là 1"): cùng dòng `OutboundItem`, cùng kho hàng, chỉ
+// khác màn hình ⇒ chặn cả hai, đừng để nhặt lẻ thành cửa sau.
+// Kho Thủ công (`work_mode` khác GUIDED) giữ nguyên hành vi cũ — không bắt chốt.
+type DateRuleGateItem = { date_rule?: unknown; date_required?: number | null; material_code_raw?: string | null }
+
+// CỬA QUÉT PHẢI ĐỌC CHÍNH MỨC ĐÃ CHỐT (C19 tái phát lần 2, đo ca đêm 20/09): dòng theo kênh BHX chốt
+// "≥ 80 %" mà thủ kho soạn hàng lẻ từ pallet 78 % vẫn 200 + trừ tồn, `rotation_violation=false` —
+// vì hai cửa quét chỉ soi `date_required` của VL06O (trống 100 % trên dữ liệu thật), còn kiểm luân
+// chuyển chỉ hỏi "có LỘT thứ tự pallet tốt nhất không" nên pallet KHÔNG ĐẠT (sớm hơn) lại được coi là
+// đúng thứ tự. 14/09 đã vá CHỈ ĐƯỜNG đọc rule; cửa trừ tồn — cửa duy nhất làm hàng rời kho — vẫn mù.
+// Luật diễn giải vẫn là `palletMeetsDateRule` (một nguồn), đây chỉ là chỗ GỌI nó ở cửa ghi + cửa xem
+// trước. Giảm/hoàn không đi qua đây (luật là "không xuất dưới mức", không phải "không sửa sai").
+const DATE_RULE_SOURCE_LABEL: Record<string, string> = { CHANNEL: 'theo kênh', CUSTOMER: 'theo khách', SYSTEM: 'hệ thống đặt', MANUAL: 'chốt tay' }
+// (Ca đêm 20/09 từng chặn pallet HẾT HẠN ở cửa quét — user hoàn lại cùng ngày: "có trường hợp xuất huỷ thì vẫn xuất".
+//  Dòng đòi mức tự chặn pallet 0 % qua dateRuleBelowError; dòng không đòi mốc lấy được. Xem utils/rotation.ts.)
+/** Tập pallet đã được ghim cho CHÍNH chuyến này (việc PICK còn treo) — loại khỏi phép so "pallet phải lấy trước" */
+async function plannedEntryIdsOf(gdoId: string): Promise<Set<string>> {
+  const { data } = await supabase.from('wms_tasks').select('entry_id').eq('gdo_id', gdoId).eq('status', 'PENDING').eq('kind', 'PICK').limit(1000)
+  return new Set(((data ?? []) as { entry_id: string | null }[]).map(t => t.entry_id).filter((x): x is string => !!x))
+}
+function dateRuleBelowError(inv: DateRulePallet, mat: MaterialShelfInfo | null, item: DateRuleGateItem, qr: string): string | null {
+  const rule = dateRuleOf(item)
+  if (!rule || rule.kind === 'FEFO') return null
+  if (palletMeetsDateRule(inv, mat, rule)) return null
+  const pct = computePctDate(inv, mat), days = computeDaysLeft(inv, mat)
+  const measured = rule.kind === 'MIN_DAYS'
+    ? (days == null ? 'không đo được hạn dùng' : `còn ${days} ngày`)
+    : (pct == null ? 'không đo được %Date' : `%Date còn ${Math.floor(pct)} %`)
+  const src = DATE_RULE_SOURCE_LABEL[String(rule.source ?? 'MANUAL')] ?? 'chốt tay'
+  return `Pallet "${qr}" ${measured} — dưới mức đã chốt cho dòng này (${describeDateRule(rule)}, ${src}). Lấy pallet đạt mức theo cột "Vị trí lấy" / Việc cần làm; muốn xuất pallet này thì đổi mức ở Quy định date trước.`
+}
+function dateRuleGateError(
+  gdo: unknown, item: DateRuleGateItem, what: 'lấy hàng' | 'nhặt lẻ',
+): string | null {
+  // Kho chạy Hướng dẫn, HOẶC kho đã BẬT quy định date — cả hai đều là "kho này đi theo quy định
+  // date" (user chốt 11/09: "dòng nào không khai thì dòng đó không thao tác được").
+  // ⚠️ KHÔNG chặn vô điều kiện mọi kho: cả 153 kho đang để chính sách TẮT, chặn hết là dừng xuất
+  // hàng toàn bộ ngay lúc lên máy vì không dòng nào được cấp mức.
+  const wh = (gdo as { warehouse?: { work_mode?: string | null; date_rule_policy?: string | null } | null } | null)?.warehouse ?? null
+  const gated = wh?.work_mode === 'GUIDED' || asDateRulePolicy(wh?.date_rule_policy) !== 'OFF'
+  if (!gated) return null
+  if (item.date_rule != null) return null                        // đã khai (tay hoặc máy)
+  if (Number(item.date_required ?? 0) > 0) return null            // mức kế thừa từ VL06O = đã có yêu cầu
+  const code = item.material_code_raw ? ` ${item.material_code_raw}` : ''
+  return `Dòng${code} CHƯA CÓ QUY ĐỊNH DATE — kho này đi theo quy định date nên phải khai trước khi ${what}. `
+    + `Vào menu "Quy định date" (hoặc nút Quy định date trên chuyến), chọn mức rồi làm tiếp — khai xong kế hoạch tự sắp lại.`
+}
+// Chuyến nào cũng cần biết kho chạy chế độ nào + có bật quy định date không ⇒ thêm nhúng này vào
+// SELECT của các cửa lấy hàng.
+const GDO_WORK_MODE = 'warehouse:Warehouse!warehouse_id(work_mode, date_rule_policy)'
+const workModeOf = (gdo: unknown): string | null =>
+  ((gdo as { warehouse?: { work_mode?: string | null } | null } | null)?.warehouse?.work_mode) ?? null
 
 // CHUYẾN BẤT ĐỘNG (user chốt 03/08) — 2 lý do, cùng 1 hệ quả: chuyến hiện trên màn nhưng KHÔNG
 // thao tác được (chỉ xem + xem lịch sử). Chặn ở ĐÚNG các cửa THỰC THI như luật chặn xuất sớm,
@@ -242,6 +339,14 @@ async function linkWeighTicket(ticketId: string | null, gdoId: string) {
 async function adjustInventoryAtomic(
   invId: string, deltaRemaining: number, deltaReserved: number,
 ): Promise<boolean> {
+  // Đường NHANH: khoá dòng trong DB (migration 20260906) — 1 lượt gọi, không thử lại, không ngủ.
+  // RPC chưa apply → rơi về vòng CAS bên dưới NGUYÊN VẸN (cửa sổ triển khai).
+  {
+    const { data, error } = await supabase.rpc('outbound_adjust_entry', {
+      p_entry_id: invId, p_delta_remaining: deltaRemaining, p_delta_reserved: deltaReserved, p_now: now(),
+    })
+    if (!error && data) return (data as { ok?: boolean }).ok === true
+  }
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
@@ -277,6 +382,8 @@ const KEEP_LOCATION = 'KEEP'   // sentinel FE gửi khi user chọn "giữ chỗ
 
 async function moveLeftoverPallet(
   invId: string, locationId: string, updatedBy: string | null, t: string,
+  from: { location_id: string | null; pallet_code?: string | null } = { location_id: null },
+  actorName: string | null = null,
 ): Promise<string | null> {
   const vnDate = new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const { data: result, error } = await supabase.rpc('move_pallets_to_location', {
@@ -289,7 +396,19 @@ async function moveLeftoverPallet(
     case 'NOT_FOUND': return 'Không tìm thấy vị trí đã chọn'
     case 'INACTIVE':  return 'Vị trí đã chọn đang ngưng sử dụng'
     case 'FULL':      return `Vị trí ${parts[2] ?? ''} vừa hết chỗ (còn ${parts[1] ?? 0} slot) — chọn vị trí khác`
-    default:          return null
+    default:
+      // SỔ CHUYỂN VỊ TRÍ — pallet bị "mổ" rồi mang phần dư sang ô khác LÀ một lần đổi chỗ thật;
+      // chính vì nó mà cột location_id được đụng tới ở luồng xuất (chốt 30/07). Cửa này bị bỏ quên
+      // lúc dựng sổ 17/09 ⇒ hàng dư đi đâu không ai tra được. Ghi SAU khi RPC báo thành công.
+      // `mark_stocktake` = false: người quét tem để XUẤT hàng, không phải đi kiểm kê ô.
+      await logPalletMoves({
+        moved: [{ entry_id: invId, from_location_id: from.location_id, pallet_code: from.pallet_code ?? null }],
+        to_location_id: locationId,
+        actor_id: updatedBy, actor_name: actorName,
+        note: 'Đặt phần còn lại của pallet khi quét xuất',
+        where: '/wms/outbound/scan', at: t,
+      })
+      return null
   }
 }
 
@@ -348,6 +467,18 @@ export async function looseHeldGdoIds(gdoIds: string[]): Promise<Set<string>> {
 // Trả: true=trừ xong · false=KHÔNG đủ tồn (đã bị thao tác khác lấy) · null=tranh chấp sau 5 lần.
 // Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
 async function consumeInventoryExact(invId: string, amount: number): Promise<boolean | null> {
+  // Đường NHANH: khoá dòng trong DB (migration 20260906). Ngữ nghĩa y hệt vòng CAS bên dưới:
+  // true = đã trừ · false = KHÔNG ĐỦ tồn · null = không tìm thấy dòng.
+  {
+    const { data, error } = await supabase.rpc('outbound_consume_exact', {
+      p_entry_id: invId, p_amount: amount, p_now: now(),
+    })
+    if (!error && data) {
+      const r = data as { ok?: boolean; missing?: boolean }
+      if (r.missing) return null
+      return r.ok === true ? true : false
+    }
+  }
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
@@ -387,6 +518,65 @@ async function addItemScanned(itemId: string, delta: number, statusOf: (total: n
     await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
   }
   return null
+}
+
+/**
+ * ĐẶT GẠCH hạn mức của dòng hàng NGUYÊN TỬ — trả SỐ THỰC ĐƯỢC CẤP (có thể nhỏ hơn số muốn).
+ *
+ * VÌ SAO (bug thật, tái hiện 100% ngày 29/08): trần "còn được quét bao nhiêu" được tính từ bản
+ * chụp `item` đọc ở ĐẦU hàm, còn việc cộng dồn thì mãi cuối hàm mới làm ⇒ check-then-act. Ba người
+ * cùng quét MỘT dòng hàng đặt 240: cả ba đều thấy "còn 240", cả ba đều được cấp ⇒ dòng hàng ghi
+ * **720/240** và tồn bị trừ 720 — tức là **xuất thừa 3 lần lên xe**. Chạy tuần tự thì hai lượt sau
+ * bị chặn đúng, nên lỗi chỉ hiện khi đông người — đúng cảnh ca cao điểm.
+ * `addItemScanned` (CAS trên TỔNG) không cứu được: nó bảo đảm không MẤT cộng dồn, nhưng không hề
+ * kiểm trần ⇒ vẫn cộng vượt.
+ *
+ * ⇒ Hạn mức phải được ĐẶT GẠCH TRƯỚC mọi thao tác khác. Đặt gạch trước được vì hạn mức là bộ đếm
+ * thuần — nhả lại luôn thành công; còn tồn kho và vị trí thì nhả lại có thể HỎNG (ô đã bị người
+ * khác lấp đầy), nên không được phép làm chúng trước rồi mới biết mình không có quyền.
+ *
+ * Trả: số được cấp (>0) · 'FULL' nếu dòng hàng đã đủ · null nếu tranh chấp quá 15 lượt.
+ */
+async function claimItemQuota(
+  itemId: string, want: number, ceiling: number, statusOf: (total: number) => string,
+  completeWhenFull?: boolean,
+): Promise<{ grant: number; total: number | null } | 'FULL' | null> {
+  // Đường NHANH: khoá dòng trong DB (migration 20260906) — 1 lượt gọi thay cho đọc+CAS, và
+  // KHÔNG thử lại (người đến sau chờ trên khoá vài ms rồi đọc số mới nhất). Trả luôn TỔNG mới
+  // nên caller khỏi đọc lại lần nữa.
+  if (completeWhenFull != null) {
+    const { data, error } = await supabase.rpc('outbound_claim_quota', {
+      p_item_id: itemId, p_want: want, p_ceiling: ceiling,
+      p_complete_when_full: completeWhenFull, p_now: now(),
+    })
+    if (!error && data) {
+      const r = data as { grant?: number; total?: number; missing?: boolean }
+      if (r.missing) return null
+      if (Number(r.grant ?? 0) <= 0) return 'FULL'
+      return { grant: Number(r.grant), total: Number(r.total) }
+    }
+  }
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const { data: it } = await supabase.from('OutboundItem')
+      .select('cartons_scanned').eq('id', itemId).single()
+    if (!it) return null
+    const cur = Number(it.cartons_scanned ?? 0)
+    const grant = Math.min(want, ceiling - cur)
+    if (grant <= 0) return 'FULL'
+    const next = cur + grant
+    const { data: applied } = await supabase.from('OutboundItem')
+      .update({ cartons_scanned: next, status: statusOf(next), updated_at: now() })
+      .eq('id', itemId).eq('cartons_scanned', cur).select('id')
+    if (applied?.length) return { grant, total: next }
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+  }
+  return null
+}
+
+/** Đọc lại TỔNG đã quét của dòng hàng (sau khi hạn mức đã đặt gạch) — chỉ để trả về màn quét. */
+async function currentItemScanned(itemId: string): Promise<number | null> {
+  const { data } = await supabase.from('OutboundItem').select('cartons_scanned').eq('id', itemId).maybeSingle()
+  return data ? Number(data.cartons_scanned ?? 0) : null
 }
 
 function parsePlannedDate(group_code: string): string | null {
@@ -434,30 +624,7 @@ function validateGroupCode(gc: string): string | null {
   return null
 }
 
-function parseExcelDate(val: any): string | null {
-  if (!val) return null
-  if (typeof val === 'number') {
-    const d = XLSX.SSF.parse_date_code(val)
-    if (!d) return null
-    const date = new Date(Date.UTC(d.y, d.m - 1, d.d))
-    return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
-  }
-  const s = String(val).trim()
-  if (!s) return null
-  // dd/mm/yyyy (Vietnamese default — JS Date() would misread as mm/dd)
-  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (dmy) {
-    const [dd, mm, yy] = [parseInt(dmy[1]), parseInt(dmy[2]), parseInt(dmy[3])]
-    const date = new Date(Date.UTC(yy, mm - 1, dd))
-    if (isNaN(date.getTime())) return null
-    // Date.UTC TRÀN ÂM THẦM: 32/13/2026 → 01/02/2027 (ngày SAI mà không báo lỗi). Ngày không tồn
-    // tại trên lịch phải trả null để controller báo "ngày không hợp lệ" thay vì ghi ngày lệch.
-    if (date.getUTCFullYear() !== yy || date.getUTCMonth() !== mm - 1 || date.getUTCDate() !== dd) return null
-    return date.toISOString().slice(0, 10)
-  }
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
-}
+// parseExcelDate → utils/excelCells.ts (22/09), import ở đầu file.
 
 function isExcludedFromCount(item: any): boolean {
   return item.material?.no_qr_tracking === true
@@ -467,7 +634,10 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await supabase.from('GroupDeliveryOrder')
-    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
+    // `work_mode` (10/09): trang chuyến phải biết kho có chạy Hướng dẫn không — chuyến ĐANG XUẤT ở kho
+    // Hướng dẫn mà 0 việc là BẤT THƯỜNG (bật cờ sau khi chuyến đã bắt đầu ⇒ không ai sắp lại hộ), phải
+    // hiện lý do + nút Sắp lại chứ không ẩn khối đi như trước. Đi ké embed sẵn có, không thêm round-trip.
+    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,work_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at), dock:Location!dock_location_id(id,location_code,row,kind,dock_capacity)')
     .eq('id', id).single()
   if (error || !gdo) return null
 
@@ -489,6 +659,21 @@ async function fetchGDOFull(id: string) {
     westData = (await supabase.rpc('gdo_weight_estimates', { p_gdo_ids: [id] })).data
   const weightEstimate = (Array.isArray(westData) ? westData : [])[0] ?? null
 
+  // LOẠI XE DỰ KIẾN từ lệnh vận chuyển (KHVC, order_code = Số xe): chuyến CHƯA gắn biển số thì đây
+  // là nguồn DUY NHẤT để sơ đồ xếp xe biết vẽ theo XE PALLET hay xe thường — trước 26/08 màn 3D chỉ
+  // suy từ biển số nên mọi chuyến đang lên kế hoạch đều mặc định "Xe thường" (đo đơn thật 15/08:
+  // 55/95 chuyến chưa gắn xe có kế hoạch khai XE PALLET, 14 chuyến khai CONTAINER — vẽ sai hẳn kiểu).
+  // CHỈ hỏi khi chưa có biển: chuyến đang xuất luôn có biển ⇒ không thêm round-trip vào đường nóng.
+  const plateNow = (gdo as unknown as { license_plate?: string | null }).license_plate
+  let plannedVehicleType: string | null = null
+  if (!plateNow) {
+    const { data: tord } = await supabase.from('TmsOrder')
+      .select('vehicle_type')
+      .eq('order_code', (gdo as unknown as { group_code: string }).group_code)
+      .limit(1).maybeSingle()
+    plannedVehicleType = (tord as { vehicle_type?: string | null } | null)?.vehicle_type ?? null
+  }
+
   const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
     .select('*').eq('gdo_id', id).order('delivery_code').order('id'))
 
@@ -497,7 +682,7 @@ async function fetchGDOFull(id: string) {
   // Detail chuyến phải ĐỦ item/scan (chuyến >1000 scan: cap-1000 làm "đã quét" hiển thị thiếu)
   const items = doIds.length
     ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,warehouse_pallet_overrides,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,base_unit,entry_unit,units_per_carton)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,category,cartons_per_pallet,warehouse_pallet_overrides,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,is_pallet_carrier,pallet_color,base_unit,entry_unit,units_per_carton)')
         .in('do_id', chunk)
         .order('id'))
     : []
@@ -548,10 +733,26 @@ async function fetchGDOFull(id: string) {
     itemsByDO.set(item.do_id, list)
   }
 
+  // Ô tổng KẾ HOẠCH LẤY HÀNG (Directed Work 1c) — 1 câu, chỉ để trang chuyến hiện dải "Sắp quét"
+  // và thanh tiến độ. Chuyến kho Thủ công không có việc nào ⇒ mảng rỗng, FE tự ẩn khối.
+  const { data: taskRows } = await supabase.from('wms_tasks')
+    .select('status, needs_lower, lowered_at, moved_at').eq('gdo_id', id)
+  const tr = (taskRows ?? []) as { status: string; needs_lower: boolean; lowered_at: string | null; moved_at: string | null }[]
+  const tasksSummary = tr.length ? {
+    total:    tr.filter(t => t.status === 'PENDING' || t.status === 'DONE').length,
+    pending:  tr.filter(t => t.status === 'PENDING').length,
+    done:     tr.filter(t => t.status === 'DONE').length,
+    to_lower: tr.filter(t => t.status === 'PENDING' && t.needs_lower && !t.lowered_at).length,
+    to_move:  tr.filter(t => t.status === 'PENDING' && !t.moved_at && (!t.needs_lower || !!t.lowered_at)).length,
+    skipped:  tr.filter(t => t.status === 'SKIPPED').length,
+  } : null
+
   return {
     ...gdo,
+    planned_vehicle_type: plannedVehicleType,
     weigh_tickets: wtRes.data ?? [],
     weight_estimate: weightEstimate,
+    tasks_summary: tasksSummary,
     delivery_orders: (dos ?? []).map((d: any) => ({
       ...d,
       items: itemsByDO.get(d.id) ?? [],
@@ -726,7 +927,7 @@ export async function listGDOs(req: Request, res: Response) {
       ? (data ?? []).filter((g: { warehouse_type?: string | null }) => categoryAllowed(req, g.warehouse_type))
       : (data ?? [])
     return ok(res, await enrichGdos(scoped))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ── Enrich list chuyến (dùng chung mode cũ trả mảng + mode phân trang): bulk DO/item +
@@ -746,8 +947,17 @@ async function enrichGdos(data: any[]): Promise<any[]> {
     const doIds = (dos ?? []).map((d: any) => d.id)
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_pallet_carrier)')
+      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_pallet_carrier, is_non_stock, weight_kg)')
       .in('do_id', chunk).order('id'))
+
+    // Dòng xe CON của chuyến (23/09) — tên + sức chứa để in cột Tải / Non tải; freight_* đi thẳng từ select('*')
+    const vmIds = [...new Set((data ?? []).map((g: any) => g.vehicle_model_id).filter(Boolean))] as string[]
+    const vmRows = vmIds.length ? await fetchAllByIdChunks(vmIds, chunk => supabase.from('vehicle_model')
+      .select('id, sap_code, name, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct').in('id', chunk).order('id')) : []
+    const vmById = new Map<string, any>(vmRows.map((v: any) => [v.id, v]))
+    // Số tham chiếu SAP theo (OD, mã) — tải rơi về đây khi master thiếu quy cách (cùng luật với freightEstimate)
+    const sapRefs = await sapLoadRefs((dos ?? []).map((d: any) => d.delivery_code).filter(Boolean))
+    const doCodeById = new Map<string, string | null>((dos ?? []).map((d: any) => [d.id, d.delivery_code ?? null]))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
     const gdoModeById = new Map<string, string | null>((data ?? []).map((g: any) => [g.id, g.warehouse?.inventory_mode ?? null]))
@@ -802,7 +1012,10 @@ async function enrichGdos(data: any[]): Promise<any[]> {
         const stored = Number(i.pallets_estimated ?? 0)
         if (stored > 0) return stored
         const cpp = effCartonsPerPallet((i.material ?? null) as MatPalletUnits | null, g.warehouse_id ?? null)
-        return cpp > 0 ? qEntry(i, i.cartons_ordered) / cpp : 0
+        if (cpp > 0) return qEntry(i, i.cartons_ordered) / cpp
+        // Master thiếu Thùng/Pallet → số SAP của đúng (OD, mã) — CÙNG nguồn với cột Tải (23/09: cột Pallet in 9 còn Tải in 13/17 cho một xe)
+        const ref = sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw))
+        return ref?.sap_pallets != null && ref.sap_pallets > 0 ? Number(ref.sap_pallets) : 0
       }
       for (const i of gdoItems) {
         const material_code = i.material_code_raw ?? '(?)'
@@ -829,8 +1042,19 @@ async function enrichGdos(data: any[]): Promise<any[]> {
         ? { base_unit: uniformMat.base_unit ?? null, entry_unit: uniformMat.entry_unit ?? null, units_per_carton: uniformMat.units_per_carton ?? null }
         : null
 
+      // Tải THẬT của chuyến theo master (pallet thập phân + tấn) → % tải so sức chứa dòng xe con. Cột trên list tính
+      // SỐNG (không đọc freight_detail) để đổi dòng hàng là đổi ngay; cước thì đọc cột đã ghi (cần bảng cước).
+      const loads = gdoItems.map((i: any) => loadOfWithSap(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null,
+        sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw))))
+      const loadSum = sumLoads(loads)
+      const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
+      const tons = loadSum.kg == null ? null : Math.round(loadSum.kg) / 1000
+      const util = loadUtilization(vm, loadSum.pallets, tons)
+
       return {
         ...g,
+        vehicle_model: vm ? { id: vm.id, sap_code: vm.sap_code, name: vm.name, capacity_mode: vm.capacity_mode, max_pallets: vm.max_pallets, max_tons: vm.max_tons, tariff_unit: vm.tariff_unit, underload_pct: vm.underload_pct } : null,
+        load: { pallets: loadSum.pallets, tons, incomplete: loadSum.incomplete, ...util },
         do_count:          gdoDOs.length,
         distributor_names: distributorNames as string[],
         delivery_codes:    deliveryCodes as string[],
@@ -862,7 +1086,7 @@ export async function listGDOsSummary(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('outbound_gdos_summary', gdoRpcParams(ctx))
     if (error) throw new Error(error.message)
     return ok(res, data)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ── Option filter (Loại xe / ĐVVT / NPP / Mã hàng / Loại kho / Tình trạng) — DISTINCT dưới DB ──
@@ -880,7 +1104,7 @@ export async function listGDOsFacets(req: Request, res: Response) {
     })
     if (error) throw new Error(error.message)
     return ok(res, data)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Tra cứu chuyến xuất theo tem pallet ──────────────────────
@@ -914,7 +1138,7 @@ export async function lookupPalletGdos(req: Request, res: Response) {
     }
     const gdoIds = [...new Set(dos.map(d => d.gdo_id).filter((v): v is string => !!v))]
     return ok(res, gdoIds)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get GDO detail ───────────────────────────────────────────
@@ -932,7 +1156,7 @@ export async function getGDO(req: Request, res: Response) {
     const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
     const cartonPolicy = await warehouseCartonScanPolicy(r.warehouse_id, r.warehouse_type)
     return ok(res, { ...result, carton_scan_enabled: cartonPolicy.enabled, carton_scan_require_full: cartonPolicy.requireFull })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // PATCH /wms/outbound/scan-entries/:scanId/cartons — đính danh sách mã THÙNG vào 1 dòng scan pallet
@@ -967,7 +1191,7 @@ export async function attachCartonScans(req: Request, res: Response) {
       .update({ carton_scans: clean, updated_at: now() }).eq('id', scanId)
     if (error) return fail(res, `Lỗi lưu mã thùng: ${error.message}`, 500)
     return ok(res, { id: scanId, carton_count: clean.length })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── DVVT trên phiếu xuất khớp 1 ĐVVT hoặc NCC (code/alias/tên) → chuẩn hoá về TÊN chính tắc ──
@@ -1011,20 +1235,68 @@ async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): 
   return { error: 'Số chuyến đang bị nhiều người tạo cùng lúc — vui lòng bấm Lưu lại.', conflict: true }
 }
 
+// %Date máy áp theo Khách hàng/Kênh cho MỘT chuyến (đơn tạo tay · thêm dòng tay · sửa đơn).
+// Đường upload dùng `loadPolicyCtx` một lần cho cả file; ở đây chỉ một kho + một ship-to nên nạp
+// gọn rồi trả hàm thuần. Luật nằm ở services/dateRulePolicy.ts — KHÔNG chép lại thang ưu tiên.
+// Mức nay phụ thuộc LOẠI HÀNG của mã (khách A: FG01 ≥ 70 %, FG02 ≥ 35 ngày) và HẠN DÙNG khai ở
+// danh mục (mã không đo được date thì hệ thống tự đặt "không đòi mốc") ⇒ hàm trả về nhận thêm 2
+// trường đó. Thiếu chúng thì mọi dòng rơi về mức "mọi loại hàng" — sai âm thầm, không lỗi nào nổi.
+type DateRuleItemIn = {
+  header_text: string | null; date_required: number | null
+  category?: string | null; shelf_life_days?: number | null
+}
+async function autoDateRuleFor(
+  whId: string | null | undefined, shipto: string | null | undefined, actor: string | null,
+): Promise<(it: DateRuleItemIn) => DateRule | null> {
+  const ctx = await loadPolicyCtx([whId ?? null], [shipto ?? null])
+  return it => resolveDateRule(ctx, {
+    warehouseId: whId, shipto, headerText: it.header_text, dateRequired: it.date_required,
+    category: it.category ?? null, shelfLifeDays: it.shelf_life_days ?? null,
+    existing: null, actor,
+  }).rule
+}
+
 // ─── Kho phụ nội bộ (Warehouse.parent_warehouse_id) — luật quỹ đạo ───────────
 // Kho phụ CHỈ giao dịch với kho parent của nó: nhận chuyển kho từ parent, xuất trả parent,
 // hoặc xuất tiêu hao (không gắn ship-to). Cặp parent↔con được nới biển số khi Bắt đầu/Xuất luôn.
 type OrbitWh = { id: string; name: string; parent_warehouse_id: string | null }
+type ShiptoWh = { id: string; code: string; name: string; inventory_mode?: string | null; parent_warehouse_id?: string | null }
 
-async function orbitWhByShipto(shipto: string | null | undefined): Promise<OrbitWh | null> {
+/**
+ * KHO ĐÍCH của một mã ship-to — MỘT cửa tra cho cả 3 chỗ đang cần (chuyển kho tự sinh, luật quỹ đạo
+ * kho phụ, cặp nội bộ). Thứ tự: **danh mục Khách hàng** (khai tường minh, `Customer.warehouse_id`) →
+ * cột `code`/`shipto_codes` của Kho (tương thích dữ liệu cũ) → null = khách ngoài.
+ *
+ * Vì sao Khách hàng đứng TRƯỚC (user chốt 11/09): đo staging 11/09 thì **0/153 kho** có khai
+ * `shipto_codes`, nên đường duy nhất còn chạy là dò TÊN kho — đổi tên kho là luật hỏng âm thầm.
+ * Khách vào danh mục KHÔNG đồng nghĩa họ phải xác nhận hàng: chỉ khách có trỏ kho mới là kho nhận.
+ */
+async function warehouseByShipto(shipto: string | null | undefined): Promise<ShiptoWh | null> {
   const st = String(shipto ?? '').trim()
   if (!st) return null
+  const code = normShipto(st)
+  if (code) {
+    const { data: cust } = await supabase.from('Customer')
+      .select('warehouse_id, is_active').eq('ship_to_code', code).maybeSingle()
+    const c = cust as { warehouse_id: string | null; is_active: boolean } | null
+    if (c?.warehouse_id && c.is_active !== false) {
+      const { data } = await supabase.from('Warehouse')
+        .select('id, code, name, inventory_mode, parent_warehouse_id')
+        .eq('id', c.warehouse_id).eq('is_active', true).maybeSingle()
+      if (data) return data as ShiptoWh
+    }
+  }
   const stSafe = safeFilterValue(st)
   const { data } = await supabase.from('Warehouse')
-    .select('id, name, parent_warehouse_id')
+    .select('id, code, name, inventory_mode, parent_warehouse_id')
     .or(`code.eq.${stSafe},shipto_codes.cs.{${stSafe}}`)
     .eq('is_active', true).maybeSingle()
-  return (data as OrbitWh | null) ?? null
+  return (data as ShiptoWh | null) ?? null
+}
+
+async function orbitWhByShipto(shipto: string | null | undefined): Promise<OrbitWh | null> {
+  const w = await warehouseByShipto(shipto)
+  return w ? { id: w.id, name: w.name, parent_warehouse_id: w.parent_warehouse_id ?? null } : null
 }
 
 async function parentOfWh(whId: string | null | undefined): Promise<string | null> {
@@ -1108,23 +1380,70 @@ function uploadRowQtyBase(row: Record<string, any>, mu: MatUnitsQ | null | undef
   return thung * Number(mu!.units_per_carton) + parseDecimal(row['Hộp'])
 }
 
-// Thông tin pallet để tính nhặt lẻ (định mức chung + ngoại lệ theo kho).
+// Thông tin pallet để tính nhặt lẻ (định mức chung + ngoại lệ theo kho + loại kho để tra policy).
 export type MatPalletUnits = MatUnitsQ & {
   cartons_per_pallet?: number | null
   warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
+  category?: string | null
+  // Hạn dùng khai ở danh mục — thang Quy định date cần để biết mã này có ĐO ĐƯỢC date không
+  // (0/null + tem không mang HSD ⇒ hệ thống tự đặt "không đòi mốc", xem services/dateRulePolicy).
+  shelf_life_days?: number | null
 }
 
-// ĐỢT 3 — NHẶT LẺ THEO PALLET (user chốt 20/07): loose = phần base KHÔNG đủ xếp 1 pallet nguyên
-// (thùng lẻ < 1 pallet → phải nhặt từng thùng, không quét được nguyên pallet). SAP luôn key thùng chẵn
-// nên nhặt lẻ theo hộp-lẻ-dưới-thùng gần như không phát sinh → dùng ngưỡng PALLET. Tính trên qty base ĐÃ GỘP
-// (nhiều dòng cùng mã/NPP đã cộng lại) — KHÔNG tính per-dòng rồi cộng (sẽ thổi loose). Mã không entry /
-// thiếu cartons_per_pallet → 0 (không ép nhặt lẻ).
-export function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | null | undefined, warehouseId: string | null | undefined): number {
+// ĐỢT 3 — NHẶT LẺ THEO PALLET (user chốt 20/07) + SETTING 2 TẦNG (user chốt 24/08).
+// policy.mode: REMAINDER = phần base KHÔNG đủ xếp 1 pallet nguyên (hành vi gốc — thùng lẻ < 1 pallet
+// phải nhặt từng thùng); ALL = TOÀN BỘ SL vào nhặt lẻ (POSM soạn full trước); OFF = không nhặt lẻ.
+// Trần policy.max_cartons (THÙNG) chỉ áp REMAINDER: phần lẻ vượt trần → 0 (bốc nguyên pallet + khai
+// chỗ đặt phần dư nhanh hơn nhặt tay). Tính trên qty base ĐÃ GỘP (nhiều dòng cùng mã/NPP đã cộng lại)
+// — KHÔNG tính per-dòng rồi cộng (sẽ thổi loose). REMAINDER với mã không entry / thiếu
+// cartons_per_pallet → 0 (không ép nhặt lẻ). Policy lấy từ looseConfigOf(...).of(kho, loại của MÃ).
+export function loosePalletRemainder(
+  orderedBase: number, mu: MatPalletUnits | null | undefined,
+  warehouseId: string | null | undefined, policy: LoosePolicy,
+): number {
+  if (policy.mode === 'OFF') return 0
+  if (policy.mode === 'ALL') return Math.max(0, Number(orderedBase) || 0)
   if (!hasEntry(mu)) return 0
   const cpp = effCartonsPerPallet(mu, warehouseId ?? null)
   const palletBase = cpp > 0 ? cpp * Number(mu!.units_per_carton) : 0
   if (palletBase <= 0) return 0
-  return Number(orderedBase) % palletBase
+  const rem = Number(orderedBase) % palletBase
+  // Trần thùng: so trên PHẦN LẺ quy thùng của chính mã đó
+  if (policy.max_cartons != null && rem > policy.max_cartons * Number(mu!.units_per_carton)) return 0
+  return rem
+}
+
+// Resolver policy nhặt lẻ 2 tầng — mirror rotationConfigOf (2 câu cho CẢ danh sách kho; null = mọi
+// kho, cho upload nhiều kho). Trả HÀM tra theo (kho, loại kho của MÃ HÀNG) — caller tự ghép 2 map
+// là đường đẻ bản luật chép tay thứ hai.
+export interface LooseResolver {
+  of: (warehouseId: string | null | undefined, category: string | null | undefined) => LoosePolicy
+}
+export async function looseConfigOf(warehouseIds: string[] | null): Promise<LooseResolver> {
+  const FALLBACK: LoosePolicy = { mode: 'REMAINDER', max_cartons: null }
+  const ids = warehouseIds ? [...new Set(warehouseIds.filter(Boolean))] : null
+  if (ids && !ids.length) return { of: () => FALLBACK }
+  const whQ = () => supabase.from('Warehouse').select('id, loose_mode, loose_max_cartons')
+  const cfgQ = () => supabase.from('warehouse_type_configs').select('warehouse_id, type_code, loose_mode, loose_max_cartons')
+  const [whs, cfgs] = await Promise.all(ids
+    ? [fetchAllByIdChunks(ids, chunk => whQ().in('id', chunk).order('id')),
+       fetchAllByIdChunks(ids, chunk => cfgQ().in('warehouse_id', chunk).order('warehouse_id'))]
+    : [fetchAllRowsParallel(() => whQ()), fetchAllRowsParallel(() => cfgQ())])
+  const whById = new Map<string, Record<string, unknown>>()
+  const typesByWh = new Map<string, WhTypeConfigRow[]>()
+  for (const w of ((whs ?? []) as ({ id: string } & Record<string, unknown>)[])) whById.set(w.id, w)
+  for (const c of ((cfgs ?? []) as ({ warehouse_id: string } & WhTypeConfigRow)[])) {
+    const arr = typesByWh.get(c.warehouse_id) ?? []
+    arr.push(c)
+    typesByWh.set(c.warehouse_id, arr)
+  }
+  return {
+    of: (warehouseId, category) => {
+      const wh = warehouseId ? whById.get(warehouseId) : null
+      if (!wh) return FALLBACK
+      return resolveLoosePolicy(wh, typesByWh.get(warehouseId ?? '') ?? [], category ?? null)
+    },
+  }
 }
 
 // Form Tạo/Sửa bên Xuất KHÔNG sửa nhặt lẻ tay (user chốt 22/07): loose LUÔN TỰ TÍNH từ TỔNG
@@ -1132,17 +1451,43 @@ export function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | n
 async function loosePalletMats(codes: string[]): Promise<Map<string, MatPalletUnits>> {
   if (!codes.length) return new Map()
   const { data } = await supabase.from('Material')
-    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides')
+    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, category, shelf_life_days')
     .in('material_code', codes)   // form tay ≤ vài chục mã/đơn — không cần chunk
   return new Map(((data ?? []) as (MatPalletUnits & { material_code: string })[]).map(m => [String(m.material_code), m]))
+}
+
+// SỐ DO TRÙNG khi tạo TAY (user chốt 31/08 "Cảnh báo + xác nhận"): bấm đúp / 2 người cùng nhập
+// từng sinh 2 chuyến y hệt (đo dsub 31/08: 201/201) → nguy cơ soạn hàng + trừ tồn ĐÔI cho một đơn.
+// Đã có chuyến CHƯA HỦY cùng (Số DO, ngày xuất, kho) → 409 DUPLICATE_DO; tách xe CHỦ ĐÍCH
+// ("1 DO đi 2 xe") thì client gửi allow_duplicate_do=true để vượt có chủ ý. Chỉ áp cửa tạo TAY
+// (createGDO + quick-export) — upload có luật gộp theo key riêng, KHÔNG đi qua đây.
+async function duplicateDoError(
+  deliveryCode: string | undefined, deliveryDate: string | undefined,
+  warehouseId: string | null | undefined, excludeGdoId?: string,
+): Promise<string | null> {
+  const dc = String(deliveryCode ?? '').trim()
+  if (!dc || !deliveryDate) return null
+  const { data } = await supabase.from('OutboundDelivery')
+    .select('gdo_id, gdo:GroupDeliveryOrder!gdo_id(id, group_code, status, delivery_date, warehouse_id)')
+    .eq('delivery_code', dc).limit(50)
+  type DupRow = { gdo_id: string; gdo: { id: string; group_code: string | null; status: string; delivery_date: string | null; warehouse_id: string | null } | null }
+  for (const row of ((data ?? []) as unknown as DupRow[])) {
+    const g = row.gdo
+    if (!g || g.status === 'CANCELLED') continue
+    if (excludeGdoId && g.id === excludeGdoId) continue
+    if (String(g.delivery_date ?? '') !== String(deliveryDate)) continue
+    if (String(g.warehouse_id ?? '') !== String(warehouseId ?? '')) continue
+    return `Số DO "${dc}" đã có chuyến ${g.group_code ?? ''} cùng ngày ở kho này. Nếu đúng là tách 1 DO lên 2 xe, tick ô xác nhận rồi lưu lại.`
+  }
+  return null
 }
 
 export async function createGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items, allow_duplicate_do } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string
+      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; allow_duplicate_do?: boolean
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
@@ -1159,9 +1504,9 @@ export async function createGDO(req: Request, res: Response) {
     // nguyên — fail ở đây thì chưa ghi gì, không để lại GDO mồ côi)
     const allCodes = [...new Set(items.map(i => i.material_code))]
     const { data: mats } = await supabase.from('Material')
-      .select('id, material_code, category, base_unit, entry_unit, units_per_carton').in('material_code', allCodes)
-    const matMap = new Map<string, { id: string; category: string | null } & MatUnitsQ>(
-      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category, base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton }])
+      .select('id, material_code, category, base_unit, entry_unit, units_per_carton, shelf_life_days').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null; shelf_life_days: number | null } & MatUnitsQ>(
+      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category, shelf_life_days: m.shelf_life_days, base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton }])
     )
     const baseErr = invalidItemQtyBase(items, matMap)
     if (baseErr) return fail(res, baseErr, 422)
@@ -1177,6 +1522,12 @@ export async function createGDO(req: Request, res: Response) {
     const whData = warehouse_id ? (await supabase.from('Warehouse').select('code').eq('id', warehouse_id).single()).data : null
     const whCode = (whData as { code?: string } | null)?.code ? String((whData as { code: string }).code) : 'XX'
     const prefix = `${whCode}_X_${ddmmyy}_`
+
+    // Số DO trùng (chưa hủy, cùng ngày+kho) → 409 chờ xác nhận; cờ allow_duplicate_do = tách xe chủ đích
+    if (!allow_duplicate_do) {
+      const dupErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null)
+      if (dupErr) return fail(res, 409, 'DUPLICATE_DO', dupErr)
+    }
 
     const gdoId = randomUUID()
     const actor = req.user?.name || null
@@ -1195,33 +1546,56 @@ export async function createGDO(req: Request, res: Response) {
       id: doId, gdo_id: gdoId, delivery_code: delivery_code?.trim() || null,
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
-    if (doErr) return fail(res, doErr.message)
+    if (doErr) return fail(res, doErr)
+
+    // ĐÓNG CỬA SỔ ĐUA của check trên (2 lệnh Lưu bay lên CÙNG mili-giây đều qua pre-check —
+    // đo dsub 31/08): sau khi ghi DO, soi lại — vẫn còn chuyến khác trùng thì RÚT bản của mình
+    // (DO + GDO, items chưa ghi) và trả 409. Hai bên cùng rút → cả hai 409, user lưu lại là xong;
+    // không bao giờ còn chuyến đôi âm thầm.
+    if (!allow_duplicate_do) {
+      const raceErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null, gdoId)
+      if (raceErr) {
+        await supabase.from('OutboundDelivery').delete().eq('id', doId)
+        await supabase.from('GroupDeliveryOrder').delete().eq('id', gdoId)
+        return fail(res, 409, 'DUPLICATE_DO', raceErr)
+      }
+    }
 
     const looseMats = await loosePalletMats(allCodes)
+    const loosePol = await looseConfigOf(warehouse_id ? [warehouse_id] : null)
+    const autoDate = await autoDateRuleFor(warehouse_id ?? null, shipto_party ?? null, actor)
+    const autoApplied: AutoApplied[] = []
     const itemsToInsert = items.map(item => {
       const matInfo = matMap.get(item.material_code)
       const material_type = matInfo?.category ?? null
+      const header_text   = item.header_text?.trim() || null
+      const date_required = item.date_required || null
+      const itemId = randomUUID()
+      const rule = autoDate({ header_text, date_required, category: material_type, shelf_life_days: matInfo?.shelf_life_days ?? null })
+      if (rule) autoApplied.push({ id: itemId, warehouse_id: warehouse_id ?? null, material_id: matInfo?.id ?? null, rule })
       return {
-        id: randomUUID(), do_id: doId,
+        id: itemId, do_id: doId,
         material_id: matInfo?.id ?? null,
         material_code_raw: item.material_code,
         cartons_ordered: item.cartons_ordered,
         boxes_display: 0, weight: null, pallets_estimated: 0,
-        loose_picking: loosePalletRemainder(item.cartons_ordered, looseMats.get(item.material_code), warehouse_id ?? null),
-        header_text: item.header_text?.trim() || null,
+        loose_picking: loosePalletRemainder(item.cartons_ordered, looseMats.get(item.material_code), warehouse_id ?? null,
+          loosePol.of(warehouse_id ?? null, looseMats.get(item.material_code)?.category ?? matInfo?.category ?? null)),
+        header_text,
         batch_required: item.batch_required?.trim() || null,
-        date_required: item.date_required || null,
+        date_required,
         cs_responsible: item.cs_responsible?.trim() || null,
         material_type, export_type: export_type ?? null, cartons_scanned: 0,
-        status: 'PENDING', updated_at: now(),
+        status: 'PENDING', date_rule: rule, updated_at: now(),
       }
     })
     const { error: itemErr } = await supabase.from('OutboundItem').insert(itemsToInsert)
-    if (itemErr) return fail(res, itemErr.message)
+    if (itemErr) return fail(res, itemErr)
+    if (autoApplied.length) await flagNoStock(autoApplied)
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Tạo & Xuất luôn (quick-export — hàng không tem: mã no-QR / kho QTY) ──────
@@ -1233,10 +1607,10 @@ export async function createGDO(req: Request, res: Response) {
 export async function quickExportGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, gate_registration_id, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, gate_registration_id, items, allow_duplicate_do } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; license_plate?: string
-      gate_registration_id?: string | null
+      gate_registration_id?: string | null; allow_duplicate_do?: boolean
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
@@ -1260,7 +1634,7 @@ export async function quickExportGDO(req: Request, res: Response) {
     const dvvtRes = (await buildDvvtResolver())(dvvt)
     const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
-    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode, require_weigh_on_start, require_gate_on_start').eq('id', warehouse_id).maybeSingle()
+    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode, require_weigh_on_start, require_gate_on_start, work_mode, date_rule_policy').eq('id', warehouse_id).maybeSingle()
     if (!wh) return fail(res, 'Không tìm thấy kho xuất', 404)
     const whMode = (wh as { inventory_mode?: string | null }).inventory_mode ?? null
 
@@ -1317,6 +1691,13 @@ export async function quickExportGDO(req: Request, res: Response) {
         `Không đủ tồn: ${short.map(i => `${i.material_code} cần ${qtyLabel(Number(i.cartons_ordered), matMap.get(i.material_code))}, còn ${qtyLabel(availOf(i.material_code) ?? 0, matMap.get(i.material_code))}`).join(' · ')}`)
     }
 
+    // Số DO trùng (chưa hủy, cùng ngày+kho) → 409 chờ xác nhận — Xuất luôn trừ tồn NGAY nên chuyến
+    // đôi ở cửa này nặng hơn cả cửa Lưu thường (user chốt 31/08 "Cảnh báo + xác nhận")
+    if (!allow_duplicate_do) {
+      const dupErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null)
+      if (dupErr) return fail(res, 409, 'DUPLICATE_DO', dupErr)
+    }
+
     // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO, retry+jitter chống đụng số khi tạo đồng thời)
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const [yr, mo, dy] = today.split('-')
@@ -1345,26 +1726,56 @@ export async function quickExportGDO(req: Request, res: Response) {
       id: doId, gdo_id: gdoId, delivery_code: delivery_code.trim(),
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: t,
     })
-    if (doErr) return fail(res, doErr.message)
+    if (doErr) return fail(res, doErr)
 
     const qxLooseMats = await loosePalletMats(allCodes)
-    const itemRows = items.map(item => ({
-      id: randomUUID(), do_id: doId,
-      material_id: matMap.get(item.material_code)!.id,
-      material_code_raw: item.material_code,
-      cartons_ordered: item.cartons_ordered,
-      boxes_display: 0, weight: null, pallets_estimated: 0,
-      loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id),
-      header_text: item.header_text?.trim() || null,
-      batch_required: item.batch_required?.trim() || null,
-      date_required: item.date_required || null,
-      cs_responsible: item.cs_responsible?.trim() || null,
-      material_type: matMap.get(item.material_code)!.category,
-      export_type: export_type ?? null, cartons_scanned: 0,
-      status: 'PENDING', updated_at: t,
-    }))
+    const qxLoosePol = await looseConfigOf([warehouse_id])
+    // "Xuất luôn" TRỪ TỒN THẬT y như quét ⇒ phải đi qua CÙNG cửa gác quy định date, nếu không nó
+    // thành đường lách: kho đang chạy theo quy định date mà một nút bấm là hàng ra khỏi kho không
+    // cần khai mức nào (cùng lớp lỗi "nhặt lẻ là cửa sau" đã vá 10/09).
+    const qxAutoDate = await autoDateRuleFor(warehouse_id ?? null, shipto_party ?? null, actor)
+    const qxApplied: AutoApplied[] = []
+    const itemRows = items.map(item => {
+      const mi = matMap.get(item.material_code)!
+      const rule = qxAutoDate({
+        header_text: item.header_text?.trim() || null,
+        date_required: item.date_required || null,
+        category: mi.category, shelf_life_days: qxLooseMats.get(item.material_code)?.shelf_life_days ?? null,
+      })
+      const itemId = randomUUID()
+      if (rule) qxApplied.push({ id: itemId, warehouse_id: warehouse_id ?? null, material_id: mi.id, rule })
+      return {
+        id: itemId, do_id: doId,
+        material_id: mi.id,
+        material_code_raw: item.material_code,
+        cartons_ordered: item.cartons_ordered,
+        boxes_display: 0, weight: null, pallets_estimated: 0,
+        loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id,
+          qxLoosePol.of(warehouse_id, qxLooseMats.get(item.material_code)?.category ?? mi.category ?? null)),
+        header_text: item.header_text?.trim() || null,
+        batch_required: item.batch_required?.trim() || null,
+        date_required: item.date_required || null,
+        cs_responsible: item.cs_responsible?.trim() || null,
+        material_type: mi.category,
+        export_type: export_type ?? null, cartons_scanned: 0,
+        date_rule: rule,
+        status: 'PENDING', updated_at: t,
+      }
+    })
+    // Chặn TRƯỚC khi ghi dòng nào: chuyến đã tạo ở trên còn xoá được, chứ tồn đã trừ thì không.
+    {
+      const gated = { warehouse: { work_mode: (wh as { work_mode?: string | null }).work_mode ?? null,
+                                  date_rule_policy: (wh as { date_rule_policy?: string | null }).date_rule_policy ?? null } }
+      const bad = itemRows.find(r => dateRuleGateError(gated, r as DateRuleGateItem, 'lấy hàng'))
+      if (bad) {
+        await supabase.from('OutboundDelivery').delete().eq('id', doId)
+        await supabase.from('GroupDeliveryOrder').delete().eq('id', gdoId)
+        return fail(res, 422, 'DATE_RULE_REQUIRED', dateRuleGateError(gated, bad as DateRuleGateItem, 'lấy hàng')!)
+      }
+    }
     const { error: itemErr } = await supabase.from('OutboundItem').insert(itemRows)
-    if (itemErr) return fail(res, itemErr.message)
+    if (itemErr) return fail(res, itemErr)
+    if (qxApplied.length) await flagNoStock(qxApplied)
 
     // Ghi nhận từng mã: pool (CAS) + entry CHỈ cho mã no-QR hiệu lực — khớp quickExportExistingGDO/manualCompleteItem.
     // Kho NONE + mã thường: không theo dõi tồn → chỉ đánh item COMPLETED (không pool, không entry — trước đây
@@ -1413,11 +1824,12 @@ export async function quickExportGDO(req: Request, res: Response) {
         .update({ status: 'COMPLETED', completed_at: tEnd, scan_completed_at: tEnd, updated_by: actor, updated_at: tEnd })
         .eq('id', gdoId).neq('status', 'COMPLETED'),
     ])
+    await estimateFreightSafely([gdoId], 'ACTUAL')
     await maybeAutoCreateTransferOrder(gdoId, tEnd)
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── "Xuất luôn" trên GDO ĐÃ LƯU (kho QTY/NONE) — 1 bước: nhập biển số → tự Bắt đầu + ghi nhận mọi mã + Hoàn thành ──
@@ -1432,7 +1844,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select(`id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)`)
+      .select(`id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start,work_mode,date_rule_policy)`)
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
@@ -1482,13 +1894,20 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
     if (!doIds.length) return fail(res, 'Chuyến chưa có đơn/mặt hàng', 400)
     const { data: items } = await supabase.from('OutboundItem')
-      .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
+      .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
       .in('do_id', doIds)
     const pending = ((items ?? []) as Array<{
       id: string; material_id: string | null; material_code_raw: string | null
       cartons_ordered: number; cartons_scanned: number | null; status: string
+      date_rule?: unknown; date_required?: number | null
       material?: ({ material_code?: string | null; no_qr_tracking?: boolean | null } & MatUnitsQ) | null
     }>).filter(i => i.status !== 'COMPLETED')
+
+    // CÙNG cửa gác với quét/nhặt lẻ: "Xuất luôn" cũng trừ tồn thật, không được là đường lách.
+    for (const it of pending) {
+      const drErr = dateRuleGateError(gdo, it as DateRuleGateItem, 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
+    }
 
     const actor = req.user?.name || null
     // Ghi nhận từng mã TRƯỚC (trừ tồn). CHƯA đụng trạng thái GDO — nếu TẤT CẢ fail thì giữ nguyên PENDING
@@ -1564,9 +1983,10 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
         .update({ status: 'COMPLETED', completed_at: tEnd, scan_completed_at: tEnd, updated_by: actor, updated_at: tEnd })
         .eq('id', gdoId).neq('status', 'COMPLETED').select('id'),
     ])
+    await estimateFreightSafely([gdoId], 'ACTUAL')
     if ((winRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(gdoId, tEnd)
     return ok(res, await fetchGDOFull(gdoId))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Auto-create/SYNC TmsOrder khi GDO COMPLETED — theo cờ Xác nhận giao hàng ───
@@ -1602,16 +2022,8 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const custLabel = ((dos ?? [])[0] as { distributor_name?: string | null } | undefined)?.distributor_name?.trim() || 'KH'
 
   type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null; parent_warehouse_id?: string | null }
-  let destWh: DestWh | null = null
-  if (gdo.shipto_party) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const stSafe = safeFilterValue(gdo.shipto_party)
-    const { data: destWhData } = await supabase.from('Warehouse')
-      .select('id, code, name, inventory_mode, parent_warehouse_id')
-      .or(`code.eq.${stSafe},shipto_codes.cs.{${stSafe}}`)
-      .eq('is_active', true).maybeSingle()
-    destWh = (destWhData as DestWh) ?? null
-  }
+  // Kho đích: danh mục Khách hàng trước (khai tường minh), rồi mới tới code/shipto_codes của Kho.
+  let destWh: DestWh | null = gdo.shipto_party ? ((await warehouseByShipto(gdo.shipto_party)) as DestWh | null) : null
   // Fallback: KHÔNG có/không khớp shipto → dò TÊN khách khớp TÊN kho danh mục (gõ tay không bấm gợi ý,
   // đơn cũ chưa gắn shipto…). Khớp ĐÚNG 1 kho mới nhận (trùng tên nhiều kho → giữ OTHER cho an toàn).
   if (!destWh && custLabel !== 'KH') {
@@ -1777,7 +2189,7 @@ export async function deleteGDO(req: Request, res: Response) {
       .eq('gdo_id', req.params.id)
     await supabase.from('GroupDeliveryOrder').delete().eq('id', req.params.id)
     return ok(res, { success: true })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Update GDO (header + items, chỉ PENDING) ─────────────────
@@ -1844,79 +2256,29 @@ export async function updateGDO(req: Request, res: Response) {
     const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
     const t = now()
-    const gdoUpdates: Record<string, unknown> = {
-      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvtName, updated_at: t,
-    }
-    if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
-    if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null
-    if ('warehouse_type' in req.body) gdoUpdates.warehouse_type = warehouse_type ?? null
 
-    await supabase.from('GroupDeliveryOrder')
-      .update(gdoUpdates)
-      .eq('id', req.params.id)
-
+    // ══ VALIDATE HẾT trước — GHI sau (bug 31/08, DAYFLOW): bản cũ update header GDO/DO TRƯỚC rồi
+    // mới validate items, nên PUT bị TỪ CHỐI (400/422) vẫn đã ghi một nửa — đo thật: hạ SL dưới mức
+    // đã xuất trả 400 nhưng chuyến ĐANG XUẤT đã mất warehouse_id + dvvt (thành chuyến "ma" không
+    // thuộc kho nào trong khi tồn ĐÃ TRỪ). Mọi return fail từ đây tới mốc GHI phải đứng TRƯỚC mọi write.
     const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id, distributor_name, delivery_code').eq('gdo_id', req.params.id)
     const doList = dos ?? []
     const isMultiDO = doList.length > 1
 
-    // Update customer_name / delivery_code chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
-    if (!isMultiDO && doList.length === 1) {
-      // Chuyến SAP: NPP/Số DO cũng là dữ liệu nguồn — đổi thì 422 chỉ đường, không ghi đè âm thầm
-      if (gdoCur.origin === 'SAP') {
-        const d0 = doList[0] as { distributor_name?: string | null; delivery_code?: string | null }
-        const norm = (v: unknown) => String(v ?? '').trim()
-        if (customer_name !== undefined && norm(customer_name) !== norm(d0.distributor_name))
-          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
-        if ('delivery_code' in req.body && delivery_code !== undefined && norm(delivery_code) !== norm(d0.delivery_code))
-          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Số DO tại đây, sửa ở tab DO SAP (Dữ liệu bên ngoài).')
-      } else {
-        const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
-        if ('delivery_code' in req.body && delivery_code !== undefined)
-          singleDOPatch.delivery_code = delivery_code.trim() || null
-        await supabase.from('OutboundDelivery')
-          .update(singleDOPatch).eq('id', doList[0].id)
-      }
+    // Chuyến SAP: NPP/Số DO cũng là dữ liệu nguồn — đổi thì 422 chỉ đường, không ghi đè âm thầm
+    if (!isMultiDO && doList.length === 1 && gdoCur.origin === 'SAP') {
+      const d0 = doList[0] as { distributor_name?: string | null; delivery_code?: string | null }
+      const norm = (v: unknown) => String(v ?? '').trim()
+      if (customer_name !== undefined && norm(customer_name) !== norm(d0.distributor_name))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+      if ('delivery_code' in req.body && delivery_code !== undefined && norm(delivery_code) !== norm(d0.delivery_code))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Số DO tại đây, sửa ở tab DO SAP (Dữ liệu bên ngoài).')
     }
 
-    if (!items) return ok(res, await fetchGDOFull(req.params.id))
-
-    // BASE UNIT: số item = SỐ BASE — mã có entry phải nguyên (validate trước khi đụng items)
-    {
-      const codes = [...new Set(items.map(i => i.material_code).filter(Boolean))]
-      const { data: umats } = codes.length
-        ? await supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', codes)
-        : { data: [] }
-      const uMap = new Map<string, MatUnitsQ>(((umats ?? []) as any[]).map(m => [m.material_code, m]))
-      const bErr = invalidItemQtyBase(items as any[], uMap)
-      if (bErr) return fail(res, bErr, 422)
-    }
-
-    // Nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — bỏ qua loose_picking client gửi (user chốt 22/07)
-    const effWh = warehouse_id !== undefined ? (warehouse_id ?? null) : ((gdo as { warehouse_id?: string | null }).warehouse_id ?? null)
-    const looseMats = await loosePalletMats([...new Set(items.map(i => i.material_code).filter(Boolean))])
-    const looseOf = (i: { material_code: string; cartons_ordered: number }) =>
-      loosePalletRemainder(i.cartons_ordered, looseMats.get(i.material_code), effWh)
-
-    // Lấy tất cả items của GDO (across all DOs)
-    const doIds = doList.map((d: any) => d.id as string)
-    const { data: existingItems } = doIds.length
-      ? await supabase.from('OutboundItem')
-          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, export_type, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
-      : { data: [] }
-
-    // Chuyến SAP: Loại xe (export_type) cũng từ Kế hoạch xuất — update ghi đè per-item nên phải chặn ở đây.
-    // So khớp BỎ DẤU + hoa/thường: FE canonical hóa ("xe container"→"Xe Container") nên so thô sẽ chặn oan.
-    if (gdoCur.origin === 'SAP' && export_type !== undefined) {
-      const laxEt = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
-      const curEt = ((existingItems ?? []) as { export_type?: string | null }[]).find(i => i.export_type)?.export_type ?? ''
-      if (laxEt(export_type) !== laxEt(curEt))
-        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
-    }
-
-    // Đơn UPLOAD từ SAP (item có od_refs liên kết DO SAP) → KHÓA sửa số lượng ở form Xuất (user chốt 22/07):
-    // raw là nguồn sự thật — sửa ở đây sẽ lệch raw và bị engine đè lại khi SAP đổi. Sửa SL ở tab DO SAP.
-    // Đơn TAY (od_refs rỗng) sửa tự do như cũ. Các field khác (Batch/%Date/CS/ghi chú) vẫn sửa được.
+    // Dòng item hiện có — nạp TRƯỚC để validate; phần GHI phía dưới dùng lại, không nạp lần 2.
+    type ExItemRow = { id: string; do_id: string; material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number; od_refs?: unknown[] | null; export_type?: string | null; material?: MatUnitsQ | null }
+    let existingItems: ExItemRow[] = []
     const sapLinked = (ex: { od_refs?: unknown[] | null } | undefined | null) => ((ex?.od_refs as unknown[] | null)?.length ?? 0) > 0
     const sapQtyLockError = (ex: { material_code_raw?: string | null }) =>
       `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không sửa số lượng tại đây. Sửa Số lượng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
@@ -1925,40 +2287,152 @@ export async function updateGDO(req: Request, res: Response) {
     const sapMaterialLockError = (ex: { material_code_raw?: string | null }) =>
       `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không đổi mã hàng tại đây. Sửa ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
 
+    if (items) {
+      // BASE UNIT: số item = SỐ BASE — mã có entry phải nguyên (validate trước khi đụng items)
+      const codes = [...new Set(items.map(i => i.material_code).filter(Boolean))]
+      const { data: umats } = codes.length
+        ? await supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', codes)
+        : { data: [] }
+      const uMap = new Map<string, MatUnitsQ>(((umats ?? []) as any[]).map(m => [m.material_code, m]))
+      const bErr = invalidItemQtyBase(items as any[], uMap)
+      if (bErr) return fail(res, bErr, 422)
+
+      const doIds = doList.map((d: any) => d.id as string)
+      const { data: exData } = doIds.length
+        ? await supabase.from('OutboundItem')
+            .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, export_type, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
+        : { data: [] }
+      existingItems = (exData ?? []) as unknown as ExItemRow[]
+
+      // Chuyến SAP: Loại xe (export_type) cũng từ Kế hoạch xuất — update ghi đè per-item nên phải chặn ở đây.
+      // So khớp BỎ DẤU + hoa/thường: FE canonical hóa ("xe container"→"Xe Container") nên so thô sẽ chặn oan.
+      if (gdoCur.origin === 'SAP' && export_type !== undefined) {
+        const laxEt = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+        const curEt = existingItems.find(i => i.export_type)?.export_type ?? ''
+        if (laxEt(export_type) !== laxEt(curEt))
+          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+      }
+
+      if (isMultiDO) {
+        const existingById = new Map<string, ExItemRow>(existingItems.map(i => [i.id, i]))
+        const requestedDbIds = new Set(items.filter(i => i.db_id).map(i => i.db_id as string))
+        // Không xóa item đã xuất + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
+        for (const [id, ex] of existingById) {
+          if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
+            return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
+          }
+          if (!requestedDbIds.has(id) && sapLinked(ex)) {
+            return fail(res, sapDeleteLockError(ex), 422)
+          }
+        }
+        // Số thùng < đã xuất + KHÓA sửa SL / đổi mã đơn gốc SAP
+        for (const item of items) {
+          if (!item.db_id) continue
+          const ex = existingById.get(item.db_id)
+          if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
+            return fail(res, `Số lượng "${ex.material_code_raw}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
+          }
+          if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
+            return fail(res, sapQtyLockError(ex), 422)
+          }
+          // Khóa ĐỔI MÃ HÀNG dòng gốc SAP (kể cả chưa quét) — giữ liên kết SAP↔WMS, tránh reconcile báo "đổi mã" oan
+          if (ex && sapLinked(ex) && ex.material_code_raw !== item.material_code) {
+            return fail(res, sapMaterialLockError(ex), 422)
+          }
+        }
+        // Dòng thêm mới phải chỉ định NPP hợp lệ — validate TRƯỚC (bản cũ kiểm giữa lúc ghi:
+        // fail ở đây là các update item khác ĐÃ chạy xong)
+        const doByNpp = new Set(doList.map((d: any) => String(d.distributor_name ?? '').trim()))
+        for (const item of items.filter(i => !i.db_id && i.material_code)) {
+          if (!doByNpp.has(String(item.npp ?? '').trim()))
+            return fail(res, `Dòng "${item.material_code}": chưa chọn NPP hợp lệ cho dòng thêm mới`, 400)
+        }
+      } else if (doList.length === 1) {
+        const existingByCode = new Map<string, ExItemRow>(existingItems.map(i => [String(i.material_code_raw), i]))
+        const newCodes = new Set(items.map(i => i.material_code))
+        // Không xóa item có scan + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
+        for (const [code, ex] of existingByCode) {
+          if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
+            return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
+          }
+          if (!newCodes.has(code) && sapLinked(ex)) {
+            return fail(res, sapDeleteLockError(ex), 422)
+          }
+        }
+        // Số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
+        for (const item of items) {
+          const ex = existingByCode.get(item.material_code)
+          if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
+            return fail(res, `Số lượng "${item.material_code}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
+          }
+          if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
+            return fail(res, sapQtyLockError(ex), 422)
+          }
+        }
+      }
+    }
+
+    // ══ HẾT VALIDATE — từ đây mới GHI ═══════════════════════════════════════════
+    // Header GDO: CHỈ ghi field CÓ MẶT trong body (bug 31/08: bản cũ ghi vô điều kiện
+    // `warehouse_id ?? null` + `dvvt: dvvtName` nên PUT chỉ-sửa-items xoá trắng Kho + ĐVVT).
+    const gdoUpdates: Record<string, unknown> = { updated_at: t }
+    if (delivery_date !== undefined) gdoUpdates.delivery_date = delivery_date
+    if ('warehouse_id' in req.body) gdoUpdates.warehouse_id = warehouse_id ?? null
+    if ('dvvt' in req.body) gdoUpdates.dvvt = dvvtName
+    if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
+    if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null
+    if ('warehouse_type' in req.body) gdoUpdates.warehouse_type = warehouse_type ?? null
+
+    await supabase.from('GroupDeliveryOrder')
+      .update(gdoUpdates)
+      .eq('id', req.params.id)
+
+    // Update customer_name / delivery_code chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
+    // — cũng chỉ ghi field có mặt trong body (cùng lớp bug xoá trắng ở trên)
+    if (!isMultiDO && doList.length === 1 && gdoCur.origin !== 'SAP') {
+      const singleDOPatch: Record<string, unknown> = { updated_at: t }
+      if (customer_name !== undefined) singleDOPatch.distributor_name = customer_name ?? null
+      if ('delivery_code' in req.body && delivery_code !== undefined)
+        singleDOPatch.delivery_code = delivery_code.trim() || null
+      if (Object.keys(singleDOPatch).length > 1) {
+        await supabase.from('OutboundDelivery')
+          .update(singleDOPatch).eq('id', doList[0].id)
+      }
+    }
+
+    if (!items) return ok(res, await fetchGDOFull(req.params.id))
+
+    // Nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — bỏ qua loose_picking client gửi (user chốt 22/07)
+    const effWh = warehouse_id !== undefined ? (warehouse_id ?? null) : ((gdo as { warehouse_id?: string | null }).warehouse_id ?? null)
+    const looseMats = await loosePalletMats([...new Set(items.map(i => i.material_code).filter(Boolean))])
+    const upLoosePol = await looseConfigOf(effWh ? [effWh] : null)
+    const looseOf = (i: { material_code: string; cartons_ordered: number }) =>
+      loosePalletRemainder(i.cartons_ordered, looseMats.get(i.material_code), effWh,
+        upLoosePol.of(effWh, looseMats.get(i.material_code)?.category ?? null))
+
+    // export_type là field CẤP BODY áp per-item: chỉ đè khi body có gửi (không thì PUT chỉ-sửa-items
+    // xoá trắng Loại xe của mọi dòng — cùng lớp bug 31/08)
+    const exportTypePatch = 'export_type' in req.body ? { export_type: export_type ?? null } : {}
+
+    // %Date theo Khách hàng/Kênh — CHỈ cho dòng THÊM MỚI. Dòng đang có giữ nguyên quy tắc của nó
+    // (sửa số lượng/ghi chú không phải cơ hội để viết lại quyết định %Date của người khác).
+    const autoDate = await autoDateRuleFor(effWh, effShipto, actorOf(req))
+    const autoApplied: AutoApplied[] = []
+    // Loại hàng đọc thẳng từ `material_type` của chính dòng sắp ghi; hạn dùng truyền vào (không có
+    // trên dòng đơn) — thiếu hai thứ này thì mức theo loại hàng không bao giờ khớp.
+    const withAutoRule = <T extends { id: string; material_id: string | null; header_text: string | null; date_required: number | null; material_type?: string | null }>(
+      row: T, shelfLifeDays?: number | null,
+    ): T & { date_rule: DateRule | null } => {
+      const rule = autoDate({ ...row, category: row.material_type ?? null, shelf_life_days: shelfLifeDays ?? null })
+      if (rule) autoApplied.push({ id: row.id, warehouse_id: effWh, material_id: row.material_id, rule })
+      return { ...row, date_rule: rule }
+    }
+
     if (isMultiDO) {
-      // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất
-      const existingById = new Map<string, any>(
-        (existingItems ?? []).map((i: any) => [i.id as string, i])
-      )
+      // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất (đã validate ở trên)
+      const existingById = new Map<string, ExItemRow>(existingItems.map(i => [i.id, i]))
       const requestedDbIds = new Set(items.filter(i => i.db_id).map(i => i.db_id as string))
 
-      // Kiểm tra: không xóa item đã xuất + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
-      for (const [id, ex] of existingById) {
-        if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
-          return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
-        }
-        if (!requestedDbIds.has(id) && sapLinked(ex)) {
-          return fail(res, sapDeleteLockError(ex), 422)
-        }
-      }
-
-      // Kiểm tra số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
-      for (const item of items) {
-        if (!item.db_id) continue
-        const ex = existingById.get(item.db_id)
-        if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-          return fail(res, `Số lượng "${ex.material_code_raw}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
-        }
-        if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
-          return fail(res, sapQtyLockError(ex), 422)
-        }
-        // Khóa ĐỔI MÃ HÀNG dòng gốc SAP (kể cả chưa quét) — giữ liên kết SAP↔WMS, tránh reconcile báo "đổi mã" oan
-        if (ex && sapLinked(ex) && ex.material_code_raw !== item.material_code) {
-          return fail(res, sapMaterialLockError(ex), 422)
-        }
-      }
-
-      // Xóa items bị loại bỏ (chưa xuất)
       const toDeleteIds = [...existingById.keys()].filter(id => !requestedDbIds.has(id))
       if (toDeleteIds.length) {
         await deleteByIdsChunked('OutboundItem', toDeleteIds)
@@ -1987,7 +2461,7 @@ export async function updateGDO(req: Request, res: Response) {
             const ex = existingById.get(item.db_id!)!
             const scanned = Number(ex.cartons_scanned)
             const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t }
+            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, ...exportTypePatch, status: newStatus, updated_at: t }
             if (scanned === 0 && ex.material_code_raw !== item.material_code) {
               const matInfo = changedMatMap.get(item.material_code)
               fields.material_code_raw = item.material_code
@@ -1998,22 +2472,18 @@ export async function updateGDO(req: Request, res: Response) {
           })
       )
 
-      // Dòng THÊM MỚI (không db_id) ở đơn đa-NPP: gắn vào DO của NPP dòng đó chỉ định
+      // Dòng THÊM MỚI (không db_id) ở đơn đa-NPP: gắn vào DO của NPP dòng đó chỉ định (NPP đã validate)
       const newRows = items.filter(item => !item.db_id && item.material_code)
       if (newRows.length) {
         const doByNpp = new Map<string, string>(
           doList.map((d: any) => [String(d.distributor_name ?? '').trim(), d.id as string])
         )
-        for (const item of newRows) {
-          if (!doByNpp.has(String(item.npp ?? '').trim()))
-            return fail(res, `Dòng "${item.material_code}": chưa chọn NPP hợp lệ cho dòng thêm mới`, 400)
-        }
         const { data: newMats } = await supabase.from('Material')
-          .select('id, material_code, category').in('material_code', newRows.map(i => i.material_code))
-        const newMatMap = new Map((newMats ?? []).map((m: any) => [m.material_code as string, { id: m.id as string, category: m.category as string | null }]))
+          .select('id, material_code, category, shelf_life_days').in('material_code', newRows.map(i => i.material_code))
+        const newMatMap = new Map((newMats ?? []).map((m: any) => [m.material_code as string, { id: m.id as string, category: m.category as string | null, shelf_life_days: m.shelf_life_days as number | null }]))
         const inserts = newRows.map(item => {
           const matInfo = newMatMap.get(item.material_code)
-          return {
+          return withAutoRule({
             id: randomUUID(), do_id: doByNpp.get(String(item.npp ?? '').trim())!,
             material_id: matInfo?.id ?? null, material_code_raw: item.material_code,
             cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0,
@@ -2024,57 +2494,34 @@ export async function updateGDO(req: Request, res: Response) {
             cs_responsible: item.cs_responsible?.trim() || null,
             material_type: matInfo?.category ?? null, export_type: export_type ?? null,
             cartons_scanned: 0, status: 'PENDING', updated_at: t,
-          }
+          }, matInfo?.shelf_life_days ?? null)
         })
         const { error: insErr } = await supabase.from('OutboundItem').insert(inserts)
-        if (insErr) return fail(res, insErr.message)
+        if (insErr) return fail(res, insErr)
       }
     } else {
-      // Single-DO: CRUD đầy đủ, match bằng material_code
+      // Single-DO: CRUD đầy đủ, match bằng material_code (đã validate ở trên)
       const doId = doList[0]?.id
       if (!doId) return ok(res, await fetchGDOFull(req.params.id))
 
-      const existingByCode = new Map<string, any>(
-        (existingItems ?? []).map((i: any) => [i.material_code_raw as string, i])
-      )
+      const existingByCode = new Map<string, ExItemRow>(existingItems.map(i => [String(i.material_code_raw), i]))
       const newCodes = new Set(items.map(i => i.material_code))
 
-      // Kiểm tra xóa item có scan + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
-      for (const [code, ex] of existingByCode) {
-        if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
-          return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
-        }
-        if (!newCodes.has(code) && sapLinked(ex)) {
-          return fail(res, sapDeleteLockError(ex), 422)
-        }
-      }
-
-      // Kiểm tra số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
-      for (const item of items) {
-        const ex = existingByCode.get(item.material_code)
-        if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-          return fail(res, `Số lượng "${item.material_code}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
-        }
-        if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
-          return fail(res, sapQtyLockError(ex), 422)
-        }
-      }
-
       // Xóa items bị loại bỏ
-      const toDeleteIds = (existingItems ?? [])
-        .filter((i: any) => !newCodes.has(i.material_code_raw as string))
-        .map((i: any) => i.id as string)
+      const toDeleteIds = existingItems
+        .filter(i => !newCodes.has(String(i.material_code_raw)))
+        .map(i => i.id)
       if (toDeleteIds.length) {
         await deleteByIdsChunked('OutboundItem', toDeleteIds)
       }
 
       // Load material cho items mới
       const newCodes2 = items.filter(i => !existingByCode.has(i.material_code)).map(i => i.material_code)
-      let matMap = new Map<string, { id: string; category: string | null }>()
+      let matMap = new Map<string, { id: string; category: string | null; shelf_life_days: number | null }>()
       if (newCodes2.length) {
         const { data: mats } = await supabase.from('Material')
-          .select('id, material_code, category').in('material_code', newCodes2)
-        matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
+          .select('id, material_code, category, shelf_life_days').in('material_code', newCodes2)
+        matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category, shelf_life_days: m.shelf_life_days }]))
       }
 
       // Phân loại update / insert, thực thi song song
@@ -2085,11 +2532,11 @@ export async function updateGDO(req: Request, res: Response) {
         if (ex) {
           const scanned = Number(ex.cartons_scanned)
           const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
+          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, ...exportTypePatch, status: newStatus, updated_at: t } })
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null
-          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t })
+          toInsert.push(withAutoRule({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t }, matInfo?.shelf_life_days ?? null))
         }
       }
       await Promise.all([
@@ -2098,8 +2545,9 @@ export async function updateGDO(req: Request, res: Response) {
       ])
     }
 
+    if (autoApplied.length) await flagNoStock(autoApplied)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Patch GDO (delivery_date / status / misc fields) ────────
@@ -2180,7 +2628,10 @@ export async function patchGDO(req: Request, res: Response) {
           const { data: og } = await supabase.from('GroupDeliveryOrder').select('origin').eq('id', req.params.id).maybeSingle()
           const fixHint = (og as { origin?: string | null } | null)?.origin === 'SAP'
             ? 'Chuyến sinh từ SAP: sửa Số lượng DO ở tab DO SAP (Dữ liệu bên ngoài) → hệ thống dội xuống đơn (dòng đã quét sẽ vào "Cần xử lý" — bấm Áp SAP) → khớp rồi hoàn thành.'
-            : 'Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.'
+            // Câu này phải nói ĐỦ BA BƯỚC: đơn ĐANG XUẤT không sửa được (updateGDO chỉ nhận
+            // PENDING/PAUSED), nên bỏ bước "Tạm dừng" là đẩy người vận hành vào ngõ cụt —
+            // họ làm đúng lời hướng dẫn rồi nhận tiếp lỗi thứ hai (đo thật 06/09).
+            : 'Bấm "Tạm dừng" chuyến → sửa số lượng đơn xuống bằng thực xuất → "Tiếp tục" → Hoàn thành.'
           return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${qtyLabel(Number(e.cartons_scanned), e.material ?? null)}/${qtyLabel(Number(e.cartons_ordered), e.material ?? null)}). ${fixHint}`, 400)
         }
 
@@ -2230,13 +2681,19 @@ export async function patchGDO(req: Request, res: Response) {
     let upd = supabase.from('GroupDeliveryOrder').update(patch).eq('id', req.params.id)
     if (status === 'COMPLETED') upd = upd.neq('status', 'COMPLETED')
     const { data: updRows, error } = await upd.select('id')
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
+    // Hoàn thành → tính lại cước theo THỰC XUẤT (pallet/tấn từ số đã quét) — augment, không chặn
+    if (status === 'COMPLETED' && (updRows ?? []).length) await estimateFreightSafely([req.params.id], 'ACTUAL')
 
     if (status === 'COMPLETED' && (updRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(req.params.id, t)
+    // Chuyến chốt sổ ⇒ việc còn treo hết hiệu lực. Việc ĐÃ XONG giữ nguyên: đó là vết ai làm gì lúc
+    // nào, và bảng vẫn hiện chúng (gạch ngang) tới khi chuyến rời trạng thái đang chạy.
+    if (status === 'COMPLETED' && (updRows?.length ?? 0) > 0)
+      await cancelGdoTasks(req.params.id, 'GDO_COMPLETED', req.user?.name ?? null)
 
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Assign GDO (Giao đơn) ────────────────────────────────────
@@ -2254,10 +2711,10 @@ export async function assignGDO(req: Request, res: Response) {
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: now(), assigned_by: assigned_by ?? null, updated_at: now() })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Unassign GDO (Gỡ giao đơn) ──────────────────────────────
@@ -2266,15 +2723,172 @@ export async function unassignGDO(req: Request, res: Response) {
   try {
     if (!(await guardGdoScope(req, res, req.params.id))) return
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, started_at').eq('id', req.params.id).single()
-    if (!gdo?.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
+      .select('assigned_at, started_at').eq('id', req.params.id).maybeSingle()
+    // Chuyến không còn (đã xoá / link cũ) phải nói ĐÚNG lý do. Bản cũ nuốt lỗi `.single()` rồi rơi
+    // vào nhánh dưới, trả "Đơn chưa được giao đơn" — người dùng hiểu là chuyến vẫn còn và đi tìm
+    // nút giao đơn không tồn tại (đo 06/09, gói QA 52 phép [47]).
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến — có thể đã bị xoá', 404)
+    if (!gdo.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
     if (gdo?.started_at)   return fail(res, 'Cần gỡ bắt đầu trước khi gỡ giao đơn', 400)
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: null, assigned_by: null, status: 'PENDING', updated_at: now() })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── CỬA XUẤT có sức chứa xe (Directed Work đợt 1a, 09/09) ──────────────────
+// Cửa = Location kind DOCK_OUT trên Sơ đồ kho, `dock_capacity` = số xe tối đa (NULL = không giới hạn).
+// Chuyến ghi `dock_location_id`; suất cửa tính theo status IN_PROGRESS/PAUSED (nhả khi Hoàn thành / Huỷ /
+// bỏ Bắt đầu). Gán qua RPC gdo_assign_dock (khoá dòng cửa, đếm theo XE). Tình trạng cửa = RPC
+// warehouse_docks_status — 1 round-trip nuôi cả ô chọn lúc Bắt đầu lẫn lớp phủ trên bản vẽ.
+
+export type DockStatus = {
+  id: string; location_code: string; name: string; kind: 'DOCK_OUT' | 'DOCK_IN'
+  capacity: number | null; occupied: number
+  // Loại kho cửa phục vụ (10/09). Rỗng = mọi loại — bản vẽ cũ giữ nguyên hành vi.
+  serve_categories: string[]
+  // `vehicle_type` + `container_number` (10/09, migration 20260910i): sơ đồ 3D vẽ xe container khác xe tải.
+  // RPC tra hộ vì loại xe không nằm trên chuyến (biển số → Vehicle → VehicleType, chưa gắn biển thì lấy ở lệnh VC).
+  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null; vehicle_type?: string | null; container_number?: string | null }[]
+  grid_x: number | null; grid_y: number | null
+}
+
+async function docksStatusOf(warehouseId: string | null | undefined): Promise<DockStatus[]> {
+  if (!warehouseId) return []
+  const { data, error } = await supabase.rpc('warehouse_docks_status', { p_warehouse_id: warehouseId })
+  if (error) throw error
+  return Array.isArray(data) ? (data as DockStatus[]) : []
+}
+
+// "Còn trống: Cửa Pallet 1 (0/1), Cửa SCA (0/1)" — người bấm biết đi đâu, không phải mở bản vẽ mới biết
+function dockFreeHint(docks: DockStatus[]): string {
+  const free = docks.filter(d => d.capacity == null || d.occupied < d.capacity)
+  if (!free.length) return 'Hiện KHÔNG còn cửa nào trống — chờ xe đang bốc Hoàn thành chuyến.'
+  return 'Còn trống: ' + free.map(d => `${d.name} (${d.occupied}/${d.capacity ?? '∞'})`).join(', ') + '.'
+}
+
+type AssignDockResult =
+  | { ok: true; occupied: number; capacity: number | null }
+  | { ok: false; status: number; code: string; message: string }
+async function assignDock(gdoId: string, dockId: string, plate: string | null, actor: string | null): Promise<AssignDockResult> {
+  const { data, error } = await supabase.rpc('gdo_assign_dock', { p_gdo_id: gdoId, p_dock_id: dockId, p_plate: plate, p_actor: actor })
+  if (error) throw error
+  const r = (data ?? {}) as { ok?: boolean; error?: string; occupied?: number; capacity?: number | null; plates?: string[]; dock_name?: string }
+  if (r.ok) return { ok: true, occupied: r.occupied ?? 0, capacity: r.capacity ?? null }
+  switch (r.error) {
+    case 'NOT_FOUND':       return { ok: false, status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy cửa này trên Sơ đồ kho (đã gỡ?)' }
+    case 'NOT_DOCK':        return { ok: false, status: 400, code: 'NOT_DOCK', message: 'Ô này không phải cửa xuất' }
+    case 'WRONG_WAREHOUSE': return { ok: false, status: 400, code: 'WRONG_WAREHOUSE', message: 'Cửa này thuộc kho khác, không phải kho của chuyến' }
+    case 'DOCK_FULL':       return { ok: false, status: 422, code: 'DOCK_FULL',
+      message: `${r.dock_name ?? 'Cửa'} đang đủ ${r.occupied}/${r.capacity} xe${(r.plates ?? []).length ? ` (${(r.plates ?? []).join(', ')})` : ''} — chờ xe đó Hoàn thành chuyến hoặc chọn cửa khác.` }
+    default:                return { ok: false, status: 400, code: 'VALIDATION_ERROR', message: 'Không gán được cửa' }
+  }
+}
+
+// GET /outbound/docks?warehouse_id= — tình trạng cửa xuất/nhập của kho (ô chọn lúc Bắt đầu, lớp phủ Cửa trên bản vẽ)
+export async function listDocks(req: Request, res: Response) {
+  try {
+    const whId = String(req.query.warehouse_id ?? '')
+    if (!whId || whId.length > 100 || searchLooksLikeInjection(whId)) return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã kho')
+    // PHẠM VI KHO: tham số do người gọi đặt — kho ngoài phạm vi thì 403 (không lộ biển số xe kho khác)
+    const myWhs = scopeWhIds(req)
+    if (myWhs && !myWhs.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    return ok(res, await docksStatusOf(whId))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// PATCH /outbound/:id/dock { dock_location_id } — đổi cửa giữa chuyến (cùng luật đếm xe như lúc Bắt đầu)
+export async function changeDockGDO(req: Request, res: Response) {
+  try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
+    const dockId = (req.body ?? {}).dock_location_id
+    if (typeof dockId !== 'string' || !dockId || dockId.length > 100 || searchLooksLikeInjection(dockId))
+      return fail(res, 400, 'BAD_ID', 'Thiếu hoặc sai mã cửa')
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('started_at, status, license_plate, dock_location_id, warehouse_id, warehouse_type').eq('id', req.params.id).maybeSingle()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến', 404)
+    const g = gdo as { started_at: string | null; status: string; license_plate: string | null; dock_location_id: string | null; warehouse_id: string | null; warehouse_type: string | null }
+    if (!g.started_at || !['IN_PROGRESS', 'PAUSED'].includes(g.status))
+      return fail(res, 'Chỉ đổi cửa cho chuyến ĐANG XUẤT (đã Bắt đầu, chưa Hoàn thành)', 400)
+    if (g.dock_location_id === dockId) return ok(res, await fetchGDOFull(req.params.id))
+    // Cửa phục vụ đúng Loại kho (10/09) — cùng luật với lúc Bắt đầu, đừng để đổi cửa thành đường lách
+    const chDocks = (await docksStatusOf(g.warehouse_id)).filter(d => d.kind === 'DOCK_OUT')
+    const chPicked = chDocks.find(d => d.id === dockId)
+    if (chPicked && !servesCategory(chPicked, g.warehouse_type))
+      return fail(res, 422, 'DOCK_CATEGORY_MISMATCH', `${chPicked.name} chỉ nhận ${(chPicked.serve_categories ?? []).join(', ')} — chuyến này chở ${g.warehouse_type ?? 'loại khác'}. ${dockFreeHint(chDocks.filter(d => servesCategory(d, g.warehouse_type)))}`)
+    const r = await assignDock(req.params.id, dockId, normalizePlate(g.license_plate) ?? null, req.user?.name ?? null)
+    if (!r.ok) return fail(res, r.status, r.code, r.message)
+    // Cửa đổi ⇒ đường đi đổi ⇒ thứ tự việc phải tính lại từ cửa mới (kế hoạch cũ chỉ về cửa cũ)
+    await planGdoTasks(req.params.id, req.user?.name ?? null)
+    return ok(res, await fetchGDOFull(req.params.id))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── CÁCH LÀM VIỆC của chuyến (Directed Work 1c) ────────────────────────────
+// Cờ 2 tầng Kho + Loại kho, ghép bằng resolveWorkMode (utils/putaway) — KHÔNG suy lại ở đây.
+// Chuyến chở LẪN loại (`FG01+PM01`): chạy Hướng dẫn nếu BẤT KỲ loại nào của chuyến bật — hàng đã
+// lên cùng một xe thì không tách vai được, thà chỉ đường cho phần chỉ đường được.
+async function workModeOfGdo(
+  warehouseId: string | null, whRow: Record<string, unknown> | null, tripCategories: string | null,
+): Promise<'MANUAL' | 'GUIDED'> {
+  if (!warehouseId || !whRow) return 'MANUAL'
+  const { data: cfgs } = await supabase.from('warehouse_type_configs')
+    .select('type_code, work_mode, lower_from_level').eq('warehouse_id', warehouseId)
+  const rows = (cfgs ?? []) as WhTypeConfigRow[]
+  const cats = String(tripCategories ?? '').split('+').map(s => s.trim()).filter(Boolean)
+  if (!cats.length) return resolveWorkMode(whRow, rows, null).mode
+  return cats.some(c => resolveWorkMode(whRow, rows, c).mode === 'GUIDED') ? 'GUIDED' : 'MANUAL'
+}
+
+const MAX_FORKLIFT_DRIVERS = 20   // trần khai rõ: một chuyến không có 20 lái xe nâng
+
+// Danh sách lái xe nâng chuyển: id phải là nhân sự ĐANG LÀM và THUỘC KHO của chuyến (id lạ = 400,
+// không im lặng bỏ qua — bảng việc lọc theo danh sách này nên sai một id là mất người nhận việc).
+async function validForkliftIds(
+  ids: unknown, legacyId: string | undefined, warehouseId: string | null,
+): Promise<{ ids: string[]; names: string | null } | { error: string; code: string }> {
+  const raw = Array.isArray(ids) ? ids : (legacyId ? [legacyId] : [])
+  const list = [...new Set(raw.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(s => s.trim()))]
+  if (!list.length) return { ids: [], names: null }
+  if (list.length > MAX_FORKLIFT_DRIVERS) return { error: `Tối đa ${MAX_FORKLIFT_DRIVERS} người lái xe nâng cho một chuyến`, code: 'TOO_MANY_FORKLIFT' }
+  if (list.some(id => id.length > 100 || searchLooksLikeInjection(id))) return { error: 'Mã nhân sự không hợp lệ', code: 'BAD_ID' }
+  const { data, error } = await supabase.from('Employee')
+    .select('id, name, warehouse_scope, job_title_id').in('id', list).eq('is_active', true).limit(MAX_FORKLIFT_DRIVERS)
+  if (error) throw error
+  const found = (data ?? []) as { id: string; name: string | null; warehouse_scope: string | null; job_title_id: string | null }[]
+  const missing = list.filter(id => !found.some(f => f.id === id))
+  if (missing.length) return { error: 'Có người không còn làm việc hoặc không tồn tại — chọn lại', code: 'EMPLOYEE_NOT_FOUND' }
+  // VAI TRÒ đọc theo CỜ `JobTitle.is_forklift_driver`, KHÔNG so tên tiếng Việt (luật 14/08).
+  // Trước 18/09 cửa này chỉ gác "có thật" + "đúng kho" ⇒ Admin và tài khoản mô phỏng lọt vào
+  // `forklift_driver_ids` của 3 chuyến đang xuất: bảng "Cần đưa ra" giao việc cho người không lái
+  // xe nâng, và khối Giám sát → "theo người" đếm sai công cả kho. Ô chọn trên màn có lọc nhưng lọc
+  // ở FE thì gọi thẳng API vẫn ghi được — lọc là gợi ý, gác mới là luật.
+  const jtIds = [...new Set(found.map(f => f.job_title_id).filter((x): x is string => !!x))]
+  const { data: jts } = jtIds.length
+    // ≤ MAX_FORKLIFT_DRIVERS chức danh (jtIds rút từ chính `list` đã kẹp trần) — không dính cap 1000
+    ? await db.from('JobTitle').select('id, is_forklift_driver').in('id', jtIds).limit(MAX_FORKLIFT_DRIVERS)
+    : { data: [] as { id: string; is_forklift_driver: boolean }[] }
+  const okJt = new Set((jts ?? []).filter(j => j.is_forklift_driver).map(j => j.id))
+  const notDriver = found.filter(f => !f.job_title_id || !okJt.has(f.job_title_id))
+  if (notDriver.length) {
+    return { error: `${notDriver.map(o => o.name ?? o.id).join(', ')} không phải chức danh lái xe nâng — tick "Là chức danh lái xe nâng" ở Chức danh nếu đúng người`, code: 'NOT_FORKLIFT' }
+  }
+  // Phạm vi kho của nhân sự nằm ở bảng `UserWarehouseAccess` (KHÔNG phải cột trên Employee).
+  // Người phạm vi toàn quốc thì kho nào cũng làm được.
+  if (warehouseId) {
+    const assigned = found.filter(f => f.warehouse_scope !== 'NATIONAL')
+    if (assigned.length) {
+      const { data: acc } = await supabase.from('UserWarehouseAccess')
+        .select('employee_id').eq('warehouse_id', warehouseId).in('employee_id', assigned.map(f => f.id)).limit(MAX_FORKLIFT_DRIVERS)
+      const okIds = new Set(((acc ?? []) as { employee_id: string }[]).map(a => a.employee_id))
+      const outside = assigned.filter(f => !okIds.has(f.id))
+      if (outside.length) return { error: `${outside.map(o => o.name ?? o.id).join(', ')} không được giao kho của chuyến này`, code: 'FORKLIFT_OUT_OF_SCOPE' }
+    }
+  }
+  const byId = new Map(found.map(f => [f.id, f.name ?? '']))
+  return { ids: list, names: list.map(id => byId.get(id) ?? '').filter(Boolean).join(', ') || null }
 }
 
 // ─── Start GDO (Bắt đầu xuất kho) ────────────────────────────
@@ -2283,14 +2897,18 @@ export async function startGDO(req: Request, res: Response) {
   try {
     const {
       license_plate, container_number, exporter_name,
-      loader_name, forklift_driver_id, forklift_driver_names,
-      gate_registration_id, allow_shared_gate,
+      loader_name, forklift_driver_id, forklift_driver_names, forklift_driver_ids,
+      gate_registration_id, allow_shared_gate, dock_location_id,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
+      forklift_driver_ids?: string[]
       gate_registration_id?: string | null; allow_shared_gate?: boolean
+      dock_location_id?: string | null
     }
     if (!(await guardGdoScope(req, res, req.params.id))) return
+    if (dock_location_id != null && (typeof dock_location_id !== 'string' || dock_location_id.length > 100 || searchLooksLikeInjection(dock_location_id)))
+      return fail(res, 400, 'BAD_ID', 'Mã cửa không hợp lệ')
 
     // Khóa cứng 1 chuyến = 1 phiếu: nếu chuyến cổng đã gắn GDO khác → chặn, trừ khi user xác nhận đặc biệt (bốc thêm đơn cùng chuyến)
     if (gate_registration_id && !allow_shared_gate) {
@@ -2306,7 +2924,7 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select(`assigned_at, started_at, status, warehouse_id, shipto_party, delivery_date, weigh_waived_at, gate_waived_at, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)`).eq('id', req.params.id).maybeSingle()
+      .select(`assigned_at, started_at, status, warehouse_id, warehouse_type, shipto_party, delivery_date, weigh_waived_at, gate_waived_at, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start,work_mode,lower_from_level)`).eq('id', req.params.id).maybeSingle()
     // Chặn start đúp/start ngược trạng thái: 2 người cùng bấm → người sau đè biển số người trước;
     // tệ hơn, start trên chuyến ĐÃ hoàn thành kéo status về IN_PROGRESS (lách quyền uncomplete).
     const curStatus = (cur as { status?: string } | null)?.status
@@ -2350,6 +2968,41 @@ export async function startGDO(req: Request, res: Response) {
       }
     }
 
+    // RULE 3 — CỬA XUẤT (Directed Work đợt 1a, user chốt 09/09): kho CÓ cửa xuất trên Sơ đồ kho ⇒ chuyến phải
+    // ghi đậu cửa nào; cửa có số xe tối đa, đầy thì xe sau chờ xe trước Hoàn thành. Kho chưa vẽ cửa = hành vi cũ,
+    // không cờ riêng (ai vẽ cửa đầu tiên cho kho là tự bật luật — đúng ý "kho có cửa thì mới bắt").
+    // Cặp nội bộ (Ba Vì → Chế biến) MIỄN: hàng đi xe nâng trong khuôn viên, không lên xe tải ở cửa.
+    // Đếm suất theo XE (cùng biển không tốn suất) — nằm trong RPC gdo_assign_dock (khoá dòng cửa).
+    const startWhId = (cur as { warehouse_id?: string | null } | null)?.warehouse_id ?? null
+    let dockId: string | null = null
+    if (!isInternal) {
+      const docks = await docksStatusOf(startWhId)
+      // CỬA PHỤC VỤ LOẠI KHO NÀO (10/09): kho thật đang phân cửa bằng TÊN ("Cửa FG01", "Cửa sca") —
+      // nay khai được. Khớp GIAO ≥ 1 với loại hàng chuyến chở (chuyến chở lẫn `FG01+PM01` vào được
+      // cửa khai một trong hai); cửa để trống = phục vụ mọi loại.
+      const tripCats = (cur as { warehouse_type?: string | null } | null)?.warehouse_type ?? null
+      const outDocks = docks.filter(d => d.kind === 'DOCK_OUT')
+      const fitDocks = outDocks.filter(d => servesCategory(d, tripCats))
+      if (outDocks.length) {
+        if (!dock_location_id) return fail(res, 422, 'DOCK_REQUIRED', `Kho này có ${outDocks.length} cửa xuất trên Sơ đồ kho — chọn cửa xe đang đậu. ${dockFreeHint(fitDocks.length ? fitDocks : outDocks)}`)
+        const picked = outDocks.find(d => d.id === dock_location_id)
+        if (picked && !servesCategory(picked, tripCats))
+          return fail(res, 422, 'DOCK_CATEGORY_MISMATCH', `${picked.name} chỉ nhận ${(picked.serve_categories ?? []).join(', ')} — chuyến này chở ${tripCats ?? 'loại khác'}. ${dockFreeHint(fitDocks)}`)
+        const r = await assignDock(req.params.id, dock_location_id, normalizePlate(license_plate) ?? null, req.user?.name ?? null)
+        if (!r.ok) return fail(res, r.status, r.code, r.message + (r.code === 'DOCK_FULL' ? ` ${dockFreeHint(fitDocks.length ? fitDocks : outDocks)}` : ''))
+        dockId = dock_location_id
+      }
+    }
+
+    // XE NÂNG CHUYỂN — kho HƯỚNG DẪN bắt buộc chọn ít nhất một người (user chốt 10/09 vòng 6):
+    // bảng "Cần đưa ra" lọc việc theo danh sách này, không có ai thì kế hoạch sinh ra mà không ai
+    // nhận. Kho Thủ công giữ nguyên: tuỳ chọn như hôm nay. "Xuất luôn" không đi qua đây.
+    const startDrivers = await validForkliftIds(forklift_driver_ids, forklift_driver_id, startWhId)
+    if ('error' in startDrivers) return fail(res, 400, startDrivers.code, startDrivers.error)
+    const startWorkMode = await workModeOfGdo(startWhId, (cur as { warehouse?: Record<string, unknown> | null } | null)?.warehouse ?? null, (cur as { warehouse_type?: string | null } | null)?.warehouse_type ?? null)
+    if (startWorkMode === 'GUIDED' && !startDrivers.ids.length)
+      return fail(res, 422, 'FORKLIFT_REQUIRED', 'Kho này chạy chế độ Hướng dẫn — chọn ít nhất một người lái xe nâng chuyển để giao việc lấy hàng.')
+
     // CAS trên started_at: 2 người bấm Bắt đầu đồng thời → chỉ 1 người thắng, người sau 409
     // (không thì người sau đè biển số/phiếu cổng và có thể gắn 2 phiếu cân vào cùng chuyến)
     const { data: startedRows, error } = await supabase.from('GroupDeliveryOrder')
@@ -2359,21 +3012,64 @@ export async function startGDO(req: Request, res: Response) {
         container_number:       container_number       ?? null,
         exporter_name:          exporter_name          ?? null,
         loader_name:            loader_name            ?? null,
-        forklift_driver_id:     forklift_driver_id     ?? null,
-        forklift_driver_names:  forklift_driver_names  ?? null,
+        // Ghi CẢ HAI dạng: `forklift_driver_ids` là nguồn mới (nhiều người, lọc bảng việc), 2 cột cũ
+        // giữ đồng bộ để bundle PWA cũ + báo cáo cũ đọc được (id = người đầu, names = tên nối).
+        forklift_driver_ids:    startDrivers.ids.length ? startDrivers.ids : null,
+        forklift_driver_id:     startDrivers.ids[0]     ?? forklift_driver_id ?? null,
+        forklift_driver_names:  startDrivers.names      ?? forklift_driver_names ?? null,
         gate_registration_id:   gate_registration_id   ?? null,
+        // Ghi lại cửa TRONG cùng câu CAS: hai người cùng bấm, RPC của cả hai đều có thể đã chạy — người
+        // thắng CAS mới là người quyết định cửa của chuyến (người thua không để lại cửa của mình trên dòng).
+        ...(dockId ? { dock_location_id: dockId, dock_assigned_at: now() } : {}),
         ...(autoAssign ? { assigned_at: now(), assigned_by: req.user?.name ?? null } : {}),
         status:     'IN_PROGRESS',
         updated_at: now(),
       })
       .eq('id', req.params.id).is('started_at', null).select('id')
-    if (error) return fail(res, error.message)
-    if (!startedRows || startedRows.length === 0)
+    if (error || !startedRows || startedRows.length === 0) {
+      // Thua CAS (người khác đã Bắt đầu) hoặc lỗi ghi → NHẢ suất cửa vừa giữ ở RPC (dòng PENDING gán cửa <2 phút
+      // đang được tính là chiếm suất — 20260910b). Chỉ nhả khi chuyến vẫn chưa started (của người thắng thì giữ).
+      if (dockId) await supabase.from('GroupDeliveryOrder').update({ dock_location_id: null, dock_assigned_at: null }).eq('id', req.params.id).is('started_at', null)
+      if (error) return fail(res, error)
       return fail(res, 'Chuyến vừa được người khác Bắt đầu — tải lại trang để xem trạng thái mới', 409)
+    }
     await linkWeighTicket(weighTicketId, req.params.id)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
+    // KẾ HOẠCH LẤY HÀNG (Directed Work 1c) — chạy SAU khi đã thắng CAS, và KHÔNG BAO GIỜ làm Bắt đầu
+    // hỏng: lập kế hoạch lỗi thì chuyến vẫn xuất như chế độ Thủ công, chỉ kèm cảnh báo trên màn hình.
+    // Không fire-and-forget (`void fn()`) — serverless đóng băng lambda ngay sau response.
+    const plan = startWorkMode === 'GUIDED' ? await planGdoTasks(req.params.id, req.user?.name ?? null) : null
     const result = await fetchGDOFull(req.params.id)
+    // BÁO NGƯỜI ĐƯỢC GIAO XE NÂNG (12/09): trước đó tài xế chỉ biết có việc nếu tự mở trang — chuông
+    // (feed Cá nhân + push theo cài đặt "Được giao việc") là đường duy nhất tới người đang ngồi trên xe.
+    // Không báo cho chính người bấm Bắt đầu; url mang id chuyến để mỗi chuyến là một thông báo riêng.
+    await notifyForkliftDrivers(startDrivers.ids, req.user?.sub ?? null, req.user?.name ?? null,
+      result as { group_code?: string | null; license_plate?: string | null } | null, req.params.id)
+    if (plan && (plan.warning || plan.unset_items > 0)) {
+      return ok(res, {
+        ...(result as Record<string, unknown>),
+        plan_warning: plan.warning,
+        plan_unset_items: plan.unset_items,
+        plan_created: plan.created,
+      })
+    }
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/** Chuông cho lái xe nâng vừa được gắn vào chuyến (Bắt đầu / Sửa thông tin xe). Không bao giờ throw. */
+async function notifyForkliftDrivers(
+  ids: string[], selfId: string | null, actor: string | null,
+  gdo: { group_code?: string | null; license_plate?: string | null } | null, gdoId: string,
+) {
+  const targets = ids.filter(id => id && id !== selfId)
+  if (!targets.length) return
+  const code = gdo?.group_code ?? gdoId
+  await notifyEmployees(targets, 'ASSIGN', 'assign', {
+    title: `Chuyến ${code}${gdo?.license_plate ? ` · ${gdo.license_plate}` : ''}`,
+    body: `${actor ?? 'Thủ kho'} giao bạn làm xe nâng chuyển cho chuyến này — mở Việc cần làm để xem thứ tự lấy hàng`,
+    url: `/wms/directed?trip=${gdoId}`,
+    tag: `directed-${gdoId}`,
+  })
 }
 
 // ─── Duyệt bỏ qua TỪNG RULE — 2 tình huống, 2 action, 2 quyền riêng (user chốt 01/08:
@@ -2391,7 +3087,7 @@ export async function waiveWeighGDO(req: Request, res: Response) {
         weigh_waive_reason: String(reason ?? '').trim() || null, updated_at: now(),
       })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2409,7 +3105,7 @@ export async function waiveGateGDO(req: Request, res: Response) {
         gate_waive_reason: String(reason ?? '').trim() || null, updated_at: now(),
       })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2422,7 +3118,7 @@ export async function unwaiveGateGDO(req: Request, res: Response) {
     const { data, error } = await supabase.from('GroupDeliveryOrder')
       .update({ gate_waived_at: null, gate_waived_by: null, gate_waive_reason: null, updated_at: now() })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2435,7 +3131,7 @@ export async function unwaiveWeighGDO(req: Request, res: Response) {
     const { data, error } = await supabase.from('GroupDeliveryOrder')
       .update({ weigh_waived_at: null, weigh_waived_by: null, weigh_waive_reason: null, updated_at: now() })
       .eq('id', req.params.gdoId).select('id').maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
     return ok(res, await fetchGDOFull(req.params.gdoId))
   } catch (e) { return fail(res, String(e)) }
@@ -2447,17 +3143,18 @@ export async function updateTransport(req: Request, res: Response) {
   try {
     const {
       license_plate, container_number, exporter_name,
-      loader_name, forklift_driver_id, forklift_driver_names,
+      loader_name, forklift_driver_id, forklift_driver_names, forklift_driver_ids,
       gate_registration_id, allow_shared_gate,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
+      forklift_driver_ids?: string[]
       gate_registration_id?: string | null; allow_shared_gate?: boolean
     }
     if (!(await guardGdoScope(req, res, req.params.id))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('started_at, warehouse_id, license_plate, gate_waived_at, weigh_waived_at, warehouse:Warehouse(require_gate_on_start,require_weigh_on_start)')
+      .select('started_at, warehouse_id, warehouse_type, group_code, license_plate, gate_waived_at, weigh_waived_at, forklift_driver_ids, warehouse:Warehouse(require_gate_on_start,require_weigh_on_start,work_mode,lower_from_level)')
       .eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Chuyến chưa được bắt đầu', 400)
     const utGateWaived  = !!(gdo as { gate_waived_at?: string | null }).gate_waived_at
@@ -2494,19 +3191,44 @@ export async function updateTransport(req: Request, res: Response) {
       utTicketId = gate.ticketId
     }
 
+    // XE NÂNG CHUYỂN — thêm/bớt sau khi đã Bắt đầu (user chốt 10/09 "có thể bổ sung khi cần").
+    // Kho HƯỚNG DẪN: không cho về RỖNG khi chuyến còn việc treo — bảng "Cần đưa ra" lọc theo danh
+    // sách này, rỗng là việc còn đó mà không ai thấy.
+    const utGdoRow = gdo as unknown as { warehouse_id: string | null; warehouse_type: string | null; forklift_driver_ids: string[] | null; warehouse: Record<string, unknown> | null }
+    const utDrivers = forklift_driver_ids !== undefined || forklift_driver_id !== undefined
+      ? await validForkliftIds(forklift_driver_ids, forklift_driver_id, utGdoRow.warehouse_id)
+      : { ids: utGdoRow.forklift_driver_ids ?? [], names: null as string | null }
+    if ('error' in utDrivers) return fail(res, 400, utDrivers.code, utDrivers.error)
+    if (forklift_driver_ids !== undefined && !utDrivers.ids.length) {
+      const utMode = await workModeOfGdo(utGdoRow.warehouse_id, utGdoRow.warehouse, utGdoRow.warehouse_type)
+      if (utMode === 'GUIDED') {
+        const { count: openTasks } = await supabase.from('wms_tasks')
+          .select('id', { count: 'exact', head: true }).eq('gdo_id', req.params.id).eq('status', 'PENDING')
+        if ((openTasks ?? 0) > 0)
+          return fail(res, 422, 'FORKLIFT_REQUIRED', `Chuyến còn ${openTasks} việc lấy hàng chưa xong — phải giữ ít nhất một người lái xe nâng chuyển.`)
+      }
+    }
+
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         license_plate:         utNewPlate ?? null,
         container_number:      container_number?.trim()      || null,
         exporter_name:         exporter_name?.trim()         || null,
         loader_name:           loader_name?.trim()           || null,
-        forklift_driver_id:    forklift_driver_id            || null,
-        forklift_driver_names: forklift_driver_names?.trim() || null,
+        forklift_driver_ids:   utDrivers.ids.length ? utDrivers.ids : null,
+        forklift_driver_id:    utDrivers.ids[0]   || forklift_driver_id            || null,
+        forklift_driver_names: utDrivers.names    || forklift_driver_names?.trim() || null,
         gate_registration_id:  gate_registration_id          ?? null,
         updated_at: now(),
       })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
+    // Người MỚI được thêm vào danh sách xe nâng chuyển → chuông (người đã có từ trước không báo lại)
+    {
+      const oldIds = new Set(utGdoRow.forklift_driver_ids ?? [])
+      await notifyForkliftDrivers(utDrivers.ids.filter(id => !oldIds.has(id)), req.user?.sub ?? null, req.user?.name ?? null,
+        { group_code: (gdo as { group_code?: string | null }).group_code ?? null, license_plate: utNewPlate ?? null }, req.params.id)
+    }
     if (utPlateChanged) {
       // Biển đổi → phiếu cân auto của biển CŨ không còn thuộc chuyến này (match tay giữ nguyên)
       await supabase.from('WeighTicket')
@@ -2516,7 +3238,7 @@ export async function updateTransport(req: Request, res: Response) {
       await linkWeighTicket(utTicketId, req.params.id)
     }
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Unstart GDO (Gỡ bắt đầu) ────────────────────────────────
@@ -2559,19 +3281,23 @@ export async function unstartGDO(req: Request, res: Response) {
       .update({
         started_at: null, license_plate: null, container_number: null,
         exporter_name: null, loader_name: null,
-        forklift_driver_id: null, forklift_driver_names: null,
+        forklift_driver_id: null, forklift_driver_names: null, forklift_driver_ids: null,
         gate_registration_id: null,   // trả phiếu cổng — không thì chuyến đã gỡ vẫn "chiếm" phiếu (409 oan chuyến khác)
+        dock_location_id: null, dock_assigned_at: null,   // nhả cửa (suất cửa tính theo status, nhưng dòng PENDING không nên còn trỏ cửa)
         status: 'PENDING', updated_at: t,
       })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
+    // Kế hoạch lấy hàng của chuyến hết hiệu lực — không thì 3 bảng còn chỉ người đi lấy hàng cho
+    // một chuyến đã quay về trạng thái chờ.
+    await cancelGdoTasks(req.params.id, 'UNSTART', req.user?.name ?? null)
     // Gỡ phiếu cân đã gắn TỰ ĐỘNG lúc Bắt đầu (bug 01/08: phiếu kẹt với chuyến đã gỡ → xe bị chặn
     // OAN 422 khi start chuyến khác). Match TAY (người trạm cân chủ động gắn) giữ nguyên.
     await supabase.from('WeighTicket')
       .update({ gdo_id: null, matched_at: null, matched_by: null, updated_at: t })
       .eq('gdo_id', req.params.id).eq('matched_by', 'auto-start')
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Uncomplete GDO (Bỏ hoàn thành) ──────────────────────────
@@ -2612,9 +3338,9 @@ export async function uncompleteGDO(req: Request, res: Response) {
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, transfer_status: keepTransfer ? 'IN_TRANSIT' : null, updated_at: now() })
       .eq('id', req.params.id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get warehouse employees (for forklift driver dropdown) ──
@@ -2622,6 +3348,13 @@ export async function uncompleteGDO(req: Request, res: Response) {
 export async function getWarehouseEmployees(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as Record<string, string>
+    // PHẠM VI KHO: `warehouse_id` là tham số do người gọi tự đặt, không phải phạm vi của họ. Bản cũ
+    // lọc thẳng theo tham số đó ⇒ tài khoản chỉ được giao Kho Ba Vì đổi id trên đường dẫn là đọc
+    // được HỌ TÊN, MÃ NV, CHỨC DANH của nhân sự kho khác (đo 06/09, gói QA 52 phép [81]). Route này
+    // nuôi cả ô "Giao lệnh fill cho ai" lẫn ô chọn lái xe nâng bên Xuất kho.
+    const myWhs = scopeWhIds(req)                       // null = không giới hạn (superadmin/toàn quốc)
+    if (myWhs && warehouse_id && !myWhs.includes(warehouse_id))
+      return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     // Phân trang đủ (cap ~1000/response — nhân sự có thể >1000)
     const data = await fetchAllRowsParallel(() => {
       let q = supabase.from('Employee')
@@ -2629,21 +3362,28 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
         .eq('is_active', true)
         .order('name').order('id')
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      else if (myWhs) q = myWhs.length ? q.in('warehouse_id', myWhs) : q.eq('id', '__none__')
       return q
     })
     const emps = data as { id: string; name: string; employee_code: string; job_title_id: string | null }[]
-    // Kèm tên chức danh (để FE lọc "lái xe nâng" theo chức danh)
+    // Kèm tên chức danh (hiển thị) + CỜ lái xe nâng (để FE lọc ô chọn). FE từng lọc bằng cách so tên
+    // chứa "lái xe nâng" — đổi tên chức danh trong danh mục là ô chọn rỗng mà không lỗi nào nổ; cờ
+    // `is_forklift_driver` nay là nguồn DUY NHẤT, dùng chung với cửa gác `validForkliftIds`.
     const jtIds = [...new Set(emps.map(e => e.job_title_id).filter(Boolean))] as string[]
     const { data: jts } = jtIds.length
-      ? await supabase.from('JobTitle').select('id, name').in('id', jtIds)
-      : { data: [] as { id: string; name: string }[] }
-    const jtMap = new Map((jts ?? []).map((j: { id: string; name: string }) => [j.id, j.name]))
-    const result = emps.map(e => ({
-      id: e.id, name: e.name, employee_code: e.employee_code,
-      job_title: e.job_title_id ? jtMap.get(e.job_title_id) ?? null : null,
-    }))
+      ? await db.from('JobTitle').select('id, name, is_forklift_driver').in('id', jtIds)
+      : { data: [] as { id: string; name: string; is_forklift_driver: boolean }[] }
+    const jtMap = new Map((jts ?? []).map(j => [j.id, j]))
+    const result = emps.map(e => {
+      const jt = e.job_title_id ? jtMap.get(e.job_title_id) : undefined
+      return {
+        id: e.id, name: e.name, employee_code: e.employee_code,
+        job_title: jt?.name ?? null,
+        is_forklift_driver: jt?.is_forklift_driver === true,
+      }
+    })
     return ok(res, result)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Merge upload for PAUSED GDO ─────────────────────────────
@@ -2686,7 +3426,11 @@ async function mergePausedGDO(
   warehouse_type: string | null,
   byNpp: Map<string, Record<string, any>[]>,
   matMap: Map<string, { id: string } & MatPalletUnits>,
-  autoLoosePallet = false,   // true (KHVC/SAP): loose = phần thùng lẻ < 1 pallet, tính trên qty base đã gộp
+  autoLoosePallet = false,   // true (KHVC/SAP): loose theo policy nhặt lẻ của (kho, loại) — mặc định phần thùng lẻ < 1 pallet
+  loosePol: LooseResolver,   // policy 2 tầng (24/08) — OFF ép 0 cả cột "Nhặt lẻ" ghi tay
+  // %Date theo Khách hàng/Kênh (11/09) — CHỈ áp cho dòng MỚI thêm vào chuyến tạm dừng; dòng cũ giữ
+  // nguyên quy tắc đang có (merge là thêm hàng, không phải cơ hội để viết lại quyết định cũ).
+  dateCtx?: { ctx: PolicyCtx; shipto: string | null; actor: string | null; out: AutoApplied[]; vehicleModelId?: string | null },
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
@@ -2769,7 +3513,7 @@ async function mergePausedGDO(
 
   // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
   await supabase.from('GroupDeliveryOrder')
-    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
+    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, ...(dateCtx && 'vehicleModelId' in dateCtx ? { vehicle_model_id: dateCtx.vehicleModelId ?? null } : {}), updated_at: t })
     .eq('id', gdoId)
 
   // Upsert DO (1/NPP) + items — item cũ được re-point về DO canonical (do_id trong fields)
@@ -2800,7 +3544,10 @@ async function mergePausedGDO(
         cartons_ordered:   newCartons,
         boxes_display:     parseDecimal(row['Hộp']),
         weight:            parseDecimal(row['Tải']),
-        loose_picking:     autoLoosePallet ? loosePalletRemainder(newCartons, mu, warehouse_id) : parseDecimal(row['Nhặt lẻ']),
+        loose_picking:     autoLoosePallet
+          ? loosePalletRemainder(newCartons, mu, warehouse_id, loosePol.of(warehouse_id, mu?.category ?? null))
+          // Kho OFF ép 0 cả số ghi tay (user chốt 24/08) — file cũ không lách được setting
+          : (loosePol.of(warehouse_id, mu?.category ?? null).mode === 'OFF' ? 0 : parseDecimal(row['Nhặt lẻ'])),
         pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
         material_type,
         export_type:    String(row['Loại xuất']     ?? '').trim() || null,
@@ -2820,10 +3567,19 @@ async function mergePausedGDO(
           : 'PENDING'
         await supabase.from('OutboundItem').update({ ...fields, status: newStatus }).eq('id', existing.id)
       } else {
+        const itemId = randomUUID()
+        const auto = dateCtx ? resolveDateRule(dateCtx.ctx, {
+          warehouseId: warehouse_id, shipto: dateCtx.shipto,
+          headerText: fields.header_text, dateRequired: fields.date_required,
+          category: mu?.category ?? null, shelfLifeDays: mu?.shelf_life_days ?? null,
+          existing: null, actor: dateCtx.actor,
+        }).rule : null
+        if (auto && dateCtx) dateCtx.out.push({ id: itemId, warehouse_id, material_id: mu?.id ?? null, rule: auto })
         await supabase.from('OutboundItem').insert({
-          id: randomUUID(), ...fields,
+          id: itemId, ...fields,
           cartons_scanned: 0,
           status: 'PENDING',
+          date_rule: auto,
         })
       }
     }
@@ -2859,8 +3615,12 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const { warehouse_id } = req.body as { warehouse_id?: string }
 
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    // Ô GỘP: file KH xuất gộp ô "Số xe" cho nhiều DO của cùng một xe — không trải thì mọi DO trừ
+    // dòng đầu mất Số xe và bị vòng gom dưới đây bỏ ÂM THẦM (xem `expandMergedCells`).
+    expandMergedCells(ws)
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
 
     if (!rows.length) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
@@ -2877,7 +3637,7 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
     return await processVehicleGroups(req, res, byVehicle, warehouse_id)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── CHUYẾN BẤT ĐỘNG: chờ dữ liệu SAP / kế hoạch đã bỏ (user chốt 03/08) ───────
@@ -3056,8 +3816,10 @@ async function processVehicleGroups(
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party, awaiting_sap, plan_dropped')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock, category, shelf_life_days')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
     ])
+    // Policy nhặt lẻ 2 tầng — file trải nhiều kho nên nạp MỌI kho 1 lượt (2 câu, không per-group)
+    const uploadLoosePol = await looseConfigOf(null)
 
     const warehouseByKey = new Map<string, string>()
     for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string }[]) {
@@ -3125,6 +3887,36 @@ async function processVehicleGroups(
       }
     }
 
+    // %DATE ĐÃ CHỐT TAY — MANG THEO khi derive ghi đè (cùng lớp với shipto ở trên; user hỏi 10/09
+    // "dữ liệu bên ngoài thay đổi thì có ảnh hưởng gì không"). Đo thật 10/09: thủ kho chốt ≥60 % rồi
+    // điều vận sửa MỘT ô ĐVVT trên Kế hoạch xuất ⇒ derive xóa+tạo lại dòng hàng ⇒ chốt biến mất
+    // KHÔNG một lời báo, chuyến vào ca không sinh việc nào. Khớp theo (Số xe, NPP, mã hàng) — đổi mã
+    // thì không mang theo (đúng: quy tắc đó chốt cho mã cũ).
+    const keptItemRules = new Map<string, { date_rule: unknown; pinned_pallets: unknown }>()
+    {
+      const gcById = new Map<string, string>()
+      for (const [gc, id] of pendingSimpleMap)   gcById.set(id, gc)
+      for (const [gc, id] of pendingPreserveMap) gcById.set(id, gc)
+      const rebuildIds = [...gcById.keys()]
+      if (rebuildIds.length) {
+        const dvs = await fetchAllByIdChunks(rebuildIds, c => supabase.from('OutboundDelivery')
+          .select('id, gdo_id, distributor_name').in('gdo_id', c).order('id')) as { id: string; gdo_id: string; distributor_name: string | null }[]
+        const doById = new Map(dvs.map(d => [d.id, d]))
+        const its = dvs.length
+          ? await fetchAllByIdChunks(dvs.map(d => d.id), c => supabase.from('OutboundItem')
+              .select('do_id, material_code_raw, date_rule, pinned_pallets').in('do_id', c).order('do_id')) as
+              { do_id: string; material_code_raw: string | null; date_rule: unknown; pinned_pallets: unknown }[]
+          : []
+        for (const i of its) {
+          if (i.date_rule == null && i.pinned_pallets == null) continue
+          const d = doById.get(i.do_id); if (!d) continue
+          const gc = gcById.get(d.gdo_id); if (!gc) continue
+          keptItemRules.set(`${gc}::${String(d.distributor_name ?? '').trim()}::${String(i.material_code_raw ?? '').trim()}`,
+            { date_rule: i.date_rule ?? null, pinned_pallets: i.pinned_pallets ?? null })
+        }
+      }
+    }
+
     // Chuyến PENDING/PAUSED đang GIỮ HÀNG NHẶT LẺ → KHÔNG ghi đè/merge (user chốt 05/08): ghi đè
     // là xóa-tạo-lại item nên tự nhả phần giữ TRÊN GIẤY, trong khi hàng VẬT LÝ đã rời pallet nằm ở
     // vị trí chờ — user phải gỡ trả hàng nhặt lẻ trên chuyến trước rồi mới sửa/dội kế hoạch.
@@ -3137,6 +3929,26 @@ async function processVehicleGroups(
       for (const g of (existingGdos ?? []))
         if (held.has(g.id as string)) looseHeldGcs.add(g.group_code as string)
     }
+
+    // ── %DATE THEO KHÁCH HÀNG / KÊNH (user chốt 11/09) ──────────────────────────────────────
+    // Quét TRƯỚC một lượt để nạp chính sách kho + khách + kênh trong 3 truy vấn; hỏi per-dòng là
+    // 1.000 lượt trên pool 10 khe của PostgREST. Khách lạ được TẠO ngay tại đây (kênh TRỐNG ⇒ vẫn
+    // KHÔNG được cấp %Date tự động) để danh mục tự nuôi, không ai phải nhớ đi khai.
+    const shiptoSeen = new Map<string, string>()     // mã ship-to → tên NPP gặp đầu tiên
+    const whSeen = new Set<string>()
+    for (const [gc, groupRows] of byVehicle) {
+      const khoV = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
+      const whId = khoV ? warehouseByKey.get(khoV.toLowerCase()) ?? null : (warehouse_id ?? null)
+      if (whId) whSeen.add(whId)
+      const stCol = groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).find(Boolean)
+      const code = normShipto(stCol ?? shiptoByGroupCode.get(gc) ?? null)
+      if (code && !shiptoSeen.has(code))
+        shiptoSeen.set(code, String(groupRows[0]['Tên NPP'] ?? '').trim() || code)
+    }
+    if (!isPreflight(req) && shiptoSeen.size)
+      await ensureCustomers([...shiptoSeen].map(([ship_to_code, name]) => ({ ship_to_code, name })), req.user?.name ?? null)
+    const policyCtx = await loadPolicyCtx([...whSeen], [...shiptoSeen.keys()])
+    const autoApplied: AutoApplied[] = []            // dòng máy vừa áp → soi tồn sau khi ghi xong
 
     // ── Phase 1: pre-validate ALL vehicles, block entire upload on any error ──
 
@@ -3268,6 +4080,8 @@ async function processVehicleGroups(
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const priority = String(groupRows[0]['Ưu tiên'] ?? groupRows[0]['Uu tien'] ?? '').trim() || null   // ĐỢT 3: ưu tiên chuyến (KHVC)
       const transport_note = String(groupRows[0]['Note'] ?? groupRows[0]['Ghi chú'] ?? '').trim() || null // ĐỢT 3: ghi chú điều vận (KHVC, cấp chuyến)
+      // Dòng xe CON (23/09) — uuid đã validate ở cửa ghi khvc_lines (CRUD/upload); chỉ luồng KHVC có, luồng cũ để null
+      const vehicle_model_id = String(groupRows[0]['Dòng xe con'] ?? '').trim() || null
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
       const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null
 
@@ -3306,7 +4120,8 @@ async function processVehicleGroups(
           pausedGDOMap.get(group_code)!,
           group_code, delivery_date, planned_date,
           resolved_warehouse_id, dvvt, loai_kho,
-          byNpp, matMap, autoLoosePallet
+          byNpp, matMap, autoLoosePallet, uploadLoosePol,
+          { ctx: policyCtx, shipto: resolvedShipto, actor: req.user?.name ?? null, out: autoApplied, vehicleModelId: vehicle_model_id },
         )
         if (resolvedShipto) {
           await supabase.from('GroupDeliveryOrder')
@@ -3328,24 +4143,45 @@ async function processVehicleGroups(
             const material_type = String(row['Material_type'] ?? '').trim() || null
             const mu            = matMap.get(mat_code) ?? null
             const orderedBase   = uploadRowQtyBase(row, mu)
+            const headerText    = String(row['HEADER TEXT'] ?? '').trim() || null
+            const dateReq       = parseDecimal(row['%Date_Yêu cầu']) || null
+            // %Date đã chốt TAY sống sót qua lần dội này (keptItemRules) — nó thắng mọi thứ máy tính ra.
+            const keptRule      = keptItemRules.get(`${group_code}::${String(npp ?? '').trim()}::${mat_code}`)
+            const auto          = keptRule ? null : resolveDateRule(policyCtx, {
+              warehouseId: resolved_warehouse_id, shipto: resolvedShipto,
+              headerText, dateRequired: dateReq,
+              // Loại hàng: ưu tiên cột của file (Material_type), thiếu thì lấy của danh mục
+              category: material_type ?? mu?.category ?? null,
+              shelfLifeDays: mu?.shelf_life_days ?? null,
+              existing: null, actor: req.user?.name ?? null,
+            }).rule
+            const itemId        = randomUUID()
+            if (auto) autoApplied.push({ id: itemId, warehouse_id: resolved_warehouse_id, material_id: mu?.id ?? null, rule: auto })
             itemInserts.push({
-              id: randomUUID(), do_id: doId,
+              id: itemId, do_id: doId,
               material_id:       mu?.id ?? null,
               material_code_raw: mat_code,
               cartons_ordered:   orderedBase,
               boxes_display:     parseDecimal(row['Hộp']),
               weight:            parseDecimal(row['Tải']),
-              loose_picking:     autoLoosePallet ? loosePalletRemainder(orderedBase, mu, resolved_warehouse_id) : parseDecimal(row['Nhặt lẻ']),
+              loose_picking:     autoLoosePallet
+                ? loosePalletRemainder(orderedBase, mu, resolved_warehouse_id, uploadLoosePol.of(resolved_warehouse_id, mu?.category ?? null))
+                : (uploadLoosePol.of(resolved_warehouse_id, mu?.category ?? null).mode === 'OFF' ? 0 : parseDecimal(row['Nhặt lẻ'])),
               pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
               material_type,
               export_type:    String(row['Loại xuất']     ?? '').trim() || null,
-              header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
+              header_text:    headerText,
               batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
-              date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
+              date_required:  dateReq,
               cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
               od_refs:        Array.isArray(row['__od_refs']) ? row['__od_refs'] : [],   // liên kết ngược dòng OD (KHVC); file gộp trực tiếp → []
               cartons_scanned: 0,
               status: 'PENDING',
+              // %Date máy áp theo Khách hàng/Kênh (null nếu không đủ điều kiện — xem dateRulePolicy)
+              date_rule: auto,
+              // Chốt %Date của thủ kho sống sót qua lần dội dữ liệu ngoài này (xem keptItemRules) —
+              // đặt SAU nên nó ĐÈ quy tắc máy vừa tính: người chốt luôn thắng.
+              ...(keptRule ?? {}),
               updated_at: now(),
             })
           }
@@ -3358,7 +4194,7 @@ async function processVehicleGroups(
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, origin: gdoOrigin, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, vehicle_model_id, origin: gdoOrigin, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
         created.push({ group_code, id: gdoId, created: true, preserved_assignment: assignedGcs.has(group_code) })
@@ -3377,6 +4213,7 @@ async function processVehicleGroups(
         shipto_party: resolvedShipto,   // cột > khớp Tên NPP > ship-to đã gán tay (upload đè không làm mất)
         priority,                       // ĐỢT 3: ưu tiên chuyến (null = không đặt)
         transport_note,                 // ĐỢT 3: ghi chú điều vận (null = không có)
+        vehicle_model_id,               // dòng xe CON (mã SAP) — cước/tải tính theo nó (23/09)
         origin: gdoOrigin,              // 'SAP' (KHVC) khóa sửa kế hoạch trên đơn · 'EXCEL' như cũ
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
@@ -3493,8 +4330,20 @@ async function processVehicleGroups(
       throw e
     }
 
+    // Máy vừa áp %Date → soi xem kho còn pallet nào đạt không. KHÔNG chặn upload (đó là chuyện tồn
+    // kho, không phải lỗi file) nhưng phải gắn cờ "cần xem", nếu không chuyến vào ca sinh 0 việc mà
+    // không ai biết vì sao — đúng lỗi bắt được trong diễn tập 10/09.
+    if (autoApplied.length) await flagNoStock(autoApplied)
+
     // Cờ CHỜ DỮ LIỆU: đặt cho xe còn DO thiếu, gỡ cho xe vừa đủ dữ liệu (+ ghi sổ sự kiện)
     const awaitingResult = await applyAwaitingState(req, awaitingByGc ?? new Map(), [...byVehicle.keys()], prevGdoState)
+
+    // CƯỚC DỰ TÍNH + TẢI theo kế hoạch (đợt 1 mục 15, 23/09) — AUGMENT: chuyến vừa dựng/ghi đè/merge đều tính lại;
+    // thiếu bảng cước hay chưa chọn dòng xe con thì ghi lý do, không chặn.
+    if (autoLoosePallet) {
+      const freightIds = created.filter(c => c.id && !c.skipped).map(c => c.id as string)
+      if (freightIds.length) await estimateFreightSafely(freightIds, 'PLAN')
+    }
 
     // KẾ HOẠCH VC tự sinh theo Số xe (chỉ luồng KHVC/SAP — kho không làm SAP vẫn up tay bên TMS như cũ)
     let tmsSync: Awaited<ReturnType<typeof syncTmsPlanFromKhvc>> | null = null
@@ -3510,7 +4359,7 @@ async function processVehicleGroups(
     if (autoLoosePallet && planFp && planFp.size && healDepth < 2) {
       try {
         const fresh = await fetchAllByIdChunks([...planFp.keys()], chunk => supabase.from('khvc_lines')
-          .select('group_code, do_no, export_date, npp, veh_type, dvvt')
+          .select('group_code, do_no, export_date, npp, veh_type, dvvt, vehicle_model_id')
           .in('group_code', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as PlanFpRow[]
         const nowFp = planFingerprints(fresh ?? [])
         const drifted = [...planFp.keys()].filter(gc => (nowFp.get(gc) ?? '') !== (planFp.get(gc) ?? ''))
@@ -3543,11 +4392,72 @@ type ErpRawLine = {
 
 // Upload VL06O (SAP) → tầng RAW. Giữ NGUYÊN tên cột SAP (map theo header) — endpoint SAP tương lai
 // dump ra là ingest được ngay; cột `raw` jsonb ôm TOÀN BỘ dòng gốc (an toàn cột thêm sau).
+// ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") — dùng chung VL06O + ZSD02 ──
+// Dòng SAP mang mã `plant` + `storage_location` (KHÔNG phải Warehouse.code) → map qua 2 cột khai per kho
+// `Warehouse.sap_plant` / `sap_storage_locations` (migration 20260726_warehouse_sap_mapping). Khớp (plant, sloc)
+// trước, không thấy thì khớp theo plant. Dòng map ĐƯỢC mà kho ngoài phạm vi → caller CHẶN (all-or-nothing);
+// dòng KHÔNG map được kho nào → cho qua + đếm cảnh báo (fail-open có chủ đích: fail-closed sẽ chặn upload
+// tới khi khai đủ map = chặn vận hành).
+export async function sapScopeCheck(req: Request, records: { plant?: unknown; storage_location?: unknown }[]): Promise<{ outside: string[]; unmapped: number }> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return { outside: [], unmapped: 0 }
+  const { data: whMapRows } = await supabase.from('Warehouse')
+    .select('id, code, name, sap_plant, sap_storage_locations').not('sap_plant', 'is', null)
+  const whMap = (whMapRows ?? []) as { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null }[]
+  const norm = (v: unknown) => String(v ?? '').trim().toUpperCase()
+  const resolveWh = (plant: unknown, sloc: unknown) => {
+    const p = norm(plant), s = norm(sloc)
+    if (!p) return null
+    const byPair = whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).some(x => norm(x) === s))
+    if (byPair) return byPair
+    return whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).length === 0) ?? null
+  }
+  const outside = new Map<string, string>()   // kho ngoài phạm vi → nhãn
+  let unmapped = 0
+  for (const r of records) {
+    const wh = resolveWh(r.plant, r.storage_location)
+    if (!wh) { unmapped++; continue }
+    if (!scope.includes(wh.id)) outside.set(wh.id, `${wh.name} (plant ${norm(r.plant)}${norm(r.storage_location) ? `/${norm(r.storage_location)}` : ''})`)
+  }
+  return { outside: [...outside.values()], unmapped }
+}
+
+// ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU (user chốt 03/08: "realtime kích hoạt trở lại khi đủ dữ liệu") ──
+// Dữ liệu SAP vừa về → xe nào trong Kế hoạch xuất trỏ tới DO đó mà đang chờ thì derive lại NGAY.
+// Chỉ replan xe THẬT SỰ đang chờ (không quét cả kế hoạch): 1 file có thể chạm hàng trăm DO. Lỗi ở đây
+// KHÔNG làm hỏng upload cốt lõi (trả null + log). Dùng chung VL06O + ZSD02.
+export async function activateAwaitingForDos(req: Request, fileDos: Iterable<string>, where: string): Promise<Record<string, unknown> | null> {
+  try {
+    const khLines = await fetchAllByIdChunks([...fileDos], chunk => supabase.from('khvc_lines')
+      .select('group_code').in('do_no', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as { group_code: string }[]
+    const gcs = [...new Set((khLines ?? []).map(l => l.group_code).filter(Boolean))]
+    const waiting: string[] = []
+    for (let i = 0; i < gcs.length; i += 300) {
+      const { data } = await supabase.from('GroupDeliveryOrder').select('group_code')
+        .in('group_code', gcs.slice(i, i + 300)).eq('awaiting_sap', true)
+      for (const g of ((data ?? []) as { group_code: string }[])) waiting.push(g.group_code)
+    }
+    // Xe có dòng kế hoạch mà CHƯA hề có chuyến (up KH lúc chưa có dữ liệu SAP, chuyến vỏ dựng hụt) — cũng derive
+    const known = new Set<string>()
+    for (let i = 0; i < gcs.length; i += 300) {
+      const { data } = await supabase.from('GroupDeliveryOrder').select('group_code').in('group_code', gcs.slice(i, i + 300))
+      for (const g of ((data ?? []) as { group_code: string }[])) known.add(g.group_code)
+    }
+    const target = [...new Set([...waiting, ...gcs.filter(gc => !known.has(gc))])]
+    return target.length ? await replanKhvcGroups(req, target) : null
+  } catch (e) { console.error(`[${where}] kích hoạt chuyến chờ:`, e); return null }
+}
+
 export async function uploadVl06o(req: Request, res: Response) {
   try {
+    // Công tắc nguồn (22/09): ZSD02 đã là nguồn duy nhất thì cửa này đóng — hai nguồn ghi cùng sổ theo khoá (od, item).
+    if ((await getSapDoSource()) === 'ZSD02') return fail(res, 409, 'SOURCE_DISABLED',
+      'Nguồn DO SAP đang đặt là ZSD02 — nạp file ZSD02 thay cho VL06O (đổi cờ "Nguồn DO SAP" ở Cài đặt WMS → Hệ thống nếu cần đường lui).')
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
+    expandMergedCells(ws)   // bản SAP xuất qua Excel hay gộp ô Delivery cho nhiều Item
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File VL06O trống hoặc không đúng định dạng', 400)
 
@@ -3623,91 +4533,14 @@ export async function uploadVl06o(req: Request, res: Response) {
     }
     if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
 
-    // ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") ──
-    // Dòng VL06O mang mã SAP `plant` + `storage_location` (KHÔNG phải Warehouse.code) → map qua 2 cột
-    // khai per kho `Warehouse.sap_plant` / `sap_storage_locations` (migration 20260726_warehouse_sap_mapping).
-    // Khớp (plant, sloc) trước, không thấy thì khớp theo plant. Dòng map ĐƯỢC mà kho ngoài phạm vi → CHẶN
-    // (all-or-nothing: chưa ghi gì). Dòng KHÔNG map được kho nào → cho qua + đếm cảnh báo (fail-open có
-    // chủ đích: fail-closed sẽ chặn upload tới khi khai đủ map = chặn vận hành).
-    let sapUnmapped = 0
-    {
-      const scope = scopeWhIds(req)
-      if (scope !== null) {
-        const { data: whMapRows } = await supabase.from('Warehouse')
-          .select('id, code, name, sap_plant, sap_storage_locations').not('sap_plant', 'is', null)
-        const whMap = (whMapRows ?? []) as { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null }[]
-        const norm = (v: unknown) => String(v ?? '').trim().toUpperCase()
-        const resolveWh = (plant: unknown, sloc: unknown) => {
-          const p = norm(plant), s = norm(sloc)
-          if (!p) return null
-          const byPair = whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).some(x => norm(x) === s))
-          if (byPair) return byPair
-          return whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).length === 0) ?? null
-        }
-        const outside = new Map<string, string>()   // kho ngoài phạm vi → nhãn
-        for (const r of records) {
-          const wh = resolveWh(r.plant, r.storage_location)
-          if (!wh) { sapUnmapped++; continue }
-          if (!scope.includes(wh.id)) outside.set(wh.id, `${wh.name} (plant ${norm(r.plant)}${norm(r.storage_location) ? `/${norm(r.storage_location)}` : ''})`)
-        }
-        if (outside.size) return fail(res,
-          `Ngoài phạm vi kho — file VL06O chứa dòng của: ${[...outside.values()].join(', ')}. Chỉ upload file của kho được giao.`, 403)
-      }
-    }
+    // ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") — dùng chung với cửa ZSD02 (22/09) ──
+    const sapScope = await sapScopeCheck(req, records)
+    if (sapScope.outside.length) return fail(res,
+      `Ngoài phạm vi kho — file VL06O chứa dòng của: ${sapScope.outside.join(', ')}. Chỉ upload file của kho được giao.`, 403)
+    const sapUnmapped = sapScope.unmapped
 
-    // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
-    if (isPreflight(req)) {
-      const dos = [...new Set(records.map(r => String(r.od_number)))]
-      const found: { gdo_id: string; delivery_code: string | null }[] = []
-      for (let i = 0; i < dos.length; i += 40) {
-        const orExpr = dos.slice(i, i + 40).map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
-        const { data } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').or(orExpr)
-        for (const d of ((data ?? []) as { gdo_id: string; delivery_code: string | null }[])) found.push(d)
-      }
-      const dosSet = new Set(dos)
-      const dosOnTrips = new Set<string>()
-      const relevantGdos = new Set<string>()
-      for (const d of found) {
-        const toks = String(d.delivery_code ?? '').split(/,\s*/).map(x => x.trim()).filter(t => dosSet.has(t))
-        if (toks.length) { toks.forEach(t => dosOnTrips.add(t)); relevantGdos.add(d.gdo_id) }
-      }
-      let tripsInProgress = 0, scannedItems = 0
-      const gdoIds = [...relevantGdos]
-      if (gdoIds.length) {
-        const { data: gs } = await supabase.from('GroupDeliveryOrder').select('id, status').in('id', gdoIds)
-        tripsInProgress = ((gs ?? []) as { status: string }[]).filter(g => g.status === 'IN_PROGRESS' || g.status === 'PAUSED').length
-        const dvs = await fetchAllByIdChunks(gdoIds, c => supabase.from('OutboundDelivery').select('id').in('gdo_id', c).order('id')) as { id: string }[]
-        const dvIds = (dvs ?? []).map(x => x.id)
-        const its = await fetchAllByIdChunks(dvIds, c => supabase.from('OutboundItem').select('cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
-        scannedItems = (its ?? []).filter(i => Number(i.cartons_scanned) > 0).length
-      }
-      // Báo cáo CHUẨN (utils/uploadPreflight) — cùng khuôn với mọi upload khác. Lỗi đơn vị lệch hệ
-      // thống là lỗi CHẶN (all-or-nothing) nên đưa vào errors → nút Xác nhận tự tắt.
-      return ok(res, buildPreflight({
-        unit: 'dòng', total: rows.length, toInsert: records.length, skipped: skippedNoKey,
-        errors: [...unitErrs.values()].map(u =>
-          `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`),
-        warnings,
-        extra: [
-          { label: 'Số DO trong file', value: dos.length },
-          ...(sapUnmapped ? [{ label: 'Dòng không map được kho SAP', value: sapUnmapped, warn: true }] : []),
-          ...(dosOnTrips.size ? [{ label: 'DO đã lên chuyến', value: dosOnTrips.size, warn: true }] : []),
-          ...(tripsInProgress ? [{ label: 'Chuyến ĐANG XUẤT bị ảnh hưởng', value: tripsInProgress, warn: true }] : []),
-          ...(scannedItems ? [{ label: 'Dòng đã quét thực tế', value: scannedItems, warn: true }] : []),
-        ],
-      }))
-    }
-
-    // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
-    if (unitErrs.size) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'UNIT_MISMATCH', message: `${unitErrs.size} mã có đơn vị không khớp hệ thống — sửa Đơn vị ở trang Mã hàng rồi up lại.` },
-        unit_errors: [...unitErrs.values()],
-      })
-    }
-
-    // ── Nạp CÓ SO SÁNH (ingest-with-comparison) — thay "upsert mù" ──
+    // ── Nạp CÓ SO SÁNH (ingest-with-comparison) — thay "upsert mù"; phân loại TRƯỚC kiểm-trước để bảng
+    // kiểm-trước nói đúng thêm / cập nhật / không đổi (kiểm lại 22/09: nạp lại file cũ mà in "Sẽ thêm N"). Chỉ ĐỌC. ──
     // (1) Vá churn PK: pre-fetch (od,item)→id, GIỮ id cũ khi UPDATE, randomUUID CHỈ khi INSERT.
     // (2) Idempotent: dòng y hệt (hash cột nghiệp vụ đã chuẩn hóa) = NO-OP → không ghi, không đổi id/updated_at.
     // (3) KHÔNG auto-OBSOLETE (v2.3): dòng vắng khỏi file để NGUYÊN — up tay chỉ cộng thêm/sửa.
@@ -3741,14 +4574,6 @@ export async function uploadVl06o(req: Request, res: Response) {
       updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
 
-    // Upsert theo (od_number, od_item) — CHỈ dòng INSERT/UPDATE; chunk 500 (KHÔNG ghi tuần tự)
-    const CHUNK = 500
-    for (let i = 0; i < toWrite.length; i += CHUNK) {
-      const { error } = await supabase.from('erp_outbound_orders')
-        .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
-      if (error) throw new Error(error.message)
-    }
-
     // ── Phát hiện dòng THIẾU trong DO CÓ MẶT (v2.3: VL06O luôn xuất trọn dòng của DO) ──
     // DO có trong file → dòng ACTIVE cũ của DO đó KHÔNG có trong file = SAP đã bỏ dòng → OBSOLETE (KHÔNG hard-delete,
     // giữ raw cho post-back; derive/engine bỏ qua OBSOLETE). DO cả-DO-vắng = mơ hồ → ĐỂ NGUYÊN (post-back gác).
@@ -3759,6 +4584,68 @@ export async function uploadVl06o(req: Request, res: Response) {
       const k = `${p.od_number}__${p.od_item}`
       if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
         removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
+    }
+
+    // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
+    if (isPreflight(req)) {
+      const dos = odNumbers
+      const found: { gdo_id: string; delivery_code: string | null }[] = []
+      for (let i = 0; i < dos.length; i += 40) {
+        const orExpr = dos.slice(i, i + 40).map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
+        const { data } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').or(orExpr)
+        for (const d of ((data ?? []) as { gdo_id: string; delivery_code: string | null }[])) found.push(d)
+      }
+      const dosSet = new Set(dos)
+      const dosOnTrips = new Set<string>()
+      const relevantGdos = new Set<string>()
+      for (const d of found) {
+        const toks = String(d.delivery_code ?? '').split(/,\s*/).map(x => x.trim()).filter(t => dosSet.has(t))
+        if (toks.length) { toks.forEach(t => dosOnTrips.add(t)); relevantGdos.add(d.gdo_id) }
+      }
+      let tripsInProgress = 0, scannedItems = 0
+      const gdoIds = [...relevantGdos]
+      if (gdoIds.length) {
+        const { data: gs } = await supabase.from('GroupDeliveryOrder').select('id, status').in('id', gdoIds)
+        tripsInProgress = ((gs ?? []) as { status: string }[]).filter(g => g.status === 'IN_PROGRESS' || g.status === 'PAUSED').length
+        const dvs = await fetchAllByIdChunks(gdoIds, c => supabase.from('OutboundDelivery').select('id').in('gdo_id', c).order('id')) as { id: string }[]
+        const dvIds = (dvs ?? []).map(x => x.id)
+        const its = await fetchAllByIdChunks(dvIds, c => supabase.from('OutboundItem').select('cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
+        scannedItems = (its ?? []).filter(i => Number(i.cartons_scanned) > 0).length
+      }
+      // Báo cáo CHUẨN (utils/uploadPreflight) — cùng khuôn với mọi upload khác. Lỗi đơn vị lệch hệ
+      // thống là lỗi CHẶN (all-or-nothing) nên đưa vào errors → nút Xác nhận tự tắt.
+      return ok(res, buildPreflight({
+        unit: 'dòng', total: rows.length, toInsert: inserted, toUpdate: updated, skipped: skippedNoKey,
+        errors: [...unitErrs.values()].map(u =>
+          `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`),
+        warnings,
+        extra: [
+          { label: 'Số DO trong file', value: dos.length },
+          ...(noop ? [{ label: 'Không đổi (đã có y hệt)', value: noop }] : []),
+          ...(removedKeys.length ? [{ label: 'Dòng SAP đã bỏ → OBSOLETE', value: removedKeys.length, warn: true }] : []),
+          ...(sapUnmapped ? [{ label: 'Dòng không map được kho SAP', value: sapUnmapped, warn: true }] : []),
+          ...(dosOnTrips.size ? [{ label: 'DO đã lên chuyến', value: dosOnTrips.size, warn: true }] : []),
+          ...(tripsInProgress ? [{ label: 'Chuyến ĐANG XUẤT bị ảnh hưởng', value: tripsInProgress, warn: true }] : []),
+          ...(scannedItems ? [{ label: 'Dòng đã quét thực tế', value: scannedItems, warn: true }] : []),
+        ],
+      }))
+    }
+
+    // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
+    if (unitErrs.size) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'UNIT_MISMATCH', message: `${unitErrs.size} mã có đơn vị không khớp hệ thống — sửa Đơn vị ở trang Mã hàng rồi up lại.` },
+        unit_errors: [...unitErrs.values()],
+      })
+    }
+
+    // ── GHI (đã phân loại ở trên): upsert theo (od_number, od_item) — CHỈ dòng INSERT/UPDATE; chunk 500 ──
+    const CHUNK = 500
+    for (let i = 0; i < toWrite.length; i += CHUNK) {
+      const { error } = await supabase.from('erp_outbound_orders')
+        .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
+      if (error) throw new Error(error.message)
     }
     if (removedKeys.length) {
       await Promise.all(removedKeys.map(k => supabase.from('erp_outbound_orders')
@@ -3774,29 +4661,8 @@ export async function uploadVl06o(req: Request, res: Response) {
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadVl06o:', e) }
     }
 
-    // ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU (user chốt 03/08: "realtime kích hoạt trở lại khi đủ dữ liệu") ──
-    // Dữ liệu vừa về → xe nào trong Kế hoạch xuất trỏ tới DO đó mà đang chờ thì derive lại NGAY.
-    // Chỉ replan xe THẬT SỰ đang chờ (không quét cả kế hoạch): 1 file VL06O có thể chạm hàng trăm DO.
-    let activated: Record<string, unknown> | null = null
-    try {
-      const khLines = await fetchAllByIdChunks([...fileDos], chunk => supabase.from('khvc_lines')
-        .select('group_code').in('do_no', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as { group_code: string }[]
-      const gcs = [...new Set((khLines ?? []).map(l => l.group_code).filter(Boolean))]
-      const waiting: string[] = []
-      for (let i = 0; i < gcs.length; i += 300) {
-        const { data } = await supabase.from('GroupDeliveryOrder').select('group_code')
-          .in('group_code', gcs.slice(i, i + 300)).eq('awaiting_sap', true)
-        for (const g of ((data ?? []) as { group_code: string }[])) waiting.push(g.group_code)
-      }
-      // Xe có dòng kế hoạch mà CHƯA hề có chuyến (up KH lúc chưa có VL06O, chuyến vỏ dựng hụt) — cũng derive
-      const known = new Set<string>()
-      for (let i = 0; i < gcs.length; i += 300) {
-        const { data } = await supabase.from('GroupDeliveryOrder').select('group_code').in('group_code', gcs.slice(i, i + 300))
-        for (const g of ((data ?? []) as { group_code: string }[])) known.add(g.group_code)
-      }
-      const target = [...new Set([...waiting, ...gcs.filter(gc => !known.has(gc))])]
-      if (target.length) activated = await replanKhvcGroups(req, target)
-    } catch (e) { console.error('[uploadVl06o] kích hoạt chuyến chờ:', e) }
+    // ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU — dùng chung với cửa ZSD02 (22/09) ──
+    const activated = await activateAwaitingForDos(req, fileDos, 'uploadVl06o')
 
     const deliveries = new Set(records.map(r => r.od_number)).size
     // Nhắc khai map SAP→kho: còn dòng chưa map được thì phần đó CHƯA được siết theo kho
@@ -3808,7 +4674,7 @@ export async function uploadVl06o(req: Request, res: Response) {
       reconcile, reconcile_error, ...(activated ? { activated } : {}),
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ── Reshape dòng Kế hoạch xuất → byVehicle (row-shape file gộp) — DÙNG CHUNG 2 đường:
@@ -3818,20 +4684,21 @@ export async function uploadVl06o(req: Request, res: Response) {
 type KhvcPlanRow = {
   group_code: string; do_no: string; npp: string; export_date: unknown
   veh_type: string; dvvt: string; priority: string; cs: string; note: string
+  vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng để tính cước/tải (23/09)
 }
 // DẤU VÂN TAY KẾ HOẠCH của 1 Số xe — dùng để phát hiện "kế hoạch đã đổi TRONG LÚC đang dội xuống".
 // Hai người cùng sửa 1 xe (hoặc upload đè trong lúc người kia thêm DO): lượt chạy sau đọc kế hoạch
 // TRƯỚC khi lượt kia ghi xong ⇒ chuyến dựng theo bản kế hoạch CŨ và đứng im như vậy (đo T2: 2/24 xe
 // lệch số lượng). Kế hoạch trong DB vẫn đúng — chỉ bản dẫn xuất bị cũ, và không có gì tự sửa.
 // Chốt: so vân tay TRƯỚC/SAU khi dội; khác nhau ⇒ dội lại đúng những xe đó (có chặn độ sâu).
-type PlanFpRow = { group_code: string; do_no: string; export_date?: unknown; npp?: string | null; veh_type?: string | null; dvvt?: string | null }
+type PlanFpRow = { group_code: string; do_no: string; export_date?: unknown; npp?: string | null; veh_type?: string | null; dvvt?: string | null; vehicle_model_id?: string | null }
 function planFingerprints(rows: PlanFpRow[]): Map<string, string> {
   const byGc = new Map<string, string[]>()
   for (const r of rows) {
     const gc = String(r.group_code ?? ''); if (!gc) continue
     const a = byGc.get(gc) ?? []
     a.push([String(r.do_no ?? ''), String(parseExcelDate(r.export_date) ?? ''),
-            String(r.npp ?? '').trim(), String(r.veh_type ?? '').trim(), String(r.dvvt ?? '').trim()].join('|'))
+            String(r.npp ?? '').trim(), String(r.veh_type ?? '').trim(), String(r.dvvt ?? '').trim(), String(r.vehicle_model_id ?? '')].join('|'))
     byGc.set(gc, a)
   }
   const out = new Map<string, string>()
@@ -3857,8 +4724,8 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
   const matCodes = [...new Set(raws.map(r => String(r.material_code ?? '').trim()).filter(Boolean))]
   const allMats = matCodes.length
     ? await fetchAllByIdChunks(matCodes, chunk => supabase.from('Material')
-        .select('id, material_code, category, base_unit, entry_unit, units_per_carton')
-        .in('material_code', chunk).order('id')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
+        .select('id, material_code, category, base_unit, entry_unit, units_per_carton, shelf_life_days')
+        .in('material_code', chunk).order('id')) as ({ id: string; material_code: string; category: string | null; shelf_life_days: number | null } & MatUnitsQ)[]
     : []
   const matByCode = new Map(allMats.map(m => [String(m.material_code).trim(), m]))
 
@@ -3897,6 +4764,7 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
         'Hộp':     hasEntry(mat) ? sp.base  : 0,
         'Nhặt lẻ': 0,   // loose TÍNH AUTO theo pallet ở processVehicleGroups (trên qty base ĐÃ GỘP, chống thổi khi 1 mã nhiều dòng)
         'Loại xuất': k.veh_type,
+        'Dòng xe con': k.vehicle_model_id ?? '',   // uuid vehicle_model — cấp xe, đọc ở groupRows[0] như DVVT
         'Ưu tiên': k.priority,
         'CS phụ trách': k.cs,
         'Note': k.note,
@@ -3928,9 +4796,9 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   const actor = req.user?.name || 'KHVC-EDIT'
   const t = now()
 
-  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null }
+  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null; vehicle_model_id: string | null }
   const lines = (await fetchAllByIdChunks(gcs, chunk => supabase.from('khvc_lines')
-    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status')
+    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status, vehicle_model_id')
     .in('group_code', chunk).order('id')) as KLine[])
     .filter(l => (l.sync_status ?? 'ACTIVE') !== 'OBSOLETE')
   const gcWithLines = new Set(lines.map(l => l.group_code))
@@ -4010,6 +4878,7 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
     const khvcRows: KhvcPlanRow[] = lines.filter(l => replanGcs.includes(l.group_code)).map(l => ({
       group_code: l.group_code, do_no: l.do_no, npp: l.npp ?? '', export_date: l.export_date,
       veh_type: l.veh_type ?? '', dvvt: l.dvvt ?? '', priority: l.priority ?? '', cs: l.cs ?? '', note: l.note ?? '',
+      vehicle_model_id: l.vehicle_model_id ?? null,
     }))
     const { byVehicle, missingDos, awaitingByGc } = await buildKhvcByVehicle(khvcRows)
     if (missingDos.size) {
@@ -4089,7 +4958,8 @@ async function sweepOrphanDeliveries(doNos: string[]): Promise<number> {
 export async function uploadKhvc(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
     // Trải ô GỘP trước khi đọc: file điều vận hay gộp ô "Số xe" cho nhiều DO của cùng một xe, mà ô
     // gộp chỉ mang giá trị ở dòng đầu ⇒ các DO còn lại mất Số xe và bị bỏ ÂM THẦM ở vòng dưới.
@@ -4097,7 +4967,7 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; booking_category: string; raw: Record<string, any> }
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; booking_category: string; vehicle_sap: string; vehicle_model_id: string | null; raw: Record<string, any> }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
     // Dòng BỊ BỎ (thiếu Số xe hoặc DO) phải ĐẾM ĐƯỢC và báo ra, không bỏ im lặng: người nạp đang
@@ -4134,6 +5004,9 @@ export async function uploadKhvc(req: Request, res: Response) {
         // Nhận cả biến thể tiêu đề hay gặp: có dấu * (đánh dấu bắt buộc), không dấu tiếng Việt.
         booking_category: String(r['Loại kho booking'] ?? r['Loại kho booking *'] ?? r['Loai kho booking']
           ?? r['Loai kho booking *'] ?? r['Cửa booking'] ?? r['Cua booking'] ?? '').trim(),
+        // DÒNG XE CON (23/09) — cột TÙY CHỌN mang mã SAP 9100000xx (đúng chữ "Mã xe SAP" của bảng cước); resolve → id ở dưới
+        vehicle_sap: String(r['Mã xe SAP'] ?? r['Ma xe SAP'] ?? r['Dòng xe con'] ?? r['Dong xe con'] ?? '').replace(/\.0$/, '').trim(),
+        vehicle_model_id: null,
         raw: r,
       })
     }
@@ -4314,6 +5187,15 @@ export async function uploadKhvc(req: Request, res: Response) {
           }
         }
       }
+      // ⭐ DO KHÔNG LÊN XE (ZSD02 22/09): flow RETURN (trả pallet/trả hàng = chiều nhập) · DISCOUNT (không có hàng) ·
+      // UNKNOWN (mã SAP chưa phân loại). VL06O không mang cột này nên trước đây file điều vận có DO trả về vẫn sinh chuyến.
+      {
+        const bad = await notLoadableDos([...allDos])
+        for (const k of khvcRows) {
+          const f = bad.get(k.do_no)
+          if (f) addErr(k.group_code, `DO ${k.do_no} là dòng ${FLOW_LABEL[f] ?? f} theo SAP — không lên xe được`)
+        }
+      }
       if (perGc.size) {
         // Cả file trống cột → 1 dòng chẩn đoán thay vì N dòng giống nhau (file trăm xe đọc không nổi)
         const thieuHet = blankGcs.size === allGcs.size
@@ -4336,6 +5218,38 @@ export async function uploadKhvc(req: Request, res: Response) {
       for (const k of khvcRows) k.booking_category = validByUpper.get(k.booking_category.toUpperCase()) ?? k.booking_category
     }
 
+    // ── DÒNG XE CON theo mã SAP (tùy chọn, 23/09): có khai thì phải đúng danh mục + 1 Số xe 1 dòng xe; không khai → null ──
+    {
+      const saps = [...new Set(khvcRows.map(k => k.vehicle_sap).filter(Boolean))]
+      if (saps.length) {
+        const { data: vms } = await supabase.from('vehicle_model').select('id, sap_code, is_active').in('sap_code', saps.slice(0, 300))
+        const vmBySap = new Map(((vms ?? []) as { id: string; sap_code: string; is_active: boolean }[]).map(m => [String(m.sap_code).trim(), m]))
+        const perGc = new Map<string, string[]>()
+        const addErr = (gc: string, msg: string) => perGc.set(gc, [...(perGc.get(gc) ?? []), msg])
+        const byGc = new Map<string, Set<string>>()
+        for (const k of khvcRows) {
+          if (!k.vehicle_sap) continue
+          const m = vmBySap.get(k.vehicle_sap)
+          if (!m) { addErr(k.group_code, `Mã xe SAP "${k.vehicle_sap}" không có trong danh mục dòng xe (Cài đặt TMS → Mã dòng xe)`); continue }
+          if (!m.is_active) { addErr(k.group_code, `Dòng xe mã SAP "${k.vehicle_sap}" đang tạm dừng`); continue }
+          k.vehicle_model_id = m.id
+          const s = byGc.get(k.group_code) ?? new Set<string>(); s.add(k.vehicle_sap); byGc.set(k.group_code, s)
+        }
+        for (const [gc, s] of byGc) if (s.size > 1) addErr(gc, `khai ${s.size} mã xe SAP khác nhau (${[...s].join(' + ')}) — 1 Số xe chỉ 1 dòng xe`)
+        // Dòng của xe không khai mã (cột trống) thì theo dòng có khai — không bắt điền đủ mọi dòng
+        for (const k of khvcRows) if (!k.vehicle_model_id) { const s = byGc.get(k.group_code); if (s?.size === 1) k.vehicle_model_id = vmBySap.get([...s][0])?.id ?? null }
+        if (perGc.size) {
+          const errors = [...perGc].flatMap(([gc, msgs]) => msgs.map(m => `Số xe ${gc} — ${m}`))
+          if (isPreflight(req)) return ok(res, buildPreflight({ unit: 'chuyến', total: new Set(khvcRows.map(k => k.group_code)).size, errors, extra: preflightExtra }))
+          return res.status(400).json({
+            success: false,
+            error: { code: 'VEHICLE_MODEL_INVALID', message: `File có ${perGc.size} Số xe khai sai "Mã xe SAP" — không upload` },
+            validation_errors: [...perGc].map(([group_code, errs]) => ({ group_code, errors: errs })),
+          })
+        }
+      }
+    }
+
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
     // Churn-safe: (group_code, do_no)→id nạp Ở TRÊN (cùng lượt với gác cửa), GIỮ id cũ khi up lại
     // (không đổi PK). Upsert chunk 500.
@@ -4347,6 +5261,8 @@ export async function uploadKhvc(req: Request, res: Response) {
       npp: k.npp || null, veh_type: k.veh_type || null, dvvt: k.dvvt || null,
       priority: k.priority || null, cs: k.cs || null, note: k.note || null,
       booking_category: k.booking_category || null,
+      // File không có cột Mã xe SAP → GIỮ dòng xe con đã chọn tay ở tab Kế hoạch xuất (up lại file không xoá lựa chọn)
+      ...(k.vehicle_sap ? { vehicle_model_id: k.vehicle_model_id } : {}),
       export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
       raw: k.raw, uploaded_by: khActor, updated_at: khNow, manual_edited_at: null,   // upload đè lại → gỡ cờ sửa tay
     }))
@@ -4375,7 +5291,7 @@ export async function uploadKhvc(req: Request, res: Response) {
 
     // KHVC/SAP → nhặt lẻ auto theo pallet; preflightExtra = số liệu rủi ro tính ở trên (nếu đang kiểm trước)
     return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra, awaitingByGc, writeKhvcRaw, planFingerprints(khvcRows))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get available inventory for an item ─────────────────────
@@ -4421,12 +5337,13 @@ export async function getItemInventory(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
     const [itemRes, gdoRes] = await Promise.all([
-      supabase.from('OutboundItem').select('material_id').eq('id', itemId).single(),
+      itemOfGdo(itemId, gdoId, 'material_id'),
       supabase.from('GroupDeliveryOrder').select('warehouse_id').eq('id', gdoId).single(),
     ])
+    if (!inScope(req, gdoRes.data?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (!itemRes.data) return fail(res, 'Không tìm thấy mặt hàng', 404)
     return ok(res, await fetchMaterialInventory(itemRes.data.material_id, gdoRes.data?.warehouse_id ?? null))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Cảnh báo thiếu tồn theo (kho, ngày giao) ─────────────────
@@ -4452,7 +5369,7 @@ export async function getOutboundShortages(req: Request, res: Response) {
       })
       .filter(r => r.level > 0)
     return ok(res, rows)
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // Tồn theo mã hàng + kho (nút search tồn kho ở bảng chuẩn bị, không gắn item cụ thể)
@@ -4461,31 +5378,78 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
     const { material_id, warehouse_id } = req.query as Record<string, string>
     if (!material_id) return fail(res, 'material_id là bắt buộc', 400)
     return ok(res, await fetchMaterialInventory(material_id, warehouse_id || null))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Gợi ý vị trí lấy FEFO theo mã hàng (dùng chung: board Chuẩn bị hàng + cột "Vị trí lấy") ──
 // Chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
 // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in()).
 // Trả map material_id → danh sách vị trí ĐÃ SORT (hòa %Date → ít hàng nhất trước → tên) — caller tự slice.
-type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null }
-async function rotationSuggestionsByMaterial(
-  matIds: string[], warehouseIds: string[], principleByWh: Map<string, RotationPrinciple>,
+// `is_pick_face` = ô này có phải VỊ TRÍ NHẶT LẺ không. Cần ở đây vì phần lẻ lấy bằng TAY: nó phải
+// được nhặt ở vị trí nhặt lẻ, còn pallet chẵn thì lấy ngay trên kệ — cùng một danh sách gợi ý mà
+// hai việc đọc theo hai cách, nên cờ phải đi kèm từng ô thay vì để caller tự tra lại.
+export type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null; is_pick_face: boolean }
+// Hạng nhặt của từng khu, khoá `${warehouse_id}|${sub_code}` — 1 câu cho cả danh sách kho.
+// Cùng nguồn với trang Tối ưu vị trí và với chiến thuật cất hàng ABC (WarehouseZone.pick_rank),
+// nên "gần cửa" ở hai luồng nhập/xuất là CÙNG một định nghĩa, không phải hai bản chép tay.
+async function pickRankByZone(warehouseIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (!warehouseIds.length) return map
+  const rows = await fetchAllByIdChunks(warehouseIds, chunk => supabase.from('WarehouseZone')
+    .select('warehouse_id, code, pick_rank').in('warehouse_id', chunk).eq('is_active', true)) as unknown as
+    { warehouse_id: string; code: string; pick_rank: number | null }[]
+  for (const z of rows) if (z.pick_rank != null) map.set(`${z.warehouse_id}|${z.code}`, Number(z.pick_rank))
+  return map
+}
+
+// Pallet ứng viên nhìn từ hàm gợi ý — đủ trường để caller tự lọc thêm (vd "có đạt mức %Date đã chốt
+// trên dòng đơn không"), không phải đoán từ kết quả đã gộp.
+export type SuggestionEntry = RotationEntry & {
+  material_id: string
+  pallet_code: string | null
+  batch: string | null
+  location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null; is_pick_face: boolean | null } | null
+  material: (MaterialShelfInfo & { category?: string | null }) | null
+}
+/**
+ * Một "câu hỏi gợi ý": lấy hàng cho KHOÁ nào, của mã nào, và pallet nào được tính.
+ * Có `accept` vì quy tắc date thuộc về DÒNG ĐƠN chứ không thuộc về mã hàng — hai dòng cùng mã có
+ * thể đòi hai mức khác nhau, nên kết quả phải khoá theo dòng, không khoá theo mã.
+ */
+export interface SuggestionGroup { key: string; material_id: string; accept?: (e: SuggestionEntry) => boolean }
+
+/** Giữ nguyên cửa cũ: mỗi mã một câu hỏi, không lọc thêm gì. */
+export async function rotationSuggestionsByMaterial(
+  matIds: string[], warehouseIds: string[], rotCfg: RotationResolver,
+): Promise<Map<string, FefoSuggestion[]>> {
+  return rotationSuggestionsFor(matIds.map(id => ({ key: id, material_id: id })), warehouseIds, rotCfg)
+}
+
+// export (14/09): đường đi nhặt lẻ (`directedWorkController.getLooseRoute`) dùng CÙNG gợi ý này để
+// xếp thứ tự ghé — vị trí lấy và thứ tự đi phải nói về cùng một pallet, không hai bản luật.
+export async function rotationSuggestionsFor(
+  groups: SuggestionGroup[], warehouseIds: string[], rotCfg: RotationResolver,
 ): Promise<Map<string, FefoSuggestion[]>> {
   const out = new Map<string, FefoSuggestion[]>()
+  const matIds = [...new Set(groups.map(g => g.material_id))]
   if (!matIds.length) return out
   const useWhFilter = warehouseIds.length > 0
+  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const entryChunks = await Promise.all(
     Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
       fetchAllRowsParallel(() => {
         let q = supabase.from('InventoryEntry')
-          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+          // `category` = khóa chọn chiến thuật tầng 2 (mỗi loại kho có thể chạy nguyên tắc riêng)
+          // `pallet_code`/`batch`: quy tắc date kiểu CHỈ ĐỊNH khớp theo tem hoặc mã lô — thiếu 2 cột
+          // này thì bộ lọc của caller sẽ loại sạch pallet và màn hình nói "không còn hàng đạt mức".
+          .select(`material_id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
           .in('status', [...PICKABLE_STATUSES])
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
           // nơi rồi mới biết không lấy được (lỗi thật, vá 14/08). Lọc ở DB cho nhẹ, JS kiểm lại bằng
           // isPickEligible để luật chỉ có MỘT bản.
-          .is('qa_status_id', null)
+          // "GIỮ" = dấu QA khác `OK`; dấu OK là ĐÃ DUYỆT và cửa quét vẫn cho xuất (services/qaStatus.ts).
+          .or(qaFilter)
           .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
           .order('id')
         if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
@@ -4493,56 +5457,87 @@ async function rotationSuggestionsByMaterial(
       })
     )
   )
-  const entries = entryChunks.flat() as Array<RotationEntry & {
-    material_id: string
-    location: { location_code: string | null; warehouse_id: string | null } | null
-    material: MaterialShelfInfo | null
-  }>
+  const entries = entryChunks.flat() as SuggestionEntry[]
+  // HẠNG NHẶT của khu = khu đó gần cửa xuất tới đâu (1 = gần nhất). Kho đã xếp hạng ở trang Tối ưu
+  // vị trí và luồng CẤT hàng đã dùng (chiến thuật ABC), nhưng luồng LẤY hàng thì chưa đọc dòng nào:
+  // hoà ngày là xếp theo TÊN vị trí (alphabet) — người nhặt bị đẩy sang khu xa trong khi khu gần
+  // cũng có đúng ngày đó. Chỉ dùng làm TIE-BREAK: nguyên tắc luân chuyển (FEFO/FIFO/LIFO) vẫn
+  // đứng trước, không bao giờ vì gần cửa mà lấy sai thứ tự.
+  const rankByZone = await pickRankByZone([...new Set(entries.map(e => e.location?.warehouse_id).filter((x): x is string => !!x))])
   const nowMs = Date.now()
-  type Agg = FefoSuggestion & { rot_key: number | null }
-  const byMat = new Map<string, Map<string, Agg>>()
+  type Agg = FefoSuggestion & { rot_key: number | null; pick_rank: number }
+  const eligibleByMat = new Map<string, SuggestionEntry[]>()
   for (const e of (entries ?? [])) {
-    if (!isPickEligible(e)) continue
-    const principle = principleByWh.get(e.location?.warehouse_id ?? '') ?? asRotationPrinciple(null)
-    const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
-    const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
-    const rot_key  = rotationSortKey(e, e.material, principle)
-    const rot_date = rotationDateOf(e, e.material, principle)
-    const loc = e.location?.location_code ?? '(chưa xác định)'
-    const k = `${rot_key ?? 'n'}|${loc}`
-    const locMap = byMat.get(e.material_id) ?? new Map<string, Agg>()
-    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key }
-    cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
-    locMap.set(k, cur)
-    byMat.set(e.material_id, locMap)
+    if (!isPickEligible(e, qaHold)) continue
+    eligibleByMat.set(e.material_id, [...(eligibleByMat.get(e.material_id) ?? []), e])
   }
-  for (const [matId, locMap] of byMat) {
-    // Thứ tự = ĐÚNG nguyên tắc luân chuyển của kho (không còn cứng %Date). Hòa → ưu tiên vị trí ÍT
-    // hàng nhất (dọn hàng lẻ trước) → tên vị trí.
-    out.set(matId, [...locMap.values()].sort((a, b) => {
+  for (const g of groups) {
+    const locMap = new Map<string, Agg>()
+    for (const e of eligibleByMat.get(g.material_id) ?? []) {
+      if (g.accept && !g.accept(e)) continue
+      const principle = rotCfg.of(e.location?.warehouse_id, e.material?.category).principle
+      const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
+      const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
+      const rot_key  = rotationSortKey(e, e.material, principle)
+      const rot_date = rotationDateOf(e, e.material, principle)
+      const loc = e.location?.location_code ?? '(chưa xác định)'
+      // Khu chưa xếp hạng → đẩy xuống cuối nhóm cùng ngày (không có thông tin thì không ưu ái)
+      const pick_rank = rankByZone.get(`${e.location?.warehouse_id ?? ''}|${e.location?.sub_code ?? ''}`) ?? Number.MAX_SAFE_INTEGER
+      const k = `${rot_key ?? 'n'}|${loc}`
+      const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key, pick_rank, is_pick_face: e.location?.is_pick_face === true }
+      cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
+      locMap.set(k, cur)
+    }
+    if (!locMap.size) continue
+    // Thứ tự = ĐÚNG nguyên tắc luân chuyển của kho (không còn cứng %Date). Hòa ngày → KHU GẦN CỬA
+    // XUẤT trước (hạng nhặt, 17/08) → vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí.
+    // Hạng nhặt đứng SAU rot_key: đi ít bước là để nhanh, không bao giờ đổi được thứ tự lấy hàng.
+    out.set(g.key, [...locMap.values()].sort((a, b) => {
       const ka = a.rot_key ?? Infinity, kb = b.rot_key ?? Infinity
       if (ka !== kb) return ka - kb
+      if (a.pick_rank !== b.pick_rank) return a.pick_rank - b.pick_rank
       if (a.available !== b.available) return a.available - b.available
       return (a.location_code ?? '').localeCompare(b.location_code ?? '')
-    }).map(({ rot_key: _k, ...rest }) => rest))
+    }).map(({ rot_key: _k, pick_rank: _r, ...rest }) => rest))
   }
   return out
 }
 
-// Cấu hình luân chuyển của các kho — 1 câu cho cả danh sách kho.
-async function rotationConfigOf(warehouseIds: string[]): Promise<Map<string, { principle: RotationPrinciple; required: boolean }>> {
-  const map = new Map<string, { principle: RotationPrinciple; required: boolean }>()
-  const ids = [...new Set(warehouseIds.filter(Boolean))]
-  if (!ids.length) return map
-  const data = await fetchAllByIdChunks(ids, chunk => supabase.from('Warehouse')
-    .select('id, rotation_principle, rotation_required').in('id', chunk).order('id'))
-  for (const w of ((data ?? []) as { id: string; rotation_principle: string | null; rotation_required: boolean | null }[])) {
-    map.set(w.id, { principle: asRotationPrinciple(w.rotation_principle), required: w.rotation_required === true })
-  }
-  return map
+// Cấu hình luân chuyển 2 TẦNG của các kho — mặc định kho + override theo LOẠI KHO (21/08).
+// Trả về HÀM tra thay vì Map thô: nguyên tắc bây giờ phụ thuộc (kho, loại kho của MÃ HÀNG), caller
+// mà tự ghép lại từ hai map là đúng đường đẻ ra bản luật chép tay thứ hai.
+// 2 câu cho CẢ danh sách kho (không phải mỗi kho một câu).
+interface RotationResolver {
+  of: (warehouseId: string | null | undefined, category: string | null | undefined) => RotationConfig
 }
-const principleMapOf = (cfg: Map<string, { principle: RotationPrinciple; required: boolean }>) =>
-  new Map([...cfg.entries()].map(([k, v]) => [k, v.principle]))
+export async function rotationConfigOf(warehouseIds: string[]): Promise<RotationResolver> {
+  const whById = new Map<string, Record<string, unknown>>()
+  const typesByWh = new Map<string, WhTypeConfigRow[]>()
+  const ids = [...new Set(warehouseIds.filter(Boolean))]
+  const FALLBACK: RotationConfig = { principle: asRotationPrinciple(null), required: false, source: 'WAREHOUSE' }
+  if (!ids.length) return { of: () => FALLBACK }
+
+  const [whs, cfgs] = await Promise.all([
+    fetchAllByIdChunks(ids, chunk => supabase.from('Warehouse')
+      .select('id, rotation_principle, rotation_required').in('id', chunk).order('id')),
+    fetchAllByIdChunks(ids, chunk => supabase.from('warehouse_type_configs')
+      .select('warehouse_id, type_code, rotation_principle, rotation_required')
+      .in('warehouse_id', chunk).order('warehouse_id')),
+  ])
+  for (const w of ((whs ?? []) as ({ id: string } & Record<string, unknown>)[])) whById.set(w.id, w)
+  for (const c of ((cfgs ?? []) as ({ warehouse_id: string } & WhTypeConfigRow)[])) {
+    const arr = typesByWh.get(c.warehouse_id) ?? []
+    arr.push(c)
+    typesByWh.set(c.warehouse_id, arr)
+  }
+  return {
+    of: (warehouseId, category) => {
+      const wh = warehouseId ? whById.get(warehouseId) : null
+      if (!wh) return FALLBACK
+      return resolveRotation(wh, typesByWh.get(warehouseId ?? '') ?? [], category ?? null)
+    },
+  }
+}
 
 // KIỂM LUÂN CHUYỂN của 1 lượt quét — dùng CHUNG cho preview (checkScanItem) và ghi (scanItem),
 // nên hai màn không bao giờ nói hai chuyện khác nhau như trước 14/08.
@@ -4552,28 +5547,53 @@ const principleMapOf = (cfg: Map<string, { principle: RotationPrinciple; require
 async function rotationCheckOf(args: {
   entry: RotationEntry; material: MaterialShelfInfo | null; materialId: string | null
   warehouseId: string | null; principle: RotationPrinciple; required: boolean
+  source?: 'WAREHOUSE' | 'TYPE'
+  // QUY TẮC DATE CỦA DÒNG ĐƠN: pallet không đạt mức KHÔNG xuất được cho dòng này (bị chặn ở bước
+  // kiểm %Date) nên không được đề cử làm "pallet phải lấy trước" — nếu không, dòng đòi date cao ở
+  // kho bật "bắt buộc" sẽ KẸT: mọi pallet đạt yêu cầu đều "sai thứ tự" so với pallet không đạt
+  // (cùng lớp lỗi "gợi ý chỉ vào pallet không lấy được" ở đầu utils/rotation.ts, đã fix cho QA-giữ).
+  // ⚠️ Phải đọc CẢ `date_rule` chốt tay chứ không chỉ `date_required` của VL06O (vá 15/09, lớp C19):
+  // bản cũ chỉ biết %Date của SAP, nên dòng chốt tay "≥ 80 %" ở kho bật bắt buộc bị so với pallet
+  // 9 % ⇒ 422 sai thứ tự cho ĐÚNG pallet mà chính app vừa chỉ tới. Luật diễn giải DateRule vẫn là
+  // `palletMeetsDateRule`, không đẻ bản hai.
+  rule?: DateRule | null
+  // PALLET ĐÃ NẰM TRONG KẾ HOẠCH CỦA CHÍNH CHUYẾN NÀY (ca đêm 20/09): 6/9 "vi phạm luân chuyển" đo được là
+  // thủ kho quét các pallet mà app tự ghim cho chuyến, theo thứ tự ĐƯỜNG ĐI của bảng (13/07 rồi 14/07 rồi
+  // 07/07). Cả ba cùng rời kho trên một xe nên thứ tự quét giữa chúng không đổi được gì về luân chuyển —
+  // mà kho bật "bắt buộc" thì cửa quét sẽ 422 đúng pallet app vừa chỉ. "Pallet tốt nhất" chỉ so với pallet
+  // NGOÀI kế hoạch của chuyến.
+  excludeEntryIds?: ReadonlySet<string>
 }): Promise<RotationCheck> {
   const { entry, material, materialId, warehouseId, principle, required } = args
+  const rule = args.rule ?? null
+  const exclude = args.excludeEntryIds ?? null
   const base: RotationCheck = {
-    principle, required, violation: false, date_label: ROTATION_DATE_LABEL[principle],
+    principle, required, source: args.source ?? 'WAREHOUSE',
+    violation: false, date_label: ROTATION_DATE_LABEL[principle],
     scanned_date: rotationDateOf(entry, material, principle),
     best_date: null, best_pallet_code: null, best_location_code: null,
   }
   if (!materialId || !warehouseId) return base
 
+  // "QA giữ" = dấu QA khác `OK` (services/qaStatus.ts) — cùng luật với cửa quét xuất bên dưới.
+  const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-    .select('pallet_code, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id)')
+    .select('id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id, is_pick_face)')
     .eq('material_id', materialId)
     .eq('location.warehouse_id', warehouseId)
     .in('status', [...PICKABLE_STATUSES])
-    .is('qa_status_id', null)
+    .or(qaFilter)
     .gt('cartons_remaining', 0)
-    .order('id')) as Array<RotationEntry & { pallet_code: string | null; location: { location_code: string | null } | null }>
+    .order('id')) as Array<RotationEntry & { id: string; pallet_code: string | null; batch: string | null; location: { location_code: string | null; is_pick_face: boolean | null } | null }>
 
   let best: (typeof rows)[number] | null = null
   let bestKey: number | null = null
   for (const r of rows) {
-    if (!isPickEligible(r)) continue
+    if (exclude?.has(r.id)) continue
+    if (!isPickEligible(r, qaHold)) continue
+    // Dòng có quy tắc date: pallet không đạt sẽ bị chặn lúc quét cho dòng này → loại khỏi tập so
+    // sánh, "pallet tốt nhất" = tốt nhất TRONG SỐ lấy được.
+    if (rule && !palletMeetsDateRule(r, material, rule)) continue
     const k = rotationSortKey(r, material, principle)
     if (k == null) continue
     if (bestKey == null || k < bestKey) { bestKey = k; best = r }
@@ -4596,6 +5616,12 @@ const canRotationOverride = (req: Request): boolean =>
   req.user?.is_superadmin === true ||
   (req.user?.module_permissions ?? {})['outbound']?.includes('rotation_override') === true
 
+// Quyền duyệt CẤT khác quy tắc — dùng chung một quyền cho cả app (`inbound.putaway_override`,
+// xem inventoryController): nó là một NĂNG LỰC ("được cất lệch luật"), không phải một cái nút.
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
+
 // Thông báo chặn khi kho bật "bắt buộc" — nói rõ pallet nào nên lấy + lấy ở đâu, để người quét
 // còn đi lấy được, thay vì chỉ bị từ chối.
 function rotationBlockMessage(r: RotationCheck): string {
@@ -4617,12 +5643,28 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
     const doIds = (dos ?? []).map((d: { id: string }) => d.id)
     if (!doIds.length) return ok(res, {})
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('material_id').in('do_id', chunk).order('id')) as Array<{ material_id: string | null }>
+      .select('id, material_id, date_rule, date_required').in('do_id', chunk).order('id')) as Array<{
+        id: string; material_id: string | null; date_rule: unknown; date_required: number | null
+      }>
     const matIds = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
     const whIds = gdo.warehouse_id ? [gdo.warehouse_id] : []
-    const sugByMat = await rotationSuggestionsByMaterial(matIds, whIds, principleMapOf(await rotationConfigOf(whIds)))
-    return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+    // Mức %Date thuộc về DÒNG ĐƠN, không thuộc về mã hàng (14/09) ⇒ dòng nào đã chốt mức thì trả
+    // thêm khoá theo ID DÒNG, đã lọc đúng mức đó. Khoá theo MÃ giữ nguyên nghĩa cũ để bundle PWA
+    // cũ (tra theo material_id) không mất cột; bản mới tra theo dòng trước, rơi về mã nếu chưa chốt.
+    const groups: SuggestionGroup[] = matIds.map(m => ({ key: m, material_id: m }))
+    for (const it of items) {
+      const rule = dateRuleOf(it)
+      if (!rule || !it.material_id) continue
+      groups.push({ key: it.id, material_id: it.material_id, accept: e => palletMeetsDateRule(e, e.material, rule) })
+    }
+    const sugByKey = await rotationSuggestionsFor(groups, whIds, await rotationConfigOf(whIds))
+    // `?loose=1` — màn NHẶT LẺ hỏi: phần lẻ lấy bằng TAY nên ô đúng là VỊ TRÍ NHẶT LẺ giữ đúng lô
+    // (cùng phép so với bảng "Theo vị trí", `services/loosePickFace.ts`). Trang Xuất kho lấy nguyên
+    // pallet thì KHÔNG bật cờ này: rút pallet khỏi kho lẻ là lấy mất chỗ nhặt tay của người khác.
+    const looseView = String(req.query.loose ?? '') === '1'
+    return ok(res, Object.fromEntries([...sugByKey.entries()]
+      .map(([k, v]) => [k, (looseView ? pickFaceFirst(v) : v).slice(0, 2)])))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Bảng chuẩn bị hàng — gom ≥1 GDO, tính pallet CÒN PHẢI chuẩn bị + gợi ý vị trí FEFO ──
@@ -4695,7 +5737,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
     // Gợi ý vị trí lấy — helper dùng chung với cột "Vị trí lấy" trang chi tiết đơn, sắp theo
     // nguyên tắc luân chuyển của TỪNG kho (board có thể gom nhiều kho).
     const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
-    const sugByMat = await rotationSuggestionsByMaterial(matIds, warehouseIds, principleMapOf(await rotationConfigOf(warehouseIds)))
+    const sugByMat = await rotationSuggestionsByMaterial(matIds, warehouseIds, await rotationConfigOf(warehouseIds))
     for (const r of rowMap.values()) {
       if (!r.material_id) continue
       r.suggestions = (sugByMat.get(r.material_id) ?? []).slice(0, 2)
@@ -4723,7 +5765,365 @@ export async function getPrepareBoard(req: Request, res: Response) {
       total_cartons: rows.reduce((s, r) => s + qtyEntryDecimal(r.cartons_remaining, r), 0),
       total_pallets: rows.reduce((s, r) => s + r.pallets_remaining, 0),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── CHỐT %DATE cho dòng đơn — HÀNG LOẠT (user chốt 10/09 vòng 3–4) ──────────────────────────
+// VÌ SAO có bước này: kho KHÔNG chạy FEFO toàn bộ. NPP đi ≥ 60 % nếu CS không ghi chú; CS ghi chú
+// bằng CHỮ và mỗi lần một kiểu — dữ liệu thật trên staging: "XX GIAO DATE 50%-70%", "Giao date >75%"
+// nằm lẫn với "Trả pallet", "kho thạch hà". KHÔNG parser nào bền, nên máy KHÔNG đọc ghi chú: thủ kho
+// đọc rồi CHỐT thành số. Và FEFO cũng phải BẤM XÁC NHẬN — dòng chưa chốt thì không sinh việc, để
+// không ai "tưởng mặc định rồi đi làm, sau mới update = làm sai".
+//
+/**
+ * Đọc + kiểm quy tắc date từ body. MỘT chỗ dùng chung cho cả cửa HỎI TRƯỚC lẫn cửa GHI, để hai bên
+ * không bao giờ hiểu khác nhau về cùng một payload.
+ */
+type ParsedRule = { rule: DateRule } | { err: { status: number; code: string; msg: string } }
+function parseDateRuleBody(raw: unknown): ParsedRule {
+  const bad = (msg: string, status = 422, code = 'VALIDATION_ERROR') => ({ err: { status, code, msg } })
+  const r = (raw ?? {}) as { kind?: unknown; value?: unknown; parts?: unknown }
+  const kind = String(r.kind ?? '')
+  if (kind === 'FEFO') return { rule: { kind: 'FEFO' } }
+  if (kind === 'MIN_PCT') {
+    const n = Number(r.value)
+    if (!Number.isFinite(n) || n < 0 || n > 100) return bad('% hạn dùng tối thiểu phải trong khoảng 0–100')
+    return { rule: { kind: 'MIN_PCT', value: Math.round(n) } }
+  }
+  // "Còn tối thiểu N ngày" (11/09) — với hàng hạn ngắn thì % không diễn đạt nổi: FG02 hạn 45–60
+  // ngày nên "còn ≥ 35 ngày" ra 77,8 % trên mã này và 58,3 % trên mã kia.
+  if (kind === 'MIN_DAYS') {
+    const n = Number(r.value)
+    if (!Number.isInteger(n) || n < 1 || n > MAX_MIN_DAYS)
+      return bad(`Số ngày còn lại phải là số nguyên trong khoảng 1–${MAX_MIN_DAYS}`)
+    return { rule: { kind: 'MIN_DAYS', value: n } }
+  }
+  if (kind === 'EXACT') {
+    const v = String(r.value ?? '').trim()
+    if (!v) return bad('Chọn NSX / HSD / mã lô / tem pallet cần lấy')
+    if (v.length > 120 || searchLooksLikeInjection(v)) return bad('Giá trị chỉ định không hợp lệ', 400, 'BAD_ID')
+    return { rule: { kind: 'EXACT', value: v } }
+  }
+  // CHIA PHẦN THEO SỐ LƯỢNG — "250 thùng date 60, 30 thùng date 90" trên CÙNG một dòng đơn
+  if (kind === 'SPLIT') {
+    const list = Array.isArray(r.parts) ? r.parts : []
+    if (!list.length) return bad('Chia phần thì phải khai ít nhất một phần')
+    if (list.length > MAX_RULE_PARTS) return bad(`Tối đa ${MAX_RULE_PARTS} phần cho một dòng`)
+    const parts: DateRulePart[] = []
+    for (const p of list as Array<{ qty_base?: unknown; kind?: unknown; value?: unknown }>) {
+      const q = Number(p?.qty_base)
+      if (!Number.isFinite(q) || q <= 0) return bad('Mỗi phần phải khai số lượng lớn hơn 0')
+      const sub = parseDateRuleBody({ kind: p?.kind, value: p?.value })
+      if ('err' in sub) return sub
+      if (sub.rule.kind === 'SPLIT') return bad('Không lồng chia phần trong chia phần')
+      parts.push({ qty_base: Math.round(q), kind: sub.rule.kind, value: sub.rule.value ?? null })
+    }
+    return { rule: { kind: 'SPLIT', parts } }
+  }
+  return bad('Quy định date không hợp lệ (không đòi mốc / ≥ % hạn dùng / ≥ số ngày còn lại / chỉ định NSX-lô-tem / chia phần)')
+}
+
+// Nguồn quy tắc dùng để LỌC trên màn khai. MANUAL/CUSTOMER/CHANNEL/SYSTEM/SAP là giá trị thật của
+// cột `source`; UNSET (chưa khai) và REVIEW (cần xem lại) là hai LÁT CẮT.
+const DATE_RULE_SOURCES = ['MANUAL', 'CUSTOMER', 'CHANNEL', 'SYSTEM', 'SAP', 'UNSET', 'REVIEW'] as const as readonly string[]
+// Kiểu quy định dùng để LỌC (ô "Kiểu" trên thanh lọc)
+const DATE_RULE_KINDS = ['FEFO', 'MIN_PCT', 'MIN_DAYS', 'EXACT', 'SPLIT'] as const as readonly string[]
+
+/**
+ * GET /outbound/date-rule-lines — MÀN CHỐT %DATE: mọi DÒNG HÀNG của mọi chuyến trong khoảng ngày.
+ * User chốt 10/09: "trước lúc xuất, nv SAP kiểm tra TẤT CẢ đơn rồi input — cần nhìn hết đơn hàng
+ * (filter được) và thấy tất cả các dòng". Một RPC trả dòng + tổng + ô band (đừng kéo dòng về đếm).
+ */
+export async function getDateRuleLines(req: Request, res: Response) {
+  try {
+    const from = String(req.query.date_from ?? '')
+    const to = String(req.query.date_to ?? '') || from
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+      return fail(res, 'Thiếu hoặc sai khoảng ngày (date_from/date_to dạng YYYY-MM-DD)', 400)
+    const span = (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000
+    if (span < 0 || span > 62) return fail(res, 'Khoảng ngày tối đa 62 ngày', 400)
+
+    const whId = req.query.warehouse_id ? String(req.query.warehouse_id) : null
+    if (whId && (whId.length > 100 || searchLooksLikeInjection(whId))) return fail(res, 400, 'BAD_ID', 'Mã kho không hợp lệ')
+    const scope = scopeWhIds(req)
+    if (whId && scope && !scope.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+
+    const state = String(req.query.state ?? 'ALL').toUpperCase()
+    if (!['ALL', 'SET', 'UNSET'].includes(state)) return fail(res, 400, 'VALIDATION_ERROR', 'Trạng thái chốt không hợp lệ')
+    const search = req.query.search ? String(req.query.search).slice(0, 120) : null
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'BAD_ID', 'Từ khoá tìm kiếm không hợp lệ')
+
+    const pageSize = Math.min(1000, Math.max(1, Number(req.query.page_size ?? 200) || 200))
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1)
+    const cats = scopeCategoriesOf(req)
+
+    // Lọc theo NGUỒN quy tắc (11/09). UNSET/REVIEW là hai LÁT CẮT, không phải giá trị của cột nguồn.
+    const srcRaw = parseListParam(req.query.source) ?? []
+    const src = srcRaw.map(s => s.toUpperCase()).filter(s => DATE_RULE_SOURCES.includes(s))
+    if (srcRaw.length && !src.length) return fail(res, 400, 'VALIDATION_ERROR', 'Nguồn quy định date không hợp lệ')
+
+    // Lọc theo LOẠI HÀNG của mã (khác `p_categories` = loại hàng CHUYẾN chở, dùng cắt phạm vi)
+    const mcatRaw = parseListParam(req.query.material_category) ?? []
+    const mcat = mcatRaw.map(s => s.toUpperCase().trim()).filter(s => /^[A-Z0-9_]{1,30}$/.test(s))
+    if (mcatRaw.length && !mcat.length) return fail(res, 400, 'VALIDATION_ERROR', 'Loại hàng không hợp lệ')
+    // Lọc theo KIỂU quy định
+    const kindRaw = parseListParam(req.query.kind) ?? []
+    const kinds = kindRaw.map(s => s.toUpperCase()).filter(s => DATE_RULE_KINDS.includes(s))
+    if (kindRaw.length && !kinds.length) return fail(res, 400, 'VALIDATION_ERROR', 'Kiểu quy định date không hợp lệ')
+
+    const { data, error } = await supabase.rpc('outbound_date_rule_lines', {
+      p_from: from, p_to: to,
+      p_scope_wh: scope, p_warehouse_id: whId,
+      p_categories: cats && cats.length ? cats : null,
+      p_state: state, p_search: search,
+      p_limit: pageSize, p_offset: (page - 1) * pageSize,
+      p_source: src.length ? src : null,
+      p_mat_categories: mcat.length ? mcat : null,
+      p_kinds: kinds.length ? kinds : null,
+    })
+    if (error) return fail(res, error)
+    return ok(res, { ...(data ?? { rows: [], total: 0, summary: {} }), page, page_size: pageSize })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/**
+ * POST /outbound/items/date-rule/check { rules: [{ item_id, rule }] } — HỎI TRƯỚC KHI CHỐT.
+ * Màn chốt gọi lúc người ta vừa gõ xong mức %Date: dòng nào không còn tồn nào đạt thì đỏ NGAY và
+ * không cho Lưu (user chốt 10/09). Một lời gọi cho CẢ BẢNG — đừng hỏi từng dòng.
+ */
+export async function checkItemsDateRule(req: Request, res: Response) {
+  try {
+    const raw = (req.body ?? {}) as { rules?: unknown }
+    const list = Array.isArray(raw.rules) ? raw.rules : []
+    if (!list.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa có dòng nào để kiểm')
+    if (list.length > MAX_DATE_CHECK) return fail(res, 400, 'VALIDATION_ERROR', `Tối đa ${MAX_DATE_CHECK} dòng mỗi lần kiểm`)
+
+    const reqs: Array<{ item_id: string; rule: DateRule }> = []
+    for (const r of list as Array<{ item_id?: unknown; rule?: { kind?: unknown; value?: unknown } }>) {
+      const id = String(r?.item_id ?? '')
+      if (!id || id.length > 100 || searchLooksLikeInjection(id)) return fail(res, 400, 'BAD_ID', 'Mã dòng hàng không hợp lệ')
+      if (!r?.rule?.kind) continue                      // dòng chưa chốt → không kiểm
+      const parsed = parseDateRuleBody(r.rule)
+      if ('err' in parsed) return fail(res, parsed.err.status, parsed.err.code, parsed.err.msg)
+      reqs.push({ item_id: id, rule: parsed.rule })
+    }
+    if (!reqs.length) return ok(res, [])
+
+    // PHẠM VI KHO: không cho dò tồn của kho ngoài phạm vi bằng cách đoán id dòng hàng
+    const myWhs = scopeWhIds(req)
+    if (myWhs) {
+      const rows = await fetchAllByIdChunks(reqs.map(r => r.item_id), chunk => supabase.from('OutboundItem')
+        .select('id, delivery:OutboundDelivery!do_id(gdo:GroupDeliveryOrder!gdo_id(warehouse_id))')
+        .in('id', chunk).order('id')) as unknown as Array<{ id: string; delivery: { gdo: { warehouse_id: string | null } | null } | null }>
+      const outside = rows.filter(r => { const w = r.delivery?.gdo?.warehouse_id ?? null; return w && !myWhs.includes(w) })
+      if (outside.length) return fail(res, `${outside.length} dòng thuộc kho ngoài phạm vi được giao`, 403)
+    }
+
+    return ok(res, await checkDateRuleStock(reqs))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// PATCH /outbound/items/date-rule { item_ids: string[], rule: {kind, value} | null }
+// Nhiều dòng, nhiều chuyến trong MỘT lần lưu (bảng chốt tick nhiều dòng rồi Lưu một lần).
+export async function setItemsDateRule(req: Request, res: Response) {
+  try {
+    const body = (req.body ?? {}) as { item_ids?: unknown; rule?: unknown }
+    const ids = Array.isArray(body.item_ids) ? body.item_ids : []
+    if (!ids.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn dòng hàng nào')
+    if (ids.length > 500) return fail(res, 400, 'VALIDATION_ERROR', 'Tối đa 500 dòng mỗi lần lưu')
+    if (ids.some(id => typeof id !== 'string' || !id || id.length > 100 || searchLooksLikeInjection(id)))
+      return fail(res, 400, 'BAD_ID', 'Mã dòng hàng không hợp lệ')
+
+    // rule = null ⇒ XOÁ chốt (quay lại "chưa chốt"); dòng đó lập tức rời khỏi Việc cần làm
+    let rule: DateRule | null = null
+    if (body.rule != null) {
+      const parsed = parseDateRuleBody(body.rule)
+      if ('err' in parsed) return fail(res, parsed.err.status, parsed.err.code, parsed.err.msg)
+      rule = parsed.rule
+    }
+
+    // PHẠM VI KHO: dòng hàng thuộc chuyến kho nào — cắt theo phạm vi NGƯỜI GỌI, tất cả hoặc không.
+    // Chuỗi tra ngược item → DO → chuyến; chunk 300 vì id đi trên URL của PostgREST.
+    const idList = ids as string[]
+    const itemRows = await fetchAllByIdChunks(idList, chunk => supabase.from('OutboundItem')
+      .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, date_rule, date_required, delivery:OutboundDelivery!do_id(gdo_id, delivery_code, gdo:GroupDeliveryOrder!gdo_id(id, group_code, warehouse_id))')
+      .in('id', chunk).order('id')) as unknown as Array<{
+        id: string; do_id: string; material_code_raw: string | null
+        cartons_ordered: number | null; cartons_scanned: number | null
+        date_rule: unknown; date_required: number | null
+        delivery: { gdo_id: string | null; delivery_code: string | null; gdo: { id: string; group_code: string; warehouse_id: string | null } | null } | null
+      }>
+    if (!itemRows.length) return fail(res, 'Không tìm thấy dòng hàng nào (có thể đã bị xoá)', 404)
+    const myWhs = scopeWhIds(req)
+    if (myWhs) {
+      const outside = itemRows.filter(r => {
+        const w = r.delivery?.gdo?.warehouse_id ?? null
+        return w && !myWhs.includes(w)
+      })
+      if (outside.length) return fail(res, `${outside.length} dòng thuộc kho ngoài phạm vi được giao`, 403)
+    }
+
+    // CHIA PHẦN: tổng SL các phần không được vượt SL đặt của dòng — vượt là người khai nhầm đơn vị
+    // (gõ thùng vào ô base) chứ không phải ý định thật; nhận vào rồi thì phần thừa lặng lẽ bị cắt.
+    if (rule?.kind === 'SPLIT') {
+      const sum = (rule.parts ?? []).reduce((s, p) => s + Number(p.qty_base ?? 0), 0)
+      const over = itemRows.filter(r => sum > Number(r.cartons_ordered ?? 0))
+      if (over.length)
+        return fail(res, 422, 'VALIDATION_ERROR',
+          `Tổng các phần (${sum}) vượt số lượng đặt của ${over.length} dòng (nhỏ nhất ${Math.min(...over.map(r => Number(r.cartons_ordered ?? 0)))}).`)
+    }
+
+    // CHỐT PHẢI CÓ HÀNG ĐỂ LẤY (user chốt 10/09): đòi %Date mà kho không còn pallet nào đạt thì
+    // chốt xong cũng KHÔNG sinh được việc — im lặng nhận rồi để người ta chờ là kiểu hỏng tệ nhất.
+    // Màn chốt đã cảnh báo tại chỗ; gác lại ở đây vì lọc trên UI chỉ là gợi ý (gọi thẳng API vẫn đặt
+    // được nếu không chặn). FEFO không ràng mốc date nào nên không gác.
+    if (rule && rule.kind !== 'FEFO') {
+      const stock = await checkDateRuleStock(itemRows.map(r => ({ item_id: r.id, rule })))
+      const bad = stock.filter(s => !s.ok)
+      if (bad.length) {
+        // BA TÌNH HUỐNG, BA LỜI KHUYÊN (14/09) — gộp chung một câu "chọn mức khác" là khuyên sai
+        // đúng lúc người ta cần tin: hàng bị QA giữ thì đổi mức bao nhiêu cũng không ra pallet.
+        const noStock = bad.filter(b => b.total_base <= 0 && b.held_pallets <= 0)
+        const held = bad.filter(b => b.total_base <= 0 && b.held_pallets > 0)
+        const below = bad.filter(b => b.total_base > 0)
+        const best = below.map(b => b.best_pct).filter((x): x is number => x != null)
+        // LÀM TRÒN XUỐNG: đây là mức người ta CHỌN ĐƯỢC. Làm tròn lên thì tồn cao nhất 98,8 % hiện
+        // ra "99 %" — đúng con số vừa bị từ chối, câu thông báo tự mâu thuẫn (đo thật 10/09).
+        const parts: string[] = []
+        if (held.length) parts.push(`${held.length} dòng có hàng nhưng TOÀN BỘ ${held.reduce((s, b) => s + b.held_pallets, 0)} pallet đang bị QA giữ — gỡ QA ở trang Tồn kho rồi chốt, đổi mức không giúp được`)
+        if (noStock.length) parts.push(`${noStock.length} dòng không còn tồn mã đó trong kho`)
+        if (below.length) parts.push(`${below.length} dòng có hàng nhưng không pallet nào đạt "${describeDateRule(rule)}"${
+          rule.kind === 'MIN_PCT' && best.length ? ` (%Date cao nhất còn trong kho là ${Math.floor(Math.max(...best))} %)` : ''} — chọn mức khác hoặc để chưa chốt`)
+        return fail(res, 422, 'DATE_RULE_NO_STOCK', `Không chốt được: ${parts.join('; ')}.`)
+      }
+    }
+
+    const t = now()
+    // source = MANUAL: người chốt là bất khả xâm phạm — mọi đường máy áp (`dateRulePolicy`) đều
+    // dừng lại trước dòng này, kể cả nút "Áp lại theo master". Ghi lại cả object nên cờ `review`
+    // (nếu có từ lần máy áp trước) tự biến mất — người đã tự quyết thì không còn gì để nhắc.
+    const payload = rule ? { ...rule, source: 'MANUAL', set_by: req.user?.name ?? null, set_at: t } : null
+    // Chunk 300: id đi trên URL của PostgREST kể cả ở filter của UPDATE (500 uuid = ~18KB, đứt)
+    const updated: { id: string }[] = []
+    for (let i = 0; i < itemRows.length; i += 300) {
+      const { data: upd, error } = await supabase.from('OutboundItem')
+        .update({ date_rule: payload, updated_at: t })
+        .in('id', itemRows.slice(i, i + 300).map(r => r.id)).select('id')
+      if (error) return fail(res, error)
+      updated.push(...((upd ?? []) as { id: string }[]))
+    }
+
+    // SỔ LỊCH SỬ (user 10/09: "cần có info xem được lịch sử input, sửa"): ghi CŨ → MỚI cho từng
+    // dòng vào chính sổ sự kiện của chuyến, nên nút "Thông tin" trên chuyến hiện luôn, không phải
+    // dựng màn mới. Ghi sổ hỏng KHÔNG được làm hỏng việc chốt (logOutboundEvents tự bọc).
+    await logOutboundEvents(itemRows
+      .filter(r => r.delivery?.gdo?.group_code)
+      .map(r => {
+        const before = describeDateRule(dateRuleOf(r))
+        const after = describeDateRule(rule)
+        return {
+          group_code: r.delivery!.gdo!.group_code,
+          gdo_id: r.delivery!.gdo!.id,
+          event_type: rule ? 'DATE_RULE_SET' : 'DATE_RULE_CLEARED',
+          source: 'USER' as const,
+          actor: req.user?.name ?? null,
+          do_number: r.delivery?.delivery_code ?? null,
+          material_code: r.material_code_raw ?? null,
+          old_value: before,
+          new_value: after,
+          detail: rule
+            ? `Chốt %Date lấy hàng: ${before} → ${after}`
+            : `Xoá chốt %Date (dòng quay lại "chưa chốt", không sinh việc): ${before} → chưa chốt`,
+        }
+      }))
+
+    // Chuyến ĐANG XUẤT thì kế hoạch lấy hàng phải sắp lại ngay — chốt xong là việc hiện ra, không
+    // phải chờ ai bấm gì thêm (realtime đẩy bảng tự cập nhật). Bỏ việc CHƯA AI ĐỤNG của chính các
+    // dòng vừa đổi TRƯỚC khi sắp lại — không thì việc cũ (trỏ pallet theo mức date CŨ) vẫn ăn hết
+    // nhu cầu và lần sửa này thành vô tác dụng.
+    await resetUntouchedTasksOfItems(itemRows.map(r => r.id), req.user?.name ?? null)
+    const gdoIds = [...new Set(itemRows.map(r => r.delivery?.gdo?.id).filter((x): x is string => !!x))]
+    for (const g of gdoIds) await planGdoTasks(g, req.user?.name ?? null)
+
+    return ok(res, { updated: updated.length, trips_replanned: gdoIds.length })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/**
+ * POST /outbound/items/date-rule/apply-master?preflight=1 — ÁP LẠI %DATE THEO MASTER.
+ *
+ * Từ 12/09 đổi cấu hình đã TỰ áp ngay (`services/dateRuleApply.ts`), nên nút này còn dùng cho hai
+ * việc mà đường tự động không phủ: áp cho KHOẢNG NGÀY khác cửa sổ mặc định, và chạy lại sau khi TỒN
+ * KHO đổi (dòng gắn cờ "cần xem" nay đã có hàng đạt mức).
+ *
+ * CHỈ đụng dòng máy áp (CUSTOMER/CHANNEL) hoặc chưa chốt. Dòng CHỐT TAY không bao giờ đụng tới —
+ * `resolveDateRule` chặn ở bậc 1, kể cả khi gọi với overwriteAuto.
+ */
+export async function applyDateRuleMaster(req: Request, res: Response) {
+  try {
+    const body = (req.body ?? {}) as { from?: unknown; to?: unknown; warehouse_id?: unknown }
+    const from = String(body.from ?? '')
+    const to = String(body.to ?? '') || from
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+      return fail(res, 'Thiếu hoặc sai khoảng ngày (from/to dạng YYYY-MM-DD)', 400)
+    const span = (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000
+    if (span < 0 || span > 62) return fail(res, 'Khoảng ngày tối đa 62 ngày', 400)
+
+    const whId = body.warehouse_id ? String(body.warehouse_id) : null
+    if (whId && (whId.length > 100 || searchLooksLikeInjection(whId))) return fail(res, 400, 'BAD_ID', 'Mã kho không hợp lệ')
+    const scope = scopeWhIds(req)
+    if (whId && scope && !scope.includes(whId)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const cats = scopeCategoriesOf(req)
+
+    const out = await applyMasterToOpenOrders({
+      from, to, warehouseId: whId, scopeWh: scope, categories: cats,
+      actor: req.user?.name ?? null, dryRun: isPreflight(req),
+    })
+    if (out.capped)
+      return fail(res, 400, 'TOO_MANY_LINES', `Khoảng ngày này có hơn ${APPLY_MASTER_CAP.toLocaleString('vi-VN')} dòng cần xét — thu hẹp khoảng ngày hoặc lọc theo kho rồi áp lại.`)
+
+    // KIỂM TRƯỚC: chưa ghi gì, trả báo cáo để người bấm biết chính xác sẽ đụng bao nhiêu dòng.
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'dòng', total: out.scanned,
+      toInsert: out.applied, toUpdate: 0, skipped: out.scanned - out.applied - out.cleared,
+      extra: [
+        { label: 'Sẽ áp %Date theo khách / kênh', value: out.applied },
+        ...(out.cleared ? [{ label: 'Sẽ XOÁ chốt máy đã áp (kho đổi chính sách / có ghi chú CS)', value: out.cleared, warn: true }] : []),
+        { label: 'Giữ nguyên vì đã CHỐT TAY', value: out.kept_manual },
+        { label: 'Không đổi', value: Math.max(0, out.scanned - out.applied - out.cleared) },
+      ],
+    }))
+    return ok(res, out)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── STT chuẩn bị theo booking khung giờ (user chốt 24/08) ───
+// Số DẪN XUẤT (không lưu cột): RPC booking_sequence đánh ROW_NUMBER theo
+// (kho, ngày, chiều) sort (khung giờ, giờ đặt) — đổi/hủy booking là số tự cập nhật.
+// Read-only, gate outbound view|prepare; kho cắt theo scope như getPrepareBoard.
+export async function getBookingSequence(req: Request, res: Response) {
+  try {
+    const dateFrom = typeof req.query.date_from === 'string' ? req.query.date_from : ''
+    const dateTo   = typeof req.query.date_to === 'string' && req.query.date_to ? req.query.date_to : dateFrom
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      return fail(res, 'Thiếu hoặc sai khoảng ngày (date_from/date_to dạng YYYY-MM-DD)', 400)
+    }
+    // Chặn khoảng vô lý (fuzz 1900→9999) — list Xuất kho lấy range từ trang hiện tại nên ≤ vài tháng
+    const spanDays = (new Date(`${dateTo}T00:00:00Z`).getTime() - new Date(`${dateFrom}T00:00:00Z`).getTime()) / 86_400_000
+    if (spanDays < 0 || spanDays > 190) return fail(res, 'Khoảng ngày tối đa 190 ngày', 400)
+    const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    const whParam = typeof req.query.warehouse_id === 'string' && req.query.warehouse_id ? req.query.warehouse_id : null
+    if (whParam && scope && !scope.includes(whParam)) {
+      return fail(res, 'Ngoài phạm vi kho được giao — không thể xem thứ tự booking của kho này', 403)
+    }
+    const whIds = whParam ? [whParam] : scope   // null = NATIONAL không lọc kho
+    if (whIds && whIds.length === 0) return ok(res, [])
+    const { data, error } = await supabase.rpc('booking_sequence', {
+      p_warehouse_ids: whIds, p_from: dateFrom, p_to: dateTo,
+    })
+    if (error) throw error
+    return ok(res, data ?? [])
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Check scan validity (no save) ───────────────────────────
@@ -4771,6 +6171,34 @@ function dupScanQuery(itemId: string, qr: string, loose: boolean) {
   return q.limit(1).maybeSingle()
 }
 
+/**
+ * QUÉT NHẦM MÃ — thông báo phải nói MÃ HÀNG + TÊN, KHÔNG in id nội bộ.
+ *
+ * Bug thật (đo 06/09): hai nhánh quét xuất trả `pallet "904ac939-fbd6-…" không khớp với phiếu
+ * "a431693b-b5b0-…"` — người quét cầm máy PDA đọc hai dãy uuid thì không biết mình vừa lấy hàng
+ * gì và dòng hàng đang cần gì, trong khi màn NHẬP kho từ lâu đã nói tử tế
+ * (`QR có "510000084" (KUN STC Hương Cam …) nhưng phiếu nhập yêu cầu "510000364"`).
+ * Tra tên chỉ chạy trên ĐƯỜNG LỖI (hiếm) nên không thêm chi phí cho lượt quét bình thường.
+ */
+async function materialMismatchFail(
+  res: Response, qr: string, palletMatId: string | null, itemMatId: string | null,
+) {
+  const ids = [palletMatId, itemMatId].filter(Boolean) as string[]
+  // .limit(2) khai RÕ: danh sách này luôn đúng 1–2 id (pallet + dòng hàng), không bao giờ là
+  // tập mở — nên không cần chunk/phân trang, và cổng tĩnh không phải đoán.
+  const { data } = ids.length
+    ? await supabase.from('Material').select('id, material_code, short_name').in('id', ids).limit(2)
+    : { data: [] as { id: string; material_code: string; short_name: string | null }[] }
+  const by = new Map(((data ?? []) as { id: string; material_code: string; short_name: string | null }[])
+    .map(m => [m.id, m]))
+  const label = (id: string | null): string => {
+    const m = id ? by.get(id) : null
+    if (!m) return 'mã không xác định'
+    return `"${m.material_code}"${m.short_name ? ` (${m.short_name})` : ''}`
+  }
+  return fail(res, `Quét nhầm mã hàng — tem "${qr}" là ${label(palletMatId)} nhưng dòng hàng đang cần ${label(itemMatId)}`, 400)
+}
+
 export async function checkScanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
@@ -4784,8 +6212,8 @@ export async function checkScanItem(req: Request, res: Response) {
       { data: invList },
       { data: dupCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
-      supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(id, location_code, warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
     ])
@@ -4806,6 +6234,10 @@ export async function checkScanItem(req: Request, res: Response) {
       if (futErr) return fail(res, 422, 'FUTURE_DATE', futErr)
     }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: chưa chốt %Date thì chưa được lấy hàng (xem dateRuleGateError). Báo ở BƯỚC XEM
+    // TRƯỚC luôn để người quét biết ngay trên màn, không phải bấm Lưu mới lộ.
+    { const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
@@ -4820,13 +6252,13 @@ export async function checkScanItem(req: Request, res: Response) {
     if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
 
     if (item.material_id && inv.material_id !== item.material_id) {
-      return fail(res, `Sai mã hàng — pallet không khớp với phiếu`, 400)
+      return await materialMismatchFail(res, qr, inv.material_id ?? null, item.material_id)
     }
 
     // Shelf-life của mã: cần cho CẢ kiểm %Date lẫn kiểm luân chuyển → nạp MỘT lần.
     const matId = item.material_id ?? inv.material_id
     const { data: mat } = matId
-      ? await supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
+      ? await supabase.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
       : { data: null }
 
     const dateReqPct = Number(item.date_required ?? 0)
@@ -4838,16 +6270,21 @@ export async function checkScanItem(req: Request, res: Response) {
         return fail(res, `%Date còn lại: ${Math.floor(pct)}% < yêu cầu ${dateReqPct}%`, 400)
       }
     }
+    // Mức đã chốt trên dòng (tay / khách / kênh) — báo ngay ở bước xem trước, cùng luật với cửa ghi
+    { const belowErr = dateRuleBelowError(inv as DateRulePallet, mat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
+      if (belowErr) return fail(res, 400, 'DATE_RULE_BELOW', belowErr) }
 
     // Kiểm luân chuyển (FEFO/FIFO/LIFO theo cấu hình kho) — ở đây CHỈ báo cáo, không chặn: đây là
     // bước xem trước để FE hiện cảnh báo / hỏi lý do. Cửa chặn thật nằm ở scanItem (gọi thẳng API
     // vẫn phải qua đó — luật "lọc ở picker chỉ là gợi ý, gác ở BE").
-    const rotCfg = (await rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : [])).get(gdo?.warehouse_id ?? '')
-      ?? { principle: asRotationPrinciple(null), required: false }
+    const rotCfg = (await rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : []))
+      .of(gdo?.warehouse_id, (mat as { category?: string | null } | null)?.category)
     const rotation = await rotationCheckOf({
       entry: inv as RotationEntry, material: mat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
-      principle: rotCfg.principle, required: rotCfg.required,
+      principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
+      rule: dateRuleOf(item as DateRuleGateItem),
+      excludeEntryIds: await plannedEntryIdsOf(gdoId),
     })
 
     return res.json({
@@ -4867,7 +6304,7 @@ export async function checkScanItem(req: Request, res: Response) {
         warehouse_id:       gdo?.warehouse_id ?? null,
       },
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Scan QR for an item ──────────────────────────────────────
@@ -4887,9 +6324,9 @@ export async function scanItem(req: Request, res: Response) {
       { data: dupCheck },
       { data: empCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
-      supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
-      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId),
+      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id, is_pick_face)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
       employee_id
         ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
@@ -4913,6 +6350,9 @@ export async function scanItem(req: Request, res: Response) {
       if (futErr) return fail(res, 422, 'FUTURE_DATE', futErr)
     }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: chưa chốt %Date thì chưa được lấy hàng — cửa GHI, gác kể cả khi gọi thẳng API
+    { const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, loose_picking_mode ? 'nhặt lẻ' : 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
@@ -4921,17 +6361,19 @@ export async function scanItem(req: Request, res: Response) {
 
     // Fetch shelf_life_days + cấu hình luân chuyển của kho song song (cả hai chỉ cần dữ liệu bước trên)
     const matId = item.material_id ?? inv.material_id
-    const [{ data: shelfMat }, rotCfgMap] = await Promise.all([
+    const [{ data: shelfMat }, rotResolver] = await Promise.all([
       matId
-        ? supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton').eq('id', matId).single()
+        ? supabase.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton').eq('id', matId).single()
         : Promise.resolve({ data: null }),
       rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : []),
     ])
-    const rotCfg = rotCfgMap.get(gdo?.warehouse_id ?? '') ?? { principle: asRotationPrinciple(null), required: false }
+    const rotCfg = rotResolver.of(gdo?.warehouse_id, (shelfMat as { category?: string | null } | null)?.category)
     const rotation = await rotationCheckOf({
       entry: inv as RotationEntry, material: shelfMat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
-      principle: rotCfg.principle, required: rotCfg.required,
+      principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
+      rule: dateRuleOf(item as DateRuleGateItem),
+      excludeEntryIds: await plannedEntryIdsOf(gdoId),
     })
 
     // ── CHẶN khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────────────────
@@ -4948,6 +6390,25 @@ export async function scanItem(req: Request, res: Response) {
         return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${rotationBlockMessage(rotation)} Chọn lý do để tiếp tục.`)
       rotationOverride = raw.slice(0, 200)
     }
+    // ── CHẶN nhặt lẻ NGOÀI vị trí nhặt lẻ khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────
+    // Kho tích bắt buộc = cam kết đi đúng thứ tự luân chuyển. Hàng lẻ lấy bằng TAY, nên lô đúng thứ
+    // tự phải được FILL xuống vị trí nhặt lẻ rồi mới nhặt: nhặt thẳng trên kệ vừa nguy hiểm (tầng
+    // 4) vừa để kho lẻ mãi giữ lô mới không ai đụng — tức chính lô cũ ở lại kho. Luật + van xả:
+    // `services/loosePickFace.ts`. Đo 15/09: 0/153 kho đang tích, nên cửa này nằm im tới khi kho bật.
+    // Điều kiện phải hỏi theo LOẠI KHO của chính mã đang quét: kho khai ô lẻ cho FG01 mà chặn cả hàng
+    // FG02 thì loại đó không ai lấy được — Fill hàng không có đích nào để hạ nó xuống (vá 15/09).
+    if (loose_picking_mode && rotCfg.required
+      && (inv as { location?: { is_pick_face?: boolean | null } | null }).location?.is_pick_face !== true
+      && (await pickFaceAcceptor(gdo?.warehouse_id)).accepts(shelfMat?.category ?? null)) {
+      const raw  = String(rotation_override_reason ?? '').trim()
+      const code = raw.split(':')[0].trim()
+      const msg  = looseFillMessage(rotation.best_location_code)
+      if (!canRotationOverride(req))
+        return fail(res, 422, 'LOOSE_PICK_FACE_REQUIRED', `${msg} Cần người có quyền duyệt lấy khác thứ tự.`)
+      if (!isRotationReason(code))
+        return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${msg} Chọn lý do để tiếp tục.`)
+      rotationOverride = raw.slice(0, 200)
+    }
     // %Date pallet: ưu tiên HSD tường minh trên tem (V2) → fallback NSX+shelflife (V1). Tính 1 lần, tái dùng cho check + lưu.
     const pctRaw = computePctDate(inv, shelfMat)
 
@@ -4961,9 +6422,12 @@ export async function scanItem(req: Request, res: Response) {
         return fail(res, `%Date còn lại: ${Math.floor(pctRaw)}% < yêu cầu ${dateReqPct}%`, 400)
       }
     }
+    // Mức đã chốt trên dòng (tay / khách / kênh) — CỬA GHI: gọi thẳng API vẫn phải qua đây
+    { const belowErr = dateRuleBelowError(inv as DateRulePallet, shelfMat as MaterialShelfInfo | null, item as DateRuleGateItem, qr)
+      if (belowErr) return fail(res, 400, 'DATE_RULE_BELOW', belowErr) }
 
     if (item.material_id && inv.material_id !== item.material_id) {
-      return fail(res, `Sai mã hàng — pallet "${inv.material_id}" không khớp với phiếu "${item.material_id}"`, 400)
+      return await materialMismatchFail(res, qr, inv.material_id ?? null, item.material_id)
     }
 
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
@@ -4993,7 +6457,26 @@ export async function scanItem(req: Request, res: Response) {
       const ie = qtyIntegerError(Number(cartons_override), (shelfMat ?? null) as MatUnitsQ | null)
       if (ie) return fail(res, ie, 422)
     }
-    const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
+    const wanted = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
+
+    // ── ĐẶT GẠCH HẠN MỨC DÒNG HÀNG (nguyên tử) TRƯỚC KHI GHI BẤT CỨ THỨ GÌ ──────────
+    // Nhặt lẻ chưa xác nhận thì dòng hàng KHÔNG được tự COMPLETE dù đủ số — hỏi trước vì trạng thái
+    // mới được chốt ngay trong lượt đặt gạch này.
+    const { data: unconfirmedLoose } = await supabase.from('OutboundScanEntry')
+      .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
+    const blockComplete = (unconfirmedLoose ?? []).length > 0
+    const ordered = Number(item.cartons_ordered)
+    const claimed = await claimItemQuota(itemId, wanted, ordered,
+      loose_picking_mode ? () => 'IN_PROGRESS' : n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS',
+      !loose_picking_mode && !blockComplete)
+    if (claimed === 'FULL') return fail(res, 'Mặt hàng đã đủ số lượng — người khác vừa quét xong', 400)
+    if (claimed === null)   return fail(res, 'Dòng hàng này đang có nhiều người cùng quét — thử lại', 409)
+    const to_take = claimed.grant
+    // TỔNG mới do chính lượt đặt gạch chốt ra — khớp đúng con số vừa ghi vào DB, khỏi đọc lại.
+    const claimedTotal = claimed.total
+    // Từ đây trở đi hạn mức đã là CỦA MÌNH: mọi đường thoát lỗi phải NHẢ lại, nếu không dòng hàng
+    // sẽ kẹt "đã quét" số hàng chưa hề rời kệ.
+    const releaseQuota = () => addItemScanned(itemId, -to_take, n => n >= ordered ? 'COMPLETED' : n > 0 ? 'IN_PROGRESS' : 'PENDING')
 
     // ── PALLET ĐI KHÔNG HẾT → BẮT KHAI VỊ TRÍ CHO PHẦN CÒN LẠI (user chốt 30/07) ──
     // Nhặt lẻ chỉ GIỮ hàng (reserve), remaining không đổi ⇒ pallet luôn còn hàng trên đó.
@@ -5012,16 +6495,46 @@ export async function scanItem(req: Request, res: Response) {
         // bản cũ (không khai cờ, không gửi vị trí) → GIỮ CHỖ CŨ y như trước, KHÔNG lỗi.
         // Phải thoát hẳn khối này: pick rỗng mà chạy tiếp sẽ tra Location id='' → 422 "không tồn tại".
       } else if (!pick) {
+        await releaseQuota()
         return fail(res, `Pallet còn ${qtyLabel(leftoverQty, (shelfMat ?? null) as MatUnitsQ | null)} chưa xuất — phải chọn vị trí để phần còn lại (giữ chỗ cũ hoặc chọn vị trí khác)`, 422)
       } else if (pick !== KEEP_LOCATION && pick !== inv.location_id) {
         const { data: loc } = await supabase.from('Location')
           .select('id, location_code, is_active, warehouse_id').eq('id', pick).maybeSingle()
+        if (!loc || !loc.is_active || loc.warehouse_id !== gdo?.warehouse_id) await releaseQuota()
         if (!loc)           return fail(res, 'Vị trí đã chọn không tồn tại', 422)
         if (!loc.is_active) return fail(res, `Vị trí ${loc.location_code} đang ngưng sử dụng — chọn vị trí khác`, 422)
         if (loc.warehouse_id !== gdo?.warehouse_id)
           return fail(res, `Vị trí ${loc.location_code} không thuộc kho của chuyến xe này`, 422)
         moveLeftoverTo = pick
       }
+    }
+
+    // ── HÀNG DƯ ĐẶT SANG Ô KHÁC = MỘT LẦN CẤT HÀNG (user chốt 18/08) ────────────────────
+    // Bốc xong còn dư mà mang sang ô mới thì đó đúng nghĩa "đưa hàng vào ô đó" ⇒ phải theo cùng
+    // quy tắc cất của kho: mức CẢNH BÁO thì cho qua + nói ra, mức BẮT BUỘC thì không cho.
+    // "Giữ chỗ cũ" KHÔNG chấm: pallet đã nằm sẵn ở đó, chặn chỉ tạo ngõ cụt (không cho giữ mà cũng
+    // chẳng dời được hàng đi đâu) — luật là "không ĐƯA hàng vào", không phải "không được ở lại".
+    let putLeftoverWarn: string | null = null
+    if (moveLeftoverTo) {
+      const put = await guardPutaway({
+        warehouseId: gdo?.warehouse_id ?? null,
+        locationId:  moveLeftoverTo,
+        incoming: {
+          material_id:     inv.material_id,
+          ncc_id:          inv.ncc_id ?? null,
+          production_date: inv.production_date ?? null,
+          expiry_date:     inv.expiry_date ?? null,
+          shelf_life_days: inv.shelf_life_days ?? null,
+        },
+        overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+        canOverride:    canPutawayOverride(req),
+        material:       shelfMat as MaterialShelfInfo | null,
+      })
+      if (put.error) {
+        await releaseQuota()
+        return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      }
+      putLeftoverWarn = put.warning
     }
 
     // pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian (dùng lại pctRaw đã tính trên)
@@ -5045,19 +6558,28 @@ export async function scanItem(req: Request, res: Response) {
       rotation_override_reason: rotationOverride,
       pct_date,
       is_loose_picking: !!loose_picking_mode,
-      scanned_by: resolved_employee_id, scanned_at: t,
+      // AI QUÉT — lấy từ body, THIẾU thì rơi về người đang đăng nhập (17/09). `employee_id` do
+      // CLIENT gửi nên bundle cũ / tích hợp / script không gửi là mất vết mà không ai thấy: đo
+      // staging 17/09 **288/288 dòng quét xuất không có tên người**. Sổ pallet trả lời câu "ai
+      // tác động vào hàng" mà đúng bước làm tồn giảm nhiều nhất lại trống thì sổ vô dụng.
+      scanned_by: resolved_employee_id ?? actorUuid(req), scanned_at: t,
       created_at: t, updated_at: t,
     })
-    if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)
+    if (insertErr) {
+      await releaseQuota()
+      return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500, req.originalUrl)
+    }
 
-    let new_scanned = Number(item.cartons_scanned) + to_take
+    // Hạn mức đã đặt gạch ở trên ⇒ tổng mới là con số CHÍNH THỨC, không đọc lại bản chụp cũ.
+    let new_scanned = to_take
 
     // Chuyển vị trí phần dư NGAY SAU khi trừ/giữ tồn, TRƯỚC khi cộng dồn item: hỏng (vị trí vừa
     // bị người khác lấp đầy) thì hoàn nguyên đúng thao tác vừa làm + xóa scan entry rồi báo 409 —
     // không bao giờ để lại trạng thái "đã trừ tồn mà không biết hàng dư nằm đâu".
     const applyLeftoverMove = async (revert: () => Promise<unknown>): Promise<string | null> => {
       if (!moveLeftoverTo) return null
-      const err = await moveLeftoverPallet(inv.id, moveLeftoverTo, resolved_employee_id ?? null, t)
+      const err = await moveLeftoverPallet(inv.id, moveLeftoverTo, resolved_employee_id ?? actorUuid(req), t,
+        { location_id: inv.location_id ?? null, pallet_code: inv.pallet_code ?? qr }, req.user?.name ?? null)
       if (!err) return null
       await revert()
       await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
@@ -5073,11 +6595,12 @@ export async function scanItem(req: Request, res: Response) {
       const reserved_ok = await adjustInventoryAtomic(inv.id, 0, to_take)
       if (!reserved_ok) {
         await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
+        await releaseQuota()
         return fail(res, 'Tồn kho mã này vừa thay đổi (thao tác khác) — thử lại', 409)
       }
       const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, 0, -to_take))
-      if (moveErr) return fail(res, moveErr, 409)
-      const cum = await addItemScanned(itemId, to_take, () => 'IN_PROGRESS')
+      if (moveErr) { await releaseQuota(); return fail(res, moveErr, 409) }
+      const cum = claimedTotal ?? await currentItemScanned(itemId)
       if (cum != null) new_scanned = cum
     } else {
       // Trừ tồn NGUYÊN TỬ chống đua + chống xuất-quá-tồn (trước đây ghi mù remaining=available-to_take
@@ -5085,20 +6608,16 @@ export async function scanItem(req: Request, res: Response) {
       const consumed = await consumeInventoryExact(inv.id, to_take)
       if (consumed !== true) {
         await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
+        await releaseQuota()
         return fail(res, consumed === false
           ? `Pallet "${qr}" vừa được người khác xuất bớt — tồn không đủ, quét lại`
           : 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
       }
       const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, to_take, 0))
-      if (moveErr) return fail(res, moveErr, 409)
-      // Nhặt lẻ chưa xác nhận → KHÔNG cho complete dù đủ số
-      const { data: unconfirmedLoose } = await supabase.from('OutboundScanEntry')
-        .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
-      const blockComplete = (unconfirmedLoose ?? []).length > 0
-      const ordered = Number(item.cartons_ordered)
-      // Cộng dồn cartons_scanned NGUYÊN TỬ + set status theo TỔNG thật (chống mất cộng dồn khi nhiều
-      // người quét cùng item → item kẹt IN_PROGRESS / đơn không tự hoàn thành dù đã quét đủ).
-      const cum = await addItemScanned(itemId, to_take, n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS')
+      if (moveErr) { await releaseQuota(); return fail(res, moveErr, 409) }
+      // Tổng + trạng thái đã được chốt NGUYÊN TỬ lúc đặt gạch hạn mức; ở đây chỉ đọc lại con số
+      // thật để trả về cho màn quét (người khác có thể vừa quét thêm dòng này).
+      const cum = claimedTotal ?? await currentItemScanned(itemId)
       if (cum != null) new_scanned = cum
       new_item_status = (new_scanned >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS'
     }
@@ -5134,12 +6653,32 @@ export async function scanItem(req: Request, res: Response) {
       ])
     }
 
+    // ── KẾ HOẠCH LẤY HÀNG: đóng việc theo lượt quét (Directed Work 1c) ──────────────────────────
+    // Quét là SỰ THẬT; kế hoạch chỉ đi theo. KHÔNG chặn gì ở đây (chế độ Hướng dẫn là chỉ đường,
+    // không phải rào), và mọi lỗi ở khối này KHÔNG được làm hỏng lượt quét đã ghi xong.
+    try {
+      // Pallet TƯƠNG ĐƯƠNG (cùng ô · cùng mã · cùng NSX) với pallet kế hoạch ghim thì cũng là ĐÚNG việc
+      // (user 14/09: "43 pallet chung một date thì pallet nào cũng được") — markTaskDoneByScan tự đổi ghim.
+      const closed = await markTaskDoneByScan(gdoId, inv.id as string, scanId, req.user?.name ?? null, itemId)
+      // Quét pallet KHÁC Ô / KHÁC DATE so với mọi việc treo: bỏ một việc treo của dòng rồi sắp bù — kế hoạch tự lành
+      if (!closed) await skipOnePendingOfItem(gdoId, itemId, 'OTHER_PALLET', req.user?.name ?? null)
+      // Pallet này đang là việc của CHUYẾN KHÁC (hai chuyến cùng cần một pallet) → chuyến kia mất
+      // pallet, phải biết ngay và được sắp bù
+      await skipTasksOnForeignScan(inv.id as string, gdoId, req.user?.name ?? null)
+      if (!closed) await planGdoTasks(gdoId, req.user?.name ?? null)
+    } catch (e) {
+      recordBackgroundFailure(String((e as Error)?.message ?? e), 'TASK_SYNC_FAILED', req.originalUrl, e)
+    }
+
     return ok(res, {
       scan_entry: { id: scanId, pallet_code: qr, cartons_scanned: to_take },
       item: { ...item, cartons_scanned: new_scanned, status: new_item_status },
       leftover: leftoverQty > 0 ? { qty: leftoverQty, moved: !!moveLeftoverTo } : null,
+      // Kho chưa bật "bắt buộc" → đã chuyển rồi nhưng NÓI RA (hook FE bật toast). Khác màn quét
+      // NHẬP (im lặng): ở đây vị trí vừa được chọn ngay lượt này, chưa qua cửa duyệt nào.
+      ...(putLeftoverWarn ? { putaway_warning: putLeftoverWarn } : {}),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Delete scan entry (hủy QR đã quét) ─────────────────────
@@ -5148,10 +6687,13 @@ export async function deleteScanEntry(req: Request, res: Response) {
   try {
     const { gdoId, itemId, scanId } = req.params
 
-    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status, warehouse_id').eq('id', gdoId).single()
+    const [{ data: gdo }, { data: itemRef }] = await Promise.all([
+      supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId, 'id'),
+    ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể xóa QR', 400)
+    if (!itemRef) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     const { data: scan } = await supabase.from('OutboundScanEntry')
       .select('*').eq('id', scanId).eq('item_id', itemId).single()
@@ -5225,7 +6767,7 @@ export async function deleteScanEntry(req: Request, res: Response) {
     }
 
     return ok(res, { success: true })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Confirm loose picking entries for an item ────────────────
@@ -5237,8 +6779,8 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
-        supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
-        supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
+        supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, ${GDO_WORK_MODE}`).eq('id', gdoId).single(),
+        itemOfGdo(itemId, gdoId),
         employee_id
           ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
           : Promise.resolve({ data: null }),
@@ -5250,6 +6792,9 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     { const inertErr = inertError(gdo as GdoInertState | null)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: XÁC NHẬN nhặt lẻ là bước TRỪ TỒN THẬT ⇒ cũng phải có %Date đã chốt như xuất
+    { const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, 'nhặt lẻ')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr) }
     // SOẠN nhặt lẻ trước ngày = OK (chỉ giữ hàng/reserved), nhưng XÁC NHẬN = TRỪ TỒN THẬT = hàng rời kho
     // ⇒ phải đúng ngày xuất (probe 02/08: đây là đường lách FUTURE_DATE duy nhất còn trừ được tồn).
     const clFutErr = futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
@@ -5317,7 +6862,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     }
 
     return ok(res, { confirmed: (claimed as any[]).length })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Lưu thủ công nhặt lẻ (hàng no-QR: POSM/Loscam) ───────────
@@ -5332,16 +6877,20 @@ export async function manualLooseItem(req: Request, res: Response) {
     if (cartons == null || !Number.isFinite(Number(cartons)) || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, warehouse_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode)`).eq('id', gdoId).single(),
-      supabase.from('OutboundItem')
-        .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
-        .eq('id', itemId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, warehouse_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode, work_mode)`).eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     { const inertErr = inertError(gdo as GdoInertState | null)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Kho Hướng dẫn: ghi số nhặt lẻ thủ công (hàng no-QR) cũng là lấy hàng ⇒ chốt %Date trước.
+    // Ghi số 0 = HOÀN lại phần đã soạn: luật là "chưa chốt thì chưa lấy", không phải "không sửa sai".
+    if (Number(cartons) > 0) {
+      const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, 'nhặt lẻ')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
+    }
 
     // BASE UNIT: cartons = SỐ BASE (nhặt lẻ đếm hộp nguyên) — mã có entry phải nguyên
     {
@@ -5369,10 +6918,21 @@ export async function manualLooseItem(req: Request, res: Response) {
     const otherLoose      = looseScannedTot - oldQty
     const looseCap        = Math.max(0, effectiveLoose - otherLoose)
 
-    // Tồn chung theo warehouse_id trực tiếp (entry POSM location_id=null)
-    const { data: invEntry } = await supabase.from('InventoryEntry')
+    // Tồn chung theo warehouse_id trực tiếp (entry POSM location_id=null).
+    // KHÔNG maybeSingle: pool no-QR có thể 2+ dòng cùng pallet_code sau nhập lại (bài học
+    // ed92e2a — maybeSingle gặp 2 dòng trả error → 404 "chưa có tồn" OAN dù tồn dư; POSM
+    // mode ALL 24/08 đi qua đây hằng ngày). Bản ghi soạn cũ giữ ĐÚNG dòng đã reserve;
+    // bản ghi mới chọn dòng khả dụng cao nhất.
+    const { data: invRows } = await supabase.from('InventoryEntry')
       .select('id, cartons_remaining, cartons_imported, cartons_reserved')
-      .eq('pallet_code', matCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
+      .eq('pallet_code', matCode).eq('warehouse_id', gdo.warehouse_id)
+      .gt('cartons_remaining', -1).limit(50)
+    type PoolRow = { id: string; cartons_remaining: number | null; cartons_imported: number | null; cartons_reserved: number | null }
+    const pool = ((invRows ?? []) as PoolRow[])
+    const availOf = (r: PoolRow) => Number(r.cartons_remaining ?? r.cartons_imported ?? 0) - Number(r.cartons_reserved ?? 0)
+    const existingEntryId = (looseEntries ?? []).find((e: any) => !e.loose_confirmed && e.pallet_code === matCode)?.inventory_entry_id as string | undefined
+    const invEntry = (existingEntryId ? pool.find(r => r.id === existingEntryId) : null)
+      ?? pool.sort((a, b) => availOf(b) - availOf(a))[0]
     if (!invEntry) return fail(res, `Mã "${matCode}" chưa có tồn trong kho — kiểm tra phiếu nhập`, 404)
 
     let newQty = Math.min(Math.round(Number(cartons)), looseCap)
@@ -5397,6 +6957,7 @@ export async function manualLooseItem(req: Request, res: Response) {
         id: randomUUID(), item_id: itemId, inventory_entry_id: invEntry.id,
         pallet_code: matCode, cartons_scanned: newQty,
         is_loose_picking: true, loose_confirmed: false,
+        scanned_by: actorUuid(req),   // cửa ghi số TAY (hàng không tem) — trước 17/09 không ghi ai cả
         scanned_at: t, created_at: t, updated_at: t,
       })
     }
@@ -5405,7 +6966,7 @@ export async function manualLooseItem(req: Request, res: Response) {
     if (delta !== 0) await addItemScanned(itemId, delta, n => n === 0 ? 'PENDING' : 'IN_PROGRESS')
 
     return ok(res, { scan_entry: { pallet_code: matCode, cartons_scanned: newQty } })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── List loose picking items (nhặt lẻ) ──────────────────────
@@ -5428,8 +6989,96 @@ export async function getLoosePickingFacets(req: Request, res: Response) {
     p_from:         date || date_from || null,
     p_to:           date || date_to || null,
   })
-  if (error) return fail(res, error.message)
+  if (error) return fail(res, error)
   return ok(res, data ?? {})
+}
+
+// NÚT "TÍNH LẠI NHẶT LẺ" (user chốt 24/08 — sau khi đổi setting nhặt lẻ giữa chừng):
+// setting KHÔNG hồi tố đơn đã tạo (chủ đích — số tự nhảy khi đang soạn là loạn hiện trường);
+// đây là đường ÁP LẠI có kiểm soát, phạm vi hẹp:
+// - Chỉ chuyến CHƯA BẮT ĐẦU (PENDING, không CHỜ SAP / NGỪNG) của MỘT kho (+ khoảng ngày nếu lọc).
+// - Dòng đã soạn/giữ hoặc đã xác nhận: chỉ cập nhật khi số MỚI ≥ số ĐÃ SOẠN (nới rule 20→50 vẫn
+//   lên 50 được, phần đã soạn giữ nguyên); số mới < số đã soạn → GIỮ NGUYÊN + đếm báo lại
+//   (không tự cắt dưới số người ta đã soạn — muốn hạ thì gỡ soạn trước).
+// - Số "Nhặt lẻ" nhập tay từ file cũ (chuyến origin EXCEL/LEGACY): giữ nguyên — trừ setting OFF
+//   (OFF ép 0 mọi đường, vẫn qua gác "đã soạn" ở trên).
+export async function recalcLoosePicking(req: Request, res: Response) {
+  try {
+    const { warehouse_id, date_from, date_to } = req.body as { warehouse_id?: string; date_from?: string; date_to?: string }
+    if (!warehouse_id) return fail(res, 'Chọn Kho xuất trước khi tính lại — setting nhặt lẻ đặt theo kho', 422)
+    if (req.user?.warehouse_scope !== 'NATIONAL' && !(req.user?.warehouse_ids ?? []).includes(warehouse_id))
+      return fail(res, 'Kho ngoài phạm vi được gán', 403)
+
+    const gdosAll = await fetchAllRowsParallel(() => {
+      let q = supabase.from('GroupDeliveryOrder')
+        .select('id, group_code, warehouse_type, origin, awaiting_sap, plan_dropped')
+        .eq('warehouse_id', warehouse_id).eq('status', 'PENDING')
+      if (date_from) q = q.gte('delivery_date', date_from)
+      if (date_to)   q = q.lte('delivery_date', date_to)
+      return q
+    }) as { id: string; group_code: string; warehouse_type: string | null; origin: string | null; awaiting_sap?: boolean | null; plan_dropped?: boolean | null }[]
+    // Chuyến bất động (chờ SAP / ngừng) không có gì để tính; scope Loại hàng = giao ≥1 như mọi cửa ghi GDO
+    const gdos = gdosAll.filter(g => !g.awaiting_sap && !g.plan_dropped && categoryAllowed(req, g.warehouse_type))
+    const originByGdo = new Map(gdos.map(g => [g.id, g.origin ?? null]))
+
+    const dels = await fetchAllByIdChunks(gdos.map(g => g.id), chunk =>
+      supabase.from('OutboundDelivery').select('id, gdo_id').in('gdo_id', chunk)) as { id: string; gdo_id: string }[]
+    const gdoByDo = new Map(dels.map(d => [d.id, d.gdo_id]))
+    const items = await fetchAllByIdChunks(dels.map(d => d.id), chunk =>
+      supabase.from('OutboundItem').select('*').in('do_id', chunk).neq('status', 'CANCELLED')) as Record<string, any>[]
+
+    // Số ĐÃ SOẠN/GIỮ/XÁC NHẬN per dòng (base) — gác "không cắt dưới số đã soạn"
+    const looseScans = await fetchAllByIdChunks(items.map(i => String(i.id)), chunk =>
+      supabase.from('OutboundScanEntry').select('item_id, cartons_scanned')
+        .eq('is_loose_picking', true).in('item_id', chunk)) as { item_id: string; cartons_scanned: number }[]
+    const scannedByItem = new Map<string, number>()
+    for (const s of looseScans)
+      scannedByItem.set(s.item_id, (scannedByItem.get(s.item_id) ?? 0) + Number(s.cartons_scanned || 0))
+
+    const codes = [...new Set(items.map(i => String(i.material_code_raw ?? '').trim()).filter(Boolean))]
+    const mats = await fetchAllByIdChunks(codes, chunk =>
+      supabase.from('Material')
+        .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, category')
+        .in('material_code', chunk)) as (MatPalletUnits & { material_code: string })[]
+    const matByCode = new Map(mats.map(m => [String(m.material_code), m]))
+    const loosePol = await looseConfigOf([warehouse_id])
+
+    const t = new Date().toISOString()
+    const changed: Record<string, any>[] = []
+    let keptScanned = 0, keptManual = 0
+    for (const it of items) {
+      const gdoId = gdoByDo.get(String(it.do_id))
+      if (!gdoId) continue
+      const cur = Number(it.loose_picking ?? 0)
+      const mu = matByCode.get(String(it.material_code_raw ?? '').trim()) ?? null
+      const policy = loosePol.of(warehouse_id, mu?.category ?? null)
+      const origin = originByGdo.get(gdoId)
+      let next: number
+      if (origin === 'EXCEL' || origin === 'LEGACY') {
+        // Số nhặt lẻ nhập tay từ file — công thức không đè, chỉ OFF mới ép 0
+        if (policy.mode !== 'OFF') { if (cur > 0) keptManual++; continue }
+        next = 0
+      } else {
+        next = loosePalletRemainder(Number(it.cartons_ordered ?? 0), mu, warehouse_id, policy)
+      }
+      if (next === cur) continue
+      const done = scannedByItem.get(String(it.id)) ?? 0
+      if (next < done) { keptScanned++; continue }   // đã soạn nhiều hơn số mới → giữ, báo lại
+      changed.push({ ...it, loose_picking: next, updated_at: t })
+    }
+
+    // UPDATE nhiều dòng giá trị khác nhau = upsert LÔ full-record (chuẩn upload) — không update lẻ
+    for (let i = 0; i < changed.length; i += 500) {
+      const { error } = await supabase.from('OutboundItem').upsert(changed.slice(i, i + 500), { onConflict: 'id' })
+      if (error) return fail(res, `Lỗi cập nhật: ${error.message}`)
+    }
+    return ok(res, {
+      gdos: gdos.length, items_checked: items.length, updated: changed.length,
+      kept_scanned: keptScanned, kept_manual: keptManual,
+    })
+  } catch (e) {
+    return fail(res, e instanceof Error ? e.message : 'Lỗi tính lại nhặt lẻ')
+  }
 }
 
 export async function listLoosePickingItems(req: Request, res: Response) {
@@ -5455,6 +7104,12 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       effectiveWh = [warehouse_id]
     }
 
+    // TỰ RA LỆNH FILL (15/09) — xả hàng đợi đối chiếu (kho, ngày xuất), một RPC. Đặt ở ĐÂY chứ không
+    // chỉ ở trang Việc cần làm: trang đó chỉ có nghĩa với kho Hướng dẫn, mà kho nhiều ô nhặt lẻ nhất
+    // (Bàu Bàng, 25/28 ô) đang chạy THỦ CÔNG ⇒ móc một chỗ là bỏ sót đúng kho cần nhất. Chỉ chạy khi
+    // người xem đang đứng ở MỘT kho cụ thể — lọc rỗng là "mọi kho trong phạm vi", không rõ kho nào.
+    if (warehouse_id && effectiveWh?.length === 1) await autoFillSafe(warehouse_id)
+
     // TRANG = CHUYẾN XE, chọn trong RPC `loose_picking_page` (migration 20260728_loose_picking_paged_rpc.sql).
     // Đường cũ nạp HẾT chuyến trong khoảng ngày rồi mới lọc `loose_picking > 0` ở tầng thứ ba —
     // vừa không có trần, vừa ngược chiều (điều kiện chọn-lọc-nhất áp cuối cùng).
@@ -5474,7 +7129,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       p_offset:       (pageNum - 1) * pageSize,
       p_limit:        pageSize,
     })
-    if (pageErr) return fail(res, pageErr.message)
+    if (pageErr) return fail(res, pageErr)
     const pd = (pageData ?? {}) as {
       gdo_ids?: string[]; items?: unknown[]; total?: number; items_n?: number; pending_n?: number
       loose_total?: number; loose_done?: number
@@ -5550,7 +7205,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     })
 
     return ok(res, { items: result, ...meta })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Get stock for manual-complete dialog ─────────────────────
@@ -5560,10 +7215,9 @@ export async function getManualItemStock(req: Request, res: Response) {
     const { gdoId, itemId } = req.params
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
-      supabase.from('OutboundItem')
-        .select('material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)')
-        .eq('id', itemId).single(),
+      itemOfGdo(itemId, gdoId, 'material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)'),
     ])
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (!gdo || !item) return fail(res, 'Không tìm thấy', 404)
     const materialCode = (item.material as any)?.material_code ?? item.material_code_raw
     // GỘP qua mọi dòng cùng pallet_code (mã pool có thể có nhiều dòng sau khi xuất hết rồi nhập lại) — KHÔNG maybeSingle.
@@ -5591,7 +7245,7 @@ export async function getManualItemStock(req: Request, res: Response) {
       ...(date_pools ? { date_pools } : {}),
       has_pool:          rows.length > 0,                                   // có dòng tồn = được theo dõi
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Manual complete item ─────────────────────────────────────
@@ -5632,10 +7286,8 @@ export async function manualCompleteItem(req: Request, res: Response) {
     }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, warehouse:Warehouse(inventory_mode)`).eq('id', gdoId).single(),
-      supabase.from('OutboundItem')
-        .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
-        .eq('id', itemId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, warehouse:Warehouse(inventory_mode, work_mode)`).eq('id', gdoId).single(),
+      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
@@ -5649,10 +7301,16 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // Chặn xuất sớm CHỈ khi GHI THÊM. Sửa GIẢM / hoàn về 0 luôn cho phép — nếu không, chuyến lỡ bị
     // đẩy sang ngày tương lai sau khi đã ghi nhận sẽ KẸT: tồn đã trừ mà không đường nào trả lại
     // (probe 02/08 B2). Luật là "không xuất sớm", không phải "không sửa sai".
-    const mcFutErr = (cartons == null || Number(cartons) > Number(item.cartons_scanned))
+    const mcAdding = (cartons == null || Number(cartons) > Number(item.cartons_scanned))
+    const mcFutErr = mcAdding
       ? futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
       : null
     if (mcFutErr) return fail(res, 422, 'FUTURE_DATE', mcFutErr)
+    // Kho Hướng dẫn: cùng lý do — GHI THÊM là lấy hàng, sửa GIẢM/hoàn thì luôn cho
+    if (mcAdding) {
+      const drErr = dateRuleGateError(gdo, item as DateRuleGateItem, 'lấy hàng')
+      if (drErr) return fail(res, 422, 'DATE_RULE_REQUIRED', drErr)
+    }
 
     // BASE UNIT: cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
     if (cartons != null) {
@@ -5668,6 +7326,18 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // Kho QTY → ép no-QR hiệu lực (xuất tay qua pool dùng chung như mã no_qr_tracking)
     const gdoMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode
     const isSpecial = effectiveNoQr((item.material as any)?.no_qr_tracking, gdoMode)
+
+    // ── CỬA NÀY CHỈ DÀNH CHO HÀNG KHÔNG TEM ────────────────────────────────────
+    // Với hàng CÓ tem, đường ghi nhận xuất là QUÉT. Nhánh dưới của hàm này ghi thẳng
+    // `cartons_scanned = ctn` mà KHÔNG đụng tồn và KHÔNG đụng vết quét ⇒ gọi trên hàng có tem sẽ
+    // làm bộ đếm của dòng hàng lệch khỏi vết quét thật VÀ lệch khỏi tồn đã trừ — đúng thứ bất biến
+    // "bộ đếm = Σ vết quét" mà bộ QA đang gác. FE vốn chỉ hiện nút này cho hàng không tem
+    // (`no_qr_tracking === true`), nên chặn ở đây là khớp FE, không cắt việc của ai.
+    // Phát hiện 29/08 khi diễn tập 100 người: BE không hề gác, gọi thẳng API là desync được.
+    if (!isSpecial) {
+      return fail(res, 400, 'QR_ITEM_MANUAL_FORBIDDEN',
+        'Mặt hàng này theo dõi bằng tem QR — ghi nhận xuất bằng cách QUÉT. Muốn sửa số đã ghi thì xóa lượt quét tương ứng.')
+    }
     const specialMatCode: string | null = isSpecial ? ((item.material as any)?.material_code ?? item.material_code_raw ?? null) : null
 
     // Chỉ COMPLETED khi nhập đủ kế hoạch — thiếu thì IN_PROGRESS (giống hàng QR).
@@ -5720,7 +7390,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     ])
 
     return ok(res, { success: true })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Scan log (lịch sử quét xuất kho) ───────────────────────────────────────
@@ -5791,6 +7461,10 @@ export async function getScanLog(req: Request, res: Response) {
     ;({ data, error } = await supabase.rpc('get_outbound_scan_log', rpcParams))
   }
 
+  // Quá hạn tính khi đông người cùng truy vấn KHÔNG phải lỗi app: 503 kèm câu người dùng LÀM ĐƯỢC
+  // gì đó (thu hẹp khoảng ngày / chọn 1 kho), thay vì 500 "Lỗi hệ thống" — mà 500 rác còn làm rule
+  // cảnh báo "lỗi BE 24h" kêu oan (đo 29/08: 35 dòng error_logs của riêng màn này trong 3 giờ).
+  if (error && isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
   const first = (data as any[])?.[0]

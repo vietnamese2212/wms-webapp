@@ -13,16 +13,23 @@ import * as weigh from '../controllers/wms/weighTicketController'
 import * as controlTower from '../controllers/wms/controlTowerController'
 import * as slotting from '../controllers/wms/slottingController'
 import * as fill from '../controllers/wms/fillController'
+import * as autoFill from '../controllers/wms/autoFillController'
 import * as alerts from '../controllers/wms/alertController'
 import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as packing from '../controllers/wms/packingController'
 import * as dashboard from '../controllers/wms/dashboardController'
+import * as kpi from '../controllers/wms/kpiController'
+import * as warehouseCost from '../controllers/wms/warehouseCostController'
+import * as trace from '../controllers/wms/traceController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
+import * as warehouseMap from '../controllers/wms/warehouseMapController'
+import * as directed from '../controllers/wms/directedWorkController'
 import * as integrationKeys from '../controllers/integration/keyController'
 import * as vision from '../controllers/integration/visionController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
+import { validate, z, zText } from '../middlewares/validate'
 
 // Chỉ nhận file Excel (chặn feed binary lạ vào XLSX.read) + 1 file + trần 10MB.
 // File sai loại → req.file undefined → controller trả 400 "Không có file" (không ném lỗi thô).
@@ -55,10 +62,56 @@ router.get('/events', (req, res) => {
 
 // Dashboard tổng quan — hở đọc có chủ đích (auth-only, cắt scope kho+loại trong controller)
 router.get('/dashboard', dashboard.getDashboard)
+// Năng suất kho (tab riêng): CÓ gate — số liệu này là NHÂN SỰ (ngày công, giờ tăng ca), không
+// nằm trong diện "hở đọc" như tồn kho. Các khoá TIỀN trong payload bị controller cắt bỏ nếu
+// người gọi không có `warehouse_cost.view`.
+router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboard.getProductivity)
+// Tab KPI (08/09): 24 KPI đo được + so kỳ + xu hướng tháng — đi theo quyền Dashboard; khoá TIỀN bị cắt
+// nếu thiếu warehouse_cost.view. Đặt MỤC TIÊU = quyền riêng `dashboard.kpi_target` (người đặt là quản
+// lý kho, không phải quản trị hệ thống — không đi ké wms_settings.manage_system).
+router.get('/kpi',          requirePerm('dashboard', 'view'),       kpi.getKpi)
+router.get('/kpi/series',   requirePerm('dashboard', 'view'),       kpi.getKpiSeries)
+router.get('/kpi/targets',  requirePerm('dashboard', 'view'),       kpi.getKpiTargets_)
+router.put('/kpi/targets',  requirePerm('dashboard', 'kpi_target'), kpi.putKpiTargets)
+router.get('/kpi/meanings', requirePerm('dashboard', 'view'),       kpi.getKpiMeanings_)
+router.put('/kpi/meanings', requirePerm('dashboard', 'kpi_note'),   kpi.putKpiMeanings)
+
+// Chi phí kho — SỔ KÊ KHAI: 1 dòng = (Kho · Kỳ tháng · Khoản mục · Số tiền); mỗi việc 1 quyền riêng.
+// Route tĩnh (/items, /upload…) phải đứng TRƯỚC /:id, không thì 'items' bị nuốt làm id.
+// Truy xuất lô 2 chiều (28/08): lô → đã giao đi đâu · khách/chuyến/biển số → đã nhận lô nào.
+// Chỉ ĐỌC, nhưng là quyền RIÊNG: nó ghép tồn kho + xuất hàng + khách hàng vào một chỗ, rộng hơn
+// bất kỳ trang đơn lẻ nào — ai xem được Tồn kho không mặc nhiên được xem "hàng đã đi tới NPP nào".
+router.get   ('/trace',                         requirePerm('traceability', 'view'),          trace.lotTrace)
+// Điều tra theo THÙNG (01/09): khớp giờ in phun ↔ sổ đóng gói → truy khách đã nhận; hồ sơ lưu vết.
+// TẠO hồ sơ = quyền riêng investigate (đứng tên hồ sơ điều tra); XEM hồ sơ đi theo view.
+router.get   ('/trace/suggest',                 requirePerm('traceability', 'view'),          trace.traceSuggest)
+router.get   ('/trace/runs',                    requirePerm('traceability', 'investigate'),   trace.listCandidateRuns)
+router.get   ('/trace/runs/:id',                requirePerm('traceability', 'investigate'),   trace.getRunPallets)
+router.get   ('/trace/investigations',          requirePerm('traceability', 'view'),          trace.listInvestigations)
+router.get   ('/trace/investigations/:id',      requirePerm('traceability', 'view'),          trace.getInvestigation)
+router.post  ('/trace/investigations/preview',  requirePerm('traceability', 'investigate'),   trace.investigatePreview)
+router.post  ('/trace/investigations',          requirePerm('traceability', 'investigate'),   trace.createInvestigation)
+// Chất lượng phục vụ (giao đủ / đúng hạn / sao) — tab của trang Tổng quan, đi theo quyền Dashboard
+router.get   ('/service-level',                 requirePerm('dashboard', 'view'),             trace.serviceLevel)
+
+router.get   ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'),        warehouseCost.listCosts)
+router.get   ('/warehouse-costs/vouchers',      requirePerm('warehouse_cost', 'view'),        warehouseCost.listVouchers)
+router.get   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'view'),        warehouseCost.getVoucher)
+router.put   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'edit'),        warehouseCost.saveVoucher)
+router.post  ('/warehouse-costs/copy-previous', requirePerm('warehouse_cost', 'edit'),        warehouseCost.copyPreviousMonth)
+router.post  ('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'),        upload.single('file'), warehouseCost.uploadCostExcel)
+router.post  ('/warehouse-costs/lock',          requirePerm('warehouse_cost', 'lock'),        warehouseCost.setCostLock)
+router.post  ('/warehouse-costs/items',         requirePerm('warehouse_cost', 'manage_item'), warehouseCost.saveCostItem)
+router.delete('/warehouse-costs/items/:code',   requirePerm('warehouse_cost', 'manage_item'), warehouseCost.deleteCostItem)
+router.post  ('/warehouse-costs',               requirePerm('warehouse_cost', 'edit'),        warehouseCost.createCost)
+router.patch ('/warehouse-costs/:id',           requirePerm('warehouse_cost', 'edit'),        warehouseCost.updateCost)
+router.delete('/warehouse-costs/:id',           requirePerm('warehouse_cost', 'edit'),        warehouseCost.deleteCost)
 
 // Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
 router.get('/settings',      systemSetting.listSettings)
-router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'), systemSetting.updateSetting)
+// 11/09: mẫu `validate({…})` — body không phải object / thiếu `value` / key rác → 400 kèm tên trường, trước khi vào controller
+router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'),
+  validate({ params: z.object({ key: zText(1, 64) }), body: z.object({ value: z.unknown() }) }), systemSetting.updateSetting)
 
 // Quản lý API key tích hợp ERP — CHỈ superadmin (kiểm trong controller). Key thô hiện 1 lần lúc tạo.
 router.get('/integration-keys',            integrationKeys.listKeys)
@@ -125,7 +178,6 @@ router.get('/inbound-orders',                           inbound.listOrders)
 // Hở đọc như listOrders (CLAUDE.md) — scope kho + loại vẫn cắt trong controller theo JWT.
 router.get('/inbound-orders/summary',                   inbound.listOrdersSummary)
 router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
-router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
 router.post('/inbound-orders',                          requirePerm('inbound', 'create'), inbound.createOrder)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)
@@ -149,16 +201,34 @@ router.get('/inventory/export',                    requirePerm('inventory', 'exp
 router.get('/stocktake/cycle',                     requirePerm('stocktake', 'view'), cycleCount.getCycleCount)
 router.get('/inventory/stocktake-entries',         requirePerm('stocktake', 'view'), inventory.stocktakeEntries)   // phải trước /:id
 router.get('/inventory/stocktake-log',             requirePerm('stocktake', 'view'), inventory.stocktakeLog)       // lịch sử kiểm (phải trước /:id)
+// Lịch sử chuyển vị trí — tab Lịch sử của màn Chuyển vị trí (người chuyển xem được, không đòi quyền kiểm kê)
+router.get('/inventory/move-log',                  requireAnyPerm(['inventory', 'move_location'], ['stocktake', 'view']), inventory.moveLog)
+// SỔ PALLET (17/09) — "pallet này ai đã tác động vào": hợp nhất 7 sổ sẵn có, chỉ ĐỌC.
+// Ai đang làm việc trong kho đều tra được; controller vẫn cắt phạm vi kho + loại hàng.
+router.get('/inventory/pallet-ledger',             requireAnyPerm(['inventory', 'view'], ['directed_work', 'view'], ['stocktake', 'view']), inventory.palletLedger)
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), inventory.uploadExcel)
-router.post('/inventory/stocktake-check',          requirePerm('stocktake', 'scan'), inventory.stocktakeCheck)
+// Tra pallet theo QR — dùng chung 2 màn: Kiểm kê (stocktake.scan) + Chuyển vị trí quét QR
+// (inventory.move_location — người chuyển vị trí không bắt buộc có quyền kiểm kê)
+router.post('/inventory/stocktake-check',          requireAnyPerm(['stocktake', 'scan'], ['inventory', 'move_location']), inventory.stocktakeCheck)
 router.patch('/inventory/bulk-qa',                requirePerm('inventory', 'qa_update'), inventory.bulkUpdateQA)
 router.patch('/inventory/bulk-ncc',               requirePerm('inventory', 'update_ncc'), inventory.bulkUpdateNcc)
 router.patch('/inventory/bulk-location',          requirePerm('inventory', 'move_location'), inventory.bulkTransferLocation)
 router.patch('/inventory/bulk-material',          requirePerm('inventory', 'recode'), inventory.bulkTransferMaterial)
 router.patch('/inventory/bulk-production-date',   requirePerm('inventory', 'update_prod_date'), inventory.bulkUpdateProductionDate)
-router.patch('/inventory/:id/adjust',             requirePerm('inventory', 'adjust'), inventory.adjustInventory)
+// Ép kiểu TẠI RÌA (18/09): `actor_name` là SỐ thì `.trim()` trong controller ném TypeError ⇒ 500
+// UNCAUGHT (fuzz bắt được). Đúng lớp lỗi "body sai kiểu" mà `validate` sinh ra để chặn — khai schema
+// rẻ hơn kiểm kiểu tay ở từng dòng, và chặn TRƯỚC khi vào controller.
+router.patch('/inventory/:id/adjust',             requirePerm('inventory', 'adjust'),
+  validate({ body: z.object({
+    adjustment: z.number().finite(),
+    note: zText(0, 500).optional().nullable(),
+    actor_name: zText(0, 200).optional().nullable(),
+    employee_id: zText(0, 100).optional().nullable(),
+    stocktake_by: zText(0, 100).optional().nullable(),
+    qty_semantics: zText(0, 20).optional(),
+  }).passthrough() }), inventory.adjustInventory)
 router.get('/inventory/:id/adjustment-log',       inventory.listAdjustmentLog)
 router.patch('/inventory/:id/unflag',             requirePerm('stocktake', 'complete'), inventory.unflagEntry)
 router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan'), inventory.stocktakeEntry)
@@ -166,6 +236,7 @@ router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan
 // Loose picking (nhặt lẻ)
 router.get('/loosepicking/facets',                            requirePerm('loosepicking', 'view'), outbound.getLoosePickingFacets)   // phải trước '/loosepicking'
 router.get('/loosepicking',                                   requirePerm('loosepicking', 'view'), outbound.listLoosePickingItems)
+router.post('/loosepicking/recalc',                           requirePerm('loosepicking', 'recalc'), outbound.recalcLoosePicking)   // tính lại loose theo setting — chuyến CHƯA bắt đầu
 
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       requirePerm('outbound', 'view'), outbound.listGDOs)
@@ -197,6 +268,28 @@ router.post('/slotting/plans/:id/scan-move',                  requirePerm('inven
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'delete'),   slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
 
+// ─── SƠ ĐỒ KHO (08/09) — bản vẽ 2D: khung lưới + vị trí/cửa/bãi đặt lên lưới; nền cho Directed Work ───
+// Mọi route đều có :warehouseId → controller kiểm phạm vi kho (403) + id rác/không có kho (404) trước khi làm gì.
+// ── VIỆC CẦN LÀM (Directed Work 1c, 10/09) — 3 bảng theo vai ──────────────────────────────────
+router.get('/directed/board',                                 requirePerm('directed_work', 'view'),    directed.getBoard)
+router.get('/directed/inbox',                                 requirePerm('directed_work', 'view'),    directed.getInbox)        // hộp việc theo người (đợt C, 12/09)
+router.get('/directed/supervision',                           requirePerm('directed_work', 'replan'),  directed.getSupervision)  // giám sát: ai đang làm · % đúng kế hoạch
+router.post('/directed/tasks/confirm',                        requirePerm('directed_work', 'confirm'), directed.confirm)
+router.post('/directed/tasks/claim',                          requirePerm('directed_work', 'confirm'),                    // "Nhận" việc chung = bước trước của ✓ Xong (12/09)
+  validate({ body: z.object({ task_ids: z.array(zText(1, 100)).min(1).max(200), undo: z.boolean().optional() }) }), directed.claim)
+router.post('/directed/gdos/:id/replan',                      requirePerm('directed_work', 'replan'),  directed.replan)
+router.get('/directed/loose-route',                           requireAnyPerm(['loosepicking', 'view'], ['directed_work', 'view']), directed.getLooseRoute)   // đường đi nhặt lẻ A→B→C của một chuyến (14/09)
+
+router.get('/warehouse-map/:warehouseId',                     requirePerm('warehouse_map', 'view'), warehouseMap.getWarehouseMap)
+router.get('/warehouse-map/:warehouseId/occupancy',           requirePerm('warehouse_map', 'view'), warehouseMap.getMapOccupancy)
+router.get('/warehouse-map/:warehouseId/find',                requirePerm('warehouse_map', 'view'), warehouseMap.findOnMap)
+router.put('/warehouse-map/:warehouseId',                     requirePerm('warehouse_map', 'edit'), warehouseMap.saveWarehouseMapFrame)
+router.patch('/warehouse-map/:warehouseId/cells',             requirePerm('warehouse_map', 'edit'), warehouseMap.assignCells)
+router.patch('/warehouse-map/:warehouseId/footprint',         requirePerm('warehouse_map', 'edit'), warehouseMap.setFootprintRack)
+router.post('/warehouse-map/:warehouseId/objects',            requirePerm('warehouse_map', 'edit'), warehouseMap.createMapObject)
+router.patch('/warehouse-map/:warehouseId/objects/:id',       requirePerm('warehouse_map', 'edit'), warehouseMap.renameMapObject)
+router.delete('/warehouse-map/:warehouseId/objects/:id',      requirePerm('warehouse_map', 'edit'), warehouseMap.deleteMapObject)
+
 // ─── FILL HÀNG phục vụ nhặt lẻ (04/08; v3 gom lệnh theo DATE 05/08) ─────────
 // Quét thực hiện GHI location_id, nhưng phạm vi bị chặn cứng ở BE: đúng mã + đúng DATE của dòng
 // lệnh, đích phải là vị trí nhặt lẻ nhận đúng Loại kho. Cùng tiền lệ `leftover_location_id` bên
@@ -204,10 +297,12 @@ router.patch('/slotting/zone-config/:id',                     requirePerm('slott
 // đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
 // Trung tâm cảnh báo (Đợt 2 roadmap 06/08) — mỗi nút 1 quyền: view=xem, ack=đánh dấu đã biết
 router.get('/alerts',                                         requirePerm('alerts', 'view'),  alerts.listAlerts)
+// Quét TÁCH khỏi GET /alerts (21/08) — người mở trang không phải chờ lượt quét 6 rule (~1,9s).
+router.post('/alerts/scan',                                   requirePerm('alerts', 'view'),  alerts.scanAlerts)
 router.post('/alerts/:id/ack',                                requirePerm('alerts', 'ack'),   alerts.ackAlert)
 router.delete('/alerts/:id/ack',                              requirePerm('alerts', 'ack'),   alerts.unackAlert)
 
-router.get('/fill/demand',                                    requirePerm('fill', 'view'),    fill.getFillDemand)
+router.get('/fill/demand',                                    requirePerm('fill', 'view'),    autoFill.beforeDemand, fill.getFillDemand)
 router.get('/fill/candidates',                                requirePerm('fill', 'view'),    fill.getFillCandidates)
 router.get('/fill/orders',                                    requirePerm('fill', 'view'),    fill.listFillOrders)
 router.get('/fill/orders/:id',                                requirePerm('fill', 'view'),    fill.getFillOrder)
@@ -216,9 +311,18 @@ router.get('/fill/pick-face-locations',                       requirePerm('fill'
 // Ô chọn người nhận lệnh — dùng lại controller danh sách nhân sự theo kho (read-only) của Xuất kho
 router.get('/fill/employees',                                 requirePerm('fill', 'assign'),  outbound.getWarehouseEmployees)
 router.post('/fill/orders',                                   requirePerm('fill', 'plan'),    fill.createFillOrder)
+// "Chạy ngay" bộ tự ra lệnh (15/09) — cùng quyền với nút ra lệnh tay vì nó tạo đúng thứ đó
+router.post('/fill/auto',                                     requirePerm('fill', 'plan'),
+  validate({ body: z.object({ warehouse_id: zText(1, 100), date: zText(10, 10).optional() }) }), autoFill.runAutoFill)
 router.post('/fill/scan',                                     requirePerm('fill', 'execute'), fill.scanFill)
 // Gán người (assign) và đổi vị trí đích (plan) đi chung 1 route → controller tự kiểm TỪNG quyền
 // Gán người ≠ đổi vị trí đến ≠ hủy = 3 quyền riêng (tách 05/08 — controller kiểm đúng field)
+// Gán CẢ LỆNH NGÀY cho một người ("nhận kế hoạch cả ngày", 15/09) — cùng quyền với gán từng dòng
+router.patch('/fill/orders/:id',                              requirePerm('fill', 'assign'),
+  validate({ body: z.object({ assignee_id: zText(1, 100).nullable() }) }), fill.assignFillOrder)
+// Chốt ngày: đóng sổ lệnh của ngày, huỷ nốt dòng chưa thực hiện (cùng quyền với ra lệnh)
+router.post('/fill/orders/:id/close',                         requirePerm('fill', 'plan'),
+  validate({ params: z.object({ id: zText(1, 100) }) }), fill.closeFillOrder)
 router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'change_dest']), fill.updateFillTask)
 router.delete('/fill/tasks/:id',                              requirePerm('fill', 'cancel'),  fill.cancelFillTask)
 router.delete('/fill/orders/:id',                             requirePerm('fill', 'cancel'),  fill.cancelFillOrder)
@@ -241,7 +345,7 @@ router.get('/forklift-report',      requirePerm('forklift', 'view'),           f
 
 // ─── Sổ đóng gói điện tử (11/08) — /board đặt TRƯỚC route param nếu sau này có /:id ───
 // AI Vision đọc date/giờ thùng — cùng ngữ cảnh quét ghi sổ; lỗi/chưa cấu hình = 422 → FE rơi về OCR local
-router.post('/packing/vision-ocr',     requirePerm('packing', 'record'), vision.visionOcr)
+router.post('/packing/vision-ocr',     requireAnyPerm(['packing', 'record'], ['traceability', 'investigate']), vision.visionOcr)   // AI đọc giờ từ ảnh — dùng chung cho Sổ đóng gói + Điều tra truy vết
 router.get('/packing-logs/board',      requirePerm('packing', 'view'),   packing.getBoard)
 router.get('/packing-logs',            requirePerm('packing', 'view'),   packing.listLogs)
 router.post('/packing-logs/open',      requirePerm('packing', 'record'), packing.openLog)
@@ -256,7 +360,6 @@ router.post('/packing-runs',            requirePerm('packing', 'open_run'), pack
 router.post('/packing-runs/:id/close',  requirePerm('packing', 'open_run'), packing.closeRun)
 router.patch('/packing-runs/:id',       requirePerm('packing', 'open_run'), packing.updateRun)
 router.post('/packing-runs/:id/cancel', requirePerm('packing', 'open_run'), packing.cancelRun)
-router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
 router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)
@@ -269,13 +372,23 @@ router.get('/outbound/scan-log',                              requirePerm('scanl
 router.get('/outbound/reconcile-tasks/count',                 requirePerm('outbound', 'reconcile'), reconcile.reconcileOpenCount)
 router.get('/outbound/reconcile-tasks',                       requirePerm('outbound', 'reconcile'), reconcile.listReconcileTasks)
 router.post('/outbound/reconcile-tasks/:id/resolve',          requirePerm('outbound', 'reconcile'), reconcile.resolveReconcileTask)
+// CHỐT %Date hàng loạt (10/09) — đứng TRƯỚC mọi route `/outbound/:id` để "items" không bị nuốt làm id
+router.get('/outbound/date-rule-lines',                       requirePerm('outbound', 'set_date'), outbound.getDateRuleLines)          // màn chốt %Date: mọi dòng của mọi chuyến trong khoảng ngày
+router.post('/outbound/items/date-rule/check',                requirePerm('outbound', 'set_date'), outbound.checkItemsDateRule)   // hỏi TRƯỚC khi chốt: mức %Date này còn tồn nào đạt không
+router.patch('/outbound/items/date-rule',                     requirePerm('outbound', 'set_date'), outbound.setItemsDateRule)
+router.post('/outbound/items/date-rule/apply-master',         requirePerm('outbound', 'set_date'), outbound.applyDateRuleMaster)   // ?preflight=1 = chỉ đếm
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
+// STT chuẩn bị theo booking khung giờ — read-only, dùng ở list Xuất kho (view) + board Chuẩn bị hàng (prepare) + list Nhặt lẻ (nhặt lẻ soạn TRƯỚC theo thứ tự xe tới)
+router.get('/outbound/booking-sequence',                      requireAnyPerm(['outbound', 'view'], ['outbound', 'prepare'], ['loosepicking', 'view']), outbound.getBookingSequence)
 router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'prepare'), outbound.getInventoryByMaterial)
 router.get('/outbound/pallet-lookup',                         requirePerm('outbound', 'view'), outbound.lookupPalletGdos)
 // Cảnh báo thiếu tồn theo (kho, ngày giao) — dùng ở cả Xuất kho lẫn Nhặt lẻ (read-only)
 router.get('/outbound/shortages',                             requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getOutboundShortages)
 router.get('/outbound/:id/events',                            requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), reconcile.listOutboundEvents)   // nút "Thông tin" — lịch sử thay đổi của chuyến
 router.get('/outbound/:id/pick-suggestions',                  requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGdoPickSuggestions)   // cột "Vị trí lấy" (FEFO) trang chi tiết
+// Cửa xuất có sức chứa xe (09/09): tình trạng cửa của kho nuôi ô chọn lúc Bắt đầu + lớp phủ Cửa trên Sơ đồ kho.
+// Đứng TRƯỚC `/outbound/:id` — không thì "docks" bị nuốt làm id chuyến.
+router.get('/outbound/docks',                                 requireAnyPerm(['outbound', 'start'], ['outbound', 'view'], ['warehouse_map', 'view']), outbound.listDocks)
 router.get('/outbound/:id',                                   requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGDO)
 router.put('/outbound/:id',                                   requirePerm('outbound', 'edit'), outbound.updateGDO)
 // PATCH nhận cả edit lẫn complete — controller kiểm chi tiết: đổi status=COMPLETED cần
@@ -285,6 +398,8 @@ router.delete('/outbound/:id',                                requirePerm('outbo
 router.post('/outbound/:id/assign',                           requirePerm('outbound', 'assign'), outbound.assignGDO)
 router.post('/outbound/:id/unassign',                         requirePerm('outbound', 'unassign'), outbound.unassignGDO)
 router.post('/outbound/:id/start',                            requirePerm('outbound', 'start'), outbound.startGDO)
+// Đổi cửa giữa chuyến (cửa xuất có sức chứa xe, 09/09) = sửa thông tin xe (outbound.edit)
+router.patch('/outbound/:id/dock',                            requirePerm('outbound', 'edit'), outbound.changeDockGDO)
 router.patch('/outbound/:id/transport',                       requirePerm('outbound', 'edit'), outbound.updateTransport)
 router.post('/outbound/:id/unstart',                          requirePerm('outbound', 'unstart'), outbound.unstartGDO)
 // Duyệt bỏ qua TỪNG RULE Bắt đầu (2 tình huống 2 action riêng — user chốt 01/08): mỗi rule 1 quyền, không đi ké start/edit

@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify, Unlock, History } from 'lucide-react'
+import { passwordError, PASSWORD_HINT } from '@/utils/passwordPolicy'
+import { toast } from '@/components/ui/use-toast'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import { formatDateTime, normalizePhone } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -16,21 +18,24 @@ import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Card }     from '@/components/ui/card'
 import { Badge }    from '@/components/ui/badge'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import {
   useDepartments, useJobTitles, useEmployeesPaged,
-  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
+  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useUnlockAccount, useAdminAudit, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
   useTransportCompanies, useTmsVehicles,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { MODULES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { LANDING_PAGES, LANDING_DEFAULT_LABEL } from '@/config/landing'
 import { PERMISSION_PAGES } from '@/config/navigation'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
@@ -39,6 +44,20 @@ import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 
 // Màu badge Loại kho theo cờ per-loại (LookupValue.meta) — whTypeBadgeCls từ utils/cargoCategory
+
+// Nhãn hành động sổ quản trị (khớp ADMIN_AUDIT_ACTIONS ở backend/src/services/adminAudit.ts)
+const AUDIT_ACTION_LABEL: Record<string, string> = {
+  EMPLOYEE_CREATE: 'Tạo tài khoản', EMPLOYEE_UPDATE: 'Sửa hồ sơ', PASSWORD_SET: 'Đặt mật khẩu', ACCOUNT_UNLOCK: 'Mở khoá đăng nhập',
+  EMPLOYEE_DELETE: 'Xoá / ẩn tài khoản', EMPLOYEE_RESTORE: 'Khôi phục tài khoản', WAREHOUSE_ACCESS: 'Đổi phạm vi kho', MANAGER_SET: 'Đổi quản lý',
+  JOBTITLE_CREATE: 'Tạo chức danh', JOBTITLE_UPDATE: 'Sửa chức danh / QUYỀN', JOBTITLE_PARENT: 'Đổi cấp trên chức danh',
+  DEPARTMENT_CREATE: 'Tạo phòng ban', DEPARTMENT_UPDATE: 'Sửa phòng ban', SETTING_UPDATE: 'Đổi cờ hệ thống', VISION_CONFIG: 'Cấu hình AI Vision',
+  APIKEY_CREATE: 'Tạo API key', APIKEY_REVOKE: 'Thu hồi API key', APIKEY_DELETE: 'Xoá API key',
+}
+const AUDIT_ACTION_TONE = (a: string): BadgeTone =>
+  /PASSWORD|UNLOCK|APIKEY|JOBTITLE_UPDATE|WAREHOUSE_ACCESS/.test(a) ? 'red' : /CREATE|RESTORE/.test(a) ? 'green' : /DELETE/.test(a) ? 'slate' : 'sky'
+// Hiện jsonb gọn: {a: 1, b: [..]} → "a: 1 · b: [..]" (cắt 400 ký tự, tooltip có bản đầy đủ)
+const compactJson = (o: Record<string, unknown> | null | undefined): string =>
+  o && Object.keys(o).length ? Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ') : ''
 
 // ─── Set password dialog ──────────────────────────────────────────────────────
 
@@ -54,7 +73,8 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (password.length < 6) { setError('Mật khẩu phải có ít nhất 6 ký tự'); return }
+    const policyErr = passwordError(password, { email: emp.email, employee_code: emp.employee_code })
+    if (policyErr) { setError(policyErr); return }
     if (password !== confirm) { setError('Xác nhận mật khẩu không khớp'); return }
     setSaving(true)
     try {
@@ -92,7 +112,7 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
             <div className="space-y-1">
               <Label className="text-xs">Mật khẩu mới</Label>
               <Input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder="Tối thiểu 6 ký tự" autoComplete="new-password" />
+                placeholder={PASSWORD_HINT} autoComplete="new-password" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Xác nhận mật khẩu</Label>
@@ -271,6 +291,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     setCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
   }
 
+  const noWarehousePicked = scope === 'ASSIGNED' && warehouseIds.length === 0
+  // Bỏ tick HẾT loại hàng cũng bị BE từ chối (422) vì mảng rỗng bị đọc là "không giới hạn" —
+  // tức tài khoản đọc được MỌI loại. Chỉ áp khi SỬA: lúc tạo mà để trống thì BE tự điền cả danh mục.
+  const noCategoryPicked = isEdit && scope === 'ASSIGNED' && categories.length === 0
+
   function handleSubmit() {
     const payload: Record<string, unknown> = {
       name,
@@ -376,7 +401,13 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       title={isEdit ? 'Sửa nhân viên' : 'Thêm nhân viên'}
       footer={<>
         <Button variant="outline" onClick={onClose}>Huỷ</Button>
-        <Button onClick={handleSubmit} disabled={isPending || !showRestOfForm || !name || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
+        {/* Phạm vi "kho được gán" mà không gán kho nào thì BE từ chối (422) — tài khoản đó vừa không
+            thao tác được gì, vừa đọc được dữ liệu của mọi kho. Chặn ngay tại nút để người quản trị
+            biết phải làm gì, thay vì bấm Lưu rồi mới nhận banner đỏ. */}
+        <Button onClick={handleSubmit}
+          title={noWarehousePicked ? 'Chọn ít nhất 1 kho cho phạm vi "Kho được chỉ định"'
+               : noCategoryPicked ? 'Chọn ít nhất 1 loại hàng' : undefined}
+          disabled={isPending || !showRestOfForm || !name || noWarehousePicked || noCategoryPicked || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
           {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
         </Button>
       </>}
@@ -480,7 +511,14 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
               <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
                 <div className="space-y-1">
-                  <Label className="text-xs">Loại hàng được phép</Label>
+                  <Label className="text-xs">
+                    Loại hàng được phép{scope === 'ASSIGNED' && <span className="text-red-500"> *</span>}
+                  </Label>
+                  {noCategoryPicked && (
+                    <p className="text-[11px] text-red-600">
+                      Phải chọn ít nhất 1 loại — bỏ tick hết là tài khoản đọc được MỌI loại hàng.
+                    </p>
+                  )}
                   <div className="flex gap-2 flex-wrap">
                     {categoryOptions.map(cat => (
                       <button key={cat} type="button" onClick={() => toggleCategory(cat)}
@@ -509,7 +547,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
                 {scope === 'ASSIGNED' && (
                   <div className="space-y-1">
-                    <Label className="text-xs">Kho được phép</Label>
+                    <Label className="text-xs">Kho được phép <span className="text-red-500">*</span></Label>
                     <WarehouseMultiSelect
                       warehouses={warehouses as { id: string; code: string; name: string }[]}
                       selected={warehouseIds}
@@ -517,6 +555,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                       dropUp
                       showTags
                     />
+                    {noWarehousePicked && (
+                      <p className="text-[11px] text-red-600">
+                        Phải chọn ít nhất 1 kho — để trống thì tài khoản vừa không thao tác được, vừa đọc được dữ liệu của mọi kho.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -614,6 +657,10 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
 
 // ─── Job title form dialog ────────────────────────────────────────────────────
 
+// Tìm không dấu trong trình phân quyền ("xuat excel" khớp "Xuất Excel")
+const normVn = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+type PermModDef = { page: string; tab?: string; actions: Record<string, string> }
+
 function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: boolean; onClose: () => void }) {
   const isEdit = !!jt
   const me = useAuthStore(s => s.user)
@@ -625,7 +672,30 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const [deptId,     setDeptId]     = useState(jt?.department_id ?? '')
   const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
   const [isDriver,   setIsDriver]   = useState(jt?.is_driver     ?? false)
+  const [isForklift, setIsForklift] = useState(jt?.is_forklift_driver ?? false)
+  const [landing,    setLanding]    = useState<string>(jt?.landing_page ?? '')   // '' = Tổng quan
   const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
+
+  // Ô tìm trang/tab/action trong bảng phân quyền (user 19/08 "đang kéo nhiều quá"):
+  // khớp TÊN TRANG → giữ nguyên cả trang; khớp tab/module → giữ nguyên tab; khớp nhãn
+  // action → chỉ hiện action đó. Không dấu vẫn khớp (normVn).
+  const [permSearch, setPermSearch] = useState('')
+  const permPages = useMemo(() => {
+    const q = normVn(permSearch.trim())
+    const out: { page: string; mods: [ModuleKey, PermModDef][] }[] = []
+    for (const { page, modules } of PERMISSION_PAGES) {
+      const pageHit = !q || normVn(page).includes(q)
+      const mods: [ModuleKey, PermModDef][] = []
+      for (const k of modules) {
+        const d = MODULES[k] as PermModDef
+        if (pageHit || normVn(`${k} ${d.tab ?? ''}`).includes(q)) { mods.push([k, d]); continue }
+        const acts = Object.fromEntries(Object.entries(d.actions).filter(([ak, al]) => normVn(`${ak} ${al}`).includes(q)))
+        if (Object.keys(acts).length > 0) mods.push([k, { ...d, actions: acts }])
+      }
+      if (mods.length > 0) out.push({ page, mods })
+    }
+    return out
+  }, [permSearch])
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateJobTitle()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateJobTitle()
@@ -652,7 +722,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     const cleanPerms = Object.fromEntries(
       Object.entries(modulePerms).filter((e): e is [string, string[]] => e[1] !== undefined)
     )
-    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver }
+    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver, is_forklift_driver: isForklift, landing_page: landing || null }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
@@ -714,9 +784,14 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             <p className="text-xs font-medium text-slate-600 flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền module
             </p>
+            {/* Ô TÌM trang/tab/action (user 19/08 "đang kéo nhiều quá") — không dấu vẫn khớp */}
+            <Input value={permSearch} onChange={e => setPermSearch(e.target.value)}
+              placeholder="Tìm trang / tab / action… (vd: dashboard, thông báo, xuất excel)" className="h-8 text-xs" />
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {PERMISSION_PAGES.map(({ page, modules }) => {
-                const mods = modules.map(k => [k, MODULES[k]] as [ModuleKey, typeof MODULES[ModuleKey]])
+              {permPages.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-4">Không có quyền nào khớp "{permSearch}"</p>
+              )}
+              {permPages.map(({ page, mods }) => {
                 const multi = mods.length > 1                                            // trang nhiều tab
                 const pageHasAny = mods.some(([k]) => (modulePerms[k]?.length ?? 0) > 0)
                 const isAll = mods.every(([k, d]) => Object.keys(d.actions).every(a => (modulePerms[k] ?? []).includes(a)))
@@ -729,8 +804,15 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                       <button
                         type="button"
                         onClick={() => setModulePerms(prev => {
+                          // Khi đang TÌM, d.actions chỉ là phần đang hiện → gán/gỡ đúng phần đó,
+                          // KHÔNG đè nguyên module (đè = gỡ nhầm cả action đang bị ẩn bởi từ khóa)
                           const next = { ...prev }
-                          for (const [k, d] of mods) next[k] = isAll ? undefined : Object.keys(d.actions)
+                          for (const [k, d] of mods) {
+                            const vis = Object.keys(d.actions)
+                            const cur = (prev[k] ?? []) as string[]
+                            const merged = isAll ? cur.filter(a => !vis.includes(a)) : Array.from(new Set([...cur, ...vis]))
+                            next[k] = merged.length ? merged : undefined
+                          }
                           return next
                         })}
                         className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
@@ -777,7 +859,12 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">{tab}</span>
                               <button
                                 type="button"
-                                onClick={() => setModulePerms(prev => ({ ...prev, [modKey]: tabAll ? undefined : tabActions }))}
+                                onClick={() => setModulePerms(prev => {
+                                  // tabActions = phần ĐANG HIỆN (khi tìm) — merge/trừ thay vì đè module
+                                  const cur = (prev[modKey] ?? []) as string[]
+                                  const merged = tabAll ? cur.filter(a => !tabActions.includes(a)) : Array.from(new Set([...cur, ...tabActions]))
+                                  return { ...prev, [modKey]: merged.length ? merged : undefined }
+                                })}
                                 className={`text-[9px] px-1.5 py-0.5 rounded font-medium transition-colors ${
                                   tabAll ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'
                                 }`}
@@ -812,6 +899,29 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
               <span className="block text-[11px] font-normal text-slate-500">Tài khoản mang chức danh này được gán xe và mở màn hình tài xế (chỉ có tác dụng khi phòng ban là đơn vị vận tải).</span>
             </Label>
           </div>
+          {/* Cờ lái xe nâng (18/09) — thay việc so tên chức danh chứa "lái xe nâng". Cờ này quyết định
+              CẢ ô chọn lúc Bắt đầu chuyến LẪN cửa gác của máy chủ, nên bỏ tick là người đó không nhận
+              được việc xe nâng nữa. */}
+          <div className="flex items-start gap-2">
+            <input id="jt-forklift" type="checkbox" checked={isForklift}
+              onChange={e => setIsForklift(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
+            <Label htmlFor="jt-forklift" className="text-sm cursor-pointer leading-snug">
+              Là chức danh lái xe nâng
+              <span className="block text-[11px] font-normal text-slate-500">Chỉ người mang chức danh có tick này mới chọn được vào ô “Lái xe nâng” lúc Bắt đầu chuyến, và mới nhận việc ở bảng “Cần đưa ra”.</span>
+            </Label>
+          </div>
+          {/* Trang mở đầu theo chức danh (12/09): lái xe nâng đăng nhập là thấy việc của mình, không đi
+              qua Dashboard KPI toàn công ty rồi mới lần vào menu. Chỉ có tác dụng khi có quyền vào trang đó. */}
+          <div className="space-y-1">
+            <Label className="text-xs">Trang mở đầu sau đăng nhập</Label>
+            <SingleSelect
+              value={landing || '__default__'}
+              onChange={v => setLanding(v === '__default__' ? '' : v)}
+              options={[{ value: '__default__', label: LANDING_DEFAULT_LABEL }, ...LANDING_PAGES.map(l => ({ value: l.to, label: l.label }))]}
+            />
+            <p className="text-[11px] text-slate-500">Chỉ áp khi chức danh có quyền vào trang đó; không thì vẫn mở Tổng quan.</p>
+          </div>
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="jt-active" type="checkbox" checked={isActive}
@@ -834,7 +944,15 @@ export default function UserManagement() {
   const canCreateEmp = can(perms, 'user_admin', 'create')
   const canEditEmp   = can(perms, 'user_admin', 'edit')
   const canSetPwd    = can(perms, 'user_admin', 'set_password')
+  const canUnlock    = can(perms, 'user_admin', 'unlock')
   const canDeleteEmp = can(perms, 'user_admin', 'delete')
+  const { mutate: unlockAccount, isPending: unlocking } = useUnlockAccount()
+  // Khoá đăng nhập (gõ sai 10 lần/15') — chỉ tính khi locked_until còn ở tương lai
+  const isLocked = (emp: EmployeeRecord) => !!emp.locked_until && new Date(emp.locked_until).getTime() > Date.now()
+  const doUnlock = (emp: EmployeeRecord) => unlockAccount(emp.id, {
+    onSuccess: () => toast({ title: 'Đã mở khoá đăng nhập', description: `${emp.name} có thể đăng nhập lại ngay.`, variant: 'success' }),
+    onError: (err) => toast({ title: 'Không mở khoá được', description: (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err), variant: 'destructive' }),
+  })
   // Cấu trúc phòng ban/chức danh & phân quyền: chỉ Admin. Danh mục Vị trí/Skill: Admin hoặc người có
   // work_skill.manage cho chức danh CẤP DƯỚI mình (theo sơ đồ chức danh).
   const isAdminUser    = isAdmin(user)
@@ -939,9 +1057,36 @@ export default function UserManagement() {
       options: departments.map(d => ({ value: d.id, label: d.name })) },
   ]
 
+  // ── Tab Nhật ký quản trị (03/09) — ai đổi quyền / kho / mật khẩu / API key / cờ hệ thống ──
+  const canAudit = can(perms, 'user_admin', 'audit_log')
+  const AUDIT_PAGE_SIZE = ua.auditPageSize || 50
+  const { data: auditPage, isLoading: auditLoading, isError: auditError } = useAdminAudit(
+    { page: ua.auditPage, page_size: AUDIT_PAGE_SIZE, action: ua.auditAction, search: ua.auditSearch, from: ua.auditFrom, to: ua.auditTo }, canAudit)
+  const auditFilterDefs: FilterDef[] = [
+    { key: 'auditAction', label: 'Hành động', type: 'single', allLabel: 'Mọi hành động',
+      value: ua.auditAction, onChange: v => setUserAdmin({ auditAction: v, auditPage: 1 }),
+      options: (auditPage?.actions ?? Object.keys(AUDIT_ACTION_LABEL)).map(a => ({ value: a, label: AUDIT_ACTION_LABEL[a] ?? a })) },
+    { key: 'auditRange', label: 'Khoảng ngày', type: 'daterange', from: ua.auditFrom, to: ua.auditTo,
+      onChange: (from, to) => setUserAdmin({ auditFrom: from, auditTo: to, auditPage: 1 }) },
+  ]
+  const auditTotal = auditPage?.total ?? 0
+  const auditPages = Math.max(1, Math.ceil(auditTotal / AUDIT_PAGE_SIZE))
+
+  // Dải tab đã lọc theo quyền (Nhật ký cần user_admin.audit_log) — key khớp PAGE_TABS['/masterdata/users']
+  const [tab, setTab] = useState('employees')
+  const permTabs = useMemo(() => [
+    { key: 'employees',   label: 'Nhân viên', icon: User2 },
+    { key: 'departments', label: 'Phòng ban', icon: Building2 },
+    { key: 'job-titles',  label: 'Chức danh', icon: Briefcase },
+    ...(canAudit ? [{ key: 'audit', label: 'Nhật ký', icon: History }] : []),
+  ], [canAudit])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/masterdata/users', permTabs, tab, setTab)
+
   return (
-    <div className="flex flex-col h-full p-2 gap-1.5 max-w-7xl mx-auto w-full">
-      <Tabs defaultValue="employees" className="flex flex-col flex-1 min-h-0">
+    // Full-width như các module chuẩn (bỏ max-w-7xl mx-auto — user 19/08 "fit màn hình")
+    <div className="flex flex-col h-full p-2 sm:p-3 gap-1.5 w-full">
+      <Tabs value={tab} onValueChange={setTab} className="flex flex-col flex-1 min-h-0">
         {/* Tiêu đề + tab trên CÙNG 1 hàng để tối ưu chiều cao, dành đất cho bảng */}
         <div className="shrink-0 flex items-center gap-3 mb-1.5">
           <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
@@ -949,15 +1094,11 @@ export default function UserManagement() {
             <span className="hidden md:inline">Quản lý nhân sự &amp; phân quyền</span>
           </h1>
           <TabsList className="shrink-0">
-            <TabsTrigger value="employees" className="gap-1.5">
-              <User2 className="h-3.5 w-3.5" /> Nhân viên
-            </TabsTrigger>
-            <TabsTrigger value="departments" className="gap-1.5">
-              <Building2 className="h-3.5 w-3.5" /> Phòng ban
-            </TabsTrigger>
-            <TabsTrigger value="job-titles" className="gap-1.5">
-              <Briefcase className="h-3.5 w-3.5" /> Chức danh
-            </TabsTrigger>
+            {tabs.map(t => (
+              <TabsTrigger key={t.key} value={t.key} className="gap-1.5">
+                <t.icon className="h-3.5 w-3.5" /> {t.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
@@ -1074,10 +1215,14 @@ export default function UserManagement() {
                           <TableCell className="px-2">
                             {isDeleted ? (
                               <Badge variant="secondary" className="text-[9px] text-amber-700 bg-amber-50">Đã ẩn</Badge>
+                            ) : isLocked(emp) ? (
+                              <StatusBadge tone="red" title={`Khoá đăng nhập do gõ sai mật khẩu nhiều lần — tự mở lúc ${formatDateTime(emp.locked_until as string)}`}>
+                                Khoá tới {formatDateTime(emp.locked_until as string).slice(-5)}
+                              </StatusBadge>
                             ) : (
-                              <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[9px]">
+                              <StatusBadge tone={emp.is_active ? 'green' : 'slate'}>
                                 {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                              </Badge>
+                              </StatusBadge>
                             )}
                           </TableCell>
                           <TableCell className="px-2 py-2">
@@ -1092,6 +1237,14 @@ export default function UserManagement() {
                               )
                             ) : (
                               <div className="flex items-center gap-1">
+                                {canUnlock && isLocked(emp) && (
+                                  <button title="Mở khoá đăng nhập"
+                                    disabled={unlocking}
+                                    className="text-red-500 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
+                                    onClick={e => { e.stopPropagation(); doUnlock(emp) }}>
+                                    <Unlock className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                                 {canSetPwd && (
                                   <button title="Đặt mật khẩu"
                                     className="text-slate-400 hover:text-amber-500 transition-colors p-1"
@@ -1136,7 +1289,7 @@ export default function UserManagement() {
                 {/* Thao tác nhanh — khỏi phải kéo ngang bảng để thấy cột action */}
                 {(selectedEmp.deleted_at
                   ? canDeleteEmp
-                  : (canSetPwd || canEditEmp || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
+                  : (canSetPwd || canEditEmp || (canUnlock && isLocked(selectedEmp)) || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
                   <div className="border-b pb-2">
                     <ActionCluster className="justify-start" items={selectedEmp.deleted_at
                       ? (canDeleteEmp ? [{
@@ -1150,6 +1303,11 @@ export default function UserManagement() {
                             key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa thông tin nhân viên',
                             primary: true, variant: 'default',
                             onClick: () => { setEditingEmp(selectedEmp); setShowEmpDlg(true) },
+                          } satisfies ActionItem] : []),
+                          ...(canUnlock && isLocked(selectedEmp) ? [{
+                            key: 'unlock', icon: Unlock, label: 'Mở khoá', tip: 'Mở khoá đăng nhập (đang khoá do gõ sai mật khẩu nhiều lần)',
+                            primary: true, busy: unlocking, className: 'border-green-300 text-green-700 hover:bg-green-50',
+                            onClick: () => doUnlock(selectedEmp),
                           } satisfies ActionItem] : []),
                           ...(canSetPwd ? [{
                             key: 'password', icon: KeyRound, label: 'Mật khẩu', tip: 'Đặt mật khẩu đăng nhập mới',
@@ -1170,6 +1328,9 @@ export default function UserManagement() {
                 <div><span className="text-slate-400">Phòng ban:</span> <span className="font-medium">{selectedEmp.dept?.name ?? '—'}</span></div>
                 <div><span className="text-slate-400">Chức danh:</span> <span className="font-medium">{selectedEmp.job_title?.name ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedEmp.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                {isLocked(selectedEmp) && (
+                  <div className="text-red-600">Khoá đăng nhập tới {formatDateTime(selectedEmp.locked_until as string)} (gõ sai mật khẩu nhiều lần)</div>
+                )}
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
                   <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedEmp.created_by ?? '—'}</span></div>
@@ -1225,9 +1386,9 @@ export default function UserManagement() {
                           <TableCell className="px-2 py-1.5 font-mono font-semibold text-slate-600">{d.code}</TableCell>
                           <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={d.name}>{d.name}</TableCell>
                           <TableCell className="px-2 py-1.5">
-                            <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-[9px]">
+                            <StatusBadge tone={d.is_active ? 'green' : 'slate'}>
                               {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1.5">
                             {isAdminUser && (
@@ -1309,9 +1470,9 @@ export default function UserManagement() {
                           <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={jt.name}>{jt.name}</TableCell>
                           <TableCell className="px-2 py-1.5 text-slate-600 truncate" title={jt.department?.name ?? '—'}>{jt.department?.name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1.5">
-                            <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-[9px]">
+                            <StatusBadge tone={jt.is_active ? 'green' : 'slate'}>
                               {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1.5">
                             {canEditJt(jt.id) && (
@@ -1347,6 +1508,66 @@ export default function UserManagement() {
             )}
           </div>
         </TabsContent>
+
+        {/* ── Tab: Nhật ký quản trị (03/09) — ai đổi quyền / kho / mật khẩu / API key / cờ hệ thống ── */}
+        {canAudit && (
+          <TabsContent value="audit" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
+            <div className="shrink-0 flex gap-2 flex-wrap items-center">
+              <SearchInput value={ua.auditSearch} onChange={v => setUserAdmin({ auditSearch: v, auditPage: 1 })}
+                placeholder="Tìm người thao tác, đối tượng…" className="flex-1 min-w-[200px]" />
+              <FilterSheetButton defs={auditFilterDefs} className="sm:hidden" />
+              <FilterBar defs={auditFilterDefs} className="hidden sm:flex" />
+            </div>
+            <Card className="flex-1 min-h-0 flex flex-col">
+              {auditError ? (
+                <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">Không tải được nhật ký quản trị.</p>
+              ) : auditLoading && !auditPage ? (
+                <p className="p-6 text-center text-xs text-slate-400">Đang tải…</p>
+              ) : !auditPage?.rows.length ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <History className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có thao tác quản trị nào khớp bộ lọc</p>
+                </div>
+              ) : (
+                <div className="overflow-auto flex-1 min-h-0">
+                  <Table className="[&_td]:text-[10px] [&_th]:whitespace-nowrap">
+                    <TableHeader className="sticky top-0 bg-white z-10">
+                      <TableRow>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Lúc</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người thao tác</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Hành động</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Đối tượng</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trước</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Sau</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 hidden lg:table-cell">IP</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {auditPage.rows.map(r => (
+                        <TableRow key={r.id}>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap text-slate-600">{formatDateTime(r.created_at)}</TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap font-medium text-slate-800">{r.actor_name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                            <StatusBadge tone={AUDIT_ACTION_TONE(r.action)} title={r.action}>{AUDIT_ACTION_LABEL[r.action] ?? r.action}</StatusBadge>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 max-w-[220px] truncate" title={`${r.target_type} ${r.target_id ?? ''}`}>
+                            <span className="text-slate-400 mr-1">{r.target_type}</span>{r.target_label ?? r.target_id ?? '—'}
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 max-w-[260px] truncate text-slate-500" title={JSON.stringify(r.before ?? {}, null, 1)}>{compactJson(r.before) || '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 max-w-[260px] truncate text-slate-800" title={JSON.stringify(r.after ?? {}, null, 1)}>{compactJson(r.after) || '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap font-mono text-slate-400 hidden lg:table-cell">{r.ip ?? '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <PagerNav page={ua.auditPage} totalPages={auditPages} onPage={p => setUserAdmin({ auditPage: p })} />
+                </div>
+              )}
+              <ListFooter page={ua.auditPage} pageSize={AUDIT_PAGE_SIZE} total={auditTotal} unit="thao tác"
+                onPageSize={n => setUserAdmin({ auditPageSize: n, auditPage: 1 })} />
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
 
       {showEmpDlg && (

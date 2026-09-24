@@ -3,6 +3,8 @@ import { maskServerMessage } from '../../utils/response'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { getMonitorCacheSeconds } from '../../utils/settings'
 
 // ─── Control Tower (Giám sát vận hành) ────────────────────────────────────────
 // Toàn bộ số liệu trong-ngày gộp 1 RPC (aggregate phía DB — bảng triệu dòng, PostgREST
@@ -13,7 +15,7 @@ function ok(res: Response, data: unknown) {
 }
 function fail(res: Response, message: string, status = 500, code = 'ERROR') {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 
 // GET /wms/control-tower?warehouse_ids=a,b,c&categories=x,y
@@ -39,17 +41,56 @@ export async function getControlTower(req: Request, res: Response) {
     // Mã hàng: lọc đích danh (chỉ cắt 2 khối hàng-theo-mã trong RPC)
     const matCodes = parseListParam(req.query.material_codes, 100) ?? []
 
-    const { data, error } = await supabase.rpc('control_tower_stats', {
-      p_warehouse_ids: effective.length > 0 ? effective : null,
+    // 2 RPC song song, FE vẫn 1 request: stats (khối chính) + resources (nhân sự/xe nâng/tồn sạch/
+    // chu trình cổng — console kiểu Manhattan 20/08). resources lỗi/chưa apply → null, FE tự ẩn khối.
+    //
+    // CACHE (29/08): màn này mở THƯỜNG TRỰC trên màn TV nên nó vừa là nạn nhân vừa là NGUỒN tải —
+    // đo dưới 100 người dùng, nó là 1 trong 3 endpoint duy nhất còn trả 500 (statement timeout).
+    // Bản _cached chống cả giẫm đạp: N người cùng miss thì CHỈ MỘT tính, số còn lại dùng số cũ.
+    // Tuổi tối đa = cờ `monitor_cache_seconds` (mặc định 30s, 0 = tắt → chạy y đường cũ).
+    const ttl = await getMonitorCacheSeconds()
+    const whArg = effective.length > 0 ? effective : null
+    const argStats = {
+      p_warehouse_ids: whArg,
       p_categories: effCats.length > 0 ? effCats : null,
       p_today: today,
       p_material_codes: matCodes.length > 0 ? matCodes : null,
-    })
-    if (error) {
-      if (/control_tower_stats/i.test(error.message) || error.code === 'PGRST202')
-        return fail(res, 'Chưa apply migration 20260716_control_tower_stats', 503, 'NOT_READY')
-      return fail(res, error.message, 500, 'DB_ERROR')
     }
-    return ok(res, { date: today, ...(data as Record<string, unknown>) })
+    const argRes = { p_warehouse_ids: whArg, p_today: today }
+    let [main, resources] = await Promise.all([
+      supabase.rpc('control_tower_stats_cached', { ...argStats, p_ttl_seconds: ttl }),
+      supabase.rpc('control_tower_resources_cached', { ...argRes, p_ttl_seconds: ttl }),
+    ])
+    // Nhánh dự phòng cửa sổ triển khai (20260829 chưa apply) — đường cũ KHÔNG cache, nguyên vẹn.
+    if (main.error?.code === 'PGRST202') main = await supabase.rpc('control_tower_stats', argStats)
+    if (resources.error?.code === 'PGRST202') resources = await supabase.rpc('control_tower_resources', argRes)
+    if (main.error) {
+      if (/control_tower_stats/i.test(main.error.message) || main.error.code === 'PGRST202')
+        return fail(res, 'Chưa apply migration 20260716_control_tower_stats', 503, 'NOT_READY')
+      // Quá hạn tính (nhiều người cùng truy vấn) KHÔNG phải lỗi app: trả 503 kèm câu người dùng
+      // LÀM ĐƯỢC gì đó, thay vì 500 "Lỗi hệ thống". 500 rác còn làm rule cảnh báo "lỗi BE 24h"
+      // kêu OAN — đo 29/08: 67 dòng error_logs của riêng màn này chỉ trong 3 giờ chạy tải.
+      // HẾT GIỜ TÍNH (hệ thống đang nghẽn) → ĐƯA SỐ CŨ thay vì bắt người dùng nhìn màn lỗi.
+      // Đo 06/09: dưới tải ghi 2 kho, người "đi tính" ôm khe pool 30s rồi 503, cache vẫn không
+      // được làm mới ⇒ người kế tiếp lại chịu y vậy — màn hình hỏng suốt cả ca cao điểm.
+      // Số cũ CÓ ÍCH (vài chục giây trước) miễn là NÓI THẲNG nó cũ: cờ `stale` + `computed_at`.
+      if (isQueryTimeout(main.error)) {
+        const { data: staleData } = await supabase.rpc('control_tower_stats_stale', argStats)
+        if (staleData) {
+          return ok(res, {
+            date: today,
+            ...(staleData as Record<string, unknown>),
+            resources: resources.error ? null : resources.data,
+          })
+        }
+        return fail(res, QUERY_TIMEOUT_MSG, 503, 'QUERY_TIMEOUT')
+      }
+      return fail(res, main.error.message, 500, 'DB_ERROR')
+    }
+    return ok(res, {
+      date: today,
+      ...(main.data as Record<string, unknown>),
+      resources: resources.error ? null : resources.data,
+    })
   } catch (e) { return fail(res, String(e)) }
 }

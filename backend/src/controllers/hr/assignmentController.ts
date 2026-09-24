@@ -3,12 +3,27 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
-import { layoutSkillsDetailed, layoutJobTitleIds } from './layoutController'
+import { layoutSkillsDetailed, layoutJobTitleIds, whInHrScope, hrScopeWhIds, HR_WH_DENY } from './layoutController'
 import { loadShiftRuleMap } from './shiftRuleController'
+import { isDay } from '../../utils/dates'
 
 type ReqUser = { sub?: string; name?: string }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
+
+/**
+ * Lấy phiếu phân công + gác PHẠM VI KHO. Trả null nếu đã trả lời lỗi.
+ * Cả controller này trước đây không đọc `warehouse_ids` lần nào: tài khoản chỉ có kho B mở được
+ * phiếu của kho A kèm danh sách tên nhân sự kho A (đo 06/09, gói QA 51 phép [65]).
+ */
+async function sheetInScope(req: Request, res: Response, id: string): Promise<{ id: string; warehouse_id: string; layout_id: string | null; status: string } | null> {
+  const { data } = await supabase.from('WorkAssignmentSheet')
+    .select('id, warehouse_id, layout_id, status').eq('id', id).maybeSingle()
+  if (!data) { fail(res, 'Không tìm thấy phiếu', 404); return null }
+  const row = data as { id: string; warehouse_id: string; layout_id: string | null; status: string }
+  if (!whInHrScope(req, row.warehouse_id)) { fail(res, HR_WH_DENY, 403); return null }
+  return row
+}
 
 // .in() trên danh sách id lớn: chunk 300 (URL dài) + phân trang từng chunk (cap ~1000/response)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,10 +48,14 @@ async function sheetSkills(layout_id: string | null) {
 export async function listSheets(req: Request, res: Response) {
   try {
     const { warehouse_id, layout_id, date_from, date_to, status } = req.query as Record<string, string>
+    const myWhs = hrScopeWhIds(req)
+    if (warehouse_id && !whInHrScope(req, warehouse_id)) return fail(res, HR_WH_DENY, 403)
+    if (myWhs && !myWhs.length) return ok(res, [])
     // Phân trang né cap ~1000 dòng/response (khoảng ngày rộng × nhiều layout dễ vượt)
     const data = await fetchAllRowsParallel(() => {
       let q = supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).order('work_date', { ascending: false }).order('id')
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      else if (myWhs) q = q.in('warehouse_id', myWhs)
       if (layout_id)    q = q.eq('layout_id', layout_id)
       if (status)       q = q.eq('status', status)
       if (date_from)    q = q.gte('work_date', date_from)
@@ -88,8 +107,9 @@ export async function listSheets(req: Request, res: Response) {
 export async function getSheet(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await sheetInScope(req, res, id))) return
     const { data: sheet, error } = await supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).eq('id', id).maybeSingle()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
 
     const [{ data: demands }, { data: asgs }, skills] = await Promise.all([
@@ -131,11 +151,13 @@ export async function upsertSheet(req: Request, res: Response) {
       demands?: { skill_id: string; required_count: number; note?: string }[]
     }
     if (!layout_id || !work_date) return fail(res, 'layout_id, work_date là bắt buộc', 400)
+    if (!isDay(work_date)) return fail(res, 'Ngày làm việc phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07) và là ngày có thật', 400)
 
     // kho lấy từ layout
     const { data: layout } = await supabase.from('WorkLayout').select('id, warehouse_id').eq('id', layout_id).maybeSingle()
     if (!layout) return fail(res, 'Không tìm thấy layout', 404)
     const warehouse_id = (layout as { warehouse_id: string }).warehouse_id
+    if (!whInHrScope(req, warehouse_id)) return fail(res, HR_WH_DENY, 403)
 
     // tìm phiếu sẵn có (ngày + layout) — mỗi layout chỉ 1 phiếu/ngày
     const { data: existing } = await supabase.from('WorkAssignmentSheet').select('id, status')
@@ -146,6 +168,11 @@ export async function upsertSheet(req: Request, res: Response) {
     let sheetId: string
     const isNew = !existing
     if (existing) {
+      // KHOÁ PHÁT HÀNH phải kín ở MỌI cửa. Ba đường xếp người đã trả 409 đúng, riêng đường này để
+      // lọt: sửa được ghi chú và XOÁ SẠCH yêu cầu vị trí của phiếu đã phát hành — người đã đọc lịch
+      // phân công thấy một đằng, phiếu thành một nẻo (đo 06/09, gói QA 51 phép [44]).
+      if ((existing as { status: string }).status === 'PUBLISHED')
+        return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
       sheetId = (existing as { id: string }).id
       await supabase.from('WorkAssignmentSheet').update({ note: note ?? null, updated_at: now(), updated_by: u.name || null }).eq('id', sheetId)
     } else {
@@ -154,7 +181,7 @@ export async function upsertSheet(req: Request, res: Response) {
         id: sheetId, work_date, warehouse_id, layout_id, status: 'DRAFT', note: note ?? null,
         created_at: now(), updated_at: now(), created_by: u.name || null, updated_by: u.name || null,
       })
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
     }
 
     // demands: dùng demands truyền lên; nếu tạo mới mà không truyền → đổ từ layout
@@ -181,6 +208,7 @@ export async function upsertSheet(req: Request, res: Response) {
 export async function autoAssign(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await sheetInScope(req, res, id))) return
     const { data: sheet } = await supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).eq('id', id).maybeSingle()
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
     const { warehouse_id, layout_id, work_date } = sheet as { warehouse_id: string; layout_id: string | null; work_date: string }
@@ -253,9 +281,16 @@ export async function autoAssign(req: Request, res: Response) {
 
     // ── 4. Giữ các dòng xếp tay (is_manual) → khóa NV + giảm demand ──
     const { data: prevAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id, status, is_manual').eq('sheet_id', id)
-    const manualRows = ((prevAsg ?? []) as { employee_id: string; skill_id: string | null; status: string; is_manual: boolean }[])
-      .filter(a => a.is_manual && a.status === 'ASSIGNED' && a.skill_id)
-    const lockedEmp = new Set(manualRows.map(a => a.employee_id))
+    const prevRows = (prevAsg ?? []) as { employee_id: string; skill_id: string | null; status: string; is_manual: boolean }[]
+    const manualRows = prevRows.filter(a => a.is_manual && a.status === 'ASSIGNED' && a.skill_id)
+    // "Bỏ người này" (dòng thủ công UNASSIGNED) cũng là một QUYẾT ĐỊNH của người điều hành, y như
+    // xếp tay — bản cũ chỉ khoá người được xếp tay nên bước xếp tự động vẫn nhặt họ vào, để lại
+    // phiếu TỰ MÂU THUẪN: cùng một người vừa "bỏ" vừa "được xếp" (gói QA 51 phép [39]). Người đọc
+    // phiếu không có cách nào biết dòng nào mới là thật.
+    const lockedEmp = new Set([
+      ...manualRows.map(a => a.employee_id),
+      ...prevRows.filter(a => a.is_manual && a.status === 'UNASSIGNED').map(a => a.employee_id),
+    ])
     const remainingNeed = new Map<string, number>()
     for (const d of demandList) remainingNeed.set(d.skill_id, d.required_count)
     for (const a of manualRows) if (a.skill_id) remainingNeed.set(a.skill_id, (remainingNeed.get(a.skill_id) ?? 0) - 1)
@@ -339,7 +374,12 @@ export async function autoAssign(req: Request, res: Response) {
     const slotsOfSkill = new Map<string, string[]>()
     for (const [sid, n] of remainingNeed) if (n > 0) slotsOfSkill.set(sid, Array.from({ length: n }, (_, k) => `${sid}#${k}`))
     const skillOfSlot = (slot: string) => slot.slice(0, slot.lastIndexOf('#'))
-    const tagOfSlot = (slot: string) => shiftTagOf.get(skillOfSlot(slot)) ?? null
+    // Vị trí KHÔNG KHAI CA (`Skill.shift_tag` rỗng) vẫn là vị trí cần người. Bản cũ trả null ở đây,
+    // mà vòng ghép chỉ nhận slot có ca nằm trong `allow` ⇒ những vị trí đó KHÔNG BAO GIỜ được xếp:
+    // màn hình báo "thiếu người" trong khi người rảnh đủ kỹ năng vẫn đứng đó (gói QA 51 phép [36]).
+    // Cho nó một nhãn riêng để đi qua đúng bộ máy ghép, xếp ở tầng cuối cùng.
+    const NO_SHIFT = '__NOSHIFT__'
+    const tagOfSlot = (slot: string) => shiftTagOf.get(skillOfSlot(slot)) ?? NO_SHIFT
     // adjacency người → slot đủ điều kiện; trong 1 người: priority → (CA3 hôm qua: thiếu→ưu tiên CA3, đủ→ưu tiên CA2) → cân bằng từng-ca → thứ tự vị trí
     const adj = new Map<string, string[]>()
     for (const eid of people) {
@@ -367,7 +407,7 @@ export async function autoAssign(req: Request, res: Response) {
     const augment = (eid: string, seen: Set<string>, allow: Set<string>): boolean => {
       for (const slot of adj.get(eid) ?? []) {
         const tag = tagOfSlot(slot)
-        if (!tag || !allow.has(tag) || seen.has(slot)) continue
+        if (!allow.has(tag) || seen.has(slot)) continue
         seen.add(slot)
         const occ = slotMatch.get(slot)
         if (occ !== undefined && frozen.has(occ)) continue   // không bứng người đã chốt
@@ -379,6 +419,8 @@ export async function autoAssign(req: Request, res: Response) {
       { tags: ['CA1', 'CA2'], key: e => tagLoad(e, 'CA1') + tagLoad(e, 'CA2'), ca: true },
       { tags: ['CA3'],        key: e => tagLoad(e, 'CA3'),                     ca: true, isCA3: true },
       { tags: ['HC'],         key: e => hcLoad(e),                            ca: false },
+      // Tầng cuối: vị trí chưa khai ca — xếp sau khi mọi ca đã có người, bằng số người còn lại.
+      { tags: [NO_SHIFT],     key: () => 0,                                   ca: false },
     ]
     const allow = new Set<string>()
     for (const tier of TIERS) {
@@ -479,15 +521,26 @@ export async function assignOne(req: Request, res: Response) {
     const { employee_id, skill_id } = req.body as { employee_id?: string; skill_id?: string | null }
     if (!employee_id) return fail(res, 'employee_id là bắt buộc', 400)
 
-    const { data: sh } = await supabase.from('WorkAssignmentSheet').select('status').eq('id', id).maybeSingle()
-    if ((sh as { status: string } | null)?.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
+    // Phiếu phải CÓ THẬT: bản cũ nhận id lạ rồi insert vấp khoá ngoại, lỗi bị nuốt và vẫn trả
+    // "đã gán" trong khi 0 dòng được ghi (đo 06/09, gói QA 51 phép [41]).
+    const sh = await sheetInScope(req, res, id)
+    if (!sh) return
+    if (sh.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
 
-    const { data: existing } = await supabase.from('WorkAssignment').select('id, status')
-      .eq('sheet_id', id).eq('employee_id', employee_id).maybeSingle()
+    // KHÔNG dùng `.maybeSingle()` ở đây: một người CÓ THỂ giữ nhiều vị trí trong cùng một phiếu
+    // (đo staging 07/09: 11/79 dòng thuộc cặp (phiếu, người) có >1 dòng, do bước xếp tự động).
+    // Gặp 2 dòng thì `.maybeSingle()` trả data=null KÈM error — mà error không được đọc — nên nhánh
+    // dưới INSERT thêm dòng thứ ba: bấm "gán 1 vị trí" lại ĐẺ RA vị trí (gói QA 51 phép [40]).
+    const { data: rows } = await supabase.from('WorkAssignment').select('id, status, skill_id')
+      .eq('sheet_id', id).eq('employee_id', employee_id).order('created_at')
+    const list = (rows ?? []) as { id: string; status: string; skill_id: string | null }[]
+    // Ưu tiên đúng dòng của vị trí đang gán (thao tác lặp không đổi gì), sau đó mới tới dòng đầu —
+    // giữ nguyên ngữ nghĩa cũ "gán vị trí = ĐỔI chỗ của người này", không phải thêm chỗ.
+    const existing = list.find(r => (r.skill_id ?? null) === (skill_id || null)) ?? list[0] ?? null
     const status = skill_id ? 'ASSIGNED' : 'UNASSIGNED'
     if (existing) {
       // không cho ghi đè dòng nghỉ phép tự động
-      await supabase.from('WorkAssignment').update({ skill_id: skill_id || null, status, is_manual: true, updated_at: now() }).eq('id', (existing as { id: string }).id)
+      await supabase.from('WorkAssignment').update({ skill_id: skill_id || null, status, is_manual: true, updated_at: now() }).eq('id', existing.id)
     } else {
       await supabase.from('WorkAssignment').insert({
         id: randomUUID(), sheet_id: id, employee_id, skill_id: skill_id || null, status, is_manual: true, created_at: now(), updated_at: now(),
@@ -504,8 +557,9 @@ export async function setPositions(req: Request, res: Response) {
     const { employee_id, skill_ids } = req.body as { employee_id?: string; skill_ids?: string[] }
     if (!employee_id) return fail(res, 'employee_id là bắt buộc', 400)
 
-    const { data: sh } = await supabase.from('WorkAssignmentSheet').select('status').eq('id', id).maybeSingle()
-    if ((sh as { status: string } | null)?.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
+    const sh = await sheetInScope(req, res, id)
+    if (!sh) return
+    if (sh.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
 
     // thay toàn bộ phân công của NV này trong phiếu bằng danh sách vị trí mới (mỗi vị trí 1 dòng)
     await supabase.from('WorkAssignment').delete().eq('sheet_id', id).eq('employee_id', employee_id)
@@ -529,12 +583,15 @@ export async function setPositions(req: Request, res: Response) {
 export async function publishSheet(req: Request, res: Response) {
   try {
     const { id } = req.params
+    // Bản cũ update thẳng, không kiểm phiếu tồn tại: phát hành một phiếu KHÔNG CÓ THẬT vẫn nhận
+    // "đã phát hành" (đo 06/09, gói QA 51 phép [42]).
+    if (!(await sheetInScope(req, res, id))) return
     const { publish } = req.body as { publish?: boolean }
     const status = publish === false ? 'DRAFT' : 'PUBLISHED'
     const { error } = await supabase.from('WorkAssignmentSheet').update({
       status, published_at: status === 'PUBLISHED' ? now() : null, updated_at: now(), updated_by: userOf(req).name || null,
     }).eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { id, status })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -542,8 +599,9 @@ export async function publishSheet(req: Request, res: Response) {
 export async function deleteSheet(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await sheetInScope(req, res, id))) return
     const { error } = await supabase.from('WorkAssignmentSheet').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

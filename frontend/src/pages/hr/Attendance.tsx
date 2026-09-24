@@ -21,12 +21,14 @@ import {
   useLeaves, useHolidayOverrides, useStandardWorkHours,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
 import { getHoliday } from '@/utils/vnHolidays'
 import { LeaveSection, CreateLeaveDialog } from './LeaveManagement'
 import { ATTENDANCE_KINDS, shiftOptions, shiftLabel, shiftShort, shiftCell } from '@/config/shifts'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 // Ca làm việc: MỘT nguồn ở config/shifts.ts (mã · nhãn · thứ tự · màu) — xem ghi chú ở file đó
 const KINDS = shiftOptions(ATTENDANCE_KINDS)
@@ -64,6 +66,14 @@ export default function Attendance() {
 
   const canSheet = canView || canReport
   const [tab, setTab] = useState<'me' | 'leave' | 'team'>(canSelf ? 'me' : canLeave ? 'leave' : 'team')
+  // Dải tab đã lọc theo quyền — key khớp PAGE_TABS['/hr/attendance'] (config/mobileSurface.ts)
+  const permTabs = useMemo(() => [
+    ...(canSelf  ? [{ key: 'me'    as const, label: 'Của tôi' }]   : []),
+    ...(canLeave ? [{ key: 'leave' as const, label: 'Nghỉ phép' }] : []),
+    ...(canSheet ? [{ key: 'team'  as const, label: 'Bảng công' }] : []),
+  ], [canSelf, canLeave, canSheet])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/hr/attendance', permTabs, tab, setTab)
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -71,9 +81,9 @@ export default function Attendance() {
         <div className="border-b border-slate-200 px-3 py-2.5 sm:rounded-t-xl flex items-center gap-3">
           <h1 className="text-base font-semibold text-slate-800">Chấm công</h1>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-            {canSelf && <button onClick={() => setTab('me')} className={`px-3 py-1.5 ${tab === 'me' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Của tôi</button>}
-            {canLeave && <button onClick={() => setTab('leave')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'leave' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Nghỉ phép</button>}
-            {canSheet && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
+            {tabs.map((t, i) => (
+              <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+            ))}
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto p-3">
@@ -451,7 +461,13 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           // Xuất bảng công = dữ liệu nhân sự → dùng quyền attendance.report (đã có sẵn, đúng nghĩa "báo cáo"),
           // KHÔNG để ai xem được là xuất được (attendance.self_log có ở 10/19 chức danh).
           ...(can(perms, 'attendance', 'report') ? [{
-            key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
+            key: 'export', icon: Download, label: 'Xuất Excel',
+            // Nút bật/tắt theo SỐ DÒNG CÔNG, còn màn hình đếm theo SỐ NGƯỜI: khoảng ngày chưa ai
+            // chấm thì lưới vẫn hiện đủ người + "Lượt thiếu", mà nút lại mờ. Nói thẳng lý do thay
+            // vì để người dùng đoán (đo 06/09: 40 người trên màn, nút mờ, tooltip không giải thích).
+            tip: filtered.length
+              ? `Xuất Excel ${filtered.length.toLocaleString('vi-VN')} dòng chấm công trong khoảng lọc (dữ liệu thô, mỗi dòng = 1 người × 1 ngày)`
+              : 'Chưa có dòng chấm công nào trong khoảng lọc — không có gì để xuất. Lưới đang hiện danh sách người và lượt thiếu, nhưng file xuất chỉ gồm ngày đã chấm.',
             mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
             disabled: !filtered.length,
             onClick: exportExcel,
@@ -511,7 +527,7 @@ function MatrixTable({ emps, dates, isWorkDay, dense }: { emps: MatrixRow[]; dat
         </thead>
         <tbody className="divide-y divide-slate-100">
           {emps.length === 0 ? (
-            <tr><td colSpan={dates.length + 5} className="text-center text-slate-400 py-6">Không có nhân viên phù hợp</td></tr>
+            <TableEmptyRow colSpan={dates.length + 5}>Không có nhân viên phù hợp</TableEmptyRow>
           ) : emps.map(g => (
             <tr key={g.id} className="hover:bg-slate-50/60">
               <td className={`px-2 ${pad} sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700 whitespace-nowrap max-w-[160px] truncate`} title={g.name}>{g.name}</td>
@@ -568,7 +584,7 @@ function AttTable({ rows, onDelete, showName, dense }: { rows: AttendanceRow[]; 
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
-            <tr><td colSpan={showName ? 11 : 8} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <TableEmptyRow colSpan={showName ? 11 : 8}>Chưa có dữ liệu</TableEmptyRow>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
               {showName && <td className={`px-2 ${pad} font-medium text-slate-700 sticky left-0 z-10 bg-white max-w-[160px] truncate`} title={r.employee?.name ?? ''}>{r.employee?.name ?? '—'}</td>}

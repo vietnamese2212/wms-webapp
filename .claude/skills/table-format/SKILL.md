@@ -96,6 +96,9 @@ Desktop (lg+, `useIsDesktop()`): **click 1 dòng = chọn** → hiện pane ph�
 ## 9. Không wrap text — bắt buộc
 **Mọi `<TableHead>` và `<TableCell>` phải có `whitespace-nowrap`** — không ngoại lệ. Thiếu → text xuống dòng → row cao bất thường → vỡ layout. Nội dung dài → `truncate` + `max-w-[Npx]`. **Không ẩn cột trên mobile** (`hidden sm:table-cell` bị CẤM) — scroll ngang thay vì vỡ. Không hiển thị thiếu thông tin (kể cả dữ liệu dài).
 
+## 9b. Dòng "trống" trong bảng RỘNG = `TableEmptyRow` (19/09)
+Bảng `table-fixed` cuộn ngang thì `<td colSpan>` trải theo bề rộng BẢNG (Fill hàng 1.646 px), câu "Không có…" căn giữa nằm ở x ≈ 820 — **ngoài màn 360 px, người dùng thấy bảng TRẮNG** và không biết là hết dữ liệu hay đang tải hỏng (đo 19/09 bằng vai thủ kho: Fill hàng · Lịch sử chuyển vị trí · Lịch sử kiểm). Dùng `<TableEmptyRow colSpan={n}>Chưa có…</TableEmptyRow>` (`components/shared/TableEmptyRow.tsx` — khối `sticky left-0 w-fit`, đứng ở mép trái vùng nhìn dù bảng cuộn tới đâu), KHÔNG tự viết `<TableRow><TableCell colSpan className="text-center">`. Dòng "Đang tải…" cũng dùng nó. Ratchet `empty_row_centered_in_wide_td` (bắt theo thẻ mở `colSpan` + `text-center`, baseline 0) gác. Trạng thái rỗng đặt NGOÀI bảng (như Xuất kho, `EmptyState`) vẫn đúng.
+
 ## 10. Màu row theo trạng thái — helper `@/lib/rowStatus`
 KHÔNG fill nền — chỉ tô **màu chữ** + gạch ngang khi hoàn thành. Mỗi module export `<module>Key(record): RowStatusKey` (`completed` xanh+gạch · `full` xanh · `scanDone` hồng · `inProgress` cam · `assigned` xanh lá · `paused` đỏ · `pending` xám).
 ```tsx
@@ -181,6 +184,22 @@ Nút thao tác nhanh trong cell (vd QR "Thêm pallet", icon nhỏ): **icon `h-3.
 
 ## 19. Responsive bắt buộc — test PC + Tablet + Phone
 Popover/sheet không tràn màn 360px; toolbar co giãn (search `flex-1`, nhãn phụ `hidden sm:inline`).
+
+## 20. Hiến pháp UI 24/08 — đồng bộ + mobile density (user chốt, áp khi tạo/sửa BẤT KỲ trang nào)
+- **Badge trạng thái = `StatusBadge`** (`components/shared/StatusBadge.tsx`) — tone theo NGỮ NGHĨA: green=hoạt động/OK · blue=hoàn thành · amber=đang chạy/dở · red=chặn/tạm dừng/lỗi · slate=chờ/trung tính · purple=phân loại đặc thù. KHÔNG tự chế `bg-*-100 text-*-700`, KHÔNG Badge nền đặc kiểu button cho trạng thái, KHÔNG trộn outline/filled tùy hứng.
+- **SummaryBand**: component tự lo mobile lưới 3 cột — nhãn tile phải ĐỌC ĐƯỢC ĐẦY ĐỦ trên 390px (hết cảnh "SL (QUY Đ…"). Đặt nhãn ngắn từ đầu, có `tip` giải nghĩa.
+- **Toolbar mobile ≤ 2 hàng**: tiêu đề trang `hidden sm:inline` (bottom-nav đã báo đang ở trang nào); dòng meta phụ (dòng ngày…) `hidden sm:block`. Mục tiêu đo được: **dòng dữ liệu đầu tiên xuất hiện ≤ ~300px** từ mép trên ở 390px.
+- **Thứ tự cột: cột NGHIỆP VỤ đứng trước, cột thường-rỗng (mã phụ, ship-to, địa chỉ, ghi chú) ra sau** — phone thấy thông tin chính không phải kéo ngang (mẫu: bảng Kho WMSSettings 24/08).
+- **Khối PHỤ trang detail = `CollapseSection`** (`components/shared/CollapseSection.tsx` — mobile thu gọn mặc định, desktop mở). KHÔNG áp cho khối cốt lõi (band, bảng dòng hàng); bảng dòng hàng luôn mở + scroll NGANG, **TUYỆT ĐỐI không mở/đóng từng row theo chiều dọc** (user chốt 24/08 — đơn nhiều mã sẽ thành scroll dọc dài).
+- **Mã ĐỊNH DANH (Số xe/mã phiếu/mã hàng/tem pallet/mã vị trí) ở HEADER detail & màn quét KHÔNG được truncate** (user bắt 24/08 "Số đơn bị che dưới dạng …"): mobile cho XUỐNG DÒNG hiện đủ — `text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0`; tem pallet còn phân biệt nhau ở ĐUÔI (STT) nên che đuôi = 2 tem nhìn như một. `truncate` chỉ dành cho CELL bảng (kéo giãn cột + `title` tooltip).
+
+## 21. Form CẤU HÌNH = khuôn AppSheet (user chốt 24/08 — áp MỌI form setting/config)
+Dùng `SettingsGroup` + `SettingRow` (`components/shared/SettingRow.tsx`), KHÔNG tự chế khung:
+- **SettingsGroup** = band tiêu đề (vạch accent sky + IN HOA đậm `text-sky-900`) + các row ngăn `divide-y`.
+- **SettingRow** = tên **ĐẬM** + **diễn giải xám NHÌN THẤY NGAY** dưới tên (đừng giấu hết vào ⓘ — ⓘ chỉ cho chi tiết dài); control GỌN (Switch/chip/ô số) đứng **bên phải CÙNG HÀNG** qua prop `control`; control RỘNG (select/input dài) đứng dưới diễn giải qua `children`. Chip phụ (vd "Bắt buộc") phải nằm CÙNG HÀNG với setting của nó, không rớt xuống dòng riêng.
+- **Boolean = `Switch`** (ui/switch), không dùng checkbox thô trong form cấu hình; `htmlFor` để tên bấm được.
+- Nhóm xếp **lưới nhiều cột cân đối** (`xl:grid-cols-2` chẵn nhóm) — KHÔNG để cột mồ côi/lỗ trống lớn.
+Mẫu: `StrategyFields.tsx` + form Kho `WMSSettings.tsx` (24/08).
 
 ## Checklist tạo/sửa list page (Manhattan)
 - [ ] Card trên canvas xám (`sm:p-3` + panel trắng bo góc, KHÔNG `overflow-hidden`)

@@ -1,29 +1,41 @@
 export const ALL_PERMISSIONS: Record<string, string[]> = {
   inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_ncc', 'update_prod_date', 'export', 'import'],
-  inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete'],
-  outbound:     ['view', 'prepare', 'create', 'quick_export', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel', 'reconcile', 'weigh_waive', 'gate_waive', 'rotation_override'],
+  inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete', 'putaway_override'],
+  outbound:     ['view', 'prepare', 'create', 'quick_export', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel', 'reconcile', 'weigh_waive', 'gate_waive', 'rotation_override', 'set_date'],
   scanlog:      ['view', 'export'],
-  loosepicking: ['view', 'scan', 'complete'],
+  // Truy xuất lô (28/08): ghép tồn + xuất + khách hàng vào một màn — rộng hơn từng trang lẻ nên
+  // là quyền riêng, không đi ké inventory.view/scanlog.view. Export tách theo luật 26/07.
+  traceability: ['view', 'export', 'investigate'],
+  loosepicking: ['view', 'scan', 'complete', 'recalc'],
   stocktake:    ['view', 'scan', 'complete', 'export'],
-  locations:    ['view', 'create', 'edit', 'delete', 'import', 'export'],
+  locations:    ['view', 'create', 'edit', 'delete', 'import', 'export', 'print_label'],
   employees:    ['view'],
-  user_admin:   ['view', 'create', 'edit', 'set_password', 'delete', 'manage_roles'],
+  user_admin:   ['view', 'create', 'edit', 'set_password', 'unlock', 'delete', 'manage_roles', 'audit_log'],
   wms_settings: ['view', 'manage_warehouse', 'manage_type', 'manage_unit', 'manage_zone', 'manage_shift', 'manage_qa', 'manage_machine', 'manage_system'],
   tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt', 'export'],
   tms_vehicle_types: ['view', 'create', 'edit', 'delete'],
+  freight:           ['view', 'manage', 'export'],   // Cước vận chuyển: bảng cước · phụ phí · phân tuyến ĐVVT (20260923)
+  dispatch:          ['view', 'plan', 'confirm', 'export'],   // Điều vận: kế hoạch ghép chuyến nháp → Xác nhận ghi Kế hoạch xuất (20260924)
   tms_slots:         ['view', 'create', 'edit', 'delete'],
   tms_companies:     ['view', 'create', 'edit', 'delete'],
   tms_vehicles:      ['view', 'create', 'edit', 'delete'],
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   weigh_station: ['view', 'match'],
+  dashboard:         ['view', 'kpi_target', 'kpi_note'],   // Trang Tổng quan (19/08); kpi_target = đặt mục tiêu G/Y/R tab KPI (08/09); kpi_note = sửa diễn giải KPI trong nút ⓘ (09/09)
   control_tower:     ['view'],
+  // Chi phí kho (27/08): TIỀN là dữ liệu nhạy cảm — tách hẳn khỏi `dashboard.view`, ai không có
+  // `warehouse_cost.view` vẫn xem được tấn/công/tăng ca nhưng KHÔNG thấy ô nào có tiền.
+  warehouse_cost:    ['view', 'edit', 'lock', 'manage_item'],
   alerts:            ['view', 'ack'],   // Trung tâm cảnh báo (06/08): view = xem + nhận push cảnh báo mới theo kho; ack riêng
   slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)
+  warehouse_map:     ['view', 'edit'],   // Sơ đồ kho (08/09): view = xem bản vẽ + tồn theo ô + tìm pallet + đường đi; edit = dựng khung / đặt vị trí / cửa-bãi / kệ-sàn
+  directed_work:     ['view', 'confirm', 'replan'],   // Việc cần làm (10/09): 3 bảng theo vai; confirm = nút "✓ Xong" của xe nâng; replan = sắp lại kế hoạch chuyến
   fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)
   forklift:          ['view', 'check', 'delete_check', 'manage_vehicle', 'manage_item'],   // Xe nâng: ghi-sửa check ≠ xóa bản ghi (tách 05/08) / danh mục xe / danh mục hạng mục
   packing:           ['view', 'record', 'open_run', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): open_run = mở/đóng TRANG SỔ (lệnh) ≠ record = quét pallet; export riêng theo luật 26/07
   inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],
+  customers:         ['view', 'edit', 'import', 'manage_channel'],   // Khách hàng / Nơi nhận + Kênh (20260911)
   pallet_print:      ['view', 'generate', 'reprint', 'history', 'audit'],
   pallet_ops:        ['view', 'merge', 'ungroup', 'split'],
   work_skill:        ['view', 'create', 'edit', 'delete', 'assign'],

@@ -22,7 +22,8 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   /** part: render 1 ô lẻ cho layout 2 cột (Entry | Base). Bỏ trống = 2 ô gộp như cũ. */
   part?: 'entry' | 'base'
 }) {
-  const h = compact ? 'h-8 text-sm' : 'h-10 text-lg'
+  // Ô nhập số trên điện thoại cao 44 px (chuẩn chạm, rà 21/09); desktop giữ 40. compact (trong bảng) không đổi.
+  const h = compact ? 'h-8 text-sm' : 'h-11 sm:h-10 text-lg'
   // Ô hẹp (compact): giảm padding ngang để số 3–4 chữ số không bị CẮT (mặc định Input là px-3 = 24px).
   const pad = compact ? 'px-1' : ''
   const noEntry = !hasEntry(mat)

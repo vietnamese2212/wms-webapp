@@ -11,7 +11,7 @@ function ok(res: Response, data: unknown) {
 }
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
 
 type LabelIn = {
@@ -125,7 +125,8 @@ export async function listPrintsPaged(req: Request, res: Response) {
   // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN, không phải
   // "Lỗi hệ thống". Quan sát thật dưới tải 24 luồng ghi: câu gom 29.279 tem chỉ mất 59ms lúc rảnh
   // nhưng vượt 8s khi tranh CPU ⇒ user cần biết "hãy thu hẹp khoảng ngày", không phải lỗi trắng.
-  if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error.message, 500)
+  if (error && isQueryTimeout(error)) return fail(res, QUERY_TIMEOUT_MSG, 503)   // quá hạn = quá tải, giữ câu hướng dẫn
+  if (error) return fail(res, error.message, 500)
   const pd = (data ?? {}) as { rows?: unknown[]; ids?: string[]; total?: number; total_rows?: number; new_n?: number; reprint_n?: number }
 
   // RPC trả THẲNG dòng (migration 20260728h) ⇒ 1 request PostgREST cho cả trang.
@@ -139,7 +140,7 @@ export async function listPrintsPaged(req: Request, res: Response) {
     const parts: unknown[][] = []
     for (let i = 0; i < pd.ids.length; i += 300) {
       const { data: part, error: e2 } = await supabase.from('PalletLabelPrint')
-        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at, warehouse_id')
         .in('id', pd.ids.slice(i, i + 300))
       if (e2) return fail(res, e2.message, 500)
       parts.push((part ?? []) as unknown[])
@@ -183,7 +184,7 @@ export async function listPrints(req: Request, res: Response) {
     const applyFilters = (codeChunk: string[] | null) => {
       let q = supabase
         .from('PalletLabelPrint')
-        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at, warehouse_id')
         .order('created_at', { ascending: false })
       if (scopeWh) q = q.or(`warehouse_id.is.null,warehouse_id.in.(${scopeWh.join(',')})`)
       if (scopeCats) q = q.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)

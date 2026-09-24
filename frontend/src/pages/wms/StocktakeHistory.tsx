@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { useWarehouses, useLocationsReal, useStocktakeLog, fetchAllStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { useWarehouses, useLocationsReal, useLocationsByFlag, useLocationsByIds, useStocktakeLog, fetchAllStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -13,6 +14,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -22,6 +24,7 @@ import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyEntryText, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
 import { rowText } from '@/lib/rowStatus'
 import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const LOG_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'at',     label: 'Thời gian kiểm', w: 140 },
@@ -66,11 +69,19 @@ export default function StocktakeHistory() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // Ô lọc Vị trí = TÌM TRÊN SERVER (kéo cả kho Bàu Bàng 1.517 vị trí = 1.030KB/2,9s mỗi lần mở màn)
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [], isFetching: locLoading } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
+    !!warehouseId,
   )
-  // Vị trí "quan trọng" (cần kiểm) của kho — mở nhanh nhóm này
-  const importantLocIds = (locations as { id: string; requires_stocktake?: boolean }[]).filter(l => l.requires_stocktake).map(l => l.id)
+  // Nhãn cho vị trí ĐANG CHỌN (options chỉ có 50 dòng khớp từ khóa hiện tại → chip in uuid thô)
+  const { data: pickedLocs = [] } = useLocationsByIds(locationIds)
+  // Vị trí "quan trọng" (cần kiểm) của kho — hỏi thẳng TẬP mang cờ, không lọc trên cả kho
+  const { data: flagLocs = [] } = useLocationsByFlag(
+    'requires_stocktake', { warehouse_id: warehouseId, category: category || undefined }, !!warehouseId)
+  const importantLocIds = flagLocs.map(l => l.id)
   const isImportantScope = importantLocIds.length > 0
     && locationIds.length === importantLocIds.length
     && importantLocIds.every(id => locationIds.includes(id))
@@ -109,6 +120,8 @@ export default function StocktakeHistory() {
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
       onChange: ids => setF({ locationIds: ids, page: 1 }),
+      serverSearch: true, onSearchChange: setLocTerm, loading: locLoading,
+      selectedOpts: pickedLocs.map(l => ({ value: l.id, label: l.location_code })),
       options: (locations as { id: string; location_code: string }[]).map(l => ({ value: l.id, label: l.location_code })) },
   ]
 
@@ -160,6 +173,15 @@ export default function StocktakeHistory() {
           )}
           <SearchInput value={search} onChange={v => setF({ search: v, page: 1 })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
           <FilterSheetButton defs={defs} className="sm:hidden" />
+          {/* Quét tem ô để lọc lịch sử kiểm của đúng ô đó (cộng dồn, xem Tồn kho) */}
+          <LocationScanButton
+            purpose="lookup"   // chỉ trỏ tới ô để lọc — ô đầy vẫn phải chọn được
+            warehouseId={warehouseId || null}
+            onPicked={loc => setF({
+              locationIds: locationIds.includes(loc.id) ? locationIds : [...locationIds, loc.id],
+              page: 1,
+            })}
+          />
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
             <SavedViews module="stocktake_history" currentFilters={viewSnapshot} activeId={activeViewId}
               onApply={(fl) => setF(fl as Partial<typeof viewSnapshot>)} />
@@ -214,9 +236,9 @@ export default function StocktakeHistory() {
           </TableHeader>
           <TableBody>
             {isFetching && rows.length === 0 ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Chưa có lượt kiểm nào trong khoảng ngày này</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Chưa có lượt kiểm nào trong khoảng ngày này</TableEmptyRow>
             ) : rows.map(r => {
               const stickyBg = 'bg-white'
               return (

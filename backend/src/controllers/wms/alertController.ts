@@ -1,7 +1,7 @@
 // TRUNG TÂM CẢNH BÁO — API list + ack (Đợt 2 roadmap 06/08). Quét nằm ở services/alertScanner.
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
-import { maskServerMessage } from '../../utils/response'
+import { maskServerMessage, pgUserError } from '../../utils/response'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
@@ -11,7 +11,7 @@ function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
 }
 function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 const now = () => new Date().toISOString()
 
@@ -20,9 +20,13 @@ const RULES: readonly string[] = ALERT_RULES
 // GET /wms/alerts?status=open|acked|resolved|all&rule=&severity=&warehouse_id=&fresh=1
 export async function listAlerts(req: Request, res: Response) {
   try {
-    // Quét lười ngay tại cửa người xem (throttle trong scanner) — mở trang là số liệu tươi
-    await runAlertScan(req.query.fresh === '1')
-
+    // KHÔNG quét ở đây nữa (21/08). Trước đây `await runAlertScan()` nằm ngay đầu hàm ⇒ người mở
+    // trang phải CHỜ hết lượt quét 6 rule: đo thật 309ms (bị throttle) → **1.940ms** (lượt quét
+    // thật), và `alerts_expiry_candidates` là câu tốn TỔNG thời gian DB lớn nhất app (1.182 lượt ×
+    // 798ms = 944s), đã từng chạm statement_timeout rồi ghi ALERT_RULE_FAILED.
+    // Nay quét đi ĐƯỜNG RIÊNG: `POST /wms/alerts/scan` (FE gọi sau khi trang đã hiện + định kỳ).
+    // Cố ý KHÔNG dùng `void runAlertScan()` fire-and-forget: trên serverless, sau khi response đã
+    // trả thì lambda có thể bị đóng băng giữa lượt quét ⇒ đồng bộ vòng đời cảnh báo dở dang.
     const status = String(req.query.status || 'open')
     const rules = (parseListParam(req.query.rule) ?? []).filter(r => RULES.includes(r))
     const sevs = (parseListParam(req.query.severity) ?? []).filter(s => ['CRITICAL', 'WARNING'].includes(s))
@@ -60,12 +64,25 @@ export async function listAlerts(req: Request, res: Response) {
 }
 
 // POST /wms/alerts/:id/ack — "tôi biết rồi" (ẩn khỏi list mặc định; điều kiện hết sẽ tự đóng)
+// POST /wms/alerts/scan?fresh=1 — CHẠY lượt quét (tách khỏi GET để không ai phải chờ).
+// FE gọi sau khi trang đã hiện, và định kỳ; nút "Quét lại" gọi kèm fresh=1.
+// Throttle vẫn nằm trong scanner (10' thường / 20s cho fresh) nên gọi nhiều lần là vô hại.
+export async function scanAlerts(req: Request, res: Response) {
+  try {
+    await runAlertScan(req.query.fresh === '1')
+    return ok(res, { scanned: true })
+  } catch (e) {
+    return fail(res, 500, 'SCAN_FAILED', e instanceof Error ? e.message : String(e))
+  }
+}
+
 export async function ackAlert(req: Request, res: Response) {
   try {
     const { data, error } = await supabase.from('alert_events')
       .update({ ack_by: req.user?.name ?? null, ack_at: now(), updated_at: now() })
       .eq('id', req.params.id).is('resolved_at', null).select('id').maybeSingle()
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    // id sai dạng = 22P02 → 400 kèm câu người dùng đọc được, không phải "Lỗi hệ thống"
+    if (error) { const m = pgUserError(error); return fail(res, m?.status ?? 500, error.code ?? 'DB_ERROR', m?.message ?? error.message) }
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Cảnh báo không còn mở (đã tự đóng hoặc không tồn tại)')
     return ok(res, { acked: true })
   } catch (e) { return fail(res, 500, 'SERVER_ERROR', String(e)) }
@@ -74,10 +91,13 @@ export async function ackAlert(req: Request, res: Response) {
 // DELETE /wms/alerts/:id/ack — bỏ đánh dấu (đưa lại vào list mặc định)
 export async function unackAlert(req: Request, res: Response) {
   try {
-    const { error } = await supabase.from('alert_events')
+    const { data, error } = await supabase.from('alert_events')
       .update({ ack_by: null, ack_at: null, updated_at: now() })
-      .eq('id', req.params.id)
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+      .eq('id', req.params.id).select('id')
+    // Cùng luật với ackAlert ngay trên: id sai dạng là lỗi ĐẦU VÀO (400), không phải lỗi hệ thống;
+    // và bỏ đánh dấu một cảnh báo không tồn tại thì phải nói không tìm thấy, đừng báo đã làm xong.
+    if (error) { const m = pgUserError(error); return fail(res, m?.status ?? 500, error.code ?? 'DB_ERROR', m?.message ?? error.message) }
+    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy cảnh báo — có thể đã tự đóng')
     return ok(res, { acked: false })
   } catch (e) { return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

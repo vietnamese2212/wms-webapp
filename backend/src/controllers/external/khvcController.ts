@@ -8,6 +8,7 @@ import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { replanKhvcGroups, looseHeldGdoIds } from '../wms/outboundController'
+import { notLoadableDos, FLOW_LABEL } from '../../services/sapFlow'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate } from '../../utils/bookingGuards'
@@ -182,7 +183,23 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const f of STR_FIELDS) if (f in body) { const v = body[f]; out[f] = v == null || v === '' ? null : String(v).trim() }
   if ('export_date' in body) { const v = body.export_date; out.export_date = v == null || v === '' ? null : String(v) }
+  // DÒNG XE CON (uuid, 23/09) — cột FK, KHÔNG đi qua nhánh String() chung: chuỗi rác tới Postgres là 22P02 → 500.
+  // Validate ở resolveVehicleModel; ở đây chỉ chuẩn hoá rỗng → null.
+  if ('vehicle_model_id' in body) { const v = body.vehicle_model_id; out.vehicle_model_id = v == null || v === '' ? null : String(v).trim() }
   return out
+}
+
+// ── DÒNG XE CON (mã SAP) — thuộc tính CẤP XE như cửa đặt lịch (1 xe vật lý = 1 dòng xe): kho chỉ quan tâm
+// dòng CHA (veh_type) để booking, điều vận chọn dòng CON để tính cước/tải. Rác/không tồn tại/tạm dừng → 400.
+async function resolveVehicleModel(raw: unknown): Promise<{ id: string | null } | { error: string; status: number }> {
+  const v = String(raw ?? '').trim()
+  if (!v) return { id: null }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return { error: `Dòng xe con "${v}" không hợp lệ`, status: 400 }
+  const { data } = await supabase.from('vehicle_model').select('id, name, is_active').eq('id', v).maybeSingle()
+  const m = data as { id: string; name: string; is_active: boolean } | null
+  if (!m) return { error: 'Dòng xe con không có trong danh mục (Cài đặt TMS → Mã dòng xe)', status: 400 }
+  if (!m.is_active) return { error: `Dòng xe con "${m.name}" đang tạm dừng — chọn dòng khác hoặc mở lại ở Cài đặt TMS`, status: 400 }
+  return { id: m.id }
 }
 
 // GET /external/khvc — list phân trang + filter + search (+ in_do_sap)
@@ -326,6 +343,13 @@ export async function listKhvc(req: Request, res: Response) {
         .select('od_number').in('od_number', chunk).neq('sync_status', 'OBSOLETE').order('od_number'))
       for (const r of (raws ?? []) as { od_number: string }[]) readyDos.add(String(r.od_number))
     }
+    // (c) tên dòng xe con (mã SAP) — uuid không đọc được trên bảng
+    const vmIds = [...new Set(items.map(i => String(i.vehicle_model_id ?? '')).filter(Boolean))]
+    const vmById = new Map<string, { id: string; sap_code: string; name: string }>()
+    if (vmIds.length) {
+      const { data: vms } = await supabase.from('vehicle_model').select('id, sap_code, name').in('id', vmIds.slice(0, 300))
+      for (const m of (vms ?? []) as { id: string; sap_code: string; name: string }[]) vmById.set(m.id, m)
+    }
     for (const i of items) {
       const gc = String(i.group_code ?? '')
       const g = gdoByGc.get(gc)
@@ -333,6 +357,7 @@ export async function listKhvc(req: Request, res: Response) {
       i.gdo_status = g?.status ?? null
       i.gdo_date = g?.delivery_date ?? null   // ngày chuyến bên Xuất — FE so với export_date để báo lệch
       i.do_ready = readyDos.has(String(i.do_no ?? ''))
+      i.vehicle_model = i.vehicle_model_id ? (vmById.get(String(i.vehicle_model_id)) ?? null) : null
     }
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined, gdo_issue_warning: gdoIssueWarning ?? undefined })
   } catch (e) { return fail(res, String(e)) }
@@ -361,20 +386,43 @@ export async function createKhvc(req: Request, res: Response) {
     const { data: dup } = await supabase.from('khvc_lines').select('id')
       .eq('group_code', fields.group_code).eq('do_no', fields.do_no).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
+    // DO KHÔNG LÊN XE (ZSD02 22/09): trả pallet/trả hàng là chiều NHẬP, chiết khấu không có hàng, mã chưa phân loại chưa biết —
+    // VL06O không có thông tin này nên trước đây không chặn được. Dòng flow NULL (VL06O) vẫn qua.
+    const badFlow = await notLoadableDos([String(fields.do_no)])
+    if (badFlow.size) return fail(res,
+      `DO ${fields.do_no} là dòng ${FLOW_LABEL[badFlow.get(String(fields.do_no)) ?? ''] ?? badFlow.get(String(fields.do_no))} theo SAP — không lên xe được (Kế hoạch xuất chỉ nhận dòng bán hàng / chuyển kho / nội bộ / pallet đi cùng)`, 400)
     const awaitingData = await doMissingInRaw(String(fields.do_no))   // chỉ để BÁO, không chặn
     // NGÀY XUẤT LÀ THUỘC TÍNH CẤP XE (1 xe vật lý chạy 1 ngày): thêm DO vào xe ĐÃ CÓ thì phải theo
     // ngày của xe. Không ép thì xe mang 2 ngày và ngày chuyến phụ thuộc dòng nào đứng đầu — probe
     // 02/08 C1 tái hiện được. Muốn đổi ngày cả xe: dùng "Đổi ngày" (bulk-date) / sửa dòng.
     let dateForcedTo: string | null = null
     let bookingCatForcedTo: string | null = null
+    let vehicleModelForcedTo: string | null = null
+    let syncVehicleModelToGroup = false
+    if (fields.vehicle_model_id) {   // xe MỚI (chưa có dòng nào) vẫn phải validate — nhánh dưới chỉ chạy khi có dòng anh em
+      const vm = await resolveVehicleModel(fields.vehicle_model_id)
+      if ('error' in vm) return fail(res, vm.error, vm.status)
+      fields.vehicle_model_id = vm.id
+    }
     {
       // Lấy dòng ĐÃ CHỐT CỬA làm mẫu (nullsFirst:false). Xe di sản có dòng cửa NULL lẫn dòng có cửa
       // (sau migration, MỌI dòng cũ đều NULL cho tới khi ai đó khai): bốc đúng dòng NULL thì code
       // tưởng "xe chưa có cửa" → cho khai cửa khác → trigger DB chặn 23514 → user ăn 500 vô cớ.
-      const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
+      const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category, vehicle_model_id')
         .eq('group_code', fields.group_code).neq('sync_status', 'OBSOLETE')
         .order('booking_category', { nullsFirst: false }).limit(1).maybeSingle()
-      const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
+      const sibRow = sib as { export_date?: string | null; booking_category?: string | null; vehicle_model_id?: string | null } | null
+      // DÒNG XE CON cũng là thuộc tính CẤP XE: xe đã có dòng con → dòng mới theo xe; xe chưa có mà dòng mới khai
+      // → validate rồi (sau insert) áp cho cả xe.
+      if (sibRow?.vehicle_model_id) {
+        if (String(fields.vehicle_model_id ?? '') !== sibRow.vehicle_model_id) vehicleModelForcedTo = sibRow.vehicle_model_id
+        fields.vehicle_model_id = sibRow.vehicle_model_id
+      } else if (fields.vehicle_model_id) {
+        const vm = await resolveVehicleModel(fields.vehicle_model_id)
+        if ('error' in vm) return fail(res, vm.error, vm.status)
+        fields.vehicle_model_id = vm.id
+        syncVehicleModelToGroup = !!sib && !!vm.id
+      }
       const xeDate = sibRow?.export_date ?? null
       if (sib && String(xeDate ?? '') !== String(fields.export_date ?? '')) {
         fields.export_date = xeDate
@@ -405,13 +453,18 @@ export async function createKhvc(req: Request, res: Response) {
     }
     const { data, error } = await supabase.from('khvc_lines').insert(row).select().single()
     if (error) throw new Error(error.message)
+    // Dòng mới khai dòng xe con cho xe CHƯA có → áp cho mọi dòng còn sống của xe (1 xe 1 dòng xe)
+    if (syncVehicleModelToGroup) {
+      await supabase.from('khvc_lines').update({ vehicle_model_id: String(fields.vehicle_model_id), updated_at: now() })
+        .eq('group_code', String(fields.group_code)).neq('sync_status', 'OBSOLETE').is('vehicle_model_id', null)
+    }
     await logOutboundEvents([{
       group_code: String(fields.group_code), event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor: actorOf(req),
       do_number: String(fields.do_no), new_value: String(fields.export_date ?? ''),
       detail: `Thêm DO ${fields.do_no} vào Số xe ${fields.group_code}${awaitingData ? ' (DO chưa có dữ liệu VL06O — chuyến sẽ chờ)' : ''}`,
     }])
     const extra = await replanAfterCrud(req, [String(fields.group_code)])
-    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(awaitingData ? { awaiting_sap: true } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}) }, 201)
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(awaitingData ? { awaiting_sap: true } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}), ...(vehicleModelForcedTo !== null ? { vehicle_model_forced_to: vehicleModelForcedTo } : {}) }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -421,7 +474,7 @@ export async function updateKhvc(req: Request, res: Response) {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
     // Group_code CŨ cần cho replan (đổi Số xe = chuyến cũ mất 1 dòng + chuyến mới thêm 1 dòng — dội CẢ HAI)
-    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date, booking_category').eq('id', req.params.id).maybeSingle()
+    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date, booking_category, vehicle_model_id').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
     // Scope kho: gác CẢ dòng đang sửa (kho cũ) lẫn Số xe mới (kho đích nếu đổi xe)
     const scopeErr = await khvcScopeError(req, [String(cur.group_code ?? ''), String(fields.group_code ?? '')])
@@ -431,6 +484,12 @@ export async function updateKhvc(req: Request, res: Response) {
     const movingVehicle = 'group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '')
     const changingDate  = 'export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? '')
     const changingCat   = 'booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? '')
+    const changingModel = 'vehicle_model_id' in fields && String(fields.vehicle_model_id ?? '') !== String(cur.vehicle_model_id ?? '')
+    if (changingModel) {
+      const vm = await resolveVehicleModel(fields.vehicle_model_id)
+      if ('error' in vm) return fail(res, vm.error, vm.status)
+      fields.vehicle_model_id = vm.id
+    }
 
     // Đổi Ngày xuất phụ thuộc tình trạng chuyến — gác trên xe ĐÍCH (đổi cả Số xe thì dòng theo xe mới)
     if (changingDate) {
@@ -465,13 +524,19 @@ export async function updateKhvc(req: Request, res: Response) {
     // mang 2 ngày y hệt lỗi thêm-dòng (probe 02/08 C1). Không áp khi cùng lượt chỉ định export_date mới.
     let dateForcedTo: string | null = null
     let bookingCatForcedTo: string | null = null
+    let vehicleModelForcedTo: string | null = null
     if (movingVehicle) {
-      const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
+      const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category, vehicle_model_id')
         .eq('group_code', String(fields.group_code ?? '')).neq('id', req.params.id)
         .neq('sync_status', 'OBSOLETE')
         .order('booking_category', { nullsFirst: false })    // ưu tiên dòng ĐÃ chốt cửa (xem chú thích ở createKhvc)
         .limit(1).maybeSingle()
-      const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
+      const sibRow = sib as { export_date?: string | null; booking_category?: string | null; vehicle_model_id?: string | null } | null
+      // Dòng chuyển sang xe khác thì mang DÒNG XE CON của xe đích (1 xe 1 dòng xe) — xe đích chưa có thì giữ của dòng
+      if (sibRow?.vehicle_model_id && String(fields.vehicle_model_id ?? cur.vehicle_model_id ?? '') !== sibRow.vehicle_model_id) {
+        fields.vehicle_model_id = sibRow.vehicle_model_id
+        vehicleModelForcedTo = sibRow.vehicle_model_id
+      }
       const xeDate = sibRow?.export_date ?? null
       if (sib && !changingDate && String(xeDate ?? '') !== String(cur.export_date ?? '')) {
         fields.export_date = xeDate
@@ -495,6 +560,16 @@ export async function updateKhvc(req: Request, res: Response) {
         .eq('group_code', String(cur.group_code ?? '')).neq('sync_status', 'OBSOLETE').select('id')
       if (syncErr) throw new Error(syncErr.message)
       bookingCatSynced = Math.max(0, (synced ?? []).length - 1)   // trừ chính dòng đang sửa
+    }
+    // DÒNG XE CON: cùng luật cấp xe — đổi ở 1 dòng = đổi cả xe (không có trigger DB nên thứ tự không bắt buộc,
+    // vẫn ghi cả xe trong MỘT câu để không có lúc nào xe mang 2 dòng xe).
+    let vehicleModelSynced = 0
+    if (changingModel && !movingVehicle) {
+      const { data: synced, error: syncErr } = await supabase.from('khvc_lines')
+        .update({ vehicle_model_id: (fields.vehicle_model_id ?? null) as string | null, updated_at: now() })
+        .eq('group_code', String(cur.group_code ?? '')).neq('sync_status', 'OBSOLETE').select('id')
+      if (syncErr) throw new Error(syncErr.message)
+      vehicleModelSynced = Math.max(0, (synced ?? []).length - 1)
     }
     const { data, error } = await supabase.from('khvc_lines')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
@@ -535,10 +610,18 @@ export async function updateKhvc(req: Request, res: Response) {
         evs.push({ group_code: newGc || String(cur.group_code ?? ''), event_type: 'PLAN_BOOKING_CATEGORY_CHANGED', source: 'PLAN', actor,
           do_number: doNo, old_value: (cur.booking_category ?? null) as string | null, new_value: fields.booking_category as string | null,
           detail: `Đổi Loại kho booking (cửa đặt lịch): ${cur.booking_category ?? '—'} → ${fields.booking_category ?? '—'}${bookingCatSynced ? ` (đồng bộ ${bookingCatSynced} dòng cùng xe)` : ''}` })
+      if (changingModel) {
+        const ids = [cur.vehicle_model_id, fields.vehicle_model_id].filter((x): x is string => !!x)
+        const { data: vms } = ids.length ? await supabase.from('vehicle_model').select('id, sap_code, name').in('id', ids.slice(0, 2)) : { data: [] }
+        const nameOf = (id: unknown) => { const m = ((vms ?? []) as { id: string; sap_code: string; name: string }[]).find(x => x.id === id); return m ? `${m.sap_code} ${m.name}` : '—' }
+        evs.push({ group_code: newGc || String(cur.group_code ?? ''), event_type: 'PLAN_VEHICLE_MODEL_CHANGED', source: 'PLAN', actor,
+          do_number: doNo, old_value: (cur.vehicle_model_id ?? null) as string | null, new_value: (fields.vehicle_model_id ?? null) as string | null,
+          detail: `Đổi dòng xe con: ${nameOf(cur.vehicle_model_id)} → ${nameOf(fields.vehicle_model_id)}${vehicleModelSynced ? ` (đồng bộ ${vehicleModelSynced} dòng cùng xe)` : ''}` })
+      }
       await logOutboundEvents(evs)
     }
     const extra = await replanAfterCrud(req, gcs)
-    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatSynced ? { booking_category_synced_lines: bookingCatSynced } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}) })
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatSynced ? { booking_category_synced_lines: bookingCatSynced } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}), ...(vehicleModelSynced ? { vehicle_model_synced_lines: vehicleModelSynced } : {}), ...(vehicleModelForcedTo !== null ? { vehicle_model_forced_to: vehicleModelForcedTo } : {}) })
   } catch (e) { return fail(res, String(e)) }
 }
 

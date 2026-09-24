@@ -7,12 +7,25 @@ import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint } from './systemSettingController'
 import { qtyLabel, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
+import { isDay } from '../../utils/dates'
+import { safeFilterValue } from '../../utils/search'
+import { logPalletMoves } from '../../services/palletMoveLog'
+import { actorUuid } from '../../utils/actor'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
+function failCode(res: Response, status: number, code: string, message: string) {
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
+}
+
+// Quyền duyệt CẤT khác quy tắc — cùng một năng lực với inbound/inventory (xem inboundController)
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
 
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const ACTIVE = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
@@ -29,7 +42,9 @@ const WH_SELECT = 'warehouse_id, location:Location!location_id(warehouse_id)'
 function guardEntryWh(req: Request, res: Response, whId: string | null): boolean {
   if (req.user?.warehouse_scope === 'NATIONAL') return true
   const scope = req.user?.warehouse_ids ?? []
-  if (scope.length === 0) return true
+  // KHÔNG có ngoại lệ "chưa gán kho thì cho qua": đó là đường cho tài khoản chưa gán kho DỒN/TÁCH
+  // pallet của mọi kho, trong khi cùng tình huống đó Tồn kho lại chặn sạch (guardEntriesScope).
+  // Trạng thái này nay bị chặn từ cửa ghi hồ sơ nhân sự (emptyScopeError), đây là lớp thứ hai.
   if (!whId || !scope.includes(whId)) {
     fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác pallet của kho này', 403)
     return false
@@ -71,12 +86,34 @@ export async function mergePallets(req: Request, res: Response) {
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
     const { data: kRows, error: kErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, parent_pallet_code, location_id, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
+      .select(`id, pallet_code, parent_pallet_code, location_id, material_id, ncc_id, production_date, expiry_date, shelf_life_days, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
     if (kErr) return fail(res, kErr.message, 500)
     const kids = (kRows ?? []).filter((k: any) => matchWh(k, warehouse_id))
     const found = kids.map((k: any) => k.pallet_code)
     const missing = children.filter(c => !found.includes(c))
     if (missing.length) return fail(res, (await wrongFormatHint(missing[0])) ?? `Pallet không tồn tại/đã xuất: ${missing.join(', ')}`)
+
+    // Pallet con đang đứng Ô KHÁC bị kéo về ô của pallet đích = hàng MỚI đi vào ô đó ⇒ một lần
+    // CẤT HÀNG, phải qua luật cất của kho (bịt lỗ 25/08 — trước đây dồn đi thẳng, kho bật "bắt
+    // buộc" vẫn dồn được hàng vào ô cấm/vượt số mã). Sức chứa cố ý KHÔNG kiểm: dồn = chồng vật lý
+    // lên pallet đích, không chiếm thêm chân pallet.
+    let putawayWarning: string | null = null
+    const movingKids = tgt.location_id ? kids.filter((k: any) => k.location_id !== tgt.location_id) : []
+    if (movingKids.length) {
+      const put = await guardPutawayBatch({
+        warehouseId: ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]),
+        locationId:  tgt.location_id,
+        entries: movingKids.map((k: any): IncomingInput => ({
+          material_id: k.material_id, ncc_id: k.ncc_id ?? null,
+          production_date: k.production_date ?? null, expiry_date: k.expiry_date ?? null,
+          shelf_life_days: k.shelf_life_days ?? null,
+        })),
+        overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+        canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return failCode(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putawayWarning = put.warning
+    }
 
     const now = new Date().toISOString()
     // Lưu trạng thái cũ (parent + vị trí) để hoàn tác
@@ -87,7 +124,26 @@ export async function mergePallets(req: Request, res: Response) {
     if (uErr) return fail(res, uErr.message, 500)
 
     await logOp(req, 'MERGE', children, [target], { count: kids.length, prev }, ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]))
-    return ok(res, { target, merged: kids.length })
+    // SỔ CHUYỂN VỊ TRÍ — dồn pallet KÉO tem con sang ô của tem đích (chính vì thế ngay trên đây có
+    // `guardPutawayBatch`: đội ngũ vốn coi đây là một lần CẤT HÀNG thật). Cửa này nằm ngoài tầm
+    // nhìn của sổ vì nó ghi thẳng `location_id`, không qua RPC chuyển ô — nên tab Lịch sử của màn
+    // Chuyển vị trí không trả lời được "sao pallet của tôi sang ô khác" khi thủ phạm là một lần dồn.
+    // KHÔNG trùng với dòng MERGED của Sổ pallet: dòng đó để TRỐNG ô đi/ô đến, dòng này mới nói
+    // từ ô nào sang ô nào. Helper tự bỏ qua tem đã đứng sẵn ở ô đích.
+    if (tgt.location_id) {
+      await logPalletMoves({
+        moved: kids.map((k: any) => ({
+          entry_id: k.id, from_location_id: k.location_id ?? null,
+          pallet_code: k.pallet_code, material_id: k.material_id ?? null,
+          app_qty: Number(k.cartons_remaining ?? 0),
+        })),
+        to_location_id: tgt.location_id,
+        actor_id: actorUuid(req), actor_name: req.user?.name ?? null,
+        note: `Dồn pallet về tem ${target}`,
+        where: '/wms/pallet-ops/merge', at: now,
+      })
+    }
+    return ok(res, { target, merged: kids.length, putaway_warning: putawayWarning })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
 
@@ -144,7 +200,7 @@ export async function splitPallet(req: Request, res: Response) {
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
     const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
+      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, import_date, ncc_id, shelf_life_days, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
@@ -152,6 +208,9 @@ export async function splitPallet(req: Request, res: Response) {
     const source = sMatch[0]
     if (!source) return fail(res, (await wrongFormatHint(src)) ?? `Không tìm thấy pallet gốc "${src}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
     if (!guardEntryWh(req, res, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))) return
+
+    // Ngày hàng vào kho của pallet GỐC — pallet con kế thừa (xem chỗ dựng dòng con bên dưới)
+    const srcImportDate = (source as { import_date?: string | null }).import_date ?? null
 
     const remaining = Number(source.cartons_remaining ?? 0)
     const reserved = Number(source.cartons_reserved ?? 0)
@@ -164,6 +223,43 @@ export async function splitPallet(req: Request, res: Response) {
     const totalSplit = items.reduce((s, q) => s + q, 0)
     if (totalSplit > free) return fail(res, `Tách ${qtyLabel(totalSplit, (source as any).material as MatUnits)} vượt số khả dụng (${qtyLabel(free, (source as any).material as MatUnits)}, đã trừ ${qtyLabel(reserved, (source as any).material as MatUnits)} giữ chỗ)`)
 
+    // ĐÍCH do người chọn = một lần CẤT HÀNG (bịt lỗ 25/08 — trước đây tách đặt con vào Ô BẤT KỲ:
+    // không kiểm cùng kho, không sức chứa, không luật cất ⇒ kho bật "bắt buộc" vẫn bị lách qua
+    // đường Tách). Mặc định giữ chỗ pallet nguồn thì MIỄN — hàng không di chuyển, cùng lý lẽ
+    // "Giữ chỗ cũ" của quét xuất (chặn là ngõ cụt).
+    let putawayWarning: string | null = null
+    const srcWh = ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0])
+    if (location_id && location_id !== source.location_id) {
+      const { data: dest } = await supabase.from('Location')
+        .select('id, location_code, warehouse_id, is_active, max_pallets').eq('id', location_id).maybeSingle()
+      if (!dest) return fail(res, 'Không tìm thấy vị trí đặt pallet con', 404)
+      if (dest.is_active === false) return fail(res, `Vị trí ${dest.location_code} không hoạt động`)
+      if (srcWh && dest.warehouse_id !== srcWh)
+        return fail(res, `Vị trí ${dest.location_code} thuộc kho khác — pallet con phải nằm trong kho của pallet gốc`)
+      // Sức chứa (loại tồn=0 — cùng định nghĩa used_slots): N pallet con cần N chỗ
+      const cap = Number(dest.max_pallets ?? 0)
+      if (cap > 0) {
+        const { count } = await supabase.from('InventoryEntry')
+          .select('id', { count: 'exact', head: true })
+          .eq('location_id', location_id).gt('cartons_remaining', 0)
+        if ((count ?? 0) + items.length > cap)
+          return failCode(res, 400, 'LOCATION_FULL',
+            `Vị trí ${dest.location_code} không đủ chỗ (đang ${count ?? 0}/${cap} pallet, cần thêm ${items.length})`)
+      }
+      const put = await guardPutawayBatch({
+        warehouseId: srcWh, locationId: location_id,
+        entries: items.map((): IncomingInput => ({
+          material_id: source.material_id, ncc_id: source.ncc_id ?? null,
+          production_date: source.production_date ?? null, expiry_date: source.expiry_date ?? null,
+          shelf_life_days: source.shelf_life_days ?? null,
+        })),
+        overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+        canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return failCode(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putawayWarning = put.warning
+    }
+
     // Tìm số thứ tự con kế tiếp (baseCode.N) — mã con = mã gốc + ".N".
     // V1 (`_`): ".N" gắn vào ĐOẠN SEQ (đoạn 5).
     // V2 (`;`): ".N" gắn vào ĐUÔI MÃ LÔ (đoạn 3) → vd TA260705A018.1. Cột `batch` DB vẫn lưu mã lô GỐC
@@ -171,30 +267,33 @@ export async function splitPallet(req: Request, res: Response) {
     // Phân trang (fetchAllRowsParallel): quét cả bảng theo material_id bị cap ~1000 → maxN sai → SINH MÃ TRÙNG.
     const baseSeq = isV2 ? '' : parts[4]
     const childPrefix = isV2 ? `%${baseMalo}.%` : `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
-    const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-      .select('pallet_code').eq('material_id', source.material_id)
-      .ilike('pallet_code', childPrefix).order('id'))
-    let maxN = 0
-    for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
-      const code = String(r.pallet_code)
-      if (isV2) {
-        // con V2 = mọi đoạn GIỐNG src, chỉ đoạn 3 = "<baseMalo>.N" (N thuần số → loại cháu ".1.2")
-        const cs = code.split(';')
-        if (cs.length === segs.length && cs.every((v, idx) => idx === 2 || v === segs[idx]) && cs[2].startsWith(`${baseMalo}.`)) {
-          const suffix = cs[2].slice(baseMalo.length + 1)
-          if (/^\d+$/.test(suffix)) { const n = parseInt(suffix, 10); if (n > maxN) maxN = n }
-        }
-      } else {
-        const p = code.split('_')
-        if (p.length === parts.length && p[0] === parts[0] && p[1] === parts[1] && p[2] === parts[2] && p[3] === parts[3] && p[5] === parts[5] && p[4].startsWith(`${baseSeq}.`)) {
-          const n = parseInt(p[4].slice(baseSeq.length + 1), 10)
-          if (!isNaN(n) && n > maxN) maxN = n
+    const scanMaxN = async (): Promise<number> => {
+      const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+        .select('pallet_code').eq('material_id', source.material_id)
+        .ilike('pallet_code', childPrefix).order('id'))
+      let maxN = 0
+      for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
+        const code = String(r.pallet_code)
+        if (isV2) {
+          // con V2 = mọi đoạn GIỐNG src, chỉ đoạn 3 = "<baseMalo>.N" (N thuần số → loại cháu ".1.2")
+          const cs = code.split(';')
+          if (cs.length === segs.length && cs.every((v, idx) => idx === 2 || v === segs[idx]) && cs[2].startsWith(`${baseMalo}.`)) {
+            const suffix = cs[2].slice(baseMalo.length + 1)
+            if (/^\d+$/.test(suffix)) { const n = parseInt(suffix, 10); if (n > maxN) maxN = n }
+          }
+        } else {
+          const p = code.split('_')
+          if (p.length === parts.length && p[0] === parts[0] && p[1] === parts[1] && p[2] === parts[2] && p[3] === parts[3] && p[5] === parts[5] && p[4].startsWith(`${baseSeq}.`)) {
+            const n = parseInt(p[4].slice(baseSeq.length + 1), 10)
+            if (!isNaN(n) && n > maxN) maxN = n
+          }
         }
       }
+      return maxN
     }
 
     const now = new Date().toISOString()
-    const rows = items.map((qty, i) => {
+    const buildRows = (maxN: number) => items.map((qty, i) => {
       const n = maxN + 1 + i
       let childCode: string
       if (isV2) {
@@ -228,15 +327,31 @@ export async function splitPallet(req: Request, res: Response) {
         status: 'IN_STOCK',
         created_by: req.user?.sub ?? null,
         updated_by: req.user?.sub ?? null,
-        import_date: vnDate(),
-        update_date: vnDate(),
+        // `import_date` = NGÀY HÀNG THỰC TẾ VÀO KHO (user chốt 09/09/2026), KHÔNG phải ngày thao tác.
+        // Tách pallet là xử lý NỘI BỘ — hàng đã nằm trong kho từ trước, không có gì mới vào. Đóng dấu
+        // hôm nay thì pallet tồn lâu chỉ cần tách một lần là "trẻ" lại và rơi khỏi Hàng chậm / Không
+        // luân chuyển / tuổi tồn — đúng kiểu che số liệu mà không ai thấy (NSX, HSD, mã lô, QA đã kế
+        // thừa sẵn từ pallet gốc ở trên; chỉ mỗi ngày nhập là bị đặt lại).
+        import_date: srcImportDate ?? vnDate(),
+        update_date: vnDate(),                     // ngày CHẠM gần nhất — đúng là hôm nay
         created_at: now,
         updated_at: now,
       }
     })
 
-    const { data: created, error: cErr } = await supabase.from('InventoryEntry').insert(rows).select('*')
-    if (cErr) return fail(res, cErr.message, 500)
+    // ĐUA ĐẶT TÊN: 2 người tách cùng pallet đồng thời cùng tính ra ".N" → người sau dính unique
+    // uq_inventory_active_wh_pallet (23505). Không phải lỗi hệ thống: tính lại maxN + jitter rồi
+    // thử lại; hết lượt → 409 sạch (trước 19/08 trả 500 thô — gói QA 27 [8] gác).
+    let rows: ReturnType<typeof buildRows> = []
+    let created: unknown[] | null = null
+    for (let nameTry = 0; nameTry < 4; nameTry++) {
+      rows = buildRows(await scanMaxN())
+      const { data: ins, error: cErr } = await supabase.from('InventoryEntry').insert(rows).select('*')
+      if (!cErr) { created = ins ?? []; break }
+      if ((cErr as { code?: string }).code !== '23505') return fail(res, cErr.message, 500)
+      await new Promise(r => setTimeout(r, 30 + Math.floor(Math.random() * (100 + nameTry * 80))))
+    }
+    if (!created) return fail(res, `Pallet gốc "${src}" đang bận (nhiều người cùng tách) — thử lại`, 409)
 
     // Trừ tồn pallet gốc NGUYÊN TỬ (optimistic-CAS + jitter, GIỮ NGUYÊN cartons_imported để báo cáo nhập bất biến):
     // chống 2 lượt tách cùng pallet đồng thời over-split (cả 2 trừ từ cùng số đọc cũ). Đọc lại mỗi lần;
@@ -267,7 +382,7 @@ export async function splitPallet(req: Request, res: Response) {
     const childCodes = rows.map(r => r.pallet_code)
     await logOp(req, 'SPLIT', [src], childCodes, { children: rows.map(r => ({ code: r.pallet_code, qty: r.cartons_remaining })), source_remaining: newRemaining }, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))
 
-    return ok(res, { source: src, source_remaining: newRemaining, children: created ?? [] })
+    return ok(res, { source: src, source_remaining: newRemaining, children: created ?? [], putaway_warning: putawayWarning })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
 
@@ -278,15 +393,36 @@ const OPS_SELECT = 'id, type, source_codes, target_codes, detail, operated_by_na
 // không cờ ⇒ người dùng tưởng đã hết. Nâng trần không cứu (20.000 dòng ≈ 5,6MB > trần 4,5MB
 // của Vercel). Lọc Loại kho cũng phải xuống SQL — lọc ở client sau khi phân trang là lọc trên
 // ĐÚNG 1 TRANG (số dòng và ô tổng đều sai). Chi tiết: migration 20260728_pallet_ops_paged_rpc.sql
+// Phạm vi kho của người xem sổ: null = không giới hạn (NATIONAL), mảng = chỉ các kho được gán.
+// Đo 07/09 (gói QA 53): sổ Dồn/Tách là controller DUY NHẤT trong nhóm pallet-ops không đọc
+// `warehouse_ids` — 3 cửa ghi (dồn/tách/gỡ) + hoàn tác đều gác, riêng cửa ĐỌC thì tài khoản kho
+// Ba Vì xem trọn thao tác của kho Bluestar. Cùng mẫu "bất đối xứng đọc/ghi" đã gặp ở Chấm công.
+const opsScope = (req: Request): string[] | null =>
+  req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+
+// Ngày trên bộ lọc phải là ngày thật — `new Date('abc').toISOString()` ném RangeError → 500 "Lỗi hệ thống"
+const badDate = (q: Record<string, string | undefined>): string | null =>
+  (q.date_from && !isDay(q.date_from)) || (q.date_to && !isDay(q.date_to))
+    ? 'date_from/date_to phải theo định dạng YYYY-MM-DD' : null
+
 async function listOpsPaged(req: Request, res: Response) {
   const q = req.query as Record<string, string | undefined>
+  const dErr = badDate(q)
+  if (dErr) return fail(res, dErr)
+  const scope = opsScope(req)
+  let wh = q.warehouse_id || null
+  if (scope !== null) {
+    if (wh && !scope.includes(wh)) return fail(res, 'Ngoài phạm vi kho được giao', 403)
+    // RPC nhận MỘT kho; tài khoản gán nhiều kho phải chọn kho (trang này vốn bắt chọn kho trước khi xem)
+    if (!wh) { if (scope.length === 1) wh = scope[0]; else return fail(res, 'Chọn kho để xem sổ Dồn/Tách') }
+  }
   const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
   const pageSize = Math.min(1000, Math.max(1, parseInt(String(q.page_size ?? '200'), 10) || 200))
   const { data, error } = await supabase.rpc('pallet_ops_page', {
-    p_wh:       q.warehouse_id || null,
+    p_wh:       wh,
     p_type:     q.type || null,
     p_category: q.category || null,
-    p_search:   q.search?.trim() || null,
+    p_search:   q.search ? (safeFilterValue(q.search) || null) : null,
     p_from:     q.date_from ? new Date(`${q.date_from}T00:00:00+07:00`).toISOString() : null,
     p_to:       q.date_to   ? new Date(`${q.date_to}T23:59:59+07:00`).toISOString()   : null,
     p_offset:   (pageNum - 1) * pageSize,
@@ -313,17 +449,33 @@ async function listOpsPaged(req: Request, res: Response) {
 export async function listOps(req: Request, res: Response) {
   try {
     if (req.query.page) return await listOpsPaged(req, res)
-    const { search, type, warehouse_id, date_from, date_to, limit } = req.query as Record<string, string | undefined>
+    const query = req.query as Record<string, string | undefined>
+    const { search, type, warehouse_id, date_from, date_to, limit } = query
+    const dErr = badDate(query)
+    if (dErr) return fail(res, dErr)
+    // Phạm vi kho: chỉ kho được gán (null-inclusive — thao tác không ghi được kho vẫn hiện, theo quy ước chung)
+    const scope = opsScope(req)
+    let whs: string[] | null = warehouse_id ? [warehouse_id] : null
+    if (scope !== null) {
+      if (warehouse_id && !scope.includes(warehouse_id)) return fail(res, 'Ngoài phạm vi kho được giao', 403)
+      whs = warehouse_id ? [warehouse_id] : scope
+      if (!whs.length) return ok(res, [])
+    }
     // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
     const applyFilters = () => {
       let q = supabase.from('PalletOperation')
         .select(OPS_SELECT)
         .order('created_at', { ascending: false })
       if (type) q = q.eq('type', type)
-      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      if (whs) {
+        q = scope !== null
+          ? q.or(`warehouse_id.in.(${whs.map(w => JSON.stringify(w)).join(',')}),warehouse_id.is.null`)
+          : q.eq('warehouse_id', whs[0])
+      }
       if (search) {
-        const s = search.trim()
-        q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)
+        // Dấu nháy/phẩy/ngoặc trong từ khoá lọt vào chuỗi filter `.cs.{"…"}` = PostgREST không parse được → 500
+        const s = safeFilterValue(search)
+        if (s) q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)
       }
       if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
       if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())
@@ -348,10 +500,16 @@ export async function listOps(req: Request, res: Response) {
 export async function undoOp(req: Request, res: Response) {
   try {
     const { id } = req.params
+    // id rác (không phải uuid) → 400 rõ ràng, đừng để PostgREST nổ 22P02 thành 500
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? ''))
+      return fail(res, 'Id thao tác không hợp lệ')
     const { data: op, error } = await supabase.from('PalletOperation').select('*').eq('id', id).maybeSingle()
     if (error) return fail(res, error.message, 500)
     if (!op) return fail(res, 'Không tìm thấy thao tác', 404)
     if (op.undone_at) return fail(res, 'Thao tác này đã được hoàn tác trước đó')
+    // Chống IDOR (kiểm định 02/09): hoàn tác cũng đụng tồn của kho ⇒ kho của thao tác phải thuộc phạm vi người
+    // bấm, y như 3 cửa thuận merge/ungroup/split (trước đây chỉ cửa thuận kiểm, cửa hoàn tác không).
+    if (!guardEntryWh(req, res, (op.warehouse_id as string | null) ?? null)) return
 
     // Hoàn tác = nghịch đảo của thao tác → đòi ĐÚNG quyền của loại op đó (route chỉ chặn
     // anyOf(merge|ungroup|split) — người chỉ có split không được undo op MERGE của người khác).

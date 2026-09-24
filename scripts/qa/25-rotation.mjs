@@ -8,11 +8,13 @@
 // Fixture cố tình dựng ca mà FEFO và FIFO TRẢ LỜI KHÁC NHAU (pallet NSX mới nhưng HSD ngắn nhất):
 // nếu ai đó lỡ gộp hai khái niệm lại làm một, gói này đỏ ngay.
 //
-// 10 phép kiểm: FEFO chọn đúng HSD ngắn nhất · FIFO chọn đúng NSX cũ nhất (KHÁC pallet FEFO) ·
+// 16 phép kiểm: FEFO chọn đúng HSD ngắn nhất · FIFO chọn đúng NSX cũ nhất (KHÁC pallet FEFO) ·
+// [14..15] đơn có %Date yêu cầu: pallet không đạt bị LOẠI khỏi đề cử (không kẹt 2 luật) ·
 // pallet QA giữ không bao giờ được đề cử · quét đúng thứ tự = không vi phạm · kho chỉ-cảnh-báo
 // KHÔNG chặn · kho bắt-buộc chặn khi thiếu lý do · mã lý do bậy bị từ chối · có lý do thì qua và
 // GHI VẾT đủ 4 cột · cột gợi ý không liệt kê vị trí của pallet QA · dòng ghi lưu đúng nguyên tắc
-// đang hiệu lực.
+// đang hiệu lực · [11..13] HÀNG DƯ sau khi bốc đặt sang ô khác phải theo QUY TẮC CẤT của kho
+// (cảnh báo / chặn theo mức), còn "Giữ chỗ cũ" thì không bao giờ bị chặn.
 // usage: node scripts/qa/25-rotation.mjs
 import { login, api, check, finish, restAll, restWrite } from './lib.mjs'
 import { randomUUID } from 'crypto'
@@ -24,7 +26,7 @@ await login()
 const nowIso = () => new Date().toISOString()
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const created = { locs: [], entries: [], gdo: null, do: null, items: [] }
-let whId = null, whBackup = null
+let whId = null, whBackup = null, putBackup = null
 
 async function cleanup() {
   for (const id of created.items) await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${id}`)
@@ -35,6 +37,9 @@ async function cleanup() {
   for (const id of created.locs)    await restWrite('Location', 'DELETE', `id=eq.${id}`)
   // TRẢ cấu hình kho về nguyên trạng — gói QA không được để lại kho đang bật "bắt buộc"
   if (whId && whBackup) await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, whBackup)
+  // Luật CẤT trả qua API để backend xoá luôn cache 30s (ghi thẳng PostgREST thì instance đang
+  // chạy vẫn giữ bản "bắt buộc" sau khi gói kết thúc → chặn oan người dùng thật).
+  if (whId && putBackup) await api(`/masterdata/warehouses/${whId}`, 'PUT', putBackup)
 }
 // Tàn dư lần chạy hỏng giữa chừng → dọn trước (fixture phải TỰ HỒI PHỤC)
 for (const [t, col] of [['InventoryEntry', 'pallet_code'], ['Location', 'location_code']]) {
@@ -47,24 +52,61 @@ try {
   const anyEntry = (await restAll('InventoryEntry', 'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0'))[0]
   if (!anyEntry) { check('có dữ liệu tồn để dựng fixture', false, 'kho rỗng'); finish('ROTATION'); process.exit() }
   whId = anyEntry.warehouse_id
-  const [mat] = await restAll('Material', `select=id,material_code,category,shelf_life_days&id=eq.${anyEntry.material_id}`)
-  const [wh] = await restAll('Warehouse', `select=id,rotation_principle,rotation_required&id=eq.${whId}`)
-  whBackup = { rotation_principle: wh?.rotation_principle ?? 'FEFO', rotation_required: wh?.rotation_required === true, updated_at: nowIso() }
 
+  // MÃ dùng cho fixture phải KHÔNG CÓ tồn sống nào khác trong kho này.
+  // VÌ SAO (bug của chính gói này, đo 21/08): trước đây gói lấy luôn `anyEntry.material_id`, tức MỘT
+  // MÃ TUỲ Ý đang có tồn — rồi dựng 3 pallet với ngày CỐ ĐỊNH và khẳng định pallet SHORT là "HSD
+  // ngắn nhất". Khẳng định đó chỉ đúng khi mã đó không có lô nào cũ hơn. Nó xanh nhiều tháng vì
+  // `limit=1` KHÔNG có ORDER BY nên vô tình luôn bốc đúng một mã "sạch" — cho tới khi
+  // `ALTER COLUMN TYPE` (migration 20260821h) GHI LẠI TOÀN BẢNG làm đổi thứ tự dòng vật lý ⇒ bốc
+  // phải mã có lô NSX 14/07 (HSD suy ra 28/08, sớm hơn 01/12 của fixture) ⇒ 4 phép kiểm FEFO đỏ
+  // dù engine trả lời HOÀN TOÀN ĐÚNG.
+  // Nay chọn mã TRỐNG tồn ⇒ fixture là TOÀN BỘ tập ứng viên ⇒ kết quả tất định, không phụ thuộc
+  // dữ liệu nền (staging giữ ~150k dòng seed vĩnh viễn nên "dữ liệu nền" chỉ ngày càng dày).
+  const liveMatIds = new Set((await restAll('InventoryEntry',
+    `select=material_id&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)).map(r => r.material_id))
+  const cands = await restAll('Material',
+    'select=id,material_code,category,shelf_life_days&is_active=is.true&is_non_stock=not.is.true'
+    + '&category=not.is.null&order=material_code&limit=1000')
+  const mat = cands.find(m => !liveMatIds.has(m.id))
+  if (!mat) {
+    check('tìm được mã TRỐNG tồn để dựng fixture tất định', false,
+      `${cands.length} mã ứng viên đều đang có tồn ở kho ${whId}`)
+    finish('ROTATION'); process.exit()
+  }
+  const [wh] = await restAll('Warehouse',
+    `select=id,rotation_principle,rotation_required,putaway_enforced,work_mode&id=eq.${whId}`)
+  // work_mode PHẢI nằm trong bản sao lưu: gói ép kho về THỦ CÔNG trong lúc đo (xem setRot),
+  // quên trả lại là để kho dùng chung sai cách làm việc cho mọi gói chạy sau.
+  whBackup = { rotation_principle: wh?.rotation_principle ?? 'FEFO', rotation_required: wh?.rotation_required === true, work_mode: wh?.work_mode ?? 'MANUAL', updated_at: nowIso() }
+  putBackup = { putaway_enforced: wh?.putaway_enforced ?? [] }
+
+  // ⚠️ ÉP kho về THỦ CÔNG trong suốt lượt đo. VÌ SAO (đo 24/09, gói đỏ 4 phép ở CẢ hai lượt chạy):
+  // gói MƯỢN một kho thật bất kỳ (`anyEntry.warehouse_id`); nếu kho đó đang HƯỚNG DẪN thì Bắt đầu
+  // chuyến sinh việc lấy hàng GHIM pallet, và luật 20/09 (`rotationCheckOf.excludeEntryIds`) CỐ Ý
+  // không coi pallet đã ghim cho CHÍNH chuyến là "sai thứ tự" ⇒ best_pallet_code = null ⇒
+  // violation=false ⇒ [8][9][10][15] đỏ OAN trong khi app hoàn toàn đúng thiết kế.
+  // Đây là gói đo LUÂN CHUYỂN, không đo chỉ dẫn công việc — hai luật đó phải tách nhau ra.
   const setRot = (principle, required) =>
-    restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_principle: principle, rotation_required: required, updated_at: nowIso() })
+    restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_principle: principle, rotation_required: required, work_mode: 'MANUAL', updated_at: nowIso() })
+  // Luật CẤT đi qua API (backend cache 30s cho hot-path quét — ghi thẳng DB thì luật không hiệu lực)
+  const setPut = (enforced) => api(`/masterdata/warehouses/${whId}`, 'PUT', { putaway_enforced: enforced })
+  // Cache cấu hình 30s/instance serverless → phải chờ hết cửa sổ mới đo được mức BẮT BUỘC
+  const waitConfigSettled = () => new Promise(r => setTimeout(r, 31_000))
 
-  const mkLoc = async (code) => {
+  const mkLoc = async (code, extra = {}) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: 20,
       is_active: true, row: 'QA', shelf: '1', sub_code: `${TAG}-${code}`,
-      created_at: nowIso(), updated_at: nowIso(),
+      created_at: nowIso(), updated_at: nowIso(), ...extra,
     })
     created.locs.push(row.id)
     return row.id
   }
   const locMain = await mkLoc('MAIN')
   const locQa   = await mkLoc('QAHOLD')
+  const locNoIn1 = await mkLoc('NOIN1', { slot_no_in: true })
+  const locNoIn2 = await mkLoc('NOIN2', { slot_no_in: true })
 
   // Pallet: cố tình để FEFO ≠ FIFO.
   //   OLD  — NSX cũ nhất (2026-01-01) nhưng HSD xa (2027-06-01) → FIFO chọn cái này
@@ -101,6 +143,12 @@ try {
     const [row] = await restWrite('OutboundItem', 'POST', null, {
       id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
       cartons_ordered: ordered, cartons_scanned: 0, loose_picking: 0, status: 'PENDING',
+      // Kho fixture (Ba Vì) đang chạy chế độ HƯỚNG DẪN ⇒ cửa quét đòi dòng phải KHAI quy định date
+      // trước (luật 10/09, mở rộng 11/09). Gói này đo THỨ TỰ LUÂN CHUYỂN chứ không đo date ⇒ khai
+      // "không đòi mốc" là đúng ngữ nghĩa và không đụng tới thứ tự (thứ tự do rotation_principle
+      // của kho quyết). Khai ngay tại fixture để gói MIỄN NHIỄM với work_mode của kho dùng chung —
+      // đo thật 12/09: một tài khoản mô phỏng bật GUIDED cho Ba Vì là 4 gói đỏ cùng lúc.
+      date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso(), set_by: 'QA 25' },
       created_at: nowIso(), updated_at: nowIso(),
     })
     created.items.push(row.id)
@@ -170,6 +218,10 @@ try {
 
   // ── [8..10] Kho BẮT BUỘC: chặn, đòi lý do đúng danh sách ──────────────────
   await setRot('FEFO', true)
+  // ⚠️ setRot ghi THẲNG DB, mà backend cache cấu hình kho 30s cho hot-path quét ⇒ quét ngay
+  // vẫn thấy required=false và trả 200. Thiếu bước chờ này thì [8][9][10][15] ĐỎ OAN — gói
+  // kêu oan vì chính nó, không phải app hỏng (đo lại 24/09: 2 lượt liên tiếp đỏ y hệt).
+  await waitConfigSettled()
   const itemB = await mkItem(500)
   {
     const r = await scan(itemB, { qr_code: `${TAG}-OLD`, cartons_override: 10, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
@@ -189,6 +241,73 @@ try {
     check('[10] Có lý do hợp lệ → qua được VÀ lưu vết lý do (van xả có dấu vết, không phải cửa mở toang)',
       (r.s === 200 || r.s === 201) && se?.rotation_violation === true && se?.rotation_override_reason === 'BLOCKED',
       `http=${r.s} se=${JSON.stringify(se)}`)
+  }
+
+  // ── [14..15] ĐƠN có yêu cầu %Date: pallet KHÔNG ĐẠT bị loại khỏi đề cử (bắt 25/08) ────
+  // Đơn đòi %Date ≥ 30 mà pallet HSD ngắn nhất chỉ còn ~8% (quét nó = 400 %Date) → nếu vẫn lấy
+  // nó làm "best" thì MỌI pallet đạt yêu cầu đều "sai thứ tự": kho bắt buộc KẸT CỨNG (lượt nào
+  // cũng phải xin vượt rào), kho cảnh báo thì ghi vết vi phạm OAN. Best phải = tốt nhất TRONG SỐ
+  // pallet đạt %Date của đơn. Ngày 2 pallet mới tính TƯƠNG ĐỐI theo hôm nay để %Date không mục
+  // theo thời gian (%Date phụ thuộc NOW, khác các phép so thứ tự phía trên).
+  const dPlus = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+  await mkPallet('NEAR', 100, locMain, dPlus(-360), dPlus(30))   // FEFO-best tuyệt đối, %Date ≈ 8%
+  await mkPallet('GOOD', 100, locMain, dPlus(-45),  dPlus(45))   // %Date = 50%, HSD ngắn nhất TRONG SỐ đạt (today+45 < SHORT/OLD)
+  const [itemE] = await restWrite('OutboundItem', 'POST', null, {
+    id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
+    cartons_ordered: 500, cartons_scanned: 0, loose_picking: 0, status: 'PENDING',
+    date_required: 30, created_at: nowIso(), updated_at: nowIso(),
+  })
+  created.items.push(itemE.id)
+  {
+    const r = await checkScan(itemE.id, `${TAG}-GOOD`)
+    const rot = r.j?.data?.rotation
+    check('[14] Đơn đòi %Date≥30: pallet ~8% bị loại khỏi đề cử — best = HSD ngắn nhất TRONG SỐ đạt, quét nó KHÔNG vi phạm',
+      r.s === 200 && rot?.violation === false && rot?.best_pallet_code === `${TAG}-GOOD`,
+      `http=${r.s} rot=${JSON.stringify(rot)}`)
+    const w = await scan(itemE.id, { qr_code: `${TAG}-GOOD`, cartons_override: 10, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[14b] Kho BẮT BUỘC: lượt quét đó LƯU ĐƯỢC không cần lý do (hết kẹt giữa 2 luật)',
+      w.s === 200 || w.s === 201, `http=${w.s} ${JSON.stringify(w.j?.error ?? '')}`)
+  }
+  {
+    const r = await scan(itemE.id, { qr_code: `${TAG}-OLD`, cartons_override: 10, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[15] Trong số pallet ĐẠT %Date luật vẫn giữ: quét pallet HSD xa hơn → 422 như thường',
+      r.s === 422 && String(r.j?.error?.code ?? '').startsWith('ROTATION'),
+      `http=${r.s} code=${r.j?.error?.code}`)
+  }
+
+  // ── [11..13] HÀNG DƯ SAU KHI BỐC = MỘT LẦN CẤT HÀNG (user chốt 18/08) ─────────────────
+  // Bốc không hết rồi mang phần dư sang ô khác thì đó là "đưa hàng vào ô đó" — trước 18/08 cửa này
+  // đi thẳng xuống RPC move, không hỏi luật cất, nên ô đánh dấu "không đưa hàng vào" vẫn nhận hàng
+  // qua đường xuất. Van an toàn: "Giữ chỗ cũ" KHÔNG bị chấm (pallet đã nằm sẵn đó — chặn là ngõ cụt).
+  await setRot('FEFO', false)          // tách khỏi luật luân chuyển: đang đo luật CẤT
+  const itemC = await mkItem(500)
+  const locOf = async (code) => (await restAll('InventoryEntry',
+    `select=location_id&pallet_code=eq.${code}`))[0]?.location_id ?? null
+  {
+    const r = await scan(itemC, { qr_code: `${TAG}-OLD`, cartons_override: 10, qty_semantics: 'base',
+      leftover_ui: true, leftover_location_id: locNoIn1 })
+    check('[11] Kho chỉ CẢNH BÁO: hàng dư vẫn đặt được vào ô "không đưa hàng vào" NHƯNG có cảnh báo',
+      (r.s === 200 || r.s === 201) && /không đưa hàng vào/i.test(r.j?.data?.putaway_warning ?? '')
+        && (await locOf(`${TAG}-OLD`)) === locNoIn1,
+      `http=${r.s} warn=${r.j?.data?.putaway_warning ?? 'KHÔNG có'}`)
+  }
+  await setPut(['NO_IN']); await waitConfigSettled()
+  {
+    const r = await scan(itemC, { qr_code: `${TAG}-SHORT`, cartons_override: 10, qty_semantics: 'base',
+      leftover_ui: true, leftover_location_id: locNoIn2 })
+    check('[12] Kho BẮT BUỘC: gọi THẲNG API vẫn KHÔNG đặt được hàng dư vào ô cấm, pallet đứng yên',
+      r.s === 422 && r.j?.error?.code === 'PUTAWAY_VIOLATION'
+        && (await locOf(`${TAG}-SHORT`)) === locMain,
+      `http=${r.s} code=${r.j?.error?.code} loc=${await locOf(`${TAG}-SHORT`)}`)
+  }
+  {
+    // Pallet OLD đang NẰM ở ô cấm (từ [11]). Nếu "Giữ chỗ cũ" cũng bị chặn thì người quét kẹt:
+    // không lưu được lượt quét mà cũng chẳng có cách nào dời pallet đi trong màn quét.
+    const itemD = await mkItem(500)   // item MỚI: cùng pallet + cùng item = lượt quét trùng, bị chặn vì lý do khác
+    const r = await scan(itemD, { qr_code: `${TAG}-OLD`, cartons_override: 10, qty_semantics: 'base',
+      leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[13] "Giữ chỗ cũ" KHÔNG bị chặn dù pallet đang ở chính ô cấm (không tạo ngõ cụt)',
+      r.s === 200 || r.s === 201, `http=${r.s} ${JSON.stringify(r.j?.error ?? '')}`)
   }
 } catch (e) {
   check('gói chạy không nổ', false, String(e))

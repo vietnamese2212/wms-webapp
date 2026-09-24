@@ -1,4 +1,4 @@
-// Thùng/Pallet hiệu lực theo KHO — ngoại lệ kho đè định mức chung.
+// Thùng/Pallet hiệu lực theo KHO — ngoại lệ kho đè định mức chung. MIRROR: frontend/src/utils/palletCalc.ts.
 // Nếu material có warehouse_pallet_overrides cho kho đang xét → dùng giá trị đó;
 // không có (hoặc <=0) → dùng cartons_per_pallet mặc định.
 

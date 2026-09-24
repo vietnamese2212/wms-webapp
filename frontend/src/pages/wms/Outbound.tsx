@@ -11,6 +11,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { ModalOverlay } from '@/components/shared/ModalOverlay'
@@ -22,12 +23,14 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, UPLOAD_TOO_LARGE_MSG, type UploadPreflight } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, useBookingSequence, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type BookingSeqRow } from '@/api/hooks'
+import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime, formatTimestampDate } from '@/utils/formatters'
@@ -82,12 +85,12 @@ export function itemStatusText(status: string): string {
   }
 }
 
-function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
-  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
-  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
-  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   cls: 'bg-red-100 text-red-700'     }
-  if (gdo.assigned_at)              return { label: 'Giao đơn',   cls: 'bg-green-100 text-green-700' }
-  return                                   { label: '—',           cls: 'bg-slate-100 text-slate-400' }
+function gdoStatusInfo(gdo: GDO): { label: string; tone: BadgeTone } {
+  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', tone: 'blue'  }
+  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  tone: 'amber' }
+  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   tone: 'red'   }
+  if (gdo.assigned_at)              return { label: 'Giao đơn',   tone: 'green' }
+  return                                   { label: '—',           tone: 'slate' }
 }
 
 // (naturalSortCode đã chuyển xuống SQL — outbound_gdos_page sắp theo số ở CUỐI mã chuyến;
@@ -114,6 +117,7 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'pin',       label: '',              w: 34 },
   { id: 'date',      label: 'Ngày xuất',     w: 96 },
   { id: 'code',      label: 'Số xe',         w: 132 },
+  { id: 'stt',       label: 'STT booking',   w: 100 },   // thứ tự chuẩn bị theo khung giờ đặt lịch (kho, ngày, chiều xuất)
   { id: 'npp',       label: 'Tên NPP',       w: 150 },
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
@@ -123,6 +127,10 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 118, align: 'right' },
   { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 118, align: 'right' },
   { id: 'pallets',   label: 'Pallet',        w: 72,  align: 'right' },
+  // Đợt 1 TMS điều vận (23/09): dòng xe CON đã chọn ở Kế hoạch xuất · % tải so sức chứa (Non tải) · cước dự tính theo bảng cước
+  { id: 'model',     label: 'Dòng xe con',   w: 130 },
+  { id: 'load',      label: 'Tải',           w: 104, align: 'right' },
+  { id: 'freight',   label: 'Cước dự tính',  w: 104, align: 'right' },
   { id: 'warehouse', label: 'Kho xuất',      w: 110 },
   { id: 'exptype',   label: 'Loại xe',       w: 100 },
   { id: 'whtype',    label: 'Loại kho',      w: 96 },
@@ -171,6 +179,36 @@ function GdoQty({ base, decimal, unit, zeroDash }: {
   )
 }
 
+// Tải của chuyến so sức chứa dòng xe con: "12/16 pl · 75 %"; dưới ngưỡng Non tải → đỏ. Không đo được → nói vì sao.
+function GdoLoad({ load }: { load: GDO['load'] }) {
+  if (!load) return <span className="text-slate-300">—</span>
+  const unit = load.basis === 'TON' ? 't' : 'pl'
+  const used = load.used == null ? null : Number(load.used).toLocaleString('vi-VN', { maximumFractionDigits: load.basis === 'TON' ? 2 : 1 })
+  if (load.pct == null) {
+    const why = load.basis == null ? 'Chưa chọn dòng xe con nên chưa so được tải' : load.used == null ? `Không đo được tải (${load.incomplete} dòng hàng thiếu quy cách trong master)` : 'Dòng xe con chưa khai sức chứa'
+    return <span className="text-slate-300" title={why}>{used != null ? `${used} ${unit}` : '—'}</span>
+  }
+  const pctTxt = `${load.pct.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} %`
+  return (
+    <span title={`${used} / ${load.cap} ${unit} · ${pctTxt}${load.underload ? ` — NON TẢI (dưới ${load.underload_pct} %)` : ''}${load.incomplete ? ` · ${load.incomplete} dòng thiếu quy cách` : ''}`}>
+      <span className="text-[10px] tabular-nums">{used}/{load.cap} <span className="text-[9px] text-slate-400">{unit}</span></span>
+      <span className={`ml-1 text-[9px] px-1 py-0.5 rounded font-semibold tabular-nums ${load.underload ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{pctTxt}</span>
+    </span>
+  )
+}
+// Cước dự tính đã ghi trên chuyến (bảng cước × pallet làm tròn lên / trọn chuyến + rớt điểm). Chưa có → lý do trong tooltip.
+function GdoFreight({ gdo }: { gdo: GDO }) {
+  const v = gdo.freight_estimated == null ? null : Number(gdo.freight_estimated)
+  const d = gdo.freight_detail
+  if (v == null) return <span className="text-slate-300" title={d?.reason ?? (gdo.vehicle_model_id ? 'Chưa tính cước — bấm "Tính lại cước" ở trang Cước vận chuyển' : 'Chưa chọn dòng xe con')}>—</span>
+  const parts = [d?.unit === 'PER_PALLET' ? `${(d.billed_pallets ?? 0).toLocaleString('vi-VN')} pallet × đơn giá` : 'trọn chuyến', ...(d?.surcharges ?? []).map(s => `${s.kind === 'DROP_POINT' ? 'rớt điểm' : s.kind} ${s.qty}× = ${s.total.toLocaleString('vi-VN')}`)]
+  return (
+    <span className="text-[10px] font-semibold tabular-nums" title={`${d?.basis === 'ACTUAL' ? 'Theo thực xuất' : 'Theo kế hoạch'} · phường ${d?.ward ?? '—'} · ${d?.stops ?? 0} điểm giao · ${parts.join(' · ')}`}>
+      {v.toLocaleString('vi-VN')}<span className="text-[9px] text-slate-400 ml-0.5">₫</span>
+    </span>
+  )
+}
+
 // ─── Pane phải + Live Tiles (Manhattan Insight) — chuẩn list→detail như Inbound ───
 function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
   const navigate = useNavigate()
@@ -196,7 +234,7 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
     <aside className="hidden lg:flex flex-col w-56 shrink-0 border-l border-slate-200 bg-slate-50">
       <div className="px-3 py-2 border-b border-slate-200 bg-white">
         <div className="flex items-center justify-between">
-          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${st.cls}`}>{st.label}</span>
+          <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600" title="Đóng"><X className="h-3.5 w-3.5" /></button>
         </div>
         <div className={`mt-1 text-sm font-mono font-semibold leading-tight ${gdoRowText(gdo)}`}>{gdo.group_code}</div>
@@ -267,7 +305,8 @@ export default function Outbound() {
   const [moveErrs, setMoveErrs] = useState<string[]>([])
   const [moveOk, setMoveOk] = useState<string | null>(null)
   const isDesktop = useIsDesktop()
-  const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths', OUTBOUND_COL_DEFAULTS)
+  // v2 (23/09): thêm 3 cột giữa bảng — độ rộng lưu theo CHỈ SỐ nên phải đổi khoá, kẻo cột cũ đội nhãn cột mới
+  const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths_v2', OUTBOUND_COL_DEFAULTS)
   function toggleDensity() {
     setDense(d => { localStorage.setItem('outbound_density', d ? 'comfortable' : 'compact'); return !d })
   }
@@ -368,6 +407,21 @@ export default function Outbound() {
   // KHÔNG lọc/sort lại ở client — làm vậy chỉ tác dụng trong trang đang xem = sai âm thầm.
   const filtered = gdos
   const sorted   = gdos
+
+  // STT chuẩn bị theo booking khung giờ — khoảng ngày lấy từ TRANG ĐANG XEM (không phụ thuộc
+  // filter ngày có set hay không); kho lấy theo filter, không chọn kho thì BE tự cắt theo scope
+  const seqRange = useMemo(() => {
+    if (!gdos.length) return null
+    let min = gdos[0].delivery_date, max = gdos[0].delivery_date
+    for (const g of gdos) {
+      if (g.delivery_date < min) min = g.delivery_date
+      if (g.delivery_date > max) max = g.delivery_date
+    }
+    // BE chặn khoảng >190 ngày (chống fuzz) — trang trải quá rộng thì thôi không tra STT
+    const span = (new Date(`${max}T00:00:00Z`).getTime() - new Date(`${min}T00:00:00Z`).getTime()) / 86_400_000
+    return span > 190 ? null : { min, max }
+  }, [gdos])
+  const { data: seqRows = [] } = useBookingSequence(f.warehouseId || undefined, seqRange?.min, seqRange?.max)
 
   // Vị trí bracket cho mỗi chuyến trong nhóm "cùng xe" (cùng ngày + cùng outboundGroupKey)
   const bracketPositions = useMemo(() => {
@@ -612,7 +666,8 @@ export default function Outbound() {
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
+          {/* Mobile ẨN tiêu đề trang (bottom-nav đã báo đang ở đâu) — nhường chỗ cho ô tìm (đợt UI 24/08) */}
+          <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
           <SearchInput value={f.search} onChange={v => setOutbound({ search: v, page: 1 })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng chủ đích (hết cảnh mỗi nút 1 hàng rời rạc trên PDA);
@@ -675,7 +730,8 @@ export default function Outbound() {
           )}
         </div>
 
-        <p className="text-xs text-slate-500">
+        {/* Dòng ngày: mobile ẩn (ngày đã có ở chip Lọc + cột Ngày xuất) — bớt 1 hàng toolbar */}
+        <p className="hidden sm:block text-xs text-slate-500">
           {hasDate ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>
@@ -808,6 +864,7 @@ export default function Outbound() {
                   <GDORow
                     key={gdo.id}
                     gdo={gdo}
+                    seq={bookingSeqOf(seqRows, gdo)}
                     dense={dense}
                     pinW={colW[0]}
                     selected={gdo.id === selectedId}
@@ -955,8 +1012,9 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck, sapLocked = false }: {
+function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck, sapLocked = false }: {
   gdo: GDO
+  seq?: BookingSeqRow | null   // STT chuẩn bị theo booking khung giờ (null = xe chưa đặt lịch)
   onClick: () => void
   onDoubleClick?: () => void
   onAssign?: (e: React.MouseEvent) => void
@@ -977,7 +1035,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   // Ship-to = giá trị GỐC từ upload (shipto_party). Nối mode (None/QR/QTY) tra SỐNG từ Warehouse
   // theo chính mã shipto — không khớp kho nào thì chỉ hiện mã (không mode). KHÔNG suy từ Tên NPP.
   const shiptoMode = gdo.shipto_party ? (whInfoByKey.get(gdo.shipto_party.trim().toLowerCase())?.mode ?? '') : ''
-  const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
+  const { label: statusLabel, tone: statusTone } = gdoStatusInfo(gdo)
   const isPending = gdo.status === 'PENDING'
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
   const rowBg = selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'
@@ -1025,6 +1083,14 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         )}
         <span className="text-[10px] font-mono font-semibold" title={inert ?? undefined}>{gdo.group_code}</span>
       </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {seq ? (
+          <span title={`Thứ tự chuẩn bị theo booking — khung giờ ${seqTimeLabel(seq)}`}>
+            <span className="text-[11px] font-bold tabular-nums text-sky-700">#{seq.stt}</span>
+            <span className="text-[9px] text-slate-400 ml-1 tabular-nums">{seqTimeLabel(seq)}</span>
+          </span>
+        ) : <span className="text-slate-300" title="Xe chưa đặt lịch khung giờ">—</span>}
+      </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
       </TableCell>
@@ -1062,6 +1128,13 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
+        {gdo.vehicle_model
+          ? <span className="text-[10px] truncate block" title={`${gdo.vehicle_model.sap_code} · ${gdo.vehicle_model.name}`}>{gdo.vehicle_model.name}</span>
+          : <span className="text-slate-300" title="Chưa chọn dòng xe con — chọn ở tab Kế hoạch xuất (Dữ liệu bên ngoài)">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap"><GdoLoad load={gdo.load} /></TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap"><GdoFreight gdo={gdo} /></TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.warehouse?.name ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1097,7 +1170,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         <span className="text-[10px] tabular-nums">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>
+        <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {gdo.transfer_status ? (
@@ -1425,6 +1498,7 @@ function GDOFormBody({
   onClose,
   quickAction,
   plateSlot,
+  errorExtra,
 }: {
   gdo?: GDO | null
   mode: 'create' | 'edit'
@@ -1443,6 +1517,7 @@ function GDOFormBody({
   onClose: () => void
   quickAction?: React.ReactNode   // nút "Tạo & Xuất luôn" — đặt cạnh nút Lưu (chỉ form tạo, kho QTY/NONE)
   plateSlot?: React.ReactNode      // ô Biển số xe — hiện trong header cạnh ĐVVT (chỉ kho QTY/NONE)
+  errorExtra?: React.ReactNode     // khối dưới banner lỗi (vd checkbox xác nhận Số DO trùng — 31/08)
 }) {
   const formUser = useAuthStore(s => s.user)
   const [pasteErr, setPasteErr] = useState('')
@@ -1765,7 +1840,10 @@ function GDOFormBody({
 
       {/* Error banner */}
       {error && (
-        <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700">{error}</div>
+        <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700">
+          {error}
+          {errorExtra}
+        </div>
       )}
       {pasteErr && (
         <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700 flex items-center justify-between gap-2">
@@ -1977,7 +2055,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [date, setDate]               = useState(TODAY_STR)
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
-  const [warehouseType, setWarehouseType] = useState('')
+  // Loại kho mặc định theo bối cảnh toàn cục ở Header (kho đã theo filter — filter được sweep)
+  const [warehouseType, setWarehouseType] = useState(() => useGlobalScopeStore.getState().whType)
   const [shiptoPartyId, setShiptoPartyId] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
@@ -1985,6 +2064,11 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const [exportType, setExportType]   = useState('')
   const [items, setItems]             = useState<ItemRow[]>(() => Array.from({ length: 20 }, makeItem))
   const [error, setError]             = useState('')
+  // Số DO trùng (user chốt 31/08 "Cảnh báo + xác nhận"): BE trả 409 DUPLICATE_DO → hiện checkbox
+  // xác nhận tách xe; tick rồi lưu lại thì gửi kèm allow_duplicate_do. Đổi Số DO là reset.
+  const [dupDoAsked, setDupDoAsked]   = useState(false)
+  const [allowDupDo, setAllowDupDo]   = useState(false)
+  useEffect(() => { setDupDoAsked(false); setAllowDupDo(false) }, [deliveryCode])
 
   const { mutate: createGDO, isPending } = useCreateGDO()
   const { mutate: quickExportGDO, isPending: quickPending } = useQuickExportGDO()
@@ -2051,13 +2135,15 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
       export_type: exportType,
       // loose_picking KHÔNG gửi — BE tự tính từ Tổng (pallet-remainder)
       items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined })),
+      allow_duplicate_do: allowDupDo || undefined,   // tick xác nhận tách xe mới gửi cờ
     }
     const handlers = {
       onSuccess: () => onClose(),
       onError: (e: unknown) => {
         // Rule cân chặn (WEIGH_REQUIRED): BE đã kèm hướng dẫn "Lưu đơn thường → nhờ duyệt trên chuyến"
-        const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn')
-        setError(msg)
+        const eobj = (e as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
+        if (eobj?.code === 'DUPLICATE_DO') setDupDoAsked(true)   // hiện checkbox xác nhận tách xe
+        setError(eobj?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn'))
       },
     }
     if (isQuick) quickExportGDO({ ...payload, license_plate: quickPlate.trim() }, handlers)
@@ -2078,6 +2164,12 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         exportType={exportType} setExportType={setExportType}
         items={items} setItems={setItems}
         error={error} isPending={isPending || quickPending}
+        errorExtra={dupDoAsked ? (
+          <label className="mt-1 flex items-center gap-1.5 font-medium cursor-pointer">
+            <input type="checkbox" checked={allowDupDo} onChange={e => setAllowDupDo(e.target.checked)} />
+            Tôi xác nhận tách 1 DO lên 2 xe — tạo thêm chuyến cùng Số DO này
+          </label>
+        ) : undefined}
         onSubmit={() => handleSubmit(false)} onClose={onClose}
         plateSlot={showQuick ? (
           <div className="space-y-1">

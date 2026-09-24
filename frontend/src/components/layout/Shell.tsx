@@ -15,6 +15,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { setRealtimeAuth } from '@/lib/supabase'
 import { setUnitLabels } from '@/utils/qtyUnits'
 import { OfflineBanner } from '@/offline/OfflineBanner'
+import { ReturnBar } from './ReturnBar'
 import { AppUpdateBanner } from '@/components/shared/AppUpdateButton'
 import { OfflineQueuePanel } from '@/offline/OfflineQueuePanel'
 import { initScanQueue } from '@/offline/scanQueue'
@@ -64,8 +65,8 @@ export function Shell() {
     // Gắn vé realtime đã persist (nếu có) TRƯỚC khi mở kênh → reload app vẫn kết nối
     // realtime dưới RLS đóng-hẳn. refreshUser() ở trên sẽ tái cấp vé mới khi /me trả về.
     setRealtimeAuth(useAuthStore.getState().realtimeToken)
-    // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
-    connectRealtimeEvents()
+    // Mở 2 kênh Broadcast riêng tư (chung + cá nhân theo employee id) — xem realtimeEvents.ts
+    connectRealtimeEvents(useAuthStore.getState().user?.id)
 
     // Hàng đợi quét offline: hydrate từ IndexedDB + tự replay khi mạng về
     initScanQueue()
@@ -86,6 +87,8 @@ export function Shell() {
       <div className="flex flex-1 flex-col min-w-0">
         <Header />
         <OfflineBanner />
+        {/* "‹ Về Việc cần làm" — điểm neo cho trang giao việc, hiện ở mọi trang đích (14/09) */}
+        <ReturnBar />
         <main className="flex-1 overflow-y-auto pb-16 lg:pb-0 bg-slate-100">
           {/* Page transition: fade + trượt nhẹ mỗi lần đổi route (key theo pathname) */}
           <div key={location.pathname} className="h-full animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out">

@@ -26,6 +26,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampDate } from '@/utils/formatters'
 
 import { LEAVE_TYPES, leaveTypeLabel as typeLabel } from '@/config/leaveTypes'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const KIND_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'Hành chính', LEAVE: 'Nghỉ phép' }
 
@@ -232,9 +233,9 @@ export function LeaveSection() {
           </thead>
           <tbody className={`divide-y divide-slate-100 ${dense ? '[&_td]:py-1' : '[&_td]:py-2'}`}>
             {isLoading ? (
-              <tr><td colSpan={11} className="text-center text-slate-400 py-6">Đang tải…</td></tr>
+              <TableEmptyRow colSpan={11}>Đang tải…</TableEmptyRow>
             ) : leaves.length === 0 ? (
-              <tr><td colSpan={11} className="text-center text-slate-400 py-6">Không có đơn nghỉ</td></tr>
+              <TableEmptyRow colSpan={11}>Không có đơn nghỉ</TableEmptyRow>
             ) : leaves.map(l => {
               const meta = STATUS_META[l.status]
               return (

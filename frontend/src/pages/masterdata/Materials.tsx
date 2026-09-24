@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { Tag, Plus, Upload, Pencil, Trash2, X, Check, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
 import { RowCheck } from '@/components/shared/RowCheck'
+import { toast } from '@/components/ui/use-toast'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -120,12 +121,16 @@ export default function Materials() {
   const statusFilter = mf.statusFilter
   const qrFilter     = mf.qrFilter ?? []
   const dqFilter     = mf.dqFilter ?? []
+  const dimsFilter   = mf.dimsFilter ?? []
+  const flagsFilter  = mf.flagsFilter ?? []
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang 5 mà lọc là ra trang trống
   const setSearch       = (v: string)   => setMaterials({ search: v, page: 1 })
   const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v, page: 1 })
   const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v, page: 1 })
   const setQrFilter     = (v: string[]) => setMaterials({ qrFilter: v, page: 1 })
   const setDqFilter     = (v: string[]) => setMaterials({ dqFilter: v, page: 1 })
+  const setDimsFilter   = (v: string[]) => setMaterials({ dimsFilter: v, page: 1 })
+  const setFlagsFilter  = (v: string[]) => setMaterials({ flagsFilter: v, page: 1 })
 
   // Density
   const [dense, setDense] = useState(() => localStorage.getItem('materials_density') !== 'comfortable')
@@ -144,7 +149,9 @@ export default function Materials() {
   const [editActive,       setEditActive]       = useState(true)
   const [noQr,             setNoQr]             = useState(false)
   const [nonStock,         setNonStock]         = useState(false)   // mã phi hàng hóa (chiết khấu/dịch vụ) — chỉ cần Mã+Tên, loại khỏi mọi tác vụ kho
-  const [palletCarrier,    setPalletCarrier]    = useState(false)   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
+  const [palletCarrier,    setPalletCarrier]    = useState(false)
+  // Màu vẽ pallet trên sơ đồ xếp xe — mỗi DẠNG pallet 1 màu (user 26/08); rỗng = mặc định xanh Loscam
+  const [palletColor,      setPalletColor]      = useState('')   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
   const [stackOnTop,       setStackOnTop]       = useState(false)   // hàng nhẹ — được xếp trên mã hàng khác (xếp xe 3D)
   const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
   const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
@@ -170,7 +177,8 @@ export default function Materials() {
   // Bộ lọc + tổng + 2 luật "Trùng tên"/"Thiếu thông tin" nay tính bằng SQL trên toàn bảng.
   const listParams = useMemo(() => ({
     search, categories: catFilter, status: statusFilter, qr: qrFilter, dq: dqFilter,
-  }), [search, catFilter, statusFilter, qrFilter, dqFilter])
+    dims: dimsFilter, flags: flagsFilter,
+  }), [search, catFilter, statusFilter, qrFilter, dqFilter, dimsFilter, flagsFilter])
   const { data: pageData, isLoading } = useMaterialsPaged({ ...listParams, page: mf.page, page_size: mf.pageSize })
   const { data: matSummary } = useMaterialsSummary(listParams)
   const pageItems = useMemo(() => (pageData?.rows ?? []) as Material[], [pageData])
@@ -280,6 +288,7 @@ export default function Materials() {
     setNoQr(false)
     setNonStock(false)
     setPalletCarrier(false)
+    setPalletColor('')
     setStackOnTop(false)
     setFormError('')
     setDialogMode('add')
@@ -324,6 +333,7 @@ export default function Materials() {
     setNoQr(mat.no_qr_tracking ?? false)
     setNonStock(mat.is_non_stock ?? false)
     setPalletCarrier(mat.is_pallet_carrier ?? false)
+    setPalletColor(mat.pallet_color ?? '')
     setStackOnTop(mat.stack_on_top ?? false)
     setFormError('')
     setDialogMode('edit')
@@ -365,6 +375,8 @@ export default function Materials() {
         no_qr_tracking:                noQr,
         is_non_stock:                  nonStock,
         is_pallet_carrier:             palletCarrier,
+        // Bỏ tick pallet thì màu về null luôn — không để giá trị ma nằm lại trên mã thường
+        pallet_color:                  palletCarrier && palletColor ? palletColor : null,
         warehouse_pallet_overrides:    palletOverrides,
         supplier_shelf_life_overrides: supplierHsdOverrides,
       }
@@ -380,6 +392,13 @@ export default function Materials() {
     }
   }
 
+  // Lỗi xoá/sửa hàng loạt PHẢI NÓI RA: bản cũ `try/finally` không `catch` nên xoá hỏng (23503 đang được
+  // dùng, 403…) nhìn y hệt xoá xong — dialog đóng, dòng vẫn còn (rà 21/09). Dialog GIỮ MỞ khi lỗi.
+  const failToast = (e: unknown, fallback: string) => {
+    const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+    toast({ title: msg ?? fallback, variant: 'destructive' })
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return
     setDeleting(true)
@@ -387,10 +406,9 @@ export default function Materials() {
       await deleteMaterial.mutateAsync(deleteTarget.id)
       setSelected(s => { const n = new Set(s); n.delete(deleteTarget.id); return n })
       if (detailMat?.id === deleteTarget.id) setDetailMat(null)
-    } finally {
-      setDeleting(false)
       setDeleteTarget(null)
-    }
+    } catch (e) { failToast(e, 'Không xoá được mã hàng') }
+    finally { setDeleting(false) }
   }
 
   async function handleBulkDelete() {
@@ -399,9 +417,8 @@ export default function Materials() {
       await Promise.all([...selected].map(id => deleteMaterial.mutateAsync(id)))
       setSelected(new Set())
       setBulkDeleteOpen(false)
-    } finally {
-      setBulkDeleting(false)
-    }
+    } catch (e) { failToast(e, 'Có mã không xoá được — danh sách đã tải lại, kiểm tra mã còn lại') }
+    finally { setBulkDeleting(false) }
   }
 
   async function handleBulkNoQr() {
@@ -410,9 +427,8 @@ export default function Materials() {
       await Promise.all([...selected].map(id => updateMaterial.mutateAsync({ id, no_qr_tracking: true })))
       setSelected(new Set())
       setBulkQrOpen(false)
-    } finally {
-      setBulkQrSaving(false)
-    }
+    } catch (e) { failToast(e, 'Có mã không cập nhật được cờ Không QR') }
+    finally { setBulkQrSaving(false) }
   }
 
   const bulkPackHasChange = !!(bulkPack.l || bulkPack.w || bulkPack.h || bulkPack.layers || bulkPack.onTop)
@@ -431,9 +447,8 @@ export default function Materials() {
       setSelected(new Set())
       setBulkPackOpen(false)
       setBulkPack({ l: '', w: '', h: '', layers: '', onTop: '' })
-    } finally {
-      setBulkPackSaving(false)
-    }
+    } catch (e) { failToast(e, 'Có mã không cập nhật được quy cách xếp xe') }
+    finally { setBulkPackSaving(false) }
   }
 
   function toggleSelect(id: string) {
@@ -478,7 +493,8 @@ export default function Materials() {
     return `${base} [${sfx}]`
   })()
 
-  const colCount = (canDel ? 1 : 0) + 10 + 2 + (canEdit || canDel ? 1 : 0)
+  // 10 cột gốc + 7 cột quy cách/chi tiết (dims·lớp·HSD·pallet-EA·cờ·mã cũ·NSX) + 2 cột audit
+  const colCount = (canDel ? 1 : 0) + 10 + 7 + 2 + (canEdit || canDel ? 1 : 0)
 
   // Cột bảng — số phần tử khớp số <TableCell> mỗi dòng (tùy quyền canDel/canEdit)
   const MAT_COLS = useMemo(() => {
@@ -493,6 +509,15 @@ export default function Materials() {
       { id: 'pl',      label: 'PL',           w: 60, align: 'right' },
       { id: 'ea',      label: 'EA/T',         w: 64, align: 'right' },
       { id: 'kg',      label: 'KG',           w: 64, align: 'right' },
+      // Quy cách XẾP — sơ đồ xếp xe 3D ăn thẳng mấy cột này; thiếu D×R×C là sơ đồ phải vẽ bằng cỡ
+      // giả định (user 26/08: "áp kích thước xong không thấy đâu" vì bảng không có cột)
+      { id: 'dims',    label: 'Thùng D×R×C (mm)', w: 140 },
+      { id: 'layers',  label: 'Lớp',          w: 54, align: 'right' },
+      { id: 'hsd',     label: 'HSD (ngày)',   w: 82, align: 'right' },
+      { id: 'ppe',     label: 'Pallet/EA',    w: 78, align: 'right' },
+      { id: 'flags',   label: 'Cờ',           w: 110 },
+      { id: 'old',     label: 'Mã cũ',        w: 96 },
+      { id: 'mfr',     label: 'Nhà SX',       w: 120 },
       { id: 'tt',      label: 'Trạng thái',   w: 96 },
       { id: 'qr',      label: 'QR',           w: 80 },
       { id: 'created', label: 'Tạo',          w: 120 },
@@ -516,9 +541,19 @@ export default function Materials() {
     { key: 'dq', label: 'Dữ liệu', type: 'multi',
       options: [{ value: 'incomplete', label: 'Thiếu thông tin' }, { value: 'dup', label: 'Trùng tên' }], selected: dqFilter,
       onChange: setDqFilter },
+    // Lọc SERVER (RPC) — 2.740 mã, lọc ở máy chỉ lọc được trang đang xem
+    { key: 'dims', label: 'KT thùng', type: 'multi',
+      options: [{ value: 'no_dims', label: 'CHƯA khai D×R×C' }, { value: 'has_dims', label: 'Đã khai D×R×C' }],
+      selected: dimsFilter, onChange: setDimsFilter },
+    { key: 'flags', label: 'Cờ', type: 'multi',
+      options: [
+        { value: 'non_stock', label: 'Phi hàng hóa' },
+        { value: 'pallet_carrier', label: 'Pallet mang hàng' },
+        { value: 'stack_on_top', label: 'Hàng nhẹ (lên nóc)' },
+      ], selected: flagsFilter, onChange: setFlagsFilter },
   ]
 
-  const viewSnapshot = { search, catFilter, statusFilter, qrFilter, dqFilter }
+  const viewSnapshot = { search, catFilter, statusFilter, qrFilter, dqFilter, dimsFilter, flagsFilter }
   const savedViews = useSavedViewsStore(s => s.views['materials'] ?? [])
   const activeViewId = useMemo(() => {
     const cur = JSON.stringify(viewSnapshot)
@@ -533,6 +568,7 @@ export default function Materials() {
     noQr:       matSummary?.no_qr ?? 0,
     incomplete: matSummary?.incomplete ?? 0,
     dup:        matSummary?.dup ?? 0,
+    noDims:     matSummary?.no_dims ?? 0,
   }
 
   return (
@@ -588,6 +624,7 @@ export default function Materials() {
         { label: 'Không QR', value: summary.noQr, accent: summary.noQr > 0 },
         { label: 'Thiếu DL', value: summary.incomplete, danger: summary.incomplete > 0 },
         { label: 'Trùng tên', value: summary.dup, accent: summary.dup > 0 },
+        { label: 'Chưa KT thùng', value: summary.noDims, danger: summary.noDims > 0 },
       ]} />
 
       {/* ── Table ─────────────────────────────────────────────────────── */}
@@ -658,6 +695,34 @@ export default function Materials() {
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right"
                       title={mat.weight_kg != null ? String(mat.weight_kg) : undefined}>
                       {fmtWeight(mat.weight_kg) ?? <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    {/* Quy cách XẾP (sơ đồ xếp xe 3D dùng) */}
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] tabular-nums">
+                      {mat.carton_length_mm && mat.carton_width_mm && mat.carton_height_mm
+                        ? `${mat.carton_length_mm}×${mat.carton_width_mm}×${mat.carton_height_mm}`
+                        : <span className="text-red-500 font-medium" title="Chưa khai kích thước thùng — sơ đồ xếp xe phải vẽ bằng cỡ giả định">chưa khai</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] tabular-nums text-right">
+                      {mat.max_stack_layers ?? <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] tabular-nums text-right">
+                      {mat.shelf_life_days ?? <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] tabular-nums text-right">
+                      {mat.pallet_per_ea ?? <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[9px]">
+                      {mat.is_pallet_carrier && <span className="px-1 py-0.5 rounded bg-sky-100 text-sky-700 mr-0.5">pallet</span>}
+                      {mat.stack_on_top && <span className="px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 mr-0.5">nhẹ↑</span>}
+                      {mat.is_non_stock && <span className="px-1 py-0.5 rounded bg-amber-100 text-amber-700">phi HH</span>}
+                      {!mat.is_pallet_carrier && !mat.stack_on_top && !mat.is_non_stock && <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono text-slate-500">
+                      {mat.old_code ?? <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500 max-w-[120px] truncate"
+                      title={mat.manufacturer ? `${mat.manufacturer.code}${mat.manufacturer.name ? ' – ' + mat.manufacturer.name : ''}` : undefined}>
+                      {mat.manufacturer ? (mat.manufacturer.name || mat.manufacturer.code) : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
@@ -932,6 +997,22 @@ export default function Materials() {
                 <span className="block text-[11px] text-slate-500 leading-snug">Chính là pallet chứa hàng bên trên — KHÔNG cộng vào đếm Pallet của chuyến xuất (tránh double); vẫn tính ở Tổng (k QR).</span>
               </span>
             </label>
+            )}
+            {/* Màu vẽ pallet trên sơ đồ xếp xe — mỗi DẠNG pallet 1 màu (user 26/08). Chỉ hiện khi
+                đã tick "là PALLET": mã thường không có màu để khỏi ai thắc mắc ô này làm gì. */}
+            {!nonStock && palletCarrier && (
+              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 -mt-1">
+                <Label className="text-xs text-slate-700 shrink-0">Màu pallet trên sơ đồ xếp xe</Label>
+                <input type="color" value={palletColor || '#1d4ed8'}
+                  onChange={e => setPalletColor(e.target.value)}
+                  className="h-7 w-10 rounded border border-slate-300 cursor-pointer bg-white p-0.5" />
+                {palletColor ? (
+                  <button type="button" className="text-[10px] text-slate-400 hover:text-slate-600 underline"
+                    onClick={() => setPalletColor('')}>Dùng màu mặc định</button>
+                ) : (
+                  <span className="text-[10px] text-slate-400">mặc định — xanh Loscam</span>
+                )}
+              </div>
             )}
 
             {/* Mã hàng */}

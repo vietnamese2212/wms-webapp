@@ -74,10 +74,10 @@ export function SingleSelect({
           type="button"
           disabled={disabled}
           onClick={() => setOpen(o => !o)}
-          className={`flex items-center justify-between gap-1.5 border border-slate-200 rounded-md px-2.5 text-xs w-full h-full
+          // min-h: điện thoại 44 px (chuẩn chạm, rà 21/09 — ô chọn trong form đo được 28–32 px), desktop 28 px như cũ
+          className={`flex items-center justify-between gap-1.5 border border-slate-200 rounded-md px-2.5 text-xs w-full h-full min-h-11 sm:min-h-[28px]
             bg-white hover:border-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
             ${!value ? 'text-slate-400' : 'text-slate-700'}`}
-          style={{ minHeight: '28px' }}
         >
           <span className="truncate" title={selected?.label ?? undefined}>{displayLabel}</span>
           <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />

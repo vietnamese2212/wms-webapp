@@ -2,7 +2,7 @@
 // 3 tab — Cá nhân (feed việc đích danh: được giao lệnh fill…) · Chung (cảnh báo vận hành, nêu
 // rõ KHO — cần quyền alerts.view) · Cài đặt (trường hợp nào mới ĐỔ CHUÔNG per user; tắt chỉ tắt
 // chuông, danh sách vẫn đủ). Badge = chưa đọc cá nhân + cảnh báo chung đang mở.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell, Settings2, CheckCheck, ExternalLink } from 'lucide-react'
 // Panel = DropdownMenu Radix (tự portal, không thêm dep Popover); phần thân là div thường
@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
-  useNotifyFeed, useMarkFeedRead, useNotifyPrefs, useUpdateNotifyPrefs, useAlerts,
+  useNotifyFeed, useMarkFeedRead, useNotifyPrefs, useUpdateNotifyPrefs, useAlerts, useScanAlerts,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -19,7 +19,7 @@ import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 const PREF_LABEL: { key: string; label: string; desc: string }[] = [
-  { key: 'assign',     label: 'Được giao việc',      desc: 'Giao lệnh fill / giao lại dòng cho bạn' },
+  { key: 'assign',     label: 'Được giao việc',      desc: 'Giao lệnh fill / giao lại dòng cho bạn · được chọn làm xe nâng chuyển của một chuyến xuất' },
   { key: 'reconcile',  label: 'Cần xử lý SAP',       desc: 'SAP đổi dữ liệu sinh việc chờ xử (cần quyền reconcile)' },
   { key: 'EXPIRY',     label: 'Tồn cận date',        desc: 'Mã có lô %Date dưới ngưỡng trong kho của bạn' },
   // Không ghi số ngưỡng cứng ở đây — ngưỡng chỉnh được ở tab "Cài đặt ngưỡng" trang Thông báo
@@ -28,6 +28,8 @@ const PREF_LABEL: { key: string; label: string; desc: string }[] = [
   { key: 'WEIGH_DIFF', label: 'Lệch cân',            desc: 'Phiếu cân lệch KL tính vượt ngưỡng' },
   { key: 'BE_ERRORS',  label: 'Lỗi hệ thống',        desc: 'Backend có lỗi 5xx trong 24h' },
   { key: 'PACKING_UNRECEIVED', label: 'Sổ đóng gói — kho chưa nhận', desc: 'Pallet SX ghi sổ quá ngưỡng giờ mà kho chưa quét nhập' },
+  { key: 'AUTH_LOCKOUT', label: 'Bảo mật — nhiều tài khoản bị khoá', desc: 'Từ 3 tài khoản khác nhau bị khoá đăng nhập trong 1 giờ (dấu hiệu dò mật khẩu)' },
+  { key: 'ADMIN_NEW_IP', label: 'Bảo mật — admin đăng nhập IP mới', desc: 'Tài khoản quản trị đăng nhập từ địa chỉ IP chưa thấy trong 30 ngày' },
 ]
 const SEV_DOT: Record<string, string> = { CRITICAL: 'bg-red-500', WARNING: 'bg-amber-500' }
 
@@ -48,6 +50,22 @@ export function NotificationBell() {
   const prefsQ = useNotifyPrefs(open)
   const updPrefs = useUpdateNotifyPrefs()
   const push = usePushNotifications()
+
+  // Chuông luôn mount trong Shell ⇒ đây là chỗ hợp lý nhất để KÍCH HOẠT lượt quét cảnh báo mà
+  // không ai phải chờ (21/08 — trước đây GET /wms/alerts tự quét, người mở trang chịu ~1,9s).
+  // Throttle thật nằm ở BE (10'/instance) nên gọi định kỳ 10' là vô hại; ở đây chỉ cần đảm bảo
+  // "có người bấm cò" đều đặn. useRef chặn gọi 2 lần do StrictMode double-mount lúc dev.
+  const scan = useScanAlerts()
+  const scanRef = useRef(scan)
+  scanRef.current = scan
+  useEffect(() => {
+    if (!canAlerts) return
+    let armed = true
+    const fire = () => { if (armed) scanRef.current.mutate(undefined) }
+    fire()
+    const t = setInterval(fire, 10 * 60_000)
+    return () => { armed = false; clearInterval(t) }
+  }, [canAlerts])
 
   const unread = feed.data?.unread ?? 0
   const badge = unread + (canAlerts ? alertRows.length : 0)
@@ -159,7 +177,7 @@ export function NotificationBell() {
               {PREF_LABEL.map(p => (
                 <div key={p.key} className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-slate-700">{p.label}</p>
+                    <p className="text-xs font-semibold text-slate-800">{p.label}</p>
                     <p className="text-[10px] text-slate-400 truncate" title={p.desc}>{p.desc}</p>
                   </div>
                   <Switch

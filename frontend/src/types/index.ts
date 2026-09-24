@@ -14,6 +14,7 @@ export interface User {
   job_title_id?: string | null
   job_title_name?: string | null
   is_driver?: boolean          // chức danh TÀI XẾ (cờ JobTitle.is_driver — KHÔNG so tên)
+  landing_page?: string | null // trang mở đầu theo chức danh (JobTitle.landing_page) — null = Tổng quan
   is_carrier_dept?: boolean    // phòng ban là ĐƠN VỊ VẬN TẢI (cờ Department.is_carrier)
   ncc_id?: string | null
   employee_code?: string | null
@@ -48,6 +49,8 @@ export interface JobTitle {
   parent_id:          string | null
   in_chart?:          boolean
   is_driver?:         boolean      // chức danh TÀI XẾ — cờ thay việc so tên 'Lái xe'
+  is_forklift_driver?: boolean     // chức danh LÁI XE NÂNG — cờ thay việc so tên chứa 'lái xe nâng'
+  landing_page?:      string | null // trang mở đầu sau đăng nhập (null = Tổng quan)
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions
@@ -77,6 +80,7 @@ export interface EmployeeRecord {
   created_by?:        string | null
   updated_by?:        string | null
   deleted_at?:        string | null
+  locked_until?:      string | null   // đang bị khoá đăng nhập (gõ sai nhiều lần) tới thời điểm này — chỉ có ở list phân trang
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
   job_title?:         Pick<JobTitle, 'id' | 'name'> | null
   warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]
@@ -246,6 +250,7 @@ export interface Material {
   no_qr_tracking:             boolean
   is_non_stock?:              boolean
   is_pallet_carrier?:         boolean   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
+  pallet_color?:              string | null   // màu vẽ pallet trên sơ đồ xếp xe 3D (#rrggbb) — chỉ nghĩa khi là pallet; null = mặc định
   is_active:                  boolean
   created_at?:                string
   updated_at?:                string | null
@@ -482,9 +487,12 @@ export interface TmsVehicleType {
   code:       string
   name:       string
   is_active:  boolean
-  box_length_mm?: number | null   // lòng thùng xe (cm) — phục vụ sơ đồ xếp xe 3D
+  box_length_mm?: number | null   // lòng thùng xe (mm) — cỡ TIÊU BIỂU của loại; cỡ THẬT khai ở từng biển số
   box_width_mm?:  number | null
   box_height_mm?: number | null
+  // Xe chở hàng ĐÃ LÊN PALLET (26/08) — quyết định CÁCH VẼ sơ đồ xếp xe: bật = gom hàng lên pallet
+  // rồi xếp pallet (sức chứa tính bằng chỗ pallet); tắt = xếp từng thùng như cũ.
+  is_pallet_truck?: boolean | null
   created_at?: string
   updated_at?: string
   created_by?: string | null
@@ -515,6 +523,7 @@ export interface TransportCompany {
   name:          string
   type:          'ĐVVT' | 'NCC'
   alias_codes?:  string[] | null
+  tender_required?: boolean        // ĐVVT cần phản hồi khi Điều vận chào chuyến (false = điều vận tự chốt, đổi tay)
   contact_name:  string | null
   contact_phone: string | null
   is_active:     boolean
@@ -535,7 +544,12 @@ export interface TmsVehicle {
   ncc?:            Pick<TransportCompany, 'id' | 'code' | 'name'>
   license_plate:   string
   vehicle_type_id: string
-  vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
+  vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'> & { is_pallet_truck?: boolean | null }
+  // Kích thước lòng thùng THẬT của CHIẾC xe này (26/08) — sơ đồ xếp xe tự điền khi chọn biển số.
+  // Khai ở đây (không phải ở Loại xe) vì hai xe cùng loại vẫn có lòng thùng khác nhau.
+  box_length_mm?:  number | null
+  box_width_mm?:   number | null
+  box_height_mm?:  number | null
   is_active:       boolean
   created_at?:     string
   updated_at?:     string
@@ -649,7 +663,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; category?: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; is_pallet_carrier?: boolean | null; pallet_color?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   cartons_ordered:    number
   od_refs?:           { od_number: string; od_item: string; qty_base?: number }[] | null   // liên kết dòng DO SAP (đơn upload) — rỗng = đơn tay
   boxes_display:      number
@@ -659,6 +673,9 @@ export interface OutboundItem {
   material_type:      string | null   // "Thành phẩm" | "POSM" | "Pallet Loscam"
   export_type:        string | null
   header_text:        string | null
+  // Quy tắc lấy hàng theo date do THỦ KHO chốt (1c). NULL = chưa chốt ⇒ dòng KHÔNG sinh việc.
+  date_rule?:         DateRule | null
+  pinned_pallets?:    string[] | null
   batch_required:     string | null
   date_required:      number | null
   cs_responsible:     string | null
@@ -692,7 +709,7 @@ export interface GDO {
   delivery_date:    string
   warehouse_id:     string | null
   warehouse_type:   string | null
-  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; require_weigh_on_start?: boolean; require_gate_on_start?: boolean } | null
+  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; work_mode?: string | null; require_weigh_on_start?: boolean; require_gate_on_start?: boolean } | null
   shipto_party?:     string | null
   transfer_status?:  string | null
   dvvt:             string | null
@@ -716,6 +733,19 @@ export interface GDO {
   total_loose_base?:   number
   qty_unit?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
   item_breakdown?:  GDOItemBreakdown[]
+  // Dòng xe CON (mã SAP) + tải + cước dự tính (đợt 1 TMS điều vận, 23/09) — enrich từ listGDOs / cột trên GDO
+  vehicle_model_id?: string | null
+  vehicle_model?: { id: string; sap_code: string; name: string; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | null } | null
+  load?: { pallets: number | null; tons: number | null; incomplete: number; basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number } | null
+  freight_estimated?: number | string | null
+  freight_tariff_id?: string | null
+  freight_detail?: {
+    computed_at: string; basis: 'PLAN' | 'ACTUAL'; unit: 'PER_PALLET' | 'PER_TRIP' | null
+    total: number | null; base: number | null; billed_pallets: number | null
+    surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]
+    ward: string | null; wards: string[]; stops: number; pallets: number | null; tons: number | null; incomplete: number
+    reason: string | null
+  } | null
   // Workflow fields
   assigned_at?:        string | null
   assigned_by?:        string | null
@@ -724,6 +754,9 @@ export interface GDO {
   scan_completed_at?:  string | null
   completed_at?:       string | null
   license_plate?:      string | null
+  // Loại xe DỰ KIẾN theo kế hoạch vận chuyển (getGDO trả khi chuyến CHƯA gắn biển số) — sơ đồ
+  // xếp xe dùng để biết vẽ XE PALLET hay xe thường lúc còn đang lên kế hoạch
+  planned_vehicle_type?: string | null
   container_number?:   string | null
   exporter_name?:      string | null
   loader_name?:        string | null
@@ -733,6 +766,17 @@ export interface GDO {
   // Liên kết chuyến xe ở Đăng ký cổng (1 chuyến = 1 lượt xe đã vào) — phục vụ báo cáo per-chuyến
   gate_registration_id?:  string | null
   gate_registration?:     { id: string; registration_number: number; date: string; license_plate: string | null; status: string; direction: string; entry_at?: string | null; exit_at?: string | null } | null
+  // CỬA XUẤT chuyến đậu (09/09, Directed Work đợt 1a): chọn lúc Bắt đầu khi kho có cửa trên Sơ đồ kho; cửa có
+  // số xe tối đa. Giữ lại sau Hoàn thành (báo cáo) — suất cửa tính theo status IN_PROGRESS/PAUSED.
+  dock_location_id?:      string | null
+  dock_assigned_at?:      string | null
+  dock?:                  { id: string; location_code: string; row: string | null; kind: string; dock_capacity: number | null } | null
+  // Ô tổng kế hoạch lấy hàng (Directed Work 1c) — null khi kho chạy Thủ công (không có việc nào)
+  tasks_summary?:         { total: number; pending: number; done: number; to_lower: number; to_move: number; skipped: number } | null
+  // Cảnh báo trả kèm response Bắt đầu: lập kế hoạch hỏng / còn dòng chưa chốt %Date
+  plan_warning?:          string | null
+  plan_unset_items?:      number
+  forklift_driver_ids?:   string[] | null
   // Audit
   updated_at?:     string | null
   created_by?:     string | null
@@ -760,6 +804,214 @@ export interface GDO {
   awaiting_sap?:  boolean | null   // còn DO chưa có dữ liệu VL06O (tự tắt khi VL06O về)
   awaiting_dos?:  string[] | null  // DO đang chờ (hiện trong cảnh báo)
   plan_dropped?:  boolean | null   // Kế hoạch xuất không còn Số xe này (tự bật lại khi kế hoạch có lại)
+}
+
+// Tình trạng một cửa xuất/nhập của kho (RPC warehouse_docks_status) — ô chọn cửa lúc Bắt đầu + lớp phủ Cửa trên Sơ đồ kho
+export interface DockStatus {
+  id: string; location_code: string; name: string; kind: 'DOCK_OUT' | 'DOCK_IN'
+  capacity: number | null          // null = không giới hạn
+  occupied: number                 // số XE đang chiếm (cùng biển = 1 xe)
+  serve_categories: string[]       // Loại kho cửa phục vụ; RỖNG = mọi loại (10/09)
+  // `vehicle_type` + `container_number` (10/09): sơ đồ 3D vẽ XE CONTAINER khác XE TẢI — loại xe không
+  // nằm trên chuyến, RPC tra hộ (biển số → Vehicle → VehicleType, chưa gắn biển thì lấy ở lệnh VC).
+  vehicles: { gdo_id: string; group_code: string; license_plate: string | null; status: string; dock_assigned_at: string | null; started_at: string | null; vehicle_type?: string | null; container_number?: string | null }[]
+  grid_x: number | null; grid_y: number | null
+}
+
+// ─── VIỆC CẦN LÀM (Directed Work 1c, 10/09) ────────────────────────────────────────────────────
+// Một DÒNG BẢNG = một NHÓM việc gom theo VỊ TRÍ (xe nâng không quét tem, họ đi theo ô) ở bảng
+// Cần hạ / Cần đưa ra; ở bảng Sắp quét thì mỗi dòng là một pallet vì thủ kho quét theo tem.
+export interface DirectedRow {
+  group_key: string
+  task_ids: string[]
+  seq: number
+  gdo_id: string
+  group_code: string | null
+  license_plate: string | null
+  started_at: string | null
+  delivery_date: string | null    // ngày chuyến — để tách việc hôm nay với chuyến cũ còn dở
+  dock_name: string | null
+  // FILL = dòng lệnh fill kho lẻ, KHÔNG phải `wms_tasks` (16/09 — user: "hạ hàng phải xem ở Cần hạ
+  // rồi lại bật Fill hàng lên, mở nhiều chỗ quá"). Bổ sung hàng xuống ô nhặt là một LOẠI việc hạ
+  // trong cùng hàng đợi, đúng cách Manhattan/SAP EWM làm; trang Fill hàng còn lại cho người ra lệnh.
+  // Dòng FILL có `task_ids` rỗng + `can_confirm=false`: nó ghi tồn thật nên chỉ đóng bằng QUÉT TEM.
+  kind: 'PICK' | 'LOOSE_FEED' | 'FILL'
+  item_id?: string | null          // dòng hàng (14/09) — tab Sắp quét: lối "Trừ tồn nhặt lẻ" trỏ thẳng dòng hàng
+  current_code: string | null      // VỊ TRÍ HIỆN TẠI của pallet — kể cả đang trên kệ (user chốt 10/09)
+  from_code: string | null
+  level_no: number | null
+  to_code: string | null
+  to_name: string | null
+  drop_name: string | null
+  dist_cells: number | null
+  n_pallets: number
+  // PALLET TƯƠNG ĐƯƠNG (14/09): lệnh = "lấy N pallet ở ô X"; tem ghim chỉ là gợi ý
+  n_done?: number                  // đã quét mấy pallet trong nhóm (Sắp quét gom theo ô)
+  n_equiv?: number                 // pallet trong ô cùng mã + cùng NSX với pallet ghim — lấy cái nào cũng được
+  cell_ndates?: number             // ô có mấy NSX khác nhau của mã đó — > 1 thì phải nói rõ NSX
+  qty_base: number
+  // Pallet lấy MỘT PHẦN (12/09): thủ kho phải biết lấy bao nhiêu thùng — kèm đơn vị của mã để in qtyLabel
+  is_partial: boolean
+  units_per_carton: number | null
+  entry_unit: string | null
+  base_unit: string | null
+  material_codes: (string | null)[]
+  // CẶP id+mã dựng trong SQL (12/09) — nút "Tồn" cần material_id, mà hai mảng agg rời nhau không
+  // bảo đảm cùng thứ tự nên ghép theo chỉ số sẽ tra nhầm mã ở ô chứa nhiều mã
+  materials: { id: string; code: string | null }[]
+  // Loại kho của (các) mã trong dòng — BE ghép ở TS (17/09) để lọc theo khu; mảng vì ô có thể nhiều mã
+  categories?: string[]
+  material_name: string | null
+  pallet_codes: (string | null)[]
+  needs_lower: boolean
+  waiting_lower: boolean           // chưa hạ ⇒ xe chuyển thấy dòng mờ, chưa bấm được
+  // Việc BỊ BỎ (12/09): thủ kho quét pallet khác / chuyến khác lấy trước — vẫn trả về để nói lý do,
+  // không để việc biến mất không lời (xe hạ đã hạ pallet đó xuống rồi)
+  skipped: boolean
+  skip_reason: string | null
+  // NHẬN việc chung (12/09) — khoá mềm 10 phút; claimed_by = Employee.id
+  claim_active: boolean
+  claimed_by: string | null
+  claimed_by_name: string | null
+  // GIỜ nhận (17/09, user: "phải biết được ai là người nhận, nhận lúc nào") — khoá mềm tự nhả sau
+  // 10 phút, không nói ra thì việc rời tay người ta mà không ai hiểu vì sao
+  claimed_at?: string | null
+  // Người được GÁN làm xe chuyển của chuyến (gán lúc Bắt đầu) — chuỗi nối bằng dấu phẩy. Nền cho
+  // switch Phạm vi "Của tôi / Tất cả" ở bảng Cần đưa ra: lọc tại chỗ, đếm được CẢ HAI phía.
+  driver_ids?: string | null
+  // Kho KHÔNG có xe hạ riêng: dòng chờ hạ ở bảng xe chuyển là MỘT việc "Hạ & đưa ra"
+  combined_lower: boolean
+  stage_done: boolean              // xong Ở CHẶNG NÀY ⇒ gạch ngang, vẫn ở lại bảng
+  all_scanned: boolean
+  last_at: string | null
+  done_by_name: string | null
+  can_confirm: boolean
+  // ── Thông tin để TRẢ LỜI TẠI CHỖ (13/09) ─────────────────────────────────────────────────────
+  // TỪNG pallet của nhóm + nguyên liệu thô để tính %Date bằng `computePctDate` (luật một nguồn —
+  // KHÔNG tính trong SQL). Đo staging 13/09: 16/18 việc đang chờ có ô chứa NHIỀU pallet cùng mã
+  // (nhiều nhất 13), 8/18 ca các pallet đó khác NSX ⇒ "lấy cái nào" là câu hỏi thật, không lý thuyết.
+  pallets: DirectedPallet[]
+  date_rules: DateRule[]          // yêu cầu date của (các) dòng đơn trong nhóm — thường đúng 1
+  date_required: number | null    // mức % kế thừa từ VL06O khi chưa ai chốt tay
+  customer_name: string | null    // NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai
+  do_codes: string | null
+  cs_note: string | null          // ghi chú CS nguyên văn (máy không đọc, người đọc)
+  // ── chỉ có ở dòng kind='FILL' ──
+  fill_task_id?: string
+  fill_order_id?: string
+  fill_order_code?: string | null
+  fill_required_date?: string | null   // NSX của lô phải hạ (lệnh fill chỉ định theo DATE, không ghim tem)
+  // Lệnh fill giao cả ngày cho một người ⇒ dòng RIÊNG trong rổ chung; cửa quét 409 NOT_YOUR_TASK với
+  // người khác (chỉ ai có `fill.assign` mới nhận lại được) nên bảng phải nói trước, đừng để bấm rồi mới biết
+  fill_assignee_id?: string | null
+  fill_assignee_name?: string | null
+  fill_auto?: boolean                  // lệnh do hệ thống tự đặt theo nhu cầu trong ngày
+}
+// Một pallet trong nhóm việc. `mat_*` = shelflife của MÃ (và ngoại lệ theo NCC) — cặp với
+// `production_date`/`expiry_date`/`shelf_life_days` của LÔ để `computePctDate` cho ra đúng con số
+// mà trang Tồn kho đang hiện. Đo 13/09: 0/19.527 pallet tồn có shelflife riêng ⇒ đường đi thực tế
+// là NSX + shelflife của mã.
+export interface DirectedPallet {
+  task_id: string
+  code: string | null
+  material_code: string | null
+  qty_base: number
+  is_partial: boolean
+  level_no: number | null
+  loc_code: string | null
+  production_date: string | null
+  expiry_date: string | null
+  shelf_life_days: number | null
+  ncc_id: string | null
+  mat_shelf_days: number | null
+  mat_overrides: { transport_company_id: string; shelf_life_days: number }[] | null
+  done: boolean
+  skipped: boolean
+}
+// Hồ sơ chuyến — tiến độ đếm theo DÒNG HÀNG, không cộng thùng cross-mã (luật base-unit)
+export interface DirectedTrip {
+  gdo_id: string
+  group_code: string | null
+  license_plate: string | null
+  dock_name: string | null
+  started_at: string | null
+  delivery_date: string | null
+  customers: string | null
+  n_do: number
+  lines_total: number
+  lines_done: number
+  lines_unset: number
+  tasks_pending: number
+  tasks_done: number
+}
+export interface DirectedBoard {
+  rows: DirectedRow[]
+  // `to_lower`/`to_move` ĐÃ gồm phần lệnh fill (đếm theo PALLET như mọi ô khác) để badge trên tab
+  // đúng ở mọi chỗ đang đứng; `fill_pending` tách riêng cho ai cần biết phần nào là fill
+  totals: { pending?: number; done?: number; skipped?: number; to_lower?: number; to_move?: number; trips?: number; fill_pending?: number }
+  settings?: { separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number }
+  trips?: DirectedTrip[]
+  auto_replanned?: number     // số chuyến vừa được máy sắp lại theo tồn mới ngay trước lần tải này (14/09)
+  fill_rows?: number          // số dòng lệnh fill kho lẻ đang nằm chung bảng này (16/09)
+  // Máy vừa tự đặt / thu hồi lệnh fill hàng nhặt lẻ ngay trước lần tải này (15/09)
+  auto_fill?: { created: number; recalled: number; order_code: string | null }
+  // Dòng đơn CHƯA CHỐT %Date ⇒ không có việc nào — phải nói ra, không im lặng
+  // 14/09 mang thêm mã/quy cách/NPP để mở SetDateRuleSheet ngay tại trang ("Khai ngay")
+  unset_items: {
+    gdo_id: string; group_code: string | null; item_id: string; material_code: string | null; remaining: number
+    note: string | null; delivery_date: string | null
+    material_id?: string | null; material_name?: string | null; material_category?: string | null
+    units_per_carton?: number | null; entry_unit?: string | null; base_unit?: string | null
+    customer_name?: string | null
+  }[]
+}
+// HỘP VIỆC theo người (đợt C, 12/09) — mọi nguồn việc (chuyến · fill · slotting · chuyển kho · date · DO SAP)
+// về cùng một hình dạng, chia 3 vùng: Của tôi · Việc chung của kho · Đang chờ người khác
+export interface WorkInboxRow {
+  zone: 'MINE' | 'SHARED' | 'WAITING'
+  source: string          // TRIP · CLAIM · FILL · LOWER · FILL_OPEN · SLOTTING · TRANSFER · DATE · RECONCILE · TRIP_WAIT · OTHER_CLAIM
+  key: string
+  warehouse_id: string
+  wh_name: string | null
+  title: string
+  sub: string | null
+  n: number
+  link: string            // '' = chỉ xem (đang chờ người khác, mình không có quyền làm)
+}
+export interface WorkInbox {
+  mine: WorkInboxRow[]; shared: WorkInboxRow[]; waiting: WorkInboxRow[]
+  counts: { mine: number; shared: number; waiting: number }
+}
+export interface DirectedSupervision {
+  live: { gdo_id: string; group_code: string | null; license_plate: string | null; dock_name: string | null; started_at: string | null
+          pending: number; waiting_lower: number; done: number; oldest_wait_min: number | null; claimers: string | null; drivers: string | null }[]
+  by_person: { name: string; lowered: number; moved: number; done: number }[]
+  by_day: { day: string; done: number; skipped_other: number; adherence_pct: number | null }[]
+  lead_time: { lower_to_move_min: number | null; move_to_scan_min: number | null; sample: number }
+  since: string
+  days: number
+}
+// SPLIT = một dòng đơn nhiều mức date theo SỐ LƯỢNG ("250 thùng date 60, 30 thùng date 90")
+// MIN_DAYS = "còn tối thiểu N ngày" (11/09). Với hàng hạn ngắn thì % không diễn đạt nổi: FG02 hạn
+// 45–60 ngày nên "còn ≥ 35 ngày" ra 77,8 % trên mã này và 58,3 % trên mã kia.
+export type SimpleRuleKind = 'FEFO' | 'MIN_PCT' | 'MIN_DAYS' | 'EXACT'
+export type DateRuleKind = SimpleRuleKind | 'SPLIT'
+export interface DateRulePart { qty_base: number; kind: SimpleRuleKind; value?: string | number | null }
+export type DateRuleSource = 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SYSTEM'
+export interface DateRule {
+  kind: DateRuleKind
+  value?: string | number | null
+  parts?: DateRulePart[]
+  set_by?: string | null; set_at?: string | null
+  // AI ĐẶT quy tắc (11/09): người khai tay · máy áp theo Khách hàng/Kênh · hệ thống tự đặt.
+  // Thiếu khoá = MANUAL (mọi dòng khai trước 11/09 đều do người khai).
+  source?: DateRuleSource | null
+  // Cờ "cần xem" — chỉ NHẮC, không chặn:
+  //   NO_STOCK     = lúc máy áp, kho không còn pallet nào đạt mức này
+  //   BELOW_MASTER = %Date của VL06O quy ra ngày còn thấp hơn mức khách đã khai
+  review?: 'NO_STOCK' | 'BELOW_MASTER' | null
+  // Vì sao HỆ THỐNG tự đặt (chỉ đi kèm source = 'SYSTEM'): mã không đo được date
+  reason?: 'NO_SHELF_LIFE' | null
 }
 
 // 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP

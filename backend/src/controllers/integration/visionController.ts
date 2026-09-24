@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { encryptSecret, decryptSecret } from '../../utils/secretBox'
+import { logAdmin } from '../../services/adminAudit'
 
 // AI VISION đọc chữ in phun trên thùng (Sổ đóng gói) — user chốt 12/08: "AI Vision trước,
 // API hết hạn/lỗi thì chuyển OCR; key nằm ở kết nối ERP để thay thế".
@@ -74,6 +75,7 @@ export async function saveVisionConfig(req: Request, res: Response) {
     const { error } = await supabase.from('SystemSetting').delete().eq('key', VISION_KEY)
     if (error) return fail(res, error.message, 500)
     _cfgCache = null
+    await logAdmin(req, { action: 'VISION_CONFIG', target_type: 'SystemSetting', target_id: VISION_KEY, target_label: 'AI Vision', after: { configured: false } })
     return ok(res, { configured: false })
   }
 
@@ -102,6 +104,9 @@ export async function saveVisionConfig(req: Request, res: Response) {
   }, { onConflict: 'key' })
   if (error) return fail(res, error.message, 500)
   _cfgCache = null
+  // Sổ quản trị: ghi nhà cung cấp/model + CÓ đổi key hay không — KHÔNG ghi key
+  await logAdmin(req, { action: 'VISION_CONFIG', target_type: 'SystemSetting', target_id: VISION_KEY, target_label: 'AI Vision',
+    before: { provider: cur?.provider ?? null, model: cur?.model ?? null }, after: { provider: prov, model: m, key_changed: typeof api_key === 'string' } })
   return ok(res, { configured: true, provider: prov, model: m })
 }
 

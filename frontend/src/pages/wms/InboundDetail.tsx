@@ -2,11 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
-import {
-  ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
-  MapPin, Package, AlertTriangle, QrCode,
-  Clock, Calendar, User, Bookmark, RotateCcw, History,
-} from 'lucide-react'
+import { ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil, MapPin, Package, AlertTriangle, Clock, Calendar, User, Bookmark, RotateCcw, History } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
@@ -36,11 +33,13 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
+import { LocationScanButton }      from '@/components/wms/LocationScanButton'
 import { useDebouncedValue }        from '@/hooks/useDebouncedValue'
 import { PdaGunHint }               from '@/components/shared/PdaGunHint'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
+import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
 // Thay Radix <Select> pill "Đổi vị trí"/"Chọn vị trí" — kho nhiều vị trí phải tìm được.
@@ -170,7 +169,8 @@ export default function InboundDetail() {
           warehouse_id: order.warehouse_id,
           ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
           ...(order.material_id ? { material_id: order.material_id } : {}),
-          search: locTermDeb || undefined, limit: 50,
+          // 300 (17/08): kho cỡ thường thấy TRỌN danh sách — ★ trên đầu, ô chặn cuối (BE sort)
+          search: locTermDeb || undefined, limit: 300,
         }
       : undefined
   )
@@ -204,8 +204,10 @@ export default function InboundDetail() {
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
   const { mutate: setOrderLocation                      } = useSetInboundOrderLocation()
   const [locError, setLocError] = useState<string | null>(null)
-  const changeLoc = (v: string) => setOrderLocation(
-    { id: order!.id, location_id: v, location_code: (allLocations as LocOpt[]).find(l => l.id === v)?.location_code },
+  // code: truyền vào khi mã vị trí KHÔNG có trong `allLocations` — vd quét tem ô đang ở ngoài 300
+  // dòng server trả về. Thiếu tham số này thì nhãn vị trí sau khi quét bị trống.
+  const changeLoc = (v: string, code?: string) => setOrderLocation(
+    { id: order!.id, location_id: v, location_code: code ?? (allLocations as LocOpt[]).find(l => l.id === v)?.location_code },
     { onSuccess: () => setLocError(null),
       onError: (e) => setLocError((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không đổi được vị trí') },
   )
@@ -214,28 +216,18 @@ export default function InboundDetail() {
   // KHÔNG dùng quyền `edit` (vốn là "Sửa nhóm phiếu NCC"). Tách riêng theo chuẩn 1 action = 1 quyền.
   const canSetLocation = can(perms, 'inbound', 'edit_pallet') || can(perms, 'inbound', 'force_edit_pallet')
 
-  // Vị trí cho dropdown đổi vị trí: hiện (đã dùng/sức chứa) + ★ khuyến nghị (đang để dở cùng loại,
-  // còn chỗ) — đồng bộ với form tạo phiếu. ★ đẩy lên đầu, còn lại giữ thứ tự.
-  type LocOpt = { id: string; location_code: string; used_slots?: number; max_pallets: number; has_same_material?: boolean }
-  const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
-  const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
+  // Vị trí cho dropdown đổi vị trí. ★ / lý do chặn / thứ tự đều do BACKEND chấm theo quy tắc cất
+  // hàng của kho (utils/putaway.ts) — KHÔNG tự tính lại ở đây (trước 15/08 chỗ này là bản chép
+  // tay thứ hai của luật ★, lệch với form tạo phiếu và với BE).
+  type LocOpt = PutawayLocRow
   // gộp vị trí ĐANG CHỌN (tra theo id) — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
-  const locAll = [...(allLocations as LocOpt[]), ...(locPicked as unknown as LocOpt[]).filter(p => !(allLocations as LocOpt[]).some(l => l.id === p.id))]
-  const locOptions = locAll.sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
-  const locPickOptions = locOptions.map(l => {
-    const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
-    return {
-      id: l.id,
-      searchText: l.location_code,
-      node: (
-        <>
-          {locRec(l) && <span className="text-amber-500 font-bold mr-1">★</span>}
-          <span className={locFull(l) ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-        </>
-      ),
-    }
-  })
+  const locOptions = [...(allLocations as LocOpt[]),
+    ...(locPicked as unknown as LocOpt[]).filter(p => !(allLocations as LocOpt[]).some(l => l.id === p.id))]
+  const locPickOptions = locOptions.map(l => ({
+    id: l.id,
+    searchText: l.location_code,
+    node: <PutawayOption loc={l} />,
+  }))
   const { mutate: saveManual, isPending: savingManual   } = useScanManualPallet()
 
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
@@ -311,13 +303,16 @@ export default function InboundDetail() {
   const gunArmed = !!order && isOpen && !isNccFull && !isManualEntry && !!order.location_id && can(perms, 'inbound', 'scan')
 
   // Cò súng cấp trang (user chốt: Nhập thì bóp cò NGAY tại trang phiếu) → tự mở màn quét chế độ SÚNG + xử lý tem.
-  // Đang mở dialog/sheet khác thì bỏ qua (sheet tự có listener súng riêng khi đã mở).
+  // Form/dialog đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ bỏ qua mã: máy đọc bắt chuỗi
+  // phím nhanh/IME ở mọi ô nhập rồi trả lại giá trị cũ — gõ trên điện thoại trong form bị xoá trắng
+  // (bug xe vãng lai 25/08). Sheet quét tự có listener súng riêng khi đã mở.
+  const wedgeFormOpen = showManualDialog || showLocHistory || !!editState || !!confirm || !!completeDlg
   useWedgeScanner(code => {
-    if (!gunArmed || showScan || showManualDialog || showLocHistory || editState || confirm || completeDlg) return
+    if (!gunArmed || showScan) return
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   // Cửa sổ người nhập tự sửa/xóa = cờ `inbound_edit_window_days` (mặc định 2) — mirror gate BE checkDeletePermission
   const editWindowDays = useSettingNumber('inbound_edit_window_days', 2)
@@ -679,8 +674,8 @@ export default function InboundDetail() {
           </div>
         )}
 
-        {/* ── Compact header (~20%) ── */}
-        <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">
+        {/* ── Compact header (~20%) — mobile nén đệm (đợt UI 24/08: user chê "nhiều vị trí dư thừa") ── */}
+        <div className="border-b bg-white px-3 pt-2 pb-2 space-y-1 sm:px-4 sm:pt-3 sm:pb-3 sm:space-y-2 shrink-0">
 
           {/* Row 1: navigation + code + actions — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
           <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
@@ -691,7 +686,7 @@ export default function InboundDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-semibold font-mono text-sm truncate ${statusText(inboundKey(order))}`}>
+              <span className={`font-semibold font-mono text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${statusText(inboundKey(order))}`}>
                 {order.import_code ?? order.id.slice(0, 8)}
               </span>
               <button
@@ -706,11 +701,12 @@ export default function InboundDetail() {
               </button>
             </div>
 
-            <ActionCluster items={headerActionItems} />
+            {/* mobileInline: cụm nút CHUNG HÀNG với mã phiếu — hết cảnh ⋮ chiếm nguyên 1 hàng riêng */}
+            <ActionCluster mobileInline items={headerActionItems} />
           </div>
 
           {/* Row 2: info chips */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:gap-x-4 sm:gap-y-1 text-xs text-slate-600">
             {((order as any).from_gdo_delivery_codes?.length ?? 0) > 0 && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">Số DO:</span>
@@ -741,13 +737,21 @@ export default function InboundDetail() {
                     <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
                     {headerLocMismatch && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                     {isOpen && canSetLocation && (
-                      <LocPickerPill
-                        trigger={<><Pencil className="h-3 w-3" /> Đổi vị trí</>}
-                        triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
-                        options={locPickOptions}
-                        onPick={changeLoc}
-                        onSearch={setLocTerm}
-                      />
+                      <>
+                        <LocPickerPill
+                          trigger={<><Pencil className="h-3 w-3" /> Đổi vị trí</>}
+                          triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
+                          options={locPickOptions}
+                          onPick={changeLoc}
+                          onSearch={setLocTerm}
+                        />
+                        <LocationScanButton
+                          variant="pill"
+                          warehouseId={order.warehouse_id}
+                          materialId={order.material_id}
+                          onPicked={loc => changeLoc(loc.id, loc.location_code)}
+                        />
+                      </>
                     )}
                     {locHistory.length > 0 && (
                       <button type="button" onClick={() => setShowLocHistory(true)}
@@ -761,13 +765,21 @@ export default function InboundDetail() {
                     <AlertTriangle className="h-3 w-3" />
                     Chưa chọn vị trí
                     {canSetLocation && (
-                      <LocPickerPill
-                        trigger={<><MapPin className="h-3 w-3" /> Chọn vị trí</>}
-                        triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
-                        options={locPickOptions}
-                        onPick={changeLoc}
-                        onSearch={setLocTerm}
-                      />
+                      <>
+                        <LocPickerPill
+                          trigger={<><MapPin className="h-3 w-3" /> Chọn vị trí</>}
+                          triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
+                          options={locPickOptions}
+                          onPick={changeLoc}
+                          onSearch={setLocTerm}
+                        />
+                        <LocationScanButton
+                          variant="pill"
+                          warehouseId={order.warehouse_id}
+                          materialId={order.material_id}
+                          onPicked={loc => changeLoc(loc.id, loc.location_code)}
+                        />
+                      </>
                     )}
                   </span>
                 ) : (
@@ -885,7 +897,7 @@ export default function InboundDetail() {
         ]} />
 
         {/* Heading + action — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
-        <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
+        <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
               Pallet đã quét
@@ -932,15 +944,15 @@ export default function InboundDetail() {
             </div>
           </div>
 
-        {/* ── Pallet table (~80%) ── */}
-        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
+        {/* ── Pallet table (~80%) — mobile bảng sát mép (đệm to chỉ để desktop) ── */}
+        <div className="flex-1 p-1.5 sm:p-4 overflow-auto pb-20 lg:pb-4">
           {/* min-w-max: Card nở đúng bằng bảng để nền+viền phủ trọn, không lộ vạch xám giữa bảng khi cuộn ngang */}
           <Card className="min-w-max">
             {isPlaceholderData ? (
               <TableSkeleton rows={5} cols={7} />
             ) : entries.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
-                <QrCode className="h-10 w-10 opacity-30" />
+                <ScanIcon className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
                 {isOpen && can(perms, 'inbound', 'scan') && !isNccFull && (
                   isManualEntry ? (

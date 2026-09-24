@@ -3,6 +3,21 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+/**
+ * Cửa THÊM và cửa SỬA phải cùng một luật (chốt 07/09).
+ *
+ * Bản cũ: THÊM có kiểm mã trùng (409) và bắt buộc mã/tên, còn SỬA thì `throw error` → rơi vào
+ * catch → **500 "Lỗi hệ thống"** khi đổi sang mã đã có (đo 07/09, gói QA 49 phép [29][33]), và
+ * SỬA cũng nhận tên RỖNG — ca không tên thì không ai chọn được nữa (phép [30]).
+ * `patchText` trả undefined khi ô không gửi lên, ném lỗi khi gửi lên mà rỗng.
+ */
+const BLANK = Symbol('blank')
+function patchText(v: unknown): string | undefined | typeof BLANK {
+  if (v === undefined) return undefined
+  const s = v == null ? '' : String(v).trim()
+  return s === '' ? BLANK : s
+}
+
 // ─── ImportShift (Ca nhập) ────────────────────────────────────
 
 export async function listImportShifts(_req: Request, res: Response) {
@@ -38,13 +53,17 @@ export async function updateImportShift(req: Request, res: Response) {
   try {
     const { code, name, display_order, is_active } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (code          !== undefined) patch.code = code
-    if (name          !== undefined) patch.name = name
+    const codeVal = patchText(code), nameVal = patchText(name)
+    if (codeVal === BLANK) return fail(res, 400, 'VALIDATION_ERROR', 'Mã ca không được để trống')
+    if (nameVal === BLANK) return fail(res, 400, 'VALIDATION_ERROR', 'Tên ca không được để trống')
+    if (codeVal !== undefined) patch.code = codeVal
+    if (nameVal !== undefined) patch.name = nameVal
     if (display_order !== undefined) patch.display_order = display_order
     if (is_active     !== undefined) patch.is_active = is_active
     const { data, error } = await supabase
       .from('ImportShift').update(patch).eq('id', req.params.id)
       .select('id, code, name, display_order, is_active').maybeSingle()
+    if (error?.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã ca đã tồn tại')
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy ca nhập')
     ok(res, data)
@@ -86,13 +105,17 @@ export async function updateQAStatus(req: Request, res: Response) {
   try {
     const { code, name, display_order, is_active } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (code          !== undefined) patch.code = code
-    if (name          !== undefined) patch.name = name
+    const codeVal = patchText(code), nameVal = patchText(name)
+    if (codeVal === BLANK) return fail(res, 400, 'VALIDATION_ERROR', 'Mã QA không được để trống')
+    if (nameVal === BLANK) return fail(res, 400, 'VALIDATION_ERROR', 'Tên trạng thái QA không được để trống')
+    if (codeVal !== undefined) patch.code = codeVal
+    if (nameVal !== undefined) patch.name = nameVal
     if (display_order !== undefined) patch.display_order = display_order
     if (is_active     !== undefined) patch.is_active = is_active
     const { data, error } = await supabase
       .from('QAStatus').update(patch).eq('id', req.params.id)
       .select('id, code, name, display_order, is_active').maybeSingle()
+    if (error?.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã QA đã tồn tại')
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy trạng thái QA')
     ok(res, data)

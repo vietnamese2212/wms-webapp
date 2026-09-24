@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Layers, Scissors, QrCode, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw, Printer } from 'lucide-react'
+import { Layers, Scissors, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw, Printer } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
@@ -10,6 +11,7 @@ import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
@@ -20,13 +22,16 @@ import {
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { materialCodeOf } from '@/utils/qr'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 type Tab = 'merge' | 'split' | 'history'
 
@@ -48,6 +53,14 @@ export default function PalletOps() {
     if (initTab === 'history') return 'history'
     return canMergeTab ? 'merge' : canSplit ? 'split' : 'history'   // tab đầu tiên có quyền
   })
+  // key = khoá cấu hình điện thoại ('/wms/pallet-ops#<key>' — config/mobileSurface.ts)
+  const permTabs = useMemo(() => ([
+    canMergeTab && { key: 'merge' as const,   label: 'Dồn (gom nhóm)', icon: Layers },
+    canSplit    && { key: 'split' as const,   label: 'Tách số lượng',  icon: Scissors },
+    { key: 'history' as const, label: 'Lịch sử', icon: History },
+  ] as const).filter((t): t is Exclude<typeof t, false> => !!t), [canMergeTab, canSplit])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/pallet-ops', permTabs, tab, setTab)
   const [scanFor, setScanFor] = useState<null | 'target' | 'child' | 'source' | 'history'>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -57,10 +70,13 @@ export default function PalletOps() {
   const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
-  // Lưu/khôi phục lựa chọn Kho + Loại kho (không phải chọn lại)
+  // Lưu/khôi phục lựa chọn Kho + Loại kho (không phải chọn lại) — bối cảnh toàn cục ở Header
+  // (nếu đang chọn) ưu tiên hơn giá trị đã nhớ của trang
   const SCOPE = useMemo<{ opWh?: string; opCat?: string }>(() => { try { return JSON.parse(localStorage.getItem('palletOps_scope') || '{}') } catch { return {} } }, [])
-  const [opWh, setOpWh]   = useState<string>(SCOPE.opWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
-  const [opCat, setOpCat] = useState<string>(SCOPE.opCat ?? '')
+  const gScope = useGlobalScopeStore.getState()
+  const gOpWh = gScope.warehouseId && (!allowedWhIds || allowedWhIds.has(gScope.warehouseId)) ? gScope.warehouseId : ''
+  const [opWh, setOpWh]   = useState<string>(gOpWh || SCOPE.opWh || (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [opCat, setOpCat] = useState<string>(gScope.whType || SCOPE.opCat || '')
   useEffect(() => { try { localStorage.setItem('palletOps_scope', JSON.stringify({ opWh, opCat })) } catch { /* ignore */ } }, [opWh, opCat])
   const scopeReady = !!(opWh && opCat)   // bắt buộc đủ Kho + Loại kho mới cho quét/thao tác
 
@@ -87,7 +103,8 @@ export default function PalletOps() {
     if (!scopeReady) { setMsg({ ok: false, text: 'Chọn Kho và Loại kho trước khi dồn' }); return }
     try {
       const r = await merge.mutateAsync({ target_pallet_code: mergeTarget.trim(), child_pallet_codes: allChildren, warehouse_id: opWh })
-      setMsg({ ok: true, text: `Đã dồn ${r.merged} pallet vào ${r.target}` })
+      // Luật cất mức CẢNH BÁO: cho dồn nhưng phải nói ra (BE trả putaway_warning)
+      setMsg({ ok: true, text: `Đã dồn ${r.merged} pallet vào ${r.target}${(r as { putaway_warning?: string | null }).putaway_warning ? ` — ⚠ ${(r as { putaway_warning?: string | null }).putaway_warning}` : ''}` })
       setMergeChildren([]); setChildInput('')
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi dồn pallet' }) }
   }
@@ -198,7 +215,7 @@ export default function PalletOps() {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children, warehouse_id: opWh, location_id: splitLoc || undefined })
       const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining))
       setSplitDone(labels)   // KHÔNG tự in — chờ người dùng bấm "In tem" (hoặc in sau ở tab Lịch sử)
-      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${qtyLabel(Number(res.source_remaining), srcEntry?.material)}). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.` })
+      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${qtyLabel(Number(res.source_remaining), srcEntry?.material)}). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.${(res as { putaway_warning?: string | null }).putaway_warning ? ` — ⚠ ${(res as { putaway_warning?: string | null }).putaway_warning}` : ''}` })
       setSplitQtys([''])
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi tách pallet' }) }
   }
@@ -228,12 +245,8 @@ export default function PalletOps() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5"><Layers className="h-4 w-4 text-slate-500" />Dồn / Tách pallet</span>
             <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-              {canMergeTab && <button onClick={() => { setTab('merge'); setMsg(null) }}
-                className={`px-3 py-1 inline-flex items-center gap-1 transition-colors ${tab === 'merge' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Layers className="h-3 w-3" />Dồn (gom nhóm)</button>}
-              {canSplit && <button onClick={() => { setTab('split'); setMsg(null) }}
-                className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'split' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Scissors className="h-3 w-3" />Tách số lượng</button>}
-              <button onClick={() => { setTab('history'); setMsg(null) }}
-                className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Lịch sử</button>
+              {tabs.map((t, i) => <button key={t.key} onClick={() => { setTab(t.key); setMsg(null) }}
+                className={`px-3 py-1 ${i > 0 ? 'border-l border-slate-200 ' : ''}inline-flex items-center gap-1 transition-colors ${tab === t.key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><t.icon className="h-3 w-3" />{t.label}</button>)}
             </div>
           </div>
         </div>
@@ -245,7 +258,8 @@ export default function PalletOps() {
           /* Ô tổng đếm TRÊN TOÀN BỘ bộ lọc (server) — đếm trên `ops` là chỉ đếm trang đang xem */
           : [{ label: 'Số thao tác', value: hist?.total ?? 0, accent: (hist?.total ?? 0) > 0 }, { label: 'Dồn', value: hist?.merge_n ?? 0 }, { label: 'Tách', value: hist?.split_n ?? 0 }, { label: 'Đã hoàn tác', value: hist?.undone_n ?? 0 }]} />
 
-        <div className="flex-1 min-h-0 overflow-auto flex flex-col">
+        {/* 1 tầng cuộn duy nhất per tab (bỏ overflow-auto ở wrapper — tab Lịch sử có scroller riêng) */}
+        <div className="flex-1 min-h-0 flex flex-col">
          {tab === 'history' ? (
           <div className="flex-1 min-h-0 flex flex-col">
             {msg && (
@@ -268,7 +282,7 @@ export default function PalletOps() {
                 {/* Mobile: action + nút Lọc GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
                 <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
                 <ActionCluster className="shrink-0" mobileInline items={[{
-                  key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để tìm trong lịch sử dồn/tách', primary: true,
+                  key: 'scan', icon: ScanIcon, label: 'Quét QR', tip: 'Quét QR mã pallet để tìm trong lịch sử dồn/tách', primary: true,
                   onClick: () => setScanFor('history'),
                 } satisfies ActionItem]} />
                 <FilterSheetButton defs={histDefs} className="sm:hidden" />
@@ -291,9 +305,9 @@ export default function PalletOps() {
                 </thead>
                 <tbody>
                   {!opWh ? (
-                    <tr><td colSpan={9} className="px-2 py-10 text-center text-amber-600">Chọn <b>Kho</b> để xem lịch sử dồn/tách (tránh tải quá nhiều dữ liệu)</td></tr>
+                    <TableEmptyRow colSpan={9}>Chọn <b>Kho</b> để xem lịch sử dồn/tách (tránh tải quá nhiều dữ liệu)</TableEmptyRow>
                   ) : ops.length === 0 ? (
-                    <tr><td colSpan={9} className="px-2 py-10 text-center text-slate-400">Chưa có thao tác dồn/tách nào{(hSearch || hType || opCat || hFrom || hTo) ? ' khớp bộ lọc' : ''}</td></tr>
+                    <TableEmptyRow colSpan={9}>Chưa có thao tác dồn/tách nào{(hSearch || hType || opCat || hFrom || hTo) ? ' khớp bộ lọc' : ''}</TableEmptyRow>
                   ) : ops.map(o => {
                     const aCode = (o.target_codes?.[0] || o.source_codes?.[0] || '')
                     const matName = matByCode.get(materialCodeOf(aCode))?.short_name ?? materialCodeOf(aCode) ?? '—'
@@ -331,8 +345,9 @@ export default function PalletOps() {
               right={histLoading ? 'đang tải…' : undefined} />
           </div>
          ) : (
-          <div className="p-4">
-          <div className="mx-auto max-w-xl space-y-4">
+          <div className="flex-1 min-h-0 overflow-auto p-4">
+          {/* Căn trái + nới rộng (bỏ mx-auto max-w-xl bó giữa — user 19/08 "fit màn hình") */}
+          <div className="max-w-3xl space-y-4">
             {!scopeReady && <p className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Chọn <b>Kho</b> và <b>Loại kho</b> trước mới quét/thao tác được.</p>}
             {/* Chọn Kho + Loại kho (scope thao tác) */}
             <div className="rounded-lg border border-slate-200 p-3 grid grid-cols-2 gap-2">
@@ -368,7 +383,7 @@ export default function PalletOps() {
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet đích" value={mergeTarget} disabled={!scopeReady} onChange={e => setMergeTarget(e.target.value)} />
                     </div>
                     <ActionCluster className="shrink-0" items={[{
-                      key: 'scan-target', icon: QrCode, label: 'Quét QR',
+                      key: 'scan-target', icon: ScanIcon, label: 'Quét QR',
                       tip: scopeReady ? 'Quét QR pallet đích (giữ lại làm đại diện)' : 'Chọn Kho và Loại kho trước mới quét được',
                       primary: true, disabled: !scopeReady,
                       onClick: () => setScanFor('target'),
@@ -385,7 +400,7 @@ export default function PalletOps() {
                         onChange={e => setChildInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addChild(childInput) }} onBlur={() => addChild(childInput)} />
                     </div>
                     <ActionCluster className="shrink-0" items={[{
-                      key: 'scan-child', icon: QrCode, label: 'Quét QR',
+                      key: 'scan-child', icon: ScanIcon, label: 'Quét QR',
                       tip: scopeReady ? 'Quét QR pallet con — quét liên tiếp để thêm nhiều pallet' : 'Chọn Kho và Loại kho trước mới quét được',
                       primary: true, disabled: !scopeReady,
                       onClick: () => setScanFor('child'),
@@ -435,7 +450,7 @@ export default function PalletOps() {
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet gốc" value={splitSrc} disabled={!scopeReady} onChange={e => setSplitSrc(e.target.value)} />
                     </div>
                     <ActionCluster className="shrink-0" items={[{
-                      key: 'scan-source', icon: QrCode, label: 'Quét QR',
+                      key: 'scan-source', icon: ScanIcon, label: 'Quét QR',
                       tip: scopeReady ? 'Quét QR pallet gốc cần tách' : 'Chọn Kho và Loại kho trước mới quét được',
                       primary: true, disabled: !scopeReady,
                       onClick: () => setScanFor('source'),
@@ -485,7 +500,16 @@ export default function PalletOps() {
 
                 {/* Vị trí pallet con — lọc theo Loại kho, mặc định = vị trí pallet gốc */}
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
-                  <Label className="text-xs font-semibold">Vị trí pallet con</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs font-semibold">Vị trí pallet con</Label>
+                    <LocationScanButton
+                      variant="pill"
+                      className="ml-auto"
+                      warehouseId={opWh || null}
+                      materialId={srcEntry?.material_id ?? null}
+                      onPicked={loc => setSplitLoc(loc.id)}
+                    />
+                  </div>
                   <SingleSelect
                     value={splitLoc || '__src__'}
                     onChange={v => setSplitLoc(v === '__src__' ? (srcEntry?.location_id ?? '') : v)}

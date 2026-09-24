@@ -110,8 +110,12 @@ interface LocationsFilters {
   // phiên cũ không bị đọc nhầm thành 'yes'/'no'.)
   flagMode: FlagMode        // requires_stocktake — cần check hàng ngày
   pickFaceMode: FlagMode    // is_pick_face — vị trí nhặt lẻ
+  noInMode: FlagMode        // slot_no_in — không đưa hàng vào (kho tạm/ngoài đường)
+  noOutMode: FlagMode       // slot_no_out — không lấy hàng đi (hàng kẹt)
   page: number
   pageSize: number
+  // Tab trang Vị trí kho (21/09, user: "Sơ đồ kho là một tab của Vị trí thì hợp lý hơn"): 'list' danh mục · 'map' bản vẽ
+  tab: 'list' | 'map'
 }
 export type StocktakeView = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 interface StocktakeFilters {
@@ -140,6 +144,16 @@ interface StocktakeHistoryFilters {
   page: number
   pageSize: number
 }
+// Tab Lịch sử của màn Chuyển vị trí quét QR (20/08)
+interface MoveLogFilters {
+  warehouseId: string
+  category: string
+  dateFrom: string   // Ngày chuyển (mặc định 7 ngày gần nhất)
+  dateTo: string
+  search: string
+  page: number
+  pageSize: number
+}
 interface GateRegistrationFilters {
   fDate: string
   fDateTo: string
@@ -156,6 +170,21 @@ interface MaterialsFilters {
   statusFilter: string[]
   qrFilter: string[]
   dqFilter: string[]   // chất lượng dữ liệu: 'incomplete' (thiếu thông tin) | 'dup' (trùng tên)
+  dimsFilter: string[]  // kích thước thùng: 'has_dims' | 'no_dims' (sơ đồ xếp xe cần D×R×C)
+  flagsFilter: string[] // cờ đặc biệt: 'non_stock' | 'pallet_carrier' | 'stack_on_top'
+  page: number
+  pageSize: number
+}
+// Khách hàng / Nơi nhận (11/09) — danh mục nuôi %Date tự động
+interface CustomersFilters {
+  search: string
+  channel: string[]
+  hasChannel: '' | '1' | '0'
+  warehouseId: string
+  active: '' | '1' | '0'
+  // Đã khai mức quy định date chưa (đợt 2) — chỗ để tìm ra ai còn sót
+  hasRule: '' | '1' | '0'
+  tab: 'list' | 'channels'
   page: number
   pageSize: number
 }
@@ -201,6 +230,8 @@ interface UserAdminFilters {
   jtDept: string          // tab Chức danh: lọc theo phòng ban
   page: number
   pageSize: number
+  // tab Nhật ký quản trị (03/09)
+  auditAction: string; auditSearch: string; auditFrom: string; auditTo: string; auditPage: number; auditPageSize: number
 }
 interface AttendanceTeamFilters {
   view: 'matrix' | 'raw'
@@ -236,8 +267,59 @@ interface SlottingFilters {
   palletKind: 'FULL' | 'PARTIAL' | 'ALL' // FULL = chỉ hàng chẵn (pallet nguyên — user 18/07: "hầu hết chỉ dồn hàng chẵn")
   tab: 'analysis' | 'plans' | 'config'
 }
+// Sơ đồ kho (08/09): bản vẽ theo MỘT kho; lớp phủ = cách tô màu ô; khu = làm nổi các khu đang chọn
+interface WarehouseMapFilters {
+  warehouseId: string
+  zones: string[]
+  overlay: 'stock' | 'path' | 'none'
+}
+// Việc cần làm (Directed Work 1c, 10/09) — 3 bảng theo vai. `mine` = chỉ việc của chuyến mình được
+// giao lái xe nâng chuyển; `hideDone` = ẩn dòng đã xong (mặc định HIỆN — user chốt "phòng bị quên").
+interface DateRuleFilters {
+  from: string; to: string
+  warehouseId: string
+  state: '' | 'SET' | 'UNSET'
+  search: string
+  // NGUỒN quy tắc (11/09): MANUAL | CUSTOMER | CHANNEL | SYSTEM | SAP | UNSET | REVIEW
+  source: string[]
+  // LOẠI HÀNG của mã (đợt 2) — trục thứ hai của mức, khác Loại kho mà CHUYẾN chở
+  matCategory: string[]
+  // KIỂU quy định: MIN_PCT | MIN_DAYS | FEFO | EXACT | SPLIT
+  kind: string[]
+  page: number; pageSize: number
+}
+
+interface DirectedWorkFilters {
+  warehouseId: string
+  tab: 'INBOX' | 'LOWER' | 'MOVE' | 'SCAN'   // INBOX = hộp việc theo người (đợt C, 12/09) — mặc định cho người mới
+  gdoId: string
+  mine: boolean
+  // Phạm vi của bảng "Cần hạ" (17/09, user: "tại sao k tạo switch việc chung, việc riêng"): rổ việc
+  // hạ là CHUNG toàn kho, nhưng trong đó có hai loại việc riêng — việc ai đó đã bấm "Nhận" (giữ mềm
+  // 10 phút) và dòng lệnh fill đã giao tên (giữ cả ngày). Bảng "Cần đưa ra" có bộ lọc riêng (`mine`,
+  // lọc ở BE theo người được gán lúc Bắt đầu chuyến) nên KHÔNG dùng chung field này.
+  scope: 'all' | 'mine' | 'free'
+  cats: string[]            // lọc Loại kho của mã trong dòng việc (17/09) — chọn NHIỀU loại
+  hideDone: boolean
+}
 interface DashboardFilters {
   warehouseId: string   // '' = tất cả kho trong scope
+  // Khoảng ngày của tab NĂNG SUẤT (27/08) — '' = để component lấy mặc định THÁNG NÀY.
+  // Không lưu sẵn ngày cụ thể: app mở qua tháng mới mà nhớ tháng cũ thì user tưởng mất số liệu.
+  prodFrom: string
+  prodTo: string
+  // Khoảng ngày của tab DỊCH VỤ (28/08) — để RIÊNG với tab Năng suất: hai tab hỏi hai câu khác
+  // nhau, dùng chung một khoảng thì đổi bên này lại đổi luôn bên kia mà người dùng không ngờ.
+  svcFrom: string
+  svcTo: string
+  // Tab KPI (08/09): khoảng ngày riêng + CHU KỲ biểu đồ ('day'|'week'|'month'|'year') + chế độ so kỳ
+  // ('' | 'prev' | 'yoy') + nhóm KPI đang xem bảng theo kho. from/to luôn là ngày YYYY-MM-DD; ô chọn
+  // tuần/tháng/năm chỉ là cách nhập, được quy về ngày đầu/cuối kỳ.
+  kpiFrom: string
+  kpiTo: string
+  kpiGrain: string
+  kpiCompare: string
+  kpiGroup: string
 }
 // Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
 interface FillFilters {
@@ -251,6 +333,9 @@ interface FillFilters {
   cats: string[]                                 // tab Đề xuất: lọc Loại kho của mã
   reportFrom: string
   reportTo: string
+  // tab Lệnh fill: khoảng NGÀY XUẤT của lệnh (lệnh = sổ của một ngày nên đây là bộ lọc chính; rỗng = mọi ngày)
+  ordersFrom: string
+  ordersTo: string
   page: number
   pageSize: number
 }
@@ -304,6 +389,49 @@ interface DoSapFilters {
   od: string
   inPlan: string     // '' tất cả | '1' trong kế hoạch | '0' ngoài kế hoạch
   used: string       // '' tất cả | '1' còn trong chuyến Xuất | '0' không (tìm DO có KH nhưng chuyến đã xóa)
+  flow: string[]     // ZSD02 (22/09): phân loại dòng SALE/STO/INTERNAL/RETURN/DISCOUNT/PALLET/UNKNOWN
+  dispatch: string   // '' | 'ASSIGNED' | 'UNASSIGNED' — trạng thái điều phối xe theo SAP
+  deliveryFrom: string   // khoảng Ngày giao (delivery_date) — độc lập với Ngày nạp
+  deliveryTo: string
+  page: number
+  pageSize: number
+}
+// Sổ SO — tab "Chưa có OD" (dòng ZSD02 chưa có OD), lọc theo Ngày giao
+// Cài đặt TMS → tab Mã dòng xe (23/09): dòng xe con mang mã SAP
+interface VehicleModelFilters {
+  search: string
+  parents: string[]      // id VehicleType; '__none__' = chưa gán cha
+  temps: string[]        // HOT | COLD | MIXED | DRY | '__none__'
+  status: string         // '' | 'active' | 'inactive'
+  capMode: string        // '' | 'PALLET' | 'TON'
+}
+// Cước vận chuyển (23/09): bộ lọc dùng chung 3 tab — kho xuất · ĐVVT · dòng xe · tìm phường
+interface FreightFilters {
+  tab: 'tariffs' | 'surcharges' | 'allocation'
+  warehouseId: string
+  companyId: string
+  modelId: string
+  search: string
+  page: number
+  pageSize: number
+}
+// Điều vận (24/09): kho × ngày giao đang lập; kế hoạch đang mở
+interface DispatchFilters {
+  warehouseId: string
+  planDate: string       // '' → trang mặc định NGÀY MAI (điều vận xếp xe cho hôm sau)
+  planId: string         // kế hoạch đang mở ('' = bản nháp mới nhất của kho×ngày)
+  // Việc của NGƯỜI ở bước này là soát bản máy ghép rồi xác nhận ⇒ lọc theo VẤN ĐỀ, không lọc theo
+  // thuộc tính. '' = tất cả · 'todo' = mọi xe cần người quyết · còn lại là từng loại vấn đề.
+  issue: string
+  todoFirst: boolean     // xe cần xử lý xếp LÊN ĐẦU (mặc định bật — làm từ trên xuống, hết việc là sạch đầu bảng)
+}
+interface SoLinesFilters {
+  search: string
+  dateFrom: string   // Ngày giao (delivery_date); mặc định RỖNG → trang nhắc chọn
+  dateTo: string
+  plant: string
+  status: string[]   // OPEN | HAS_OD | CANCELLED — mặc định ['OPEN']
+  flow: string[]
   page: number
   pageSize: number
 }
@@ -332,7 +460,40 @@ interface ReconcileFilters {
   page: number
   pageSize: number
 }
+/** Chi phí kho — sổ kê khai theo KỲ THÁNG (period rỗng = tháng này, không ghim tháng cứng). */
+interface WarehouseCostFilters {
+  view: 'voucher' | 'line'   // Phiếu (kho × kỳ) | Dòng chi phí (xem 1 khoản mục qua nhiều tháng)
+  periodFrom: string   // 'YYYY-MM'; '' = tháng hiện tại
+  periodTo: string     // '' = bằng periodFrom (một kỳ)
+  warehouseId: string  // '' tất cả | '__shared__' chi phí chung | id kho
+  items: string[]
+  search: string
+  page: number
+  pageSize: number
+}
+/** Truy xuất lô — 2 khoảng ngày TÁCH BẠCH: ngày SX (truy từ lô) ≠ ngày giao (truy từ khách). */
+interface TraceInvFilters {           // tab Hồ sơ truy vết (điều tra theo thùng)
+  from: string; to: string; search: string; page: number
+}
+// FILTER CHUẨN (01/09): mỗi tiêu chí 1 chip, điền ô nào lọc ô đó — dir chọn chiều xuôi/ngược
+interface LotTraceFilters {
+  dir: 'fwd' | 'rev'
+  pallet: string; material: string; batch: string
+  cycle: string; machine: string; nmsx: string
+  npp: string; trip: string; plate: string
+  prodFrom: string; prodTo: string
+  shipFrom: string; shipTo: string
+}
+// export để trang đọc `{ ...LOT_TRACE_DEFAULT, ...stored }` — state cũ đã persist (shape kind/value)
+// thiếu field mới, thiếu default là .trim() nổ
+export const LOT_TRACE_DEFAULT: LotTraceFilters = {
+  dir: 'fwd', pallet: '', material: '', batch: '', cycle: '', machine: '', nmsx: '',
+  npp: '', trip: '', plate: '', prodFrom: '', prodTo: '', shipFrom: '', shipTo: '',
+}
 interface WmsFilterState {
+  lotTrace:          LotTraceFilters
+  traceInv:          TraceInvFilters
+  warehouseCost:     WarehouseCostFilters
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
@@ -346,15 +507,20 @@ interface WmsFilterState {
   alerts:            AlertFilters
   stocktakeCycle:    StocktakeCycleFilters
   slotting:          SlottingFilters
+  warehouseMap:      WarehouseMapFilters
+  dateRules:         DateRuleFilters
+  directedWork:      DirectedWorkFilters
   fill:              FillFilters
   forklift:          ForkliftFilters
   packing:           PackingFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   stocktakeHistory:  StocktakeHistoryFilters
+  moveLog:           MoveLogFilters
   locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
   materials:         MaterialsFilters
+  customers:         CustomersFilters
   inboundReport:     InboundReportFilters
   tmsBookings:       TmsBookingsFilters
   tmsTransfer:       TmsTransferFilters
@@ -363,12 +529,23 @@ interface WmsFilterState {
   attendanceMy:      AttendanceMyFilters
   leave:             LeaveFilters
   doSap:             DoSapFilters
+  soLines:           SoLinesFilters
+  freight:           FreightFilters
+  setFreight:           (f: Partial<FreightFilters>)           => void
+  dispatch:          DispatchFilters
+  setDispatch:          (f: Partial<DispatchFilters>)          => void
+  vehicleModels:     VehicleModelFilters
+  setVehicleModels:     (f: Partial<VehicleModelFilters>)      => void
   khvc:              KhvcFilters
   reconcile:         ReconcileFilters
   setDoSap:             (f: Partial<DoSapFilters>)             => void
+  setSoLines:           (f: Partial<SoLinesFilters>)           => void
   setKhvc:              (f: Partial<KhvcFilters>)              => void
   setReconcile:         (f: Partial<ReconcileFilters>)         => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
+  setWarehouseCost:     (f: Partial<WarehouseCostFilters>)     => void
+  setLotTrace:          (f: Partial<LotTraceFilters>)          => void
+  setTraceInv:          (f: Partial<TraceInvFilters>)          => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
   setAttendanceMy:      (f: Partial<AttendanceMyFilters>)      => void
@@ -384,15 +561,20 @@ interface WmsFilterState {
   setAlerts:            (f: Partial<AlertFilters>)             => void
   setStocktakeCycle:    (f: Partial<StocktakeCycleFilters>)    => void
   setSlotting:          (f: Partial<SlottingFilters>)          => void
+  setWarehouseMap:      (f: Partial<WarehouseMapFilters>)      => void
+  setDateRules:         (f: Partial<DateRuleFilters>)          => void
+  setDirectedWork:      (f: Partial<DirectedWorkFilters>)      => void
   setFill:              (f: Partial<FillFilters>)              => void
   setForklift:          (f: Partial<ForkliftFilters>)          => void
   setPacking:           (f: Partial<PackingFilters>)           => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setStocktakeHistory:  (f: Partial<StocktakeHistoryFilters>)  => void
+  setMoveLog:           (f: Partial<MoveLogFilters>)           => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
+  setCustomers:         (f: Partial<CustomersFilters>)         => void
   setInboundReport:     (f: Partial<InboundReportFilters>)     => void
   setAssignment:        (f: Partial<AssignmentFilters>)        => void
   setTmsBookings:       (f: Partial<TmsBookingsFilters>)       => void
@@ -411,7 +593,10 @@ const INBOUND_DEFAULT: InboundFilters = {
 // và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
 function initialFilters() {
   return {
-    dashboard: { warehouseId: '' },
+    dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '', kpiFrom: '', kpiTo: '', kpiGrain: '', kpiCompare: '', kpiGroup: '' },
+    warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
+    lotTrace: { ...LOT_TRACE_DEFAULT },
+    traceInv: { from: '', to: '', search: '', page: 1 },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),
@@ -442,8 +627,14 @@ function initialFilters() {
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
+    warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
+    dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[],
+                    matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
+    directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, scope: 'all' as const,
+                    cats: [] as string[], hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
-                    onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
+                    onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(),
+                    ordersFrom: '', ordersTo: '', page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
@@ -451,26 +642,34 @@ function initialFilters() {
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
-    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, page: 1, pageSize: 200 },
+    moveLog:          { warehouseId: '', category: '', dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 100 },
+    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, noInMode: '' as FlagMode, noOutMode: '' as FlagMode, page: 1, pageSize: 200, tab: 'list' as const },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
-    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], page: 1, pageSize: 200 },
+    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], dimsFilter: [], flagsFilter: [], page: 1, pageSize: 200 },
+    customers:  { search: '', channel: [], hasChannel: '' as const, warehouseId: '', active: '1' as const,
+                  hasRule: '' as const, tab: 'list' as const, page: 1, pageSize: 200 },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
     },
     tmsBookings: { search: '', dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const, page: 1, pageSize: 200 },
     tmsTransfer: { search: '', dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
-    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__', page: 1, pageSize: 100 },
+    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__', page: 1, pageSize: 100,
+      auditAction: '', auditSearch: '', auditFrom: '', auditTo: '', auditPage: 1, auditPageSize: 50 },
     attendanceTeam: { page: 1, pageSize: 100, view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },
     // Nghỉ phép mặc định = TỪ ĐẦU NĂM đến hôm nay. Trước đây để TRỐNG = kéo TOÀN BỘ lịch sử đơn
     // nghỉ mỗi lần mở trang; vài trăm nhân sự × vài năm là vượt trần 10.000 dòng → trang chết hẳn
     // (400 "thu hẹp khoảng ngày") chứ không chỉ chậm. Cần xem năm cũ thì tự nới khoảng ngày.
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
-    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', page: 1, pageSize: 50 },
+    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
+    soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
+    freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true },
+    vehicleModels: { search: '', parents: [], temps: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
@@ -481,6 +680,9 @@ export const useWmsFilterStore = create<WmsFilterState>()(
     (set) => ({
       ...initialFilters(),
       setDashboard:        (f) => set(s => ({ dashboard:        { ...s.dashboard,        ...f } })),
+      setWarehouseCost:    (f) => set(s => ({ warehouseCost:    { ...s.warehouseCost,    ...f } })),
+      setLotTrace:         (f) => set(s => ({ lotTrace:         { ...LOT_TRACE_DEFAULT, ...s.lotTrace, ...f } })),
+      setTraceInv:         (f) => set(s => ({ traceInv:         { ...s.traceInv,         ...f } })),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setOutboundPrepare:  (f) => set(s => ({ outboundPrepare:  { ...s.outboundPrepare,  ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
@@ -490,6 +692,9 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setWeighTickets:     (f) => set(s => ({ weighTickets:     { ...s.weighTickets,     ...f } })),
       setControlTower:     (f) => set(s => ({ controlTower:     { ...s.controlTower,     ...f } })),
       setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
+      setWarehouseMap:     (f) => set(s => ({ warehouseMap:     { ...s.warehouseMap,     ...f } })),
+      setDateRules:        (f) => set(s => ({ dateRules:        { ...s.dateRules,        ...f } })),
+      setDirectedWork:     (f) => set(s => ({ directedWork:     { ...s.directedWork,     ...f } })),
       setFill:             (f) => set(s => ({ fill:             { ...s.fill,             ...f } })),
       setForklift:         (f) => set(s => ({ forklift:         { ...s.forklift,         ...f } })),
       setPacking:          (f) => set(s => ({ packing:          { ...s.packing,          ...f } })),
@@ -498,9 +703,11 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setStocktakeHistory: (f) => set(s => ({ stocktakeHistory: { ...s.stocktakeHistory, ...f } })),
+      setMoveLog:          (f) => set(s => ({ moveLog:          { ...s.moveLog,          ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
+      setCustomers:        (f) => set(s => ({ customers:        { ...s.customers,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
       setTmsBookings:      (f) => set(s => ({ tmsBookings:      { ...s.tmsBookings,      ...f } })),
@@ -509,14 +716,23 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setAttendanceTeam:   (f) => set(s => ({ attendanceTeam:   { ...s.attendanceTeam,   ...f } })),
       setAttendanceMy:     (f) => set(s => ({ attendanceMy:     { ...s.attendanceMy,     ...f } })),
       setLeave:            (f) => set(s => ({ leave:            { ...s.leave,            ...f } })),
-      setDoSap:            (f) => set(s => ({ doSap:            { ...s.doSap,            ...f } })),
+      // `...DOSAP_DEFAULT` trước: bản lưu localStorage từ trước 22/09 thiếu flow/dispatch/deliveryFrom → spread rồi
+      // đọc `.flow.length` là TRẮNG TRANG (cùng bẫy `merge` của Fill 16/09)
+      setDoSap:            (f) => set(s => ({ doSap:            { ...initialFilters().doSap, ...s.doSap, ...f } })),
+      setSoLines:          (f) => set(s => ({ soLines:          { ...initialFilters().soLines, ...s.soLines, ...f } })),
+      setFreight:          (f) => set(s => ({ freight:          { ...initialFilters().freight, ...s.freight, ...f } })),
+      setDispatch:         (f) => set(s => ({ dispatch:         { ...initialFilters().dispatch, ...s.dispatch, ...f } })),
+      setVehicleModels:    (f) => set(s => ({ vehicleModels:    { ...initialFilters().vehicleModels, ...s.vehicleModels, ...f } })),
       setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
       setReconcile:        (f) => set(s => ({ reconcile:        { ...s.reconcile,        ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
     {
       name: 'wms-filters-v10',
-      storage: createJSONStorage(() => sessionStorage),
+      // localStorage (đổi 21/09 từ sessionStorage): PWA trên điện thoại bị hệ điều hành đóng ngầm khi
+      // chuyển app là mất TRỌN sessionStorage — thủ kho mở lại app thì chuyến đang quét, kho đang chọn,
+      // ngày đang lọc về hết mặc định. Key vẫn gắn user.id qua scopedPersist nên không dính sang người khác.
+      storage: createJSONStorage(() => localStorage),
       // Deep-merge TỪNG slice qua default: dữ liệu persist shape CŨ (thiếu field mới, vd locationIds)
       // sẽ được lấp bằng default → tránh crash khi đọc field chưa có (màn trắng). Setter giữ từ current.
       merge: (persisted, current) => {
@@ -532,6 +748,10 @@ export const useWmsFilterStore = create<WmsFilterState>()(
               ? { ...(def as object), ...(pv as object) }
               : (pv !== undefined ? pv : def)
         }
+        // Lệnh fill: MẶC ĐỊNH khi mở lại là "chưa làm" (user chốt 16/09: "lệnh đã kết thúc không nằm trong filter
+        // mặc định"). Bỏ tick hết trong phiên vẫn xem được tất cả, nhưng trạng thái rỗng KHÔNG được nhớ sang lần mở sau.
+        const fill = merged.fill as { status?: string[] } | undefined
+        if (fill && (!Array.isArray(fill.status) || fill.status.length === 0)) fill.status = ['PENDING']
         return merged as unknown as WmsFilterState
       },
     }

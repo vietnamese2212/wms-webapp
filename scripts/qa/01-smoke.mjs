@@ -1,14 +1,30 @@
 // GÓI SMOKE — mỗi module chính 1 GET + chu trình CRUD Outbound (tạo → sửa → xóa, tự dọn).
-import { login, api, check, finish, FIX } from './lib.mjs'
+import { login, api, check, finish, FIX, realtimeTokenIssued, BASE } from './lib.mjs'
 
 console.log('── GÓI SMOKE ──')
 await login()
 check('Login admin', true)
+// Từ 02/09 realtime đi kênh Broadcast RIÊNG TƯ (đòi vé role=authenticated) — thiếu SUPABASE_JWT_SECRET
+// trên Vercel là vé null ⇒ realtime chết CÂM ở mọi màn (không còn rơi về anon như trước).
+check('Login cấp VÉ realtime (SUPABASE_JWT_SECRET đã cấu hình trên môi trường này)', realtimeTokenIssued())
+
+// /api/health phải PHẢN ÁNH tình trạng DB, không phải luôn "ok" (vá 11/09 — xem app.ts).
+// Đường ĐỎ (DB chết → 503) không dựng lên được từ đây, nên cái khoá được ở đây là: câu trả lời
+// có mang kết luận về DB hay không. Bản cũ trả đúng `{status:'ok'}` và KHÔNG có khoá `db` nào —
+// tức nó không hề nhìn DB; check này đỏ ngay nếu ai đó gỡ phần nhìn đó đi.
+{
+  const r = await fetch(`${BASE}/api/health`)
+  const j = await r.json().catch(() => null)
+  check('/api/health nói được tình trạng DB (có khoá `db`, không phải luôn ok)',
+    r.status === 200 && j?.db === 'ok', `http=${r.status} db=${j?.db ?? '(thiếu)'}`)
+}
 
 // GET các list chính (đủ 200 + shape data)
 const GETS = [
   ['Outbound list',        `/wms/outbound?date_from=${FIX.DATE}&date_to=${FIX.DATE}`],
-  ['Inbound list',         '/wms/inbound-orders?limit=20'],
+  // Đi MODE PHÂN TRANG (?page=) như FE thật: staging dữ liệu lớn ~900 phiếu/ngày → mode mảng cũ
+  // không kèm đủ lọc bị guard RANGE_TOO_WIDE 400 CHỦ ĐÍCH (chặn-có-hướng-dẫn, không cắt âm thầm).
+  ['Inbound list',         `/wms/inbound-orders?page=1&limit=20&date_from=${new Date(Date.now() - 7 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&date_to=${FIX.EXEC_DATE}`],
   ['Inventory list',       '/wms/inventory?limit=20'],
   ['Inventory facets',     '/wms/inventory/facets'],
   ['TMS transfer list',    `/tms/orders?source_type=TRANSFER&date_from=${FIX.DATE}`],

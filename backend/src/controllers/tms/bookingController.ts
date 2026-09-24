@@ -35,7 +35,7 @@ export async function listBookings(req: Request, res: Response) {
     if (status) q = q.eq('status', status)
 
     const { data, error } = await q
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -74,7 +74,7 @@ export async function createBooking(req: Request, res: Response) {
       .select(BOOKING_SELECT)
       .single()
 
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -100,7 +100,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
         const { data: existing, error: dupErr } = await supabase.from('DeliveryBooking')
           .select('vehicle_code')
           .in('vehicle_code', incomingCodes.slice(i, i + 300))
-        if (dupErr) return fail(res, dupErr.message)
+        if (dupErr) return fail(res, dupErr)
         if (existing?.length) dupeCodes.push(...(existing as { vehicle_code: string }[]).map(r => r.vehicle_code))
       }
       if (dupeCodes.length) return fail(res, `Số xe đã tồn tại trong hệ thống: ${dupeCodes.join(', ')}`)
@@ -134,7 +134,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
     const { data, error } = await supabase.from('DeliveryBooking').insert(rows).select('id')
     if (error) {
       if (error.code === '23505') return fail(res, 'Số xe bị trùng, vui lòng kiểm tra lại file')
-      return fail(res, error.message)
+      return fail(res, error)
     }
     return ok(res, { inserted: data.length, skipped: 0 }, 201)
   } catch (e) { return fail(res, String(e)) }
@@ -238,7 +238,7 @@ export async function updateBooking(req: Request, res: Response) {
       .select(BOOKING_SELECT)
       .single()
 
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -260,7 +260,7 @@ export async function deleteBooking(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('DeliveryBooking').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }
 }

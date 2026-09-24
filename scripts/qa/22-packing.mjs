@@ -2,6 +2,7 @@
 // (mở → quét pallet → Giờ kết thúc tính tổng → sửa/hủy) + gate "mở sổ trước mới quét"
 // + chống đua (unique 1-trang-mở per kho+mã+máy; 1-tem-1-dòng-sống) + luật giờ.
 // KHÔNG gửi ảnh trong QA (tránh residue storage) — đường ảnh/OCR verify tay trên Preview.
+import { randomUUID } from 'crypto'
 import { login, api, restAll, restWrite, check, finish, resolveFixtures, BASE, FIX } from './lib.mjs'
 
 const TAG = 'QAPACK'
@@ -10,6 +11,12 @@ const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Mi
 const ddmmyy = today.slice(8, 10) + today.slice(5, 7) + today.slice(2, 4)
 const tem = (n, mat = `${TAG}${n}`) => `${ddmmyy}_${mat}_55_M9_00${n}_B`   // V1 hợp lệ ≥6 đoạn
 const iso = (h, m = 0) => new Date(`${today}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`).toISOString()
+// Đóng trang sổ mà KHÔNG truyền giờ kết thúc thì server lấy "bây giờ" — và fixture đặt giờ bắt đầu
+// 07:00, nên gói chạy trong khoảng 00:00–07:00 giờ VN sẽ có end < start ⇒ app từ chối ĐÚNG LUẬT
+// (422 TIME_ORDER), trang không đóng được, các phép kiểm sau lệch dây chuyền (đo thật 16/08 lúc
+// 00:20: 6 FAIL, trong đó 3 cái báo RUN_AMBIGUOUS vì trang cũ còn mở). Không phải lỗi app — nhưng
+// CI chạy mỗi lần push, push ban đêm là cổng đỏ oan. Mọi lời gọi đóng đều truyền giờ TƯỜNG MINH.
+const END_OK = iso(16, 30)
 
 async function cleanup() {
   await restWrite('packing_logs', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
@@ -17,6 +24,7 @@ async function cleanup() {
   await restWrite('packing_runs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})   // [16] giả lập kho nhận
   await restWrite('warehouse_machines', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})   // [19] danh mục máy
+  await restWrite('PalletLabelPrint', 'DELETE', `warehouse_id=eq.${WH}&printed_by_name=is.null`).catch(() => {})  // [17b] tem in giả lập
 }
 const openRun = (mat, machine, extra = {}) =>
   api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: mat, machine_code: machine, run_date: today, start_at: iso(7, 0), shift: 'Ca 1', cycle: '55', ...extra })
@@ -122,6 +130,19 @@ let runB = null
     `http=${ok1.s} qty=${ok1.j?.data?.qty_cartons}`)
   const r2 = await api(`/wms/packing-logs/${id}/close`, 'POST', { qty_cartons: 54 })
   check('Đóng pallet lần 2 → 409 NOT_OPEN', r2.s === 409 && r2.j?.error?.code === 'NOT_OPEN', `http=${r2.s} code=${r2.j?.error?.code}`)
+
+  // [7b] ĐƠN VỊ CỦA SỐ TRÊN SỔ — lớp lỗi LẶP (`packing-qty-unit-mixup`, 06/09; tái phát 17/09 khi
+  // dựng Sổ pallet): cột `packing_logs.qty_cartons` TÊN là "thùng" nhưng GIÁ TRỊ là BASE. Màn nào
+  // đọc theo TÊN cột sẽ in sai gấp `units_per_carton` lần mà không lỗi nào nổ. Sổ pallet phải trả
+  // đúng ô `qty_base`, và ô `qty_cartons` phải RỖNG — không nguồn nào trong app ghi theo thùng.
+  const pal = (await restAll('packing_logs', `select=pallet_code&id=eq.${id}`))[0]?.pallet_code
+  if (pal) {
+    const led = await api(`/wms/inventory/pallet-ledger?pallet_code=${encodeURIComponent(pal)}`)
+    const pk = (led.j?.data?.events ?? []).find(x => x.kind === 'PACKED')
+    check('[7b] Sổ pallet đọc số sổ đóng gói là BASE (không tin cái tên cột "cartons")',
+      led.s === 200 && !!pk && Number(pk.qty_base) === 54 && pk.qty_cartons == null,
+      `http=${led.s} qty_base=${pk?.qty_base} qty_cartons=${pk?.qty_cartons} · chờ base=54, thùng=rỗng`)
+  }
 }
 
 // [8] HỦY TRANG có pallet → 409 RUN_HAS_PALLETS (bảo toàn sổ)
@@ -141,11 +162,22 @@ let runB = null
   check('Tổng sản lượng chốt = Σ thùng pallet (54) + đếm pallet = 1',
     Number(okR?.j?.data?.qty_total) === 54 && Number(okR?.j?.data?.pallet_count) === 1,
     `qty_total=${okR?.j?.data?.qty_total} pallets=${okR?.j?.data?.pallet_count}`)
+  // [9b] "SL (quy đổi)" = THÙNG quy đổi per mã, KHÔNG phải base thô (ca đêm 20/09: pallet 190 thùng in "4.560").
+  // Đọc lại trang qua GET detail: qty_conv = qty_total ÷ quy cách của chính mã đó (mã không entry ⇒ bằng base).
+  {
+    const d = await api(`/wms/packing-runs/${runA?.id}`)
+    const mat = (await restAll('Material', `select=units_per_carton,entry_unit&material_code=eq.${encodeURIComponent(d.j?.data?.material_code ?? '')}`))[0]
+    const upc = Number(mat?.units_per_carton ?? 0)
+    const expect = mat?.entry_unit && upc > 0 ? Math.round(54 / upc * 1000) / 1000 : 54
+    check('[9b] Trang sổ trả qty_conv = thùng quy đổi theo quy cách mã (nhãn "SL (quy đổi)" không còn đội số base)',
+      d.s === 200 && Number(d.j?.data?.qty_conv) === expect,
+      `http=${d.s} qty_conv=${d.j?.data?.qty_conv} qty_total=${d.j?.data?.qty_total} upc=${upc} entry=${mat?.entry_unit ?? '—'} chờ=${expect}`)
+  }
 }
 
 // [10] Trang ĐÃ ĐÓNG không nhận quét nữa: đóng nốt trang B + trang M9 → quét mã đó lại bị RUN_REQUIRED
 {
-  await api(`/wms/packing-runs/${runB?.id}/close`, 'POST', {})
+  await api(`/wms/packing-runs/${runB?.id}/close`, 'POST', { end_at: END_OK })
   const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(7, `${TAG}1`) })
   check('Mọi trang của mã đã đóng → quét lại 422 RUN_REQUIRED', r.s === 422 && r.j?.error?.code === 'RUN_REQUIRED', `http=${r.s} code=${r.j?.error?.code}`)
 }
@@ -313,22 +345,44 @@ let runB = null
     `http=${qd.s} diff_count=${qd.j?.data?.diff_count} received_qty=${dHit?.received_qty}`)
   await restWrite('InventoryEntry', 'DELETE', `id=eq.${invId}`)
 
-  await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', {})
+  await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', { end_at: END_OK })
   if (yWin?.id) await api(`/wms/packing-runs/${yWin.id}/cancel`, 'POST', {})
 }
 
-// [17] SỐ THÙNG TỰ ĐIỀN THEO QUY CÁCH khi tem KHÔNG có lịch sử in (user 13/08 "số thùng phải
+// [17] SỐ LƯỢNG TỰ ĐIỀN THEO QUY CÁCH khi tem KHÔNG có lịch sử in (user 13/08 "số thùng phải
 // tự nhảy theo quy cách") — nguồn SPEC (không phải MANUAL); dùng mã THẬT có khai quy cách.
+//
+// ⚠️ CỘT qty_cartons LƯU SỐ BASE (như tem in PalletLabelPrint.qty và như mọi số lượng trong app).
+// Quy cách `cartons_per_pallet` là SỐ THÙNG ⇒ phải × units_per_carton. Bản đầu của chính phép kiểm
+// này đòi `qty_cartons === cartons_per_pallet` nên đã KHOÁ hành vi sai vào bộ QA: cùng một cột mang
+// 2 đơn vị tuỳ đường đi (tem in → 6.720 base · quy cách → 140 thùng), tổng sản lượng trang thành
+// phép cộng lẫn đơn vị và cờ "lệch SL sổ ↔ kho" báo oan pallet kho nhận ĐÚNG (đo thật 06/09).
 {
-  const mp = (await restAll('Material', `select=material_code,cartons_per_pallet&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
+  const mp = (await restAll('Material', `select=material_code,cartons_per_pallet,units_per_carton&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
   if (!mp?.cartons_per_pallet) console.log('ℹ️  bỏ qua [17] — mã fixture chưa khai quy cách thùng/pallet')
   else {
+    const upc = Number(mp.units_per_carton) > 0 ? Number(mp.units_per_carton) : 1
+    const specBase = Number(mp.cartons_per_pallet) * upc
     await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [FIX.MAT_POOL], machine_code: 'MQ', cycle: '55' })
     const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1, FIX.MAT_POOL) })
-    check('[17] Tem không có lịch sử in → Số thùng TỰ ĐIỀN theo quy cách (nguồn SPEC)',
-      r.s === 200 && Number(r.j?.data?.qty_cartons) === Number(mp.cartons_per_pallet) && r.j?.data?.qty_source === 'SPEC',
-      `http=${r.s} qty=${r.j?.data?.qty_cartons} src=${r.j?.data?.qty_source} spec=${mp.cartons_per_pallet}`)
-    if (r.j?.data?.id) await api(`/wms/packing-logs/${r.j.data.id}/cancel`, 'POST', {})
+    check('[17] Tem không có lịch sử in → SL tự điền theo quy cách, tính bằng BASE (nguồn SPEC)',
+      r.s === 200 && Number(r.j?.data?.qty_cartons) === specBase && r.j?.data?.qty_source === 'SPEC',
+      `http=${r.s} qty=${r.j?.data?.qty_cartons} src=${r.j?.data?.qty_source} · quy cách ${mp.cartons_per_pallet} thùng × ${upc} = ${specBase} base`)
+
+    // MỘT ĐƠN VỊ DUY NHẤT: pallet có tem in và pallet không có tem in phải ra CÙNG một con số.
+    const temLabel = tem(2, FIX.MAT_POOL)
+    await restWrite('PalletLabelPrint', 'POST', null, {
+      id: randomUUID(), qr_code: temLabel, material_code: FIX.MAT_POOL, machine: 'MQ',
+      qty: specBase, warehouse_id: WH, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).catch(() => {})
+    const rl = await api('/wms/packing-logs/open', 'POST', { qr_code: temLabel })
+    check('[17b] Pallet CÓ tem in và pallet KHÔNG tem in ghi sổ cùng một số (không lẫn thùng/base)',
+      rl.s === 200 && Number(rl.j?.data?.qty_cartons) === Number(r.j?.data?.qty_cartons),
+      `tem in=${rl.j?.data?.qty_cartons} (${rl.j?.data?.qty_source}) · quy cách=${r.j?.data?.qty_cartons} (${r.j?.data?.qty_source})`)
+
+    for (const id of [r.j?.data?.id, rl.j?.data?.id].filter(Boolean))
+      await api(`/wms/packing-logs/${id}/cancel`, 'POST', {})
+    await restWrite('PalletLabelPrint', 'DELETE', `qr_code=eq.${encodeURIComponent(temLabel)}`).catch(() => {})
     const mq = await restAll('packing_runs', `select=id&warehouse_id=eq.${WH}&machine_code=eq.MQ&status=eq.OPEN`)
     for (const rr of mq) await api(`/wms/packing-runs/${rr.id}/cancel`, 'POST', {})
   }
@@ -383,7 +437,7 @@ let runB = null
       }
       const hits = [
         ['PATCH trang sổ', await as5(`/wms/packing-runs/${rid}`, 'PATCH', { shift: 'Ca 3' })],
-        ['Giờ kết thúc trang', await as5(`/wms/packing-runs/${rid}/close`, 'POST', {})],
+        ['Giờ kết thúc trang', await as5(`/wms/packing-runs/${rid}/close`, 'POST', { end_at: END_OK })],
         ['Hủy trang', await as5(`/wms/packing-runs/${rid}/cancel`, 'POST', {})],
         ['PATCH pallet', await as5(`/wms/packing-logs/${lid}`, 'PATCH', { qty_cartons: 1 })],
         ['Đóng pallet', await as5(`/wms/packing-logs/${lid}/close`, 'POST', {})],
@@ -519,7 +573,7 @@ let runB = null
   // máy A cho cùng mã (2 trang OPEN cùng mã sẽ thành RUN_AMBIGUOUS nên phải đóng trang cũ trước).
   const m9 = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'M9' })
   const mA = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'A' })
-  await api(`/wms/packing-runs/${rcId}/close`, 'POST', {})
+  await api(`/wms/packing-runs/${rcId}/close`, 'POST', { end_at: END_OK })
   const rcA = await openRun(`${TAG}C`, 'A', { cycle: '55' })
   const rcAId = rcA.j?.data?.id
   check('[20] mở trang máy A (danh mục có A) → 200', rcA.s === 200, `http=${rcA.s} code=${rcA.j?.error?.code}`)
@@ -532,7 +586,7 @@ let runB = null
   check('[20] Máy ghi vào sổ = máy TRANG SỔ (không nhận override từ body)',
     okMachine.j?.data?.machine_code === 'A', `machine=${okMachine.j?.data?.machine_code}`)
 
-  if (rcAId) await api(`/wms/packing-runs/${rcAId}/close`, 'POST', {})   // có pallet → đóng, không hủy được
+  if (rcAId) await api(`/wms/packing-runs/${rcAId}/close`, 'POST', { end_at: END_OK })   // có pallet → đóng, không hủy được
   for (const id of [m9.j?.data?.id, mA.j?.data?.id]) if (id) await api(`/masterdata/machines/${id}`, 'DELETE')
 }
 
@@ -640,7 +694,7 @@ let runB = null
     Number(r3?.recv_total) === 2 && Number(r3?.received_count) === 2, `recv=${r3?.received_count}/${r3?.recv_total}`)
 
   for (const iid of invIds) await restWrite('InventoryEntry', 'DELETE', `id=eq.${iid}`)
-  if (rid) await api(`/wms/packing-runs/${rid}/close`, 'POST', {})
+  if (rid) await api(`/wms/packing-runs/${rid}/close`, 'POST', { end_at: END_OK })
 }
 
 console.log('\n🧹 dọn…')

@@ -47,10 +47,11 @@ export async function listTransportCompanies(req: Request, res: Response) {
 
 export async function createTransportCompany(req: Request, res: Response) {
   try {
-    const { code, name, type, contact_name, contact_phone, alias_codes } = req.body as {
-      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string; alias_codes?: unknown
+    const { code, name, type, contact_name, contact_phone, alias_codes, tender_required } = req.body as {
+      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string; alias_codes?: unknown; tender_required?: unknown
     }
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
+    if (tender_required !== undefined && typeof tender_required !== 'boolean') return fail(res, 'tender_required phải là true/false', 400)
     const codeU = code.toUpperCase().trim()
     const aliasArr = normAlias(alias_codes).filter(c => c !== codeU)
     const clash = await findCodeClash([codeU, ...aliasArr])
@@ -62,13 +63,14 @@ export async function createTransportCompany(req: Request, res: Response) {
       .insert({
         id: randomUUID(), code: codeU, name: name.trim(),
         type: type ?? 'ĐVVT', alias_codes: aliasArr,
+        tender_required: tender_required === true,   // ĐVVT cần phản hồi khi chào chuyến (Điều vận) — mặc định không
         contact_name: contact_name?.trim() ?? null,
         contact_phone: contact_phone?.trim() ?? null,
         is_active: true, created_at: now, updated_at: now,
         created_by: actor, updated_by: actor,
       })
       .select().single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -81,10 +83,12 @@ export async function updateTransportCompany(req: Request, res: Response) {
     // ĐVVT user: chỉ được sửa công ty của mình
     if (userNccId && id !== userNccId)
       return fail(res, 'Bạn không có quyền chỉnh sửa ĐVVT này', 403)
-    const { name, type, contact_name, contact_phone, is_active, alias_codes } = req.body as {
-      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: unknown
+    const { name, type, contact_name, contact_phone, is_active, alias_codes, tender_required } = req.body as {
+      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: unknown; tender_required?: unknown
     }
+    if (tender_required !== undefined && typeof tender_required !== 'boolean') return fail(res, 'tender_required phải là true/false', 400)
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
+    if (tender_required !== undefined) updates.tender_required = tender_required
     if (name          !== undefined) updates.name          = name.trim()
     if (type          !== undefined) updates.type          = type
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null
@@ -100,8 +104,9 @@ export async function updateTransportCompany(req: Request, res: Response) {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TransportCompany')
-      .update(updates).eq('id', id).select().single()
-    if (error) return fail(res, error.message)
+      .update(updates).eq('id', id).select().maybeSingle()
+    if (error) return fail(res, error)
+    if (!data) return fail(res, 'Không tìm thấy ĐVVT/NCC', 404)
 
     // Cascade is_active → tất cả xe → tất cả driver employee của ĐVVT
     if (is_active !== undefined) {
@@ -142,6 +147,39 @@ export async function deleteTransportCompany(req: Request, res: Response) {
     if (userNccId) return fail(res, 'Không có quyền xóa ĐVVT', 403)
     const { id } = req.params
 
+    // ── ĐẾM THAM CHIẾU TRƯỚC KHI ĐỘNG VÀO BẤT CỨ THỨ GÌ ────────────────────────
+    // Bản cũ xoá cứng tài khoản tài xế → xoá cứng xe → rồi mới DELETE công ty và ĐỂ POSTGRES
+    // báo khoá ngoại. Công ty còn được lệnh vận chuyển / kế hoạch nhập / tồn kho / phiếu nhập /
+    // nhân sự tham chiếu ⇒ bước cuối 23503 → 500 "Lỗi hệ thống", NHƯNG ĐỘI XE VÀ TÀI KHOẢN TÀI XẾ
+    // ĐÃ MẤT VĨNH VIỄN. Người dùng đọc "Lỗi hệ thống" thì hiểu là chưa có gì xảy ra — sai hoàn toàn.
+    // (đo 06/09, gói QA 50 phép [9]: xe còn 0/1 sau một lượt xoá thất bại.)
+    // Nay hỏi trước, từ chối tử tế, và chỉ xoá khi chắc chắn xoá được — như deleteVehicleType.
+    // Kiểm id CÓ THẬT trước tiên. Không chỉ để trả 404 đúng: id sai dạng làm mọi câu đếm dưới đây
+    // ném 22P02 từ trong `fetchAllRowsParallel`, rơi vào `catch` và biến thành 500 "Lỗi hệ thống"
+    // (đo 07/09, gói QA 50 phép [64] — cửa duy nhất của nhóm này còn đỏ sau đợt vá).
+    const { data: cur, error: curErr } = await supabase.from('TransportCompany')
+      .select('id').eq('id', id).maybeSingle()
+    if (curErr) return fail(res, curErr)
+    if (!cur) return fail(res, 'Không tìm thấy ĐVVT/NCC — có thể đã bị xoá trước đó', 404)
+
+    const [orders, planLines, entries, imports, staff] = await Promise.all([
+      supabase.from('TmsOrder').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('inbound_plan_lines').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('ProductionImport').select('id', { count: 'exact', head: true }).eq('ncc_id', id),
+      supabase.from('Employee').select('id', { count: 'exact', head: true }).eq('ncc_id', id).eq('is_driver', false),
+    ])
+    const used: string[] = []
+    if (orders.count) used.push(`${orders.count} lệnh vận chuyển`)
+    if (planLines.count) used.push(`${planLines.count} dòng kế hoạch nhập`)
+    if (entries.count) used.push(`${entries.count} pallet tồn kho`)
+    if (imports.count) used.push(`${imports.count} phiếu nhập`)
+    if (staff.count) used.push(`${staff.count} nhân sự`)
+    if (used.length) {
+      return fail(res, `Không thể xóa: ĐVVT/NCC này đang được dùng bởi ${used.join(', ')}. `
+        + 'Hãy gỡ liên kết trước, hoặc đặt Tạm dừng để ẩn khỏi danh sách chọn.', 409)
+    }
+
     // Lấy tất cả xe của ĐVVT — phân trang (đội xe >1000 → xóa sót driver)
     const vehicles = await fetchAllRowsParallel(() =>
       supabase.from('Vehicle').select('license_plate').eq('ncc_id', id).order('id'))
@@ -164,8 +202,11 @@ export async function deleteTransportCompany(req: Request, res: Response) {
 
     // Hard-delete ĐVVT (Postgres sẽ trả lỗi FK nếu còn record tham chiếu)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await supabase.from('TransportCompany').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    const { data: gone, error } = await supabase.from('TransportCompany').delete().eq('id', id).select('id')
+    if (error) return fail(res, error)
+    // DELETE trên id không tồn tại là "thành công rỗng" — không kiểm thì app báo đã xoá một ĐVVT
+    // chưa từng có, còn ĐVVT thật thì vẫn nằm nguyên trong danh sách.
+    if (!gone?.length) return fail(res, 'Không tìm thấy ĐVVT/NCC — có thể đã bị xoá trước đó', 404)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

@@ -4,7 +4,7 @@ import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
-import { loosePalletRemainder, type MatPalletUnits } from './outboundController'
+import { loosePalletRemainder, looseConfigOf, type MatPalletUnits } from './outboundController'
 
 const now = () => new Date().toISOString()
 
@@ -124,9 +124,10 @@ export async function resolveReconcileTask(req: Request, res: Response) {
       let mu: MatPalletUnits | null = null
       if (item.material_id) {
         const { data: m } = await supabase.from('Material')
-          .select('units_per_carton, entry_unit, base_unit, cartons_per_pallet, warehouse_pallet_overrides').eq('id', item.material_id).maybeSingle()
+          .select('units_per_carton, entry_unit, base_unit, cartons_per_pallet, warehouse_pallet_overrides, category').eq('id', item.material_id).maybeSingle()
         mu = (m as MatPalletUnits) ?? null
       }
+      const loosePol = await looseConfigOf(whId ? [whId] : null)
       // Refresh snapshot od_refs.qty_base từ raw HIỆN TẠI (ACTIVE) — nguồn so sánh lần sau
       const refs = (item.od_refs ?? []) as { od_number: string; od_item: string; qty_base: number }[]
       const refOds = [...new Set(refs.map(r => r.od_number))]
@@ -141,7 +142,7 @@ export async function resolveReconcileTask(req: Request, res: Response) {
 
       await supabase.from('OutboundItem').update({
         cartons_ordered: newOrdered,
-        loose_picking: loosePalletRemainder(newOrdered, mu, whId),
+        loose_picking: loosePalletRemainder(newOrdered, mu, whId, loosePol.of(whId, mu?.category ?? null)),
         od_refs: newRefs,
         updated_at: now(),
       }).eq('id', item.id)

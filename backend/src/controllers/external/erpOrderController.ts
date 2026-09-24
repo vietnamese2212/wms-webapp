@@ -9,6 +9,8 @@ import { safeFilterValue } from '../../utils/search'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
+import { parseListParam } from '../../utils/httpQuery'
+import { isFlow } from '../../services/zsd02Parse'
 
 const now = () => new Date().toISOString()
 
@@ -32,9 +34,9 @@ const PLAN_FILTER_CAP = 800
 
 // Đối chiếu SAP↔WMS sau khi SỬA/XÓA raw tay (AUGMENT — lỗi engine KHÔNG làm hỏng thao tác CRUD raw).
 async function reconcileQuiet(keys: OdKey[], actor: string | null) {
-  if (!keys.length) return
-  try { await reconcileFromSap(keys, { actor: actor || 'DO-SAP-EDIT' }) }
-  catch (e) { console.error('[reconcileFromSap] DO SAP edit:', e) }
+  if (!keys.length) return null
+  try { return await reconcileFromSap(keys, { actor: actor || 'DO-SAP-EDIT' }) }
+  catch (e) { console.error('[reconcileFromSap] DO SAP edit:', e); return null }
 }
 
 // Cột nghiệp vụ cho phép ghi tay (id/created_at do hệ thống; qty là numeric)
@@ -44,6 +46,27 @@ const STR_FIELDS = [
   'ship_to_code', 'ship_to_name', 'plant', 'storage_location', 'batch', 'batch_so',
   'note_delivery', 'note_invoice', 'shipping_point', 'license_plate', 'source',
 ] as const
+
+// ─── Scope kho cho DO SAP (kiểm định 02/09: controller này từng KHÔNG có dấu vết scope, mà sửa raw ở đây dội xuống
+// đơn xuất — nguồn dẫn xuất của Xuất kho). Khoá nối = `Warehouse.sap_plant` ↔ `erp_outbound_orders.plant`.
+// NATIONAL/superadmin → null (không giới hạn). ASSIGNED → tập plant của các kho được gán. Dòng plant NULL vẫn qua
+// (quy ước null-inclusive của mọi lát cắt); riêng THÊM TAY thì phải khai plant thuộc phạm vi (không thì tài khoản
+// kho lẻ tạo được dòng "không nhà máy" rồi reconcile kéo vào đơn của kho khác).
+export async function allowedPlants(req: Request): Promise<string[] | null> {
+  if (req.user?.is_superadmin === true || req.user?.warehouse_scope === 'NATIONAL') return null
+  const ids = req.user?.warehouse_ids ?? []
+  const out = new Set<string>()
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await supabase.from('Warehouse').select('sap_plant').in('id', ids.slice(i, i + 300)).not('sap_plant', 'is', null)
+    for (const w of (data ?? []) as { sap_plant: string | null }[]) if (w.sap_plant) out.add(String(w.sap_plant).trim().toUpperCase())
+  }
+  return [...out]
+}
+export const plantAllowed = (plants: string[] | null, plant: unknown): boolean =>
+  plants === null || plant == null || plant === '' || plants.includes(String(plant).trim().toUpperCase())
+export const plantOrFilter = (plants: string[]): string =>
+  plants.length ? `plant.is.null,plant.in.(${plants.map(p => JSON.stringify(p)).join(',')})` : 'plant.is.null'
+const PLANT_FORBIDDEN = 'Nhà máy (plant) ngoài phạm vi kho được phân quyền'
 
 function pickFields(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -55,9 +78,16 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/do-sap — list phân trang + filter + search (?q, od_number, material_code, ship_to_code, plant, source, batch, in_plan, page, page_size)
 export async function listDoSap(req: Request, res: Response) {
   try {
-    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan, used } = req.query as Record<string, string>
+    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan, used,
+      flow, dispatch, delivery_from, delivery_to } = req.query as Record<string, string>
+    // Bộ lọc cột ZSD02 (22/09): flow (SALE/STO/…; CSV — `?flow=` rỗng = KHÔNG dòng nào, luật parseListParam) ·
+    // dispatch (ASSIGNED/UNASSIGNED) · khoảng Ngày giao (delivery_date)
+    // Whitelist theo FLOWS rồi ghép chuỗi `flow.in.(…)` — giá trị chỉ còn 7 mã cố định, không có ký tự lạ lọt vào filter
+    const flows = parseListParam(flow)?.filter(isFlow) ?? null
+    const dispatchStatus = dispatch === 'ASSIGNED' || dispatch === 'UNASSIGNED' ? dispatch : ''
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
+    if (flows && !flows.length) return ok(res, { items: [], total: 0, page, page_size: pageSize })
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
     const gteFrom = date_from ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : ''
     const lteTo   = date_to   ? new Date(`${date_to}T23:59:59.999+07:00`).toISOString() : ''
@@ -158,8 +188,14 @@ export async function listDoSap(req: Request, res: Response) {
     if (plant)         query = query.eq('plant', plant)
     if (source)        query = query.eq('source', source)
     if (batch)         query = query.ilike('batch', `%${safeFilterValue(batch)}%`)
+    if (flows?.length) query = query.or(`flow.in.(${flows.join(',')})`)   // đã whitelist ở trên
+    if (dispatchStatus) query = query.eq('sap_dispatch_status', dispatchStatus)
+    if (delivery_from) query = query.gte('delivery_date', delivery_from)
+    if (delivery_to)   query = query.lte('delivery_date', delivery_to)
     if (searchOr) query = query.or(searchOr)
     if (restrictOds) query = query.in('od_number', restrictOds)
+    const plants = await allowedPlants(req)
+    if (plants) query = query.or(plantOrFilter(plants))   // nhiều .or() = AND với nhau (mỗi or= là 1 điều kiện riêng)
     query = query.order('od_number', { ascending: true }).order('od_item', { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1)
 
@@ -229,15 +265,17 @@ export async function listDoSap(req: Request, res: Response) {
 }
 
 // GET /external/do-sap/facets — giá trị lọc (plant, source, ship_to) — gọn, lấy distinct từ trang đầu lớn
-export async function doSapFacets(_req: Request, res: Response) {
+export async function doSapFacets(req: Request, res: Response) {
   try {
     // Phân trang né cap-1000: .limit(5000) KHÔNG vượt cap PostgREST (~1000) → facet thiếu giá trị khi bảng >1000 dòng
-    const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').order('id'))
-    const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].sort()
+    const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name, flow').order('id'))
+    const allowed = await allowedPlants(req)
+    const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].filter(p => plantAllowed(allowed, p)).sort()
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()
+    const flows = [...new Set((data ?? []).map(r => r.flow).filter(Boolean))].sort()
     const shiptos = [...new Map((data ?? []).filter(r => r.ship_to_code).map(r => [r.ship_to_code, r.ship_to_name])).entries()]
       .map(([code, name]) => ({ code, name })).sort((a, b) => String(a.code).localeCompare(String(b.code)))
-    return ok(res, { plants, sources, shiptos })
+    return ok(res, { plants, sources, shiptos, flows })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -247,6 +285,14 @@ export async function createDoSap(req: Request, res: Response) {
     const body = req.body as Record<string, unknown>
     const fields = pickFields(body)
     if (!fields.od_number || !fields.od_item) return fail(res, 'Thiếu Delivery (DO) hoặc Item', 400)
+    {
+      const plants = await allowedPlants(req)
+      // Thiếu plant ≠ plant ngoài phạm vi: người phạm vi kho thêm DO tay mà bỏ trống Nhà máy từng nhận 403
+      // "ngoài phạm vi" (ca đêm 20/09, NV SAP TP) — đi tìm lỗi phân quyền trong khi chỉ thiếu một ô. 400 + tên ô + gợi ý.
+      if (plants && !fields.plant)
+        return fail(res, 400, 'PLANT_REQUIRED', `Thiếu Nhà máy (plant) — tài khoản phạm vi kho phải khai plant của kho mình${plants.length ? `: ${plants.join(', ')}` : ' (kho được gán chưa khai mã plant SAP)'}`)
+      if (plants && !plantAllowed(plants, fields.plant)) return fail(res, PLANT_FORBIDDEN, 403)
+    }
     // Chặn trùng (od_number, od_item) — bảng có unique index
     const { data: dup } = await supabase.from('erp_outbound_orders').select('id')
       .eq('od_number', fields.od_number).eq('od_item', fields.od_item).maybeSingle()
@@ -265,6 +311,14 @@ export async function updateDoSap(req: Request, res: Response) {
   try {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
+    {
+      const plants = await allowedPlants(req)
+      if (plants) {
+        const { data: cur } = await supabase.from('erp_outbound_orders').select('plant').eq('id', req.params.id).maybeSingle()
+        if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
+        if (!plantAllowed(plants, cur.plant) || ('plant' in fields && !plantAllowed(plants, fields.plant))) return fail(res, PLANT_FORBIDDEN, 403)
+      }
+    }
     // BASE UNIT: sửa qty_base cho mã có entry → phải nguyên (lấy material_code từ body nếu đổi, ngược lại từ dòng hiện tại)
     if ('qty_base' in fields) {
       const { data: cur } = await supabase.from('erp_outbound_orders').select('material_code').eq('id', req.params.id).maybeSingle()
@@ -288,9 +342,13 @@ export async function updateDoSap(req: Request, res: Response) {
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
-    // Sửa raw tay → đối chiếu lại các đơn WMS dùng dòng OD này
-    await reconcileQuiet([{ od_number: String(data.od_number), od_item: String(data.od_item) }], req.user?.name ?? null)
-    return ok(res, data)
+    // Sửa raw tay → đối chiếu lại các đơn WMS dùng dòng OD này.
+    // TRẢ KẾT QUẢ ĐỐI CHIẾU cho FE (10/09): dòng đã quét thì engine KHÔNG tự áp mà đẩy sang hàng chờ
+    // "Cần xử lý" — bản trước lưu xong trả 200 trơn nên người sửa tưởng đã xong, quay lại Hoàn thành
+    // chuyến vẫn bị chặn y như cũ (đo thật trong diễn tập 10/09). Có số này thì màn hình nói được
+    // "n thay đổi cần duyệt ở tab Cần xử lý".
+    const rec = await reconcileQuiet([{ od_number: String(data.od_number), od_item: String(data.od_item) }], req.user?.name ?? null)
+    return ok(res, { ...(data as Record<string, unknown>), reconcile: rec })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -324,8 +382,9 @@ async function classifyDoSapDelete(rows: DelRow[]): Promise<{ deletable: DelRow[
 // DELETE /external/do-sap/:id (?check=1 = chỉ kiểm, không xóa)
 export async function deleteDoSap(req: Request, res: Response) {
   try {
-    const { data: row } = await supabase.from('erp_outbound_orders').select('od_number, od_item').eq('id', req.params.id).maybeSingle()
+    const { data: row } = await supabase.from('erp_outbound_orders').select('od_number, od_item, plant').eq('id', req.params.id).maybeSingle()
     if (!row) return fail(res, 'Không tìm thấy dòng', 404)
+    if (!plantAllowed(await allowedPlants(req), row.plant)) return fail(res, PLANT_FORBIDDEN, 403)
     const dr: DelRow = { id: req.params.id, od_number: String(row.od_number), od_item: String(row.od_item) }
     const { deletable, blocked } = await classifyDoSapDelete([dr])
     if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
@@ -343,10 +402,16 @@ export async function bulkDeleteDoSap(req: Request, res: Response) {
     const ids = (req.body as { ids?: string[] })?.ids ?? []
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
     const rows: DelRow[] = []
+    const plants = await allowedPlants(req)
+    let outside = 0
     for (let i = 0; i < ids.length; i += 300) {
-      const { data } = await supabase.from('erp_outbound_orders').select('id, od_number, od_item').in('id', ids.slice(i, i + 300))
-      for (const r of ((data ?? []) as DelRow[])) rows.push({ id: r.id, od_number: String(r.od_number), od_item: String(r.od_item) })
+      const { data } = await supabase.from('erp_outbound_orders').select('id, od_number, od_item, plant').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as (DelRow & { plant: string | null })[])) {
+        if (!plantAllowed(plants, r.plant)) { outside++; continue }
+        rows.push({ id: r.id, od_number: String(r.od_number), od_item: String(r.od_item) })
+      }
     }
+    if (outside) return fail(res, `${PLANT_FORBIDDEN} — ${outside} dòng đã chọn thuộc nhà máy ngoài phạm vi`, 403)
     const { deletable, blocked } = await classifyDoSapDelete(rows)
     const blockedOut = blocked.map(b => ({ od_number: b.od_number, od_item: b.od_item, reason: b.reason }))
     if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })

@@ -55,7 +55,7 @@ export async function updateMachine(req: Request, res: Response) {
       .update(patch).eq('id', req.params.id).select(SEL).maybeSingle()
     if (error) {
       if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Kho này đã có máy trùng tên')
-      throw error
+      return fail(res, error)   // id sai dạng = 22P02 → 400; `throw` ở đây thành 500 "Lỗi server"
     }
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy máy')
     ok(res, data)
@@ -66,7 +66,7 @@ export async function deleteMachine(req: Request, res: Response) {
   try {
     const { error, count } = await supabase.from('warehouse_machines')
       .delete({ count: 'exact' }).eq('id', req.params.id)
-    if (error) throw error
+    if (error) return fail(res, error)   // id sai dạng = 22P02 → 400; `throw` ở đây thành 500 "Lỗi server"
     if (!count) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy máy')
     ok(res, { deleted: true })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

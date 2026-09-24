@@ -11,7 +11,7 @@
 //
 // Mirror FE (chỉ phần NHÃN + mã lý do): frontend/src/utils/rotation.ts — sửa luật phải sửa cả hai.
 
-import { resolveShelfLife, type MaterialShelfInfo } from './shelfLife'
+import { effectiveExpiryMs, type MaterialShelfInfo } from './shelfLife'
 
 export const ROTATION_PRINCIPLES = ['FEFO', 'FIFO', 'LIFO'] as const
 export type RotationPrinciple = typeof ROTATION_PRINCIPLES[number]
@@ -47,10 +47,20 @@ export function availableOf(e: RotationEntry): number {
 
 // Pallet có được đưa vào so sánh / gợi ý không.
 // PHẢI khớp đúng điều kiện mà scanItem chấp nhận: còn hàng + KHÔNG bị QA giữ.
-// (qa_status_id có giá trị = đang giữ — bulkUpdateQA chỉ đặt cột này, KHÔNG đổi `status`,
-//  nên đừng suy QA từ status='QUARANTINE'.)
-export function isPickEligible(e: RotationEntry): boolean {
-  if (e.qa_status_id) return false
+// (bulkUpdateQA chỉ đặt `qa_status_id`, KHÔNG đổi `status`, nên đừng suy QA từ status='QUARANTINE'.)
+//
+// ⚠️ `qaHold` là BẮT BUỘC, cố ý: trước 13/09 hàm này coi MỌI giá trị qa_status_id là "đang giữ",
+// nhưng danh mục QAStatus có mã `OK` = ĐÃ DUYỆT và cửa quét vẫn cho xuất pallet đó ⇒ cùng một
+// pallet, quét thì xuất được mà gợi ý/kế hoạch bảo "hết hàng" (đo Ba Vì: 8.760 pallet bị tính là
+// kẹt trong khi chỉ 5 pallet bị giữ thật). Bắt truyền tham số để mọi điểm gọi phải lấy bộ id từ
+// `services/qaStatus.ts` — thiếu là lỗi BIÊN DỊCH chứ không âm thầm sai.
+// HÀNG HẾT HẠN VẪN LẤY ĐƯỢC (user chốt 20/09: "cứ cho phép xuất hàng hết hạn — có trường hợp xuất huỷ"): ca đêm mô
+// phỏng 20/09 từng vá thành "quá hạn = loại khỏi kế hoạch + cửa quét 400 EXPIRED" rồi HOÀN LẠI cùng ngày. FEFO xếp
+// pallet hạn sớm nhất (kể cả đã quá hạn) lên đầu là CHỦ ĐÍCH: dòng đòi mức (MIN_PCT/MIN_DAYS) tự loại pallet 0 % qua
+// `matchesRule`; dòng "không đòi mốc" (xuất huỷ, trả hàng) phải lấy được pallet đó. ĐỪNG thêm lại cửa chặn hết hạn ở đây
+// hay ở scanItem — gói 57 [25r1][25r2] khoá quyết định này.
+export function isPickEligible(e: RotationEntry, qaHold: ReadonlySet<string>): boolean {
+  if (e.qa_status_id && qaHold.has(e.qa_status_id)) return false
   return availableOf(e) > 0
 }
 
@@ -60,16 +70,9 @@ function msOf(v: string | Date | null | undefined): number | null {
   return isNaN(t) ? null : t
 }
 
-// HSD hiệu lực (ms): ưu tiên HSD tường minh trên tem (V2) → suy từ NSX + shelf-life (V1).
-// Cùng công thức nền với computePctDate: shelf-life lấy theo lô → theo NCC → mặc định của mã.
-function effectiveExpiryMs(e: RotationEntry, material: MaterialShelfInfo | null | undefined): number | null {
-  const exp = msOf(e.expiry_date)
-  if (exp != null) return exp
-  const prod = msOf(e.production_date)
-  const days = resolveShelfLife(e.shelf_life_days, material, e.ncc_id)
-  if (prod == null || days <= 0) return null
-  return prod + days * 86_400_000
-}
+// HSD hiệu lực (ms) đến từ `shelfLife.ts` — MỘT nguồn dùng chung với "số ngày còn lại" của quy
+// tắc MIN_DAYS. Trước 11/09 file này giữ bản chép tay riêng: đúng khuôn lỗi mà chính đầu file
+// đang cảnh báo, chỉ là ở tầng sâu hơn một bậc.
 
 // Khóa sắp xếp: NHỎ HƠN = nên lấy TRƯỚC. null = không đủ dữ liệu để xếp (đứng cuối, không kết luận
 // vi phạm — mã không khai NSX/HSD thì không có "thứ tự đúng" để mà sai).
@@ -135,6 +138,9 @@ export function isRotationReason(code: unknown): code is RotationReasonCode {
 export interface RotationCheck {
   principle:          RotationPrinciple
   required:           boolean          // kho có bật "bắt buộc" không
+  // Nguyên tắc đang áp đến từ mặc định KHO hay từ chiến thuật riêng của LOẠI KHO (21/08).
+  // FE hiện thêm "(theo Loại kho)" — KHÔNG được tự suy từ cấu hình kho (bản luật chép tay thứ N).
+  source:             'WAREHOUSE' | 'TYPE'
   violation:          boolean
   date_label:         string           // 'HSD' | 'NSX' — để FE khỏi tự đoán
   scanned_date:       string | null

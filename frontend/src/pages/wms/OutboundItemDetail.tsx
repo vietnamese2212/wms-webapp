@@ -1,12 +1,13 @@
 import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
 import { createPortal } from 'react-dom'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare, Info,
-} from 'lucide-react'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
+import { ArrowLeft, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare, Info } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
@@ -36,30 +37,13 @@ import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { normalizeQR } from '@/utils/qr'
 import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { usePutawayGate } from '@/components/wms/PutawayGate'
+import type { PutawayHint } from '@/utils/putaway'
 import { useRotationGate } from '@/components/wms/RotationGate'
 import { scanRotationOf } from '@/utils/rotation'
-import type { OutboundItem, OutboundStatus } from '@/types'
-
-// ─── Status badge ──────────────────────────────────────────────
-
-const statusCls: Record<OutboundStatus, string> = {
-  PENDING:     'bg-slate-100 text-slate-600',
-  IN_PROGRESS: 'bg-amber-100 text-amber-800',
-  COMPLETED:   'bg-green-100 text-green-800',
-  CANCELLED:   'bg-red-100 text-red-600',
-  PAUSED:      'bg-red-100 text-red-700',
-}
-const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-}
-function Badge({ status }: { status: string }) {
-  const s = status as OutboundStatus
-  return (
-    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
-      {statusLabel[s] ?? status}
-    </span>
-  )
-}
+import type { OutboundItem } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
+import { OutboundStatusBadge } from '@/lib/statusMaps'
 
 function ProgressBar({ scanned, ordered, looseUnconfirmed = 0, mat }: { scanned: number; ordered: number; looseUnconfirmed?: number; mat?: MatUnits | null }) {
   const confirmed     = scanned - looseUnconfirmed
@@ -79,7 +63,7 @@ function ProgressBar({ scanned, ordered, looseUnconfirmed = 0, mat }: { scanned:
         )}
       </div>
       <span className={`text-sm tabular-nums font-medium ${totalPct >= 100 && looseUnconfirmed === 0 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {qtyEntryText(scanned, mat)}/{qtyEntryText(ordered, mat)} {qtyUnitLabel(mat)}
+        {qtyLabel(scanned, mat)} / {qtyLabel(ordered, mat)}
       </span>
     </div>
   )
@@ -90,13 +74,15 @@ type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string } | nul
 interface ScanDialogProps {
   item:    OutboundItem
   gdoId:   string
+  warehouseId: string | null       // kho CỦA CHUYẾN → quyết loại mã camera giải (QR / mã vạch / cả hai)
   cartonScanEnabled?: boolean
   onClose: () => void
   pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }
 
-function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, warehouseId, cartonScanEnabled, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+  const codeTypes = useScanCodeTypes(warehouseId)
   const scannerRef = useRef<QRScannerHandle>(null)
   // Súng quét: bắn 1 phát = chuyển hẳn chế độ súng (tắt camera cả phiên) → sau khi Lưu KHÔNG bật lại camera.
   const [gunMode, setGunMode] = useState(pdaMode)
@@ -109,12 +95,14 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const [pendingCartons, setPendingCartons] = useState('')
   // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  const [leftoverHint,   setLeftoverHint]   = useState<PutawayHint | null>(null)   // quy tắc CẤT của ô vừa chọn (BE chấm)
   // Lỗi VỊ TRÍ (thiếu / vị trí vừa đầy): hiện NGAY TRONG panel và GIỮ tem đang chờ — user chọn lại
   // rồi bấm Lưu, KHÔNG phải quét lại pallet (user 30/07: "muốn chọn lại phải quét tiếp, mất thao tác")
   const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   // Luân chuyển: kết quả do BE tính (xem components/wms/RotationGate.tsx)
   const rotGate = useRotationGate(checkResult?.rotation)
+  const putGate = usePutawayGate(leftoverHint)   // ô đặt phần dư lệch luật + kho bắt buộc → khoá Lưu tới khi có lý do
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
   const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
   // Panel multiscan tem THÙNG neo vào pallet vừa quét (chỉ khi Kho/Loại kho bật cờ)
@@ -164,7 +152,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
-    rotGate.reset()   // tem mới = câu hỏi lý do mới
+    rotGate.reset(); putGate.reset()   // tem mới = câu hỏi lý do mới
     if (isOffline()) {   // trình duyệt biết chắc offline → khỏi bắn check chết
       queueScan(qr_code, undefined, false)
       return
@@ -175,7 +163,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
-          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
+          setLeftoverLoc(null); setLeftoverHint(null); putGate.reset(); setLocError('')   // pallet mới → chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           // Wifi dính AP nhưng không có internet: check fail vì MẠNG → vẫn xếp hàng được
@@ -194,13 +182,13 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const qtyToTake  = Math.max(1, parseInt(pendingCartons) || 1)
   const leftoverQty = Math.max(0, (checkResult?.pallet_remaining ?? 0) - qtyToTake)
   const needLeftoverLoc = !!checkResult && leftoverQty > 0
-  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok && putGate.ok
 
   function handleSave() {
     if (!checkResult || saving || !canSave) return
     scanItem(
       { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake, employee_id: user?.id ?? undefined,
-        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg },
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg, ...putGate.arg },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -223,8 +211,9 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
           const qr = checkResult.pallet_code
           const cartons = qtyToTake
           // Lỗi VỊ TRÍ → giữ nguyên tem đang chờ + báo trong panel để chọn lại rồi Lưu tiếp
-          const emsg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? ''
-          if (isLeftoverLocError(emsg)) { setLocError(emsg); setLeftoverLoc(null); return }
+          const eobj = (err as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
+          const emsg = eobj?.message ?? ''
+          if (isLeftoverLocError(emsg, eobj?.code)) { setLocError(emsg); setLeftoverLoc(null); setLeftoverHint(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL user đã xác nhận; lỗi SAU khi
           // gửi (không rõ kết quả) → uncertain, replay gặp "đã quét" sẽ coi là thành công
@@ -311,14 +300,14 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                     để chữ lại là đè mất chữ trên màn nhỏ (user báo 2 lần, 30/07). */}
                 {!checkResult && !checking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
                   </>
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {checking && (
@@ -393,9 +382,12 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                     mat={item.material}
                     currentLocationCode={checkResult.location_code ?? null}
                     warehouseId={checkResult.warehouse_id ?? null}
+                    materialId={item.material_id ?? undefined}
                     value={leftoverLoc}
                     onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                    onHintChange={h => { setLeftoverHint(h); putGate.reset() }}
                   />
+                  {putGate.box && <div className="mt-1.5">{putGate.box}</div>}
                   {locError && (
                     <p className="mt-1.5 text-xs font-medium text-red-600 flex items-start gap-1">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{locError}
@@ -437,6 +429,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         <CartonScanSheet
           open
           palletCode={cartonFor.palletCode}
+          codeTypes={codeTypes}
           expectedMaterialCode={expectedMaterialCode}
           saving={attaching}
           onSave={saveCarton}
@@ -488,7 +481,8 @@ export default function OutboundItemDetail() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const pctBands = usePctBands()
-  const { data: gdo, isLoading } = useGDO(gdoId)
+  const { data: gdo, isLoading, isError } = useGDO(gdoId)
+  const pageCodeTypes = useScanCodeTypes(gdo?.warehouse_id)   // quét lại tem thùng của pallet đã lưu
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
   const { mutate: confirmLoose,        isPending: confirming    } = useConfirmLoosePickingItem()
@@ -519,10 +513,12 @@ export default function OutboundItemDetail() {
   const hasAutoScanned = useRef(false)
 
   // PDA (user 19/07): bóp cò NGAY TẠI TRANG MÃ → tự mở màn quét chế độ SÚNG (không camera),
-  // validate mã giữ nguyên (BE chặn tem sai mã của item này như quét thường)
+  // validate mã giữ nguyên (BE chặn tem sai mã của item này như quét thường).
+  // Dialog/panel đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ bỏ qua mã — máy đọc bắt
+  // chuỗi phím nhanh/IME ở mọi ô nhập rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
+  const wedgeFormOpen = !!confirmScanId || confirmLooseOpen || showLoscamDialog || !!cartonRowId || !!cartonListId
   useWedgeScanner(code => {
     if (!gdo || showScan) return
-    if (confirmScanId || confirmLooseOpen || showLoscamDialog || cartonRowId || cartonListId) return
     const it = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
     if (!it || it.material?.no_qr_tracking === true || it.status === 'COMPLETED') return
     if (!gdo.started_at || gdo.status === 'PAUSED' || gdo.status === 'COMPLETED') return
@@ -530,7 +526,7 @@ export default function OutboundItemDetail() {
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return
@@ -568,7 +564,7 @@ export default function OutboundItemDetail() {
   const invAggRows = useMemo<InvAggRow[]>(() => {
     const map = new Map<string, InvAggRow>()
     for (const e of sortedInv) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.available; r.entries.push(e) }
@@ -584,6 +580,16 @@ export default function OutboundItemDetail() {
     })
   }, [sortedInv])
 
+  // Deep-link cũ / chuyến đã xóa: 404 → gdo mãi undefined → trước đây SKELETON VĨNH VIỄN
+  // (trang "trắng" không thông báo, không lối về — đo 31/08). Báo tử tế + link quay lại.
+  if (isError || (!isLoading && !gdo)) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không tìm thấy chuyến — có thể đã bị xóa hoặc đường link đã cũ</p>
+        <Link to="/wms/outbound" className="text-xs text-sky-600 underline">← Về Xuất kho</Link>
+      </div>
+    )
+  }
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">
@@ -688,7 +694,7 @@ export default function OutboundItemDetail() {
       })
   } else if (!isDone && canScan) {
     actionItems.push({
-      key: 'scan', icon: QrCode, label: 'Quét pallet', tip: 'Quét QR pallet để xuất hàng',
+      key: 'scan', icon: ScanIcon, label: 'Quét pallet', tip: 'Quét QR pallet để xuất hàng',
       primary: true, variant: 'default',
       onClick: openScan,
     })
@@ -709,7 +715,7 @@ export default function OutboundItemDetail() {
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${itemStatusText(item.status)}`}>
       <span className="flex items-center gap-1">
         <Package className="h-3 w-3 text-slate-400 shrink-0" />
-        <span className="font-medium">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+        <span className="font-medium">{qtyLabel(item.cartons_ordered, item.material)}</span>
         {item.boxes_display > 0 && (
           <span className="ml-1">· <span className="font-medium">{item.boxes_display}</span> hộp</span>
         )}
@@ -740,7 +746,7 @@ export default function OutboundItemDetail() {
         </DialogContent>
       </Dialog>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled}
+        <ScanDialog item={item} gdoId={gdoId!} warehouseId={gdo.warehouse_id} cartonScanEnabled={!!gdo.carton_scan_enabled}
           pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowScan(false); setPdaScan(null) }} />
       )}
@@ -749,6 +755,7 @@ export default function OutboundItemDetail() {
         <CartonScanSheet
           open
           palletCode={cartonRow.pallet_code}
+          codeTypes={pageCodeTypes}
           expectedMaterialCode={item.material?.material_code ?? materialCodeOf(item.material_code_raw) ?? ''}
           initial={(cartonRow.carton_scans ?? []).map(c => ({ code: c.code, match: c.match, at: c.at ? new Date(c.at).getTime() : Date.now() }))}
           saving={attachingRow}
@@ -897,7 +904,9 @@ export default function OutboundItemDetail() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col h-full min-h-0">
+      {/* Khung card chuẩn như OutboundDetail (user 19/08 "fit màn hình đồng nhất") */}
+      <div className="flex flex-col h-full min-h-0 sm:p-3">
+       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
 
         {/* ── Header: ~30% ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
@@ -906,13 +915,13 @@ export default function OutboundItemDetail() {
           <div className="flex items-center gap-x-2 gap-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
-                onClick={() => navigate(`/wms/outbound/${gdoId}`)}
+                onClick={() => navigate(backTarget(`/wms/outbound/${gdoId}`))}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm truncate ${itemStatusText(item.status)}`}>{matCode}</span>
-              <Badge status={item.status} />
+              <span className={`font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${itemStatusText(item.status)}`}>{matCode}</span>
+              <OutboundStatusBadge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}
                 className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
@@ -1099,11 +1108,11 @@ export default function OutboundItemDetail() {
           <Card className="min-w-max">
             {scans.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
-                <QrCode className="h-10 w-10 opacity-30" />
+                <ScanIcon className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
                 {!isDone && !isNoQr && canScan && (
                   <Button size="sm" variant="outline" onClick={openScan}>
-                    <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
+                    <ScanIcon className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
                   </Button>
                 )}
               </div>
@@ -1140,7 +1149,7 @@ export default function OutboundItemDetail() {
                                 disabled={isPaused}
                                 onClick={() => !isPaused && setCartonRowId(se.id)}
                               >
-                                <QrCode className="h-3.5 w-3.5" />
+                                <ScanIcon className="h-3.5 w-3.5" />
                               </button>
                             )}
                           </div>
@@ -1214,6 +1223,7 @@ export default function OutboundItemDetail() {
           </Card>
         </div>
         </div>
+       </div>
       </div>
     </>
   )

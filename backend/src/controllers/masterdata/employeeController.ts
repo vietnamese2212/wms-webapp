@@ -1,10 +1,12 @@
 import { Request, Response } from 'express'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomInt } from 'crypto'
 import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeSearch } from '../../utils/search'
+import { passwordError } from '../../utils/passwordPolicy'
+import { logAdmin, diffFields, ADMIN_AUDIT_ACTIONS } from '../../services/adminAudit'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
@@ -108,18 +110,20 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   return allowed
 }
 
+// Mật khẩu tạm 12 ký tự (≥ PASSWORD_MIN của utils/passwordPolicy), nguồn ngẫu nhiên MẬT MÃ (randomInt) —
+// Math.random đoán được theo seed. Bỏ ký tự dễ nhầm khi đọc/ghi tay (0/O, 1/l/I).
 function generateTempPassword(): string {
   const upper  = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
   const lower  = 'abcdefghjkmnpqrstuvwxyz'
   const digits = '23456789'
   const pool   = upper + lower + digits
   const chars  = [
-    upper[Math.floor(Math.random() * upper.length)],
-    digits[Math.floor(Math.random() * digits.length)],
-    ...Array.from({ length: 6 }, () => pool[Math.floor(Math.random() * pool.length)]),
+    upper[randomInt(upper.length)],
+    digits[randomInt(digits.length)],
+    ...Array.from({ length: 10 }, () => pool[randomInt(pool.length)]),
   ]
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]]
   }
   return chars.join('')
@@ -279,12 +283,20 @@ export async function listEmployeesPaged(req: Request, res: Response) {
     p_offset:       (pageNum - 1) * pageSize,
     p_limit:        pageSize,
   })
-  if (error) return fail(res, error.message)
+  if (error) return fail(res, error)
   const pd = (data ?? {}) as { ids?: string[]; total?: number; active?: number; paused?: number; hidden?: number }
   const ids = pd.ids ?? []
   // fetchFull chỉ nạp ĐÚNG nhân sự của trang này (đã chunk 300 bên trong)
   const rows = ids.length ? await fetchFull({ ids, include_deleted: true }) : []
-  const byId = new Map(rows.map(r => [r.id, r]))
+  // Trạng thái KHOÁ đăng nhập (auth_attempts, 03/09) — 1 truy vấn cho cả trang (chunk 300 khoá), chỉ dòng đang khoá.
+  const acctKeys = rows.map(r => r.email).filter((e): e is string => !!e).map(e => `acct:${e.trim().toLowerCase()}`)
+  const nowIso = new Date().toISOString()
+  const locks = acctKeys.length ? await fetchAllByIdChunks(acctKeys, chunk => supabase.from('auth_attempts')
+    .select('key, locked_until').in('key', chunk).gt('locked_until', nowIso).order('key')) as { key: string; locked_until: string }[] : []
+  const lockByKey = new Map(locks.map(l => [l.key, l.locked_until]))
+  const byId = new Map(rows.map(r => [r.id, {
+    ...r, locked_until: r.email ? lockByKey.get(`acct:${r.email.trim().toLowerCase()}`) ?? null : null,
+  }]))
   return ok(res, {
     rows: ids.map(id => byId.get(id)).filter(Boolean),
     total: pd.total ?? 0, active: pd.active ?? 0, paused: pd.paused ?? 0, hidden: pd.hidden ?? 0,
@@ -341,6 +353,10 @@ export async function createEmployee(req: Request, res: Response) {
     }
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
+    // Tài khoản mới cũng phải có kho ngay từ đầu — xem emptyScopeError. `warehouse_ids` mặc định `[]`
+    // nên nếu không chặn ở đây thì "tạo tài khoản rồi gán kho sau" chính là đường sinh ra kẽ hở.
+    if (await emptyScopeError(res, '', warehouse_scope ?? 'ASSIGNED', warehouse_ids, allowed_categories)) return
+    if (await badWarehouseError(res, warehouse_ids)) return
 
     // ── ỦY QUYỀN CÓ RÀO CHẮN (delegation, không leo thang) ──────────────────────
     // Quản lý đơn vị (có user_admin.create) TẠO ĐƯỢC tài khoản, nhưng KHÔNG được vượt
@@ -406,23 +422,96 @@ export async function createEmployee(req: Request, res: Response) {
       created_by: actor,
       updated_by: actor,
     })
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     if (warehouse_ids.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await supabase.from('UserWarehouseAccess').insert(
+      // KHÔNG nuốt lỗi: ghi kho hỏng mà vẫn trả 201 là đẻ ra tài khoản 0 kho — trạng thái mà
+      // emptyScopeError vừa cấm ở ngay đầu hàm này.
+      const { error: waErr } = await supabase.from('UserWarehouseAccess').insert(
         warehouse_ids.map(wid => ({
           id: randomUUID(), employee_id: empId, warehouse_id: wid,
         }))
       )
+      if (waErr) return fail(res, `Tạo tài khoản xong nhưng KHÔNG gán được kho: ${waErr.message}`, 500)
     }
 
     const rows = await fetchFull({ ids: [empId] })
+    await logAdmin(req, { action: 'EMPLOYEE_CREATE', target_type: 'Employee', target_id: empId, target_label: `${employee_code} · ${name}`,
+      after: { employee_code, name, email: email || null, job_title_id: job_title_id || null, warehouse_scope: warehouse_scope ?? 'ASSIGNED', warehouse_ids, allowed_categories: defaultCategories } })
     return ok(res, { ...rows[0], temp_password: tempPassword }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
+
+/**
+ * CHẶN trạng thái "phạm vi ASSIGNED nhưng KHÔNG kho nào" — trạng thái này VÔ NGHĨA về nghiệp vụ
+ * (người đó không làm được gì) và NGUY HIỂM về kỹ thuật: app đọc mảng kho rỗng theo HAI cách trái
+ * ngược nhau — `[]` giữ nguyên ⇒ chặn sạch (Tồn kho ghi, Nhập, Xuất), nhưng `ids.length ? ids : null`
+ * ⇒ null ⇒ **KHÔNG giới hạn** (Tổng quan, Truy xuất lô, Chi phí kho, facet Tồn kho, dồn/tách pallet).
+ * Đo thật 30/08 trên staging: tài khoản chưa gán kho nào nhìn thấy ĐÚNG BẰNG superadmin ở 5 màn.
+ *
+ * Vá 15 chỗ đọc thì chắc chắn sót (chính lượt quét tay này đã sót 2 chỗ so với đo thực tế) — nên
+ * chặn ở CỬA GHI để trạng thái đó không tồn tại; khi ấy hai cách đọc cho cùng một đáp án.
+ * Cùng triết lý với loại hàng: `allowed_categories` bỏ trống thì tự điền CẢ danh mục (dòng ~378),
+ * cũng là để mảng rỗng không bao giờ xuất hiện.
+ *
+ * Trả true nghĩa là ĐÃ gửi lỗi cho client, caller phải dừng.
+ * @param nextScope   phạm vi SAU khi ghi; undefined = không đổi (đọc lại từ DB)
+ * @param nextWhIds   danh sách kho SAU khi ghi; undefined = không đổi (đếm lại từ DB)
+ */
+/**
+ * Kho gán phải CÓ THẬT. Không kiểm thì `emptyScopeError` bị vô hiệu hoàn toàn: nó đếm ĐỘ DÀI mảng,
+ * nên gửi một id kho không tồn tại là qua cửa — rồi lệnh ghi `UserWarehouseAccess` hỏng vì khoá
+ * ngoại và (trước bản vá này) bị NUỐT, để lại đúng tài khoản 0 kho mà chốt chặn sinh ra để ngăn.
+ * Đo thật 30/08: gửi id toàn số 0 → HTTP 201, tài khoản có 0 kho.
+ * Kiểm TRƯỚC khi ghi để không tạo ra bản ghi dở dang.
+ */
+async function badWarehouseError(res: Response, ids: string[] | undefined): Promise<boolean> {
+  if (!ids?.length) return false
+  const uniq = [...new Set(ids)]
+  // Chunk 300: một đơn vị có hàng trăm kho NPP, mà `.in()` nằm trên URL của PostgREST (trần ~300 id
+  // uuid) và response bị cap 1.000 dòng. Thiếu chunk thì id cuối danh sách bị coi là "không tồn tại"
+  // — tức chặn OAN đúng lúc người ta gán nhiều kho nhất.
+  const rows = await fetchAllByIdChunks(uniq, chunk =>
+    supabase.from('Warehouse').select('id').in('id', chunk).order('id'))
+  const found = new Set((rows as { id: string }[]).map(w => w.id))
+  const missing = uniq.filter(id => !found.has(id))
+  if (missing.length === 0) return false
+  fail(res, `Kho không tồn tại: ${missing.join(', ')}`, 400)
+  return true
+}
+
+async function emptyScopeError(
+  res: Response, empId: string, nextScope: string | undefined, nextWhIds: string[] | undefined,
+  nextCats?: string[] | undefined,
+): Promise<boolean> {
+  if (nextScope === undefined && nextWhIds === undefined && nextCats === undefined) return false
+  let scope = nextScope
+  if (scope === undefined) {
+    const { data } = await supabase.from('Employee').select('warehouse_scope').eq('id', empId).maybeSingle()
+    scope = (data as { warehouse_scope: string | null } | null)?.warehouse_scope ?? 'ASSIGNED'
+  }
+  if (scope === 'NATIONAL') return false          // toàn quốc thì không cần gán kho/loại
+  // TRỤC LOẠI HÀNG y hệt trục kho: `scopeCategoriesOf` cũng đọc mảng rỗng là "không giới hạn".
+  // Lúc TẠO thì BE tự điền CẢ danh mục nên rỗng không xuất hiện, nhưng form Sửa cho phép BỎ TICK
+  // HẾT ⇒ lưu `[]` ⇒ nhìn thấy MỌI loại. Đo thật 30/08: tài khoản bỏ tick hết thấy FG01+FG02,
+  // người được cấp đúng FG01 chỉ thấy FG01.
+  if (nextCats !== undefined && nextCats.length === 0) {
+    fail(res, 'Tài khoản theo phạm vi kho được gán thì phải chọn ÍT NHẤT 1 loại hàng — '
+      + 'bỏ tick hết là tài khoản đọc được MỌI loại hàng', 422)
+    return true
+  }
+  let count = nextWhIds?.length
+  if (count === undefined) {
+    const { data } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', empId)
+    count = (data ?? []).length
+  }
+  if (count > 0) return false
+  fail(res, 'Tài khoản theo phạm vi kho được gán thì phải gán ÍT NHẤT 1 kho — '
+    + 'để trống là tài khoản vừa không thao tác được, vừa đọc được dữ liệu của mọi kho', 422)
+  return true
+}
 
 export async function updateEmployee(req: Request, res: Response) {
   try {
@@ -444,6 +533,9 @@ export async function updateEmployee(req: Request, res: Response) {
       ncc_id?: string | null; is_driver?: boolean; manager_id?: string | null
     }
 
+    if (await emptyScopeError(res, id, warehouse_scope, warehouse_ids, allowed_categories)) return
+    if (await badWarehouseError(res, warehouse_ids)) return
+
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
     // (quyền nằm trên JobTitle, không phải Employee — không đụng module_permissions ở đây)
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
@@ -460,24 +552,37 @@ export async function updateEmployee(req: Request, res: Response) {
     if (is_driver         !== undefined) updates.is_driver         = is_driver
     if (manager_id        !== undefined) updates.manager_id        = manager_id || null
 
+    // Bản TRƯỚC để ghi sổ quản trị (chỉ các cột có thể đổi ở đây + kho hiện gán)
+    const beforeRows = await fetchFull({ ids: [id], include_deleted: true })
+    const beforeRow = beforeRows[0] as (typeof beforeRows[number] & { warehouse_access?: { warehouse_id: string }[] }) | undefined
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('Employee')
       .update(updates)
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     if (warehouse_ids !== undefined) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
       if (warehouse_ids.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('UserWarehouseAccess').insert(
+        // Xoá xong mà ghi lại hỏng = tài khoản mất sạch kho ÂM THẦM → phải báo, không nuốt.
+        const { error: waErr } = await supabase.from('UserWarehouseAccess').insert(
           warehouse_ids.map(wid => ({ id: randomUUID(), employee_id: id, warehouse_id: wid }))
         )
+        if (waErr) return fail(res, `Không gán lại được kho cho tài khoản: ${waErr.message}`, 500)
       }
     }
 
     const rows = await fetchFull({ ids: [id] })
+    if (beforeRow) {
+      const { updated_at: _u, updated_by: _b, ...changed } = updates
+      const d = diffFields(
+        { ...beforeRow, warehouse_ids: (beforeRow.warehouse_access ?? []).map(w => w.warehouse_id).sort() },
+        { ...changed, ...(warehouse_ids !== undefined ? { warehouse_ids: [...warehouse_ids].sort() } : {}) })
+      if (Object.keys(d.after).length)
+        await logAdmin(req, { action: 'EMPLOYEE_UPDATE', target_type: 'Employee', target_id: id, target_label: `${beforeRow.employee_code} · ${beforeRow.name}`, ...d })
+    }
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -511,8 +616,9 @@ export async function setManager(req: Request, res: Response) {
     const { error } = await supabase.from('Employee')
       .update({ manager_id: mgr, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const rows = await fetchFull({ ids: [id] })
+    await logAdmin(req, { action: 'MANAGER_SET', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id, after: { manager_id: mgr } })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -524,17 +630,83 @@ export async function setPassword(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
-    const { password } = req.body as { password?: string }
-    if (!password || password.length < 8) return fail(res, 'Mật khẩu phải có ít nhất 8 ký tự', 400)
+    const { password } = req.body as { password?: unknown }
+    const { data: target } = await supabase.from('Employee').select('email, employee_code').eq('id', id).maybeSingle()
+    if (!target) return fail(res, 'Không tìm thấy nhân viên', 404)
+    const t = target as { email: string | null; employee_code: string }
+    // Chính sách mật khẩu tập trung (utils/passwordPolicy) — admin đặt cũng phải theo, không có "mật khẩu tạm 123456"
+    const policyErr = passwordError(password, { email: t.email, employee_code: t.employee_code })
+    if (policyErr) return fail(res, policyErr, 400)
 
-    const hash = await bcrypt.hash(password, 10)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hash = await bcrypt.hash(password as string, 10)
     const { error } = await supabase.from('Employee')
       .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
+    // Sổ quản trị: chỉ ghi SỰ KIỆN đặt mật khẩu, không bao giờ ghi giá trị
+    await logAdmin(req, { action: 'PASSWORD_SET', target_type: 'Employee', target_id: id, target_label: `${t.employee_code} · ${t.email ?? ''}` })
     return ok(res, { message: 'Đặt mật khẩu thành công' })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Nhật ký quản trị (03/09) — GET /masterdata/admin-audit?page&page_size&action&search&from&to ──
+// Đọc bảng admin_audit_events (services/adminAudit). Phân trang SERVER (range + count) — sổ lớn dần vô hạn.
+// `search` khớp actor_name / target_label / target_id (ilike, escape). from/to = ngày VN.
+export async function listAdminAudit(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | undefined>
+    const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+    const pageSize = Math.min(200, Math.max(1, parseInt(String(q.page_size ?? '50'), 10) || 50))
+    const action = q.action && (ADMIN_AUDIT_ACTIONS as readonly string[]).includes(q.action) ? q.action : null
+    if (q.action && !action) return fail(res, `Hành động không hợp lệ (hợp lệ: ${ADMIN_AUDIT_ACTIONS.join(', ')})`, 400)
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/
+    if ((q.from && !dateRe.test(q.from)) || (q.to && !dateRe.test(q.to))) return fail(res, 'from/to phải là YYYY-MM-DD', 400)
+
+    let sel = supabase.from('admin_audit_events')
+      .select('id, actor_id, actor_name, ip, action, target_type, target_id, target_label, before, after, created_at', { count: 'exact' })
+    if (action) sel = sel.eq('action', action)
+    if (q.from) sel = sel.gte('created_at', new Date(`${q.from}T00:00:00+07:00`).toISOString())
+    if (q.to)   sel = sel.lt('created_at', new Date(new Date(`${q.to}T00:00:00+07:00`).getTime() + 86400_000).toISOString())
+    if (q.search) { const s = safeSearch(q.search); sel = sel.or(`actor_name.ilike.%${s}%,target_label.ilike.%${s}%,target_id.ilike.%${s}%`) }
+    const from = (pageNum - 1) * pageSize
+    const { data, error, count } = await sel.order('created_at', { ascending: false }).range(from, from + pageSize - 1)
+    if (error) return fail(res, error)
+    return ok(res, { rows: data ?? [], total: count ?? 0, page: pageNum, page_size: pageSize, actions: ADMIN_AUDIT_ACTIONS })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Mở khoá đăng nhập (03/09) ────────────────────────────────────────────────
+// Khoá 10 lần sai/15' nằm ở bảng auth_attempts (migration 20260903). Trước đây mở khoá = xoá dòng bằng tay
+// trong DB — không admin đơn vị nào làm được. Gỡ CẢ khoá `ip:` của những địa chỉ tài khoản này vừa đăng nhập
+// sai trong 15' (30 sai/15' theo IP): mở khoá tài khoản mà máy của người đó vẫn bị chặn thì như chưa mở.
+const AUTH_KEY_PREFIX = { acct: 'acct:', ip: 'ip:' }
+
+export async function unlockAccount(req: Request, res: Response) {
+  try {
+    if (await blockIfTargetSuperadmin(req, res)) return
+    if (await blockIfOutOfScope(req, res, req.params.id)) return
+    const { data: emp } = await supabase.from('Employee').select('id, email').eq('id', req.params.id).maybeSingle()
+    if (!emp) return fail(res, 'Không tìm thấy nhân viên', 404)
+    const email = String((emp as { email: string | null }).email ?? '').trim().toLowerCase()
+    if (!email) return fail(res, 'Nhân viên chưa có tên đăng nhập', 400)
+
+    const since = new Date(Date.now() - 15 * 60_000).toISOString()
+    const { data: evs } = await supabase.from('auth_login_events').select('ip')
+      .eq('email', email).eq('ok', false).gte('created_at', since).limit(50)
+    const ips = [...new Set(((evs ?? []) as { ip: string | null }[]).map(e => e.ip).filter((x): x is string => !!x))]
+    const keys = [`${AUTH_KEY_PREFIX.acct}${email}`, ...ips.map(ip => `${AUTH_KEY_PREFIX.ip}${ip}`)]
+    // ≤51 khoá (1 acct + ≤50 ip) — xoá theo lô cho khớp luật `.in()` qua chunk (DELETE cũng đi URL)
+    for (const chunk of [keys.slice(0, 300)]) {
+      const { error } = await supabase.from('auth_attempts').delete().in('key', chunk)
+      if (error) return fail(res, error)
+    }
+    // Vết: ai mở khoá cho ai (nhật ký đăng nhập là nơi kiểm tra chuỗi khoá/mở)
+    await supabase.from('auth_login_events').insert({
+      email, ip: String(req.ip ?? ''), ok: true, reason: `UNLOCKED_BY:${req.user?.sub ?? ''}`, employee_id: (emp as { id: string }).id,
+    })
+    await logAdmin(req, { action: 'ACCOUNT_UNLOCK', target_type: 'Employee', target_id: (emp as { id: string }).id, target_label: email, after: { keys_cleared: keys.length } })
+    return ok(res, { message: 'Đã mở khoá đăng nhập', keys_cleared: keys.length })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -564,6 +736,14 @@ export async function deleteEmployee(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
+    // Nhãn cho sổ quản trị lấy TRƯỚC khi xoá (xoá cứng xong thì không còn tên)
+    const { data: tgt } = await supabase.from('Employee').select('employee_code, name').eq('id', id).maybeSingle()
+    // Không có người này thì không có gì để xoá — và tuyệt đối không ghi một dòng "đã xoá nhân sự"
+    // vào NHẬT KÝ QUẢN TRỊ cho một id không tồn tại (đo 07/09: sổ ghi 1 dòng cho id ma). Nhật ký là
+    // chứng cứ ai làm gì; bơm vào đó việc chưa từng xảy ra là làm hỏng đúng thứ dùng để tra cứu.
+    if (!tgt) return fail(res, 'Không tìm thấy nhân viên — có thể đã bị xoá trước đó', 404)
+    const label = `${(tgt as { employee_code: string }).employee_code} · ${(tgt as { name: string }).name}`
+    const audit = (mode: 'soft' | 'hard') => logAdmin(req, { action: 'EMPLOYEE_DELETE', target_type: 'Employee', target_id: id, target_label: label, after: { deleted: mode } })
 
     const hasHistory = await employeeHasHistory(id)
     if (hasHistory) {
@@ -571,14 +751,15 @@ export async function deleteEmployee(req: Request, res: Response) {
       const { error: softErr } = await supabase.from('Employee')
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
-      if (softErr) return fail(res, softErr.message)
+      if (softErr) return fail(res, softErr)
+      await audit('soft')
       return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
     }
 
     // Không có lịch sử → hard delete (FK constraint thực như UserWarehouseAccess sẽ cascade)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: hardErr } = await supabase.from('Employee').delete().eq('id', id)
-    if (!hardErr) return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' })
+    if (!hardErr) { await audit('hard'); return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' }) }
 
     // Vẫn còn FK constraint DB-level khác (23503) → soft delete
     if (hardErr.code === '23503') {
@@ -586,11 +767,12 @@ export async function deleteEmployee(req: Request, res: Response) {
       const { error: softErr } = await supabase.from('Employee')
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
-      if (softErr) return fail(res, softErr.message)
+      if (softErr) return fail(res, softErr)
+      await audit('soft')
       return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
     }
 
-    return fail(res, hardErr.message)
+    return fail(res, hardErr)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -601,12 +783,24 @@ export async function restoreEmployee(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
+    // "Khôi phục" chỉ được HOÀN TÁC MỘT LẦN XOÁ. Bản cũ update vô điều kiện nên nó cũng bật lại
+    // `is_active` của tài khoản bị KHOÁ (`is_active=false`, chưa từng xoá — thao tác kỷ luật/nghỉ
+    // việc, làm bằng quyền `user_admin.edit`). Người chỉ có quyền XOÁ mở lại được tài khoản mà
+    // người khác vừa khoá = leo thang quyền (đo 06/09, gói QA 49 phép [69]).
+    const { data: cur } = await supabase.from('Employee')
+      .select('id, deleted_at, employee_code, name').eq('id', id).maybeSingle()
+    if (!cur) return fail(res, 'Không tìm thấy nhân viên', 404)
+    if (!(cur as { deleted_at: string | null }).deleted_at) {
+      return fail(res, 'Tài khoản này chưa bị xoá nên không có gì để khôi phục. '
+        + 'Nếu tài khoản đang bị KHOÁ, hãy mở lại ở phần Sửa thông tin (cần quyền sửa nhân viên).', 400)
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('Employee')
       .update({ deleted_at: null, is_active: true, updated_at: new Date().toISOString() })
       .eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const rows = await fetchFull({ ids: [id], include_deleted: true })
+    await logAdmin(req, { action: 'EMPLOYEE_RESTORE', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -618,17 +812,29 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được sửa phạm vi kho', 403)
     const { id } = req.params
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
+    // Body thiếu/sai kiểu → 400 sạch (bodyfuzz 31/08: {} làm .filter trên undefined nổ 500)
+    if (!Array.isArray(warehouse_ids)) return fail(res, 'warehouse_ids phải là MẢNG id kho', 400)
+    if (await emptyScopeError(res, id, undefined, warehouse_ids)) return
+    if (await badWarehouseError(res, warehouse_ids)) return
+
+    const { data: beforeWa } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', id).limit(1000)
+    const beforeIds = ((beforeWa ?? []) as { warehouse_id: string }[]).map(w => w.warehouse_id).sort()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
     if (warehouse_ids.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await supabase.from('UserWarehouseAccess').insert(
+      // Như updateEmployee: đã xoá phạm vi cũ, ghi lại hỏng mà im lặng = mất sạch kho âm thầm.
+      const { error: waErr } = await supabase.from('UserWarehouseAccess').insert(
         warehouse_ids.map(wid => ({ id: randomUUID(), employee_id: id, warehouse_id: wid }))
       )
+      if (waErr) return fail(res, `Không đặt được phạm vi kho: ${waErr.message}`, 500)
     }
 
     const rows = await fetchFull({ ids: [id] })
+    const afterIds = [...warehouse_ids].sort()
+    if (JSON.stringify(beforeIds) !== JSON.stringify(afterIds))
+      await logAdmin(req, { action: 'WAREHOUSE_ACCESS', target_type: 'Employee', target_id: id, target_label: rows[0] ? `${rows[0].employee_code} · ${rows[0].name}` : id,
+        before: { warehouse_ids: beforeIds }, after: { warehouse_ids: afterIds } })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }

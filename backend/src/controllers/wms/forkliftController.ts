@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { getRetentionDays } from '../../utils/settings'
+import { isUuid } from '../../utils/ids'
 
 // ─── Module XE NÂNG — check list an toàn hàng ngày + đồng hồ giờ vận hành ─────
 // Bảng: forklift_vehicles (danh mục xe) · forklift_checklist_items (hạng mục check
@@ -107,7 +108,7 @@ export async function listForklifts(req: Request, res: Response) {
     if (req.query.include_inactive !== '1') q = q.eq('is_active', true)
     return q
   }).catch((e: Error) => e)
-  if (rows instanceof Error) return fail(res, rows.message, 500)
+  if (rows instanceof Error) return fail(res, rows)
   return ok(res, rows)
 }
 
@@ -132,7 +133,7 @@ export async function createForklift(req: Request, res: Response) {
   }).select('id, code').single()
   if (error) {
     if (error.code === '23505') return fail(res, `Mã xe "${codeNorm}" đã tồn tại`, 409)
-    return fail(res, error.message, 500)
+    return fail(res, error)
   }
   return ok(res, data, 201)
 }
@@ -163,7 +164,7 @@ export async function updateForklift(req: Request, res: Response) {
   const { error } = await supabase.from('forklift_vehicles').update(patch).eq('id', id)
   if (error) {
     if (error.code === '23505') return fail(res, 'Mã xe đã tồn tại', 409)
-    return fail(res, error.message, 500)
+    return fail(res, error)
   }
   return ok(res, { id })
 }
@@ -180,7 +181,7 @@ export async function deleteForklift(req: Request, res: Response) {
   if ((count ?? 0) > 0) return fail(res, `Xe đã có ${count} bản ghi check list — chuyển "Ngừng dùng" thay vì xóa (giữ lịch sử)`, 409)
 
   const { error } = await supabase.from('forklift_vehicles').delete().eq('id', id)
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   return ok(res, { id })
 }
 
@@ -219,7 +220,7 @@ export async function listChecklistItems(req: Request, res: Response) {
     if (req.query.include_inactive !== '1') q = q.eq('is_active', true)
     return q
   }).catch((e: Error) => e)
-  if (rows instanceof Error) return fail(res, rows.message, 500)
+  if (rows instanceof Error) return fail(res, rows)
   return ok(res, rows)
 }
 
@@ -245,7 +246,7 @@ export async function createChecklistItem(req: Request, res: Response) {
     is_active: true,
     updated_at: new Date().toISOString(),
   }).select('id').single()
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   return ok(res, data, 201)
 }
 
@@ -276,7 +277,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
     patch.warehouse_id = newWh
   }
   const { error, data } = await supabase.from('forklift_checklist_items').update(patch).eq('id', id).select('id').maybeSingle()
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   if (!data) return fail(res, 'Không tìm thấy hạng mục', 404)
   return ok(res, { id })
 }
@@ -289,7 +290,7 @@ export async function deleteChecklistItem(req: Request, res: Response) {
   const scopeErr = guardItemScope(req, cur.warehouse_id ?? null)
   if (scopeErr) return fail(res, scopeErr, 403)
   const { error } = await supabase.from('forklift_checklist_items').delete().eq('id', id)
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   return ok(res, { id })
 }
 
@@ -310,7 +311,7 @@ export async function getBoard(req: Request, res: Response) {
     if (scope !== null) q = q.in('warehouse_id', scope)
     return q
   }).catch((e: Error) => e)
-  if (vehicles instanceof Error) return fail(res, vehicles.message, 500)
+  if (vehicles instanceof Error) return fail(res, vehicles)
   if (vehicles.length === 0) return ok(res, { date, vehicles: [] })
 
   const ids = vehicles.map((v: { id: string }) => v.id)
@@ -320,7 +321,7 @@ export async function getBoard(req: Request, res: Response) {
       .select('id, forklift_id, status, hour_meter, checklist, issue_count, note, checked_by, photo_path, updated_at')
       .eq('log_date', date).in('forklift_id', chunk).order('forklift_id'),
   ).catch((e: Error) => e)
-  if (logs instanceof Error) return fail(res, logs.message, 500)
+  if (logs instanceof Error) return fail(res, logs)
 
   // Bucket riêng tư → phát signed URL 1h cho ảnh chụp xe (1 lời gọi batch)
   const photoUrls = await signPhotoUrls((logs as { photo_path?: string | null }[])
@@ -341,7 +342,7 @@ export async function getBoard(req: Request, res: Response) {
       // order phải DUY NHẤT cho phân trang .range() — (forklift_id, log_date) là unique key
       .in('forklift_id', chunk).order('log_date', { ascending: false }).order('forklift_id'),
   ).catch((e: Error) => e)
-  if (prevRows instanceof Error) return fail(res, prevRows.message, 500)
+  if (prevRows instanceof Error) return fail(res, prevRows)
 
   const prevByForklift = new Map<string, { log_date: string; hour_meter: number }>()
   for (const r of prevRows as { forklift_id: string; log_date: string; hour_meter: number }[]) {
@@ -447,7 +448,7 @@ export async function saveLog(req: Request, res: Response) {
   const { data, error } = await supabase.from('forklift_daily_logs')
     .upsert(record, { onConflict: 'forklift_id,log_date' })
     .select('id, forklift_id, log_date, status, hour_meter, issue_count').single()
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   // Chụp lại = dọn ảnh cũ (fire-and-forget — orphan không phá gì, đừng làm hỏng response)
   if (photoPath && existing?.photo_path && existing.photo_path !== photoPath)
     void supabase.storage.from(PHOTO_BUCKET).remove([existing.photo_path]).then(() => {}, () => {})
@@ -467,7 +468,7 @@ export async function deleteLog(req: Request, res: Response) {
   const whId = (cur.forklift as unknown as { warehouse_id: string } | null)?.warehouse_id
   if (scope !== null && whId && !scope.includes(whId)) return fail(res, 'Bản ghi ngoài phạm vi kho được gán', 403)
   const { error } = await supabase.from('forklift_daily_logs').delete().eq('id', id)
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   if (cur.photo_path) void supabase.storage.from(PHOTO_BUCKET).remove([cur.photo_path]).then(() => {}, () => {})
   return ok(res, { id })
 }
@@ -490,17 +491,21 @@ export async function listLogs(req: Request, res: Response) {
       .eq('forklift_id', fkId).gte('log_date', range.from).lte('log_date', range.to)
       .order('log_date', { ascending: false }),
   ).catch((e: Error) => e)
-  if (rows instanceof Error) return fail(res, rows.message, 500)
+  if (rows instanceof Error) return fail(res, rows)
   return ok(res, rows)
 }
 
 // GET /wms/forklift-logs/:id — chi tiết 1 bản ghi (dialog xem hạng mục đạt/lỗi)
 export async function getLog(req: Request, res: Response) {
   const { id } = req.params
+  // `forklift_daily_logs.id` là cột UUID → id rác lọt xuống Postgres = 22P02 → **500** (đo 21/08:
+  // chính 3 dòng `invalid input syntax for type uuid: "undefined"` trong error_logs ra từ đây).
+  // Id sai là lỗi ĐẦU VÀO ⇒ 400, đừng để tai mắt production kêu như app sập.
+  if (!isUuid(id)) return fail(res, 'Mã bản ghi không hợp lệ', 400)
   const { data, error } = await supabase.from('forklift_daily_logs')
     .select('id, forklift_id, log_date, status, hour_meter, checklist, issue_count, note, checked_by, photo_path, created_at, updated_at, forklift:forklift_vehicles(id, code, name, warehouse_id)')
     .eq('id', id).maybeSingle()
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
   if (!data) return fail(res, 'Không tìm thấy bản ghi', 404)
   const scope = scopeWhIds(req)
   const whId = (data.forklift as unknown as { warehouse_id: string } | null)?.warehouse_id
@@ -542,7 +547,7 @@ export async function getReport(req: Request, res: Response) {
   const { data, error } = await supabase.rpc('forklift_report', {
     p_from: range.from, p_to: range.to, p_warehouse_ids: whIds,
   })
-  if (error) return fail(res, error.message, 500)
+  if (error) return fail(res, error)
 
   type ReportRow = {
     id: string; forklift_id: string; code: string; forklift_name: string | null; warehouse_id: string

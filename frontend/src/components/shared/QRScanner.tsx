@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Flashlight, FlashlightOff, Minus, Plus } from 'lucide-react'
 import { isValidTem } from '@/utils/qr'
-import { createScanEngine, drawBoxes, type Box, type ScanEngine, type ScanHit, type ExtCapabilities } from '@/utils/scanEngine'
+import { createScanEngine, drawBoxes, type Box, type ScanEngine, type ScanHit, type ExtCapabilities, type ScanCodeTypes } from '@/utils/scanEngine'
 
 interface QRScannerProps {
   onScan: (value: string) => void
@@ -18,6 +18,10 @@ interface QRScannerProps {
   // resume() tự bật lại camera (~0,5s). Flow auto-resume 1,5s (Xuất/Nhập) ĐỪNG bật cờ này —
   // tắt/bật mỗi lượt quét liên tục chỉ thêm trễ.
   stopOnScan?: boolean
+  // Loại mã camera được giải, theo cấu hình KHO của nghiệp vụ đang quét (hook useScanCodeTypes).
+  // BẮT BUỘC khai (không có giá trị mặc định) — màn quét mới mà quên thì phải là LỖI BIÊN DỊCH,
+  // chứ không âm thầm giải cả mã vạch ở kho chỉ dùng tem QR (đúng kiểu lọt của bug 21/08).
+  codeTypes: ScanCodeTypes
 }
 
 export interface QRScannerHandle {
@@ -30,7 +34,7 @@ export interface QRScannerHandle {
 // Confirm-flow (Nhập): quét → onScan → parent hiện preview, gọi resume() cho lần kế. Instant-flow (Xuất): onScan → API.
 // KHÔNG phát bíp ở đây — parent tự bíp trong onScan (tránh bíp đôi).
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
-  function QRScanner({ onScan, fill, active = true, stopOnScan = false }, ref) {
+  function QRScanner({ onScan, fill, active = true, stopOnScan = false, codeTypes }, ref) {
     const videoRef   = useRef<HTMLVideoElement>(null)
     const overlayRef = useRef<HTMLCanvasElement>(null)
     const freezeRef  = useRef<HTMLCanvasElement>(null)   // ảnh chụp khung cuối khi stopOnScan tắt camera
@@ -41,6 +45,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     const stoppedRef = useRef(false)
     const pausedRef  = useRef(false)
     const busyRef    = useRef(false)
+    const codeTypesRef = useRef(codeTypes)
+    codeTypesRef.current = codeTypes                 // vòng quét đọc giá trị mới nhất
     const settingUpRef = useRef(false)                   // đang getUserMedia — resume() đừng bump epoch trùng
     const pendingRef = useRef<{ text: string; hits: number } | null>(null)   // mã lạ: cần thấy 2 lần mới nhận (lọc "bóng ma")
     const [epoch, setEpoch] = useState(0)                // bump = mở lại camera sau khi stopOnScan đã tắt
@@ -149,7 +155,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         if (!video) return
         settingUpRef.current = true
         try {
-          const engine = await createScanEngine()
+          const engine = await createScanEngine(codeTypesRef.current)
           if (destroyed) return
           engineRef.current = engine
 
@@ -193,7 +199,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         setTorchOn(false)          // track mới luôn mở với đèn pin tắt — icon phải khớp
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [active, epoch])
+    }, [active, epoch, codeTypes])
 
     function applyZoom(raw: number) {
       const track = streamRef.current?.getVideoTracks()[0]

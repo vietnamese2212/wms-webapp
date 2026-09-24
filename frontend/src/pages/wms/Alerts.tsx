@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal } from 'lucide-react'
+import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -14,12 +14,14 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
-import { useAlerts, useAckAlert, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
+import { useAlerts, useAckAlert, useScanAlerts, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const RULE_LABEL: Record<string, string> = {
   EXPIRY:     'Tồn cận date',
@@ -28,8 +30,12 @@ const RULE_LABEL: Record<string, string> = {
   WEIGH_DIFF: 'Lệch cân',
   BE_ERRORS:  'Lỗi hệ thống',
   PACKING_UNRECEIVED: 'Sổ đóng gói — kho chưa nhận',
+  AUTH_LOCKOUT: 'Bảo mật — nhiều tài khoản bị khoá',
+  ADMIN_NEW_IP: 'Bảo mật — admin đăng nhập IP mới',
 }
 const RULE_BADGE: Record<string, string> = {
+  AUTH_LOCKOUT: 'bg-red-100 text-red-800',
+  ADMIN_NEW_IP: 'bg-red-100 text-red-800',
   EXPIRY:     'bg-amber-100 text-amber-800',
   GATE_DWELL: 'bg-sky-100 text-sky-700',
   TRIP_LATE:  'bg-violet-100 text-violet-700',
@@ -77,11 +83,19 @@ export default function Alerts() {
   const wanted = urlTab === 'personal' || urlTab === 'general' ? urlTab : f.tab
   const tab: 'personal' | 'general' | 'thresholds' =
     (wanted === 'general' && !canAlerts) || (wanted === 'thresholds' && !canTh) ? 'personal' : wanted
+  // Key khớp PAGE_TABS['/wms/alerts'] — đã lọc theo quyền sẵn có
+  const permTabs = useMemo(() => [
+    { key: 'personal' as const, label: 'Cá nhân' },
+    ...(canAlerts ? [{ key: 'general' as const, label: 'Thông báo chung' }] : []),
+    ...(canTh ? [{ key: 'thresholds' as const, label: 'Cài đặt ngưỡng' }] : []),
+  ], [canAlerts, canTh])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/alerts', permTabs, tab, k => setF({ tab: k }))
 
   const tabBar = (
     <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
       <BellRing className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
-      {([['personal', 'Cá nhân', true], ['general', 'Thông báo chung', canAlerts], ['thresholds', 'Cài đặt ngưỡng', canTh]] as const).map(([k, label, show]) => show && (
+      {tabs.map(({ key: k, label }) => (
         <button key={k} type="button"
           onClick={() => { window.history.replaceState(null, '', '/wms/alerts'); setF({ tab: k }) }}
           className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors ${
@@ -149,9 +163,9 @@ function PersonalTab({ tabBar }: { tabBar: ReactNode }) {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+                <TableEmptyRow colSpan={5}>Đang tải…</TableEmptyRow>
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Chưa có thông báo nào cho bạn</TableCell></TableRow>
+                <TableEmptyRow colSpan={5}>Chưa có thông báo nào cho bạn</TableEmptyRow>
               ) : rows.map(n => (
                 <TableRow key={n.id} className={`${n.url ? 'cursor-pointer' : ''} ${n.read_at ? 'text-slate-400' : 'text-slate-800'} hover:bg-slate-50`}
                   onClick={() => { if (!n.read_at) markRead.mutate([n.id]); if (n.url) navigate(n.url) }}>
@@ -205,8 +219,17 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
     warehouse_id: f.warehouseId || undefined,
   })
   const ackMut = useAckAlert()
+  const scanMut = useScanAlerts()
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
+
+  // Tổng cảnh báo MỞ toàn scope (KHÔNG theo bộ lọc trang) — trùng query key với chuông Header
+  // nên không tốn thêm request. Lệch với số đang hiện = có cảnh báo bị bộ lọc CHE: user 19/08
+  // "ack hàng loạt rồi mà chuông vẫn còn số" — thực ra số đó nằm ngoài bộ lọc đang áp.
+  const allOpen = useAlerts({ status: 'open' })
+  const hiddenOpen = f.status === 'open'
+    ? Math.max(0, (allOpen.data?.total ?? 0) - (data?.total ?? 0))
+    : 0
 
   // Search client-side: list đã cap 1000 dòng server (cảnh báo mở là danh sách VIỆC, không phải kho lưu trữ)
   const rows = useMemo(() => {
@@ -268,11 +291,14 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
                 <Check className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang lưu…' : `Đã biết (${pickedOpen.length})`}
               </Button>
             )}
+            {/* Quét THẬT (fresh=1 bỏ throttle 10'), rồi nạp lại danh sách. Trước 21/08 nút này chỉ
+                refetch — lượt quét đi kèm GET nên bấm xong CHƯA CHẮC có quét, chỉ là đọc lại bảng. */}
             <button type="button" title="Quét lại ngay (bình thường tự quét ~10 phút/lần)"
-              onClick={() => refetch()}
-              className="h-9 sm:h-7 px-2 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 inline-flex items-center gap-1 text-[11px] shrink-0">
-              <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Quét lại</span>
+              disabled={scanMut.isPending}
+              onClick={() => scanMut.mutate(true, { onSettled: () => { void refetch() } })}
+              className="h-9 sm:h-7 px-2 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 inline-flex items-center gap-1 text-[11px] shrink-0">
+              <RefreshCw className={`h-3.5 w-3.5 ${scanMut.isPending || isFetching ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{scanMut.isPending ? 'Đang quét…' : 'Quét lại'}</span>
             </button>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
@@ -285,6 +311,17 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
           { label: 'Đang hiện / tổng', value: `${rows.length.toLocaleString('vi-VN')} / ${(data?.total ?? rows.length).toLocaleString('vi-VN')}` },
         ]} />
 
+        {hiddenOpen > 0 && (
+          <div className="shrink-0 mx-3 mt-1.5 flex items-center gap-2 flex-wrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>Còn <b>{hiddenOpen.toLocaleString('vi-VN')}</b> cảnh báo đang mở nằm <b>ngoài bộ lọc</b> đang áp (kho / loại / mức độ khác) — chuông Header vẫn đếm số này.</span>
+            <button type="button" onClick={() => setF({ warehouseId: '', rules: [], severity: [], search: '' })}
+              className="ml-auto shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100">
+              Xóa bộ lọc để xem
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"
             style={{ width: totalWidth, minWidth: '100%' }}>
@@ -293,7 +330,9 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
               <TableRow>
                 {COLS.map((c, i) => (
                   <TableHead key={c.id}
-                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    // Cột THAO TÁC ghim mép PHẢI: bảng rộng ~1.470 px nên nút "Đã biết" đứng ngoài màn (đo x≈1.500 ở 1280
+                    // và ngoài tầm với trên điện thoại) — người vào trang này là để bấm nút đó (rà 21/09)
+                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'act' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                     {c.id === 'sel' && canAck ? (
                       <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={allSel}
                         onChange={e => setSel(e.target.checked ? new Set(selectable.map(a => a.id)) : new Set())} />
@@ -306,11 +345,11 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">Đang quét cảnh báo…</TableCell></TableRow>
+                <TableEmptyRow colSpan={COLS.length}>Đang quét cảnh báo…</TableEmptyRow>
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={COLS.length} className="text-center py-8 text-xs text-slate-400">
+                <TableEmptyRow colSpan={COLS.length}>
                   {f.status === 'open' ? 'Không có cảnh báo nào đang mở 🎉' : 'Không có cảnh báo khớp bộ lọc'}
-                </TableCell></TableRow>
+</TableEmptyRow>
               ) : rows.map(a => {
                 const acked = !!a.ack_at && !a.resolved_at
                 const picked = sel.has(a.id)
@@ -353,7 +392,7 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={a.ack_by ?? ''}>
                       {a.ack_at ? `${a.ack_by ?? ''} · ${formatTimestampDate(a.ack_at, true)}` : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <TableCell className={`px-2 py-1 whitespace-nowrap sticky right-0 z-10 border-l border-slate-200 ${picked ? 'bg-sky-50' : 'bg-white'}`}>
                       {canAck && !a.resolved_at && (
                         <button type="button"
                           title={acked ? 'Bỏ đánh dấu đã biết (hiện lại trong danh sách mặc định)' : 'Đã biết — ẩn khỏi danh sách mặc định (điều kiện hết sẽ tự đóng)'}
@@ -400,11 +439,14 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     const v = thRow?.value as Partial<Record<ThKey, number>> | undefined
     return { ...TH_DEFAULT, ...(v ?? {}) }
   }, [thRow])
+  // Cờ boolean tách khỏi map số: xe ĐÃ RA thì cảnh báo tự ẩn (mặc định) hay giữ lại chờ "Đã biết"
+  const savedKeep = (thRow?.value as { GATE_KEEP_AFTER_EXIT?: unknown } | undefined)?.GATE_KEEP_AFTER_EXIT === true
   const [vals, setVals] = useState<Record<ThKey, string>>(() => toStrings(TH_DEFAULT))
+  const [keepExit, setKeepExit] = useState(false)
   const [err, setErr] = useState('')
   const [okMsg, setOkMsg] = useState('')
-  useEffect(() => { setVals(toStrings(saved)) }, [saved])
-  const dirty = JSON.stringify(vals) !== JSON.stringify(toStrings(saved))
+  useEffect(() => { setVals(toStrings(saved)); setKeepExit(savedKeep) }, [saved, savedKeep])
+  const dirty = JSON.stringify(vals) !== JSON.stringify(toStrings(saved)) || keepExit !== savedKeep
   const set = (k: ThKey) => (v: string) => setVals(s => ({ ...s, [k]: v }))
 
   function save() {
@@ -424,7 +466,7 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     if (t.WEIGH_WARN_PCT > t.WEIGH_CRIT_PCT || t.WEIGH_CRIT_PCT > 100) return setErr('Lệch cân: Cảnh báo ≤ Nghiêm trọng ≤ 100%.')
     if (t.PACKING_UNRECV_WARN_H < 1 || t.PACKING_UNRECV_WARN_H > t.PACKING_UNRECV_CRIT_H || t.PACKING_UNRECV_CRIT_H > 168)
       return setErr('Sổ đóng gói — kho chưa nhận: 1 giờ ≤ Cảnh báo ≤ Nghiêm trọng ≤ 168 giờ.')
-    upd.mutate({ key: 'alert_thresholds', value: t }, {
+    upd.mutate({ key: 'alert_thresholds', value: { ...t, GATE_KEEP_AFTER_EXIT: keepExit } }, {
       onSuccess: () => setOkMsg('Đã lưu — áp dụng từ lượt quét tiếp theo (tự quét ~10 phút/lần, hoặc bấm Quét lại ở tab Thông báo chung).'),
       onError: (e) => setErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lưu thất bại — thử lại.'),
     })
@@ -459,6 +501,16 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
               <div className="grid grid-cols-2 gap-1.5">
                 <SettingNum label="Cảnh báo khi ≥" unit="phút" value={vals.GATE_WARN_MIN} onChange={set('GATE_WARN_MIN')} />
                 <SettingNum label="Nghiêm trọng khi ≥" unit="phút" value={vals.GATE_CRIT_MIN} onChange={set('GATE_CRIT_MIN')} />
+              </div>
+              <SettingLabel text="Khi xe đã ra khỏi cổng" tip="Tự ẩn: xe ra là cảnh báo tự đóng ở lượt quét kế (hành vi gốc). Giữ lại: cảnh báo còn nguyên để truy cứu vì sao xe nằm lâu — tự bấm ‘Đã biết’ mới ẩn." />
+              <div className="flex flex-col gap-1">
+                {([[false, 'Tự ẩn cảnh báo (mặc định)'], [true, 'Giữ lại — bấm "Đã biết" mới ẩn']] as const).map(([v, label]) => (
+                  <label key={String(v)} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="radio" name="gate-keep-exit" className="h-3 w-3 accent-sky-600"
+                      checked={keepExit === v} onChange={() => setKeepExit(v)} />
+                    {label}
+                  </label>
+                ))}
               </div>
             </SettingGroup>
 

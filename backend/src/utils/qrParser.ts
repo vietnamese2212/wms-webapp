@@ -1,4 +1,6 @@
 // QR pallet — 2 định dạng sống chung vô thời hạn (multi-tenant: mỗi đơn vị 1 format tem CỐ ĐỊNH):
+// MIRROR: frontend/src/utils/qr.ts (isValidTem/materialCodeOf/normalizeQR) — phép kiểm
+// backend/tests/mirror/qrParser.mirror.test.ts ép FE.isValidTem(raw) === parseInboundQR(raw).is_valid.
 //
 // V1 (đơn vị 1, delimiter `_`): ddmmyy_MaterialCode_ChuKy_<Máy|NCC>_PalletSeq_NMSX
 //   Đoạn 4 (machine_code) = Máy với thành phẩm; = MÃ NCC với hàng nhập NCC (POSM/Raw/Thùng/Giấy),

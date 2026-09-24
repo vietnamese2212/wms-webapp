@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera, Maximize2, X, Grid3X3, Table as TableIcon, ListChecks } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,7 +20,9 @@ import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   useForklifts, useCreateForklift, useUpdateForklift, useDeleteForklift,
@@ -113,6 +116,16 @@ const BOARD_BADGE: Record<string, { cls: string; label: string }> = {
 const boardBadge = (v: ForkliftBoardVehicle) =>
   !v.log ? BOARD_BADGE.none : v.log.status === 'IDLE' ? BOARD_BADGE.idle : v.log.issue_count > 0 ? BOARD_BADGE.issue : BOARD_BADGE.ok
 
+// Key = đúng giá trị `forklift.tab` trong store (khớp PAGE_TABS['/wms/forklift'])
+const FORKLIFT_TABS = [
+  { key: 'board',    label: 'Check list ngày',  icon: ClipboardCheck },
+  { key: 'report',   label: 'Báo cáo vận hành', icon: BarChart2 },
+  { key: 'matrix',   label: 'Ma trận check',    icon: Grid3X3 },
+  { key: 'summary',  label: 'Tổng hợp xe',      icon: TableIcon },
+  { key: 'detail',   label: 'Chi tiết ngày',    icon: ListChecks },
+  { key: 'settings', label: 'Cài đặt',          icon: Settings2 },
+] as const
+
 export default function Forklift() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
@@ -124,6 +137,9 @@ export default function Forklift() {
 
   const f = useWmsFilterStore(s => s.forklift)
   const setF = useWmsFilterStore(s => s.setForklift)
+  const permTabs = useMemo(() => FORKLIFT_TABS.filter(t => showSettings || t.key !== 'settings'), [showSettings])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/forklift', permTabs, f.tab, k => setF({ tab: k }))
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const whOpts = (warehouses as { id: string; name?: string; code?: string }[])
     .map(w => ({ value: w.id, label: w.name ?? w.id, sub: w.code }))
@@ -137,12 +153,9 @@ export default function Forklift() {
               <ForkliftIcon className="h-4 w-4 text-slate-500" /> Xe nâng
             </span>
             <TabsList className="h-8 max-w-full overflow-x-auto">
-              <TabsTrigger value="board" className="gap-1.5 text-xs"><ClipboardCheck className="h-3.5 w-3.5" /> Check list ngày</TabsTrigger>
-              <TabsTrigger value="report" className="gap-1.5 text-xs"><BarChart2 className="h-3.5 w-3.5" /> Báo cáo vận hành</TabsTrigger>
-              <TabsTrigger value="matrix" className="gap-1.5 text-xs"><Grid3X3 className="h-3.5 w-3.5" /> Ma trận check</TabsTrigger>
-              <TabsTrigger value="summary" className="gap-1.5 text-xs"><TableIcon className="h-3.5 w-3.5" /> Tổng hợp xe</TabsTrigger>
-              <TabsTrigger value="detail" className="gap-1.5 text-xs"><ListChecks className="h-3.5 w-3.5" /> Chi tiết ngày</TabsTrigger>
-              {showSettings && <TabsTrigger value="settings" className="gap-1.5 text-xs"><Settings2 className="h-3.5 w-3.5" /> Cài đặt</TabsTrigger>}
+              {tabs.map(t => (
+                <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>
+              ))}
             </TabsList>
           </div>
 
@@ -1051,8 +1064,11 @@ function VehicleSection({ whOpts, warehouseId }: { whOpts: { value: string; labe
   return (
     <div>
       <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 flex items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1">Danh mục xe nâng ({vehicles.length})</span>
-        <ActionCluster items={[{
+        {/* Cụm nút mặc định chiếm TRỌN hàng trên mobile (w-full — đúng cho header trang detail),
+            nhưng ở thanh tiêu đề khối thì nó ép tiêu đề còn ~60 px và bẻ thành 5 dòng (đo 360 px
+            12/09). Ở đây cụm chỉ cần rộng đúng bằng nút. */}
+        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1 min-w-0">Danh mục xe nâng ({vehicles.length})</span>
+        <ActionCluster className="w-auto shrink-0" items={[{
           key: 'add', icon: Plus, label: 'Thêm xe', tip: 'Khai báo xe nâng mới',
           primary: true, variant: 'default', onClick: () => { setEditing(null); setShowForm(true) },
         } satisfies ActionItem]} />
@@ -1111,7 +1127,12 @@ function VehicleSheet({ vehicle, whOpts, onClose }: { vehicle: ForkliftVehicle |
   const update = useUpdateForklift()
   const [code, setCode] = useState(vehicle?.code ?? '')
   const [name, setName] = useState(vehicle?.name ?? '')
-  const [whId, setWhId] = useState(vehicle?.warehouse_id ?? (whOpts.length === 1 ? whOpts[0].value : ''))
+  const [whId, setWhId] = useState(() => {
+    if (vehicle?.warehouse_id) return vehicle.warehouse_id
+    const g = useGlobalScopeStore.getState().warehouseId   // bối cảnh toàn cục ở Header
+    if (g && whOpts.some(o => o.value === g)) return g
+    return whOpts.length === 1 ? whOpts[0].value : ''
+  })
   const [active, setActive] = useState(vehicle?.is_active ?? true)
   const [error, setError] = useState('')
   const saving = create.isPending || update.isPending
@@ -1150,9 +1171,9 @@ function VehicleSheet({ vehicle, whOpts, onClose }: { vehicle: ForkliftVehicle |
           <SingleSelect options={whOpts} value={whId} onChange={setWhId} placeholder="Chọn kho…" triggerClassName="w-full" />
         </div>
         {vehicle && (
-          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-3.5 w-3.5" />
-            Đang dùng (bỏ tick = ngừng dùng, ẩn khỏi board — giữ lịch sử)
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+            <Switch checked={active} onCheckedChange={setActive} />
+            Đang dùng <span className="font-normal text-slate-500">(tắt = ngừng dùng, ẩn khỏi board — giữ lịch sử)</span>
           </label>
         )}
       </div>
@@ -1176,8 +1197,8 @@ function ItemSection({ whOpts, warehouseId }: { whOpts: { value: string; label: 
   return (
     <div>
       <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 flex items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1">Hạng mục check list ({items.length}) — theo kho hoặc dùng chung</span>
-        <ActionCluster items={[{
+        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1 min-w-0">Hạng mục check list ({items.length}) — theo kho hoặc dùng chung</span>
+        <ActionCluster className="w-auto shrink-0" items={[{
           key: 'add', icon: Plus, label: 'Thêm hạng mục', tip: 'Thêm nội dung kiểm tra mới',
           primary: true, variant: 'default', onClick: () => { setEditing(null); setShowForm(true) },
         } satisfies ActionItem]} />
@@ -1283,9 +1304,9 @@ function ItemSheet({ item, whOpts, defaultWarehouseId, onClose }: {
           <Input inputMode="numeric" value={sortOrder} onChange={e => setSortOrder(e.target.value)} className="h-9 w-28 tabular-nums" />
         </div>
         {item && (
-          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-3.5 w-3.5" />
-            Đang dùng (bỏ tick = không hiện trong check list mới — lịch sử giữ nguyên)
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+            <Switch checked={active} onCheckedChange={setActive} />
+            Đang dùng <span className="font-normal text-slate-500">(tắt = không hiện trong check list mới — lịch sử giữ nguyên)</span>
           </label>
         )}
       </div>

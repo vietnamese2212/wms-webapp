@@ -3,16 +3,8 @@ import { useInventoryEntry } from '@/api/hooks'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { computePctDate } from '@/utils/shelfLife'
 import { qtyLabel } from '@/utils/qtyUnits'
-
-const STATUS_LABEL: Record<string, string> = {
-  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
-  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
-}
-const STATUS_CLS: Record<string, string> = {
-  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
-  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
-  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
-}
+import { InventoryStatusBadge } from '@/lib/statusMaps'
+import { parseCodeFields } from '@/components/shared/palletLabel'
 
 function datePctCls(pct: number): string {
   if (pct >= 70) return 'text-green-600 font-semibold'
@@ -49,6 +41,16 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
   const pct       = entry ? computePctDate(entry, entry.material) : null
 
+  // Thông số SX nằm NGAY TRÊN TEM (đoạn 3/4/5/6 tem V1) — cột DB chỉ được điền khi vào qua quét
+  // nhập, pallet vào bằng upload/seed thì trống ⇒ bóc từ pallet_code làm fallback (parseCodeFields
+  // là helper tập trung, khớp qrParser BE). Hàng NCC: đoạn 4 là MÃ NCC chứ không phải máy → chỉ
+  // fallback "Máy" khi dòng không gắn NCC.
+  const tem     = entry ? parseCodeFields(entry.pallet_code ?? '') : null
+  const cycle   = entry?.cycle || tem?.cycle || ''
+  const machine = entry?.machine_code || (entry?.ncc ? '' : (tem?.machine ?? ''))
+  const nmsx    = entry?.nmsx || tem?.nmsx || ''
+  const seq     = entry?.pallet_sequence_no != null ? String(entry.pallet_sequence_no) : (tem?.seq ?? '')
+
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="max-w-xs p-0">
@@ -67,9 +69,7 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
             <p className="text-slate-400 text-center py-4 text-xs">Không tìm thấy pallet</p>
           ) : (
             <>
-              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[entry.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                {STATUS_LABEL[entry.status] ?? entry.status}
-              </span>
+              <InventoryStatusBadge status={entry.status} />
 
               <Section title="Thông tin hàng">
                 <Row label="Kho"      value={entry.location?.warehouse?.name ?? '—'} />
@@ -106,11 +106,14 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
                 )}
               </Section>
 
-              {(entry.manufacturer || entry.cycle || entry.machine_code) && (
-                <Section title="Sản xuất">
+              {(entry.manufacturer || entry.ncc || cycle || machine || nmsx || seq) && (
+                <Section title="Sản xuất (thông số tem)">
                   {entry.manufacturer && <Row label="NMSX"    value={entry.manufacturer.code} mono />}
-                  {entry.cycle        && <Row label="Chu kỳ"  value={entry.cycle} mono />}
-                  {entry.machine_code && <Row label="Máy"     value={entry.machine_code} mono />}
+                  {entry.ncc          && <Row label="NCC"     value={entry.ncc.name} wrap />}
+                  {nmsx    && <Row label="Kho SX (ký hiệu)" value={nmsx} mono />}
+                  {cycle   && <Row label="Chu kỳ"    value={cycle} mono />}
+                  {machine && <Row label="Máy"       value={machine} mono />}
+                  {seq     && <Row label="Số pallet" value={seq} mono />}
                 </Section>
               )}
 

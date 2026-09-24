@@ -64,8 +64,11 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
   const lo = from ?? (page - 1) * pageSize + 1
   const hi = to ?? Math.min(page * pageSize, total)
   return (
-    <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between gap-3 sm:rounded-b-xl">
-      <span className="min-w-0">
+    // `right` từng là `shrink-0` còn phần ĐẾM `min-w-0` ⇒ ở 360 px một ghi chú dài (Slotting: "xếp hạng
+    // theo lượt nhặt 30 ngày…") bóp phần đếm còn ~20 px và bẻ "1–132 / 132 mã" thành NĂM dòng dọc,
+    // footer cao 111 px. Nay: phần đếm KHÔNG co (`whitespace-nowrap`), ghi chú tự xuống dòng khi chật.
+    <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 sm:rounded-b-xl">
+      <span className="whitespace-nowrap">
         {total > 0
           ? `${lo.toLocaleString('vi-VN')}–${hi.toLocaleString('vi-VN')} / ${total.toLocaleString('vi-VN')} ${unit}`
           : `0 ${unit}`}
@@ -80,7 +83,7 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
           </select>
         </label>
       </span>
-      {right && <span className="text-slate-400 shrink-0 text-right">{right}</span>}
+      {right && <span className="text-slate-400 min-w-0 flex-1 truncate text-right sm:flex-none sm:shrink-0">{right}</span>}
     </div>
   )
 }

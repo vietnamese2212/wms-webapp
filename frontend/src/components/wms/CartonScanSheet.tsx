@@ -5,9 +5,10 @@
 //   🟩 khớp mã hàng · 🟧 tem hợp lệ nhưng LẠ mã hàng · 🟥 sai định dạng.
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Flashlight, FlashlightOff, ZoomIn, ZoomOut, Trash2, Check, ScanBarcode } from 'lucide-react'
+import { X, Flashlight, FlashlightOff, ZoomIn, ZoomOut, Trash2, Check } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
-import { createScanEngine, drawBoxes, type ScanEngine, type Box, type ExtCapabilities } from '@/utils/scanEngine'
+import { createScanEngine, drawBoxes, type ScanEngine, type Box, type ExtCapabilities, type ScanCodeTypes } from '@/utils/scanEngine'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { isValidTem, materialCodeOf } from '@/utils/qr'
 
@@ -21,12 +22,14 @@ interface Props {
   saving?: boolean
   onSave: (cartons: CartonScan[]) => void
   onSkip: () => void               // đóng, KHÔNG lưu (bỏ qua quét thùng)
+  // Loại mã camera giải, theo cấu hình KHO (như QRScanner) — BẮT BUỘC khai để màn mới không lọt
+  codeTypes: ScanCodeTypes
 }
 
 interface Entry { code: string; valid: boolean; match: boolean; at: number; hits: number }
 const INVALID_MIN_HITS = 2
 
-export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initial, saving, onSave, onSkip }: Props) {
+export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initial, saving, onSave, onSkip, codeTypes }: Props) {
   const videoRef   = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const wrapRef    = useRef<HTMLDivElement>(null)
@@ -58,7 +61,7 @@ export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initia
     setError(null)
     unlockAudio()
     try {
-      engineRef.current = await createScanEngine()
+      engineRef.current = await createScanEngine(codeTypes)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
       })
@@ -151,7 +154,7 @@ export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initia
     <div className="fixed inset-0 z-[70] flex flex-col bg-white">
       {/* Header */}
       <div className="shrink-0 border-b px-3 py-2 flex items-center gap-2">
-        <ScanBarcode className="h-4 w-4 text-sky-600 shrink-0" />
+        <ScanIcon className="h-4 w-4 text-sky-600 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-slate-800 leading-tight">Quét tem thùng của pallet</p>
           <p className="text-[11px] text-slate-500 truncate">Mã hàng <b>{expectedMaterialCode || '—'}</b> · pallet <span className="font-mono">{palletCode}</span></p>

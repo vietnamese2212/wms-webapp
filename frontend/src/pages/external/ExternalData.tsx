@@ -10,6 +10,7 @@ import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -24,8 +25,11 @@ import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
   useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc, useBulkDateKhvc,
   useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
-  type DoSapRow, type KhvcRow, type ReconcileTask,
+  useSoLines, useSystemSettings, useVehicleModels,
+  type DoSapRow, type KhvcRow, type ReconcileTask, type SoLineRow,
 } from '@/api/hooks'
+import { StatusBadge as ToneBadge, type BadgeTone } from '@/components/shared/StatusBadge'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { apiClient } from '@/api/client'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -33,19 +37,22 @@ import { can, type ModulePermissions, type ModuleKey } from '@/config/permission
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { VcUploadDialog, type VcUploadMode } from './VcUploadDialog'
+import { SapLineDetailSheet } from './SapLineDetailSheet'
+import { FLOW_VI, DISPATCH_VI, SOURCE_VI, SO_STATUS_VI } from './sapLabels'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
-type TabKey = 'dosap' | 'khvc' | 'reconcile'
+type TabKey = 'dosap' | 'solines' | 'khvc' | 'reconcile'
 const TABS: { key: TabKey; label: string; module: ModuleKey; action?: string }[] = [
   { key: 'dosap',     label: 'DO SAP', module: 'external_do_sap' },
+  { key: 'solines',   label: 'Chưa có OD', module: 'external_do_sap' },   // sổ SO từ ZSD02 (22/09) — dòng SO chưa có OD, chỉ để nhìn trước tải
   { key: 'khvc',      label: 'Kế hoạch xuất', module: 'external_khvc' },
   { key: 'reconcile', label: 'Cần xử lý', module: 'outbound', action: 'reconcile' },
 ]
 
 // Header trang: tiêu đề "Dữ liệu bên ngoài" NẰM TRÊN, BAO các tab (DO SAP / Kế hoạch xuất / Cần xử lý).
-function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => void; perms: ModulePermissions | null }) {
-  const visible = TABS.filter(t => can(perms, t.module, t.action ?? 'view'))
+// `tabs` = danh sách đã lọc quyền + cờ điện thoại (shell tính, để hook đứng trước các return sớm).
+function TabBar({ tab, setTab, tabs: visible }: { tab: TabKey; setTab: (t: TabKey) => void; tabs: typeof TABS }) {
   return (
     <div className="border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
       <div className="flex items-center gap-1.5 mb-1.5">
@@ -71,19 +78,33 @@ function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => vo
 const TODAY_VN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // ─── Cột bảng ─────────────────────────────────────────────────────────────────
+// User chốt 24/09: bảng giữ cột QUAN TRỌNG (SO/PO · Sold-to · Ship-to · Tuyến · Ghi chú…), phần còn lại của
+// 79 cột ZSD02 đọc ở panel chi tiết (bấm dòng → SapLineDetailSheet).
 const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'sel',        label: '' },
   { id: 'od_number',  label: 'DO' },
   { id: 'od_item',    label: 'Item' },
+  { id: 'so',         label: 'SO/PO SAP' },
   { id: 'material',   label: 'Mã hàng' },
   { id: 'mat_name',   label: 'Tên hàng' },
   { id: 'qty_sales',  label: 'SL bán', align: 'right' },
   { id: 'qty_base',   label: 'SL gốc', align: 'right' },
+  { id: 'soldto',     label: 'Sold-to' },
   { id: 'shipto',     label: 'Ship-to' },
   { id: 'plant',      label: 'Plant' },
   { id: 'storage',    label: 'Kho' },
+  // Cột ZSD02 (22/09) — VL06O để trống. Phường = khoá cước; ĐP xe = SAP đã gắn biển hay chưa (đối soát với kế hoạch app)
+  { id: 'flow',       label: 'Phân loại' },
+  { id: 'ddate',      label: 'Ngày giao' },
+  { id: 'ward',       label: 'Phường' },
+  { id: 'route',      label: 'Tuyến' },
+  { id: 'dvvt',       label: 'ĐVVT SAP' },
+  { id: 'dispatch',   label: 'ĐP xe SAP' },
+  { id: 'kg',         label: 'KL (kg)', align: 'right' },
+  { id: 'pal',        label: 'Pallet SAP', align: 'right' },
   { id: 'batch',      label: 'Batch' },
   { id: 'pct',        label: '%Date', align: 'right' },
+  { id: 'note',       label: 'Ghi chú' },
   { id: 'status',     label: 'Tình trạng' },
   { id: 'unit',       label: 'Lệch ĐV' },
   { id: 'plan_veh',   label: 'Số xe (KH)' },
@@ -91,7 +112,7 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 150, 95, 80, 110]
+const COL_DEFAULTS = [40, 110, 55, 100, 110, 160, 90, 90, 95, 135, 70, 90, 90, 80, 110, 150, 75, 85, 75, 75, 100, 70, 160, 90, 65, 150, 95, 80, 110]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -100,10 +121,11 @@ function num(v: number | null | undefined) {
 
 function SourceBadge({ source }: { source: string | null }) {
   const v = (source ?? '').toUpperCase()
-  const cls = v === 'SAP' ? 'bg-sky-100 text-sky-700'
+  const cls = v === 'SAP' || v === 'ZSD02' ? 'bg-sky-100 text-sky-700'
     : v === 'MANUAL' ? 'bg-amber-100 text-amber-700'
     : 'bg-slate-100 text-slate-600'
-  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`}>{source ?? '—'}</span>
+  // Nhãn: mã nguồn 'EXCEL' là VL06O từ thời chỉ có một file — in tên báo cáo để đứng cạnh ZSD02 không gây hiểu nhầm
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={source ?? undefined}>{SOURCE_VI[v] ?? source ?? '—'}</span>
 }
 
 function StatusBadge({ used, syncStatus }: { used: boolean | undefined; syncStatus: string | null | undefined }) {
@@ -128,10 +150,23 @@ export default function ExternalData() {
   const urlTabDef = urlTab ? TABS.find(t => t.key === urlTab) : null
   const initialTab = urlTabDef && can(perms, urlTabDef.module, urlTabDef.action ?? 'view') ? urlTabDef.key : firstTab
   const [tab, setTab] = useState<TabKey>(initialTab)
-  const tabBar = <TabBar tab={tab} setTab={setTab} perms={perms} />
+  // key = khoá cấu hình điện thoại ('/external/do-sap#<key>' — config/mobileSurface.ts)
+  const permTabs = useMemo(() => TABS.filter(t => can(perms, t.module, t.action ?? 'view')), [perms])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/external/do-sap', permTabs, tab, setTab)
+  const tabBar = <TabBar tab={tab} setTab={setTab} tabs={tabs} />
   if (tab === 'reconcile') return <ReconcileTab tabBar={tabBar} />
   if (tab === 'khvc') return <KhvcTab tabBar={tabBar} />
+  if (tab === 'solines') return <SoLinesTab tabBar={tabBar} />
   return <DoSapTab tabBar={tabBar} />
+}
+
+// ─── Phân loại dòng SAP (flow) — nhãn ở ./sapLabels (dùng chung với panel chi tiết) ──
+const FLOW_OPTS = Object.entries(FLOW_VI).map(([value, v]) => ({ value, label: v.label }))
+function FlowBadge({ flow }: { flow: string | null | undefined }) {
+  if (!flow) return <span className="text-slate-300">—</span>
+  const f = FLOW_VI[flow] ?? { label: flow, tone: 'slate' as BadgeTone }
+  return <ToneBadge tone={f.tone} title={flow}>{f.label}</ToneBadge>
 }
 
 // ─── Tab DO SAP (raw erp_outbound_orders) ─────────────────────────────────────
@@ -145,9 +180,14 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
   const { doSap: f, setDoSap } = useWmsFilterStore()
   const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, used: fUsed, page, pageSize } = f
+  const fFlow = f.flow ?? [], fDispatch = f.dispatch ?? '', fDelivFrom = f.deliveryFrom ?? '', fDelivTo = f.deliveryTo ?? ''
+  // Công tắc nguồn DO SAP (Cài đặt WMS → Hệ thống): BOTH = hai nút · ZSD02 = ẩn nút VL06O · VL06O = ẩn nút ZSD02
+  const { data: sysSettings } = useSystemSettings()
+  const sapSrc = (() => { const v = sysSettings?.find(s => s.key === 'sap_do_source')?.value; return v === 'ZSD02' || v === 'VL06O' ? v : 'BOTH' })()
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [detail, setDetail]         = useState<DoSapRow | null>(null)   // bấm dòng → panel chi tiết (mọi cột ZSD02 còn lại)
   const [doEditor, setDoEditor]     = useState<string[] | null>(null)   // sửa cả DO — danh sách od_number (bảng gom mọi mã cùng DO)
   const [exporting, setExporting]   = useState(false)
   const [exportErr, setExportErr]   = useState('')
@@ -155,7 +195,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // Nút nạp nguồn: ai import được bên Xuất, hoặc ai được tạo dữ liệu SAP tại chính trang này
   const canUploadVl06o = can(perms, 'outbound', 'import') || can(perms, 'external_do_sap', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v4', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v6', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -171,9 +211,14 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     od_number:     fOd.trim() || undefined,
     in_plan:       fInPlan || undefined,
     used:          fUsed || undefined,
+    // danh sách RỖNG thì KHÔNG gửi (`flow=` rỗng BE hiểu là "không gì" — lớp C27)
+    flow:          fFlow.length ? fFlow.join(',') : undefined,
+    dispatch:      fDispatch || undefined,
+    delivery_from: fDelivFrom || undefined,
+    delivery_to:   fDelivTo || undefined,
     page,
     page_size:     pageSize,
-  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, page, pageSize])
+  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, page, pageSize])
 
   const { data, isLoading, isError, error } = useDoSapOrders(params, hasDate)
   const items = data?.items ?? []
@@ -182,7 +227,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const planWarn = data?.plan_filter_warning
 
   // Đổi filter/search/pageSize → về trang 1 (filterKey KHÔNG gồm page để tránh vòng lặp)
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
@@ -207,6 +252,15 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     { key: 'used', label: 'Chuyến Xuất', type: 'single', allLabel: 'Tất cả', value: fUsed,
       options: [{ value: '1', label: 'Còn trong chuyến' }, { value: '0', label: 'Không có chuyến' }],
       onChange: v => setDoSap({ used: v === '__all__' ? '' : v }) },
+    // Cột ZSD02 (22/09)
+    { key: 'delivery', label: 'Ngày giao', type: 'daterange', from: fDelivFrom, to: fDelivTo,
+      onChange: (from, to) => setDoSap({ deliveryFrom: from, deliveryTo: to }) },
+    { key: 'flow', label: 'Phân loại', type: 'multi', selected: fFlow, searchable: false,
+      options: (facets?.flows?.length ? facets.flows : Object.keys(FLOW_VI)).map(v => ({ value: v, label: FLOW_VI[v]?.label ?? v })),
+      onChange: v => setDoSap({ flow: v }) },
+    { key: 'dispatch', label: 'ĐP xe SAP', type: 'single', allLabel: 'Tất cả', value: fDispatch,
+      options: [{ value: 'ASSIGNED', label: 'Đã gắn xe' }, { value: 'UNASSIGNED', label: 'Chưa gắn xe' }],
+      onChange: v => setDoSap({ dispatch: v === '__all__' ? '' : v }) },
   ]
 
   // Selection theo trang hiện tại
@@ -257,19 +311,33 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       const rows = all.slice(0, CAP).map(x => ({
         'DO': x.od_number,
         'Item': x.od_item,
+        'SO/PO SAP': x.so_number ?? '',
         'Mã hàng': x.material_code ?? '',
         'Tên hàng': x.material_name ?? '',
         'SL bán': x.qty_sales ?? '',
         'ĐV bán': x.sales_unit ?? '',
         'SL gốc': x.qty_base ?? '',
         'ĐV gốc': x.base_unit ?? '',
+        'Sold-to': x.sold_to_code ?? '',
         'Ship-to': x.ship_to_code ?? '',
         'Tên ship-to': x.ship_to_name ?? '',
         'Plant': x.plant ?? '',
         'Kho': x.storage_location ?? '',
-        'Batch': x.batch ?? '',
+        'Phân loại': x.flow ? (FLOW_VI[x.flow]?.label ?? x.flow) : '',
+        'Ngày giao': x.delivery_date ?? '',
+        'Phường': x.ward_code ?? '',
+        'Mã Route': x.route_code ?? '',
+        'Tuyến': x.route_name ?? '',
+        'ĐVVT SAP': x.dvvt_code ?? x.dvvt_raw ?? '',
+        'Biển số SAP': x.license_plate ?? '',
+        'ĐP xe SAP': x.sap_dispatch_status ? (DISPATCH_VI[x.sap_dispatch_status]?.label ?? x.sap_dispatch_status) : '',
+        'KL (kg)': x.gross_weight_kg ?? '',
+        'Pallet SAP': x.sap_pallets ?? '',
+        'Batch': x.batch ?? x.batch_so ?? '',
         '%Date': x.pct_date_req ?? '',
-        'Nguồn': x.source ?? '',
+        'Ghi chú giao hàng': x.note_delivery ?? '',
+        'Ghi chú hoá đơn': x.note_invoice ?? '',
+        'Nguồn': SOURCE_VI[(x.source ?? '').toUpperCase()] ?? x.source ?? '',
         'Tình trạng': x.sync_status === 'OBSOLETE' ? 'SAP đã bỏ' : x.used ? 'Đã dùng' : 'Chưa dùng',
         'Cập nhật': x.updated_at ? formatTimestampDate(x.updated_at, true) : '',
       }))
@@ -306,8 +374,15 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           </button>
           {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
           {/* Upload = việc thuần PC (chọn file Excel) → ẩn trên mobile như các nút Upload khác của app */}
-          {canUploadVl06o && (
-            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('vl06o')}>
+          {canUploadVl06o && sapSrc !== 'VL06O' && (
+            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('zsd02')}
+              title="Báo cáo SAP ZSD02 (mức dòng SO/OD) — nguồn DO thay VL06O; dòng chưa có OD vào tab Chưa có OD">
+              <Upload className="h-3.5 w-3.5 mr-1" /> Up ZSD02
+            </Button>
+          )}
+          {canUploadVl06o && sapSrc !== 'ZSD02' && (
+            <Button size="sm" variant={sapSrc === 'BOTH' ? 'outline' : 'default'} className={`hidden sm:inline-flex h-7 shrink-0 ${sapSrc === 'BOTH' ? '' : 'bg-blue-600 hover:bg-blue-700'}`} onClick={() => setUpDialog('vl06o')}
+              title={sapSrc === 'BOTH' ? 'Giai đoạn đối chiếu: nạp cả VL06O lẫn ZSD02 cùng ngày' : undefined}>
               <Upload className="h-3.5 w-3.5 mr-1" /> Up VL06O
             </Button>
           )}
@@ -387,7 +462,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                 const isSel = selected.has(r.id)
                 const cellPad = dense ? 'py-1' : 'py-2.5'
                 return (
-                  <TableRow key={r.id} className={isSel ? 'bg-sky-50' : ''}>
+                  <TableRow key={r.id} className={`cursor-pointer ${isSel ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r)}>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap sticky left-0 z-10 ${isSel ? 'bg-sky-50' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
                       <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600 cursor-pointer align-middle"
                         checked={isSel} onChange={() => toggleOne(r.id)} />
@@ -399,6 +474,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                       )}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.od_item || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`} title={r.so_type ? `Loại ${r.so_type}` : undefined}>{r.so_number || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.material_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.material_name ?? undefined}>{r.material_name || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>
@@ -407,6 +483,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-semibold tabular-nums text-right whitespace-nowrap`}>
                       {r.qty_base != null ? <>{num(r.qty_base)}{r.base_unit && <span className="text-slate-400 font-normal"> {r.base_unit}</span>}</> : <span className="text-slate-300">—</span>}
                     </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.sold_to_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
                       {r.ship_to_code ? (
                         <div className="leading-tight">
@@ -417,8 +494,34 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.plant || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.storage_location || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.batch || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><FlowBadge flow={r.flow} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.ward_code ?? undefined}>{r.ward_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ? `${r.route_code ?? ''} ${r.route_name}`.trim() : undefined}>
+                      {r.route_name || r.route_code
+                        ? <div className="leading-tight"><div className="truncate">{r.route_name || <span className="text-slate-300">—</span>}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`} title={r.dvvt_raw ?? undefined}>
+                      {r.dvvt_code ? <span className="font-mono font-semibold">{r.dvvt_code}</span>
+                        : r.dvvt_raw ? <ToneBadge tone="amber" title="ĐVVT trong SAP không khớp danh mục — khai mã khác ở Cài đặt TMS → ĐVVT">{r.dvvt_raw}</ToneBadge>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      {r.sap_dispatch_status && DISPATCH_VI[r.sap_dispatch_status]
+                        ? <ToneBadge tone={DISPATCH_VI[r.sap_dispatch_status].tone} title={r.license_plate ? `Biển SAP: ${r.license_plate}` : undefined}>{DISPATCH_VI[r.sap_dispatch_status].label}</ToneBadge>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.gross_weight_kg != null ? num(Math.round(Number(r.gross_weight_kg))) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_pallets != null ? Number(r.sap_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : <span className="text-slate-300">—</span>}</TableCell>
+                    {/* VL06O ghi `batch`, ZSD02 ghi `batch_so` (SO-Batch) — cột in cái nào có (bản cũ chỉ đọc `batch` nên dòng ZSD02 luôn "—") */}
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.batch || r.batch_so || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.pct_date_req != null ? `${r.pct_date_req}%` : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={[r.note_delivery, r.note_invoice].filter(Boolean).join('\n') || undefined}>
+                      {r.note_delivery || r.note_invoice
+                        ? <div className="leading-tight"><div className="truncate">{r.note_delivery || <span className="text-slate-300">—</span>}</div>{r.note_invoice && <div className="text-[9px] text-slate-400 truncate">HĐ: {r.note_invoice}</div>}</div>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><StatusBadge used={r.used} syncStatus={r.sync_status} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
                       {r.unit_mismatch
@@ -462,6 +565,201 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         />
       )}
       {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} />}
+      <SapLineDetailSheet row={detail} kind="od" onClose={() => setDetail(null)} />
+    </div>
+  )
+}
+
+// ─── Tab "Chưa có OD" — sổ SO từ ZSD02 (22/09) ────────────────────────────────
+// Dòng SO mà SAP CHƯA tạo OD: KHÔNG lên xe được (không có khoá OD ⇒ không có dòng hàng, không có tem để quét).
+// Việc của tab: nhìn trước tải ngày mai theo kho × tuyến để đặt xe với ĐVVT. Số base ở đây là DẪN XUẤT
+// (SAP để "OD Qty (Base Unit)" = 0 cho dòng này) — nhãn "quy đổi" nói rõ; SL bán giữ nguyên số SAP.
+const SO_COLS: { id: string; label: string; align?: 'right' }[] = [
+  { id: 'so',       label: 'SO' },
+  { id: 'item',     label: 'Item' },
+  { id: 'status',   label: 'Trạng thái' },
+  { id: 'material', label: 'Mã hàng' },
+  { id: 'mat_name', label: 'Tên hàng' },
+  { id: 'qty',      label: 'SL bán (SAP)', align: 'right' },
+  { id: 'base',     label: 'SL gốc (quy đổi)', align: 'right' },
+  { id: 'cartons',  label: 'Thùng (SAP)', align: 'right' },
+  { id: 'kg',       label: 'KL (kg)', align: 'right' },
+  { id: 'pal',      label: 'Pallet SAP', align: 'right' },
+  { id: 'ddate',    label: 'Ngày giao' },
+  { id: 'soldto',   label: 'Sold-to' },
+  { id: 'shipto',   label: 'Ship-to' },
+  { id: 'ward',     label: 'Phường' },
+  { id: 'route',    label: 'Tuyến' },
+  { id: 'plant',    label: 'Plant' },
+  { id: 'flow',     label: 'Phân loại' },
+  { id: 'note',     label: 'Ghi chú' },
+  { id: 'od',       label: 'OD' },
+  { id: 'updated',  label: 'Cập nhật' },
+]
+const SO_COL_DEFAULTS = [110, 50, 90, 100, 160, 100, 120, 90, 80, 80, 85, 95, 135, 110, 150, 60, 95, 160, 100, 100]
+const SO_STATUS_OPTS = Object.entries(SO_STATUS_VI).map(([value, v]) => ({ value, label: v.label }))
+
+function SoLinesTab({ tabBar }: { tabBar: ReactNode }) {
+  const { soLines: f, setSoLines } = useWmsFilterStore()
+  const { search, dateFrom, dateTo, plant, status, flow, page, pageSize } = f
+  const [dense, setDense] = useState(() => localStorage.getItem('solines_density') !== 'comfortable')
+  const [detail, setDetail] = useState<SoLineRow | null>(null)   // bấm dòng → panel chi tiết
+  const { widths: colW, startResize, totalWidth } = useColumnResize('solines_col_widths_v2', SO_COL_DEFAULTS)
+  const { data: facets } = useDoSapFacets()
+  const hasDate = !!(dateFrom || dateTo)
+
+  const params = useMemo(() => ({
+    q: search.trim() || undefined,
+    date_from: dateFrom || undefined, date_to: dateTo || undefined,
+    plant: plant || undefined,
+    // rỗng = KHÔNG gửi: BE mặc định OPEN; FE muốn "tất cả" thì tick đủ 3 — không gửi `status=` rỗng (lớp C27)
+    status: status.length ? status.join(',') : undefined,
+    flow: flow.length ? flow.join(',') : undefined,
+    page, page_size: pageSize,
+  }), [search, dateFrom, dateTo, plant, status, flow, page, pageSize])
+  const { data, isLoading, isError, error } = useSoLines(params, hasDate)
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const sum = data?.summary
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, plant, status, flow, pageSize })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setSoLines({ page: 1 }) }, [filterKey])
+
+  const filterDefs: FilterDef[] = [
+    { key: 'date', label: 'Ngày giao', type: 'daterange', from: dateFrom, to: dateTo, onChange: (from, to) => setSoLines({ dateFrom: from, dateTo: to }) },
+    { key: 'status', label: 'Trạng thái', type: 'multi', selected: status, options: SO_STATUS_OPTS, searchable: false, onChange: v => setSoLines({ status: v }) },
+    { key: 'plant', label: 'Plant', type: 'single', allLabel: 'Tất cả plant', value: plant,
+      options: (facets?.plants ?? []).map(p => ({ value: p, label: p })), onChange: v => setSoLines({ plant: v === '__all__' ? '' : v }) },
+    { key: 'flow', label: 'Phân loại', type: 'multi', selected: flow, options: FLOW_OPTS, searchable: false, onChange: v => setSoLines({ flow: v }) },
+  ]
+  const cellPad = dense ? 'py-1' : 'py-2.5'
+  const tomorrow = () => { const d = new Date(Date.now() + 86400000); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) }
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {tabBar}
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchInput value={search} onChange={v => setSoLines({ search: v })} placeholder="Tìm SO, mã hàng, tên hàng, ship-to…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <button type="button" onClick={() => { localStorage.setItem('solines_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        <FilterBar defs={filterDefs} />
+      </div>
+
+      <SummaryBand tiles={[
+        { label: 'Dòng', value: (sum?.rows ?? total).toLocaleString('vi-VN') },
+        { label: 'Chưa có OD', value: (sum?.open ?? 0).toLocaleString('vi-VN'), accent: (sum?.open ?? 0) > 0, tip: 'Dòng SO mà SAP chưa tạo OD — chưa lên xe được, chỉ để nhìn trước tải' },
+        { label: 'Số SO', value: (sum?.so_numbers ?? 0).toLocaleString('vi-VN') },
+        { label: 'Ship-to', value: (sum?.ship_tos ?? 0).toLocaleString('vi-VN') },
+        { label: 'Pallet SAP', value: (sum?.sap_pallets ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ SL SO PALLET theo SAP của CÁC DÒNG ĐANG LỌC — tham chiếu để đặt xe; pallet thật tính theo master lúc lên chuyến' },
+        { label: 'Tấn', value: ((sum?.kg ?? 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }), tip: 'Σ Gross Weight (kg ÷ 1.000) của các dòng đang lọc' },
+        { label: 'Không quy đổi', value: (sum?.unresolved ?? 0).toLocaleString('vi-VN'), accent: (sum?.unresolved ?? 0) > 0, tip: 'Dòng không suy được số gốc: mã chưa có trong danh mục hoặc thiếu quy cách Thùng — khai ở trang Mã hàng' },
+        ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
+      ]} />
+
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {!hasDate ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
+            <Database className="h-10 w-10 opacity-30" />
+            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày giao</b> để xem dòng SO chưa có OD</p>
+            <p className="text-xs">Dòng ở đây là đơn SAP đã nhận nhưng <b>chưa tạo OD</b> — chưa lên xe được, dùng để đặt xe trước với ĐVVT.</p>
+            <div className="flex gap-2 mt-2">
+              <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setSoLines({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>Hôm nay</Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setSoLines({ dateFrom: tomorrow(), dateTo: tomorrow() })}>Ngày mai</Button>
+            </div>
+          </div>
+        ) : isLoading ? (
+          <TableSkeleton cols={12} rows={12} />
+        ) : isError ? (
+          <div className="p-6 text-center text-sm text-red-500">{apiError(error, 'Lỗi tải sổ SO. Vui lòng thử lại.')}</div>
+        ) : (
+          <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+            <TableHeader>
+              <TableRow>
+                {SO_COLS.map((c, i) => (
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.length === 0 && (
+                <TableEmptyRow colSpan={SO_COLS.length}>
+                  {status.length === 1 && status[0] === 'OPEN'
+                    ? 'Không có dòng SO nào chưa có OD trong khoảng ngày này — mở bộ lọc Trạng thái để xem cả dòng đã có OD / SAP huỷ.'
+                    : 'Không có dòng SO nào khớp bộ lọc.'}
+                </TableEmptyRow>
+              )}
+              {items.map((r: SoLineRow) => {
+                const st = SO_STATUS_VI[r.status] ?? { label: r.status, tone: 'slate' as BadgeTone }
+                const notLoadable = r.loadable === false
+                return (
+                  <TableRow key={r.id} className={`cursor-pointer ${r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}`} onClick={() => setDetail(r)}>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white`}>{r.so_number}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.so_item}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><ToneBadge tone={st.tone} title={r.cancel_reason ?? undefined}>{st.label}</ToneBadge></TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.material_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.material_name ?? undefined}>{r.material_name || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>
+                      {r.qty_so_sales != null ? <>{num(r.qty_so_sales)}{r.sales_unit && <span className="text-slate-400"> {r.sales_unit}</span>}</> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-semibold tabular-nums text-right whitespace-nowrap`}>
+                      {r.qty_unresolved
+                        ? <ToneBadge tone="amber" title="Không suy được số gốc — mã chưa có trong danh mục hoặc thiếu quy cách Thùng">không quy đổi được</ToneBadge>
+                        : r.qty_so_base != null
+                          ? <span title={r.qty_base_derived ? `Số DẪN XUẤT (${r.derive_source === 'FILE' ? 'hệ số quan sát từ dòng có OD cùng mã trong file' : 'hệ số Thùng của Mã hàng'}) — SAP không cho số gốc ở dòng chưa có OD` : 'Số gốc của SAP (đơn vị bán = đơn vị gốc)'}>
+                              {num(r.qty_so_base)}{r.base_unit && <span className="text-slate-400 font-normal"> {r.base_unit}</span>}
+                              {r.qty_base_derived && <span className="ml-1 text-[9px] text-amber-600 font-normal">≈</span>}
+                            </span>
+                          : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.qty_so_cartons != null ? Number(r.qty_so_cartons).toLocaleString('vi-VN', { maximumFractionDigits: 3 }) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.gross_weight_kg != null ? num(Math.round(Number(r.gross_weight_kg))) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_pallets != null ? Number(r.sap_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.sold_to_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
+                      {r.ship_to_code ? <div className="leading-tight"><div className="font-mono">{r.ship_to_code}</div>{r.ship_to_name && <div className="text-[9px] text-slate-400 truncate" title={r.ship_to_name}>{r.ship_to_name}</div>}</div> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.ward_code ?? undefined}>{r.ward_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.route_name ? `${r.route_code ?? ''} ${r.route_name}`.trim() : undefined}>
+                      {r.route_name || r.route_code
+                        ? <div className="leading-tight"><div className="truncate">{r.route_name || <span className="text-slate-300">—</span>}</div>{r.route_code && <div className="text-[9px] text-slate-400 font-mono">{r.route_code}</div>}</div>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.plant || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><FlowBadge flow={r.flow} />{notLoadable && r.status !== 'CANCELLED' && <span className="ml-1 text-[9px] text-slate-400">không lên xe</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.note_delivery ?? undefined}>{r.note_delivery || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.od_number || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      <div className="leading-tight">
+                        <div className="text-[10px] text-slate-600">{r.uploaded_by ?? <span className="text-slate-300">—</span>}</div>
+                        <div className="text-[9px] text-slate-400">{r.updated_at ? formatTimestampDate(r.updated_at, true) : ''}</div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setSoLines({ page: p })} />
+      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setSoLines({ pageSize: n })}
+        right="Dòng chưa có OD chỉ để nhìn trước tải — lên xe phải chờ SAP tạo OD (tab DO SAP)" />
+     </div>
+      <SapLineDetailSheet row={detail} kind="so" onClose={() => setDetail(null)} />
     </div>
   )
 }
@@ -685,7 +983,16 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
       }
       // PUT tuần tự (KHÔNG Promise.all): mỗi PUT chạy reconcile đọc-tính-ghi trên OutboundItem;
       // 2 dòng OD cùng đổ vào 1 item (od_refs) mà PUT song song → race mất cập nhật / task trùng.
-      for (const r of changed) await update.mutateAsync({ id: r.id, qty_base: draft[r.id] })
+      // Đếm phần KHÔNG tự áp được: dòng đã quét thì engine đẩy sang hàng chờ "Cần xử lý" — lưu xong
+      // mà im lặng thì người sửa tưởng đã dội xuống, quay lại Hoàn thành chuyến vẫn bị chặn y cũ
+      // (đo thật trong diễn tập 10/09).
+      let pending = 0
+      for (const r of changed) {
+        const res = await update.mutateAsync({ id: r.id, qty_base: draft[r.id] }) as { reconcile?: { review?: number; blocked?: number } | null }
+        pending += Number(res?.reconcile?.review ?? 0) + Number(res?.reconcile?.blocked ?? 0)
+      }
+      if (pending > 0)
+        blockedNote = [blockedNote, `${pending} thay đổi KHÔNG tự dội xuống đơn (dòng đã quét) — vào tab "Cần xử lý" bấm Áp SAP thì số kế hoạch mới khớp.`].filter(Boolean).join(' · ')
       await Promise.all(validAdded.map(l => create.mutateAsync({
         od_number: l.od_number, od_item: l.od_item.trim(),
         material_code: l.material_code.trim(), material_name: l.material_name,
@@ -881,6 +1188,7 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'npp',       label: 'NPP' },
   { id: 'bkcat',     label: 'Cửa booking' },
   { id: 'veh_type',  label: 'Loại xe' },
+  { id: 'model',     label: 'Dòng xe con' },   // mã SAP 9100000xx — cấp xe, tính cước/tải (23/09)
   { id: 'dvvt',      label: 'ĐVVT' },
   { id: 'priority',  label: 'Ưu tiên' },
   { id: 'cs',        label: 'CS' },
@@ -892,7 +1200,7 @@ const KH_COLS: { id: string; label: string }[] = [
 ]
 // PHẢI đủ 1 số cho MỖI cột của KH_COLS (thiếu 1 số → mọi cột từ đó trở đi lệch nhãn, cột cuối
 // rộng `undefined` và totalWidth tính thiếu → kéo giãn cột cuối cho ra NaN). Thêm cột = thêm số.
-const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 90, 70, 70, 95, 90, 110, 80, 110]
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 130, 90, 70, 70, 95, 90, 110, 80, 110]
 
 function TripBadge({ materialized, gdoStatus, gdoDate, exportDate }: { materialized?: boolean; gdoStatus?: string | null; gdoDate?: string | null; exportDate?: string | null }) {
   if (!materialized) {
@@ -935,7 +1243,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const [showUpload, setShowUpload] = useState(false)                      // nạp KH điều vận (chuyển về đây 02/08)
   const canUploadKhvc = can(perms, 'outbound', 'import') || can(perms, 'external_khvc', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v3', KH_COL_DEFAULTS)   // v3: thêm cột Dòng xe con (23/09)
   const { data: facets } = useKhvcFacets()
   // Cần MỘT trong hai khoảng ngày (nạp HOẶC xuất) mới tải — điều vận thường tìm theo NGÀY XE CHẠY
   const hasDate = !!(dateFrom || dateTo || exportFrom || exportTo)
@@ -1131,6 +1439,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                       {r.booking_category || <span className="text-amber-600" title="Chưa chốt cửa đặt lịch — nạp lại KH có cột &quot;Loại kho booking&quot; hoặc sửa tại đây">chưa chốt</span>}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.vehicle_model ? `${r.vehicle_model.sap_code} · ${r.vehicle_model.name}` : undefined}>
+                      {r.vehicle_model ? r.vehicle_model.name : <span className="text-amber-600" title="Chưa chọn dòng xe con — chuyến sẽ không có cước dự tính / % tải. Sửa Số xe để chọn.">chưa chọn</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dvvt || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.priority || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.cs || <span className="text-slate-300">—</span>}</TableCell>
@@ -1258,7 +1569,7 @@ function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: s
 // ─── Sửa cả Số xe (bảng gom mọi DO cùng group_code) — mirror DoSapDoEditor ────
 // Mở như 1 chứng từ điều vận: mỗi dòng = 1 DO trên xe; sửa inline mọi field điều vận;
 // thêm DO vào xe / xóa DO khỏi xe ngay trong bảng; xóa hết dòng + Lưu = XÓA CẢ SỐ XE.
-const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category'] as const
+const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category', 'vehicle_model_id'] as const
 // Ô NHẬP THEO DÒNG — KHÁC danh sách trên (danh sách trên là các field mang theo khi lưu).
 // `booking_category` KHÔNG có ô theo dòng: cửa đặt lịch là thuộc tính CẤP XE, 1 ô duy nhất đặt
 // ngoài bảng. Nhét nó vào mảng render thì (a) đẻ ra ô cho từng DO — mời gọi khai lệch nhau, đúng
@@ -1266,13 +1577,14 @@ const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'c
 // thêm 1 cột. Cả 3 đã xảy ra thật (bắt bằng Playwright 04/08). Thêm field mới mà user gõ theo
 // từng DO thì thêm vào ĐÂY và thêm <th>; field cấp xe thì chỉ thêm ở KHVC_FIELDS.
 type KhvcField = (typeof KHVC_FIELDS)[number]
-const KHVC_ROW_FIELDS: KhvcField[] = KHVC_FIELDS.filter(f => f !== 'booking_category')
+// `vehicle_model_id` (dòng xe CON, 23/09) cũng là thuộc tính CẤP XE — cùng lối với booking_category: 1 ô ngoài bảng.
+const KHVC_ROW_FIELDS: KhvcField[] = KHVC_FIELDS.filter(f => f !== 'booking_category' && f !== 'vehicle_model_id')
 type KhvcDraft = Record<(typeof KHVC_FIELDS)[number], string>
 type KhvcNewLine = KhvcDraft & { key: string; group_code: string; do_no: string }
 const khvcDraftOf = (r: KhvcRow): KhvcDraft => ({
   warehouse_code: s(r.warehouse_code), npp: s(r.npp), veh_type: s(r.veh_type), dvvt: s(r.dvvt),
   priority: s(r.priority), cs: s(r.cs), export_date: s(r.export_date), note: s(r.note),
-  booking_category: s(r.booking_category),
+  booking_category: s(r.booking_category), vehicle_model_id: s(r.vehicle_model_id),
 })
 function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }: {
   groupCodes: string[]
@@ -1306,6 +1618,8 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   // Danh mục Loại kho theo SCOPE user (không dùng hook gốc — tránh cho chọn loại ngoài quyền)
   const { data: whTypes = [] } = useScopedWhTypes()
   const whTypeOpts = useMemo(() => whTypes.map(t => ({ value: t.value, label: t.value })), [whTypes])
+  // Dòng xe CON đang hoạt động — nhãn "mã SAP · tên"; dòng cùng CHA với Loại xe của xe xếp lên đầu (gợi ý, không chặn)
+  const { data: vmData } = useVehicleModels({ is_active: true })
   const update = useUpdateKhvc()
   const create = useCreateKhvc()
   const bulkDel = useBulkDeleteKhvc()
@@ -1335,6 +1649,19 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   // Cửa đang áp cho xe = giá trị của dòng còn sống ĐẦU TIÊN (mọi dòng luôn bằng nhau — rule 1 xe 1 cửa)
   const bookingCat = (remaining.map(r => draft[r.id]?.booking_category).find(Boolean)
     ?? added.map(l => l.booking_category).find(Boolean) ?? '') as string
+  // Dòng xe con đang áp cho xe — cùng luật cấp xe (mọi dòng bằng nhau; BE đồng bộ cả xe khi đổi)
+  const vehicleModelId = (remaining.map(r => draft[r.id]?.vehicle_model_id).find(Boolean)
+    ?? added.map(l => l.vehicle_model_id).find(Boolean) ?? '') as string
+  const vehTypeOfXe = (remaining.map(r => draft[r.id]?.veh_type).find(Boolean) ?? '') as string
+  const vehicleModelOpts = useMemo(() => {
+    const items = vmData?.items ?? []
+    const norm = (x: string) => x.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+    const vt = norm(vehTypeOfXe)
+    const sameParent = (m: typeof items[number]) => !!vt && !!m.parent && (norm(m.parent.name) === vt || norm(m.parent.code) === vt)
+    return [...items]
+      .sort((a, b) => Number(sameParent(b)) - Number(sameParent(a)) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name))
+      .map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}${m.parent ? '' : ' (chưa gán cha)'}` }))
+  }, [vmData, vehTypeOfXe])
   const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
 
   function addLine() {
@@ -1345,6 +1672,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
       priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
       booking_category: s(base?.booking_category),   // 1 xe 1 cửa → dòng mới KẾ THỪA cửa của xe
+      vehicle_model_id: s(base?.vehicle_model_id),   // 1 xe 1 dòng xe con — kế thừa y như cửa
     }])
   }
   const patchLine = (key: string, p: Partial<KhvcNewLine>) =>
@@ -1400,7 +1728,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
           work.push({ key: crypto.randomUUID(), group_code: g, do_no: '',
             warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
             priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
-            booking_category: s(base?.booking_category) })
+            booking_category: s(base?.booking_category), vehicle_model_id: s(base?.vehicle_model_id) })
           pos = work.length - 1
         }
         const cols = line.split('\t')
@@ -1457,14 +1785,14 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             group_code: r.group_code, do_no: r.do_no,
             warehouse_code: n(d.warehouse_code), npp: n(d.npp), veh_type: n(d.veh_type), dvvt: n(d.dvvt),
             priority: n(d.priority), cs: n(d.cs), export_date: n(d.export_date), note: n(d.note),
-            booking_category: n(d.booking_category),
+            booking_category: n(d.booking_category), vehicle_model_id: n(d.vehicle_model_id),
           })
         }),
         ...validAdded.map(l => create.mutateAsync({
           group_code: l.group_code, do_no: l.do_no.trim(),
           warehouse_code: n(l.warehouse_code), npp: n(l.npp), veh_type: n(l.veh_type), dvvt: n(l.dvvt),
           priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note),
-          booking_category: n(l.booking_category), source: 'MANUAL',
+          booking_category: n(l.booking_category), vehicle_model_id: n(l.vehicle_model_id), source: 'MANUAL',
         })),
       ])
       if (blockedNote) { setRemoved(new Set()); setAdded([]); setErrMsg(blockedNote) }
@@ -1526,6 +1854,33 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             />
           </div>
           <span className="text-[10px] text-slate-500">Cả xe dùng 1 cửa — đổi ở đây áp cho MỌI DO của xe. Xe đang giữ khung giờ của cửa khác thì phải nhả khung trước.</span>
+        </div>
+      )}
+      {/* DÒNG XE CON (mã SAP) = thuộc tính CẤP XE thứ hai (23/09): kho booking theo dòng CHA ("Loại xe"), điều vận chọn
+          dòng CON để app tính cước (bảng cước khoá theo dòng con) và % tải (Non tải). Cùng luật 1 ô cho cả xe. */}
+      {!multi && !isLoading && (rows.length > 0 || added.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <span className="text-xs font-medium text-slate-600">Dòng xe con (mã SAP)</span>
+          <div className="w-72">
+            <SingleSelect
+              options={vehicleModelOpts}
+              value={vehicleModelId}
+              placeholder="Chưa chọn — chuyến không có cước/tải"
+              disabled={!canEdit}
+              onChange={v => {
+                setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, vehicle_model_id: v }])))
+                setAdded(prev => prev.map(l => ({ ...l, vehicle_model_id: v })))
+              }}
+            />
+          </div>
+          {vehicleModelId && canEdit && (
+            <button type="button" className="text-[10px] text-slate-500 hover:text-red-600 hover:underline !min-h-0 !min-w-0"
+              onClick={() => {
+                setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, vehicle_model_id: '' }])))
+                setAdded(prev => prev.map(l => ({ ...l, vehicle_model_id: '' })))
+              }}>Bỏ chọn</button>
+          )}
+          <span className="text-[10px] text-slate-500">Dòng cùng dòng xe cha với &quot;Loại xe&quot; xếp trên. Chọn xong Lưu → chuyến bên Xuất kho hiện Tải và Cước dự tính.</span>
         </div>
       )}
       {isLoading ? (
@@ -1751,7 +2106,8 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
             <TableHeader>
               <TableRow>
                 {RC_COLS.map((c, i) => (
-                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  // Cột "Xử lý" ghim mép PHẢI: bảng ~1.460 px, ba nút Áp SAP / Giữ WMS đứng ngoài màn (rà 21/09)
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'action' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                     {c.label}
                     <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
                       className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
@@ -1787,7 +2143,7 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
                         : <div className="leading-tight"><span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-green-100 text-green-700">Đã xử lý</span>
                           {r.resolution && <div className="text-[9px] text-slate-400 mt-0.5">{r.resolution === 'apply' ? 'Áp SAP' : r.resolution === 'keep' ? 'Giữ WMS' : 'Tay'} · {r.resolved_by ?? ''}</div>}</div>}
                     </TableCell>
-                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap`}>
+                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-200`}>
                       {isOpen && canResolve ? (
                         <div className="flex items-center gap-1 flex-wrap">
                           {canApply && (

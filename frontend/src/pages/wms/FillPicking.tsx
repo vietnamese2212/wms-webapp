@@ -10,7 +10,7 @@
 // là thổi tổng (luật BASE UNIT trong CLAUDE.md, cổng tĩnh 09 đang gác nhãn này).
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDownToLine, QrCode, Plus, X, Rows3, AlignJustify, UserPlus, Info, CalendarSearch } from 'lucide-react'
+import { ArrowDownToLine, Plus, X, Rows3, AlignJustify, UserPlus, Info, CalendarSearch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -20,8 +20,9 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
-import { FillScanOverlay } from './FillScanOverlay'
-import { AssigneePicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
+import { InfoTip } from '@/components/shared/InfoTip'
+import { AssigneePicker, FILL_STATUS_LABEL, FILL_ORDER_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } from './fillShared'
 import {
   useWarehouses, useFillDemand, useFillCandidates, useFillOrders, useFillReport,
   useCreateFillOrder, useCancelFillOrder,
@@ -29,16 +30,23 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
-import { useWedgeScanner } from '@/hooks/useWedgeScanner'
-import { unlockAudio } from '@/utils/audio'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
-import { formatDate, formatTimestampDate } from '@/utils/formatters'
+import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
+
+// Key = đúng giá trị `fill.tab` trong store (khớp PAGE_TABS['/wms/fill'])
+const FILL_TABS = [
+  { key: 'demand', label: 'Đề xuất' },
+  { key: 'tasks',  label: 'Lệnh fill' },
+  { key: 'report', label: 'Kết quả' },
+] as const
 
 const DEMAND_COLS = [
   { id: 'sel',     label: '',                 w: 36 },
@@ -79,6 +87,7 @@ const REPORT_COLS = [
   { id: 'who',   label: 'Người thực hiện', w: 200 },
   { id: 'total', label: 'Được giao',       w: 100, align: 'right' as const },
   { id: 'done',  label: 'Đã xong',         w: 100, align: 'right' as const },
+  { id: 'missed', label: 'Không kịp',       w: 100, align: 'right' as const },   // huỷ lúc chốt ngày — vẫn trong mẫu số
   { id: 'rate',  label: 'Tỷ lệ hoàn thành', w: 150 },
   { id: 'qty',   label: QTY_CONVERTED_LABEL, w: 130, align: 'right' as const },
   { id: 'avg',   label: 'TG trung bình',   w: 120, align: 'right' as const },
@@ -95,7 +104,6 @@ export default function FillPicking() {
   const canPlan    = can(perms, 'fill', 'plan')     // Ra lệnh fill (tab Đề xuất)
   const canCancel  = can(perms, 'fill', 'cancel')   // Hủy dòng/lệnh — quyền riêng (tách 05/08)
   const canAssign  = can(perms, 'fill', 'assign')
-  const canExecute = can(perms, 'fill', 'execute')
 
   // Công nhân (không có quyền lập kế hoạch) mở trang = vào THẲNG tab Lệnh fill — việc của họ
   // nằm ở đó (vị trí lấy/hạ + nút quét); tab Đề xuất là màn của người lập kế hoạch.
@@ -103,6 +111,8 @@ export default function FillPicking() {
     if (perms && !canPlan && f.tab === 'demand') setFill({ tab: 'tasks' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canPlan])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/fill', FILL_TABS, f.tab, k => setFill({ tab: k }))
 
   const [dense, setDense] = useState(() => localStorage.getItem('fill_density') !== 'comfortable')
   const toggleDensity = () =>
@@ -136,6 +146,11 @@ export default function FillPicking() {
         onChange: (v: string[]) => setFillFilter({ cats: v }) },
     ] : []),
     ...(f.tab === 'tasks' ? [
+      // Lệnh fill = SỔ CỦA MỘT NGÀY (15/09) nên ngày xuất là khoá tra cứu chính; user bắt 16/09 "tab Lệnh
+      // fill chưa có filter theo ngày". Rỗng = mọi ngày (hành vi cũ), không tự thu hẹp hộ ai.
+      { key: 'orange', label: 'Ngày xuất', type: 'daterange' as const,
+        from: f.ordersFrom, to: f.ordersTo,
+        onChange: (from: string, to: string) => setFillFilter({ ordersFrom: from, ordersTo: to }) },
       { key: 'status', label: 'Trạng thái', type: 'multi' as const, searchable: false,
         options: [
           { value: 'PENDING', label: 'Chờ làm' },
@@ -154,36 +169,26 @@ export default function FillPicking() {
     ] : []),
   ]
 
-  const [scanOpen, setScanOpen] = useState(false)
-  const [scanMounted, setScanMounted] = useState(false)
-  const [scanOrderId, setScanOrderId] = useState<string | undefined>(undefined)
-  const [pdaScan, setPdaScan] = useState<string | null>(null)
-  const openScan = (orderId?: string) => { setScanOrderId(orderId); setScanMounted(true); setScanOpen(true) }
-
-  // PDA: bóp cò NGAY TẠI TRANG (tab Lệnh fill, chưa mở màn quét) → mở màn quét chế độ SÚNG
-  // (không bật camera) và xử lý luôn tem vừa bắn — đồng bộ chuẩn Outbound/Nhập (user nhắc 05/08)
-  useWedgeScanner(code => {
-    if (scanOpen || !whId || !canExecute || f.tab !== 'tasks') return
-    unlockAudio()
-    setPdaScan(code)
-    openScan(undefined)
-  }, true)
+  // QUÉT THỰC HIỆN CHỈ CÓ TRONG TRANG LỆNH (user chốt 16/09: "bỏ quét thực hiện ở ngoài lệnh fill — phải mở
+  // vào đúng lệnh mới quét được"). Bản 05/08 cho quét ngay ở danh sách (nút toolbar · nút từng dòng · cò súng
+  // PDA) rồi tự dò dòng lệnh khớp tem; nay mọi cửa đó bỏ, người quét vào lệnh rồi bấm Quét ở đó.
 
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 shrink-0 sm:rounded-t-xl space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
+            {/* Mobile ẨN tiêu đề trang như các list page khác (hiến pháp UI mục 20): ở 360 px cái
+                tiêu đề chiếm ~90 px, đẩy ô ngày/ô tìm xuống thành hàng thứ ba của thanh công cụ
+                (chuẩn là tối đa 2). Bỏ nó ra thì tab + ngày nằm gọn một hàng, hàng còn lại là các nút. */}
+            <h1 className="hidden sm:flex text-sm font-semibold text-slate-800 items-center gap-1.5 shrink-0">
               <ArrowDownToLine className="h-4 w-4 text-sky-600" /> Fill hàng
             </h1>
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-medium shrink-0">
-              <button className={`px-2.5 py-1 ${f.tab === 'demand' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setFill({ tab: 'demand' })}>Đề xuất</button>
-              <button className={`px-2.5 py-1 border-l border-slate-200 ${f.tab === 'tasks' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setFill({ tab: 'tasks' })}>Lệnh fill</button>
-              <button className={`px-2.5 py-1 border-l border-slate-200 ${f.tab === 'report' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                onClick={() => setFill({ tab: 'report' })}>Kết quả</button>
+              {tabs.map((t, i) => (
+                <button key={t.key} className={`px-2.5 py-1 ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.tab === t.key ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => setFill({ tab: t.key })}>{t.label}</button>
+              ))}
             </div>
             {/* NGÀY XUẤT là THAM SỐ của phép tính (RPC nhận đúng 1 ngày), không phải bộ lọc phụ →
                 để ngay trên toolbar cho thấy rõ đang tính cho ngày nào, thay vì giấu trong chip lọc */}
@@ -198,17 +203,9 @@ export default function FillPicking() {
               <SearchInput value={f.search} onChange={v => setFillFilter({ search: v })}
                 placeholder="Tìm mã lệnh, mã hàng, người…" className="flex-1 min-w-[140px]" />
             )}
-            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08 "đưa action lên trên
-                nút ba chấm"). Quét thực hiện CHỈ đặt ở tab Lệnh fill — quét là thao tác trên
-                LỆNH; tab Đề xuất/Kết quả không có gì để quét. */}
+            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08). Không có nút Quét ở đây: quét là thao
+                tác TRONG một lệnh — mở lệnh rồi quét (user chốt 16/09). */}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
-              {canExecute && whId && f.tab === 'tasks' && (
-                <Button size="sm" className="h-9 sm:h-7 text-[11px]"
-                  title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh → soi vị trí đến → xác nhận hạ"
-                  onClick={() => openScan(undefined)}>
-                  <QrCode className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
-                </Button>
-              )}
               <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
                 title="Mở trang Nhặt lẻ (nguồn của nhu cầu fill)"
                 onClick={() => navigate('/wms/loosepicking')}>
@@ -229,17 +226,12 @@ export default function FillPicking() {
         ) : f.tab === 'demand' ? (
           <DemandTab warehouseId={whId} date={f.date} onlyShort={f.onlyShort} cats={f.cats} dense={dense} canPlan={canPlan} canAssign={canAssign} />
         ) : f.tab === 'tasks' ? (
-          <OrdersTab warehouseId={whId} dense={dense} canCancel={canCancel} canExecute={canExecute} onScan={openScan} />
+          <OrdersTab warehouseId={whId} dense={dense} canCancel={canCancel} />
         ) : (
           <ReportTab warehouseId={whId} from={f.reportFrom} to={f.reportTo} dense={dense} />
         )}
       </div>
 
-      {scanMounted && (
-        <FillScanOverlay warehouseId={whId} orderId={scanOrderId} open={scanOpen} canAssign={canAssign}
-          pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
-          onClose={() => { setScanOpen(false); setPdaScan(null) }} />
-      )}
     </div>
   )
 }
@@ -248,6 +240,7 @@ export default function FillPicking() {
 function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssign }: {
   warehouseId: string; date: string; onlyShort: boolean; cats: string[]; dense: boolean; canPlan: boolean; canAssign: boolean
 }) {
+  const navigate = useNavigate()
   const { widths: colW, startResize, totalWidth } = useColumnResize('fill_demand_col_widths', DEMAND_COLS.map(c => c.w))
   const { data, isLoading } = useFillDemand({ warehouse_id: warehouseId, date })
   const createOrder = useCreateFillOrder()
@@ -266,12 +259,15 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
   // Chỉ định HIỆU LỰC của 1 dòng — mọi cột (pallet/SL hạ/date/vị trí lấy) + Ra lệnh đọc từ đây
   const eff = (r: FillDemandRow): EffSugg[] => overrides.get(r.material_id)?.sugg ?? r.suggestions
 
+  // Mã NGƯỜI ĐÃ BÁC hôm nay: ẩn khỏi bảng mặc định (băng riêng nêu lý do), bấm "Hiện" mới thấy để đưa lại vào lệnh tay
+  const [showVetoed, setShowVetoed] = useState(false)
   const rows = useMemo(() => {
     let all = data?.rows ?? []
+    if (!showVetoed) all = all.filter(r => !r.veto)
     if (onlyShort) all = all.filter(r => Number(r.short_base) > 0)
     if (cats.length) all = all.filter(r => r.category && cats.includes(r.category))
     return all
-  }, [data, onlyShort, cats])
+  }, [data, onlyShort, cats, showVetoed])
 
   // Tổng CROSS-MÃ: quy đổi per-mã rồi mới cộng (nhãn "SL (quy đổi)")
   const tot = useMemo(() => {
@@ -358,24 +354,90 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         { label: 'Pallet cần hạ', value: nf(tot.pallets), accent: tot.pallets > 0 },
       ]} />
 
-      {data && data.pick_face_locations === 0 && (
-        <div className="mx-3 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-          Kho này <b>chưa khai vị trí nhặt lẻ nào</b> nên mọi mã đều hiện "thiếu". Vào <b>Vị trí kho</b> → lọc các vị trí
-          tầng dưới → nút <b>"Vị trí nhặt lẻ"</b> để khai hàng loạt, rồi quay lại đây.
+      {/* MÃ KHÔNG NẰM TRONG BẢNG — mỗi lý do MỘT CHIP, chi tiết nằm trong ⓘ (user 16/09: "đưa thông tin
+          vào tooltip info đi, thấy mấy cảnh báo mất hết cả màn hình"). Bốn băng chữ cũ ăn ~230/780 px
+          của màn 360 và đẩy bảng — thứ người ta mở trang để xem — xuống dưới nếp gấp. Chip giữ đủ
+          CON SỐ + việc phải làm; danh sách mã, lý do, đường đi tiếp mở ra khi bấm ⓘ. */}
+      {data && ((data.pick_face_locations === 0) || (data.excluded?.length ?? 0) > 0
+        || (data.unset?.length ?? 0) > 0 || (data.vetoed?.length ?? 0) > 0) && (
+        <div className="mx-3 mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+          {data.pick_face_locations === 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+              Kho chưa khai vị trí nhặt lẻ
+              <InfoTip className="text-amber-500 hover:text-amber-700" tip={
+                <>Mọi mã đều hiện "thiếu" vì chưa có ô nào để hạ xuống. Vào <b>Vị trí kho</b> → lọc các vị trí tầng
+                dưới → nút <b>"Vị trí nhặt lẻ"</b> để khai hàng loạt, rồi quay lại đây.</>} />
+            </span>
+          )}
+          {(data.excluded?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+              <b>{nf(data.excluded!.length)}</b> mã chưa có ô lẻ nhận loại
+              <InfoTip className="text-amber-500 hover:text-amber-700" tip={
+                <>
+                  <div>Cần nhặt lẻ hôm nay nhưng kho <b>chưa có ô nhặt lẻ nào nhận Loại kho</b> của chúng nên
+                  không đề xuất được — hàng lẻ sẽ phải lấy trên kệ:</div>
+                  <div className="mt-1">
+                    {Object.entries(data.excluded!.reduce<Record<string, string[]>>((acc, x) => {
+                      const k = x.category ?? '—'; (acc[k] ??= []).push(x.material_code ?? x.material_id); return acc
+                    }, {})).map(([cat, codes]) => (
+                      <div key={cat}><b>{cat}</b>: <span className="font-mono">{codes.join(', ')}</span></div>
+                    ))}
+                  </div>
+                  <div className="mt-1">Khai thêm ô nhặt lẻ nhận loại đó ở <b>Vị trí kho</b> (cột Loại hàng của vị trí).</div>
+                </>} />
+            </span>
+          )}
+          {(data.unset?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
+              <b>{nf(data.unset!.length)}</b> mã chưa chốt %Date
+              <InfoTip tip={close => (
+                <>
+                  <div>Có nhặt lẻ hôm nay nhưng dòng đơn <b>chưa chốt %Date</b> nên chưa đưa vào đề xuất — chưa
+                  chốt thì chưa được lấy hàng:</div>
+                  <div className="mt-1 font-mono">{data.unset!.map(x => x.material_code ?? x.material_id).join(', ')}</div>
+                  <button type="button" className="mt-1 underline font-medium text-sky-700"
+                    onClick={() => { close(); navigate('/wms/outbound/date-rules') }}>
+                    Chốt ở Quy định date ›
+                  </button>
+                  <div className="text-slate-500">Chốt xong máy tự đề xuất, không cần bấm gì thêm.</div>
+                </>)} />
+            </span>
+          )}
+          {(data.vetoed?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
+              <b>{nf(data.vetoed!.length)}</b> mã người đã bác
+              <InfoTip tip={close => (
+                <>
+                  <div>Hôm nay <b>đã có người huỷ dòng máy đặt</b> nên máy không đặt lại, không đưa vào đề xuất:</div>
+                  <div className="mt-1">
+                    {data.vetoed!.map(x => (
+                      <div key={x.material_id}>
+                        <span className="font-mono">{x.material_code ?? x.material_id}</span>
+                        <span className="text-slate-500"> — {x.reason || 'không ghi lý do'}{x.at ? ` · ${formatTimestampTime(x.at)}` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="mt-1 underline font-medium text-sky-700"
+                    onClick={() => { close(); setShowVetoed(v => !v) }}>
+                    {showVetoed ? 'Ẩn lại khỏi bảng' : 'Hiện để đưa vào lệnh tay ›'}
+                  </button>
+                </>)} />
+            </span>
+          )}
         </div>
       )}
 
+      {/* Thanh này trước đây là một <div> đứng cố định giữa băng và bảng: chưa tick mã nào vẫn ăn ~90 px
+          của màn 360 và chìa ra một nút bấm không được. Nay là pill NỔI, chỉ hiện khi đã chọn (luật C28). */}
       {canPlan && (
-        <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
-          <span className="text-[11px] text-slate-500">
-            Đã chọn <b className="text-slate-700">{sel.size}</b> mã ·
-            {' '}{nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet sẽ vào MỘT lệnh
-          </span>
-          <Button size="sm" className="h-7 text-[11px] ml-auto" disabled={sel.size === 0 || createOrder.isPending}
+        <FloatingActionBar count={sel.size}
+          unit={`mã · ${nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet vào lệnh fill của NGÀY`}>
+          <Button size="sm" className={FLOATING_BTN} disabled={createOrder.isPending}
             onClick={() => { setErr(''); setAssignOpen(true) }}>
-            <Plus className="h-3.5 w-3.5 mr-1" />{createOrder.isPending ? 'Đang tạo…' : 'Ra lệnh fill'}
+            <Plus className="h-3.5 w-3.5 mr-1" />{createOrder.isPending ? 'Đang lưu…' : 'Đưa vào lệnh fill'}
           </Button>
-        </div>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setSel(new Set())}>Bỏ chọn</Button>
+        </FloatingActionBar>
       )}
       {err && <p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
       {result && (
@@ -432,11 +494,11 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={DEMAND_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={DEMAND_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={DEMAND_COLS.length} className="text-center py-8 text-xs text-slate-400">
+              <TableEmptyRow colSpan={DEMAND_COLS.length}>
                 {onlyShort ? 'Không mã nào thiếu hàng ở vị trí nhặt lẻ — không cần fill' : 'Ngày này không có nhặt lẻ'}
-              </TableCell></TableRow>
+</TableEmptyRow>
             ) : rows.map(r => {
               const short = Number(r.short_base)
               const picked = sel.has(r.material_id)
@@ -452,7 +514,13 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                         })} />
                     )}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.material_code ?? '—'}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">
+                    {r.material_code ?? '—'}
+                    {r.veto && (
+                      <span className="ml-1 font-sans font-normal text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800"
+                        title={`Người đã huỷ dòng máy đặt hôm nay: ${r.veto.reason || 'không ghi lý do'}`}>Người đã bác</span>
+                    )}
+                  </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.material_name ?? ''}>
                     {r.material_name ?? <span className="text-slate-300">—</span>}
                   </TableCell>
@@ -462,9 +530,17 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
                     {qtyLabel(Number(r.demand_base), r)}
                   </TableCell>
+                  {/* "Có ở kho lẻ" mà KHÔNG phải lô đúng thứ tự thì nhặt ở đó là vi phạm luật luân
+                      chuyển của chính kho ⇒ phải nói ra, nếu không người đọc thấy tồn to đùng mà
+                      máy báo "thiếu" sẽ tưởng máy sai (đo Ba Vì 15/09: có 45.259, đúng lô 0). */}
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
                     {qtyLabel(Number(r.pick_face_base), r)}
                     <span className="text-slate-400"> · {r.pick_face_pallets} pl</span>
+                    {r.pick_face_ok_base != null && Number(r.pick_face_ok_base) < Number(r.pick_face_base) && (
+                      <div className="text-[9px] text-amber-700" title={`Chỉ ${qtyLabel(Number(r.pick_face_ok_base), r)} ở vị trí nhặt lẻ là lô ĐÚNG THỨ TỰ${r.lot_nsx ? ` (NSX ${formatDate(r.lot_nsx)})` : ''} — phần còn lại là lô khác, nhặt ở đó là lấy sai thứ tự.`}>
+                        đúng lô: {qtyLabel(Number(r.pick_face_ok_base), r)}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
                     {Number(r.pending_base) > 0
@@ -557,7 +633,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setAssignOpen(false)} disabled={createOrder.isPending}>Hủy</Button>
             <Button size="sm" onClick={raLenh} disabled={createOrder.isPending}>
-              {createOrder.isPending ? 'Đang tạo…' : 'Ra lệnh'}
+              {createOrder.isPending ? 'Đang lưu…' : 'Đưa vào lệnh'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -582,9 +658,8 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
 }
 
 // ─── TAB 2 — LỆNH FILL (danh sách lệnh gom — mở dòng ra trang chi tiết) ──────
-function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
-  warehouseId: string; dense: boolean; canCancel: boolean; canExecute: boolean
-  onScan: (orderId: string) => void
+function OrdersTab({ warehouseId, dense, canCancel }: {
+  warehouseId: string; dense: boolean; canCancel: boolean
 }) {
   const navigate = useNavigate()
   const f = useWmsFilterStore(s => s.fill)
@@ -592,7 +667,10 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
   const { widths: colW, startResize, totalWidth } = useColumnResize('fill_order_col_widths', ORDER_COLS.map(c => c.w))
   const { data, isLoading } = useFillOrders({
     warehouse_id: warehouseId,
-    status: f.status.join(','),
+    date_from: f.ordersFrom || undefined, date_to: f.ordersTo || undefined,
+    // Bỏ tick hết = "Tất cả" (chuẩn FilterBar), KHÔNG gửi `status=` rỗng — BE coi rỗng là "không trạng
+    // thái nào" và trả bảng trống (user 16/09: "Lệnh fill ko có dữ liệu?"). Ratchet list_param_join_without_empty_guard.
+    status: f.status.join(',') || undefined,
     mine: f.mine ? '1' : undefined,
     search: f.search || undefined,
     page: f.page, page_size: f.pageSize,
@@ -636,8 +714,9 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {/* MOBILE = THẺ VIỆC (user chốt 05/08: "thông tin và thao tác ở VỊ TRÍ NÀO phải hiện
-            ngay view đầu tiên") — vị trí LẤY → VỀ chữ to, nút Quét ngay trên thẻ; bảng đầy đủ
-            cột giữ nguyên cho desktop từ breakpoint sm. */}
+            ngay view đầu tiên") — vị trí LẤY → VỀ chữ to; bảng đầy đủ cột giữ nguyên cho desktop từ
+            breakpoint sm. Thẻ CỐ Ý KHÔNG có nút Quét (user chốt 16/09 vòng 5: "phải mở vào đúng lệnh
+            mới quét được") — bấm thẻ mở trang lệnh, quét ở đó. Đừng thêm lại. */}
         <div className="sm:hidden divide-y divide-slate-100">
           {isLoading ? (
             <p className="text-center py-8 text-xs text-slate-400">Đang tải…</p>
@@ -650,7 +729,13 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                 onClick={() => navigate(`/wms/fill/orders/${o.id}`)}>
                 <div className="flex items-center gap-2">
                   <span className={`font-mono text-xs font-bold ${fillRowText(o.status) || 'text-slate-800'}`}>{o.order_code}</span>
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_STATUS_LABEL[o.status]}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_ORDER_STATUS_LABEL[o.status]}</span>
+                  {/* Dấu "máy tạo" phải có Ở CẢ THẺ (kiểm 360px 15/09: bảng desktop có, thẻ mobile
+                      thiếu) — người kho dùng điện thoại, mà đây đúng là chỗ họ cần biết vì sao có
+                      việc mình không bấm. Hai lối hiển thị cùng một dữ liệu thì phải nói cùng một chuyện. */}
+                  {o.auto_created && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 ring-1 ring-sky-200 shrink-0">Máy tạo</span>
+                  )}
                   <span className="text-[10px] text-slate-400">{formatTimestampDate(o.target_date, true)}</span>
                   <span className="ml-auto text-[11px] tabular-nums font-semibold">{nf(o.pallets_done)}/{nf(o.pallets_req)} pl</span>
                 </div>
@@ -678,12 +763,6 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                       style={{ width: `${prog}%` }} />
                   </div>
                   <span className="text-[10px] tabular-nums font-semibold">{prog}%</span>
-                  {o.status === 'PENDING' && canExecute && (
-                    <Button size="sm" className="h-9 text-[11px] shrink-0"
-                      onClick={e => { e.stopPropagation(); onScan(o.id) }}>
-                      <QrCode className="h-3.5 w-3.5 mr-1" /> Quét
-                    </Button>
-                  )}
                 </div>
               </div>
             )
@@ -708,9 +787,9 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={ORDER_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={ORDER_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={ORDER_COLS.length} className="text-center py-8 text-xs text-slate-400">Chưa có lệnh fill nào khớp bộ lọc</TableCell></TableRow>
+              <TableEmptyRow colSpan={ORDER_COLS.length}>Chưa có lệnh fill nào khớp bộ lọc</TableEmptyRow>
             ) : rows.map(o => {
               const prog = o.pallets_req > 0 ? Math.min(100, Math.round(o.pallets_done * 100 / o.pallets_req)) : 0
               return (
@@ -719,7 +798,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">{formatTimestampDate(o.target_date, true)}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{o.order_code}</TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_STATUS_LABEL[o.status]}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_ORDER_STATUS_LABEL[o.status]}</span>
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate" title={o.mat_codes ?? ''}>
                     {o.mat_codes ?? <span className="text-slate-300">—</span>}
@@ -745,7 +824,12 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                     <div className="leading-tight">
-                      <div className="text-slate-600 truncate">{o.created_by ?? '—'}</div>
+                      {/* Lệnh do MÁY đặt phải nhìn ra ngay: người xem cần biết vì sao có việc mình
+                          không bấm (15/09) — và biết nó tự thu hồi khi nhu cầu hết. */}
+                      {o.auto_created
+                        ? <span className="inline-flex items-center rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-700 ring-1 ring-sky-200"
+                            title="Hệ thống tự đặt theo nhu cầu nhặt lẻ trong ngày — chưa ai nhận thì tự thu hồi khi hết nhu cầu">Máy tạo</span>
+                        : <div className="text-slate-600 truncate">{o.created_by ?? '—'}</div>}
                       <div className="text-[9px] text-slate-400">{formatTimestampDate(o.created_at, true)}</div>
                     </div>
                   </TableCell>
@@ -753,12 +837,6 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                     {o.status === 'PENDING' && (
                       <div className="flex items-center gap-0.5">
-                        {canExecute && (
-                          <button type="button" title="Quét thực hiện trong lệnh này" onClick={() => onScan(o.id)}
-                            className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
-                            <QrCode className="h-3.5 w-3.5" />
-                          </button>
-                        )}
                         {canCancel && (
                           <button type="button" title="Hủy các dòng còn treo của lệnh này" onClick={() => doCancel(o)}
                             className="px-1.5 py-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600">
@@ -895,6 +973,8 @@ function ReportTab({ warehouseId, from, to, dense }: {
       <SummaryBand tiles={[
         { label: 'Tổng dòng lệnh', value: nf(data?.total ?? 0) },
         { label: 'Đã xong',   value: nf(data?.done ?? 0) },
+        { label: 'Không kịp', value: nf(data?.missed ?? 0), danger: (data?.missed ?? 0) > 0,
+          tip: 'Dòng còn treo lúc chốt ngày — bị huỷ với lý do "chưa thực hiện" nhưng vẫn tính vào mẫu số' },
         { label: 'Tỷ lệ hoàn thành', value: `${nf(rate)}%`, danger: rate < 80, accent: rate >= 80 },
         { label: 'Chưa giao ai', value: nf(data?.unassigned ?? 0) },
         { label: `ĐÃ HẠ — ${QTY_CONVERTED_LABEL}`, value: nf(data?.qty_entry ?? 0), tip: QTY_CONVERTED_TIP },
@@ -919,9 +999,9 @@ function ReportTab({ warehouseId, from, to, dense }: {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={REPORT_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={REPORT_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={REPORT_COLS.length} className="text-center py-8 text-xs text-slate-400">Khoảng ngày này chưa có lệnh fill</TableCell></TableRow>
+              <TableEmptyRow colSpan={REPORT_COLS.length}>Khoảng ngày này chưa có lệnh fill</TableEmptyRow>
             ) : rows.map(r => (
               <TableRow key={r.assignee_id ?? '__none__'} className={r.rate >= 100 ? 'text-[#4A90D9]' : r.done_n > 0 ? 'text-[#D8891C]' : ''}>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate sticky left-0 z-10 bg-white font-medium" title={r.assignee_name}>
@@ -929,6 +1009,9 @@ function ReportTab({ warehouseId, from, to, dense }: {
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{nf(r.total_n)}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold">{nf(r.done_n)}</TableCell>
+                <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums ${(r.missed_n ?? 0) > 0 ? 'text-red-600' : ''}`}>
+                  {(r.missed_n ?? 0) > 0 ? nf(r.missed_n ?? 0) : <span className="text-slate-300">—</span>}
+                </TableCell>
                 <TableCell className="px-2 py-1 whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
                     <div className="h-1.5 flex-1 min-w-[40px] rounded-full bg-slate-200 overflow-hidden">

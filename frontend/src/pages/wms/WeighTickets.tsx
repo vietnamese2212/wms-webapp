@@ -156,7 +156,8 @@ export default function WeighTickets() {
               <TableRow>
                 {/* KHÔNG đặt `relative` lên TableHead — đè mất `sticky top-0` của base → header hết freeze */}
                 {COLS.map((c, i) => (
-                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  // Cột gắn/gỡ chuyến ghim mép PHẢI: bảng 17 cột ~1.500 px, nút đứng ngoài màn ở 1280 (rà 21/09)
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'action' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                     {c.label}
                     <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
                       className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
@@ -214,7 +215,7 @@ export default function WeighTickets() {
                       {r.gdo_id && (r.matched_by === 'auto' || r.matched_by === 'auto-start') && <span className="ml-1 text-[8px] text-slate-400">auto</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.trans_company || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-1 py-1 whitespace-nowrap">
+                    <TableCell className="px-1 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-200">
                       {canMatch && (r.gdo_id ? (
                         <button className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0" title="Gỡ chuyến khỏi phiếu cân"
                           onClick={() => setMatchFor(r)}>

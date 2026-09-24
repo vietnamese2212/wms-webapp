@@ -7,6 +7,11 @@
 # Secrets cần khai 1 lần (Settings → Secrets and variables → Actions):
 #   QA_DATABASE_URL  = SUPABASE_URL|SERVICE_ROLE_KEY của STAGING, nối bằng dấu | (2 giá trị 1 secret)
 #     (chỉ staging — TUYỆT ĐỐI không đặt key production vào đây)
+# KHÔNG cần secret tài khoản: từ 07/09 CI TỰ CẤP một tài khoản QA sống vài phút bằng chính khoá
+# dịch vụ trên rồi xoá (scripts/qa/ci-account.mjs). Hai secret cũ QA_ADMIN_EMAIL / QA_ADMIN_PASSWORD
+# nay THỪA — xoá được. Lý do bỏ: bản chép tay lỗi thời vào đúng lúc không ai để ý, và mỗi lần chạy
+# lại đốt một lần ĐOÁN SAI lên tài khoản thật (auth_throttle khoá sau 10 lần sai/15 phút — đo thật
+# 06–07/09: 9 job đỏ liên tiếp cùng một gốc).
 # Gói race/scale KHÔNG chạy ở đây (có ghi dữ liệu — chạy tay/đêm, tránh đè giờ demo).
 name: ci
 on:
@@ -18,9 +23,9 @@ jobs:
   static:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }   # 22 = có WebSocket native; supabase-js v2.105 ném lỗi lúc createClient trên Node 20 (CI đỏ 11/09)
       - name: Cài dependency (BE + FE)
         run: |
           cd backend && npm ci --no-audit --no-fund &
@@ -28,6 +33,14 @@ jobs:
           wait
       - name: Cổng tĩnh ratchet (as any / split(',') / timezone / nhãn quy đổi)
         run: node scripts/qa/09-static-gate.mjs
+      - name: Lỗ hổng thư viện (npm audit ratchet — high/critical không được tăng so audit-baseline.json)
+        run: node scripts/qa/44-npm-audit.mjs
+      # 11/09: hai lưới rẻ nhất, không cần server — helper thuần + mirror BE⇄FE (vài giây) và ratchet độ phủ
+      # (route/quyền mới chưa gói QA nào chạm → đỏ ngay, không chờ đợt kiểm toàn app).
+      - name: Test đơn vị + mirror BE⇄FE (vitest)
+        run: cd backend && npm test --silent
+      - name: Ratchet độ phủ QA (route/quyền mới phải có phép kiểm chạm)
+        run: node scripts/qa/coverage-surface.mjs --ratchet
       - name: tsc backend
         run: cd backend && npx tsc --noEmit
       - name: tsc + build frontend
@@ -37,15 +50,53 @@ jobs:
     # Chỉ dev: main deploy production — không bắn QA vào production.
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    # 11/09: ngày 10/09 có 30 lượt push ⇒ 30 lượt qa-smoke nối đuôi, 5 lượt đỏ = 5 email cho cùng một
+    # trạng thái staging ⇒ push mới thì bỏ lượt cũ đang chờ Preview (kết quả của nó cũng vô nghĩa vì
+    # Preview đã đổi commit). Bước thu hồi tài khoản vẫn chạy (always()).
+    #
+    # 23/09 — ĐỔI CÁCH BỎ: `cancel-in-progress: true` làm lượt cũ kết thúc với trạng thái **cancelled**,
+    # và cả LƯỢT CHẠY mang kết luận "cancelled" dù job `static` đã XANH (đo thật: lượt 850). Chú thích cũ
+    # khẳng định "lượt bị huỷ không gửi email" — đó là một GIẢ ĐỊNH chưa ai kiểm, mà hộp thư người dùng
+    # mới là nơi trả lời. Thay vì đoán: QUEUE (`cancel-in-progress: false`) rồi để lượt cũ TỰ NHẬN RA mình
+    # đã cũ và thoát 0 kèm ::notice ⇒ kết luận **success**, không còn trạng thái nào để GitHub báo động.
+    # Queue vẫn giữ nguyên điều cần giữ: KHÔNG BAO GIỜ hai bộ smoke cùng bắn vào staging một lúc.
+    # CÒN HỞ (nói thẳng): GitHub chỉ giữ MỘT lượt ở hàng chờ mỗi nhóm — push cái thứ BA khi cái thứ hai
+    # còn đang chờ thì cái thứ hai vẫn bị huỷ. Hai push liên tiếp (ca thường gặp) nay sạch; ba push dồn
+    # trong vài phút thì còn một lượt "cancelled". Gom commit trước khi push vẫn là cách rẻ nhất.
+    concurrency: { group: qa-smoke-dev, cancel-in-progress: false }
     env:
       PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }   # 22 = có WebSocket native; supabase-js v2.105 ném lỗi lúc createClient trên Node 20 (CI đỏ 11/09)
+      # Tới lượt mình mà nhánh đã chạy tiếp ⇒ lượt này vô nghĩa (Preview chỉ giữ commit MỚI NHẤT).
+      # Thoát SẠCH thay vì để bị huỷ: lượt "cancelled" là thứ GitHub có thể gửi email, "success" thì không.
+      - name: Bỏ qua nếu đã có commit mới hơn trên nhánh
+        id: stale
         run: |
+          head=$(git ls-remote origin "$GITHUB_REF" | cut -f1)
+          if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Bỏ qua QA smoke::commit này (${GITHUB_SHA:0:8}) không còn là đầu nhánh (${head:0:8}) — Preview đã đổi, kết quả sẽ vô nghĩa. Lượt của commit mới sẽ kiểm."
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
+        id: wait
+        if: steps.stale.outputs.stale == 'false'
+        # Phải hỏi "mình còn mới không?" TRONG vòng chờ, không chỉ lúc bắt đầu: người ta push tiếp
+        # lúc vòng này đang chạy thì Vercel dựng commit MỚI, nên SHA của lượt này KHÔNG BAO GIỜ lên
+        # nữa ⇒ ngồi đủ 12 phút rồi ::error = ĐỎ OAN, tệ hơn cả bị huỷ.
+        run: |
+          echo "stale=false" >> "$GITHUB_OUTPUT"
           for i in $(seq 1 72); do
+            head=$(git ls-remote origin "$GITHUB_REF" | cut -f1)
+            if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
+              echo "stale=true" >> "$GITHUB_OUTPUT"
+              echo "::notice title=Bỏ qua QA smoke::nhánh đã chạy tiếp tới ${head:0:8} trong lúc chờ — Preview không còn mang commit này. Lượt của commit mới sẽ kiểm."
+              exit 0
+            fi
             sha=$(curl -s --max-time 15 "$PREVIEW_URL/api/version" | grep -o '"sha":"[a-f0-9]*"' | cut -d'"' -f4 || true)
             echo "lần $i: preview=$sha cần=$GITHUB_SHA"
             if [ "$sha" = "$GITHUB_SHA" ]; then echo "Preview ĐÃ live đúng commit"; exit 0; fi
@@ -54,6 +105,7 @@ jobs:
           echo "::error::Preview không lên đúng commit sau 12 phút (Vercel build fail?)"; exit 1
       - name: Dựng env cho bộ QA (từ secret — thiếu thì skip có chủ đích)
         id: qaenv
+        if: steps.stale.outputs.stale == 'false' && steps.wait.outputs.stale == 'false'
         run: |
           if [ -z "${{ secrets.QA_DATABASE_URL }}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -64,15 +116,36 @@ jobs:
             printf 'SUPABASE_URL=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$url" "$key" > backend/.env
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      # TÀI KHOẢN CHẠY BỘ KIỂM = CẤP LÚC CHẠY, XOÁ NGAY SAU ĐÓ (user chốt 07/09).
+      # Không còn cặp email/mật khẩu chép tay trong Secrets — bản chép tay lỗi thời vào đúng lúc
+      # không ai để ý, và mỗi lần chạy lại đốt một lần ĐOÁN SAI lên tài khoản thật (khoá sau 10 lần
+      # sai/15 phút). Khoá dịch vụ vốn đã có sẵn trong QA_DATABASE_URL nên không cần thêm secret nào.
+      - name: Cấp tài khoản QA tạm cho lượt chạy này
+        id: qacred
+        if: steps.qaenv.outputs.skip == 'false'
+        run: |
+          npm i bcryptjs@2.4.3 --no-save --no-audit --no-fund >/dev/null 2>&1
+          out=$(node scripts/qa/ci-account.mjs provision) || { echo "::error::Không cấp được tài khoản QA tạm"; exit 1; }
+          email=$(printf '%s\n' "$out" | sed -n 's/^email=//p')
+          pass=$(printf '%s\n' "$out" | sed -n 's/^password=//p')
+          echo "::add-mask::$pass"
+          { echo "QA_ADMIN_EMAIL=$email"; echo "QA_ADMIN_PASSWORD=$pass"; } >> "$GITHUB_ENV"
       - name: "QA read-only: invariant + params-fuzz + perm-coverage"
         if: steps.qaenv.outputs.skip == 'false'
         env:
           QA_BASE_URL: ${{ env.PREVIEW_URL }}
-          # 2 secret tuỳ chọn — chưa khai thì lib.mjs dùng tài khoản test staging mặc định;
-          # sau khi đổi mật khẩu admin thì BẮT BUỘC khai (lib.mjs dùng ||, chuỗi rỗng vẫn fallback)
-          QA_ADMIN_EMAIL: ${{ secrets.QA_ADMIN_EMAIL }}
-          QA_ADMIN_PASSWORD: ${{ secrets.QA_ADMIN_PASSWORD }}
+        # Mỗi gói một khối + ::error nêu TÊN GÓI khi gói chết mà không kịp in phép kiểm nào (crash/đăng nhập
+        # hỏng) — 3/6 lượt đỏ ngày 10/09 chỉ có dòng "Process completed with exit code 1", không biết gói nào.
         run: |
-          node scripts/qa/00-invariant.mjs
-          node scripts/qa/07-params-fuzz.mjs
-          node scripts/qa/08-perm-coverage.mjs
+          rc=0
+          for p in 00-invariant 07-params-fuzz 08-perm-coverage; do
+            echo "::group::$p"
+            if ! node "scripts/qa/$p.mjs"; then echo "::error title=QA gói $p ĐỎ::xem khối $p trong log"; rc=1; fi
+            echo "::endgroup::"
+          done
+          exit $rc
+      # always(): bộ kiểm đỏ thì tài khoản vẫn phải bị thu hồi — không để lại tài khoản superadmin
+      # sống lay lắt trên staging vì một job fail.
+      - name: Thu hồi tài khoản QA tạm
+        if: always() && steps.qacred.outcome == 'success'
+        run: node scripts/qa/ci-account.mjs cleanup

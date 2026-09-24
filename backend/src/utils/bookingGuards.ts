@@ -96,6 +96,37 @@ export async function deleteVehicleSlotsAndRecount(orderIds: string[]): Promise<
   return slotIds.size
 }
 
+/**
+ * NHẢ khung giờ của các lệnh (giữ nguyên dòng xe) — dùng khi lệnh NGỪNG HIỆU LỰC mà bản ghi vẫn
+ * phải ở lại để tra cứu (kế hoạch nhập bị huỷ hết dòng, xe bị bỏ khỏi kế hoạch…).
+ *
+ * VÌ SAO CÓ HÀM NÀY (đo 06/09, gói QA 50 phép [54]): huỷ dòng kế hoạch nhập cuối cùng làm lệnh
+ * chuyển sang ĐÃ HUỶ, nhưng dòng xe vẫn giữ `slot_id` và vẫn tính là một chỗ trong khung giờ ⇒
+ * khung cao điểm bị một lệnh đã huỷ chiếm chỗ, xe thật không đặt được, và không còn nút nào để nhả
+ * (lệnh huỷ rồi thì màn hình không cho thao tác nữa). Đường XOÁ dòng kế hoạch thì đã nhả đúng
+ * (`deleteVehicleSlotsAndRecount`) — hai đường cùng hậu quả mà chỉ một đường dọn.
+ *
+ * Đi qua RPC `book_vehicle_slot(…, p_new_slot_id = NULL)` như nút "Trả lại khung giờ" của người
+ * dùng: RPC khoá dòng + đếm SỐNG + tự `recount_slot`, nên không bao giờ làm trôi bộ đếm.
+ */
+export async function releaseSlotsOfOrders(orderIds: string[], actor: string | null): Promise<number> {
+  const ids = [...new Set(orderIds.filter(Boolean))]
+  if (!ids.length) return 0
+  let released = 0
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await supabase.from('TmsVehicleSlot')
+      .select('id').in('order_id', ids.slice(i, i + 300)).not('slot_id', 'is', null)
+    for (const v of ((data ?? []) as { id: string }[])) {
+      const { error } = await supabase.rpc('book_vehicle_slot', {
+        p_vslot_id: v.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor,
+      })
+      if (error) console.error('[bookingGuards] nhả khung giờ:', error.message)
+      else released++
+    }
+  }
+  return released
+}
+
 /** Đổi CỬA đặt lịch: khung đang giữ thuộc cửa khác (khung 'ALL' thì mọi cửa đều đậu được → bỏ qua). */
 export function slotHeldBlockingCategory(held: HeldSlot[] | undefined, newCat: string): string | null {
   for (const s of held ?? []) {

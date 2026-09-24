@@ -13,8 +13,9 @@ import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
-import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
+import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule, WorkInbox, DirectedSupervision } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
+import type { MatUnits } from '@/utils/qtyUnits'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -32,7 +33,10 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; search?: string; limit?: number }
+// ncc_id: chỉ dùng cho picker CẤT HÀNG — để BE chấm được luật "không trộn NCC trong 1 vị trí".
+// `putaway: 1` = picker CẤT HÀNG chưa biết mã hàng (lô nhiều mã) — bắt BE vẫn chấm luật của Ô
+// (cấm nhận hàng / đã đầy / nhặt lẻ / QA giữ). Có `material_id` thì tự bật, khỏi truyền.
+type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; ncc_id?: string; search?: string; limit?: number; putaway?: 1 }
 
 /** Cột view=lite của Location (LOCATION_LITE_COLS ở BE) + 2 cột tính thêm. */
 export type LocationLite = {
@@ -43,6 +47,8 @@ export type LocationLite = {
   requires_stocktake?: boolean | null; is_pick_face?: boolean | null
   slot_no_in?: boolean | null; slot_no_out?: boolean | null
   used_slots?: number; has_same_material?: boolean
+  // Khối do BE chấm theo quy tắc cất hàng của kho — FE chỉ hiển thị (xem utils/putaway.ts)
+  putaway?: { blocked: string | null; reason: string | null } | null
 }
 
 /**
@@ -66,6 +72,29 @@ export function useLocationsReal(params?: LocationListParams, enabled = true) {
  * Ô chọn vị trí tìm-trên-server chỉ giữ 50 dòng khớp từ khoá HIỆN TẠI ⇒ value đang chọn phải
  * có đường tra riêng, không thì ô in uuid thô và user tưởng mất dữ liệu (bài học 29/07).
  */
+/**
+ * TẬP vị trí mang một CỜ (cần kiểm kê / kho tạm / hàng kẹt) — BE tự lọc và trả bản gọn.
+ * Dùng thay cho "kéo cả kho về rồi `.filter(l => l.requires_stocktake)`": đo 15/08 kho Bàu Bàng
+ * 1.517 vị trí = 1.030KB / 2,9s mỗi lần mở màn, trong khi tập mang cờ chỉ vài chục dòng.
+ * Cờ là tập CON có chủ đích nên trả đủ là an toàn — đây KHÔNG phải nạp cả danh mục.
+ */
+export function useLocationsByFlag(
+  flag: 'requires_stocktake' | 'slot_no_in' | 'slot_no_out',
+  params: { warehouse_id?: string; category?: string },
+  enabled = true,
+) {
+  const qs = flag === 'requires_stocktake' ? { flag: '1' } : { [flag]: '1' }
+  return useQuery({
+    queryKey: ['locations-real', 'by-flag', flag, params],
+    enabled: enabled && !!params.warehouse_id,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/locations', { params: { ...params, ...qs, view: 'lite' } })
+      return data.data as LocationLite[]
+    },
+  })
+}
+
 export function useLocationsByIds(ids: (string | null | undefined)[], enabled = true) {
   const key = [...new Set(ids.filter((x): x is string => !!x))].sort()
   return useQuery({
@@ -81,6 +110,56 @@ export function useLocationsByIds(ids: (string | null | undefined)[], enabled = 
         out.push(...(data.data as LocationLite[]))
       }
       return out
+    },
+  })
+}
+
+/**
+ * QUÉT TEM VỊ TRÍ → tra ĐÚNG 1 vị trí theo mã (BE `GET /masterdata/locations/resolve`).
+ * KHÔNG dùng `?search=` để tra tem: search là khớp-chứa trên cả tên khu nên một phát quét có thể
+ * ra nhiều dòng, và lấy "dòng đầu" thì tem `..._5_T1` nhận về `..._5_T10` — pallet đi sai ô mà
+ * không ai biết. BE khớp TRỌN mã, nhiều dòng thì báo mơ hồ chứ không đoán.
+ * Không phải hook: người quét bắn từng phát rời rạc, cache theo mã không có ích.
+ */
+export async function resolveLocationByCode(params: {
+  code: string; warehouse_id?: string | null; material_id?: string | null; ncc_id?: string | null; putaway?: 1
+}): Promise<LocationLite> {
+  const { data } = await apiClient.get('/masterdata/locations/resolve', {
+    params: {
+      code: params.code,
+      warehouse_id: params.warehouse_id || undefined,
+      material_id: params.material_id || undefined,
+      ncc_id: params.ncc_id || undefined,
+      putaway: params.putaway,
+    },
+  })
+  return data.data as LocationLite
+}
+
+/**
+ * "Ô này đang CHỨA GÌ" — gom theo MÃ cho MỘT vị trí (user yêu cầu 17/08).
+ * Chỉ gọi khi người dùng đã CHỌN một vị trí ⇒ 1 request, không phải mỗi lần gõ phím tìm.
+ */
+export interface LocationContentRow {
+  material_id: string; material_code: string | null; short_name: string | null
+  pallets: number; qty_base: number; qa_hold: number
+  date_min: string | null; date_max: string | null
+  /** BE nói rõ ngày trên là HSD hay NSX — FE KHÔNG đoán theo nguyên tắc luân chuyển của kho */
+  date_kind: 'HSD' | 'NSX' | null
+  base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+}
+export interface LocationContents {
+  location_code: string; max_pallets: number; pallets: number; qa_hold: number
+  materials: LocationContentRow[]
+}
+export function useLocationContents(locationId?: string | null) {
+  return useQuery({
+    queryKey: ['location-contents', locationId],
+    enabled: !!locationId,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/masterdata/locations/${locationId}/contents`)
+      return data.data as LocationContents
     },
   })
 }
@@ -102,7 +181,7 @@ export function useLocationsFull(params?: LocationListParams, enabled = true) {
 // flag / pick_face = BA trạng thái: undefined (không lọc) · true (có cờ) · false (chưa có cờ)
 export type LocationsListParams = {
   warehouse_id?: string; category?: string; search?: string; zones?: string[]
-  flag?: boolean; pick_face?: boolean; include_inactive?: boolean
+  flag?: boolean; pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean; include_inactive?: boolean
 }
 export type LocationsSummary = { count: number; capacity: number; used: number; full: number }
 
@@ -113,11 +192,14 @@ export type LocationsSummary = { count: number; capacity: number; used: number; 
 // này — tự dựng params bằng tay là tái diễn đúng bug trên ở một đường khác.
 export function locationsQp(p: LocationsListParams): Record<keyof LocationsListParams, string | undefined> {
   const tri = (v?: boolean) => (v === undefined ? undefined : v ? '1' : '0')
+  // Đọc qua destructure có chủ đích: ratchet `putaway_rule_hand_rolled` bắt mẫu `x.slot_no_in`
+  // (FE tự đoán luật cất) — đây chỉ là map query-param lọc, không phải kết luận gì từ cờ.
+  const { slot_no_in: noIn, slot_no_out: noOut } = p
   return {
     warehouse_id: p.warehouse_id || undefined, category: p.category || undefined,
     search: p.search || undefined,
     zones: p.zones?.length ? p.zones.join(',') : undefined,
-    flag: tri(p.flag), pick_face: tri(p.pick_face),
+    flag: tri(p.flag), pick_face: tri(p.pick_face), slot_no_in: tri(noIn), slot_no_out: tri(noOut),
     include_inactive: p.include_inactive ? '1' : undefined,
   }
 }
@@ -154,6 +236,9 @@ export type PalletPrintRow = {
   id: string; batch_id: string | null; qr_code: string; material_code: string | null; category: string | null
   cycle: string | null; machine: string | null; seq: string | null; nmsx: string | null
   qty: number | null; mode: string; printed_by_name: string | null; created_at: string
+  // Kho của TỪNG TEM — cần để tra cờ is_ncc_goods đúng kho khi in lại (cờ khai riêng theo kho từ
+  // 21/08, mà 1 lệnh in có thể gồm tem của nhiều kho). Optional: BE cũ trong cửa sổ deploy.
+  warehouse_id?: string | null
 }
 export function useLogPalletPrints() {
   const qc = useQueryClient()
@@ -436,13 +521,32 @@ export function useMaterialsFull(params?: MaterialListParams, enabled = true) {
 // trên TOÀN bảng (không suy được từ 200 dòng đang xem) — server gắn cờ `is_dup_name` per dòng.
 export type MaterialsListParams = {
   search?: string; categories?: string[]; status?: string[]; qr?: string[]; dq?: string[]
+  // dims: 'has_dims' | 'no_dims' (đã khai D×R×C thùng chưa) · flags: 'non_stock' | 'pallet_carrier' | 'stack_on_top'
+  dims?: string[]; flags?: string[]
 }
 export type MaterialsPage = { rows: (import('@/types').Material & { is_dup_name?: boolean })[]; total: number }
-export type MaterialsSummary = { total: number; active: number; inactive: number; no_qr: number; incomplete: number; dup: number }
+export type MaterialsSummary = { total: number; active: number; inactive: number; no_qr: number; incomplete: number; dup: number; no_dims: number }
+
+/**
+ * MỌI query key của danh mục Mã hàng — dùng ở TẤT CẢ mutation đụng Material.
+ * Bẫy đã cắn 26/08 (user: "áp kích thước cho 51 mã, lưu xong không có dữ liệu"): dữ liệu ĐÃ ghi
+ * xuống DB nhưng trang vẫn hiện bản cũ vì mutation chỉ `invalidateQueries(['materials'])`, trong
+ * khi trang danh mục (phân trang SERVER từ 28/07) đọc `['materials-paged']` / `['materials-summary']`
+ * — TanStack khớp key theo TỪNG PHẦN TỬ nên `'materials'` KHÔNG khớp `'materials-paged'`.
+ * Thêm key mới cho Material → thêm vào đây (và vào TABLE_QUERY_MAP.Material cho realtime).
+ */
+// (`['materials','lite'|'by-codes'|'by-ids'|'full']` đã nằm dưới tiền tố ['materials'] nên khỏi liệt kê)
+export const MATERIAL_QUERY_KEYS: string[][] = [
+  ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'],
+]
+export function invalidateMaterialQueries(qc: ReturnType<typeof useQueryClient>): void {
+  for (const k of MATERIAL_QUERY_KEYS) qc.invalidateQueries({ queryKey: k })
+}
 
 function materialsCsvParams(p: MaterialsListParams) {
   const j = (a?: string[]) => (a?.length ? a.join(',') : undefined)
-  return { search: p.search || undefined, categories: j(p.categories), status: j(p.status), qr: j(p.qr), dq: j(p.dq) }
+  return { search: p.search || undefined, categories: j(p.categories), status: j(p.status), qr: j(p.qr), dq: j(p.dq),
+    dims: j(p.dims), flags: j(p.flags) }
 }
 
 export function useMaterialsPaged(params: MaterialsListParams & { page: number; page_size: number }) {
@@ -672,7 +776,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_underload_pct?: number | null; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -681,11 +785,26 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean }) =>
-      apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_underload_pct?: number | null }) =>
+      apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data as WarehouseSaved),
+    // Bật/tắt "Áp %Date tự động" ghi thẳng vào dòng hàng của đơn đang mở (BE áp ngay từ 12/09) →
+    // phải làm mới cả màn Quy định date và bảng việc, không đợi người dùng bấm lại.
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
+      if (data?.date_rule_applied?.updated) {
+        for (const k of [['date-rule-lines'], ['gdo'], ['gdos'], ['directed-board'], ['work-inbox']])
+          qc.invalidateQueries({ queryKey: k })
+      }
+    },
   })
 }
+
+/** Kết quả áp %Date theo master mà BE trả kèm mỗi lần đổi cấu hình (kho / khách / kênh). */
+export interface DateRuleApplied {
+  scanned: number; applied: number; cleared: number; kept_manual: number
+  updated: number; trips_replanned: number; capped: boolean; note?: string
+}
+export type WarehouseSaved = Record<string, unknown> & { date_rule_applied?: DateRuleApplied }
 
 export function useDeleteWarehouse() {
   const qc = useQueryClient()
@@ -696,11 +815,78 @@ export function useDeleteWarehouse() {
   })
 }
 
+// ─── Loại kho mỗi kho VẬN HÀNH + chiến thuật riêng theo loại (21/08) ────────
+// Dòng tồn tại = kho có loại đó; cột chiến thuật null = kế thừa mặc định kho.
+export interface WhTypeConfig {
+  id?:                         string
+  type_code:                   string
+  /** Thứ tự RIÊNG của kho này (kéo-thả tab Loại kho); null = theo danh mục dùng chung */
+  sort_order?:                 number | null
+  // 3 cờ VẬN HÀNH khai riêng theo kho (21/08) — null = theo danh mục chung
+  is_ncc_goods?:               boolean | null
+  requires_ncc?:               boolean | null
+  batch_char?:                 string | null
+  rotation_principle?:         string | null
+  rotation_required?:          boolean | null
+  putaway_priority?:           string | null
+  putaway_date_mix?:           string | null
+  putaway_block_pick_face?:    boolean | null
+  putaway_block_qa_hold?:      boolean | null
+  putaway_block_full?:         boolean | null
+  putaway_single_ncc?:         boolean | null
+  putaway_enforced?:           string[] | null
+  // Luật ép về CHỈ CẢNH BÁO dù kho đang bắt buộc (25/08). Không có mặt ở CẢ HAI cột = theo kho —
+  // trước đó mảng `putaway_enforced` thay thế nguyên khối nên khai 1 luật là tắt hết luật còn lại.
+  putaway_enforced_off?:       string[] | null
+  putaway_same_mat_date_pref?: string | null
+  putaway_fallback?:           string | null
+  // Nhặt lẻ tự sinh 2 tầng (24/08) — null = theo mặc định kho
+  loose_mode?:                 string | null
+  loose_max_cartons?:          number | null
+  auto_fill?:                  boolean | null   // tự ra lệnh fill (15/09) — null = theo kho
+  work_mode?:                  string | null
+  lower_from_level?:           number | null
+}
+
+export function useWhTypeConfigs(warehouseId: string | null | undefined) {
+  return useQuery<WhTypeConfig[]>({
+    queryKey: ['wh-type-configs', warehouseId],
+    queryFn: () => apiClient.get(`/masterdata/warehouses/${warehouseId}/type-configs`).then(r => r.data.data),
+    enabled: !!warehouseId,
+  })
+}
+
+// Cờ khai riêng của MỌI kho — cho màn cần tra theo kho của TỪNG DÒNG (In tem: 1 lệnh in gồm tem
+// của nhiều kho). Chỉ trả dòng CÓ khai riêng nên payload theo số khai riêng, không theo số kho.
+export type WhTypeFlagOverride = {
+  warehouse_id: string; type_code: string
+  is_ncc_goods: boolean | null; requires_ncc: boolean | null; batch_char: string | null
+}
+export function useWhTypeFlagOverrides() {
+  return useQuery<WhTypeFlagOverride[]>({
+    queryKey: ['wh-type-flag-overrides'],
+    queryFn: () => apiClient.get('/masterdata/warehouses/type-flag-overrides').then(r => r.data.data),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export function useSaveWhTypeConfigs() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, items }: { id: string; items: WhTypeConfig[] }) =>
+      apiClient.put(`/masterdata/warehouses/${id}/type-configs`, { items }).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['wh-type-configs', v.id] })
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
+    },
+  })
+}
+
 export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
     // Loại của vị trí KẾ THỪA từ Khu vực (không gửi category — BE tự lấy từ zone)
-    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number }) =>
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number; max_materials?: number | null }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -712,7 +898,8 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean }) =>
+    // sub_code/row/shelf (14/09): đổi mã khi ô TRỐNG — BE gác 409 nếu còn hàng / việc treo
+    mutationFn: ({ id, ...body }: { id: string; sub_code?: string; row?: string; shelf?: string; sub_name?: string; max_pallets?: number; max_materials?: number | null; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -741,10 +928,15 @@ export function useBulkFlagLocations() {
   return useMutation({
     // Danh sách đã phân trang → gửi CỜ bộ lọc (`by_filter`) để BE tự resolve TOÀN BỘ vị trí khớp,
     // thay vì nhồi hàng nghìn id qua mạng. Vẫn nhận `ids` cho chỗ gọi cũ.
-    // 2 cờ: requires_stocktake (cần kiểm kê) · is_pick_face (vị trí nhặt lẻ — nguồn của Fill hàng).
-    // Gửi cờ nào thì BE ghi cờ đó; thiếu cả hai → 400 (không ghi mù).
+    // 4 cờ: requires_stocktake (cần kiểm kê) · is_pick_face (vị trí nhặt lẻ — nguồn của Fill hàng)
+    // · slot_no_in (không đưa hàng vào — kho tạm/ngoài đường) · slot_no_out (không lấy hàng đi).
+    // Gửi cờ nào thì BE ghi cờ đó; thiếu tất cả → 400 (không ghi mù).
     mutationFn: (body: { ids?: string[]; by_filter?: boolean; filter?: Record<string, unknown>
-                         requires_stocktake?: boolean; is_pick_face?: boolean }) =>
+                         requires_stocktake?: boolean; is_pick_face?: boolean
+                         slot_no_in?: boolean; slot_no_out?: boolean
+                         // Trần số mã của ô (26/08) — KHÔNG phải cờ: `null` = gỡ giới hạn (giá trị
+                         // thật), vắng field = đừng đụng cột. Vì thế kiểu phải cho phép null.
+                         max_materials?: number | null }) =>
       apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -768,7 +960,7 @@ export function useCreateMaterial() {
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.post('/masterdata/materials', body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+    onSuccess: () => invalidateMaterialQueries(qc),
   })
 }
 
@@ -787,7 +979,7 @@ export function useUpdateMaterial() {
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+    onSuccess: () => invalidateMaterialQueries(qc),
   })
 }
 
@@ -796,7 +988,7 @@ export function useDeleteMaterial() {
   return useMutation({
     mutationFn: (id: string) =>
       apiClient.delete(`/masterdata/materials/${id}`).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+    onSuccess: () => invalidateMaterialQueries(qc),
   })
 }
 
@@ -967,6 +1159,14 @@ export function useInboundOrder(id?: string) {
   })
 }
 
+// Kho CHƯA bật "bắt buộc cất đúng quy tắc" thì vị trí vi phạm vẫn lưu được — nhưng phải NÓI RA,
+// không thì y hệt hành vi cũ và cấu hình kho thành vô nghĩa. Đặt ở HOOK (khuôn warnKhvcReplan)
+// để mọi màn gọi mutation này đều báo, khỏi phải nhớ nối ở từng trang.
+function warnPutaway(data: unknown) {
+  const msg = (data as { putaway_warning?: string } | null)?.putaway_warning
+  if (msg) toast({ title: 'Đã lưu — nhưng vị trí này lệch quy tắc cất hàng', description: String(msg).slice(0, 300) })
+}
+
 export function useCreateInboundOrder() {
   const qc = useQueryClient()
   return useMutation({
@@ -985,7 +1185,7 @@ export function useCreateInboundOrder() {
       planned_cartons?: number
       ncc_id?: string
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inbound-orders'] }),
+    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
   })
 }
 
@@ -1031,6 +1231,7 @@ export function useSetInboundOrderLocation() {
       if (ctx?.prev) qc.setQueryData(['inbound-order', ctx.id], ctx.prev)
     },
     onSuccess: (data: Partial<InboundOrderCache>, v) => {
+      warnPutaway(data)
       // PATCH trả về order đầy đủ (ORDER_SELECT + count) → merge, GIỮ inventory_entries hiện có.
       qc.setQueryData<InboundOrderCache>(['inbound-order', v.id], (old) =>
         old ? { ...old, ...data } : old)
@@ -1112,6 +1313,8 @@ export function useScanPallet() {
       employee_id?: string
       ncc_id?: string
       shelf_life_days?: number
+      // mã lý do vượt rào quy tắc cất hàng (kho bật "bắt buộc") — danh sách cố định ở utils/putaway
+      putaway_override_reason?: string
       // timeout 12s: sóng yếu → fail sớm → InboundScanSheet tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body, { timeout: 12000 }).then((r) => r.data.data),
 
@@ -1135,7 +1338,9 @@ export function useScanPallet() {
         qa_status_id:       null,
         qa_status:          null,
         stack_layer:        1,
-        cartons_imported:   previous?.material?.cartons_per_pallet ?? 0,
+        // BASE UNIT: quy cách là THÙNG → nhân units_per_carton ra base, không thì dòng tạm hiện
+        // số nhỏ hơn thật đúng bằng hệ số rồi tự nhảy khi server trả (người quét thấy số giật)
+        cartons_imported:   (previous?.material?.cartons_per_pallet ?? 0) * (Number(previous?.material?.units_per_carton) > 0 ? Number(previous?.material?.units_per_carton) : 1),
         production_date:    null,
         status:             'IN_STOCK',
         created_by_emp:     null,
@@ -1332,6 +1537,45 @@ export function useReorderWarehouseTypes() {
   })
 }
 
+// ─── Điều kiện bảo quản (storage_condition) — danh mục dùng CHUNG cho hàng (theo Loại kho) và xe (24/09) ──
+// Dùng chính cửa /wms/lookup như Loại kho: queryKey ['lookup', type] nên realtime LookupValue tự bắt.
+export type StorageConditionRow = { id: string; value: string; sort_order: number; meta?: { label?: string; temp_min?: number | null; temp_max?: number | null; badge_color?: string } | null }
+export type StorageConditionInput = { value: string; meta?: StorageConditionRow['meta'] }
+/** Nhãn hiển thị: nhãn khai trong danh mục, thiếu thì rơi về chính mã (không bịa chữ). */
+export const conditionLabel = (r: StorageConditionRow | undefined, code?: string) => r?.meta?.label?.trim() || r?.value || code || '—'
+
+export function useStorageConditions() {
+  return useQuery({
+    queryKey: ['lookup', 'storage_condition'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/lookup', { params: { type: 'storage_condition' } })
+      return data.data as StorageConditionRow[]
+    },
+  })
+}
+export function useAddStorageCondition() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: StorageConditionInput) => apiClient.post('/wms/lookup', { type: 'storage_condition', ...input }).then(r => r.data.data as StorageConditionRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'storage_condition'] }),
+  })
+}
+export function useUpdateStorageCondition() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: StorageConditionInput & { id: string }) => apiClient.put(`/wms/lookup/${id}`, input).then(r => r.data.data as StorageConditionRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'storage_condition'] }),
+  })
+}
+export function useDeleteStorageCondition() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/lookup/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'storage_condition'] }),
+  })
+}
+
 // ─── Đơn vị tính (unit_of_measure) — danh mục Base/Entry Unit (tab Cài đặt WMS) ──
 export type UnitRole = 'base' | 'entry' | 'both'
 export type UnitRow = { id: string; value: string; sort_order: number; meta?: { role?: UnitRole; label?: string } | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
@@ -1460,7 +1704,7 @@ export function useInventoryEntries(params?: {
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
-      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number; total_pallets_in_stock?: number }
+      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number; total_pallets_in_stock?: number; by_unit?: { unit: string; qty: number }[] }
     },
   })
 }
@@ -1508,7 +1752,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
-      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number; page: number; limit: number }
+      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number; page: number; limit: number; by_unit?: { unit: string; qty: number }[] }
     },
   })
 }
@@ -1654,6 +1898,50 @@ export function useAdjustmentLog(entryId: string) {
   })
 }
 
+/** Một tác động lên pallet — hình dạng CHUNG mà `pallet_ledger` quy mọi nguồn về. */
+export interface PalletLedgerEvent {
+  grp: 'STOCK' | 'TASK'          // STOCK = hàng thật sự bị động vào · TASK = việc được giao/nhận/huỷ
+  at: string
+  kind: string                   // PACKED · RECEIVED · MOVED · COUNTED · ADJUSTED · MERGED · SPLIT · UNGROUPED · UNDONE · FILLED · PICKED · TASK_*
+  actor: string | null           // tên người; null = đường ghi không mang người (upload / script / dữ liệu cũ)
+  from_code: string | null
+  to_code: string | null
+  qty_base: number | null        // mọi nguồn theo BASE…
+  qty_cartons: number | null     // …trừ sổ đóng gói ghi theo THÙNG (không quy đổi trong SQL)
+  warehouse_id: string | null
+  ref: string | null             // chứng từ liên quan: Số xe · mã lệnh fill · máy SX
+  note: string | null
+}
+export interface PalletLedgerEntry {
+  entry_id: string; status: string | null
+  warehouse_id: string | null; warehouse_name: string | null; location_code: string | null
+  material_code: string | null; material_name: string | null; category: string | null
+  entry_unit: string | null; base_unit: string | null; units_per_carton: number | null
+  cartons_imported: number | null; cartons_remaining: number | null
+  production_date: string | null; expiry_date: string | null; batch: string | null; import_date: string | null
+}
+export interface PalletLedger {
+  pallet_code: string
+  entries: PalletLedgerEntry[]
+  events: PalletLedgerEvent[]
+}
+
+/**
+ * SỔ PALLET (17/09) — "tem này ai đã tác động vào, lúc nào". Hợp nhất 7 sổ sẵn có ở máy chủ
+ * (nhập · chuyển ô · kiểm kê · điều chỉnh · dồn/tách · fill · xuất · nhật ký việc), KHÔNG có bảng
+ * mới nào. `grp` tách "tác động lên HÀNG" với "nhật ký VIỆC" — xem `pallet_ledger` để biết vì sao.
+ */
+export function usePalletLedger(palletCode: string | null) {
+  return useQuery({
+    queryKey: ['pallet-ledger', palletCode],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inventory/pallet-ledger', { params: { pallet_code: palletCode } })
+      return data.data as PalletLedger
+    },
+    enabled: !!palletCode,
+  })
+}
+
 export function useBulkUpdateInventoryQA() {
   const qc = useQueryClient()
   return useMutation({
@@ -1683,11 +1971,16 @@ export function useBulkUpdateInventoryNcc() {
 export function useBulkTransferLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, location_id, employee_id }: { ids: string[]; location_id: string; employee_id?: string }) => {
-      const { data } = await apiClient.patch('/wms/inventory/bulk-location', { ids, location_id, employee_id })
-      return data.data as { updated: number; location_code: string }
+    mutationFn: async ({ ids, location_id, employee_id, putaway_override_reason, count_as_stocktake }: {
+      ids: string[]; location_id: string; employee_id?: string; putaway_override_reason?: string
+      count_as_stocktake?: boolean   // màn Chuyển vị trí quét QR: 1 lần chuyển = 1 lượt kiểm kê
+    }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-location',
+        { ids, location_id, employee_id, putaway_override_reason, count_as_stocktake })
+      return data.data as { updated: number; location_code: string; putaway_warning?: string }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
+    // Kho CHƯA bật "bắt buộc": vẫn chuyển được nhưng phải nói ra là lệch quy tắc (không im lặng)
+    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
   })
 }
 
@@ -1869,6 +2162,28 @@ export async function fetchAllStocktakeLog(params: StocktakeLogParams): Promise<
   return out
 }
 
+// Lịch sử CHUYỂN VỊ TRÍ (tab Lịch sử màn Chuyển vị trí, 20/08) — dòng StocktakeLog có
+// location_changed_to (gồm cả lượt "kiểm kê đổi vị trí" bên trang Kiểm kê)
+export interface MoveLogRow extends StocktakeLogRow {
+  categories: string[] | null
+  location_from_code: string | null
+}
+export type MoveLogParams = {
+  warehouse_id?: string; category?: string; date_from?: string; date_to?: string
+  search?: string; page?: number; page_size?: number
+}
+export function useMoveLog(params: MoveLogParams, enabled = true) {
+  return useQuery({
+    queryKey: ['move-log', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inventory/move-log', { params })
+      return data.data as { rows: MoveLogRow[]; total: number }
+    },
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
 // WMS (mock — legacy, không dùng nữa)
 export function useInventory() {
   return useQuery({
@@ -1913,6 +2228,550 @@ export function useDashboardStats(warehouseId?: string) {
     queryFn: () => apiClient.get('/wms/dashboard', {
       params: warehouseId ? { warehouse_id: warehouseId } : undefined,
     }).then(r => r.data.data),
+  })
+}
+
+// ─── Năng suất kho theo khoảng ngày (tab "Năng suất" của Dashboard, 27/08) ───────────────────
+// Tấn = CHỨNG TỪ cả 2 chiều nhập+xuất; công = module Chấm công. Số thô do BE trả — mọi TỶ SỐ
+// (tấn/công, tỷ lệ tăng ca…) tính ở `productivity.ts` để công thức nằm MỘT chỗ.
+export type ProductivityRow = {
+  warehouse_id: string; warehouse_name: string
+  tons_in: number; tons_out: number; tons: number
+  pallets_in: number; trips: number
+  work_days: number; work_hours: number; ot_hours: number; early_hours: number
+  leave_days: number; headcount: number; lines_no_weight: number
+  // TIỀN — chỉ có khi người gọi có quyền `warehouse_cost.view` (BE cắt khỏi payload nếu không)
+  cost?: number; cost_own?: number; cost_labor?: number
+}
+export type ProductivityData = {
+  from: string; to: string; std_hours: number; categories_filtered: boolean
+  rows: ProductivityRow[]
+  by_month: Array<{ month: string; tons_in: number; tons_out: number; tons: number
+    trips: number; work_days: number; work_hours: number; ot_hours: number }>
+  totals: Omit<ProductivityRow, 'warehouse_id' | 'warehouse_name'> & {
+    warehouses_no_labor: number; warehouses_no_cost?: number
+    // Tháng CÓ HÀNG mà chưa khai chi phí — kỳ nhiều tháng mà chỉ 1 tháng có chi phí thì
+    // "chi phí/tấn" đọc ra rẻ giả tạo, phải nói ra (migration 20260827e)
+    months_total?: number; months_no_cost?: number
+  }
+  cost_prorated?: boolean    // khoảng ngày LẺ → chi phí là số PHÂN BỔ theo ngày, phải nói rõ
+  cost_shared?: number       // chi phí CHUNG (chưa gán kho) đã gộp vào tổng
+  cost_hidden?: boolean      // thiếu quyền xem tiền → mọi khoá tiền đã bị cắt
+  cached?: boolean
+}
+export function useProductivity(
+  params: { warehouseId?: string; from: string; to: string },
+  enabled: boolean,
+) {
+  return useQuery<ProductivityData>({
+    queryKey: ['dashboard-productivity', params.warehouseId || 'all', params.from, params.to],
+    // `enabled`: CHỈ gọi khi người dùng đang xem tab Năng suất — các tab khác của trang chủ
+    // vẫn dùng chung một lời gọi đã cache, không ai phải trả giá cho tab mình không mở.
+    enabled: enabled && !!params.from && !!params.to,
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/dashboard/productivity', {
+      params: {
+        ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
+        date_from: params.from, date_to: params.to,
+      },
+    }).then(r => r.data.data),
+  })
+}
+
+// ─── Chi phí kho (27/08) — SỔ KÊ KHAI: 1 dòng = Kho · Kỳ tháng · Khoản mục · Số tiền ─────────
+export type CostItem = { code: string; label: string; is_labor: boolean; group: string | null; sort_order: number }
+export type CostLine = {
+  id: string
+  warehouse_id: string | null; warehouse_name: string
+  period: string
+  cost_item: string; item_label: string; is_labor: boolean
+  amount: number; note: string | null
+  updated_at: string | null; updated_by: string | null
+  locked: boolean
+}
+export type CostBook = {
+  period: string; period_from: string; period_to: string
+  can_edit_shared: boolean
+  items: CostItem[]
+  rows: CostLine[]
+  total: number; page: number; pageSize: number
+  totals: { amount: number; labor: number; warehouses: number; lines: number; vouchers: number }
+  locks: Array<{ warehouse_id: string | null; period: string; locked_at: string; locked_by: string | null }>
+}
+
+export function useCostBook(params: {
+  periodFrom: string; periodTo: string
+  warehouseId?: string; items?: string[]; search?: string; page: number; pageSize: number
+}) {
+  return useQuery<CostBook>({
+    queryKey: ['warehouse-costs', 'lines', params],
+    enabled: !!params.periodFrom,
+    queryFn: () => apiClient.get('/wms/warehouse-costs', {
+      params: {
+        period_from: params.periodFrom, period_to: params.periodTo || params.periodFrom,
+        ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
+        ...(params.items?.length ? { items: params.items.join(',') } : {}),
+        ...(params.search ? { search: params.search } : {}),
+        page: params.page, pageSize: params.pageSize,
+      },
+    }).then(r => r.data.data),
+  })
+}
+
+// ── CHẤT LƯỢNG PHỤC VỤ (28/08) — giao đủ / đúng hạn / sao, theo khoảng ngày ───────────────────
+export type ServiceLevel = {
+  summary: {
+    trips: number; lines: number; lines_short: number
+    demand: number; shipped: number
+    fill_rate: number | null; on_time_pct: number | null; in_full_pct: number | null; otif_pct: number | null
+    avg_stars: number | null; rated_trips: number; ratable_trips: number
+  }
+  by_warehouse: Array<{
+    warehouse_id: string | null; warehouse_name: string; trips: number
+    on_time_pct: number | null; in_full_pct: number | null
+    demand: number; shipped: number; fill_rate: number | null
+  }>
+  top_short: Array<{ material_code: string | null; lines: number; missing: number; demand: number }>
+}
+export function useServiceLevel(p: { from: string; to: string; warehouseId?: string }) {
+  return useQuery<ServiceLevel>({
+    queryKey: ['service-level', p],
+    enabled: !!p.from && !!p.to,
+    queryFn: () => apiClient.get('/wms/service-level', {
+      params: { from: p.from, to: p.to, ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}) },
+    }).then(r => r.data.data),
+  })
+}
+
+// ─── Tab KPI của Dashboard (08/09) — 24 KPI đo được từ "Warehouse KPI Master List" ───────────────
+// Định nghĩa KPI (tên, đơn vị, chiều tốt, công thức, ghi chú đo một phần) do BE trả trong `defs` —
+// FE KHÔNG có bản chép; đèn G/Y/R cũng do BE tính theo mục tiêu đã cấu hình.
+export type KpiDir = 'up' | 'down' | 'band'
+export type KpiDefPublic = {
+  id: string; no: number; name: string; short: string; group: string; unit: string; dir: KpiDir
+  kind: 'pct' | 'ratio' | 'doh' | 'turnover'; decimals: number; defaults: number[] | null
+  formula: string; note: string | null; snapshot: boolean; cost: boolean
+  empty_hint: string      // thiếu dữ liệu thì cần cài đặt / thao tác gì để có
+  meaning: string         // ý nghĩa KPI — hiện trong nút ⓘ trên thẻ cùng cách tính
+}
+export type KpiValue = {
+  id: string; value: number | null; num: number | null; den: number | null
+  rag: 'G' | 'Y' | 'R' | null; t: number[] | null; t_source: 'default' | 'global' | 'warehouse'; sub: string | null
+  prev: number | null; delta: number | null
+}
+export type KpiData = {
+  from: string; to: string; days: number
+  compare: { mode: 'prev' | 'yoy'; from: string; to: string; days: number } | null
+  pct_low: number; slow_days: number; dead_days: number
+  groups: Array<{ key: string; label: string }>
+  defs: KpiDefPublic[]
+  unavailable: Array<{ no: number; name: string; group: string; need: string }>
+  target_scope: string | null
+  kpis: KpiValue[]
+  by_warehouse: Array<{ warehouse_id: string; warehouse_name: string; kpis: KpiValue[] }>
+  notes: { lines_no_weight: number; loc_uncapped: number; warehouses_no_labor: number; categories_filtered: boolean
+    cost_shared: number; cost_hidden: boolean; cached: boolean }
+}
+export function useWarehouseKpi(p: { warehouseId?: string; from: string; to: string; compare: string }, enabled: boolean) {
+  return useQuery<KpiData>({
+    queryKey: ['warehouse-kpi', p.warehouseId || 'all', p.from, p.to, p.compare || 'none'],
+    enabled: enabled && !!p.from && !!p.to,     // chỉ gọi khi đang xem tab KPI
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/kpi', {
+      params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), date_from: p.from, date_to: p.to,
+        ...(p.compare ? { compare: p.compare } : {}) },
+    }).then(r => r.data.data),
+  })
+}
+// Chuỗi theo chu kỳ ngày/tuần/tháng/năm cho biểu đồ đường thực tế ↔ mục tiêu (chỉ KPI theo kỳ)
+export type KpiGrain = 'day' | 'week' | 'month' | 'year'
+export type KpiBucket = { key: string; from: string; to: string; days: number; values: Record<string, number | null> }
+export type KpiSeries = {
+  grain: KpiGrain; from: string; to: string; defs: KpiDefPublic[]; targets: Record<string, number[] | null>
+  buckets: KpiBucket[]
+  compare: { mode: 'prev' | 'yoy'; from: string; to: string; buckets: KpiBucket[] } | null
+}
+export function useWarehouseKpiSeries(p: { warehouseId?: string; grain: KpiGrain; from: string; to: string; compare: string }, enabled: boolean) {
+  return useQuery<KpiSeries>({
+    queryKey: ['warehouse-kpi-series', p.warehouseId || 'all', p.grain, p.from, p.to, p.compare || 'none'],
+    enabled: enabled && !!p.from && !!p.to,
+    staleTime: 5 * 60_000,
+    // Kỳ đổi thì giữ khung cũ mờ đi (không skeleton, không nhảy layout) — luật dataviz "refetch keeps the frame"
+    placeholderData: prev => prev,
+    // BE nhận ≤ 60 kỳ / 1 request (timeout 60s của Vercel). Khoảng dài (2 năm theo tuần = 105 kỳ) → tách
+    // thành các đoạn ≤ 30 kỳ trùng ranh giới kỳ, gọi 2 đoạn song song rồi GHÉP — người dùng thấy một chuỗi liền.
+    queryFn: async () => {
+      const { chunkRanges } = await import('@/utils/kpiPeriods')
+      const segs = chunkRanges(p.grain, p.from, p.to, 30)
+      const fetchSeg = (s: { from: string; to: string }) => apiClient.get('/wms/kpi/series', {
+        params: { ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}), grain: p.grain, date_from: s.from, date_to: s.to,
+          ...(p.compare ? { compare: p.compare } : {}) },
+      }).then(r => r.data.data as KpiSeries)
+      const parts: KpiSeries[] = []
+      for (let i = 0; i < segs.length; i += 2) parts.push(...await Promise.all(segs.slice(i, i + 2).map(fetchSeg)))
+      const head = parts[0]
+      return {
+        ...head, from: p.from, to: p.to,
+        buckets: parts.flatMap(x => x.buckets),
+        compare: head.compare ? { ...head.compare, buckets: parts.flatMap(x => x.compare?.buckets ?? []) } : null,
+      }
+    },
+  })
+}
+export type KpiTargetMap = Record<string, number[] | null>
+export type KpiTargets = {
+  default: KpiTargetMap; by_warehouse: Record<string, KpiTargetMap>; params: { slow_days: number; dead_days: number }
+  defs: KpiDefPublic[]; groups: Array<{ key: string; label: string }>
+}
+export function useKpiTargets(enabled: boolean) {
+  return useQuery<KpiTargets>({
+    queryKey: ['kpi-targets'], enabled, staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/kpi/targets').then(r => r.data.data),
+  })
+}
+export function useSaveKpiTargets() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string | null; targets: KpiTargetMap; params?: { slow_days: number; dead_days: number } }) =>
+      apiClient.put('/wms/kpi/targets', body).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['kpi-targets'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi-series'] })
+    },
+  })
+}
+
+// ── DIỄN GIẢI KPI (nút ⓘ) — sửa được trong app, lưu ở cờ `kpi_meanings` (09/09) ───────────────
+export type KpiMeaningRow = {
+  id: string; no: number; name: string; group: string; unit: string; formula: string
+  meaning: string; meaning_default: string; custom: boolean
+}
+export type KpiMeanings = {
+  meanings: Record<string, string>; defs: KpiMeaningRow[]; groups: Array<{ key: string; label: string }>
+}
+export function useKpiMeanings(enabled: boolean) {
+  return useQuery<KpiMeanings>({
+    queryKey: ['kpi-meanings'], enabled, staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/kpi/meanings').then(r => r.data.data),
+  })
+}
+export function useSaveKpiMeanings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (meanings: Record<string, string>) => apiClient.put('/wms/kpi/meanings', { meanings }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['kpi-meanings'] })
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi'] })       // defs mang câu diễn giải → thẻ đọc lại
+      qc.invalidateQueries({ queryKey: ['warehouse-kpi-series'] })
+      qc.invalidateQueries({ queryKey: ['kpi-targets'] })
+    },
+  })
+}
+
+// ── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) — kho nhận chấm lúc xác nhận đơn ─────────────────────────
+export type ReceiptRatingMode = 'off' | 'optional' | 'required'
+export type ReceiptRating = {
+  stars: number; reason_code: string | null; note: string | null
+  rated_by_name: string | null; rated_at: string
+}
+export function useReceiptRating(orderId: string | null | undefined) {
+  return useQuery<{ mode: ReceiptRatingMode; ratable: boolean; can_rate: boolean; rating: ReceiptRating | null }>({
+    queryKey: ['receipt-rating', orderId],
+    enabled: !!orderId,
+    queryFn: () => apiClient.get(`/tms/orders/${orderId}/receipt-rating`).then(r => r.data.data),
+  })
+}
+export function useRateReceipt() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (p: { orderId: string; stars: number; reason_code?: string | null; note?: string | null }) =>
+      apiClient.post(`/tms/orders/${p.orderId}/receipt-rating`,
+        { stars: p.stars, reason_code: p.reason_code ?? null, note: p.note ?? null }).then(r => r.data.data),
+    onSettled: (_d, _e, p) => {
+      qc.invalidateQueries({ queryKey: ['receipt-rating', p.orderId] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+    },
+  })
+}
+
+// ── TRUY XUẤT LÔ (28/08) — 1 lời gọi trả cả "đã giao đi đâu" lẫn "còn trong kho" ───────────────
+export type TraceKind = 'pallet' | 'material' | 'batch' | 'prod' | 'npp' | 'trip' | 'plate'
+export type TraceShipment = {
+  pallet_code: string; cartons_scanned: number; scanned_at: string | null; pct_date: number | null
+  production_date: string | null; expiry_date: string | null; batch: string | null
+  material_code: string | null; short_name: string | null
+  group_code: string; delivery_date: string | null; license_plate: string | null; trip_status: string
+  delivery_code: string | null; distributor_name: string | null; warehouse_name: string | null
+}
+export type TraceStock = {
+  pallet_code: string; cartons_remaining: number; status: string
+  production_date: string | null; expiry_date: string | null; batch: string | null; import_date: string | null
+  material_code: string | null; short_name: string | null
+  warehouse_name: string | null; location_code: string | null
+}
+export type TraceResult = {
+  codes: number
+  shipments: TraceShipment[]
+  stock: TraceStock[]
+  summary: {
+    pallets: number; shipments: number; stock_rows: number; customers: number; trips: number
+    qty_shipped: number; qty_on_hand: number; truncated: boolean
+  }
+}
+// FILTER CHUẨN (user chốt 01/09 tối lần 3): mỗi tiêu chí một chip, điền ô nào lọc ô đó — 1 lời
+// gọi kind='fwd' (xuôi, tổ hợp trên tồn) hoặc 'rev' (ngược, tổ hợp trên đường giao).
+export type TraceDir = 'fwd' | 'rev'
+export function useLotTrace(p: {
+  dir: TraceDir
+  pallet?: string; material?: string; batch?: string
+  cycle?: string; machine?: string; nmsx?: string
+  npp?: string; trip?: string; plate?: string
+  prodFrom?: string; prodTo?: string; shipFrom?: string; shipTo?: string
+}) {
+  const t = (v?: string) => (v ?? '').trim()
+  // Có bất kỳ điều kiện nào của chiều đang chọn là tìm (tiền tố tem cần ≥4 ký tự — BE cũng chặn)
+  const enough = p.dir === 'fwd'
+    ? !!(t(p.pallet).length >= 4 || t(p.material) || t(p.batch) || t(p.cycle) || t(p.machine)
+         || t(p.nmsx) || p.prodFrom || p.prodTo)
+    : !!(t(p.npp) || t(p.trip) || t(p.plate) || p.shipFrom || p.shipTo)
+  const put = (k: string, v?: string) => (t(v) ? { [k]: t(v) } : {})
+  return useQuery<TraceResult>({
+    queryKey: ['lot-trace', p],
+    enabled: enough,
+    queryFn: () => apiClient.get('/wms/trace', {
+      params: {
+        kind: p.dir,
+        ...put('pallet', p.pallet), ...put('material', p.material), ...put('batch', p.batch),
+        ...put('cycle', p.cycle), ...put('machine', p.machine), ...put('nmsx', p.nmsx),
+        ...put('npp', p.npp), ...put('trip', p.trip), ...put('plate', p.plate),
+        ...(p.prodFrom ? { prod_from: p.prodFrom } : {}), ...(p.prodTo ? { prod_to: p.prodTo } : {}),
+        ...(p.shipFrom ? { ship_from: p.shipFrom } : {}), ...(p.shipTo ? { ship_to: p.shipTo } : {}),
+      },
+    }).then(r => r.data.data),
+  })
+}
+
+// ── TRUY XUẤT THEO THÙNG (01/09 v2) — gợi ý sổ đóng gói ±3 ngày → chọn sổ → hành trình toàn cty ──
+export type TraceRun = {
+  id: string; run_date: string | null; shift: string | null; cycle: string | null
+  material_code: string | null; material_codes: string[] | null; machine_code: string | null
+  warehouse_id: string | null; warehouse_name: string | null; warehouse_nmsx: string | null
+  start_at: string | null; end_at: string | null
+  qty_total: number | null; qty_conv?: number | null; pallet_count: number | null; status: string
+  opened_by_name: string | null
+}
+export type CartonMatch = {
+  pallet_code: string; material_code: string | null; machine_code: string | null
+  warehouse_id: string | null; qty_cartons: number | null
+  prod_start_at: string | null; prod_end_at: string | null
+  packed_by_name: string | null; status: string
+  time_hit?: boolean
+}
+export type TraceInbound = {
+  pallet_code: string; import_date: string | null; warehouse_id: string | null
+  warehouse_name: string | null; cartons_imported: number | null
+  cartons_remaining: number | null; status: string; created_at: string
+}
+export type InvestigateTrace = TraceResult & { run?: TraceRun; inbound?: TraceInbound[] }
+export type InvestigateInput = {
+  run_id: string; carton_date: string; carton_time: string
+  machine_code: string; cycle: string; material_code?: string
+}
+export type InvestigateResult = { run: TraceRun; matched: CartonMatch[]; trace: InvestigateTrace }
+export type TraceInvestigation = {
+  id: string; run_id: string | null; carton_at: string; material_code: string | null
+  machine_code: string | null; cycle: string | null
+  note: string | null; result_note: string | null
+  photos: string[]; matched: CartonMatch[]
+  summary?: TraceResult['summary'] | null            // list: trace->summary
+  run?: TraceRun | null                               // list: trace->run
+  trace?: InvestigateTrace | null                     // detail: full snapshot
+  photo_urls?: { path: string; url: string }[]        // detail: signed URL 1h
+  performed_by_name: string | null; created_at: string
+}
+/** Gợi ý "giá trị cần tìm" cho Truy xuất lô — DISTINCT trong RPC; material rỗng vẫn trả 50 mã đầu. */
+// kind nhận thêm 3 kiểu gợi ý riêng cho dropdown thông số SX: 'cycle' | 'machine' | 'nmsx'
+// (danh mục nhỏ — chưa gõ gì vẫn gợi ý, như material); `on` để tắt query khi ô chưa hiện.
+export type TraceSuggestKind = TraceKind | 'cycle' | 'machine' | 'nmsx'
+export function useTraceSuggest(kind: TraceSuggestKind, term: string, on = true) {
+  const rich = kind === 'material' || kind === 'cycle' || kind === 'machine' || kind === 'nmsx'
+  return useQuery<{ value: string; label: string }[]>({
+    queryKey: ['trace-suggest', kind, term],
+    enabled: on && (rich || term.trim().length >= 1),
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/trace/suggest', {
+      params: { kind, ...(term.trim() ? { search: term.trim() } : {}) },
+    }).then(r => r.data.data),
+  })
+}
+export function useTraceRuns(p: { machine: string; cycle: string; date: string; material_code?: string; nmsx?: string }) {
+  const enough = !!p.machine.trim() && !!p.cycle.trim() && !!p.date
+  return useQuery<TraceRun[]>({
+    queryKey: ['trace-runs', p],
+    enabled: enough,
+    queryFn: () => apiClient.get('/wms/trace/runs', {
+      params: { machine: p.machine.trim(), cycle: p.cycle.trim(), date: p.date,
+        ...(p.material_code ? { material_code: p.material_code } : {}),
+        ...(p.nmsx?.trim() ? { nmsx: p.nmsx.trim() } : {}) },
+    }).then(r => r.data.data),
+  })
+}
+export function useTraceRunPallets(runId: string | null) {
+  return useQuery<{ run: TraceRun; pallets: CartonMatch[] }>({
+    queryKey: ['trace-runs', 'pallets', runId],
+    enabled: !!runId,
+    queryFn: () => apiClient.get(`/wms/trace/runs/${runId}`).then(r => r.data.data),
+  })
+}
+export function useInvestigatePreview() {
+  return useMutation({
+    mutationFn: (p: InvestigateInput) =>
+      apiClient.post('/wms/trace/investigations/preview', p).then(r => r.data.data as InvestigateResult),
+  })
+}
+export function useCreateInvestigation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (p: InvestigateInput & { note?: string; result_note?: string; photos?: string[] }) =>
+      apiClient.post('/wms/trace/investigations', p).then(r => r.data.data as TraceInvestigation),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['trace-investigations'] }),
+  })
+}
+export function useTraceInvestigations(params: { from?: string; to?: string; search?: string; page: number }) {
+  return useQuery<{ rows: TraceInvestigation[]; total: number; page: number; page_size: number }>({
+    queryKey: ['trace-investigations', params],
+    queryFn: () => apiClient.get('/wms/trace/investigations', {
+      params: {
+        ...(params.from ? { from: params.from } : {}), ...(params.to ? { to: params.to } : {}),
+        ...(params.search ? { search: params.search } : {}), page: params.page,
+      },
+    }).then(r => r.data.data),
+  })
+}
+export function useTraceInvestigation(id: string | null) {
+  return useQuery<TraceInvestigation>({
+    queryKey: ['trace-investigations', 'detail', id],
+    enabled: !!id,
+    queryFn: () => apiClient.get(`/wms/trace/investigations/${id}`).then(r => r.data.data),
+  })
+}
+
+// ── PHIẾU chi phí = (Kho × Kỳ tháng) — mở phiếu ra để thêm/sửa các khoản trong đó ─────────────
+export type CostVoucher = {
+  warehouse_id: string | null; warehouse_name: string
+  period: string
+  lines: number; amount: number; labor: number
+  updated_at: string | null; updated_by: string | null
+  locked: boolean
+}
+export type CostVoucherList = {
+  period_from: string; period_to: string
+  can_edit_shared: boolean
+  items: CostItem[]
+  rows: CostVoucher[]
+  total: number
+  totals: { amount: number; labor: number; lines: number; vouchers: number }
+}
+export function useCostVouchers(params: {
+  periodFrom: string; periodTo: string; warehouseId?: string; search?: string; page: number; pageSize: number
+}) {
+  return useQuery<CostVoucherList>({
+    queryKey: ['warehouse-costs', 'vouchers', params],
+    enabled: !!params.periodFrom,
+    queryFn: () => apiClient.get('/wms/warehouse-costs/vouchers', {
+      params: {
+        period_from: params.periodFrom, period_to: params.periodTo || params.periodFrom,
+        ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
+        ...(params.search ? { search: params.search } : {}),
+        page: params.page, pageSize: params.pageSize,
+      },
+    }).then(r => r.data.data),
+  })
+}
+
+export type CostVoucherLine = {
+  id: string; cost_item: string; item_label: string; is_labor: boolean
+  amount: number; note: string | null; updated_at: string | null; updated_by: string | null
+}
+export type CostVoucherDetail = {
+  period: string; warehouse_id: string | null; warehouse_name: string; locked: boolean
+  items: CostItem[]; rows: CostVoucherLine[]
+  totals: { amount: number; labor: number; lines: number }
+}
+export function useCostVoucher(warehouseKey: string, period: string) {
+  return useQuery<CostVoucherDetail>({
+    queryKey: ['warehouse-costs', 'voucher', warehouseKey, period],
+    enabled: !!warehouseKey && !!period,
+    queryFn: () => apiClient.get('/wms/warehouse-costs/voucher', {
+      params: { warehouse_id: warehouseKey, period },
+    }).then(r => r.data.data),
+  })
+}
+/** Lưu TRỌN phiếu trong một lần bấm (thêm/sửa/xoá dòng) — giống form nhập/xuất. */
+export function useSaveCostVoucher() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      period: string; warehouse_id: string | null
+      lines: Array<{ id?: string; cost_item: string; amount: number; note: string | null }>
+    }) => apiClient.put('/wms/warehouse-costs/voucher', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+
+// Thêm/sửa/xoá TỪNG dòng vẫn còn ở BE (POST/PATCH/DELETE /wms/warehouse-costs) cho tích hợp,
+// nhưng màn hình chỉ còn MỘT cửa sửa: mở phiếu ra sửa cả cụm rồi Lưu (useSaveCostVoucher).
+
+/** Danh mục khoản mục — kế toán tự thêm "Thuê pallet"… (quyền `warehouse_cost.manage_item`). */
+export function useSaveCostItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code?: string; label: string; is_labor?: boolean }) =>
+      apiClient.post('/wms/warehouse-costs/items', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useDeleteCostItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiClient.delete(`/wms/warehouse-costs/items/${code}`).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+/** Mọi mutation chi phí đều đụng cả lưới LẪN ô chi phí/tấn ở Dashboard → invalidate cả hai. */
+function invalidateCost(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['warehouse-costs'] })
+  qc.invalidateQueries({ queryKey: ['dashboard-productivity'] })
+}
+export function useCopyPrevCosts() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (period: string) => apiClient.post('/wms/warehouse-costs/copy-previous', { period }).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useLockCostPeriod() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { period: string; warehouse_id: string | null; locked: boolean }) =>
+      apiClient.post('/wms/warehouse-costs/lock', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+/** Upload 2 pha (chuẩn UploadExcelDialog): preflight=true trả UploadPreflight, false trả UploadResult. */
+export function useUploadCosts() {
+  const qc = useQueryClient()
+  return useMutation<UploadResult & Partial<UploadPreflight>, unknown, { period: string; file: File; preflight: boolean }>({
+    mutationFn: ({ period, file, preflight }) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('period', period)
+      return apiClient.post('/wms/warehouse-costs/upload', fd, { params: preflight ? { preflight: 1 } : {} })
+        .then(r => r.data.data)
+    },
+    // Pha xem trước KHÔNG ghi gì → không cần invalidate; chỉ pha ghi thật mới nạp lại
+    onSuccess: (_d, v) => { if (!v.preflight) invalidateCost(qc) },
   })
 }
 
@@ -2060,7 +2919,7 @@ export function useCreateEmployee() {
       warehouse_ids?: string[]
       ncc_id?: string | null; is_driver?: boolean
     }) => apiClient.post('/masterdata/employees', body).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
   })
 }
 
@@ -2099,7 +2958,38 @@ export function useDeleteEmployee() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}`).then(r => r.data.data as { message: string; deleted: 'hard' | 'soft' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
+  })
+}
+
+// Nhật ký quản trị (03/09) — bảng admin_audit_events không realtime (bảng nội bộ) → poll 60s
+export type AdminAuditRow = {
+  id: string; actor_id: string | null; actor_name: string | null; ip: string | null
+  action: string; target_type: string; target_id: string | null; target_label: string | null
+  before: Record<string, unknown> | null; after: Record<string, unknown> | null; created_at: string
+}
+export type AdminAuditPage = { rows: AdminAuditRow[]; total: number; page: number; page_size: number; actions: string[] }
+export function useAdminAudit(params: { page: number; page_size: number; action?: string; search?: string; from?: string; to?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['admin-audit', params],
+    enabled,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+      const { data } = await apiClient.get('/masterdata/admin-audit', { params: q })
+      return data.data as AdminAuditPage
+    },
+  })
+}
+
+// Mở khoá đăng nhập (khoá 10 lần sai/15') — bảng auth_attempts không có realtime nên invalidate tay
+export function useUnlockAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}/lock`).then(r => r.data.data as { message: string }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
   })
 }
 
@@ -2107,7 +2997,7 @@ export function useRestoreEmployee() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.post(`/masterdata/employees/${id}/restore`).then(r => r.data.data as EmployeeRecord),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
   })
 }
 
@@ -2117,7 +3007,7 @@ export function useSetEmployeeWarehouses() {
     mutationFn: ({ id, warehouse_ids }: { id: string; warehouse_ids: string[] }) =>
       apiClient.put(`/masterdata/employees/${id}/warehouses`, { warehouse_ids }).then(r => r.data.data),
     onSuccess: (_d, v) => {
-      qc.invalidateQueries({ queryKey: ['employee-records'] })
+      qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] })
       qc.invalidateQueries({ queryKey: ['employee-record', v.id] })
     },
   })
@@ -2146,6 +3036,7 @@ export function useCreateJobTitle() {
   return useMutation({
     mutationFn: (body: {
       name: string; department_id: string; parent_id?: string | null; in_chart?: boolean; is_driver?: boolean
+      landing_page?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       module_permissions?: Record<string, string[]>
     }) => apiClient.post('/masterdata/job-titles', body).then(r => r.data.data),
@@ -2166,7 +3057,7 @@ export function useUpdateJobTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: {
-      id: string; name?: string; is_driver?: boolean
+      id: string; name?: string; is_driver?: boolean; landing_page?: string | null
       allowed_categories?: string[]; warehouse_scope?: string; is_active?: boolean
       module_permissions?: Record<string, string[]>
     }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data),
@@ -2186,6 +3077,7 @@ type GDOFormPayload = {
   delivery_code?: string
   export_type: string
   items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string; npp?: string }>
+  allow_duplicate_do?: boolean   // Số DO trùng cùng ngày+kho: tick xác nhận tách xe mới gửi (31/08)
 }
 
 export type LookupItem = { id: string; value: string }
@@ -2303,14 +3195,31 @@ export function useScanLoosePickingItem() {
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, {
       ...body, loose_picking_mode: true,
     }).then(r => r.data.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+    onSuccess: (data) => {
+      warnPutaway(data)   // hàng dư đặt sang ô lệch quy tắc cất (kho chưa bật bắt buộc)
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
       // quét nhặt lẻ reserve tồn → làm mới tồn kho & gợi ý FEFO
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
+    },
+  })
+}
+
+// Tính lại số nhặt lẻ theo setting hiện tại (24/08) — setting không hồi tố, nút này áp lại
+// cho chuyến CHƯA BẮT ĐẦU của 1 kho; dòng đã soạn nhiều hơn số mới / số nhập tay giữ nguyên
+export type RecalcLooseResult = { gdos: number; items_checked: number; updated: number; kept_scanned: number; kept_manual: number }
+export function useRecalcLoosePicking() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; date_from?: string; date_to?: string }) =>
+      apiClient.post('/wms/loosepicking/recalc', body).then(r => r.data.data as RecalcLooseResult),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
     },
   })
 }
@@ -2322,7 +3231,7 @@ export function useManualLooseItem() {
     mutationFn: ({ gdoId, itemId, cartons }: { gdoId: string; itemId: string; cartons: number }) =>
       apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-loose`, { cartons }).then(r => r.data.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
@@ -2574,6 +3483,64 @@ export function useUploadVl06o() {
   })
 }
 
+// ZSD02 (22/09): nguồn DO thay VL06O — dòng CÓ OD vào sổ OD (`erp_outbound_orders`), MỌI dòng vào sổ SO (`erp_so_lines`).
+export interface Zsd02UploadResult {
+  rows: number; skipped_no_key: number
+  od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number }
+  so: { rows: number; orders: number; without_od: number; inserted: number; updated: number; noop: number; obsoleted: number; unresolved: number; cancelled: number }
+  flows: Record<string, number>; not_loadable: number
+  routes: number; customers: { created: number; filled: number; conflicts: number } | null
+  sap_unmapped: number; warning_count: number; warnings: string[]
+}
+export function useUploadZsd02() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
+      guardUploadSize(file)
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
+      }).then(r => r.data.data)
+    },
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return
+      for (const key of [['do-sap'], ['do-sap-facets'], ['so-lines'], ['so-lines-summary'], ['customers'], ['gdos']]) qc.invalidateQueries({ queryKey: key })
+    },
+  })
+}
+
+// Sổ SO (tab "Chưa có OD") — dòng ZSD02 chưa có OD; số base là DẪN XUẤT (cờ qty_base_derived / derive_source), không lên xe được.
+export interface SoLineRow {
+  id: string; so_number: string; so_item: string; od_number: string | null
+  material_code: string | null; material_name: string | null
+  qty_so_sales: number | null; sales_unit: string | null; qty_so_cartons: number | null
+  qty_so_base: number | null; qty_base_derived: boolean; derive_source: string | null; qty_unresolved: boolean; base_unit: string | null
+  ship_to_code: string | null; ship_to_name: string | null; sold_to_code: string | null
+  plant: string | null; storage_location: string | null; delivery_date: string | null
+  flow: string | null; so_type: string | null; item_category: string | null
+  status: 'OPEN' | 'HAS_OD' | 'CANCELLED'; cancel_reason: string | null; approval_status: string | null
+  ward_code: string | null; region_code: string | null; route_code: string | null; route_name: string | null
+  sap_pallets: number | null; sap_m3: number | null; gross_weight_kg: number | null; note_delivery: string | null
+  source: string; uploaded_by: string | null; created_at: string; updated_at: string
+  loadable?: boolean
+  raw?: Record<string, unknown> | null   // trọn dòng file nguồn (panel chi tiết đọc cột không có cột riêng)
+}
+export interface SoLinesSummary { rows: number; open: number; has_od: number; cancelled: number; unresolved: number; not_loadable: number; so_numbers: number; ship_tos: number; sap_pallets: number; kg: number }
+export function useSoLines(params: Record<string, string | number | undefined>, enabled = true) {
+  return useQuery({
+    queryKey: ['so-lines', params],
+    queryFn: async () => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
+      const r = await apiClient.get(`/external/so-lines?${qs.toString()}`)
+      return r.data.data as { items: SoLineRow[]; total: number; page: number; page_size: number; summary: SoLinesSummary }
+    },
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
 // ĐỢT 3: Up KHVC (join raw theo DO → sinh GDO/DO/Item) → refetch danh sách chuyến.
 // DO luôn bắt buộc: thiếu DO khớp VL06O → BE chặn toàn bộ (MISSING_DO); xuất tay không DO dùng "Tạo đơn".
 export function useUploadKhvc() {
@@ -2606,6 +3573,15 @@ export interface DoSapRow {
   used?: boolean; unit_mismatch?: boolean   // enrich từ BE list (đã sinh chuyến? / lệch đơn vị vs Material)
   in_plan?: boolean; plan_group_code?: string | null; plan_group_count?: number; plan_export_date?: string | null   // kế hoạch VC gắn với DO
   mat_units?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null   // quy cách mã (Material master) — tách Thùng+Hộp khi sửa qty_base
+  // Cột ZSD02 (22/09) — VL06O để trống
+  so_number?: string | null; so_type?: string | null; item_category?: string | null; flow?: string | null
+  delivery_date?: string | null; ward_code?: string | null; region_code?: string | null; route_code?: string | null; route_name?: string | null
+  dvvt_code?: string | null; dvvt_raw?: string | null; driver_name?: string | null; sap_dispatch_status?: 'ASSIGNED' | 'UNASSIGNED' | null
+  qty_so_sales?: number | null; qty_issued_base?: number | null; gross_weight_kg?: number | null; sap_pallets?: number | null; sap_m3?: number | null
+  mat_doc?: string | null; billing_no?: string | null
+  so_item?: string | null; sold_to_code?: string | null; sales_org?: string | null; dist_channel?: string | null; sales_district?: string | null
+  so_created_at?: string | null; od_created_at?: string | null; approval_status?: string | null; customer_ref?: string | null
+  raw?: Record<string, unknown> | null   // trọn dòng file nguồn theo key bộ đọc — 26 cột ZSD02 không có cột riêng chỉ sống ở đây (panel chi tiết)
 }
 export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({
@@ -2623,7 +3599,7 @@ export function useDoSapOrders(params: Record<string, string | number | undefine
 export function useDoSapFacets() {
   return useQuery({
     queryKey: ['do-sap-facets'],
-    queryFn: async () => (await apiClient.get('/external/do-sap/facets')).data.data as { plants: string[]; sources: string[]; shiptos: { code: string; name: string }[] },
+    queryFn: async () => (await apiClient.get('/external/do-sap/facets')).data.data as { plants: string[]; sources: string[]; shiptos: { code: string; name: string }[]; flows?: string[] },
   })
 }
 // DO SAP mutations invalidate CHÉO: ['khvc'] (cột "Trong DO SAP") + reconcile keys + ['gdos']
@@ -2667,6 +3643,8 @@ export interface KhvcRow {
   npp: string | null; veh_type: string | null; dvvt: string | null
   priority: string | null; cs: string | null; note: string | null
   booking_category: string | null   // CỬA đặt lịch — 1 Số xe chỉ 1 giá trị (trigger DB gác); chỉ dùng cho khung giờ
+  vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng tính cước/tải (23/09)
+  vehicle_model?: { id: string; sap_code: string; name: string } | null   // enrich từ BE list
   export_date: string | null; source: string | null; sync_status: string | null
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO
@@ -2830,7 +3808,7 @@ export function useUploadMaterialsExcel() {
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
-      qc.invalidateQueries({ queryKey: ['materials'] })
+      invalidateMaterialQueries(qc)
       qc.invalidateQueries({ queryKey: ['material-categories'] })
     },
   })
@@ -2896,6 +3874,7 @@ export function useScanOutboundItem() {
       // timeout 12s: sóng yếu → fail sớm → ScanDialog tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body, { timeout: 12000 }).then(r => r.data.data),
     onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {
+      warnPutaway(data)   // hàng dư đặt sang ô lệch quy tắc cất (kho chưa bật bắt buộc)
       qc.setQueryData(['gdo', v.gdoId], (old: any) => {
         if (!old) return old
         return {
@@ -3041,11 +4020,60 @@ export type ItemInventoryEntry = {
 // Gợi ý vị trí lấy FEFO theo mã hàng của 1 chuyến (cột "Vị trí lấy" — thủ kho xem trên màn).
 // Key prefix 'gdo' → realtime tự invalidate khi quét (reserve tồn đổi ⇒ gợi ý đổi).
 // Dùng chung type PickSuggestion khai ở phần Bảng chuẩn bị hàng (bên dưới).
-export function useGdoPickSuggestions(gdoId: string | undefined) {
+// `loose` = màn NHẶT LẺ (phần lẻ lấy bằng tay ⇒ ưu tiên VỊ TRÍ NHẶT LẺ giữ đúng lô). Trang Xuất kho
+// để mặc định: lấy nguyên pallet thì không nên rút hàng khỏi kho lẻ.
+export function useGdoPickSuggestions(gdoId: string | undefined, loose = false) {
   return useQuery({
-    queryKey: ['gdo', 'pick-suggestions', gdoId],
-    queryFn: () => apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions`)
+    queryKey: ['gdo', 'pick-suggestions', gdoId, loose],
+    queryFn: () => apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions${loose ? '?loose=1' : ''}`)
       .then(r => r.data.data as Record<string, PickSuggestion[]>),
+    enabled: !!gdoId,
+  })
+}
+
+// ĐƯỜNG ĐI NHẶT LẺ (14/09): thứ tự ghé vị trí lấy từ cửa của chuyến (BFS trên Sơ đồ kho, cùng phép
+// đo với vòng đi xe nâng). Key prefix 'gdo' → realtime tự làm mới khi quét / tồn đổi.
+export interface LooseRouteMaterial {
+  item_id: string; material_id: string; material_code: string | null; material_name: string | null
+  units: MatUnits | null
+  remaining_base: number          // còn lấy nhặt lẻ (BASE) — cùng công thức itemLooseProgress; BE đã lọc dòng = 0
+  effective_base: number; scanned_base: number   // cần / đã lấy (BASE) — in "đã/cần" theo thùng
+  pct_date: number | null; available: number
+  // Ô đang giữ lô ĐÚNG THỨ TỰ khi ô đó KHÔNG phải vị trí nhặt lẻ ⇒ "nên fill xuống rồi hãy nhặt"
+  // (cảnh báo; kho tích "bắt buộc đúng thứ tự" thì dòng nằm ở `unlocated` với reason NEED_FILL).
+  need_fill_from?: string | null
+  // Việc fill ấy ĐÃ CÓ LỆNH treo chưa (16/09) — có rồi thì màn nói "chờ hạ" thay vì giục ra lệnh
+  fill_order_id?: string | null; fill_order_code?: string | null; fill_pending_base?: number
+}
+/** Dòng đã lấy đủ phần lẻ — vẫn nằm cuối bảng lộ trình, gạch ngang (phòng bị quên) */
+export interface LooseRouteDone {
+  item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
+  units: MatUnits | null; effective_base: number; scanned_base: number; location_code: string | null
+}
+export interface LooseRouteStop {
+  seq: number; location_id: string; location_code: string; is_pick_face: boolean
+  dist_from_prev_cells: number | null   // quãng (ô lưới) từ điểm đứng trước; null = chưa có bản vẽ / không tới được
+  materials: LooseRouteMaterial[]
+}
+export interface LooseRoute {
+  routed: boolean; start_code: string | null; cell_m: number | null
+  stops: LooseRouteStop[]
+  unlocated: Array<{
+    item_id: string; material_id: string | null; material_code: string | null; material_name: string | null
+    units: MatUnits | null; remaining_base: number
+    // NO_MATCH  = kho CÒN hàng mã này nhưng không pallet nào đạt mức %Date đã chốt trên dòng
+    // NEED_FILL = kho tích "bắt buộc đúng thứ tự": lô đúng thứ tự đang trên kệ, phải fill xuống
+    //             vị trí nhặt lẻ rồi mới nhặt được (services/loosePickFace.ts)
+    reason?: 'NO_STOCK' | 'NO_MATCH' | 'NEED_FILL'
+    fill_from?: string | null
+    fill_order_id?: string | null; fill_order_code?: string | null; fill_pending_base?: number
+  }>
+  done: LooseRouteDone[]
+}
+export function useLooseRoute(gdoId: string | undefined) {
+  return useQuery({
+    queryKey: ['gdo', 'loose-route', gdoId],
+    queryFn: () => apiClient.get(`/wms/directed/loose-route?gdo_id=${gdoId}`).then(r => r.data.data as LooseRoute),
     enabled: !!gdoId,
   })
 }
@@ -3075,7 +4103,7 @@ export function useConfirmLoosePickingItem() {
       // confirm-loose giảm tồn InventoryEntry → làm mới cả tồn kho & list nhặt lẻ
       qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
@@ -3168,6 +4196,26 @@ export function usePrepareBoard(gdoIds: string[]) {
   })
 }
 
+// STT chuẩn bị theo booking khung giờ — số DẪN XUẤT từ RPC booking_sequence
+// (kho, ngày, chiều) → 1,2,3… theo (khung giờ, giờ đặt). Đổi/hủy booking là số tự cập nhật.
+export type BookingSeqRow = {
+  warehouse_id: string; date: string; direction: 'OUTBOUND' | 'INBOUND'; stt: number
+  order_code: string; license_plate: string | null; time_from: string; time_to: string
+}
+export function useBookingSequence(warehouseId: string | null | undefined, dateFrom: string | null | undefined, dateTo: string | null | undefined) {
+  return useQuery({
+    queryKey: ['booking-sequence', warehouseId ?? '', dateFrom, dateTo],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/booking-sequence', {
+        params: { warehouse_id: warehouseId || undefined, date_from: dateFrom, date_to: dateTo },
+      })
+      return data.data as BookingSeqRow[]
+    },
+    enabled: !!dateFrom && !!dateTo,
+    staleTime: 15_000,
+  })
+}
+
 // Cảnh báo thiếu tồn theo (kho, ngày giao) — level 1: tồn thiếu nhưng tồn + KH nhập đủ
 // (push hàng về đúng KH); level 2: tồn + KH nhập vẫn thiếu. Chỉ trả mã có cảnh báo.
 export type OutboundShortage = { material_id: string; demand: number; available: number; planned: number; level: 1 | 2 }
@@ -3234,8 +4282,12 @@ export function useStartGDO() {
     mutationFn: ({ id, ...body }: {
       id: string; license_plate?: string; container_number?: string
       exporter_name?: string; loader_name?: string
-      forklift_driver_id?: string; forklift_driver_names?: string
+      // Một chuyến giao được NHIỀU lái xe nâng ⇒ gửi `forklift_driver_ids`. Cột số ít
+      // `forklift_driver_id` là dạng CŨ, BE chỉ dùng khi không có mảng — gửi nó là tự cắt
+      // danh sách còn một người (xem ghi chú ở StartDialog/EditTransportDialog).
+      forklift_driver_ids?: string[]; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
+      dock_location_id?: string | null   // cửa xuất (bắt buộc khi kho có cửa trên Sơ đồ kho — BE 422 DOCK_REQUIRED/DOCK_FULL)
       // 2 rule cổng/cân per kho: KHÔNG có cờ bỏ qua nào ở đây — miễn trừ duy nhất là duyệt
       // trước trên chuyến (useWaiveWeighGDO, quyền outbound.weigh_waive)
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
@@ -3253,13 +4305,426 @@ export function useStartGDO() {
   })
 }
 
+// ── Cửa xuất có sức chứa xe (09/09) ──
+// Tình trạng cửa của kho: 1 RPC. Nuôi ô chọn cửa lúc Bắt đầu / Sửa xe và lớp phủ Cửa trên Sơ đồ kho.
+// Realtime: GroupDeliveryOrder + Location đổi → key 'outbound-docks' tự invalidate (realtimeEvents.ts).
+export function useWarehouseDocks(warehouseId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['outbound-docks', warehouseId],
+    enabled: !!warehouseId && enabled,
+    staleTime: 15_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/docks', { params: { warehouse_id: warehouseId } })
+      return data.data as DockStatus[]
+    },
+  })
+}
+// ─── VIỆC CẦN LÀM (Directed Work 1c, 10/09) ────────────────────────────────────────────────────
+export function useDirectedBoard(
+  warehouseId: string | null | undefined,
+  mode: 'LOWER' | 'MOVE' | 'SCAN',
+  opts: { gdoId?: string | null; driverId?: string | null; enabled?: boolean } = {},
+) {
+  const { gdoId = null, driverId = null, enabled = true } = opts
+  return useQuery({
+    queryKey: ['directed-board', warehouseId, mode, gdoId, driverId],
+    // Bảng "Sắp quét" vô nghĩa nếu chưa chọn chuyến — đừng gọi để nhận 400
+    enabled: !!warehouseId && enabled && (mode !== 'SCAN' || !!gdoId),
+    staleTime: 10_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/directed/board', {
+        params: { warehouse_id: warehouseId, mode, ...(gdoId ? { gdo_id: gdoId } : {}), ...(driverId ? { driver_id: driverId } : {}) },
+      })
+      return data.data as DirectedBoard
+    },
+  })
+}
+
+/** Nút "✓ Xong" — gửi CẢ NHÓM việc của một vị trí trong một lần bấm. BOTH = "Hạ & đưa ra" (kho không xe hạ riêng). */
+export function useConfirmTasks() {
+  const qc = useQueryClient()
+  return useMutation({
+    // restore: hoàn tác việc NHẶT LẺ và ghi pallet lại về ô cũ (chỉ khi người bấm xác nhận hàng chưa đưa xuống)
+    mutationFn: (body: { task_ids: string[]; stage: 'LOWER' | 'MOVE' | 'BOTH'; undo?: boolean; restore?: boolean }) =>
+      apiClient.post('/wms/directed/tasks/confirm', body).then(r => r.data.data as { changed: number; moved_pallets: number }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })   // LOOSE_FEED chuyển pallet thật trong tồn
+    },
+  })
+}
+
+/** Nút "Nhận" việc chung (12/09) — khoá mềm 10 phút, không chặn người khác bấm ✓ Xong. */
+export function useClaimTasks() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { task_ids: string[]; undo?: boolean }) =>
+      apiClient.post('/wms/directed/tasks/claim', body).then(r => r.data.data as { changed: number; held_by: string | null }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['directed-board'] }),
+  })
+}
+
+/** Hộp việc theo người (đợt C) — whId null = mọi kho trong phạm vi (badge bottom-nav). */
+export function useWorkInbox(whId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['work-inbox', whId ?? ''],
+    enabled,
+    staleTime: 20_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/directed/inbox', { params: whId ? { warehouse_id: whId } : {} })
+      return data.data as WorkInbox
+    },
+  })
+}
+
+/** Góc nhìn giám sát Việc cần làm (quyền replan): ai đang làm · chờ hạ lâu nhất · % làm đúng kế hoạch. */
+export function useDirectedSupervision(whId: string | null | undefined, days = 7, enabled = true) {
+  return useQuery({
+    queryKey: ['directed-supervision', whId, days],
+    enabled: enabled && !!whId,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/directed/supervision', { params: { warehouse_id: whId, days } })
+      return data.data as DirectedSupervision
+    },
+  })
+}
+
+export function useReplanGdo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (gdoId: string) =>
+      apiClient.post(`/wms/directed/gdos/${gdoId}/replan`, {}).then(r => r.data.data as { created: number; cancelled: number; unset_items: number; warning: string | null }),
+    onSettled: (_d, _e, gdoId) => {
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+      qc.invalidateQueries({ queryKey: ['gdo', gdoId] })
+    },
+  })
+}
+
+/** Chốt %Date HÀNG LOẠT — nhiều dòng, nhiều chuyến, lưu một lần. `rule: null` = xoá chốt. */
+/** Màn "Chốt %Date": MỌI dòng hàng của MỌI chuyến trong khoảng ngày — nv SAP soi cả ngày một lượt. */
+export interface DateRuleLine {
+  item_id: string; gdo_id: string; group_code: string | null; license_plate: string | null
+  delivery_date: string; gdo_status: string
+  warehouse_id: string | null; warehouse_name: string | null; warehouse_type: string | null
+  delivery_code: string | null; distributor_name: string | null
+  material_id: string | null; material_code: string | null; material_name: string | null
+  units_per_carton: number | null; base_unit: string | null; entry_unit: string | null
+  cartons_ordered: number; cartons_scanned: number; remaining: number
+  header_text: string | null; batch_required: string | null; date_required: number | null
+  date_rule: DateRule | null; is_set: boolean
+  // Khách hàng / Kênh + nguồn quy tắc (11/09) — để biết con số trước mặt là quyết định của AI
+  shipto_party: string | null; customer_name: string | null; channel: string | null
+  customer_known: boolean; customer_has_channel: boolean
+  source: 'MANUAL' | 'CUSTOMER' | 'CHANNEL' | 'SYSTEM' | 'SAP' | null
+  review: 'NO_STOCK' | 'BELOW_MASTER' | null
+  reason: 'NO_SHELF_LIFE' | null
+  // Loại hàng của MÃ + hạn dùng khai ở danh mục (đợt 2) — trục thứ hai của mức
+  material_category: string | null; shelf_life_days: number | null
+  rule_kind: string | null
+}
+export function useDateRuleLines(p: {
+  from: string; to: string; warehouseId?: string; state?: string; search?: string
+  source?: string[]; matCategory?: string[]; kind?: string[]; page: number; pageSize: number
+}) {
+  return useQuery({
+    queryKey: ['date-rule-lines', p],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/date-rule-lines', {
+        params: {
+          date_from: p.from, date_to: p.to,
+          warehouse_id: p.warehouseId || undefined,
+          state: p.state || undefined,
+          search: p.search || undefined,
+          source: p.source?.length ? p.source.join(',') : undefined,
+          material_category: p.matCategory?.length ? p.matCategory.join(',') : undefined,
+          kind: p.kind?.length ? p.kind.join(',') : undefined,
+          page: p.page, page_size: p.pageSize,
+        },
+      })
+      return data.data as {
+        rows: DateRuleLine[]; total: number; page: number; page_size: number
+        summary: { lines: number; set: number; unset: number; with_note: number; trips: number
+                   review: number; no_channel: number; no_shelf_life: number }
+      }
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 10_000,
+  })
+}
+
+/**
+ * Loại hàng khai được quy định date — kèm số mã CÓ khai hạn dùng để màn khai làm MỜ đúng loại
+ * không đo được date (đo 11/09: PM01 = 0/888 mã) thay vì im lặng bỏ.
+ */
+export interface DateRuleCategory {
+  value: string; label: string; materials: number; with_shelf_life: number; measurable: boolean
+  // Khoảng hạn dùng thật của loại này — để màn khai quy đổi SỐNG ("≥ 60 % ≈ còn 27–36 ngày")
+  min_shelf_life: number | null; max_shelf_life: number | null
+}
+export function useDateRuleCategories() {
+  return useQuery({
+    queryKey: ['date-rule-categories'],
+    queryFn: async () => (await apiClient.get('/masterdata/date-rules/categories')).data.data as DateRuleCategory[],
+    staleTime: 300_000,
+  })
+}
+
+/** Hỏi TRƯỚC khi chốt: mức %Date đang gõ còn tồn nào đạt không (một lời gọi cho cả bảng). */
+export interface DateRuleStockPart { ok: boolean; qty_base: number; matched_base: number; matched_pallets: number }
+export interface DateRuleStock {
+  item_id: string; ok: boolean
+  matched_base: number; matched_pallets: number; total_base: number
+  held_pallets: number        // pallet còn hàng nhưng QA đang giữ — lời khuyên là "gỡ QA", không phải "đổi mức"
+  best_pct: number | null; need_base: number
+  parts?: DateRuleStockPart[]
+  // Tranh chấp giữa các đơn cùng mã · cùng kho · cùng ngày xuất (14/09) — máy nói ra, người chốt chia
+  competing_lines?: number; competing_base?: number; rule_pool_base?: number
+}
+export function useCheckDateRule(rules: Array<{ item_id: string; rule: DateRule }>, enabled: boolean) {
+  return useQuery({
+    queryKey: ['date-rule-check', JSON.stringify(rules)],
+    queryFn: async () => {
+      const { data } = await apiClient.post('/wms/outbound/items/date-rule/check', { rules })
+      return data.data as DateRuleStock[]
+    },
+    enabled: enabled && rules.length > 0,
+    staleTime: 15_000,
+  })
+}
+
+export function useSetItemsDateRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { item_ids: string[]; rule: DateRule | null }) =>
+      apiClient.patch('/wms/outbound/items/date-rule', body).then(r => r.data.data as { updated: number; trips_replanned: number }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['outbound-prepare'] })
+      // Chính màn "Chốt %Date" — thiếu key này thì chốt xong bảng vẫn ghi "Chưa chốt" (đo trên
+      // Preview 10/09), người chốt tưởng mình bấm hụt và chốt lại lần nữa.
+      qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
+    },
+  })
+}
+
+// ─── KHÁCH HÀNG / NƠI NHẬN + KÊNH (11/09) — master data nuôi %Date tự động ────────────────────
+/** Một dòng mức: loại hàng (null = mọi loại còn lại) + quy tắc. Bảng `date_rule_master`. */
+export interface MasterRuleRow { id?: string; category: string | null; rule: DateRule }
+export interface Customer {
+  id: string; ship_to_code: string; name: string; channel: string | null
+  warehouse_id: string | null
+  is_active: boolean; auto_created: boolean; note: string | null
+  created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
+  // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
+  rules: MasterRuleRow[]
+  channel_rules: MasterRuleRow[]
+}
+export interface CustomerFilters {
+  search?: string; channel?: string[]; hasChannel?: '' | '1' | '0'
+  warehouseId?: string; active?: '' | '1' | '0'; hasRule?: '' | '1' | '0'
+  page: number; pageSize: number
+}
+export function useCustomers(f: CustomerFilters) {
+  return useQuery({
+    queryKey: ['customers', f],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/customers', {
+        params: {
+          search: f.search || undefined,
+          channel: f.channel?.length ? f.channel.join(',') : undefined,
+          has_channel: f.hasChannel || undefined,
+          warehouse_id: f.warehouseId || undefined,
+          active: f.active || undefined,
+          has_rule: f.hasRule || undefined,
+          page: f.page, page_size: f.pageSize,
+        },
+      })
+      return data.data as {
+        rows: Customer[]; total: number; page: number; page_size: number
+        summary: { total: number; no_channel: number; with_warehouse: number; auto_created: number
+                   inactive: number; no_rule: number }
+      }
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+}
+
+export interface CustomerChannel {
+  id: string; value: string; label: string; rules: MasterRuleRow[]; sort_order: number | null; customers: number
+}
+export function useCustomerChannels() {
+  return useQuery({
+    queryKey: ['customer-channels'],
+    queryFn: async () => (await apiClient.get('/masterdata/customer-channels')).data.data as CustomerChannel[],
+    staleTime: 60_000,
+  })
+}
+
+/** Ứng viên nạp danh mục — mã ship-to đã thấy trong VL06O hoặc trên chuyến. */
+export interface CustomerCandidate {
+  ship_to_code: string; name: string; erp_lines: number; trips: number; last_date: string | null
+  exists_already: boolean; current_name: string | null; current_channel: string | null
+  current_warehouse_id: string | null
+  // GỢI Ý kho khớp (20260911h): 44/102 mã ship-to chờ nạp chính là kho đã có trong danh mục Kho.
+  // `match_by`: CODE = trùng mã kho · SHIPTO = nằm trong ship-to phụ của kho · NAME = trùng TÊN
+  // và tên đó duy nhất trong danh mục (khớp tên thì người nạp nên liếc lại trước khi tick).
+  wh_id: string | null; wh_code: string | null; wh_name: string | null
+  wh_mode: string | null; match_by: 'CODE' | 'SHIPTO' | 'NAME' | null
+}
+export function useCustomerSeedCandidates(enabled: boolean) {
+  return useQuery({
+    queryKey: ['customer-seed-candidates'],
+    queryFn: async () => (await apiClient.get('/masterdata/customers/seed-candidates')).data.data as
+      { rows: CustomerCandidate[]; total: number; new_count: number; days: number },
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: ['customers'] })
+  qc.invalidateQueries({ queryKey: ['customer-channels'] })
+  qc.invalidateQueries({ queryKey: ['customer-seed-candidates'] })
+  // Màn Chốt %Date hiện tên khách + kênh của từng dòng — đổi danh mục là bảng đó phải đổi theo
+  qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
+}
+
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note'>>
+export function useSaveCustomer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: CustomerPatch & { id?: string }) =>
+      (id ? apiClient.put(`/masterdata/customers/${id}`, body) : apiClient.post('/masterdata/customers', body))
+        .then(r => r.data.data as Customer),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+export function useDeactivateCustomer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/customers/${id}`).then(r => r.data.data as Customer),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+/** Thao tác hàng loạt: `ids` (dòng đã tick) HOẶC `filter` (chọn tất cả theo bộ lọc) — không cả hai. */
+export function useBulkUpdateCustomers() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids?: string[]; filter?: Record<string, unknown>; patch: CustomerPatch }) =>
+      apiClient.patch('/masterdata/customers/bulk', body).then(r => r.data.data as { updated: number }),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+export function useSeedCustomers() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ rows, preflight }: {
+      rows: { ship_to_code: string; name: string; warehouse_id?: string | null }[]; preflight?: boolean
+    }) =>
+      apiClient.post(`/masterdata/customers/seed${preflight ? '?preflight=1' : ''}`, { rows })
+        .then(r => r.data.data as { created?: number; skipped?: number; linked?: number } & Partial<UploadPreflight>),
+    onSettled: () => invalidateCustomers(qc),
+  })
+}
+/**
+ * THAY TRỌN bộ mức của MỘT khách / MỘT kênh. Thay trọn chứ không sửa lẻ vì màn khai là một BẢNG
+ * nhỏ: người dùng thêm/xoá/sửa dòng rồi bấm Lưu một lần — sửa lẻ thì ca "xoá dòng chưa kịp gửi"
+ * sẽ để lại mức cũ đang chạy mà người khai tưởng đã bỏ.
+ */
+export function useSaveDateRules() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ scope, key, rules }: {
+      scope: 'CUSTOMER' | 'CHANNEL'; key: string
+      rules: Array<{ category: string | null; kind: string; value?: string | number | null }>
+    }) => apiClient.put(`/masterdata/date-rules/${scope}/${encodeURIComponent(key)}`, { rules })
+      .then(r => r.data.data as { rules: MasterRuleRow[]; date_rule_applied?: DateRuleApplied }),
+    // Lưu mức xong BE đã áp ngay cho đơn đang mở (12/09) → làm mới cả màn Quy định date và bảng việc
+    onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
+  })
+}
+
+/** Sau khi đổi cấu hình %Date: dòng hàng của đơn đang mở đã bị ghi lại, mọi màn đọc nó phải nạp lại. */
+function invalidateAfterDateRule(qc: ReturnType<typeof useQueryClient>) {
+  for (const k of [['date-rule-lines'], ['gdo'], ['gdos'], ['gdos-paged'], ['directed-board'], ['work-inbox']])
+    qc.invalidateQueries({ queryKey: k })
+}
+
+/** Đặt MỘT mức (một loại hàng) cho NHIỀU khách — đường khai chính cho lần đầu. */
+export function useBulkSetDateRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      ids?: string[]; filter?: Record<string, unknown>
+      category: string | null; kind?: string | null; value?: string | number | null
+    }) => apiClient.patch('/masterdata/customers/bulk-rule', body)
+      .then(r => r.data.data as { updated: number; cleared: boolean; date_rule_applied?: DateRuleApplied }),
+    onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
+  })
+}
+
+export function useUpdateCustomerChannel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; label?: string }) =>
+      apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
+    onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
+  })
+}
+
+/**
+ * ÁP LẠI %DATE THEO MASTER cho đơn đang mở. Từ 12/09 đổi cấu hình đã tự áp ngay, nên nút này còn
+ * dùng cho KHOẢNG NGÀY ngoài cửa sổ tự động và cho lần chạy lại sau khi tồn kho đổi — 2 pha:
+ * `preflight` đếm trước, người xem rồi mới bấm Xác nhận.
+ */
+export interface ApplyMasterResult {
+  scanned: number; applied: number; cleared: number; kept_manual: number; updated: number; trips_replanned: number
+}
+export function useApplyDateRuleMaster() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ preflight, ...body }: { from: string; to: string; warehouse_id?: string; preflight?: boolean }) =>
+      apiClient.post(`/wms/outbound/items/date-rule/apply-master${preflight ? '?preflight=1' : ''}`, body)
+        .then(r => r.data.data as ApplyMasterResult & Partial<UploadPreflight>),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['directed-board'] })
+    },
+  })
+}
+
+export function useChangeDock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, dock_location_id }: { id: string; dock_location_id: string }) =>
+      apiClient.patch(`/wms/outbound/${id}/dock`, { dock_location_id }).then(r => r.data.data as GDO),
+    onSuccess: (data, { id }) => {
+      qc.setQueryData(['gdo', id], data)
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['outbound-docks'] })
+    },
+  })
+}
+
 export function useUpdateTransport() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: {
       id: string; license_plate?: string; container_number?: string   // biển TÙY CHỌN khi chuyến đã duyệt bỏ qua cổng (giao lẻ)
       exporter_name?: string; loader_name?: string
-      forklift_driver_id?: string; forklift_driver_names?: string
+      // Như useStartGDO: gửi MẢNG, đừng gửi cột số ít (sẽ cắt danh sách còn một người).
+      forklift_driver_ids?: string[]; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
     }) => apiClient.patch(`/wms/outbound/${id}/transport`, body).then(r => r.data.data as GDO),
     onSuccess: (data, { id }) => {
@@ -3341,7 +4806,9 @@ export function useUnwaiveGateGDO() {
 export const useUnassignGDO   = makeUndoGDOMutation('unassign',
   old => ({ ...old, assigned_at: null, assigned_by: null, status: 'PENDING' }))
 export const useUnstartGDO    = makeUndoGDOMutation('unstart',
-  old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_names: null, status: 'PENDING' }))
+  // Xoá cả `forklift_driver_ids` (nguồn thật) chứ không riêng cột số ít, kẻo màn hình còn giữ
+  // danh sách người của chuyến vừa bỏ Bắt đầu cho tới lượt nạp lại.
+  old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_ids: null, forklift_driver_names: null, status: 'PENDING' }))
 export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
   old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }),
   [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-transfer']])
@@ -3353,7 +4820,9 @@ export function useWarehouseEmployees(warehouse_id?: string | null) {
       const { data } = await apiClient.get('/wms/outbound/employees', {
         params: warehouse_id ? { warehouse_id } : undefined,
       })
-      return data.data as { id: string; name: string; employee_code: string; job_title?: string | null }[]
+      // `is_forklift_driver` = cờ chức danh (JobTitle) do BE trả — ô chọn lái xe nâng lọc theo cờ này,
+      // KHÔNG so tên chức danh (đổi tên danh mục là ô chọn rỗng mà không lỗi nào nổ).
+      return data.data as { id: string; name: string; employee_code: string; job_title?: string | null; is_forklift_driver?: boolean }[]
     },
   })
 }
@@ -3583,8 +5052,22 @@ export interface ControlTowerMatIn {
   // optional — RPC cũ (trước 20260729c) không trả field này.
   unit?: string | null
 }
+// Khối RESOURCES + cycle-time (console Manhattan 20/08) — RPC control_tower_resources, null nếu chưa apply
+export interface ControlTowerResources {
+  staff_out:  { n: number; scans: number }
+  top_out:    { name: string; scans: number }[]
+  staff_in:   { n: number; pallets: number }
+  stocktake:  { n: number; checks: number; moves: number }
+  forklift:   { total: number; active: number; idle: number; unchecked: number; issues: number }
+  inventory:  { total: number; locked: number }
+  gate_cycle: { done_n: number; inout_mins: number | null; wait_mins: number | null }
+}
 export interface ControlTowerData {
   date: string
+  // Hệ thống nghẽn → BE trả số ĐÃ TÍNH lần trước thay vì báo lỗi (06/09). Màn hình phải NÓI RA.
+  stale?: boolean
+  computed_at?: string
+  resources?: ControlTowerResources | null
   gate: { registered: number; called: number; inside: number; completed: number; inside_list: ControlTowerGateRow[] }
   outbound: { pending: number; in_progress: number; paused: number; completed: number; total: number
               planned: number; scanned: number; loose_planned?: number; loose_scanned?: number
@@ -3770,18 +5253,6 @@ export function useDeleteSlottingPlan() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
   })
 }
-// Cấu hình slotting của VỊ TRÍ (tab Cài đặt): no_in = không đưa hàng vào (kho tạm); no_out = không lấy hàng đi
-export function useUpdateSlottingLocationConfig() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { warehouse_id: string; no_in_ids: string[]; no_out_ids: string[] }) =>
-      apiClient.put('/wms/slotting/location-config', body).then(r => r.data.data as { no_in: number; no_out: number }),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['locations-real'] })
-      qc.invalidateQueries({ queryKey: ['slotting'] })
-    },
-  })
-}
 // Cấu hình slotting của KHU (tab Cài đặt trang Tối ưu vị trí — quyền slotting.configure)
 export function useUpdateSlottingZoneConfig() {
   const qc = useQueryClient()
@@ -3825,12 +5296,27 @@ export interface FillDemandRow {
   category: string | null
   base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   demand_base: number; pick_face_base: number; pick_face_pallets: number
+  // Trong số đang có ở kho lẻ, bao nhiêu là ĐÚNG LÔ theo nguyên tắc luân chuyển (15/09) — `short_base`
+  // tính theo số này, vì nhặt lẻ lấy lô khác là vi phạm chính luật kho đang chạy.
+  pick_face_ok_base?: number; lot_date?: string | null
+  /** NSX của lô đúng thứ tự — màn hình in cột này (`lot_date` là HẠN DÙNG, khoá FEFO) */
+  lot_nsx?: string | null
+  /** Người đã huỷ tay dòng máy đặt cho mã này hôm nay — máy không đặt lại; màn tách khỏi bảng mặc định (16/09) */
+  veto?: { reason: string; at: string | null } | null
+  // Phần nhu cầu đã có việc LOOSE_FEED lo (tách riêng khỏi `pending_base` gộp cả dòng lệnh fill)
+  feed_pending_base?: number
   pending_base: number; pending_n: number; short_base: number
   to_location: { id: string; code: string } | null
   suggestions: FillSuggestion[]
 }
 export interface FillDemandData {
   rows: FillDemandRow[]; pick_face_locations: number; error?: string
+  /** Mã CÓ nhu cầu nhặt lẻ nhưng kho không có ô nhặt lẻ nào nhận Loại kho của nó — RPC không đề xuất được, phải NÓI RA (16/09) */
+  excluded?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
+  /** Mã có nhặt lẻ hôm nay nhưng dòng đơn CHƯA CHỐT %Date — không phải mã thiếu, tách khỏi `rows` (16/09) */
+  unset?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number }[]
+  /** Mã có người đã bác hôm nay (huỷ tay dòng máy đặt) — vẫn nằm trong `rows` kèm `veto`, màn tách ra băng riêng */
+  vetoed?: { material_id: string; material_code: string | null; material_name: string | null; category: string | null; demand_base: number; reason: string; at: string | null }[]
 }
 export function useFillDemand(params?: { warehouse_id: string; date: string }) {
   return useQuery({
@@ -3864,6 +5350,8 @@ export interface FillTaskRow {
 export interface FillOrderRow {
   id: string; order_code: string; warehouse_id: string; target_date: string
   status: FillTaskStatus; created_by: string | null; created_at: string
+  auto_created?: boolean | null            // lệnh do HỆ THỐNG tự đặt (15/09), không phải người bấm
+  warehouse_type?: string | null           // lệnh theo NGÀY: một lệnh cho mỗi (kho, ngày, loại kho)
   lines_n: number; pending_lines: number; done_lines: number; cancelled_lines: number
   pallets_req: number; pallets_done: number
   qty_req_entry: number; qty_done_entry: number
@@ -3902,7 +5390,11 @@ export function useFillOrder(orderId?: string) {
       const { data } = await apiClient.get(`/wms/fill/orders/${orderId}`)
       const d = data.data as {
         order: { id: string; order_code: string; warehouse_id: string; target_date: string
-                 status: FillTaskStatus; created_by: string | null; created_at: string }
+                 status: FillTaskStatus; created_by: string | null; created_at: string
+                 // Lệnh theo NGÀY (15/09): một lệnh cho mỗi (kho, ngày, loại kho), gán người cả ngày
+                 warehouse_type: string | null; auto_created: boolean | null
+                 assignee_id: string | null; assignee_name: string | null
+                 closed_at: string | null; closed_by: string | null }
         lines: (FillTaskRow & { material: { entry_unit: string | null; units_per_carton: number | null; base_unit: string | null } | null })[]
         scans: FillScanRow[]
       }
@@ -3915,6 +5407,7 @@ export function useFillOrder(orderId?: string) {
 export interface FillReportRow {
   assignee_id: string | null; assignee_name: string
   total_n: number; done_n: number; pending_n: number
+  missed_n?: number            // dòng bị huỷ lúc CHỐT NGÀY vì chưa thực hiện (vẫn nằm trong mẫu số)
   done_qty_entry: number; total_qty_entry: number
   avg_minutes: number | null; rate: number
 }
@@ -3924,7 +5417,7 @@ export function useFillReport(params?: { warehouse_id: string; date_from?: strin
     enabled: !!params?.warehouse_id,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/fill/report', { params })
-      return data.data as { rows: FillReportRow[]; total: number; done: number; unassigned: number; qty_entry: number }
+      return data.data as { rows: FillReportRow[]; total: number; done: number; missed?: number; unassigned: number; qty_entry: number }
     },
   })
 }
@@ -3995,6 +5488,28 @@ export function useCancelFillOrder() {
   })
 }
 
+// Gán CẢ LỆNH NGÀY cho một người — "người đó nhận kế hoạch cả ngày" (15/09): dòng máy thêm vào
+// sau đó cũng thuộc về họ, không phải nhận lại từng lần.
+export function useAssignFillOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, assignee_id }: { id: string; assignee_id: string | null }) =>
+      apiClient.patch(`/wms/fill/orders/${id}`, { assignee_id })
+        .then(r => r.data.data as { assignee_id: string | null; assignee_name: string | null; lines: number }),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
+// Chốt ngày — đóng sổ lệnh của ngày, huỷ nốt dòng chưa thực hiện (có vết để báo cáo còn mẫu số)
+export function useCloseFillOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      apiClient.post(`/wms/fill/orders/${id}/close`).then(r => r.data.data as { cancelled_lines: number }),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
 export function useUpdateFillTask() {
   const qc = useQueryClient()
   return useMutation({
@@ -4045,7 +5560,7 @@ export function useVehicleTypes(onlyActive = false) {
 export function useCreateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
+    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean }) =>
       apiClient.post('/tms/vehicle-types', body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -4064,7 +5579,7 @@ export function useReorderVehicleTypes() {
 export function useUpdateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean }) =>
       apiClient.put(`/tms/vehicle-types/${id}`, body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -4076,6 +5591,191 @@ export function useDeleteVehicleType() {
     mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-types/${id}`).then(r => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
+}
+
+// ─── DÒNG XE CON (vehicle_model, mã SAP 9100000xx) — cha = VehicleType (23/09) ───────────────────────
+export type VehicleModelTemp = 'HOT' | 'COLD' | 'MIXED' | 'DRY'
+export interface VehicleModel {
+  id: string; sap_code: string; name: string
+  parent_type_id: string | null
+  parent: { code: string; name: string } | null
+  temp_mode: VehicleModelTemp | null
+  storage_conditions: string[]      // điều kiện bảo quản xe chở được; RỖNG = mọi điều kiện (24/09)
+  capacity_mode: 'PALLET' | 'TON'
+  max_pallets: number | null; max_tons: number | null; max_m3: number | null; max_drops: number | null
+  allow_mix_channels: boolean
+  tariff_unit: 'PER_PALLET' | 'PER_TRIP'
+  underload_pct: number
+  is_active: boolean; sort_order: number
+  created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
+}
+export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by'>>
+export function useVehicleModels(params?: { parent_type_id?: string; unassigned?: boolean; is_active?: boolean }) {
+  return useQuery({
+    queryKey: ['vehicle-models', params ?? null],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      if (params?.parent_type_id) q.parent_type_id = params.parent_type_id
+      if (params?.unassigned) q.unassigned = '1'
+      if (params?.is_active !== undefined) q.is_active = String(params.is_active)
+      const { data } = await apiClient.get('/tms/vehicle-models', { params: q })
+      return data.data as { items: VehicleModel[]; unassigned: number; unconditioned: number }
+    },
+  })
+}
+export function useCreateVehicleModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: VehicleModelPatch & { sap_code: string; name: string }) => apiClient.post('/tms/vehicle-models', body).then(r => r.data.data as VehicleModel),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+export function useUpdateVehicleModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: VehicleModelPatch & { id: string }) => apiClient.put(`/tms/vehicle-models/${id}`, body).then(r => r.data.data as VehicleModel),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+/** Gán (hoặc gỡ: parent_type_id null) cha cho nhiều dòng con một lượt. */
+export function useAssignVehicleModelParent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids: string[]; parent_type_id: string | null }) => apiClient.patch('/tms/vehicle-models/assign-parent', body).then(r => r.data.data as { updated: number; missing: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+/** Khai điều kiện bảo quản cho NHIỀU dòng xe một lượt (60 dòng, khai lẻ là 60 nhát bấm). */
+export function useAssignVehicleModelConditions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids: string[]; storage_conditions: string[] }) => apiClient.patch('/tms/vehicle-models/assign-conditions', body).then(r => r.data.data as { updated: number; missing: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+export function useDeleteVehicleModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-models/${id}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
+  })
+}
+
+// ─── CƯỚC VẬN CHUYỂN (đợt 1 TMS điều vận, 23/09) ──────────────────────────────────────────────────
+type FreightRef = { warehouse: { code: string; name: string } | null; company: { code: string; name: string } | null; model: { sap_code: string; name: string; tariff_unit: string; parent_type_id: string | null } | null }
+type Effective = { effective_from: string; effective_to: string | null; is_active: boolean; note: string | null; created_at: string; updated_at: string; created_by: string | null; updated_by: string | null }
+export interface FreightTariff extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string
+  ward_code: string; price: number; distance_km: number | null
+  province_old: string | null; district_old: string | null; province_new: string | null; ward_raw: string | null
+}
+export type SurchargePer = 'PER_STOP' | 'PER_TRIP' | 'PER_PALLET' | 'PER_TON'
+export interface FreightSurcharge extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string | null
+  kind: string; amount: number; per: SurchargePer; count_mode: 'ALL_STOPS' | 'EXTRA_STOPS'; min_stops: number
+}
+export interface SurchargeKind { value: string; label: string; default_per: SurchargePer }
+export interface CarrierAllocation extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; area_kind: 'WARD' | 'REGION'; area_code: string; transport_company_id: string; priority: number; effective_now: boolean
+}
+export interface CarrierShare extends FreightRef, Effective {
+  id: string; from_warehouse_id: string; transport_company_id: string; share_pct: number; basis: 'TRIPS' | 'PALLETS' | 'TONS'; period: 'MONTH'; effective_now: boolean
+}
+export type FreightListParams = { warehouse_id?: string; company_id?: string; model_id?: string; ward?: string; active_on?: string; q?: string; page?: number; pageSize?: number }
+const freightParams = (p: FreightListParams) => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined && v !== '' && v !== null).map(([k, v]) => [k, String(v)]))
+const invalidateFreight = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: ['freight-tariffs'] }); qc.invalidateQueries({ queryKey: ['freight-surcharges'] }); qc.invalidateQueries({ queryKey: ['freight-allocations'] })
+}
+export function useFreightTariffs(p: FreightListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['freight-tariffs', p], enabled, placeholderData: keepPreviousData, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/tms/freight/tariffs', { params: freightParams(p) })).data.data as { items: FreightTariff[]; total: number; page: number; pageSize: number },
+  })
+}
+export type FreightTariffBody = { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string; ward_code: string; price: number; distance_km?: number | null; province_new?: string | null; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveFreightTariff() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<FreightTariffBody> & { id?: string }) =>
+      (id ? apiClient.put(`/tms/freight/tariffs/${id}`, body) : apiClient.post('/tms/freight/tariffs', body)).then(r => r.data.data as FreightTariff),
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteFreightTariff() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/tariffs/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+/** Upload bảng cước 2 pha (chuẩn UploadExcelDialog). `warehouse_id` dùng khi file không có cột "Kho xuất". */
+export function useUploadFreightTariffs() {
+  const qc = useQueryClient()
+  return useMutation<UploadResult & Partial<UploadPreflight>, unknown, { file: File; preflight: boolean; warehouse_id?: string; effective_from?: string }>({
+    mutationFn: ({ file, preflight, warehouse_id, effective_from }) => {
+      guardUploadSize(file)
+      const fd = new FormData(); fd.append('file', file)
+      if (warehouse_id) fd.append('warehouse_id', warehouse_id)
+      if (effective_from) fd.append('effective_from', effective_from)
+      return apiClient.post(`/tms/freight/tariffs/upload${preflight ? '?preflight=1' : ''}`, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }).then(r => r.data.data)
+    },
+    onSuccess: (_d, v) => { if (!v.preflight) invalidateFreight(qc) },
+  })
+}
+export function useFreightSurcharges(p: FreightListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['freight-surcharges', p], enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/tms/freight/surcharges', { params: freightParams(p) })).data.data as { items: FreightSurcharge[]; kinds: SurchargeKind[] },
+  })
+}
+export type FreightSurchargeBody = { from_warehouse_id: string; transport_company_id: string; vehicle_model_id?: string | null; kind: string; amount: number; per: SurchargePer; count_mode?: 'ALL_STOPS' | 'EXTRA_STOPS'; min_stops?: number; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveFreightSurcharge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<FreightSurchargeBody> & { id?: string }) => {
+      if (id) { const { from_warehouse_id: _w, transport_company_id: _c, ...rest } = body; return apiClient.put(`/tms/freight/surcharges/${id}`, rest).then(r => r.data.data as FreightSurcharge) }
+      return apiClient.post('/tms/freight/surcharges', body).then(r => r.data.data as FreightSurcharge)
+    },
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteFreightSurcharge() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/surcharges/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+export function useCarrierAllocations(p: FreightListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['freight-allocations', p], enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/tms/freight/allocations', { params: freightParams(p) })).data.data as { allocations: CarrierAllocation[]; shares: CarrierShare[] },
+  })
+}
+export type CarrierAllocationBody = { from_warehouse_id: string; area_kind: 'WARD' | 'REGION'; area_code: string; transport_company_id: string; priority?: number; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveCarrierAllocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<CarrierAllocationBody> & { id?: string }) => {
+      if (id) { const { priority, effective_from, effective_to, is_active, note } = body; return apiClient.put(`/tms/freight/allocations/${id}`, { priority, effective_from, effective_to, is_active, note }).then(r => r.data.data as CarrierAllocation) }
+      return apiClient.post('/tms/freight/allocations', body).then(r => r.data.data as CarrierAllocation)
+    },
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteCarrierAllocation() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/allocations/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
+}
+export type CarrierShareBody = { from_warehouse_id: string; transport_company_id: string; share_pct: number; basis?: 'TRIPS' | 'PALLETS' | 'TONS'; effective_from?: string; effective_to?: string | null; is_active?: boolean; note?: string | null }
+export function useSaveCarrierShare() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<CarrierShareBody> & { id?: string }) => {
+      if (id) { const { share_pct, basis, effective_from, effective_to, is_active, note } = body; return apiClient.put(`/tms/freight/shares/${id}`, { share_pct, basis, effective_from, effective_to, is_active, note }).then(r => r.data.data as CarrierShare) }
+      return apiClient.post('/tms/freight/shares', body).then(r => r.data.data as CarrierShare)
+    },
+    onSuccess: () => invalidateFreight(qc),
+  })
+}
+export function useDeleteCarrierShare() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/freight/shares/${id}`).then(r => r.data), onSuccess: () => invalidateFreight(qc) })
 }
 
 export function useSlotTemplates(params?: { warehouse_id?: string; vehicle_type_id?: string }) {
@@ -4169,6 +5869,106 @@ export function useSlotApplyInfo(params: { warehouse_id?: string; vehicle_type_i
   })
 }
 
+// ─── Điều vận — kế hoạch ghép chuyến NHÁP (đợt 2, 24/09) ─────────────────────
+export interface DispatchTripOd {
+  id: string; trip_id: string; od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null
+  pallets: number | string | null; tons: number | string | null; lines: number; part_index: number | null; part_of: number | null; material_codes: string[]
+}
+export interface DispatchTripDetail {
+  freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
+  load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
+  categories: string[]; conditions?: string[]; booking_category: string | null; cluster: string
+  carrier_reasons: string[]; warnings: string[]; merge_hint: string | null
+  vehicle_model: { id: string; sap_code: string; name: string; parent_type_name: string | null } | null
+  carrier: { id: string; code: string; name: string; tender_required?: boolean } | null
+}
+/** Vòng đời một xe nháp (24/09): DRAFT → TENDERED (chờ ĐVVT) → CONFIRMED (đã vào Kế hoạch xuất) | DECLINED (ĐVVT từ chối) · DISCARDED (bỏ). */
+export type DispatchTripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
+export interface DispatchTrip {
+  id: string; plan_id: string; seq: number; group_code: string
+  vehicle_model_id: string | null; transport_company_id: string | null
+  stops: number; wards: string[]; pallets: number | string | null; tons: number | string | null; load_pct: number | string | null
+  underload: boolean; oversize: boolean; freight_estimated: number | string | null; detail: DispatchTripDetail; manual_edited: boolean
+  status: DispatchTripStatus; tendered_at: string | null; responded_at: string | null; response_by: string | null; response_note: string | null; confirmed_at: string | null
+  ods: DispatchTripOd[]
+}
+export interface DispatchShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: 'TRIPS' | 'PALLETS' | 'TONS' }
+export interface DispatchSummary { trips: number; ods: number; pallets: number; tons: number; freight_total: number; unpriced: number; underload: number; oversize: number; tendered?: number; declined?: number; confirmed?: number; shares: DispatchShare[] }
+export interface DispatchPlan {
+  id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
+  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number }
+  summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
+  engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
+  warehouse?: { id: string; code: string; name: string } | null
+  trips: DispatchTrip[]
+  in_plan?: { od_number: string; group_code: string }[]
+}
+export type DispatchPlanListItem = Omit<DispatchPlan, 'trips' | 'params' | 'unplanned'>
+const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }) }
+export function useDispatchPlans(p: { warehouse_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-plans', p], enabled, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get('/tms/dispatch/plans', { params: freightParams(p) })).data.data as { items: DispatchPlanListItem[] },
+  })
+}
+export function useDispatchPlan(id: string | null) {
+  return useQuery({
+    queryKey: ['dispatch-plan', id], enabled: !!id, staleTime: 15_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}`)).data.data as DispatchPlan,
+  })
+}
+export function useCreateDispatchPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null }) =>
+      apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
+    onSuccess: () => invalidateDispatch(qc),
+  })
+}
+export function useUpdateDispatchTrip() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; transport_company_id?: string | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
+    onSuccess: () => invalidateDispatch(qc),
+  })
+}
+export function useMoveDispatchOd() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ trip_id, od_number, to_trip_id }: { trip_id: string; od_number: string; to_trip_id?: string }) =>
+      apiClient.post(`/tms/dispatch/trips/${trip_id}/move-od`, { od_number, ...(to_trip_id ? { to_trip_id } : {}) }).then(r => r.data.data as DispatchPlan),
+    onSuccess: () => invalidateDispatch(qc),
+  })
+}
+export function useConfirmDispatchPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; lines: number; group_codes: string[]; replan: Record<string, unknown> | null; replan_error: string | null }),
+    onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
+  })
+}
+type TripSettleResult = { trip_id: string; group_code: string; trip_status: DispatchTripStatus; plan_status: DispatchPlan['status']; lines?: number; replan_error?: string | null }
+/** Chốt MỘT xe của kế hoạch đang chờ ĐVVT (xe nháp / xe bị từ chối đã đổi ĐVVT): ĐVVT không cần phản hồi ⇒ vào Kế hoạch xuất ngay, cần ⇒ chờ. */
+export function useSettleDispatchTrip() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (tripId: string) => apiClient.post(`/tms/dispatch/trips/${tripId}/settle`, {}, { timeout: 120_000 }).then(r => r.data.data as TripSettleResult),
+    onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
+  })
+}
+/** Ghi câu trả lời của ĐVVT cho xe đang chờ (đợt A: điều vận ghi thay sau khi gọi/Zalo). */
+export function useRespondDispatchTrip() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tripId, accept, note }: { tripId: string; accept: boolean; note?: string }) => apiClient.post(`/tms/dispatch/trips/${tripId}/respond`, { accept, ...(note ? { note } : {}) }, { timeout: 120_000 }).then(r => r.data.data as TripSettleResult),
+    onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
+  })
+}
+export function useDiscardDispatchPlan() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/plans/${id}`).then(r => r.data.data as { id: string; status: DispatchPlan['status']; discarded_trips: number }), onSuccess: () => invalidateDispatch(qc) })
+}
+
 export function useTransportCompanies(onlyActive = false, type?: 'NCC' | 'ĐVVT') {
   return useQuery({
     queryKey: ['tms-transport-companies', onlyActive, type ?? ''],
@@ -4185,7 +5985,7 @@ export function useTransportCompanies(onlyActive = false, type?: 'NCC' | 'ĐVVT'
 export function useCreateTransportCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; alias_codes?: string }) =>
+    mutationFn: (body: { code: string; name: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; alias_codes?: string; tender_required?: boolean }) =>
       apiClient.post('/tms/transport-companies', body).then(r => r.data.data as TransportCompany),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
   })
@@ -4194,7 +5994,7 @@ export function useCreateTransportCompany() {
 export function useUpdateTransportCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: string; tender_required?: boolean }) =>
       apiClient.put(`/tms/transport-companies/${id}`, body).then(r => r.data.data as TransportCompany),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
   })
@@ -4239,10 +6039,40 @@ export function useTmsVehiclesPaged(
   })
 }
 
+// Xe ĐÃ KHAI lòng thùng (has_box=1) — sơ đồ xếp xe 3D nạp sẵn dropdown chọn xe (vài chục xe,
+// không nạp cả đội ~950 chiếc; xe khác vẫn tra được bằng ô tìm theo biển số)
+export function useTmsVehiclesWithBox(enabled = true) {
+  return useQuery({
+    queryKey: ['tms-vehicles-with-box'],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/vehicles', { params: { has_box: 1, is_active: true, limit: 200 } })
+      return (data.data ?? []) as TmsVehicle[]
+    },
+  })
+}
+
+// Danh mục MÃ PALLET (Material.is_pallet_carrier) — sơ đồ xếp xe 3D lấy quy cách chân/đế + màu vẽ
+// từ đây (vài dòng; BE bỏ cắt scope loại hàng cho nhánh này vì là tham số VẼ dùng chung)
+export function usePalletCarrierMaterials(enabled = true) {
+  return useQuery({
+    queryKey: ['materials-pallet-carriers'],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/materials', {
+        params: { pallet_carrier: 1, active: true, limit: 50 },
+      })
+      return (data.data ?? []) as Material[]
+    },
+  })
+}
+
 export function useCreateTmsVehicle() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { ncc_id: string; license_plate: string; vehicle_type_id: string }) =>
+    mutationFn: (body: { ncc_id: string; license_plate: string; vehicle_type_id: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
       apiClient.post('/tms/vehicles', body).then(r => r.data.data as TmsVehicle),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
@@ -4254,7 +6084,7 @@ export function useCreateTmsVehicle() {
 export function useUpdateTmsVehicle() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
       apiClient.put(`/tms/vehicles/${id}`, body).then(r => r.data.data as TmsVehicle),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
@@ -5520,7 +7350,7 @@ export function useForkliftReport(params: { from: string; to: string; warehouse_
 }
 
 // ─── Trung tâm cảnh báo (Đợt 2 roadmap 06/08) ─────────────────────────────────
-export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS'
+export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS' | 'PACKING_UNRECEIVED' | 'AUTH_LOCKOUT' | 'ADMIN_NEW_IP'
 export interface AlertRow {
   id: string; rule: AlertRule; severity: 'CRITICAL' | 'WARNING'
   warehouse_id: string | null; warehouse_name: string | null; category: string | null
@@ -5537,6 +7367,22 @@ export function useAlerts(params: { status: string; rule?: string; severity?: st
       const { data } = await apiClient.get('/wms/alerts', { params })
       return data.data as { rows: AlertRow[]; total: number }
     },
+  })
+}
+// Kích hoạt lượt quét cảnh báo — ĐƯỜNG RIÊNG, không nằm trong GET danh sách (21/08).
+// Trước đây GET /wms/alerts tự quét nên người mở trang chờ ~1,9s; nay trang hiện ngay, quét chạy
+// song song rồi invalidate để cảnh báo mới trồi lên. Throttle nằm ở BE (10' / 20s khi fresh).
+export function useScanAlerts() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (fresh?: boolean) =>
+      // Body `{}` chứ KHÔNG phải `null`: axios gửi `null` thành chuỗi JSON "null" kèm
+      // Content-Type: application/json, mà `express.json()` mặc định strict ⇒ **400** entity.parse.
+      // Triệu chứng đúng kiểu "chết câm": mutation vẫn onSettled → danh sách vẫn refetch, nên nhìn
+      // như chạy bình thường, chỉ có LƯỢT QUÉT là không bao giờ chạy. Bắt được nhờ soi console thật
+      // trên Preview (gọi bằng fetch tay thì 200 — fetch không body khác axios body null).
+      apiClient.post('/wms/alerts/scan', {}, { params: fresh ? { fresh: 1 } : undefined }).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['alerts-list'] }),
   })
 }
 export function useAckAlert() {
@@ -5730,7 +7576,8 @@ export interface PackingRun {
   machine_code: string
   start_at: string
   end_at: string | null
-  qty_total: number | null
+  qty_total: number | null           // Σ BASE (hộp) — cột lưu
+  qty_conv?: number | null           // Σ thùng quy đổi per mã (BE tính sống) — thứ hiện dưới nhãn "SL (quy đổi)"
   pallet_count: number | null
   status: 'OPEN' | 'CLOSED' | 'CANCELLED'
   opened_by_name: string | null

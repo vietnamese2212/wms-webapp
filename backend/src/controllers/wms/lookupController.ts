@@ -2,25 +2,47 @@ import { Request, Response } from 'express'
 import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { invalidateWhTypeMetaCache, type WhTypeMeta } from '../../utils/warehouseTypeMeta'
+import { fetchAllRowsParallel } from '../../utils/pagination'
+import { invalidateWhTypeMetaCache, getStorageConditionByCategory, type WhTypeMeta } from '../../utils/warehouseTypeMeta'
 
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
 
-// meta = cờ hành vi per-giá-trị (hiện dùng cho warehouse_type — xem utils/warehouseTypeMeta).
-// Chỉ nhận đúng các key đã biết, ép kiểu — không cho client nhét jsonb tùy ý.
-function sanitizeMeta(raw: unknown): WhTypeMeta | null {
+/** meta của danh mục ĐIỀU KIỆN BẢO QUẢN (type='storage_condition', 24/09): nhãn tiếng Việt + dải nhiệt để hiển thị. */
+export interface StorageConditionMeta { label?: string; temp_min?: number | null; temp_max?: number | null; badge_color?: string }
+type LookupMeta = WhTypeMeta & StorageConditionMeta
+
+// meta = cờ hành vi per-giá-trị. Chỉ nhận đúng các key đã biết CỦA TỪNG DANH MỤC, ép kiểu — không cho
+// client nhét jsonb tùy ý, và không để key của danh mục này lọt sang danh mục khác.
+// ⚠️ THÊM DANH MỤC MỚI CÓ meta THÌ PHẢI KHAI KEY Ở ĐÂY: key lạ bị vứt ÂM THẦM (không lỗi, không cảnh
+// báo) — đúng lớp lỗi "cột không khai là rơi khỏi raw" của bộ đọc ZSD02 (C36, 24/09).
+function sanitizeMeta(raw: unknown, type?: string): LookupMeta | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
-  const out: WhTypeMeta = {}
+  const out: LookupMeta = {}
+  if (typeof o.badge_color === 'string') out.badge_color = o.badge_color.trim()
+  if (type === 'storage_condition') {
+    if (typeof o.label === 'string') out.label = o.label.trim().slice(0, 60)
+    const temp = (v: unknown): number | null | undefined => {
+      if (v === null || v === '') return null
+      const n = Number(v)
+      return typeof v === 'number' || typeof v === 'string' ? (Number.isFinite(n) ? n : undefined) : undefined
+    }
+    const lo = temp(o.temp_min), hi = temp(o.temp_max)
+    if (lo !== undefined) out.temp_min = lo
+    if (hi !== undefined) out.temp_max = hi
+    return out
+  }
   if (typeof o.is_ncc_goods === 'boolean') out.is_ncc_goods = o.is_ncc_goods
   if (typeof o.requires_shelf_life === 'boolean') out.requires_shelf_life = o.requires_shelf_life
   if (typeof o.requires_pallet_per_ea === 'boolean') out.requires_pallet_per_ea = o.requires_pallet_per_ea
   if (typeof o.requires_ncc === 'boolean') out.requires_ncc = o.requires_ncc
   if (typeof o.batch_char === 'string') out.batch_char = o.batch_char.trim().toUpperCase().slice(0, 1)
-  if (typeof o.badge_color === 'string') out.badge_color = o.badge_color.trim()
+  // Loại kho khai điều kiện bảo quản của hàng thuộc loại đó; chuỗi rỗng = gỡ khai (về "không ràng buộc").
+  if (typeof o.storage_condition === 'string') out.storage_condition = o.storage_condition.trim() || null
+  else if (o.storage_condition === null) out.storage_condition = null
   return out
 }
 
@@ -57,7 +79,7 @@ export async function addLookup(req: Request, res: Response) {
   const actor = req.user?.name || null
   const { data, error } = await supabase
     .from('LookupValue')
-    .insert({ id: randomUUID(), type, value: value.trim(), sort_order: nextSort, meta: sanitizeMeta(meta) ?? {}, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
+    .insert({ id: randomUUID(), type, value: value.trim(), sort_order: nextSort, meta: sanitizeMeta(meta, type) ?? {}, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
     .select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by')
     .single()
 
@@ -65,7 +87,20 @@ export async function addLookup(req: Request, res: Response) {
     if (error.code === '23505') return fail(res, `"${value.trim()}" đã tồn tại`)
     return fail(res, error.message, 500)
   }
-  if (type === 'warehouse_type') invalidateWhTypeMetaCache()
+  if (type === 'warehouse_type') {
+    invalidateWhTypeMetaCache()
+    // LOẠI KHO LÀ DANH MỤC CHUNG (user chốt 21/08): tạo xong thì MỌI kho đều có loại này, setting
+    // để trống = theo mặc định của từng kho. Thiếu bước này thì kho nào cũng phải tự khai lại.
+    const whs = await fetchAllRowsParallel(() => supabase.from('Warehouse').select('id').order('id'))
+    const rows = ((whs ?? []) as { id: string }[]).map(w => ({
+      id: randomUUID(), warehouse_id: w.id, type_code: value.trim(),
+      sort_order: nextSort, updated_at: t, updated_by: actor,
+    }))
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error: seedErr } = await supabase.from('warehouse_type_configs').insert(rows.slice(i, i + 500))
+      if (seedErr) console.error('seed warehouse_type_configs:', seedErr.message)
+    }
+  }
   res.json({ success: true, data })
 }
 
@@ -77,6 +112,13 @@ export async function updateLookup(req: Request, res: Response) {
 
   const { data: cur } = await supabase.from('LookupValue').select('type, value').eq('id', id).maybeSingle()
   if (!cur) return fail(res, 'Không tìm thấy giá trị danh mục', 404)
+  // CỬA NÀY LÀ CỦA LOẠI KHO. Bản cũ không lọc `type` nên quyền "Quản lý Loại kho" sửa/xoá được cả
+  // ĐƠN VỊ TÍNH — đi vòng qua quyền `manage_unit`, và tệ hơn: nó không viết HOA giá trị như tab
+  // ĐVT vẫn làm, nên mã hàng đang dùng đơn vị đó mất nhãn ngay (đo 06/09, gói QA 49 phép [44][45]).
+  // Đơn vị tính có cửa riêng `/wms/lookup-unit/*` với guard "đang được N mã hàng dùng".
+  if (cur.type === 'unit_of_measure') {
+    return fail(res, 'Đơn vị tính phải sửa ở tab Đơn vị tính (Cài đặt WMS) — cửa này dành cho Loại kho', 403)
+  }
 
   // Đổi TÊN loại kho = cascade RPC: tên đang lưu dạng text ở ~11 cột dữ liệu (Material/Location/
   // WarehouseZone/Employee.allowed_categories/SlotTemplate/DeliverySlot/TmsOrder/GDO/gate/
@@ -95,7 +137,7 @@ export async function updateLookup(req: Request, res: Response) {
   }
 
   const patch: Record<string, unknown> = { value: newValue, updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
-  const cleanMeta = sanitizeMeta(meta)
+  const cleanMeta = sanitizeMeta(meta, cur.type)
   if (cleanMeta) patch.meta = cleanMeta
 
   const { data, error } = await supabase
@@ -170,11 +212,28 @@ export async function updateUnit(req: Request, res: Response) {
   const { id } = req.params
   const { value, meta } = req.body as { value?: string; meta?: unknown }
   if (!value?.trim()) return fail(res, 'Mã ĐVT là bắt buộc')
-  const { data: cur } = await supabase.from('LookupValue').select('type').eq('id', id).maybeSingle()
+  const { data: cur } = await supabase.from('LookupValue').select('type, value, meta').eq('id', id).maybeSingle()
   if (!cur || cur.type !== 'unit_of_measure') return fail(res, 'Không tìm thấy đơn vị tính', 404)
   const code = value.trim().toUpperCase()
+  // ĐỔI TÊN đơn vị tính đang được mã hàng dùng: `Material.base_unit/entry_unit` lưu TEXT nên không
+  // có gì kéo theo — mã hàng trỏ vào một mã đơn vị không còn tồn tại và mất nhãn tiếng Việt. Xoá
+  // thì đã chặn (dưới), đổi tên thì chưa: cùng hậu quả mà chỉ một cửa có rào (gói QA 49 phép [38]).
+  if (code !== cur.value) {
+    const [b, e] = await Promise.all([
+      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('base_unit', cur.value),
+      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('entry_unit', cur.value),
+    ])
+    const total = (b.count ?? 0) + (e.count ?? 0)
+    if (total > 0) {
+      return fail(res, `ĐVT "${cur.value}" đang được ${total} mã hàng dùng — không đổi được MÃ. `
+        + 'Muốn đổi cách gọi thì sửa ô Tên hiển thị; đổi mã thì phải cập nhật các mã hàng đó trước.', 409)
+    }
+  }
+  // Không gửi `meta` thì GIỮ NGUYÊN vai trò + tên hiển thị đang có. Bản cũ ghi đè vô điều kiện nên
+  // mỗi lần sửa mã mà quên kèm meta là đơn vị mất vai trò (entry → both) và mất tên tiếng Việt.
+  const nextMeta = meta === undefined ? (cur as { meta?: unknown }).meta ?? null : sanitizeUnitMeta(meta)
   const { data, error } = await supabase.from('LookupValue')
-    .update({ value: code, meta: sanitizeUnitMeta(meta), updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+    .update({ value: code, meta: nextMeta, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
     .eq('id', id).select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by').single()
   if (error) {
     if (error.code === '23505') return fail(res, `"${code}" đã tồn tại`)
@@ -214,21 +273,26 @@ export async function reorderUnit(req: Request, res: Response) {
   res.json({ success: true })
 }
 
-export async function deleteLookup(req: Request, res: Response) {
-  const { id } = req.params
-
-  // Chặn xóa loại kho đang được dùng — phải soi ĐỦ MỌI chỗ một Loại kho có thể nằm.
-  // Trước 27/07 chỉ soi Location/Material/WarehouseZone → xóa được trong khi Nhân sự (phạm vi
-  // loại hàng), Khung giờ, Slot ngày, lệnh TMS… vẫn trỏ vào loại đã mất: dữ liệu mồ côi ÂM THẦM
-  // (vd "Thùng": guard báo 2, thực tế còn 39 nhân sự + 174 khung giờ + 90 slot).
-  const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
-  if (lk?.type === 'warehouse_type' && lk.value) {
-    const v = lk.value as string
+/**
+ * Đếm dữ liệu đang trỏ vào một Loại kho — phải soi ĐỦ MỌI chỗ một Loại kho có thể nằm.
+ * Trước 27/07 chỉ soi Location/Material/WarehouseZone → xóa được trong khi Nhân sự (phạm vi
+ * loại hàng), Khung giờ, Slot ngày, lệnh TMS… vẫn trỏ vào loại đã mất: dữ liệu mồ côi ÂM THẦM
+ * (vd "Thùng": guard báo 2, thực tế còn 39 nhân sự + 174 khung giờ + 90 slot).
+ * `skipWarehouseConfigs` cho ca "gỡ loại khỏi kho CUỐI CÙNG" — lúc đó chính dòng gán đang bị bỏ.
+ */
+export async function warehouseTypeUsage(v: string, opts?: { skipWarehouseConfigs?: boolean }) {
+  {
     const one = (table: string, col: string) =>
       supabase.from(table).select('id', { count: 'exact', head: true }).eq(col, v)
     // Cột MẢNG: dùng contains (cs) thay vì eq
     const arr = (table: string, col: string) =>
       supabase.from(table).select('id', { count: 'exact', head: true }).contains(col, [v])
+    // Cột CHUỖI GHÉP ('FG01+PM01' — chuyến chở lẫn, luật giao ≥1 chốt 30/07): `eq` KHÔNG khớp
+    // phần tử bên trong ⇒ trước 21/08 xoá lọt loại vẫn đang được chuyến chở lẫn trỏ tới.
+    // So theo từng ĐOẠN: đúng nó · đầu chuỗi · cuối chuỗi · giữa chuỗi.
+    const joined = (table: string, col: string) =>
+      supabase.from(table).select('id', { count: 'exact', head: true })
+        .or(`${col}.eq.${v},${col}.like.${v}+%,${col}.like.%+${v},${col}.like.%+${v}+%`)
 
     const CHECKS: [string, () => PromiseLike<{ count: number | null }>][] = [
       ['mã hàng',              () => one('Material', 'category')],
@@ -239,8 +303,16 @@ export async function deleteLookup(req: Request, res: Response) {
       ['kho (quét tem thùng)', () => arr('Warehouse', 'carton_scan_categories')],
       ['khung giờ mẫu',        () => one('SlotTemplate', 'cargo_type')],
       ['slot ngày',            () => one('DeliverySlot', 'cargo_type')],
-      ['lệnh vận chuyển',      () => one('TmsOrder', 'warehouse_type')],
-      ['chuyến xuất',          () => one('GroupDeliveryOrder', 'warehouse_type')],
+      ['lệnh vận chuyển',      () => joined('TmsOrder', 'warehouse_type')],
+      ['chuyến xuất',          () => joined('GroupDeliveryOrder', 'warehouse_type')],
+      // Cửa đặt lịch (giá trị ĐƠN, tách khỏi luật giao ≥1) + dòng kế hoạch xuất thô
+      ['cửa đặt lịch (lệnh)',  () => one('TmsOrder', 'booking_category')],
+      ['dòng kế hoạch xuất',   () => one('khvc_lines', 'booking_category')],
+      // Loại kho mà các kho đang VẬN HÀNH (bảng gán 21/08) — xoá loại mà bỏ qua đây thì tập gán
+      // + chiến thuật riêng của từng kho mồ côi ÂM THẦM (đúng lớp lỗi mà comment trên đã kể).
+      // KHÔNG đếm `warehouse_type_configs`: từ 21/08 mọi kho đều có mọi loại nên dòng gán là MẶC
+      // ĐỊNH, không phải bằng chứng "đang dùng" — đếm vào là không bao giờ xoá được loại nào.
+      // Xoá loại sẽ dọn luôn các dòng gán (cascade thủ công trong deleteLookup).
       ['phiếu nhập',           () => one('ProductionImport', 'warehouse_type')],
       ['đăng ký cổng',         () => one('gate_registrations', 'warehouse_type')],
       ['dòng kế hoạch nhập',   () => one('inbound_plan_lines', 'warehouse_type')],
@@ -251,11 +323,41 @@ export async function deleteLookup(req: Request, res: Response) {
     const used = CHECKS
       .map(([label], i) => ({ label, n: counts[i].count ?? 0 }))
       .filter(x => x.n > 0)
-    if (used.length) {
-      const chi_tiet = used.map(x => `${x.label}: ${x.n}`).join(' · ')
-      const tong = used.reduce((s, x) => s + x.n, 0)
-      return fail(res, `Loại kho "${v}" đang được dùng ở ${tong} bản ghi — không thể xóa. Chi tiết: ${chi_tiet}`, 409)
+    return { total: used.reduce((s, x) => s + x.n, 0), detail: used.map(x => `${x.label}: ${x.n}`).join(' · ') }
+  }
+}
+
+export async function deleteLookup(req: Request, res: Response) {
+  const { id } = req.params
+
+  const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
+  if (!lk) return fail(res, 'Không tìm thấy giá trị danh mục', 404)
+  // Cùng lý do với updateLookup: đây là cửa Loại kho. Xoá ĐVT ở đây bỏ qua guard "đang được N mã
+  // hàng dùng" của tab ĐVT ⇒ mã hàng mất đơn vị gốc, đụng thẳng lõi số lượng (gói QA 49 phép [45]).
+  if (lk.type === 'unit_of_measure') {
+    return fail(res, 'Đơn vị tính phải xoá ở tab Đơn vị tính (Cài đặt WMS) — nơi có kiểm "đang được mã hàng nào dùng"', 403)
+  }
+  // Điều kiện bảo quản đang được Loại kho hoặc dòng xe khai ⇒ xoá là để lại mã mồ côi: hàng mất ràng
+  // buộc nhiệt, xe khai phục vụ một mã không còn trong danh mục (đúng lớp lỗi "tên ma" của Loại kho).
+  if (lk.type === 'storage_condition' && lk.value) {
+    const v = lk.value as string
+    const cats = [...(await getStorageConditionByCategory()).entries()].filter(([, c]) => c === v).map(([cat]) => cat)
+    const { count: veh } = await supabase.from('vehicle_model')
+      .select('id', { count: 'exact', head: true }).contains('storage_conditions', [v])
+    const used = cats.length + (veh ?? 0)
+    if (used > 0) {
+      const parts = [cats.length ? `${cats.length} Loại kho (${cats.join(', ')})` : '', veh ? `${veh} dòng xe` : ''].filter(Boolean)
+      return fail(res, `Điều kiện bảo quản "${v}" đang được dùng ở ${parts.join(' · ')} — gỡ khai ở đó trước khi xoá.`, 409)
     }
+  }
+  if (lk.type === 'warehouse_type' && lk.value) {
+    const v = lk.value as string
+    const { total, detail } = await warehouseTypeUsage(v)
+    if (total > 0)
+      return fail(res, `Loại kho "${v}" đang được dùng ở ${total} bản ghi — không thể xóa. Chi tiết: ${detail}`, 409)
+    // Dọn dòng gán của MỌI kho (không dữ liệu nào dùng loại này nữa) — để lại là mồ côi
+    const { error: cErr } = await supabase.from('warehouse_type_configs').delete().eq('type_code', v)
+    if (cErr) return fail(res, cErr.message, 500)
   }
 
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)

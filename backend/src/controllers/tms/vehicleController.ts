@@ -6,6 +6,7 @@ import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from 
 import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
+import { applyBoxDims } from '../../utils/boxDims'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -101,7 +102,7 @@ export async function listVehicles(req: Request, res: Response) {
     if (req.query.page) return await listVehiclesPaged(req, res)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
-    const { ncc_id, is_active, unassigned, pool_branches, search, limit } = req.query as Record<string, string>
+    const { ncc_id, is_active, unassigned, pool_branches, search, limit, has_box } = req.query as Record<string, string>
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
 
@@ -130,6 +131,9 @@ export async function listVehicles(req: Request, res: Response) {
       else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
       if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
       if (search)                  q = q.ilike('license_plate', `%${safeSearch(search)}%`)
+      // has_box=1: chỉ xe ĐÃ KHAI lòng thùng — sơ đồ xếp xe 3D nạp sẵn dropdown (vài chục xe,
+      // không dội cả đội ~950 chiếc về trình duyệt)
+      if (has_box === '1') q = q.not('box_length_mm', 'is', null).not('box_width_mm', 'is', null).not('box_height_mm', 'is', null)
       return q
     }
     let vehicles: Record<string, unknown>[]
@@ -191,11 +195,15 @@ export async function createVehicle(req: Request, res: Response) {
     // giữ nguyên dấu gạch nên chính nó đẻ ra "29E-09404", "98C-06739" trong danh mục (đo 30/07)
     const plate = normalizePlate(license_plate)
     if (!plate) return fail(res, 'Biển số phải có ít nhất 1 chữ hoặc số', 400)
+    // Kích thước lòng thùng của CHIẾC xe này (26/08) — sơ đồ xếp xe tự điền khi chọn biển số.
+    const dims: Record<string, unknown> = {}
+    const dimErr = applyBoxDims(req.body as Record<string, unknown>, dims)
+    if (dimErr) return fail(res, dimErr, 400)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
-      .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, created_at: now, updated_at: now })
+      .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, ...dims, created_at: now, updated_at: now })
       .select('*').single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const [merged] = await withRelations([data])
     return ok(res, merged, 201)
   } catch (e) { return fail(res, String(e)) }
@@ -222,14 +230,17 @@ export async function updateVehicle(req: Request, res: Response) {
       return fail(res, 'Bạn không có quyền chỉnh sửa xe này', 403)
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const dimErr = applyBoxDims(req.body as Record<string, unknown>, updates)
+    if (dimErr) return fail(res, dimErr, 400)
     if (ncc_id          !== undefined) updates.ncc_id          = ncc_id
     if (vehicle_type_id !== undefined) updates.vehicle_type_id = vehicle_type_id
     if (is_active       !== undefined) updates.is_active       = is_active
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
-      .update(updates).eq('id', id).select('*').single()
-    if (error) return fail(res, error.message)
+      .update(updates).eq('id', id).select('*').maybeSingle()
+    if (error) return fail(res, error)
+    if (!data) return fail(res, 'Không tìm thấy xe', 404)
 
     // Cascade xuống driver employee (khóa theo plate + ncc cũ):
     // - đổi ĐVVT (ncc_id) → di chuyển driver theo xe (giữ tài khoản đăng nhập khớp ncc mới)
@@ -267,10 +278,14 @@ export async function deleteVehicle(req: Request, res: Response) {
 
     // Lấy thông tin xe trước khi xóa
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: vehicle } = await supabase.from('Vehicle')
-      .select('license_plate, ncc_id').eq('id', id).single()
-    const plate  = (vehicle as { license_plate: string; ncc_id: string } | null)?.license_plate ?? null
-    const nccId  = (vehicle as { license_plate: string; ncc_id: string } | null)?.ncc_id       ?? null
+    const { data: vehicle, error: findErr } = await supabase.from('Vehicle')
+      .select('license_plate, ncc_id').eq('id', id).maybeSingle()
+    if (findErr) return fail(res, findErr)
+    // Không có xe = 404. Trước đây xoá xe không tồn tại (hoặc xoá lần 2) vẫn trả `deleted:true` —
+    // "đã xoá" giả: 2 người cùng bấm xoá, người sau tưởng mình vừa xoá một chiếc xe khác (QA 53, 07/09)
+    if (!vehicle) return fail(res, 'Không tìm thấy xe — có thể đã bị xoá', 404)
+    const plate  = (vehicle as { license_plate: string; ncc_id: string }).license_plate ?? null
+    const nccId  = (vehicle as { license_plate: string; ncc_id: string }).ncc_id       ?? null
 
     // ĐVVT user: chỉ được xóa xe của mình
     if (userNccId && nccId && nccId !== userNccId)
@@ -287,8 +302,9 @@ export async function deleteVehicle(req: Request, res: Response) {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await supabase.from('Vehicle').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    const { data: gone, error } = await supabase.from('Vehicle').delete().eq('id', id).select('id')
+    if (error) return fail(res, error)
+    if (!gone?.length) return fail(res, 'Không tìm thấy xe — có thể vừa bị người khác xoá', 404)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }
 }

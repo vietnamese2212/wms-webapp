@@ -1,17 +1,17 @@
-import { useState, useEffect, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { formatDate, formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
-import {
-  ArrowLeft, CheckCircle2,
-  AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen,
-} from 'lucide-react'
+import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen, ListChecks, CalendarClock } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
 import { Label }   from '@/components/ui/label'
@@ -25,10 +25,13 @@ import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
+import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
+import type { DateRule } from '@/types'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
-  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock, useDirectedBoard, useReplanGdo,
   useWaiveWeighGDO, useUnwaiveWeighGDO, useWaiveGateGDO, useUnwaiveGateGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
@@ -43,32 +46,23 @@ import { unlockAudio } from '@/utils/audio'
 import { EditGDOModal, gdoKey } from './Outbound'
 import { printDeliveryNote } from './printDeliveryNote'
 import { statusText } from '@/lib/rowStatus'
+import { OutboundStatusBadge } from '@/lib/statusMaps'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { LoadPlan3DDialog } from '@/components/wms/LoadPlan3DDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import type { OutboundItem, OutboundDelivery, OutboundStatus, GDO } from '@/types'
+import type { OutboundItem, OutboundDelivery, GDO, DockStatus } from '@/types'
 
-// ─── Status badge ──────────────────────────────────────────────
-
-const statusCls: Record<OutboundStatus, string> = {
-  PENDING:     'bg-slate-100 text-slate-600',
-  IN_PROGRESS: 'bg-amber-100 text-amber-800',
-  COMPLETED:   'bg-green-100 text-green-800',
-  CANCELLED:   'bg-red-100 text-red-600',
-  PAUSED:      'bg-red-100 text-red-700',
-}
-const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-}
-function Badge({ status }: { status: string }) {
-  const s = status as OutboundStatus
-  return (
-    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
-      {statusLabel[s] ?? status}
-    </span>
-  )
+// ─── Cửa xuất có sức chứa xe (09/09) ───────────────────────────
+// Dòng phụ của một cửa trong ô chọn: "1/1 xe · ĐẦY (29S03092B)" — người bấm biết cửa nào còn trống mà không
+// phải mở Sơ đồ kho. Cùng biển số đang ở cửa thì KHÔNG tính đầy (một xe bốc nhiều đơn).
+function dockOptionOf(d: DockStatus, myPlate: string) {
+  const plates = d.vehicles.map(v => v.license_plate).filter((p): p is string => !!p)
+  const samePlate = !!myPlate && plates.includes(normalizeLicensePlate(myPlate) ?? '')
+  const full = d.capacity != null && d.occupied >= d.capacity && !samePlate
+  const who = plates.length ? ` (${plates.join(', ')})` : ''
+  return { value: d.id, label: d.name, sub: `${d.occupied}/${d.capacity ?? '∞'} xe${full ? ' · ĐẦY' : ''}${who}`, disabled: full }
 }
 
 // ─── Progress bar ──────────────────────────────────────────────
@@ -101,10 +95,15 @@ function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }
 
 // ─── Tag multi-picker (employee dropdown + removable tags) ───
 
-type EmpOption = { id: string; name: string; employee_code?: string; job_title?: string | null }
+type EmpOption = {
+  id: string; name: string; employee_code?: string; job_title?: string | null
+  is_forklift_driver?: boolean
+}
 
-// Lái xe nâng = nhân viên có chức danh CHỨA "lái xe nâng" (không phân biệt hoa thường)
-const isForkliftDriver = (e: EmpOption) => (e.job_title ?? '').toLowerCase().includes('lái xe nâng')
+// Lái xe nâng = CỜ `JobTitle.is_forklift_driver` do BE trả (18/09) — trước đó so tên chức danh chứa
+// "lái xe nâng", vừa là luật chép ở FE vừa hỏng âm thầm khi danh mục đổi tên. Cùng một cờ gác ở
+// `validForkliftIds` phía máy chủ, nên ô chọn và cửa ghi không bao giờ nói hai chuyện.
+const isForkliftDriver = (e: EmpOption) => e.is_forklift_driver === true
 
 // Dropdown tìm kiếm chung (portal VÀO node Dialog qua usePopoverAnchor) — có ô tìm theo tên / mã NV
 function PersonSearchMenu({ options, onPick, placeholder }: {
@@ -157,13 +156,17 @@ function PersonSearchMenu({ options, onPick, placeholder }: {
 
 // Picker theo ID (Lái xe nâng — cần forklift_driver_id) — có ô tìm
 function TagPicker({
-  fixedName, employees, selectedIds, onChange, placeholder = 'Thêm người…',
+  fixedName, employees, selectedIds, onChange, placeholder = 'Thêm người…', nameOf,
 }: {
   fixedName?: string
   employees: EmpOption[]
   selectedIds: string[]
   onChange: (ids: string[]) => void
   placeholder?: string
+  // Tra tên cho người ĐANG ĐƯỢC CHỌN mà không còn trong danh sách chọn được — vd người đã đổi chức
+  // danh nên không còn là "Lái xe nâng". Thiếu đường tra này thì chip in MÃ THÔ và người sửa không
+  // biết mình đang gỡ ai (đúng lớp lỗi "giá trị đã chọn phải LUÔN CÓ NHÃN" trong CLAUDE.md).
+  nameOf?: (id: string) => string | undefined
 }) {
   const unselected = employees.filter(e => !selectedIds.includes(e.id))
   return (
@@ -174,9 +177,11 @@ function TagPicker({
         )}
         {selectedIds.map(id => {
           const emp = employees.find(e => e.id === id)
+          const label = emp?.name ?? nameOf?.(id)
           return (
-            <span key={id} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-              {emp?.name ?? id}
+            <span key={id} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700"
+              title={label ? undefined : 'Người này không còn trong danh sách lái xe nâng của kho'}>
+              {label ?? 'Không rõ (ngoài danh sách)'}
               <button type="button" onClick={() => onChange(selectedIds.filter(s => s !== id))}>
                 <X className="h-3 w-3 text-slate-400 hover:text-red-500" />
               </button>
@@ -353,7 +358,11 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
 
 // ─── Start dialog ─────────────────────────────────────────────
 
-function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose: () => void }) {
+function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
+  open: boolean; gdo: GDO; onClose: () => void
+  onWaiveGate?: () => void               // có quyền duyệt bỏ qua cổng → mở thẳng hộp xác nhận
+  onWaiveWeigh?: () => void
+}) {
   const user = useAuthStore(s => s.user)
   const { data: employees = [] } = useWarehouseEmployees(gdo.warehouse_id)
   const { mutate: startGDO, isPending } = useStartGDO()
@@ -366,7 +375,9 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   // 2 RULE per kho + 2 VẾT DUYỆT RIÊNG (user chốt 01/08): rule 1 đăng ký cổng (miễn = gate_waived) ·
   // rule 2 cân (miễn = weigh_waived) — duyệt rule nào thoát rule đó, duyệt TRƯỚC trên chuyến,
   // KHÔNG có lựa chọn nào ở dialog này ("bắt đầu và chọn là rủi ro").
+  const guidedWh    = gdo.warehouse?.work_mode === 'GUIDED'   // kho Hướng dẫn: lái xe nâng là BẮT BUỘC
   const ruleGate    = gdo.warehouse?.require_gate_on_start === true
+  const ruleWeigh   = gdo.warehouse?.require_weigh_on_start === true
   const gateWaived  = !!gdo.gate_waived_at
   const weighWaived = !!gdo.weigh_waived_at
   // Kho bật rule cổng: KHÔNG cho nhập biển tay (xe không đăng ký = vi phạm rule 1, phải được duyệt);
@@ -415,11 +426,26 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     return dest.parent_warehouse_id === gdo.warehouse_id || (src?.parent_warehouse_id ?? null) === dest.id
   })()
 
+  // RULE 3 — CỬA XUẤT (09/09): kho có cửa xuất trên Sơ đồ kho ⇒ phải chọn cửa xe đang đậu (BE 422 DOCK_REQUIRED /
+  // DOCK_FULL). Cặp nội bộ miễn (hàng đi xe nâng trong khuôn viên). Kho chưa vẽ cửa → ô này không hiện.
+  const { data: docks = [] } = useWarehouseDocks(gdo.warehouse_id, open)
+  const outDocks = (docks as DockStatus[]).filter(d => d.kind === 'DOCK_OUT')
+  const needDock = outDocks.length > 0 && !internalPair
+  const [dockId, setDockId] = useState('')
+
   // Resolved names for submission
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
   const exporterName = [user?.name, ...exporterNames]
     .filter(Boolean).join(', ')
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
+
+  // NÓI TRƯỚC, đừng để bấm rồi mới biết (user 10/09): bị 422 xong phải ĐÓNG dialog → tìm nút
+  // "Bỏ qua cổng"/"Bỏ qua cân" trên trang → MỞ LẠI dialog → điền lại = sáu bước cho một chuyến.
+  // Dialog đã biết sẵn kho bật rule nào và chuyến đã duyệt gì, nên nêu ngay lúc mở; người có
+  // quyền duyệt thì bấm luôn tại đây. Vẫn KHÔNG có cờ bypass nào gửi kèm lệnh Bắt đầu.
+  const preGate  = ruleGate  && !gateWaived  && !gateRegId && !internalPair
+  const preWeigh = ruleWeigh && !weighWaived && !internalPair
+  const preRules = [preGate ? 'ĐĂNG KÝ CỔNG' : null, preWeigh ? 'CÂN XE' : null].filter(Boolean).join(' + ')
 
   function handleSubmit() {
     // Chuyến đã được DUYỆT bỏ qua CỔNG: biển số tùy chọn (giao lẻ NV nhận không có xe)
@@ -429,6 +455,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         : 'Vui lòng chọn chuyến xe đã vào cổng — kho này yêu cầu xe phải có Đăng ký cổng')
       return
     }
+    if (needDock && !dockId) { setErr('Chọn cửa xuất xe đang đậu — kho này có cửa trên Sơ đồ kho'); setErrCode('DOCK_REQUIRED'); return }
     setErr(null); setErrCode(null)
     startGDO(
       {
@@ -437,10 +464,15 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         container_number:     containerNum || undefined,
         exporter_name:        exporterName || undefined,
         loader_name:          loaderName   || undefined,
-        forklift_driver_id:   forklifterIds[0] || undefined,
+        // Gửi CẢ DANH SÁCH. Trước 12/09 chỗ này chỉ gửi NGƯỜI ĐẦU TIÊN vào trường số ít, nên ô
+        // chọn cho tick nhiều người, tên vẫn hiện đủ trên chuyến (chuỗi `..._names` riêng), mà
+        // việc thì chỉ MỘT người nhận — những người kia mở "Việc cần làm" thấy bảng trống và
+        // chuông "được giao xe" cũng không tới. Không lỗi nào nổ, chỉ lệch âm thầm.
+        forklift_driver_ids:  forklifterIds,
         forklift_driver_names: forklifterNames || undefined,
         gate_registration_id: gateRegId || undefined,
         allow_shared_gate:    special || undefined,
+        dock_location_id:     needDock ? dockId : undefined,
       },
       {
         onSuccess: onClose,
@@ -481,6 +513,31 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
             </div>
           )}
 
+          {!gdo.started_at && preRules && (
+            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 space-y-1.5">
+              <p className="flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>Kho yêu cầu <b>{preRules}</b> trước khi Bắt đầu.
+                  {preGate  && ' Chọn chuyến xe đã vào cổng ở ô ngay dưới.'}
+                  {preWeigh && ' Phiếu cân được tự tìm theo biển số lúc bấm Bắt đầu — xe chưa cân thì bấm sẽ bị chặn.'}
+                </span></p>
+              {(onWaiveGate && preGate) || (onWaiveWeigh && preWeigh) ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px]">Xe không đáp ứng được (giao lẻ, xe máy, cân hỏng)?</span>
+                  {onWaiveGate && preGate && (
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] border-amber-300 text-amber-700"
+                      onClick={onWaiveGate}>Duyệt bỏ qua cổng</Button>
+                  )}
+                  {onWaiveWeigh && preWeigh && (
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] border-amber-300 text-amber-700"
+                      onClick={onWaiveWeigh}>Duyệt bỏ qua cân</Button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px]">Xe không đáp ứng được thì nhờ người có quyền bấm <b>“Bỏ qua cổng”</b> / <b>“Bỏ qua cân”</b> trên trang chuyến rồi Bắt đầu lại.</p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe / Biển số {gateWaived ? '' : '*'}</Label>
             <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
@@ -493,6 +550,15 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
 
           {special && !gateRegId && licPlate.trim() && allowFreePlate && !gateWaived && (
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
+          )}
+
+          {needDock && (
+            <div className="space-y-1">
+              <Label className="text-xs">Cửa xuất xe đang đậu <span className="text-red-500">*</span></Label>
+              <SingleSelect searchable={outDocks.length > 6} value={dockId} onChange={setDockId} placeholder="Chọn cửa…"
+                options={outDocks.map(d => dockOptionOf(d, effectivePlate))} />
+              <p className="text-[11px] text-slate-500">Cửa đang đủ xe thì chờ xe đó Hoàn thành chuyến (cùng biển số bốc thêm đơn không tính thêm xe).</p>
+            </div>
           )}
 
           {isContainer && (
@@ -515,7 +581,11 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs">Lái xe nâng</Label>
+            {/* Kho Hướng dẫn thì BE bắt buộc ≥ 1 người (422 FORKLIFT_REQUIRED) — nhãn phải nói TRƯỚC,
+                đừng để người ta điền xong, bấm Bắt đầu rồi mới biết còn thiếu (tự vấp 10/09). */}
+            <Label className="text-xs">
+              Lái xe nâng{guidedWh && <span className="text-red-500"> *</span>}
+            </Label>
             <TagPicker
               employees={(employees as EmpOption[]).filter(isForkliftDriver)}
               selectedIds={forklifterIds}
@@ -541,6 +611,9 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           {errCode === 'WEIGH_REQUIRED' && (
             <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân, không có xe…): người có quyền bấm <b>"Bỏ qua cân"</b> trên trang chuyến để duyệt, sau đó bấm Bắt đầu lại.</p>
           )}
+          {errCode === 'DOCK_FULL' && (
+            <p className="text-[11px] text-amber-700">Cửa vừa chọn đã đủ xe: chọn cửa khác còn trống, hoặc chờ xe đang bốc ở cửa đó Hoàn thành chuyến.</p>
+          )}
         </div>
     </FormSheet>
   )
@@ -562,8 +635,12 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
     (gdo.exporter_name ?? '').split(',').map(s => s.trim()).filter(Boolean)
   )
   const [loaderName,      setLoaderName]      = useState(gdo.loader_name ?? '')
+  // Mở form phải lấy ĐỦ danh sách đang giao. Bản cũ đọc cột số ít `forklift_driver_id` nên chuyến
+  // giao 3 người mở ra chỉ thấy 1 người được tick — người sửa không biết mình đang gỡ ai, và chỉ
+  // cần bấm Lưu (dù chỉ sửa biển số) là hai người kia rơi khỏi chuyến.
   const [forklifterIds,   setForklifterIds]   = useState<string[]>(
-    gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
+    gdo.forklift_driver_ids?.length ? gdo.forklift_driver_ids
+      : gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
   )
   const [gateRegId,       setGateRegId]       = useState(gdo.gate_registration_id ?? '')
   const [special,         setSpecial]         = useState(false)   // mặc định CHỈ xe đang trong cổng; muốn xe đã ra/vãng lai phải tự tích
@@ -592,12 +669,34 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
-  const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
+  // Tên đã lưu trên chuyến là lưới đỡ cuối: BE ghi `..._names` theo ĐÚNG THỨ TỰ của `..._ids`, nên
+  // người đã đổi chức danh (không còn trong danh sách lái xe nâng của kho) vẫn hiện ra tên thật
+  // thay vì một chuỗi uuid.
+  const storedNames = (() => {
+    const ids = gdo.forklift_driver_ids ?? (gdo.forklift_driver_id ? [gdo.forklift_driver_id] : [])
+    const names = (gdo.forklift_driver_names ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    const m = new Map<string, string>()
+    if (ids.length === names.length) ids.forEach((id, i) => m.set(id, names[i]))
+    return m
+  })()
+  const nameOfDriver = (id: string) => empMap.get(id) ?? storedNames.get(id)
+  const forklifterNames = forklifterIds.map(id => nameOfDriver(id) ?? id).filter(Boolean).join(', ')
 
-  function handleSubmit() {
+  // Đổi CỬA giữa chuyến (09/09): cùng luật đếm xe như lúc Bắt đầu — đi route riêng PATCH /dock TRƯỚC, đầy thì
+  // dừng ngay (không lưu nửa chừng thông tin xe rồi mới báo cửa đầy)
+  const { data: etDocks = [] } = useWarehouseDocks(gdo.warehouse_id, open)
+  const etOutDocks = (etDocks as DockStatus[]).filter(d => d.kind === 'DOCK_OUT')
+  const [etDockId, setEtDockId] = useState(gdo.dock_location_id ?? '')
+  const { mutateAsync: changeDock, isPending: dockPending } = useChangeDock()
+
+  async function handleSubmit() {
     // Chuyến đã duyệt bỏ qua cổng (giao lẻ/xe máy/NV nhận) → biển số TÙY CHỌN như lúc Bắt đầu
     if (!effectivePlate.trim() && !etGateWaived) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
     setErr(null)
+    if (etDockId && etDockId !== (gdo.dock_location_id ?? '')) {
+      try { await changeDock({ id: gdo.id, dock_location_id: etDockId }) }
+      catch (e) { setErr((e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Không đổi được cửa'); return }
+    }
     updateTransport(
       {
         id:                    gdo.id,
@@ -605,7 +704,9 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
         container_number:      containerNum  || undefined,
         exporter_name:         exporterNames.join(', ') || undefined,
         loader_name:           loaderName    || undefined,
-        forklift_driver_id:    forklifterIds[0] || undefined,
+        // Gửi mảng KỂ CẢ KHI RỖNG: đó là cách duy nhất nói "tôi gỡ hết người" — BE phân biệt
+        // rỗng với không-gửi, và tự chặn 422 nếu kho Hướng dẫn còn việc treo.
+        forklift_driver_ids:   forklifterIds,
         forklift_driver_names: forklifterNames  || undefined,
         gate_registration_id:  gateRegId || null,
         allow_shared_gate:     special || undefined,
@@ -627,9 +728,9 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
       title="Sửa thông tin xe"
       widthClass="sm:max-w-lg"
       footer={<>
-        <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
-        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-          {isPending ? 'Đang lưu…' : 'Lưu'}
+        <Button variant="outline" size="sm" onClick={onClose} disabled={isPending || dockPending}>Hủy</Button>
+        <Button size="sm" onClick={() => void handleSubmit()} disabled={isPending || dockPending}>
+          {isPending || dockPending ? 'Đang lưu…' : 'Lưu'}
         </Button>
       </>}
     >
@@ -646,6 +747,14 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
 
           {special && !gateRegId && licPlate.trim() && (
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
+          )}
+
+          {(etOutDocks.length > 0 || gdo.dock) && (
+            <div className="space-y-1">
+              <Label className="text-xs">Cửa xuất xe đang đậu</Label>
+              <SingleSelect searchable={etOutDocks.length > 6} value={etDockId} onChange={setEtDockId} placeholder="Chọn cửa…"
+                options={etOutDocks.map(d => d.id === (gdo.dock_location_id ?? '') ? { ...dockOptionOf(d, effectivePlate), disabled: false } : dockOptionOf(d, effectivePlate))} />
+            </div>
           )}
 
           {(isContainer || containerNum) && (
@@ -670,6 +779,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
               employees={(employees as EmpOption[]).filter(isForkliftDriver)}
               selectedIds={forklifterIds}
               onChange={setForklifterIds}
+              nameOf={nameOfDriver}
               placeholder="Chọn lái xe nâng…"
             />
           </div>
@@ -722,7 +832,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
   const aggRows: AggRow[] = (() => {
     const map = new Map<string, AggRow>()
     for (const e of sorted) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.available; r.entries.push(e) }
@@ -1004,6 +1114,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
     ...(hasBoxes ? [{ id: 'boxes', label: 'Hộp (KH)', w: 60, align: 'right' as const }] : []),
     ...(hasLoosePicking ? [{ id: 'loose_c', label: 'Lẻ thùng', w: 60, align: 'right' as const }, { id: 'loose_b', label: 'Lẻ hộp', w: 54, align: 'right' as const }] : []),
     ...(hasCsResp ? [{ id: 'cs', label: 'CS', w: 90 }] : []),
+    // HAI CỘT RIÊNG (user chốt 11/09): đã đòi % thì thôi đòi ngày — mỗi dòng điền đúng một cột.
+    { id: 'datepct',  label: '% date yêu cầu', w: 110 },
+    { id: 'datedays', label: 'Ngày date còn yêu cầu', w: 130 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
     ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
     ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
@@ -1123,7 +1236,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                           className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
                           title="Quét pallet"
                         >
-                          <QrCode className="h-2.5 w-2.5" /> Quét
+                          <ScanIcon className="h-2.5 w-2.5" /> Quét
                         </button>
                       )
                     })()}
@@ -1152,7 +1265,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   >
                     {(() => {
                       if (item.status === 'COMPLETED') return <span className="text-[10px] text-slate-300">—</span>
-                      const sugs = item.material_id ? pickSug?.[item.material_id] ?? [] : []
+                      // Dòng đã chốt mức %Date có khoá riêng theo ID DÒNG (đã lọc đúng mức);
+                      // chưa chốt thì rơi về khoá theo MÃ. Mức thuộc về dòng, không thuộc về mã.
+                      const sugs = pickSug?.[item.id] ?? (item.material_id ? pickSug?.[item.material_id] ?? [] : [])
                       if (sugs.length === 0) return <span className="text-[10px] text-slate-300">—</span>
                       return (
                         <div className="leading-tight">
@@ -1162,7 +1277,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                               {s.pct_date != null && (
                                 <span className={`ml-1 font-bold tabular-nums ${pctDateCls(s.pct_date, pctBands)}`}>{s.pct_date}%</span>
                               )}
-                              <span className="ml-1 text-slate-400 tabular-nums">{qtyEntryText(s.available, item.material)}th</span>
+                              {/* qtyLabel, không "76,438th": bảng Tối ưu tuyến in "76 thùng + 21 hộp" cho cùng pallet — hai màn phải nói một số (C2, 19/09) */}
+                              <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, item.material)}</span>
                             </div>
                           ))}
                         </div>
@@ -1202,6 +1318,28 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
+                {/* Quy định date ĐÃ KHAI — cột LUÔN CÓ. Khai xong mà bảng dòng hàng không hiện gì
+                    thì người khai không có cách nào biết mình đã làm chưa (user bắt 10/09).
+                    Kiểu KHÔNG phải con số (không đòi mốc / chỉ định / chia phần / chưa khai) hiện
+                    badge ở cột %; cột ngày để trống. */}
+                {(() => {
+                  const c = dateRuleCols(item.date_rule, item.date_required)
+                  const b = dateRuleLabel(item.date_rule, item.material, item.date_required)
+                  const numeric = c.pct != null || c.days != null
+                  return <>
+                    <TableCell className="px-2 py-1 align-top whitespace-nowrap text-right">
+                      {c.pct
+                        ? <span className="text-[10px] font-semibold tabular-nums text-sky-700">{c.pct}</span>
+                        : c.days ? <span className="text-[10px] text-slate-300">—</span>
+                        : <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls}`}>{b.text}</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 align-top whitespace-nowrap text-right">
+                      {c.days
+                        ? <span className="text-[10px] font-semibold tabular-nums text-teal-700">{c.days}</span>
+                        : <span className="text-[10px] text-slate-300">{numeric ? '—' : ''}</span>}
+                    </TableCell>
+                  </>
+                })()}
                 {hasBatchRequired && (
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                     {item.batch_required
@@ -1405,6 +1543,7 @@ export default function OutboundDetail() {
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng NGAY TẠI TRANG → mở màn quét chế độ súng (không camera)
   const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
+  const [showDateRule, setShowDateRule] = useState(false)
   // Mobile: thu gọn phần header chi tiết (info/audit/tổng) để list nhiều dòng như AppSheet; chevron bung ra. Desktop luôn hiện.
   const [showEditGDO,       setShowEditGDO]       = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
@@ -1419,9 +1558,12 @@ export default function OutboundDetail() {
 
   // PDA (user 19/07): bóp cò NGAY TẠI TRANG (chưa mở màn quét) → tự mở màn quét chế độ SÚNG
   // (không bật camera) và xử lý luôn tem vừa bắn. Điều kiện = đúng điều kiện nút Quét QR.
+  // ⚠️ Form đang mở phải TẮT HẲN máy đọc (enabled=false), KHÔNG chỉ bỏ qua mã trong callback:
+  // máy đọc bắt chuỗi ký tự nhanh/IME ở MỌI ô nhập rồi TRẢ LẠI giá trị cũ — bàn phím điện thoại
+  // chèn cả cụm ký tự nên gõ biển số vãng lai trong form Bắt đầu bị xoá trắng (user báo 25/08).
+  const wedgeFormOpen = showStart || showEditGDO || showEditTransport || showQuickExport || showLoadPlan || !!pendingConfirm
   useWedgeScanner(code => {
     if (!gdo || showOrderScan) return
-    if (showStart || showEditGDO || showEditTransport || showQuickExport || showLoadPlan || pendingConfirm) return
     if (!gdo.started_at || gdo.status === 'PAUSED' || gdo.status === 'COMPLETED') return
     if (!can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'scan')) return
     const anyScannable = (gdo.delivery_orders ?? []).some(d => d.items.some(i =>
@@ -1430,7 +1572,7 @@ export default function OutboundDetail() {
     unlockAudio()
     setPdaScan(code)
     setShowOrderScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
     setUndoErr(null)
@@ -1468,6 +1610,35 @@ export default function OutboundDetail() {
       navigate('/wms/outbound', { replace: true })
     }
   }, [isLoading, isError, gdo, navigate, id, unpin])
+
+  // ⚠ MỌI HOOK PHẢI NẰM TRÊN LỆNH RETURN SỚM NÀY. Hai hook dưới đây từng đứng dưới (đợt 1c) —
+  // lần render đầu chuyến chưa về nên hàm thoát ở đây, lần sau chạy tiếp và gọi THÊM hook ⇒ React
+  // "Rendered more hooks than during the previous render" ⇒ TOÀN BỘ trang chuyến trắng, tsc không
+  // bắt được vì đây là luật lúc chạy, không phải luật kiểu.
+  //
+  // Dòng việc KẾ TIẾP của chuyến (kho Hướng dẫn) — chỉ gọi khi chuyến thật sự có việc
+  const { data: scanBoard } = useDirectedBoard(gdo?.warehouse_id, 'SCAN', {
+    gdoId: gdo?.id ?? null, enabled: !!gdo?.started_at && (gdo?.tasks_summary?.total ?? 0) > 0,
+  })
+  // Sắp lại kế hoạch lấy hàng — CỬA PHỤC HỒI duy nhất khi chuyến đang xuất mà không có việc nào
+  const replan = useReplanGdo()
+  // Dòng hàng của chuyến để CHỐT %DATE — mở thẳng từ đây vì đó là chỗ thủ kho đang đứng
+  const dateTargets: DateRuleTarget[] = useMemo(() => (gdo?.delivery_orders ?? []).flatMap(d =>
+    (d.items ?? [])
+      .filter(i => Number(i.cartons_ordered ?? 0) > Number(i.cartons_scanned ?? 0))
+      .map(i => ({
+        item_id: i.id,
+        material_id: i.material_id ?? null,
+        material_code: i.material_code_raw ?? null,
+        material_name: i.material?.short_name ?? null,
+        trip_label: d.delivery_code ?? null,
+        remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
+        units: i.material ?? null,     // để màn chốt hiện Thùng + lẻ, không đổ số base thô
+        note: i.header_text ?? null,
+        // Mức kế thừa từ VL06O đã được bộ sinh việc dùng ⇒ dialog phải mở ra với đúng mức đó
+        current: (i.date_rule as DateRule | null)
+          ?? (Number(i.date_required) > 0 ? ({ kind: 'MIN_PCT', value: Number(i.date_required) } as DateRule) : null),
+      }))), [gdo])
 
   if (isLoading || !gdo) {
     return (
@@ -1570,7 +1741,25 @@ export default function OutboundDetail() {
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   // Nút Thông tin KHÔNG nằm ở đây nữa (user chốt 03/08 "gom về làm 1"): nút ⓘ cạnh mã chuyến
   // mở dialog gộp thông tin đơn + lịch sử, hiện cả desktop lẫn mobile — kể cả chuyến bất động.
+  const nextTask = (scanBoard?.rows ?? []).find(r => !r.stage_done) ?? null
+  const nUnsetDate = dateTargets.filter(t => !t.current).length
+  // Kho chạy Hướng dẫn (cờ ở KHO; loại hàng có thể ghi đè nhưng đủ để biết chuyến này CÓ nên có việc)
+  const guidedTrip = gdo.warehouse?.work_mode === 'GUIDED'
+  const noPlanYet  = guidedTrip && (gdo.tasks_summary?.total ?? 0) === 0
+  const canReplan  = guidedTrip && can(perms, 'directed_work', 'replan')
+    && (gdo.status === 'IN_PROGRESS' || gdo.status === 'PAUSED')
+
   const actionItems: ActionItem[] = []
+  // CHỐT %DATE — cửa DUY NHẤT tạo quy tắc lấy hàng. Đặt ở chuyến vì thủ kho chốt ngay trước khi xuất.
+  if (dateTargets.length > 0 && can(perms, 'outbound', 'set_date'))
+    actionItems.push({
+      key: 'date-rule', icon: CalendarClock, label: 'Quy định date',
+      tip: nUnsetDate > 0
+        ? `${nUnsetDate} dòng chưa chốt — chưa chốt thì hệ thống KHÔNG chia hàng cho dòng đó`
+        : 'Sửa quy tắc lấy hàng theo date của từng dòng',
+      primary: nUnsetDate > 0,
+      onClick: () => setShowDateRule(true),
+    })
   // Chuyến bất động: ẩn Sửa đơn/Giao đơn (BE cũng chặn 422) — chỉ còn xem + lịch sử + xóa để dọn
   if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && !inertReason && can(perms, 'outbound', 'edit'))
     actionItems.push({
@@ -1614,7 +1803,7 @@ export default function OutboundDetail() {
     i.material?.no_qr_tracking !== true && i.status !== 'COMPLETED' && i.cartons_scanned < i.cartons_ordered)
   if (!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED' && hasScannableRemaining && can(perms, 'outbound', 'scan'))
     actionItems.push({
-      key: 'scan-order', icon: QrCode, label: 'Quét QR',
+      key: 'scan-order', icon: ScanIcon, label: 'Quét QR',
       tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện xuất của mã đó',
       primary: true, variant: 'default',
       onClick: () => { unlockAudio(); setShowOrderScan(true) },
@@ -1806,17 +1995,100 @@ export default function OutboundDetail() {
             <span className="font-mono font-semibold break-all" title={gdo.delivery_codes!.join(' · ')}>{gdo.delivery_codes!.join(' · ')}</span>
           </span>
         )}
+        {/* Dòng xe CON · tải · cước dự tính (đợt 1 TMS điều vận 23/09) — đọc từ enrich của list/detail, không tính lại ở FE */}
+        {gdo.vehicle_model && (
+          <span className="flex items-center gap-1" title={`Dòng xe con ${gdo.vehicle_model.sap_code}`}>
+            <span className="text-slate-400 shrink-0">Xe</span>
+            <span>{gdo.vehicle_model.name}</span>
+          </span>
+        )}
+        {gdo.load?.pct != null && (
+          <span className="flex items-center gap-1" title={`Tải ${gdo.load.used} / ${gdo.load.cap} ${gdo.load.basis === 'TON' ? 'tấn' : 'pallet'}${gdo.load.underload ? ` — NON TẢI (dưới ${gdo.load.underload_pct} %)` : ''}`}>
+            <span className="text-slate-400 shrink-0">Tải</span>
+            <span className={`font-semibold tabular-nums ${gdo.load.underload ? 'text-red-600' : 'text-green-700'}`}>{gdo.load.pct.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} %</span>
+          </span>
+        )}
+        {gdo.freight_estimated != null && (
+          <span className="flex items-center gap-1" title={[gdo.freight_detail?.basis === 'ACTUAL' ? 'Theo thực xuất' : 'Theo kế hoạch', gdo.freight_detail?.ward ? `phường ${gdo.freight_detail.ward}` : null, gdo.freight_detail ? `${gdo.freight_detail.stops} điểm giao` : null, ...(gdo.freight_detail?.surcharges ?? []).map(s => `${s.kind === 'DROP_POINT' ? 'rớt điểm' : s.kind} ${s.qty}× = ${s.total.toLocaleString('vi-VN')}`)].filter(Boolean).join(' · ')}>
+            <span className="text-slate-400 shrink-0">Cước</span>
+            <span className="font-semibold tabular-nums">{Number(gdo.freight_estimated).toLocaleString('vi-VN')} ₫</span>
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <Package className="h-3 w-3 text-slate-400 shrink-0" />
           <span className="font-medium">{totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span> thùng
         </span>
       </div>
 
+      {/* KẾ HOẠCH LẤY HÀNG (Directed Work 1c). Thủ kho cần đúng một câu: pallet nào tiếp theo, đang
+          nằm đâu, đã được hạ chưa.
+          ⚠ Khối này TRƯỚC 10/09 chỉ hiện khi `tasks_summary.total > 0` — nên chuyến ĐANG XUẤT ở kho
+          Hướng dẫn mà 0 việc thì trang chuyến KHÔNG NÓI GÌ, còn bảng Việc cần làm thì đổ lỗi sai
+          ("kho chạy Thủ công…"). Ca thật đo được 10/09: bật cờ Hướng dẫn SAU khi chuyến đã Bắt đầu ⇒
+          không đường nào gọi sắp lại ⇒ chuyến chạy cả buổi với 0 việc. Nay kho Hướng dẫn thì khối
+          LUÔN hiện, 0 việc = nói rõ + có nút Sắp lại. */}
+      {gdo.started_at && (guidedTrip || (gdo.tasks_summary?.total ?? 0) > 0) && (
+        <Card className={`px-2 py-1 ${noPlanYet ? 'bg-amber-50 border-amber-200' : 'bg-sky-50 border-sky-200'}`}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+            <span className={`font-semibold flex items-center gap-1 ${noPlanYet ? 'text-amber-800' : 'text-sky-800'}`}>
+              <ListChecks className="h-3.5 w-3.5" />Kế hoạch lấy hàng
+            </span>
+            {noPlanYet ? (
+              <span className="text-amber-800">
+                Chưa có việc nào cho chuyến này
+                {nUnsetDate > 0
+                  ? <> — còn <b>{nUnsetDate}</b> dòng chưa chốt %Date</>
+                  : <> — bấm <b>Sắp lại kế hoạch</b> để hệ thống chia hàng</>}
+              </span>
+            ) : (
+              <>
+                <span className="text-slate-600">
+                  <strong>{gdo.tasks_summary?.done ?? 0}/{gdo.tasks_summary?.total ?? 0}</strong> việc xong
+                </span>
+                {(gdo.tasks_summary?.to_lower ?? 0) > 0 && <span className="text-amber-700">chờ hạ {gdo.tasks_summary?.to_lower}</span>}
+                {(gdo.tasks_summary?.to_move ?? 0) > 0 && <span className="text-slate-600">chờ đưa ra {gdo.tasks_summary?.to_move}</span>}
+                {nextTask && (
+                  <span className="text-slate-700">
+                    · tiếp theo <b className="font-mono">{nextTask.pallet_codes?.[0] ?? ''}</b>
+                    {nextTask.current_code && <> tại <b className="font-mono">{nextTask.current_code}</b></>}
+                    {nextTask.waiting_lower ? <span className="text-amber-700"> (chờ xe hạ)</span> : <span className="text-green-700"> (lấy được)</span>}
+                  </span>
+                )}
+              </>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              {canReplan && (
+                <button className="text-sky-700 hover:underline disabled:opacity-50"
+                  title="Bỏ các việc CHƯA AI ĐỤNG rồi chia lại hàng theo %Date và tồn hiện tại (việc đã hạ / đã đưa ra giữ nguyên)"
+                  disabled={replan.isPending} onClick={() => replan.mutate(gdo.id)}>
+                  {replan.isPending ? 'Đang sắp…' : '↻ Sắp lại kế hoạch'}
+                </button>
+              )}
+              <Link to="/wms/directed" className="text-sky-700 hover:underline">Mở Việc cần làm →</Link>
+            </div>
+          </div>
+          {replan.isSuccess && !replan.isPending && (
+            <div className="text-[11px] text-slate-600">
+              Đã sắp lại: {replan.data?.created ?? 0} việc mới
+              {(replan.data?.cancelled ?? 0) > 0 && ` · bỏ ${replan.data?.cancelled} việc cũ`}
+              {(replan.data?.unset_items ?? 0) > 0 && ` · ${replan.data?.unset_items} dòng chưa chốt %Date`}
+              {replan.data?.warning && <span className="text-amber-700"> · {replan.data.warning}</span>}
+            </div>
+          )}
+          {replan.isError && (
+            <div className="text-[11px] text-red-600">
+              Sắp lại không được: {(replan.error as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'}
+            </div>
+          )}
+        </Card>
+      )}
+
       {gdo.started_at && (
         <Card className="px-2 py-1 bg-blue-50 border-blue-200">
           <div className="flex items-start justify-between gap-1">
             <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
               <span><strong>Biển số:</strong> {gdo.license_plate ?? '—'}</span>
+              {gdo.dock && <span className="flex items-center gap-1"><DoorOpen className="h-3 w-3 text-slate-400" /><strong>Cửa:</strong> {gdo.dock.row ?? gdo.dock.location_code}</span>}
               {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
               {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
               {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
@@ -1926,7 +2198,23 @@ export default function OutboundDetail() {
       {showHistory && <TripHistoryDialog gdoId={gdo.id} groupCode={gdo.group_code} infoContent={orderInfoJSX}
         onClose={() => setShowHistory(false)} />}
       {showStart && (
-        <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
+        <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)}
+          // Đường tắt tới ĐÚNG hộp xác nhận đang dùng cho 2 nút duyệt trên header — cùng một
+          // hành động, cùng một vết, chỉ bớt cho người dùng vòng đóng-mở dialog.
+          onWaiveGate={gdo.warehouse?.require_gate_on_start && !gdo.gate_waived_at && can(perms, 'outbound', 'gate_waive')
+            ? () => { setShowStart(false); setPendingConfirm({
+                title: 'Duyệt bỏ qua ĐĂNG KÝ CỔNG',
+                message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần Đăng ký cổng (ghi vết người duyệt). Rule cân — nếu kho bật — vẫn phải chấp hành. Xác nhận?`,
+                onConfirm: () => waiveGate({ id: gdo.id }),
+              }) }
+            : undefined}
+          onWaiveWeigh={gdo.warehouse?.require_weigh_on_start && !gdo.weigh_waived_at && can(perms, 'outbound', 'weigh_waive')
+            ? () => { setShowStart(false); setPendingConfirm({
+                title: 'Duyệt bỏ qua CÂN',
+                message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần phiếu cân (ghi vết người duyệt). Rule đăng ký cổng — nếu kho bật — vẫn phải chấp hành. Xác nhận?`,
+                onConfirm: () => waiveWeigh({ id: gdo.id }),
+              }) }
+            : undefined} />
       )}
       {showOrderScan && (
         <GdoScanSheet gdo={gdo} mode="outbound" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
@@ -1984,6 +2272,8 @@ export default function OutboundDetail() {
       {showEditTransport && (
         <EditTransportDialog open={showEditTransport} gdo={gdo} onClose={() => setShowEditTransport(false)} />
       )}
+      <SetDateRuleSheet open={showDateRule} onClose={() => setShowDateRule(false)}
+        targets={dateTargets} warehouseId={gdo.warehouse_id ?? null} />
       {showEditGDO && (
         <EditGDOModal
           gdoId={gdo.id}
@@ -2011,14 +2301,17 @@ export default function OutboundDetail() {
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1">
 
           {/* Row 1: back + code + status + buttons — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
-          <div className="flex items-center gap-x-2 gap-y-1.5">
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <button onClick={() => navigate('/wms/outbound')}
+          {/* Mobile: mã chuyến chiếm NGUYÊN hàng, cụm nút xuống hàng riêng — flex-1 (basis 0) không bao giờ
+              tự wrap nên mã từng bị ép còn vài px, bẻ dọc từng ký tự (user bắt 02/09) */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1 max-sm:w-full max-sm:flex-none">
+              <button onClick={() => navigate(backTarget('/wms/outbound'))}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm truncate min-w-0 ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
-              <Badge status={gdo.status} />
+              {/* Mã đơn = ĐỊNH DANH — mobile XUỐNG DÒNG hiện đủ, không che "…" (user bắt 24/08) */}
+              <span className={`font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
+              <OutboundStatusBadge status={gdo.status} />
               <button
                 onClick={() => pinned
                   ? unpin(gdo.id)
@@ -2038,7 +2331,7 @@ export default function OutboundDetail() {
                 <Info className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 max-sm:w-full">
               <ActionCluster items={actionItems} />
             </div>
           </div>

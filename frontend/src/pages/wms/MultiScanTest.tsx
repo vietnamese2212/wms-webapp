@@ -1,13 +1,17 @@
 // Trang TEST quét NHIỀU QR trong 1 phiên camera (kiểu Scandit MatrixScan).
 // Độc lập hoàn toàn: không gọi API, không ghi DB — chỉ để đo tốc độ/độ ổn định
 // trên thiết bị thật trước khi tích hợp vào luồng Xuất hàng.
-// Engine: BarcodeDetector native (Android Chrome — nhanh, đa mã) → fallback
-// zxing-wasm (iPhone/desktop — cũng đa mã, chạy WASM bundle nội bộ).
+// Engine: MẶC ĐỊNH zxing-wasm (bắt được nhiều mã 1D nhất trong 1 khung — xem ghi chú EN_CHOICE
+// trong start()); BarcodeDetector native chỉ còn là lựa chọn để so sánh.
 import { useEffect, useRef, useState } from 'react'
 import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { isValidTem } from '@/utils/qr'
+import { registerHit, MIN_HITS_1D, type ScanEntry } from '@/utils/scanDedupe'
+// Tập mã đọc được khai MỘT CHỖ ở scanEngine (QR + 1D) — trang này có engine riêng để tinh chỉnh
+// độ phân giải/tryHarder, nhưng ĐỪNG khai lại danh sách format kẻo lệch với luồng thật.
+import { NATIVE_FORMATS, ZXING_FORMATS, ZXING_MIN_LINE_COUNT } from '@/utils/scanEngine'
 
 // ── BarcodeDetector chưa có trong lib.dom của TS — khai báo tối thiểu ──────────
 interface DetectedBarcode {
@@ -34,12 +38,9 @@ type ExtConstraintSet = MediaTrackConstraintSet & { zoom?: number; torch?: boole
 
 // Validate định dạng tem (V1 `_` pallet / V2 `;` thùng) dùng CHUNG với scanner đơn: utils/qr.ts isValidTem.
 
-interface ScannedCode {
-  text: string
-  valid: boolean
-  at: number      // Date.now() lúc bắt được lần đầu
-  hits: number    // số lần nhìn thấy (đếm cả frame trùng)
-}
+// Bản ghi 1 mã trong phiên quét = ScanEntry của utils/scanDedupe (dùng chung để logic gom mã có
+// thể kiểm bằng test thuần, không cần camera).
+type ScannedCode = ScanEntry
 
 interface FrameBox {
   points: { x: number; y: number }[]
@@ -49,13 +50,21 @@ interface FrameBox {
 type EngineKind = 'native' | 'wasm'
 const WASM_WIDTHS = [1280, 1920, 2560, 3840] as const
 // Mã ĐÚNG định dạng: nhận NGAY lần đầu (không làm chậm) — QR có mã sửa lỗi nên gần như
-// không thể decode nhầm ra đúng cấu trúc 40 ký tự. Mã SAI định dạng phải thấy đủ N lần
-// mới hiện → diệt "bóng ma" (giải rác 1 frame lúc lia/mờ, vd 524959, 4910).
-const INVALID_MIN_HITS = 2
+// không thể decode nhầm ra đúng cấu trúc 40 ký tự. Mã 1D thì ngược lại (không có mã sửa lỗi,
+// bản đọc sai vẫn thoả checksum) nên phải thấy đủ MIN_HITS_1D lần mới hiện — ngưỡng khai ở
+// utils/scanDedupe (một nguồn, gói QA 30 kiểm).
+const INVALID_MIN_HITS = MIN_HITS_1D
+// Dưới mốc này thì dòng 1D có thể là BẢN ĐỌC SAI của tem bên cạnh (mã thật trong đo thật đạt 10–86
+// lần, rác chỉ 2–5) → gắn nhãn "chưa chắc" NGAY LÚC QUÉT để người quét tự soi. Cố ý BÁO cho người
+// thay vì tự đoán rồi xoá: đoán theo vị trí đã làm mất mã thật 2 lần (xem đầu utils/scanDedupe).
+const WEAK_HITS = 6
 
 // ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
-interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean }
-const SETTINGS_KEY = 'multi_scan_settings_v1'
+interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean; engine?: EngineKind }
+// ⚠️ ĐỔI MẶC ĐỊNH thì PHẢI bump số phiên bản khóa này. Bài học 21/08: đổi mặc định tryHarder
+// thành true nhưng máy user đã lưu 'false' từ lần bấm thử ⇒ '?? true' KHÔNG bao giờ chạy, user
+// quét 9 mã chỉ ra 5 mà không có dấu hiệu gì (clip user gửi: nút Quét kỹ tắt, 5 mã đứng yên 10s).
+const SETTINGS_KEY = 'multi_scan_settings_v2'
 function loadSettings(): ScanSettings {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') || {} } catch { return {} }
 }
@@ -118,8 +127,15 @@ export default function MultiScanTest() {
   const [error, setError]       = useState<string | null>(null)
   const [nativeAvail, setNativeAvail] = useState(false)
   const [engine, setEngine]     = useState<EngineKind>('wasm')
-  const [wasmWidth, setWasmWidth] = useState(() => loadSettings().wasmWidth ?? 3840)   // mặc định giải ở độ phân giải GỐC (xa nhất)
-  const [tryHarder, setTryHarder] = useState(() => loadSettings().tryHarder ?? false)
+  // 2560 = mặc định (khớp WASM_WIDTH của luồng quét thật). Đo 21/08 trên lưới 15 mã: 3840 KHÔNG bắt
+  // thêm mã nào so với 1600/2560 mà tốn gấp ~2,4× (85ms vs 36ms) ⇒ đừng lấy 3840 làm mặc định; nút
+  // 3840 vẫn còn cho ca tem NHỎ Ở XA (nơi độ phân giải mới thực sự quyết định).
+  const [wasmWidth, setWasmWidth] = useState(() => loadSettings().wasmWidth ?? 2560)
+  // MẶC ĐỊNH BẬT (21/08) — mã vạch 1D gần như PHẢI có "quét kỹ", QR thì không. Đo thật trên lưới
+  // 15 mã (12 barcode + 3 QR) trong CÙNG một khung: tắt → 6–8/15 mã, bật → 15/15; QR bắt đủ ở cả
+  // hai chế độ. Đó là lý do user thấy "barcode bắt kém hơn QR" — không phải chậm CPU mà là TRƯỢT.
+  // Giá: 1600px 16→36ms · 2560px 30→56ms · 3840px 55→85ms (vẫn 12–28 khung/s).
+  const [tryHarder, setTryHarder] = useState(() => loadSettings().tryHarder ?? true)
   const [torchOn, setTorchOn]   = useState(false)
   const [torchAvail, setTorchAvail] = useState(false)
   const [zoomCap, setZoomCap]   = useState<{ min: number; max: number; step: number } | null>(null)
@@ -158,7 +174,10 @@ export default function MultiScanTest() {
     if (!ctx) return []
     ctx.drawImage(video, 0, 0, cw, ch)
     const img = ctx.getImageData(0, 0, cw, ch)
-    const results = await read(img, { formats: ['QRCode'], maxNumberOfSymbols: 64, tryHarder: tryHarderRef.current, tryRotate: true })
+    const results = await read(img, {
+      formats: [...ZXING_FORMATS], maxNumberOfSymbols: 64,
+      tryHarder: tryHarderRef.current, tryRotate: true, minLineCount: ZXING_MIN_LINE_COUNT,
+    })
     // Đưa tọa độ về hệ pixel của video gốc
     const inv = 1 / scale
     return results.map(r => ({
@@ -171,14 +190,15 @@ export default function MultiScanTest() {
   function processResults(found: { text: string; points: { x: number; y: number }[] }[]): FrameBox[] {
     const boxes: FrameBox[] = []
     let anyNew = false, anyInvalid = false
-    for (const f of found) {
-      let entry = codesRef.current.get(f.text)
-      if (!entry) {
-        entry = { text: f.text, valid: isValidTem(f.text), at: Date.now(), hits: 0 }
-        codesRef.current.set(f.text, entry)
-      }
-      entry.hits++
-      const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · sai định dạng: cần 2 lần
+    const now = Date.now()
+    // Gom mã: khoá chuẩn hoá (1 tem không thành 2 dòng) — CHỈ gom + đếm, KHÔNG tự xoá dòng nào
+    // (đã thử đoán bản-đọc-sai theo vị trí và làm MẤT MÃ THẬT 2 lần — xem đầu utils/scanDedupe).
+    // Logic thuần nằm ở utils/scanDedupe (gói QA 30 kiểm bằng chuỗi khung mô phỏng).
+    const entries = found.map(f => registerHit(codesRef.current, { text: f.text, points: f.points, now }).entry)
+
+    for (const [i, f] of found.entries()) {
+      const entry = entries[i]
+      const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · 1D: cần MIN_HITS_1D lần
       const confirmed = entry.hits >= need
       const justConfirmed = entry.hits === need           // frame vừa chốt
       if (justConfirmed) {
@@ -264,24 +284,36 @@ export default function MultiScanTest() {
     setError(null)
     unlockAudio()
     try {
-      // Chọn engine: ưu tiên native nếu hỗ trợ QR
+      // Chọn engine — MẶC ĐỊNH WASM cho quét LOẠT, xem ghi chú EN_CHOICE ở đầu file
       let native = false
       if (window.BarcodeDetector) {
         try {
-          const formats = await window.BarcodeDetector.getSupportedFormats()
-          if (formats.includes('qr_code')) {
-            detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] })
+          const supported = await window.BarcodeDetector.getSupportedFormats()
+          if (supported.includes('qr_code')) {
+            const formats = NATIVE_FORMATS.filter(f => supported.includes(f))
+            detectorRef.current = new window.BarcodeDetector({ formats: [...formats] })
             native = true
           }
         } catch {}
       }
       setNativeAvail(native)
-      if (!native) {
-        await loadWasm()
-        setEngine('wasm')
-      } else {
-        setEngine('native')
+      // ⭐ EN_CHOICE — MẶC ĐỊNH WASM cho quét LOẠT (user báo 21/08: "chỉ bắt được 1,2 cái").
+      // Native (BarcodeDetector → API barcode ĐỜI CŨ của Play Services) bắt QR tốt nhưng trả về RẤT
+      // ÍT mã vạch 1D khi có NHIỀU mã trong CÙNG một khung: máy thật 15 tem chỉ ra 1–2, còn zxing
+      // tryHarder@2560 đo được 15/15. Trang này trước đây ƯU TIÊN native (hợp lý hồi chỉ đọc QR) và
+      // KHÔNG có lưới zxing đỡ như luồng quét đơn ⇒ mở trên Android là rơi vào nhánh kém nhất mà
+      // không có dấu hiệu gì để lần ra. Quét loạt cần ĐỘ PHỦ hơn tốc độ khung ⇒ chọn wasm.
+      // Nút chuyển engine vẫn còn để so sánh, và lựa chọn được NHỚ giữa các lần mở trang.
+      const want: EngineKind = loadSettings().engine ?? 'wasm'
+      let eff: EngineKind = want === 'native' && native ? 'native' : 'wasm'
+      if (eff === 'wasm') {
+        try { await loadWasm() }
+        catch {
+          if (!native) throw new Error('Không tải được bộ giải mã (zxing) — kiểm tra mạng rồi thử lại')
+          eff = 'native'          // mất mạng giữa đường: còn native thì chạy tạm, hơn là không quét được
+        }
       }
+      setEngine(eff)
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
@@ -368,6 +400,7 @@ export default function MultiScanTest() {
 
   // Chốt phiên: lưu vào lịch sử nếu có ít nhất 1 mã (gọi khi Dừng camera / rời trang)
   function endSession() {
+
     const codes = Array.from(codesRef.current.values()).filter(c => c.valid || c.hits >= INVALID_MIN_HITS)
     if (!sessionStartRef.current || codes.length === 0) { sessionStartRef.current = 0; return }
     const s: SavedSession = {
@@ -412,10 +445,20 @@ export default function MultiScanTest() {
     streamRef.current?.getTracks().forEach(t => t.stop())
   }, [])
 
+  // Một nút về đúng bộ thiết lập ĐÃ ĐO là bắt mã vạch tốt nhất — thoát cảnh loay hoay trong tổ hợp
+  // knob xấu mà không biết knob nào đang hại (chính ca 21/08: quét kỹ tắt từ lần bấm thử trước).
+  async function resetToBest() {
+    await loadWasm().catch(() => {})
+    setEngine('wasm'); setWasmWidth(2560); setTryHarder(true)
+    saveSettings({ engine: 'wasm', wasmWidth: 2560, tryHarder: true })
+    decodeEmaRef.current = 0
+  }
+
   async function switchEngine(next: EngineKind) {
     if (next === 'wasm') await loadWasm()
     decodeEmaRef.current = 0
     setEngine(next)
+    saveSettings({ engine: next })
   }
 
   function applyTrack(set: ExtConstraintSet) {
@@ -566,9 +609,17 @@ export default function MultiScanTest() {
                     <span className="rounded bg-slate-100 px-1.5 py-0.5">Decode: {decodeMs}ms/khung</span>
                     {nativeAvail && (
                       <button onClick={() => switchEngine(engine === 'native' ? 'wasm' : 'native')}
+                        title={engine === 'native'
+                          ? 'Về WASM (zxing) — bắt được nhiều mã vạch 1D nhất trong 1 khung'
+                          : 'Thử Native (BarcodeDetector) — nhanh/đỡ pin nhưng bắt RẤT ÍT mã vạch 1D khi nhiều mã cùng khung'}
                         className="rounded border border-slate-300 px-1.5 py-0.5 hover:bg-slate-50">
                         Thử engine {engine === 'native' ? 'WASM' : 'Native'}
                       </button>
+                    )}
+                    {engine === 'native' && (
+                      <span className="rounded bg-amber-100 text-amber-700 px-1.5 py-0.5 font-semibold">
+                        Native bắt ít mã vạch — quét loạt nên dùng WASM
+                      </span>
                     )}
                     {engine === 'wasm' && (
                       <span className="flex items-center gap-1">
@@ -584,9 +635,21 @@ export default function MultiScanTest() {
                     {engine === 'wasm' && (
                       <button onClick={() => { const v = !tryHarder; setTryHarder(v); saveSettings({ tryHarder: v }); decodeEmaRef.current = 0 }}
                         className={`rounded px-1.5 py-0.5 border ${tryHarder ? 'border-amber-500 bg-amber-50 text-amber-700 font-semibold' : 'border-slate-300 hover:bg-slate-50'}`}>
-                        Quét kỹ (xa hơn){tryHarder ? ' ✓' : ''}
+                        Quét kỹ (cần cho mã vạch){tryHarder ? ' ✓' : ''}
                       </button>
                     )}
+                    {/* TẮT quét kỹ = mã vạch chỉ bắt được ~một nửa (đo: 6–8/15 so với 15/15) mà màn
+                        hình không có dấu hiệu gì → user tưởng app hỏng. Nói thẳng trạng thái ra. */}
+                    {engine === 'wasm' && !tryHarder && (
+                      <span className="rounded bg-red-100 text-red-700 px-1.5 py-0.5 font-semibold">
+                        Đang TẮT quét kỹ — mã vạch bắt được ~một nửa
+                      </span>
+                    )}
+                    <button onClick={resetToBest}
+                      title="Về đúng bộ thiết lập bắt mã vạch tốt nhất đã đo: WASM + 2560p + Quét kỹ"
+                      className="rounded border border-sky-300 text-sky-700 px-1.5 py-0.5 hover:bg-sky-50">
+                      Đặt lại tốt nhất
+                    </button>
                   </>
                 )}
               </div>
@@ -628,7 +691,12 @@ export default function MultiScanTest() {
                         {c.valid ? '✓' : '✗'}
                       </span>
                       <span className="font-mono text-[10px] font-semibold text-slate-700 truncate">{c.text}</span>
-                      <span className="ml-auto shrink-0 text-[9px] text-slate-400 tabular-nums">
+                      {/* Dòng 1D còn ÍT lần thấy = chưa chắc (có thể là bản đọc sai chưa bị dọn) →
+                          hiện vàng để soi ngay lúc quét, khỏi phải chờ tới lúc lưu mới biết. */}
+                      {!c.valid && c.hits < WEAK_HITS && (
+                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">chưa chắc</span>
+                      )}
+                      <span className={`ml-auto shrink-0 text-[9px] tabular-nums ${!c.valid && c.hits < WEAK_HITS ? 'text-amber-600 font-semibold' : 'text-slate-400'}`}>
                         {new Date(c.at).toLocaleTimeString('vi-VN')} · {c.hits}×
                       </span>
                       <button onClick={() => removeCode(c.text)} className="shrink-0 text-slate-400 hover:text-red-600 p-0.5">

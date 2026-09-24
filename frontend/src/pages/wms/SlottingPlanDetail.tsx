@@ -4,7 +4,9 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Boxes, CheckCircle2, ChevronDown, ChevronRight, QrCode, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
+import { ArrowLeft, Boxes, CheckCircle2, ChevronDown, ChevronRight, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
+import { backTarget } from '@/lib/returnTo'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
@@ -166,13 +168,13 @@ export default function SlottingPlanDetail() {
   return (
     <div className="flex flex-col h-full sm:p-3">
       {scanEverOpened && (
-        <PlanScanOverlay plan={{ id: plan.id, name: plan.name }} open={scanOpen} onClose={() => setScanOpen(false)} />
+        <PlanScanOverlay plan={{ id: plan.id, name: plan.name, warehouse_id: plan.warehouse_id }} open={scanOpen} onClose={() => setScanOpen(false)} />
       )}
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {/* Header */}
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-1.5 print:hidden">
           <div className="flex items-center gap-2 flex-wrap">
-            <Link to="/wms/slotting" className="text-slate-400 hover:text-slate-600 shrink-0"><ArrowLeft className="h-4 w-4" /></Link>
+            <Link to={backTarget('/wms/slotting')} className="text-slate-400 hover:text-slate-600 shrink-0"><ArrowLeft className="h-4 w-4" /></Link>
             <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
               <Boxes className="h-4 w-4 text-sky-600" /> {plan.name}
             </h1>
@@ -183,6 +185,16 @@ export default function SlottingPlanDetail() {
               {plan.completed_at ? ` · đóng ${formatDateTime(plan.completed_at)} (${plan.completed_by ?? '—'})` : ''}
             </span>
             <span className="ml-auto flex items-center gap-1.5">
+              {/* QUÉT CHUYỂN VỊ TRÍ — nút CHÍNH của trang (user 16/09: "cái tôi cần là chuyển đúng vị trí").
+                  Trước đó chỉ có nút nhỏ trong ô "Từ vị trí" của TỪNG DÒNG còn chờ làm, nên kế hoạch mà
+                  phần lớn dòng đã xong/đã hết hàng thì gần như không thấy nút nào (Ba Vì 16/09: 52/54 dòng).
+                  Quét tem là BE tự chuyển sang ĐÚNG vị trí đích của lệnh, không ai chọn tay. */}
+              {canScanMove && plan.status === 'ACTIVE' && (
+                <Button size="sm" className="h-7 text-[11px]" onClick={openScan}
+                  title="Quét tem pallet đang ở vị trí nguồn — hệ thống tự chuyển sang đúng vị trí đích của lệnh">
+                  <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét chuyển vị trí
+                </Button>
+              )}
               <Button size="sm" variant="outline" className="h-7 text-[11px]"
                 title="In phiếu A4 gom theo vị trí đích — in đúng danh sách đang lọc trên màn"
                 onClick={() => {
@@ -387,7 +399,7 @@ function LineRow({ l, bracketPos = 'only', frees = false, onScan }: {
             <button className="ml-auto shrink-0 text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded !min-h-0 !min-w-0"
               title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"
               onClick={e => { e.stopPropagation(); onScan() }}>
-              <QrCode className="h-3.5 w-3.5" />
+              <ScanIcon className="h-3.5 w-3.5" />
             </button>
           )}
         </span>

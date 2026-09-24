@@ -89,6 +89,9 @@ try {
     const [row] = await restWrite('OutboundItem', 'POST', null, {
       id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
       cartons_ordered: ordered, cartons_scanned: 0, loose_picking: loose, status: 'PENDING',
+      // Kho fixture chạy chế độ HƯỚNG DẪN ⇒ cửa quét đòi dòng phải KHAI quy định date trước (luật
+      // 10/09, mở rộng 11/09). Gói này đo VỊ TRÍ PHẦN DƯ, không đo date ⇒ khai "không đòi mốc".
+      date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso(), set_by: 'QA 10' },
       created_at: nowIso(), updated_at: nowIso(),
     })
     created.items.push(row.id)
@@ -144,6 +147,15 @@ try {
     check('chọn vị trí mới → xuất 30, pallet dư 70 CHUYỂN sang vị trí mới',
       r.s === 200 && Number(e.cartons_remaining) === 70 && e.location_id === locDest.id && e.status === 'PARTIAL',
       `HTTP ${r.s} · tồn ${e.cartons_remaining} · ${e.status}`)
+
+    // AI QUÉT (17/09) — `employee_id` do CLIENT gửi, thiếu thì trước đây ghi NULL: đo staging
+    // 288/288 dòng quét xuất không có tên người, tức bước làm tồn giảm nhiều nhất không truy được
+    // ai làm. Chính gói này gọi /scan KHÔNG kèm employee_id ⇒ là chỗ đo đúng ca đó: máy chủ phải
+    // rơi về người đang đăng nhập.
+    const sc = await restAll('OutboundScanEntry', `select=scanned_by&item_id=eq.${itPartial}`)
+    check('[ai-quét] Dòng quét ghi người thực hiện kể cả khi client KHÔNG gửi employee_id',
+      sc.length > 0 && sc.every(x => !!x.scanned_by),
+      `${sc.filter(x => !!x.scanned_by).length}/${sc.length} dòng có người`)
   }
 
   // 5) pallet đi HẾT → không đòi vị trí

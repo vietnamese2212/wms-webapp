@@ -1,0 +1,532 @@
+// GÓI 29 — LOẠI KHO THEO TỪNG KHO + CHIẾN THUẬT XUẤT/NHẬP 2 TẦNG (21/08).
+// Luật "bug chết hai lần" cho đợt này. Ba lớp lỗi mà gói gác:
+//   1. HỒI QUY: chưa khai override thì MỌI hành vi phải y hệt trước 21/08 (tiêu chí số 1 của đợt).
+//      Kiểm bằng cách so trực tiếp cùng một lượt quét khi bật/tắt override trên CÙNG fixture.
+//   2. Override IM LẶNG KHÔNG ĂN: cấu hình lưu được nhưng engine vẫn chạy mặc định kho — không lỗi,
+//      không cảnh báo, chỉ sai thứ tự lấy hàng. Fixture cố ý dựng ca FEFO ≠ FIFO nên nếu override
+//      không ăn thì kết luận vi phạm không đổi và gói ĐỎ.
+//   3. VÒNG ĐỜI: gỡ loại khỏi kho khi CÒN TỒN không được khoá đường xử lý tồn cũ (user chốt 20/08:
+//      "ngừng vận hành", không phải xoá) và chiến thuật riêng phải rơi về mặc định kho, không lỗi.
+// Kèm: xoá Loại kho khỏi danh mục khi còn kho vận hành / còn chuyến chở lẫn → 409 (lỗ `eq` với
+// chuỗi ghép 'FG01+PM01' vá cùng đợt).
+// usage: node scripts/qa/29-wh-type-strategy.mjs
+import { login, api, check, finish, restAll, restWrite, resolveFixtures, FIX } from './lib.mjs'
+import { randomUUID } from 'crypto'
+
+const TAG = 'QA-WHTYPE'
+console.log('── GÓI LOẠI KHO 2 TẦNG (chiến thuật xuất/nhập theo loại) ──')
+await login()
+await resolveFixtures()
+
+const nowIso = () => new Date().toISOString()
+const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const whId = FIX.WH_QR.id
+const created = { locs: [], entries: [], gdo: null, do: null, items: [] }
+let whBackup = null, cfgBackup = null
+
+const STRAT_COLS = 'rotation_principle,rotation_required,putaway_priority,putaway_enforced,' +
+  'putaway_date_mix,putaway_block_pick_face,putaway_block_qa_hold,' +
+  'putaway_block_full,putaway_single_ncc,putaway_same_mat_date_pref,putaway_fallback'
+
+// Dọn theo TAG trước (lần chạy hỏng giữa chừng để lại fixture mồ côi)
+async function sweep() {
+  for (const t of ['OutboundScanEntry']) {
+    for (const r of await restAll(t, `select=id&pallet_code=like.${TAG}-*`)) await restWrite(t, 'DELETE', `id=eq.${r.id}`)
+  }
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=like.${TAG}-*`)) {
+    for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)) {
+      for (const it of await restAll('OutboundItem', `select=id&do_id=eq.${d.id}`)) {
+        await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${it.id}`)
+        await restWrite('OutboundItem', 'DELETE', `id=eq.${it.id}`)
+      }
+      await restWrite('OutboundDelivery', 'DELETE', `id=eq.${d.id}`)
+    }
+    await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
+  }
+  for (const e of await restAll('InventoryEntry', `select=id&pallet_code=like.${TAG}-*`)) await restWrite('InventoryEntry', 'DELETE', `id=eq.${e.id}`)
+  // Phiếu nhập của mục [12] — quét theo `notes` là lưới phòng thủ (lần chạy hỏng giữa chừng không
+  // thu được id thì phiếu OPEN mồ côi, kẹt luôn index "1 lệnh/NCC/ngày" của kho)
+  for (const o of await restAll('ProductionImport', `select=id&notes=like.*${TAG}*`)) {
+    await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${o.id}`)
+    await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`)
+  }
+  for (const l of await restAll('Location', `select=id&location_code=like.${TAG}-*`)) await restWrite('Location', 'DELETE', `id=eq.${l.id}`)
+  // Log in tem của mục [13]
+  for (const p of await restAll('PalletLabelPrint', `select=id&qr_code=like.${TAG}-*`)) await restWrite('PalletLabelPrint', 'DELETE', `id=eq.${p.id}`)
+}
+async function cleanup() {
+  await sweep()
+  // TRẢ cấu hình kho + tập loại về nguyên trạng — qua API để backend xoá luôn cache 30s
+  // (ghi thẳng DB thì instance đang chạy vẫn giữ bản test và chặn oan người dùng thật).
+  if (whBackup) await api(`/masterdata/warehouses/${whId}`, 'PUT', whBackup)
+  if (cfgBackup) await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: cfgBackup })
+}
+await sweep()
+
+try {
+  // ── Fixture: 2 mã KHÁC LOẠI trong cùng kho ───────────────────────────────
+  const [wh] = await restAll('Warehouse', `select=id,${STRAT_COLS}&id=eq.${whId}`)
+  whBackup = Object.fromEntries(STRAT_COLS.split(',').map(k => [k, wh?.[k] ?? null]))
+  const cfg0 = await api(`/masterdata/warehouses/${whId}/type-configs`)
+  cfgBackup = (cfg0.j?.data ?? []).map(r => {
+    const o = { type_code: r.type_code, sort_order: r.sort_order ?? null }
+    for (const k of STRAT_COLS.split(',')) o[k] = r[k] ?? null
+    return o
+  })
+  check('[0] GET type-configs trả tập loại kho đang vận hành',
+    cfg0.s === 200 && Array.isArray(cfg0.j?.data) && cfg0.j.data.length > 0,
+    `http=${cfg0.s} n=${cfg0.j?.data?.length}`)
+
+  // Mã A = loại của fixture (FG01…), mã B = loại KHÁC — cần cả hai để chứng minh override chỉ
+  // ăn ĐÚNG loại được khai, không lan sang loại khác.
+  const catA = FIX.MAT_POOL_CAT
+  const matA = { id: FIX.MAT_POOL_ID, code: FIX.MAT_POOL, category: catA }
+  const [matB] = await restAll('Material',
+    `select=id,material_code,category&category=neq.${catA}&category=not.is.null&is_non_stock=not.is.true&order=material_code&limit=1`)
+  if (!matB) { check('có 2 loại kho khác nhau để dựng fixture', false, 'DB chỉ có 1 loại'); finish('WHTYPE'); process.exit() }
+  const catB = matB.category
+
+  const mkLoc = async (code, extra = {}) => {
+    const [row] = await restWrite('Location', 'POST', null, {
+      id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: 20,
+      is_active: true, row: 'QA', shelf: '1', sub_code: `${TAG}-${code}`,
+      categories: [catA, catB], created_at: nowIso(), updated_at: nowIso(), ...extra,
+    })
+    created.locs.push(row.id)
+    return row.id
+  }
+  const loc = await mkLoc('L1')
+
+  // Mỗi mã 2 pallet dựng ca FEFO ≠ FIFO:
+  //   OLD  : NSX cũ (2026-01-01), HSD xa (2027-06-01) → FIFO chọn
+  //   SHORT: NSX mới (2026-06-01), HSD gần (2026-12-01) → FEFO chọn
+  const mkPallet = async (code, matId, prod, exp) => {
+    const [row] = await restWrite('InventoryEntry', 'POST', null, {
+      id: randomUUID(), pallet_code: `${TAG}-${code}`, material_id: matId, warehouse_id: whId,
+      location_id: loc, cartons_imported: 200, cartons_remaining: 200, cartons_reserved: 0,
+      status: 'IN_STOCK', production_date: prod, expiry_date: exp,
+      import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+    })
+    created.entries.push(row.id)
+    return row.id
+  }
+  await mkPallet('A-OLD',   matA.id, '2026-01-01', '2027-06-01')
+  await mkPallet('A-SHORT', matA.id, '2026-06-01', '2026-12-01')
+  await mkPallet('B-OLD',   matB.id, '2026-01-01', '2027-06-01')
+  await mkPallet('B-SHORT', matB.id, '2026-06-01', '2026-12-01')
+
+  const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
+    id: randomUUID(), group_code: `${TAG}-GDO`, warehouse_id: whId, warehouse_type: `${catA}+${catB}`,
+    delivery_date: FIX.EXEC_DATE, planned_date: FIX.EXEC_DATE, status: 'IN_PROGRESS',
+    license_plate: 'QAWHTYPEXE', started_at: nowIso(), created_at: nowIso(), updated_at: nowIso(),
+  })
+  created.gdo = gdo.id
+  const [dlv] = await restWrite('OutboundDelivery', 'POST', null, {
+    id: randomUUID(), gdo_id: gdo.id, delivery_code: `${TAG}-DO`, distributor_name: TAG,
+    created_at: nowIso(), updated_at: nowIso(),
+  })
+  created.do = dlv.id
+  const mkItem = async (mat) => {
+    const [row] = await restWrite('OutboundItem', 'POST', null, {
+      id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code ?? mat.code,
+      cartons_ordered: 900, cartons_scanned: 0, loose_picking: 0, status: 'PENDING',
+      // Kho fixture (Ba Vì) chạy chế độ HƯỚNG DẪN ⇒ cửa quét đòi dòng phải KHAI quy định date trước
+      // (luật 10/09, mở rộng 11/09). Gói này đo THỨ TỰ LUÂN CHUYỂN, không đo date ⇒ khai "không đòi
+      // mốc" là đúng ngữ nghĩa và không đụng gì tới thứ tự (thứ tự do rotation_principle của kho).
+      date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso(), set_by: 'QA 29' },
+      created_at: nowIso(), updated_at: nowIso(),
+    })
+    created.items.push(row.id)
+    return row.id
+  }
+  const itemA = await mkItem(matA)
+  const itemB = await mkItem(matB)
+  const checkScan = (itemId, qr) => api(`/wms/outbound/${gdo.id}/items/${itemId}/check-scan`, 'POST', { qr_code: qr })
+  const scan = (itemId, body) => api(`/wms/outbound/${gdo.id}/items/${itemId}/scan`, 'POST', body)
+  const setWh = (body) => api(`/masterdata/warehouses/${whId}`, 'PUT', body)
+  const setCfg = (items) => api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+  const allTypes = (extra = []) => {
+    const base = cfgBackup.map(r => ({ type_code: r.type_code }))
+    return base.map(r => ({ ...r, ...(extra.find(e => e.type_code === r.type_code) ?? {}) }))
+  }
+
+  // ── [1] HỒI QUY: kho FEFO + chưa khai override ⇒ CẢ HAI loại đều theo FEFO ──
+  await setWh({ rotation_principle: 'FEFO', rotation_required: false })
+  await setCfg(allTypes())
+  {
+    const a = (await checkScan(itemA, `${TAG}-A-OLD`)).j?.data?.rotation
+    const b = (await checkScan(itemB, `${TAG}-B-OLD`)).j?.data?.rotation
+    check('[1] Chưa khai override: cả 2 loại chạy FEFO của kho (hành vi y hệt trước 21/08)',
+      a?.principle === 'FEFO' && a?.violation === true && a?.source === 'WAREHOUSE'
+      && b?.principle === 'FEFO' && b?.violation === true && b?.source === 'WAREHOUSE',
+      `A=${JSON.stringify(a)} B=${JSON.stringify(b)}`)
+  }
+
+  // ── [2] Override cho RIÊNG loại B: FIFO ────────────────────────────────────
+  await setCfg(allTypes([{ type_code: catB, rotation_principle: 'FIFO' }]))
+  {
+    const a = (await checkScan(itemA, `${TAG}-A-OLD`)).j?.data?.rotation
+    const b = (await checkScan(itemB, `${TAG}-B-OLD`)).j?.data?.rotation
+    check(`[2a] Loại ${catB} khai FIFO ⇒ quét pallet NSX cũ nhất KHÔNG còn vi phạm (override ĂN)`,
+      b?.principle === 'FIFO' && b?.violation === false && b?.source === 'TYPE' && b?.date_label === 'NSX',
+      JSON.stringify(b))
+    check(`[2b] Loại ${catA} KHÔNG bị lây — vẫn FEFO của kho`,
+      a?.principle === 'FEFO' && a?.violation === true && a?.source === 'WAREHOUSE',
+      JSON.stringify(a))
+    const bShort = (await checkScan(itemB, `${TAG}-B-SHORT`)).j?.data?.rotation
+    check(`[2c] Loại ${catB}: quét pallet NSX mới thành VI PHẠM theo FIFO (đảo đúng chiều)`,
+      bShort?.violation === true && bShort?.best_pallet_code === `${TAG}-B-OLD`, JSON.stringify(bShort))
+  }
+
+  // ── [3] "Bắt buộc" theo TỪNG loại: kho bắt buộc, loại B nới lỏng ───────────
+  await setWh({ rotation_principle: 'FEFO', rotation_required: true })
+  await setCfg(allTypes([{ type_code: catB, rotation_principle: 'FEFO', rotation_required: false }]))
+  {
+    const rA = await scan(itemA, { qr_code: `${TAG}-A-OLD`, cartons_override: 5, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check(`[3a] Loại ${catA} theo kho (bắt buộc): quét sai thứ tự thiếu lý do → 422`,
+      rA.s === 422, `http=${rA.s} code=${rA.j?.error?.code}`)
+    const rB = await scan(itemB, { qr_code: `${TAG}-B-OLD`, cartons_override: 5, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check(`[3b] Loại ${catB} khai "không bắt buộc": CÙNG kiểu vi phạm nhưng vẫn lưu được (chỉ cảnh báo)`,
+      rB.s === 200 || rB.s === 201, `http=${rB.s} ${JSON.stringify(rB.j?.error ?? '')}`)
+    const [se] = await restAll('OutboundScanEntry', `select=rotation_violation,rotation_principle&item_id=eq.${itemB}&pallet_code=eq.${TAG}-B-OLD`)
+    check('[3c] Vẫn GHI VẾT vi phạm dù không chặn (không im lặng)',
+      se?.rotation_violation === true && se?.rotation_principle === 'FEFO', JSON.stringify(se))
+  }
+
+  // ── [4] Xoá dòng override ⇒ rơi về mặc định kho ────────────────────────────
+  await setCfg(allTypes())
+  {
+    // Dùng pallet CHƯA quét: B-OLD đã ghi ở [3b] nên quét lại bị chặn "đã quét trong phiếu này"
+    // (guard sẵn có của Xuất, không liên quan chiến thuật).
+    const r = await checkScan(itemB, `${TAG}-B-SHORT`)
+    const b = r.j?.data?.rotation
+    check('[4] Bỏ override ⇒ loại đó quay lại đúng mặc định kho (FEFO + bắt buộc)',
+      b?.principle === 'FEFO' && b?.required === true && b?.source === 'WAREHOUSE',
+      `http=${r.s} err=${JSON.stringify(r.j?.error ?? '')} rot=${JSON.stringify(b)}`)
+  }
+  await setWh({ rotation_required: false })
+
+  // ── [5] PUT round-trip + validate ─────────────────────────────────────────
+  {
+    const payload = allTypes([{ type_code: catB, rotation_principle: 'LIFO', putaway_priority: 'SPREAD',
+      putaway_date_mix: 'SAME', putaway_block_full: true,
+      putaway_same_mat_date_pref: 'SAME_DATE', putaway_fallback: 'EMPTY_FIRST', putaway_enforced: ['FULL'] }])
+    const put = await setCfg(payload)
+    const got = (put.j?.data ?? []).find(r => r.type_code === catB)
+    check('[5a] PUT → GET round-trip giữ nguyên MỌI field chiến thuật',
+      put.s === 200 && got?.rotation_principle === 'LIFO' && got?.putaway_priority === 'SPREAD'
+      && got?.putaway_date_mix === 'SAME'
+      && got?.putaway_block_full === true && got?.putaway_same_mat_date_pref === 'SAME_DATE'
+      && got?.putaway_fallback === 'EMPTY_FIRST' && JSON.stringify(got?.putaway_enforced) === JSON.stringify(['FULL']),
+      `http=${put.s} got=${JSON.stringify(got)}`)
+    const bad1 = await setCfg([{ type_code: 'KHONG_CO_LOAI_NAY' }])
+    check('[5b] type_code ngoài danh mục → 400 (không đẻ dòng mồ côi)',
+      bad1.s === 400, `http=${bad1.s} code=${bad1.j?.error?.code}`)
+    const bad2 = await setCfg(allTypes([{ type_code: catB, rotation_principle: 'XXX' }]))
+    check('[5c] Nguyên tắc luân chuyển bậy → 422', bad2.s === 422, `http=${bad2.s} code=${bad2.j?.error?.code}`)
+    const bad3 = await setCfg(allTypes([{ type_code: catB, putaway_fallback: 'XXX' }]))
+    check('[5d] Bước 3 (thứ tự vị trí còn lại) bậy → 422', bad3.s === 422, `http=${bad3.s}`)
+    const bad4 = await setCfg([...allTypes(), { type_code: catB }])
+    check('[5e] Khai TRÙNG một loại → 400', bad4.s === 400, `http=${bad4.s}`)
+    // Trả về sạch
+    await setCfg(allTypes())
+  }
+
+  // ── [5f..5i] MỨC XỬ LÝ từng luật kế thừa PER-LUẬT (user chốt 25/08) ───────
+  // Trước đó mảng `putaway_enforced` của LOẠI thay thế NGUYÊN KHỐI mảng của kho ⇒ loại khai 1 luật
+  // là lặng lẽ gỡ mọi luật bắt buộc còn lại (đo thật: PM01 khai [FULL] làm hàng POSM thoát luật
+  // "tối đa N mã/vị trí" của kho — không ai đọc form mà đoán ra). Nay: không khai = THEO KHO.
+  {
+    const whBk = (await restAll('Warehouse', `select=putaway_enforced&id=eq.${whId}`))[0]
+    await api(`/masterdata/warehouses/${whId}`, 'PUT',
+      { putaway_enforced: ['MAX_MATERIALS', 'FULL'] })
+    // Loại chỉ khai BẬT thêm 1 luật (giống hệt ca PM01 thật)
+    await setCfg(allTypes([{ type_code: catB, putaway_enforced: ['FULL'] }]))
+    const eff1 = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+    const row1 = eff1.find(r => r.type_code === catB)
+    check('[5f] Loại khai [FULL] KHÔNG xoá mảng của kho — cột lưu đúng phần loại tự khai',
+      JSON.stringify(row1?.putaway_enforced) === JSON.stringify(['FULL']) && !row1?.putaway_enforced_off,
+      `got=${JSON.stringify(row1?.putaway_enforced)} off=${JSON.stringify(row1?.putaway_enforced_off)}`)
+    // (Hiệu lực CHẶN THẬT của mức bắt buộc đo ở gói 26-putaway — cùng engine resolvePutawayRules;
+    //  ở đây chỉ khoá phần LƯU + ngữ nghĩa 2 cột để không ai quay lại kiểu "thay thế nguyên mảng".)
+    // Loại ép 1 luật của kho về CHỈ CẢNH BÁO
+    await setCfg(allTypes([{ type_code: catB, putaway_enforced_off: ['MAX_MATERIALS'] }]))
+    const row2 = ((await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? [])
+      .find(r => r.type_code === catB)
+    check('[5h] Loại ép luật của kho về "chỉ cảnh báo" → lưu vào cột riêng, không đụng cột bật',
+      JSON.stringify(row2?.putaway_enforced_off) === JSON.stringify(['MAX_MATERIALS']),
+      `off=${JSON.stringify(row2?.putaway_enforced_off)}`)
+    const badOff = await setCfg(allTypes([{ type_code: catB, putaway_enforced_off: ['KHONG_CO_LUAT'] }]))
+    check('[5i] Mã luật bậy trong danh sách chỉ-cảnh-báo → 422 (không ghi rác vào DB)',
+      badOff.s === 422, `http=${badOff.s}`)
+    await setCfg(allTypes())
+    await api(`/masterdata/warehouses/${whId}`, 'PUT', {
+      putaway_enforced: whBk?.putaway_enforced ?? [],
+    })
+  }
+
+  // ── [6] Thang cất hàng: Bước 2/Bước 3 lưu được ở CẢ HAI tầng ──────────────
+  {
+    const r = await setWh({ putaway_same_mat_date_pref: 'OLDER_FIRST', putaway_fallback: 'MOST_FREE' })
+    const [w] = await restAll('Warehouse', `select=putaway_same_mat_date_pref,putaway_fallback&id=eq.${whId}`)
+    check('[6a] Kho lưu được Bước 2 + Bước 3 (thang cất hàng tường minh)',
+      (r.s === 200 || r.s === 201) && w?.putaway_same_mat_date_pref === 'OLDER_FIRST' && w?.putaway_fallback === 'MOST_FREE',
+      `http=${r.s} ${JSON.stringify(w)}`)
+    const bad = await setWh({ putaway_same_mat_date_pref: 'XXX' })
+    check('[6b] Bước 2 giá trị bậy → 422 ở cấp kho', bad.s === 422, `http=${bad.s}`)
+    await setWh({ putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE' })
+  }
+
+  // ── [7] Gợi ý vị trí CẤT vẫn chạy khi loại khai chiến thuật riêng ─────────
+  {
+    await setCfg(allTypes([{ type_code: catA, putaway_priority: 'SPREAD', putaway_fallback: 'EMPTY_FIRST' }]))
+    const r = await api(`/masterdata/locations?warehouse_id=${whId}&material_id=${matA.id}&putaway=1&limit=50`)
+    const rows = r.j?.data ?? []
+    check('[7] Ô chọn vị trí vẫn trả khối putaway cho mọi dòng khi loại chạy chiến thuật riêng',
+      r.s === 200 && rows.length > 0 && rows.every(x => x.putaway && 'blocked' in x.putaway),
+      `http=${r.s} n=${rows.length}`)
+    await setCfg(allTypes())
+  }
+
+  // ── [8] MỌI KHO ĐỀU CÓ MỌI LOẠI (user chốt 21/08 vòng cuối) ───────────────
+  // Loại kho là DANH MỤC CHUNG: không còn thao tác "gỡ loại khỏi kho". Client gửi thiếu loại
+  // (bản cũ / lưu một phần) thì backend GIỮ NGUYÊN phần còn lại — mất loại là mọi form của kho
+  // đó không chọn được nó nữa, sai âm thầm.
+  {
+    const without = cfgBackup.filter(r => r.type_code !== catB).map(r => ({ type_code: r.type_code }))
+    const del = await setCfg(without)
+    check('[8a] Gửi thiếu một loại ⇒ KHÔNG bị gỡ khỏi kho (mọi kho đều có mọi loại)',
+      del.s === 200 && (del.j?.data ?? []).some(r => r.type_code === catB),
+      `http=${del.s} còn=${(del.j?.data ?? []).length}`)
+    const b = (await checkScan(itemB, `${TAG}-B-SHORT`)).j?.data?.rotation
+    check('[8b] Tồn của loại đó vẫn quét xuất bình thường', b?.principle === 'FEFO', JSON.stringify(b))
+    const rB = await scan(itemB, { qr_code: `${TAG}-B-SHORT`, cartons_override: 5, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[8c] Ghi nhận xuất vẫn 200', rB.s === 200 || rB.s === 201, `http=${rB.s}`)
+    await setCfg(allTypes())
+    const back = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+    check('[8d] Kho vẫn đủ tập loại như ban đầu', back.length === cfgBackup.length, `n=${back.length}/${cfgBackup.length}`)
+  }
+
+  // ── [9] Xoá Loại kho khỏi DANH MỤC khi còn dùng → 409 ─────────────────────
+  {
+    const [lk] = await restAll('LookupValue', `select=id,value&type=eq.warehouse_type&value=eq.${catB}`)
+    const r = await api(`/wms/lookup/${lk.id}`, 'DELETE')
+    check('[9a] Xoá loại đang có dữ liệu (mã hàng / vị trí / chuyến chở lẫn) → 409, KHÔNG xoá',
+      r.s === 409, `http=${r.s} msg=${String(r.j?.error?.message ?? '').slice(0, 120)}`)
+    // Dòng gán của kho KHÔNG được tính là "đang dùng": mọi kho đều có mọi loại nên tính vào là
+    // KHÔNG BAO GIỜ xoá được loại nào (bẫy gặp ngay khi đổi sang danh mục chung).
+    check('[9b] 409 KHÔNG đếm dòng gán của kho (nếu không sẽ khoá cứng mọi thao tác xoá)',
+      !String(r.j?.error?.message ?? '').includes('kho đang vận hành loại này'),
+      String(r.j?.error?.message ?? '').slice(0, 220))
+    const [still] = await restAll('LookupValue', `select=id&id=eq.${lk.id}`)
+    check('[9c] Loại vẫn còn nguyên trong danh mục', !!still)
+  }
+
+  // ── [10] THỨ TỰ LOẠI KHO LÀ CỦA TỪNG KHO (user chốt 21/08 chiều) ──────────
+  // Trước đây thứ tự chỉ nằm ở danh mục dùng chung ⇒ kéo ở kho A thì kho B cũng đổi theo.
+  {
+    const codesOf = j => (j?.data ?? []).map(r => r.type_code)
+    // Kho ĐỐI CHỨNG phải có ≥2 loại — kho 1 loại thì đảo thứ tự nào cũng "giống nhau", kiểm vô nghĩa
+    let otherWh = null, otherBefore = null
+    for (const w of await restAll('Warehouse', 'select=id&is_active=is.true&order=code&limit=30')) {
+      if (w.id === whId) continue
+      const r = await api(`/masterdata/warehouses/${w.id}/type-configs`)
+      if ((r.j?.data ?? []).length >= 2) { otherWh = w.id; otherBefore = r; break }
+    }
+    const before = await api(`/masterdata/warehouses/${whId}/type-configs`)
+    const list = before.j?.data ?? []
+    if (list.length < 2) {
+      check('[10] bỏ qua — kho fixture chỉ vận hành 1 loại', true, `n=${list.length}`)
+    } else {
+      // Đảo 2 loại đầu, đánh lại thứ tự 1..n
+      const swapped = [list[1], list[0], ...list.slice(2)]
+      const items = swapped.map((r, i) => ({ ...r, sort_order: i + 1 }))
+      const rw = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+      const after = await api(`/masterdata/warehouses/${whId}/type-configs`)
+      check('[10a] Đổi thứ tự loại kho của MỘT kho: lưu + đọc lại đúng thứ tự mới',
+        rw.s === 200 && codesOf(after.j).join(',') === swapped.map(r => r.type_code).join(','),
+        `http=${rw.s} sau=${codesOf(after.j).join(',')} mong=${swapped.map(r => r.type_code).join(',')}`)
+      const otherAfter = otherWh ? await api(`/masterdata/warehouses/${otherWh}/type-configs`) : null
+      check('[10b] Kho KHÁC không bị đổi theo (thứ tự là của TỪNG kho, không phải danh mục chung)',
+        !!otherWh && codesOf(otherAfter.j).join(',') === codesOf(otherBefore.j).join(','),
+        otherWh ? `kho=${otherWh.slice(0, 8)} truoc=${codesOf(otherBefore.j).join(',')} sau=${codesOf(otherAfter?.j).join(',')}`
+          : 'KHÔNG tìm được kho đối chứng ≥2 loại')
+      // Client cũ (lưu chiến thuật, không gửi sort_order) KHÔNG được xoá trắng công sắp xếp
+      const bare = swapped.map(r => {
+        const o = { type_code: r.type_code }
+        for (const k of STRAT_COLS.split(',')) o[k] = r[k] ?? null
+        return o
+      })
+      await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: bare })
+      const kept = await api(`/masterdata/warehouses/${whId}/type-configs`)
+      check('[10c] Lưu chiến thuật mà không gửi sort_order ⇒ GIỮ NGUYÊN thứ tự đã sắp',
+        codesOf(kept.j).join(',') === swapped.map(r => r.type_code).join(','),
+        `sau=${codesOf(kept.j).join(',')}`)
+      const bad = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+        { items: swapped.map((r, i) => ({ type_code: r.type_code, sort_order: i === 0 ? 'một' : i + 1 })) })
+      check('[10d] sort_order không phải số nguyên → 422 (không ghi rác)', bad.s === 422, `http=${bad.s}`)
+      const neg = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+        { items: swapped.map((r, i) => ({ type_code: r.type_code, sort_order: i === 0 ? -3 : i + 1 })) })
+      check('[10e] sort_order âm → 422', neg.s === 422, `http=${neg.s}`)
+    }
+  }
+
+  // ── [11] LOẠI KHO = DANH MỤC CHUNG: tạo 1 lần, MỌI KHO đều có (user chốt 21/08 vòng cuối) ──
+  {
+    const tmpCode = `${TAG}-T1`
+    const nWh = (await restAll('Warehouse', 'select=id')).length
+    const mk = await api('/wms/lookup', 'POST', { type: 'warehouse_type', value: tmpCode, meta: {} })
+    const tmpId = mk.j?.data?.id
+    check('[11a] Tạo loại kho mới', mk.s === 200 || mk.s === 201, `http=${mk.s}`)
+    // Tạo xong là MỌI kho đều có — thiếu bước này thì từng kho phải tự khai lại, và Đợt 2 (lọc
+    // option theo kho) sẽ chặn oan đúng loại vừa tạo.
+    const seeded = await restAll('warehouse_type_configs', `select=warehouse_id&type_code=eq.${tmpCode}`)
+    check('[11b] Loại mới có mặt ở TẤT CẢ kho', seeded.length === nWh, `${seeded.length}/${nWh} kho`)
+    const cfgA = await api(`/masterdata/warehouses/${whId}/type-configs`)
+    check('[11c] Kho fixture thấy loại mới ngay', (cfgA.j?.data ?? []).some(r => r.type_code === tmpCode))
+
+    // 3 cờ VẬN HÀNH khai riêng theo kho (null = theo danh mục chung)
+    const items = (cfgA.j?.data ?? []).map(r => r.type_code === tmpCode
+      ? { ...r, is_ncc_goods: true, requires_ncc: true, batch_char: 'K' } : { ...r })
+    const rw = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+    const got = (rw.j?.data ?? []).find(r => r.type_code === tmpCode)
+    check('[11d] Khai riêng 3 cờ vận hành cho kho này → lưu + đọc lại đúng',
+      rw.s === 200 && got?.is_ncc_goods === true && got?.requires_ncc === true && got?.batch_char === 'K',
+      `http=${rw.s} got=${JSON.stringify(got && { n: got.is_ncc_goods, r: got.requires_ncc, b: got.batch_char })}`)
+    const cfgB = await api(`/masterdata/warehouses/${FIX.WH_QTY.id}/type-configs`)
+    const otherRow = (cfgB.j?.data ?? []).find(r => r.type_code === tmpCode)
+    check('[11e] Kho KHÁC không bị lây 3 cờ đó (vẫn theo danh mục chung)',
+      !!otherRow && otherRow.is_ncc_goods == null && otherRow.requires_ncc == null && !otherRow.batch_char,
+      JSON.stringify(otherRow && { n: otherRow.is_ncc_goods, r: otherRow.requires_ncc, b: otherRow.batch_char }))
+    const bad = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+      { items: items.map(r => r.type_code === tmpCode ? { ...r, batch_char: 'AB' } : r) })
+    check('[11f] Ký tự mã lô >1 ký tự → 422', bad.s === 422, `http=${bad.s}`)
+
+    // Xoá loại khỏi danh mục = mọi kho mất theo + dọn sạch dòng gán (không để mồ côi)
+    const rmv = await api(`/wms/lookup/${tmpId}`, 'DELETE')
+    check('[11g] Xoá loại chưa có dữ liệu dùng → cho xoá', rmv.s === 200, `http=${rmv.s} msg=${String(rmv.j?.error?.message ?? '').slice(0, 100)}`)
+    const left = await restAll('warehouse_type_configs', `select=id&type_code=eq.${tmpCode}`)
+    check('[11h] Xoá loại dọn luôn setting riêng của MỌI kho (0 dòng mồ côi)', left.length === 0, `còn ${left.length} dòng`)
+  }
+
+  // ── [12] CỜ VẬN HÀNH RIÊNG PHẢI ĂN Ở CỬA GHI, không chỉ lưu được ─────────────
+  // Đây là lớp lỗi số 2 của gói này: cấu hình lưu êm nhưng engine vẫn chạy mặc định chung — không
+  // lỗi, không cảnh báo. Kiểm bằng chính cửa QUÉT NHẬP: cùng một pallet không NCC, chỉ đổi cờ của
+  // kho mà kết quả phải đảo (cho qua ↔ 422 NCC_REQUIRED).
+  {
+    const [whRow] = await restAll('Warehouse', `select=nmsx_code&id=eq.${whId}`)
+    const nmsx = whRow?.nmsx_code || 'B'
+    const d = new Date()
+    const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(2)}`
+    let seq = 810
+    // Đoạn 4 = 'M9' (KHÔNG phải mã NCC) + cờ is_ncc_goods=false ⇒ chắc chắn pallet không tự có NCC
+    const mkQR = () => `${ddmmyy}_${matA.code}_${TAG.replace(/-/g, '')}_M9_${++seq}_${nmsx}`
+    const setFlags = async patch => {
+      const cur = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+      const items = cur.map(r => r.type_code === catA ? { ...r, ...patch } : { ...r })
+      const w = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+      await new Promise(r => setTimeout(r, 1200))   // cache cờ 30s/instance — chờ lượt ghi vào cache mới
+      return w
+    }
+    const mkOrder = async () => {
+      const r = await api('/wms/inbound-orders', 'POST', {
+        warehouse_id: whId, material_id: matA.id, location_id: loc, import_date: vnDate(),
+        source_type: 'FACTORY', warehouse_type: catA, notes: `${TAG} ncc-gate`, qty_semantics: 'base',
+      })
+      return r.j?.data?.order?.id
+    }
+    const scanQR = async (orderId, qr) => api(`/wms/inbound-orders/${orderId}/scan`, 'POST',
+      { qr_code: qr, location_id: loc, qty_semantics: 'base' })
+
+    await setFlags({ is_ncc_goods: false, requires_ncc: false })
+    const o1 = await mkOrder()
+    const s1 = await scanQR(o1, mkQR())
+    check('[12a] Kho khai riêng "không bắt buộc NCC" ⇒ pallet không NCC quét ĐƯỢC',
+      s1.s === 200 || s1.s === 201, `http=${s1.s} err=${s1.j?.error?.code ?? ''}`)
+
+    await setFlags({ is_ncc_goods: false, requires_ncc: true })
+    // Cờ đi qua cache 30s/instance: PUT xoá cache của instance nhận request, nhưng lượt quét có thể
+    // rơi vào instance KHÁC ⇒ thử lại vài lượt (mỗi lượt 1 QR mới) thay vì kết luận ngay.
+    let s2 = await scanQR(o1, mkQR())
+    for (let i = 0; i < 3 && s2.s !== 422; i++) {
+      await new Promise(r => setTimeout(r, 11000))
+      s2 = await scanQR(o1, mkQR())
+    }
+    check('[12b] Đổi cờ của KHO sang "bắt buộc NCC" ⇒ CÙNG pallet đó bị chặn 422 (cờ ĂN THẬT)',
+      s2.s === 422 && s2.j?.error?.code === 'NCC_REQUIRED',
+      `http=${s2.s} code=${s2.j?.error?.code} msg=${String(s2.j?.error?.message ?? '').slice(0, 90)}`)
+
+    // Kho KHÁC không được lây: cùng loại, cờ để trống ⇒ vẫn theo danh mục chung
+    const otherWh = FIX.WH_QTY.id
+    const oc = await api(`/masterdata/warehouses/${otherWh}/type-configs`)
+    const otherRow = (oc.j?.data ?? []).find(r => r.type_code === catA)
+    check('[12c] Kho khác vẫn để trống cờ đó (không lây)', !otherRow || otherRow.requires_ncc == null,
+      JSON.stringify(otherRow && { r: otherRow.requires_ncc }))
+
+    // Trả cờ về "theo danh mục chung" → hành vi quay lại đúng mặc định
+    await setFlags({ is_ncc_goods: null, requires_ncc: null })
+    const s3 = await scanQR(o1, mkQR())
+    const sharedNcc = (await restAll('LookupValue', `select=meta&type=eq.warehouse_type&value=eq.${catA}`))[0]?.meta?.requires_ncc === true
+    check('[12d] Bỏ khai riêng ⇒ chạy lại đúng mặc định chung của loại',
+      sharedNcc ? (s3.s === 422 && s3.j?.error?.code === 'NCC_REQUIRED') : (s3.s === 200 || s3.s === 201),
+      `chung=${sharedNcc} http=${s3.s} code=${s3.j?.error?.code ?? ''}`)
+  }
+  // ── [13] NHÃN TEM IN phải tra cờ theo KHO CỦA TỪNG TEM ───────────────────────
+  // Lớp lỗi: một LỆNH IN gộp tem của nhiều kho, nên component tem không có "kho đang chọn" để hỏi.
+  // Trước 21/08 nó đọc danh mục CHUNG ⇒ kho khai riêng "hàng NCC" vẫn in ra ô "Máy" (sai nhãn, im
+  // lặng). Hai điều kiện để đúng: (a) tra được cờ khai riêng của MỌI kho trong 1 lời gọi;
+  // (b) mỗi tem trong log in phải MANG kho của nó — cột này trước đây luôn NULL vì FE không gửi,
+  // kéo theo cả guard scope kho ở logPrints không bao giờ nổ.
+  {
+    const setOv = async patch => {
+      const cur = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+      return api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+        { items: cur.map(r => r.type_code === catA ? { ...r, ...patch } : { ...r }) })
+    }
+    await setOv({ is_ncc_goods: true })
+    const ov1 = await api('/masterdata/warehouses/type-flag-overrides')
+    const mine = (ov1.j?.data ?? []).filter(r => r.warehouse_id === whId && r.type_code === catA)
+    check('[13a] Đọc được cờ khai riêng của MỌI kho trong 1 lời gọi',
+      ov1.s === 200 && mine.length === 1 && mine[0].is_ncc_goods === true,
+      `http=${ov1.s} n=${mine.length} v=${mine[0]?.is_ncc_goods}`)
+    check('[13b] Chỉ trả dòng CÓ khai riêng (kho khác cùng loại không lọt vào)',
+      !(ov1.j?.data ?? []).some(r => r.warehouse_id === FIX.WH_QTY.id && r.type_code === catA),
+      `tổng ${(ov1.j?.data ?? []).length} dòng khai riêng`)
+
+    // Ghi log in kèm kho của tem → đọc lại phải thấy đúng kho (cả 2 đường: theo mã và phân trang)
+    const qr = `${TAG}-PRINT-${Date.now()}`
+    const lg = await api('/wms/pallet-prints', 'POST', {
+      mode: 'REPRINT',
+      labels: [{ qr_code: qr, material_code: matA.code, category: catA, machine: 'M9', seq: '901', warehouse_id: whId }],
+    })
+    check('[13c] Ghi log in tem kèm kho của tem', lg.s === 200 || lg.s === 201, `http=${lg.s}`)
+    const byCode = await api(`/wms/pallet-prints?qr_codes=${encodeURIComponent(qr)}`)
+    const row = (byCode.j?.data ?? []).find(r => r.qr_code === qr)
+    check('[13d] Đường "theo mã tem" trả kho của tem (In lại tra được cờ đúng kho)',
+      row?.warehouse_id === whId, `wh=${row?.warehouse_id ?? 'null'}`)
+    const paged = await api(`/wms/pallet-prints?page=1&page_size=20&search=${encodeURIComponent(qr)}`)
+    const prow = (paged.j?.data?.rows ?? []).find(r => r.qr_code === qr)
+    check('[13e] Đường "Lịch sử in" (RPC phân trang) cũng trả kho của TỪNG tem',
+      prow?.warehouse_id === whId, `wh=${prow?.warehouse_id ?? 'null'}`)
+    for (const r of await restAll('PalletLabelPrint', `select=id&qr_code=eq.${qr}`)) {
+      await restWrite('PalletLabelPrint', 'DELETE', `id=eq.${r.id}`)
+    }
+    await setOv({ is_ncc_goods: null })
+    const ov2 = await api('/masterdata/warehouses/type-flag-overrides')
+    check('[13f] Bỏ khai riêng ⇒ dòng rời khỏi danh sách (tem về nhãn theo danh mục chung)',
+      !(ov2.j?.data ?? []).some(r => r.warehouse_id === whId && r.type_code === catA))
+  }
+} catch (e) {
+  check('gói chạy trọn', false, String(e?.message ?? e))
+} finally {
+  await cleanup()
+  const [le, ll, lg] = [
+    await restAll('InventoryEntry', `select=id&pallet_code=like.${TAG}-*`),
+    await restAll('Location', `select=id&location_code=like.${TAG}-*`),
+    await restAll('GroupDeliveryOrder', `select=id&group_code=like.${TAG}-*`),
+  ]
+  check('[dọn] 0 tàn dư', le.length === 0 && ll.length === 0 && lg.length === 0,
+    `entry=${le.length} loc=${ll.length} gdo=${lg.length}`)
+}
+
+finish('WHTYPE')

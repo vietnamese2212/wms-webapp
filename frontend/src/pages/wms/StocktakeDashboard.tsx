@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  useWarehouses, useLocationsReal,
+  useWarehouses, useLocationsReal, useLocationsByFlag, useLocationsByIds,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry, fetchAllStocktakeEntries,
   usePctBands,
   type StocktakeEntryRow,
@@ -8,12 +8,15 @@ import {
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { InventoryStatusBadge } from '@/lib/statusMaps'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -27,6 +30,7 @@ import { computePctDate } from '@/utils/shelfLife'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
@@ -60,15 +64,6 @@ function StatCard({ label, value, active, color, onClick }: {
 }
 
 // ─── Side Detail Panel ───────────────────────────────────────────
-const STATUS_LABEL: Record<string, string> = {
-  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
-  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
-}
-const STATUS_CLS: Record<string, string> = {
-  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
-  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
-  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
-}
 
 function DR({ label, value, mono, bold, cls }: {
   label: string; value: string; mono?: boolean; bold?: boolean; cls?: string
@@ -122,9 +117,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
           <p className="text-xs text-slate-400 text-center py-4">Không tìm thấy</p>
         ) : (
           <>
-            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[entry.status] ?? 'bg-gray-100 text-gray-500'}`}>
-              {STATUS_LABEL[entry.status] ?? entry.status}
-            </span>
+            <InventoryStatusBadge status={entry.status} />
 
             {/* Kiểm kê — đặt lên đầu vì đây là thông tin quan trọng nhất ở trang này */}
             <Sec title="Kiểm kê vị trí">
@@ -260,13 +253,22 @@ export default function StocktakeDashboard() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // Ô lọc Vị trí = TÌM TRÊN SERVER (kéo cả kho Bàu Bàng 1.517 vị trí = 1.030KB/2,9s mỗi lần mở màn)
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [], isFetching: locLoading } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
+    !!warehouseId,
   )
+  // Nhãn cho vị trí ĐANG CHỌN (options chỉ có 50 dòng khớp từ khóa hiện tại → chip in uuid thô)
+  const { data: pickedLocs = [] } = useLocationsByIds(locationIds)
 
   const filteredLocations = (locations as any[])
-  // Vị trí "quan trọng" (cần kiểm) của kho đang chọn
-  const importantLocIds = (locations as any[]).filter((l: any) => l.requires_stocktake).map((l: any) => l.id as string)
+  // Vị trí "quan trọng" (cần kiểm) — hỏi thẳng TẬP mang cờ. Màn này TỰ TICK cả tập khi mở nên
+  // cần ĐỦ id, không cắt 50 được; nhưng tập cờ là tập CON có chủ đích nên vẫn nhỏ.
+  const { data: flagLocs = [] } = useLocationsByFlag(
+    'requires_stocktake', { warehouse_id: warehouseId, category: category || undefined }, !!warehouseId)
+  const importantLocIds = flagLocs.map(l => l.id)
   // "Chỉ vị trí cần check" bật (mặc định) → tự chọn hết vị trí quan trọng khi MỞ (1 lần/kho).
   // Bỏ tick sẽ xoá chọn (requiresOnly=false) nên effect không tự điền lại.
   const initedWh = useRef<string | null>(null)
@@ -330,6 +332,8 @@ export default function StocktakeDashboard() {
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
       onChange: ids => { setStocktakeSummary({ locationIds: ids, page: 1 }); setSelectedId(null) },
+      serverSearch: true, onSearchChange: setLocTerm, loading: locLoading,
+      selectedOpts: pickedLocs.map(l => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })),
       options: filteredLocations.map((l: { id: string; location_code: string; requires_stocktake?: boolean }) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })) },
   ]
 
@@ -410,6 +414,18 @@ export default function StocktakeDashboard() {
             } satisfies ActionItem] : []),
           ]} />
           <FilterSheetButton defs={defs} className="sm:hidden" />
+          {/* Quét tem ô để chọn vị trí cần tổng hợp (cộng dồn — kiểm vài kệ liền nhau) */}
+          <LocationScanButton
+            purpose="lookup"   // chỉ trỏ tới ô để lọc — ô đầy vẫn phải chọn được
+            warehouseId={warehouseId || null}
+            onPicked={loc => {
+              setStocktakeSummary({
+                locationIds: locationIds.includes(loc.id) ? locationIds : [...locationIds, loc.id],
+                page: 1,
+              })
+              setSelectedId(null)
+            }}
+          />
           </div>
           <FilterBar defs={defs} className="hidden sm:flex" />
         </div>
@@ -485,19 +501,15 @@ export default function StocktakeDashboard() {
                 </TableHeader>
                 <TableBody>
                   {isFetching && entries.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
-                    </TableRow>
+                    <TableEmptyRow colSpan={STK_COLS.length}>Đang tải…</TableEmptyRow>
                   ) : entries.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">
-                        {view === 'problem'   ? 'Không có pallet cần xử lý 🎉'
-                          : view === 'checked'   ? 'Chưa có pallet nào được kiểm trong đợt này'
-                          : view === 'flagged'   ? 'Không có chênh lệch trong đợt này 🎉'
-                          : view === 'unchecked' ? 'Tất cả pallet đã được kiểm 🎉'
-                          : 'Không có dữ liệu'}
-                      </TableCell>
-                    </TableRow>
+                    <TableEmptyRow colSpan={STK_COLS.length}>
+                      {view === 'problem'   ? 'Không có pallet cần xử lý 🎉'
+                        : view === 'checked'   ? 'Chưa có pallet nào được kiểm trong đợt này'
+                        : view === 'flagged'   ? 'Không có chênh lệch trong đợt này 🎉'
+                        : view === 'unchecked' ? 'Tất cả pallet đã được kiểm 🎉'
+                        : 'Không có dữ liệu'}
+                    </TableEmptyRow>
                   ) : entries.map(e => {
                     const diff    = parseDiff(e.stocktake_flag_note)
                     const checked = isCheckedInRange(e, rangeStart, rangeEnd)

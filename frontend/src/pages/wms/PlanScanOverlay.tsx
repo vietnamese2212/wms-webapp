@@ -8,11 +8,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { useQueryClient } from '@tanstack/react-query'
-import { QrCode, X } from 'lucide-react'
+import { X } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { apiClient } from '@/api/client'
 import { playBeep } from '@/utils/audio'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -25,10 +27,11 @@ interface ScanMoveResult {
 }
 
 export function PlanScanOverlay({ plan, open, onClose }: {
-  plan: { id: string; name: string }; open: boolean; onClose: () => void
+  plan: { id: string; name: string; warehouse_id: string }; open: boolean; onClose: () => void
 }) {
   const qc = useQueryClient()
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(plan.warehouse_id)
   const busyRef = useRef(false)
   const [err, setErr] = useState('')
   const [last, setLast] = useState<ScanMoveResult | null>(null)
@@ -59,7 +62,7 @@ export function PlanScanOverlay({ plan, open, onClose }: {
   return (
     <div className={`fixed inset-0 z-50 bg-black flex flex-col ${open ? '' : 'hidden'}`}>
       <div className="flex items-center gap-2 px-3 py-2 shrink-0">
-        <QrCode className="h-4 w-4 text-sky-400 shrink-0" />
+        <ScanIcon className="h-4 w-4 text-sky-400 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold text-white truncate">Quét thực hiện — {plan.name}</p>
           <p className="text-[10px] text-white/60">Quét tem pallet ĐANG Ở vị trí nguồn của lệnh · phiên này: {count} pallet</p>
@@ -70,7 +73,7 @@ export function PlanScanOverlay({ plan, open, onClose }: {
         </button>
       </div>
       <div className="flex-1 min-h-0">
-        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
+        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} codeTypes={codeTypes} />
       </div>
       <div className="shrink-0 p-3 space-y-2">
         {err && (

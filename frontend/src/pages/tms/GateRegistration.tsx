@@ -762,7 +762,8 @@ export default function GateRegistration() {
   // ── Modal helpers
   function openCreate() {
     setEditReg(null)
-    setForm({ ...formDefault(), warehouse_id: fWarehouse })
+    // Kho + Loại kho kế thừa filter trang (filter đã được bối cảnh toàn cục ở Header sweep)
+    setForm({ ...formDefault(), warehouse_id: fWarehouse, warehouse_type: fWarehouseType })
     setOutLeg(LEG_DEFAULT)
     setApiError('')
     setModalOpen(true)
@@ -1156,7 +1157,8 @@ export default function GateRegistration() {
         </span>
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap" title={reg.notes ?? ''}>{reg.notes ?? '—'}</TableCell>
-      <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+      {/* Ghim mép PHẢI: Gọi xe / Vào / Ra là nút chính của trang mà cột đứng cuối bảng 13 cột (rà 21/09) */}
+      <TableCell className="px-1 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-200" onClick={e => e.stopPropagation()}>
         <ActionButtons reg={reg} />
       </TableCell>
     </TableRow>
@@ -1168,11 +1170,13 @@ export default function GateRegistration() {
       {/* ── Toolbar */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
-          <div className="flex-1" />
-          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08); nút Lọc dời vào cụm dưới để mobile chỉ 1 hàng
+              (desktop sm:contents tan wrapper nên thứ tự hiển thị không đổi) */}
+          <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
+          <div className="hidden sm:block flex-1" />
+          {/* Mobile: Lọc + SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+            <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="gateRegistration"
             currentFilters={viewSnapshot}
@@ -1233,7 +1237,7 @@ export default function GateRegistration() {
                   <TableRow>
                     {GATE_COLS.map((c, i) => (
                       <TableHead key={c.id}
-                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${c.id === 'actions' ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${c.id === 'actions' ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.id === 'actions' ? 'sticky right-0 z-20 bg-slate-50 border-l border-slate-200' : ''}`}>
                         {c.label}
                         {i > 0 && c.id !== 'actions' && (
                           <span onPointerDown={e => gateStartResize(i, e)} onClick={e => e.stopPropagation()}

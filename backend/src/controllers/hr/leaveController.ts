@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { isLeaveType, DEFAULT_LEAVE_TYPE, LEAVE_TYPE_VALUES } from '../../config/leaveTypes'
+import { isDay } from '../../utils/dates'
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[]; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -273,8 +274,17 @@ export async function createLeave(req: Request, res: Response) {
     }
     const empId = employee_id || u.sub
     if (!empId || !date_from || !date_to) return fail(res, 'employee_id, date_from, date_to là bắt buộc', 400)
+    // Ngày phải CÓ THẬT và đúng dạng. Bỏ kiểm thì '10-12-2026' (10/12 kiểu Việt) được Postgres đọc
+    // theo kiểu Mỹ và lưu ÊM thành 2026-10-12 — đơn nghỉ nhảy sang tháng khác, không lỗi, không
+    // cảnh báo (đo 06/09, gói QA 51 phép [11]).
+    for (const [k, v] of [['Từ ngày', date_from], ['Đến ngày', date_to]] as const)
+      if (!isDay(v)) return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07) và là ngày có thật`, 400)
     if (!(await guardLeaveTarget(req, res, empId))) return
     if (date_to < date_from) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
+    // Loại nghỉ lạ: đường SỬA đã trả 400, đường TẠO thì âm thầm đổi thành "nghỉ phép năm" ⇒ trừ
+    // nhầm quỹ phép. Hai cửa cùng một sổ phải nói cùng một luật (gói QA 51 phép [12]).
+    if (leave_type !== undefined && leave_type !== null && leave_type !== '' && !isLeaveType(leave_type))
+      return fail(res, `Loại nghỉ không hợp lệ (chỉ nhận: ${LEAVE_TYPE_VALUES.join(', ')})`, 400)
 
     const dup = await overlappingLeave(empId, date_from, date_to)
     if (dup) return fail(res, `Nhân viên đã có đơn nghỉ phép trùng/chồng ngày (${dup.date_from} → ${dup.date_to}). Không thể tạo trùng.`, 409)
@@ -291,7 +301,7 @@ export async function createLeave(req: Request, res: Response) {
       created_at: now, updated_at: now,
       created_by: u.name || null, updated_by: u.name || null,
     }).select(LEAVE_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const [withEmp] = await attachEmployees([data as { employee_id: string }])
     return ok(res, withEmp, 201)
   } catch (e) { return fail(res, String(e)) }
@@ -305,6 +315,9 @@ export async function updateLeave(req: Request, res: Response) {
       date_from?: string; date_to?: string; leave_type?: string; reason?: string
     }
     const datesChanged = date_from !== undefined || date_to !== undefined
+    for (const [k, v] of [['Từ ngày', date_from], ['Đến ngày', date_to]] as const)
+      if (v !== undefined && !isDay(v))
+        return fail(res, `${k} phải theo dạng NĂM-THÁNG-NGÀY (2026-09-07) và là ngày có thật`, 400)
     // old = trạng thái trước khi sửa (để đồng bộ lại chấm công nếu đơn đã DUYỆT đổi ngày)
     let old: { id: string; employee_id: string; date_from: string; date_to: string; status: string } | null = null
     if (datesChanged) {
@@ -312,6 +325,19 @@ export async function updateLeave(req: Request, res: Response) {
         .select('id, employee_id, date_from, date_to, status').eq('id', id).maybeSingle()
       if (!cur) return fail(res, 'Không tìm thấy đơn', 404)
       old = cur as { id: string; employee_id: string; date_from: string; date_to: string; status: string }
+      // ĐỔI NGÀY TRÊN ĐƠN ĐÃ DUYỆT = TỰ CẤP THÊM NGÀY NGHỈ. Bản cũ cho sửa xong vẫn giữ nguyên
+      // trạng thái ĐÃ DUYỆT và ghi thẳng chấm công theo ngày mới: người chỉ có quyền "xin nghỉ" nới
+      // đơn của chính mình từ 1 ngày lên 7 ngày mà không ai duyệt lại (đo 06/09, gói QA 51 [16b]).
+      // Muốn đổi ngày thì đơn phải quay về CHỜ DUYỆT để cấp trên xét lại — trừ người có quyền duyệt.
+      if (old.status === 'APPROVED') {
+        const u = userOf(req)
+        const mayApprove = u.is_superadmin === true
+          || (await canApprove(await approverContext(u.sub), old.employee_id, await loadParentMap(), false))
+        if (!mayApprove) {
+          return fail(res, 'Đơn đã được duyệt — không tự đổi ngày được. '
+            + 'Hãy nhờ người duyệt đơn sửa, hoặc huỷ đơn rồi tạo đơn mới cho khoảng ngày cần nghỉ.', 403)
+        }
+      }
       const nf = date_from ?? old.date_from, nt = date_to ?? old.date_to
       if (nt < nf) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
       const dup = await overlappingLeave(old.employee_id, nf, nt, id)
@@ -320,6 +346,14 @@ export async function updateLeave(req: Request, res: Response) {
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userOf(req).name || null }
     if (date_from  !== undefined) updates.date_from  = date_from
     if (date_to    !== undefined) updates.date_to    = date_to
+    // Đơn ĐÃ DUYỆT mà đổi khoảng ngày thì cái đã được duyệt không còn là cái đang có hiệu lực —
+    // dù người sửa CHÍNH LÀ người duyệt được. Đưa về CHỜ DUYỆT để có một lượt xét lại tường minh,
+    // thay vì đơn 1 ngày lặng lẽ thành đơn 7 ngày mà vẫn mang dấu "đã duyệt" (gói QA 51 phép [16]).
+    if (datesChanged && old?.status === 'APPROVED') {
+      updates.status = 'PENDING'
+      updates.approved_by = null
+      updates.approved_at = null
+    }
     if (leave_type !== undefined) {
       // Sổ loại nghỉ là DANH SÁCH ĐÓNG — gọi thẳng API không được ghi giá trị ngoài sổ
       if (!isLeaveType(leave_type))
@@ -327,14 +361,15 @@ export async function updateLeave(req: Request, res: Response) {
       updates.leave_type = leave_type
     }
     if (reason     !== undefined) updates.reason     = reason || null
-    const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).single()
-    if (error) return fail(res, error.message)
+    const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).maybeSingle()
+    if (error) return fail(res, error)
+    if (!data) return fail(res, 'Không tìm thấy đơn nghỉ', 404)
 
-    // Đơn đã DUYỆT mà đổi ngày → gỡ chấm công LEAVE ngày cũ rồi ghi lại ngày mới
-    if (datesChanged && old?.status === 'APPROVED') {
-      await clearLeaveAttendance(old)
-      await applyLeaveAttendance(data as { id: string; employee_id: string; warehouse_id: string | null; date_from: string; date_to: string })
-    }
+    // Đơn đã DUYỆT mà đổi ngày → GỠ chấm công nghỉ của khoảng ngày cũ. KHÔNG ghi lại theo ngày mới:
+    // đơn vừa quay về CHỜ DUYỆT ở trên, mà công nghỉ là hệ quả của việc ĐƯỢC DUYỆT. Bản cũ ghi
+    // luôn ngày mới nên bảng công tự mọc thêm ngày nghỉ chưa ai duyệt (3 → 5 dòng, phép [16]).
+    // Lượt duyệt lại sẽ sinh công nghỉ theo khoảng ngày mới.
+    if (datesChanged && old?.status === 'APPROVED') await clearLeaveAttendance(old)
     const [withEmp] = await attachEmployees([data as { employee_id: string }])
     return ok(res, withEmp)
   } catch (e) { return fail(res, String(e)) }
@@ -364,7 +399,7 @@ export async function decideLeave(req: Request, res: Response) {
       approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(), updated_by: u.name || null,
     }).eq('id', id).select(LEAVE_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     // Duyệt → tự ghi chấm công LEAVE; thu thập ngày bị ghi đè để cảnh báo.
     // Từ chối (kể cả gỡ duyệt một đơn từng APPROVED) → gỡ chấm công LEAVE đã tạo.
@@ -389,7 +424,7 @@ export async function deleteLeave(req: Request, res: Response) {
     const { data: cur } = await supabase.from('LeaveRequest')
       .select('id, employee_id, date_from, date_to, status').eq('id', id).maybeSingle()
     const { error } = await supabase.from('LeaveRequest').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     const c = cur as { id: string; employee_id: string; date_from: string; date_to: string; status: string } | null
     if (c && c.status === 'APPROVED') await clearLeaveAttendance(c)
     return ok(res, { deleted: true })

@@ -6,14 +6,16 @@
 //   2. Tham số tra-cứu RỖNG (`?ids=`/`?codes=`) → 0 dòng, KHÔNG dump cả danh mục.
 //   3. Payload < 4MB (trần Vercel 4,5MB — chừa lề an toàn).
 // usage: node scripts/qa/07-params-fuzz.mjs
-import { BASE, login, api, HAS_DB, restAll } from './lib.mjs'
+import { readFileSync, readdirSync } from 'fs'
+import { BASE, login, api, HAS_DB, restAll, FIX, tally } from './lib.mjs'
 
 const MAX_BYTES = 4 * 1024 * 1024
 let pass = 0, fail = 0
 const bad = []
 const chk = (cond, label, detail = '') => {
   if (cond) { pass++; console.log(`  ✅ ${label}${detail ? ' — ' + detail : ''}`) }
-  else { fail++; bad.push(label); console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
+  // đẩy CẢ detail vào `bad`: chú thích lên email chỉ có chuỗi này, thiếu số liệu thì vẫn phải mở log
+  else { fail++; bad.push(detail ? `${label} — ${detail}` : label); console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
 }
 const rowsOf = (j) => {
   const d = j?.data ?? j
@@ -43,6 +45,13 @@ for (const [path, label] of LOOKUP_EMPTY) {
 // Lưu ý ngữ nghĩa: filter rỗng = "không lọc" là HỢP LỆ (khác tra cứu) — chỉ cấm 500/quá trần.
 const d0 = '2026-07-01', d1 = '2026-07-29'
 const LIST_FUZZ = [
+  // page KHỔNG LỒ (bookmark cũ/bot): offset = page×limit tràn int4 Postgres → từng 500 thô
+  // ở 5 màn (31/08); nay lưới chung app.ts trả 400 BAD_PAGE — gác cả 5 màn từng dính
+  `/wms/outbound?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
+  `/wms/inbound-orders?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
+  `/wms/outbound/scan-log?page=1000000000&limit=50&from_date=${d0}&to_date=${d1}`,
+  `/wms/loosepicking?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
+  `/hr/leaves?page=1000000000&limit=50&date_from=${d0}&date_to=${d1}`,
   `/wms/inventory?page=1&limit=50&warehouse_ids=&categories=`,
   `/wms/inventory?page=1&limit=50&warehouse_ids=khong-phai-uuid`,
   `/wms/inventory?page=1&limit=50&search=${encodeURIComponent("';--")}`,
@@ -86,6 +95,23 @@ const LIST_FUZZ = [
   `/wms/fill/demand?warehouse_id=x&date=2026-13-99`,
   `/wms/fill/orders?warehouse_id=x&date_from=2026-13-99`,
   `/wms/fill/report?warehouse_id=x&date_to=0000-00-00`,
+  // KỲ THÁNG cũng cùng họ đó (check-app 27/08): `\d{4}-\d{2}` cho "2026-13" qua rồi Postgres nổ
+  // 22008 → 500. Chi phí kho nhận period ở CẢ query lẫn body nên fuzz cả GET.
+  `/wms/warehouse-costs?period=2026-13`,
+  `/wms/warehouse-costs?period=0000-00`,
+  `/wms/warehouse-costs?period=2026-08-99`,
+  `/wms/warehouse-costs?period=`,
+  `/wms/warehouse-costs?period=2026-08&items=&warehouse_id=&search=`,
+  `/wms/dashboard/productivity?date_from=2026-13-01&date_to=2026-08-31`,
+  `/wms/dashboard/productivity?date_from=2026-08-01&date_to=0000-00-00`,
+  // Cùng họ đó nhưng trên 5 MÀN CHÍNH — fuzz 30/08 cho thấy đều 500. Regex `^\d{4}-\d{2}-\d{2}$`
+  // là kiểm DẠNG chứ không kiểm LỊCH: 2026-02-31 khớp dạng, xuống Postgres nổ 22008. Nay chặn
+  // bằng lưới CHUNG trong app.ts (không rải guard từng controller rồi lại sót) + utils/dates.ts.
+  `/wms/outbound?date_from=2026-02-31&date_to=2026-08-31`,
+  `/wms/inbound-orders?date_from=2026-13-45&date_to=2026-08-31`,
+  `/hr/leaves?date_from=0000-00-00&date_to=2026-08-31&page=1&page_size=20`,
+  `/external/khvc?export_from=2026-02-31&export_to=2026-08-31`,
+  `/wms/loosepicking?date_from=2026-13-45&date_to=2026-08-31`,
 ]
 for (const path of LIST_FUZZ) {
   const r = await api(path)
@@ -94,6 +120,117 @@ for (const path of LIST_FUZZ) {
   const okSize = r.bytes < MAX_BYTES
   chk(okStatus && okSize, `fuzz ${path.slice(0, 72)}`,
     `HTTP ${r.s} · ${(r.bytes / 1024).toFixed(0)}KB${okStatus ? '' : r.s === 404 ? ' → route đổi, sửa test!' : ' → 500!'}${okSize ? '' : ' → QUÁ 4MB!'}`)
+}
+
+// ── 2b) PHIẾU chi phí (kho × kỳ) — tham số rác phải ra 4xx CÓ NGHĨA ────────────────────────
+// Bắt 27/08: `warehouse_id` không có thật từng trả 200 và vẽ ra "phiếu ma" của "(kho đã xoá)",
+// còn đường GHI thì rơi xuống khoá ngoại 23503 → 500 rác. Ở đây soi ĐÚNG mã trạng thái mong đợi
+// (không chỉ "< 500") vì 404 mới là câu trả lời đúng cho id không tồn tại.
+const VOUCHER_FUZZ = [
+  [`/wms/warehouse-costs/vouchers?period=2026-13`, 400],
+  [`/wms/warehouse-costs/vouchers?period=`, 400],
+  [`/wms/warehouse-costs/vouchers?period_from=2026-08&period_to=2026-01`, 400],
+  [`/wms/warehouse-costs/vouchers?period_from=2019-01&period_to=2026-12`, 400],
+  // Mốc trần: ĐÚNG 24 tháng phải đọc được. FE (`costShared.MAX_SPAN_MONTHS`) kẹp Từ/Đến đúng con
+  // số này để người dùng không bao giờ thấy banner đỏ — hạ trần BE mà quên FE thì dòng này đỏ.
+  [`/wms/warehouse-costs/vouchers?period_from=2025-01&period_to=2026-12`, 200],
+  [`/wms/warehouse-costs/voucher?warehouse_id=undefined&period=2026-08`, 404],
+  [`/wms/warehouse-costs/voucher?warehouse_id=00000000-0000-4000-8000-000000000000&period=2026-08`, 404],
+  [`/wms/warehouse-costs/voucher?warehouse_id=x&period=xx`, 400],
+]
+// ── Truy xuất lô (28/08): tham số rác phải 400 CÓ THÔNG BÁO, không 500 và không quét cả bảng ──
+const TRACE_FUZZ = [
+  [`/wms/trace?kind=pallet&value=19`, 400],                       // tiền tố quá ngắn → quét gần cả kho
+  [`/wms/trace?kind=xxx&value=abc`, 400],                         // kiểu tìm bịa
+  [`/wms/trace?kind=pallet&value=`, 400],                         // thiếu giá trị
+  [`/wms/trace?kind=material&value=X&prod_from=hom-qua`, 400],    // ngày rác (đừng để Postgres ném 22007)
+  [`/wms/trace?kind=material&value=KHONG_CO_MA_NAY_1234`, 200],   // không khớp gì → rỗng, KHÔNG lỗi
+  [`/wms/trace?kind=plate&value=51D-446.57`, 200],                // biển gõ có dấu vẫn khớp dạng chuẩn
+  // Chất lượng phục vụ: khoảng ngày đảo/rác phải 400
+  [`/wms/service-level?from=2026-08-28&to=2026-08-01`, 400],
+  [`/wms/service-level?from=abc&to=2026-08-28`, 400],
+  [`/wms/service-level?from=2026-08-01&to=2026-08-28`, 200],
+  [`/wms/service-level?from=2026-08-01&to=2026-08-28&warehouse_id=undefined`, 400], // id rác → 400, không 22P02/500
+  // Ngày ĐÚNG DẠNG nhưng KHÔNG CÓ THẬT: regex chỉ kiểm dạng, Postgres nổ 22008 ⇒ 500 (fuzz 30/08)
+  [`/wms/trace?kind=material&value=510000084&prod_from=2026-13-45`, 400],
+  [`/wms/trace?kind=material&value=510000084&prod_to=2026-02-31`, 400],
+  [`/wms/service-level?from=0000-00-00&to=2026-08-31`, 400],
+]
+for (const [path, want] of TRACE_FUZZ) {
+  const r = await api(path)
+  chk(r.s === want, `fuzz truy xuất ${path.replace('/wms/', '').slice(0, 60)}`, `HTTP ${r.s} (mong ${want})`)
+}
+
+// ── Ký tự đại diện LIKE không được lách rào "tiền tố ≥ 4 ký tự" (30/08) ──
+// `format(%L)` chống TIÊM SQL nhưng KHÔNG đụng tới ý nghĩa của '%' và '_' trong chính LIKE. Gõ
+// '%%%%' vừa đủ 4 ký tự và khớp MỌI mã pallet — đo trước khi vá: 55.768/55.770 pallet, 415KB,
+// 2,4s. Phải soi SỐ DÒNG chứ không chỉ mã trạng thái: cả hai bên đều trả 200.
+for (const val of ['%%%%', '____', '%_%_']) {
+  const r = await api(`/wms/trace?kind=pallet&value=${encodeURIComponent(val)}`)
+  const n = r.j?.data?.summary?.pallets ?? 0
+  chk(r.s === 200 && n === 0, `truy xuất lô: "${val}" là ký tự THẬT, không phải ký tự đại diện`,
+    `HTTP ${r.s} · ${n} pallet (phải 0 — nếu ra hàng chục nghìn là quét trọn kho)`)
+}
+
+// ── Tab Dịch vụ phải NGHE ô chọn Kho của Dashboard (28/08) ──
+// Bản đầu bỏ qua tham số kho: người dùng chọn "Kho Ba Vì" mà bảng vẫn liệt kê mọi kho — sai âm
+// thầm, vì màn hình KHÔNG báo lỗi, chỉ đơn giản trả lời câu hỏi khác câu người ta hỏi.
+{
+  const all = await api('/wms/service-level?from=2026-08-01&to=2026-08-28')
+  const rows = all.j?.data?.by_warehouse ?? []
+  if (!rows.length) {
+    console.log(`  ⊘ lọc kho tab Dịch vụ: kỳ 08 không có chuyến hoàn thành nào — bỏ qua (đọc ${rows.length} kho)`)
+  } else {
+    const whs = await api('/masterdata/warehouses?limit=200')
+    const list = whs.j?.data?.items ?? whs.j?.data ?? []
+    const hit = list.find(w => rows.some(r => r.warehouse_name === w.name))
+    if (!hit) {
+      console.log(`  ⊘ lọc kho tab Dịch vụ: không khớp được tên kho (${rows.length} kho báo cáo / ${list.length} kho danh mục)`)
+    } else {
+      const one = await api(`/wms/service-level?from=2026-08-01&to=2026-08-28&warehouse_id=${hit.id}`)
+      const got = one.j?.data?.by_warehouse ?? []
+      chk(one.s === 200 && got.length === 1 && got[0].warehouse_name === hit.name,
+        'tab Dịch vụ lọc đúng 1 kho khi Dashboard chọn kho',
+        `HTTP ${one.s} · ${rows.length} kho khi không lọc → ${got.length} kho khi lọc "${hit.name}"`)
+    }
+  }
+}
+
+// ── Chấm sao chuyến giao: KHO NHẬN KHÔNG TÍCH NHẬN thì không có ai để chấm (28/08) ──
+// Bản đầu của tính năng cho chấm cả chuyến `delivery_mode='SELF'` (tài xế tự hoàn thành) — người
+// bấm là bên GỬI, tức tự chấm mình. Ẩn nút là chưa đủ: gọi thẳng API vẫn ghi được điểm vô nghĩa.
+{
+  // `source_type=TRANSFER` là đúng tham số của danh sách lệnh chuyển kho (khớp useTransferOrders).
+  // KHÔNG lọc ngày: lệnh SELF có thể cũ hơn cửa sổ mặc định — lọc ngày làm phép kiểm im lặng bỏ qua.
+  const r = await api('/tms/orders?source_type=TRANSFER')
+  const orders = rowsOf(r.j) ?? []
+  const self = orders.find(o => o.delivery_mode === 'SELF' && o.transfer_gdo_id)
+  if (!self) {
+    // Im lặng KHÔNG phải là đạt: nói rõ đã đọc bao nhiêu lệnh mà vẫn không thấy ca cần kiểm
+    console.log(`  ⊘ chấm sao chuyến SELF: đọc ${orders.length} lệnh chuyển kho, không có lệnh SELF nào — bỏ qua`)
+  } else {
+    const p = await api(`/tms/orders/${self.id}/receipt-rating`, 'POST', { stars: 5 })
+    chk(p.s === 422, 'chấm sao chuyến kho nhận KHÔNG tích nhận bị chặn', `HTTP ${p.s} (mong 422)`)
+    const g = await api(`/tms/orders/${self.id}/receipt-rating`)
+    chk(g.s === 200 && g.j?.data?.ratable === false && g.j?.data?.can_rate === false,
+      'GET trả ratable=false + can_rate=false cho chuyến SELF',
+      `HTTP ${g.s} · ratable=${g.j?.data?.ratable} · can_rate=${g.j?.data?.can_rate}`)
+    // Chuyến CÓ tích nhận: `can_rate` phải BẬT với tài khoản không giới hạn kho — nếu cờ luôn false
+    // thì nút chấm biến mất khỏi mọi màn mà không ai biết vì sao (im lặng lại trông như bình thường)
+    const scan = orders.find(o => o.delivery_mode !== 'SELF' && o.transfer_gdo_id)
+    if (scan) {
+      const g2 = await api(`/tms/orders/${scan.id}/receipt-rating`)
+      chk(g2.s === 200 && g2.j?.data?.can_rate === true, 'GET can_rate=true cho chuyến kho nhận CÓ tích nhận',
+        `HTTP ${g2.s} · can_rate=${g2.j?.data?.can_rate}`)
+    } else {
+      console.log(`  ⊘ can_rate=true: đọc ${orders.length} lệnh, không có lệnh chuyển kho nào CÓ tích nhận — bỏ qua`)
+    }
+  }
+}
+
+for (const [path, want] of VOUCHER_FUZZ) {
+  const r = await api(path)
+  chk(r.s === want, `fuzz phiếu ${path.replace('/wms/warehouse-costs', '').slice(0, 64)}`, `HTTP ${r.s} (mong ${want})`)
 }
 
 // ── 3) Danh sách id DÀI (300+) — không đứt kết nối, không 500 (chunk .in() phía BE) ──
@@ -179,7 +316,10 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
   } else {
     const seen = new Map(), order = []
     let pages = 0, dup = 0, httpBad = 0
-    for (let page = 1; page <= 40; page++) {
+    // Cap trang ĐỘNG theo total (staging dữ liệu lớn: Ba Vì 1.832 lệnh/60 ngày cần ~184 trang —
+    // cap cứng 40 làm check "mất đơn" đỏ oan dù không trùng/không mất, chỉ chưa đọc hết)
+    const maxPages = Math.min(220, Math.ceil(target.total / 10) + 5)
+    for (let page = 1; page <= maxPages; page++) {
       const r = await api(`/tms/orders?date_from=${from}&date_to=${today}&warehouse_id=${target.w.id}&page=${page}&page_size=10`)
       if (r.s !== 200) { httpBad++; break }
       const rows = r.j?.data?.rows ?? []
@@ -219,7 +359,131 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
   }
 }
 
-console.log(`\n[PARAMS-FUZZ] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}`)
-if (fail) console.log('  Hỏng: ' + bad.join(' | '))
-// KHÔNG process.exit() cưỡng bức sau fetch HTTPS (libuv assert trên Windows) — đặt exitCode, thoát tự nhiên.
-process.exitCode = fail ? 1 : 0
+// ── 6) ID RÁC trên MỌI route có :param → 4xx sạch, KHÔNG 5xx (bug thật 21/08) ──
+// Gốc: `forklift_daily_logs.id` / `TmsOrder.id` là cột UUID; FE ghép `/${id}` khi state chưa có →
+// gửi nguyên chuỗi "undefined" → Postgres 22P02 → controller nuốt thành **500** (đúng 3 dòng
+// `invalid input syntax for type uuid: "undefined"` nằm trong error_logs). Id sai là lỗi ĐẦU VÀO.
+// Quét TỰ ĐỘNG từ file routes để route :param THÊM SAU cũng bị soi — không chép tay danh sách.
+{
+  // ĐIỂM MÙ CỦA CHÍNH LƯỚI NÀY (phát hiện 07/09): bản đầu chỉ quét `router.get` — mọi PUT/PATCH/
+  // DELETE nằm ngoài tầm, mà đó mới đúng là chỗ 500 sống dai nhất (gói QA 50 bắt 12 ca liền: sửa/
+  // xoá loại xe, ĐVVT, xe, đặt/trả/thu hồi khung giờ). Lưới giăng một phía thì nửa nhà vẫn trống.
+  const PREFIX = { wms: '/wms', masterdata: '/masterdata', tms: '/tms', hr: '/hr', external: '/external', notify: '/notify' }
+  const RD = new URL('../../backend/src/routes/', import.meta.url)
+  const found = []
+  for (const f of readdirSync(RD)) {
+    const pre = PREFIX[f.replace('.ts', '')]
+    if (!pre || !f.endsWith('.ts')) continue
+    const src = readFileSync(new URL(f, RD), 'utf8')
+    for (const m of src.matchAll(/router\.(get|put|patch|delete)\(\s*'([^']*:[A-Za-z_]+[^']*)'/g))
+      found.push(`${m[1].toUpperCase()} ${pre}${m[2]}`)
+  }
+  // POST cố tình KHÔNG quét: id rác trên POST thường là route tạo-con (`/:id/items`), gửi body rỗng
+  // vào đó đo cái khác chứ không đo id.
+  const routes = [...new Set(found)]
+  const offenders = []
+  for (const r of routes) {
+    const [verb, path] = r.split(' ')
+    for (const b of ['undefined', 'null', 'NaN', 'abc-not-uuid']) {
+      const res = await api(path.replace(/:[A-Za-z_]+/g, b), verb, verb === 'GET' ? undefined : {})
+      if (res.s >= 500) { offenders.push(`${r} (${b})`); break }
+    }
+  }
+  chk(offenders.length === 0, `id rác trên ${routes.length} route :param (GET/PUT/PATCH/DELETE) → không 5xx`,
+    offenders.length ? `${offenders.length} route: ` + offenders.slice(0, 4).join(' | ') : 'tất cả 4xx sạch')
+}
+
+// ── 7) Giá trị tham số kiểu SQL-injection → 400, KHÔNG 5xx (bug thật 21/08) ──
+// Gốc: WAF đứng trước Supabase chặn Ở TẦNG HẠ TẦNG và trả HTML → supabase-js lỗi lạ → 500 "Lỗi hệ
+// thống" ở 7 endpoint. Không phải lỗ bảo mật, nhưng đổ rác vào error_logs làm rule cảnh báo
+// "lỗi BE 24h" kêu OAN — tức tự làm hỏng tai mắt. Lưới chặn = middleware /api trong app.ts.
+{
+  const HOST = [
+    '/wms/outbound', '/wms/inbound-orders', '/wms/inventory', '/wms/alerts', '/wms/packing-runs',
+    '/masterdata/locations', '/masterdata/materials', '/hr/attendance',
+    '/tms/orders?date_from=2026-08-18&date_to=2026-08-18',
+  ]
+  const PAYLOAD = ["' or 1=1--", '1 UNION ALL SELECT 1', "x'; DROP TABLE a", 'a/*c*/b']
+  const bad5xx = [], notBlocked = []
+  for (const h of HOST) {
+    for (const p of PAYLOAD) {
+      const r = await api(`${h}${h.includes('?') ? '&' : '?'}warehouse_id=${encodeURIComponent(p)}`)
+      if (r.s >= 500) bad5xx.push(`${h} <= ${p}`)
+      else if (r.s !== 400) notBlocked.push(`${h} <= ${p} = ${r.s}`)
+    }
+  }
+  chk(bad5xx.length === 0, `giá trị tham số kiểu injection → không 5xx (${HOST.length}x${PAYLOAD.length} lượt)`,
+    bad5xx.length ? bad5xx.slice(0, 3).join(' | ') : 'sạch')
+  chk(notBlocked.length === 0, 'giá trị tham số kiểu injection → chặn bằng 400 BAD_PARAM',
+    notBlocked.length ? notBlocked.slice(0, 3).join(' | ') : `${HOST.length * PAYLOAD.length} lượt đều 400`)
+}
+
+// ── 7b) KÝ TỰ NUL + BODY SAI KIỂU → 400, KHÔNG 5xx (bug thật 18/09) ──
+// Hai ca fuzz bắt được trong đợt kiểm 18/09, cùng họ với mục 7 nhưng khác CỬA:
+//   • `?pallet_code=%00abc` → Postgres không lưu nổi   ⇒ nổ ở tầng driver ⇒ 500.
+//   • `actor_name: 12345` (SỐ) ở PATCH adjust → `.trim()` ném TypeError ⇒ 500 UNCAUGHT — đúng lớp
+//     "body sai kiểu" mà `validate` sinh ra để chặn, nhưng route CŨ chưa khai schema.
+// Lưới: ký tự điều khiển chặn ở middleware CHUNG (query + body); route adjust khai zod.
+{
+  const NUL = [
+    '/wms/inventory/pallet-ledger?pallet_code=%00abc',
+    '/wms/inventory?search=%00',
+    '/masterdata/materials?search=a%00b',
+  ]
+  const bad = [], notBlocked = []
+  for (const p of NUL) {
+    const r = await api(p)
+    if (r.s >= 500) bad.push(`${p} = ${r.s}`)
+    else if (r.s !== 400) notBlocked.push(`${p} = ${r.s}`)
+  }
+  chk(bad.length === 0, 'ký tự NUL (%00) trong tham số → không 5xx',
+    bad.length ? bad.join(' | ') : `${NUL.length} lượt sạch`)
+  chk(notBlocked.length === 0, 'ký tự NUL (%00) → chặn bằng 400 ở lưới chung',
+    notBlocked.length ? notBlocked.join(' | ') : 'đều 400')
+
+  const FAKE = '00000000-0000-0000-0000-000000000000'
+  const BODIES = [
+    ['actor_name là SỐ', { adjustment: -1, actor_name: 12345, qty_semantics: 'base' }],
+    ['adjustment là CHỮ', { adjustment: 'nhiều', qty_semantics: 'base' }],
+    ['note là object', { adjustment: -1, note: { a: 1 }, qty_semantics: 'base' }],
+  ]
+  const badBody = []
+  for (const [label, body] of BODIES) {
+    const r = await api(`/wms/inventory/${FAKE}/adjust`, 'PATCH', body)
+    if (r.s >= 500) badBody.push(`${label} = ${r.s}`)
+  }
+  chk(badBody.length === 0, 'thân yêu cầu SAI KIỂU ở PATCH adjust → không 5xx (ép kiểu tại rìa)',
+    badBody.length ? badBody.join(' | ') : `${BODIES.length} ca sạch`)
+}
+
+// ── 8) Ô TỔNG TỒN KHO: phần TÁCH ĐƠN VỊ phải cộng lại ĐÚNG BẰNG tổng (21/08) ──
+// Ô "SL (quy đổi)" gộp nhiều đơn vị vật lý (đo Bàu Bàng 132.762.662 mà 131,2 triệu là EA) nên từ
+// 21/08 tile hiện thêm dòng "gồm những gì". Nếu phần tách LỆCH tổng thì user thấy 2 con số đá nhau
+// ngay trên CÙNG một ô — tệ hơn cả lúc chưa tách. Kiểm CẢ 2 chế độ xem: chi tiết pallet dùng RPC
+// inventory_band_totals, tổng hợp dùng inventory_summary_page — 2 RPC khác nhau, sửa 1 bên là lệch.
+{
+  const WH = [null, FIX.WH_QR.id]
+  for (const wh of WH) {
+    for (const [mode, path] of [
+      ['chi tiết',  `/wms/inventory?limit=1${wh ? '&warehouse_ids=' + wh : ''}`],
+      ['tổng hợp',  `/wms/inventory/summary?limit=1${wh ? '&warehouse_ids=' + wh : ''}`],
+    ]) {
+      const r = await api(path)
+      const d = r.j?.data ?? {}
+      const tot = Number(d.total_cartons_remaining ?? 0)
+      const bu = Array.isArray(d.by_unit) ? d.by_unit : null
+      if (bu === null) { chk(false, `by_unit của ô tổng — ${mode}${wh ? ' (1 kho)' : ' (toàn scope)'}`, 'API KHÔNG trả khoá by_unit (migration 20260821g/i chưa apply?)'); continue }
+      const sum = bu.reduce((a, u) => a + Number(u.qty), 0)
+      // sai số làm tròn: numeric chia per-mã rồi cộng — nới 0,05 trên tổng cỡ trăm triệu
+      chk(Math.abs(sum - tot) <= 0.05, `by_unit của ô tổng cộng lại = tổng — ${mode}${wh ? ' (1 kho)' : ' (toàn scope)'}`,
+        `tổng ${tot.toLocaleString('vi-VN')} vs Σ ${sum.toLocaleString('vi-VN')} · ${bu.length} đơn vị`)
+    }
+  }
+}
+
+// `tally` thay cho việc tự đặt exitCode: gói này chạy trong CI SAU MỖI PUSH nên khi đỏ, TÊN phép kiểm
+// hỏng phải lên được trang lượt chạy + email (log đầy đủ đòi đăng nhập mới tải được). `retryOnFail`
+// bật vì gói đọc TRẠNG THÁI CHUNG của DB (ô tổng ⇄ Σ danh sách trên toàn scope) — một bộ kiểm khác
+// đang ghi trên cùng staging làm nó lệch vài giây; đo lại sau khi lắng thì vi phạm ẢO tự hết, vi phạm
+// THẬT vẫn hỏng ở lần hai. Đo 14–15/09: 2 lượt CI đỏ ở gói này mà chạy tay ngay sau đó 94/94 PASS.
+tally('PARAMS-FUZZ', { pass, fail, bad }, { retryOnFail: true })

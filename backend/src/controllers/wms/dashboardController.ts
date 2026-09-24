@@ -3,13 +3,17 @@ import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
+import { getDashboardCacheSeconds, getStandardWorkHours } from '../../utils/settings'
+import { maskServerMessage } from '../../utils/response'
 
 // Dashboard tổng quan tồn kho — GET hở đọc có chủ đích (auth-only như /inventory),
 // dữ liệu vẫn CẮT theo scope kho + loại hàng của user trong controller.
 
 const ok = (res: Response, data: unknown) => res.json({ success: true, data })
+// maskServerMessage: 5xx KHÔNG trả nguyên văn lỗi Postgres ra client (lộ tên bảng/cột) và ghi
+// `error_logs` kèm ROUTE — helper `fail` cục bộ trước đây đi vòng qua cả hai (xem utils/response.ts).
 const fail = (res: Response, message: string, status = 500) =>
-  res.status(status).json({ success: false, error: { code: 'DASHBOARD_ERROR', message } })
+  res.status(status).json({ success: false, error: { code: 'DASHBOARD_ERROR', message: maskServerMessage(message, status, res) } })
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
@@ -69,6 +73,18 @@ export async function getDashboard(req: Request, res: Response) {
     // MỘT lời gọi cho CẢ dashboard: stats + zones (migration 20260729, `dashboard_all`).
     // Trước đây 2 request song song (dashboard_stats + zone_capacity_rows) — trang ai cũng mở
     // đầu tiên, dưới tải mỗi request là 1 lượt xếp hàng ở pool ~10 khe của PostgREST.
+    //
+    // CACHE (21/08, user chốt 5 phút): số liệu Dashboard là TỔNG HỢP TOÀN CÔNG TY. Đo dưới tải ghi
+    // đồng thời: p50 28,3s · max 36,0s · 500 — và đã loại trừ query là nguyên nhân (ấm 64ms, thử
+    // index không nhanh hơn) ⇒ nút thắt là XẾP HÀNG pool, nên phải BỎ tổng hợp nặng khỏi mọi request.
+    // Tuổi tối đa cấu hình ở Cài đặt WMS › Hệ thống (`dashboard_cache_seconds`, 0 = tắt cache).
+    const ttl = await getDashboardCacheSeconds()
+    const { data: cached, error: cachedErr } = await supabase.rpc('dashboard_all_cached', {
+      p_warehouse_ids: whIds, p_categories: cats, p_today: today, p_ttl_seconds: ttl,
+    })
+    if (!cachedErr && cached) return ok(res, { ...(cached as object), source: 'rpc' })
+
+    // Nhánh dự phòng cửa sổ triển khai (20260821f chưa apply) — đường cũ KHÔNG cache, nguyên vẹn.
     const { data: allData, error: allErr } = await supabase.rpc('dashboard_all', {
       p_warehouse_ids: whIds, p_categories: cats, p_today: today,
     })
@@ -183,5 +199,63 @@ export async function getDashboard(req: Request, res: Response) {
     }
 
     return ok(res, { inventory, today: todayStats, zones: await zonesPromise, source: 'fallback' })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ── NĂNG SUẤT KHO theo khoảng ngày — tab "Năng suất" của Dashboard (user chốt 27/08) ──────────
+// Tách endpoint RIÊNG chứ không nhồi vào `/dashboard`: trang chủ là ẢNH CHỤP HÔM NAY dùng chung
+// một dòng cache cho mọi người, còn cụm này chạy theo KHOẢNG NGÀY người dùng tự chọn — nhét chung
+// sẽ băm nhỏ cache của trang ai cũng mở (đúng thứ đã làm p50 28,3s hồi 21/08). FE chỉ gọi khi
+// người dùng BẤM vào tab, nên ai không xem thì không trả giá gì.
+/**
+ * CẮT mọi khoá TIỀN khỏi payload khi người gọi không có `warehouse_cost.view`.
+ * Cache lưu bản ĐỦ (một dòng dùng chung cho mọi người cùng phạm vi) — chốt chặn nằm ở tầng API
+ * này, không phải ở cache. Ẩn ở FE là chưa đủ: gọi thẳng endpoint vẫn phải không thấy tiền.
+ */
+function stripCost(req: Request, payload: unknown): unknown {
+  const perms = req.user?.module_permissions as Record<string, string[]> | null | undefined
+  if (req.user?.is_superadmin === true || perms?.warehouse_cost?.includes('view')) return payload
+  const COST_KEYS = ['cost', 'cost_own', 'cost_labor', 'cost_shared', 'cost_prorated', 'warehouses_no_cost']
+  const drop = (o: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(o)) if (!COST_KEYS.includes(k)) out[k] = v
+    return out
+  }
+  const p = payload as { rows?: Record<string, unknown>[]; totals?: Record<string, unknown> } & Record<string, unknown>
+  return {
+    ...drop(p),
+    rows: (p.rows ?? []).map(drop),
+    totals: p.totals ? drop(p.totals) : p.totals,
+    cost_hidden: true,
+  }
+}
+
+export async function getProductivity(req: Request, res: Response) {
+  try {
+    const q = req.query as { warehouse_id?: string; date_from?: string; date_to?: string }
+    const scope = scopeWhIds(req)
+    const sel = String(q.warehouse_id ?? '').trim()
+    if (sel && scope && !scope.includes(sel)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
+    const whIds = sel ? [sel] : scope
+    const cats = scopeCategoriesOf(req)
+
+    const from = String(q.date_from ?? '').trim()
+    const to = String(q.date_to ?? '').trim()
+    const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s))
+    if (!isDate(from) || !isDate(to)) return fail(res, 'date_from, date_to (YYYY-MM-DD) là bắt buộc', 400)
+    if (from > to) return fail(res, 'Khoảng ngày không hợp lệ: "Từ ngày" lớn hơn "Đến ngày"', 400)
+    // Trần 400 ngày: quét trọn 12 tháng đã ~1,65s trên dữ liệu lớn — chặn KÈM HƯỚNG DẪN còn hơn
+    // để người dùng ngồi chờ rồi timeout mà không hiểu vì sao.
+    const days = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1
+    if (days > 400) return fail(res, `Khoảng ngày tối đa 400 ngày (đang chọn ${days} ngày) — thu hẹp lại rồi thử lại`, 400)
+
+    const [stdHours, ttl] = await Promise.all([getStandardWorkHours(), getDashboardCacheSeconds()])
+    const args = { p_warehouse_ids: whIds, p_categories: cats, p_from: from, p_to: to, p_std_hours: stdHours }
+    const { data, error } = await supabase.rpc('warehouse_productivity_cached', { ...args, p_ttl_seconds: ttl })
+    if (!error && data) return ok(res, stripCost(req, data))
+    // Nhánh dự phòng cửa sổ triển khai (bản _cached chưa apply) — bản không cache, số liệu như nhau
+    const { data: raw, error: rawErr } = await supabase.rpc('warehouse_productivity', args)
+    if (!rawErr && raw) return ok(res, stripCost(req, raw))
+    return fail(res, rawErr?.message ?? error?.message ?? 'Không lấy được số liệu năng suất')
   } catch (e) { return fail(res, String(e)) }
 }

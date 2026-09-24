@@ -3,7 +3,7 @@
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { HAS_DB, restAll, restRpc, chunk, check, finish } from './lib.mjs'
+import { HAS_DB, BASE, restAll, restRpc, restWrite, chunk, check, finish } from './lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -16,6 +16,16 @@ console.log('── GÓI INVARIANT (read-only) ──')
 // 1. Tồn không âm
 const neg = await restAll('InventoryEntry', 'select=id,pallet_code,cartons_remaining&cartons_remaining=lt.0')
 check('Tồn kho không âm', neg.length === 0, neg.length ? `${neg.length} dòng ÂM, vd ${neg[0].pallet_code}=${neg[0].cartons_remaining}` : '')
+
+// 1b. Trạng thái pallet KHỚP số còn — `status = EXPORTED` mà `cartons_remaining > 0` là hai cột nói
+// hai chuyện: Dashboard đếm theo số còn (9.178) còn Tồn kho/sức chứa đếm theo status (9.092) nên hai
+// màn cạnh nhau ra hai con số cho CÙNG một kho (đo 19/09: 86 pallet ở ô nhặt lẻ Ba Vì còn nguyên
+// 6.720 hộp mà mang EXPORTED — không đường ghi nào của app tạo ra, chỉ có seed/script; nhưng app
+// không có lưới nào phát hiện). Mọi RPC ghi tồn đều tự suy status từ số còn, nên ca này = có ai ghi
+// tắt. Kèm mã pallet để finish() phân biệt rác fixture.
+const ghost = await restAll('InventoryEntry', 'select=id,pallet_code,cartons_remaining&status=eq.EXPORTED&cartons_remaining=gt.0')
+check('Pallet EXPORTED không còn số (status khớp cartons_remaining)', ghost.length === 0,
+  ghost.length ? `${ghost.length} pallet — vd ${ghost.slice(0, 3).map(g => `${g.pallet_code}=${g.cartons_remaining}`).join(', ')}` : '')
 
 // 2. Không xuất quá kế hoạch (so 2 cột — client-side)
 const items = await restAll('OutboundItem', 'select=id,material_code_raw,cartons_ordered,cartons_scanned&cartons_scanned=gt.0')
@@ -45,13 +55,18 @@ const orphanLines = lines.filter(l => !foundOrd.has(l.tms_order_id))
 check('Không dòng kế hoạch nhập mồ côi', orphanLines.length === 0, orphanLines.length ? `${orphanLines.length} dòng` : `soi ${lines.length} dòng`)
 
 // 5. OutboundScanEntry không mồ côi (item đã xóa)
-const scans = await restAll('OutboundScanEntry', 'select=id,item_id')
+// `pallet_code` lấy kèm để câu lỗi NÊU ĐƯỢC MÃ — không có mã thì không phân biệt nổi rác của fixture
+// bộ kiểm (QA57_…) với rác thật, mà chính chỗ đó quyết định lượt CI đỏ hay chỉ ghi chú (xem finish()).
+const scans = await restAll('OutboundScanEntry', 'select=id,item_id,pallet_code')
 const itemIds = [...new Set(scans.map(s => s.item_id))]
 const foundItem = new Set()
 for (const c of chunk(itemIds))
   for (const i of await restAll('OutboundItem', `select=id&id=in.(${c.join(',')})`)) foundItem.add(i.id)
 const orphanScans = scans.filter(s => !foundItem.has(s.item_id))
-check('Không scan entry mồ côi', orphanScans.length === 0, orphanScans.length ? `${orphanScans.length} entry` : `soi ${scans.length} entry`)
+check('Không scan entry mồ côi', orphanScans.length === 0,
+  orphanScans.length
+    ? `${orphanScans.length} entry — vd ${orphanScans.slice(0, 3).map(s => s.pallet_code).join(', ')}`
+    : `soi ${scans.length} entry`)
 
 // 5b. OutboundDelivery không mồ côi (chuyến đã xóa) — probe 02/08 C5b: 2 lượt replan/upload chạy
 // song song trên cùng Số xe (chuyến PENDING = xóa-tạo-lại) sinh DO trỏ chuyến vừa bị xóa. Rác này
@@ -170,14 +185,14 @@ for (const [table, label] of [
   const body = src.slice(src.indexOf('TABLE_QUERY_MAP'))
   const declared = [...body.matchAll(/^ {2}([A-Za-z_][A-Za-z0-9_]*):\s*\[/gm)].map(m => m[1])
   const ready = await restRpc('realtime_readiness')
-  const broken = declared.filter(t => {
-    const r = ready?.[t]
-    return !r || !r.in_pub || (r.rls && Number(r.sel_pol) === 0)
-  })
-  check('Bảng khai realtime trong code đều NHẬN được sự kiện (publication + policy đọc)',
+  // (02/09) Realtime = Broadcast từ trigger `trg_wms_notify` (migration 20260902b). Policy SELECT cho
+  // authenticated KHÔNG còn là điều kiện nhận sự kiện — ngược lại, còn policy đó là LỖ HỔNG (mục 10b).
+  const rpcOld = ready && Object.values(ready).length && !('has_trigger' in Object.values(ready)[0])
+  const broken = declared.filter(t => !ready?.[t]?.has_trigger)
+  check('Bảng khai realtime trong code đều có trigger phát tín hiệu (trg_wms_notify)',
     broken.length === 0,
     broken.length
-      ? `${broken.length} bảng câm: ${broken.slice(0, 4).map(t => `${t}(${!ready?.[t]?.in_pub ? 'ngoài publication' : 'thiếu policy đọc'})`).join(', ')}`
+      ? `${broken.length} bảng câm: ${broken.slice(0, 4).join(', ')}${rpcOld ? ' (RPC realtime_readiness chưa cập nhật — migration 20260902b)' : ''}`
       : `soi ${declared.length} bảng`)
 
   // MỌI bảng public phải BẬT RLS (cảnh báo Supabase 03/08: StocktakeLog + 10 bảng backup hở —
@@ -189,6 +204,39 @@ for (const [table, label] of [
     Array.isArray(rlsGaps)
       ? (rlsGaps.length ? `HỞ: ${rlsGaps.slice(0, 5).join(', ')}${rlsGaps.length > 5 ? '…' : ''}` : 'soi toàn schema public')
       : 'RPC rls_gap_tables chưa apply (migration 20260805c)')
+}
+
+// 10b. CỬA ĐỌC PostgREST PHẢI ĐÓNG với anon/authenticated/PUBLIC (chốt 02/09).
+//      Kiểm định trước chào bán: 64 policy `USING(true)` nuôi realtime cũ đã biến vé realtime (JWT
+//      role=authenticated, nằm trong localStorage của MỌI tài khoản) thành chìa khoá đọc trọn 58/73 bảng
+//      qua PostgREST — vòng qua requirePerm + cắt scope kho. Nay realtime đi Broadcast nên hai vai này
+//      KHÔNG ĐƯỢC có bất kỳ quyền bảng / policy / default ACL nào trong public. RPC rest_exposure()
+//      (migration 20260902b) trả 3 mảng; pha 2 (20260902c) đưa cả 3 về rỗng — và phải RỖNG MÃI.
+{
+  let exp = null
+  try { exp = await restRpc('rest_exposure') } catch { /* chưa apply migration → báo dưới */ }
+  const privs = exp?.table_privs, pols = exp?.policies, dacl = exp?.default_acl
+  const ok = Array.isArray(privs) && Array.isArray(pols) && Array.isArray(dacl)
+    && privs.length === 0 && pols.length === 0 && dacl.length === 0
+  check('Cửa đọc PostgREST đóng với anon/authenticated (0 quyền bảng · 0 policy · 0 default ACL)',
+    ok,
+    !exp ? 'RPC rest_exposure chưa apply (migration 20260902b)'
+      : ok ? 'soi relacl + pg_policies + pg_default_acl của schema public'
+      : `quyền bảng ${privs.length} (vd ${privs.slice(0, 3).join(', ')}) · policy ${pols.length} (vd ${pols.slice(0, 3).join(', ')}) · default ACL ${dacl.length}`)
+
+  // 10c. HAI CỬA CÒN LẠI (20260902d — kiểm định độc lập sau pha 2): (a) publication `supabase_realtime`
+  //      phải RỖNG — còn bảng là anon subscribe postgres_changes vẫn nhận "bảng X vừa đổi" (payload rỗng
+  //      nhưng vẫn là tín hiệu, và Realtime decode WAL vô ích); (b) 0 hàm public (ngoài hàm extension)
+  //      gọi được bằng anon/authenticated — SECURITY INVOKER hôm nay chết ở SELECT, nhưng SECURITY DEFINER
+  //      tạo sau sẽ hở ngay vì Postgres mặc định cấp EXECUTE cho PUBLIC; (c) default EXECUTE toàn cục cho
+  //      PUBLIC phải TẮT để hàm mới không tự mở lại.
+  const pub = exp?.pub_tables, fx = exp?.func_execs, fdef = exp?.func_default_public_exec
+  const ok2 = Array.isArray(pub) && Array.isArray(fx) && pub.length === 0 && fx.length === 0 && fdef === false
+  check('Publication supabase_realtime RỖNG · 0 hàm public gọi được bằng anon/authenticated · hàm mới tự đóng',
+    ok2,
+    !exp || pub === undefined ? 'RPC rest_exposure chưa có pub_tables/func_execs (migration 20260902d)'
+      : ok2 ? 'soi pg_publication_tables + has_function_privilege + pg_default_acl(f)'
+      : `bảng trong publication ${pub?.length ?? '?'} · hàm gọi được ${fx?.length ?? '?'} (vd ${(fx ?? []).slice(0, 3).join(', ')}) · default EXECUTE cho PUBLIC=${fdef}`)
 }
 
 // 11. ĐỔI TÊN LOẠI KHO PHẢI PHỦ ĐỦ MỌI CỘT (chốt 15/08).
@@ -207,4 +255,198 @@ for (const [table, label] of [
       : 'RPC warehouse_type_column_coverage chưa apply (migration 20260815b)')
 }
 
-finish('INVARIANT')
+// 11a. KHÔNG HÀM NÀO ĐƯỢC CÓ HAI BẢN (chốt 12/09 — lớp lỗi đã cắn HAI lần).
+//      `CREATE OR REPLACE FUNCTION` chỉ thay bản TRÙNG chữ ký; thêm/bớt một tham số là ĐẺ hàm mới
+//      chứ không thay. Mà PostgREST phân giải theo TẬP TÊN THAM SỐ trong body, không theo thứ tự ⇒
+//      một lời gọi quên tham số mới là rơi trúng bản CŨ: không lỗi, không cảnh báo, màn hình lặng lẽ
+//      quay về hành vi phiên bản trước. Đã dính `outbound_date_rule_lines` (11/09 — màn Quy định date
+//      mất bộ lọc) và `hr_employees_page` (12/09 — lọc chức danh so theo TÊN, đổi tên là hỏng câm).
+//      Thêm tham số có DEFAULT KHÔNG cứu: bản cũ vẫn khớp khi lời gọi không nhắc tên tham số mới.
+{
+  const dup = await restRpc('function_overloads')
+  check('Không hàm public nào có HAI bản (đổi chữ ký RPC phải DROP bản cũ)',
+    Array.isArray(dup) && dup.length === 0,
+    Array.isArray(dup)
+      ? (dup.length ? `SÓT: ${dup.map(d => `${d.fn}(${d.n} bản)`).join(', ')}` : 'quét toàn schema public')
+      : 'RPC function_overloads chưa apply (migration 20260912b)')
+}
+
+// 11b. MỌI KHO PHẢI CÓ MỌI LOẠI KHO (user chốt 21/08: loại kho là DANH MỤC CHUNG — tạo một lần thì
+//      tất cả kho đều có; mỗi kho chỉ khác nhau ở SETTING). Thiếu cặp (kho, loại) = kho đó không có
+//      dòng cấu hình ⇒ setting riêng không khai được và (Đợt 2) form ghi sẽ chặn oan đúng loại đó.
+//      Lệch phát sinh khi có đường tạo kho / tạo loại MỚI quên seed, hoặc ai đó INSERT thẳng DB.
+//      ⚠️ CHỈ ĐẾM KHO NGHIỆP VỤ — kho fixture của bộ kiểm (mã `QA*`) bị loại ra. Vì sao: mọi gói QA
+//      tạo kho bằng cách ghi THẲNG PostgREST (`restWrite('Warehouse','POST')`), tức cố ý đi vòng qua
+//      `warehouseController.createWarehouse` — nơi seed cấu hình loại. Kho đó thiếu dòng cấu hình là
+//      ĐƯƠNG NHIÊN, không phản ánh bug nào của app; đếm nó vào đây thì suốt lúc gói 57 chạy (2 kho
+//      QA57_W + QA57_Q) phép kiểm ra 765/775 và mỗi push là một lượt CI đỏ + một email (đo 13–14/09:
+//      5 lượt liên tiếp). Lưới cho ĐƯỜNG THẬT (tạo kho qua API phải seed đủ loại) nằm ở gói 49 [46b].
+{
+  const whs = await restAll('Warehouse', 'select=id,code')
+  const real = whs.filter(w => !/^QA/i.test(String(w.code ?? '')))
+  const realIds = new Set(real.map(w => w.id))
+  const types = await restAll('LookupValue', 'select=value&type=eq.warehouse_type')
+  const cfgs = (await restAll('warehouse_type_configs', 'select=warehouse_id,type_code'))
+    .filter(c => realIds.has(c.warehouse_id))
+  const expect = real.length * types.length
+  const skipped = whs.length - real.length
+  check('Mọi kho đều có đủ mọi Loại kho (danh mục chung, không kho nào bị thiếu dòng cấu hình)',
+    cfgs.length === expect,
+    `${cfgs.length}/${expect} cặp (${real.length} kho × ${types.length} loại)${skipped ? ` · bỏ qua ${skipped} kho fixture QA*` : ''}`)
+}
+
+// 12. RPC scan_insert_pallet PHẢI GHI ĐỦ MỌI KHOÁ mà backend gửi (chốt 15/08).
+//     BUG THẬT: RPC insert bằng DANH SÁCH CỘT GHI TAY, nên khoá mới thêm vào `entryObj` (3 cột vết
+//     quy tắc cất hàng) bị RƠI ÂM THẦM — API trả 200, tsc xanh, build xanh, "quét thành công" cũng
+//     xanh, chỉ có dữ liệu là không tới nơi. Đúng lớp lỗi vô hình: không exception, không cảnh báo.
+//     Ở đây đối chiếu SỐNG khoá của `entryObj` trong source với danh sách cột của RPC trong DB.
+{
+  const src = readFileSync(join(ROOT, 'backend/src/controllers/wms/inboundController.ts'), 'utf8')
+  // `const entryObj = { … }` — cắt tới dòng `}` cùng mức thụt đầu dòng
+  const body = src.split(/const entryObj\s*=\s*\{/)[1]?.split(/\n    \}/)[0] ?? ''
+  const keys = [...body.matchAll(/^\s{6}([a-z_]+):/gm)].map(m => m[1])
+  const spreadsTrace = /\.\.\.put\.trace/.test(body)
+  const def = await restRpc('rpc_source', { p_name: 'scan_insert_pallet' })
+  const cols = typeof def === 'string'
+    ? (def.split(/INSERT INTO "InventoryEntry"\s*\(/)[1] ?? '').split(')')[0]
+    : ''
+  const traceCols = ['putaway_checked', 'putaway_violation', 'putaway_override_reason']
+  const missing = cols
+    ? [...keys, ...(spreadsTrace ? traceCols : [])].filter(k => !new RegExp(`\\b${k}\\b`).test(cols))
+    : null
+  check('RPC scan_insert_pallet ghi ĐỦ mọi khoá backend gửi (không cột nào rơi âm thầm)',
+    Array.isArray(missing) && missing.length === 0,
+    Array.isArray(missing)
+      ? (missing.length ? `RƠI: ${missing.join(', ')} — thêm vào INSERT của RPC` : `${keys.length + (spreadsTrace ? traceCols.length : 0)} khoá khớp`)
+      : 'RPC rpc_source chưa apply (migration 20260815f)')
+}
+
+// 13. HÀM SECURITY DEFINER KHÔNG ĐƯỢC MỞ CHO ANON (chốt 15/08).
+//     Đo thật bằng chính anon key (khoá này nằm CÔNG KHAI trong bundle FE): `packing_logs_recon`
+//     trả HTTP 200 kèm dữ liệu nghiệp vụ THẬT (id pallet, id trang sổ, id NGƯỜI đóng gói);
+//     `packing_open_run` trả lỗi NGHIỆP VỤ — tức đã chạy qua tầng quyền, payload đủ là anon TẠO
+//     ĐƯỢC trang sổ. Gốc: Postgres mặc định cấp EXECUTE cho PUBLIC, và SECURITY DEFINER chạy bằng
+//     quyền chủ sở hữu nên RLS — lá chắn của cả app — KHÔNG chặn được gì.
+{
+  const rows = await restRpc('secdef_public_grants')
+  check('Không hàm SECURITY DEFINER nào còn mở cho PUBLIC/anon (RLS không che được lớp này)',
+    Array.isArray(rows) && rows.length === 0,
+    Array.isArray(rows)
+      ? (rows.length ? `HỞ: ${rows.slice(0, 5).map(r => `${r.fn}→${r.grantee}`).join(', ')}` : 'quét toàn schema public')
+      : 'RPC secdef_public_grants chưa apply (migration 20260815j)')
+}
+
+// 14. KHÔNG HÀM NÀO ĐƯỢC SO `warehouse_id` (text) VỚI UUID (chốt 21/08).
+//     Gốc: `Warehouse.id` là text và 21 bảng trỏ FK vào nó, nhưng `InventoryEntry.warehouse_id` +
+//     `PalletOperation.warehouse_id` từng khai **uuid** (migration 20260821h dọn). Lớp lỗi này
+//     KHÔNG nổ lúc biên dịch — chỉ 42883 `operator does not exist: text = uuid` LÚC CHẠY, và chính
+//     nó vừa làm đỏ `GET /wms/inventory/facets` + gói RACE khi dọn kiểu: quét tay bằng grep chỉ tìm
+//     token `::uuid` cùng dòng nên BỎ SÓT hàm khai THAM SỐ kiểu uuid (`p_wh uuid`).
+//     Nay máy soi 2 chiều: dòng có cả warehouse_id lẫn uuid, VÀ tham số tên kho khai uuid.
+{
+  const rows = await restRpc('warehouse_id_uuid_mismatch')
+  check('Không hàm nào so warehouse_id (text) với uuid — lỗi này chỉ nổ LÚC CHẠY',
+    Array.isArray(rows) && rows.length === 0,
+    Array.isArray(rows)
+      ? (rows.length ? `LỆCH: ${rows.slice(0, 5).map(r => `${r.fn} (${r.why})`).join(' · ')}` : 'quét toàn schema public')
+      : 'RPC warehouse_id_uuid_mismatch chưa apply (migration 20260821j)')
+}
+
+// 15. CHI PHÍ CHUNG KHÔNG ĐƯỢC CHẢY VÀO Ô TỔNG KHI ĐANG LỌC 1 KHO (chốt 27/08).
+//     Gốc: check-app dựng vai kế toán chỉ được gán Kho Ba Vì thì trang Chi phí kho hiện
+//     1.063.200.000 (sổ CẮT dòng chi phí chung) còn tab Năng suất hiện 1.304.200.000 (cộng TRỌN
+//     241 triệu chi phí chung toàn công ty) — hai màn hình cùng một kỳ lệch nhau, và người chỉ
+//     quản 1 kho đọc được số cấp CÔNG TY. Bất biến: `warehouse_productivity` lọc theo kho phải
+//     trả ĐÚNG tổng tiền RIÊNG của kho đó (migration 20260827d).
+{
+  const costs = await restAll('warehouse_costs', 'select=warehouse_id,period,amount')
+  if (!costs.length) {
+    check('Chi phí CHUNG không lọt vào tổng khi lọc 1 kho', true, 'chưa có dòng chi phí nào để soi')
+  } else {
+    const byWh = new Map()
+    for (const r of costs) {
+      const p = String(r.period).slice(0, 7)
+      const k = `${r.warehouse_id ?? '*'}|${p}`
+      byWh.set(k, (byWh.get(k) ?? 0) + Number(r.amount))
+    }
+    const target = [...byWh.entries()].filter(([k]) => !k.startsWith('*|'))[0]
+    const [wid, period] = target[0].split('|')
+    const own = target[1]
+    const lastDay = new Date(Date.UTC(+period.slice(0, 4), +period.slice(5, 7), 0)).toISOString().slice(0, 10)
+    const j = await restRpc('warehouse_productivity', {
+      p_warehouse_ids: [wid], p_categories: null, p_from: `${period}-01`, p_to: lastDay, p_std_hours: 8,
+    })
+    const got = Number(j?.totals?.cost ?? -1)
+    check('Chi phí CHUNG không lọt vào tổng khi lọc 1 kho',
+      Math.abs(got - own) < 1 && Number(j?.cost_shared ?? -1) === 0,
+      `kỳ ${period}: RPC ${got.toLocaleString('vi-VN')} vs tiền riêng của kho ${own.toLocaleString('vi-VN')} · cost_shared=${j?.cost_shared}`)
+  }
+}
+
+// 16. CẢNH BÁO "LỖI HỆ THỐNG" KHÔNG ĐƯỢC ĐẾM 503 (chốt 06/09).
+//     Gốc: 29/08 đổi 500 → 503 cho tình huống ĐÃ LƯỜNG TRƯỚC (quá tải / chưa apply migration) với
+//     hai mục đích: người dùng đọc được câu làm-được-gì-đó, và cảnh báo thôi kêu oan. Cả hai đều
+//     KHÔNG đạt vì `fail`/`maskServerMessage` che MỌI status ≥ 500 và digest đếm MỌI dòng source=be
+//     — đo 06/09: 43 dòng 503 nằm trong error_logs (Giám sát vận hành 20 · Slotting 18 · Vị trí 5),
+//     mỗi dòng đủ dựng cờ đỏ + email cho một tình huống không ai phải sửa gì.
+//     Phép kiểm ĐẶT DÒNG THẬT vào error_logs rồi đọc digest: 503 không được làm tăng be_24h,
+//     nhưng 500 thì PHẢI tăng (nếu không thì bộ đếm hỏng chứ không phải đã lọc đúng).
+{
+  const digest = async () => {
+    const r = await fetch(`${BASE}/api/telemetry/digest`)
+    return (await r.json())?.be_24h ?? null
+  }
+  const before = await digest()
+  const tag = `QA-SUITE soft5xx ${Date.now()}`
+  let soft = null, hard = null
+  try {
+    ;[soft] = await restWrite('error_logs', 'POST', null,
+      { source: 'be', status: 503, code: 'QUERY_TIMEOUT', message: tag, url: 'QA-SUITE/soft' })
+    const afterSoft = await digest()
+    ;[hard] = await restWrite('error_logs', 'POST', null,
+      { source: 'be', status: 500, code: 'DB_ERROR', message: tag, url: 'QA-SUITE/hard' })
+    const afterHard = await digest()
+    check('Cảnh báo "lỗi hệ thống 24h" BỎ QUA 503 (quá tải) nhưng vẫn đếm 500',
+      before != null && afterSoft === before && afterHard === before + 1,
+      `be_24h: ${before} → +503: ${afterSoft} → +500: ${afterHard}`)
+  } finally {
+    for (const row of [soft, hard]) if (row?.id) await restWrite('error_logs', 'DELETE', `id=eq.${row.id}`).catch(() => {})
+  }
+}
+
+// retryOnFail: gói này đọc bất biến của TOÀN BỘ kho dữ liệu (mồ côi / bộ đếm / tồn), nên một bộ kiểm
+// khác đang chạy dở trên cùng DB staging làm nó thấy trạng thái lệch trong vài giây. Đo lại sau khi lắng
+// để phân loại ẢO/THẬT thay vì báo đỏ oan — xem finish() trong lib.mjs.
+// 17. VIỆC LẤY HÀNG KHÔNG ĐƯỢC TRỎ VÀO CHUYẾN ĐÃ ĐÓNG, KHÔNG ĐƯỢC VƯỢT NHU CẦU (chốt 10/09).
+//     Hai cách hỏng ÂM THẦM của bảng việc (Directed Work 1c): (a) chuyến đã Hoàn thành/Huỷ/bỏ Bắt
+//     đầu mà việc còn treo ⇒ xe nâng vẫn được chỉ đi lấy hàng cho một chuyến không còn tồn tại —
+//     không màn nào báo lỗi, chỉ có người đi vô ích; (b) Σ số lượng việc treo của một dòng vượt
+//     phần còn phải lấy ⇒ giữ chỗ pallet oan, chuyến khác thiếu hàng mà tồn vẫn còn.
+{
+  const tasks = await restAll('wms_tasks', 'select=id,gdo_id,item_id,qty_base&status=eq.PENDING')
+  const gdoIds = [...new Set(tasks.map(t => t.gdo_id))]
+  const aliveGdo = new Map()
+  for (const c of chunk(gdoIds))
+    for (const g of await restAll('GroupDeliveryOrder', `select=id,status,started_at&id=in.(${c.join(',')})`))
+      aliveGdo.set(g.id, g)
+  const orphanTasks = tasks.filter(t => {
+    const g = aliveGdo.get(t.gdo_id)
+    return !g || !g.started_at || !['IN_PROGRESS', 'PAUSED'].includes(g.status)
+  })
+  check('Không việc lấy hàng nào treo trên chuyến đã đóng / chưa Bắt đầu', orphanTasks.length === 0,
+    orphanTasks.length ? `${orphanTasks.length} việc, vd chuyến ${orphanTasks[0].gdo_id}` : `soi ${tasks.length} việc treo`)
+
+  const byItem = new Map()
+  for (const t of tasks) byItem.set(t.item_id, (byItem.get(t.item_id) ?? 0) + Number(t.qty_base))
+  const itemIds = [...byItem.keys()]
+  const over = []
+  for (const c of chunk(itemIds))
+    for (const i of await restAll('OutboundItem', `select=id,cartons_ordered,cartons_scanned&id=in.(${c.join(',')})`)) {
+      const left = Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0)
+      if ((byItem.get(i.id) ?? 0) > left) over.push(`${i.id}: việc ${byItem.get(i.id)} > còn lại ${left}`)
+    }
+  check('Σ số lượng việc treo của mỗi dòng hàng ≤ phần còn phải lấy', over.length === 0,
+    over.length ? over.slice(0, 3).join(' · ') : `soi ${itemIds.length} dòng có việc`)
+}
+
+finish('INVARIANT', { retryOnFail: true })

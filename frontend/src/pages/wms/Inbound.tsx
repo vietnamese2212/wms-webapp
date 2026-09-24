@@ -1,12 +1,14 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { useAuthStore }        from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore }  from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
@@ -21,7 +23,7 @@ import {
   useInboundOrders, useCreateInboundOrder,
   useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
   useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
-  useEmployeeRecords, useWarehouseZones,
+  useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
@@ -40,6 +42,10 @@ import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { PutawayOption } from '@/components/wms/PutawayOption'
+import { LocationContents } from '@/components/wms/LocationContents'
+import type { PutawayHint } from '@/utils/putaway'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
@@ -59,6 +65,7 @@ interface LocationWithCapacity {
   max_pallets: number
   used_slots: number
   has_same_material?: boolean
+  putaway?: PutawayHint | null
 }
 
 const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
@@ -198,6 +205,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
   const dialogAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
+  // Bối cảnh toàn cục ở Header → mặc định Kho/Loại kho khi tạo phiếu mới
+  const gWh = useGlobalScopeStore(s => s.warehouseId)
+  const gWt = useGlobalScopeStore(s => s.whType)
+  const gWhOk = gWh && (!dialogAllowedWhIds || dialogAllowedWhIds.has(gWh)) ? gWh : ''
 
   const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC'>('FACTORY')
   const [nccId,        setNccId]        = useState('')       // NCC chọn (bắt buộc khi Nhập NCC)
@@ -248,8 +259,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         })))
       } else {
         setSourceType('FACTORY')
-        setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-        setSubType(''); setMaterialId('')
+        setWarehouseId(gWhOk || (user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? ''))
+        setSubType(gWt); setMaterialId('')
         setLocationId(''); setShiftId('')
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')
@@ -348,12 +359,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   )
 
   // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho — Bàu Bàng 1.517 vị trí
-  // = 616KB + hàng chục round-trip. BE đã ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng trả về,
-  // nên gợi ý gom pallet KHÔNG mất khi cắt danh sách.
+  // = 616KB + hàng chục round-trip. BE ưu tiên nhóm ★ "đang để dở cùng mã" vào các dòng trả về.
+  // `category` phải đi TRÊN SERVER (user báo 17/08 "chỉ hiện vài vị trí, gõ tay mới ra ô khác"):
+  // lọc Loại kho ở client trên 50 dòng đã cắt = mất gần hết danh sách — đúng lớp lỗi "lọc trên
+  // list cắt cụt". Limit 300: kho cỡ thường thấy TRỌN danh sách (Ba Vì 236 ô), ★ trên đầu, ô bị
+  // chặn xuống cuối (BE sort theo điểm) — kho nghìn ô vẫn cắt + tìm server.
   const [locTerm, setLocTerm] = useState('')
   const locTermDeb = useDebouncedValue(locTerm, 250)
+  // ncc_id đi kèm để BE chấm được luật "không trộn NCC" (kho nào bật) — không có thì luật im lặng.
   const { data: locations = [] } = useLocationsReal(warehouseId
-    ? { warehouse_id: warehouseId, material_id: materialId || undefined, search: locTermDeb || undefined, limit: 50 }
+    ? { warehouse_id: warehouseId, category: subType || undefined,
+        material_id: materialId || undefined, ncc_id: nccId || undefined,
+        search: locTermDeb || undefined, limit: 300 }
     : undefined)
   const { data: locPicked = [] } = useLocationsByIds([locationId])
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
@@ -362,18 +379,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: allWhTypes = [] } = useScopedWhTypes()
   const loaiKhoOpts = allWhTypes.map(t => t.value)
   const selectedZone = zones.find(z => z.name === subType)
-  // Khuyến nghị vị trí (sau khi chọn Mã hàng): CHỈ vị trí còn chỗ + đang để dở đúng loại
-  // hàng (gom pallet) → đánh dấu ★ + đẩy lên đầu. Còn trống / loại khác giữ thứ tự bình thường.
-  const isRecommended = (l: LocationWithCapacity) =>
-    materialId !== '' && !!l.has_same_material && !(l.max_pallets > 0 && l.used_slots >= l.max_pallets)
-  const filteredLocs = useMemo(() => {
-    const base = subType
-      ? allLocs.filter(l => (l.categories ?? []).includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
-      : allLocs
-    if (!materialId) return base
-    // sort ổn định: vị trí khuyến nghị lên đầu, phần còn lại giữ nguyên thứ tự gốc
-    return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
-  }, [allLocs, subType, selectedZone, materialId])
+  // ★ và thứ tự do BACKEND chấm theo quy tắc cất hàng của kho (utils/putaway.ts) — FE KHÔNG tự
+  // tính lại. Trước 15/08 chỗ này tự đánh ★ + tự sort, lệch với bản của InboundDetail và với BE.
+  // Loại kho đã lọc TRÊN SERVER (17/08) — filter dưới chỉ là lưới an toàn, thêm nhánh null
+  // (vị trí chưa gán loại = dùng chung, khớp ngữ nghĩa server) để không cắt lại dòng server đã cho.
+  const filteredLocs = useMemo(() => subType
+    ? allLocs.filter(l => !l.categories?.length || l.categories.includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
+    : allLocs,
+    [allLocs, subType, selectedZone])
 
   // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập.
   // Tìm TRÊN SERVER + 50 dòng: loại kho nhiều nghìn mã thì không dội hết về trình duyệt.
@@ -383,17 +396,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined, search: matTerm || undefined, limit: 50 }, !!subType)
   const materials    = useMemo(() => materialsRaw.filter(m => !m.is_non_stock), [materialsRaw])
 
-  // Chỉ cần id nhân sự của CHÍNH người đang đăng nhập → tìm trên server theo tên.
-  // Trước đây nạp TOÀN BỘ nhân sự đang hoạt động chỉ để dò 1 dòng: đo 28/07 = 1.230KB với
-  // 1.539 người, và ~830 B/dòng nghĩa là 5.400 người đã vượt trần 4,5MB của Vercel.
-  const { data: meEmployees = [] } = useEmployeeRecords(
-    user?.name ? { is_active: 'true', search: user.name } : undefined,
-  )
-  type EmpItem = { id: string; name: string; employee_code: string }
-  const importedByEmpId = useMemo(
-    () => (meEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
-    [meEmployees, user?.name]
-  )
+  // Người nhập mặc định = CHÍNH người đang đăng nhập. `user.id` ĐÃ LÀ id bảng Employee (authController
+  // phát token từ Employee) — bản cũ đi vòng gọi /masterdata/employees?search=<tên> để tìm lại chính
+  // mình, mà cửa đó đòi employees.view nên lái xe nâng/thủ kho nhận 403 và phiếu nhập ghi imported_by
+  // RỖNG không ai thấy (đo 21/09 bằng vai thật). Không tra gì nữa: 0 request, không dính quyền.
+  const importedByEmpId = user?.id ?? ''
 
   useEffect(() => {
     if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return
@@ -795,37 +802,43 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   </div>
                 ) : (<>
                 <Label className="text-xs">Vị trí nhập <span className="text-red-500">*</span>
-                  <span className="ml-2 text-[10px] font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
+                  <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
                 </Label>
-                <SingleSelect
-                  value={locationId}
-                  onChange={setLocationId}
-                  disabled={!subType || !materialId}
-                  searchPlaceholder="Tìm vị trí…"
-                  triggerClassName="h-8 mt-0.5"
-                  serverSearch
-                  onSearchChange={setLocTerm}
-                  selectedLabel={locationId
-                    ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
-                    : undefined}
-                  placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
-                  options={filteredLocs.map(l => {
-                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                    const isPartial = l.used_slots > 0 && !isFull
-                    const rec = isRecommended(l)
-                    return {
-                      value: l.id,
-                      label: l.location_code,
-                      node: (
-                        <span className="flex-1 truncate text-[11px]">
-                          {rec && <span className="text-amber-500 font-bold mr-1">★</span>}
-                          <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : 'text-slate-700'}>{l.location_code}</span>
-                          <span className="ml-2 text-[10px] text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-                        </span>
-                      ),
-                    }
-                  })}
-                />
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <div className="flex-1 min-w-0">
+                    <SingleSelect
+                      value={locationId}
+                      onChange={setLocationId}
+                      disabled={!subType || !materialId}
+                      searchPlaceholder="Tìm vị trí…"
+                      triggerClassName="h-8"
+                      serverSearch
+                      onSearchChange={setLocTerm}
+                      selectedLabel={locationId
+                        ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
+                        : undefined}
+                      placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
+                      options={filteredLocs.map(l => ({
+                        value: l.id,
+                        label: l.location_code,
+                        node: <PutawayOption loc={l} />,
+                      }))}
+                    />
+                  </div>
+                  {/* Quét tem ô thay vì gõ mã (mã vị trí dài: D_TP1_A81_T4). armWedge=false: form
+                      này còn nhiều ô nhập, cò súng chỉ mở khi người dùng bấm nút quét. */}
+                  <LocationScanButton
+                    warehouseId={warehouseId || null}
+                    materialId={materialId || null}
+                    nccId={nccId || null}
+                    disabled={!subType || !materialId}
+                    onPicked={loc => setLocationId(loc.id)}
+                    className="h-8 w-8 sm:h-8 sm:w-8"
+                  />
+                </div>
+                {/* Chọn xong thì thấy NGAY ô đó đang chứa gì (user 17/08) — mã đang nhập được
+                    tô xanh + ghim đầu, tức nhìn ra lý do ★ thay vì phải tin dấu sao. */}
+                <LocationContents locationId={locationId} highlightMaterialId={materialId} />
                 </>)}
               </div>
 
@@ -1310,7 +1323,7 @@ function InboundPane({ order, onClose, canScan }: { order: InboundOrder; onClose
         {canScan && order.status === 'OPEN' && !!order.location_id && (
           <button onClick={() => { unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }}
             className="w-full rounded-lg bg-blue-600 text-white px-3 py-2 text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1.5">
-            <QrCode className="h-3.5 w-3.5" /> Quét thêm pallet
+            <ScanIcon className="h-3.5 w-3.5" /> Quét thêm pallet
           </button>
         )}
       </div>
@@ -1527,7 +1540,8 @@ export default function Inbound() {
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density + Create */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08 — tên trang đã có ở nav, nhường chỗ dữ liệu) */}
+          <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
           <SearchInput value={f.search} onChange={v => setInbound({ search: v, page: 1 })} placeholder="Tìm mã phiếu, hàng hóa, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
@@ -1564,8 +1578,11 @@ export default function Inbound() {
           )}
         </div>
 
-        {/* Bối cảnh ngày (số liệu tổng đã đưa vào SummaryBand bên dưới) */}
-        <p className="text-xs text-slate-500 -mt-1">
+        {/* Bối cảnh ngày (số liệu tổng đã đưa vào SummaryBand bên dưới).
+            Mobile ẨN (hiến pháp UI mục 20 — dòng meta phụ): ở 360 px dòng này cộng với dải 7 ô tổng
+            đẩy dòng dữ liệu đầu tiên xuống y=382, quá xa mốc ~300 và người dùng chỉ còn thấy 3 phiếu
+            trên cả màn. Ngày vẫn đọc được ở cột NGÀY NHẬP của từng dòng và trong tấm Lọc. */}
+        <p className="hidden sm:block text-xs text-slate-500 -mt-1">
           {hasDate ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>
@@ -1878,7 +1895,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
               className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-1 transition-colors"
               title="Thêm pallet"
             >
-              <QrCode className="h-3.5 w-3.5" />
+              <ScanIcon className="h-3.5 w-3.5" />
             </button>
           )}
         </div>

@@ -4,9 +4,13 @@ Chạy trên **Preview (dev) + DB STAGING**. Không dependency — chỉ cần N
 **Luật: xanh toàn bộ mới được merge main.**
 
 ```bash
-node scripts/qa/run-all.mjs             # invariant → smoke → race → invariant  (~3–5')
-node scripts/qa/run-all.mjs --scale 300 # thêm gói scale seed 300 đơn + dọn    (+~3')
+node scripts/qa/run-all.mjs --tier fast   # ~5': cổng tĩnh + npm test (unit/mirror) + độ phủ + invariant + smoke + fuzz + perm — sau mỗi fix
+node scripts/qa/run-all.mjs               # = --tier full: toàn bộ 57 gói (~1h) — trước merge main; tự chạy đêm (qa-nightly.yml)
+node scripts/qa/run-all.mjs --scale 300   # thêm gói scale seed 300 đơn + dọn    (+~3')
+cd backend && npm test                    # 3 giây, không cần DB: bất biến helper thuần + mirror BE⇄FE (backend/tests)
+node scripts/qa/coverage-surface.mjs --ratchet   # route/quyền mới chưa gói nào chạm → đỏ (coverage-baseline.json)
 ```
+Sổ lớp lỗi + lưới gác từng lớp: `docs/qa/BUG_CLASSES.md` (mỗi đợt check-app gắn nhãn LẶP/MỚI).
 
 Chạy lẻ từng gói: `node scripts/qa/00-invariant.mjs` (read-only, chạy lúc nào cũng được) ·
 `01-smoke.mjs` · `02-race.mjs` · `03-scale.mjs [N]`.

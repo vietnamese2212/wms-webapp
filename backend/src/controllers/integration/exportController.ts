@@ -6,7 +6,12 @@ import { supabase } from '../../lib/supabase'
 // + ổn định khi dữ liệu triệu dòng). ERP gọi lần đầu kèm ?updated_since=<ISO>; sau đó chỉ
 // cần lặp lại theo ?cursor=<next_cursor> tới khi next_cursor = null. cursor mã hóa cả mốc
 // updated_since + id cuối → giữ bộ lọc delta xuyên suốt các trang mà ERP không phải nhớ.
-const MAX_LIMIT = 1000, DEFAULT_LIMIT = 500
+// MAX_LIMIT = 999, KHÔNG PHẢI 1000: để biết "còn trang sau" ta xin PostgREST `limit + 1` dòng, mà
+// PostgREST trần cứng 1000 dòng/response (db-max-rows). Với limit=1000 nó xin 1001 nhưng chỉ nhận
+// 1000 ⇒ `hasMore` = 1000 > 1000 = false ⇒ ERP thấy `has_more:false` và DỪNG kéo dù DB còn hàng
+// chục nghìn dòng — mất dữ liệu ÂM THẦM, đúng ở kích cỡ trang mà ERP hay chọn nhất. Đo 07/09 (gói
+// QA 53) trên staging 142k dòng tồn: limit=1000 → count=1000, has_more=false.
+const MAX_LIMIT = 999, DEFAULT_LIMIT = 500
 
 type Row = Record<string, unknown>
 

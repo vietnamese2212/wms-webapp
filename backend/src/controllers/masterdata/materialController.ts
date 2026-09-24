@@ -8,8 +8,17 @@ import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } 
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
-import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+
+// Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
+// null = màu mặc định; chuỗi lạ → 400 (DB cũng có CHECK hex, đây là lưới trước để lỗi ra tiếng Việt).
+function parsePalletColor(v: unknown): { value: string | null } | { error: string } {
+  if (v === null || v === undefined || v === '') return { value: null }
+  const t = String(v).trim()
+  if (!/^#[0-9a-fA-F]{6}$/.test(t)) return { error: 'Màu pallet phải dạng #rrggbb (vd #2563eb) — để trống = màu mặc định' }
+  return { value: t.toLowerCase() }
+}
 
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
@@ -36,6 +45,8 @@ type MatListCtx = {
   status: string[] | null
   qr: string[] | null
   dq: string[] | null
+  dims: string[] | null    // 'has_dims' | 'no_dims' — đã khai D×R×C thùng chưa
+  flags: string[] | null   // 'non_stock' | 'pallet_carrier' | 'stack_on_top'
 }
 const matCsv = (v?: string | string[]): string[] | null => {
   const a = parseListParam(v) ?? []
@@ -53,12 +64,14 @@ function getMatListCtx(req: Request): MatListCtx {
     status: matCsv(q.status),
     qr: matCsv(q.qr),
     dq: matCsv(q.dq),
+    dims: matCsv(q.dims),
+    flags: matCsv(q.flags),
   }
 }
 async function matRpcParams(c: MatListCtx) {
   return {
     p_tokens: c.tokens, p_categories: c.categories, p_scope_cats: c.scopeCats,
-    p_status: c.status, p_qr: c.qr, p_dq: c.dq,
+    p_status: c.status, p_qr: c.qr, p_dq: c.dq, p_dims: c.dims, p_flags: c.flags,
     p_cat_rules: await getMaterialCategoryRules(),
     p_legacy_no_sl: LEGACY_NO_SHELF_LIFE, p_legacy_pe: LEGACY_PALLET_PER_EA,
   }
@@ -101,7 +114,7 @@ export async function listMaterialsSummary(req: Request, res: Response) {
 
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids } = req.query
+    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids, pallet_carrier } = req.query
     // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
@@ -133,7 +146,11 @@ export async function listMaterials(req: Request, res: Response) {
       if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
       if (storage_category) query = query.eq('storage_category', String(storage_category))
       if (category) query = query.eq('category', String(category))
-      if (scopeCats) query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+      // pallet_carrier=1: danh mục MÃ PALLET (vài dòng) cho sơ đồ xếp xe 3D lấy quy cách + màu vẽ.
+      // KHÔNG cắt scope loại hàng cho nhánh này: quy cách pallet là tham số VẼ dùng chung — user
+      // chỉ có scope Thành phẩm vẫn phải thấy pallet (mã pallet thường thuộc loại Thùng/bao bì).
+      if (pallet_carrier === '1') query = query.eq('is_pallet_carrier', true)
+      if (scopeCats && pallet_carrier !== '1') query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
       // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
       if (codeList) query = query.in('material_code', codeList)
@@ -168,6 +185,45 @@ export async function getMaterial(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+/**
+ * HAI LÁ CHẮN CỦA CỬA UPLOAD, NAY DÙNG CHUNG CHO CẢ FORM (chốt 07/09).
+ *
+ * Cửa upload đã chặn loại hàng lạ từ 26/07 (`whTypeSet` trong `uploadExcel`), nhưng form Thêm/Sửa
+ * mã hàng thì không — gửi `category:"QA49-LOAI-MA"` là ghi thẳng vào DB (đo 07/09, gói QA 49 phép
+ * [16][24]). Loại mồ côi không nằm trong danh mục nên mọi bộ lọc/phân quyền theo Loại kho đều
+ * không thấy mã đó: mã tồn tại mà biến mất khỏi màn hình của mọi người.
+ * Cùng đợt: quy cách nhận SỐ ÂM (`cartons_per_pallet:-5`) — sức chứa âm thì phép đếm chỗ trống
+ * của vị trí kho tính ra số vô nghĩa.
+ * `categoryAllowed` (phạm vi của NGƯỜI DÙNG) và hàm này (giá trị CÓ THẬT trong danh mục) là hai
+ * câu hỏi khác nhau — phải hỏi cả hai.
+ */
+async function unknownCategoryError(category: unknown): Promise<string | null> {
+  const c = category == null ? '' : String(category).trim()
+  if (!c) return null
+  const { data } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+  const known = ((data ?? []) as { value: string }[]).map(r => String(r.value))
+  if (known.includes(c)) return null
+  return `Loại hàng "${c}" không có trong danh mục Loại kho (${known.join(', ') || 'danh mục đang trống'})`
+    + ' — khai ở Cài đặt WMS › Loại kho trước, đừng gõ tự do.'
+}
+
+// Trường quy cách nhận số ÂM ở cả form lẫn API; tên field giữ nguyên như body để câu lỗi chỉ đúng ô.
+const NON_NEGATIVE_FIELDS: Record<string, string> = {
+  weight_kg: 'Khối lượng', cartons_per_pallet: 'Thùng/Pallet', cartons_per_pallet_mn: 'Thùng/Pallet (MN)',
+  units_per_carton: 'Hộp/Thùng', pallet_per_ea: 'Pallet/EA', shelf_life_days: 'Hạn dùng (ngày)',
+  carton_length_mm: 'Dài thùng', carton_width_mm: 'Rộng thùng', carton_height_mm: 'Cao thùng',
+  max_stack_layers: 'Số lớp chồng tối đa',
+}
+function negativeNumberError(body: Record<string, unknown>): string | null {
+  for (const [key, label] of Object.entries(NON_NEGATIVE_FIELDS)) {
+    const raw = body[key]
+    if (raw === undefined || raw === null || raw === '') continue
+    const n = Number(raw)
+    if (Number.isFinite(n) && n < 0) return `${label} không được là số âm (đang nhận ${raw})`
+  }
+  return null
+}
+
 export async function createMaterial(req: Request, res: Response) {
   try {
     const {
@@ -183,6 +239,10 @@ export async function createMaterial(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
     // Scope Loại hàng: không tạo mã thuộc loại ngoài phạm vi (mã chưa gán loại → cho qua)
     if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    const catErr = await unknownCategoryError(category)
+    if (catErr) return fail(res, 400, 'VALIDATION_ERROR', catErr)
+    const negErr = negativeNumberError(req.body as Record<string, unknown>)
+    if (negErr) return fail(res, 400, 'VALIDATION_ERROR', negErr)
     // Entry unit đòi hệ số 1 Entry = N Base (dùng lại units_per_carton)
     if (entry_unit && !(Number(units_per_carton) > 0))
       return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô Hộp/thùng) phải > 0')
@@ -191,6 +251,8 @@ export async function createMaterial(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP)')
 
     const short_name = buildShortName(material_description, material_code, custom_short_name)
+    const palColor = parsePalletColor(req.body.pallet_color)
+    if ('error' in palColor) return fail(res, 400, 'VALIDATION_ERROR', palColor.error)
 
     const { data, error } = await supabase
       .from('Material')
@@ -217,6 +279,7 @@ export async function createMaterial(req: Request, res: Response) {
         entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
         is_non_stock: Boolean(is_non_stock),
         is_pallet_carrier: Boolean(is_pallet_carrier),   // mã PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến
+        pallet_color: palColor.value,                    // màu vẽ pallet trên sơ đồ 3D (chỉ nghĩa khi là pallet)
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
         batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
@@ -260,6 +323,12 @@ export async function updateMaterial(req: Request, res: Response) {
       if (!categoryAllowed(req, (curCat as { category: string | null } | null)?.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
       if (category !== undefined && !categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     }
+    if (category !== undefined) {
+      const catErr = await unknownCategoryError(category)
+      if (catErr) return fail(res, 400, 'VALIDATION_ERROR', catErr)
+    }
+    const negErr = negativeNumberError(req.body as Record<string, unknown>)
+    if (negErr) return fail(res, 400, 'VALIDATION_ERROR', negErr)
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
     if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {
@@ -307,6 +376,11 @@ export async function updateMaterial(req: Request, res: Response) {
     if (entry_unit !== undefined) patch.entry_unit = entry_unit ? String(entry_unit).trim().toUpperCase() : null
     if (is_non_stock !== undefined) patch.is_non_stock = Boolean(is_non_stock)
     if (is_pallet_carrier !== undefined) patch.is_pallet_carrier = Boolean(is_pallet_carrier)
+    if (req.body.pallet_color !== undefined) {
+      const pc = parsePalletColor(req.body.pallet_color)
+      if ('error' in pc) return fail(res, 400, 'VALIDATION_ERROR', pc.error)
+      patch.pallet_color = pc.value
+    }
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
     if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null
@@ -403,8 +477,10 @@ const mBool = (v: unknown): boolean | null => {
 export async function uploadExcel(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    expandMergedCells(ws)   // file danh mục hay gộp ô Loại hàng/Nhóm cho cả cụm mã
     const { rows, missingRequired } = parseSheetByHeader(ws, M_FIELDS)   // map theo TÊN cột (chịu đảo cột)
     if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Mã hàng`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)

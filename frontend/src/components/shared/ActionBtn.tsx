@@ -110,8 +110,10 @@ export function ActionCluster({ items, className, mobileInline }: { items: Actio
         {secondaries.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
+              {/* text-foreground TƯỜNG MINH: cụm đặt trong pill tối (thanh bulk Tồn kho `text-white`) kế thừa
+                  màu chữ trắng ⇒ icon ⋮ trắng trên nền trắng = ô trống không ai bấm (đo 390 px, 21/09) */}
               <Button variant="outline" size="sm" aria-label="Thao tác khác"
-                className="!min-h-0 !min-w-0 h-9 w-9 p-0 rounded-md shrink-0 ml-auto">
+                className="!min-h-0 !min-w-0 h-9 w-9 p-0 rounded-md shrink-0 ml-auto text-foreground">
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>

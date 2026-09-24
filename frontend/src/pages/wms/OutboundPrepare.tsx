@@ -1,21 +1,22 @@
-import { useState, useMemo, useEffect, Fragment } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { ArrowLeft, PackageCheck, MapPin, Plus, X, Search, ChevronDown, ChevronRight } from 'lucide-react'
+import { ArrowLeft, PackageCheck, MapPin, Plus, X, Search, ChevronDown } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, useOutboundShortages, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
-import { pctDateCls } from '@/utils/pctDateBands'
+import { useGDOs, useWarehouses, usePrepareBoard, useOutboundShortages, useBookingSequence } from '@/api/hooks'
+import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import { qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
+import { MaterialStockDialog } from '@/components/wms/MaterialStockDialog'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
@@ -30,104 +31,6 @@ const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
   { id: 'avail',   label: 'Khả dụng',      w: 96, align: 'right' },
 ]
 const PREPARE_COL_DEFAULTS = PREPARE_COLS.map(c => c.w)
-
-// ─── Dialog tồn kho theo mã hàng (như search tồn ở xuất bình thường) ──
-function InventoryDialog({ materialId, materialCode, materialName, mat, warehouseId, onClose }: {
-  materialId: string; materialCode: string; materialName: string; mat?: MatUnits | null; warehouseId: string | undefined; onClose: () => void
-}) {
-  const { data: inv = [], isLoading } = useInventoryByMaterial(materialId, warehouseId)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const pctBands = usePctBands()
-
-  type Agg = { key: string; pct_date: number | null; location_code: string | null; is_qa: boolean; cartons: number; entries: ItemInventoryEntry[] }
-  const rows: Agg[] = useMemo(() => {
-    const map = new Map<string, Agg>()
-    for (const e of inv) {
-      const q = !!e.qa_status
-      const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
-      const r = map.get(k)
-      if (r) { r.cartons += e.available; r.entries.push(e) }
-      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.available, entries: [e] })
-    }
-    // Hòa %Date → hàng thường trước QA giữ → vị trí ÍT hàng nhất trước (dọn hàng lẻ) → tên vị trí; đồng bộ luật với gợi ý FEFO board
-    return [...map.values()].sort((a, b) => {
-      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
-      if (pa !== pb) return pa - pb
-      if (a.is_qa !== b.is_qa) return a.is_qa ? 1 : -1
-      if (a.cartons !== b.cartons) return a.cartons - b.cartons
-      return (a.location_code ?? '').localeCompare(b.location_code ?? '')
-    })
-  }, [inv])
-  const total = useMemo(() => inv.reduce((s, e) => s + e.available, 0), [inv])
-
-  function toggle(k: string) {
-    setExpanded(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })
-  }
-
-  return (
-    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-sm sm:max-w-md p-0">
-        <DialogHeader className="px-4 pt-4 pb-2 border-b">
-          <DialogTitle className="text-sm font-semibold">
-            <span className="font-mono">{materialCode}</span> · {materialName}
-          </DialogTitle>
-          <p className="text-xs text-slate-500 mt-0.5">Tồn kho theo %Date · lấy thấp trước · {inv.length} pallet · {qtyEntryText(total, mat)} {qtyUnitLabel(mat)}</p>
-        </DialogHeader>
-        <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
-          {isLoading ? (
-            <div className="p-4 space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 bg-slate-100 rounded animate-pulse" />)}</div>
-          ) : rows.length === 0 ? (
-            <div className="py-10 text-center text-slate-400 text-sm">Không còn tồn kho trong kho này</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">%Date</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Vị trí</TableHead>
-                  <TableHead className="text-[9px] font-medium text-blue-500 px-3 py-1.5 text-right">Khả dụng</TableHead>
-                  <TableHead className="w-6 px-2 py-1.5" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map(row => {
-                  const open = expanded.has(row.key)
-                  return (
-                    <Fragment key={row.key}>
-                      <TableRow className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`} onClick={() => toggle(row.key)}>
-                        <TableCell className="px-3 py-1.5">
-                          <div className="flex items-center gap-1.5">
-                            {row.pct_date !== null
-                              ? <span className={`text-xs font-bold tabular-nums ${pctDateCls(row.pct_date, pctBands)}`}>{row.pct_date}%</span>
-                              : <span className="text-[10px] text-slate-400">Chưa có</span>}
-                            {row.is_qa && <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-1.5"><span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span></TableCell>
-                        <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, mat)}</span>
-                          <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
-                          <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 text-slate-400">{open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</TableCell>
-                      </TableRow>
-                      {open && row.entries.map(e => (
-                        <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
-                          <TableCell className="px-3 py-1 pl-7" colSpan={2}><span className="font-mono text-[10px] font-semibold text-slate-600">{e.pallet_code}</span></TableCell>
-                          <TableCell className="px-3 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-blue-700">{qtyEntryText(e.available, mat)}</span><span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span></TableCell>
-                          <TableCell className="px-2 py-1" />
-                        </TableRow>
-                      ))}
-                    </Fragment>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 export default function OutboundPrepare() {
   const navigate = useNavigate()
@@ -188,10 +91,28 @@ export default function OutboundPrepare() {
     })
   }, [selectableGdos])
 
-  const selectedGdos = useMemo(() => gdos.filter(g => selected.has(g.id)), [gdos, selected])
+  // STT chuẩn bị theo booking khung giờ — xe đặt lịch sớm soạn trước (POSM/nhặt lẻ của xe đó soạn full theo board)
+  const { data: seqRows = [] } = useBookingSequence(warehouseId || undefined, date, date)
+  const seqOf = useMemo(() => {
+    const cache = new Map<string, ReturnType<typeof bookingSeqOf>>()
+    return (g: GDO) => {
+      if (!cache.has(g.id)) cache.set(g.id, bookingSeqOf(seqRows, g))
+      return cache.get(g.id) ?? null
+    }
+  }, [seqRows])
+  // Sort theo STT (chưa đặt lịch xuống cuối) — áp cả chip đã chọn lẫn dropdown thêm xe
+  const bySeq = (a: GDO, b: GDO) => {
+    const sa = seqOf(a)?.stt ?? Infinity, sb = seqOf(b)?.stt ?? Infinity
+    if (sa !== sb) return sa - sb
+    return a.group_code.localeCompare(b.group_code)
+  }
+
+  const selectedGdos = useMemo(() => gdos.filter(g => selected.has(g.id)).sort(bySeq),
+    [gdos, selected, seqOf])   // eslint-disable-line react-hooks/exhaustive-deps
   const toAdd = useMemo(() => selectableGdos.filter(g => !selected.has(g.id))
-    .filter(g => omniMatch([g.group_code, g.export_type, ...(g.distributor_names ?? []), ...(g.delivery_codes ?? [])], addSearch)),
-    [selectableGdos, selected, addSearch])
+    .filter(g => omniMatch([g.group_code, g.export_type, ...(g.distributor_names ?? []), ...(g.delivery_codes ?? [])], addSearch))
+    .sort(bySeq),
+    [selectableGdos, selected, addSearch, seqOf])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedIds = useMemo(() => [...selected], [selected])
   const { data: board, isFetching } = usePrepareBoard(selectedIds)
@@ -212,10 +133,26 @@ export default function OutboundPrepare() {
     (g.distributor_names ?? []).join(', ') || null,
   ].filter(Boolean).join(' · ')
 
+  // Badge STT + khung giờ booking — hiện cạnh Số xe ở dropdown thêm xe và chip đã chọn
+  const seqBadge = (g: GDO) => {
+    const s = seqOf(g)
+    return s ? (
+      <span className="inline-flex shrink-0 items-center rounded bg-sky-100 px-1 py-0.5 text-[9px] font-semibold tabular-nums text-sky-700"
+        title={`Thứ tự chuẩn bị theo booking — khung giờ ${seqTimeLabel(s)}`}>
+        #{s.stt} · {seqTimeLabel(s)}
+      </span>
+    ) : (
+      <span className="inline-flex shrink-0 items-center rounded bg-slate-100 px-1 py-0.5 text-[9px] text-slate-400"
+        title="Xe chưa đặt lịch khung giờ — soạn sau các xe đã đặt">
+        chưa đặt lịch
+      </span>
+    )
+  }
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      {invMat && (
-       <InventoryDialog materialId={invMat.id} materialCode={invMat.code} materialName={invMat.name} mat={invMat.mat}
+       <MaterialStockDialog materialId={invMat.id} materialCode={invMat.code} materialName={invMat.name} mat={invMat.mat}
          warehouseId={warehouseId || undefined} onClose={() => setInvMat(null)} />
      )}
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -261,7 +198,10 @@ export default function OutboundPrepare() {
                       ) : toAdd.map(g => (
                         <button key={g.id} onClick={() => { addGdo(g.id); setAddSearch('') }}
                           className="w-full text-left px-3 py-1.5 hover:bg-blue-50 border-b border-slate-50 last:border-0">
-                          <div className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</span>
+                            {seqBadge(g)}
+                          </div>
                           <div className="text-[9px] text-slate-500 truncate">{gdoMeta(g) || '—'}</div>
                         </button>
                       ))}
@@ -279,7 +219,10 @@ export default function OutboundPrepare() {
               {selectedGdos.map(g => (
                 <div key={g.id} className="flex items-start gap-1.5 rounded-lg border border-slate-200 bg-slate-50 pl-2 pr-1 py-1 max-w-[260px]">
                   <div className="min-w-0">
-                    <div className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</span>
+                      {seqBadge(g)}
+                    </div>
                     <div className="text-[9px] text-slate-500 truncate" title={gdoMeta(g)}>{gdoMeta(g) || '—'}</div>
                   </div>
                   <button onClick={() => removeGdo(g.id)} className="shrink-0 p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50" title="Bỏ xe này">
@@ -366,7 +309,7 @@ export default function OutboundPrepare() {
                       <span className="text-[12px] font-bold tabular-nums text-sky-700">{r.pallets_remaining || '—'}</span>
                       {r.cartons_per_pallet > 0 && <span className="text-[9px] text-slate-400 ml-0.5">pl</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-slate-700">{qtyEntryText(r.cartons_remaining, r)}</span><span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(r)}</span></TableCell>
+                    <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-slate-700">{qtyLabel(r.cartons_remaining, r)}</span></TableCell>
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                       {sug ? (
                         <span className={`text-[10px] tabular-nums ${short ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>

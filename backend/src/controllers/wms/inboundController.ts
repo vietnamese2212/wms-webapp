@@ -14,7 +14,17 @@ import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTy
 import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
-import { getInboundEditWindowDays } from '../../utils/settings'
+import { getInboundEditWindowDays, getReceiptRatingCfg } from '../../utils/settings'
+import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
+import { putawayEnforces } from '../../utils/putaway'
+import type { MaterialShelfInfo } from '../../utils/shelfLife'
+import { resolveActorId } from '../../utils/actor'
+
+// Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
+// (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
 
 // BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
 const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)
@@ -478,7 +488,7 @@ export async function listOrders(req: Request, res: Response) {
     }
 
     ok(res, await enrichOrders(filtered))
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ── Enrich list phiếu (dùng chung mode cũ trả mảng + mode phân trang): applyInboundMode +
@@ -575,7 +585,7 @@ export async function listOrdersSummary(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('inbound_orders_summary', await inboundRpcFilterParams(ctx))
     if (error) throw new Error(error.message)
     ok(res, data)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ── Option filter Material / Chu kỳ / Máy — DISTINCT dưới DB theo filter NỀN (kho/loại/ngày).
@@ -594,7 +604,7 @@ export async function listOrdersFacets(req: Request, res: Response) {
     })
     if (error) throw new Error(error.message)
     ok(res, data)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function createOrder(req: Request, res: Response) {
@@ -634,6 +644,21 @@ export async function createOrder(req: Request, res: Response) {
     }
     const noQrEffective = effectiveNoQr(matCheck?.no_qr_tracking, (whMode as { inventory_mode?: string | null } | null)?.inventory_mode)
     const resolvedLocationId = noQrEffective ? null : (location_id ?? null)
+
+    // Quy tắc cất hàng: phiếu tạo với vị trí sẵn cũng là một lần CHỌN CHỖ CẤT → gác luôn ở đây,
+    // không thì tạo phiếu vào ô cấm rồi mới bị chặn lúc quét (công nhân đã đẩy hàng tới nơi).
+    let putWarn: string | null = null
+    if (resolvedLocationId) {
+      const put = await guardPutaway({
+        warehouseId: warehouse_id ?? null,
+        locationId:  resolvedLocationId,
+        incoming:    { material_id: material_id ?? '', ncc_id: req.body.ncc_id ?? null },
+        overrideReason: req.body.putaway_override_reason,
+        canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putWarn = put.warning
+    }
 
     const todayStr = vnDate()
 
@@ -724,8 +749,11 @@ export async function createOrder(req: Request, res: Response) {
     applyInboundMode(order as Parameters<typeof applyInboundMode>[0])
 
     emitInboundChanged()
-    ok(res, { order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } } })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+    ok(res, {
+      order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } },
+      ...(putWarn ? { putaway_warning: putWarn } : {}),   // kho chỉ CẢNH BÁO: vẫn tạo nhưng nói ra
+    })
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Get single order ────────────────────────────────────────
@@ -800,7 +828,7 @@ export async function getOrder(req: Request, res: Response) {
       _count: { inventory_entries: allEntries.length },
       from_gdo_delivery_codes: fromGdoDeliveryCodes,
     })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Update order header ─────────────────────────────────────
@@ -832,7 +860,8 @@ export async function updateOrder(req: Request, res: Response) {
     if (shift_id        !== undefined) patch.shift_id = shift_id
     if (import_date     !== undefined) patch.import_date = import_date
     if (notes           !== undefined) patch.notes = notes
-    if (updated_by      !== undefined) patch.updated_by = updated_by
+    // Sửa phiếu LUÔN ghi người sửa (FE không gửi trường này) — không còn phụ thuộc client có gửi hay không.
+    patch.updated_by = resolveActorId(req, updated_by)
 
     const { data: updated, error } = await supabase
       .from('ProductionImport').update(patch).eq('id', req.params.id).select(ORDER_SELECT).maybeSingle()
@@ -842,7 +871,7 @@ export async function updateOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Lịch sử vị trí ──────────────────────────────────────────
@@ -865,7 +894,7 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
 
     const { data: order } = await supabase
-      .from('ProductionImport').select('status, warehouse_id, warehouse_type, location_id, location_history').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('status, warehouse_id, warehouse_type, location_id, location_history, material_id, ncc_id').eq('id', req.params.id).maybeSingle()
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể đổi vị trí')
 
@@ -881,8 +910,23 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (locCats?.length && orderCategory && !locCats.includes(orderCategory))
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
         `Vị trí ${location.location_code} thuộc loại "${locCats.join(', ')}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
+    // Quy tắc cất hàng (20260815d/e). Ở đây CHƯA có pallet nên không so được date — luật trộn date
+    // chỉ kết luận lúc quét; các ràng buộc còn lại (cấm nhập / đầy / nhặt lẻ / QA giữ / số mã / NCC)
+    // áp được ngay từ lúc chọn vị trí cho phiếu.
+    const ord = order as { warehouse_id?: string | null; material_id?: string | null; ncc_id?: string | null }
+    const put = await guardPutaway({
+      warehouseId: ord.warehouse_id ?? null,
+      locationId:  location_id,
+      incoming:    { material_id: ord.material_id ?? '', ncc_id: ord.ncc_id ?? null },
+      overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+      canOverride: canPutawayOverride(req),
+    })
+    if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+
     const changed = location_id !== (order as any).location_id
-    const patch: Record<string, unknown> = { location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() }
+    // `location_history` ngay dòng dưới đã đọc `req.user`; cột `updated_by` cạnh nó thì đọc thân
+    // request — hai vết của CÙNG một thao tác lấy từ hai nguồn, nên một cái có tên một cái không.
+    const patch: Record<string, unknown> = { location_id, updated_by: resolveActorId(req, updated_by), updated_at: new Date().toISOString() }
     if (changed) patch.location_history = appendLocHistory(order, location.location_code, 'detail', req.user)
 
     const { data: updated, error } = await supabase
@@ -894,8 +938,9 @@ export async function setOrderLocation(req: Request, res: Response) {
 
     const withCount = await attachCount(updated)
     emitInboundChanged()
-    ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+    // Kho chưa bật "bắt buộc" → vẫn lưu nhưng NÓI RA (FE hiện banner vàng), không im lặng
+    ok(res, put.warning ? { ...withCount, putaway_warning: put.warning } : withCount)
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Complete order ──────────────────────────────────────────
@@ -908,12 +953,37 @@ export async function completeOrder(req: Request, res: Response) {
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
 
+    // Kho nhận phải CHẤM SAO chuyến giao trước khi chốt phiếu (chỉ khi đơn vị bật `required`).
+    // Chặn ở bước HOÀN THÀNH chứ không ở bước xác nhận: lúc xác nhận người ta chưa mở hàng ra xem,
+    // chấm lúc đó là chấm mò. Chỉ áp cho phiếu SINH RA TỪ CHUYỂN KHO — nhập NCC/sản xuất không có
+    // ai để chấm.
+    if (existing.source_type === 'TRANSFER' && existing.tms_order_id) {
+      const { mode } = await getReceiptRatingCfg()
+      if (mode === 'required') {
+        const { data: tmsOrder } = await supabase.from('TmsOrder')
+          .select('transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
+        const gdoId = (tmsOrder as { transfer_gdo_id: string | null } | null)?.transfer_gdo_id
+        if (gdoId) {
+          const { count } = await supabase.from('receipt_ratings')
+            .select('id', { count: 'exact', head: true }).eq('gdo_id', gdoId)
+          if (!count)
+            return fail(res, 422, 'RATING_REQUIRED',
+              'Cần đánh giá chuyến giao (chấm sao) trước khi hoàn thành phiếu nhận')
+        }
+      }
+    }
+
     const nowTs = new Date().toISOString()
     // CAS: chỉ đổi nếu CHƯA completed → 2 lượt "hoàn thành" cùng lúc thì chỉ 1 thắng,
     // cascade (TmsOrder DONE / GDO DELIVERED) chạy ĐÚNG 1 lần (tránh xử lý trùng).
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
+      // AI HOÀN THÀNH — FE gọi nút này KHÔNG kèm thân request, nên bản cũ (`req.body.updated_by
+      // ?? null`) vừa không bao giờ ghi được tên, vừa GHI NULL ĐÈ lên tên đã có. Đo 18/09:
+      // 0/22.986 phiếu ĐÃ HOÀN THÀNH có người, trong khi `created_by` đầy 22.983 — tức chỉ đường
+      // cập nhật mất vết. Cột này là khoá ngoại Employee và được SELECT ra `updated_by_emp` để
+      // hiện "Người sửa", nên nó vốn được thiết kế để hiện tên. Rơi về người đang đăng nhập.
+      .update({ status: 'COMPLETED', updated_by: resolveActorId(req, req.body?.updated_by), updated_at: nowTs })
       .eq('id', req.params.id)
       .neq('status', 'COMPLETED')
       .select(ORDER_SELECT).maybeSingle()
@@ -962,7 +1032,7 @@ export async function completeOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Uncomplete order (revert COMPLETED → OPEN) ───────────────
@@ -978,7 +1048,7 @@ export async function uncompleteOrder(req: Request, res: Response) {
     const nowTs = new Date().toISOString()
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'OPEN', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
+      .update({ status: 'OPEN', updated_by: resolveActorId(req, req.body?.updated_by), updated_at: nowTs })
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
@@ -1005,7 +1075,7 @@ export async function uncompleteOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Cancel order ────────────────────────────────────────────
@@ -1064,7 +1134,7 @@ export async function cancelOrder(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: true })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Scan QR → create InventoryEntry ────────────────────────
@@ -1096,9 +1166,16 @@ export async function checkScanQR(req: Request, res: Response) {
     const isTransfer = (order as any).source_type === 'TRANSFER'
 
     const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
-      supabase.from('Material').select('id, material_code, cartons_per_pallet, warehouse_pallet_overrides').eq('material_code', parsed.material_code).maybeSingle(),
+      // shelf_life_days + supplier_shelf_life_overrides: quy tắc cất hàng cần để suy HSD hiệu lực
+      // (thiếu 2 cột này thì luật trộn date ở PREVIEW im lặng trong khi lúc GHI lại chặn)
+      supabase.from('Material').select('id, material_code, category, cartons_per_pallet, warehouse_pallet_overrides, shelf_life_days, supplier_shelf_life_overrides').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories').eq('id', location_id).maybeSingle(),
+      // slot_no_in + is_pick_face + max_materials: 3 thuộc tính quy tắc cất hàng CỦA CHÍNH Ô —
+      // thiếu thì preview KHÔNG thấy ô bị cấm trong khi lúc quét thật lại chặn (người quét đi tới
+      // nơi mới biết). Dòng này được truyền THẲNG vào `guardPutaway({ loc })` để đỡ 1 round-trip,
+      // nên cột nào thiếu ở đây là luật đó IM LẶNG KHÔNG CHẠY ở cửa quét — không có lỗi, không có
+      // cảnh báo. Thêm thuộc tính mới vào `PutawayLoc` thì phải thêm vào câu select này.
+      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories, slot_no_in, is_pick_face, max_materials').eq('id', location_id).maybeSingle(),
       isTransfer
         ? supabase.from('OutboundScanEntry').select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -1172,14 +1249,36 @@ export async function checkScanQR(req: Request, res: Response) {
     }
 
     const mat = material as { cartons_per_pallet?: number | null; warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null }
+    // Quy tắc cất hàng — ở PREVIEW chỉ BÁO TRƯỚC, không chặn (điểm chặn thật là scanQR). Preview
+    // chưa resolve NCC theo tem nên dùng NCC của phiếu; sai lệch chỉ làm preview "hiền" hơn thực tế.
+    const putPrev = await guardPutaway({
+      warehouseId: orderWarehouseId,
+      locationId:  location_id,
+      incoming: {
+        material_id:     material.id,
+        ncc_id:          (order as { ncc_id?: string | null }).ncc_id ?? null,
+        production_date: parsed.production_date ?? null,
+        expiry_date:     parsed.expiry_date ?? null,
+      },
+      overrideReason: null, canOverride: false,
+      loc: location as PutawayLocRow, material: material as MaterialShelfInfo,
+    })
     // BASE UNIT: gợi ý = base (định mức thùng/pallet vật lý × hệ số; outboundCartons đã là base)
     return ok(res, {
       pallet_code:       parsed.pallet_code,
       production_date:   parsed.production_date ?? null,
       suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId) * qtyFactorOf(material as MatUnits),
       outbound_cartons:  outboundCartons,
+      putaway: {
+        // CHỈ nói khi CHẶN THẬT (kho bật bắt buộc). Mức cảnh báo → im lặng ở màn quét, cùng lý lẽ
+        // với `warnings` trong scanQR: vị trí đã được duyệt ở bước chọn chỗ cất.
+        violation: putPrev.error ? putPrev.blocked : null,
+        message:   putPrev.error?.message ?? null,
+        // true = kho BẮT BUỘC ⇒ FE phải bắt chọn lý do trước khi cho Lưu
+        required:  !!putPrev.error,
+      },
     })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function scanQR(req: Request, res: Response) {
@@ -1282,7 +1381,7 @@ export async function scanQR(req: Request, res: Response) {
           status:            'IN_STOCK',
           updated_at:        now,
           update_date:       vnDate(),
-          updated_by:        employee_id ?? null,
+          updated_by:        resolveActorId(req, employee_id),
         }).eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
         if (uErr) return fail(res, 500, 'DB_ERROR', uErr.message)
         if (upd?.length) {
@@ -1294,8 +1393,10 @@ export async function scanQR(req: Request, res: Response) {
             cartons_before: before,
             cartons_after:  after,
             note:           `Nhập trả về từ phiếu transfer ${importCode}`,
-            actor_name:     null,
-            actor_id:       employee_id ?? null,
+            // CÙNG BẢNG với dòng "Điều chỉnh tồn" đã vá 18/09 nhưng là cửa KHÁC — và cửa này còn
+            // để `actor_name` NULL CỨNG, tức dòng sổ chắc chắn không có tên dù ai làm.
+            actor_name:     req.user?.name ?? null,
+            actor_id:       resolveActorId(req, employee_id),
             adjusted_at:    now,
           })
           if (logErr) console.error('[scanQR merge] Ghi InventoryAdjustmentLog thất bại:', logErr.message)
@@ -1367,7 +1468,7 @@ export async function scanQR(req: Request, res: Response) {
     //   (pallet đổi tên A→B không kế thừa được → operator chọn ở sheet.)
     // - shelflife lưu thẳng trên pallet vì 1 mã+1 NCC có thể nhiều shelflife (không suy được từ NCC).
     // Hàng nhập NCC (cờ is_ncc_goods của Loại kho): đoạn 4 QR = MÃ NCC (không phải Máy) → lưu vào ncc_id.
-    const isNccGoods = await isNccGoodsCategory(((order as any).material?.category ?? '') as string)
+    const isNccGoods = await isNccGoodsCategory(((order as any).material?.category ?? '') as string, (order as { warehouse_id?: string | null }).warehouse_id ?? null)
 
     let resolvedNcc: string | null = ncc_override ?? (order as { ncc_id?: string | null }).ncc_id ?? null
     let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null
@@ -1392,7 +1493,7 @@ export async function scanQR(req: Request, res: Response) {
     // Cờ requires_ncc của Loại kho (user chốt 10/07): pallet tồn MỚI phải có NCC — chặn cứng.
     // Chuyển kho KHÔNG chặn (kế thừa từ pallet gốc ở trên, gốc không có thì thôi).
     const matCategory = ((order as any).material?.category ?? '') as string
-    if (!isTransfer && !resolvedNcc && await categoryRequiresNcc(matCategory)) {
+    if (!isTransfer && !resolvedNcc && await categoryRequiresNcc(matCategory, (order as { warehouse_id?: string | null }).warehouse_id ?? null)) {
       return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${matCategory}" bắt buộc chọn NCC — chọn NCC ở panel quét rồi lưu lại`)
     }
 
@@ -1405,9 +1506,32 @@ export async function scanQR(req: Request, res: Response) {
       resolvedQa = (qa as { id?: string } | null)?.id ?? null
     }
 
+    // QUY TẮC CẤT HÀNG (20260815d/e) — chặn ở CỬA GHI, không phải ở dropdown: lọc trên picker chỉ
+    // là gợi ý, gọi thẳng API vẫn cất được. Đây là điểm DUY NHẤT trong luồng nhập biết đủ NSX/HSD
+    // của pallet nên cũng là nơi duy nhất kết luận được luật trộn date.
+    const put = await guardPutaway({
+      warehouseId: orderWarehouseId,
+      locationId:  location_id,
+      incoming: {
+        material_id:     material.id,
+        ncc_id:          resolvedNcc,
+        production_date: parsed.production_date ?? null,
+        expiry_date:     parsed.expiry_date ?? null,
+        shelf_life_days: resolvedShelf,
+      },
+      overrideReason: req.body.putaway_override_reason,
+      canOverride: canPutawayOverride(req),
+      // Dùng lại 2 dòng đã nạp ở Promise.all phía trên — quét là đường ghi nóng nhất, pool
+      // PostgREST chỉ ~10 khe nên mỗi request thừa ở đây làm chậm CẢ APP.
+      loc: location as PutawayLocRow,
+      material: material as MaterialShelfInfo,
+    })
+    if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+
     const entryObj = {
       id:              randomUUID(),
       pallet_code:     parsed.pallet_code,
+      ...put.trace,
       location_id,
       warehouse_id:    orderWarehouseId,   // set để unique (warehouse_id, pallet_code) hoạt động (no-QR cùng mã ở nhiều kho vẫn OK)
       material_id:     material.id,
@@ -1424,8 +1548,8 @@ export async function scanQR(req: Request, res: Response) {
       batch:              parsed.batch,                                                        // tem V2: mã lô nguyên văn
       expiry_date:        parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null,  // tem V2: HSD tường minh (Date UTC từ thành phần — không lệch ngày)
       import_order_id:    order_id,
-      created_by:         employee_id ?? null,
-      updated_by:         employee_id ?? null,
+      created_by:         resolveActorId(req, employee_id),
+      updated_by:         resolveActorId(req, employee_id),
       status:             'IN_STOCK',
       ncc_id:             resolvedNcc,
       shelf_life_days:    resolvedShelf,
@@ -1440,11 +1564,20 @@ export async function scanQR(req: Request, res: Response) {
     let entry: unknown = null
     const { data: rpcRes, error: rpcErr } = await supabase.rpc('scan_insert_pallet', {
       p_entry: entryObj, p_location_id: location_id, p_stack_layer: stackLayerNum,
+      // "Tối đa N mã / vị trí" là ĐẾM trên tài nguyên dùng chung ⇒ phải chốt DƯỚI ROW-LOCK, không
+      // thể tin phép kiểm ở backend (đo 15/08: 6 lượt đồng thời vào ô giới hạn 1 mã → lọt 3 mã).
+      // NULL khi luật tắt HOẶC đã được duyệt vượt rào — backend vẫn là nơi quyết định.
+      // Chỉ chốt dưới row-lock khi luật này ở mức BẮT BUỘC — mức Cảnh báo thì backend đã nói ra rồi,
+      // RPC mà vẫn chặn là mức "cảnh báo" hoá ra chặn cứng.
+      p_max_materials: (putawayEnforces(put.rules, 'MAX_MATERIALS') && !put.trace.putaway_override_reason)
+        ? put.max_materials : null,
     })
     if (!rpcErr) {
       const parts = String(rpcRes ?? '').split('|')
       switch (parts[0]) {
         case 'NOLOC':   return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+        case 'MAXMAT':  return fail(res, 422, 'PUTAWAY_VIOLATION',
+          `Vị trí ${location.location_code} đang có ${parts[1]} mã, kho giới hạn ${parts[2]} mã cho một vị trí. Kho yêu cầu cất đúng quy tắc — cần người có quyền duyệt cất khác quy tắc.`)
         case 'FULL':    return fail(res, 422, 'LOCATION_FULL',
           `Vị trí ${location.location_code} đã đầy (${parts[1]}/${parts[2]} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
         case 'NO_BASE': return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
@@ -1453,27 +1586,13 @@ export async function scanQR(req: Request, res: Response) {
       const { data: e } = await supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('id', parts[1]).single()
       entry = e
     } else {
-      // RPC chưa apply (function not found) → fallback logic cũ (KHÔNG nguyên tử) để không vỡ tính năng.
-      const notDeployed = rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? '')
-      if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
-      if (stackLayerNum === 1) {
-        // Đếm pallet CHIẾM CHỖ layer 1 (IN_STOCK/PARTIAL/QUARANTINE + tồn>0 — loại snapshot tồn=0 báo đầy oan)
-        const { count: usedSlots } = await supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
-          .eq('location_id', location_id).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE']).gt('cartons_remaining', 0)
-        if ((usedSlots ?? 0) >= location.max_pallets)
-          return fail(res, 422, 'LOCATION_FULL',
-            `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
-      } else {
-        const { data: baseArr } = await supabase.from('InventoryEntry').select('id')
-          .eq('location_id', location_id).eq('stack_layer', stackLayerNum - 1).eq('status', 'IN_STOCK').limit(1)
-        if (!baseArr?.[0]) return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
-      }
-      const { data: e, error: entErr } = await supabase.from('InventoryEntry').insert(entryObj).select(ENTRY_SELECT).single()
-      if (entErr) {
-        if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
-        throw entErr
-      }
-      entry = e
+      // RPC vắng mặt ⇒ BÁO LỖI, KHÔNG tự đi đường vòng. Nhánh dự phòng cũ (check-rồi-insert) không
+      // nguyên tử VÀ không chốt được luật "tối đa N mã/vị trí" dưới row-lock — nó cứu được tính năng
+      // nhưng lại lặng lẽ tắt 2 lớp bảo vệ, đúng kiểu lỗi không ai nhìn thấy. Cùng cách xử như
+      // slottingController.scanMove.
+      if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
+        return fail(res, 503, 'NOT_READY', 'Chưa apply RPC scan_insert_pallet')
+      return fail(res, 500, 'DB_ERROR', rpcErr.message)
     }
 
     // Persist vị trí "hiện tại" của phiếu = vị trí vừa quét + ghi lịch sử khi đổi (quyền scan)
@@ -1486,6 +1605,11 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     const warnings: string[] = []
+    // QUÉT NHẬP KHÔNG CẢNH BÁO QUY TẮC CẤT (user chốt 18/08). Chỗ QUYẾT ĐỊNH nơi cất là lúc CHỌN
+    // VỊ TRÍ (tạo phiếu / đổi vị trí / picker trong màn quét) — cả 3 cửa đó đều đã gác và đều nói
+    // ra khi lệch. Tới lượt quét thì hoặc đã bị chặn (kho bật bắt buộc → 422 ở guardPutaway phía
+    // trên), hoặc vị trí đã được chấp nhận ⇒ nhắc lại mỗi tem chỉ dạy người quét bấm bỏ qua cảnh
+    // báo. Vết `put.trace` VẪN ghi vào InventoryEntry để báo cáo tuân thủ không mất mẫu số.
     if (!manufacturer && parsed.manufacturer_code) {
       // Chỉ cảnh báo khi đoạn 6 KHÔNG khớp cả Nhà sản xuất lẫn mã NMSX kho (Warehouse.nmsx_code) — vd "B" = Kho Ba Vì là hợp lệ
       const isWhNmsx = (((await whNmsxP).data ?? []) as { id: string }[]).length > 0
@@ -1513,7 +1637,7 @@ export async function scanQR(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { entry, warnings })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Manual scan (POSM / Loscam) — no QR format, location optional ───────────
@@ -1544,7 +1668,7 @@ export async function scanManual(req: Request, res: Response) {
     // Cờ requires_ncc của Loại kho: lưu thủ công (no-QR — entry pool không mang NCC riêng)
     // → NCC phải có ở cấp PHIẾU (ProductionImport.ncc_id). Thiếu → chặn cứng (user chốt 10/07).
     const manualCategory = ((order as any).material?.category ?? '') as string
-    if (!(order as any).ncc_id && await categoryRequiresNcc(manualCategory)) {
+    if (!(order as any).ncc_id && await categoryRequiresNcc(manualCategory, (order as { warehouse_id?: string | null }).warehouse_id ?? null)) {
       return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${manualCategory}" bắt buộc có NCC — sửa phiếu nhập, chọn NCC rồi lưu lại`)
     }
 
@@ -1560,7 +1684,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
-    const warehouseId = (order as any).warehouse_id as string | null
+    const warehouseId = (order as { warehouse_id?: string | null }).warehouse_id ?? null
 
     // Kho QTY_DATE: pool tách theo NSX. Ưu tiên body production_date (người nhận SỬA được NSX khi tem
     // thực tế lệch dữ liệu quét) → fallback NSX của PHIẾU (transfer_production_date — kế thừa từ tem
@@ -1610,7 +1734,7 @@ export async function scanManual(req: Request, res: Response) {
             warehouse_id:      warehouseId,
             update_date:       vnDate(),
             updated_at:        now,
-            updated_by:        employee_id ?? null,
+            updated_by:        resolveActorId(req, employee_id),
           })
           .eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
         if (updErr) throw updErr
@@ -1630,8 +1754,8 @@ export async function scanManual(req: Request, res: Response) {
             cartons_remaining: cartonsNum,
             stack_layer:       1,
             import_order_id:   order_id,
-            created_by:        employee_id ?? null,
-            updated_by:        employee_id ?? null,
+            created_by:        resolveActorId(req, employee_id),
+            updated_by:        resolveActorId(req, employee_id),
             status:            'IN_STOCK',
             import_date:       vnDate(),
             update_date:       vnDate(),
@@ -1666,7 +1790,7 @@ export async function scanManual(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { entry, warnings: [] })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Update a pallet entry ───────────────────────────────────
@@ -1692,7 +1816,12 @@ export async function updateEntry(req: Request, res: Response) {
 
     // BASE UNIT: cartons_imported từ FE = SỐ BASE — mã có entry phải là số nguyên
     if (cartons_imported !== undefined) {
-      const ie = qtyIntegerError(Number(cartons_imported), (entry as any).material as MatUnits)
+      // Số nhập ÂM / không phải số: đo 06/09 cửa này nhận thẳng `-5` và ghi vào DB (API trả 200).
+      // Pallet mang số nhập âm làm hỏng mọi phép cộng tồn phía sau mà không có lỗi nào nổi lên.
+      const n = Number(cartons_imported)
+      if (!Number.isFinite(n) || n < 0)
+        return fail(res, 422, 'VALIDATION_ERROR', 'Số lượng nhập phải là số không âm')
+      const ie = qtyIntegerError(n, (entry as any).material as MatUnits)
       if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
     }
 
@@ -1748,7 +1877,15 @@ export async function updateEntry(req: Request, res: Response) {
     if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const patch: Record<string, unknown> = { updated_at: nowTs, update_date: vnDate() }
-    if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
+    // SỬA SỐ NHẬP PHẢI KÉO THEO SỐ TỒN (đo 06/09): trước đây chỉ ghi `cartons_imported`, nên sửa
+    // 6.720 → 6.672 cho pallet CHƯA xuất lượt nào vẫn để tồn 6.720 ⇒ tồn LỚN HƠN số nhập, và số
+    // dôi ra đó không đến từ đâu cả (staging đang có 2 dòng đúng dạng này). An toàn vì ngay trên
+    // `checkInventoryUnchanged` đã bắt buộc pallet còn NGUYÊN (chưa xuất / chưa giữ chỗ / chưa
+    // điều chỉnh) ⇒ tại đây luôn có tồn = số nhập, sửa số nhập tức là sửa cả hai.
+    if (cartons_imported !== undefined) {
+      patch.cartons_imported = Number(cartons_imported)
+      patch.cartons_remaining = Number(cartons_imported)
+    }
     if (stack_layer      !== undefined) patch.stack_layer = Number(stack_layer)
 
     const { data: updated, error } = await supabase
@@ -1758,7 +1895,7 @@ export async function updateEntry(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, updated)
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Permission helper ───────────────────────────────────────
@@ -1895,7 +2032,7 @@ export async function removeEntry(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: true })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Bulk remove pallet entries ──────────────────────────────
@@ -1937,7 +2074,7 @@ export async function removeEntries(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: entries.length })
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Gợi ý vị trí cất hàng: ĐÃ GỠ 14/08 ──────────────────────

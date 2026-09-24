@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
 import { can, canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { LANDING_PAGES } from '@/config/landing'
 import { Pages } from '@/routes/lazyPages'
 
 // Login giữ eager (màn đầu khi chưa đăng nhập). Mọi trang còn lại tách chunk
@@ -11,12 +12,12 @@ import Login from '@/pages/Login'
 const {
   Dashboard, Inventory, Inbound, InboundDetail,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
-  Slotting, SlottingPlanDetail, Forklift, Packing, FillPicking, FillOrderDetail,
+  Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
-  Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, PalletLabels, PalletOps, MultiScanTest,
-  WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
+  Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, MoveLocation, PalletLabels, PalletOps, MultiScanTest,
+  WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration, Freight, Dispatch,
   LeaveManagement, Assignments, Attendance, OrgChart,
-  UserManagement, IntegrationKeys, Materials, ExternalData, Settings,
+  UserManagement, IntegrationKeys, Materials, Customers, ExternalData, Settings,
 } = Pages
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,20 @@ function PermissionRoute({
   return <>{children}</>
 }
 
+// Dashboard gate bằng dashboard.view (19/08) — bến đáp khi BỊ CHẶN là /wms/alerts (trang mở
+// cho mọi user), KHÔNG đá về "/" như PermissionRoute (chính "/" là trang này → vòng lặp).
+function DashboardRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  // Trang mở đầu theo CHỨC DANH (12/09): lái xe nâng vào thẳng Việc cần làm. Chỉ chuyển khi user có
+  // quyền vào trang đích — không thì PermissionRoute đá về "/" và hai route ném nhau vô hạn.
+  const landing = LANDING_PAGES.find(l => l.to === user?.landing_page)
+  if (landing && (isAdmin(user) || canAccess(perms, landing.module))) return <Navigate to={landing.to} replace />
+  const allowed = isAdmin(user) || canAccess(perms, 'dashboard')
+  if (!allowed) return <Navigate to="/wms/alerts" replace />
+  return <>{children}</>
+}
+
 // Trang "Dữ liệu bên ngoài" có 3 tab, tab "Cần xử lý" gate bằng outbound.reconcile —
 // route phải nhận CẢ quyền đó (user chỉ có reconcile vẫn vào xử hàng chờ được).
 function ExternalRoute({ children }: { children: React.ReactNode }) {
@@ -76,7 +91,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<DashboardRoute><Dashboard /></DashboardRoute>} />
 
         {/* WMS — inventory */}
         <Route path="/wms/inventory" element={<PermissionRoute module="inventory"><Inventory /></PermissionRoute>} />
@@ -112,8 +127,22 @@ export default function App() {
         <Route path="/wms/stocktake/history" element={<PermissionRoute module="stocktake"><StocktakeHistory /></PermissionRoute>} />
         <Route path="/wms/stocktake/cycle" element={<PermissionRoute module="stocktake"><StocktakeCycle /></PermissionRoute>} />
 
+        {/* WMS — chuyển vị trí bằng quét QR (pallet-first; mỗi lần chuyển = 1 lượt kiểm kê) */}
+        <Route path="/wms/move-location" element={<PermissionRoute module="inventory" action="move_location"><MoveLocation /></PermissionRoute>} />
+
         {/* WMS — slotting (tối ưu vị trí) */}
         <Route path="/wms/slotting"           element={<PermissionRoute module="slotting"><Slotting /></PermissionRoute>} />
+        {/* Sơ đồ kho là TAB của Vị trí kho từ 21/09 — giữ route cũ làm chuyển hướng cho link đã phát (thông báo, hướng dẫn) */}
+        <Route path="/wms/warehouse-map"      element={<PermissionRoute module="warehouse_map"><Navigate to="/wms/locations?tab=map" replace /></PermissionRoute>} />
+        {/* Chốt %Date — màn nv SAP soi CẢ NGÀY rồi input hàng loạt (user chốt 10/09) */}
+        <Route path="/wms/outbound/date-rules" element={<PermissionRoute module="outbound" action="set_date"><DateRules /></PermissionRoute>} />
+        <Route path="/wms/directed"           element={<PermissionRoute module="directed_work"><DirectedWork /></PermissionRoute>} />
+        {/* Truy xuất lô 2 chiều — hồ sơ thu hồi: lô đã đi tới đâu / khách đã nhận lô nào */}
+        <Route path="/wms/trace"              element={<PermissionRoute module="traceability"><LotTrace /></PermissionRoute>} />
+        {/* Chi phí kho — kê khai (Kho × Tháng × Khoản mục) nuôi ô chi phí/tấn ở tab Năng suất */}
+        <Route path="/wms/warehouse-costs"    element={<PermissionRoute module="warehouse_cost"><WarehouseCosts /></PermissionRoute>} />
+        {/* 1 phiếu = 1 kho × 1 kỳ tháng; whKey = id kho hoặc 'chung' (chi phí chung toàn công ty) */}
+        <Route path="/wms/warehouse-costs/:whKey/:period" element={<PermissionRoute module="warehouse_cost"><WarehouseCostVoucher /></PermissionRoute>} />
         <Route path="/wms/slotting/plans/:id" element={<PermissionRoute module="slotting"><SlottingPlanDetail /></PermissionRoute>} />
 
         {/* WMS — fill hàng phục vụ nhặt lẻ (hạ hàng từ tầng trên xuống vị trí nhặt lẻ) */}
@@ -159,6 +188,18 @@ export default function App() {
         <Route
           path="/masterdata/materials"
           element={<PermissionRoute module="materials"><Materials /></PermissionRoute>}
+        />
+        <Route
+          path="/masterdata/customers"
+          element={<PermissionRoute module="customers"><Customers /></PermissionRoute>}
+        />
+        <Route
+          path="/tms/freight"
+          element={<PermissionRoute module="freight"><Freight /></PermissionRoute>}
+        />
+        <Route
+          path="/tms/dispatch"
+          element={<PermissionRoute module="dispatch"><Dispatch /></PermissionRoute>}
         />
 
         <Route path="/settings" element={<Settings />} />

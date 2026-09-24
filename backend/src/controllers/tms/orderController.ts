@@ -5,14 +5,35 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
-import { uuidList } from '../../utils/ids'
+import { uuidList, isUuid } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { heldSlotsByOrderId, slotHeldBlockingDate } from '../../utils/bookingGuards'
+import { getReceiptRatingCfg } from '../../utils/settings'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+/**
+ * VÒNG ĐỜI LỆNH VẬN CHUYỂN — danh sách ĐÓNG (user chốt 07/09: "Chờ · Xong · Huỷ").
+ *
+ * Trước đây `PATCH /tms/orders/:id` nhận `status` thô từ body: gọi thẳng API là ghi được giá trị
+ * bất kỳ, y như lỗi trạng thái DÒNG XE đã vá cùng ngày (giá trị lạ làm xe rơi khỏi phép đếm sức
+ * chứa và hỏng cả trang cài khung giờ của kho).
+ *
+ * Kèm một BẪY DI SẢN đã dọn cùng đợt: 3.173 lệnh cũ (17/07–17/08) mang `'COMPLETED'` trong khi
+ * code hiện tại ghi `'DONE'` — hai tên cho cùng một việc. Chưa gây lỗi vì chưa ai lọc theo chúng,
+ * nhưng báo cáo "lệnh đã hoàn thành" đầu tiên sẽ mất một nửa số liệu mà KHÔNG báo gì. Migration
+ * `20260907_tmsorder_status_enum.sql` chuẩn hoá về `DONE` + CHECK ở DB để không đẻ tên thứ ba.
+ */
+export const ORDER_STATUSES = ['PENDING', 'DONE', 'CANCELLED'] as const
+const isOrderStatus = (v: unknown): v is typeof ORDER_STATUSES[number] =>
+  typeof v === 'string' && (ORDER_STATUSES as readonly string[]).includes(v)
+
+export const ORDER_DIRECTIONS = ['INBOUND', 'OUTBOUND'] as const
+const isDirection = (v: unknown): v is typeof ORDER_DIRECTIONS[number] =>
+  typeof v === 'string' && (ORDER_DIRECTIONS as readonly string[]).includes(v)
 
 // Phân trang TUẦN TỰ cho 1 query bất kỳ — né cap ~1000 dòng/response của PostgREST.
 // `makeQuery`: hàm trả về query MỚI mỗi lần (đã .select + filter + .order ổn định), CHƯA .range. Throw nếu lỗi.
@@ -237,7 +258,7 @@ export async function listOrders(req: Request, res: Response) {
     if (truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
     return ok(res, data)
   } catch (e) {
-    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, String(e))
   }
 }
@@ -365,7 +386,7 @@ export async function listOrdersSummary(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     return ok(res, data ?? {})
   } catch (e) {
-    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, String(e))
   }
 }
@@ -384,7 +405,7 @@ export async function listOrdersFacets(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     return ok(res, data ?? {})
   } catch (e) {
-    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     return fail(res, String(e))
   }
 }
@@ -436,6 +457,10 @@ export async function createOrder(req: Request, res: Response) {
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
     if (!direction)  return fail(res, 'direction là bắt buộc', 400)
+    // Danh sách đóng — DB có ràng buộc riêng nên giá trị lạ vốn rơi xuống 23514 → "Lỗi hệ thống";
+    // và mã lệnh tự sinh suy tiền tố từ chiều (X/N) nên chiều rác đẻ luôn mã lệnh vô nghĩa.
+    if (!isDirection(direction))
+      return fail(res, 'Chiều không hợp lệ — chỉ nhận Nhập (INBOUND) hoặc Xuất (OUTBOUND)', 400, 'BAD_DIRECTION')
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
@@ -506,7 +531,7 @@ export async function createOrder(req: Request, res: Response) {
     }
     if (ordErr) {
       if (ordErr.code === '23505') return fail(res, `Mã đơn "${order_code}" đã tồn tại`, 409)
-      return fail(res, ordErr.message)
+      return fail(res, ordErr)
     }
 
     // Tạo 1 TmsVehicleSlot mặc định
@@ -519,7 +544,7 @@ export async function createOrder(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TmsOrder')
       .select(ORDER_SELECT).eq('id', orderId).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -608,7 +633,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         const raceDup = await findDupMessage()
         return fail(res, raceDup ?? 'Mã đơn bị trùng do có người khác vừa upload cùng lúc — kiểm tra rồi upload lại.', 409)
       }
-      return fail(res, insErr.message)
+      return fail(res, insErr)
     }
 
     // Tạo 1 TmsVehicleSlot mặc định cho mỗi order
@@ -661,6 +686,11 @@ export async function updateOrder(req: Request, res: Response) {
     if (!(await guardOrderScope(req, res, id))) return
     if (warehouse_id !== undefined && !guardWhCreate(req, res, warehouse_id)) return
     if (warehouse_type !== undefined && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    // Vòng đời lệnh là danh sách ĐÓNG — xem chú thích ORDER_STATUSES ở đầu file
+    if (status !== undefined && !isOrderStatus(status))
+      return fail(res, `Trạng thái lệnh không hợp lệ (${ORDER_STATUSES.join(' | ')})`, 400, 'BAD_ORDER_STATUS')
+    if (direction !== undefined && direction !== null && !isDirection(direction))
+      return fail(res, 'Chiều không hợp lệ — chỉ nhận Nhập (INBOUND) hoặc Xuất (OUTBOUND)', 400, 'BAD_DIRECTION')
 
     // ĐỔI NGÀY chỉ cho đơn PENDING (mirror bulkUpdateOrderDate): đơn đã BOOKED/ARRIVED có TmsVehicleSlot
     // gắn DeliverySlot theo ngày cũ — đổi TmsOrder.date ở đây KHÔNG recount slot → booked_count lệch (xe ma).
@@ -699,7 +729,7 @@ export async function updateOrder(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TmsOrder')
       .update(updates).eq('id', id).select(ORDER_SELECT).single()
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -762,7 +792,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
         .in('id', ids.slice(i, i + 300))
         .eq('status', 'PENDING')
         .select('id')
-      if (error) return fail(res, error.message)
+      if (error) return fail(res, error)
       updatedIds.push(...((data ?? []) as { id: string }[]).map(o => o.id))
     }
 
@@ -772,7 +802,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
       const { error: lineErr } = await supabase.from('inbound_plan_lines')
         .update({ date, updated_by: user?.name || null, updated_at: now })
         .in('tms_order_id', updatedIds.slice(i, i + 300))
-      if (lineErr) return fail(res, lineErr.message)
+      if (lineErr) return fail(res, lineErr)
     }
     return ok(res, { updated: updatedIds.length })
   } catch (e) { return fail(res, String(e)) }
@@ -783,6 +813,11 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
 export async function getPlanVsActual(req: Request, res: Response) {
   try {
     const { orderId } = req.params
+    // TmsOrder.id là cột UUID → id rác (`undefined` do FE ghép chuỗi khi state chưa có, `null`,
+    // `NaN`) lọt xuống Postgres thành 22P02 rồi controller nuốt ra **500**. Chặn ở rìa: 400 sạch.
+    // (Đo 21/08: đúng dạng lỗi `invalid input syntax for type uuid: "undefined"` đã nằm trong
+    // error_logs — client gửi id rỗng thì đó là lỗi ĐẦU VÀO, không phải app sập.)
+    if (!isUuid(orderId)) return fail(res, 400, 'BAD_ID', 'Mã lệnh vận chuyển không hợp lệ')
     if (!(await guardOrderScope(req, res, orderId))) return   // chống IDOR: chỉ đọc lệnh dính kho trong phạm vi
 
     // Plan lines (kế hoạch)
@@ -791,7 +826,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       .select('material_id, planned_boxes, planned_pallets, material:Material!material_id(material_code, short_name, material_description, base_unit, entry_unit, units_per_carton)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
-    if (planErr) return fail(res, planErr.message)
+    if (planErr) return fail(res, planErr)
 
     // ProductionImport records cho order này (kèm no_qr + mode kho nhận để tính "no-QR hiệu lực")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -799,7 +834,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
-    if (actErr) return fail(res, actErr.message)
+    if (actErr) return fail(res, actErr)
 
     // Thực nhận theo material: mã no-QR hiệu lực (mã no_qr_tracking HOẶC kho nhận QTY) → posm_cartons
     // (pool dùng chung, import_order_id ≠ phiếu nên không khớp InventoryEntry theo phiếu); còn lại → cartons_imported.
@@ -1784,8 +1819,118 @@ export async function deleteOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('TmsOrder').delete().eq('id', id)
-    if (error) return fail(res, error.message)
+    if (error) return fail(res, error)
 
     return ok(res, { id })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) ──────────────────────────────────────────────────────────
+// Kho NHẬN chấm chất lượng lô hàng vừa nhận. Fill rate đo được "đủ hay thiếu", còn "giao có tử tế
+// không" (hàng móp, chứng từ thiếu, xe tới trễ) thì chỉ người nhận biết — nên chỗ hỏi phải nằm
+// ngay trong luồng họ đang làm, không phải một biểu mẫu riêng ai đó nhớ thì điền.
+//
+// Gate quyền = `tms_plan.confirm_receipt`: ai xác nhận nhận hàng thì người đó chấm, không đẻ quyền mới.
+const RATING_REASONS = ['SHORT', 'WRONG', 'DAMAGED', 'LATE', 'DOC', 'OTHER'] as const
+type RatingReason = typeof RATING_REASONS[number]
+
+/**
+ * Lệnh chuyển kho → (gdo_id, kho gửi, kho nhận, có ai để chấm không).
+ * null nếu không phải lệnh chuyển kho.
+ *
+ * ⚠️ `ratable=false` khi kho nhận KHÔNG tích nhận (`delivery_mode='SELF'` — kho nhận hình thức
+ * NONE/OTHER, tài xế tự bấm hoàn thành). Ở những chuyến đó KHÔNG AI mở hàng ra xem trong app:
+ * người bấm là bên gửi/điều vận, chấm sao là TỰ CHẤM MÌNH. Đo staging 28/08: 30 chuyến SELF đã
+ * DELIVERED — bản đầu của tính năng cho chấm hết 30 chuyến đó (user hỏi đúng chỗ này).
+ */
+async function transferPartiesOf(orderId: string) {
+  const { data } = await supabase.from('TmsOrder')
+    .select('id, transfer_gdo_id, destination_warehouse_id, delivery_mode').eq('id', orderId).maybeSingle()
+  const o = data as {
+    transfer_gdo_id: string | null; destination_warehouse_id: string | null; delivery_mode: string | null
+  } | null
+  if (!o?.transfer_gdo_id) return null
+  const { data: g } = await supabase.from('GroupDeliveryOrder')
+    .select('warehouse_id').eq('id', o.transfer_gdo_id).maybeSingle()
+  return {
+    gdoId: o.transfer_gdo_id,
+    fromWh: (g as { warehouse_id: string | null } | null)?.warehouse_id ?? null,
+    toWh: o.destination_warehouse_id,
+    ratable: o.delivery_mode !== 'SELF',
+  }
+}
+
+export async function getReceiptRating(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return
+    const cfg = await getReceiptRatingCfg()
+    const parties = await transferPartiesOf(id)
+    if (!parties) return ok(res, { mode: cfg.mode, ratable: false, can_rate: false, rating: null })
+    const { data } = await supabase.from('receipt_ratings')
+      .select('stars, reason_code, note, rated_by_name, rated_at').eq('gdo_id', parties.gdoId).maybeSingle()
+    // `can_rate` = MỘT nguồn cho FE ẩn/hiện nút: gộp cả "chuyến có người nhận" lẫn "mình có phải
+    // kho nhận không" — để FE khỏi tự suy luận lại rồi lệch với luật của BE.
+    const scope = scopeWhIds(req)
+    const isReceiver = scope === null || !parties.toWh || scope.includes(parties.toWh)
+    return ok(res, {
+      mode: cfg.mode, ratable: parties.ratable, can_rate: parties.ratable && isReceiver,
+      rating: data ?? null,
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+export async function rateTransferReceipt(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return
+    const cfg = await getReceiptRatingCfg()
+    if (cfg.mode === 'off') return fail(res, 'Đơn vị đang TẮT tính năng đánh giá chuyến giao', 400, 'RATING_OFF')
+
+    const body = req.body as { stars?: unknown; reason_code?: unknown; note?: unknown }
+    const stars = Number(body.stars)
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5)
+      return fail(res, 'Số sao phải là số nguyên 1–5', 400, 'BAD_STARS')
+    const reason = body.reason_code == null || body.reason_code === '' ? null : String(body.reason_code)
+    if (reason !== null && !RATING_REASONS.includes(reason as RatingReason))
+      return fail(res, `Lý do không hợp lệ (${RATING_REASONS.join(' | ')})`, 400, 'BAD_REASON')
+    // Chấm thấp mà không nêu lý do thì kho gửi không sửa được gì — DB cũng có CHECK cùng luật
+    if (stars <= 3 && !reason)
+      return fail(res, 'Chấm từ 3 sao trở xuống phải chọn lý do', 422, 'REASON_REQUIRED')
+
+    const parties = await transferPartiesOf(id)
+    if (!parties) return fail(res, 'Lệnh này không phải lệnh chuyển kho — không có chuyến giao để đánh giá', 400, 'NOT_TRANSFER')
+    // Kho nhận không tích nhận (tài xế tự hoàn thành) ⇒ không ai xem hàng trong app để mà chấm.
+    // Chặn ở BE chứ không chỉ ẩn nút: ẩn nút chỉ là gợi ý, gọi thẳng API vẫn ghi được điểm vô nghĩa.
+    if (!parties.ratable)
+      return fail(res, 'Chuyến này kho nhận KHÔNG tích nhận (tài xế tự hoàn thành) — không có người nhận để chấm sao',
+        422, 'NOT_RATABLE')
+    // CHỈ KHO NHẬN được chấm (user chốt 28/08: "NPP xác nhận sao thôi"). `guardOrderScope` ở trên
+    // cho qua khi user thuộc kho GỬI *hoặc* kho nhận — đủ để thao tác lệnh, nhưng KHÔNG đủ để chấm:
+    // bên gửi chấm chuyến của chính mình thì con số sao mất sạch ý nghĩa. Scope null (superadmin /
+    // NATIONAL) vẫn được — cần đường sửa khi kho nhận chấm nhầm.
+    {
+      const scope = scopeWhIds(req)
+      if (scope !== null && parties.toWh && !scope.includes(parties.toWh))
+        return fail(res, 'Chỉ KHO NHẬN mới chấm sao chuyến giao — bạn không thuộc kho nhận của chuyến này',
+          403, 'RATER_NOT_RECEIVER')
+    }
+
+    const t = new Date().toISOString()
+    const { data: existing } = await supabase.from('receipt_ratings')
+      .select('id').eq('gdo_id', parties.gdoId).maybeSingle()
+    const row = {
+      gdo_id: parties.gdoId, tms_order_id: id,
+      from_warehouse_id: parties.fromWh, to_warehouse_id: parties.toWh,
+      stars, reason_code: reason, note: String(body.note ?? '').trim() || null,
+      rated_by: req.user?.sub ?? null, rated_by_name: req.user?.name ?? req.user?.email ?? null,
+      rated_at: t, updated_at: t,
+    }
+    // Chấm lại là SỬA, không đẻ dòng mới — nếu không, ai bấm nhiều lần sẽ kéo lệch trung bình sao
+    const { error } = existing
+      ? await supabase.from('receipt_ratings').update(row).eq('id', (existing as { id: string }).id)
+      : await supabase.from('receipt_ratings').insert({ id: randomUUID(), created_at: t, ...row })
+    if (error) return fail(res, error)
+    return ok(res, { gdo_id: parties.gdoId, stars, reason_code: reason })
   } catch (e) { return fail(res, String(e)) }
 }

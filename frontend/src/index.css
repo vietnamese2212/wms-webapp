@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Edge/IE tự vẽ con mắt "hiện mật khẩu" RIÊNG của trình duyệt trong mọi ô type=password — song song với nút
+   của app và KHÔNG đi qua lớp gác "chỉ lộ ký tự người đang gõ" (Login.tsx, 07/09). Tắt để chỉ còn một nút
+   duy nhất đã được gác; ::-ms-clear là dấu × xoá nhanh cùng họ. */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear { display: none; }
+
 @layer base {
   :root {
     --background: 0 0% 100%;

@@ -22,7 +22,7 @@ Người dùng (PC / Tablet / Điện thoại — trình duyệt)
         ▼
 Vercel (hosting, auto-deploy từ GitHub nhánh main)
  ├── Frontend: React 18 + TypeScript + Vite · TailwindCSS + shadcn/ui
- │     TanStack Query (cache dữ liệu) · html5-qrcode (quét QR bằng camera)
+ │     TanStack Query (cache dữ liệu) · BarcodeDetector + zxing-wasm (quét QR bằng camera)
  └── Backend: Node.js + Express (serverless function /api)
        JWT auth (hạn 7 ngày) · phân quyền requirePerm từng route
         │

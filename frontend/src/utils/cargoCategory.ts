@@ -8,6 +8,7 @@ export interface WhTypeMeta {
   requires_ncc?: boolean           // Nhập kho bắt buộc có NCC (quét/nhập tay/upload — chuyển kho kế thừa, không chặn)
   batch_char?: string              // ký tự cố định thế chỗ Máy trong mã lô khi sinh tem V2 (vd 'N')
   badge_color?: string             // blue | purple | orange | green | amber | red | emerald | cyan | slate
+  storage_condition?: string | null // điều kiện bảo quản của hàng thuộc loại này (LookupValue storage_condition); null = chưa khai
 }
 export type WhTypeMetaMap = Map<string, WhTypeMeta>
 

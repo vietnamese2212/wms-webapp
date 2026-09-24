@@ -3,10 +3,14 @@ import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
+import { zoneAccepts, zonesOverlap, eligibleRankedZones, bandOfIndex, type Band } from '../../utils/slottingBands'
+import { invalidatePutawayZones } from '../../services/putawayContext'
+import { logPalletMoves } from '../../services/palletMoveLog'
+import { getMonitorCacheSeconds } from '../../utils/settings'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -24,7 +28,7 @@ function ok(res: Response, data: unknown) {
 }
 function fail(res: Response, status: number, code: string, message: string) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 function chunk<T>(arr: T[], n: number): T[][] {
   const out: T[][] = []
@@ -56,15 +60,24 @@ interface StatsMaterial { material_id: string; code: string; name: string | null
 interface StatsPlacement { material_id: string; sub_code: string | null; pallets: number; cartons: number }
 // slot_no_in = vị trí KHÔNG đưa hàng vào (kho tạm — không làm đích, hàng ở đó luôn kéo đi)
 // slot_no_out = vị trí KHÔNG lấy hàng đi (hàng kẹt — loại khỏi nguồn). Optional: RPC cũ chưa có cột → undefined = false.
-interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number; slot_no_in?: boolean; slot_no_out?: boolean }
+// is_pick_face = vị trí NHẶT LẺ (hàng do lệnh Fill hạ xuống) — P1 phải chừa ra, xem ghi chú ở P1.
+interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number; slot_no_in?: boolean; slot_no_out?: boolean; is_pick_face?: boolean }
 interface Stats { total_picks: number; materials: StatsMaterial[]; placement: StatsPlacement[]; zones: StatsZone[]; locations: StatsLocation[] }
 
 async function fetchStats(warehouseId: string, categories: string[] | null, days: number): Promise<{ stats?: Stats; notReady?: boolean; error?: string }> {
-  const { data, error } = await supabase.rpc('slotting_stats', {
+  const args = {
     p_warehouse_id: warehouseId,
     p_categories: categories && categories.length > 0 ? categories : null,
     p_days: days,
-  })
+  }
+  // CACHE (29/08): engine ABC quét lượt nhặt 30 ngày — 1 trong 3 endpoint duy nhất còn trả 500
+  // (statement timeout) khi đông người, đo trong diễn tập 100 người dùng. Phân tích lịch sử 30
+  // ngày thì không ai cần từng giây, nên cache là đổi rẻ nhất. Bản _cached chống cả giẫm đạp
+  // (N người cùng miss → CHỈ MỘT tính). Tuổi tối đa = cờ `monitor_cache_seconds`, 0 = tắt.
+  const ttl = await getMonitorCacheSeconds()
+  let { data, error } = await supabase.rpc('slotting_stats_cached', { ...args, p_ttl_seconds: ttl })
+  // Nhánh dự phòng cửa sổ triển khai (20260829 chưa apply) — đường cũ KHÔNG cache, nguyên vẹn.
+  if (error?.code === 'PGRST202') ({ data, error } = await supabase.rpc('slotting_stats', args))
   if (error) {
     if (error.code === 'PGRST202' || /slotting_stats/i.test(error.message)) return { notReady: true }
     return { error: error.message }
@@ -72,31 +85,9 @@ async function fetchStats(warehouseId: string, categories: string[] | null, days
   return { stats: data as Stats }
 }
 
-// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3; multi-loại 27/07) ────
-// Khu có Loại → CHỈ nhận mã có loại ∈ MẢNG loại của khu (mã chưa khai loại KHÔNG vào được).
-// Khu chưa gắn Loại (di sản null/rỗng) → nhận mọi mã (khu đa dụng).
-function zoneAccepts(zone: StatsZone, mat: { category: string | null }): boolean {
-  if (!zone.categories?.length) return true
-  return mat.category != null && zone.categories.includes(mat.category)
-}
-// 2 khu "cùng nhóm loại" nếu giao nhau ≥1 loại (dùng để xếp band A/B/C trong nhóm khu tương đương)
-function zonesOverlap(a: string[] | null, b: string[] | null): boolean {
-  if (!a?.length || !b?.length) return (!a?.length && !b?.length)
-  return a.some(x => b.includes(x))
-}
-
-// ─── Banding khu theo hạng nhặt (chỉ dùng mức HARD) ─────────────────────────
-type Band = 'A' | 'B' | 'C'
-function eligibleRankedZones(zones: StatsZone[], mat: { category: string | null }): StatsZone[] {
-  return zones
-    .filter(z => z.pick_rank != null && zoneAccepts(z, mat))
-    .sort((a, b) => (a.pick_rank! - b.pick_rank!) || a.code.localeCompare(b.code))
-}
-function bandOfIndex(idx: number, n: number): Band {
-  if (n <= 1) return 'A'
-  const f = idx / n
-  return f < 1 / 3 ? 'A' : f < 2 / 3 ? 'B' : 'C'
-}
+// Luật khớp hàng ↔ khu + xếp band theo hạng nhặt: đã dời sang `utils/slottingBands.ts` (15/08) vì
+// chiến thuật cất hàng "Theo ABC" cũng phải dùng ĐÚNG luật này — để mỗi bên một bản là hai module
+// lại chỉ vào hai khu khác nhau, đúng bệnh cũ.
 
 interface EnrichedMaterial extends StatsMaterial {
   zones_current: { sub_code: string | null; pallets: number; cartons: number }[]
@@ -169,6 +160,10 @@ export async function getSlotting(req: Request, res: Response) {
 
     const { stats, notReady, error } = await fetchStats(warehouseId, effCats.length > 0 ? effCats : null, days)
     if (notReady) return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260717_slotting + 20260718_slotting_v2 (RPC slotting_stats)')
+    // Quá hạn tính khi đông người truy vấn KHÔNG phải lỗi app — trả 503 kèm câu hướng dẫn thay vì
+    // 500 "Lỗi hệ thống" (đo 29/08: 67 dòng error_logs của riêng màn này trong 3 giờ chạy tải,
+    // đủ để rule cảnh báo "lỗi BE 24h" kêu oan).
+    if (error && isQueryTimeout({ message: error })) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
     if (error || !stats) return fail(res, 500, 'DB_ERROR', error ?? 'RPC không trả dữ liệu')
 
     const materials = enrichMaterials(stats)
@@ -306,6 +301,16 @@ export async function previewPlan(req: Request, res: Response) {
         if (cpp > 0 && upc > 0) fullBaseByMat.set(m.id, cpp * upc)
       }
     }
+    // Pallet ĐANG BỊ QA GIỮ = hàng bị đóng băng chờ phán quyết (KPH / chờ tái kiểm), thường được
+    // gom vào đúng những ô đánh dấu "không đưa hàng vào" (đo Ba Vì 17/08: 40/95 pallet QA giữ nằm
+    // trong 4 ô như thế). Không loại ra thì bước P1 lên kế hoạch KÉO CHÍNH SỐ HÀNG ĐÓ về rack
+    // thường — trộn hàng chưa được phép dùng vào tồn tốt, mà Xuất kho thì vẫn từ chối xuất nó.
+    // Cùng lý lẽ với `cartons_reserved > 0` ngay dưới: vẫn CHIẾM chỗ, nhưng KHÔNG được xáo trộn.
+    const { data: qaRows } = await supabase.from('QAStatus').select('id, code')
+    const qaHoldIds = new Set((qaRows ?? [])
+      .filter((q: { code: string | null }) => (q.code ?? '') !== 'OK')
+      .map((q: { id: string }) => q.id))
+
     const entries: EntryRow[] = []
     // Ảnh chụp "đang chứa gì" per vị trí (trong phạm vi loại đã chọn) — gồm CẢ pallet reserved/kẹt
     // (không được chuyển nhưng vẫn CHIẾM chỗ): dùng cho phân tích kết quả kỳ vọng + cột "Đích đang chứa"
@@ -313,7 +318,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
-        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported')
+        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported, qa_status_id')
         .eq('warehouse_id', warehouse_id)
         .in('material_id', ids)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
@@ -326,6 +331,7 @@ export async function previewPlan(req: Request, res: Response) {
           rowsAtLoc.set(r.location_id, arr)
         }
         if ((r.cartons_reserved ?? 0) > 0) continue       // đang giữ cho đơn xuất — không xáo trộn
+        if (r.qa_status_id && qaHoldIds.has(r.qa_status_id)) continue   // QA giữ — đóng băng tại chỗ
         if (!r.location_id) continue                       // chưa có vị trí — không gợi ý
         if (locById.get(r.location_id)?.slot_no_out) continue  // vị trí không lấy hàng được — loại khỏi nguồn
         const fullBase = fullBaseByMat.get(r.material_id)
@@ -496,11 +502,18 @@ export async function previewPlan(req: Request, res: Response) {
       }
 
       // ── P1: VỊ TRÍ KHÔNG ĐƯA HÀNG VÀO (kho tạm) — hàng nằm đó LUÔN bị kéo đi
+      // NGOẠI TRỪ vị trí NHẶT LẺ: hàng ở đó do lệnh Fill CHỦ ĐỘNG hạ xuống để công nhân với tay
+      // lấy, không phải hàng "để tạm cần dọn". Không trừ ra thì hai tính năng giằng nhau — Fill
+      // đẩy hàng xuống, Slotting lên kế hoạch bốc chính số hàng đó đi, dọn xong Fill lại báo
+      // thiếu (đo staging 17/08 kho Ba Vì: 3 ô nhặt lẻ bị gắn cấm-nhập = 207 pallet vào diện dọn
+      // mỗi lượt lập kế hoạch). Người dùng gắn cờ lên ô nhặt lẻ là để cấm cất PALLET NGUYÊN vào
+      // đó — ý đó đã có luật riêng "Không cất pallet nguyên vào vị trí nhặt lẻ" phục vụ.
       {
         const tempByMat = new Map<string, EntryRow[]>()
         for (const e of entries) {
           if (movedEntry.has(e.id)) continue
-          if (!locById.get(locOf.get(e.id)!)?.slot_no_in) continue
+          const srcLoc = locById.get(locOf.get(e.id)!)
+          if (!srcLoc?.slot_no_in || srcLoc.is_pick_face) continue
           const arr = tempByMat.get(e.material_id) ?? []
           arr.push(e)
           tempByMat.set(e.material_id, arr)
@@ -972,50 +985,13 @@ export async function updateZoneConfig(req: Request, res: Response) {
     const { data, error } = await supabase.from('WarehouseZone').update(patch).eq('id', zone.id)
       .select('id, code, name, categories, pick_rank, flow_type').single()
     if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    // Chiến thuật cất hàng "Theo ABC" đọc hạng nhặt khu qua cache 5 phút → đổi xong phải xoá ngay,
+    // không thì sửa hạng khu mà gợi ý cất hàng vẫn chỉ vào khu cũ.
+    invalidatePutawayZones(String(zone.warehouse_id ?? ''))
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 
-// PUT /wms/slotting/location-config { warehouse_id, no_in_ids: string[], no_out_ids: string[] }
-// Cấu hình VỊ TRÍ (tab Cài đặt): replace-all 2 danh sách per kho —
-// no_in = vị trí KHÔNG đưa hàng vào (kho tạm); no_out = vị trí KHÔNG lấy hàng đi.
-export async function updateLocationConfig(req: Request, res: Response) {
-  try {
-    const { warehouse_id, no_in_ids, no_out_ids } = req.body as {
-      warehouse_id?: string; no_in_ids?: string[]; no_out_ids?: string[]
-    }
-    if (!warehouse_id || !Array.isArray(no_in_ids) || !Array.isArray(no_out_ids))
-      return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id / no_in_ids / no_out_ids')
-    if (!guardWarehouse(req, res, warehouse_id)) return
-
-    // Chỉ nhận id vị trí THUỘC kho này (chống gán chéo kho)
-    const valid = new Set<string>(
-      (await fetchAllRowsParallel(() => supabase.from('Location')
-        .select('id').eq('warehouse_id', warehouse_id).order('id'))).map((l: { id: string }) => l.id))
-    const inIds = [...new Set(no_in_ids)].filter(id => valid.has(id))
-    const outIds = [...new Set(no_out_ids)].filter(id => valid.has(id))
-
-    const now = new Date().toISOString()
-    // Reset cả kho về false rồi bật lại theo danh sách (replace-all, khớp UI multi-select)
-    const { error: resetErr } = await supabase.from('Location')
-      .update({ slot_no_in: false, slot_no_out: false, updated_at: now })
-      .eq('warehouse_id', warehouse_id)
-    if (resetErr) {
-      if (/slot_no_in|slot_no_out/.test(resetErr.message))
-        return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260718_slotting_locations')
-      return fail(res, 500, 'DB_ERROR', resetErr.message)
-    }
-    for (const ids of chunk(inIds, 300)) {
-      const { error } = await supabase.from('Location').update({ slot_no_in: true, updated_at: now }).in('id', ids)
-      if (error) return fail(res, 500, 'DB_ERROR', error.message)
-    }
-    for (const ids of chunk(outIds, 300)) {
-      const { error } = await supabase.from('Location').update({ slot_no_out: true, updated_at: now }).in('id', ids)
-      if (error) return fail(res, 500, 'DB_ERROR', error.message)
-    }
-    return ok(res, { no_in: inIds.length, no_out: outIds.length })
-  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
-}
 
 // POST /wms/slotting/plans/:id/scan-move { qr } — QUÉT THỰC HIỆN lệnh (nút inline tab Kế hoạch,
 // user chốt 19/07): pallet phải ĐANG Ở ĐÚNG vị trí nguồn của lệnh mới nhận; nhận là TỰ chuyển
@@ -1084,6 +1060,24 @@ export async function scanMovePlanPallet(req: Request, res: Response) {
     if (parts[0] === 'INACTIVE')  return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí đích không hoạt động')
     if (parts[0] === 'FULL')      return fail(res, 400, 'LOCATION_FULL',
       `Đích ${parts[2] ?? line.to_location_code ?? ''} đã đầy — bỏ qua, quét pallet khác`)
+
+    // Vết vào SỔ CHUYỂN VỊ TRÍ dùng chung (17/09) — trước đó cửa này đổi ô pallet mà tab Lịch sử
+    // của màn Chuyển vị trí không có dòng nào: người tra "pallet này ai chuyển, từ đâu" chỉ thấy
+    // khoảng trống. Xem `services/palletMoveLog.ts`.
+    await logPalletMoves({
+      moved: [{
+        entry_id: candidate.id,
+        from_location_id: candidate.location_id,          // chụp TRƯỚC khi RPC đổi ô
+        from_location_code: line.from_location_code,
+        pallet_code: code,
+        material_code: line.material_code,
+        short_name: line.material_name,
+      }],
+      to_location_id: line.to_location_id,
+      actor_id: updatedBy, actor_name: req.user?.name ?? null,
+      note: 'Quét chuyển vị trí — kế hoạch Tối ưu vị trí',
+      where: '/wms/slotting/plans/:id/scan-move',
+    })
 
     // Tiến độ dòng sau khi chuyển (để hiện "x/N" trên màn quét)
     const { count: doneCnt } = await supabase.from('InventoryEntry')

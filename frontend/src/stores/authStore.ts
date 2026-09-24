@@ -4,6 +4,7 @@ import type { AxiosError } from 'axios'
 import { apiClient } from '@/api/client'
 import { clearOfflineData } from '@/offline/persist'
 import { setRealtimeAuth } from '@/lib/supabase'
+import { disconnectRealtimeEvents } from '@/api/realtimeEvents'
 import type { User } from '@/types'
 
 interface AuthState {
@@ -34,7 +35,8 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         set({ user: null, isAuthenticated: false, token: null, realtimeToken: null })
-        setRealtimeAuth(null)     // trả kết nối realtime về anon
+        disconnectRealtimeEvents() // đóng 2 kênh Broadcast riêng tư (kênh cá nhân gắn với người vừa thoát)
+        setRealtimeAuth(null)      // trả kết nối realtime về anon
         void clearOfflineData()   // dọn cache + hàng đợi quét khỏi IndexedDB (máy dùng chung)
       },
 

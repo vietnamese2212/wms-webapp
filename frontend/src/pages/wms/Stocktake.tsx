@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
-import { useWarehouses, useLocationsReal } from '@/api/hooks'
+import { useWarehouses, useLocationsReal, useLocationsByFlag, useLocationsByIds, type LocationLite } from '@/api/hooks'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -10,7 +11,8 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, Flag, Clock, UserRound } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -18,7 +20,10 @@ import { qtyEntryText, qtyUnitLabel, qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { ScanOverlay } from '@/components/shared/ScanOverlay'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 interface StocktakeEntryData {
   id:                string
@@ -60,6 +65,7 @@ export default function Stocktake() {
     : null
 
   const { warehouseId, category, locationId, requiresOnly } = useWmsFilterStore(s => s.stocktake)
+  const codeTypes = useScanCodeTypes(warehouseId)
   const setStocktake = useWmsFilterStore(s => s.setStocktake)
 
   const [resultState,  setResultState]  = useState<ResultState>({ mode: 'none' })
@@ -87,15 +93,29 @@ export default function Stocktake() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // Ô chọn vị trí = TÌM TRÊN SERVER (kho Bàu Bàng 1.517 vị trí = 1.030KB/2,9s nếu kéo cả kho).
+  // "Chỉ vị trí cần check" thì hỏi thẳng TẬP mang cờ — BE lọc, FE không `.filter()` trên cả kho.
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locRows = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
+    !!warehouseId && !requiresOnly,
   )
+  const { data: flagLocs = [], isLoading: flagLoading } = useLocationsByFlag(
+    'requires_stocktake',
+    { warehouse_id: warehouseId, category: category || undefined },
+    !!warehouseId && requiresOnly,
+  )
+  // Nhãn cho vị trí ĐANG CHỌN — `locRows` chỉ có 50 dòng khớp từ khóa hiện tại, không thì ô in uuid thô
+  const { data: pickedLocs = [] } = useLocationsByIds([locationId])
 
-  const filteredLocations = requiresOnly
-    ? (locations as any[]).filter((l: any) => l.requires_stocktake)
-    : (locations as any[])
+  // requiresOnly: tập cờ nhỏ và đã về đủ → lọc từ khóa tại chỗ (SingleSelect ở chế độ
+  // serverSearch không tự lọc client). Ngược lại: 50 dòng server trả + dòng đang chọn.
+  const filteredLocations: LocationLite[] = requiresOnly
+    ? flagLocs.filter(l => !locTermDeb || l.location_code.toLowerCase().includes(locTermDeb.toLowerCase()))
+    : [...pickedLocs, ...locRows.filter((l: LocationLite) => !pickedLocs.some(p => p.id === l.id))]
 
-  const selectedLoc = (locations as any[]).find((l: any) => l.id === locationId)
+  const selectedLoc = filteredLocations.find(l => l.id === locationId) ?? pickedLocs[0]
 
   function clearResult() {
     setResultState({ mode: 'none' })
@@ -121,8 +141,10 @@ export default function Stocktake() {
       setResultState({ mode: 'result', entry })
     } catch (e: any) {
       setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
-      setTimeout(() => inputRef.current?.focus(), 50)
     } finally {
+      // Lấy lại focus SAU MỌI lượt tra (không chỉ lượt lỗi): súng PDA ở chế độ IME chỉ chèn được chữ
+      // khi có ô nhập đang focus — mất focus là phát bắn kế tiếp rơi vào hư không mà không báo gì.
+      setTimeout(() => inputRef.current?.focus(), 50)
       setSearching(false)
     }
   }
@@ -172,10 +194,13 @@ export default function Stocktake() {
      <StocktakeTabs />
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 space-y-1.5 sm:py-2 sm:space-y-2 shrink-0 sm:rounded-t-xl">
         <div className="flex items-center gap-1.5">
-          <MapPin className="h-4 w-4 text-slate-500 shrink-0" />
-          <p className="text-sm font-semibold text-slate-700">Check vị trí</p>
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08) — chip "Súng" vẫn hiện vì là trạng thái sống */}
+          <span className="hidden sm:flex items-center gap-1.5">
+            <MapPin className="h-4 w-4 text-slate-500 shrink-0" />
+            <p className="text-sm font-semibold text-slate-700">Check vị trí</p>
+          </span>
           {gunMode && (
             <span className="ml-1 rounded-full bg-sky-100 border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
               Súng · camera tắt
@@ -215,13 +240,47 @@ export default function Stocktake() {
             placeholder="Vị trí…"
             searchPlaceholder="Tìm vị trí…"
             triggerClassName="h-7 w-[130px]"
+            serverSearch
+            onSearchChange={setLocTerm}
+            selectedLabel={locationId ? selectedLoc?.location_code : undefined}
             options={[
               { value: '__none__', label: 'Chọn vị trí…' },
-              ...filteredLocations.map((l: any) => ({
-                value: l.id as string,
+              ...filteredLocations.map(l => ({
+                value: l.id,
                 label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}`,
               })),
             ]}
+          />
+          {/* Quét tem ô để chọn vị trí kiểm. armWedge khi CHƯA chọn vị trí: đúng lúc đó cò súng tra
+              tem pallet còn tắt (enabled = !!locationId) nên phát bắn không bị hai bên cùng ăn —
+              người kiểm đứng trước kệ bắn tem ô là vào việc ngay. */}
+          <LocationScanButton
+            // KIỂM KÊ là ĐẾM hàng trong ô, không phải cất hàng vào ô: ô đầy mới đúng là ô cần đếm,
+            // ô ngưng dùng vẫn có thể còn tồn. Chặn theo luật cất ở đây là chặn OAN đúng những ô
+            // đáng kiểm nhất (đo 22/08: quét B_TP3_37_T2 bị từ chối "đã ĐẦY 22/22").
+            purpose="lookup"
+            warehouseId={warehouseId}
+            disabled={!warehouseId}
+            armWedge={!locationId}
+            // Tick "Chỉ vị trí cần check" mà CỬA QUÉT không kiểm lại là bypass: ô chọn tay đã lọc
+            // theo cờ `requires_stocktake`, còn bắn tem thì nhận mọi ô (user báo 22/08). Luật riêng
+            // của màn phải khai qua `validate` — cùng tiền lệ Fill chỉ nhận ô nhặt lẻ.
+            validate={requiresOnly
+              ? loc => (flagLocs.some(l => l.id === loc.id) ? null
+                  // Danh sách cờ đang tải mà đã kết luận "kho chưa có ô nào" là báo oan — tick xong
+                  // bắn ngay trong <1s là dính. Nói đúng trạng thái, người quét bắn lại là xong.
+                  : flagLoading
+                    ? 'Đang tải danh sách ô cần kiểm — bắn lại tem sau một nhịp'
+                    : flagLocs.length === 0
+                      ? 'Kho này chưa có ô nào được đánh dấu cần kiểm — bỏ tick "Chỉ vị trí cần check" để kiểm ô bất kỳ'
+                      : `Ô ${loc.location_code} KHÔNG nằm trong ${flagLocs.length} ô cần kiểm — bỏ tick "Chỉ vị trí cần check" nếu vẫn muốn kiểm ô này`)
+              : undefined}
+            onPicked={loc => {
+              setStocktake({ locationId: loc.id })
+              setResultState({ mode: 'none' })
+              setInputVal('')
+              setScannerOpen(false)
+            }}
           />
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
@@ -254,7 +313,9 @@ export default function Stocktake() {
                   onChange={e => setInputVal(e.target.value)}
                   placeholder="Nhập mã pallet…"
                   className="font-mono text-sm h-9"
-                  disabled={searching || saving}
+                  // KHÔNG `disabled`, cũng KHÔNG `readOnly` lúc đang tra: cả hai đều làm Android
+                  // RỜI kết nối bàn phím/IME khỏi ô — đúng đường mà súng chế độ IME chèn chữ vào.
+                  // Chặn lượt bắn trùng đã có ở callback của cò súng (`if (searching) return`).
                 />
                 <Button
                   type="button"
@@ -264,7 +325,7 @@ export default function Stocktake() {
                   onClick={() => setScannerOpen(o => !o)}
                   disabled={searching || saving}
                 >
-                  <QrCode className="h-4 w-4" />
+                  <ScanIcon className="h-4 w-4" />
                 </Button>
                 <PdaGunHint className="h-9 w-9" />
               </div>
@@ -272,10 +333,10 @@ export default function Stocktake() {
 
             {/* Camera scanner */}
             {scannerOpen && (
-              <QRScanner
-                onScan={handleQRScan}
-                onClose={() => setScannerOpen(false)}
-              />
+              <ScanOverlay title="Quét tem pallet" onClose={() => setScannerOpen(false)}
+                footer={<p className="text-[11px] text-slate-400">Đưa camera vào tem trên pallet. Súng PDA bắn được luôn, không cần chạm màn hình.</p>}>
+                <QRScanner onScan={handleQRScan} onClose={() => setScannerOpen(false)} fill codeTypes={codeTypes} />
+              </ScanOverlay>
             )}
 
             {/* Success */}

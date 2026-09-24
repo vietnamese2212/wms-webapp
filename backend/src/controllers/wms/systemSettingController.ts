@@ -3,10 +3,15 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
 import { syncVapidSubject } from '../../services/pushService'
+import { logAdmin } from '../../services/adminAudit'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
-  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
+  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays, parseReceiptRating,
+  parseDashboardCacheSeconds,
+  parseMonitorCacheSeconds,
   parseStandardWorkHours,
+  parsePctDateBands,
+  parseSapDoSource,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -83,7 +88,9 @@ function isAlertThresholds(v: unknown): boolean {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false
   const o = v as Record<string, unknown>
   const keys = ALERT_TH_CONFIG_KEYS as readonly string[]
-  if (Object.keys(o).some(k => !keys.includes(k))) return false   // chỉ nhận đúng bộ khóa
+  // GATE_KEEP_AFTER_EXIT: cờ boolean tùy chọn (xe đã ra → tự ẩn cảnh báo hay giữ lại — 19/08)
+  if (Object.keys(o).some(k => !keys.includes(k) && k !== 'GATE_KEEP_AFTER_EXIT')) return false   // chỉ nhận đúng bộ khóa
+  if ('GATE_KEEP_AFTER_EXIT' in o && typeof o.GATE_KEEP_AFTER_EXIT !== 'boolean') return false
   if (!keys.every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number) && (o[k] as number) > 0)) return false
   const t = o as Record<string, number>
   if (!(t.PCT_CRIT <= t.PCT_WARN && t.PCT_WARN <= 90)) return false                                   // %Date: thấp = nguy
@@ -95,14 +102,33 @@ function isAlertThresholds(v: unknown): boolean {
   return true
 }
 
-function isPctDateBands(v: unknown): boolean {
+// Validator chuyển về utils/settings.ts (08/09) để tab KPI đọc cùng ngưỡng `low` — một nguồn.
+const isPctDateBands = (v: unknown): boolean => parsePctDateBands(v) !== null
+
+// - mobile_surface (21/09, user chốt "module nào — kể cả tab nhỏ — hiện trên điện thoại do superadmin
+//   cấu hình"): { hidden: string[], bottom_nav: string[] | null }.
+//     hidden     = khoá TRANG ("/wms/fill") hoặc TAB ("/wms/fill#report") bị ẨN khỏi bottom-nav / drawer /
+//                  dải tab khi màn < lg. CHỈ ẨN, KHÔNG chặn route — deep-link từ thông báo vẫn mở được;
+//                  chặn là việc của phân quyền. Toàn đơn vị (không theo chức danh).
+//     bottom_nav = thứ tự ≤ 6 trang trên thanh dưới; null = thứ tự mặc định trong code.
+//   Sổ khoá hợp lệ nằm ở FE (config/mobileSurface.ts — registry sinh từ NAV_GROUPS + tab tĩnh từng trang);
+//   BE chỉ kiểm HÌNH DẠNG, khoá lạ FE tự bỏ qua. Mặc định {hidden:[], bottom_nav:null} = hành vi cũ.
+//   Ghi CHỈ superadmin (SUPERADMIN_ONLY_SETTINGS) — không đi ké wms_settings.manage_system.
+const MOBILE_SURFACE_MAX_HIDDEN = 400
+const MOBILE_SURFACE_MAX_BOTTOM = 6
+function isMobileSurface(v: unknown): boolean {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false
   const o = v as Record<string, unknown>
-  if (Object.keys(o).some(k => k !== 'good' && k !== 'low')) return false
-  const good = o.good, low = o.low
-  if (typeof good !== 'number' || typeof low !== 'number' || !Number.isFinite(good) || !Number.isFinite(low)) return false
-  return low > 0 && low <= good && good <= 100
+  if (Object.keys(o).some(k => k !== 'hidden' && k !== 'bottom_nav')) return false
+  const key = (s: unknown) => typeof s === 'string' && /^\/[A-Za-z0-9/_-]*(#[A-Za-z0-9/_-]+)?$/.test(s) && s.length <= 120
+  if (!Array.isArray(o.hidden) || o.hidden.length > MOBILE_SURFACE_MAX_HIDDEN || !o.hidden.every(key)) return false
+  if (new Set(o.hidden as string[]).size !== o.hidden.length) return false
+  if (o.bottom_nav === null || o.bottom_nav === undefined) return true
+  if (!Array.isArray(o.bottom_nav) || o.bottom_nav.length > MOBILE_SURFACE_MAX_BOTTOM) return false
+  if (!o.bottom_nav.every(s => key(s) && !String(s).includes('#'))) return false
+  return new Set(o.bottom_nav as string[]).size === o.bottom_nav.length
 }
+const SUPERADMIN_ONLY_SETTINGS = new Set(['mobile_surface'])
 
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
@@ -112,7 +138,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
   alert_thresholds: {
     validate: isAlertThresholds,
-    hint: 'đủ 10 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · TRIP_LATE_DAYS 1–180 (ngày) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%) · 1 ≤ PACKING_UNRECV_WARN_H ≤ PACKING_UNRECV_CRIT_H ≤ 168 (giờ)',
+    hint: 'đủ 10 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · TRIP_LATE_DAYS 1–180 (ngày) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%) · 1 ≤ PACKING_UNRECV_WARN_H ≤ PACKING_UNRECV_CRIT_H ≤ 168 (giờ) · tùy chọn GATE_KEEP_AFTER_EXIT boolean (xe đã ra: false = tự ẩn cảnh báo, true = giữ lại chờ "Đã biết")',
   },
   retention_days: {
     validate: v => parseRetention(v) !== null,
@@ -130,6 +156,17 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
     validate: v => parsePackingMaxMaterials(v) !== null,
     hint: 'số nguyên 1–50 (mã / trang sổ)',
   },
+  dashboard_cache_seconds: {
+    validate: v => parseDashboardCacheSeconds(v) !== null,
+    hint: 'số giây 0–3600 (0 = tắt cache, tính sống mỗi lần mở trang chủ)',
+  },
+  // Nguồn nạp dòng DO SAP (22/09): BOTH = nhận cả VL06O lẫn ZSD02 (mặc định, giai đoạn đối chiếu) ·
+  // ZSD02 = nguồn duy nhất, cửa VL06O 409 · VL06O = đường lui. Hai nguồn ghi cùng sổ theo khoá (od, item).
+  sap_do_source: { validate: v => parseSapDoSource(v) !== null, hint: "'BOTH' | 'ZSD02' | 'VL06O'" },
+  monitor_cache_seconds: {
+    validate: v => parseMonitorCacheSeconds(v) !== null,
+    hint: 'số giây 0–3600 cho Giám sát vận hành + Slotting (0 = tắt cache, tính sống mỗi lần)',
+  },
   standard_work_hours: {
     validate: v => parseStandardWorkHours(v) !== null,
     hint: 'số giờ 1–24, bước 0,5 (giờ công chuẩn của 1 ngày công — bảng công quy ngày ra giờ)',
@@ -138,9 +175,17 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
     validate: v => parseVnHolidays(v) !== null,
     hint: '{ "2026": [{ date: "2026-01-01", name: "Tết Dương lịch" }] } — năm KHÔNG khai thì dùng lịch tự tính (âm lịch + 4 lễ dương)',
   },
+  receipt_rating: {
+    validate: v => parseReceiptRating(v) !== null,
+    hint: "{ mode: 'off' | 'optional' | 'required' } — kho nhận chấm sao chuyến giao lúc xác nhận đơn; required = chưa chấm thì chưa hoàn thành được phiếu nhận",
+  },
   org_profile: {
     validate: v => parseOrgProfile(v) !== null,
     hint: '{ contact_email, nmsx_alias: {CŨ:MỚI}, assumed_carton_mm: {l,w,h} } — nhận diện & tham số riêng của đơn vị',
+  },
+  mobile_surface: {
+    validate: isMobileSurface,
+    hint: '{ hidden: ["/wms/fill", "/wms/fill#report", …] (≤ 400 khoá, không trùng), bottom_nav: ["/wms/directed", …] (≤ 6 trang) | null } — chỉ superadmin ghi',
   },
 }
 
@@ -194,8 +239,13 @@ export async function updateSetting(req: Request, res: Response) {
   const { value } = req.body as { value: unknown }
   const known = KNOWN_SETTINGS[key]
   if (!known) return fail(res, 400, 'UNKNOWN_SETTING', `Cờ "${key}" không có trong sổ cờ hệ thống`)
+  // Cờ bố cục điện thoại đổi menu của CẢ đơn vị — user chốt 21/09 "config bởi superadmin", đọc cột
+  // Employee.is_superadmin (không so tên), không đi ké manage_system.
+  if (SUPERADMIN_ONLY_SETTINGS.has(key) && req.user?.is_superadmin !== true)
+    return fail(res, 403, 'SUPERADMIN_ONLY', `Cờ "${key}" chỉ superadmin mới được sửa`)
   if (!known.validate(value)) return fail(res, 400, 'INVALID_VALUE', `Giá trị không hợp lệ cho cờ "${key}" — cần ${known.hint}`)
 
+  const { data: before } = await supabase.from('SystemSetting').select('value').eq('key', key).maybeSingle()
   const { data, error } = await supabase.from('SystemSetting').upsert({
     key,
     value,
@@ -212,5 +262,9 @@ export async function updateSetting(req: Request, res: Response) {
     const email = (value as { contact_email?: unknown } | null)?.contact_email
     if (typeof email === 'string') await syncVapidSubject(email)
   }
+  // Sổ quản trị: cờ hệ thống đổi hành vi cả đơn vị (định dạng tem, ngưỡng cảnh báo, chấm sao…)
+  const oldVal = (before as { value?: unknown } | null)?.value ?? null
+  if (JSON.stringify(oldVal) !== JSON.stringify(value))
+    await logAdmin(req, { action: 'SETTING_UPDATE', target_type: 'SystemSetting', target_id: key, target_label: key, before: { value: oldVal }, after: { value } })
   return ok(res, data)
 }

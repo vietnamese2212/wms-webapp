@@ -1,11 +1,12 @@
 import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info,
-} from 'lucide-react'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
+import { ArrowLeft, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
@@ -25,30 +26,13 @@ import { playBeep, unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { usePutawayGate } from '@/components/wms/PutawayGate'
+import type { PutawayHint } from '@/utils/putaway'
 import { useRotationGate } from '@/components/wms/RotationGate'
 import { scanRotationOf } from '@/utils/rotation'
-import type { OutboundItem, OutboundStatus } from '@/types'
-
-// ─── Status badge ──────────────────────────────────────────────
-
-const statusCls: Record<OutboundStatus, string> = {
-  PENDING:     'bg-slate-100 text-slate-600',
-  IN_PROGRESS: 'bg-amber-100 text-amber-800',
-  COMPLETED:   'bg-green-100 text-green-800',
-  CANCELLED:   'bg-red-100 text-red-600',
-  PAUSED:      'bg-red-100 text-red-700',
-}
-const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-}
-function Badge({ status }: { status: string }) {
-  const s = status as OutboundStatus
-  return (
-    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
-      {statusLabel[s] ?? status}
-    </span>
-  )
-}
+import type { OutboundItem } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
+import { OutboundStatusBadge } from '@/lib/statusMaps'
 
 function ProgressBar({ scanned, target, mat }: { scanned: number; target: number; mat?: MatUnits | null }) {
   const pct = target > 0 ? Math.min(100, (scanned / target) * 100) : 0
@@ -59,7 +43,7 @@ function ProgressBar({ scanned, target, mat }: { scanned: number; target: number
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
       <span className={`text-sm tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {qtyEntryText(scanned, mat)}/{qtyEntryText(target, mat)} {qtyUnitLabel(mat)}
+        {qtyLabel(scanned, mat)} / {qtyLabel(target, mat)}
       </span>
     </div>
   )
@@ -101,24 +85,28 @@ type FeedbackState = { type: 'success' | 'error'; msg: string } | null
 interface ScanDialogProps {
   item:    OutboundItem
   gdoId:   string
+  warehouseId: string | null       // kho CỦA CHUYẾN → quyết loại mã camera giải
   onClose: () => void
   pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }
 
-function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, warehouseId, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+  const codeTypes = useScanCodeTypes(warehouseId)
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
   // Nhặt lẻ chỉ GIỮ hàng (không trừ remaining) → pallet luôn còn hàng ⇒ luôn phải khai chỗ đặt lại
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  const [leftoverHint,   setLeftoverHint]   = useState<PutawayHint | null>(null)   // quy tắc CẤT của ô vừa chọn (BE chấm)
   // Lỗi VỊ TRÍ → báo trong panel, giữ tem để chọn lại rồi Lưu (không bắt quét lại)
   const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanLoosePickingItem()
   // Luân chuyển: kết quả do BE tính (xem components/wms/RotationGate.tsx)
   const rotGate = useRotationGate(checkResult?.rotation)
+  const putGate = usePutawayGate(leftoverHint)   // ô đặt lại pallet lệch luật + kho bắt buộc → khoá Lưu tới khi có lý do
 
   const matName      = item.material?.short_name ?? item.material_code_raw ?? '—'
   const looseScanned = (item.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
@@ -138,7 +126,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
     playBeep()
     setCheckResult(null)
     setFeedback(null)
-    rotGate.reset()   // tem mới = câu hỏi lý do mới
+    rotGate.reset(); putGate.reset()   // tem mới = câu hỏi lý do mới
     checkScan(
       // loose_picking_mode: chặn trùng CHỈ so với các lượt NHẶT LẺ — pallet đã quét ở giao diện Xuất
       // (hoặc ngược lại) vẫn quét được (user 22/07: 2 người 2 việc trên cùng 1 pallet là bình thường)
@@ -147,7 +135,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? Math.min(data.suggested_cartons, remaining) : 1))
-          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt lại sau khi nhặt
+          setLeftoverLoc(null); setLeftoverHint(null); putGate.reset(); setLocError('')   // pallet mới → chọn lại chỗ đặt sau khi nhặt
         },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -160,13 +148,13 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
   const qtyToTake   = Math.max(1, parseInt(pendingCartons) || 1)
   const leftoverQty = checkResult?.pallet_remaining ?? 0
   const needLeftoverLoc = !!checkResult && leftoverQty > 0
-  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok && putGate.ok
 
   function handleSave() {
     if (!checkResult || saving || !canSave) return
     scanItem(
       { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake,
-        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg },
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg, ...putGate.arg },
       {
         onSuccess: (data: any) => {
           setCheckResult(null)
@@ -179,9 +167,10 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
           }, 1500)
         },
         onError: (err) => {
-          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          const eobj = (err as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
+          const msg = eobj?.message ?? 'Lỗi không xác định'
           // Lỗi VỊ TRÍ → giữ tem đang chờ, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
-          if (isLeftoverLocError(msg)) { setLocError(msg); setLeftoverLoc(null); return }
+          if (isLeftoverLocError(msg, eobj?.code)) { setLocError(msg); setLeftoverLoc(null); setLeftoverHint(null); return }
           setCheckResult(null)
           setFeedback({ type: 'error', msg })
         },
@@ -241,14 +230,14 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                     để chữ lại là đè mất chữ trên màn nhỏ (user báo 2 lần, 30/07). */}
                 {!checkResult && !checking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
                   </>
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {checking && (
@@ -313,7 +302,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                   mat={item.material}
                   onChange={b => setPendingCartons(String(b))}
                 />
-                <span className="text-sm text-slate-400 whitespace-nowrap">/ còn {qtyEntryText(remaining, item.material)} {qtyUnitLabel(item.material)}</span>
+                <span className="text-sm text-slate-400 whitespace-nowrap">/ còn {qtyLabel(remaining, item.material)}</span>
               </div>
               {hasEntry(item.material) && (
                 <p className="text-xs text-slate-500 tabular-nums">
@@ -327,9 +316,12 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                     mat={item.material}
                     currentLocationCode={checkResult.location_code ?? null}
                     warehouseId={checkResult.warehouse_id ?? null}
+                    materialId={item.material_id ?? undefined}
                     value={leftoverLoc}
                     onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                    onHintChange={h => { setLeftoverHint(h); putGate.reset() }}
                   />
+                  {putGate.box && <div className="mt-1.5">{putGate.box}</div>}
                   {locError && <p className="mt-1.5 text-xs font-medium text-red-600">⚠ {locError}</p>}
                 </div>
               )}
@@ -367,7 +359,7 @@ export default function LoosePickingItemDetail() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const pctBands = usePctBands()
 
-  const { data: gdo, isLoading } = useGDO(gdoId)
+  const { data: gdo, isLoading, isError } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
   const { mutateAsync: manualLooseAsync } = useManualLooseItem()
@@ -388,10 +380,12 @@ export default function LoosePickingItemDetail() {
   const hasAutoScanned = useRef(false)
 
   // PDA (user 19/07): bóp cò NGAY TẠI TRANG MÃ → tự mở màn quét chế độ SÚNG (không camera),
-  // rule chặn giữ nguyên (sai mã / vượt số nhặt lẻ như quét thường)
+  // rule chặn giữ nguyên (sai mã / vượt số nhặt lẻ như quét thường).
+  // Form đang mở → TẮT HẲN máy đọc (enabled=false) — máy đọc bắt chuỗi phím nhanh/IME ở mọi
+  // ô nhập rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
+  const wedgeFormOpen = confirmLooseOpen || showManualLoose
   useWedgeScanner(code => {
     if (!gdo || showScan) return
-    if (confirmLooseOpen || showManualLoose) return
     const it = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
     if (!it || it.material?.no_qr_tracking === true || it.loose_picking <= 0) return
     const ls = (it.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
@@ -402,7 +396,7 @@ export default function LoosePickingItemDetail() {
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return
@@ -441,7 +435,7 @@ export default function LoosePickingItemDetail() {
   const invAggRows = useMemo<InvAggRow[]>(() => {
     const map = new Map<string, InvAggRow>()
     for (const e of sortedInv) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.available; r.entries.push(e) }
@@ -461,6 +455,15 @@ export default function LoosePickingItemDetail() {
     setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
 
+  // Deep-link cũ / chuyến đã xóa: 404 → gdo mãi undefined → trước đây SKELETON VĨNH VIỄN (31/08)
+  if (isError || (!isLoading && !gdo)) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không tìm thấy chuyến — có thể đã bị xóa hoặc đường link đã cũ</p>
+        <Link to="/wms/loosepicking" className="text-xs text-sky-600 underline">← Về Nhặt lẻ</Link>
+      </div>
+    )
+  }
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">
@@ -564,7 +567,7 @@ export default function LoosePickingItemDetail() {
         })
     } else if (!isDone) {
       actionItems.push({
-        key: 'scan', icon: QrCode, label: 'Quét pallet', tip: 'Quét QR pallet để chuẩn bị hàng lẻ',
+        key: 'scan', icon: ScanIcon, label: 'Quét pallet', tip: 'Quét QR pallet để chuẩn bị hàng lẻ',
         primary: true, variant: 'default',
         onClick: openScan,
       })
@@ -582,7 +585,7 @@ export default function LoosePickingItemDetail() {
       </span>
       <span className="flex items-center gap-1">
         <Package className="h-3 w-3 text-slate-400 shrink-0" />
-        Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+        Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(item.cartons_ordered, item.material)}</span>
       </span>
       {doCode && (
         <span><span className="text-slate-400">DO:</span> <span className="font-mono break-all text-slate-600">{doCode}</span></span>
@@ -601,7 +604,7 @@ export default function LoosePickingItemDetail() {
         </DialogContent>
       </Dialog>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+        <ScanDialog item={item} gdoId={gdoId!} warehouseId={gdo.warehouse_id} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowScan(false); setPdaScan(null) }} />
       )}
 
@@ -665,7 +668,9 @@ export default function LoosePickingItemDetail() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col h-full min-h-0">
+      {/* Khung card chuẩn như OutboundDetail (user 19/08 "fit màn hình đồng nhất") */}
+      <div className="flex flex-col h-full min-h-0 sm:p-3">
+       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
 
         {/* ── Header ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
@@ -674,13 +679,13 @@ export default function LoosePickingItemDetail() {
           <div className="flex items-center gap-x-2 gap-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
-                onClick={() => navigate(`/wms/loosepicking/${gdoId}`)}
+                onClick={() => navigate(backTarget(`/wms/loosepicking/${gdoId}`))}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
-              <Badge status={item.status} />
+              <span className="font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0">{matCode}</span>
+              <OutboundStatusBadge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}
                 className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
@@ -847,7 +852,7 @@ export default function LoosePickingItemDetail() {
             <Card className="min-w-max">
               {scans.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
-                  <QrCode className="h-10 w-10 opacity-30" />
+                  <ScanIcon className="h-10 w-10 opacity-30" />
                   <p className="text-sm">Chưa có pallet nào được quét</p>
                   {!isDone && can(perms, 'loosepicking', 'scan') && (
                     isNoQr ? (
@@ -856,7 +861,7 @@ export default function LoosePickingItemDetail() {
                       </Button>
                     ) : (
                       <Button size="sm" variant="outline" onClick={openScan}>
-                        <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
+                        <ScanIcon className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
                       </Button>
                     )
                   )}
@@ -918,6 +923,7 @@ export default function LoosePickingItemDetail() {
             </Card>
           </div>
         </div>
+       </div>
       </div>
     </>
   )

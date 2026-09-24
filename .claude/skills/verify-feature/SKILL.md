@@ -1,15 +1,17 @@
 ---
 name: verify-feature
-description: BẮT BUỘC chạy TRƯỚC khi báo "đã xong" cho bất kỳ tính năng/sửa lỗi nào. Quy trình kiểm chứng chuẩn của dự án (KHÔNG phải viết unit test — dự án không có test framework): compile (tsc + build) → soi DB thật bằng Postgres MCP → realtime 4 case (tạo/sửa/xóa/làm lại) → UI flow thật bằng Playwright → TẢI ĐỒNG THỜI vài trăm nhân sự (không treo/đá user + không sai dữ liệu) → báo cáo trung thực kèm bằng chứng. Chống thói tuyên bố xong khi chưa chạy thử.
+description: BẮT BUỘC chạy TRƯỚC khi báo "đã xong" cho bất kỳ tính năng/sửa lỗi nào. Quy trình kiểm chứng chuẩn của dự án: compile (tsc + build) + `cd backend && npm test` (vitest — bất biến helper thuần + mirror BE⇄FE, từ 11/09) → soi DB thật bằng Postgres MCP → realtime 4 case (tạo/sửa/xóa/làm lại) → UI flow thật bằng Playwright → TẢI ĐỒNG THỜI vài trăm nhân sự (không treo/đá user + không sai dữ liệu) → báo cáo trung thực kèm bằng chứng. Chống thói tuyên bố xong khi chưa chạy thử.
 ---
 
 # Verify Feature — kiểm chứng trước khi báo xong
 
 Hiện thực hóa CLAUDE.md mục #4 ("tiêu chí thành công verify được") + luật "Realtime & test bắt buộc". **Không claim "xong" nếu chưa qua các cổng dưới.** Báo cáo trung thực: pass/fail kèm bằng chứng; nếu skip bước nào, nói rõ skip.
 
-## Cổng 1 — Compile (luôn luôn)
+## Cổng 1 — Compile + test đơn vị (luôn luôn)
 - Sửa frontend: `cd frontend && npx tsc --noEmit && npm run build`.
 - Sửa backend: `cd backend && npx tsc --noEmit`. Nếu sửa `backend/src` → **bump rebuild-token** trong `api/index.ts` (Vercel mới rebuild function).
+- **`cd backend && npm test`** (11/09 — vitest, 3 giây, không cần DB): test bất biến helper thuần + **mirror BE⇄FE** (`backend/tests/mirror`). Sửa helper nào có bản mirror (qtyUnits · shelfLife · qrParser/qr · plate/formatters · locationScan · passwordPolicy · vnNumber · warehouseGrid · palletCalc · categoryScope · rotation) thì sửa CẢ HAI rồi test này phải xanh. Thêm helper mirror mới → thêm `backend/tests/mirror/<tên>.mirror.test.ts` (ratchet `mirror_helper_without_test` gác).
+- `node scripts/qa/09-static-gate.mjs` — ratchet: route write mới phải có `validate({…})`, file BE mới dùng `db` có kiểu, tên bảng phải có trong kiểu sinh (`npm run db:types` sau migration).
 - Không pass → CHƯA xong, sửa ngay, không báo cáo.
 
 ## Cổng 2 — DB là nguồn sự thật (mọi tính năng đụng số liệu)
@@ -34,7 +36,8 @@ Kiểm đủ: **1) Bắt đầu làm** (tạo mới → số liệu cập nhật
   - Đọc lại ảnh từng cỡ để xác nhận, không chỉ chụp.
 - Kiểm phân quyền: nút write có bị ẩn đúng khi thiếu `can(perms,…)` không.
 
-## Cổng 5 — TẢI ĐỒNG THỜI: vài trăm nhân sự cùng thao tác (BẮT BUỘC cho mọi tính năng ghi số liệu)
+## Cổng 5 — TẢI ĐỒNG THỜI: vài trăm nhân sự cùng thao tác
+> **Khi nào BẮT BUỘC (chốt 11/09 — cổng nặng bắt buộc cho MỌI thứ thì bị bỏ qua âm thầm, tệ hơn không có):** tính năng ghi vào **bộ đếm / tổng / tồn / sức chứa / khung giờ DÙNG CHUNG** (InventoryEntry.cartons_*, booked_count, dock_capacity, OutboundItem.cartons_scanned, FillTask, wms_tasks…), hoặc thêm đường ghi có thể chạy song song trên cùng bản ghi. Còn lại (CRUD danh mục, cấu hình, báo cáo đọc, UI) → **ghi rõ "⊘ Cổng 5: không đụng bộ đếm dùng chung"** và bỏ qua có chủ đích; gói race 02/17/27/46/56 trong bậc `full` vẫn gác các bộ đếm đã biết.
 > **Luôn đặt app vào tình huống VÀI TRĂM người cùng làm việc.** App thật chạy cao điểm hàng trăm nhân sự xuất/nhập/booking đồng thời — phải chứng minh 2 điều người dùng sợ nhất KHÔNG xảy ra:
 > **(1) App treo / đá user ra đăng nhập.** **(2) Dữ liệu chạy sai khi nhiều người cùng làm.**
 
@@ -50,9 +53,10 @@ Cách mô phỏng (mẫu: `scratchpad/sim_wms.mjs`, `sim_booking.mjs` — setup/
 **Bài học cốt tử:** optimistic-CAS / retry-on-conflict **PHẢI có jitter+backoff** (không thì thundering herd → nửa số request 409 oan). Capacity/counter dùng chung → đếm sống dưới row-lock (RPC) hoặc optimistic-CAS có jitter. Xem [[concurrency-hardening]] + [[tms-slot-booking-atomic]].
 
 ## Cổng 5b — CHỐNG HỒI QUY (regression) — sau khi sửa
-Bắt lỗi cái ĐANG chạy bị vỡ bởi thay đổi mới (khác Cổng 1-5 vốn kiểm cái vừa làm). Chạy lại **bộ regression chuẩn** của dự án: `node scripts/qa/run-all.mjs` (4 gói invariant/smoke/race/scale, tag `QA-SUITE` tự dọn — memory `qa-regression-suite`).
-- **Sửa nhỏ trên dev** → tối thiểu gói `invariant` + `smoke` (nhanh), bắt hồi quy do chính thay đổi này.
-- **⭐ Trước khi merge `dev`→`main`** → **BẮT BUỘC full 4 gói XANH** (luật gốc ở CLAUDE.md). Đỏ = có hồi quy → sửa tới khi xanh, **KHÔNG merge** dù đã nghiệm thu Preview.
+Bắt lỗi cái ĐANG chạy bị vỡ bởi thay đổi mới (khác Cổng 1-5 vốn kiểm cái vừa làm). Chạy lại **bộ regression chuẩn** của dự án: `node scripts/qa/run-all.mjs` (57 gói, tag `QA-SUITE` tự dọn — memory `qa-regression-suite`), nay 3 bậc (11/09):
+- **Sửa nhỏ trên dev** → `--tier fast` (~5': static + unit/mirror + độ phủ + invariant + smoke + params-fuzz + perm) — bắt hồi quy do chính thay đổi này. Sửa module nào thì chạy thêm gói QA của module đó.
+- **Đêm** → `--tier full` tự chạy theo lịch (`.github/workflows/qa-nightly.yml`, 02:00 VN, đỏ = email).
+- **⭐ Trước khi merge `dev`→`main`** → **BẮT BUỘC `--tier full` XANH** (luật gốc ở CLAUDE.md). Đỏ = có hồi quy → sửa tới khi xanh, **KHÔNG merge** dù đã nghiệm thu Preview.
 - (Tùy chọn, luồng ổn định) lưu response chuẩn làm **golden**, chạy lại sau sửa → diff bắt hồi quy tinh vi.
 - Regression là CỔNG LẶP LẠI (chạy y hệt mỗi mốc), không phải audit khám phá — đừng lẫn với `check-app`.
 

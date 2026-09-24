@@ -9,7 +9,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
+import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
@@ -26,18 +27,24 @@ import { playBeep } from '@/utils/audio'
 import { qtyLabel, qtyBaseLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { usePutawayGate } from '@/components/wms/PutawayGate'
+import type { PutawayHint } from '@/utils/putaway'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { useAuthStore } from '@/stores/authStore'
 import type { GDO, OutboundItem } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string } | null
 type ItemWithDO = OutboundItem & { distributor_name?: string | null; delivery_code?: string | null }
 
 function apiMsg(err: unknown): string {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+}
+function apiCode(err: unknown): string | undefined {
+  return (err as AxiosError<{ error: { code?: string } }>)?.response?.data?.error?.code
 }
 
 // Số thùng lẻ CÒN cần chuẩn bị của 1 mã — cùng công thức LoosePickingItemDetail (effective trừ phần đã quét chẵn vượt)
@@ -55,6 +62,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn khi mount
 }) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(gdo.warehouse_id)   // loại mã camera giải = theo KHO CỦA CHUYẾN
   // Súng quét: hễ có 1 phát bắn = chuyển hẳn sang chế độ súng (tắt camera) cả phiên.
   // → sau khi Lưu KHÔNG bật lại camera nữa (QRScanner gỡ, resume() thành no-op). Súng listener độc lập camera nên vẫn bắn tiếp.
   const [gunMode, setGunMode] = useState(pdaMode)
@@ -64,6 +72,8 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const [pendingCartons, setPendingCartons] = useState('')
   // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Kết luận quy tắc CẤT của ô vừa chọn cho phần dư (BE chấm, FE chỉ hiển thị)
+  const [leftoverHint,   setLeftoverHint]   = useState<PutawayHint | null>(null)
   // Lỗi VỊ TRÍ → báo NGAY trong panel, GIỮ tem đang chờ để chọn lại rồi Lưu (không bắt quét lại)
   const [locError,       setLocError]       = useState('')
   const [activeItemId,   setActiveItemId]   = useState<string | null>(null)   // mã hàng vừa nhận từ QR
@@ -71,6 +81,8 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const [cartonFor,      setCartonFor]      = useState<{ scanId: string; palletCode: string } | null>(null)
   // Luân chuyển: kết quả do BE tính, FE chỉ hiển thị + hỏi lý do khi kho bắt buộc
   const rotGate = useRotationGate(checkResult?.rotation)
+  // Đặt phần dư vào ô lệch quy tắc cất: kho bắt buộc → khoá Lưu tới khi chọn lý do
+  const putGate = usePutawayGate(leftoverHint)
   const { mutate: checkScan,     isPending: checking }       = useCheckOutboundScan()
   const { mutate: scanOutbound,  isPending: savingOutbound } = useScanOutboundItem()
   const { mutate: scanLoose,     isPending: savingLoose }    = useScanLoosePickingItem()
@@ -141,7 +153,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
-    rotGate.reset()   // tem mới = câu hỏi lý do mới, không kế thừa lượt trước
+    rotGate.reset(); putGate.reset()   // tem mới = câu hỏi lý do mới, không kế thừa lượt trước
     const code = materialCodeOf(normalizeQR(qr_code))
     const matched = code ? matchItems(code) : []
     if (matched.length === 0) {
@@ -183,7 +195,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           setPendingCartons(String(data.suggested_cartons > 0
             ? (mode === 'loose' ? Math.min(data.suggested_cartons, rem) : data.suggested_cartons)
             : 1))
-          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
+          setLeftoverLoc(null); setLeftoverHint(null); putGate.reset(); setLocError('')   // pallet mới → chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           if (mode === 'outbound' && isConnectivityError(err)) { queueScanOffline(target, qr_code, undefined, false); return }
@@ -215,23 +227,23 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const palletRemain = checkResult?.pallet_remaining ?? 0
   const leftoverQty = mode === 'loose' ? palletRemain : Math.max(0, palletRemain - qtyToTake)
   const needLeftoverLoc = !!checkResult && leftoverQty > 0
-  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok && putGate.ok
 
   function handleSave() {
     if (!checkResult || saving || !activeItem || !canSave) return
     const target = activeItem
     const cartons = qtyToTake
     const leftoverArg = { leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) }
-    const rotArg = rotGate.arg
+    const rotArg = { ...rotGate.arg, ...putGate.arg }
     if (mode === 'loose') {
       scanLoose(
         { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, ...leftoverArg, ...rotArg },
         {
           onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
           onError: (err) => {
-            const m = apiMsg(err)
+            const m = apiMsg(err), ec = apiCode(err)
             // Lỗi VỊ TRÍ → giữ tem, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
-            if (isLeftoverLocError(m)) { setLocError(m); setLeftoverLoc(null); return }
+            if (isLeftoverLocError(m, ec)) { setLocError(m); setLeftoverLoc(null); setLeftoverHint(null); return }
             setCheckResult(null); setFeedback({ type: 'error', msg: m })
           },
         }
@@ -246,7 +258,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           const qr = checkResult.pallet_code
           // Lỗi VỊ TRÍ → giữ tem đang chờ, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
           const m = apiMsg(err)
-          if (!isConnectivityError(err) && isLeftoverLocError(m)) { setLocError(m); setLeftoverLoc(null); return }
+          if (!isConnectivityError(err) && isLeftoverLocError(m, apiCode(err))) { setLocError(m); setLeftoverLoc(null); setLeftoverHint(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL đã xác nhận; lỗi SAU khi gửi → uncertain
           if (isConnectivityError(err)) { queueScanOffline(target, qr, cartons, !(err instanceof OfflineError), leftoverLoc); return }
@@ -340,14 +352,14 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                     kiểu gì cũng đụng; lúc đã có tem thì việc cần làm là bấm Lưu, không phải đọc lại. */}
                 {!checkResult && !checking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
                   </>
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {checking && (
@@ -422,9 +434,12 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                     mat={activeItem?.material}
                     currentLocationCode={checkResult.location_code ?? null}
                     warehouseId={checkResult.warehouse_id ?? null}
+                    materialId={activeItem?.material_id ?? undefined}
                     value={leftoverLoc}
                     onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                    onHintChange={h => { setLeftoverHint(h); putGate.reset() }}
                   />
+                  {putGate.box && <div className="mt-1.5">{putGate.box}</div>}
                   {locError && (
                     <p className="mt-1.5 text-xs font-medium text-red-600">⚠ {locError}</p>
                   )}
@@ -468,6 +483,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
         <CartonScanSheet
           open
           palletCode={cartonFor.palletCode}
+          codeTypes={codeTypes}
           expectedMaterialCode={activeItem.material?.material_code ?? materialCodeOf(activeItem.material_code_raw) ?? ''}
           saving={attaching}
           onSave={saveCarton}

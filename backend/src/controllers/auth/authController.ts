@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { JWT_SECRET, type JwtPayload } from '../../middlewares/auth'
 import { ALL_PERMISSIONS } from '../../config/permissions'
+import { passwordError } from '../../utils/passwordPolicy'
 
 // 24h thay vì 7d: giảm cửa sổ token-bị-trộm-của-tài-khoản-đã-vô-hiệu-hóa gọi API trực tiếp
 // (từ ≤7 ngày xuống ≤1 ngày). FE refreshUser (5' + on-load) tái cấp token mới → phiên đang
@@ -76,6 +77,9 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     job_title_id:       emp.job_title_id ?? null,
     job_title_name:     jt?.name ?? null,
     is_driver:          jt?.is_driver === true,                 // chức danh TÀI XẾ (cờ, không so tên)
+    // Trang mở đầu theo CHỨC DANH (12/09): lái xe nâng mở app là rơi vào Việc cần làm thay vì
+    // Dashboard KPI toàn công ty. FE chỉ chuyển hướng khi user có quyền vào trang đó (chống vòng lặp).
+    landing_page:       (jt?.landing_page as string | null | undefined) ?? null,
     department:         dept?.name ?? null,
     is_carrier_dept:    dept?.is_carrier === true,              // phòng ban là ĐƠN VỊ VẬN TẢI
     allowed_categories: emp.allowed_categories ?? [],
@@ -95,6 +99,26 @@ export async function login(req: Request, res: Response) {
     // .ilike → 500 (digest bắt 29/07). Rác đầu vào = 400, không phải lỗi hệ thống.
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password)
       return fail(res, 'Email và mật khẩu là bắt buộc', 400)
+
+    // Chống dò mật khẩu XUYÊN instance + khoá theo TÀI KHOẢN + nhật ký (migration 20260903): bộ đếm ở DB, 2 khoá
+    // song song acct (10 sai/15') và ip (30 sai/15'), khoá 15'. RPC lỗi (chưa apply) → KHÔNG chặn đăng nhập
+    // (lớp MemoryStore của express-rate-limit vẫn còn), chỉ log — an toàn vận hành đặt trước.
+    const ipAddr = String(req.ip ?? '')
+    const emailKey = `acct:${email.trim().toLowerCase()}`
+    const throttle = async (event: 'check' | 'fail' | 'ok' | 'log', reason: string | null = null, employeeId: string | null = null) => {
+      const keys = event === 'ok' ? [emailKey] : [emailKey, `ip:${ipAddr}`]
+      const { data, error } = await supabase.rpc('auth_throttle', {
+        p_keys: keys, p_limits: [10, 30], p_event: event, p_window_seconds: 900, p_lock_seconds: 900,
+        p_email: email.trim().toLowerCase(), p_ip: ipAddr, p_reason: reason, p_employee_id: employeeId,
+      })
+      if (error) { console.error('[auth_throttle]', error.message); return { blocked: false, retry_after: 0 } }
+      return (data ?? { blocked: false, retry_after: 0 }) as { blocked: boolean; retry_after: number }
+    }
+    const pre = await throttle('check')
+    if (pre.blocked) {
+      await throttle('log', 'LOCKED')
+      return fail(res, 429, 'ACCOUNT_LOCKED', `Quá nhiều lần đăng nhập sai — tài khoản/địa chỉ đang tạm khoá, thử lại sau ${Math.max(1, Math.ceil(pre.retry_after / 60))} phút.`)
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps, error: lookupErr } = await supabase.from('Employee')
@@ -118,10 +142,12 @@ export async function login(req: Request, res: Response) {
     // mật khẩu → chống enumeration. Mọi thất bại pre-auth trả cùng 1 message + 401.
     const valid = await bcrypt.compare(password, emp?.password || DUMMY_HASH)
     if (!emp || !emp.password || !valid) {
-      return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)
+      await throttle('fail', !emp ? 'NO_ACCOUNT' : !emp.password ? 'NO_PASSWORD' : 'BAD_PASSWORD')
+      return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)   // message y như cũ — không tiết lộ tài khoản có tồn tại
     }
     // Đã chứng minh biết đúng mật khẩu → giờ mới báo trạng thái tài khoản (an toàn tiết lộ)
-    if (!emp.is_active) return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 403)
+    if (!emp.is_active) { await throttle('log', 'INACTIVE', emp.id); return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 403) }
+    await throttle('ok', null, emp.id)
 
     // Run all 3 independent post-auth queries in parallel
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,7 +155,7 @@ export async function login(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,7 +199,7 @@ export async function me(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -203,16 +229,16 @@ export async function changePassword(req: Request, res: Response) {
 
     const { old_password, new_password } = req.body as { old_password?: string; new_password?: string }
     if (!old_password || !new_password) return fail(res, 'Thiếu thông tin', 400)
-    if (new_password.length < 8) return fail(res, 'Mật khẩu mới phải có ít nhất 8 ký tự', 400)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')
-      .select('id, password').eq('id', userId).limit(1)
+      .select('id, password, email, employee_code').eq('id', userId).limit(1)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const emp = (emps as any[])?.[0]
+    const emp = (emps as { id: string; password: string | null; email: string | null; employee_code: string }[] | null)?.[0]
     if (!emp)          return fail(res, 'Không tìm thấy tài khoản', 404)
     if (!emp.password) return fail(res, 'Tài khoản chưa có mật khẩu. Liên hệ quản trị viên.', 400)
+    // Chính sách mật khẩu tập trung (utils/passwordPolicy) — cần email/mã để chặn "mật khẩu chứa tên đăng nhập"
+    const policyErr = passwordError(new_password, { email: emp.email, employee_code: emp.employee_code })
+    if (policyErr) return fail(res, policyErr, 400)
 
     const valid = await bcrypt.compare(old_password, emp.password)
     if (!valid) return fail(res, 'Mật khẩu hiện tại không đúng', 401)

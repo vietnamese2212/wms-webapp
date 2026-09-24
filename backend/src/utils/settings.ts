@@ -7,6 +7,7 @@
 // MỘT NGUỒN cho cả 2 chiều: mặc định + validator khai ở đây, systemSettingController dùng chính
 // validator này cho PUT, consumer dùng getter — không có bản chép tay nào để lệch.
 import { supabase } from '../lib/supabase'
+import { KPI_TARGETS_DEFAULT, parseKpiTargets, KPI_MEANINGS_DEFAULT, parseKpiMeanings } from './kpiDefs'
 
 const TTL_MS = 30_000
 const cache = new Map<string, { at: number; value: unknown }>()
@@ -70,6 +71,31 @@ export const INBOUND_EDIT_WINDOW_DEFAULT = 2
 export const parseInboundEditWindow = (raw: unknown) => int(raw, 1, 90)
 export const getInboundEditWindowDays = () =>
   readSetting('inbound_edit_window_days', INBOUND_EDIT_WINDOW_DEFAULT, parseInboundEditWindow)
+
+// ── dashboard_cache_seconds — TUỔI TỐI ĐA của số liệu Dashboard (21/08) ────────
+// Trang chủ là trang AI CŨNG mở đầu tiên, và số liệu của nó là TỔNG HỢP TOÀN CÔNG TY (quét
+// InventoryEntry + join chuyến xuất). Đo 21/08 dưới tải ghi đồng thời: p50 28,3s · max 36,0s · 500.
+// Đã loại trừ query là nguyên nhân (chạy ẤM chỉ 64ms; thử index giả định không nhanh hơn) — chậm là
+// do XẾP HÀNG ở pool ~10 khe của PostgREST. Cách duy nhất có tác dụng: đừng chạy tổng hợp nặng
+// trong MỌI request, mà dùng lại kết quả trong `n` giây.
+// Mặc định 300 (5 phút — user chốt 21/08). Đặt 0 = TẮT cache, tính sống mỗi lần như trước.
+export const DASHBOARD_CACHE_SECONDS_DEFAULT = 300
+export const parseDashboardCacheSeconds = (raw: unknown) => int(raw, 0, 3600)
+export const getDashboardCacheSeconds = () =>
+  readSetting('dashboard_cache_seconds', DASHBOARD_CACHE_SECONDS_DEFAULT, parseDashboardCacheSeconds)
+
+// ── monitor_cache_seconds — TUỔI TỐI ĐA số liệu 2 màn GIÁM SÁT (29/08) ────────
+// Giám sát vận hành + Slotting là 2 endpoint DUY NHẤT còn gãy dưới tải (đo 29/08, diễn tập 100
+// người ở Ba Vì + Bàu Bàng): 500 vì statement timeout, trong khi mọi màn khác chịu được 28 người.
+// Đã loại trừ round-trip (1–3/màn) và sức máy DB (chạy thẳng pg: 1,0s và 1,7s ở 8 người) — và
+// production có pg_settings GIỐNG HỆT staging nên ngưỡng đo được chính là ngưỡng thật.
+// Mặc định 30 giây, CỐ Ý ngắn: Giám sát vận hành mở thường trực trên màn TV nên nó vừa là nạn
+// nhân vừa là NGUỒN tải; 30 giây đủ gộp cơn dồn mà người đứng xem bảng không nhận ra. Đặt 0 =
+// TẮT cache, tính sống mỗi lần như trước.
+export const MONITOR_CACHE_SECONDS_DEFAULT = 30
+export const parseMonitorCacheSeconds = (raw: unknown) => int(raw, 0, 3600)
+export const getMonitorCacheSeconds = () =>
+  readSetting('monitor_cache_seconds', MONITOR_CACHE_SECONDS_DEFAULT, parseMonitorCacheSeconds)
 
 // ── packing_max_materials_per_run — số mã tối đa trên 1 trang sổ đóng gói ──────
 export const PACKING_MAX_MATERIALS_DEFAULT = 10
@@ -170,3 +196,55 @@ export function parseVnHolidays(raw: unknown): VnHolidays | null {
   return out
 }
 export const getVnHolidays = () => readSetting('vn_holidays', VN_HOLIDAYS_DEFAULT, parseVnHolidays)
+
+// ── receipt_rating — kho nhận CHẤM SAO chuyến giao lúc xác nhận đơn (28/08) ────
+// off = tắt hẳn · optional = có ô chấm nhưng không bắt buộc · required = chưa chấm thì chưa cho
+// hoàn thành phiếu nhận. Mặc định `optional`: hiện tính năng ra cho người dùng thấy nhưng KHÔNG
+// chặn luồng nhận hàng — chặn là việc đơn vị phải chủ động bật.
+export type ReceiptRatingMode = 'off' | 'optional' | 'required'
+export interface ReceiptRatingCfg { mode: ReceiptRatingMode }
+export const RECEIPT_RATING_DEFAULT: ReceiptRatingCfg = { mode: 'optional' }
+export function parseReceiptRating(raw: unknown): ReceiptRatingCfg | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'mode')) return null
+  return o.mode === 'off' || o.mode === 'optional' || o.mode === 'required'
+    ? { mode: o.mode } : null
+}
+export const getReceiptRatingCfg = () => readSetting('receipt_rating', RECEIPT_RATING_DEFAULT, parseReceiptRating)
+
+// ── sap_do_source — NGUỒN nạp dòng DO của SAP (22/09, plan TMS_DISPATCH đợt 0) ──────
+// 'BOTH' (mặc định = hành vi cũ): nhận cả VL06O lẫn ZSD02 — giai đoạn đối chiếu hai nguồn cùng ngày.
+// 'ZSD02': ZSD02 là nguồn duy nhất, cửa VL06O trả 409 SOURCE_DISABLED (code giữ làm đường lui).
+// 'VL06O': đường lui — tắt cửa ZSD02. Hai nguồn ghi CÙNG sổ `erp_outbound_orders` theo khoá (od, item);
+// chạy song song lâu dài là "hai cửa cùng một sổ khác luật" nên công tắc này là để CẮT, không để sống chung.
+export const SAP_DO_SOURCES = ['BOTH', 'ZSD02', 'VL06O'] as const
+export type SapDoSource = typeof SAP_DO_SOURCES[number]
+export const SAP_DO_SOURCE_DEFAULT: SapDoSource = 'BOTH'
+export const parseSapDoSource = (raw: unknown): SapDoSource | null =>
+  typeof raw === 'string' && (SAP_DO_SOURCES as readonly string[]).includes(raw) ? (raw as SapDoSource) : null
+export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_DEFAULT, parseSapDoSource)
+
+// ── pct_date_bands — thang màu %Date toàn app (xanh > good, vàng > low, còn lại đỏ) ──
+// Cờ này có từ trước ở systemSettingController (validator `isPctDateBands`); getter đặt ở đây để tab
+// KPI dùng `low` làm ngưỡng "tồn cận date" — cùng con số người dùng đang thấy đỏ ở trang Tồn kho.
+export interface PctDateBands { good: number; low: number }
+export const PCT_DATE_BANDS_DEFAULT: PctDateBands = { good: 60, low: 30 }
+export function parsePctDateBands(raw: unknown): PctDateBands | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'good' && k !== 'low')) return null
+  const good = o.good, low = o.low
+  if (typeof good !== 'number' || typeof low !== 'number' || !Number.isFinite(good) || !Number.isFinite(low)) return null
+  return low > 0 && low <= good && good <= 100 ? { good, low } : null
+}
+export const getPctDateBands = () => readSetting('pct_date_bands', PCT_DATE_BANDS_DEFAULT, parsePctDateBands)
+
+// ── kpi_targets — MỤC TIÊU KPI tab KPI Dashboard (08/09) ────────────────────────
+// Ghi qua route riêng PUT /wms/kpi/targets (quyền `dashboard.kpi_target`), KHÔNG nằm trong sổ cờ của
+// systemSettingController (PUT /wms/settings/kpi_targets → UNKNOWN_SETTING). Định nghĩa + validator ở kpiDefs.ts.
+export const getKpiTargets = () => readSetting('kpi_targets', KPI_TARGETS_DEFAULT, parseKpiTargets)
+
+// ── kpi_meanings — DIỄN GIẢI KPI sửa trong app (09/09). Cũng đi route riêng PUT /wms/kpi/meanings
+// (quyền `dashboard.kpi_note`), KHÔNG nằm trong sổ cờ chung. Định nghĩa + validator ở kpiDefs.ts.
+export const getKpiMeanings = () => readSetting('kpi_meanings', KPI_MEANINGS_DEFAULT, parseKpiMeanings)

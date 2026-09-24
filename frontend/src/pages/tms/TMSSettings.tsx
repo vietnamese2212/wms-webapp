@@ -1,17 +1,18 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
-import { Badge }    from '@/components/ui/badge'
+import { Switch }   from '@/components/ui/switch'
+import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
-import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -25,8 +26,11 @@ import {
   useTmsVehicles, useTmsVehiclesPaged, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { VehicleModelsPanel } from '@/components/tms/VehicleModelsPanel'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const DOW_LABEL: Record<number, string> = { 1:'T2', 2:'T3', 3:'T4', 4:'T5', 5:'T6', 6:'T7', 0:'CN' }
@@ -44,6 +48,10 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   const [code, setCode] = useState(vt?.code ?? '')
   const [name, setName] = useState(vt?.name ?? '')
   const [isActive, setIsActive] = useState(vt?.is_active ?? true)
+  // Xe chở hàng ĐÃ LÊN PALLET (26/08) — quyết định CÁCH VẼ sơ đồ xếp xe, không dính gì tới đặt lịch.
+  // Là CỜ chứ không đọc tên: danh mục đang có 'XE PALLET (16-17 PALLET)' / 'XE XÁ' nên tên đã ngầm
+  // phân biệt, nhưng đổi tên danh mục sẽ làm luồng hỏng ÂM THẦM (ratchet role_by_vietnamese_name).
+  const [isPalletTruck, setIsPalletTruck] = useState(vt?.is_pallet_truck ?? false)
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateVehicleType()
@@ -54,9 +62,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: vt.id, name, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: vt.id, name, is_active: isActive, is_pallet_truck: isPalletTruck }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      create({ code, name, is_pallet_truck: isPalletTruck }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
 
@@ -76,8 +84,18 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
           {isEdit && <p className="text-[10px] text-slate-400">Mã là định danh cố định, không sửa được.</p>}</div>
         <div className="space-y-1"><Label className="text-xs">Tên *</Label>
           <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
+        <div className="space-y-1 rounded border border-slate-200 bg-slate-50 px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            <Switch id="vt-pallet" checked={isPalletTruck} onCheckedChange={setIsPalletTruck} />
+            <Label htmlFor="vt-pallet" className="text-sm cursor-pointer">Xe chở pallet</Label>
+          </div>
+          <p className="text-[10px] text-slate-500">
+            Bật: sơ đồ xếp xe <b>gom hàng lên pallet</b> rồi xếp pallet (sức chứa tính bằng chỗ pallet).
+            Tắt: xếp <b>từng thùng</b> như xe xá, và không xếp khối pallet lên xe.
+          </p>
+        </div>
         {isEdit && <div className="flex items-center gap-2">
-          <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="vt-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>}
       </div>
@@ -293,7 +311,7 @@ function SlotRowEditDialog({ st, open, onClose, cargoOptions }: {
         <div className="space-y-1"><Label className="text-xs">Số xe tối đa *</Label>
           <Input type="number" min="0" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
         <div className="flex items-center gap-2">
-          <input id="st-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="st-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="st-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>
       </div>
@@ -312,6 +330,7 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   const [contact,  setContact]  = useState(co?.contact_name  ?? '')
   const [phone,    setPhone]    = useState(co?.contact_phone ?? '')
   const [isActive, setIsActive] = useState(co?.is_active ?? true)
+  const [tenderRequired, setTenderRequired] = useState(co?.tender_required === true)
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateTransportCompany()
@@ -321,11 +340,12 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   function handleSubmit() {
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
+    const tender_required = type === 'ĐVVT' && tenderRequired
     if (isEdit) {
-      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive, alias_codes: aliasCodes },
+      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive, alias_codes: aliasCodes, tender_required },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, alias_codes: aliasCodes },
+      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, alias_codes: aliasCodes, tender_required },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -364,8 +384,20 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
           <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
         <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
           <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" /></div>
+        {type === 'ĐVVT' && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-2.5 space-y-1">
+            <div className="flex items-center gap-2">
+              <Switch id="co-tender" checked={tenderRequired} onCheckedChange={setTenderRequired} />
+              <Label htmlFor="co-tender" className="text-sm cursor-pointer">Cần ĐVVT phản hồi khi chào chuyến (Điều vận)</Label>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-snug">
+              <b>Bật</b>: xe ghép cho ĐVVT này chờ ĐVVT <i>nhận</i> / <i>từ chối</i> rồi mới vào Kế hoạch xuất — từ chối thì điều vận đổi ĐVVT và chốt lại.
+              <b> Tắt</b> (mặc định): xác nhận là vào Kế hoạch xuất ngay; muốn đổi ĐVVT thì điều vận sửa tay ở tab Kế hoạch xuất.
+            </p>
+          </div>
+        )}
         {isEdit && <div className="flex items-center gap-2">
-          <input id="co-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="co-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>}
       </div>
@@ -385,6 +417,11 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
   const [plate,    setPlate]    = useState(v?.license_plate    ?? '')
   const [vtId,     setVtId]     = useState(v?.vehicle_type_id  ?? '')
   const [isActive, setIsActive] = useState(v?.is_active ?? true)
+  // Lòng thùng THẬT của chiếc xe (mm, 26/08) — sơ đồ xếp xe tự điền khi chọn biển số. Tuỳ chọn:
+  // để trống = chưa khai (952 xe hiện có đều vậy), sơ đồ sẽ rơi về nhập tay như cũ.
+  const [dimL, setDimL] = useState(v?.box_length_mm != null ? String(v.box_length_mm) : '')
+  const [dimW, setDimW] = useState(v?.box_width_mm  != null ? String(v.box_width_mm)  : '')
+  const [dimH, setDimH] = useState(v?.box_height_mm != null ? String(v.box_height_mm) : '')
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateTmsVehicle()
@@ -394,11 +431,17 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
   function handleSubmit() {
     setErr('')
     if (!nccId || !plate || !vtId) { setErr('Vui lòng điền đủ thông tin'); return }
+    // Ô trống gửi null TƯỜNG MINH = xoá số cũ (cùng quy ước max_materials của Vị trí kho)
+    const dims = {
+      box_length_mm: dimL.trim() ? Number(dimL) : null,
+      box_width_mm:  dimW.trim() ? Number(dimW) : null,
+      box_height_mm: dimH.trim() ? Number(dimH) : null,
+    }
     if (isEdit) {
-      update({ id: v.id, ncc_id: nccId, vehicle_type_id: vtId, is_active: isActive },
+      update({ id: v.id, ncc_id: nccId, vehicle_type_id: vtId, is_active: isActive, ...dims },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ ncc_id: nccId, license_plate: plate, vehicle_type_id: vtId },
+      create({ ncc_id: nccId, license_plate: plate, vehicle_type_id: vtId, ...dims },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -434,8 +477,19 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
             placeholder="Chọn loại xe" searchPlaceholder="Tìm tên hoặc mã loại xe…"
             triggerClassName="w-full h-9" />
         </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Lòng thùng xe D×R×C (mm) — tuỳ chọn</Label>
+          <div className="flex items-center gap-1.5">
+            <Input type="number" min={0} className="h-9 text-sm" value={dimL} onChange={e => setDimL(e.target.value)} placeholder="Dài" />
+            <span className="text-slate-400 text-xs">×</span>
+            <Input type="number" min={0} className="h-9 text-sm" value={dimW} onChange={e => setDimW(e.target.value)} placeholder="Rộng" />
+            <span className="text-slate-400 text-xs">×</span>
+            <Input type="number" min={0} className="h-9 text-sm" value={dimH} onChange={e => setDimH(e.target.value)} placeholder="Cao" />
+          </div>
+          <p className="text-[10px] text-slate-400">Khai ở đây thì sơ đồ xếp xe 3D tự nhận kích thước khi chuyến gắn biển số này.</p>
+        </div>
         {isEdit && <div className="flex items-center gap-2">
-          <input id="v-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="v-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="v-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>}
       </div>
@@ -481,11 +535,22 @@ export default function TMSSettings() {
     : showCompaniesTab ? 'companies'
     : 'vehicles'
   const [tab, setTab] = useState(defaultTab)
+  // key = khoá cấu hình điện thoại ('/tms/settings#<key>' — config/mobileSurface.ts) = value của TabsTrigger
+  const permTabs = useMemo(() => ([
+    showVtTab        && { key: 'vehicle-types' as const,  label: 'Loại xe',    icon: Truck },
+    // Dòng xe CON mang mã SAP (user 23/09: "cho dòng xe con mở 1 tab là Mã dòng xe") — cùng quyền với cha
+    showVtTab        && { key: 'vehicle-models' as const, label: 'Mã dòng xe', icon: Truck },
+    showSlotsTab     && { key: 'slot-templates' as const, label: 'Khung giờ',  icon: Clock },
+    showCompaniesTab && { key: 'companies' as const,      label: 'ĐVVT / NCC', icon: Building2 },
+    showVehiclesTab  && { key: 'vehicles' as const,       label: 'Xe',         icon: Truck },
+  ] as const).filter((t): t is Exclude<typeof t, false> => !!t), [showVtTab, showSlotsTab, showCompaniesTab, showVehiclesTab])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/tms/settings', permTabs, tab, setTab)
 
   // Warehouse selector — context cho tab Khung giờ. Scope theo phân quyền Kho + Loại kho
   // của user (rule: chỉ thấy/cài khung giờ trong phạm vi được phân).
   const { data: warehouses = [] } = useScopedWarehouses(true)
-  const [warehouseId, setWarehouseId] = useState('')
+  const [warehouseId, setWarehouseId] = useState(() => useGlobalScopeStore.getState().warehouseId)
 
   // Cargo options từ LookupValue(warehouse_type) — cắt theo allowed_categories
   const { data: whTypes = [] } = useScopedWhTypes()
@@ -511,10 +576,15 @@ export default function TMSSettings() {
     if (from === null || !ov) return
     let toIdx = ov.below ? ov.idx + 1 : ov.idx
     if (from < toIdx) toIdx--
-    if (toIdx === from) return
+    moveVTTo(from, toIdx)
+  }
+  // Touch (điện thoại/tablet) KHÔNG kéo-thả HTML5 được → nút ▲▼ là đường đổi thứ tự tương đương
+  // (chỉ khi không lọc — index mới khớp orderedVT, cùng điều kiện với kéo-thả)
+  function moveVTTo(from: number, to: number) {
+    if (to === from || to < 0 || to >= orderedVT.length) return
     const next = [...orderedVT]
     const [moved] = next.splice(from, 1)
-    next.splice(toIdx, 0, moved)
+    next.splice(to, 0, moved)
     setOrderedVT(next)
     reorderVT.mutate(next.map(v => v.id), {
       onError: e => { toast({ variant: 'destructive', title: 'Không lưu được thứ tự', description: apiMsg(e) }); setOrderedVT(vehicleTypes) },
@@ -646,10 +716,7 @@ export default function TMSSettings() {
             <Settings2 className="h-4 w-4 text-slate-500" /> Cài đặt TMS
           </span>
           <TabsList className="h-8 max-w-full overflow-x-auto">
-            {showVtTab        && <TabsTrigger value="vehicle-types"  className="gap-1.5 text-xs"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>}
-            {showSlotsTab     && <TabsTrigger value="slot-templates" className="gap-1.5 text-xs"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>}
-            {showCompaniesTab && <TabsTrigger value="companies"      className="gap-1.5 text-xs"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>}
-            {showVehiclesTab  && <TabsTrigger value="vehicles"       className="gap-1.5 text-xs"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>}
+            {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
           </TabsList>
         </div>
 
@@ -658,6 +725,7 @@ export default function TMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vtFilterDefs} />
+            <FilterSheetButton defs={vtFilterDefs} className="sm:hidden" />
             {vtCreate && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-vt', icon: Plus, label: 'Thêm loại xe', tip: 'Thêm loại xe mới',
@@ -678,6 +746,9 @@ export default function TMSSettings() {
                         {vtEdit && <TableHead className="px-2 py-1.5 w-7" />}
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
+                        {/* Cờ pallet phải NHÌN THẤY từ danh sách — nằm mỗi trong form Sửa thì như
+                            chưa tồn tại (user bắt 26/08: "loại xe chưa có 2 mục xe thường/xe pallet") */}
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Kiểu xếp xe</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
                         {vtWrite && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
@@ -701,16 +772,36 @@ export default function TMSSettings() {
                           className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragVTIdx === idx ? 'opacity-40' : ''} ${isOver && !overVT?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overVT?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                           onClick={() => setDetailVT(prev => prev?.id === vt.id ? null : vt)}>
                           {vtEdit && (
-                            <TableCell className="px-2 py-1 w-7 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title={vtFiltering ? 'Xóa bộ lọc để sắp thứ tự' : 'Kéo để đổi thứ tự'}>
-                              {!vtFiltering && <GripVertical className="h-3.5 w-3.5" />}
+                            <TableCell className="px-1 py-1 w-14" onClick={e => e.stopPropagation()} title={vtFiltering ? 'Xóa bộ lọc để sắp thứ tự' : 'Kéo hoặc bấm ▲▼ để đổi thứ tự'}>
+                              {/* Kéo-thả (chuột) + nút ▲▼ (touch không drag HTML5 được — cùng một đường lưu) */}
+                              {!vtFiltering && (
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-slate-300 cursor-grab active:cursor-grabbing"><GripVertical className="h-3.5 w-3.5" /></span>
+                                  <span className="flex flex-col">
+                                    <button type="button" disabled={idx === 0} onClick={() => moveVTTo(idx, idx - 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển lên">
+                                      <ChevronUp className="h-3 w-3" />
+                                    </button>
+                                    <button type="button" disabled={idx === shownVT.length - 1} onClick={() => moveVTTo(idx, idx + 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển xuống">
+                                      <ChevronDown className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                </div>
+                              )}
                             </TableCell>
                           )}
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
                           <TableCell className="px-2 py-1">
-                            <Badge variant={vt.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                            <StatusBadge tone={vt.is_pallet_truck ? 'green' : 'slate'}>
+                              {vt.is_pallet_truck ? 'Xe pallet' : 'Xe thường'}
+                            </StatusBadge>
+                          </TableCell>
+                          <TableCell className="px-2 py-1">
+                            <StatusBadge tone={vt.is_active ? 'green' : 'slate'}>
                               {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {vtWrite && (
                             <TableCell className="px-2 py-1">
@@ -743,6 +834,7 @@ export default function TMSSettings() {
                   <span className="font-semibold text-slate-700">{detailVT.code} — {detailVT.name}</span>
                   <button onClick={() => setDetailVT(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
+                <div><span className="text-slate-400">Kiểu xếp xe:</span> <span className="font-medium">{detailVT.is_pallet_truck ? 'Xe pallet — gom hàng lên pallet rồi xếp' : 'Xe thường — xếp từng thùng'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailVT.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
@@ -757,12 +849,18 @@ export default function TMSSettings() {
           <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{shownVT.length} / {vehicleTypes.length} loại xe</div>
         </TabsContent>
 
+        {/* ── Tab: Mã dòng xe (dòng xe CON mang mã SAP — điều vận dùng để ghép chuyến / tính cước) ── */}
+        <TabsContent value="vehicle-models" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <VehicleModelsPanel canCreate={vtCreate} canEdit={vtEdit} canDelete={vtDelete} />
+        </TabsContent>
+
         {/* ── Tab: Khung giờ ── */}
         <TabsContent value="slot-templates" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId} onChange={setWarehouseId} placeholder="Chọn kho…" triggerClassName="h-8 w-44 shrink-0" />
             <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[140px]" />
             <FilterBar defs={stFilterDefs} />
+            <FilterSheetButton defs={stFilterDefs} className="sm:hidden" />
             {slotCreate && warehouseId && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-slot', icon: Plus, label: 'Thêm khung giờ', tip: 'Thêm khung giờ mới cho kho đang chọn',
@@ -836,9 +934,9 @@ export default function TMSSettings() {
                                   </TableCell>
                                   <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
                                   <TableCell className="px-2 py-1">
-                                    <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                                    <StatusBadge tone={st.is_active ? 'green' : 'slate'}>
                                       {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                                    </Badge>
+                                    </StatusBadge>
                                   </TableCell>
                                   {slotWrite && (
                                     <TableCell className="px-2 py-1">
@@ -894,6 +992,7 @@ export default function TMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={coFilterDefs} />
+            <FilterSheetButton defs={coFilterDefs} className="sm:hidden" />
             {coCreate && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-co', icon: Plus, label: 'Thêm ĐVVT', tip: 'Thêm đơn vị vận tải / nhà cung cấp mới',
@@ -944,9 +1043,9 @@ export default function TMSSettings() {
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_phone ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1">
-                            <Badge variant={co.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                            <StatusBadge tone={co.is_active ? 'green' : 'slate'}>
                               {co.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {coWrite && (
                             <TableCell className="px-2 py-1">
@@ -983,6 +1082,7 @@ export default function TMSSettings() {
                 <div><span className="text-slate-400">Người LH:</span> <span className="font-medium">{detailCo.contact_name ?? '—'}</span></div>
                 <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{detailCo.contact_phone ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailCo.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                {detailCo.type !== 'NCC' && <div><span className="text-slate-400">Chào chuyến:</span> <span className="font-medium">{detailCo.tender_required ? 'Cần ĐVVT phản hồi' : 'Điều vận tự chốt'}</span></div>}
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
                   <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailCo.created_by ?? '—'}</span></div>
@@ -1001,6 +1101,7 @@ export default function TMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vFilterDefs} />
+            <FilterSheetButton defs={vFilterDefs} className="sm:hidden" />
             {vCreate && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-v', icon: Plus, label: 'Thêm xe', tip: 'Thêm xe mới cho ĐVVT / NCC',
@@ -1027,6 +1128,7 @@ export default function TMSSettings() {
                       <TableRow>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Biển số</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Lòng thùng D×R×C (mm)</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
                         {vWrite && <TableHead className="px-2 py-1.5 w-16" />}
@@ -1039,11 +1141,16 @@ export default function TMSSettings() {
                           onClick={() => setDetailV(prev => prev?.id === v.id ? null : v)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800">{v.license_plate}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-600 tabular-nums whitespace-nowrap">
+                            {v.box_length_mm && v.box_width_mm && v.box_height_mm
+                              ? `${v.box_length_mm}×${v.box_width_mm}×${v.box_height_mm}`
+                              : <span className="text-slate-300">—</span>}
+                          </TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1">
-                            <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                            <StatusBadge tone={v.is_active ? 'green' : 'slate'}>
                               {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {vWrite && (
                             <TableCell className="px-2 py-1">
@@ -1073,6 +1180,10 @@ export default function TMSSettings() {
                   <button onClick={() => setDetailV(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div><span className="text-slate-400">Loại xe:</span> <span className="font-medium">{detailV.vehicle_type?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">Lòng thùng:</span> <span className="font-medium tabular-nums">
+                  {detailV.box_length_mm && detailV.box_width_mm && detailV.box_height_mm
+                    ? `${detailV.box_length_mm}×${detailV.box_width_mm}×${detailV.box_height_mm} mm` : '—'}
+                </span></div>
                 <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{detailV.ncc?.name ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailV.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
 import type { AxiosError } from 'axios'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload, BadgeCheck, Factory, MapPin, Tag, CalendarDays } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload, BadgeCheck, Factory, MapPin, Tag, CalendarDays, History } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { useNavigate } from 'react-router-dom'
@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
-import { SummaryBand } from '@/components/shared/SummaryBand'
+import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -29,7 +29,14 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
-import { can } from '@/config/permissions'
+import { can, type ModulePermissions } from '@/config/permissions'
+import { PutawayOption, putawayBlocked, type PutawayLocRow } from '@/components/wms/PutawayOption'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { PalletLedgerDialog } from '@/components/wms/PalletLedgerDialog'
+import { StatusBadge } from '@/components/shared/StatusBadge'
+import { InventoryStatusBadge, inventoryStatusInfo } from '@/lib/statusMaps'
+import { parseCodeFields } from '@/components/shared/palletLabel'
+import { PUTAWAY_OVERRIDE_REASONS } from '@/utils/putaway'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
@@ -63,18 +70,6 @@ function entryRowText(e: InventoryEntry, selected: boolean): string {
   if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
   if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'
   return '[&_td_span]:text-slate-700'
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
-  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
-  LOOSE_PICKING: 'Đang nhặt lẻ',
-}
-const STATUS_CLS: Record<string, string> = {
-  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
-  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
-  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
-  LOOSE_PICKING: 'bg-purple-100 text-purple-700',
 }
 
 const LIMIT = 50
@@ -316,20 +311,25 @@ function NccPanel({ ids, material, onClose }: {
   )
 }
 
-function LocationPanel({ ids, warehouseId, category, onClose }: {
-  ids: string[]; warehouseId?: string; category?: string; onClose: () => void
+function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
+  ids: string[]; warehouseId?: string; category?: string; materialId?: string; onClose: () => void
 }) {
   const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+  const canOverride = can(perms, 'inbound', 'putaway_override')
   const [search, setSearch]   = useState('')
   const [locId, setLocId]     = useState('')
   const [error, setError]     = useState('')
+  // Bị QUY TẮC CẤT HÀNG chặn (422) — khác lỗi thường: có 2 lối thoát chứ không phải ngõ cụt
+  const [putawayBlock, setPutawayBlock] = useState<string | null>(null)
   const { mutate, isPending }  = useBulkTransferLocation()
   // TÌM TRÊN SERVER (luật danh mục lớn): trước đây nạp TOÀN BỘ vị trí của kho — đo Bàu Bàng
   // 1.517 vị trí = 616KB + hàng chục round-trip (BE còn quét InventoryEntry theo chunk 300 để
   // tính used_slots). Nay 50 dòng đầu, gõ thì server tìm tiếp.
   const searchDeb = useDebouncedValue(search, 250)
   const { data: locRows = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50 } : undefined
+    // 300 (17/08): kho cỡ thường thấy TRỌN danh sách — ★ trên đầu, ô chặn cuối (BE sort)
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 300, material_id: materialId, putaway: 1 } : undefined
   )
   const filtered = locRows as LocationLite[]
   // nhãn cho vị trí ĐANG CHỌN — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
@@ -338,16 +338,22 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
     () => filtered.find(l => l.id === locId) ?? pickedLoc.find(l => l.id === locId),
     [filtered, pickedLoc, locId])
 
-  function reset() { setLocId(''); setSearch(''); setError('') }
+  function reset() { setLocId(''); setSearch(''); setError(''); setPutawayBlock(null) }
 
-  function handleSubmit() {
+  // Lý do vượt rào truyền THẲNG vào tham số: state chưa cập nhật trong cùng lượt render (đúng bẫy
+  // đã gặp ở InboundScanSheet — bấm nút lý do mà request vẫn gửi rỗng).
+  function handleSubmit(overrideReason?: string) {
     if (!locId) { setError('Chọn vị trí trước'); return }
-    setError('')
+    setError(''); setPutawayBlock(null)
     mutate(
-      { ids, location_id: locId, employee_id: user?.id },
+      { ids, location_id: locId, employee_id: user?.id, putaway_override_reason: overrideReason },
       {
         onSuccess: () => { reset(); onClose() },
-        onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
+        onError: (e: any) => {
+          const err = e?.response?.data?.error
+          if (err?.code === 'PUTAWAY_VIOLATION') setPutawayBlock(err.message)
+          else setError(err?.message ?? 'Lỗi không xác định')
+        },
       }
     )
   }
@@ -369,8 +375,18 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
         )}
         <div className="space-y-1.5">
           <Label className="text-xs">Vị trí mới</Label>
-          <Input placeholder="Tìm vị trí…" value={search} autoFocus
-            onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+          <div className="flex items-center gap-1.5">
+            <Input placeholder="Tìm vị trí…" value={search} autoFocus
+              onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+            {/* Quét tem ô đích. Pane này chọn NHIỀU pallet (có thể nhiều mã) nên không truyền
+                materialId — BE vẫn chấm luật của Ô nhờ putaway=1 trong cửa tra. */}
+            <LocationScanButton
+              warehouseId={warehouseId}
+              disabled={isPending}
+              onPicked={loc => { setLocId(loc.id); setPutawayBlock(null); setError('') }}
+              className="h-8 w-8 sm:h-8 sm:w-8"
+            />
+          </div>
           {filtered.length >= 50 && (
             <p className="text-[10px] text-slate-400">Đang hiện 50 vị trí đầu — gõ để tìm tiếp</p>
           )}
@@ -378,25 +394,25 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
             ) : (
-              filtered.map((l: any) => {
-                const isFull = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
+              // Ô nào cất được / vì sao ★ đều do BE chấm (utils/putaway.ts) — FE KHÔNG tự so
+              // sức chứa nữa: bản tự so ở đây từng là bản chép tay thứ 4 của luật, và nó chỉ biết
+              // "đầy", không biết ô bị cấm nhận hàng / ô nhặt lẻ / vượt số mã.
+              filtered.map((l: LocationLite) => {
+                const blocked = putawayBlocked(l as PutawayLocRow)
                 const isSelected = locId === l.id
                 return (
                   <label key={l.id}
                     className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                      isSelected ? 'bg-blue-50' : isFull ? 'opacity-50 bg-slate-50 cursor-not-allowed' : 'hover:bg-slate-50'
+                      isSelected ? 'bg-blue-50' : blocked ? 'opacity-60 bg-slate-50' : 'hover:bg-slate-50'
                     }`}
-                    onClick={() => { if (!isFull) setLocId(prev => prev === l.id ? '' : l.id) }}
+                    onClick={() => setLocId(prev => prev === l.id ? '' : l.id)}
                   >
                     <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
                       isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
                     }`}>
                       {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
                     </div>
-                    <span className="text-xs font-mono font-semibold">{formatLoc(l)}</span>
-                    <span className={`ml-auto text-[10px] ${isFull ? 'text-red-400 font-medium' : 'text-slate-400'}`}>
-                      {l.used_slots ?? 0}/{l.max_pallets}{isFull ? ' (đầy)' : ''}
-                    </span>
+                    <PutawayOption loc={{ ...(l as PutawayLocRow), location_code: formatLoc(l) }} />
                   </label>
                 )
               })
@@ -409,9 +425,35 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
             </p>
           )}
         </div>
+        {/* Kho bật "bắt buộc cất đúng quy tắc" → 2 lối thoát: đổi vị trí (ai cũng làm được) hoặc
+            chọn lý do (cần quyền duyệt). KHÔNG có lối "cứ Chuyển đại". */}
+        {putawayBlock && (
+          <div className="rounded-lg bg-red-50 border border-red-300 px-3 py-2.5 space-y-2">
+            <p className="text-xs font-medium text-red-800">Không cất được vào vị trí này</p>
+            <p className="text-[11px] text-red-700">{putawayBlock}</p>
+            <button type="button" onClick={() => { setLocId(''); setPutawayBlock(null) }}
+              className="w-full h-9 rounded-md border border-red-300 bg-white text-xs font-medium text-red-700">
+              Chọn vị trí khác
+            </button>
+            {canOverride && (
+              <div className="pt-1 border-t border-red-200">
+                <p className="text-[11px] text-red-700 mb-1">Hoặc duyệt cất khác quy tắc — chọn lý do:</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {PUTAWAY_OVERRIDE_REASONS.map(r => (
+                    <button key={r.code} type="button" disabled={isPending}
+                      onClick={() => handleSubmit(r.code)}
+                      className="h-9 px-2 rounded-md border border-red-300 bg-white text-[11px] text-red-700 text-left disabled:opacity-50">
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex gap-2 pt-1">
           <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
-          <Button className="flex-1" disabled={!locId || isPending} onClick={handleSubmit}>
+          <Button className="flex-1" disabled={!locId || isPending} onClick={() => handleSubmit()}>
             {isPending ? '…' : 'Chuyển'}
           </Button>
         </div>
@@ -762,6 +804,26 @@ export default function Inventory() {
   const loading           = aggregate ? summaryLoading : isLoading
   const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
   const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
+  // TÁCH ĐƠN VỊ (21/08): ô tổng cộng gộp thùng + EA + KG + SET/M2/BAG nên con số to bất thường
+  // (đo Bàu Bàng: 132.762.662 mà 131,2 triệu là EA). Công thức tổng KHÔNG đổi — chỉ hiện thêm nó
+  // gồm những gì, để người đọc không phải tra tooltip mới hiểu con số. RPC cũ chưa trả → [] → ẩn.
+  const bandByUnit = (aggregate ? summaryData?.by_unit : data?.by_unit) ?? []
+  const unitBreakdown = bandByUnit.length > 1
+    ? bandByUnit.map(u => `${Number(u.qty).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} ${unitLabel(u.unit)}`)
+    : []
+  const qtyTile = (v: number): BandTile => ({
+    label: QTY_CONVERTED_LABEL,
+    tip: unitBreakdown.length ? `${QTY_CONVERTED_TIP}
+Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
+    value: unitBreakdown.length ? (
+      <span className="inline-block">
+        {v.toLocaleString('vi-VN')}
+        <span className="block text-[9px] font-normal leading-tight text-sky-200/90 truncate max-w-[190px]">
+          {unitBreakdown.join(' · ')}
+        </span>
+      </span>
+    ) : v.toLocaleString('vi-VN'),
+  })
   const totalPages        = Math.max(1, Math.ceil(total / limit))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
@@ -866,6 +928,13 @@ export default function Inventory() {
   )
   const actionWarehouseId = firstCheckedEntry?.location?.warehouse?.id
   const actionCategory    = firstCheckedEntry?.material?.category ?? undefined
+  // Gợi ý ★/chặn trên picker chỉ ĐẦY ĐỦ khi cả lô cùng MỘT mã (luật số mã/NCC/trộn date chấm theo
+  // mã sắp cất). Lô nhiều mã → không truyền, picker vẫn báo được ô cấm/nhặt lẻ/QA giữ, còn phần
+  // phụ thuộc mã thì BE chặn thật lúc bấm Chuyển.
+  const actionMaterialId  = useMemo(() => {
+    const set = new Set(displayEntries.filter(e => checkedIds.has(e.id)).map(e => e.material_id))
+    return set.size === 1 ? ([...set][0] as string | undefined) : undefined
+  }, [displayEntries, checkedIds])
 
   // Keep selected entry in sync when list refreshes
   useEffect(() => {
@@ -997,7 +1066,8 @@ export default function Inventory() {
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08 — tên trang đã có ở nav, nhường chỗ dữ liệu) */}
+          <span className="hidden sm:flex text-sm font-semibold text-slate-700 shrink-0 items-center gap-1.5">
             <Package className="h-4 w-4 text-slate-500" /> Tồn kho
           </span>
           <SearchInput
@@ -1007,6 +1077,20 @@ export default function Inventory() {
             className="flex-1 min-w-[140px]"
           />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Quét tem ô để LỌC theo vị trí (đứng trước kệ, bắn tem, xem ô đó đang có gì).
+              Cộng dồn vào bộ lọc chứ không thay thế — người ta kiểm 2-3 kệ liền nhau là chuyện
+              thường, còn bỏ chọn thì 1 nhấp. Kho: chỉ khoanh khi bộ lọc đang đúng MỘT kho, còn
+              lại để BE tự tìm trong phạm vi (trùng mã ở 2 kho thì nó báo mơ hồ, không đoán). */}
+          <LocationScanButton
+            purpose="lookup"   // chỉ trỏ tới ô để lọc tồn — ô đầy mới càng phải xem được
+            warehouseId={f.warehouseIds.length === 1 ? f.warehouseIds[0] : null}
+            onPicked={loc => setInventory({
+              filterLocations: f.filterLocations.includes(loc.location_code)
+                ? f.filterLocations
+                : [...f.filterLocations, loc.location_code],
+              page: 1,
+            })}
+          />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
@@ -1054,12 +1138,12 @@ export default function Inventory() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={aggregate ? [
         { label: 'Nhóm (mã×kho×ngày)', value: total.toLocaleString('vi-VN') },
-        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
+        qtyTile(totalCartons),
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ] : [
         // Chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (fallback total khi BE cũ chưa deploy)
         { label: 'Pallet', value: (data?.total_pallets_in_stock ?? total).toLocaleString('vi-VN') },
-        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
+        qtyTile(totalCartons),
         { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ]} />
@@ -1163,7 +1247,7 @@ export default function Inventory() {
         ) : actionModal === 'ncc' ? (
           <NccPanel ids={checkedIdArr} material={ncMaterial} onClose={closeActionModal} />
         ) : actionModal === 'location' ? (
-          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} onClose={closeActionModal} />
+          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} materialId={actionMaterialId} onClose={closeActionModal} />
         ) : actionModal === 'material' ? (
           <MaterialPanel ids={checkedIdArr} category={actionCategory} onClose={closeActionModal} />
         ) : actionModal === 'production-date' ? (
@@ -1386,9 +1470,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         )}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${STATUS_CLS[e.status] ?? 'bg-gray-100 text-gray-500'}`}>
-          {qa}
-        </span>
+        {/* Ô QA mượn TONE của trạng thái pallet (giữ nguyên ý nghĩa màu cũ) — nhãn vẫn là mã QA */}
+        <StatusBadge tone={inventoryStatusInfo(e.status).tone}>{qa}</StatusBadge>
       </TableCell>
       {/* Điều chỉnh: giữ dấu +/- (đủ phân biệt tăng/giảm), bỏ màu green/red → kế thừa màu dòng */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
@@ -1489,6 +1572,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const [adjNote, setAdjNote]         = useState('')
   const [showAdj, setShowAdj]         = useState(false)
   const [showLog, setShowLog]         = useState(false)
+  const [ledger, setLedger]           = useState<string | null>(null)   // sổ pallet (17/09)
   const [adjError, setAdjError]       = useState('')
   const { mutate: adjust, isPending } = useAdjustInventory()
   const { data: adjLog }              = useAdjustmentLog(e.id)
@@ -1521,6 +1605,16 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const warehouseNm = e.location?.warehouse?.name ?? (e.warehouse_id ? warehouseMap[e.warehouse_id] : null) ?? '—'
   const loaiKho     = e.material?.category ?? '—'
 
+  // Thông số SX nằm NGAY TRÊN TEM (đoạn 3/4/5/6 tem V1) — cột DB chỉ được điền khi vào qua quét
+  // nhập; pallet vào bằng upload Excel/seed thì trống ⇒ bóc từ pallet_code làm fallback
+  // (parseCodeFields = helper tập trung, khớp qrParser BE). Hàng NCC: đoạn 4 là MÃ NCC chứ không
+  // phải máy → chỉ fallback "Máy" khi dòng không gắn NCC.
+  const tem     = parseCodeFields(e.pallet_code ?? '')
+  const cycle   = e.cycle || tem.cycle || ''
+  const machine = e.machine_code || (e.ncc ? '' : tem.machine)
+  const nmsx    = e.nmsx || tem.nmsx || ''
+  const seq     = e.pallet_sequence_no != null ? String(e.pallet_sequence_no) : tem.seq
+
   return (
     <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       {/* Header */}
@@ -1534,9 +1628,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
 
       <div className="p-3 space-y-3 text-xs flex-1">
         {/* Status badge */}
-        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[e.status] ?? 'bg-gray-100 text-gray-500'}`}>
-          {STATUS_LABEL[e.status] ?? e.status}
-        </span>
+        <InventoryStatusBadge status={e.status} />
 
         {/* Core info */}
         <Section title="Thông tin hàng">
@@ -1584,12 +1676,13 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
           )}
         </Section>
 
-        {/* Production */}
-        <Section title="Sản xuất">
-          <Row label="NMSX"    value={e.manufacturer?.code ?? '—'} mono />
-          <Row label="Chu kỳ" value={e.cycle ?? '—'} mono />
-          <Row label="Máy"    value={e.machine_code ?? '—'} mono />
-          <Row label="NMSX"   value={e.nmsx ?? '—'} mono />
+        {/* Production — thuật ngữ đồng bộ Truy xuất lô / Sổ đóng gói: Chu kỳ · Máy · Số pallet · Kho SX (ký hiệu) */}
+        <Section title="Sản xuất (thông số tem)">
+          {e.manufacturer && <Row label="NMSX" value={e.manufacturer.code} mono />}
+          <Row label="Kho SX (ký hiệu)" value={nmsx || '—'} mono />
+          <Row label="Chu kỳ"    value={cycle || '—'} mono />
+          <Row label="Máy"       value={machine || '—'} mono />
+          <Row label="Số pallet" value={seq || '—'} mono />
         </Section>
 
         {/* Import */}
@@ -1694,6 +1787,16 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
             </div>
           ))}
 
+          {/* SỔ PALLET (17/09) — "tem này ai đã tác động vào": gộp nhập · chuyển ô · kiểm kê ·
+              điều chỉnh · dồn/tách · fill · xuất · nhật ký việc. Đặt NGAY TRÊN lịch sử điều chỉnh
+              vì điều chỉnh chỉ là MỘT trong các đường đó; khối cũ giữ nguyên (xem nhanh, 1 cú bấm). */}
+          <button
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
+            onClick={() => setLedger(e.pallet_code)}
+          >
+            <History className="h-3 w-3" /> Lịch sử pallet
+          </button>
+
           {/* Lịch sử điều chỉnh */}
           {adjLog && adjLog.length > 0 && (
             <div>
@@ -1726,6 +1829,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
           )}
         </div>
       </div>
+      {ledger && <PalletLedgerDialog palletCode={ledger} onClose={() => setLedger(null)} />}
     </div>
   )
 }

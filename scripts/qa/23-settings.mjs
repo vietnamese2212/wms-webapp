@@ -4,7 +4,7 @@
 // (có sẵn thì PUT lại nguyên văn, chưa có thì PUT mặc định — ngữ nghĩa tương đương vì consumer
 // đọc mặc định khi chưa cấu hình). Kèm gác chung: key lạ → 400, thiếu token → 401,
 // cờ bí mật (vision_api) không lộ qua GET hở đọc.
-import { login, api, check, finish, BASE } from './lib.mjs'
+import { login, api, check, finish, BASE, restAll, restWrite } from './lib.mjs'
 
 // So sánh GIÁ TRỊ, không so thứ tự khóa — jsonb của Postgres tự đảo thứ tự key khi lưu
 // ({photos,feed} lưu ra {feed,photos}), so JSON.stringify thô là fail oan (bắt lượt chạy đầu).
@@ -83,6 +83,20 @@ const CASES = [
     { A: 7, B: 30, C: 90, window_days: 30 }],
   ['inbound_edit_window_days', 5, [0, 91, 2.5, 'hai', { d: 2 }], 2],
   ['packing_max_materials_per_run', 15, [0, 51, 10.5, [10]], 10],
+  // dashboard_cache_seconds (21/08) — TUỔI tối đa của số liệu trang chủ. Khác các cờ số khác:
+  // **0 là giá trị HỢP LỆ** (tắt cache, tính sống mỗi lần) nên KHÔNG được đưa 0 vào danh sách phải-400.
+  ['dashboard_cache_seconds', 120, [-1, 3601, 60.5, '300', [300], null], 300],
+  // mobile_surface (21/09) — superadmin ẩn trang/tab khỏi điện thoại + chọn 6 ô bottom-nav. BE chỉ kiểm HÌNH DẠNG
+  // (sổ khoá nằm ở FE); mặc định {hidden:[], bottom_nav:null} = hành vi cũ. Ghi = superadmin (kiểm riêng bên dưới).
+  ['mobile_surface',
+    { hidden: ['/wms/fill#report', '/wms/forklift'], bottom_nav: ['/wms/directed', '/wms/move-location', '/wms/stocktake'] },
+    [{ hidden: 'x', bottom_nav: null },                                             // hidden không phải mảng
+     { hidden: ['khong-bat-dau-bang-gach'], bottom_nav: null },                      // khoá sai dạng
+     { hidden: ['/wms/fill', '/wms/fill'], bottom_nav: null },                       // trùng
+     { hidden: [], bottom_nav: ['/a', '/b', '/c', '/d', '/e', '/f', '/g'] },         // quá 6 ô
+     { hidden: [], bottom_nav: ['/wms/fill#report'] },                               // bottom-nav không nhận khoá tab
+     { hidden: [], bottom_nav: null, la: 1 }],                                       // khoá lạ
+    { hidden: [], bottom_nav: null }],
   // standard_work_hours (14/08 vòng 2) — giờ công chuẩn 1 ngày công; nhận nửa giờ, chặn số lẻ vụn
   ['standard_work_hours', 7.5, [0.5, 25, 7.37, '8', [8], null], 8],
   ['pct_date_bands', { good: 65, low: 25 },
@@ -157,6 +171,47 @@ for (const [key, valid, invalids, def] of CASES) {
     ? { ...restore, TRIP_LATE_DAYS: 14 } : restore
   const rr = await api(`/wms/settings/${key}`, 'PUT', { value: restoreFull })
   check(`${key}: khôi phục giá trị ban đầu → 200`, rr.s === 200, `http=${rr.s}`)
+}
+
+// mobile_surface CHỈ superadmin ghi (user chốt 21/09 "config bởi superadmin") — người có wms_settings.manage_system
+// vẫn sửa được cờ khác nhưng cờ này phải 403. Dựng tài khoản tạm QAMSF (chức danh chỉ có manage_system), tự dọn.
+{
+  const TAG = 'QAMSF'
+  let bcrypt = null
+  try { bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m) } catch { /* */ }
+  if (!bcrypt) console.log('  ⏭  không load được bcrypt của backend — bỏ qua phép kiểm 403 mobile_surface')
+  else {
+    const { randomUUID } = await import('crypto')
+    const clean = async () => {
+      for (const e of await restAll('Employee', `select=id&employee_code=like.${TAG}*`)) await restWrite('Employee', 'DELETE', `id=eq.${e.id}`)
+      await restWrite('JobTitle', 'DELETE', `name=like.${TAG}*`).catch(() => {})
+      await restWrite('auth_login_events', 'DELETE', `email=like.${TAG.toLowerCase()}*`).catch(() => {})
+    }
+    await clean()
+    const dept = ((await api('/masterdata/departments', 'GET')).j?.data ?? [])[0]
+    const jt = await api('/masterdata/job-titles', 'POST', { name: `${TAG} quản trị hệ thống`, department_id: dept?.id, module_permissions: { wms_settings: ['view', 'manage_system'] } })
+    const jtId = jt.j?.data?.id
+    check('QAMSF: tạo chức danh chỉ có manage_system → 201/200', (jt.s === 200 || jt.s === 201) && !!jtId, `http=${jt.s}`)
+    const pw = 'Qa' + randomUUID().slice(0, 10) + '9x'
+    const email = `${TAG.toLowerCase()}01@test.local`
+    const empId = randomUUID()
+    await restWrite('Employee', 'POST', '', [{ id: empId, employee_code: `${TAG}01`, name: `${TAG} nv`, email, job_title_id: jtId,
+      password: bcrypt.hashSync(pw, 10), is_active: true, warehouse_scope: 'NATIONAL', updated_at: new Date().toISOString() }])
+    const lr = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) })
+    const tok = (await lr.json().catch(() => null))?.data?.token
+    check('QAMSF: đăng nhập tài khoản tạm → có token', !!tok, `http=${lr.status}`)
+    if (tok) {
+      const put = async (key, value) => fetch(`${BASE}/api/wms/settings/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` }, body: JSON.stringify({ value }) })
+      const r1 = await put('mobile_surface', { hidden: [], bottom_nav: null })
+      const j1 = await r1.json().catch(() => null)
+      check('mobile_surface: manage_system KHÔNG phải superadmin → 403 SUPERADMIN_ONLY', r1.status === 403 && j1?.error?.code === 'SUPERADMIN_ONLY', `http=${r1.status} code=${j1?.error?.code}`)
+      // Đối chứng: cùng tài khoản, cờ thường vẫn ghi được (403 ở trên là vì CỜ, không vì tài khoản hỏng)
+      const cur = ((await api('/wms/settings', 'GET')).j?.data ?? []).find(s => s.key === 'inbound_edit_window_days')?.value ?? 2
+      const r2 = await put('inbound_edit_window_days', cur)
+      check('đối chứng: cùng tài khoản ghi cờ thường inbound_edit_window_days → 200', r2.status === 200, `http=${r2.status}`)
+    }
+    await clean()
+  }
 }
 
 finish('SETTINGS')

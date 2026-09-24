@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { ClipboardCheck, BarChart2, History, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 
 // Trần số id vị trí nhét được vào query string của API (đo 27/07: 800 id ≈ 32KB → Vercel 414
 // TRƯỚC khi request tới BE). Vượt trần → KHÔNG gọi API, hiện hướng dẫn thu hẹp (không cắt âm thầm).
@@ -16,22 +17,30 @@ const linkCls = ({ isActive }: { isActive: boolean }) =>
     isActive ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
   )
 
+// key = khoá cấu hình điện thoại (config/mobileSurface.ts '/wms/stocktake#<key>') — superadmin ẩn được từng tab
+const TABS = [
+  { key: 'check',   to: '/wms/stocktake',         end: true,  icon: ClipboardCheck, label: 'Check vị trí' },
+  { key: 'summary', to: '/wms/stocktake/summary', end: false, icon: BarChart2,      label: 'Tổng hợp KK' },
+  { key: 'history', to: '/wms/stocktake/history', end: false, icon: History,        label: 'Lịch sử kiểm' },
+  { key: 'cycle',   to: '/wms/stocktake/cycle',   end: false, icon: RotateCcw,      label: 'Luân phiên ABC' },
+] as const
+
 export function StocktakeTabs() {
+  // Tab là ROUTE CON nên không có state để "nhảy về tab đầu" — chỉ lọc nút; deep-link vẫn mở được (luật: ẨN, không chặn).
+  const tabs = useMobileTabs('/wms/stocktake', TABS, null)
   return (
-    <div className="shrink-0 px-3 pt-3 pb-2 sm:px-0 sm:pt-0">
+    // Rà 21/09: 4 tab cần ~455 px, khung 336 px ở 360/390 ⇒ "Luân phiên ABC" nằm ngoài màn, không bấm được.
+    // Dải cuộn ngang + ẩn thanh cuộn (cùng cách TabsList) thay vì inline-flex cứng.
+    <div className="shrink-0 px-3 pt-3 pb-2 sm:px-0 sm:pt-0 overflow-x-auto no-scrollbar">
       <div className="inline-flex h-8 items-center rounded-md bg-slate-100 p-1">
-        <NavLink to="/wms/stocktake" end className={linkCls}>
-          <ClipboardCheck className="h-3.5 w-3.5" /> Check vị trí
-        </NavLink>
-        <NavLink to="/wms/stocktake/summary" className={linkCls}>
-          <BarChart2 className="h-3.5 w-3.5" /> Tổng hợp KK
-        </NavLink>
-        <NavLink to="/wms/stocktake/history" className={linkCls}>
-          <History className="h-3.5 w-3.5" /> Lịch sử kiểm
-        </NavLink>
-        <NavLink to="/wms/stocktake/cycle" className={linkCls}>
-          <RotateCcw className="h-3.5 w-3.5" /> Luân phiên ABC
-        </NavLink>
+        {tabs.map(t => {
+          const Icon = t.icon
+          return (
+            <NavLink key={t.key} to={t.to} end={t.end} className={linkCls}>
+              <Icon className="h-3.5 w-3.5" /> {t.label}
+            </NavLink>
+          )
+        })}
       </div>
     </div>
   )

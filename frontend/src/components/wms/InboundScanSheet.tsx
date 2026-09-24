@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { Button }              from '@/components/ui/button'
 import { Label }               from '@/components/ui/label'
@@ -17,8 +19,14 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
-import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { useWhTypeMetaMapFor } from '@/hooks/useWhTypeMeta'
+import { PutawayOption } from '@/components/wms/PutawayOption'
+import { LocationContents } from '@/components/wms/LocationContents'
+import { PUTAWAY_OVERRIDE_REASONS, type PutawayHint } from '@/utils/putaway'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import type { InboundOrder } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 // ─── Scan feedback banner ─────────────────────────────────────
 
@@ -116,7 +124,7 @@ interface InboundScanSheetProps {
   onClose: () => void
   employeeId?: string
   // 50 dòng khớp từ khoá HIỆN TẠI (cha query với search+limit) — KHÔNG còn là cả kho.
-  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null }[]
+  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null; putaway?: PutawayHint | null }[]
   onLocSearch?: (term: string) => void   // gõ trong picker → cha đổi từ khoá query (tìm trên server)
   pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
   initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
@@ -124,6 +132,7 @@ interface InboundScanSheetProps {
 
 export function InboundScanSheet({ order, onClose, employeeId, allLocations, onLocSearch, pdaMode = false, initialScan }: InboundScanSheetProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(order.warehouse_id)   // loại mã camera giải = theo KHO CỦA PHIẾU
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
@@ -147,7 +156,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     baseOpts.push({ key: `${order.ncc_id}|`, ncc_id: order.ncc_id, shelf: null, label: nccName(order.ncc_id) })
   }
   // Cờ requires_ncc của Loại kho: pallet mới phải có NCC (chuyển kho kế thừa — không chặn)
-  const whTypeMeta = useWhTypeMetaMap()
+  // Cờ hiệu lực TẠI KHO của phiếu (kho khai riêng được — 21/08)
+  const whTypeMeta = useWhTypeMetaMapFor(order.warehouse_id)
   const matCategory = (order.material as { category?: string | null } | undefined)?.category ?? ''
   const nccRequired = !isTransfer && requiresNcc(matCategory, whTypeMeta)
   const nccRelevant = isTransfer || !!order.ncc_id || variants.length > 0 || nccRequired
@@ -166,6 +176,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
   const [serverCheckOk,    setServerCheckOk]    = useState(false)
   const [mergeWarning,     setMergeWarning]     = useState<string | null>(null)
   const [outboundCartons,  setOutboundCartons]  = useState<number | null>(null)
+  // Kho bật "bắt buộc cất đúng quy tắc" mà vị trí đang chọn vi phạm (BE trả 422 PUTAWAY_VIOLATION)
+  const [putawayBlock,     setPutawayBlock]     = useState<string | null>(null)
+  const [putawayReason,    setPutawayReason]    = useState('')
+  const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
+  const canPutawayOverride = can(perms, 'inbound', 'putaway_override')
 
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
@@ -196,6 +211,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     setPendingQR(raw)
     setFeedback(null)
     setServerCheckOk(false)
+    // Tem MỚI = trạng thái chặn/lý do của tem cũ hết hiệu lực (phòng thủ: hiện tại lượt mới chỉ vào
+    // được sau "Quét tiếp" hoặc lưu xong, cả hai đều đã xoá — nhưng đừng để phụ thuộc vào điều đó)
+    setPutawayBlock(null)
+    setPutawayReason('')
 
     const val = validateQR(raw, order)
     setValidation(val)
@@ -230,14 +249,16 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     )
   }
 
-  function handleSave() {
+  // reason truyền THẲNG (không đọc state): bấm nút lý do rồi lưu ngay trong cùng lượt render,
+  // state chưa kịp cập nhật nên đọc `putawayReason` ở đây sẽ gửi lên giá trị RỖNG.
+  function handleSave(reason?: string) {
     if (!pendingQR || !serverCheckOk || saving) return
     if (!activeLocationId) {
       setShowLocPicker(true)
       return
     }
     scanPallet(
-      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: nccId || undefined, shelf_life_days: shelfDays ?? undefined },
+      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: nccId || undefined, shelf_life_days: shelfDays ?? undefined, putaway_override_reason: reason || putawayReason || undefined },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -246,6 +267,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           setMergeWarning(null)
           setOutboundCartons(null)
           setCartons(defaultCartons)
+          setPutawayBlock(null)
+          setPutawayReason('')
           const successMsg = data.merged
             ? `✓ Đã cộng ${qtyLabel(data.added_cartons, order.material)} · Tồn mới: ${qtyLabel(data.new_remaining, order.material)}`
             : `✓ ${data.entry.pallet_code} · ${qtyLabel(data.entry.cartons_imported, order.material)} · ${data.entry.location?.location_code ?? ''}`
@@ -255,6 +278,17 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, warns.length ? 4000 : 1500)
         },
         onError: (err) => {
+          const ax = err as AxiosError<{ error: { code?: string; message: string } }>
+          // Kho BẮT BUỘC cất đúng quy tắc và vị trí này vi phạm → GIỮ NGUYÊN lượt quét để người
+          // quét đổi vị trí hoặc (nếu có quyền) chọn lý do rồi Lưu lại. Không xoá pendingQR, không
+          // xếp hàng đợi offline: đây là từ chối có chủ đích của server, không phải lỗi mạng.
+          // (Cố ý KHÔNG gọi check-scan trước mỗi lượt để đỡ 1 round-trip trên PDA — ô bị chặn đã
+          //  bị gạch sẵn trong picker, nên rơi vào đây là ca hiếm.)
+          if (ax?.response?.data?.error?.code === 'PUTAWAY_VIOLATION') {
+            setPutawayBlock(ax.response!.data.error.message)
+            setFeedback(null)
+            return
+          }
           const qrToQueue = pendingQR
           setPendingQR(null)
           setValidation(null)
@@ -306,6 +340,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     setMergeWarning(null)
     setOutboundCartons(null)
     setCartons(defaultCartons)
+    // Bỏ lượt quét thì phải bỏ luôn trạng thái chặn CỦA CHÍNH lượt đó. Không xoá `putawayReason`
+    // thì lượt quét SAU bị chặn sẽ tự động dùng lại lý do cũ mà người quét không hề chọn —
+    // vết vượt rào gán sai pallet, đúng thứ mà danh sách lý do cố định sinh ra để tránh.
+    setPutawayBlock(null)
+    setPutawayReason('')
     scannerRef.current?.resume()
   }
 
@@ -395,7 +434,23 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           {/* Location picker dialog */}
           {showLocPicker && (
             <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
-              <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+                {/* armWedge khi chưa có vị trí: đúng lúc đó cò súng quét TEM PALLET còn tắt
+                    (enabled = !!activeLocationId) nên phát bắn đầu tiên dành cho tem ô — người
+                    cất hàng bắn tem kệ rồi bắn tem pallet, không chạm màn hình lần nào. */}
+                <LocationScanButton
+                  variant="pill"
+                  className="ml-auto"
+                  warehouseId={order.warehouse_id}
+                  materialId={order.material_id}
+                  armWedge={!activeLocationId}
+                  onPicked={loc => {
+                    setActiveLocationId(loc.id); setShowLocPicker(false)
+                    setPutawayBlock(null); setPutawayReason('')
+                  }}
+                />
+              </div>
               {/* Tìm TRÊN SERVER: danh sách chỉ 50 vị trí đầu (trước đây nạp cả kho — Bàu Bàng
                   1.517 vị trí = 616KB mỗi lần mở màn quét, nặng nhất trên PDA/wifi xưởng) */}
               {onLocSearch && (
@@ -403,31 +458,25 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                   className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
               )}
               <div className="max-h-36 overflow-y-auto space-y-1">
-                {allLocations.map(l => {
-                    const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
-                    const isPartial = (l.used_slots ?? 0) > 0 && !isFull
-                    return (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false) }}
-                        className={[
-                          'w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between',
-                          l.id === activeLocationId
-                            ? 'bg-blue-100 text-blue-700 font-medium'
-                            : isFull
-                            ? 'text-blue-600 hover:bg-blue-50'
-                            : isPartial
-                            ? 'text-amber-600 hover:bg-amber-50'
-                            : 'text-slate-700 hover:bg-white',
-                        ].join(' ')}
-                      >
-                        <span className="font-mono">{l.location_code}</span>
-                        <span className="text-[10px] text-slate-400">{l.used_slots ?? 0}/{l.max_pallets}</span>
-                      </button>
-                    )
-                  })}
+                {allLocations.map(l => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      // đổi vị trí = xoá cảnh báo chặn của vị trí cũ (lượt quét vẫn giữ để Lưu lại)
+                      onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false); setPutawayBlock(null); setPutawayReason('') }}
+                      className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center ${
+                        l.id === activeLocationId ? 'bg-blue-100 font-medium' : 'hover:bg-white'
+                      }`}
+                    >
+                      {/* ★ / lý do chặn do BE chấm — trước đây màn này KHÔNG hiện gì, người quét
+                          chỉ thấy danh sách phẳng và không biết vì sao dòng đầu lại là dòng đầu */}
+                      <PutawayOption loc={l} />
+                    </button>
+                  ))}
               </div>
+              {/* Ô đang chọn CHỨA GÌ (user 17/08) — người đứng cất nhìn ra ngay là cùng mã hay
+                  khác mã, date nào, có pallet QA giữ không; khỏi phải tin mỗi dấu ★ */}
+              <LocationContents locationId={activeLocationId} highlightMaterialId={order.material_id} />
               {activeLocationId && (
                 <button type="button" className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setShowLocPicker(false)}>
                   Huỷ
@@ -486,14 +535,14 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                     mất chữ — màn 360x640 vùng quét chỉ còn ~120px, canh kiểu gì cũng đụng (30/07). */}
                 {!pendingQR && !serverChecking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Lưu</p>
                   </>
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {/* "Quét tiếp": hiện ở MỌI lỗi — cả lỗi validate client lẫn lỗi API khi Lưu
@@ -523,13 +572,46 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
-                onClick={handleSave}
+                onClick={() => handleSave()}
               >
                 {saving ? '…' : `Lưu ${qtyLabel(Number(cartons) || 0, order.material)}`}
               </button>
             )}
           </div>
           </>
+          )}
+
+          {/* Kho BẮT BUỘC cất đúng quy tắc — vị trí đang chọn vi phạm.
+              Hai lối thoát: đổi vị trí (ai cũng làm được) hoặc chọn lý do (cần quyền duyệt).
+              KHÔNG có lối "cứ Lưu đại" — nếu không thì công tắc bắt buộc thành trang trí. */}
+          {putawayBlock && (
+            <div className="rounded-lg bg-red-50 border border-red-300 px-3 py-2.5 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-red-800">Không cất được vào vị trí này</p>
+                  <p className="text-xs text-red-700 mt-0.5">{putawayBlock}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => { setPutawayBlock(null); setShowLocPicker(true) }}
+                className="w-full h-9 rounded-md border border-red-300 bg-white text-xs font-medium text-red-700">
+                Chọn vị trí khác
+              </button>
+              {canPutawayOverride && (
+                <div className="pt-1 border-t border-red-200">
+                  <p className="text-[11px] text-red-700 mb-1">Hoặc duyệt cất khác quy tắc — chọn lý do:</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {PUTAWAY_OVERRIDE_REASONS.map(r => (
+                      <button key={r.code} type="button"
+                        onClick={() => { setPutawayReason(r.code); handleSave(r.code) }}
+                        className="h-9 px-2 rounded-md border border-red-300 bg-white text-[11px] text-red-700 text-left">
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Merge warning banner */}
@@ -580,7 +662,8 @@ export function InboundScanSheetById({ importId, employeeId, onClose }: { import
           warehouse_id: order.warehouse_id,
           ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
           ...(order.material_id ? { material_id: order.material_id } : {}),
-          search: locTermDeb || undefined, limit: 50,
+          // 300 (17/08): kho cỡ thường thấy TRỌN danh sách — ★ trên đầu, ô chặn cuối (BE sort)
+          search: locTermDeb || undefined, limit: 300,
         }
       : undefined
   )

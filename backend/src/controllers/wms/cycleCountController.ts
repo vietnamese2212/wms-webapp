@@ -18,7 +18,7 @@ function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
 }
 function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 
 // Chu kỳ kiểm theo hạng + cửa sổ phân hạng = cờ `cycle_count` (mặc định A7/B30/C90, cửa sổ 30

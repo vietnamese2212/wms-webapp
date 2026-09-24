@@ -1,6 +1,7 @@
 // Hạ tầng chung bộ QA regression — KHÔNG dependency ngoài (Node 18+, fetch native).
 // API app qua Preview (dev) · soi DB staging qua PostgREST (key đọc từ backend/.env).
 import { readFileSync } from 'fs'
+import { spawnSync } from 'child_process'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -26,8 +27,25 @@ export const FIX = {
   EXEC_DATE: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }),
 }
 
+// ── GÓI TẢI PHẢI XIN PHÉP MỚI CHẠY (chốt 11/09) ──
+// Staging chạy trên máy Supabase NANO gói MIỄN PHÍ: quỹ Disk IO là hạn mức TÍCH LUỸ, đốt hết thì
+// máy bị bóp xuống mức không nhận nổi một kết nối nào — và KHÔNG có nút nào mua lại ngay, chỉ chờ
+// quỹ tự hồi (hoặc nâng gói trả tiền). Đo thật 11/09: staging chết nhiều giờ, toàn bộ việc dev
+// đứng lại, restart chỉ làm nặng thêm (cache nguội ⇒ đọc đĩa nhiều hơn).
+// Ba gói 03-scale · 05-rush · 06-readload CỐ Ý bơm tải — chúng vốn đã nằm ngoài mọi bậc của
+// run-all, nhưng "nằm ngoài lịch" không ngăn được một lần gõ tay. Rào này bắt phải khai chủ đích.
+export function requireLoadApproval(pack) {
+  if (process.env.QA_ALLOW_LOAD === '1') return
+  console.error(`\n⛔ ${pack} là GÓI TẢI — không tự chạy được.`)
+  console.error('   Staging là máy NANO gói miễn phí: bắn tải có thể đốt cạn quỹ Disk IO và làm')
+  console.error('   CẢ môi trường dev chết nhiều giờ (đã xảy ra 11/09/2026).')
+  console.error('   Chạy có chủ đích, ngoài giờ làm việc:  QA_ALLOW_LOAD=1 node scripts/qa/' + pack)
+  process.exit(2)
+}
+
 // ── App API ──
 let token = ''
+let realtimeToken = null
 export async function login() {
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -36,6 +54,25 @@ export async function login() {
   const j = await r.json()
   if (!j?.data?.token) throw new Error(`Login fail: ${r.status} ${JSON.stringify(j).slice(0, 200)}`)
   token = j.data.token
+  realtimeToken = j.data.realtime_token ?? null
+}
+// Vé realtime (JWT Supabase role=authenticated) có được cấp không — từ 02/09 realtime đi kênh Broadcast
+// RIÊNG TƯ nên thiếu vé (SUPABASE_JWT_SECRET chưa cấu hình) = realtime chết CÂM, không rơi về anon nữa.
+export function realtimeTokenIssued() { return !!realtimeToken }
+// Token đăng nhập hiện tại — cho gói cần gửi multipart (upload file) bằng fetch thô thay `api()` (JSON).
+export const authToken = () => token
+// Vé thô — CHỈ cho gói 40-exposure-live (đóng vai "người trong công ty cầm vé gọi thẳng Supabase").
+export function realtimeTokenValue() { return realtimeToken }
+// Anon key + URL Supabase như bundle FE đang phát ra (frontend/.env; CI có thể đưa qua env VITE_*).
+export function readFrontendEnv() {
+  const out = { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || '', VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY || '' }
+  try {
+    for (const line of readFileSync(join(ROOT, 'frontend', '.env'), 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*(VITE_[A-Z_]+)\s*=\s*"?([^"]*)"?\s*$/)
+      if (m && !out[m[1]]) out[m[1]] = m[2]
+    }
+  } catch { /* không có frontend/.env (CI) → gói 40 tự skip có hướng dẫn */ }
+  return out
 }
 export async function api(path, method = 'GET', body) {
   // BASE UNIT (đợt 2): mọi body write gắn cờ qty_semantics='base' (BE chặn 409 payload thiếu cờ);
@@ -51,6 +88,25 @@ export async function api(path, method = 'GET', body) {
   let j = null, text = ''
   try { text = await r.text(); j = JSON.parse(text) } catch { /* body không phải JSON */ }
   return { s: r.status, j, bytes: text.length }
+}
+
+/**
+ * Gọi API THÔ: chỉ gắn Authorization, KHÔNG tự đắp body.
+ *
+ * VÌ SAO CẦN (bug thật 21/08): `api()` luôn thêm `{ qty_semantics: 'base', … }` vào body mọi lời
+ * gọi có body — tiện cho test nghiệp vụ, nhưng nó CHE mất lớp lỗi "FE gửi body dạng khác".
+ * Ca cụ thể: FE dùng axios `post(url, null)` → gửi chuỗi JSON `"null"` → `express.json()` strict
+ * trả 400, trong khi `api()` cùng endpoint trả 200 vì nó đã đắp body hộ. Muốn soi ĐÚNG cái FE gửi
+ * thì phải đi cửa này.
+ */
+export async function rawFetch(path, init = {}) {
+  const r = await fetch(`${BASE}/api${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+  })
+  let text = ''
+  try { text = await r.text() } catch { /* body rỗng */ }
+  return { s: r.status, text }
 }
 
 // ── PostgREST staging (read-only cho invariant) — key service role từ backend/.env ──
@@ -81,12 +137,25 @@ async function fetchNetRetry(url, init, tries = 3) {
 }
 
 // GET 1 trang PostgREST (limit/offset). filter = chuỗi query PostgREST.
+//
+// QUÁ HẠN TRUY VẤN (57014) ĐƯỢC THỬ LẠI — đây là QUÁ TẢI của staging, không phải tín hiệu của app.
+// Đo 15/09 (bậc full): gói `00-invariant` đọc `InventoryEntry` gặp `canceling statement due to
+// statement timeout` ⇒ gói CHẾT GIỮA CHỪNG, không tới `finish()` nên cả lưới `retryOnFail` lẫn lưới
+// nhận-diện-fixture đều không áp ⇒ bậc full đỏ trong khi chạy riêng thì xanh. Cùng lớp "cổng kêu oan
+// vì chính bộ kiểm" (C18/C20/C22) — cổng đỏ oan là cổng sẽ bị bỏ qua. CHỈ nới đúng 57014: mọi mã lỗi
+// khác vẫn ném ngay để không che lỗi thật.
 async function restPage(table, filter, offset, limit) {
-  const r = await fetchNetRetry(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
-    headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` },
-  })
-  if (!r.ok) throw new Error(`PostgREST ${table}: ${r.status} ${await r.text()}`)
-  return r.json()
+  const url = `${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`
+  const headers = { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` }
+  for (let i = 0; ; i++) {
+    const r = await fetchNetRetry(url, { headers })
+    if (r.ok) return r.json()
+    const body = await r.text()
+    const overload = /57014|statement timeout/i.test(body)
+    if (!overload || i >= 2) throw new Error(`PostgREST ${table}: ${r.status} ${body}`)
+    console.log(`  ⏳ ${table}: DB quá tải (57014) — đợi rồi đọc lại (lần ${i + 2}/3)`)
+    await new Promise(res => setTimeout(res, 3000 * (i + 1) + Math.random() * 1000))
+  }
 }
 // Kéo ĐỦ mọi dòng (né cap-1000). maxRows = cầu chì an toàn cho staging.
 export async function restAll(table, filter, maxRows = 50_000) {
@@ -128,12 +197,33 @@ export async function resolveFixtures() {
   FIX.MAT_POOL_ID = mats[0].id
   FIX.MAT_POOL_CAT = mats[0].category
 
-  // 1 vị trí ĐANG HOẠT ĐỘNG ở kho QR, nhận đúng loại hàng của mã test (hoặc chưa gán loại)
+  // 1 vị trí ĐANG HOẠT ĐỘNG ở kho QR, nhận đúng loại hàng của mã test (hoặc chưa gán loại).
+  // CHỈ lấy vị trí CẤT HÀNG (`kind=STORAGE`): từ đợt Sơ đồ kho (09/09), cửa xuất/cửa nhập/điểm đầu
+  // dãy cũng là dòng `Location` nhưng `max_pallets=0` ⇒ quét nhập vào đó là 422 LOCATION_FULL. Ba Vì
+  // có `B_CUANHAP_*` đứng đầu bảng chữ cái nên fixture "vị trí đầu tiên" rơi trúng cửa nhập (gói 04
+  // đỏ âm thầm). Vị trí là thứ SINH THÊM được — fixture phải nói rõ mình cần LOẠI nào.
+  // …VÀ PHẢI CÒN CHỖ. Lần rot thứ hai của cùng fixture này (bậc full 12/09): vị trí được chọn đã
+  // chứa 31 pallet trên sức chứa 7 — dữ liệu nạp cho demo làm 124 vị trí Ba Vì vượt sức chứa — nên
+  // mọi lượt quét nhập trả 422 LOCATION_FULL và gói 04 + gói 22 đỏ vì FIXTURE chứ không vì code.
+  // App chặn là ĐÚNG; thứ sai là fixture đòi một chỗ đã đầy. Cùng khuôn `freeDockFor`: cần tài
+  // nguyên có sức chứa thì phải HỎI nó còn chỗ không, đừng lấy cái đầu bảng chữ cái.
   const cat = FIX.MAT_POOL_CAT
   const locs = await restAll('Location',
-    `select=id,location_code,categories&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&order=location_code&limit=200`)
-  const hit = locs.find(l => !l.categories?.length || (cat && l.categories.includes(cat))) ?? locs[0]
+    `select=id,location_code,categories,max_pallets&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&kind=eq.STORAGE&order=location_code&limit=200`)
+  const fit = locs.filter(l => !l.categories?.length || (cat && l.categories.includes(cat)))
+  const cand = fit.slice(0, 60)          // 60 id « trần ~300 uuid của .in() trên URL
+  const dang = new Map()
+  if (cand.length) {
+    const rows = await restAll('InventoryEntry',
+      `select=location_id&location_id=in.(${cand.map(l => l.id).join(',')})&cartons_remaining=gt.0`)
+    for (const r of rows) dang.set(r.location_id, (dang.get(r.location_id) ?? 0) + 1)
+  }
+  const conCho = (l) => !l.max_pallets || (dang.get(l.id) ?? 0) < l.max_pallets
+  const hit = cand.find(conCho) ?? fit.find(conCho) ?? fit[0] ?? locs[0]
   if (!hit) throw new Error(`Fixture: kho QR ${FIX.WH_QR.name} không có vị trí nào`)
+  if (!conCho(hit)) throw new Error(
+    `Fixture: kho QR ${FIX.WH_QR.name} không còn vị trí nào trống cho loại ${cat ?? '(mọi loại)'} — ` +
+    `dọn bớt tồn hoặc nâng sức chứa trước khi chạy bộ kiểm`)
   FIX.LOC_QR_ID = hit.id
   FIX.LOC_QR_CODE = hit.location_code
 }
@@ -165,10 +255,135 @@ export function check(name, ok, detail = '') {
   results.push({ name, ok, detail })
   console.log(`  ${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
-export function finish(pack) {
+
+// CHÚ THÍCH LỖI CHO GITHUB ACTIONS — tên phép kiểm hỏng phải LÊN ĐƯỢC trang lượt chạy + email báo đỏ.
+// Vì sao (đo 10/09): job qa-smoke đỏ 19 lần trong 06–09/09 mà hồ sơ CÔNG KHAI của lượt chạy chỉ có đúng
+// một dòng "Process completed with exit code 1" — log đầy đủ đòi đăng nhập mới tải được. Người nhận email
+// biết ĐỎ mà không biết ĐỎ Ở ĐÂU, y hệt lớp lỗi "5xx không kèm url" mà CLAUDE.md đã cấm: chuông kêu nhưng
+// không ai lần ra chỗ phải sửa. Chú thích thì đọc được qua API công khai, không cần quyền.
+const GH = () => process.env.GITHUB_ACTIONS === 'true'
+const ghEsc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+const ghProp = (s) => ghEsc(s).replace(/:/g, '%3A').replace(/,/g, '%2C')
+const ANNOTATION_CAP = 8         // GitHub chỉ hiện ~10 chú thích mỗi mức cho mỗi bước
+function ghAnnotate(level, pack, text) {
+  if (GH()) console.log(`::${level} title=${ghProp(`QA ${pack}`)}::${ghEsc(text)}`)
+}
+
+// ── LƯỚI CUỐI: GÓI CHẾT GIỮA CHỪNG PHẢI TỰ KHAI CHẾT VÌ GÌ (chốt 14/09) ───────────────────────────
+// Đo thật: 2 trong 5 lượt CI đỏ ngày 14/09 để lại ĐÚNG một dòng "Process completed with exit code 1"
+// — không phép kiểm nào hỏng, vì script NGÃ trước khi tới `finish()` (một lượt gọi PostgREST ném lỗi
+// lúc staging quá tải / vé hết hạn). `finish()` in `::error` rất đẹp nhưng nó KHÔNG BAO GIỜ được gọi,
+// nên người nhận email lại rơi đúng cảnh "chuông kêu mà không biết chỗ nào" mà CLAUDE.md đã cấm.
+// Handler này là lưới cuối cho MỌI gói: cứ import lib.mjs là có, không phải làm gì thêm.
+const PACK_FILE = (process.argv[1] ?? '').split(/[\\/]/).pop() || 'QA'
+function dieLoud(kind, err) {
+  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err)
+  console.error(`\n[${PACK_FILE}] GÓI CHẾT GIỮA CHỪNG (${kind}):`, err)
+  ghAnnotate('error', PACK_FILE, `GÓI CHẾT GIỮA CHỪNG (${kind}) — ${msg.replace(/\s+/g, ' ').slice(0, 400)}`)
+  process.exit(1)
+}
+process.on('uncaughtException', e => dieLoud('lỗi không bắt được', e))
+process.on('unhandledRejection', e => dieLoud('promise bị từ chối', e))
+
+// DẤU NHẬN DIỆN BẢN GHI CỦA CHÍNH BỘ KIỂM (fixture), để phân biệt với dữ liệu nghiệp vụ.
+// Mọi gói đều đặt mã có tiền tố gói: QA57_W · QA49WH1 · QAGRUL_DO · QALOOSE · QA-SUITE · SIMWMS…
+// CỐ Ý đòi sau "QA" phải là SỐ hoặc ≥2 CHỮ HOA liền: chuỗi "QA giữ" (trạng thái QA của pallet) và
+// `qa_status` KHÔNG được tính là fixture, nếu không thì lỗi thật về QA sẽ bị nuốt.
+const FIXTURE_RE = /(^|[^A-Za-z])(QA[0-9]|QA[A-Z]{2,}|QA-SUITE|SIMWMS)/
+export const looksFixture = (s) => FIXTURE_RE.test(String(s ?? ''))
+
+/**
+ * @param {string} pack tên gói (in ra dòng tổng kết)
+ * @param {{ retryOnFail?: boolean }} [opts] retryOnFail = ĐO LẠI một lần sau khi lắng trước khi kết luận đỏ.
+ *   Chỉ bật cho gói kiểm BẤT BIẾN TOÀN DB (00-invariant): nó đọc trạng thái chung của cả kho dữ liệu, nên
+ *   một gói QA khác đang chạy dở ở máy khác (xoá chuyến xong chưa xoá DO…) làm nó thấy "bản ghi mồ côi"
+ *   trong vài giây. Đây đúng lớp "vi phạm ẢO" mà skill check-app yêu cầu phân loại bằng cách ĐO LẠI SAU KHI
+ *   LẮNG. Vi phạm THẬT không tự hết nên vẫn đỏ ở lần hai — cổng không bị nới.
+ */
+export function finish(pack, opts = {}) {
   const fail = results.filter(r => !r.ok)
   console.log(`\n[${pack}] ${results.length - fail.length}/${results.length} PASS${fail.length ? ` — ${fail.length} FAIL` : ''}`)
+
+  if (fail.length && opts.retryOnFail && process.env.QA_SETTLE_RETRY !== '1') {
+    const wait = Math.max(0, Number(process.env.QA_SETTLE_MS ?? 20000))
+    console.log(`\n[${pack}] ${fail.length} phép kiểm hỏng ở lần đo ĐẦU — chờ ${Math.round(wait / 1000)}s cho các lượt ghi đang chạy lắng rồi ĐO LẠI.`)
+    console.log(`[${pack}] (đụng độ thì tự hết; vi phạm THẬT vẫn hỏng ở lần hai)`)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait)
+    const r = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: 'inherit', env: { ...process.env, QA_SETTLE_RETRY: '1' },
+    })
+    if (r.status === 0) {
+      const names = fail.map(f => f.name).join(' · ')
+      console.log(`\n[${pack}] Lần đo hai SẠCH ⇒ ${fail.length} vi phạm lần đầu là ẢO (có lượt ghi chạy song song), không phải lỗi dữ liệu.`)
+      ghAnnotate('notice', pack, `${fail.length} vi phạm ở lần đo đầu TỰ HẾT khi đo lại sau ${Math.round(wait / 1000)}s — nhiều khả năng có bộ kiểm khác đang ghi vào cùng DB: ${names}`)
+    }
+    process.exit(r.status ?? 1)
+  }
+
+  // VI PHẠM CHỈ TRỎ VÀO FIXTURE CỦA CHÍNH BỘ KIỂM = KHÔNG PHẢI LỖI DỮ LIỆU (chốt 14/09).
+  // Vì sao: staging là sân chung — CI chạy sau MỖI push, còn người phát triển thì chạy gói QA hàng
+  // chục phút. Gói khác đang dựng/dọn fixture (xoá chuyến xong chưa xoá DO, kho fixture ghi THẲNG
+  // PostgREST nên không đi qua đường seed của app…) làm bất biến toàn-DB thấy "vi phạm" trong suốt
+  // lúc đó — đo thật 13–14/09: 5 lượt CI đỏ, 0 lượt là lỗi sản phẩm, và mỗi lượt là một email.
+  // Chỉ nới khi ĐỦ CẢ HAI: (a) gói này là loại đọc trạng thái CHUNG (`retryOnFail`), (b) MỌI phép
+  // hỏng đều nêu mã mang dấu bộ kiểm. Còn một phép hỏng không mang dấu ⇒ ĐỎ như thường, cổng nguyên vẹn.
+  if (fail.length && opts.retryOnFail && fail.every(f => looksFixture(f.detail))) {
+    const names = fail.map(f => `${f.name} — ${f.detail}`).join(' · ')
+    console.log(`\n[${pack}] ${fail.length} vi phạm đều trỏ vào FIXTURE của bộ kiểm (mã mang dấu QA*/SIM*) ⇒ có gói QA khác đang chạy trên cùng DB, KHÔNG phải lỗi dữ liệu.`)
+    ghAnnotate('notice', pack, `${fail.length} vi phạm chỉ nằm trên fixture của bộ kiểm (gói QA khác đang chạy) — không tính đỏ: ${names.slice(0, 500)}`)
+    process.exit(0)
+  }
+
+  for (const r of fail.slice(0, ANNOTATION_CAP)) ghAnnotate('error', pack, `${r.name}${r.detail ? ` — ${r.detail}` : ''}`)
+  if (fail.length > ANNOTATION_CAP) ghAnnotate('error', pack, `… và ${fail.length - ANNOTATION_CAP} phép kiểm hỏng nữa (xem log đầy đủ của bước này)`)
   process.exit(fail.length ? 1 : 0)
+}
+
+/**
+ * KẾT THÚC CHO GÓI TỰ ĐẾM (không dùng `check()`/`results` của lib) — chốt 15/09.
+ *
+ * VÌ SAO: 9/59 gói giữ bộ đếm riêng (`pass`/`fail`/`bad`) rồi tự đặt `process.exitCode`, nên luật
+ * "job đỏ phải tự khai hỏng ở đâu" (10/09) KHÔNG áp cho chúng: gói 07 đỏ hai lượt liền 14–15/09 mà
+ * hồ sơ công khai chỉ có đúng một dòng "QA gói 07-params-fuzz ĐỎ — xem log", còn log thì đòi đăng
+ * nhập. Người nhận email lại rơi đúng cảnh chuông kêu mà không biết chỗ nào — y hệt lớp lỗi đã cấm.
+ *
+ * Dùng: `tally('PARAMS-FUZZ', { pass, fail, bad }, { retryOnFail: true })` ở CUỐI gói.
+ *   - `bad` = mảng TÊN phép kiểm hỏng (kèm chi tiết nếu có) — chính nó lên `::error`.
+ *   - `retryOnFail` chỉ bật cho gói ĐỌC TRẠNG THÁI CHUNG của DB (tổng tồn, danh sách toàn kho…);
+ *     gói tự dựng fixture riêng thì không cần và không nên (xem chú thích của `finish`).
+ * KHÔNG `process.exit()` cưỡng bức: trên Windows, thoát ngay sau fetch HTTPS làm libuv assert
+ * (exit 127 bẩn) — đặt `process.exitCode` rồi để event-loop tự cạn.
+ */
+export function tally(pack, { pass = 0, fail = 0, bad = [], note = '' }, opts = {}) {
+  console.log(`\n[${pack}] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}${note}`)
+  if (!fail) { process.exitCode = 0; return }
+  console.log('  Hỏng: ' + bad.join(' | '))
+
+  if (opts.retryOnFail && process.env.QA_SETTLE_RETRY !== '1') {
+    const wait = Math.max(0, Number(process.env.QA_SETTLE_MS ?? 20000))
+    console.log(`\n[${pack}] ${fail} phép kiểm hỏng ở lần đo ĐẦU — chờ ${Math.round(wait / 1000)}s cho các lượt ghi đang chạy lắng rồi ĐO LẠI.`)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait)
+    const r = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: 'inherit', env: { ...process.env, QA_SETTLE_RETRY: '1' },
+    })
+    if (r.status === 0) {
+      console.log(`\n[${pack}] Lần đo hai SẠCH ⇒ ${fail} vi phạm lần đầu là ẢO (có lượt ghi chạy song song).`)
+      ghAnnotate('notice', pack, `${fail} phép kiểm hỏng ở lần đo đầu TỰ HẾT khi đo lại sau ${Math.round(wait / 1000)}s — nhiều khả năng có bộ kiểm khác đang ghi vào cùng DB: ${bad.join(' · ').slice(0, 400)}`)
+    }
+    process.exitCode = r.status ?? 1
+    return
+  }
+
+  if (opts.retryOnFail && bad.length && bad.every(looksFixture)) {
+    console.log(`\n[${pack}] ${fail} vi phạm đều trỏ vào FIXTURE của bộ kiểm ⇒ có gói QA khác đang chạy trên cùng DB.`)
+    ghAnnotate('notice', pack, `${fail} vi phạm chỉ nằm trên fixture của bộ kiểm — không tính đỏ: ${bad.join(' · ').slice(0, 400)}`)
+    process.exitCode = 0
+    return
+  }
+
+  for (const b of bad.slice(0, ANNOTATION_CAP)) ghAnnotate('error', pack, String(b).slice(0, 400))
+  if (bad.length > ANNOTATION_CAP) ghAnnotate('error', pack, `… và ${bad.length - ANNOTATION_CAP} phép kiểm hỏng nữa (xem log đầy đủ của bước này)`)
+  process.exitCode = 1
 }
 
 // Chạy song song có giới hạn in-flight (mặc định 20 — an toàn max_connections=60)
@@ -186,8 +401,16 @@ export async function teardownGdo(id, status) {
   const cur = d.j?.data
   if (!cur) return false
   if (cur.status !== 'PENDING') {
-    for (const it of (cur.delivery_orders ?? []).flatMap(x => x.items))
-      await api(`/wms/outbound/${id}/items/${it.id}/manual-complete`, 'POST', { cartons: 0 })
+    // Gỡ theo ĐÚNG đường người dùng thật đi (siết 29/08: `manual-complete` chỉ còn nhận hàng KHÔNG
+    // tem — trên hàng có tem nó ghi thẳng bộ đếm mà không đụng tồn/vết quét = tự tay làm lệch dữ
+    // liệu). Nên: hàng CÓ tem thì XÓA từng lượt quét (đường này hoàn tồn đúng), hàng KHÔNG tem thì
+    // ghi số tay về 0 (đường này trả pool đúng).
+    for (const it of (cur.delivery_orders ?? []).flatMap(x => x.items)) {
+      for (const sc of (it.scan_entries ?? []))
+        await api(`/wms/outbound/${id}/items/${it.id}/scans/${sc.id}`, 'DELETE')
+      if (Number(it.cartons_scanned) > 0)
+        await api(`/wms/outbound/${id}/items/${it.id}/manual-complete`, 'POST', { cartons: 0 })
+    }
     const us = await api(`/wms/outbound/${id}/unstart`, 'POST')
     if (us.s !== 200) return false
   }
@@ -206,4 +429,41 @@ export async function cleanupTagged() {
     total += rs.filter(Boolean).length
   }
   return total
+}
+
+// Dọn LỆNH VẬN CHUYỂN gắn với các Số xe / chuyến test — ĐÚNG THỨ TỰ FK và ĐÚNG SỐ ĐẾM. Bài học 02/09 (bộ dọn gói
+// 13/16 tự khoá cổng merge vĩnh viễn): (a) xoá GroupDeliveryOrder TRƯỚC TmsOrder → 23503 vì FK transfer_gdo_id;
+// (b) tìm lệnh bằng `order_code=in.(GC)` nên lệnh chuyển kho app tự sinh `TRF_<kho>_<GC>` không bao giờ khớp →
+// không bao giờ xoá được; (c) DELETE TmsVehicleSlot THÔ làm `booked_count` trôi → gói 00 đỏ ở lượt sau.
+// ⇒ Gọi hàm này TRƯỚC khi xoá GroupDeliveryOrder; slot đã đụng được đếm lại qua RPC recount_slot (row-lock).
+export async function cleanupTmsOrdersFor(groupCodes, gdoIds = []) {
+  const ors = groupCodes.map(gc => `order_code.like.*${gc}`)        // khớp cả `GC` lẫn `TRF_<kho>_GC`
+  if (gdoIds.length) ors.push(`transfer_gdo_id.in.(${gdoIds.join(',')})`)
+  if (!ors.length) return 0
+  const orders = await restAll('TmsOrder', `select=id&or=(${ors.join(',')})`)
+  const slots = new Set()
+  for (const o of orders) {
+    for (const vs of await restAll('TmsVehicleSlot', `select=slot_id&order_id=eq.${o.id}`)) if (vs.slot_id) slots.add(vs.slot_id)
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('inbound_plan_lines', 'DELETE', `tms_order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
+  }
+  for (const s of slots) await restRpc('recount_slot', { p_slot_id: s }).catch(() => {})
+  return orders.length
+}
+
+// ── Cửa xuất có sức chứa xe (09/09) ──
+// Kho CÓ cửa xuất trên Sơ đồ kho ⇒ Bắt đầu chuyến phải gửi `dock_location_id` (422 DOCK_REQUIRED nếu thiếu).
+// Kho Ba Vì staging đã vẽ 5 cửa nên mọi gói dựng chuyến ở FIX.WH_QR phải gắn cửa. Trả: cửa đang có CÙNG biển
+// (không tốn suất) → cửa còn trống → cửa đầu (để BE báo DOCK_FULL rõ ràng thay vì DOCK_REQUIRED oan); kho không
+// vẽ cửa → undefined (hành vi cũ, body không có field).
+export async function freeDockFor(whId, plate) {
+  const r = await api(`/wms/outbound/docks?warehouse_id=${encodeURIComponent(whId)}`)
+  const docks = (r.j?.data ?? []).filter(d => d.kind === 'DOCK_OUT')
+  if (!docks.length) return undefined
+  const norm = String(plate ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const same = norm && docks.find(d => (d.vehicles ?? []).some(v => v.license_plate === norm))
+  if (same) return same.id
+  const free = docks.find(d => d.capacity == null || d.occupied < d.capacity)
+  return (free ?? docks[0]).id
 }

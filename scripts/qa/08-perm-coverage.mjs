@@ -10,14 +10,15 @@
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { restAll, restWrite, restRpc, HAS_DB, FIX } from './lib.mjs'
+import { restAll, restWrite, restRpc, HAS_DB, FIX, tally } from './lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const STRICT = process.argv.includes('--strict')
 let pass = 0, fail = 0, warns = 0
+const bad = []   // tên phép kiểm hỏng → lên ::error của lượt chạy (email chỉ đọc được chú thích)
 const chk = (c, label, detail = '') => {
   if (c) { pass++; console.log(`  ✅ ${label}${detail ? ' — ' + detail : ''}`) }
-  else { fail++; console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
+  else { fail++; bad.push(detail ? `${label} — ${detail}` : label); console.log(`  ❌ ${label}${detail ? ' — ' + detail : ''}`) }
 }
 const warn = (label) => { warns++; console.log(`  ⚠️  ${label}`) }
 
@@ -26,6 +27,11 @@ const warn = (label) => { warns++; console.log(`  ⚠️  ${label}`) }
 const ADMIN_ONLY_INTENDED = new Set([
   // 'user_admin.manage_roles',  // ví dụ — hiện chưa chốt ngoại lệ nào
 ])
+
+// ── MODULE chủ đích CHỈ superadmin dùng (cả trang không cấp cho chức danh nào là ĐÚNG thiết kế).
+// Để trống là CÓ CHỦ ĐÍCH: đo 24/09 thì cả 41/41 module đều có ≥1 chức danh nắm. Thêm vào đây
+// phải kèm lý do — đây là danh sách ngoại lệ, không phải chỗ giấu cảnh báo.
+const MODULE_ADMIN_ONLY = new Set([])
 
 console.log(`── GÓI PERM-COVERAGE${STRICT ? ' (strict)' : ''} ──`)
 
@@ -92,6 +98,22 @@ if (!HAS_DB) {
     if (STRICT) chk(false, label)
     else warn(label + '  (cấp trong Quản lý người dùng → chức danh, hoặc khai ADMIN_ONLY_INTENDED kèm lý do)')
   }
+
+  // ── Tầng 2b: MODULE bị KHOÁ TRỌN = cả một TRANG không nhân viên nào mở được → FAIL, không warn.
+  // Khác hẳn tầng 2 ở trên (một action lẻ chưa ai được cấp là QUYẾT ĐỊNH QUẢN TRỊ, warn là đúng):
+  // ở đây KHÔNG action nào của module có người nắm, tức tính năng đã lên máy mà không tới được tay ai.
+  // Đã xảy ra HAI LẦN và cả hai lần chỉ lộ ra vì có người đi đo bằng tay: `directed_work` ra máy
+  // 10/09 với 0/9 chức danh kho (vá bằng migration 20260912d), `dispatch` + `freight` ra máy 23–24/09
+  // với 0/19 chức danh (vá bằng 20260924d). Cả hai lần tầng 2 CÓ kêu — nhưng kêu bằng ⚠️ giữa một
+  // lượt chạy xanh nên không ai đọc. Chuông báo cháy mà chỉ nhấp nháy thì không phải chuông.
+  const deadModules = Object.keys(BE)
+    .filter(mod => !MODULE_ADMIN_ONLY.has(mod))
+    .filter(mod => (BE[mod] ?? []).every(a => !granted.has(`${mod}.${a}`)))
+  chk(deadModules.length === 0,
+    'không module nào bị KHOÁ TRỌN (0 chức danh nắm bất kỳ quyền nào ⇒ cả trang tàng hình)',
+    deadModules.length
+      ? `${deadModules.length} module: ${deadModules.join(', ')} — cấp quyền cho chức danh, hoặc khai MODULE_ADMIN_ONLY kèm lý do`
+      : `${Object.keys(BE).length} module đều có người nắm`)
 }
 
 // ── Tầng 3: CHUYẾN CHỞ LẪN nhiều Loại kho phải LỌT scope loại (bug thật 30/07) ──
@@ -251,7 +273,6 @@ if (!HAS_DB) {
   }
 }
 
-console.log(`\n[PERM-COVERAGE] ${pass}/${pass + fail} PASS${warns ? ` · ${warns} cảnh báo` : ''}${fail ? ` · ${fail} FAIL` : ''}`)
-// KHÔNG process.exit() ở đây: trên Windows, exit cưỡng bức ngay sau fetch HTTPS làm libuv assert
-// (exit code 127 bẩn). Đặt exitCode rồi để event-loop tự cạn — socket undici đã unref, thoát sạch.
-process.exitCode = fail ? 1 : 0
+// `tally` (KHÔNG retry — gói này so CẤU HÌNH quyền FE⇄BE, không đọc trạng thái dữ liệu đang chạy):
+// chạy mỗi push nên đỏ phải nêu được TÊN phép kiểm ngay trên trang lượt chạy + email.
+tally('PERM-COVERAGE', { pass, fail, bad, note: warns ? ` · ${warns} cảnh báo` : '' })

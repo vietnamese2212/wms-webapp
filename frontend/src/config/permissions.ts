@@ -36,6 +36,7 @@ export const MODULES = {
       cancel:             'Hủy phiếu',
       complete:           'Hoàn thành phiếu',
       uncomplete:         'Gỡ hoàn thành phiếu',
+      putaway_override:   'Duyệt cất khác quy tắc (kho bật bắt buộc)',
     },
   },
   outbound: {
@@ -58,6 +59,7 @@ export const MODULES = {
       reconcile:  'Đối chiếu SAP — xử lý hàng chờ "Cần xử lý" [Dữ liệu bên ngoài]',
       weigh_waive: 'Duyệt bỏ qua CÂN (rule 2) — xe không cân được (hỏng cân…), duyệt trên chuyến',
       gate_waive:  'Duyệt bỏ qua ĐĂNG KÝ CỔNG (rule 1) — xe không đăng ký (giao lẻ/xe máy/NV nhận…), duyệt trên chuyến; duyệt cổng ⇒ biển số tùy chọn',
+      set_date:    'Khai Quy định date (≥ % hạn dùng · ≥ số ngày còn lại · NSX chỉ định) cho dòng đơn — VÀ vào trang "Quy định date" (menu Kho WMS) để soi mọi dòng của mọi chuyến rồi khai hàng loạt; dòng chưa khai không lên Việc cần làm',
       rotation_override: 'Duyệt LẤY KHÁC THỨ TỰ luân chuyển — chỉ cần khi kho bật "bắt buộc" trong Cài đặt WMS → Kho; phải chọn lý do, có ghi vết',
     },
   },
@@ -68,12 +70,21 @@ export const MODULES = {
       export: 'Xuất Excel lịch sử quét',
     },
   },
+  traceability: {
+    page: 'Truy xuất lô',
+    actions: {
+      view:   'Truy xuất lô 2 chiều — lô/mã hàng/ngày SX đã giao tới NPP nào, và NPP/chuyến/biển số đã nhận lô nào (gồm xem Hồ sơ truy vết)',
+      export: 'Xuất Excel kết quả truy xuất (hồ sơ thu hồi)',
+      investigate: 'Điều tra theo THÙNG — nhập giờ in phun + mã hàng, đối chiếu sổ đóng gói, tạo HỒ SƠ truy vết đứng tên mình (kèm ảnh)',
+    },
+  },
   loosepicking: {
     page: 'Nhặt lẻ',
     actions: {
       view:     'Xem danh sách',
       scan:     'Quét QR',
       complete: 'Hoàn thành',
+      recalc:   'Tính lại nhặt lẻ theo setting (chuyến chưa bắt đầu)',
     },
   },
   stocktake: {
@@ -94,6 +105,7 @@ export const MODULES = {
       delete: 'Xóa vị trí',
       import: 'Upload Excel vị trí (tạo hàng loạt)',
       export: 'Xuất Excel danh sách vị trí',
+      print_label: 'In tem QR vị trí (dán lên kệ)',
     },
   },
   employees: {
@@ -110,8 +122,10 @@ export const MODULES = {
       create:       'Thêm tài khoản [Nhân viên]',
       edit:         'Sửa thông tin + gán kho truy cập [Nhân viên]',
       set_password: 'Đặt mật khẩu [Nhân viên]',
+      unlock:       'Mở khoá đăng nhập bị khoá do gõ sai mật khẩu nhiều lần [Nhân viên]',
       delete:       'Xóa / khôi phục [Nhân viên]',
       manage_roles: 'Sửa & phân quyền [Phòng ban · Chức danh]',
+      audit_log:    'Xem tab Nhật ký quản trị (ai đổi quyền / kho / mật khẩu / API key / cờ hệ thống)',
     },
   },
   work_skill: {
@@ -172,10 +186,27 @@ export const MODULES = {
     page: 'Cài đặt TMS',
     tab:  'Loại xe',
     actions: {
-      view:   'Xem danh sách',
-      create: 'Thêm loại xe',
-      edit:   'Sửa loại xe',
-      delete: 'Xóa loại xe',
+      view:   'Xem danh sách (dòng xe cha + dòng xe con mã SAP)',
+      create: 'Thêm loại xe / dòng xe con',
+      edit:   'Sửa loại xe · gán cha cho dòng xe con · sức chứa',
+      delete: 'Xóa loại xe / dòng xe con',
+    },
+  },
+  freight: {
+    page: 'Cước vận chuyển',
+    actions: {
+      view:   'Xem bảng cước · phụ phí · phân tuyến ĐVVT',
+      manage: 'Thêm / sửa / kết thúc hiệu lực · upload bảng cước · khai phụ phí · phân tuyến và tỷ trọng ĐVVT',
+      export: 'Xuất Excel bảng cước / cước tháng theo ĐVVT',
+    },
+  },
+  dispatch: {
+    page: 'Điều vận',
+    actions: {
+      view:    'Xem pool OD chưa xếp xe + kế hoạch ghép chuyến nháp / đã xác nhận',
+      plan:    'Lập kế hoạch (chạy máy ghép) · sửa nháp: đổi dòng xe / ĐVVT · chuyển OD giữa xe · bỏ nháp',
+      confirm: 'Xác nhận kế hoạch → ghi vào Kế hoạch xuất (sinh chuyến + lệnh VC như upload tay)',
+      export:  'Xuất Excel kế hoạch ghép chuyến (định dạng file KH điều vận)',
     },
   },
   tms_slots: {
@@ -227,6 +258,23 @@ export const MODULES = {
       match: 'Gắn / gỡ phiếu cân với chuyến xe',
     },
   },
+  dashboard: {
+    page: 'Dashboard (Tổng quan)',
+    actions: {
+      view: 'Xem trang Tổng quan hệ thống (tồn kho, sức chứa khu vực, hoạt động hôm nay, tab Năng suất / Dịch vụ / KPI)',
+      kpi_target: 'Đặt MỤC TIÊU (ngưỡng xanh / vàng / đỏ) cho các KPI ở tab KPI — mục tiêu dùng chung hoặc riêng từng kho',
+      kpi_note: 'Sửa DIỄN GIẢI của KPI (câu ý nghĩa trong nút ⓘ trên từng ô ở tab KPI)',
+    },
+  },
+  warehouse_cost: {
+    page: 'Chi phí kho (kê khai + chỉ số chi phí/tấn)',
+    actions: {
+      view: 'Xem chi phí kho + các ô chi phí/tấn trong tab Năng suất của Dashboard',
+      edit: 'Thêm / sửa / xoá dòng chi phí (gồm chép tháng trước, upload Excel)',
+      lock: 'Chốt kỳ (khoá không cho sửa nữa) và mở lại kỳ đã chốt',
+      manage_item: 'Quản lý DANH MỤC khoản mục chi phí (thêm "Thuê pallet", "Thuê xe nâng"…)',
+    },
+  },
   control_tower: {
     page: 'Giám sát vận hành (Control Tower)',
     actions: {
@@ -234,10 +282,13 @@ export const MODULES = {
     },
   },
   alerts: {
-    page: 'Cảnh báo vận hành',
+    page: 'Thông báo & Cảnh báo vận hành',
     actions: {
-      view: 'Xem danh sách cảnh báo + nhận thông báo đẩy cảnh báo mới (theo kho được gán)',
-      ack:  'Đánh dấu "đã biết" / bỏ đánh dấu một cảnh báo',
+      // Trang Thông báo 3 tab: "Cá nhân" (feed việc đích danh CỦA MÌNH) mở cho mọi user đăng
+      // nhập — chủ đích 06/08, không gate; "Thông báo chung" = quyền view dưới đây;
+      // "Cài đặt ngưỡng" đi theo wms_settings.manage_system (cross-module, có ghi chú ở đó).
+      view: 'Tab "Thông báo chung" (cảnh báo vận hành) + nhận thông báo đẩy cảnh báo mới theo kho được gán',
+      ack:  'Đánh dấu "đã biết" / bỏ đánh dấu cảnh báo (lẻ + hàng loạt)',
     },
   },
   slotting: {
@@ -250,6 +301,21 @@ export const MODULES = {
       cancel:    'Hủy kế hoạch',
       reopen:    'Mở lại kế hoạch đã đóng',
       configure: 'Tab Cài đặt (hạng nhặt + luồng cửa khu)',
+    },
+  },
+  warehouse_map: {
+    page: 'Sơ đồ kho',
+    actions: {
+      view: 'Xem bản vẽ kho: tồn theo ô, tìm pallet/mã, đường đi từ cửa',
+      edit: 'Dựng khung lưới, đặt vị trí lên bản vẽ, cửa/bãi/điểm đầu dãy, đánh Kệ/Sàn',
+    },
+  },
+  directed_work: {
+    page: 'Việc cần làm',
+    actions: {
+      view:    'Xem 3 bảng việc: Cần hạ (xe nâng hạ) · Cần đưa ra (xe nâng chuyển) · Sắp quét (thủ kho)',
+      confirm: 'Bấm "✓ Xong" xác nhận đã hạ / đã đưa ra',
+      replan:  'Sắp lại kế hoạch lấy hàng của chuyến',
     },
   },
   fill: {
@@ -292,6 +358,15 @@ export const MODULES = {
       edit:   'Sửa mã hàng + Nhà sản xuất',
       import: 'Upload mã hàng (Excel)',
       delete: 'Ẩn mã hàng / xóa Nhà sản xuất',
+    },
+  },
+  customers: {
+    page: 'Khách hàng',
+    actions: {
+      view:           'Xem danh sách Khách hàng / Nơi nhận',
+      edit:           'Thêm / sửa / ngừng khách + thao tác hàng loạt (phân kênh, %Date riêng, trỏ kho)',
+      import:         'Nạp khách hàng từ dữ liệu SAP',
+      manage_channel: 'Tab Kênh — sửa tên + %Date mặc định của kênh (Kho tổng / NPP / BHX / KA / MT…)',
     },
   },
   pallet_print: {

@@ -3,12 +3,15 @@ import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { scopeCategoriesOf, categoriesAllAllowed, categoriesAnyAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
-import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
+import { normalizeLocScan } from '../../utils/locationScan'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { loadPutawayContext, loadSlotFactsRaw, putawayTargetZones } from '../../services/putawayContext'
+import { putawayBlock, putawayReason, putawayScore, putawayEnforces, parseLocationMaxMaterials, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -37,7 +40,9 @@ async function guardLocScope(req: Request, res: Response, locationId: string): P
 // Giữ max_pallets/categories/slot_no_* vì picker Nhập kho & Slotting đọc.
 const LOCATION_LITE_COLS =
   'id, location_code, warehouse_id, sub_code, sub_name, categories, row, shelf,' +
-  'max_pallets, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out'
+  // `max_materials` (trần số mã của ô, 26/08) đi cùng nhóm max_pallets/slot_no_*: picker Nhập kho
+  // chấm luật cất hàng ngay trên danh sách nên phải có, không thì ô bị chặn vẫn hiện ★.
+  'max_pallets, max_materials, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out'
 
 // ─── Phân trang SERVER cho TRANG danh mục Vị trí kho ────────────────────────────────────────────
 // 1 kho có thể vài nghìn vị trí (Bàu Bàng 1.517) — trước đây render hết + cộng tổng ở máy.
@@ -48,9 +53,11 @@ type LocListCtx = {
   scopeCats: string[] | null
   tokens: string[] | null
   subs: string[] | null       // Khu vực kho (sub_code) — [] = có mặt nhưng rỗng ⇒ trả RỖNG
-  // Cả hai cờ đều BA TRẠNG THÁI: null = không lọc; true/false = chỉ có / chỉ chưa có cờ
+  // Các cờ đều BA TRẠNG THÁI: null = không lọc; true/false = chỉ có / chỉ chưa có cờ
   flag: boolean | null        // requires_stocktake (cần check hàng ngày)
   pickFace: boolean | null    // is_pick_face (vị trí nhặt lẻ)
+  noIn: boolean | null        // slot_no_in (không đưa hàng vào — kho tạm/ngoài đường)
+  noOut: boolean | null       // slot_no_out (không lấy hàng đi — hàng kẹt)
   inclInactive: boolean
   blocked: boolean
 }
@@ -80,26 +87,16 @@ function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx 
     // nhận '1' | 'true' | true — cờ boolean qua query-string mỗi client serialize một kiểu
     flag: tri(q.flag),
     pickFace: tri(q.pick_face),
+    noIn: tri(q.slot_no_in),
+    noOut: tri(q.slot_no_out),
     inclInactive: q.include_inactive === '1' || q.include_inactive === 'true' || q.include_inactive === true,
   }
 }
 const locRpcParams = (c: LocListCtx) => ({
   p_wh_ids: c.whIds, p_category: c.category, p_scope_cats: c.scopeCats,
   p_tokens: c.tokens, p_flag: c.flag, p_pick_face: c.pickFace, p_subs: c.subs,
+  p_slot_no_in: c.noIn, p_slot_no_out: c.noOut,
 })
-
-// Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem (định nghĩa khớp listLocations)
-async function usedSlotsFor(ids: string[]): Promise<Map<string, number>> {
-  const used = new Map<string, number>()
-  for (let i = 0; i < ids.length; i += 300) {
-    const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-      .select('location_id').in('location_id', ids.slice(i, i + 300))
-      .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
-    for (const r of rows as { location_id: string }[])
-      used.set(r.location_id, (used.get(r.location_id) ?? 0) + 1)
-  }
-  return used
-}
 
 async function listLocationsPaged(req: Request, res: Response) {
   const q = req.query as Record<string, string | undefined>
@@ -108,46 +105,14 @@ async function listLocationsPaged(req: Request, res: Response) {
   const ctx = getLocListCtx(req)
   if (ctx.blocked) return ok(res, { rows: [], total: 0 })
   // RPC trả THẲNG dòng + used_slots (migration 20260729, p_with_rows) ⇒ 1 request thay vì 3.
-  // Cửa sổ triển khai: code mới + RPC CŨ (8 tham số) → PostgREST PGRST202 "no matching function"
-  // vì thêm p_with_rows là ĐỔI CHỮ KÝ — phải gọi lại đúng chữ ký cũ, đừng để trang chết chờ migration.
-  let { data, error } = await supabase.rpc('locations_page', {
+  const { data, error } = await supabase.rpc('locations_page', {
     p_offset: (page - 1) * pageSize, p_limit: pageSize,
     ...locRpcParams(ctx), p_incl_inactive: ctx.inclInactive,
     p_with_rows: true,
   })
-  if (error && (error as { code?: string }).code === 'PGRST202') {
-    // Chỉ hạ cấp khi bộ lọc CŨNG chạy được trên RPC cũ: bỏ tham số ở nhánh dự phòng sẽ trả về
-    // danh sách CHƯA LỌC mà người dùng vẫn tưởng đã lọc — thà báo lỗi còn hơn cắt/không-cắt âm
-    // thầm. RPC cũ: p_flag chỉ 2 trạng thái (false = không lọc), không p_pick_face/p_subs.
-    if (ctx.pickFace !== null || ctx.flag === false || ctx.subs !== null)
-      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc theo cờ/khu vực)')
-    ;({ data, error } = await supabase.rpc('locations_page', {
-      p_offset: (page - 1) * pageSize, p_limit: pageSize,
-      p_wh_ids: ctx.whIds, p_category: ctx.category, p_scope_cats: ctx.scopeCats,
-      p_tokens: ctx.tokens, p_flag: ctx.flag === true, p_incl_inactive: ctx.inclInactive,
-    }))
-  }
   if (error) throw error
-  const p = (data ?? {}) as { ids?: string[]; rows?: unknown[]; total?: number }
-  const ids = p.ids ?? []
-  if (!ids.length) return ok(res, { rows: [], total: p.total ?? 0 })
-  if (p.rows) return ok(res, { rows: p.rows, total: p.total ?? 0 })
-  // Nhánh dự phòng (RPC cũ): nạp dòng + used_slots như trước
-  const rows = await fetchAllByIdChunks(ids, chunk => supabase.from('Location')
-    .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)').in('id', chunk).order('id'))
-  const used = await usedSlotsFor(ids)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
-  const ordered = ids.map(id => byId.get(id)).filter(Boolean).map((loc) => {
-    const { InventoryEntry, ...rest } = loc as Record<string, unknown>
-    return {
-      ...rest,
-      _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
-      used_slots: used.get(rest.id as string) ?? 0,
-      has_same_material: false,
-    }
-  })
-  return ok(res, { rows: ordered, total: p.total ?? 0 })
+  const p = (data ?? {}) as { rows?: unknown[]; total?: number }
+  return ok(res, { rows: p.rows ?? [], total: p.total ?? 0 })
 }
 
 // GET /api/masterdata/locations/summary — 4 ô SummaryBand trên TOÀN BỘ bộ lọc (chỉ vị trí đang dùng)
@@ -158,7 +123,10 @@ export async function listLocationsSummary(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('locations_summary', locRpcParams(ctx))
     if (error) throw error
     return ok(res, data ?? {})
-  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // Tập vị trí ĐANG ĐỂ DỞ đúng mã này (layer-1, còn tồn) — nguồn của gợi ý ★ "gom pallet".
@@ -177,12 +145,31 @@ export async function listLocations(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, active, category, material_id, view, search, limit } = req.query
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
-    // limit=N (typeahead): chỉ N dòng đầu → không kéo cả nghìn vị trí về trình duyệt
-    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
+    // limit=N (typeahead): chỉ N dòng đầu → không kéo cả nghìn vị trí về trình duyệt.
+    // Trần 300 (17/08, trước là 200): picker cất hàng xin 300 để kho cỡ thường (Ba Vì 236 ô) thấy
+    // TRỌN danh sách một lần — user báo "chỉ hiện vài vị trí, gõ tay mới ra ô khác" vì 50 dòng đầu
+    // theo mã vị trí bị lọc Loại kho cắt gần hết. Kho nghìn ô vẫn cắt ở 300 + tìm server.
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 300)
     // ids=... : tra NHÃN cho vị trí ĐANG CHỌN (khuôn useMaterialsByIds). Ô chọn tìm-trên-server chỉ
     // giữ 50 dòng khớp từ khoá HIỆN TẠI, nên value đang chọn phải có đường tra riêng — không thì
     // chip/ô in uuid thô và user tưởng mất dữ liệu (bài học nghiệm thu 29/07). Cap 300 = trần URL.
     const ids = parseListParam(req.query.ids, 300)
+
+    // CỜ NGỮ NGHĨA (15/08) — trả TẬP vị trí mang cờ, thay vì để FE kéo CẢ KHO rồi tự `.filter()`.
+    // Đo thật kho Bàu Bàng 1.517 vị trí: **1.030KB / 2,9s MỖI LẦN mở màn** (3 màn Kiểm kho +
+    // tab cấu hình Slotting đều làm vậy) — và phần đắt nhất là `used_slots` (quét InventoryEntry
+    // chunk 300 = 6 lượt round-trip) mà mấy màn đó KHÔNG dùng tới. Cờ nào cũng là tập CON có chủ
+    // đích (vị trí cần kiểm / kho tạm / hàng kẹt), nên trả đủ tập là an toàn — khác hẳn "cả danh mục".
+    // ⚠️ Thêm cờ lọc mới thì phải khai ở CẢ HAI nhánh (mảng ở đây + `locations_page` bên dưới).
+    // Bắt được 17/08: `pick_face` chỉ có ở nhánh phân trang ⇒ gọi `?pick_face=1` KHÔNG có `page=`
+    // trả về TOÀN BỘ vị trí của kho mà không báo gì — người gọi tưởng đã lọc (đo Ba Vì: xin tập ô
+    // nhặt lẻ, nhận đủ 236 ô). Đúng lớp lỗi "lọc bị bỏ qua âm thầm" đã dính với chính cờ này ở FE
+    // ngày 04/08.
+    const flagStk   = tri(req.query.flag)          // requires_stocktake — "cần kiểm kê"
+    const flagPick  = tri(req.query.pick_face)     // is_pick_face — vị trí nhặt lẻ
+    const flagNoIn  = tri(req.query.slot_no_in)    // Slotting: kho tạm, không đưa hàng vào
+    const flagNoOut = tri(req.query.slot_no_out)   // Slotting: hàng kẹt, không lấy hàng đi
+    const byFlag = flagStk !== null || flagNoIn !== null || flagNoOut !== null || flagPick !== null
 
     // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
     // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
@@ -202,9 +189,17 @@ export async function listLocations(req: Request, res: Response) {
     const buildQ = () => {
       let query = supabase
         .from('Location')
-        .select(view === 'lite' ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
+        .select(view === 'lite' || byFlag ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
         .order('sub_code').order('row').order('shelf').order('id')
       if (ids) query = query.in('id', ids.slice(0, 300))   // cap 300 = trần id trên URL PostgREST
+      // Sơ đồ kho (08/09): cửa/bãi/điểm đầu dãy cũng là Location (kind ≠ STORAGE) — KHÔNG đưa vào
+      // ô chọn/gợi ý cất hàng (chúng không phải chỗ chứa). Ai cần thì hỏi ?kind= hoặc tra theo ids.
+      else if (!req.query.kind) query = query.eq('kind', 'STORAGE')
+      if (req.query.kind) query = query.eq('kind', String(req.query.kind))
+      if (flagStk   !== null) query = query.eq('requires_stocktake', flagStk)
+      if (flagPick  !== null) query = query.eq('is_pick_face', flagPick)
+      if (flagNoIn  !== null) query = query.eq('slot_no_in', flagNoIn)
+      if (flagNoOut !== null) query = query.eq('slot_no_out', flagNoOut)
       if (effective) {
         query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
       } else if (warehouse_id) {
@@ -227,64 +222,300 @@ export async function listLocations(req: Request, res: Response) {
       // ⇒ mất gợi ý gom pallet. Nên khi có material_id: lấy nhóm ★ TRƯỚC (theo tập vị trí đang
       // chứa mã đó) rồi bù danh sách thường cho đủ. 2 truy vấn nhỏ, vẫn rẻ hơn nhiều so với kéo
       // cả kho (Bàu Bàng 1.517 vị trí = 616KB + hàng chục round-trip tính used_slots).
-      const recIds = material_id ? await sameMaterialLocIds(String(material_id), warehouse_id ? String(warehouse_id) : null) : []
+      // Cùng lý do đó, KHU ĐÍCH của chiến thuật ABC cũng phải được nạp TRƯỚC khi cắt: khu đích
+      // nằm cuối bảng chữ cái thì bị `limit` cắt gần hết, tức chiến thuật ABC gợi ý vào khu mà
+      // picker không hề hiện (đo 17/08 Ba Vì band C = TP3: limit=200 lọt 6/41 vị trí TP3).
+      const whForZones = effective?.length === 1 ? effective[0] : (warehouse_id ? String(warehouse_id) : null)
+      const [recIds, bandZones] = await Promise.all([
+        material_id ? sameMaterialLocIds(String(material_id), warehouse_id ? String(warehouse_id) : null) : Promise.resolve([]),
+        material_id ? putawayTargetZones(whForZones, String(material_id)) : Promise.resolve([]),
+      ])
       const rec: Record<string, unknown>[] = []
       if (recIds.length) {
         const { data: r, error } = await buildQ().in('id', recIds.slice(0, 300)).limit(cap)
         if (error) throw error
         rec.push(...((r ?? []) as unknown as Record<string, unknown>[]))
       }
+      if (bandZones.length) {
+        const { data: z, error } = await buildQ().in('sub_code', bandZones.slice(0, 100)).limit(cap)
+        if (error) throw error
+        rec.push(...((z ?? []) as unknown as Record<string, unknown>[]))
+      }
       const { data: page, error } = await buildQ().limit(cap)
       if (error) throw error
-      const seen = new Set(rec.map(l => l.id as string))
-      data = [...rec, ...((page ?? []) as unknown as Record<string, unknown>[]).filter(l => !seen.has(l.id as string))]
+      // rec gộp 2 nguồn (★ cùng mã + khu đích ABC) nên tự nó có thể TRÙNG — khử trước, không thì
+      // một vị trí hiện 2 dòng trong ô chọn.
+      const seen = new Set<string>()
+      const recUniq = rec.filter(l => !seen.has(l.id as string) && seen.add(l.id as string))
+      data = [...recUniq, ...((page ?? []) as unknown as Record<string, unknown>[]).filter(l => !seen.has(l.id as string))]
     } else {
       data = await fetchAllRowsParallel(buildQ) as unknown as Record<string, unknown>[]
     }
 
-    // used_slots (layer 1 IN_STOCK/PARTIAL): 1 lượt quét gộp thay N+1 count query
-    // (trước: mỗi vị trí 1 roundtrip — nghìn vị trí = nghìn query song song, cạn connection)
+    // Hỏi theo CỜ = chỉ cần biết "vị trí nào mang cờ" (id + mã) → trả thẳng, KHÔNG quét
+    // InventoryEntry tính used_slots (chunk 300 = phần đắt nhất của endpoint này).
+    if (byFlag) return ok(res, data ?? [])
+
+    // used_slots + "đang để dở cùng mã": HỎI DB TRẢ SỐ (RPC putaway_slot_facts), không kéo dòng
+    // tồn về đếm. Trước đây 2 vòng quét InventoryEntry riêng — Bàu Bàng 1.517 vị trí kéo về
+    // 15.009 dòng chỉ để đếm; nay tối đa 1.517 dòng, mỗi ô một dòng.
     const locIdsAll = (data ?? []).map((l: Record<string, unknown>) => l.id as string)
+    const matId = material_id ? String(material_id) : null
+
+    // Picker CẤT HÀNG ⇒ chấm ★ / lý do chặn theo quy tắc của kho; danh sách thường chỉ cần
+    // used_slots, khỏi nạp cấu hình kho.
+    // `putaway=1` cho picker KHÔNG biết trước mã hàng — Chuyển vị trí hàng loạt chọn được pallet
+    // NHIỀU MÃ, mà suy "có material_id ⇒ là picker cất hàng" thì đúng ca đó picker KHÔNG hiện gì
+    // (không "cấm nhập", không "đã đầy"), người dùng chọn xong bấm Chuyển mới ăn 422. Thiếu mã thì
+    // các luật phụ thuộc mã tự im (NCC/trộn date cần dữ liệu của pallet), còn luật của Ô vẫn chấm.
+    const wantPutaway = !!matId || req.query.putaway === '1'
+    const whForRules = effective?.length === 1 ? effective[0] : (warehouse_id ? String(warehouse_id) : null)
+    const ctx = wantPutaway && locIdsAll.length > 0
+      ? await loadPutawayContext({
+          warehouseId: whForRules,
+          locIds: locIdsAll,
+          incoming: { material_id: matId ?? '', ncc_id: req.query.ncc_id ? String(req.query.ncc_id) : null },
+        })
+      : null
+    const rawFacts = ctx ? null : (locIdsAll.length > 0 ? await loadSlotFactsRaw(locIdsAll, null, false) : [])
     const usedCount = new Map<string, number>()
-    for (let i = 0; i < locIdsAll.length; i += 300) {
-      const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-        .select('location_id').in('location_id', locIdsAll.slice(i, i + 300))
-        .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
-      for (const r of rows as { location_id: string }[])
-        usedCount.set(r.location_id, (usedCount.get(r.location_id) ?? 0) + 1)
-    }
+    if (ctx) for (const [id, f] of ctx.facts) usedCount.set(id, f.pallets)
+    else for (const r of rawFacts ?? []) usedCount.set(r.location_id, Number(r.pallets ?? 0))
+
     const withUsage = (data ?? []).map((loc: Record<string, unknown>) => {
       const { InventoryEntry, ...rest } = loc
-      return {
+      const id = rest.id as string
+      const row: Record<string, unknown> = {
         ...rest,
         _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
-        used_slots: usedCount.get(rest.id as string) ?? 0,
+        used_slots: usedCount.get(id) ?? 0,
         has_same_material: false,
-      } as Record<string, unknown>
+      }
+      if (ctx) {
+        const f = ctx.factsOf(id)
+        const l: PutawayLoc = {
+          id,
+          sub_code:     rest.sub_code     as string | null,   // chiến thuật ABC chấm theo KHU
+          max_pallets:  rest.max_pallets  as number | null,
+          slot_no_in:   rest.slot_no_in   as boolean | null,
+          is_pick_face: rest.is_pick_face as boolean | null,
+          // Trần số mã của ô (26/08) — thiếu dòng này thì picker vẫn đánh ★ cho ô đã đủ mã rồi
+          // cửa ghi mới chặn: người quét bị "gợi ý xong lại từ chối", đúng lớp lỗi tệ nhất ở đây.
+          max_materials: rest.max_materials as number | null,
+        }
+        row.has_same_material = f.sameMaterial
+        // FE CHỈ hiển thị khối này, KHÔNG tự tính lại (luật một nguồn — utils/putaway.ts)
+        const blocked = putawayBlock(l, f, ctx.incoming, ctx.rules)
+        row.putaway = {
+          blocked,
+          reason:  putawayReason(l, f, ctx.incoming, ctx.rules, ctx.abc),
+          enforced: blocked != null && putawayEnforces(ctx.rules, blocked),
+        } satisfies PutawayHint
+        row._score = putawayScore(l, f, ctx.incoming, ctx.rules, ctx.abc)
+      }
+      return row
     })
 
-    // has_same_material: vị trí đang chứa (layer-1, IN_STOCK/PARTIAL) đúng material_id này
-    // → để FE gợi ý "nơi loại hàng đó đang để dở". Chunk 300 + phân trang.
-    if (material_id && withUsage.length > 0) {
-      const locIds = withUsage.map(l => l.id as string)
-      const sameSet = new Set<string>()
-      for (let i = 0; i < locIds.length; i += 300) {
-        const sameMat = await fetchAllRowsParallel(() => supabase
-          .from('InventoryEntry')
-          .select('location_id')
-          .in('location_id', locIds.slice(i, i + 300))
-          .eq('material_id', String(material_id))
-          .eq('stack_layer', 1)
-          .in('status', ['IN_STOCK', 'PARTIAL'])
-          .gt('cartons_remaining', 0)
-          .order('id'))
-        for (const e of sameMat as { location_id: string }[]) sameSet.add(e.location_id)
-      }
-      for (const l of withUsage) l.has_same_material = sameSet.has(l.id as string)
+    // Sắp xếp theo quy tắc cất hàng: ★ lên đầu, ô bị chặn xuống cuối, còn lại giữ nguyên thứ tự
+    // gốc (mã vị trí) — sort ỔN ĐỊNH nên hai ô cùng điểm không nhảy chỗ giữa các lần gõ.
+    if (ctx) {
+      withUsage.sort((a, b) => (a._score as number) - (b._score as number))
+      for (const r of withUsage) delete r._score
     }
 
     ok(res, withUsage)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
+}
+
+// ─── QUÉT TEM VỊ TRÍ ────────────────────────────────────────────────────────────────────────────
+// GET /masterdata/locations/resolve?code=&warehouse_id=&material_id=&putaway=1
+// Tra ĐÚNG MỘT vị trí theo mã quét từ tem (user chốt 21/08: mọi chỗ chọn vị trí đều quét được).
+//
+// Vì sao KHÔNG dùng lại `?search=` của listLocations: search là `ilike %…%` trên `search_norm`
+// (gồm cả mã khu + TÊN khu) nên một phát quét có thể ra nhiều dòng, và "dòng đầu tiên" thì phụ
+// thuộc thứ tự sắp xếp — quét tem ô `B_TP1_5_T1` mà nhận về `B_TP1_5_T10` là pallet đi sai ô mà
+// không ai biết. Ở đây bắt buộc khớp TRỌN mã: 1 dòng thì nhận, nhiều dòng thì báo mơ hồ.
+//
+// Trả về CÙNG HÌNH DẠNG với một dòng của listLocations (`used_slots` + khối `putaway`) để màn quét
+// hiện y nguyên nhãn "đã đầy / không đưa hàng vào / ★ đang để dở cùng mã" như khi bấm chọn tay —
+// luật một nguồn, FE không tự chấm lại.
+export async function resolveLocation(req: Request, res: Response) {
+  try {
+    const code = normalizeLocScan(req.query.code)
+    if (!code) return fail(res, 400, 'MISSING_CODE', 'Chưa có mã vị trí để tra')
+    if (searchLooksLikeInjection(code)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+
+    const warehouseId = req.query.warehouse_id ? String(req.query.warehouse_id) : null
+    const scope = scopeWhIds(req)
+    let effective: string[] | null = null
+    if (scope !== null) {
+      effective = warehouseId ? scope.filter(id => id === warehouseId) : scope
+      if (effective.length === 0) {
+        return fail(res, 404, 'LOCATION_NOT_FOUND', `Không tìm thấy vị trí "${code}" trong phạm vi kho của bạn`)
+      }
+    }
+    type LocRow = {
+      id: string; location_code: string; warehouse_id: string | null
+      sub_code: string | null; max_pallets: number | null; categories: string[] | null
+      slot_no_in: boolean | null; is_pick_face: boolean | null; is_active: boolean | null
+    }
+
+    // Khoanh SQL bằng đúng MỘT kho (nếu người gọi khai) rồi CẮT SCOPE TRONG JS trên vài dòng khớp
+    // mã. Cố ý không nhồi cả danh sách kho/loại vào URL: một phát quét chỉ có thể khớp vài dòng,
+    // nên lọc trong JS vừa đúng vừa khỏi dính 2 trần đã biết (id-list-url-limits + cap 1000).
+    const inScope = (rows: LocRow[]) => rows.filter(l =>
+      (!effective || (l.warehouse_id != null && effective.includes(l.warehouse_id)))
+      && categoriesAnyAllowed(req, l.categories))
+    const buildQ = () => {
+      const q = supabase.from('Location').select(LOCATION_LITE_COLS)
+      return warehouseId ? q.eq('warehouse_id', warehouseId) : q
+    }
+    // Vòng 1 — khớp CHÍNH XÁC (ilike không wildcard = bỏ qua hoa/thường, giữ nguyên dấu).
+    // limit 50 (không phải 5): cắt scope làm ở JS nên phải chắc dòng THUỘC scope không bị `limit`
+    // gạt ra trước khi lọc — mã vị trí gần như duy nhất nên 50 là dư sức.
+    const { data: exact, error: e1 } = await buildQ().ilike('location_code', safeSearch(code)).limit(50)
+    if (e1) throw e1
+    let rows = inScope((exact ?? []) as unknown as LocRow[])
+
+    // Vòng 2 — tem in KHÔNG DẤU (máy in nhãn thiếu font tiếng Việt là chuyện thường). So trên cột
+    // chuẩn-hoá bỏ dấu rồi lọc lại trong JS để chỉ nhận đúng MÃ: `search_norm` còn chứa tên khu,
+    // không lọc lại thì quét "TP1" ra cả trăm ô.
+    if (rows.length === 0) {
+      const norm = normalizeSearchTerm(code)
+      const { data: fuzzy, error: e2 } = await buildQ().ilike('search_norm', `%${safeSearch(norm)}%`).limit(200)
+      if (e2) throw e2
+      rows = inScope((fuzzy ?? []) as unknown as LocRow[]).filter(l => normalizeSearchTerm(l.location_code) === norm)
+    }
+
+    if (rows.length === 0) {
+      return fail(res, 404, 'LOCATION_NOT_FOUND',
+        `Không tìm thấy vị trí "${code}"${warehouseId ? ' trong kho này' : ''}`)
+    }
+    // Cùng một mã ở 2 kho (chưa chọn kho) → KHÔNG tự đoán, bắt chọn kho. Đoán sai = pallet nhảy kho.
+    if (rows.length > 1) {
+      return fail(res, 409, 'LOCATION_AMBIGUOUS',
+        `Mã "${code}" đang có ở ${rows.length} kho — chọn kho trước khi quét`)
+    }
+
+    const loc = rows[0]
+    // Ô ngưng sử dụng VẪN trả về (kèm `is_active:false`) để màn quét nói đúng "ô này đã ngưng sử
+    // dụng" thay vì "không tìm thấy" — người quét đứng trước tem thật, báo không-tìm-thấy là bắt họ
+    // quét lại vô ích. Chặn chọn là việc của FE + của các cửa ghi.
+    const matId = req.query.material_id ? String(req.query.material_id) : null
+    const wantPutaway = !!matId || req.query.putaway === '1'
+    const row: Record<string, unknown> = { ...loc, has_same_material: false }
+
+    if (wantPutaway) {
+      const ctx = await loadPutawayContext({
+        warehouseId: loc.warehouse_id,
+        locIds: [loc.id],
+        incoming: { material_id: matId ?? '', ncc_id: req.query.ncc_id ? String(req.query.ncc_id) : null },
+      })
+      const f = ctx.factsOf(loc.id)
+      const l: PutawayLoc = {
+        id: loc.id, sub_code: loc.sub_code, max_pallets: loc.max_pallets,
+        slot_no_in: loc.slot_no_in, is_pick_face: loc.is_pick_face,
+      }
+      const blocked = putawayBlock(l, f, ctx.incoming, ctx.rules)
+      row.used_slots = f.pallets
+      row.has_same_material = f.sameMaterial
+      row.putaway = {
+        blocked,
+        reason: putawayReason(l, f, ctx.incoming, ctx.rules, ctx.abc),
+        enforced: blocked != null && putawayEnforces(ctx.rules, blocked),
+      } satisfies PutawayHint
+    } else {
+      const facts = await loadSlotFactsRaw([loc.id], null, false)
+      row.used_slots = Number(facts?.[0]?.pallets ?? 0)
+    }
+    ok(res, row)
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
+}
+
+// GET /masterdata/locations/:id/contents — "Ô này đang chứa GÌ" (user yêu cầu 17/08).
+// Người cất hàng nhìn ★/used-slots vẫn phải đoán: cùng mã hay khác mã? date nào? có pallet QA giữ
+// không? Trả bản GỌN gom theo MÃ (không trả từng pallet — ô nặng nhất staging 69 mã / hàng trăm
+// pallet) và CHỈ cho MỘT vị trí (1 request khi người dùng chọn, không phải mỗi lần gõ phím).
+export async function getLocationContents(req: Request, res: Response) {
+  try {
+    const id = req.params.id
+    if (!(await guardLocScope(req, res, id))) return
+    const { data: locRaw } = await supabase.from('Location')
+      .select('id, location_code, max_pallets, categories, is_pick_face, slot_no_in')
+      .eq('id', id).maybeSingle()
+    const loc = locRaw as { id: string; location_code: string; max_pallets: number | null
+                            categories: string[] | null; is_pick_face: boolean | null; slot_no_in: boolean | null } | null
+    if (!loc) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+
+    // Cùng ĐỊNH NGHĨA "đang chiếm chỗ" với putaway_slot_facts / used_slots (lớp 1, còn tồn) —
+    // lệch định nghĩa là hai màn nói hai số rồi người dùng mất tin.
+    type Ent = {
+      material_id: string; pallet_code: string | null; status: string
+      cartons_remaining: number; production_date: string | null; expiry_date: string | null
+    }
+    const ents = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+      .select('material_id, pallet_code, status, cartons_remaining, production_date, expiry_date')
+      .eq('location_id', id).eq('stack_layer', 1)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+      .gt('cartons_remaining', 0).order('material_id')) as unknown as Ent[]
+
+    const live = ents.filter(e => e.status !== 'QUARANTINE')
+    type Grp = { material_id: string; pallets: number; qty_base: number
+                 date_min: string | null; date_max: string | null; date_kind: 'HSD' | 'NSX' | null; qa_hold: number }
+    const byMat = new Map<string, Grp>()
+    for (const e of ents) {
+      const g: Grp = byMat.get(e.material_id)
+        ?? { material_id: e.material_id, pallets: 0, qty_base: 0, date_min: null, date_max: null, date_kind: null, qa_hold: 0 }
+      g.pallets += 1
+      g.qty_base += Number(e.cartons_remaining ?? 0)
+      if (e.status === 'QUARANTINE') g.qa_hold += 1
+      // Ngày để người cất so "hàng trong ô cũ hay mới hơn pallet mình cầm" — ưu tiên HSD tường minh
+      // (tem V2), không có thì NSX. Trả kèm date_kind để FE in ĐÚNG CHỮ, khỏi đoán theo nguyên tắc
+      // luân chuyển của kho (đoán sai là dán nhãn HSD lên một cái ngày sản xuất). Chỉ để HIỂN THỊ —
+      // luật trộn date vẫn nằm ở BE lúc quét.
+      const kind: 'HSD' | 'NSX' | null = e.expiry_date ? 'HSD' : e.production_date ? 'NSX' : null
+      const d = e.expiry_date ?? e.production_date
+      if (d) {
+        if (!g.date_min || d < g.date_min) g.date_min = d
+        if (!g.date_max || d > g.date_max) g.date_max = d
+        // Ô trộn cả 2 kiểu (hàng cũ chưa có HSD tường minh) → ghi 'HSD' vì đó là mốc rõ nghĩa hơn
+        g.date_kind = g.date_kind === null ? kind : (g.date_kind === kind ? kind : 'HSD')
+      }
+      byMat.set(e.material_id, g)
+    }
+    type MatLite = { id: string; material_code: string; short_name: string | null
+                     base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
+    const mats = await fetchAllByIdChunks([...byMat.keys()], chunk => supabase.from('Material')
+      .select('id, material_code, short_name, base_unit, entry_unit, units_per_carton').in('id', chunk)) as unknown as MatLite[]
+    const matById = new Map(mats.map(m => [m.id, m]))
+    const rows = [...byMat.values()]
+      .map(g => ({
+        ...g,
+        material_code: matById.get(g.material_id)?.material_code ?? null,
+        short_name:    matById.get(g.material_id)?.short_name ?? null,
+        base_unit:     matById.get(g.material_id)?.base_unit ?? null,
+        units_per_carton: matById.get(g.material_id)?.units_per_carton ?? null,
+        entry_unit:    matById.get(g.material_id)?.entry_unit ?? null,
+      }))
+      .sort((a, b) => b.pallets - a.pallets)
+
+    return ok(res, {
+      location_code: loc.location_code,
+      max_pallets: loc.max_pallets ?? 0,
+      pallets: live.length,                       // = used_slots (không tính pallet QA giữ)
+      qa_hold: ents.length - live.length,
+      materials: rows,
+    })
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function listSubGroups(req: Request, res: Response) {
@@ -309,7 +540,10 @@ export async function listSubGroups(req: Request, res: Response) {
       groupMap.get(key)!.location_count++
     }
     ok(res, Array.from(groupMap.values()))
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function getLocation(req: Request, res: Response) {
@@ -330,7 +564,10 @@ export async function getLocation(req: Request, res: Response) {
     if (entErr) throw entErr
 
     ok(res, { ...loc, inventory_entries: entries ?? [] })
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function createLocation(req: Request, res: Response) {
@@ -338,6 +575,12 @@ export async function createLocation(req: Request, res: Response) {
     const { warehouse_id, sub_code, sub_name, sub_type, row, shelf, max_pallets } = req.body
     if (!warehouse_id || !sub_code || !row)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code hoặc row')
+    const maxMat = parseLocationMaxMaterials(req.body.max_materials)
+    if ('error' in maxMat) return fail(res, 400, 'VALIDATION_ERROR', maxMat.error)
+    // Sức chứa ÂM = tắt lá chắn quá tải (RPC chỉ kiểm khi > 0) — xem ghi chú ở updateLocation
+    if (max_pallets !== undefined && max_pallets !== null && max_pallets !== ''
+        && (!Number.isFinite(Number(max_pallets)) || Number(max_pallets) < 0))
+      return fail(res, 400, 'VALIDATION_ERROR', 'Sức chứa phải là số không âm (0 = không giới hạn)')
     const scope = scopeWhIds(req)
     if (scope !== null && !scope.includes(String(warehouse_id)))
       return fail(res, 403, 'FORBIDDEN', 'Không thể tạo vị trí ở kho ngoài phạm vi của bạn')
@@ -378,6 +621,7 @@ export async function createLocation(req: Request, res: Response) {
         row: String(row).trim(),
         shelf: String(shelf ?? '').trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
+        max_materials: maxMat.value,          // null = không giới hạn (mặc định)
         created_by: actor, updated_by: actor,
         updated_at: new Date().toISOString(),
       })
@@ -389,39 +633,126 @@ export async function createLocation(req: Request, res: Response) {
       throw error
     }
     ok(res, data)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function updateLocation(req: Request, res: Response) {
   try {
     if (!(await guardLocScope(req, res, req.params.id))) return
     // Loại của vị trí KHÔNG sửa lẻ ở đây — kế thừa từ Khu (sửa loại = sửa ở Khu vực, tự cascade)
-    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake, is_pick_face } = req.body
+    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
+
+    // ĐỔI MÃ (Khu · Dãy · Tầng) KHI Ô TRỐNG — user 14/09: "khi thêm và sửa thì các nội dung khi thêm không
+    // sửa được khá nhiều, không hợp lý". Gõ nhầm "09" thành "9" lúc tạo mà phải XOÁ rồi TẠO LẠI là mất
+    // toạ độ trên Sơ đồ kho, các cờ đã tick và lịch sử gắn với id. Mã vị trí = Kho_Khu_Dãy_Tầng nằm trên
+    // tem QR dán kệ và trên bảng việc, nên chỉ cho đổi khi ô KHÔNG có hàng và KHÔNG việc treo trỏ vào;
+    // giữ nguyên id ⇒ bản vẽ / cờ / lịch sử còn nguyên. Kho KHÔNG bao giờ đổi (pallet thuộc kho).
+    const body = req.body as { sub_code?: unknown; row?: unknown; shelf?: unknown }
+    if (body.sub_code !== undefined || body.row !== undefined || body.shelf !== undefined) {
+      const { data: curRaw } = await supabase.from('Location')
+        .select('id, warehouse_id, sub_code, row, shelf, location_code, kind').eq('id', req.params.id).maybeSingle()
+      if (!curRaw) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+      const cur = curRaw as { id: string; warehouse_id: string; sub_code: string; row: string; shelf: string | null; location_code: string; kind: string | null }
+      const sub   = body.sub_code !== undefined ? String(body.sub_code).trim().toUpperCase() : cur.sub_code
+      const row   = body.row      !== undefined ? String(body.row).trim() : cur.row
+      const shelf = body.shelf    !== undefined ? String(body.shelf ?? '').trim() : (cur.shelf ?? '')
+      if (!sub || !row) return fail(res, 400, 'VALIDATION_ERROR', 'Khu vực và Vị trí không được để trống')
+      if (sub !== cur.sub_code || row !== cur.row || shelf !== (cur.shelf ?? '')) {
+        if (cur.kind && cur.kind !== 'STORAGE')
+          return fail(res, 400, 'VALIDATION_ERROR', 'Cửa / điểm đầu dãy đổi tên ở trang Sơ đồ kho')
+        const { count: nPal } = await supabase.from('InventoryEntry')
+          .select('id', { count: 'exact', head: true }).eq('location_id', cur.id).gt('cartons_remaining', 0)
+        if ((nPal ?? 0) > 0)
+          return fail(res, 409, 'LOCATION_NOT_EMPTY', `Vị trí đang có ${nPal} pallet — chuyển hết hàng đi rồi mới đổi mã (tem QR dán kệ sẽ hết hiệu lực)`)
+        const { count: nTask } = await supabase.from('wms_tasks')
+          .select('id', { count: 'exact', head: true }).eq('status', 'PENDING')
+          .or(`from_location_id.eq.${cur.id},to_location_id.eq.${cur.id},drop_location_id.eq.${cur.id}`)
+        if ((nTask ?? 0) > 0)
+          return fail(res, 409, 'LOCATION_HAS_TASKS', `Còn ${nTask} việc xe nâng đang trỏ tới vị trí này — chờ xong hoặc sắp lại kế hoạch rồi đổi`)
+        // Khu mới phải có trong Khu vực của kho + loại của khu trong phạm vi người sửa — cùng luật lúc tạo
+        const { data: zone } = await supabase.from('WarehouseZone')
+          .select('name, categories').eq('warehouse_id', cur.warehouse_id).eq('code', sub).maybeSingle()
+        if (!zone) return fail(res, 400, 'VALIDATION_ERROR', `Khu "${sub}" chưa có trong Khu vực của kho — tạo khu ở Cài đặt WMS → Khu vực trước`)
+        const zoneCats = (zone as { name: string | null; categories: string[] | null }).categories ?? null
+        if (!categoriesAllAllowed(req, zoneCats)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+        const { data: wh } = await supabase.from('Warehouse').select('code, nmsx_code').eq('id', cur.warehouse_id).maybeSingle()
+        if (!wh) return fail(res, 404, 'NOT_FOUND', 'Kho không tồn tại')
+        const w = wh as { code: string; nmsx_code: string | null }
+        const newCode = buildLocationCode((w.nmsx_code && String(w.nmsx_code).trim()) || w.code, sub, row, shelf)
+        const { data: dup } = await supabase.from('Location').select('id')
+          .eq('warehouse_id', cur.warehouse_id).eq('location_code', newCode).neq('id', cur.id).limit(1)
+        if ((dup ?? []).length) return fail(res, 409, 'DUPLICATE', `Mã ${newCode} đã có vị trí khác dùng`)
+        patch.sub_code = sub; patch.row = row; patch.shelf = shelf; patch.location_code = newCode
+        if (sub !== cur.sub_code) {
+          patch.categories = zoneCats                       // loại kế thừa theo khu MỚI
+          if (sub_name === undefined) patch.sub_name = (zone as { name: string | null }).name ?? null
+        }
+        // Text copy trên ĐIỂM ĐẶT / ĐÍCH của việc đã xong giữ nguyên (lịch sử); việc treo không có (đã gác)
+      }
+    }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
-    if (max_pallets !== undefined)       patch.max_pallets       = Number(max_pallets)
+    // Sức chứa ÂM/không phải số: RPC move_pallets_to_location chỉ kiểm sức chứa khi `v_max > 0`,
+    // nên một ô để max_pallets = -3 là ô KHÔNG CÒN GIỚI HẠN — tắt lá chắn quá tải mà không ai thấy
+    // (đo 06/09: API nhận -3 và ghi thẳng vào DB).
+    if (max_pallets !== undefined) {
+      const n = Number(max_pallets)
+      if (!Number.isFinite(n) || n < 0)
+        return fail(res, 400, 'VALIDATION_ERROR', 'Sức chứa phải là số không âm (0 = không giới hạn)')
+      patch.max_pallets = n
+    }
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
     if (is_pick_face !== undefined)      patch.is_pick_face       = Boolean(is_pick_face)
+    // Trần số mã của ô (26/08) — để trống = không giới hạn. CÙNG parser với khai hàng loạt + upload.
+    if (req.body.max_materials !== undefined) {
+      const m = parseLocationMaxMaterials(req.body.max_materials)
+      if ('error' in m) return fail(res, 400, 'VALIDATION_ERROR', m.error)
+      patch.max_materials = m.value
+    }
+    // 2 cờ "Vị trí đặc biệt". Trang này là ĐƯỜNG KHAI DUY NHẤT từ 18/08 — khối multi-select
+    // replace-all ở tab Cài đặt trang Tối ưu vị trí đã gỡ (user chê khó config; và một cờ hai chỗ
+    // khai thì thêm cờ mới là quên một bên).
+    if (slot_no_in !== undefined)        patch.slot_no_in         = Boolean(slot_no_in)
+    if (slot_no_out !== undefined)       patch.slot_no_out        = Boolean(slot_no_out)
 
     const { data, error } = await supabase
       .from('Location').update(patch).eq('id', req.params.id).select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
     ok(res, data)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
-// Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" và/hoặc "vị trí nhặt lẻ" (tầng dưới, fill hàng phục vụ
-// nhặt lẻ). Chỉ áp cho vị trí TRONG phạm vi kho + loại của user (bỏ qua id ngoài scope, không báo
-// lỗi cả lô). Chunk 300/lô né URL dài + cap ~1000.
+// Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" / "vị trí nhặt lẻ" / "không đưa hàng vào" / "không lấy
+// hàng đi" (2 cờ sau = Vị trí đặc biệt, chỉ khai ở trang này). Chỉ áp cho vị
+// trí TRONG phạm vi kho + loại của user (bỏ qua id ngoài scope, không báo lỗi cả lô). Chunk 300/lô.
 export async function bulkFlagLocations(req: Request, res: Response) {
   try {
-    const { ids, requires_stocktake, is_pick_face } = req.body as {
-      ids?: unknown; requires_stocktake?: unknown; is_pick_face?: unknown
+    const { ids, requires_stocktake, is_pick_face, slot_no_in, slot_no_out } = req.body as {
+      ids?: unknown; requires_stocktake?: unknown; is_pick_face?: unknown; slot_no_in?: unknown; slot_no_out?: unknown
     }
-    if (requires_stocktake === undefined && is_pick_face === undefined)
+    const flags: Record<string, unknown> = {}
+    if (requires_stocktake !== undefined) flags.requires_stocktake = Boolean(requires_stocktake)
+    if (is_pick_face       !== undefined) flags.is_pick_face       = Boolean(is_pick_face)
+    if (slot_no_in         !== undefined) flags.slot_no_in         = Boolean(slot_no_in)
+    if (slot_no_out        !== undefined) flags.slot_no_out        = Boolean(slot_no_out)
+    // Trần số mã (26/08) — KHÔNG phải cờ boolean: `null` là GIÁ TRỊ THẬT ("không giới hạn"), khác
+    // hẳn `undefined` ("đừng đụng cột này"). Vì thế phải kiểm `!== undefined` chứ đừng dùng
+    // truthiness — `Boolean(null)` sẽ biến "gỡ giới hạn" thành "không làm gì".
+    if (req.body.max_materials !== undefined) {
+      const m = parseLocationMaxMaterials(req.body.max_materials)
+      if ('error' in m) return fail(res, 400, 'VALIDATION_ERROR', m.error)
+      flags.max_materials = m.value
+    }
+    if (Object.keys(flags).length === 0)
       return fail(res, 400, 'INVALID_INPUT', 'Thiếu cờ cần gắn')
     let idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
     // Danh sách đã PHÂN TRANG → client không còn đủ id của bộ lọc: gửi CỜ bộ lọc, BE tự resolve
@@ -429,7 +760,7 @@ export async function bulkFlagLocations(req: Request, res: Response) {
     const body = req.body as { by_filter?: boolean; filter?: Record<string, unknown> }
     if (!idList.length && body.by_filter) {
       const ctx = getLocListCtx(req, body.filter ?? {})
-      if (ctx.blocked) return ok(res, { updated: 0, requires_stocktake: Boolean(requires_stocktake) })
+      if (ctx.blocked) return ok(res, { updated: 0, ...flags })
       const { data, error } = await supabase.rpc('locations_page', {
         p_offset: 0, p_limit: 1_000_000, ...locRpcParams(ctx), p_incl_inactive: false,
       })
@@ -437,9 +768,6 @@ export async function bulkFlagLocations(req: Request, res: Response) {
       idList = ((data ?? {}) as { ids?: string[] }).ids ?? []
     }
     if (!idList.length) return fail(res, 400, 'INVALID_INPUT', 'Thiếu danh sách vị trí')
-    const flags: Record<string, boolean> = {}
-    if (requires_stocktake !== undefined) flags.requires_stocktake = Boolean(requires_stocktake)
-    if (is_pick_face       !== undefined) flags.is_pick_face       = Boolean(is_pick_face)
 
     const scope = scopeWhIds(req)
     const cats  = scopeCategoriesOf(req)
@@ -465,7 +793,10 @@ export async function bulkFlagLocations(req: Request, res: Response) {
       updated += allowed.length
     }
     ok(res, { updated, ...flags })
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // ─── UPLOAD EXCEL VỊ TRÍ KHO ────────────────────────────────────────────────
@@ -482,6 +813,8 @@ const L_FIELDS: FieldDef[] = [
   { key: 'row',         label: 'Dãy',      aliases: ['hang'], required: true },
   { key: 'shelf',       label: 'Tầng',     aliases: ['ke'] },
   { key: 'max_pallets', label: 'Sức chứa', aliases: ['so pallet toi da', 'max pallets'] },
+  // Trần số mã của ô (26/08) — ô trống = không giới hạn, nên KHÔNG required.
+  { key: 'max_materials', label: 'Số mã tối đa', aliases: ['so ma toi da', 'max materials', 'so ma'] },
   { key: 'sub_type',    label: 'Kiểu',     aliases: ['kieu vi tri', 'sub type'] },
 ]
 
@@ -497,8 +830,10 @@ type ExistingLoc = Record<string, unknown> & { id: string; location_code: string
 export async function uploadExcel(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 400, 'VALIDATION_ERROR', 'Không có file upload')
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, 400, 'VALIDATION_ERROR', BAD_EXCEL_MSG)
     const ws = wb.Sheets[wb.SheetNames[0]]
+    expandMergedCells(ws)   // file dựng kho hay gộp ô Kho/Khu cho cả cụm vị trí
     const { rows, missingRequired } = parseSheetByHeader(ws, L_FIELDS)
     if (missingRequired.length)
       return fail(res, 400, 'VALIDATION_ERROR', `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Vị trí kho`)
@@ -516,7 +851,8 @@ export async function uploadExcel(req: Request, res: Response) {
     // ── PHA 1: validate TOÀN BỘ (all-or-nothing) ─────────────────────────────
     const errors: string[] = []
     type Parsed = { code: string; wh_id: string; sub_code: string; sub_name: string | null
-                    categories: string[] | null; row: string; shelf: string; max_pallets: number; sub_type: string | null }
+                    categories: string[] | null; row: string; shelf: string; max_pallets: number
+                    max_materials: number | null; sub_type: string | null }
     const parsed: Parsed[] = []
     const seenCode = new Map<string, number>()
     const scope = scopeWhIds(req)
@@ -559,6 +895,10 @@ export async function uploadExcel(req: Request, res: Response) {
       const maxRaw = lcStr(r.max_pallets)
       const max_pallets = lcInt(r.max_pallets)
       if (maxRaw && max_pallets == null) { errors.push(`${at} — sức chứa phải là số nguyên > 0 (nhận "${maxRaw}")`); continue }
+      // Ô trống = KHÔNG GIỚI HẠN (mặc định). Cùng parser với form sửa + khai hàng loạt.
+      const mmRaw = lcStr(r.max_materials)
+      const mm = parseLocationMaxMaterials(mmRaw === "" ? null : mmRaw)
+      if ("error" in mm) { errors.push(`${at} — ${mm.error} (nhận "${mmRaw}")`); continue }
 
       const prefix = (wh.nmsx_code && lcStr(wh.nmsx_code)) || wh.code
       const code = buildLocationCode(prefix, sub, rowRaw, shelf)
@@ -568,7 +908,7 @@ export async function uploadExcel(req: Request, res: Response) {
 
       parsed.push({
         code, wh_id: wh.id, sub_code: sub, sub_name: zone.name ?? null, categories: zone.categories ?? null,
-        row: rowRaw, shelf, max_pallets: max_pallets ?? 1, sub_type: lcStr(r.sub_type) || null,
+        row: rowRaw, shelf, max_pallets: max_pallets ?? 1, max_materials: mm.value, sub_type: lcStr(r.sub_type) || null,
       })
     }
     // KIỂM TRƯỚC (preflight): file có lỗi → báo cáo luôn, khỏi phải đếm insert/update
@@ -593,7 +933,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const buildNew = (p: Parsed) => ({
       id: randomUUID(), location_code: p.code, warehouse_id: p.wh_id,
       sub_code: p.sub_code, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
-      row: p.row, shelf: p.shelf, max_pallets: p.max_pallets,
+      row: p.row, shelf: p.shelf, max_pallets: p.max_pallets, max_materials: p.max_materials,
       is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor,
     })
     const inserts: Record<string, unknown>[] = []
@@ -604,7 +944,7 @@ export async function uploadExcel(req: Request, res: Response) {
         // Vị trí đã có → cập nhật sức chứa/kiểu + đồng bộ lại Tên khu & Loại theo ZONE.
         // KHÔNG đụng is_active/requires_stocktake/slot_no_in/slot_no_out (quản ở nơi khác).
         updates.push({ ...ex, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
-                       max_pallets: p.max_pallets, updated_at: now, updated_by: actor })
+                       max_pallets: p.max_pallets, max_materials: p.max_materials, updated_at: now, updated_by: actor })
       } else inserts.push(buildNew(p))
     }
 
@@ -646,7 +986,10 @@ export async function uploadExcel(req: Request, res: Response) {
       updated += chunk.length
     }
     ok(res, { inserted, updated, errors: [] })
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function deleteLocation(req: Request, res: Response) {
@@ -665,5 +1008,8 @@ export async function deleteLocation(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
     ok(res, data)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }

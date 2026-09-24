@@ -14,7 +14,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { computePctDate, type SupplierOverride } from '../utils/shelfLife'
 import { qtyLabel } from '../utils/qtyUnits'
-import { recordServerError } from '../utils/response'
+import { recordBackgroundFailure } from '../utils/response'
 import { sendPushToPerm } from './pushService'
 
 export const THRESHOLDS = {
@@ -29,6 +29,13 @@ export const THRESHOLDS = {
   PACKING_UNRECV_WARN_H: 12,  // pallet SX ghi sổ đóng gói > 12h mà kho CHƯA quét nhận (user duyệt 13/08)
   PACKING_UNRECV_CRIT_H: 24,
   EXPIRY_WINDOW_DAYS: 120, // cửa sổ prefilter RPC (siêu tập — quyết định thật ở computePctDate)
+  // Xe ĐÃ RA khỏi cổng: false = cảnh báo GATE_DWELL tự ẩn (hành vi gốc) · true = GIỮ LẠI cho người
+  // vận hành xem rồi tự bấm "Đã biết" (user chốt 19/08 — có kho muốn truy cứu vì sao xe nằm lâu).
+  GATE_KEEP_AFTER_EXIT: false,
+  // Bảo mật (03/09) — CỐ Ý không cho cấu hình: hạ ngưỡng nhầm là cảnh báo dò mật khẩu im lặng biến mất.
+  AUTH_LOCK_WARN: 3,     // ≥3 tài khoản KHÁC NHAU bị khoá trong 1 giờ → WARNING (dò mật khẩu rải)
+  AUTH_LOCK_CRIT: 10,    // ≥10 → CRITICAL
+  ADMIN_IP_MEMORY_DAYS: 30, // superadmin đăng nhập từ IP chưa thấy trong 30 ngày → WARNING
 }
 export type AlertThresholds = typeof THRESHOLDS
 
@@ -60,6 +67,7 @@ export async function getAlertThresholds(): Promise<AlertThresholds> {
       const n = Number(v[k])
       if (Number.isFinite(n) && n > 0) t[k] = n
     }
+    t.GATE_KEEP_AFTER_EXIT = v.GATE_KEEP_AFTER_EXIT === true   // boolean riêng, không đi qua vòng số
   } catch { /* đọc lỗi → dùng mặc định, đừng làm chết lượt quét */ }
   // Cửa sổ prefilter EXPIRY phải PHỦ ngưỡng cảnh báo: item %Date ≤ PCT_WARN còn tối đa
   // PCT_WARN% × shelf-life ngày. 6×PCT_WARN giữ nguyên 120 ngày ở mặc định 20% và tự nới khi tăng.
@@ -71,7 +79,7 @@ export function invalidateAlertThresholdsCache(): void { _thCache = null }
 
 // Sổ rule DUY NHẤT — alertController lấy danh sách filter từ đây (bug 13/08: RULES chép tay thiếu
 // PACKING_UNRECEIVED → filter rule mới bị lọc rớt âm thầm). Thêm rule mới = thêm vào mảng này.
-export const ALERT_RULES = ['EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED'] as const
+export const ALERT_RULES = ['EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED', 'AUTH_LOCKOUT', 'ADMIN_NEW_IP'] as const
 export type AlertRule = typeof ALERT_RULES[number]
 export interface AlertCandidate {
   rule: AlertRule
@@ -253,8 +261,11 @@ async function ruleWeighDiff(TH: AlertThresholds): Promise<AlertCandidate[]> {
 // ── R5: Lỗi hệ thống BE trong 24h ────────────────────────────────────────────
 async function ruleBeErrors(): Promise<AlertCandidate[]> {
   const since = new Date(Date.now() - 24 * 3600_000).toISOString()
+  // Bỏ 503 (quá tải / chưa sẵn sàng) — tình huống đã lường trước, không phải lỗi app.
+  // Cùng lý do và cùng câu lọc với /api/telemetry/digest (xem `isSoftStatus` utils/response.ts).
   const { count, error } = await supabase.from('error_logs')
     .select('id', { count: 'exact', head: true }).eq('source', 'be').gte('created_at', since)
+    .or('status.is.null,status.neq.503')
   if (error) throw new Error(error.message)
   if (!count) return []
   return [{
@@ -284,6 +295,59 @@ async function rulePackingUnreceived(TH: AlertThresholds): Promise<AlertCandidat
   }))
 }
 
+// ── R7: Nhiều tài khoản bị KHOÁ đăng nhập trong 1 giờ (dò mật khẩu rải nhiều tài khoản, 03/09) ──
+// Nguồn = auth_login_events reason='LOCKED' (migration 20260903). 1 tài khoản gõ sai là chuyện thường;
+// NHIỀU tài khoản khác nhau cùng bị khoá trong 1 giờ mới là dấu hiệu tấn công. Tự đóng khi hết cửa sổ 1h.
+async function ruleAuthLockout(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const since = new Date(Date.now() - 3600_000).toISOString()
+  const { data, error } = await supabase.from('auth_login_events')
+    .select('email, ip').eq('reason', 'LOCKED').gte('created_at', since).limit(1000)
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as { email: string | null; ip: string | null }[]
+  const accounts = new Set(rows.map(r => (r.email ?? '').toLowerCase()).filter(Boolean))
+  const ips = new Set(rows.map(r => r.ip).filter(Boolean))
+  if (accounts.size < TH.AUTH_LOCK_WARN) return []
+  return [{
+    rule: 'AUTH_LOCKOUT', dedup_key: `AUTHLOCK|${vnToday()}`,
+    severity: accounts.size >= TH.AUTH_LOCK_CRIT ? 'CRITICAL' : 'WARNING',
+    warehouse_id: null, category: null,
+    title: `${accounts.size} tài khoản bị khoá đăng nhập trong 1 giờ (${ips.size} địa chỉ IP)`,
+    detail: `Dấu hiệu dò mật khẩu: ${[...accounts].slice(0, 5).join(', ')}${accounts.size > 5 ? '…' : ''}. Kiểm tra Quản lý người dùng (badge Khoá), nhật ký auth_login_events; cân nhắc đổi mật khẩu các tài khoản này.`,
+    object_url: '/masterdata/users',
+  }]
+}
+
+// ── R8: Superadmin đăng nhập từ IP CHƯA TỪNG THẤY (03/09) ─────────────────────
+// Tài khoản toàn quyền đăng nhập thành công từ địa chỉ mới trong 24h qua mà 30 ngày trước đó chưa thấy
+// email đó đăng nhập từ IP đó. Cảnh báo per (email, ip), tự đóng sau 24h (đợt mới nếu IP lạ khác).
+async function ruleAdminNewIp(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const { data: admins, error: e0 } = await supabase.from('Employee').select('id, email').eq('is_superadmin', true).limit(100)
+  if (e0) throw new Error(e0.message)
+  const adminEmails = new Set(((admins ?? []) as { email: string | null }[]).map(a => (a.email ?? '').toLowerCase()).filter(Boolean))
+  if (!adminEmails.size) return []
+  const memory = new Date(Date.now() - TH.ADMIN_IP_MEMORY_DAYS * 86400_000).toISOString()
+  const recent = new Date(Date.now() - 24 * 3600_000).toISOString()
+  // HỎI DB TRẢ TẬP (email, ip) — ĐỪNG kéo dòng về rồi tự dựng tập bằng vòng lặp. Bản cũ
+  // `.select(...).limit(5000)` KHÔNG vượt được trần ~1.000 dòng của PostgREST nên chỉ thấy 1.000
+  // lượt CŨ NHẤT trong 30 ngày: đo 13/09 lúc 02:48 thì 11 GIỜ đăng nhập gần nhất nằm ngoài tầm
+  // — mà "IP lạ" hoàn toàn là chuyện của dòng MỚI, nên cảnh báo im lặng đúng lúc cần kêu và càng
+  // đông người dùng càng mù thêm. Số dòng nay bị chặn bởi SỐ CẶP (đo: 14) chứ không bởi số lượt.
+  const { data, error } = await supabase.rpc('admin_login_ip_pairs', {
+    p_emails: [...adminEmails].slice(0, 100), p_memory: memory, p_recent: recent,
+  })
+  if (error) throw new Error(error.message)
+  const pairs = (data ?? []) as { email: string; ip: string; has_old: boolean; has_new: boolean; first_new_at: string | null }[]
+  // email có lịch sử >24h — ngày đầu bật (chưa có lịch sử) thì KHÔNG báo oan mọi IP
+  const hasHistory = new Set(pairs.filter(p => p.has_old).map(p => p.email))
+  return pairs.filter(p => p.has_new && !p.has_old && hasHistory.has(p.email)).map(p => ({
+    rule: 'ADMIN_NEW_IP' as const, dedup_key: `ADMINIP|${p.email}|${p.ip}`, severity: 'WARNING' as const,
+    warehouse_id: null, category: null,
+    title: `Tài khoản quản trị ${p.email} đăng nhập từ IP mới ${p.ip}`,
+    detail: `Lúc ${new Date(p.first_new_at ?? Date.now()).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} — IP này chưa thấy trong ${TH.ADMIN_IP_MEMORY_DAYS} ngày. Không phải bạn? Đổi mật khẩu admin ngay và soi nhật ký quản trị.`,
+    object_url: '/masterdata/users',
+  }))
+}
+
 // ── Đồng bộ vòng đời + push cảnh báo MỚI ─────────────────────────────────────
 const SCAN_INTERVAL_MS = 10 * 60_000
 const FORCE_INTERVAL_MS = 20_000   // nút "Quét lại" / QA — vẫn đủ chặn spam liên hồi
@@ -302,6 +366,7 @@ export async function runAlertScan(force = false): Promise<void> {
       ['TRIP_LATE', () => ruleTripLate(TH)], ['WEIGH_DIFF', () => ruleWeighDiff(TH)],
       ['BE_ERRORS', ruleBeErrors],
       ['PACKING_UNRECEIVED', () => rulePackingUnreceived(TH)],
+      ['AUTH_LOCKOUT', () => ruleAuthLockout(TH)], ['ADMIN_NEW_IP', () => ruleAdminNewIp(TH)],
     ]
     for (const [rule, fn] of runners) {
       try { found.push(...await fn()); okRules.push(rule) }
@@ -311,8 +376,10 @@ export async function runAlertScan(force = false): Promise<void> {
         // chạy còn nguy hơn không có. Ghi error_logs → digest hằng ngày dựng cờ đỏ + chính rule
         // BE_ERRORS sẽ nổi cảnh báo ngay vòng quét này.
         console.error(`[alerts] rule ${rule} lỗi (bỏ qua vòng này):`, e)
-        recordServerError('be', `[alerts] rule ${rule} lỗi: ${String((e as Error)?.message ?? e)}`,
-          500, 'ALERT_RULE_FAILED')
+        // Quá tải (chạm trần câu lệnh lúc DB bận) ≠ rule hỏng: ghi 503 để digest đếm vào overload,
+        // không dựng cờ đỏ và gửi email báo hỏng khi app vẫn chạy bình thường.
+        recordBackgroundFailure(`[alerts] rule ${rule} lỗi: ${String((e as Error)?.message ?? e)}`,
+          'ALERT_RULE_FAILED', `alertScanner/${rule}`, e)
       }
     }
     if (!okRules.length) return
@@ -379,9 +446,24 @@ export async function runAlertScan(force = false): Promise<void> {
     // Tự đóng: dòng OPEN của các rule ĐÃ QUÉT OK mà không còn trong kết quả
     const liveKeys = new Set(found.map(f => f.dedup_key))
     const { data: openRows } = await supabase.from('alert_events')
-      .select('id, dedup_key').in('rule', okRules).is('resolved_at', null).limit(5000)
-    const closeIds = ((openRows ?? []) as { id: string; dedup_key: string }[])
-      .filter(r => !liveKeys.has(r.dedup_key)).map(r => r.id)
+      .select('id, dedup_key, rule').in('rule', okRules).is('resolved_at', null).limit(5000)
+    let closable = ((openRows ?? []) as { id: string; dedup_key: string; rule: string }[])
+      .filter(r => !liveKeys.has(r.dedup_key))
+    // Chế độ GIỮ LẠI (Cài đặt ngưỡng): xe ĐÃ RA thì cảnh báo KHÔNG tự đóng — người vận hành xem
+    // rồi tự "Đã biết". Chỉ miễn đóng đúng ca "đã ra"; dòng rớt khỏi ứng viên vì lý do khác
+    // (nới ngưỡng, quá cửa sổ quét 48h) vẫn đóng như cũ — giữ lại cả đám đó là rác vĩnh viễn.
+    if (TH.GATE_KEEP_AFTER_EXIT) {
+      const gateIds = closable.filter(r => r.rule === 'GATE_DWELL')
+        .map(r => r.dedup_key.split('|')[1]).filter(Boolean)
+      const exited = new Set<string>()
+      for (let i = 0; i < gateIds.length; i += 300) {
+        const { data: gs } = await supabase.from('gate_registrations')
+          .select('id').in('id', gateIds.slice(i, i + 300)).not('exit_at', 'is', null)
+        for (const g of (gs ?? []) as { id: string }[]) exited.add(g.id)
+      }
+      closable = closable.filter(r => !(r.rule === 'GATE_DWELL' && exited.has(r.dedup_key.split('|')[1] ?? '')))
+    }
+    const closeIds = closable.map(r => r.id)
     for (let i = 0; i < closeIds.length; i += 300) {
       await supabase.from('alert_events')
         .update({ resolved_at: t, updated_at: t }).in('id', closeIds.slice(i, i + 300))

@@ -6,8 +6,10 @@
 // Giờ bấm nút chỉ là giờ THAO TÁC (đối chiếu chéo, không phải giờ SX).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { NotebookPen, ScanLine, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
+import { NotebookPen, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
+import { toast } from '@/components/ui/use-toast'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -29,13 +31,19 @@ import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { normalizeQR } from '@/utils/qr'
+import { QtyInput } from '@/components/shared/QtyInput'
+import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ── Filter "Tháng sản xuất" (user 13/08 — dặn "chọn cẩn thận") ───────────────────
@@ -326,6 +334,7 @@ export default function Packing() {
   const [hasOpenedScan, setHasOpenedScan] = useState(false)
   const [showScan, setShowScan] = useState(false)
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(f.warehouseId)   // súng bắn ở bất kỳ đâu → lấy kho đang lọc/bối cảnh
   const [pendingQR, setPendingQR] = useState<string | null>(null)   // tem vừa quét → mở RecordSheet
   const [closeTarget, setCloseTarget] = useState<PackingLog | null>(null)
   const [editTarget, setEditTarget] = useState<PackingLog | null>(null)
@@ -336,6 +345,10 @@ export default function Packing() {
   const [cancelRunTarget, setCancelRunTarget] = useState<PackingRun | null>(null)
   const [detailRunId, setDetailRunId] = useState<string | null>(null)
   const [banner, setBanner] = useState('')
+  // Lỗi từ 7 FormSheet (validate + API) từng chỉ đổ vào banner CỦA TRANG — trên điện thoại FormSheet phủ
+  // kín màn nên người bấm Lưu không thấy gì xảy ra (rà 21/09). Toast nổi TRÊN sheet (z cao hơn) nên
+  // đưa lỗi lên toast cho cả hai cỡ màn; banner giữ lại để còn đọc sau khi đóng sheet.
+  const sheetErr = (msg: string) => { setBanner(msg); toast({ title: msg, variant: 'destructive' }) }
 
   function handleScan(raw: string) {
     playBeep()
@@ -363,11 +376,12 @@ export default function Packing() {
   // đang xem detail trang sổ thì đóng detail rồi vào form ghi (giống nút "Quét tem — thêm pallet").
   const formSheetOpen = !!(pendingQR || closeTarget || editTarget || cancelTarget
     || openRunForm || closeRunTarget || editRunTarget || cancelRunTarget)
+  // Form đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ nuốt mã: máy đọc bắt chuỗi phím
+  // nhanh/IME ở mọi ô nhập (giờ SX, số thùng…) rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
   useWedgeScanner(code => {
-    if (formSheetOpen) return
     if (detailRunId) setDetailRunId(null)
     handleScan(code)
-  }, canRecord)
+  }, canRecord && !formSheetOpen)
 
   const runHandlers: RunTableHandlers = {
     canRecord, canOpenRun, canEdit, canCancel, whName,
@@ -377,11 +391,19 @@ export default function Packing() {
     onClosePallet: setCloseTarget, onEditPallet: setEditTarget, onCancelPallet: setCancelTarget,
   }
 
+  // 12/08 user chốt: tab "Trang sổ" GIỐNG HỆT "Đóng gói" → gộp làm 1 (filter trạng thái/ngày + export nằm luôn ở Đóng gói).
+  // Key khớp PAGE_TABS['/wms/packing']; UI coi mọi giá trị ≠ 'log' là board.
+  const permTabs = useMemo(() => [
+    { key: 'board' as const, label: `Đóng gói${openRuns.length ? ` (${openRuns.length} đang mở)` : ''}` },
+    { key: 'log' as const,   label: 'Sổ pallet' },
+  ], [openRuns.length])
+  // Lớp thứ hai sau quyền: superadmin ẩn tab khỏi điện thoại (cờ mobile_surface, 21/09)
+  const tabs = useMobileTabs('/wms/packing', permTabs, f.tab === 'log' ? 'log' : 'board', k => setF({ tab: k }))
+
   const tabBar = (
     <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl overflow-x-auto">
       <NotebookPen className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
-      {/* 12/08 user chốt: tab "Trang sổ" GIỐNG HỆT "Đóng gói" → gộp làm 1 (filter trạng thái/ngày + export nằm luôn ở Đóng gói) */}
-      {([['board', `Đóng gói${openRuns.length ? ` (${openRuns.length} đang mở)` : ''}`], ['log', 'Sổ pallet']] as const).map(([k, label]) => (
+      {tabs.map(({ key: k, label }) => (
         <button key={k} type="button" onClick={() => setF({ tab: k })}
           className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
             (f.tab === k || (k === 'board' && f.tab !== 'log')) ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -424,7 +446,7 @@ export default function Packing() {
             <button type="button" onClick={() => setShowScan(false)} className="p-2"><X className="h-5 w-5" /></button>
           </div>
           <div className="flex-1 min-h-0">
-            <QRScanner ref={scannerRef} fill active={showScan} stopOnScan onScan={handleScan} onClose={() => setShowScan(false)} />
+            <QRScanner ref={scannerRef} fill active={showScan} stopOnScan onScan={handleScan} onClose={() => setShowScan(false)} codeTypes={codeTypes} />
           </div>
         </div>
       )}
@@ -441,28 +463,28 @@ export default function Packing() {
             setShowScan(true)
             setTimeout(() => scannerRef.current?.resume(), 50)
           }}
-          onError={setBanner} />
+          onError={sheetErr} />
       )}
       {closeTarget && (
-        <CloseSheet log={closeTarget} onDone={() => setCloseTarget(null)} onError={setBanner} />
+        <CloseSheet log={closeTarget} onDone={() => setCloseTarget(null)} onError={sheetErr} />
       )}
       {editTarget && (
-        <EditSheet log={editTarget} onDone={() => setEditTarget(null)} onError={setBanner} />
+        <EditSheet log={editTarget} onDone={() => setEditTarget(null)} onError={sheetErr} />
       )}
       {cancelTarget && (
-        <CancelConfirm log={cancelTarget} onDone={() => setCancelTarget(null)} onError={setBanner} />
+        <CancelConfirm log={cancelTarget} onDone={() => setCancelTarget(null)} onError={sheetErr} />
       )}
       {openRunForm && (
-        <OpenRunSheet whOpts={whOpts} onDone={() => setOpenRunForm(false)} onError={setBanner} />
+        <OpenRunSheet whOpts={whOpts} onDone={() => setOpenRunForm(false)} onError={sheetErr} />
       )}
       {closeRunTarget && (
-        <CloseRunSheet run={closeRunTarget} onDone={() => setCloseRunTarget(null)} onError={setBanner} />
+        <CloseRunSheet run={closeRunTarget} onDone={() => setCloseRunTarget(null)} onError={sheetErr} />
       )}
       {editRunTarget && (
-        <RunEditSheet run={editRunTarget} onDone={() => setEditRunTarget(null)} onError={setBanner} />
+        <RunEditSheet run={editRunTarget} onDone={() => setEditRunTarget(null)} onError={sheetErr} />
       )}
       {cancelRunTarget && (
-        <RunCancelConfirm run={cancelRunTarget} onDone={() => setCancelRunTarget(null)} onError={setBanner} />
+        <RunCancelConfirm run={cancelRunTarget} onDone={() => setCancelRunTarget(null)} onError={sheetErr} />
       )}
       {detailRunId && (
         <RunDetailSheet id={detailRunId} h={runHandlers} onDone={() => setDetailRunId(null)} />
@@ -484,6 +506,16 @@ function useMatNames(codes: string[]): Map<string, string> {
   return useMemo(() => new Map((data ?? []).map(m => [m.material_code, m.short_name ?? m.material_description ?? ''])), [data])
 }
 
+// ĐƠN VỊ của các mã đang hiện trên màn — `qty_cartons` lưu SỐ BASE (như mọi số lượng trong app),
+// nên mọi chỗ hiển thị phải đi qua qtyLabel để ra "N thùng + M hộp", đừng in số base kèm chữ "thùng".
+function useMatUnits(codes: string[]): Map<string, MatUnits> {
+  const { data } = useMaterialsByCodes(codes)
+  return useMemo(() => new Map((data ?? []).map(m => [m.material_code, m as MatUnits])), [data])
+}
+/** Số lượng 1 pallet/1 dòng sổ (base) → "140 thùng" / "89 thùng + 24 hộp". */
+const qtyOf = (qty: number | null | undefined, mat?: MatUnits | null) =>
+  qty == null ? null : qtyLabel(Number(qty), mat)
+
 const RUN_G_COLS = [
   { id: 'act',     label: 'Thao tác',     w: 116 },
   { id: 'main',    label: 'Mã · Tên hàng', w: 190 },
@@ -495,7 +527,8 @@ const RUN_G_COLS = [
   { id: 'machine', label: 'Máy',          w: 52 },
   { id: 'pallet',  label: 'Pallet',       w: 60 },
   { id: 'recv',    label: 'Kho nhập',     w: 96 },   // symbol: kho đã nhập HẾT tem của sổ chưa (15/08)
-  { id: 'qty',     label: 'Tổng SL (thùng)', w: 100 },
+  // Trang sổ có thể GHI NHIỀU MÃ (13/08) ⇒ tổng cross-mã phải mang nhãn quy đổi, KHÔNG gọi là "thùng"
+  { id: 'qty',     label: QTY_CONVERTED_LABEL, w: 110 },
   { id: 'time',    label: 'Giờ BĐ → KT',  w: 165 },
   { id: 'by',      label: 'Người mở',     w: 105 },
   // 13/08 user bỏ cột Ảnh ở bảng TRANG SỔ ngoài cùng — ảnh là dữ liệu cấp PALLET, xem trong detail/Sổ pallet
@@ -513,7 +546,7 @@ function RecvSymbol({ recv, total, diff, compact = false }: { recv: number; tota
   const Icon = diff > 0 ? AlertTriangle : missing > 0 ? Clock : Check
   const tip = [
     missing > 0 ? `${missing}/${total} pallet kho CHƯA quét nhập` : `Kho đã nhập ĐỦ ${total} pallet`,
-    diff > 0 ? `${diff} pallet lệch số thùng sổ ↔ kho` : '',
+    diff > 0 ? `${diff} pallet lệch số lượng sổ ↔ kho` : '',
   ].filter(Boolean).join(' · ')
   return (
     <span className={`no-underline tabular-nums ${tone} ${diff > 0 ? 'font-semibold' : ''}`} title={tip}>
@@ -566,9 +599,9 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
         </TableHeader>
         <TableBody>
           {loading ? (
-            <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+            <TableEmptyRow colSpan={N}>Đang tải…</TableEmptyRow>
           ) : runs.length === 0 ? (
-            <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">{emptyText}</TableCell></TableRow>
+            <TableEmptyRow colSpan={N}>{emptyText}</TableEmptyRow>
           ) : runs.map(r => {
             // list/board không còn trả pallet rows (payload 2,2MB dữ liệu lớn) — đếm bằng pallet_count server
             const palletN = Number(r.pallet_count ?? r.pallets?.length ?? 0)
@@ -583,7 +616,7 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                     <span className="inline-flex gap-1">
                       {r.status === 'OPEN' && h.canRecord && (
                         <button type="button" title="Quét tem vào trang này" onClick={e => { e.stopPropagation(); h.onScan() }}
-                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanLine className="h-3.5 w-3.5" /></button>
+                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanIcon className="h-3.5 w-3.5" /></button>
                       )}
                       {r.status === 'OPEN' && h.canOpenRun && (
                         <button type="button" title="Giờ kết thúc — đóng trang + tính tổng sản lượng" onClick={e => { e.stopPropagation(); h.onCloseRun(r) }}
@@ -625,7 +658,8 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                     <RecvSymbol recv={Number(r.received_count ?? 0)} total={Number(r.recv_total ?? palletN)} diff={Number(r.recv_diff_count ?? 0)} />
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_total ?? 0).toLocaleString('vi-VN')}</TableCell>
+                  {/* nhãn cột là "SL (quy đổi)" = THÙNG quy đổi — không in qty_total (base) dưới nhãn đó (ca đêm 20/09: pallet 190 thùng in "4.560") */}
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_conv ?? 0).toLocaleString('vi-VN')}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
                     {isoToHHMM(r.start_at)}<span className="text-slate-400 font-normal"> → </span>
                     {r.end_at ? (
@@ -669,16 +703,19 @@ function RecordSheet({ code, whName, onDone, onRescan, onError }: {
     [allRuns.data, fields.materialCode])
   const [runId, setRunId] = useState('')
   const run = candidates.find(r => r.id === runId) ?? (candidates.length === 1 ? candidates[0] : null)
-  const [qty, setQty] = useState('')       // '' = theo số chuẩn của tem
-  // SỐ THÙNG TỰ ĐIỀN THEO QUY CÁCH (user 13/08 "sao không thấy số thùng tự nhảy theo quy cách"):
-  // override thùng/pallet theo KHO của trang sổ → fallback quy cách chung của mã
+  const [qty, setQty] = useState('')       // '' = theo số chuẩn của tem; giá trị = SỐ BASE
+  // SỐ LƯỢNG TỰ ĐIỀN THEO QUY CÁCH (user 13/08 "sao không thấy số thùng tự nhảy theo quy cách"):
+  // override thùng/pallet theo KHO của trang sổ → fallback quy cách chung của mã.
+  // ⚠️ Quy cách là SỐ THÙNG ⇒ × units_per_carton mới ra BASE — cột qty_cartons lưu base (như tem in).
   const { data: matRows } = useMaterialsByCodes(fields.materialCode ? [fields.materialCode] : [])
+  const mat = (matRows ?? [])[0] as MatUnits | undefined
   const specQty = useMemo(() => {
-    const mat = (matRows ?? [])[0]
-    if (!mat) return null
-    const ov = (mat.warehouse_pallet_overrides ?? []).find(o => o.warehouse_id === run?.warehouse_id)
-    const n = Number(ov?.cartons_per_pallet ?? mat.cartons_per_pallet ?? 0)
-    return Number.isFinite(n) && n > 0 ? n : null
+    const m = (matRows ?? [])[0]
+    if (!m) return null
+    const ov = (m.warehouse_pallet_overrides ?? []).find(o => o.warehouse_id === run?.warehouse_id)
+    const n = Number(ov?.cartons_per_pallet ?? m.cartons_per_pallet ?? 0)
+    const upc = Number(m.units_per_carton ?? 0) > 0 ? Number(m.units_per_carton) : 1
+    return Number.isFinite(n) && n > 0 ? n * upc : null
   }, [matRows, run?.warehouse_id])
   const qtyTouched = useRef(false)
   useEffect(() => {
@@ -698,7 +735,7 @@ function RecordSheet({ code, whName, onDone, onRescan, onError }: {
   function save(complete: boolean) {
     if (!run) { onError(candidates.length > 1 ? 'Chọn trang sổ trước khi lưu' : 'Chưa có trang sổ đang mở cho mã này'); return }
     const q = qty.trim() === '' ? undefined : Number(qty.replace(',', '.'))
-    if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
+    if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số lượng phải là số dương'); return }
     // Giờ thùng cuối không được TRƯỚC thùng đầu — sản xuất qua nửa đêm thì đổi NGÀY ở ô ngày (user chốt 12/08)
     if (prodS.iso && prodE.iso && prodE.iso < prodS.iso) {
       onError('Giờ SX thùng CUỐI đang trước thùng ĐẦU — sản xuất qua ngày mới thì chỉnh lại Ngày ở ô thùng cuối'); return
@@ -735,7 +772,7 @@ function RecordSheet({ code, whName, onDone, onRescan, onError }: {
           <Button variant="outline" className="sm:shrink-0" onClick={onDone}>Hủy</Button>
           {/* Quét sai tem → quét lại ngay, không phải đóng form rồi tìm nút quét (camera đang TẮT) */}
           <Button variant="outline" className="gap-1 sm:shrink-0" onClick={onRescan} title="Bỏ tem này, bật camera quét tem khác">
-            <ScanLine className="h-3.5 w-3.5" /> Quét lại
+            <ScanIcon className="h-3.5 w-3.5" /> Quét lại
           </Button>
           <Button variant="outline" className="sm:flex-1 sm:min-w-[7.5rem]" disabled={openMut.isPending || busy || !run}
             title="Pallet chưa xếp xong — lưu trước, đóng sổ sau từ board"
@@ -788,12 +825,12 @@ function RecordSheet({ code, whName, onDone, onRescan, onError }: {
           <p className="text-[11px] text-slate-400">Đang tra trang sổ…</p>
         )}
         <div>
-          <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
-          <Input value={qty} onChange={e => { qtyTouched.current = true; setQty(e.target.value) }}
-            inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" placeholder="Theo tem / quy cách" />
+          <p className="text-xs font-medium text-slate-700 mb-1">Số lượng trên pallet</p>
+          <QtyInput value={Number(qty) || 0} mat={mat} compact className="max-w-[220px]"
+            onChange={b => { qtyTouched.current = true; setQty(String(b)) }} />
           {specQty != null && (
             <p className="text-[10px] text-slate-400 mt-0.5">
-              Tự điền theo quy cách {Number(specQty).toLocaleString('vi-VN')} thùng/pallet — sửa nếu pallet lẻ
+              Tự điền theo quy cách {qtyLabel(specQty, mat)}/pallet — sửa nếu pallet lẻ
             </p>
           )}
         </div>
@@ -814,12 +851,13 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
   const startDate = log.prod_start_at
     ? new Date(log.prod_start_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     : (dmyToIso(parseCodeFields(log.pallet_code).dateDisplay) ?? todayVN())
-  const [qty, setQty] = useState(log.qty_cartons != null ? String(log.qty_cartons) : '')
+  const [qty, setQty] = useState(log.qty_cartons != null ? String(log.qty_cartons) : '')   // BASE
+  const mat = useMatUnits(log.material_code ? [log.material_code] : []).get(log.material_code ?? '')
   const [prod, setProd] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
 
   function save() {
     const q = qty.trim() === '' ? null : Number(qty.replace(',', '.'))
-    if (q !== null && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
+    if (q !== null && (!Number.isFinite(q) || q <= 0)) { onError('Số lượng phải là số dương'); return }
     if (prod.iso && log.prod_start_at && prod.iso < log.prod_start_at) {
       onError('Giờ SX thùng CUỐI đang trước thùng ĐẦU — sản xuất qua ngày mới thì chỉnh lại Ngày ở ô ngày'); return
     }
@@ -871,11 +909,11 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
         </ProdSection>
         {zoom && <PhotoLightbox url={zoom} onClose={() => setZoom(null)} />}
         <div>
-          <p className="text-xs font-medium text-slate-700 mb-1">Số thùng trên pallet</p>
-          <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal"
-            className="h-9 w-32 text-sm tabular-nums" placeholder="Số thùng" />
+          <p className="text-xs font-medium text-slate-700 mb-1">Số lượng trên pallet</p>
+          <QtyInput value={Number(qty) || 0} mat={mat} compact className="max-w-[220px]"
+            onChange={b => setQty(String(b))} />
           {log.qty_cartons != null && (
-            <p className="text-[10px] text-slate-400 mt-0.5">Số chuẩn theo tem: {Number(log.qty_cartons).toLocaleString('vi-VN')} — chỉ sửa khi pallet lẻ</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Số chuẩn theo tem: {qtyLabel(Number(log.qty_cartons), mat)} — chỉ sửa khi pallet lẻ</p>
           )}
         </div>
         <PhotoOcrField title="Thùng CUỐI" hint="giờ SX kết thúc — chữ in phun" defaultDate={startDate} onValue={setProd} />
@@ -898,7 +936,8 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
   const s0 = toLocal(log.prod_start_at), e0 = toLocal(log.prod_end_at)
   const [sd, setSd] = useState(s0.d); const [st, setSt] = useState(s0.t)
   const [ed, setEd] = useState(e0.d); const [et, setEt] = useState(e0.t)
-  const [qty, setQty] = useState(log.qty_cartons != null ? String(log.qty_cartons) : '')
+  const [qty, setQty] = useState(log.qty_cartons != null ? String(log.qty_cartons) : '')   // BASE
+  const mat = useMatUnits(log.material_code ? [log.material_code] : []).get(log.material_code ?? '')
   const [note, setNote] = useState(log.note ?? '')
 
   const toIso = (d: string, t: string): string | null | 'ERR' => {
@@ -913,7 +952,7 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
     if (si === 'ERR' || ei === 'ERR') { onError('Ngày/giờ SX không hợp lệ (giờ dạng HH:MM hoặc HH:MM:SS)'); return }
     if (si && ei && ei < si) { onError('Giờ SX thùng CUỐI đang trước thùng ĐẦU — sản xuất qua ngày mới thì chỉnh lại Ngày'); return }
     const q = qty.trim() === '' ? undefined : Number(qty.replace(',', '.'))
-    if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
+    if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số lượng phải là số dương'); return }
     upd.mutate({
       id: log.id,
       prod_start_at: si, prod_end_at: ei,
@@ -979,8 +1018,8 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
         {prodSec('Thùng CUỐI', 'giờ SX kết thúc — chữ in phun', log.photo_end_url, log.prod_end_src, ed, setEd, et, setEt)}
         {zoom && <PhotoLightbox url={zoom} onClose={() => setZoom(null)} />}
         <div>
-          <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
-          <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" />
+          <p className="text-xs font-medium text-slate-700 mb-1">Số lượng</p>
+          <QtyInput value={Number(qty) || 0} mat={mat} compact className="max-w-[220px]" onChange={b => setQty(String(b))} />
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Ghi chú</p>
@@ -1029,14 +1068,19 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const { data: shifts } = useImportShifts()
   const shiftOpts = useMemo(() => ((shifts ?? []) as { id: string; name?: string; code?: string }[])
     .map(s => ({ value: s.name ?? s.code ?? '', label: s.name ?? s.code ?? '' })).filter(o => o.value), [shifts])
-  const [whId, setWhId] = useState(whOpts.length === 1 ? whOpts[0].value : '')
+  // Kho/Loại kho mặc định theo bối cảnh toàn cục ở Header (nếu kho bối cảnh nằm trong whOpts)
+  const gScope = useGlobalScopeStore.getState()
+  const [whId, setWhId] = useState(
+    (gScope.warehouseId && whOpts.some(o => o.value === gScope.warehouseId) ? gScope.warehouseId : '')
+    || (whOpts.length === 1 ? whOpts[0].value : ''),
+  )
   const [date, setDate] = useState(todayVN())
   const [shift, setShift] = useState('')
   const [cycle, setCycle] = useState('')
   // Loại kho để LỌC danh sách mã cho đúng (user 13/08) — hook SCOPED theo quyền loại hàng
   const whTypes = useScopedWhTypes()
   const catOpts = useMemo(() => (whTypes.data ?? []).map(t => ({ value: t.value, label: t.value })), [whTypes.data])
-  const [cat, setCat] = useState('')
+  const [cat, setCat] = useState(gScope.whType)
   const [matSearch, setMatSearch] = useState('')
   const mats = useMaterials({ search: matSearch || undefined, category: cat || undefined, limit: 50 })
   // 13/08 user chốt: 1 số loại hàng có 2-3 mã SX CHUNG 1 chu kỳ + 1 máy → 1 trang sổ ghi NHIỀU mã
@@ -1209,7 +1253,7 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
           </p>
           <p className="text-slate-600 pt-1">
             Sẽ chốt: <b className="tabular-nums">{run.pallet_count ?? 0}</b> pallet ·
-            Tổng sản lượng <b className="tabular-nums">{Number(run.qty_total ?? 0).toLocaleString('vi-VN')}</b> thùng
+            Tổng sản lượng <b className="tabular-nums">{Number(run.qty_total ?? 0).toLocaleString('vi-VN')}</b> <span title={QTY_CONVERTED_TIP}>(quy đổi)</span>
           </p>
         </div>
         {(run.pallet_open ?? 0) > 0 && (
@@ -1348,9 +1392,9 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
         </div>
         {run.status === 'CLOSED' && (
           <div>
-            <p className="text-xs font-medium text-slate-700 mb-1">Tổng sản lượng (thùng)</p>
+            <p className="text-xs font-medium text-slate-700 mb-1" title={QTY_CONVERTED_TIP}>Tổng sản lượng ({QTY_CONVERTED_LABEL})</p>
             <Input value={qtyTotal} onChange={e => setQtyTotal(e.target.value)} disabled={locked} inputMode="decimal" className="h-9 w-36 text-sm tabular-nums" />
-            <p className="text-[10px] text-slate-400 mt-0.5">Số máy tính = Σ thùng pallet trong trang — chỉ sửa khi cần chốt khác</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Số máy tính = Σ số lượng pallet trong trang — chỉ sửa khi cần chốt khác</p>
           </div>
         )}
         <div>
@@ -1455,7 +1499,8 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
         'Kho đã nhập': r.received_count ?? 0,
         'Kho chưa nhập': Math.max(0, Number(r.recv_total ?? r.pallet_count ?? 0) - Number(r.received_count ?? 0)),
         'Pallet lệch SL': r.recv_diff_count ?? 0,
-        'Tổng sản lượng (thùng)': r.qty_total ?? '',
+        'Tổng sản lượng (SL quy đổi)': r.qty_conv ?? '',
+        'Tổng sản lượng (base)': r.qty_total ?? '',
         'Người mở': r.opened_by_name ?? '',
         'Người đóng': r.closed_by_name ?? '',
         'Ghi chú': r.note ?? '',
@@ -1485,7 +1530,7 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
         { label: 'Đang mở', value: openCount.toLocaleString('vi-VN'), accent: openCount > 0 },
         { label: 'Trang sổ (bộ lọc)', value: total.toLocaleString('vi-VN') },
         { label: 'Pallet (trang này)', value: rows.reduce((s, r) => s + Number(r.pallet_count ?? 0), 0).toLocaleString('vi-VN') },
-        { label: 'Thùng (trang này)', value: rows.reduce((s, r) => s + Number(r.qty_total ?? 0), 0).toLocaleString('vi-VN') },
+        { label: QTY_CONVERTED_LABEL, tip: QTY_CONVERTED_TIP, value: rows.reduce((s, r) => s + Number(r.qty_conv ?? 0), 0).toLocaleString('vi-VN') },
       ]} />
 
       <RunGroupedTable runs={rows} loading={isLoading} h={h}
@@ -1513,7 +1558,7 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
 // User chốt 11/08 tối: mở 80% MÀN HÌNH — khối thông tin ~20% trên, BẢNG pallet 80% dưới.
 // Ngày hiện ĐẦY ĐỦ kèm giờ (1 chu kỳ có thể sản xuất LIỀN VÀI NGÀY).
 const fmtDT = (iso: string | null) => iso ? `${formatTimestampDate(iso, true)} ${isoToHHMM(iso)}` : ''
-const DETAIL_PALLET_COLS = ['Thao tác', 'Trạng thái', 'Tem pallet', 'Mã hàng', 'Số thùng', 'Kho nhận', 'Giờ SX thùng đầu', 'Giờ SX thùng cuối', 'Quét lúc', 'Người', 'Ảnh'] as const
+const DETAIL_PALLET_COLS = ['Thao tác', 'Trạng thái', 'Tem pallet', 'Mã hàng', 'Số lượng', 'Kho nhận', 'Giờ SX thùng đầu', 'Giờ SX thùng cuối', 'Quét lúc', 'Người', 'Ảnh'] as const
 
 function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; onDone: () => void }) {
   const { canOpenRun, whName } = h
@@ -1521,6 +1566,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
   const [lightbox, setLightbox] = useState<string | null>(null)
   const codes = run ? runCodes(run) : []
   const matName = useMatNames(codes)
+  const matUnit = useMatUnits(codes)
   // trang nhiều mã → sản lượng TÁCH THEO MÃ (tính sống từ pallet, không đụng qty_total đã chốt)
   const perMat = useMemo(() => {
     const m = new Map<string, number>()
@@ -1553,7 +1599,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
           {/* Quét thêm pallet NGAY TỪ DETAIL (user 12/08 tối: "cần nút bấm để quét pallet thêm cho sổ") */}
           {run && run.status === 'OPEN' && h.canRecord && (
             <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={() => { onDone(); h.onScan() }}>
-              <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — thêm pallet</span>
+              <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — thêm pallet</span>
             </Button>
           )}
           {run && run.status === 'OPEN' && canOpenRun && (
@@ -1588,12 +1634,17 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
             <Info label="Ngày sản xuất" value={formatDate(run.run_date)} />
             <Info label="Ca sản xuất" value={run.shift ?? '—'} />
             <Info label="Chu kỳ" value={run.cycle ?? '—'} />
+            {/* Máy nằm trong band thông tin, không chỉ trên title (user 01/09) — 1 trang = 1 máy */}
+            <Info label="Máy" value={<span className="font-mono font-semibold">{run.machine_code ?? '—'}</span>} />
             <Info label="Giờ bắt đầu" value={<span className="tabular-nums">{fmtDT(run.start_at)}</span>} />
             <Info label="Giờ kết thúc" value={<span className="tabular-nums">{run.end_at ? fmtDT(run.end_at) : (run.status === 'OPEN' ? `chưa bấm · mở ${elapsedOf(run.start_at)}` : '—')}</span>} />
+            {/* 1 mã → hiện ĐÚNG "N thùng + M hộp"; nhiều mã → tổng quy đổi + tách theo từng mã trong tooltip */}
             <Info label="Tổng sản lượng" value={
-              <b className="tabular-nums" title={codes.length > 1 ? codes.map(c => `${c}: ${(perMat.get(c) ?? 0).toLocaleString('vi-VN')} thùng`).join(' · ') : undefined}>
-                {Number(run.qty_total ?? 0).toLocaleString('vi-VN')} thùng
-                {codes.length > 1 && <span className="ml-1 font-normal text-slate-500">({codes.map(c => `${c.slice(-4)}: ${(perMat.get(c) ?? 0).toLocaleString('vi-VN')}`).join(' · ')})</span>}
+              <b className="tabular-nums" title={codes.length > 1 ? codes.map(c => `${c}: ${qtyLabel(perMat.get(c) ?? 0, matUnit.get(c))}`).join(' · ') : QTY_CONVERTED_TIP}>
+                {codes.length === 1
+                  ? qtyLabel(Number(run.qty_total ?? 0), matUnit.get(codes[0]))
+                  : <>{Number(run.qty_total ?? 0).toLocaleString('vi-VN')} <span className="font-normal text-slate-500">(quy đổi)</span></>}
+                {codes.length > 1 && <span className="ml-1 font-normal text-slate-500">({codes.map(c => `${c.slice(-4)}: ${qtyLabel(perMat.get(c) ?? 0, matUnit.get(c))}`).join(' · ')})</span>}
               </b>
             } />
             <Info label="Số pallet" value={<span className="tabular-nums">{run.pallet_count ?? 0}{(run.pallet_open ?? 0) > 0 ? ` (${run.pallet_open} đang mở)` : ''}</span>} />
@@ -1620,7 +1671,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
               {run.status === 'OPEN' && h.canRecord && (
                 <button type="button" onClick={() => { onDone(); h.onScan() }}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 text-[11px] font-medium">
-                  <ScanLine className="h-3.5 w-3.5" /> Quét tem thêm pallet
+                  <ScanIcon className="h-3.5 w-3.5" /> Quét tem thêm pallet
                 </button>
               )}
             </div>
@@ -1666,14 +1717,14 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                           {l.material_code && matName.get(l.material_code) && <span className="ml-1 text-[9px] text-slate-400 no-underline">{matName.get(l.material_code)}</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
-                          {l.qty_cartons != null ? Number(l.qty_cartons).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}
+                          {qtyOf(l.qty_cartons, matUnit.get(l.material_code ?? '')) ?? <span className="text-slate-300">—</span>}
                           {l.qty_source === 'MANUAL' && <span className="ml-1 text-[8px] px-1 rounded bg-amber-100 text-amber-800 no-underline">tay</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                           {l.received_at ? (
                             l.is_qty_diff ? (
-                              <span className="text-red-600 font-semibold no-underline" title={`Kho nhập ${Number(l.received_qty ?? 0).toLocaleString('vi-VN')} thùng ≠ sổ ghi ${Number(l.qty_cartons ?? 0).toLocaleString('vi-VN')}`}>
-                                <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />lệch: kho {Number(l.received_qty ?? 0).toLocaleString('vi-VN')}
+                              <span className="text-red-600 font-semibold no-underline" title={`Kho nhập ${qtyLabel(Number(l.received_qty ?? 0), matUnit.get(l.material_code ?? ''))} ≠ sổ ghi ${qtyLabel(Number(l.qty_cartons ?? 0), matUnit.get(l.material_code ?? ''))}`}>
+                                <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />lệch: kho {qtyLabel(Number(l.received_qty ?? 0), matUnit.get(l.material_code ?? ''))}
                               </span>
                             ) : (
                               <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(l.received_at)} ${formatTimestampTime(l.received_at)}`}>
@@ -1741,7 +1792,7 @@ const LOG_COLS = [
   { id: 'recv',    label: 'Kho nhận',      w: 118 },   // đối chiếu SX↔Kho: kho quét nhập = xác nhận lần 2
   { id: 'wh',      label: 'Kho',           w: 110 },
   { id: 'machine', label: 'Máy',           w: 60 },
-  { id: 'qty',     label: 'Số thùng',      w: 90 },
+  { id: 'qty',     label: 'Số lượng',      w: 110 },
   { id: 'prod',    label: 'Giờ SX (in phun)', w: 200 },
   { id: 'scan',    label: 'Thao tác quét', w: 170 },
   { id: 'by',      label: 'Người đóng',    w: 120 },
@@ -1777,6 +1828,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
   const closed = rows.filter(r => r.status === 'CLOSED')
   const manualN = closed.filter(r => r.prod_start_src === 'MANUAL' || r.prod_end_src === 'MANUAL').length
   const matName = useMatNames(rows.map(r => r.material_code ?? '').filter(Boolean))
+  const matUnit = useMatUnits(rows.map(r => r.material_code ?? '').filter(Boolean))
 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày mở sổ', type: 'daterange', pinned: true, from: f.dateFrom, to: f.dateTo,
@@ -1817,10 +1869,12 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
         'Tên hàng': r.material_code ? (matName.get(r.material_code) ?? '') : '',
         'Kho nhận lúc': r.received_at ? `${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}` : (r.status !== 'CANCELLED' ? 'CHƯA NHẬN' : ''),
         'SL kho nhập': r.received_qty ?? '',
+        'SL kho nhập (quy đổi)': r.received_qty != null ? qtyLabel(Number(r.received_qty), matUnit.get(r.material_code ?? '')) : '',
         'Lệch SL': r.is_qty_diff ? 'LỆCH' : '',
         'Kho': r.warehouse_id ? (whName.get(r.warehouse_id) ?? '') : '',
         'Máy': r.machine_code ?? '',
-        'Số thùng': r.qty_cartons ?? '',
+        'Số lượng': r.qty_cartons ?? '',
+        'Số lượng (quy đổi)': r.qty_cartons != null ? qtyLabel(Number(r.qty_cartons), matUnit.get(r.material_code ?? '')) : '',
         'Nguồn SL': r.qty_source === 'MANUAL' ? 'Nhập tay' : 'Theo tem',
         'Giờ SX thùng đầu': r.prod_start_at ? `${formatTimestampDate(r.prod_start_at)} ${formatTimestampTime(r.prod_start_at)}` : '',
         'Nguồn giờ đầu': r.prod_start_src ?? '',
@@ -1857,7 +1911,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
         { label: 'Kho đã nhận', value: (data?.received_count ?? 0).toLocaleString('vi-VN') },
         { label: 'Chưa nhận (SX đã tạo)', value: (data?.missing_count ?? 0).toLocaleString('vi-VN'), accent: (data?.missing_count ?? 0) > 0 },
         { label: 'Lệch SL sổ ↔ kho', value: (data?.diff_count ?? 0).toLocaleString('vi-VN'), accent: (data?.diff_count ?? 0) > 0 },
-        { label: 'Thùng (trang này)', value: closed.reduce((s, r) => s + Number(r.qty_cartons ?? 0), 0).toLocaleString('vi-VN') },
+        { label: QTY_CONVERTED_LABEL, tip: QTY_CONVERTED_TIP, value: closed.reduce((s, r) => s + qtyEntryDecimal(Number(r.qty_cartons ?? 0), matUnit.get(r.material_code ?? '')), 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
         { label: 'Giờ nhập tay (trang)', value: closed.length ? `${manualN}/${closed.length}` : '0' },
       ]} />
 
@@ -1879,9 +1933,9 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Đang tải…</TableEmptyRow>
             ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center py-8 text-xs text-slate-400">Chưa có dòng sổ nào khớp bộ lọc</TableCell></TableRow>
+              <TableEmptyRow colSpan={LOG_COLS.length}>Chưa có dòng sổ nào khớp bộ lọc</TableEmptyRow>
             ) : rows.map(r => (
               <TableRow key={r.id} className={r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
                 {/* Thao tác Ở ĐẦU row + sticky (user chốt 12/08) */}
@@ -1912,11 +1966,11 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                   {r.received_at ? (
                     r.is_qty_diff ? (
-                      <span className="text-red-600 font-semibold no-underline" title={`Kho nhập ${Number(r.received_qty ?? 0).toLocaleString('vi-VN')} thùng ≠ sổ ghi ${Number(r.qty_cartons ?? 0).toLocaleString('vi-VN')} — đối chiếu với xưởng`}>
-                        <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />lệch: kho {Number(r.received_qty ?? 0).toLocaleString('vi-VN')}
+                      <span className="text-red-600 font-semibold no-underline" title={`Kho nhập ${qtyLabel(Number(r.received_qty ?? 0), matUnit.get(r.material_code ?? ''))} ≠ sổ ghi ${qtyLabel(Number(r.qty_cartons ?? 0), matUnit.get(r.material_code ?? ''))} — đối chiếu với xưởng`}>
+                        <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />lệch: kho {qtyLabel(Number(r.received_qty ?? 0), matUnit.get(r.material_code ?? ''))}
                       </span>
                     ) : (
-                      <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}${r.received_qty != null ? ` — ${Number(r.received_qty).toLocaleString('vi-VN')} thùng` : ''}`}>
+                      <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}${r.received_qty != null ? ` — ${qtyLabel(Number(r.received_qty), matUnit.get(r.material_code ?? ''))}` : ''}`}>
                         <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(r.received_at, true)} {formatTimestampTime(r.received_at).slice(0, 5)}
                       </span>
                     )
@@ -1931,7 +1985,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.machine_code ?? '—'}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
-                  {r.qty_cartons != null ? Number(r.qty_cartons).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}
+                  {qtyOf(r.qty_cartons, matUnit.get(r.material_code ?? '')) ?? <span className="text-slate-300">—</span>}
                   {r.qty_source === 'MANUAL' && <span className="ml-1 text-[8px] px-1 rounded bg-amber-100 text-amber-800 no-underline">tay</span>}
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">

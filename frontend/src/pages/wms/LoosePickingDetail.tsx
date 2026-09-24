@@ -1,19 +1,24 @@
-import { useState, useEffect, Fragment } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef, Fragment } from 'react'
+import { useParams, useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import {
-  ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark, Info,
-} from 'lucide-react'
+import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare, CalendarClock, MapPin } from 'lucide-react'
+import { isQaHeld } from '@/utils/qaHold'
+import { backTarget } from '@/lib/returnTo'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, useLooseRoute, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { scanRotationOf } from '@/utils/rotation'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
+// NHẶT LẺ = XUẤT, chỉ khác màn (user chốt 10/09 "bản chất nó là 1"): cùng dòng OutboundItem, cùng
+// kho hàng ⇒ dùng CHUNG badge + màn chốt %Date của trang chuyến, đừng dựng bản riêng cho màn này.
+import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } from '@/components/wms/SetDateRuleSheet'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
+import { LooseRouteSheet } from '@/components/wms/LooseRouteSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -22,28 +27,8 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
-import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
-
-// ─── Status badge ──────────────────────────────────────────────
-
-const statusCls: Record<OutboundStatus, string> = {
-  PENDING:     'bg-slate-100 text-slate-600',
-  IN_PROGRESS: 'bg-amber-100 text-amber-800',
-  COMPLETED:   'bg-green-100 text-green-800',
-  CANCELLED:   'bg-red-100 text-red-600',
-  PAUSED:      'bg-red-100 text-red-700',
-}
-const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-}
-function Badge({ status }: { status: string }) {
-  const s = status as OutboundStatus
-  return (
-    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
-      {statusLabel[s] ?? status}
-    </span>
-  )
-}
+import type { OutboundItem, OutboundDelivery, DateRule } from '@/types'
+import { OutboundStatusBadge } from '@/lib/statusMaps'
 
 function ProgressBar({ scanned, target, compact = false }: { scanned: number; target: number; compact?: boolean }) {
   const pct = target > 0 ? Math.min(100, (scanned / target) * 100) : 0
@@ -91,7 +76,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
   const aggRows: AggRow[] = (() => {
     const map = new Map<string, AggRow>()
     for (const e of sorted) {
-      const q = !!e.qa_status
+      const q = isQaHeld(e.qa_status)
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
       if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
@@ -218,14 +203,20 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
   const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
   // Cột "Vị trí lấy" — top 2 vị trí FEFO trên màn (đồng bộ trang Xuất)
-  const { data: pickSug } = useGdoPickSuggestions(gdoId)
+  const { data: pickSug } = useGdoPickSuggestions(gdoId, true)   // màn nhặt lẻ → ưu tiên vị trí nhặt lẻ
+  // ĐƯỜNG ĐI NHẶT Lẻ (user 14/09 "A → B → C sao cho hợp lý"): thứ tự ghé vị trí lấy từ cửa của chuyến,
+  // BFS trên Sơ đồ kho — cùng phép đo với vòng đi xe nâng. Dòng hàng xếp theo thứ tự ghé; chưa có bản vẽ
+  // thì giữ thứ tự cũ và dải đường đi nói thẳng "chưa có bản vẽ".
+  const { data: route } = useLooseRoute(gdoId)
+  const seqOfItem = new Map<string, number>()
+  for (const s of route?.stops ?? []) for (const m of s.materials) seqOfItem.set(m.item_id, s.seq)
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
 
   const allItems = doRecords.flatMap(d =>
     d.items
       .filter(i => i.loose_picking > 0)
       .map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
-  )
+  ).sort((a, b) => (seqOfItem.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (seqOfItem.get(b.id) ?? Number.MAX_SAFE_INTEGER))
   // 3 cột CUỐI riêng biệt (user 19/07, đồng bộ Xuất): Batch yêu cầu · %Date yêu cầu · Header text — style đỏ như detail mã
   const hasBatchRequired = allItems.some(i => i.batch_required)
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
@@ -243,14 +234,21 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
 
   // Bộ cột ĐỘNG — chuẩn table-format (table-fixed + kéo giãn + sticky), đồng bộ Xuất
   const cols: RtColDef[] = [
+    // Cột VIỆC PHẢI LÀM (Lẻ đã/cần + nút Quét/Lưu SL) đứng NGAY SAU mã — phone 390px thấy đủ
+    // không kéo ngang (user bắt 24/08: "Nhặt lẻ thậm chí còn không xem được hết")
     { id: 'mat',  label: 'Mã hàng', w: 92 },
+    { id: 'le_c',   label: 'Lẻ thùng', w: 84, align: 'right' },
+    { id: 'le_b',   label: 'Lẻ hộp', w: 54, align: 'right' },
     { id: 'name', label: 'Tên hàng', w: nameMinW },
     { id: 'tong_c', label: 'Tổng thùng', w: 74, align: 'right' },
     { id: 'tong_b', label: 'Tổng hộp', w: 62, align: 'right' },
-    { id: 'le_c',   label: 'Lẻ thùng', w: 78, align: 'right' },
-    { id: 'le_b',   label: 'Lẻ hộp', w: 54, align: 'right' },
     { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
     ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
+    // Quy tắc ĐÃ CHỐT — cột LUÔN CÓ, y như bảng dòng hàng của chuyến: nhặt lẻ cũng bị chặn khi
+    // chưa chốt (kho Hướng dẫn) nên người nhặt phải thấy dòng nào còn thiếu
+    // HAI CỘT RIÊNG (user chốt 11/09): đã đòi % thì thôi đòi ngày
+    { id: 'datepct',  label: '% date yêu cầu', w: 110 },
+    { id: 'datedays', label: 'Ngày date còn yêu cầu', w: 130 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
     ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
     ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
@@ -282,6 +280,28 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
           onClose={() => setInventoryItemId(null)}
         />
       )}
+      {/* Dải ĐƯỜNG ĐI = TÓM TẮT một dòng (user 14/09 "cả chục mã thì làm sao?"): số điểm ghé + xuất phát;
+          thứ tự chi tiết nằm ở SỐ GHÉ trên từng dòng bảng (đã xếp theo đường). Danh sách điểm ghé chỉ in
+          khi ≤ 4 điểm, còn không thì cuộn ngang được (hàng nowrap trong khung co phải cuộn — luật 12/09). */}
+      {route && route.stops.length > 0 && (
+        <div className={`shrink-0 border-b px-3 py-1.5 text-[11px] flex items-center gap-2 overflow-x-auto whitespace-nowrap ${route.routed ? 'bg-sky-50/70 text-slate-700' : 'bg-slate-50 text-slate-500'}`}>
+          <span className="font-semibold text-sky-800 shrink-0">Đường đi nhặt lẻ</span>
+          <span className="shrink-0">
+            <b>{route.stops.length}</b> điểm ghé{route.start_code ? <> từ <b>{route.start_code}</b></> : null}
+            {route.stops.length > 4 && <span className="text-slate-500"> — thứ tự ghé ghi ở số tròn đầu mỗi dòng, bảng đã xếp theo đường</span>}
+          </span>
+          {!route.routed && <span className="text-amber-700 shrink-0">(kho chưa có bản vẽ / chuyến chưa gắn cửa — chưa xếp theo đường)</span>}
+          {route.stops.length <= 4 && route.stops.map((s, i) => (
+            <span key={s.location_id} className="shrink-0">
+              {i > 0 && <span className="text-slate-400 mx-1">→</span>}
+              <span className="inline-flex items-center justify-center h-4 min-w-4 rounded-full bg-sky-600 text-white text-[10px] font-semibold px-1 mr-1">{s.seq}</span>
+              <span className="font-mono font-semibold">{s.location_code}</span>
+              <span className="text-slate-500"> ({s.materials.map(m => m.material_code ?? '?').join(', ')})</span>
+            </span>
+          ))}
+          {route.unlocated.length > 0 && <span className="text-amber-700 shrink-0">· {route.unlocated.length} mã chưa có tồn để chỉ chỗ</span>}
+        </div>
+      )}
       <ResizableTable key={colSig} storageKey={`loosepicking_items_w:${colSig}`} cols={cols}>
         <TableBody>
           {allItems.map(item => {
@@ -311,10 +331,41 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   onClick={() => navigate(`/wms/loosepicking/${gdoId}/items/${item.id}`)}
                 >
                   <TableCell className={`px-2 py-1 align-top whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
-                    <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
+                    <div className={`text-[10px] font-mono font-semibold ${textCls} flex items-center gap-1`}>
+                      {/* SỐ GHÉ trên từng dòng (user 14/09 "cả chục mã thì làm sao?") — dải trên chỉ tóm tắt, thứ tự đi đọc ở đây */}
+                      {seqOfItem.has(item.id) && (
+                        <span className="inline-flex items-center justify-center h-4 min-w-4 rounded-full bg-sky-600 text-white text-[9px] font-semibold px-1 shrink-0"
+                          title={`Điểm ghé thứ ${seqOfItem.get(item.id)} trên đường đi nhặt lẻ`}>{seqOfItem.get(item.id)}</span>
+                      )}
                       {matCode}
                       <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} mat={item.material} />
                     </div>
+                  </TableCell>
+                  {/* Nhặt lẻ THÙNG (đã/cần) + nút Quét — đứng NGAY SAU mã (thứ tự khớp cols) */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>
+                        {leThung ?? (!hasEnt && effective > 0 ? `${qtyEntryText(looseDone, item.material)}/${qtyEntryText(effective, item.material)}` : '—')}
+                      </span>
+                      {!isDone && (
+                        // Hàng no-QR (POSM/Loscam) = LƯU SỐ LƯỢNG tay, không đòi tem — icon PenSquare
+                        // thống nhất với "Lưu thủ công" bên Xuất (?scan=1 tự mở đúng dialog theo loại hàng)
+                        <button
+                          onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
+                          className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+                        >
+                          {item.material?.no_qr_tracking === true
+                            ? <><PenSquare className="h-2.5 w-2.5" /> Lưu SL</>
+                            : <><ScanIcon className="h-2.5 w-2.5" /> Quét</>}
+                        </button>
+                      )}
+                    </div>
+                  </TableCell>
+                  {/* Nhặt lẻ HỘP (đã/cần) — 0 → "—" */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    {leHop
+                      ? <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{leHop}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top">
                     {/* Mobile: tên 1 DÒNG (cắt …) — bấm dòng mở chi tiết. Desktop: xuống dòng bình thường. */}
@@ -331,28 +382,6 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                     {hasEnt && tHop
                       ? <span className={`text-[10px] tabular-nums ${textCls}`}>{tHop}</span>
-                      : <span className="text-[10px] text-slate-300">—</span>}
-                  </TableCell>
-                  {/* Nhặt lẻ THÙNG (đã/cần) + nút Quét */}
-                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
-                    <div className="flex flex-col items-end gap-0.5">
-                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>
-                        {leThung ?? (!hasEnt && effective > 0 ? `${qtyEntryText(looseDone, item.material)}/${qtyEntryText(effective, item.material)}` : '—')}
-                      </span>
-                      {!isDone && (
-                        <button
-                          onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
-                          className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
-                        >
-                          <QrCode className="h-2.5 w-2.5" /> Quét
-                        </button>
-                      )}
-                    </div>
-                  </TableCell>
-                  {/* Nhặt lẻ HỘP (đã/cần) — 0 → "—" */}
-                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
-                    {leHop
-                      ? <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{leHop}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-1 py-1 align-middle text-center">
@@ -372,7 +401,9 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                     >
                       {(() => {
                         if (isDone) return <span className="text-[10px] text-slate-300">—</span>
-                        const sugs = item.material_id ? pickSug?.[item.material_id] ?? [] : []
+                        // Dòng đã chốt mức %Date có khoá riêng theo ID DÒNG (đã lọc đúng mức);
+                        // chưa chốt thì rơi về khoá theo MÃ. Mức thuộc về dòng, không thuộc về mã.
+                        const sugs = pickSug?.[item.id] ?? (item.material_id ? pickSug?.[item.material_id] ?? [] : [])
                         if (sugs.length === 0) return <span className="text-[10px] text-slate-300">—</span>
                         return (
                           <div className="leading-tight">
@@ -382,7 +413,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                                 {s.pct_date != null && (
                                   <span className={`ml-1 font-bold tabular-nums ${pctDateCls(s.pct_date, pctBands)}`}>{s.pct_date}%</span>
                                 )}
-                                <span className="ml-1 text-slate-400 tabular-nums">{qtyEntryText(s.available, item.material)}th</span>
+                                <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, item.material)}</span>
                               </div>
                             ))}
                           </div>
@@ -390,6 +421,25 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       })()}
                     </TableCell>
                   )}
+                  {/* Quy định date đã khai — HAI CỘT RIÊNG, nhãn dùng chung với trang chuyến */}
+                  {(() => {
+                    const c = dateRuleCols(item.date_rule, item.date_required)
+                    const b = dateRuleLabel(item.date_rule, item.material, item.date_required)
+                    const numeric = c.pct != null || c.days != null
+                    return <>
+                      <TableCell className="px-2 py-1 align-top whitespace-nowrap text-right">
+                        {c.pct
+                          ? <span className="text-[10px] font-semibold tabular-nums text-sky-700">{c.pct}</span>
+                          : c.days ? <span className="text-[10px] text-slate-300">—</span>
+                          : <span className={`text-[9px] font-semibold rounded px-1 py-0.5 ${b.cls}`}>{b.text}</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 align-top whitespace-nowrap text-right">
+                        {c.days
+                          ? <span className="text-[10px] font-semibold tabular-nums text-teal-700">{c.days}</span>
+                          : <span className="text-[10px] text-slate-300">{numeric ? '—' : ''}</span>}
+                      </TableCell>
+                    </>
+                  })()}
                   {hasBatchRequired && (
                     <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                       {item.batch_required
@@ -503,19 +553,33 @@ export default function LoosePickingDetail() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  const { data: gdo, isLoading } = useGDO(id)
+  const { data: gdo, isLoading, isError } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [showOrderScan,   setShowOrderScan]   = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
+  const [showDateRule,    setShowDateRule]    = useState(false)   // chốt %Date cho chính các dòng nhặt lẻ
   const [hdrOpen,         setHdrOpen]         = useState(false)   // mobile: popup thông tin đơn (thanh mảnh + nút Info)
   const [pdaScan,         setPdaScan]         = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
+  // THEO VỊ TRÍ CÔNG VIỆC (user 14/09): đường đi từ cửa qua từng ô + quét ngay tại đó. `?route=1` (link từ
+  // Việc cần làm) mở sẵn MỘT lần cho mỗi LƯỢT ĐIỀU HƯỚNG — không ghi đè khi người dùng đã đóng, nhưng bấm
+  // lại chính link đó thì phải mở lại (khoá theo giá trị tham số = link chết ở lần bấm thứ hai, 16/09).
+  const [showRoute,       setShowRoute]       = useState(false)
+  const [searchParams] = useSearchParams()
+  const routeNavKey = useLocation().key
+  const routeParamApplied = useRef<string | null>(null)
+  useEffect(() => {
+    if (routeParamApplied.current === routeNavKey) return
+    routeParamApplied.current = routeNavKey
+    if (searchParams.get('route') === '1') setShowRoute(true)
+  }, [routeNavKey, searchParams])
 
   function toggleExpand(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
   }
 
-  // PDA: bóp cò ngay tại trang → tự mở màn quét chế độ SÚNG (không camera) — điều kiện = nút Quét QR
+  // PDA: bóp cò ngay tại trang → tự mở màn quét chế độ SÚNG (không camera) — điều kiện = nút Quét QR.
+  // Màn Tối ưu tuyến đang mở thì panel quét trong đó đã nghe súng — trang không mở thêm màn thứ hai.
   useWedgeScanner(code => {
-    if (!gdo || showOrderScan) return
+    if (!gdo || showOrderScan || showRoute) return
     if (gdo.status === 'COMPLETED' || gdo.status === 'CANCELLED') return
     if (!can(perms, 'loosepicking', 'scan')) return
     const anyLoose = (gdo.delivery_orders ?? []).some(d => d.items.some(i =>
@@ -530,6 +594,16 @@ export default function LoosePickingDetail() {
     if (gdo) update(gdo.id, gdo.status)
   }, [gdo?.status, gdo?.id])
 
+  // Deep-link cũ / chuyến đã xóa: 404 → gdo mãi undefined → trước đây SKELETON VĨNH VIỄN
+  // (trang "trắng" không thông báo, không lối về — đo 31/08). Báo tử tế + link quay lại.
+  if (isError || (!isLoading && !gdo)) {
+    return (
+      <div className="p-6 text-center space-y-2">
+        <p className="text-sm text-red-600">Không tìm thấy chuyến — có thể đã bị xóa hoặc đường link đã cũ</p>
+        <Link to="/wms/loosepicking" className="text-xs text-sky-600 underline">← Về Nhặt lẻ</Link>
+      </div>
+    )
+  }
   if (isLoading || !gdo) {
     return (
       <div className="p-4 space-y-3">
@@ -543,6 +617,10 @@ export default function LoosePickingDetail() {
   // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (loose_picking lưu base)
   const totalLoose    = allLooseItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseProgress(i).effective, i.material), 0)
   const totalLooseDone = allLooseItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseProgress(i).done, i.material), 0)
+  // Nhãn đơn vị tổng: mọi mã cùng đơn vị → in đúng đơn vị; trộn (POSM CÁI + FG thùng, từ 24/08
+  // POSM mode ALL vào nhặt lẻ) → "SL quy đổi" — đừng in "thùng" lên con số có CÁI/KG bên trong
+  const looseUnitSet  = new Set(allLooseItems.map(i => qtyUnitLabel(i.material)))
+  const looseUnitLabel = looseUnitSet.size === 1 ? ([...looseUnitSet][0] || 'thùng') : 'SL quy đổi'
 
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
@@ -560,15 +638,54 @@ export default function LoosePickingDetail() {
     }
   }
 
+  // Dòng nhặt lẻ để CHỐT %DATE — cùng khuôn với trang chuyến (kho Hướng dẫn CHẶN nhặt lẻ khi
+  // dòng chưa chốt, nên người nhặt lẻ phải chốt được ngay tại màn của mình)
+  const dateTargets: DateRuleTarget[] = allDOs.flatMap(d =>
+    (d.items ?? [])
+      .filter(i => i.loose_picking > 0 && Number(i.cartons_ordered ?? 0) > Number(i.cartons_scanned ?? 0))
+      .map(i => ({
+        item_id: i.id,
+        material_id: i.material_id ?? null,
+        material_code: i.material_code_raw ?? null,
+        material_name: i.material?.short_name ?? null,
+        trip_label: d.delivery_code ?? null,
+        remaining: Number(i.cartons_ordered ?? 0) - Number(i.cartons_scanned ?? 0),
+        units: i.material ?? null,
+        note: i.header_text ?? null,
+        current: (i.date_rule as DateRule | null)
+          ?? (Number(i.date_required) > 0 ? ({ kind: 'MIN_PCT', value: Number(i.date_required) } as DateRule) : null),
+      })))
+  const nUnsetDate = dateTargets.filter(t => !t.current).length
+
   // ── Cụm action header (ActionCluster) — đồng bộ nút "Xem pallet" với OutboundDetail ──
   const actionItems: ActionItem[] = []
+  if (dateTargets.length > 0 && can(perms, 'outbound', 'set_date'))
+    actionItems.push({
+      key: 'date-rule', icon: CalendarClock, label: 'Quy định date',
+      tip: nUnsetDate > 0
+        ? `${nUnsetDate} dòng chưa chốt — kho Hướng dẫn chưa cho nhặt lẻ dòng chưa chốt`
+        : 'Sửa quy tắc lấy hàng theo date của từng dòng',
+      primary: nUnsetDate > 0,
+      onClick: () => setShowDateRule(true),
+    })
   // Quét QR cấp ĐƠN (user 19/07): quét tem pallet bất kỳ, tự nhận mã hàng — khỏi vào từng mã.
   // Rule chặn giữ nguyên (BE kiểm theo item): sai mã, không vượt số nhặt lẻ, tạm dừng…
   const hasLooseRemaining = allLooseItems.some(i =>
     i.material?.no_qr_tracking !== true && itemLooseProgress(i).remaining > 0)
-  if (hasLooseRemaining && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'loosepicking', 'scan'))
+  const tripOpen = gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED'
+  // TỐI ƯU TUYẾN (user 14/09 "mở 1 nút và hiện lên con đường đi lấy, và quét được luôn ở đó"; đổi tên
+  // từ "Theo vị trí" 15/09 — tên cũ nói CHỖ, việc thật của màn là sắp THỨ TỰ đi sao cho ngắn nhất):
+  // nút CHÍNH của người nhặt lẻ — đường đi từ cửa qua từng ô, mã phải lấy ở mỗi ô, quét ngay dưới.
+  if (allLooseItems.some(i => itemLooseProgress(i).remaining > 0) && tripOpen)
     actionItems.push({
-      key: 'scan-order', icon: QrCode, label: 'Quét QR',
+      key: 'route', icon: MapPin, label: 'Tối ưu tuyến',
+      tip: 'Tối ưu tuyến — đường đi ngắn nhất từ cửa qua từng ô lấy hàng, quét ngay tại đó',
+      primary: true, variant: 'default',
+      onClick: () => { unlockAudio(); setShowRoute(true) },
+    })
+  if (hasLooseRemaining && tripOpen && can(perms, 'loosepicking', 'scan'))
+    actionItems.push({
+      key: 'scan-order', icon: ScanIcon, label: 'Quét QR',
       tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện của mã đó',
       primary: true, variant: 'default',
       onClick: () => { unlockAudio(); setShowOrderScan(true) },
@@ -585,8 +702,8 @@ export default function LoosePickingDetail() {
   const bandTiles = [
     { label: 'DO',       value: allDOs.length },
     { label: 'Mã hàng',  value: allLooseItems.length },
-    { label: 'Đã nhặt',  value: `${totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalLooseDone > 0 },
-    { label: 'Cần nhặt', value: `${totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
+    { label: 'Đã nhặt',  value: `${totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} ${looseUnitLabel}`, accent: totalLooseDone > 0 },
+    { label: 'Cần nhặt', value: `${totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} ${looseUnitLabel}` },
   ]
   // Khối thông tin đơn — desktop hiện inline; mobile mở POPUP (nút Info trên thanh mảnh).
   const orderInfoJSX = (
@@ -601,7 +718,7 @@ export default function LoosePickingDetail() {
       <span className="flex items-center gap-1">
         <Package className="h-3 w-3 text-slate-400 shrink-0" />
         Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
-        <span className="text-slate-400 ml-0.5">thùng</span>
+        <span className="text-slate-400 ml-0.5">{looseUnitLabel}</span>
       </span>
     </div>
     <ProgressBar scanned={totalLooseDone} target={totalLoose} />
@@ -609,11 +726,18 @@ export default function LoosePickingDetail() {
   )
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    /* Khung card chuẩn như OutboundDetail (user 19/08 "fit màn hình đồng nhất") */
+    <div className="flex flex-col h-full min-h-0 sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {showOrderScan && (
         <GdoScanSheet gdo={gdo} mode="loose" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
       )}
+      {showRoute && !showOrderScan && (
+        <LooseRouteSheet gdo={gdo} canScan={can(perms, 'loosepicking', 'scan')} onClose={() => setShowRoute(false)} />
+      )}
+      <SetDateRuleSheet open={showDateRule} onClose={() => setShowDateRule(false)}
+        targets={dateTargets} warehouseId={gdo.warehouse_id ?? null} />
 
       {/* Mobile: popup thông tin đơn (desktop hiện inline) */}
       <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
@@ -626,16 +750,20 @@ export default function LoosePickingDetail() {
       {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung gọn, cao theo thực tế ── */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
 
-        {/* Row 1: back + code + status + ⓘ + cụm action (1 dòng, không wrap — cụm action bọc shrink-0) */}
-        <div className="flex items-center gap-x-2 gap-y-1.5">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-            <button onClick={() => navigate('/wms/loosepicking')}
+        {/* Row 1: back + code + status + ⓘ + cụm action. Mobile: mã chuyến chiếm NGUYÊN hàng, cụm nút
+            xuống hàng riêng — trang này có HAI nút primary (Tối ưu tuyến + Quét QR) nên hàng không wrap
+            ép mã còn 0 px và bẻ DỌC 20 ký tự, header cao 300 px (đo 360/390 ngày 21/09; Xuất kho đã
+            chữa cùng bệnh 02/09 bằng đúng khuôn này). */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 max-sm:w-full max-sm:flex-none">
+            <button onClick={() => navigate(backTarget('/wms/loosepicking'))}
               className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </button>
             <Scissors className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-            <span className="font-mono font-semibold text-sm truncate min-w-0">{gdo.group_code}</span>
-            <Badge status={gdo.status} />
+            {/* Mã đơn = ĐỊNH DANH — mobile xuống dòng hiện đủ, không che "…" (đồng bộ Xuất 24/08) */}
+            <span className="font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0">{gdo.group_code}</span>
+            <OutboundStatusBadge status={gdo.status} />
             <button
               onClick={() => pinned
                 ? unpin(gdo.id)
@@ -706,6 +834,7 @@ export default function LoosePickingDetail() {
         <ItemsTable doRecords={allDOs} gdoId={id!} expandedItemIds={expandedItemIds} toggleExpand={toggleExpand}
           warehouseId={gdo.warehouse_id} deliveryDate={gdo.delivery_date} />
       </div>
+     </div>
     </div>
   )
 }

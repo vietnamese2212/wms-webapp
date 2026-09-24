@@ -31,7 +31,8 @@ function countMatches(roots, exts, test, sampleOut) {
     for (const f of filesOf(root, exts)) {
       const lines = readFileSync(f, 'utf8').split(/\r?\n/)
       lines.forEach((line, i) => {
-        if (test(line)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+        // truyền cả đường dẫn: có luật cần MIỄN chính file chứa luật (vd utils/putaway.ts)
+        if (test(line, f)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
       })
     }
   }
@@ -43,6 +44,293 @@ function countMatches(roots, exts, test, sampleOut) {
 // kho (Bàu Bàng 1.517 = 616KB/lần + BE quét InventoryEntry chunk 300 để tính used_slots).
 // Hợp lệ khi có `limit` (typeahead) hoặc `ids` (tra nhãn giá trị đang chọn).
 // Bỏ qua chính file định nghĩa hook; đọc cả khối tham số nhiều dòng (ngoặc cân bằng).
+// MỘT symbol quét cho toàn app (components/shared/ScanIcon.tsx). Hai kiểu vi phạm:
+//   a) dùng lại lucide `ScanLine`/`ScanBarcode`/`ScanQrCode` (3 tên này KHÔNG có nghĩa nào khác)
+//   b) `QrCode` trên dòng nói về việc QUÉT (`Quét…`, `onScan`) — QrCode chỉ dành cho TEM QR
+function countScanIconDivergence(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.ts', '.tsx'])) {
+    if (f.endsWith(`shared${sep}ScanIcon.tsx`)) continue
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\{\/\*)/.test(line)) return   // ghi chú (kể cả ghi chú JSX) không tính
+      const raw = /\b(ScanLine|ScanBarcode|ScanQrCode)\b/.test(line)
+      const qrAsScan = /\bQrCode\b/.test(line) && /Quét|onScan|handleScan/.test(line)
+      if (raw || qrAsScan) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+    })
+  }
+  return n
+}
+
+/**
+ * Trang chi tiết mở bằng id KHÔNG CÒN (link cũ / bản ghi vừa bị xoá) phải cho người dùng lối ra.
+ *
+ * Bắt khối `return` sớm có câu "không tìm thấy / đã bị xoá / link đã cũ" mà TRỌN khối không chứa
+ * `<Link` (mẫu chuẩn: câu tiếng Việt + `<Link to="/…">← Về …</Link>`). Chỉ soi `frontend/src/pages`
+ * — form/dialog báo lỗi tại chỗ thì đã có nút Đóng của chính nó, không phải ngõ cụt.
+ * `navigate(...)` trong cùng khối cũng được chấp nhận (trang tự quay về danh sách).
+ */
+function countDeadEndReturns(sampleOut) {
+  const MSG = /không tìm thấy|đã bị xóa|đã bị xoá|link đã cũ|không tồn tại/i
+  // CHỈ xét lối thoát sớm "không có bản ghi": `if (isError …) return` / `if (!order) return` …
+  // (không đụng dropdown "Không tìm thấy", banner lỗi trong form, hay nhánh xử lý ảnh).
+  // `return` phải TRẢ VỀ GIAO DIỆN ngay trên dòng guard (`return (` hoặc `return <div…>`) — đó mới
+  // là màn hình người dùng nhìn thấy; `if (!order) return` trần bên trong một hàm xử lý không tính.
+  const GUARD = /\bif\s*\([^)]*(isError|isNotFound|notFound|![A-Za-z_$]*(order|gdo|data|plan|sheet|entry|record|voucher|run|task)\b)[^)]*\)\s*return\s*(\(|<)/i
+  let n = 0
+  for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return
+      if (!GUARD.test(line)) return
+      // Khối = ĐÚNG câu trả về này: một dòng nếu JSX đóng ngay trên dòng đó, ngược lại gom tới khi
+      // ngoặc cân bằng (tối đa 14 dòng). Gom bừa 14 dòng sẽ lấn sang thân trang bên dưới — nơi
+      // gần như luôn có `navigate(` — và luật tự vô hiệu hoá chính nó (đo 06/09 khi nghiệm thu).
+      let block = line
+      if (!/<\/\w[^>]*>\s*$/.test(line)) {
+        let depth = 0
+        for (let k = i; k < Math.min(i + 14, lines.length); k++) {
+          if (k > i) block += '\n' + lines[k]
+          for (const c of lines[k]) { if (c === '(') depth++; else if (c === ')') depth-- }
+          if (k > i && depth <= 0) break
+        }
+      }
+      if (!MSG.test(block)) return
+      if (/<Link\b|navigate\s*\(|<a\s+href|to=["'`]\//.test(block)) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
+
+// HOOK GỌI SAU LỆNH RETURN SỚM — luật React lúc CHẠY, tsc và eslint hiện tại KHÔNG bắt.
+// Đo thật 10/09: `useDirectedBoard` + `useMemo` của trang chuyến bị đặt DƯỚI `if (isLoading || !gdo)
+// return <skeleton/>`. Lần render đầu chuyến chưa về nên hàm thoát sớm; lần sau chạy tiếp và gọi
+// THÊM hook ⇒ "Rendered more hooks than during the previous render" ⇒ TOÀN BỘ trang chuyến TRẮNG
+// (mọi chuyến, không riêng chuyến nào), trong khi tsc/build/QA API đều xanh — chỉ mở trang mới thấy.
+// Nhận diện theo lối viết 2-space của repo: thân hàm ở 2 space, `return` trong nhánh `if` top-level
+// (thụt ≥4) là return SỚM; sau đó bất kỳ lời gọi `useXxx(` nào cũng là vi phạm.
+/**
+ * VIỆC NỀN ghi lỗi với status 500 CỨNG — quá tải bị xử như app hỏng ⇒ digest dựng cờ đỏ và GỬI EMAIL
+ * trong khi app vẫn chạy. Đo thật 15/09: rule EXPIRY chạm trần câu lệnh lúc bộ kiểm chạy ⇒ 2 dòng
+ * `ALERT_RULE_FAILED` 500. Đường đi qua `fail()` đã dịch 57014 → 503 từ 07/09; đường NỀN thì chưa,
+ * nên luật phải gác riêng: dùng `recordBackgroundFailure(...)` (tự phân biệt quá tải/hỏng thật).
+ * Miễn trừ: chính `utils/response.ts` (nơi định nghĩa) và lưới cuối `app.ts` (UNCAUGHT = hỏng thật).
+ */
+/**
+ * NHÓM CẤU HÌNH CÙNG KHU VỰC PHẢI ĐỨNG LIỀN NHAU, KHU VỰC THEO THỨ TỰ CỐ ĐỊNH XUẤT → NHẬP (user chốt 16/09:
+ * "đưa các hạng mục setting giống nhau về 1 khu vực — rule phải là theo khu vực kể cả khi xoá, thêm mới").
+ * Đo 16/09: form Kho có XUẤT · XUẤT · [XUẤT×3 · NHẬP×2 trong StrategyFields] · XUẤT (Quy định date theo
+ * khách hàng) — nhóm XUẤT mới thêm 11/09 rơi xuống dưới hai nhóm NHẬP vì ai viết sau cứ nối vào cuối.
+ * Quét theo TỪNG FILE .tsx: chuỗi khu vực theo thứ tự xuất hiện của `area="XUẤT"|"NHẬP"` (SettingsGroup)
+ * và của hai component chiến thuật (`<OutboundStrategyFields` = XUẤT · `<InboundStrategyFields` = NHẬP ·
+ * `<StrategyFields` = XUẤT rồi NHẬP). Vi phạm = một khu vực xuất hiện lại sau khi đã sang khu vực khác,
+ * hoặc NHẬP đứng trước XUẤT. Mỗi FORM một chuỗi: hai form trong cùng file được tách bằng dòng `</FormSheet>`.
+ */
+function countSettingsAreaInterleaved(sampleOut) {
+  const ORDER = ['XUẤT', 'NHẬP']
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
+    const src = readFileSync(f, 'utf8')
+    if (!/area="(XUẤT|NHẬP)"|StrategyFields/.test(src)) continue
+    for (const [fi, form] of src.split(/<\/FormSheet>/).entries()) {
+      const seq = []
+      const re = /area="(XUẤT|NHẬP)"|<(Outbound|Inbound)?StrategyFields\b/g
+      let m
+      while ((m = re.exec(form)) !== null) {
+        if (m[1]) seq.push(m[1])
+        else if (m[2] === 'Outbound') seq.push('XUẤT')
+        else if (m[2] === 'Inbound') seq.push('NHẬP')
+        else seq.push('XUẤT', 'NHẬP')
+      }
+      const compact = seq.filter((a, i) => a !== seq[i - 1])   // gộp liền kề cùng khu
+      const bad = compact.some((a, i) => compact.indexOf(a) !== i)                 // khu quay lại
+        || compact.some((a, i) => i > 0 && ORDER.indexOf(a) < ORDER.indexOf(compact[i - 1]))  // NHẬP trước XUẤT
+      if (bad) {
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${rel} (form #${fi + 1}): ${seq.join(' → ')}`)
+      }
+    }
+  }
+  return n
+}
+
+// CỬA CHUYỂN Ô PALLET MÀ KHÔNG GHI SỔ (18/09) — lớp lỗi "hai cửa cùng một sổ mà khác luật".
+// 17/09 dựng `services/palletMoveLog.ts` với lời hứa "MỌI cửa đổi ô của pallet gọi CHUNG hàm này",
+// nhưng chỉ nối 3 cửa. Đo 18/09: 5 cửa gọi RPC chuyển ô, 2 cửa KHÔNG ghi dòng nào —
+//   · outboundController — chỗ đặt PHẦN DƯ khi quét xuất (pallet bị "mổ" rồi mang sang ô khác)
+//   · fillController     — quét thực hiện lệnh fill (hạ pallet từ kệ xuống ô nhặt lẻ)
+// tức đúng hai lần chuyển ô THƯỜNG XUYÊN NHẤT trong ca lại vắng mặt khỏi sổ. Ratchet cũ
+// `location_write_without_move_rpc` chỉ hỏi "có đi qua RPC không", KHÔNG hỏi "có để lại vết không"
+// ⇒ lưới thủng đúng chỗ có bug. Cả hai RPC đều KHÔNG tự ghi `StocktakeLog` (đã soi prosrc).
+// Baseline 0: file nào gọi RPC chuyển ô thì phải gọi `logPalletMoves` trong CHÍNH file đó.
+// Cửa THỨ SÁU lộ ra ngay sau khi vá 5 cửa đầu: `palletOpsController` DỒN pallet kéo tem con sang ô
+// của tem đích bằng cách ghi THẲNG `location_id` (không qua RPC) ⇒ bản ratchet đầu, vốn chỉ soi lời
+// gọi RPC, không nhìn thấy. Nên câu hỏi phải là "cửa này có ĐỔI Ô pallet không", không phải "cửa này
+// có gọi RPC không" — bắt cả hai hình dạng.
+function countMoveWithoutLedger(sampleOut) {
+  let n = 0
+  const MOVE_RPC = /rpc\(\s*['"](move_pallets_to_location|fill_scan_apply)['"]/
+  // ghi thẳng cột: `.update({ … location_id: … })` trên InventoryEntry
+  const RAW_WRITE = /\.update\(\s*\{[^}]*\blocation_id\s*:/
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
+    if (rel === 'backend/src/services/palletMoveLog.ts') continue
+    const src = readFileSync(f, 'utf8')
+    const lines = src.split(/\r?\n/)
+    const hit = lines.findIndex(l => !/^\s*(\/\/|\*|\/\*)/.test(l) && (MOVE_RPC.test(l) || RAW_WRITE.test(l)))
+    if (hit < 0) continue
+    if (/\blogPalletMoves\s*\(/.test(src)) continue
+    n++
+    if (sampleOut && sampleOut.length < 5) sampleOut.push(`${rel}:${hit + 1}`)
+  }
+  return n
+}
+
+function countBackgroundError500(sampleOut) {
+  let n = 0
+  const SKIP = ['backend/src/utils/response.ts', 'backend/src/app.ts']
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const rel = f.slice(ROOT.length + 1).replace(/\\/g, '/')
+    if (SKIP.includes(rel)) continue
+    const src = readFileSync(f, 'utf8')
+    // gọi recordServerError(...) mà đối số status là literal 500 (có thể xuống dòng)
+    const re = /recordServerError\s*\(\s*'be'\s*,[\s\S]{0,400}?,\s*500\s*,/g
+    let m
+    while ((m = re.exec(src)) !== null) {
+      n++
+      if (sampleOut && sampleOut.length < 5)
+        sampleOut.push(`${rel}:${src.slice(0, m.index).split(/\r?\n/).length}`)
+    }
+  }
+  return n
+}
+
+/** Phần đứng SAU `if (…)` trên cùng dòng, ở mức thụt 2 dấu cách của thân hàm component.
+ *  null = dòng này không phải mở đầu một `if` · '(' = điều kiện chưa đóng (thân ở dòng sau)
+ *  '' = đóng rồi mà không có gì theo sau (thân ở dòng sau) · '{' = mở khối · còn lại = câu lệnh MỘT DÒNG. */
+function ifTailOf(line) {
+  const m = line.match(/^ {2}if\s*\(/)
+  if (!m) return null
+  let d = 0, i = m[0].length - 1
+  for (; i < line.length; i++) {
+    if (line[i] === '(') d++
+    else if (line[i] === ')' && --d === 0) break
+  }
+  return d !== 0 ? '(' : line.slice(i + 1).trim()
+}
+
+function countHookAfterEarlyReturn(sampleOut) {
+  const HOOK = /(?:^|[\s=({,])use[A-Z]\w*\s*\(/
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    let inFn = false, earlyAt = 0, inIf = false
+    lines.forEach((line, i) => {
+      if (/^(export default function|export function|function)\s+[A-Z]/.test(line)) { inFn = true; earlyAt = 0; inIf = false; return }
+      if (!inFn) return
+      if (/^\}/.test(line)) { inFn = false; return }
+      // ⚠ `if (cond) foo()` MỘT DÒNG không mở khối nào. Bản cũ bật `inIf` cho MỌI dòng bắt đầu bằng
+      // `  if (`, mà cờ đó chỉ tắt khi gặp `  }` — thứ một-dòng không bao giờ có ⇒ cờ kẹt bật tới hết
+      // hàm, rồi `return` thụt ≥4 dấu cách của một callback (useMemo, map, sort…) bị đọc thành RETURN
+      // SỚM và mọi hook sau đó đều đỏ. Đo 24/09 ở Dispatch.tsx: 5 vi phạm ma, 0 cái là lỗi thật —
+      // cổng kêu oan thì người ta học cách bỏ qua cổng. Nay chỉ bật `inIf` khi thân if nằm ở DÒNG SAU.
+      if (!earlyAt) {
+        const tail = ifTailOf(line)
+        // mở khối, hoặc điều kiện/thân còn ở dòng sau ⇒ vẫn theo dõi; CÓ câu lệnh ngay sau `)` ⇒ hết.
+        if (tail !== null) inIf = tail === '' || tail === '{' || tail === '('
+      }
+      if (inIf && /^\s{4,}return\b/.test(line)) { earlyAt = i + 1; inIf = false }
+      if (inIf && /^ {2}\}/.test(line)) inIf = false
+      if (!earlyAt && /^ {2}if\s*\(.*\)\s*return\b/.test(line)) earlyAt = i + 1
+      if (earlyAt && HOOK.test(line) && !/^\s*(\/\/|\*)/.test(line)) {
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1} (return sớm dòng ${earlyAt})`)
+      }
+    })
+  }
+  return n
+}
+
+/**
+ * Badge %Date phải luôn nhận CẢ mức kế thừa từ SAP (`date_required`).
+ *
+ * Bug 10/09: dòng có `date_required` (cột "Date (%)" của VL06O) được bộ sinh việc coi là ĐÃ CHỐT và
+ * chia hàng theo mức đó, ô tổng/bộ lọc cũng đếm là "Đã chốt" — nhưng badge trên bảng vẫn ghi "Chưa
+ * chốt" vì `date_rule` là null. Một màn hình kể hai câu chuyện trái ngược. Gọi `dateRuleLabel` mà
+ * quên tham số thứ ba là dựng lại đúng mâu thuẫn đó.
+ */
+function countDateRuleLabelMissingSap(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/export function dateRuleLabel/.test(line)) return
+      for (const m of line.matchAll(/dateRuleLabel\(([^)]*)\)/g)) {
+        let depth = 0, commas = 0
+        for (const ch of m[1]) {
+          if ('([{'.includes(ch)) depth++
+          else if (')]}'.includes(ch)) depth--
+          else if (ch === ',' && depth === 0) commas++
+        }
+        if (commas < 2) {
+          n++
+          if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+        }
+      }
+    })
+  }
+  return n
+}
+
+/**
+ * ĐỘNG CƠ KHÔNG CÓ CÔNG TẮC — hook MUTATION khai trong `api/hooks.ts` mà KHÔNG màn nào gọi.
+ *
+ * Đường ghi đủ cả route + quyền + hook nhưng người dùng KHÔNG có nút nào bấm ⇒ tính năng chỉ mở
+ * được bằng cách gọi API tay. Dính HAI LẦN trong hai ngày: cờ `work_mode` (đợt 1c ra máy mà quên ô
+ * chọn — user hỏi mới lộ) và `useReplanGdo` (chuyến đang xuất 0 việc, không có cửa phục hồi nào).
+ * tsc không bắt được vì hook được EXPORT nên "có người dùng" về mặt kiểu.
+ * Chỉ đếm hook MUTATION (nút bấm); hook đọc có thể dùng gián tiếp qua queryKey nên bỏ qua.
+ */
+function countMutationHookWithoutButton(sampleOut) {
+  const HOOKS_FILE = join(ROOT, 'frontend/src/api/hooks.ts')
+  let src = ''
+  try { src = readFileSync(HOOKS_FILE, 'utf8') } catch { return 0 }
+  const names = [...src.matchAll(/export function (use[A-Za-z0-9_]+)/g)].map(m => m[1])
+  const muts = names.filter(n => {
+    const i = src.indexOf(`export function ${n}`)
+    const end = src.indexOf('\nexport ', i + 10)
+    return /useMutation\(/.test(src.slice(i, end < 0 ? undefined : end))
+  })
+  const all = filesOf('frontend/src', ['.ts', '.tsx'])
+    .filter(f => f !== HOOKS_FILE)
+    .map(f => readFileSync(f, 'utf8')).join('\n')
+  let n = 0
+  for (const name of muts) {
+    if (new RegExp(`\\b${name}\\b`).test(all)) continue
+    n++
+    if (sampleOut && sampleOut.length < 8) sampleOut.push(`api/hooks.ts: ${name} — không màn nào gọi`)
+  }
+  return n
+}
+
+// Màn nào ĐỌC danh mục vị trí (bất kể để chọn hay để lọc) thì phải có nút quét tem vị trí.
+// Đếm theo FILE, không theo dòng: 1 file thiếu = 1 vi phạm, đủ để CI chặn mà không nhiễu.
+function countLocPickerWithoutScan(sampleOut) {
+  const HOOKS = /\b(useLocationsReal|usePickFaceLocations|useLocationsByFlag|useLocationsFull|useLocationsPaged)\s*\(/
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    if (!HOOKS.test(src)) continue
+    if (src.includes('LocationScanButton')) continue
+    n++
+    if (sampleOut && sampleOut.length < 5) sampleOut.push(f.slice(ROOT.length + 1))
+  }
+  return n
+}
+
 function countCatalogueFullLoad(sampleOut) {
   const HOOKS = ['useLocationsReal', 'useMaterials']
   let n = 0
@@ -98,7 +386,145 @@ function countColWidthMismatch(roots, sampleOut) {
 }
 
 // ── Các luật — mỗi luật là 1 phép đếm thuần văn bản, KHÔNG heuristics mờ (mờ = báo oan = bị tắt) ──
+/**
+ * `round(<biểu thức>, n) / <mẫu số>` — LÀM TRÒN TỬ SỐ RỒI MỚI CHIA.
+ * Đặt lệch một dấu ngoặc là phép làm tròn mất tác dụng hoàn toàn: tử số thường đã là số nguyên nên
+ * `round(…, 1)` không đổi gì, rồi chia xong ra 16-18 chữ số thập phân. Bắt được 30/08 ở 5 ô phần
+ * trăm của `service_level` (2/3 chuyến đúng hạn trả `66.6666666666666667` thay vì `66.7`).
+ * Giao diện che được bằng `.toFixed(1)` nên lỗi sống rất lâu — phải bắt ở NGUỒN.
+ * Khớp ngoặc thật (không phải regex thuần) để `round(a / b, 3)` — chia BÊN TRONG, hoàn toàn đúng —
+ * không bị báo oan.
+ */
+function roundBeforeDivide(line) {
+  if (/^\s*--/.test(line)) return false             // dòng chú thích: bản vá cần TRÍCH lại dạng sai để giải thích
+  for (let i = line.search(/\bround\s*\(/i); i >= 0;) {
+    let d = 0, j = line.indexOf('(', i)
+    for (; j < line.length; j++) {
+      if (line[j] === '(') d++
+      else if (line[j] === ')' && --d === 0) break
+    }
+    if (d !== 0) return false                       // ngoặc vắt sang dòng khác — bỏ qua, không đoán
+    if (/^\s*\//.test(line.slice(j + 1))) return true
+    const rest = line.slice(j + 1)
+    const k = rest.search(/\bround\s*\(/i)
+    i = k < 0 ? -1 : j + 1 + k
+  }
+  return false
+}
+
 const RULES = [
+  // Chuyến sang "Đang xuất" CHỈ qua startGDO / 2 đường Xuất luôn / uncomplete — vì startGDO là nơi duy nhất
+  // chấp hành 3 rule (cổng · cân · CỬA có sức chứa xe, 09/09). Viết thêm một chỗ `status: 'IN_PROGRESS'` là
+  // mở đường "Đang xuất" không qua rule nào (bug 01/08 PATCH status tự do đã bịt; ratchet gác không tái sinh).
+  // Baseline 8 (đều trong outboundController): 4 điểm CHUYẾN = quickExportGDO · quickExportExistingGDO · startGDO ·
+  // uncompleteGDO, + 4 điểm dòng hàng/DO đi kèm (item/DO status theo chuyến). Mẫu bắt rộng có chủ đích: thêm bất kỳ
+  // chỗ nào là phải giải thích trước khi nâng baseline.
+  {
+    key: 'settings_area_interleaved',
+    label: 'form cấu hình có nhóm cùng KHU VỰC (XUẤT/NHẬP) không đứng liền nhau hoặc NHẬP đứng trước XUẤT — nhóm mới nối vào cuối làm rối khu vực',
+    count: countSettingsAreaInterleaved,
+  },
+  {
+    key: 'background_error_500_hardcoded',
+    label: 'việc NỀN ghi error_logs với status 500 cứng — quá tải bị xử như app hỏng ⇒ cờ đỏ + email báo oan; dùng recordBackgroundFailure()',
+    count: countBackgroundError500,
+  },
+  {
+    key: 'actor_column_from_body',
+    label: 'cột vết (*_by / actor_id / counted_by) gán THẲNG từ trường của thân request — phải qua resolveActorId() để rơi về người đăng nhập khi client không gửi',
+    // Lớp C31 đã nổ BỐN lần: `scanned_by` (17/09) · `actor_name` điều chỉnh tồn (18/09) ·
+    // `ProductionImport.updated_by` (18/09, còn GHI NULL ĐÈ) · và 7 cửa còn lại của Tồn kho/Nhập kho
+    // chỉ lộ ra khi user hỏi "còn gì chưa fix". Ba lần đầu đều vá thủ công rồi quên quét phần còn
+    // lại — đúng lý do phải máy hoá. Form luôn gửi nên THỬ TAY KHÔNG BAO GIỜ THẤY; chỉ bundle cũ,
+    // script, tích hợp mới lộ. Baseline 0.
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\b(updated_by|created_by|actor_id|counted_by|scanned_by|stocktake_by|operated_by)\b\s*[:=]\s*(employee_id|req\.body|body)\b/.test(line), s),
+  },
+  {
+    key: 'entry_decimal_beside_unit_label',
+    label: 'số THÙNG THẬP PHÂN (qtyEntryText) in kèm nhãn đơn vị của MỘT mã — luật base-unit đòi qtyLabel "N thùng + M hộp"',
+    // Lớp C2 tái phát 19/09 khi soi màn bằng vai thủ kho: cột "Vị trí lấy" in "76,438th" cho pallet
+    // mà bảng Tối ưu tuyến in "76 thùng + 21 hộp"; dialog tra tồn in "16.345,667 thùng". 0,438 thùng
+    // là 21 hộp — người kho không đọc ra được, và hai màn nói hai số cho cùng một pallet. qtyEntryText
+    // CHỈ dành cho cột số hẹp có tiêu đề "Thùng" hoặc ô tổng cross-mã "SL (quy đổi)"; hễ đứng cạnh
+    // nhãn đơn vị (qtyUnitLabel / chữ "th"/"thùng") là đang in số của một mã ⇒ phải qtyLabel. Baseline 0.
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && (/qtyEntryText\([^)]*\)[^\n]*qtyUnitLabel\(/.test(line) || /qtyEntryText\([^)]*\)\}\s*(th|thùng)\b/.test(line)), s),
+  },
+  {
+    key: 'empty_row_centered_in_wide_td',
+    label: 'dòng "trống" viết tay trong <td colSpan> — bảng rộng cuộn ngang thì câu chữ căn giữa nằm NGOÀI màn 360 px; dùng <TableEmptyRow>',
+    // Đo 19/09 (vai thủ kho, 360 px): Fill hàng td rỗng rộng 1.646 px, Lịch sử chuyển vị trí 1.170 px ⇒
+    // "Không mã nào thiếu…" đứng ở x≈820, người dùng thấy bảng TRẮNG. 12 trang cùng khuôn đã chuyển
+    // sang components/shared/TableEmptyRow.tsx (sticky-left) — lượt 2 cùng ngày quét hết 56 dòng (kể cả
+    // "Đang tải…" và khối nhiều dòng) nên baseline 0.
+    // Bắt theo THẺ MỞ (`colSpan` + `text-center`), KHÔNG theo câu chữ: bản đầu bắt "Không/Chưa" trên cùng
+    // dòng nên mù với khối viết nhiều dòng (tab Đề xuất Fill hàng, Quy định date, Cảnh báo) và cả dòng
+    // "Đang tải…" — cùng bệnh "phép kiểm mù theo chiều" (07/09).
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line, f) => !/TableEmptyRow\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && /<(TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*\btext-center\b/.test(line), s),
+  },
+  {
+    key: 'move_without_ledger',
+    label: 'cửa ĐỔI Ô pallet (rpc move_pallets_to_location / fill_scan_apply, hoặc ghi thẳng location_id) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
+    count: countMoveWithoutLedger,
+  },
+  {
+    key: 'hook_after_early_return',
+    label: 'hook React gọi SAU lệnh return sớm — render đầu thoát sớm, render sau gọi thêm hook ⇒ TRẮNG TRANG (tsc không bắt được)',
+    count: countHookAfterEarlyReturn,
+  },
+  // Baseline = 14 hook mutation cũ chưa nối nút (phần lớn là bản lẻ đã bị bản HÀNG LOẠT thay thế —
+  // dead code có sẵn, luật CLAUDE.md #3 nói ghi chú chứ không tự xoá). Ratchet chặn ĐẺ THÊM:
+  // viết route + quyền + hook rồi quên nút là CI đỏ ngay, không chờ user hỏi "cái này ở đâu?".
+  {
+    key: 'daterule_label_without_sap_level',
+    label: 'gọi dateRuleLabel() thiếu mức kế thừa từ SAP (date_required) — badge ghi "Chưa chốt" trong khi bộ lọc/ô tổng đếm là ĐÃ CHỐT',
+    count: countDateRuleLabelMissingSap,
+  },
+  {
+    key: 'mutation_hook_without_button',
+    label: 'hook MUTATION không màn nào gọi — đường ghi có route+quyền+hook nhưng người dùng KHÔNG có nút nào bấm (đã dính work_mode + useReplanGdo)',
+    count: countMutationHookWithoutButton,
+  },
+  // Bảng Việc cần làm sắp xếp theo đường đi (xe đứng bãi → gần cửa → tầng cao), còn `seq` là số thứ
+  // tự đếm theo TỪNG chuyến và một dòng bảng gom nhiều việc cùng ô (lấy min). In thẳng `seq` ra cột
+  // STT ⇒ người đi theo thứ tự đọc ra 1, 2, 3, 5, 6 rồi lại 1, 2 của chuyến khác. Số thứ tự trên màn
+  // phải đánh lại theo đúng trình tự dòng đang hiện (user nêu 10/09).
+  {
+    key: 'directed_seq_rendered_raw',
+    label: 'in thẳng seq của việc ra cột STT — số nhảy cóc và lặp giữa các chuyến, người đi theo thứ tự hết tin vào thứ tự',
+    count: (s) => countMatches(['frontend/src'], ['.tsx'], l => /\{\s*r\.seq\s*\}/.test(l) && !/^\s*\/\//.test(l), s),
+  },
+  {
+    key: 'gdo_in_progress_written_directly',
+    label: "ghi status:'IN_PROGRESS' ngoài 8 điểm đã biết — Bắt đầu chuyến phải đi qua startGDO (rule cổng/cân/cửa)",
+    count: (s) => countMatches(['backend/src'], ['.ts'], l => /status:\s*'IN_PROGRESS'/.test(l) && !/^\s*\/\//.test(l), s),
+  },
+  // Baseline 5 = 5 dòng trong `20260828d_service_level.sql`. File migration ĐÃ APPLY là lịch sử,
+  // không sửa lại — bản vá nằm ở `20260830_service_level_fix.sql`. Ratchet gác code MỚI: viết thêm
+  // một chỗ nữa là 6 → CI đỏ.
+  {
+    key: 'sql_round_before_divide',
+    label: 'làm tròn TỬ SỐ rồi mới chia — round(x, n) / y khiến phép làm tròn vô tác dụng (ý định là round(x / y, n))',
+    count: (s) => countMatches(['backend/migrations'], ['.sql'], roundBeforeDivide, s),
+  },
+  // `format('… LIKE %L', <giá trị người dùng>)` — %L chống TIÊM SQL nhưng KHÔNG đụng tới '%' và '_'
+  // của chính LIKE: gõ '%%%%' là quét TRỌN kho, '_' (có khắp mã pallet V1) thành "1 ký tự bất kỳ" ⇒
+  // gom nhầm lô trong hồ sơ THU HỒI. Vá 30/08 (20260830b) rồi 01/09 viết lại lot_trace ĐÁNH RƠI
+  // escape — gói QA 07 đỏ lại trên CI đêm 01/09 (email báo lỗi tới user). Bug chết hai lần = ratchet:
+  // giá trị ghép vào LIKE/ILIKE phải qua `like_esc(...)` (hàm SQL, 20260902) hoặc biến `v_like`.
+  // Miễn: dòng chú thích; mẫu `to_char(…) || '_%'` (ký tự đại diện CÓ CHỦ ĐÍCH, không phải input).
+  // Baseline 14 = các file migration cũ (lịch sử, không sửa) — chỉ cấm TĂNG.
+  {
+    key: 'sql_like_unescaped',
+    label: "ghép giá trị vào LIKE/ILIKE qua format(%L) mà KHÔNG escape '%' '_' — phải dùng like_esc(...) / v_like (bug '%%%%' quét trọn kho, tái phát 01/09)",
+    count: (s) => countMatches(['backend/migrations'], ['.sql'],
+      l => /I?LIKE %L/.test(l) && !/^\s*--/.test(l) && !/like_esc\(|\bv_like\b|to_char\(/.test(l), s),
+  },
   // `booked_count` là CACHE và DB KHÔNG có trigger nào — xoá dòng xe mà quên `recount_slot` là khung
   // giờ kẹt "Đầy" vĩnh viễn (đo thật 04/08). Mọi chỗ xoá mới PHẢI đi qua `deleteVehicleSlotsAndRecount`.
   // Baseline = 2: bookingGuards (chính helper) + vehicleSlotController.deleteVehicleSlot (đã recount tại chỗ).
@@ -107,6 +533,28 @@ const RULES = [
     label: 'xoá TmsVehicleSlot trực tiếp — phải dùng deleteVehicleSlotsAndRecount (không đếm lại = khung giờ kẹt "Đầy")',
     count: (s) => countMatches(['backend/src'], ['.ts'],
       l => /from\('TmsVehicleSlot'\)[\s\S]*\.delete\(/.test(l), s),
+  },
+  // Tab Hệ thống (WMSSettings): mỗi ô cấu hình là 1 state `draftX`, nút Lưu sáng theo `const dirty = …`.
+  // Thêm ô mới mà quên đưa `xDirty` vào dòng dirty ⇒ đổi riêng ô đó nút Lưu vẫn MỜ, người dùng
+  // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao). Không lỗi biên dịch, tsc xanh.
+  // Đếm số `draftX` không có `xDirty` trong dòng dirty. Baseline 0.
+  {
+    key: 'settings_draft_not_in_dirty',
+    label: 'WMSSettings: state draftX có ô nhập nhưng xDirty KHÔNG nằm trong `const dirty =` — nút Lưu mờ khi chỉ đổi ô đó',
+    count: (s) => {
+      const f = join(ROOT, 'frontend/src/pages/wms/WMSSettings.tsx')
+      const src = readFileSync(f, 'utf8')
+      const dirtyLine = (src.match(/const dirty\s*=\s*([^\n]+)/) || [])[1] || ''
+      let n = 0
+      for (const m of src.matchAll(/const \[(draft(\w+)),\s*setDraft\w+\]/g)) {
+        const low = m[2][0].toLowerCase() + m[2].slice(1)
+        if (!new RegExp(`\\b${low}Dirty\\b`).test(dirtyLine)) {
+          n++
+          if (s && s.length < 5) s.push(`frontend/src/pages/wms/WMSSettings.tsx — ${m[1]} thiếu ${low}Dirty trong const dirty`)
+        }
+      }
+      return n
+    },
   },
   {
     key: 'col_defaults_length_mismatch',
@@ -150,6 +598,34 @@ const RULES = [
     key: 'band_label_thung_ton',
     label: `nhãn ô tổng cross-mã ghi "Thùng tồn"/"Tổng thùng" — phải QTY_CONVERTED_LABEL "SL (quy đổi)". Baseline 2 = cột per-MÃ ở OutboundDetail/LoosePickingDetail (tách Thùng/Hộp đúng luật base-unit, KHÔNG phải bug — đừng "dọn")`,
     count: (s) => countMatches(['frontend/src'], ['.tsx'], l => /label:\s*['"](Thùng tồn|Tổng thùng)['"]/.test(l), s),
+  },
+  // QUY CÁCH `cartons_per_pallet` LÀ SỐ **THÙNG** — mọi cột/biến số lượng trong app là **BASE**.
+  // Điền quy cách thẳng vào chỗ base mà quên × units_per_carton là lỗi ÂM THẦM (không exception,
+  // chỉ sai đúng bằng hệ số). Đo 06/09: Sổ đóng gói ghi 140 thay 6.720 với pallet không có tem in,
+  // tab Sinh tem ghi 140 còn tab In lại ghi 6.720 ⇒ cùng một cột hai đơn vị, tổng sản lượng trang
+  // thành phép cộng lẫn đơn vị và cờ "lệch SL sổ ↔ kho" báo oan pallet kho nhận ĐÚNG.
+  // Mẫu đúng: `InboundScanSheet` (× qtyFactor) · `inboundController.suggested_cartons` (× qtyFactorOf).
+  {
+    key: 'cpp_used_as_base_qty',
+    label: 'dùng quy cách `cartons_per_pallet` (THÙNG) làm số lượng BASE mà không × units_per_carton — ' +
+           'phải nhân hệ số tại rìa (qtyFactor/qtyFactorOf/upc) như InboundScanSheet',
+    // Chỉ bắt GÁN TRỰC TIẾP quy cách vào field mang nghĩa BASE — gán vào biến trung gian (`const cpp
+    // = effCartonsPerPallet(...)`) rồi nhân sau là hợp lệ, bắt cả nó thì ratchet báo oan và bị vô hiệu.
+    count: (s) => countMatches(['frontend/src', 'backend/src'], ['.ts', '.tsx'],
+      l => /\b(cartons_imported|cartons_override|qty_cartons|suggested_cartons)\s*:[^;]*\bcartons_per_pallet\b/.test(l)
+        && !/units_per_carton|qtyFactor|\bupc\b|qtyFromEntryBase/.test(l)
+        && !/^\s*(\/\/|\*)/.test(l), s),
+  },
+  // 503 = quá tải / chưa sẵn sàng. Từ 06/09 message của 503 ĐI THẲNG tới người dùng (không bị che
+  // như 500) — nhờ vậy câu "thu hẹp KHOẢNG NGÀY / chọn 1 Kho" mới tới nơi. Cái giá: nếu ai đó nhét
+  // message THÔ của Supabase vào một 503 thì tên bảng/cột/constraint lộ ra client. 26 chỗ trả 503
+  // hiện đều là chuỗi tự soạn — luật này giữ nguyên trạng đó.
+  {
+    key: 'raw_error_in_soft_5xx',
+    label: 'trả 503 kèm message THÔ của lỗi (err.message) — 503 KHÔNG bị che nên sẽ lộ schema; ' +
+           'hãy soạn câu tiếng Việt cho người dùng (mẫu QUERY_TIMEOUT_MSG)',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      l => /\b503\b/.test(l) && /\b(err|error|e)\d*\??\.message\b/.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
   },
   {
     key: 'thung_unit_on_aggregate_pages',
@@ -285,9 +761,87 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       (line) => /\.update\(\s*\{[^}]*\blocation_id\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line), s),
   },
+  {
+    key: 'putaway_door_unreviewed',
+    label: 'cửa ghi MỚI đặt pallet vào vị trí (gọi move_pallets_to_location) ngoài 4 cửa ĐÃ soi quy tắc cất hàng',
+    // Bài học 15/08 (đợt D): đợt B gác luật cất hàng ở 4 cửa của Nhập kho rồi coi như xong, trong
+    // khi "Chuyển vị trí hàng loạt" (Tồn kho) vẫn đẩy pallet vào ô CẤM NHẬN HÀNG mà không hỏi luật
+    // câu nào — công tắc "bắt buộc" của kho chỉ gác được một nửa số cửa. Không mechanize được
+    // "đã liệt kê đủ cửa chưa", nhưng mechanize được "có cửa THỨ 5 xuất hiện":
+    //   • inventoryController  — Chuyển vị trí hàng loạt: CÓ gác (guardPutawayBatch)
+    //   • outboundController   — chỗ đặt phần dư khi quét xuất: CÓ gác từ 18/08 (guardPutaway).
+    //     Mang phần dư sang ô KHÁC là một lần cất hàng thật. Ngõ cụt tránh bằng cách khác: "Giữ
+    //     chỗ cũ" KHÔNG bị chấm, nên người quét luôn còn một lối lưu được lượt quét.
+    //   • slottingController   — quét thực hiện kế hoạch: đích do engine chọn, đã loại slot_no_in
+    //   • fillController       — đích BẮT BUỘC là vị trí nhặt lẻ ⇒ luật block_pick_face mà áp vào
+    //     đây thì tự chặn chính mình; Fill có validate riêng
+    // Thêm cửa mới = phải trả lời câu hỏi đó rồi mới thêm file vào danh sách. Baseline 0.
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /rpc\(\s*['"]move_pallets_to_location['"]/.test(line)
+    //   • directedTasks.ts     — "✓ Xong" của việc LOOSE_FEED (10/09): đích BẮT BUỘC là vị trí nhặt
+    //     lẻ do CHÍNH bộ sinh việc chọn (đã lọc theo Loại kho phục vụ + còn sức chứa), y hệt Fill ⇒
+    //     áp `block_pick_face` vào đây là tự chặn chính mình. Sức chứa vẫn được gác: RPC trả FULL thì
+    //     việc VẪN TREO và người bấm được báo đổi chỗ — không có ngõ cụt.
+        && !/(inventoryController|outboundController|slottingController|fillController|directedTasks)\.ts$/.test(file), s),
+  },
   // Overlay quét KEEP-MOUNTED (ẩn bằng CSS `${open ? '' : 'hidden'}`) mà <QRScanner> không truyền
   // `active={open}` = camera CHẠY NGẦM sau khi user đóng (đèn camera sáng, tốn pin, lo ngại riêng
   // tư — user bắt 05/08 ở màn quét Fill). Màn quét unmount khi đóng thì không cần active.
+  // TRẠNG THÁI VIỆC bị đổi từ 6 chỗ (Bắt đầu · quét · bỏ Bắt đầu · huỷ · hoàn thành · nút ✓ Xong).
+  // Mỗi chỗ một bản luật là ĐÚNG khuôn lỗi "4 bản chép tay" của luật luân chuyển (14/08) — nên mọi
+  // đường ghi phải đi qua services/directedTasks.ts. Baseline 0.
+  {
+    key: 'task_status_written_outside_service',
+    label: 'ghi/sửa `wms_tasks` NGOÀI services/directedTasks.ts — trạng thái việc phải có MỘT đường ghi',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /from\(\s*['"]wms_tasks['"]\s*\)/.test(line)
+        && /\.(update|insert|upsert|delete)\(/.test(line)
+        && !/services[\\/]directedTasks\.ts$/.test(file), s),
+  },
+  // %DATE TỰ ĐỘNG PHẢI CÓ MỘT ĐƯỜNG GHI (11/09). Dòng hàng sinh ở 4 chỗ (upload Kế hoạch xuất,
+  // merge chuyến tạm dừng, tạo đơn tay, thêm dòng tay) — mỗi chỗ tự viết thang ưu tiên là đúng khuôn
+  // "4 bản chép tay" của luật luân chuyển. Mọi giá trị `date_rule` máy đặt phải đến từ
+  // services/dateRulePolicy.ts; chỉ `setItemsDateRule` (người chốt tay) được ghi thẳng.
+  // Dấu hiệu người ta TỰ DỰNG một quy tắc %Date ở chỗ mới: gõ thẳng `{ kind: 'MIN_PCT', value: 60 }`.
+  // Nơi hợp lệ chỉ có 2: `dateRulePolicy.ts` (máy áp theo Khách/Kênh) và `directedTasks.ts` (đọc
+  // tương thích mức cũ của VL06O); `parseDateRuleBody` trong outboundController là bộ đọc payload
+  // người chốt tay — baseline giữ đúng số hiện có, không được tăng.
+  {
+    key: 'date_rule_hand_rolled',
+    label: "tự dựng quy tắc %Date ({ kind: 'MIN_PCT'… }) ngoài dateRulePolicy/directedTasks — phải gọi resolveDateRule",
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\{\s*kind\s*:\s*['"](FEFO|MIN_PCT|EXACT|SPLIT)['"]/.test(line)
+        && !/services[\\/](dateRulePolicy|directedTasks)\.ts$/.test(file), s),
+  },
+  // THỨ TỰ LUÂN CHUYỂN KHÔNG PHẢI QUY ĐỊNH DATE (chốt plan đợt 2 §2, dựng lưới 12/09).
+  // Hai khái niệm khác hẳn nhau mà rất dễ lẫn vì cùng họ chữ viết tắt:
+  //   • `date_rule.kind` = YÊU CẦU VỀ DATE của khách — FEFO · MIN_PCT · MIN_DAYS · EXACT · SPLIT.
+  //   • FIFO / LIFO = THỨ TỰ LẤY HÀNG của kho — sống ở `Warehouse.rotation_principle` và
+  //     `warehouse_type_configs`, do `utils/rotation.ts` quyết, KHÔNG phải thứ khách đặt ra.
+  // Nhét FIFO/LIFO vào ô quy định date là hỏng ÂM THẦM: `matchesRule` không có nhánh nào cho chúng
+  // nên dòng hàng đó thành "không pallet nào đạt" ⇒ không sinh việc lấy hàng, hoặc lọt qua cửa gác
+  // như thể đã khai xong. CHECK `date_rule_valid()` ở DB chặn được đường GHI, nhưng lưới này chặn
+  // sớm hơn một nhịp: ngay lúc ai đó gõ ra dòng code. Baseline 0 — chưa từng có chỗ nào.
+  {
+    key: 'rotation_kind_in_date_rule',
+    label: "nhét FIFO/LIFO vào ô quy định date (kind) — đó là THỨ TỰ LẤY HÀNG của kho, không phải yêu cầu date của khách",
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && (/\{\s*kind\s*:\s*['"](FIFO|LIFO)['"]/.test(line)
+            || (/kind/.test(line) && /['"]FEFO['"]/.test(line) && /['"](FIFO|LIFO)['"]/.test(line))), s),
+  },
+  // Dò bản ghi theo TÊN là luật hỏng ÂM THẦM khi ai đó đổi tên (cùng họ với `role_by_vietnamese_name`).
+  // Kho đích của ship-to nay khai tường minh ở `Customer.warehouse_id`; baseline = 2 nhánh dự phòng
+  // còn lại (chuyển kho + tra NCC khi nhập), không được đẻ thêm chỗ nào.
+  {
+    key: 'record_resolved_by_name_ilike',
+    label: 'dò bản ghi theo TÊN (.ilike("name", …)) — đổi tên danh mục là luồng hỏng không báo',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /\.ilike\(\s*['"]name['"]/.test(line), s),
+  },
   {
     key: 'qrscanner_keepmounted_without_active',
     label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',
@@ -315,10 +869,17 @@ const RULES = [
   // Department.is_carrier, migration 20260814_role_flags). Baseline 0.
   {
     key: 'role_by_vietnamese_name',
-    label: "quyết định vai trò bằng so TÊN tiếng Việt ('Lái xe' / 'Đơn vị vận tải') — phải đọc cờ is_driver / is_carrier",
+    label: "quyết định vai trò bằng so TÊN tiếng Việt ('Lái xe' / 'Đơn vị vận tải' / 'lái xe nâng') — phải đọc cờ is_driver / is_carrier / is_forklift_driver",
+    // 18/09 mở rộng bắt 'lái xe nâng': ô chọn lúc Bắt đầu chuyến lọc bằng
+    // `job_title.toLowerCase().includes('lái xe nâng')` suốt từ đợt 1c — đúng lớp lỗi 14/08 nhưng
+    // lưới cũ chỉ liệt kê 2 chuỗi nên nó sống thêm 8 ngày. Nay đọc cờ `JobTitle.is_forklift_driver`.
+    // CHỈ bắt dạng SO SÁNH (=== / .includes), KHÔNG bắt chữ hiển thị (nhãn, placeholder) — cùng một
+    // cụm từ nhưng một bên là luật, một bên là tiếng Việt cho người đọc.
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
-        && /[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line), s),
+        && (/[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line)
+            || /\.includes\(\s*['"]lái xe nâng['"]/i.test(line)
+            || /[=!]==\s*['"]lái xe nâng['"]/i.test(line)), s),
   },
   {
     key: 'rotation_rule_hand_rolled',
@@ -333,9 +894,89 @@ const RULES = [
     // frontend/src/utils/rotation.ts (dòng cũ không có cột rotation_*). Code mới không được tăng.
   },
   {
+    key: 'qa_hold_rule_hand_rolled',
+    label: 'tự viết "pallet có bị QA giữ không" bằng qa_status_id null/not-null — phải qua services/qaStatus.ts (BE) / public.qa_is_hold() (SQL)',
+    // Bug thật 13/09: danh mục QAStatus có mã `OK` = ĐÃ DUYỆT, và cửa QUÉT XUẤT vốn hiểu đúng
+    // (`qa_status.code !== 'OK'`), nhưng 5 chỗ chỉ-đường + 3 RPC thống kê lại coi "có giá trị =
+    // đang giữ" ⇒ cùng một pallet: quét thì xuất được mà kế hoạch bảo "hết hàng". Đo Ba Vì:
+    // Giám sát vận hành đếm 8.760 pallet "kẹt" trong khi chỉ 5 bị giữ thật; 83 mã không chốt
+    // được bất kỳ mức %Date nào. Quét nhập tem V2 TỰ đóng dấu OK nên đơn vị tem `;` mất 100 % tồn.
+    // Miễn 1 file: services/qaStatus.ts (nó LÀ luật). Baseline 0.
+    // 14/09 bắt thêm dạng FE: `!!e.qa_status` / `qa_status !== null` — 5 màn tra tồn dùng nó làm
+    // nhãn "QA giữ" nên pallet đã duyệt OK cũng tím. Miễn thêm utils/qaHold.ts (bản FE của luật).
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && !/services[\\/]qaStatus\.ts$/.test(file)
+        && !/utils[\\/]qaHold\.ts$/.test(file)
+        && (/qa_status_id['"]?\s*,\s*null\s*\)|qa_status_id\b[^\n]*\bIS\s+(NOT\s+)?NULL\b|\bqa_status_id\s*(\?\?\s*null\s*\)\s*)?(!==?|===?)\s*null\b/i.test(line)
+          || /!!\s*[\w.]*\.qa_status\b(?!_id)|\.qa_status\s*(!==?|===?)\s*null\b/.test(line)), s),
+  },
+  {
+    key: 'putaway_rule_hand_rolled',
+    label: 'tự đoán "cất pallet vào ô nào" (has_same_material / slot_no_in / so sức chứa để gợi ý) — phải đi qua utils/putaway (BE) / khối `putaway` do BE trả (FE)',
+    // Cùng họ bug với rotation_rule_hand_rolled, đo 15/08: luật ★ có 3 bản chép tay (BE
+    // sameMaterialLocIds · Inbound.tsx isRecommended · InboundDetail.tsx locRec) và màn quét PDA
+    // thì KHÔNG hiển thị gì, còn cờ Location.slot_no_in ("cấm đưa hàng vào") chỉ Slotting đọc —
+    // luồng nhập vẫn gợi ý cất vào đúng ô bị cấm. Bắt việc ĐỌC has_same_material/slot_no_in ngoài
+    // 2 file luật (utils/putaway.ts BE+FE, services/putawayContext.ts) để chấm ★/chặn.
+    // Bắt việc ĐỌC cờ (`x.has_same_material` / `x.slot_no_in`) để tự kết luận — khai báo kiểu,
+    // danh sách cột, `useLocationsByFlag('slot_no_in')`, `.eq('slot_no_in', …)` và phép GÁN đều
+    // không tính. Miễn 5 file: 2 file luật, putawayContext (đường nạp chung), slottingController
+    // + locationController (nơi DUY NHẤT dựng PutawayLoc rồi gọi luật), và trang danh mục
+    // pages/wms/Locations.tsx (17/08 — nơi KHAI/HIỂN THỊ cờ: cột bảng, pane, form sửa, export;
+    // đọc cờ để in ra chứ không đoán "cất vào đâu"). Baseline 0.
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && !/utils[\\/]putaway\.ts$|services[\\/]putawayContext\.ts$|slottingController\.ts$|locationController\.ts$|pages[\\/]wms[\\/]Locations\.tsx$/.test(file)
+        && /\.\s*(has_same_material|slot_no_in)\b(?!\s*=[^=])/.test(line), s),
+  },
+  {
     key: 'n_plus_1_supabase_in_map',
     label: 'gọi supabase TRONG .map(async …) không chia lô = N+1 round-trip (pool PostgREST ~10 khe → nghẽn cả app)',
     count: (s) => countNPlus1SupabaseInMap(s),
+  },
+  {
+    key: 'detail_dead_end_no_way_back',
+    label: 'trang chi tiết báo "không tìm thấy" mà KHÔNG có lối quay lại — người dùng kẹt giữa màn, chỉ còn nút Back trình duyệt',
+    // LỚP LỖI TÁI PHÁT. Vòng 31/08 bắt 3 trang chi tiết đứng SKELETON VĨNH VIỄN khi mở bằng id đã
+    // xoá (link cũ, bookmark, chuyến vừa bị dọn) — đã vá bằng mẫu "câu tiếng Việt + <Link> quay
+    // lại". Vòng 06/09 đo lại 8 trang: 6 trang theo mẫu, riêng Lệnh fill in mỗi dòng chữ giữa màn
+    // trắng, không đường nào đi tiếp. Luật văn xuôi không tự thi hành ⇒ đưa vào ratchet.
+    // Bắt: câu báo "không tìm thấy / đã bị xoá / link đã cũ" nằm trong khối `return (…)` sớm của
+    // trang mà TRỌN khối đó không có <Link…> nào. Chỉ soi thư mục pages (trang, không phải form).
+    count: (s) => countDeadEndReturns(s),
+  },
+  {
+    // axios `post(url, null)` gửi CHUỖI JSON "null" kèm Content-Type: application/json, mà
+    // `express.json()` mặc định strict TỪ CHỐI null ở cấp cao nhất ⇒ **400**. Nguy ở chỗ triệu
+    // chứng CÂM: mutation vẫn onSettled nên list vẫn refetch, nhìn như chạy bình thường — chỉ có
+    // việc thật (vd lượt quét cảnh báo) là KHÔNG BAO GIỜ chạy. Bug thật 21/08 ở
+    // `POST /wms/alerts/scan`, phát hiện nhờ soi console trên Preview chứ không phải qua test
+    // (helper QA `api()` tự đắp body nên nó CHE mất). Không có body thì truyền `{}`.
+    // Nới `strict:false` ở server KHÔNG phải cách sửa: controller nào destructure req.body sẽ nổ 500.
+    key: 'axios_post_null_body',
+    label: 'axios .post(url, null) — express.json strict trả 400 mà FE thường nuốt im (dùng {} thay null)',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line) => /\.(post|put|patch)\(\s*[^,)]+,\s*null\s*[,)]/.test(line), s),
+  },
+  {
+    // Trang DETAIL (đọc :id từ URL) đỡ loading bằng `if (isLoading || !x)` mà KHÔNG đỡ isError:
+    // deep-link cũ / bản ghi đã xóa → 404 → data mãi undefined → SKELETON VĨNH VIỄN, không thông
+    // báo, không lối về (đo 31/08: 3 màn Nhặt lẻ/Item xuất trắng trang). Trang detail dùng
+    // useParams + guard kiểu đó PHẢI destructure isError và render khối "Không tìm thấy".
+    key: 'detail_blank_on_404',
+    label: 'trang detail có `if (isLoading || !…)` nhưng KHÔNG đỡ isError — id ma/deep-link cũ = skeleton vĩnh viễn',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        if (/useParams\s*[<(]/.test(src) && /if \(isLoading \|\| !/.test(src) && !/isError/.test(src)) {
+          n++
+          if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+        }
+      }
+      return n
+    },
   },
   {
     key: 'today_frozen_at_import',
@@ -344,6 +985,127 @@ const RULES = [
     // tính lại, hoàn toàn đúng; bắt luôn cả hai là báo oan, mà báo oan thì cổng sẽ bị bỏ qua.
     count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
       (line) => /^const\s+\w*(TODAY|Today)\w*\s*(:[^=]+)?=\s*new Date\(\)/.test(line), s),
+  },
+  // Bộ lọc nhiều-chọn: FilterBar coi `selected=[]` là "Tất cả" (chip không active, "Xóa tất cả" đưa về []),
+  // còn BE `parseListParam` coi `?x=` RỖNG là "KHÔNG giá trị nào" (hợp đồng gói 07). Gửi thẳng
+  // `x: arr.join(',')` là hai đầu hiểu ngược nhau ⇒ bỏ tick hết = bảng TRỐNG với câu "không khớp bộ lọc".
+  // Đo 16/09: tab Lệnh fill mất sạch lệnh sau khi bỏ tick "Chờ làm" (user: "Lệnh fill ko có dữ liệu?").
+  // Luật: mảng lọc lên query phải qua `arr.length ? arr.join(',') : undefined` hoặc `arr.join(',') || undefined`.
+  {
+    key: 'list_param_join_without_empty_guard',
+    label: 'tham số lọc dạng mảng gửi thẳng `key: arr.join(\',\')` không có guard rỗng — bỏ tick hết là bảng TRỐNG (FE coi rỗng = Tất cả, BE coi rỗng = không gì). Dùng `arr.join(\',\') || undefined`',
+    count: (s) => countMatches(['frontend/src/pages'], ['.tsx'],
+      (line) => /^\s*\w+:\s*[\w.]+\.join\(','\),?\s*$/.test(line), s),
+  },
+  // Thanh thao tác CHỌN-NHIỀU chèn một <div> vào luồng (giữa toolbar/band và bảng) ⇒ tick dòng đầu là bảng
+  // co lại, dòng nhảy dưới con trỏ (user 16/09: "tick multi là hiện action lên, table không được resize").
+  // Chuẩn: pill NỔI `fixed` (FloatingActionBar / Tồn kho) hoặc nút h-7 đặt sẵn TRÊN HEADER (Xuất kho, DO SAP).
+  // Bắt: khối `<X>.size > 0 && (` với X là tên tập chọn, mà thẻ mở đầu ngay sau là <div> KHÔNG có `fixed`.
+  {
+    key: 'bulk_bar_inline_reflows_table',
+    label: 'thanh thao tác chọn-nhiều là <div> chèn vào luồng (không `fixed`) — bảng bị co khi tick; dùng FloatingActionBar hoặc nút trên header',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+        const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+        lines.forEach((line, i) => {
+          if (!/\b(sel|selected|picked|checked|checkedIds|selectedIds|selectedOrderIds|selection)\w*\.size > 0 && \($/.test(line)) return
+          for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+            const t = lines[j].trim()
+            if (!t || t.startsWith('//') || t.startsWith('{/*') || t.startsWith('/*') || t.startsWith('*')) continue
+            if (/^<div\b/.test(t) && !/\bfixed\b/.test(t)) { n++; if (s && s.length < 5) s.push(`${f.slice(ROOT.length + 1)}:${j + 1}`) }
+            break
+          }
+        })
+      }
+      return n
+    },
+  },
+  // ÁP THAM SỐ URL (?tab= ?trip= ?route=) phải khoá theo `useLocation().key` — MỘT lần cho mỗi LƯỢT
+  // ĐIỀU HƯỚNG. Hai cách khoá sai đều đã nổ trên tay người dùng, cả hai đều không sinh lỗi nào:
+  //  · khoá theo state đang hiển thị (`t !== f.tab`) ⇒ bấm tab khác bị kéo ngược (12/09);
+  //  · khoá theo GIÁ TRỊ tham số ⇒ bấm lại chính link đang mở thì React Router replace về cùng URL,
+  //    tham số không đổi, effect bỏ qua ⇒ link chết (16/09: Hộp việc → tab → bấm lại "Cần đưa ra").
+  {
+    key: 'url_param_applied_by_value',
+    label: 'ref "đã áp tham số URL" khoá theo GIÁ TRỊ tham số thay vì useLocation().key — bấm lại đúng link đang mở sẽ không có tác dụng',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        if (!/useSearchParams\s*\(/.test(src)) continue
+        if (!/\w*[Aa]pplied\w*\s*=\s*useRef/.test(src)) continue
+        if (/useLocation\s*\(\s*\)/.test(src)) continue
+        n++
+        if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+      }
+      return n
+    },
+  },
+  // "Mọi view mới phải có mặt trong phân quyền" (user chốt 19/08): route trang mới trong App.tsx
+  // PHẢI bọc PermissionRoute/ExternalRoute/DashboardRoute. Baseline 3 = 3 route MỞ CHỦ ĐÍCH:
+  // /wms/alerts (tab Cá nhân = feed của mình) · /settings (tài khoản cá nhân) · /wms/multi-scan
+  // (trang test). Thêm route KHÔNG gate mới → tăng số → CI đỏ, buộc khai quyền đủ 5 việc.
+  {
+    key: 'route_without_permission',
+    label: 'route trang trong App.tsx KHÔNG bọc PermissionRoute — view mới phải được phân quyền (3 route mở là chủ đích)',
+    count: (s) => countMatches(['frontend/src/App.tsx'], ['.tsx'],
+      l => /<Route path=/.test(l) && /element=\{/.test(l)
+        && !/(PermissionRoute|ExternalRoute|DashboardRoute|<Login|Navigate)/.test(l), s),
+  },
+  // Tập mã camera đọc được khai MỘT CHỖ (utils/scanEngine). Khai literal ở màn quét mới = màn đó
+  // lệch với luồng thật (21/08: cả app từng chỉ khai QR nên mã vạch 1D bị bỏ qua ÂM THẦM).
+  {
+    key: 'scan_formats_declared_outside_engine',
+    label: 'khai formats quét bằng literal ngoài utils/scanEngine.ts — dùng NATIVE_FORMATS/ZXING_FORMATS thay vì chép danh sách',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line, file) => /formats:\s*\[\s*'/.test(line) && !file.endsWith('scanEngine.ts'), s),
+  },
+  // Tablist cuộn ngang + justify-center = TAB ĐẦU KHÔNG BẤM ĐƯỢC trên phone (đo 21/08: Cài đặt WMS
+  // 390px, scrollLeft đã 0 mà tab "Kho"/"Loại kho" vẫn ở x âm ⇒ không cuộn tới). Lỗi chỉ hiện khi
+  // số tab đủ nhiều nên rất dễ tái sinh lúc thêm tab.
+  {
+    key: 'tablist_center_blocks_scroll',
+    label: 'TabsList căn giữa (justify-center) — tablist tràn thì tab ĐẦU nằm ngoài vùng cuộn, phone không bấm được (dùng justify-start)',
+    count: (s) => countMatches(['frontend/src/components/ui/tabs.tsx'], ['.tsx'],
+      l => /justify-center/.test(l) && /inline-flex h-10/.test(l), s),
+  },
+  // Cùng họ với luật trên, nhưng là dải tab TỰ CHẾ (không qua TabsList): hàng flex CO ĐƯỢC
+  // (`flex-1 min-w-0`) render một danh sách nút `whitespace-nowrap`. Container co lại, nút thì
+  // không ⇒ nút cuối TRÀN RA NGOÀI MÀN và nằm dưới phần tử bên cạnh (thường là nút Lọc). KHÔNG
+  // lỗi nào nổ, tsc/build/QA đều xanh, chỉ người cầm điện thoại mới thấy. Đo 12/09 ở Việc cần làm:
+  // 4 tab cần 351 px trong khung 248 px ⇒ thủ kho không bấm nổi tab "Sắp quét" của chính mình.
+  // Hàng như vậy phải khai một trong: flex-wrap · overflow-x-auto · grid-cols-* · sm:flex (mobile
+  // đi lối khác). Luật đã thử ngược trên bản lỗi (cd5752de) = ĐỎ 1, bản vá = 0.
+  {
+    key: 'shrinking_flex_row_of_nowrap_chips',
+    label: 'hàng flex CO ĐƯỢC (flex-1 min-w-0) render danh sách nút — nút cuối tràn ra ngoài màn điện thoại và bị phần tử bên cạnh đè; khai flex-wrap / overflow-x-auto / grid-cols-* / sm:flex',
+    count: (s) => {
+      const re = /className=(?:"|\{`)([^"`]*\bflex\b[^"`]*\bflex-1\b[^"`]*\bmin-w-0\b[^"`]*|[^"`]*\bflex-1\b[^"`]*\bmin-w-0\b[^"`]*\bflex\b[^"`]*)(?:"|`\})\s*>\s*\{?\s*[\w.]+\.map\(/g
+      let n = 0
+      for (const f of filesOf('frontend/src', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        let m
+        while ((m = re.exec(src))) {
+          if (/flex-wrap|overflow-x-auto|overflow-auto|grid-cols|sm:flex/.test(m[1])) continue
+          n++
+          if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+        }
+      }
+      return n
+    },
+  },
+  // Gửi PHẦN TỬ ĐẦU của một mảng vào trường số ít = cắt danh sách còn 1 người mà không báo gì.
+  // Đo 12/09: màn "Bắt đầu chuyến" và "Sửa thông tin xe" cho tick NHIỀU lái xe nâng, tên vẫn hiện
+  // đủ trên chuyến (chuỗi `..._names` lưu riêng) nhưng chỉ một người thật sự được giao việc —
+  // những người còn lại mở "Việc cần làm" thấy bảng trống, chuông cũng không tới. Không lỗi nào nổ.
+  // Cột số ít là dạng CŨ giữ cho tương thích; đường ghi mới phải gửi MẢNG (BE tự lo dạng cũ).
+  // Bỏ qua dòng chú thích — chính luật này từng tự bắt câu ghi chú của mình (bẫy `as_any`).
+  {
+    key: 'first_of_list_sent_as_singular',
+    label: 'gửi `<x>_id: <x>Ids[0]` — cắt danh sách nhiều người/nhiều mục còn MỘT mà giao diện vẫn hiện đủ; gửi cả mảng',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /\b\w+_id\s*:\s*\w*[Ii]ds\s*\[\s*0\s*\]/.test(line), s),
   },
   {
     key: 'component_defined_inside_component',
@@ -357,13 +1119,135 @@ const RULES = [
            '(+ hook by-ids giữ nhãn giá trị đang chọn). Chỉ trang CẤU HÌNH/danh mục gốc mới được lấy cả danh sách',
     count: (s) => countCatalogueFullLoad(s),
   },
+  // Sơ đồ xếp xe: cỡ khối phải đi qua `cartonBoxOf` (loadPlan.ts). Tự `hasDims ? … : assumedCarton.l`
+  // ở màn nào là màn đó vẽ 1 CÁI = 1 THÙNG giả định — 200 quạt (4.000 cái/pallet) thành 2m³ phủ kín
+  // nóc xe, mọi pallet trông cao bằng nhau (user báo 27/08). Nhánh suy cỡ từ quy cách nằm 1 chỗ.
+  {
+    key: 'assumed_carton_used_directly',
+    label: 'lấy cỡ thùng GIẢ ĐỊNH làm giá trị dự phòng tại chỗ (`? … : assumedCarton.x` / `?? assumedCarton.x`) — ' +
+           'phải gọi `cartonBoxOf` trong utils/loadPlan.ts để mã bán theo cái suy cỡ từ quy cách cái/pallet',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      l => /(:|\?\?)\s*assumedCarton\s*\./.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
+  },
+  {
+    key: 'scan_icon_not_unified',
+    label: 'nút/nhãn HÀNH ĐỘNG QUÉT dùng icon riêng thay vì `ScanIcon` — user chốt 21/08 "mỗi chỗ 1 icon là k đc"; ' +
+           '`QrCode` chỉ còn để nói về TEM QR (trang In tem, cờ không-theo-dõi-QR), `Camera` cho CHỤP ẢNH',
+    count: (s) => countScanIconDivergence(s),
+  },
+  {
+    key: 'location_picker_without_scan',
+    label: 'màn có ô chọn/lọc VỊ TRÍ mà KHÔNG có nút quét tem vị trí (thiếu `LocationScanButton`) — ' +
+           'user chốt 21/08 "tất cả chức năng liên quan tới chọn vị trí" phải quét được; mã vị trí dài ' +
+           '(D_TP1_A81_T4) nên gõ tay là nguồn sai chỗ. Màn mới dùng hook vị trí thì gắn nút quét luôn',
+    count: (s) => countLocPickerWithoutScan(s),
+  },
+  {
+    key: 'wedge_ime_path_missing',
+    label: 'useWedgeScanner mất đường đọc IME (listener `input`) — DataWedge tắt "Send Characters as Events" thì ' +
+           'keydown ra key="Unidentified" (229) và MỌI màn quét chết câm, chữ vẫn vào ô nên nhìn như "phải bấm Enter ' +
+           'mới ra kết quả" (user báo 22/08, tái hiện được). Không được rút về chỉ nghe keydown',
+    count: () => {
+      const src = readFileSync(join(ROOT, 'frontend/src/hooks/useWedgeScanner.ts'), 'utf8')
+      return /addEventListener\('input'/.test(src) && /insertCompositionText/.test(src) ? 0 : 1
+    },
+  },
+  {
+    key: 'wedge_always_enabled',
+    label: 'useWedgeScanner đăng ký với enabled=true CỨNG — máy đọc súng là MODULE-LEVEL: bắt chuỗi phím nhanh/IME ' +
+           'ở MỌI ô nhập rồi TRẢ LẠI giá trị cũ, nên form/dialog mở mà máy còn armed thì bàn phím điện thoại (chèn ' +
+           'cả cụm ký tự) bị xoá trắng chữ đang gõ (bug biển số vãng lai 25/08). Điều kiện "màn đang cần súng / form ' +
+           'đang mở" phải nằm ở THAM SỐ enabled, không phải return sớm trong callback. Chỉ scan sheet mount-có-điều-kiện ' +
+           'mới được để true — baseline khoá đúng số đó',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (l, f) => !f.endsWith(`hooks${sep}useWedgeScanner.ts`)
+        && (/useWedgeScanner\(.*,\s*true\s*\)/.test(l) || /^\s*\},\s*true\s*\)/.test(l)), s),
+  },
+  {
+    key: 'filterbar_without_sheetbutton',
+    label: 'trang render <FilterBar> mà KHÔNG có <FilterSheetButton> — FilterBar gốc là `hidden sm:flex` nên ' +
+           'trên điện thoại nó BIẾN MẤT hoàn toàn: browser lọc được, mobile không (bắt 25/08 ở WMSSettings + ' +
+           'TMSSettings, 6 tab). Mỗi chỗ <FilterBar defs={X}/> phải kèm <FilterSheetButton defs={X} className="sm:hidden"/>',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        if (/<FilterBar[\s>]/.test(src) && !/FilterSheetButton/.test(src)) {
+          n++
+          if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+        }
+      }
+      return n
+    },
+  },
+  {
+    key: 'scan_input_disabled_drops_focus',
+    label: 'ô nhập mã của màn QUÉT dùng `disabled` lúc đang tra — trình duyệt GỠ focus khỏi ô, mà focus là thứ ' +
+           'duy nhất giữ cho súng PDA chế độ IME bắn được ⇒ phát bắn kế tiếp rơi vào hư không, KHÔNG báo gì ' +
+           '(user báo 22/08). Dùng `readOnly` + lấy lại focus trong `finally` của lượt tra',
+    count: (s) => countScanInputDisabled(s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
            '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',
     count: (s) => countUploadsMissingPreflight(s),
   },
+  // Chính sách mật khẩu MỘT nguồn (utils/passwordPolicy BE + mirror FE). Trước 03/09 có 4 bản `length < 6|8` rải
+  // ở controller/form ⇒ "12345678" đặt được. Tự viết `password.length <` / `pwd.length <` ngoài file policy = đỏ.
+  {
+    key: 'password_rule_hand_rolled',
+    label: 'kiểm độ dài/độ mạnh mật khẩu tự viết (`*password*.length <`, `pwd.length <`) — phải gọi passwordError() của utils/passwordPolicy',
+    count: (s) => countMatches(['backend/src', 'frontend/src', 'backend/prisma'], ['.ts', '.tsx'],
+      (l, f) => !f.endsWith(`passwordPolicy.ts`) && /\b\w*(password|passwd|pwd)\w*\.length\s*<\s*\d/i.test(l), s),
+  },
+  // Ô GỘP trong file Excel: `sheet_to_json` đọc mọi ô của vùng gộp trừ ô trái-trên là RỖNG, nên dòng
+  // dưới mất giá trị và bị vòng parse bỏ ÂM THẦM (hoặc làm hỏng cả file khi cửa đó all-or-nothing).
+  // Luật có sẵn từ 27/08 (`expandMergedCells`) nhưng chỉ 2/6 cửa gọi — 07/09 phải đi vá 4 cửa còn
+  // lại. Cửa upload MỚI quên gọi = đỏ ngay, không chờ ai đó gửi file gộp ô rồi mới biết.
+  {
+    key: 'upload_without_merge_expand',
+    label: 'cửa upload Excel KHÔNG trải ô gộp — mọi chỗ đọc workbook phải gọi `expandMergedCells(ws)` trước khi parse (utils/excelHeader)',
+    count: (s) => countUploadsMissingMergeExpand(s),
+  },
 ]
+
+// Vi phạm = hàm có `readWorkbookSafe(`/`XLSX.read(` mà trong 40 dòng kế KHÔNG có `expandMergedCells`.
+// Cắt theo hàm (`export async function`) để không tính lây sang cửa upload kế bên trong cùng file.
+function countUploadsMissingMergeExpand(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    if (f.endsWith('excelHeader.ts')) continue   // chính nơi định nghĩa helper, không phải cửa upload
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/\b(readWorkbookSafe|XLSX\.read)\s*\(/.test(line)) return
+      const end = lines.findIndex((l, j) => j > i && /^(export )?(async )?function /.test(l))
+      const block = lines.slice(i, end > i ? Math.min(end, i + 40) : i + 40).join('\n')
+      if (/expandMergedCells\s*\(/.test(block)) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
+
+// Ô nhập của màn quét = `<Input ref={inputRef}` trong file có `useWedgeScanner`. Vi phạm khi khối
+// khai báo ô đó (8 dòng kế) có `disabled=` — `disabled` gỡ focus, súng chế độ IME hết đích chèn chữ.
+function countScanInputDisabled(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    if (!src.includes('useWedgeScanner')) continue
+    const lines = src.split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/ref=\{inputRef\}/.test(line)) return
+      if (!/disabled=\{/.test(lines.slice(i, i + 8).join('\n'))) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
 
 // Khai báo component trong body hàm khác = dòng thụt lề ≥2 space, `const <TênHoa> = (`. Chỉ tính vi
 // phạm khi thân nó (≤16 dòng đầu) có ô nhập — đó là ca làm mất focus. Cụm thuần hiển thị (Tile/Row/
@@ -543,10 +1427,158 @@ function countUploadsMissingPreflight(sampleOut) {
   return miss
 }
 
+// ── 11/09: TẦNG MÁY của hệ "lỗi chết hai lần" (docs/qa/BUG_CLASSES.md) ─────────────────────────
+// File import client supabase KHÔNG kiểu. File MỚI phải dùng `db` (createClient<Database>) để tên
+// bảng/cột sai, INSERT thiếu id/updated_at, trạng thái ngoài enum → lỗi tsc chứ không phải 23502/22P02 lúc chạy.
+function countUntypedSupabaseFiles(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    if (f.endsWith(`lib${sep}supabase.ts`)) continue
+    const src = readFileSync(f, 'utf8')
+    if (/import\s*\{[^}]*\bsupabase\b[^}]*\}\s*from\s*'[^']*lib\/supabase'/.test(src)) {
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(f.slice(ROOT.length + 1))
+    }
+  }
+  return n
+}
+// NGÀY: kiểm bằng regex `^\d{4}-\d{2}-\d{2}$` là kiểm DẠNG chứ không kiểm LỊCH — '2026-13-99' /
+// '2026-02-31' khớp regex rồi nổ 22008 ở Postgres ⇒ 500 rác (làm rule "lỗi BE 24h" kêu oan).
+// `utils/dates.ts` đã nhận là có ratchet này từ 30/08 nhưng CHƯA AI VIẾT, nên 15/09 một file mới lại
+// chép regex và vấp đúng lỗi cũ. Đếm mọi chỗ tự viết regex ngày trong controller/service mà KHÔNG
+// nằm cùng dòng/khối với `isDay` — dùng `isDay` của utils/dates là đường đúng duy nhất.
+function countDateRegexWithoutCalendarCheck(sampleOut) {
+  let n = 0
+  const RE = /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//
+  for (const dir of ['backend/src/controllers', 'backend/src/services', 'backend/src/routes']) {
+    for (const f of filesOf(dir, ['.ts'])) {
+      const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+      lines.forEach((ln, i) => {
+        if (!RE.test(ln)) return
+        // Cho qua nếu chính dòng đó (hoặc 2 dòng kề) đã gọi kiểm LỊCH
+        const near = lines.slice(Math.max(0, i - 2), i + 3).join('\n')
+        if (/isDay|dayOrNull|Date\.parse|Date\.UTC/.test(near)) return
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+      })
+    }
+  }
+  return n
+}
+// Helper BE tự nhận là MIRROR của FE (đầu file có chữ "mirror") thì phải có phép kiểm so hai bản trên cùng
+// input: backend/tests/mirror/<tên file>.mirror.test.ts. "Phải khớp nhau" chỉ là ghi chú cho tới khi có máy so.
+function countMirrorHelpersWithoutTest(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src/utils', ['.ts'])) {
+    const head = readFileSync(f, 'utf8').split(/\r?\n/).slice(0, 40).join('\n')
+    if (!/mirror/i.test(head)) continue
+    const name = f.split(sep).pop().replace(/\.ts$/, '')
+    try { statSync(join(ROOT, 'backend/tests/mirror', `${name}.mirror.test.ts`)) }
+    catch {
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)} → thiếu backend/tests/mirror/${name}.mirror.test.ts`)
+    }
+  }
+  return n
+}
+// Tên bảng code gọi `.from('X')` mà file kiểu sinh từ DB không có → hoặc gõ sai tên bảng, hoặc migration
+// đã apply mà chưa chạy `npm run db:types`. Bỏ qua storage bucket (`storage.from(...)`).
+function countUnknownTablesInCode(sampleOut) {
+  let types
+  try { types = readFileSync(join(ROOT, 'backend/src/types/database.ts'), 'utf8') } catch { return 0 }
+  const known = new Set([...types.matchAll(/^      ("?[\w-]+"?): \{$/gm)].map(m => m[1].replace(/"/g, '')))
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/storage\s*\.\s*from\(|^\s*\/\//.test(line)) return
+      for (const m of line.matchAll(/\.from\('([^']+)'\)/g)) {
+        if (!known.has(m[1])) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1} .from('${m[1]}')`) }
+      }
+    })
+  }
+  return n
+}
+// Route write không có validate({…}). Đọc TRỌN câu lệnh (route dài thường xuống dòng sau requirePerm),
+// không chỉ dòng đầu — kẻo route đã khai validate ở dòng 2 vẫn bị đếm.
+function countWriteRoutesWithoutValidate(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src/routes', ['.ts'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]
+      if (/^\s*\/\//.test(l) || !/\brouter\.(post|put|patch|delete)\s*\(/.test(l)) continue
+      let stmt = l, depth = 0, j = i
+      for (;;) {
+        for (const ch of lines[j]) { if (ch === '(') depth++; else if (ch === ')') depth-- }
+        if (depth <= 0 || j - i >= 6) break
+        j++; if (j >= lines.length) break
+        stmt += '\n' + lines[j]
+      }
+      if (!/\bvalidate\(/.test(stmt)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+    }
+  }
+  return n
+}
+// Gói QA kết thúc mà KHÔNG qua `finish()` hoặc `tally()` thì khi đỏ chỉ để lại "exit code 1" trên hồ sơ
+// công khai của lượt chạy — log đầy đủ đòi đăng nhập, nên người nhận email biết ĐỎ mà không biết ĐỎ Ở ĐÂU
+// (đo 14–15/09: gói 07 đỏ hai lượt liền, không một dòng nào nói phép kiểm nào hỏng). Baseline = các gói
+// tự đếm còn lại (chỉ chạy ở bậc full); gói MỚI bắt buộc dùng một trong hai.
+function countSilentQaPacks(sampleOut) {
+  let n = 0
+  for (const f of filesOf('scripts/qa', ['.mjs'])) {
+    const name = f.split(sep).pop()
+    if (!/^\d\d-/.test(name)) continue           // chỉ xét gói đánh số, bỏ lib/runner/công cụ
+    const src = readFileSync(f, 'utf8')
+    if (/\b(finish|tally)\s*\(/.test(src)) continue
+    n++
+    if (sampleOut && sampleOut.length < 5) sampleOut.push(name)
+  }
+  return n
+}
+RULES.unshift(
+  {
+    key: 'qa_pack_without_annotated_finish',
+    label: 'gói QA không gọi finish()/tally() — đỏ thì KHÔNG in ::error nêu phép kiểm nào hỏng, người nhận email phải đăng nhập tải log mới biết',
+    count: countSilentQaPacks,
+  },
+  {
+    key: 'write_route_without_validate',
+    label: 'route write (post/put/patch/delete) không khai validate({…}) — input sai kiểu đi thẳng xuống controller/Postgres → 500 thay 400 (lớp lỗi lặp nhiều nhất 08–09/2026); route MỚI bắt buộc dùng middlewares/validate.ts',
+    count: countWriteRoutesWithoutValidate,
+  },
+  {
+    key: 'date_regex_without_calendar_check',
+    label: 'tự viết regex ngày ^\\d{4}-\\d{2}-\\d{2}$ mà không kiểm LỊCH — "2026-13-99"/"2026-02-31" khớp dạng rồi nổ 22008 ⇒ 500; dùng isDay/dayOrNull của utils/dates.ts',
+    count: countDateRegexWithoutCalendarCheck,
+  },
+  {
+    key: 'untyped_supabase_import_files',
+    label: 'file import { supabase } không kiểu — file MỚI dùng `db` (lib/supabase.ts) để tên bảng/cột/INSERT thiếu id+updated_at thành lỗi tsc',
+    count: countUntypedSupabaseFiles,
+  },
+  {
+    key: 'mirror_helper_without_test',
+    label: 'helper BE tự nhận MIRROR của FE mà không có backend/tests/mirror/<tên>.mirror.test.ts',
+    count: countMirrorHelpersWithoutTest,
+  },
+  {
+    key: 'db_types_unknown_table',
+    label: "code gọi .from('X') mà kiểu DB sinh ra không có bảng X — gõ sai tên bảng hoặc quên `npm run db:types` sau migration",
+    count: countUnknownTablesInCode,
+  },
+)
+
 let baseline = {}
 try { baseline = JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) } catch { /* lần đầu */ }
 
 console.log('── GÓI STATIC-GATE (ratchet) ──')
+// Chú thích cho GitHub Actions: luật nào ĐỎ phải hiện ngay trên trang lượt chạy + email, đừng bắt người
+// nhận email đăng nhập tải log mới biết (cùng lý do với finish() trong lib.mjs).
+const GH = process.env.GITHUB_ACTIONS === 'true'
+const ghEsc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+// title là THUỘC TÍNH của lệnh workflow — `:` và `,` là ký tự phân cách, phải mã hoá thêm
+const ghProp = (s) => ghEsc(s).replace(/:/g, '%3A').replace(/,/g, '%2C')
 let fail = 0
 const next = {}
 for (const r of RULES) {
@@ -560,6 +1592,7 @@ for (const r of RULES) {
     fail++
     console.log(`  ❌ ${r.key}: ${n} > baseline ${base} — CODE MỚI VI PHẠM: ${r.label}`)
     samples.forEach(x => console.log(`       ${x}`))
+    if (GH) console.log(`::error title=${ghProp(`Cổng tĩnh: ${r.key}`)}::${ghEsc(`${n} > baseline ${base} — ${r.label}${samples.length ? ` | vd: ${samples.slice(0, 3).join(' ; ')}` : ''}`)}`)
   } else if (n < base) {
     console.log(`  📉 ${r.key}: ${n} < baseline ${base} — đã dọn bớt, chạy --update-baseline để KHOÁ thành quả`)
   } else {

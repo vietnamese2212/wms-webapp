@@ -420,7 +420,10 @@ interface DispatchFilters {
   warehouseId: string
   planDate: string       // '' → trang mặc định NGÀY MAI (điều vận xếp xe cho hôm sau)
   planId: string         // kế hoạch đang mở ('' = bản nháp mới nhất của kho×ngày)
-  onlyUnderload: boolean
+  // Việc của NGƯỜI ở bước này là soát bản máy ghép rồi xác nhận ⇒ lọc theo VẤN ĐỀ, không lọc theo
+  // thuộc tính. '' = tất cả · 'todo' = mọi xe cần người quyết · còn lại là từng loại vấn đề.
+  issue: string
+  todoFirst: boolean     // xe cần xử lý xếp LÊN ĐẦU (mặc định bật — làm từ trên xuống, hết việc là sạch đầu bảng)
 }
 interface SoLinesFilters {
   search: string
@@ -665,7 +668,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', onlyUnderload: false },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true },
     vehicleModels: { search: '', parents: [], temps: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

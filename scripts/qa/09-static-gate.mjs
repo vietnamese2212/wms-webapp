@@ -208,6 +208,20 @@ function countBackgroundError500(sampleOut) {
   return n
 }
 
+/** Phần đứng SAU `if (…)` trên cùng dòng, ở mức thụt 2 dấu cách của thân hàm component.
+ *  null = dòng này không phải mở đầu một `if` · '(' = điều kiện chưa đóng (thân ở dòng sau)
+ *  '' = đóng rồi mà không có gì theo sau (thân ở dòng sau) · '{' = mở khối · còn lại = câu lệnh MỘT DÒNG. */
+function ifTailOf(line) {
+  const m = line.match(/^ {2}if\s*\(/)
+  if (!m) return null
+  let d = 0, i = m[0].length - 1
+  for (; i < line.length; i++) {
+    if (line[i] === '(') d++
+    else if (line[i] === ')' && --d === 0) break
+  }
+  return d !== 0 ? '(' : line.slice(i + 1).trim()
+}
+
 function countHookAfterEarlyReturn(sampleOut) {
   const HOOK = /(?:^|[\s=({,])use[A-Z]\w*\s*\(/
   let n = 0
@@ -218,7 +232,16 @@ function countHookAfterEarlyReturn(sampleOut) {
       if (/^(export default function|export function|function)\s+[A-Z]/.test(line)) { inFn = true; earlyAt = 0; inIf = false; return }
       if (!inFn) return
       if (/^\}/.test(line)) { inFn = false; return }
-      if (!earlyAt && /^ {2}if\s*\(/.test(line)) inIf = true
+      // ⚠ `if (cond) foo()` MỘT DÒNG không mở khối nào. Bản cũ bật `inIf` cho MỌI dòng bắt đầu bằng
+      // `  if (`, mà cờ đó chỉ tắt khi gặp `  }` — thứ một-dòng không bao giờ có ⇒ cờ kẹt bật tới hết
+      // hàm, rồi `return` thụt ≥4 dấu cách của một callback (useMemo, map, sort…) bị đọc thành RETURN
+      // SỚM và mọi hook sau đó đều đỏ. Đo 24/09 ở Dispatch.tsx: 5 vi phạm ma, 0 cái là lỗi thật —
+      // cổng kêu oan thì người ta học cách bỏ qua cổng. Nay chỉ bật `inIf` khi thân if nằm ở DÒNG SAU.
+      if (!earlyAt) {
+        const tail = ifTailOf(line)
+        // mở khối, hoặc điều kiện/thân còn ở dòng sau ⇒ vẫn theo dõi; CÓ câu lệnh ngay sau `)` ⇒ hết.
+        if (tail !== null) inIf = tail === '' || tail === '{' || tail === '('
+      }
       if (inIf && /^\s{4,}return\b/.test(line)) { earlyAt = i + 1; inIf = false }
       if (inIf && /^ {2}\}/.test(line)) inIf = false
       if (!earlyAt && /^ {2}if\s*\(.*\)\s*return\b/.test(line)) earlyAt = i + 1

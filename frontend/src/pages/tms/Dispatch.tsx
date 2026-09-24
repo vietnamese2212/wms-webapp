@@ -14,6 +14,8 @@ import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -52,9 +54,33 @@ const TRIP_STATUS_VI: Record<DispatchTripStatus, { label: string; tone: Tone }> 
 const EDITABLE: DispatchTripStatus[] = ['DRAFT', 'DECLINED']
 const tripStatus = (t: DispatchTrip): DispatchTripStatus => t.status ?? 'DRAFT'
 
-const COLS: RtColDef[] = [
-  { id: 'gc', label: 'Số xe dự kiến', w: 150 },
-  { id: 'status', label: 'Trạng thái', w: 105 },
+// ── VIỆC CỦA NGƯỜI Ở BƯỚC NÀY (user chốt 24/09: "máy ghép trước sau đó tới người manual và xác nhận")
+// Máy xếp xong thì người phải SOÁT rồi mới xác nhận — nhưng soát cái gì? Đo trên kế hoạch thật của
+// Ba Vì 07/09: **12/61 xe cần người quyết**, nằm rải trong 61 dòng, và cột nói LÝ DO ("Ghi chú máy")
+// lại bị đẩy ra ngoài màn 1280 px. Nên trang phải trả lời được ngay "còn bao nhiêu việc" và "đưa tôi
+// tới đó", chứ không bắt người kéo ngang 61 dòng để tự tìm.
+// ⚠ CHỈ tính trên xe NGƯỜI CÒN SỬA ĐƯỢC (DRAFT/DECLINED): xe đã vào Kế hoạch xuất mà thiếu cước thì
+// đây không phải chỗ chữa, đếm vào là giục một việc không làm được.
+type IssueKey = 'declined' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'under' | 'warn'
+const ISSUES: { key: IssueKey; label: string; tip: string; test: (t: DispatchTrip) => boolean }[] = [
+  { key: 'declined',  label: 'ĐVVT từ chối',   tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"',                     test: t => tripStatus(t) === 'DECLINED' },
+  { key: 'nomodel',   label: 'Chưa có dòng xe', tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => !t.vehicle_model_id },
+  { key: 'nocarrier', label: 'Chưa có ĐVVT',   tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => !t.transport_company_id },
+  { key: 'nofreight', label: 'Chưa có cước',   tip: 'Xác nhận vẫn được, nhưng chuyến sẽ không có cước dự tính',       test: t => t.freight_estimated == null },
+  { key: 'over',      label: 'Vượt tải',       tip: 'OD lớn hơn xe lớn nhất — tách bớt OD sang xe khác',              test: t => t.oversize },
+  { key: 'under',     label: 'Non tải',        tip: 'Dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết', test: t => t.underload },
+  { key: 'warn',      label: 'Có cảnh báo',    tip: 'Máy ghi lại chỗ nó không tự xử được — đọc cột Ghi chú máy',      test: t => t.detail.warnings.length > 0 },
+]
+const issuesOf = (t: DispatchTrip): IssueKey[] =>
+  EDITABLE.includes(tripStatus(t)) ? ISSUES.filter(i => i.test(t)).map(i => i.key) : []
+const needsWork = (t: DispatchTrip) => issuesOf(t).length > 0
+
+// Cột Trạng thái nói CÙNG MỘT TỪ ("Nháp") cho mọi dòng khi kế hoạch còn nháp — 105 px × 61 dòng cho
+// một thông tin không phân biệt được gì, trong khi thứ người soát cần lại nằm ngoài màn. Nên nó chỉ
+// hiện từ lúc kế hoạch có nhiều trạng thái thật (đã xác nhận một phần / chờ ĐVVT / bị từ chối).
+const colsFor = (showStatus: boolean): RtColDef[] => [
+  { id: 'gc', label: 'Số xe dự kiến', w: 196 },
+  ...(showStatus ? [{ id: 'status', label: 'Trạng thái', w: 105 }] : []),
   { id: 'model', label: 'Dòng xe con', w: 150 },
   { id: 'carrier', label: 'ĐVVT', w: 110 },
   { id: 'stops', label: 'Điểm giao', w: 70, align: 'right' },
@@ -66,6 +92,15 @@ const COLS: RtColDef[] = [
   { id: 'freight', label: 'Cước dự tính', w: 110, align: 'right' },
   { id: 'note', label: 'Ghi chú máy', w: 260 },
 ]
+
+// Nhãn NGẮN của vấn đề, in ngay dưới Số xe trong cột STICKY — người soát thấy "xe này vướng gì" mà
+// không phải kéo ngang (cùng khuôn "quãng đường nằm ở dòng phụ trong chính cột Vị trí" của Tối ưu
+// tuyến). Câu đầy đủ vẫn ở cột Ghi chú máy + panel chi tiết. Xếp theo mức KHẨN, lấy tối đa 2.
+const ISSUE_SHORT: Record<IssueKey, string> = {
+  declined: 'ĐVVT từ chối', over: 'vượt tải', nomodel: 'chưa có dòng xe', nocarrier: 'chưa có ĐVVT',
+  nofreight: 'chưa có cước', under: 'Non tải', warn: 'có cảnh báo',
+}
+const ISSUE_ORDER: IssueKey[] = ['declined', 'over', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
 
 function LoadCell({ t }: { t: DispatchTrip }) {
   const l = t.detail.load
@@ -112,6 +147,11 @@ export default function Dispatch() {
   const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip()
   const [openTripId, setOpenTripId] = useState<string | null>(null)
   const openTrip = plan?.trips.find(t => t.id === openTripId) ?? null
+  // CHỌN NHIỀU — 12/61 xe cùng thiếu ĐVVT thì mở 12 panel là 36 thao tác cho một quyết định duy nhất
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [bulk, setBulk] = useState<null | 'carrier' | 'model'>(null)
+  const [bulkVal, setBulkVal] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   const runPlan = () => {
@@ -125,9 +165,21 @@ export default function Dispatch() {
   const doConfirm = () => {
     if (!plan) return
     const n = plan.trips.filter(t => tripStatus(t) === 'DRAFT' && t.ods.length).length
-    const q = tenderCount
-      ? `Xác nhận ${n} xe ngày ${formatDate(plan.plan_date)}: ${n - tenderCount} xe vào Kế hoạch xuất ngay, ${tenderCount} xe CHỜ ĐVVT phản hồi (ĐVVT có cờ "cần phản hồi"). Tiếp tục?`
-      : `Xác nhận ${n} xe vào Kế hoạch xuất ngày ${formatDate(plan.plan_date)}? Sau bước này chuyến + lệnh VC tự sinh, sửa tiếp ở tab Kế hoạch xuất.`
+    // NÓI RA việc chưa xử lý TRƯỚC khi ghi — xác nhận là bước không quay lại được (chuyến + lệnh VC
+    // tự sinh ngay), mà xe thiếu ĐVVT / thiếu cước vẫn ghi được. Im lặng ở đây là để người bấm xong
+    // mới phát hiện, lúc đó phải đi sửa ở tab Kế hoạch xuất.
+    const open = plan.trips.filter(t => tripStatus(t) === 'DRAFT')
+    const noCarrier = open.filter(t => !t.transport_company_id).length
+    const noFreight = open.filter(t => t.freight_estimated == null).length
+    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '']
+      .filter(Boolean).join(' · ')
+    const q = [
+      tenderCount
+        ? `Xác nhận ${n} xe ngày ${formatDate(plan.plan_date)}: ${n - tenderCount} xe vào Kế hoạch xuất ngay, ${tenderCount} xe CHỜ ĐVVT phản hồi (ĐVVT có cờ "cần phản hồi").`
+        : `Xác nhận ${n} xe vào Kế hoạch xuất ngày ${formatDate(plan.plan_date)}? Sau bước này chuyến + lệnh VC tự sinh, sửa tiếp ở tab Kế hoạch xuất.`,
+      warn ? `\n⚠ Còn ${warn} — vẫn ghi được, nhưng phải sửa ở tab Kế hoạch xuất sau. Bấm Huỷ để quay lại xử lý (dải "Soát" ở đầu bảng).` : '',
+      '\nTiếp tục?',
+    ].filter(Boolean).join('')
     if (!window.confirm(q)) return
     confirm.mutateAsync(plan.id).then(r => {
       toast({
@@ -175,9 +227,46 @@ export default function Dispatch() {
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
   if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, onClick: doDiscard, disabled: discard.isPending })
 
-  const trips = useMemo(() => (plan?.trips ?? []).filter(t => !f.onlyUnderload || t.underload), [plan, f.onlyUnderload])
+  const all = plan?.trips ?? []
+  const todoN = useMemo(() => all.filter(needsWork).length, [all])
+  const issueN = useMemo(() => {
+    const m = {} as Record<IssueKey, number>
+    for (const i of ISSUES) m[i.key] = 0
+    for (const t of all) for (const k of issuesOf(t)) m[k]++
+    return m
+  }, [all])
+  const trips = useMemo(() => {
+    const keep = !f.issue ? all
+      : f.issue === 'todo' ? all.filter(needsWork)
+      : all.filter(t => issuesOf(t).includes(f.issue as IssueKey))
+    // sort ỔN ĐỊNH nên các xe cùng nhóm giữ nguyên thứ tự máy sinh (số xe tăng dần)
+    return f.todoFirst ? [...keep].sort((a, b) => Number(needsWork(b)) - Number(needsWork(a))) : keep
+  }, [all, f.issue, f.todoFirst])
   const sum = plan?.summary
   const s = plan ? STATUS_VI[plan.status] : null
+  const showStatus = !!plan && plan.status !== 'DRAFT'
+  const cols = useMemo(() => colsFor(showStatus), [showStatus])
+
+  // Chỉ tick được xe NGƯỜI CÒN SỬA ĐƯỢC; và chọn-tất-cả chỉ tick dòng ĐANG HIỆN (bộ lọc đang áp) —
+  // tick trúng dòng không nhìn thấy là lớp lỗi tệ nhất của bộ lọc.
+  const pickable = useMemo(() => trips.filter(t => canPlan && isOpen && EDITABLE.includes(tripStatus(t))), [trips, canPlan, isOpen])
+  const selIds = useMemo(() => pickable.filter(t => sel.has(t.id)).map(t => t.id), [pickable, sel])
+  useEffect(() => { setSel(new Set()) }, [planId])          // đổi kế hoạch thì bỏ chọn, khỏi thao tác nhầm lên xe của bản khác
+  const toggle = (id: string) => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const applyBulk = async () => {
+    if (!bulk || !bulkVal || !selIds.length) return
+    setBulkBusy(true)
+    const patch = bulk === 'carrier' ? { transport_company_id: bulkVal } : { vehicle_model_id: bulkVal }
+    const rs = await Promise.allSettled(selIds.map(id => patchTrip.mutateAsync({ id, ...patch })))
+    setBulkBusy(false)
+    const bad = rs.filter(r => r.status === 'rejected').length
+    setBulk(null); setBulkVal(''); setSel(new Set())
+    toast({
+      title: `Đã đổi ${bulk === 'carrier' ? 'ĐVVT' : 'dòng xe'} cho ${rs.length - bad}/${rs.length} xe`,
+      description: bad ? `${bad} xe không đổi được — mở từng xe để xem lý do.` : 'Cước đã tính lại theo bảng cước hiệu lực.',
+      variant: bad ? 'destructive' : undefined,
+    })
+  }
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -200,10 +289,45 @@ export default function Dispatch() {
               {s && <StatusBadge tone={s.tone}>{s.label}</StatusBadge>}
               <span>{plan.warehouse?.name} · giao {formatDate(plan.plan_date)} · lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</span>
               <span className="text-slate-400">· ≤ {plan.params.max_drops ?? 3} điểm giao · {plan.params.allow_mix_channels ? 'trộn kênh' : 'không trộn kênh'} · pool {nf(plan.params.pool_ods)} OD ({nf(plan.params.in_plan)} đã có trong Kế hoạch xuất)</span>
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none ml-auto"><input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={f.onlyUnderload} onChange={e => setF({ onlyUnderload: e.target.checked })} /> chỉ chuyến Non tải</label>
             </div>
           )}
         </div>
+
+        {/* DẢI VIỆC — trả lời "còn bao nhiêu việc" và đưa người tới đó bằng MỘT nhát bấm.
+            Dùng SWITCH hiện sẵn chứ không phải chip trong menu: cả lựa chọn LẪN số của từng lựa chọn
+            phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại
+            vấn đề nào KHÔNG có xe nào thì không hiện — menu đầy lựa chọn ra bảng trắng là vô ích. */}
+        {plan && (
+          <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 flex-wrap">
+            <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
+            {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
+               { k: 'todo', label: 'Cần xử lý', n: todoN, tip: 'Xe người còn sửa được mà máy chưa khép kín — làm hết là xác nhận được' },
+               ...ISSUES.filter(i => issueN[i.key] > 0).map(i => ({ k: i.key as string, label: i.label, n: issueN[i.key], tip: i.tip })),
+              ]).map(o => (
+              <button key={o.k || 'all'} type="button" title={o.tip} onClick={() => setF({ issue: o.k })}
+                className={`flex items-center gap-1.5 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
+                  f.issue === o.k ? 'bg-slate-800 text-white'
+                  : o.k === 'todo' && o.n > 0 ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {o.label}
+                <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${f.issue === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
+              </button>
+            ))}
+            {todoN === 0 && <span className="text-[11px] text-green-700 font-medium">✓ Máy đã khép kín — không còn xe nào chờ người quyết</span>}
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              {pickable.length > 0 && (
+                <button type="button" className="text-[11px] text-sky-700 hover:underline whitespace-nowrap"
+                  title="Chỉ tick các xe ĐANG HIỆN theo bộ lọc, và chỉ xe còn sửa được"
+                  onClick={() => setSel(selIds.length === pickable.length ? new Set() : new Set(pickable.map(t => t.id)))}>
+                  {selIds.length === pickable.length ? 'Bỏ chọn' : `Chọn ${pickable.length} xe đang hiện`}
+                </button>
+              )}
+              <label className="inline-flex items-center gap-1 cursor-pointer select-none text-[11px] text-slate-500">
+                <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={f.todoFirst} onChange={e => setF({ todoFirst: e.target.checked })} /> xe cần xử lý lên đầu
+              </label>
+            </div>
+          </div>
+        )}
 
         {plan && sum && (
           <SummaryBand tiles={[
@@ -241,16 +365,32 @@ export default function Dispatch() {
             </div>
           ) : (
             <>
-              <ResizableTable storageKey="dispatch_cols_v1" cols={COLS}>
+              <ResizableTable key={showStatus ? 'st' : 'nost'} storageKey={showStatus ? 'dispatch_cols_v2' : 'dispatch_cols_draft_v1'} cols={cols}>
                 <TableBody>
-                  {!trips.length && <TableEmptyRow colSpan={COLS.length}>{f.onlyUnderload ? 'Không có chuyến Non tải — bỏ tick "chỉ chuyến Non tải" để xem tất cả.' : 'Kế hoạch không có chuyến nào (pool trống hoặc mọi OD không đo được tải — xem danh sách dưới).'}</TableEmptyRow>}
+                  {/* RỖNG VÌ BỘ LỌC ≠ RỖNG VÌ KẾ HOẠCH KHÔNG CÓ XE — câu rỗng phải nói đúng cái vừa gây ra nó */}
+                  {!trips.length && <TableEmptyRow colSpan={cols.length}>{f.issue
+                    ? <>Không có xe nào thuộc nhóm này. <button type="button" className="underline text-sky-700" onClick={() => setF({ issue: '' })}>Xem tất cả {all.length} xe</button></>
+                    : 'Kế hoạch không có chuyến nào (pool trống hoặc mọi OD không đo được tải — xem danh sách dưới).'}</TableEmptyRow>}
                   {trips.map(t => {
                     const d = t.detail
                     const st = tripStatus(t)
+                    const iss = ISSUE_ORDER.filter(k => issuesOf(t).includes(k))
                     return (
                       <TableRow key={t.id} className={`cursor-pointer ${openTripId === t.id ? 'bg-sky-50' : ''} ${t.oversize ? 'text-red-700' : ''} ${st === 'DISCARDED' ? 'line-through text-slate-400' : st === 'CONFIRMED' ? 'text-green-700' : ''}`} onClick={() => setOpenTripId(t.id)}>
-                        <TableCell className={`${TD} font-mono font-semibold sticky left-0 z-10 ${openTripId === t.id ? 'bg-sky-50' : 'bg-white'}`}>{t.group_code}{t.manual_edited && <span className="ml-1 text-amber-600 font-sans" title="Người đã sửa chuyến này">✎</span>}</TableCell>
-                        <TableCell className={TD} title={st === 'DECLINED' && t.response_note ? `Lý do: ${t.response_note}` : undefined}><StatusBadge tone={TRIP_STATUS_VI[st].tone}>{TRIP_STATUS_VI[st].label}</StatusBadge></TableCell>
+                        <TableCell className={`${TD} sticky left-0 z-10 ${openTripId === t.id ? 'bg-sky-50' : 'bg-white'}`}>
+                          {canPlan && isOpen && EDITABLE.includes(st) && (
+                            <input type="checkbox" className="h-3.5 w-3.5 mr-1.5 align-middle accent-sky-600" checked={sel.has(t.id)}
+                              onClick={e => e.stopPropagation()} onChange={() => toggle(t.id)} title="Chọn để gán ĐVVT / dòng xe hàng loạt" />
+                          )}
+                          <span className="font-mono font-semibold">{t.group_code}</span>{t.manual_edited && <span className="ml-1 text-amber-600" title="Người đã sửa chuyến này">✎</span>}
+                          {iss.length > 0 && (
+                            <span className={`block truncate text-[9px] font-medium ${iss[0] === 'declined' || iss[0] === 'over' ? 'text-red-600' : 'text-amber-700'}`}
+                              title={iss.map(k => ISSUE_SHORT[k]).join(' · ')}>
+                              ⚠ {iss.slice(0, 2).map(k => ISSUE_SHORT[k]).join(' · ')}{iss.length > 2 ? ` +${iss.length - 2}` : ''}
+                            </span>
+                          )}
+                        </TableCell>
+                        {showStatus && <TableCell className={TD} title={st === 'DECLINED' && t.response_note ? `Lý do: ${t.response_note}` : undefined}><StatusBadge tone={TRIP_STATUS_VI[st].tone}>{TRIP_STATUS_VI[st].label}</StatusBadge></TableCell>}
                         <TableCell className={TD}>{d.vehicle_model ? <><span className="font-mono">{d.vehicle_model.sap_code}</span> <span className="text-slate-600">{d.vehicle_model.name}</span></> : <span className="text-red-600">Chưa chọn</span>}</TableCell>
                         <TableCell className={TD} title={[...d.carrier_reasons, needsTender(t) ? 'ĐVVT cần phản hồi khi chào chuyến' : ''].filter(Boolean).join(' · ') || undefined}>{d.carrier ? <><span className="font-mono font-semibold">{d.carrier.code}</span> <span className="text-slate-500">{d.carrier.name}</span>{needsTender(t) && <Send className="inline h-3 w-3 ml-1 text-sky-600" />}</> : <span className="text-red-600">Chưa chọn</span>}</TableCell>
                         <TableCell className={`${TD} text-right tabular-nums`}>{t.stops}</TableCell>
@@ -281,8 +421,40 @@ export default function Dispatch() {
             </>
           )}
         </div>
-        {plan && <div className="border-t px-3 py-1.5 text-[11px] text-slate-500 shrink-0">{trips.length}/{plan.trips.length} chuyến · bấm một chuyến để đổi dòng xe / ĐVVT hoặc chuyển OD{plan.status === 'TENDERED' ? ' · xe chờ ĐVVT: ghi "ĐVVT nhận / từ chối" trong panel xe' : ''} · máy đề xuất, người xác nhận</div>}
+        {plan && <div className="border-t px-3 py-1.5 text-[11px] text-slate-500 shrink-0 flex items-center gap-2 flex-wrap">
+          <span className="whitespace-nowrap">Đang xem {trips.length}/{plan.trips.length} xe</span>
+          <span className="flex-1 min-w-0 truncate">· bấm một xe để đổi dòng xe / ĐVVT hoặc chuyển OD{plan.status === 'TENDERED' ? ' · xe chờ ĐVVT: ghi "ĐVVT nhận / từ chối" trong panel xe' : ''} · máy đề xuất, người xác nhận</span>
+          {todoN > 0 && <span className="text-amber-700 font-medium whitespace-nowrap">còn {todoN} xe cần xử lý</span>}
+        </div>}
       </div>
+
+      {/* Thanh NỔI (không chèn hàng vào luồng — bảng không được co lại lúc đang tick) */}
+      <FloatingActionBar count={selIds.length} unit="xe đã chọn">
+        <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulk('carrier'); setBulkVal('') }}>Gán ĐVVT</Button>
+        <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulk('model'); setBulkVal('') }}>Đổi dòng xe</Button>
+        <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setSel(new Set())}>Bỏ chọn</Button>
+      </FloatingActionBar>
+
+      <Dialog open={!!bulk} onOpenChange={o => { if (!o && !bulkBusy) { setBulk(null); setBulkVal('') } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">{bulk === 'carrier' ? 'Gán ĐVVT' : 'Đổi dòng xe con'} cho {selIds.length} xe</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <SingleSelect
+              options={bulk === 'carrier'
+                ? companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))
+                : models.map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
+              value={bulkVal} onChange={setBulkVal} placeholder={bulk === 'carrier' ? 'Chọn ĐVVT…' : 'Chọn dòng xe con…'} disabled={bulkBusy} />
+            <p className="text-[11px] text-slate-500">
+              Áp cho {selIds.length} xe đang chọn. Cước từng xe tính lại theo bảng cước hiệu lực — xe nào không có cước cho tuyến + dòng xe đó sẽ để trống cước kèm lý do.
+              {bulk === 'model' && ' Dòng xe không phục vụ đủ điều kiện bảo quản của hàng trên xe sẽ bị cảnh báo (không chặn).'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="h-8" disabled={bulkBusy} onClick={() => { setBulk(null); setBulkVal('') }}>Huỷ</Button>
+            <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={!bulkVal || bulkBusy} onClick={applyBulk}>{bulkBusy ? 'Đang áp…' : `Áp cho ${selIds.length} xe`}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Sheet open={!!openTrip} onOpenChange={o => !o && setOpenTripId(null)}>
         <SheetContent side="right" className="w-full sm:max-w-lg p-0 flex flex-col">

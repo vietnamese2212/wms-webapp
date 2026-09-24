@@ -69,6 +69,7 @@ hai con số gõ tay 60 % + 40 %, tức giả định kho luôn trống 100 %. H
 đỏ 4 phép, **0 phép là lỗi sản phẩm**. Nay gói ĐO chỗ trống rồi kiểm chính LUẬT Σ ≤ 100, và chọn ĐVVT fixture
 trong số ĐVVT CHƯA có dòng thật ở kho đó. Khuôn: **gói QA ghi vào bảng CẤU HÌNH của kho thật thì oracle phải là
 LUẬT, không phải con số tuyệt đối** — cùng họ với bất biến 11b đếm cả kho fixture (14/09).
+| C39 | **CỔNG TĨNH KÊU OAN VÌ ĐỌC `if` MỘT DÒNG THÀNH MỞ KHỐI** — `countHookAfterEarlyReturn` bật cờ `inIf` cho MỌI dòng khớp `^ {2}ifs*(`, mà cờ đó chỉ tắt khi gặp `  }` — thứ một-dòng (`if (cond) foo()`) không bao giờ có ⇒ cờ kẹt bật tới hết hàm, rồi `return` thụt ≥4 dấu cách của một callback (useMemo/map/sort) bị đọc thành RETURN SỚM và **mọi hook sau đó đều đỏ**. Đo 24/09 ở `Dispatch.tsx`: 5 vi phạm ma, 0 cái thật. Cổng kêu oan còn tệ hơn không có cổng — nó dạy người ta viết vòng tránh cổng thay vì đọc cổng | (3) chính luật đó: chỉ theo dõi khi thân `if` nằm ở DÒNG SAU (`ifTailOf` tìm dấu đóng ngoặc rồi soi phần đuôi) | 24/09: file tạm 4 ca — bắt ĐỦ 3 ca THẬT (return một dòng · return trong khối · return ở dòng kế), bỏ qua đúng ca `if (cond) stmt()` | 24/09 |
 **Ghi chú C34 (23/09) — TÁI PHÁT, chiều ngược lại:** lần 19/09 là con số TOÀN KHO mượn truy vấn của màn đang
 mở; lần này là ô tổng của MỘT DANH SÁCH cộng cứng một tập con. `erp_so_lines_summary` cộng `sap_pallets`/`kg`
 với `FILTER (WHERE status='OPEN')` trong khi 5 ô còn lại đi theo mệnh đề WHERE ⇒ lọc "Đã có OD" cho **bảng

@@ -28,6 +28,11 @@ const ADMIN_ONLY_INTENDED = new Set([
   // 'user_admin.manage_roles',  // ví dụ — hiện chưa chốt ngoại lệ nào
 ])
 
+// ── MODULE chủ đích CHỈ superadmin dùng (cả trang không cấp cho chức danh nào là ĐÚNG thiết kế).
+// Để trống là CÓ CHỦ ĐÍCH: đo 24/09 thì cả 41/41 module đều có ≥1 chức danh nắm. Thêm vào đây
+// phải kèm lý do — đây là danh sách ngoại lệ, không phải chỗ giấu cảnh báo.
+const MODULE_ADMIN_ONLY = new Set([])
+
 console.log(`── GÓI PERM-COVERAGE${STRICT ? ' (strict)' : ''} ──`)
 
 // ── Parse BE ALL_PERMISSIONS ──
@@ -93,6 +98,22 @@ if (!HAS_DB) {
     if (STRICT) chk(false, label)
     else warn(label + '  (cấp trong Quản lý người dùng → chức danh, hoặc khai ADMIN_ONLY_INTENDED kèm lý do)')
   }
+
+  // ── Tầng 2b: MODULE bị KHOÁ TRỌN = cả một TRANG không nhân viên nào mở được → FAIL, không warn.
+  // Khác hẳn tầng 2 ở trên (một action lẻ chưa ai được cấp là QUYẾT ĐỊNH QUẢN TRỊ, warn là đúng):
+  // ở đây KHÔNG action nào của module có người nắm, tức tính năng đã lên máy mà không tới được tay ai.
+  // Đã xảy ra HAI LẦN và cả hai lần chỉ lộ ra vì có người đi đo bằng tay: `directed_work` ra máy
+  // 10/09 với 0/9 chức danh kho (vá bằng migration 20260912d), `dispatch` + `freight` ra máy 23–24/09
+  // với 0/19 chức danh (vá bằng 20260924d). Cả hai lần tầng 2 CÓ kêu — nhưng kêu bằng ⚠️ giữa một
+  // lượt chạy xanh nên không ai đọc. Chuông báo cháy mà chỉ nhấp nháy thì không phải chuông.
+  const deadModules = Object.keys(BE)
+    .filter(mod => !MODULE_ADMIN_ONLY.has(mod))
+    .filter(mod => (BE[mod] ?? []).every(a => !granted.has(`${mod}.${a}`)))
+  chk(deadModules.length === 0,
+    'không module nào bị KHOÁ TRỌN (0 chức danh nắm bất kỳ quyền nào ⇒ cả trang tàng hình)',
+    deadModules.length
+      ? `${deadModules.length} module: ${deadModules.join(', ')} — cấp quyền cho chức danh, hoặc khai MODULE_ADMIN_ONLY kèm lý do`
+      : `${Object.keys(BE).length} module đều có người nắm`)
 }
 
 // ── Tầng 3: CHUYẾN CHỞ LẪN nhiều Loại kho phải LỌT scope loại (bug thật 30/07) ──

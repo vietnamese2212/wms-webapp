@@ -203,6 +203,23 @@ describe('luật 6 — chọn ĐVVT: phân tuyến → dưới tỷ trọng → 
     }))
     expect(r.trips[0].carrier?.id).toBe('B')
   })
+  it('lý do phải nêu ĐÚNG bước thu hẹp: tỷ trọng lọc còn 1 ĐVVT ⇒ KHÔNG được nói "duy nhất có cước"', () => {
+    // Đo Ba Vì 07/09: 22/22 chuyến nói "ĐVVT duy nhất có cước" trong khi CẢ 3 ĐVVT đều có cước cho
+    // mọi (phường × dòng xe) — pool bị bộ lọc TỶ TRỌNG thu hẹp, không phải vì thiếu báo giá.
+    const r = runDispatch(input([od('1', 'W1', 8, { region_code: 'R1' }), od('2', 'W1', 8, { region_code: 'R2' })], {
+      share_targets: [{ transport_company_id: 'A', share_pct: 30, basis: 'TRIPS' }, { transport_company_id: 'B', share_pct: 70, basis: 'TRIPS' }],
+    }))
+    const b = r.trips.find(t => t.carrier?.id === 'B')!
+    const w = b.carrier_reasons.join(' ')
+    expect(w).toMatch(/dưới tỷ trọng kỳ \(2 ĐVVT có cước cho tuyến này\)/)
+    expect(w).not.toMatch(/duy nhất có cước cho tuyến/)
+  })
+  it('chỉ MỘT ĐVVT có cước thật ⇒ vẫn nói đúng "duy nhất có cước" (không nới lỏng câu đúng)', () => {
+    // B chỉ chào giá ở W1, nên ở W2 chỉ còn A — đây mới là ca câu cũ nói đúng.
+    const t = runDispatch(input([od('1', 'W2', 8)])).trips[0]
+    expect(t.carrier?.id).toBe('A')
+    expect(t.carrier_reasons.join(' ')).toMatch(/ĐVVT duy nhất có cước cho tuyến\/dòng xe này/)
+  })
   it('không ĐVVT nào có cước cho phường ⇒ dòng xe nhỏ nhất còn vừa, ĐVVT trống, cước null có lý do', () => {
     const t = runDispatch(input([od('1', 'W9', 8)])).trips[0]
     expect(t.carrier).toBeNull(); expect(t.vehicle_model?.id).toBe('M9')

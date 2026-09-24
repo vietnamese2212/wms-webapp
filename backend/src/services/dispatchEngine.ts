@@ -288,6 +288,7 @@ function chooseCarrier(ctx: Ctx, model: EngineModel, wards: string[], region: st
   const carriers = [...input.carriers].sort((a, b) => cmp(a.code, b.code))
   let pool: PriceOpt[] = carriers.map(c => ({ carrier: c, freight: priceFor(ctx, model, c.id, wards, stops, pallets, tons), reasons: [] })).filter(p => p.freight.total != null)
   if (!pool.length) return null
+  const pricedN = pool.length   // bao nhiêu ĐVVT CÓ CƯỚC cho tuyến này — giữ lại để câu lý do cuối nói đúng
   // (1) ưu tiên khu vực: WARD của phường xa nhất trước, rồi REGION — chỉ giữ nhóm priority NHỎ NHẤT có cước
   const farWard = pool[0].freight.ward ?? wards[0] ?? null
   const pick = (kind: 'WARD' | 'REGION', code: string | null): { ids: string[]; label: string } | null => {
@@ -313,7 +314,14 @@ function chooseCarrier(ctx: Ctx, model: EngineModel, wards: string[], region: st
   // (3) cước thấp nhất → (4) mã ĐVVT
   pool.sort((a, b) => (a.freight.total! - b.freight.total!) || cmp(a.carrier.code, b.carrier.code))
   const best = pool[0]
-  best.reasons.push(pool.length > 1 ? `Cước thấp nhất trong ${pool.length} ĐVVT có cước` : 'ĐVVT duy nhất có cước cho tuyến/dòng xe này')
+  // Câu này là LỜI GIẢI THÍCH cho điều vận, nên phải nêu ĐÚNG bước nào đã thu hẹp lựa chọn.
+  // Bản cũ luôn nói "ĐVVT duy nhất có cước" khi pool còn 1 — nhưng pool đã qua hai bộ lọc ở trên.
+  // Đo Ba Vì 07/09 sau khi khai tỷ trọng: **22/22 chuyến** mang câu đó trong khi cả 3 ĐVVT đều có
+  // cước cho MỌI cặp (phường × dòng xe) — điều vận đọc xong sẽ đi xin báo giá thứ vốn đã có sẵn.
+  if (pool.length > 1) best.reasons.push(`Cước thấp nhất trong ${pool.length} ĐVVT${pool.length < pricedN ? ' còn lại sau lọc' : ' có cước'}`)
+  else if (pricedN === 1) best.reasons.push('ĐVVT duy nhất có cước cho tuyến/dòng xe này')
+  else if (under.length === 1) best.reasons.push(`ĐVVT duy nhất đang dưới tỷ trọng kỳ (${pricedN} ĐVVT có cước cho tuyến này)`)
+  else best.reasons.push(`ĐVVT duy nhất của phân tuyến ${alloc?.label ?? ''} (${pricedN} ĐVVT có cước cho tuyến này)`)
   return best
 }
 

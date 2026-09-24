@@ -75,12 +75,20 @@ try {
     finish('ROTATION'); process.exit()
   }
   const [wh] = await restAll('Warehouse',
-    `select=id,rotation_principle,rotation_required,putaway_enforced&id=eq.${whId}`)
-  whBackup = { rotation_principle: wh?.rotation_principle ?? 'FEFO', rotation_required: wh?.rotation_required === true, updated_at: nowIso() }
+    `select=id,rotation_principle,rotation_required,putaway_enforced,work_mode&id=eq.${whId}`)
+  // work_mode PHẢI nằm trong bản sao lưu: gói ép kho về THỦ CÔNG trong lúc đo (xem setRot),
+  // quên trả lại là để kho dùng chung sai cách làm việc cho mọi gói chạy sau.
+  whBackup = { rotation_principle: wh?.rotation_principle ?? 'FEFO', rotation_required: wh?.rotation_required === true, work_mode: wh?.work_mode ?? 'MANUAL', updated_at: nowIso() }
   putBackup = { putaway_enforced: wh?.putaway_enforced ?? [] }
 
+  // ⚠️ ÉP kho về THỦ CÔNG trong suốt lượt đo. VÌ SAO (đo 24/09, gói đỏ 4 phép ở CẢ hai lượt chạy):
+  // gói MƯỢN một kho thật bất kỳ (`anyEntry.warehouse_id`); nếu kho đó đang HƯỚNG DẪN thì Bắt đầu
+  // chuyến sinh việc lấy hàng GHIM pallet, và luật 20/09 (`rotationCheckOf.excludeEntryIds`) CỐ Ý
+  // không coi pallet đã ghim cho CHÍNH chuyến là "sai thứ tự" ⇒ best_pallet_code = null ⇒
+  // violation=false ⇒ [8][9][10][15] đỏ OAN trong khi app hoàn toàn đúng thiết kế.
+  // Đây là gói đo LUÂN CHUYỂN, không đo chỉ dẫn công việc — hai luật đó phải tách nhau ra.
   const setRot = (principle, required) =>
-    restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_principle: principle, rotation_required: required, updated_at: nowIso() })
+    restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_principle: principle, rotation_required: required, work_mode: 'MANUAL', updated_at: nowIso() })
   // Luật CẤT đi qua API (backend cache 30s cho hot-path quét — ghi thẳng DB thì luật không hiệu lực)
   const setPut = (enforced) => api(`/masterdata/warehouses/${whId}`, 'PUT', { putaway_enforced: enforced })
   // Cache cấu hình 30s/instance serverless → phải chờ hết cửa sổ mới đo được mức BẮT BUỘC
@@ -210,6 +218,10 @@ try {
 
   // ── [8..10] Kho BẮT BUỘC: chặn, đòi lý do đúng danh sách ──────────────────
   await setRot('FEFO', true)
+  // ⚠️ setRot ghi THẲNG DB, mà backend cache cấu hình kho 30s cho hot-path quét ⇒ quét ngay
+  // vẫn thấy required=false và trả 200. Thiếu bước chờ này thì [8][9][10][15] ĐỎ OAN — gói
+  // kêu oan vì chính nó, không phải app hỏng (đo lại 24/09: 2 lượt liên tiếp đỏ y hệt).
+  await waitConfigSettled()
   const itemB = await mkItem(500)
   {
     const r = await scan(itemB, { qr_code: `${TAG}-OLD`, cartons_override: 10, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })

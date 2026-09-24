@@ -105,8 +105,12 @@ else {
       check('Sửa kho TRONG phạm vi (Ba Vì) → 200', r.s === 200, `http=${r.s} ${r.j?.error?.message ?? ''}`)
       r = await call('/external/do-sap', 'POST', { od_number: `${TAG}1`, od_item: '10', plant: '9999' })
       check('Thêm DO SAP plant ngoài phạm vi → 403', r.s === 403, `http=${r.s}`)
+      // THIẾU plant ≠ plant NGOÀI phạm vi (chốt ca đêm 20/09, erpOrderController): bỏ trống ô Nhà máy
+      // mà trả 403 thì người dùng đi tìm lỗi phân quyền không có thật → nay 400 + PLANT_REQUIRED nêu
+      // tên ô và liệt kê plant hợp lệ. Vẫn phải CHẶN (phép kiểm ngay trên khoá 403 cho plant sai).
       r = await call('/external/do-sap', 'POST', { od_number: `${TAG}2`, od_item: '10' })
-      check('Thêm DO SAP KHÔNG khai plant (tài khoản kho lẻ) → 403', r.s === 403, `http=${r.s}`)
+      check('Thêm DO SAP KHÔNG khai plant (tài khoản kho lẻ) → 400 PLANT_REQUIRED, nói rõ thiếu ô nào',
+        r.s === 400 && String(r.j?.error?.code ?? '') === 'PLANT_REQUIRED', `http=${r.s} code=${r.j?.error?.code}`)
       const plant = (await restAll('Warehouse', `select=sap_plant&id=eq.${FIX.WH_QR.id}`))[0]?.sap_plant
       if (plant) {
         r = await call('/external/do-sap', 'POST', { od_number: `${TAG}3`, od_item: '10', plant })

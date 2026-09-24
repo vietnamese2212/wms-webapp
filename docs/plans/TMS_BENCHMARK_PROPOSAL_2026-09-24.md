@@ -75,7 +75,15 @@ Giữ engine hiện có (xếp lớn-trước, hạ xe rẻ nhất, gộp Non t�
 - Migration `20260924_dispatch_plan.sql` + `20260924b_dispatch_tender.sql` **đã áp staging**; `database.ts` sinh lại.
 - `services/dispatchEngine.ts` (thuần, **32 test** `tests/unit/dispatchEngine.test.ts` — mỗi luật một phép kiểm, đã thử ngược 1 luật thành đỏ) · `controllers/tms/dispatchController.ts` (plan · list · get · patch trip · move-od · confirm · **settle** · **respond** · discard) · 9 route + quyền `dispatch` · trang `pages/tms/Dispatch.tsx` (cột Trạng thái xe, khối phản hồi ĐVVT trong panel xe) · nhóm "XUẤT — Điều vận" form Kho · công tắc ở form ĐVVT. **Gói QA 61 (42 phép) xanh** trên backend cục bộ + DB staging.
 - **Lỗi thật gói 61 bắt ngay lượt đầu (đã vá):** engine xếp lớn-trước vào xe LỚN NHẤT của danh mục (60 dòng thật, cont 30 pallet) dù không ĐVVT nào chào giá cho xe đó ⇒ chuyến "không ĐVVT, không cước" trong khi xe 9 pallet có cước chở được. Nay xe lớn nhất = trong số dòng xe CÓ CƯỚC cho phường của cụm; không có cước nào mới rơi về xe lớn nhất chung.
-- **Chưa (chờ user chốt câu 2–3 mục 5):** A1 hàng không đi chung theo nhiệt (Material chưa có temp class) · A2 MIN/MAX theo ĐVVT × vùng × tháng · A5 đo máy vs người trên 627 chuyến SAP · soi UI Playwright trên Preview.
+- **Đo lần đầu trên dữ liệu thật (A5 một phần, Preview, 127 OD Ba Vì 07/09 trên staging, bảng cước SƠ BỘ):**
+
+  | Luật hạ xe | Xe | Dòng xe dùng | Non tải | Tải trung vị | Điểm giao ≥ 2 | Σ cước sơ bộ |
+  |---|---|---|---|---|---|---|
+  | "rẻ nhất tuyệt đối" (bản đầu) | 77 | 1 (Xe 34 Pallet) | 73 | 28 % | 7 | 224,6 tr |
+  | ba bậc: đủ tải → nhỏ nhất có cước → nhỏ nhất (bản lên dev) | 61 | 9 | 4 | 80 % | 17 | 288,7 tr |
+
+  Bài học: cước theo pallet của xe to RẺ HƠN/pallet nên "rẻ nhất" đưa 0,5 pallet lên xe 34 pallet — không ĐVVT nào nhận giá đó cho chuyến như vậy. Cước ba bậc cao hơn 28 % **trên bảng sơ bộ tôi ước tính**, không phải kết luận về tiền; so máy vs người (627 chuyến SAP) chỉ có nghĩa khi bảng cước thật thay bảng sơ bộ. UI Playwright 1280/360: 0 lỗi console, không tràn ngang, panel xe 359 px ở 360.
+- **Chưa (chờ user chốt câu 2–3 mục 5):** A1 hàng không đi chung theo nhiệt (Material chưa có temp class) · A2 MIN/MAX theo ĐVVT × vùng × tháng · A5 so máy vs người trên 627 chuyến SAP (cần bảng cước thật).
 
 ## 5. Câu hỏi để chốt
 1. Đi theo **A → B → C** đúng thứ tự trên? Hay ưu tiên B3 (đối soát hoá đơn ĐVVT) trước B1 (tender)?

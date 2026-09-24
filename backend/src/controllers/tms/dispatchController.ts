@@ -670,7 +670,8 @@ export async function respondTrip(req: Request, res: Response) {
 // ── DELETE /tms/dispatch/plans/:id — bỏ bản nháp; kế hoạch đang chờ ĐVVT ⇒ bỏ các xe CHƯA vào Kế hoạch xuất ─────
 export async function discardPlan(req: Request, res: Response) {
   try {
-    const { data: plan } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
+    const { data: plan, error: pErr } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
+    if (pErr) throw pErr   // id rác (22P02) → 400 qua fail(), không phải "không tìm thấy"
     if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     if (!OPEN_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã xác nhận / đã bỏ')

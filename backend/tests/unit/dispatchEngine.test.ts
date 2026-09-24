@@ -102,6 +102,20 @@ describe('runDispatch — xếp lớn trước theo cụm, hạ xe rẻ nhất, 
     const r2 = runDispatch(input([od('3', 'W9', 12), od('4', 'W9', 12)], { models: [M9, M16, M30] }))
     expect(r2.trips).toHaveLength(1); expect(r2.trips[0].vehicle_model?.id).toBe('M30'); expect(r2.trips[0].carrier).toBeNull()
   })
+  it('hạ xe ba bậc: xe 30 pallet rẻ nhất/pallet nhưng 3 pallet ⇒ chọn M9 NHỎ NHẤT (không ai đủ tải, không lấy "rẻ nhất tuyệt đối"); 8 pallet ⇒ M9 đủ tải; 20 pallet ⇒ M30 duy nhất vừa', () => {
+    const M30 = model({ id: 'M30', max_pallets: 30 })
+    const cheapBig = [tariff('A', 'M30', 'W1', 50_000), tariff('A', 'M9', 'W1', 100_000), tariff('A', 'M16', 'W1', 80_000)]
+    const t3 = runDispatch(input([od('1', 'W1', 3)], { models: [M9, M16, M30], tariffs: cheapBig })).trips[0]
+    expect(t3.vehicle_model?.id).toBe('M9'); expect(t3.freight.total).toBe(3 * 100_000)
+    expect(t3.carrier_reasons.join(' ')).toMatch(/nhỏ nhất còn vừa/)
+    const t8 = runDispatch(input([od('1', 'W1', 8)], { models: [M9, M16, M30], tariffs: cheapBig })).trips[0]
+    expect(t8.vehicle_model?.id).toBe('M9'); expect(t8.underload).toBe(false)
+    // 12 pallet: M16 75 % đủ tải (80k) · M30 40 % không ⇒ M16 dù M30 rẻ hơn
+    const t12 = runDispatch(input([od('1', 'W1', 12)], { models: [M9, M16, M30], tariffs: cheapBig })).trips[0]
+    expect(t12.vehicle_model?.id).toBe('M16')
+    const t20 = runDispatch(input([od('1', 'W1', 20)], { models: [M9, M16, M30], tariffs: cheapBig })).trips[0]
+    expect(t20.vehicle_model?.id).toBe('M30'); expect(t20.oversize).toBe(false)
+  })
   it('một dòng 20 pallet > xe lớn nhất 16 ⇒ chuyến riêng oversize + cảnh báo nói thẳng', () => {
     const r = runDispatch(input([od('1', 'W1', 20)]))
     expect(r.trips).toHaveLength(1)

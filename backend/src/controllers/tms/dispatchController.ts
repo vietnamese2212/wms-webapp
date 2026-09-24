@@ -20,7 +20,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
-import { ok, fail } from '../../utils/response'
+import { ok, fail, type PgLikeError } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
 import { normDvvt } from '../../utils/sapUnits'
@@ -52,6 +52,8 @@ const CHUNK = 500
 const uniq = <T,>(a: T[]) => [...new Set(a)]
 const numOrNull = (v: unknown): number | null => { const n = Number(v); return v == null || !Number.isFinite(n) ? null : n }
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json
+/** Ném NGUYÊN đối tượng lỗi PostgREST (giữ code 22P02/23505…) để fail() dịch thành 400/409 — bậc fast 24/09 bắt id rác trên :id ra 500 vì bản cũ ném new Error(message). */
+const failAny = (res: Response, e: unknown) => (e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e), 500))
 
 // ── Phạm vi kho ────────────────────────────────────────────────────────────────────────────────────────
 function scopeWhIds(req: Request): string[] | null {
@@ -92,7 +94,7 @@ type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' |
 
 async function loadWarehouse(id: string): Promise<WhRow | null> {
   const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_max_drops, dispatch_allow_mix_channels, dispatch_underload_pct').eq('id', id).maybeSingle()
-  if (error) throw new Error(error.message)
+  if (error) throw error
   return (data as WhRow | null) ?? null
 }
 
@@ -109,7 +111,7 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     db.from('carrier_allocation').select('area_kind, area_code, transport_company_id, priority, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
     db.from('carrier_share_target').select('transport_company_id, share_pct, basis, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
   ])
-  for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw new Error(r.error.message)
+  for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
   const vtName = new Map(((vtRes.data ?? []) as { id: string; name: string }[]).map(v => [v.id, v.name]))
   const models: EngineModel[] = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | string | null; max_drops: number | null; is_active: boolean }[]).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
@@ -221,7 +223,7 @@ const carrierRef = (c: EngineCarrier) => ({ id: c.id, code: c.code, name: c.name
 
 async function readPlan(planId: string) {
   const { data: plan, error } = await db.from('dispatch_plan').select('*').eq('id', planId).maybeSingle()
-  if (error) throw new Error(error.message)
+  if (error) throw error
   if (!plan) return null
   const trips = (await fetchAllRowsParallel(() => db.from('dispatch_trip').select('*').eq('plan_id', planId).order('seq'))) as TripRow[]
   const ods = trips.length ? (await fetchAllByIdChunks(trips.map(t => t.id), c => db.from('dispatch_trip_od').select('*').in('trip_id', c).order('od_number'))) as TripOdRow[] : []
@@ -280,7 +282,7 @@ async function syncPlanStatus(plan: PlanRow, actor: string | null): Promise<stri
     const patch: Tables['dispatch_plan']['Update'] = { status: next, updated_at: t }
     if (next === 'CONFIRMED') { patch.confirmed_by = actor; patch.confirmed_at = t }
     const { error } = await db.from('dispatch_plan').update(patch).eq('id', plan.id)
-    if (error) throw new Error(error.message)
+    if (error) throw error
   }
   return next
 }
@@ -288,7 +290,7 @@ async function writeSummary(plan: PlanRow) {
   const full = await readPlan(plan.id)
   if (!full) return
   const { error } = await db.from('dispatch_plan').update({ summary: asJson(summarizeRows(plan, full.trips)), updated_at: now() }).eq('id', plan.id)
-  if (error) throw new Error(error.message)
+  if (error) throw error
 }
 
 // ── POST /tms/dispatch/plan ────────────────────────────────────────────────────────────────────────────
@@ -320,7 +322,7 @@ export async function createPlan(req: Request, res: Response) {
 
     // MỘT bản nháp mỗi kho×ngày: nháp cũ (kể cả người đã sửa) bị thay — người bấm "Lập kế hoạch" là chủ ý chạy lại
     const { error: delErr } = await db.from('dispatch_plan').delete().eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('status', 'DRAFT')
-    if (delErr) throw new Error(delErr.message)
+    if (delErr) throw delErr
     const t = now()
     const planId = randomUUID()
     const { error: pErr } = await db.from('dispatch_plan').insert({
@@ -329,7 +331,7 @@ export async function createPlan(req: Request, res: Response) {
       summary: asJson(result.summary), unplanned: asJson(result.unplanned),
       created_by: req.user?.name ?? null, updated_at: t,
     })
-    if (pErr) throw new Error(pErr.message)
+    if (pErr) throw pErr
     const tripRows = result.trips.map(tr => ({
       id: randomUUID(), plan_id: planId, seq: tr.seq, group_code: tr.group_code,
       vehicle_model_id: tr.vehicle_model?.id ?? null, transport_company_id: tr.carrier?.id ?? null,
@@ -338,7 +340,7 @@ export async function createPlan(req: Request, res: Response) {
     }))
     for (let i = 0; i < tripRows.length; i += CHUNK) {
       const { error } = await db.from('dispatch_trip').insert(tripRows.slice(i, i + CHUNK))
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     const odRows = result.trips.flatMap((tr, i) => tr.ods.map(o => ({
       id: randomUUID(), trip_id: tripRows[i].id, od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code,
@@ -346,11 +348,11 @@ export async function createPlan(req: Request, res: Response) {
     })))
     for (let i = 0; i < odRows.length; i += CHUNK) {
       const { error } = await db.from('dispatch_trip_od').insert(odRows.slice(i, i + CHUNK))
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     const full = await readPlan(planId)
     return ok(res, { ...full, in_plan }, 201)
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── GET /tms/dispatch/plans · GET /tms/dispatch/plans/:id ──────────────────────────────────────────────
@@ -374,7 +376,7 @@ export async function listPlans(req: Request, res: Response) {
     const whs = whIds.length ? (await db.from('Warehouse').select('id, code, name').in('id', whIds.slice(0, 300))).data ?? [] : []
     const whBy = new Map(whs.map(w => [w.id, w]))
     return ok(res, { items: (data ?? []).map(p => ({ ...p, warehouse: whBy.get(p.warehouse_id) ?? null })) })
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 export async function getPlan(req: Request, res: Response) {
   try {
@@ -383,7 +385,7 @@ export async function getPlan(req: Request, res: Response) {
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     const wh = (await db.from('Warehouse').select('id, code, name').eq('id', full.warehouse_id).maybeSingle()).data ?? null
     return ok(res, { ...full, warehouse: wh })
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── Sửa nháp: tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn (cùng `priceFor` của engine) ────────────
@@ -394,7 +396,7 @@ const TRIP_STATUS_VI: Record<TripStatus, string> = { DRAFT: 'nháp', TENDERED: '
 /** Chuyến + kế hoạch của nó, gác phạm vi kho. `editable` = kế hoạch còn mở (DRAFT/TENDERED) và chuyến DRAFT/DECLINED. */
 async function loadTrip(req: Request, tripId: string, opts: { editable?: boolean; allow?: TripStatus[] } = {}): Promise<{ plan: PlanRow; trip: TripRow & { ods: TripOdRow[] } } | TripErr> {
   const { data: trip, error } = await db.from('dispatch_trip').select('*').eq('id', tripId).maybeSingle()
-  if (error) throw new Error(error.message)
+  if (error) throw error
   if (!trip) return { err: ['Không tìm thấy chuyến nháp', 404] }
   const { data: plan } = await db.from('dispatch_plan').select('*').eq('id', trip.plan_id).maybeSingle()
   if (!plan) return { err: ['Không tìm thấy kế hoạch', 404] }
@@ -440,7 +442,7 @@ async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, 
     status: (statusOf(trip) === 'DECLINED' ? 'DRAFT' : statusOf(trip)) as TripStatus, updated_at: now(),
   }
   const { error } = await db.from('dispatch_trip').update(patch).eq('id', trip.id)
-  if (error) throw new Error(error.message)
+  if (error) throw error
   return { ...trip, ...patch }
 }
 
@@ -466,7 +468,7 @@ export async function updateTrip(req: Request, res: Response) {
     const updated = await repriceTrip(plan, trip, modelId, carrierId, refs, numOrNull(wh?.dispatch_underload_pct))
     await writeSummary(plan)
     return ok(res, updated)
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── POST /tms/dispatch/trips/:id/move-od ───────────────────────────────────────────────────────────────
@@ -497,10 +499,10 @@ export async function moveOd(req: Request, res: Response) {
         vehicle_model_id: src.vehicle_model_id, transport_company_id: src.transport_company_id,
         stops: 1, wards: [], detail: asJson({ ...detailOf(src), warnings: [], merge_hint: null }), manual_edited: true, status: 'DRAFT', updated_at: t,
       })
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     const { error: mvErr } = await db.from('dispatch_trip_od').update({ trip_id: targetId, updated_at: t }).in('id', moving.map(o => o.id).slice(0, 300))
-    if (mvErr) throw new Error(mvErr.message)
+    if (mvErr) throw mvErr
 
     const wh = await loadWarehouse(plan.warehouse_id)
     const allWards = uniq([...src.ods.map(o => o.ward_code)].filter((x): x is string => !!x))
@@ -508,7 +510,7 @@ export async function moveOd(req: Request, res: Response) {
     // nguồn: còn OD thì tính lại, hết OD thì xoá chuyến
     const srcLeft = src.ods.filter(o => o.od_number !== b.od_number)
     if (srcLeft.length) await repriceTrip(plan, { ...src, ods: srcLeft }, src.vehicle_model_id, src.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct))
-    else { const { error } = await db.from('dispatch_trip').delete().eq('id', src.id); if (error) throw new Error(error.message) }
+    else { const { error } = await db.from('dispatch_trip').delete().eq('id', src.id); if (error) throw error }
     // đích
     const tgTrip = (await db.from('dispatch_trip').select('*').eq('id', targetId).maybeSingle()).data as TripRow | null
     if (tgTrip) {
@@ -519,7 +521,7 @@ export async function moveOd(req: Request, res: Response) {
     }
     await writeSummary(plan)
     return ok(res, await readPlan(plan.id))
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── Ghi các chuyến vào Kế hoạch xuất — dùng chung cho Xác nhận cả kế hoạch · chốt một xe · ĐVVT nhận ─────
@@ -562,11 +564,11 @@ async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTr
   })
   for (let i = 0; i < rows.length; i += CHUNK) {
     const { error } = await db.from('khvc_lines').insert(rows.slice(i, i + CHUNK))
-    if (error) throw new Error(error.message)
+    if (error) throw error
   }
   const gcs = trips.map(x => x.group_code)
   const { error } = await db.from('dispatch_trip').update({ status: 'CONFIRMED', confirmed_at: t, updated_at: t }).in('id', trips.map(x => x.id).slice(0, 300))
-  if (error) throw new Error(error.message)
+  if (error) throw error
   let replan: Record<string, unknown> | null = null, replan_error: string | null = null
   try { replan = await replanKhvcGroups(req, gcs) } catch (e) { replan_error = String(e); console.error('[dispatch confirm] replan:', e) }
   return { lines: rows.length, group_codes: gcs, replan, replan_error }
@@ -583,7 +585,7 @@ async function markTendered(trips: FullTrip[]) {
   if (!trips.length) return
   const t = now()
   const { error } = await db.from('dispatch_trip').update({ status: 'TENDERED', tendered_at: t, responded_at: null, response_by: null, response_note: null, updated_at: t }).in('id', trips.map(x => x.id).slice(0, 300))
-  if (error) throw new Error(error.message)
+  if (error) throw error
 }
 
 // ── POST /tms/dispatch/plans/:id/confirm — xe của ĐVVT không cần phản hồi ghi thẳng; xe còn lại chờ ĐVVT ─────
@@ -608,7 +610,7 @@ export async function confirmPlan(req: Request, res: Response) {
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
     return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error })
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── POST /tms/dispatch/trips/:id/settle — chốt MỘT xe (kế hoạch đang chờ ĐVVT: xe nháp / xe bị từ chối đã sửa ĐVVT) ─
@@ -631,7 +633,7 @@ export async function settleTrip(req: Request, res: Response) {
     const status = await syncPlanStatus(plan, req.user?.name ?? null)
     await writeSummary(plan)
     return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null })
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── POST /tms/dispatch/trips/:id/respond — ghi câu trả lời của ĐVVT cho xe đang chờ (đợt A: điều vận ghi thay) ───
@@ -645,7 +647,7 @@ export async function respondTrip(req: Request, res: Response) {
     const actor = req.user?.name ?? null
     if (!b.accept) {
       const { error } = await db.from('dispatch_trip').update({ status: 'DECLINED', responded_at: t, response_by: actor, response_note: b.note?.trim() || null, updated_at: t }).eq('id', got.trip.id)
-      if (error) throw new Error(error.message)
+      if (error) throw error
       const status = await syncPlanStatus(plan, actor)
       await writeSummary(plan)
       return ok(res, { trip_id: got.trip.id, group_code: got.trip.group_code, trip_status: 'DECLINED', plan_status: status })
@@ -657,12 +659,12 @@ export async function respondTrip(req: Request, res: Response) {
     const g = await tripGuards(full, [trip])
     if (g) return sendErr(res, g)
     const { error } = await db.from('dispatch_trip').update({ responded_at: t, response_by: actor, response_note: b.note?.trim() || null, updated_at: t }).eq('id', trip.id)
-    if (error) throw new Error(error.message)
+    if (error) throw error
     const w = await writeTrips(req, full, wh, [trip])
     const status = await syncPlanStatus(plan, actor)
     await writeSummary(plan)
     return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: 'CONFIRMED', plan_status: status, lines: w.lines, replan: w.replan, replan_error: w.replan_error })
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // ── DELETE /tms/dispatch/plans/:id — bỏ bản nháp; kế hoạch đang chờ ĐVVT ⇒ bỏ các xe CHƯA vào Kế hoạch xuất ─────
@@ -674,18 +676,18 @@ export async function discardPlan(req: Request, res: Response) {
     if (!OPEN_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã xác nhận / đã bỏ')
     const t = now()
     const { data: dropped, error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: t }).eq('plan_id', plan.id).neq('status', 'CONFIRMED').select('id')
-    if (tErr) throw new Error(tErr.message)
+    if (tErr) throw tErr
     let status: string
     if (plan.status === 'DRAFT') {
       const { error } = await db.from('dispatch_plan').update({ status: 'DISCARDED', updated_at: t }).eq('id', plan.id)
-      if (error) throw new Error(error.message)
+      if (error) throw error
       status = 'DISCARDED'
     } else {
       status = await syncPlanStatus(plan as PlanRow, req.user?.name ?? null)
       await writeSummary(plan as PlanRow)
     }
     return ok(res, { id: plan.id, status, discarded_trips: dropped?.length ?? 0 })
-  } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
+  } catch (e) { return failAny(res, e) }
 }
 
 export { pickBookingCategory }

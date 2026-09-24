@@ -296,8 +296,12 @@ interface Assigned {
   model: EngineModel | null; carrier: EngineCarrier | null; freight: TripFreight; reasons: string[]; warnings: string[]
   cats: string[]; wards: string[]; stops: number; pallets: number | null; tons: number | null; oversize: boolean
 }
-/** Luật 3 (hạ xe) + 6: với một bin đã xếp, chọn (dòng xe, ĐVVT) RẺ NHẤT còn vừa; không có cước ⇒ dòng xe nhỏ nhất vừa tải. */
-function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>): Assigned {
+/** Luật 3 (hạ xe) + 6: với một bin đã xếp, chọn (dòng xe, ĐVVT) theo ba bậc:
+ *  (1) trong các dòng xe CHỞ ĐỦ TẢI (không Non tải) có cước ⇒ rẻ nhất; (2) không dòng xe nào đủ tải ⇒ dòng xe NHỎ NHẤT còn vừa
+ *  mà có cước; (3) không có cước ⇒ dòng xe nhỏ nhất vừa tải, ĐVVT trống. Vì sao không "rẻ nhất tuyệt đối": cước theo pallet của
+ *  xe to thường rẻ hơn/pallet nên "rẻ nhất" đưa 0,5 pallet lên xe 34 pallet (đo Ba Vì 07/09: 77/77 xe đều là Xe 34 Pallet,
+ *  73 Non tải) — không ĐVVT nào nhận giá đó cho chuyến như vậy, và điều vận không bao giờ xếp thế. */
+function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, underPct: (m: EngineModel) => number): Assigned {
   const cats = catsOf(b.units.flatMap(u => u.lines))
   const wards = binWards(b).filter(w => w !== '?')
   const stops = binStops(b)
@@ -308,13 +312,26 @@ function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>): A
   const cands = ctx.models.filter(m => servesAll(m, cats) && (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
     .sort((a, c) => (numOr(a.max_pallets, 1e9) - numOr(c.max_pallets, 1e9)) || (numOr(a.max_tons, 1e9) - numOr(c.max_tons, 1e9)) || cmp(a.sap_code, c.sap_code))
   const warnings: string[] = []
-  let best: { model: EngineModel; opt: PriceOpt } | null = null
+  const priced: { model: EngineModel; opt: PriceOpt; full: boolean }[] = []
   for (const m of cands) {
     const opt = chooseCarrier(ctx, m, wards, region, stops, pAll, tAll, actual)
     if (!opt) continue
-    if (!best || opt.freight.total! < best.opt.freight.total! || (opt.freight.total === best.opt.freight.total && numOr(m.max_pallets, 0) < numOr(best.model.max_pallets, 0))) best = { model: m, opt }
+    const u = loadUtilization({ capacity_mode: m.capacity_mode, max_pallets: m.max_pallets, max_tons: m.max_tons, underload_pct: underPct(m) }, pAll, tAll)
+    priced.push({ model: m, opt, full: u.pct != null && u.pct >= underPct(m) })
   }
-  if (best) return { model: best.model, carrier: best.opt.carrier, freight: best.opt.freight, reasons: best.opt.reasons, warnings, cats, wards, stops, pallets: pAll, tons: tAll, oversize }
+  const pool = priced.some(p => p.full) ? priced.filter(p => p.full) : priced   // (1) đủ tải trước; (2) không ai đủ tải ⇒ giữ cả
+  let best: { model: EngineModel; opt: PriceOpt } | null = null
+  for (const p of pool) {
+    if (!best) { best = p; continue }
+    if (pool === priced) {   // bậc (2): nhỏ nhất trước, rồi mới rẻ — cands đã sắp nhỏ→lớn nên chỉ cần giữ phần tử đầu
+      break
+    }
+    if (p.opt.freight.total! < best.opt.freight.total! || (p.opt.freight.total === best.opt.freight.total && numOr(p.model.max_pallets, 0) < numOr(best.model.max_pallets, 0))) best = p
+  }
+  if (best) {
+    if (pool === priced && priced.length) best.opt.reasons.push(`Không dòng xe nào chở đủ tải (dưới ${underPct(best.model)}%) — chọn dòng xe nhỏ nhất còn vừa có cước`)
+    return { model: best.model, carrier: best.opt.carrier, freight: best.opt.freight, reasons: best.opt.reasons, warnings, cats, wards, stops, pallets: pAll, tons: tAll, oversize }
+  }
   const m0 = cands[0] ?? null
   if (!m0) warnings.push(cats.length ? `Không dòng xe nào vừa tải và phục vụ loại ${cats.join('+')}` : 'Không dòng xe nào vừa tải')
   else warnings.push('Chưa có bảng cước cho tuyến/dòng xe này ở mọi ĐVVT — chọn dòng xe nhỏ nhất còn vừa tải')
@@ -377,7 +394,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
   // ── Luật 5 + 2: gộp chuyến Non tải cùng VÙNG — chỉ khi vừa xe, đủ điểm giao và KHÔNG ĐẮT HƠN đi riêng ──
   const snapshot: Record<string, ShareActual> = {}
   for (const [k, v] of Object.entries(input.share_actual)) snapshot[k] = { ...v }
-  const costOf = (b: Bin) => assignVehicle(ctx, b, snapshot)
+  const costOf = (b: Bin) => assignVehicle(ctx, b, snapshot, underPct)
   const isUnder = (b: Bin) => { const a = costOf(b); if (!a.model) return true; const u = loadUtilization({ capacity_mode: a.model.capacity_mode, max_pallets: a.model.max_pallets, max_tons: a.model.max_tons, underload_pct: underPct(a.model) }, a.pallets, a.tons); return u.pct != null && u.pct < underPct(a.model) }
   let changed = true
   while (changed) {
@@ -409,7 +426,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const trips: DispatchTrip[] = []
   let seq = P.start_seq
   for (const b of bins) {
-    const a = assignVehicle(ctx, b, actual)
+    const a = assignVehicle(ctx, b, actual, underPct)
     if (a.carrier) { const cur = actual[a.carrier.id] ?? { trips: 0, pallets: 0, tons: 0 }; cur.trips += 1; cur.pallets += a.pallets ?? 0; cur.tons += a.tons ?? 0; actual[a.carrier.id] = cur }
     const load = loadUtilization(a.model ? { capacity_mode: a.model.capacity_mode, max_pallets: a.model.max_pallets, max_tons: a.model.max_tons, underload_pct: underPct(a.model) } : null, a.pallets, a.tons)
     trips.push({

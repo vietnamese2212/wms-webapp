@@ -501,7 +501,11 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
                   <div className="px-2 pt-1">{loadBar(t)}</div>
                   {t.ods.length > 0 && (
                     <div className="px-2 pt-0.5 flex items-center gap-1.5 text-[10px] text-slate-600 flex-wrap">
-                      <span className={t.stops > (plan.params.max_drops ?? 3) ? 'text-red-600 font-semibold' : ''}>{t.stops}/{plan.params.max_drops ?? 3} điểm</span>
+                      {(() => {
+                        // xe pallet đếm theo "số khách / xe pallet" của kho (mặc định 1), xe xá theo "điểm giao tối đa"
+                        const lim = t.load_mode === 'PALLET' ? (plan.params.pallet_max_stops ?? 1) : (plan.params.max_drops ?? 3)
+                        return <span className={t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}/{lim} {t.load_mode === 'PALLET' ? 'khách' : 'điểm'}</span>
+                      })()}
                       <span className="text-slate-300">·</span>
                       <span className="truncate max-w-[110px]" title={t.wards.join(', ')}>{t.wards.slice(0, 2).join(', ') || '—'}{t.wards.length > 2 ? ` +${t.wards.length - 2}` : ''}</span>
                       <span className="ml-auto font-semibold tabular-nums whitespace-nowrap" title={t.detail.freight.reason ?? undefined}>{t.freight_estimated == null ? <span className="font-normal text-amber-700">chưa có cước</span> : money(t.freight_estimated)}</span>

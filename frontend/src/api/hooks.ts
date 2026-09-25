@@ -5913,7 +5913,7 @@ export interface DispatchSummary {
 }
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[] }
+  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[] }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null

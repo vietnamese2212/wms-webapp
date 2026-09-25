@@ -771,3 +771,14 @@ KHÔNG phải đơn vị vận tải (`Department.is_carrier`). Idempotent, khô
 còn chức danh lập được mà chưa xác nhận được.
 Đo sau áp: production **7 chức danh** xác nhận được (trước: 0/19) · staging 9. "Điều hành ĐVVT" (phòng
 nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_khvc` — chưa cấp, quyết định riêng.
+
+## 2026-09-25 — Điều vận v2: bàn ghép xe + pool lũy tiến + OD bị SO sửa thay
+
+**`20260925b_dispatch_board.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
+- `dispatch_trip_od`: + `plan_id uuid NOT NULL` (backfill từ trip, FK `dispatch_plan` ON DELETE CASCADE, index) · `trip_id` bỏ NOT NULL
+  (**NULL = OD nằm KHUNG CHỜ** của kế hoạch) · + `conditions text[]` · `cat_load jsonb` (tải theo Loại kho — nguồn cửa đặt lịch khi OD
+  di chuyển) · `region_code` · `delivery_date` · `late_days` (OD tồn đọng).
+- `dispatch_trip.locked boolean NOT NULL DEFAULT false` — "Tối ưu lại phần chưa khoá" không đụng xe khoá.
+- `erp_outbound_orders`: + `replaced_by_od text` · `replaced_at timestamptz` (cửa nạp ZSD02 ghi khi SAP thay OD do sửa SO — dòng cũ
+  OBSOLETE) · index một phần `(so_number, so_item) WHERE sync_status='ACTIVE'`.
+Bảng đã có `trg_wms_notify`; `TABLE_QUERY_MAP` thêm `dispatch_trip_od` + khoá `dispatch-sync`.

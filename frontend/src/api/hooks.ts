@@ -5871,9 +5871,14 @@ export function useSlotApplyInfo(params: { warehouse_id?: string; vehicle_type_i
 
 // ─── Điều vận — kế hoạch ghép chuyến NHÁP (đợt 2, 24/09) ─────────────────────
 export interface DispatchTripOd {
-  id: string; trip_id: string; od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null
+  id: string; plan_id: string; trip_id: string | null   // trip_id null = OD nằm KHUNG CHỜ (bàn ghép xe, 25/09)
+  od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code?: string | null
   pallets: number | string | null; tons: number | string | null; lines: number; part_index: number | null; part_of: number | null; material_codes: string[]
+  conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null; late_days?: number
 }
+/** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
+export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN'; info: string | null; replaced_by?: string | null }
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED'; info: string | null }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
@@ -5890,21 +5895,78 @@ export interface DispatchTrip {
   stops: number; wards: string[]; pallets: number | string | null; tons: number | string | null; load_pct: number | string | null
   underload: boolean; oversize: boolean; freight_estimated: number | string | null; detail: DispatchTripDetail; manual_edited: boolean
   status: DispatchTripStatus; tendered_at: string | null; responded_at: string | null; response_by: string | null; response_note: string | null; confirmed_at: string | null
+  locked?: boolean
   ods: DispatchTripOd[]
 }
 export interface DispatchShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: 'TRIPS' | 'PALLETS' | 'TONS' }
-export interface DispatchSummary { trips: number; ods: number; pallets: number; tons: number; freight_total: number; unpriced: number; underload: number; oversize: number; tendered?: number; declined?: number; confirmed?: number; shares: DispatchShare[] }
+export interface DispatchSummary {
+  trips: number; ods: number; pallets: number; tons: number; freight_total: number; unpriced: number; underload: number; oversize: number; tendered?: number; declined?: number; confirmed?: number; shares: DispatchShare[]
+  // dải chỉ số bàn ghép xe (25/09)
+  by_model?: { key: string; sap_code: string | null; name: string; parent: string | null; trips: number; pallets: number }[]
+  avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; pool_pallets?: number; late_ods?: number; empty_trips?: number; locked?: number
+  baseline?: { trips: number; freight_total: number; pallets: number; underload: number; unpriced: number } | null
+}
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number }
+  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[] }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
   trips: DispatchTrip[]
+  pool?: DispatchTripOd[]
   in_plan?: { od_number: string; group_code: string }[]
 }
 export type DispatchPlanListItem = Omit<DispatchPlan, 'trips' | 'params' | 'unplanned'>
-const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }) }
+const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }) }
+/** Thả OD xong server trả NGUYÊN kế hoạch ⇒ đặt thẳng vào cache (không chờ tải lại) rồi mới làm mới danh sách/cờ. */
+const putDispatchPlan = (qc: ReturnType<typeof useQueryClient>, p: DispatchPlan) => {
+  qc.setQueryData(['dispatch-plan', p.id], (old: DispatchPlan | undefined) => ({ ...(old ?? {}), ...p }))
+  qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] })
+}
+export function useDispatchPlanSync(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-sync', id], enabled: !!id && enabled, staleTime: 30_000, refetchInterval: 120_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/sync`)).data.data as { flags: DispatchOdFlag[]; new_ods: number; new_od_numbers?: string[] },
+  })
+}
+export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove'
+export function useMoveDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, ids, to, to_trip_id }: { plan_id: string; ids: string[]; to: DispatchMoveTo; to_trip_id?: string }) =>
+      apiClient.post(`/tms/dispatch/plans/${plan_id}/move`, { ids, to, ...(to_trip_id ? { to_trip_id } : {}) }).then(r => r.data.data as DispatchPlan),
+    onSuccess: p => putDispatchPlan(qc, p),
+    onError: () => invalidateDispatch(qc),
+  })
+}
+export interface DispatchMovePreview { trip_id: string; pallets: number | null; tons: number | null; stops: number; load_pct: number | null; underload: boolean; oversize: boolean; freight_estimated: number | null; freight_before: number | string | null; freight_reason: string | null; warnings: string[] }
+export const previewDispatchMove = (plan_id: string, ids: string[], to_trip_id: string) =>
+  apiClient.post(`/tms/dispatch/plans/${plan_id}/preview-move`, { ids, to_trip_id }).then(r => r.data.data as DispatchMovePreview)
+export function useReoptimizeDispatchPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+export function useRefreshDispatchPool() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/refresh-pool`, {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { refreshed: { added: number; skipped_not_loadable: number } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+export function useReplaceDispatchOd() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/replace-od`, { od_number }).then(r => r.data.data as DispatchPlan & { replaced: { from: string; to: string } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+export function useDeleteDispatchTrip() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/trips/${id}`).then(r => r.data.data as { id: string; deleted: boolean }), onSuccess: () => invalidateDispatch(qc) })
+}
 export function useDispatchPlans(p: { warehouse_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
   return useQuery({
     queryKey: ['dispatch-plans', p], enabled, staleTime: 30_000,
@@ -5928,7 +5990,7 @@ export function useCreateDispatchPlan() {
 export function useUpdateDispatchTrip() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; transport_company_id?: string | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
+    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; transport_company_id?: string | null; locked?: boolean }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
     onSuccess: () => invalidateDispatch(qc),
   })
 }

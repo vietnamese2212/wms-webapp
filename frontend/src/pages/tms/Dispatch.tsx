@@ -7,8 +7,17 @@
 // VÒNG ĐỜI XE (24/09 chiều, user chốt "config: vận tải cần phản hồi hoặc không"): ĐVVT có cờ "Cần phản hồi khi chào chuyến"
 // (form ĐVVT, Cài đặt TMS) ⇒ sau Xác nhận xe đứng CHỜ ĐVVT; điều vận ghi "ĐVVT nhận" / "ĐVVT từ chối" ngay trong panel xe;
 // từ chối ⇒ đổi ĐVVT rồi "Chốt xe này". ĐVVT không cần phản hồi ⇒ vào Kế hoạch xuất ngay, đổi tay ở tab Kế hoạch xuất.
+// 25/09 (user: "ghép xe cần một giao diện khác, rawdata nằm ở một tab, kéo thả OD cho trực quan" + "chỉ số phải hiện lên khi sửa"):
+// 3 tab cạnh tiêu đề — Bàn ghép xe (kéo thả, mặc định) · Danh sách xe (bảng soát cũ) · Dữ liệu OD (thô, OD đang ở đâu).
+// Dải chỉ số `DispatchKpiBar` + dải Soát đứng CHUNG trên cả ba tab.
 import { useEffect, useMemo, useState } from 'react'
-import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send } from 'lucide-react'
+import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, Database } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { DispatchBoard } from '@/components/tms/DispatchBoard'
+import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
+import { DispatchOdTable } from '@/components/tms/DispatchOdTable'
+import { EDITABLE, tripStatus, ISSUES, TODO_KEYS, ISSUE_ORDER, ISSUE_SHORT, issuesOf, needsWork, type IssueKey } from '@/components/tms/dispatchIssues'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -17,7 +26,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
-import { SummaryBand } from '@/components/shared/SummaryBand'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -28,7 +36,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan,
-  useSettleDispatchTrip, useRespondDispatchTrip,
+  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
   type DispatchPlan, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow,
 } from '@/api/hooks'
@@ -52,35 +60,7 @@ const TRIP_STATUS_VI: Record<DispatchTripStatus, { label: string; tone: Tone }> 
   DRAFT: { label: 'Nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT', tone: 'blue' }, DECLINED: { label: 'ĐVVT từ chối', tone: 'red' },
   CONFIRMED: { label: 'Đã vào KH xuất', tone: 'green' }, DISCARDED: { label: 'Đã bỏ', tone: 'slate' },
 }
-const EDITABLE: DispatchTripStatus[] = ['DRAFT', 'DECLINED']
-const tripStatus = (t: DispatchTrip): DispatchTripStatus => t.status ?? 'DRAFT'
-
-// ── VIỆC CỦA NGƯỜI Ở BƯỚC NÀY (user chốt 24/09: "máy ghép trước sau đó tới người manual và xác nhận")
-// Máy xếp xong thì người phải SOÁT rồi mới xác nhận — nhưng soát cái gì? Đo trên kế hoạch thật của
-// Ba Vì 07/09: **12/61 xe cần người quyết**, nằm rải trong 61 dòng, và cột nói LÝ DO ("Ghi chú máy")
-// lại bị đẩy ra ngoài màn 1280 px. Nên trang phải trả lời được ngay "còn bao nhiêu việc" và "đưa tôi
-// tới đó", chứ không bắt người kéo ngang 61 dòng để tự tìm.
-// ⚠ CHỈ tính trên xe NGƯỜI CÒN SỬA ĐƯỢC (DRAFT/DECLINED): xe đã vào Kế hoạch xuất mà thiếu cước thì
-// đây không phải chỗ chữa, đếm vào là giục một việc không làm được.
-// ⚠ `todo` = NGƯỜI ĐÓNG ĐƯỢC. "Chưa có cước" và "Có cảnh báo" thì không: 12 xe ở Ba Vì thiếu cước vì
-// bảng cước không có (phường × dòng xe) đó — gán ĐVVT xong vẫn thiếu. Nếu đếm chúng vào "Cần xử lý"
-// thì bộ đếm KHÔNG BAO GIỜ về 0, và một bộ đếm không về 0 được dạy người ta bỏ qua nó (đo thật 24/09:
-// áp ĐVVT cho 12 xe xong, "Cần xử lý" vẫn đứng nguyên 12). Chúng vẫn là chip lọc và vẫn hiện dưới số
-// xe — chỉ không giả vờ là việc phải làm. Trước khi Xác nhận thì hộp thoại nói lại, đó mới đúng chỗ.
-type IssueKey = 'declined' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'under' | 'warn'
-const ISSUES: { key: IssueKey; label: string; tip: string; todo: boolean; test: (t: DispatchTrip) => boolean }[] = [
-  { key: 'declined',  label: 'ĐVVT từ chối',   todo: true,  tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"',                     test: t => tripStatus(t) === 'DECLINED' },
-  { key: 'nomodel',   label: 'Chưa có dòng xe', todo: true, tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => !t.vehicle_model_id },
-  { key: 'nocarrier', label: 'Chưa có ĐVVT',   todo: true,  tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => !t.transport_company_id },
-  { key: 'over',      label: 'Vượt tải',       todo: true,  tip: 'OD lớn hơn xe lớn nhất — tách bớt OD sang xe khác',              test: t => t.oversize },
-  { key: 'under',     label: 'Non tải',        todo: true,  tip: 'Dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết', test: t => t.underload },
-  { key: 'nofreight', label: 'Chưa có cước',   todo: false, tip: 'Thường vì bảng cước chưa có tuyến + dòng xe này — xác nhận vẫn được, chuyến sẽ không có cước dự tính', test: t => t.freight_estimated == null },
-  { key: 'warn',      label: 'Có cảnh báo',    todo: false, tip: 'Máy ghi lại chỗ nó không tự xử được — đọc cột Ghi chú máy',      test: t => t.detail.warnings.length > 0 },
-]
-const TODO_KEYS = new Set(ISSUES.filter(i => i.todo).map(i => i.key))
-const issuesOf = (t: DispatchTrip): IssueKey[] =>
-  EDITABLE.includes(tripStatus(t)) ? ISSUES.filter(i => i.test(t)).map(i => i.key) : []
-const needsWork = (t: DispatchTrip) => issuesOf(t).some(k => TODO_KEYS.has(k))
+// Luật "xe cần xử lý" nằm ở components/tms/dispatchIssues (dùng chung với bàn ghép xe — hai góc nhìn phải đếm như nhau)
 
 // Cột Trạng thái nói CÙNG MỘT TỪ ("Nháp") cho mọi dòng khi kế hoạch còn nháp — 105 px × 61 dòng cho
 // một thông tin không phân biệt được gì, trong khi thứ người soát cần lại nằm ngoài màn. Nên nó chỉ
@@ -99,15 +79,6 @@ const colsFor = (showStatus: boolean): RtColDef[] => [
   { id: 'freight', label: 'Cước dự tính', w: 110, align: 'right' },
   { id: 'note', label: 'Ghi chú máy', w: 260 },
 ]
-
-// Nhãn NGẮN của vấn đề, in ngay dưới Số xe trong cột STICKY — người soát thấy "xe này vướng gì" mà
-// không phải kéo ngang (cùng khuôn "quãng đường nằm ở dòng phụ trong chính cột Vị trí" của Tối ưu
-// tuyến). Câu đầy đủ vẫn ở cột Ghi chú máy + panel chi tiết. Xếp theo mức KHẨN, lấy tối đa 2.
-const ISSUE_SHORT: Record<IssueKey, string> = {
-  declined: 'ĐVVT từ chối', over: 'vượt tải', nomodel: 'chưa có dòng xe', nocarrier: 'chưa có ĐVVT',
-  nofreight: 'chưa có cước', under: 'Non tải', warn: 'có cảnh báo',
-}
-const ISSUE_ORDER: IssueKey[] = ['declined', 'over', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
 
 function LoadCell({ t }: { t: DispatchTrip }) {
   const l = t.detail.load
@@ -140,6 +111,15 @@ export default function Dispatch() {
   const plan = planQ.data ?? null
   const isDraft = plan?.status === 'DRAFT'
   const isOpen = plan?.status === 'DRAFT' || plan?.status === 'TENDERED'
+  // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
+  const syncQ = useDispatchPlanSync(planId, !!isOpen)
+  const flags = useMemo(() => new Map((syncQ.data?.flags ?? []).map(x => [x.od_number, x])), [syncQ.data])
+  const ictx = useMemo(() => ({ flags }), [flags])
+  const permTabs = useMemo(() => [
+    { key: 'board', label: 'Bàn ghép xe', icon: LayoutGrid }, { key: 'list', label: 'Danh sách xe', icon: List }, { key: 'ods', label: 'Dữ liệu OD', icon: Database },
+  ], [])
+  const tabs = useMobileTabs('/tms/dispatch', permTabs, f.tab || 'board', (t: string) => setF({ tab: t }))
+  const tab = tabs.some(t => t.key === f.tab) ? f.tab : (tabs[0]?.key ?? 'board')
 
   const { data: modelsRes } = useVehicleModels({ is_active: true })
   const models = (modelsRes?.items ?? []).filter(m => m.parent)
@@ -185,15 +165,27 @@ export default function Dispatch() {
     const odTrips = new Map<string, string[]>()
     for (const t of open) for (const od of new Set(t.ods.map(o => o.od_number))) odTrips.set(od, [...(odTrips.get(od) ?? []), t.group_code])
     const split = [...odTrips].filter(([, g]) => g.length > 1)
-    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '']
+    const over = open.filter(t => t.ods.length && t.oversize).length
+    const poolN = plan.summary.pool_ods ?? 0
+    const flagged = open.filter(t => t.ods.some(o => flags.has(o.od_number)))
+    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD còn ở KHUNG CHỜ (sẽ KHÔNG đi)` : '']
       .filter(Boolean).join(' · ')
+    // OD đã đổi ở SAP sau khi lập (thay / bỏ / đã xuất / đã điều) ⇒ cửa Xác nhận trả 409 — nói TRƯỚC
+    if (flagged.length) {
+      await ask({
+        title: `Chưa xác nhận được: ${flagged.length} xe có OD đã đổi ở SAP`, danger: true, cancelLabel: null,
+        body: flagged.slice(0, 6).map(t => `• #${t.seq} ${t.group_code}: ${t.ods.filter(o => flags.has(o.od_number)).map(o => `${o.od_number} — ${flags.get(o.od_number)?.info ?? ''}`).join('; ')}`).join('\n') +
+          `\n\nTrên Bàn ghép xe: OD "SAP đã thay" có nút "Thay bằng OD mới"; OD đã xuất / đã điều / đã bỏ thì kéo về khung chờ hoặc bỏ khỏi kế hoạch.`,
+      })
+      return
+    }
     if (split.length) {
       await ask({
         title: `Không xác nhận được: ${split.length} OD đang nằm ở hai xe`, danger: true, cancelLabel: null,
         body: split.slice(0, 5).map(([od, g]) => `• ${od}: ${g.join(' + ')}`).join('\n') +
           (split.length > 5 ? `\n… và ${split.length - 5} OD nữa` : '') +
           `\n\nApp chưa tách một DO ra hai xe. Máy tách vì OD vượt sức chứa xe lớn nhất.\n` +
-          `Cách xử lý: mở panel một trong hai xe → chuyển OD đó sang xe kia để gom về MỘT xe ` +
+          `Cách xử lý: trên Bàn ghép xe kéo phần OD ở xe này thả sang xe kia để gom về MỘT xe ` +
           `(xe sẽ báo Vượt tải — vẫn xác nhận được), hoặc tách DO ở SAP trước.`,
       })
       return
@@ -279,20 +271,20 @@ export default function Dispatch() {
   if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, onClick: doDiscard, disabled: discard.isPending })
 
   const all = plan?.trips ?? []
-  const todoN = useMemo(() => all.filter(needsWork).length, [all])
+  const todoN = useMemo(() => all.filter(t => needsWork(t, ictx)).length, [all, ictx])
   const issueN = useMemo(() => {
     const m = {} as Record<IssueKey, number>
     for (const i of ISSUES) m[i.key] = 0
-    for (const t of all) for (const k of issuesOf(t)) m[k]++
+    for (const t of all) for (const k of issuesOf(t, ictx)) m[k]++
     return m
-  }, [all])
+  }, [all, ictx])
   const trips = useMemo(() => {
     const keep = !f.issue ? all
-      : f.issue === 'todo' ? all.filter(needsWork)
-      : all.filter(t => issuesOf(t).includes(f.issue as IssueKey))
+      : f.issue === 'todo' ? all.filter(t => needsWork(t, ictx))
+      : all.filter(t => issuesOf(t, ictx).includes(f.issue as IssueKey))
     // sort ỔN ĐỊNH nên các xe cùng nhóm giữ nguyên thứ tự máy sinh (số xe tăng dần)
-    return f.todoFirst ? [...keep].sort((a, b) => Number(needsWork(b)) - Number(needsWork(a))) : keep
-  }, [all, f.issue, f.todoFirst])
+    return f.todoFirst ? [...keep].sort((a, b) => Number(needsWork(b, ictx)) - Number(needsWork(a, ictx))) : keep
+  }, [all, f.issue, f.todoFirst, ictx])
   const sum = plan?.summary
   const s = plan ? STATUS_VI[plan.status] : null
   const showStatus = !!plan && plan.status !== 'DRAFT'
@@ -325,6 +317,13 @@ export default function Dispatch() {
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 shrink-0 sm:rounded-t-xl">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
+            {/* Tab CẠNH tiêu đề (khuôn app — skill table-format 22); điện thoại chiếm trọn hàng đầu */}
+            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none">
+              <TabsList className="h-8 max-w-full overflow-x-auto">
+                {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
+              </TabsList>
+              {tabs.map(t => <TabsContent key={t.key} value={t.key} className="hidden" />)}
+            </Tabs>
             {/* Kho + Ngày CHUNG một hàng trên điện thoại (bản cũ Kho chiếm trọn một hàng riêng) */}
             {/* min-w: không có thì flex-1 co ô Kho về ~20 px khi hàng còn chỗ cho ô ngày (đo 390 px, 25/09) */}
             <div className="flex-1 min-w-[150px] sm:flex-none sm:w-56"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
@@ -353,7 +352,7 @@ export default function Dispatch() {
             Dùng SWITCH hiện sẵn chứ không phải chip trong menu: cả lựa chọn LẪN số của từng lựa chọn
             phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại
             vấn đề nào KHÔNG có xe nào thì không hiện — menu đầy lựa chọn ra bảng trắng là vô ích. */}
-        {plan && (
+        {plan && tab !== 'ods' && (
           // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
@@ -372,7 +371,7 @@ export default function Dispatch() {
             ))}
             {todoN === 0 && <span className="text-[11px] text-green-700 font-medium">✓ Không còn xe nào chờ người quyết{issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}</span>}
             <div className="ml-auto flex items-center gap-2 shrink-0">
-              {pickable.length > 0 && (
+              {tab === 'list' && pickable.length > 0 && (
                 <button type="button" className="text-[11px] text-sky-700 hover:underline whitespace-nowrap"
                   title="Chỉ tick các xe ĐANG HIỆN theo bộ lọc, và chỉ xe còn sửa được"
                   onClick={() => setSel(selIds.length === pickable.length ? new Set() : new Set(pickable.map(t => t.id)))}>
@@ -386,25 +385,9 @@ export default function Dispatch() {
           </div>
         )}
 
-        {plan && sum && (
-          <SummaryBand tiles={[
-            { label: 'Chuyến', value: nf(sum.trips) },
-            { label: 'OD đã xếp', value: nf(sum.ods), tip: `${nf(plan.unplanned.length)} OD không xếp được (xem cuối bảng)` },
-            { label: 'Pallet', value: nf(sum.pallets, 1) },
-            { label: 'Tấn', value: nf(sum.tons, 1) },
-            { label: 'Σ cước dự tính', value: vnd(sum.freight_total), tip: sum.unpriced ? `${sum.unpriced} chuyến chưa có cước (thiếu bảng cước / dòng xe)` : 'Theo bảng cước hiệu lực tại ngày giao' },
-            { label: 'Non tải', value: nf(sum.underload), accent: sum.underload > 0, tip: 'Chuyến dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết' },
-            { label: 'Chưa có cước', value: nf(sum.unpriced), accent: sum.unpriced > 0 },
-            ...(plan.status !== 'DRAFT' ? [
-              { label: 'Chờ ĐVVT', value: nf(sum.tendered ?? 0), accent: (sum.tendered ?? 0) > 0, tip: 'Xe đã chào, ĐVVT chưa trả lời — ghi "ĐVVT nhận / từ chối" trong panel xe' },
-              { label: 'ĐVVT từ chối', value: nf(sum.declined ?? 0), accent: (sum.declined ?? 0) > 0, tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"' },
-              { label: 'Đã vào KH xuất', value: nf(sum.confirmed ?? 0) },
-            ] : []),
-            ...sum.shares.map(sh => ({ label: `ĐVVT ${sh.code}`, value: sh.pct == null ? `${sh.trips} ch.` : `${nf(sh.pct, 1)}%`, tip: `${sh.name}: ${sh.trips} chuyến · ${nf(sh.pallets, 1)} pallet · ${nf(sh.tons, 1)} tấn trong kỳ (kể cả chuyến đã xác nhận)${sh.target_pct != null ? ` · mục tiêu ${sh.target_pct}% theo ${sh.basis === 'TRIPS' ? 'số chuyến' : sh.basis === 'PALLETS' ? 'pallet' : 'tấn'}` : ''}`, accent: sh.target_pct != null && sh.pct != null && sh.pct < sh.target_pct })),
-          ]} />
-        )}
+        {plan && sum && <DispatchKpiBar plan={plan} />}
 
-        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        <div className={tab === 'board' && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
               <Waypoints className="h-10 w-10 opacity-30" />
@@ -420,6 +403,10 @@ export default function Dispatch() {
               {canPlan ? <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={runPlan} disabled={create.isPending}><Play className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang ghép…' : 'Lập kế hoạch'}</Button>
                 : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ chạy máy ghép.</p>}
             </div>
+          ) : tab === 'board' ? (
+            <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} newOds={syncQ.data?.new_ods ?? 0} onOpenTrip={setOpenTripId} />
+          ) : tab === 'ods' ? (
+            <DispatchOdTable plan={plan} flags={flags} search={f.search} onSearch={v => setF({ search: v })} />
           ) : (
             <>
               <ResizableTable key={showStatus ? 'st' : 'nost'} storageKey={showStatus ? 'dispatch_cols_v2' : 'dispatch_cols_draft_v1'} cols={cols}>
@@ -431,7 +418,7 @@ export default function Dispatch() {
                   {trips.map(t => {
                     const d = t.detail
                     const st = tripStatus(t)
-                    const iss = ISSUE_ORDER.filter(k => issuesOf(t).includes(k))
+                    const iss = ISSUE_ORDER.filter(k => issuesOf(t, ictx).includes(k))
                     return (
                       <TableRow key={t.id} className={`cursor-pointer ${openTripId === t.id ? 'bg-sky-50' : ''} ${t.oversize ? 'text-red-700' : ''} ${st === 'DISCARDED' ? 'line-through text-slate-400' : st === 'CONFIRMED' ? 'text-green-700' : ''}`} onClick={() => setOpenTripId(t.id)}>
                         <TableCell className={`${TD} sticky left-0 z-10 ${openTripId === t.id ? 'bg-sky-50' : 'bg-white'}`}>
@@ -441,7 +428,7 @@ export default function Dispatch() {
                           )}
                           <span className="font-mono font-semibold">{t.group_code}</span>{t.manual_edited && <span className="ml-1 text-amber-600" title="Người đã sửa chuyến này">✎</span>}
                           {iss.length > 0 && (
-                            <span className={`block truncate text-[9px] font-medium ${iss[0] === 'declined' || iss[0] === 'over' ? 'text-red-600' : TODO_KEYS.has(iss[0]) ? 'text-amber-700' : 'text-slate-400'}`}
+                            <span className={`block truncate text-[9px] font-medium ${iss[0] === 'declined' || iss[0] === 'over' || iss[0] === 'sapflag' ? 'text-red-600' : TODO_KEYS.has(iss[0]) ? 'text-amber-700' : 'text-slate-400'}`}
                               title={iss.map(k => ISSUE_SHORT[k]).join(' · ')}>
                               ⚠ {iss.slice(0, 2).map(k => ISSUE_SHORT[k]).join(' · ')}{iss.length > 2 ? ` +${iss.length - 2}` : ''}
                             </span>
@@ -478,7 +465,7 @@ export default function Dispatch() {
             </>
           )}
         </div>
-        {plan && <div className="border-t px-3 py-1.5 text-[11px] text-slate-500 shrink-0 flex items-center gap-2 flex-wrap">
+        {plan && tab === 'list' && <div className="border-t px-3 py-1.5 text-[11px] text-slate-500 shrink-0 flex items-center gap-2 flex-wrap">
           <span className="whitespace-nowrap">Đang xem {trips.length}/{plan.trips.length} xe</span>
           <span className="flex-1 min-w-0 truncate">· bấm một xe để đổi dòng xe / ĐVVT hoặc chuyển OD{plan.status === 'TENDERED' ? ' · xe chờ ĐVVT: ghi "ĐVVT nhận / từ chối" trong panel xe' : ''} · máy đề xuất, người xác nhận</span>
           {todoN > 0 && <span className="text-amber-700 font-medium whitespace-nowrap">còn {todoN} xe cần xử lý</span>}

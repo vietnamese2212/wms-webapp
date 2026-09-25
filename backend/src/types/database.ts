@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-24T07:22:41.535Z · 108 bảng/view · 171 hàm · 0 enum
+// Sinh lúc 2026-09-25T06:55:31.651Z · 108 bảng/view · 171 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3304,6 +3304,7 @@ export type Database = {
           response_by: string | null
           response_note: string | null
           confirmed_at: string | null
+          locked: boolean
         }
         Insert: {
           id: string
@@ -3330,6 +3331,7 @@ export type Database = {
           response_by?: string | null
           response_note?: string | null
           confirmed_at?: string | null
+          locked?: boolean
         }
         Update: {
           id?: string
@@ -3356,13 +3358,14 @@ export type Database = {
           response_by?: string | null
           response_note?: string | null
           confirmed_at?: string | null
+          locked?: boolean
         }
         Relationships: []
       }
       dispatch_trip_od: {
         Row: {
           id: string
-          trip_id: string
+          trip_id: string | null
           od_number: string
           ship_to_code: string | null
           ship_to_name: string | null
@@ -3375,10 +3378,16 @@ export type Database = {
           material_codes: string[]
           created_at: string
           updated_at: string
+          plan_id: string
+          conditions: string[]
+          cat_load: Json | null
+          region_code: string | null
+          delivery_date: string | null
+          late_days: number
         }
         Insert: {
           id: string
-          trip_id: string
+          trip_id?: string | null
           od_number: string
           ship_to_code?: string | null
           ship_to_name?: string | null
@@ -3391,10 +3400,16 @@ export type Database = {
           material_codes?: string[]
           created_at?: string
           updated_at: string
+          plan_id: string
+          conditions?: string[]
+          cat_load?: Json | null
+          region_code?: string | null
+          delivery_date?: string | null
+          late_days?: number
         }
         Update: {
           id?: string
-          trip_id?: string
+          trip_id?: string | null
           od_number?: string
           ship_to_code?: string | null
           ship_to_name?: string | null
@@ -3407,6 +3422,12 @@ export type Database = {
           material_codes?: string[]
           created_at?: string
           updated_at?: string
+          plan_id?: string
+          conditions?: string[]
+          cat_load?: Json | null
+          region_code?: string | null
+          delivery_date?: string | null
+          late_days?: number
         }
         Relationships: []
       }
@@ -3470,6 +3491,8 @@ export type Database = {
           od_created_at: string | null
           approval_status: string | null
           customer_ref: string | null
+          replaced_by_od: string | null
+          replaced_at: string | null
         }
         Insert: {
           id: string
@@ -3530,6 +3553,8 @@ export type Database = {
           od_created_at?: string | null
           approval_status?: string | null
           customer_ref?: string | null
+          replaced_by_od?: string | null
+          replaced_at?: string | null
         }
         Update: {
           id?: string
@@ -3590,6 +3615,8 @@ export type Database = {
           od_created_at?: string | null
           approval_status?: string | null
           customer_ref?: string | null
+          replaced_by_od?: string | null
+          replaced_at?: string | null
         }
         Relationships: []
       }

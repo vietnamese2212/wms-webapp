@@ -424,6 +424,10 @@ interface DispatchFilters {
   // thuộc tính. '' = tất cả · 'todo' = mọi xe cần người quyết · còn lại là từng loại vấn đề.
   issue: string
   todoFirst: boolean     // xe cần xử lý xếp LÊN ĐẦU (mặc định bật — làm từ trên xuống, hết việc là sạch đầu bảng)
+  // 25/09: 'board' bàn ghép xe kéo thả (mặc định) · 'list' bảng soát xe · 'ods' dữ liệu OD thô
+  tab: string
+  boardGroup: string     // khung chờ gom theo 'ward' (phường) | 'region' (vùng) | 'customer' (khách)
+  search: string         // tìm OD / khách / phường / Số xe trên bàn ghép xe + tab Dữ liệu OD
 }
 interface SoLinesFilters {
   search: string
@@ -668,7 +672,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'board', boardGroup: 'ward', search: '' },
     vehicleModels: { search: '', parents: [], temps: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

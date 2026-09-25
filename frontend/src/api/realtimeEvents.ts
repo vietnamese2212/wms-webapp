@@ -67,7 +67,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count'], ['work-inbox']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
-  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5)
+  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
   vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
   freight_tariff:        [['freight-tariffs']],                  // bảng cước
@@ -76,8 +76,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   carrier_share_target:  [['freight-allocations']],              // tỷ trọng ĐVVT
   dispatch_plan:         [['dispatch-plans'], ['dispatch-plan']], // kế hoạch ghép chuyến nháp (24/09)
   dispatch_trip:         [['dispatch-plan']],
+  dispatch_trip_od:      [['dispatch-plan'], ['dispatch-sync']],  // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau
   outbound_events:     [['gdo-events']],
-  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
+  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],

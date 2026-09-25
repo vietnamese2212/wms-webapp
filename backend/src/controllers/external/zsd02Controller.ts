@@ -20,6 +20,7 @@ import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
 import { upsertCustomerGeo } from '../../services/customerGeo'
 import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, RAW_VERSION, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
 import { allowedPlants, plantOrFilter } from './erpOrderController'
+import { findReplacedOds, type ReplaceCandidate } from '../../services/dispatchPool'
 
 const now = () => new Date().toISOString()
 const CHUNK = 500
@@ -105,6 +106,18 @@ export async function uploadZsd02(req: Request, res: Response) {
       if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
         removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
     }
+    // SO SỬA ⇒ OD MỚI (25/09): OD cũ VẮNG file bị cửa trên để nguyên ("vắng cả OD" là mơ hồ) ⇒ OD cũ vẫn ACTIVE và
+    // Điều vận có thể xếp CẢ OD cũ lẫn OD mới — một đơn đi hai lần. Có bằng chứng thì kết luận: cùng (SO, item) mang OD
+    // mới trong file, ngày giao OD cũ nằm trong khoảng ngày của file. Luật thuần ở services/dispatchPool (có test).
+    const fileSos = [...new Set(out.od.map(r => String(r.so_number ?? '')).filter(Boolean))]
+    const priorBySo = await fetchAllByIdChunks(fileSos, chunk => db.from('erp_outbound_orders')
+      .select('od_number, od_item, so_number, so_item, delivery_date, mat_doc, qty_issued_base')
+      .in('so_number', chunk).eq('sync_status', 'ACTIVE').order('id')) as ReplaceCandidate[]
+    const rep = findReplacedOds(out.od.map(r => ({ od_number: String(r.od_number), so_number: r.so_number ?? null, so_item: r.so_item ?? null, delivery_date: r.delivery_date ?? null })), priorBySo)
+    const replacedOds = [...new Set(rep.replaced.map(r => r.od_number))]
+    const repPairs = [...new Map(rep.replaced.map(r => [r.od_number, r.by])).entries()]
+    if (repPairs.length) warnings.push(`${repPairs.length} OD cũ đã được SAP THAY bằng OD mới (sửa SO) — OD cũ sẽ bị bỏ, xe nào đang chở OD cũ sẽ được báo: ${repPairs.slice(0, 15).map(([a, b]) => `${a} → ${b}`).join(' · ')}${repPairs.length > 15 ? '…' : ''}`)
+    if (rep.shipped_conflicts.length) warnings.push(`${rep.shipped_conflicts.length} dòng SO có OD MỚI trong khi OD cũ ĐÃ XUẤT KHO — kiểm lại ở SAP, app không tự bỏ OD đã xuất: ${rep.shipped_conflicts.slice(0, 15).map(x => `${x.so}: ${x.od_number} (đã xuất) + ${x.by}`).join(' · ')}`)
     // SỔ SO: cùng khuôn theo khoá (so_number, so_item)
     const soNumbers = [...new Set(out.so.map(r => String(r.so_number)))]
     const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
@@ -164,6 +177,8 @@ export async function uploadZsd02(req: Request, res: Response) {
         // so với sổ đang có — để "nạp lại file cũ" hiện 0 thêm / 0 cập nhật / N không đổi thay vì "Sẽ thêm N"
         ...(odNoop + soNoop ? [{ label: 'Không đổi (đã có y hệt)', value: odNoop + soNoop }] : []),
         ...(removedKeys.length + soObsoleteIds.length ? [{ label: 'Dòng SAP đã bỏ → OBSOLETE', value: removedKeys.length + soObsoleteIds.length, warn: true }] : []),
+        ...(replacedOds.length ? [{ label: 'OD cũ bị thay bằng OD mới (SO sửa)', value: replacedOds.length, warn: true }] : []),
+        ...(rep.shipped_conflicts.length ? [{ label: 'SO có OD mới mà OD cũ đã xuất', value: rep.shipped_conflicts.length, warn: true }] : []),
         { label: 'Phân loại', value: Object.entries(st.flows).map(([k, v]) => `${k} ${v}`).join(' · ') },
       ]
       return ok(res, buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated, skipped: st.skipped, errors: unitErrors, warnings, extra }))
@@ -185,6 +200,12 @@ export async function uploadZsd02(req: Request, res: Response) {
     if (removedKeys.length) {
       await Promise.all(removedKeys.map(k => db.from('erp_outbound_orders')
         .update({ sync_status: 'OBSOLETE', updated_at: t }).eq('od_number', k.od_number).eq('od_item', k.od_item)))
+    }
+    // OD cũ bị thay: OBSOLETE + ghi OD thay thế (bàn ghép xe đọc cột này để hiện nút "Thay bằng OD mới")
+    for (const [old, by] of repPairs) {
+      const { error } = await db.from('erp_outbound_orders').update({ sync_status: 'OBSOLETE', replaced_by_od: by, replaced_at: t, updated_at: t })
+        .eq('od_number', old).eq('sync_status', 'ACTIVE')
+      if (error) throw new Error(error.message)
     }
 
     // ── GHI SỔ SO ──
@@ -214,7 +235,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     // ── Reconcile + kích hoạt chuyến chờ — đúng hai hàm VL06O đang gọi ──
     let reconcile: Awaited<ReturnType<typeof reconcileFromSap>> | null = null
     let reconcile_error: string | null = null
-    const changedKeys = [...updatedKeys, ...removedKeys]
+    const changedKeys = [...updatedKeys, ...removedKeys, ...rep.replaced.map(r => ({ od_number: r.od_number, od_item: r.od_item }))]
     if (changedKeys.length) {
       try { reconcile = await reconcileFromSap(changedKeys, { actor: actor || 'SAP-UPLOAD' }) }
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadZsd02:', e) }
@@ -223,7 +244,7 @@ export async function uploadZsd02(req: Request, res: Response) {
 
     return ok(res, {
       rows: st.rows, skipped_no_key: st.skipped,
-      od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length },
+      od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length, replaced: repPairs.map(([od_number, by]) => ({ od_number, by })) },
       raw_refreshed: rawRefreshed,
       so: { rows: st.so_rows, orders: st.so_numbers, without_od: soWithoutOd, inserted: soInserted, updated: soUpdated, noop: soNoop, obsoleted: soObsoleted, unresolved: st.so_unresolved, cancelled: st.cancelled },
       flows: st.flows, not_loadable: st.not_loadable,

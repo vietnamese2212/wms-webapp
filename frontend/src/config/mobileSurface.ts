@@ -49,6 +49,7 @@ export const PAGE_TABS: Record<string, MobileTabDef[]> = {
   '/tms/bookings': [{ key: 'main', label: 'Kế hoạch' }, { key: 'transfer', label: 'Chuyển kho' }],
   '/tms/settings': [{ key: 'vehicle-types', label: 'Loại xe' }, { key: 'vehicle-models', label: 'Mã dòng xe' }, { key: 'slot-templates', label: 'Khung giờ' }, { key: 'companies', label: 'ĐVVT / NCC' }, { key: 'vehicles', label: 'Xe' }],
   '/tms/freight': [{ key: 'tariffs', label: 'Bảng cước' }, { key: 'surcharges', label: 'Phụ phí' }, { key: 'allocation', label: 'Phân tuyến ĐVVT' }],
+  '/tms/dispatch': [{ key: 'board', label: 'Bàn ghép xe' }, { key: 'list', label: 'Danh sách xe' }, { key: 'ods', label: 'Dữ liệu OD' }],
   '/hr/attendance': [{ key: 'me', label: 'Của tôi' }, { key: 'leave', label: 'Nghỉ phép' }, { key: 'team', label: 'Bảng công' }],
   '/hr/assignments': [{ key: 'daily', label: 'Phân công' }, { key: 'layout', label: 'Layout' }, { key: 'rules', label: 'Quy tắc ca' }],
   '/masterdata/customers': [{ key: 'list', label: 'Khách hàng' }, { key: 'channels', label: 'Kênh' }],

@@ -89,6 +89,8 @@ export interface TripOd {
   pallets: number | null; tons: number | null; lines: number
   part: { index: number; of: number } | null       // OD bị tách theo dòng hàng nguyên
   material_codes: string[]
+  conditions: string[]                              // điều kiện bảo quản của phần OD này — chuyển OD thì chuyến đích tính lại từ đây
+  cat_load: Record<string, number>                  // tải theo Loại kho (pallet + kg/1e6) — nguồn cửa đặt lịch khi OD di chuyển
 }
 export interface TripFreight {
   total: number | null; base: number | null; billed_pallets: number | null; unit: TariffUnit | null
@@ -479,7 +481,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key,
       vehicle_model: a.model, carrier: a.carrier,
-      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code) })),
+      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines) })),
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
       warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : [])],
@@ -501,10 +503,34 @@ export function runDispatch(input: EngineInput): DispatchResult {
 
 /** Cửa đặt lịch của xe = loại hàng chiếm nhiều pallet nhất (hoà ⇒ theo mã) — 1 Số xe chỉ 1 booking_category. */
 export function pickBookingCategory(lines: EngineLine[]): string | null {
+  return bookingFromCatLoads([catLoadOf(lines)])
+}
+/** Tải theo Loại kho của một tập dòng hàng — cùng thước với cửa đặt lịch (pallet + kg/1e6 để hoà mà vẫn phân được). */
+export function catLoadOf(lines: EngineLine[]): Record<string, number> {
+  const by: Record<string, number> = {}
+  for (const l of lines) if (l.category) by[l.category] = (by[l.category] ?? 0) + (l.pallets ?? 0) + (l.kg ?? 0) / 1e6
+  return by
+}
+/** Cửa đặt lịch của một xe khi chỉ còn tải theo loại của TỪNG OD (bàn ghép xe chuyển OD qua lại, không nạp lại dòng hàng). */
+export function bookingFromCatLoads(loads: (Record<string, number> | null | undefined)[]): string | null {
   const by = new Map<string, number>()
-  for (const l of lines) if (l.category) by.set(l.category, (by.get(l.category) ?? 0) + (l.pallets ?? 0) + (l.kg ?? 0) / 1e6)
+  for (const m of loads) for (const [k, v] of Object.entries(m ?? {})) by.set(k, (by.get(k) ?? 0) + (Number(v) || 0))
   const e = [...by.entries()].sort((a, b) => (b[1] - a[1]) || cmp(a[0], b[0]))
   return e[0]?.[0] ?? null
+}
+/** Chọn (dòng xe, ĐVVT) cho một NHÓM OD đã có tải tổng — dùng khi người kéo OD ra "xe mới": máy chọn xe theo đúng ba bậc
+ *  của lượt ghép thay vì để xe mới trống dòng xe/ĐVVT. Mỗi OD dựng thành dòng giả mang tải tổng + điều kiện của nó. */
+export function suggestVehicle(input: EngineInput, ods: { od: EngineOd; pallets: number | null; tons: number | null; conditions: string[] }[], actual: Record<string, ShareActual>) {
+  const ctx = buildCtx(input)
+  const underPct = (m: EngineModel | null) => input.params.underload_pct ?? numOr(m?.underload_pct, 70)
+  const units: Unit[] = ods.map(x => {
+    const lines: EngineLine[] = [{ material_code: '', qty_base: 0, pallets: x.pallets, kg: x.tons == null ? null : x.tons * 1000, category: null, condition: null },
+      ...x.conditions.map(c => ({ material_code: '', qty_base: 0, pallets: 0, kg: 0, category: null, condition: c }))]
+    return { od: x.od, lines, pallets: x.pallets, tons: x.tons, part: null, oversize: false }
+  })
+  const b: Bin = { key: '', mkey: '', units, pallets: r3(units.reduce((s, u) => s + (u.pallets ?? 0), 0)), tons: r3(units.reduce((s, u) => s + (u.tons ?? 0), 0)) }
+  const a = assignVehicle(ctx, b, actual, underPct)
+  return { model: a.model, carrier: a.carrier, freight: a.freight, reasons: a.reasons, warnings: a.warnings }
 }
 
 function sharesOf(input: EngineInput, actual: Record<string, ShareActual>): CarrierShare[] {

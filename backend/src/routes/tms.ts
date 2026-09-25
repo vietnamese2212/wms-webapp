@@ -84,6 +84,14 @@ router.post('/dispatch/plan',                 requirePerm('dispatch', 'plan'),  
 router.patch('/dispatch/trips/:id',           requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zTripPatch }),     dispatch.updateTrip)
 router.post('/dispatch/trips/:id/move-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMoveOd }),        dispatch.moveOd)
 router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.confirmPlan)
+// Bàn ghép xe (25/09): kéo thả · xem trước khi thả · tối ưu lại phần chưa khoá · nạp OD mới · thay OD bị SAP thay · bỏ xe trống
+router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)
+router.post('/dispatch/plans/:id/move',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMove }),          dispatch.moveOds)
+router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zPreview }),       dispatch.previewMove)
+router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.reoptimizePlan)
+router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam }),                                dispatch.refreshPool)
+router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
+router.delete('/dispatch/trips/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.deleteTrip)
 router.post('/dispatch/trips/:id/settle',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.settleTrip)    // chốt MỘT xe (kế hoạch đang chờ ĐVVT)
 router.post('/dispatch/trips/:id/respond',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zRespond }),       dispatch.respondTrip)   // ghi ĐVVT nhận / từ chối
 router.delete('/dispatch/plans/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.discardPlan)

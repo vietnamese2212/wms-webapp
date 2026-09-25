@@ -148,14 +148,15 @@ try {
   let P = p1b.j?.data
   let T1 = tripOfOd(P, OD[0]), T2 = tripOfOd(P, OD[2])
 
-  // [1r] Đổi ĐVVT ngay trên thẻ xe (user 25/09 "có tiền trong đó, xếp theo rank"): số tiền trong danh sách = số xe nhận
-  const rk = await api(`/tms/dispatch/trips/${x1?.id}/carriers`)
+  // [1r] Đổi ĐVVT ngay trên thẻ xe (user 25/09 "có tiền trong đó, xếp theo rank"): số tiền trong danh sách = số xe nhận.
+  // ⚠ Hỏi xe của nháp HIỆN HÀNH (T1) — nháp của `x1` đã bị "Lập lại" ở 1i thay mất (lượt đầu viết nhầm x1 ⇒ 404 đúng luật)
+  const rk = await api(`/tms/dispatch/trips/${T1?.id}/carriers`)
   const its = rk.j?.data?.items ?? []
   const rk0 = await api('/tms/dispatch/trips/undefined/carriers')
   check('1r. GET trips/:id/carriers → DA đứng ĐẦU (có cước W1), cước = đúng cước xe đang mang, cờ current; HA không có cước W1 xếp sau có lý do; id rác → 400',
-    rk.s === 200 && its[0]?.code === 'DA' && its[0]?.current === true && Number(its[0]?.freight) === Number(x1?.freight_estimated)
+    rk.s === 200 && its[0]?.code === 'DA' && its[0]?.current === true && Number(its[0]?.freight) === Number(T1?.freight_estimated)
     && its.some(i => i.code === 'HA' && i.freight == null && !!i.reason) && its.findIndex(i => i.code === 'HA') > 0 && rk0.s === 400,
-    `http=${rk.s} ${rk.j?.error?.message ?? ''} items=${its.map(i => `${i.code}:${i.freight ?? '∅'}${i.current ? '*' : ''}`).join(' ')} xe=${x1?.freight_estimated} rác=${rk0.s}`)
+    `http=${rk.s} ${rk.j?.error?.message ?? ''} items=${its.map(i => `${i.code}:${i.freight ?? '∅'}${i.current ? '*' : ''}`).join(' ')} xe=${T1?.freight_estimated} rác=${rk0.s}`)
 
   // ── [2] Người sửa nháp ──
   const sw = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { transport_company_id: HA.id })

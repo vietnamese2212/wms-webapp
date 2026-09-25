@@ -560,8 +560,8 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           mới ra — mục tiêu để tập trung xem khi cần"); trong nhóm là các dòng xe CON ── */}
       <section className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
-          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[180px]" />
-          <div className="w-44 shrink-0" title="Thẻ xe sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
+          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px]" />
+          <div className="w-40 shrink-0" title="Thẻ xe sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
                 { value: 'region', label: 'Sắp: Vùng → phường' },
@@ -581,10 +581,10 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           {canDrag && (
             <div {...dropProps('new', 'new')} title="Thả OD vào đây — máy chọn dòng xe + ĐVVT theo luật ghép"
               className={`inline-flex items-center gap-1 rounded-md border-2 border-dashed px-2 h-7 text-[11px] font-medium whitespace-nowrap ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-500'}`}>
-              <Plus className="h-3.5 w-3.5" /> Thả vào = xe mới
+              <Plus className="h-3.5 w-3.5" /> Xe mới
             </div>
           )}
-          <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>
+          {shownTrips.length !== trips.length && <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>}
           <ActionCluster items={actions} mobileInline />
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-24 lg:pb-3 space-y-2">

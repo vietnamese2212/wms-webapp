@@ -774,6 +774,10 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 
 ## 2026-09-25 — Điều vận v2: bàn ghép xe + pool lũy tiến + OD bị SO sửa thay
 
+**`20260925d_vehicle_model_dispatch_use.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
+- `vehicle_model.dispatch_use text NOT NULL DEFAULT 'ALL'` CHECK ALL|TRANSFER — điều vận dùng dòng xe cho mọi đơn / CHỈ trung chuyển giữa các kho. Backfill: cha CONT/CONTSCA ⇒ TRANSFER (5 dòng container trên staging).
+- `dispatch_trip_od.is_transfer boolean NOT NULL DEFAULT false` — OD trung chuyển (khách trỏ kho hoặc SAP STO/INTERNAL), chụp lúc máy lập để cửa sửa nháp chọn dòng xe đúng luật.
+
 **`20260925c_dispatch_pallet_loose.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
 - `Customer.load_mode text NOT NULL DEFAULT 'LOOSE'` CHECK PALLET|LOOSE — khách đi pallet / đi xá (chưa khai = xá).
 - `Warehouse.dispatch_pallet_max_stops integer NOT NULL DEFAULT 1` CHECK 1..20 — số khách tối đa trên một xe pallet.

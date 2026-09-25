@@ -14,7 +14,7 @@
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, Truck, Trash2, Package, ArrowLeftRight } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, Trash2, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -25,10 +25,11 @@ import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/componen
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useRefreshDispatchPool, useSetDispatchOdMode,
+  useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useRefreshDispatchPool, useSetDispatchOdMode,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchLoadMode,
 } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, type IssueKey } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -64,6 +65,8 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const setF = useWmsFilterStore(s => s.setDispatch)
   const desktop = useIsDesktop()
   const canDrag = editable && desktop
+  const poolRail = f.poolHidden && desktop
+  const { data: vtypes = [] } = useVehicleTypes()
   const q = f.search.trim().toLowerCase()
   const ctx = useMemo(() => ({ flags }), [flags])
   const pool = useMemo(() => plan.pool ?? [], [plan.pool])
@@ -299,8 +302,9 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
             {modeChip(o, !!editable && (!tr || editableTrip(tr)))}
             <span className="ml-auto tabular-nums text-slate-600 whitespace-nowrap">{nf(o.pallets, 1)} pl · {nf(o.tons, 1)} t</span>
           </div>
-          {!compact && <div className="truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}{o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}</div>}
-          {compact && <div className="truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}</div>}
+          {/* KHÔNG cắt "…" (user 25/09 tối: "nội dung trong thẻ đơn hàng bị che bằng dấu …") — tên khách xuống dòng */}
+          {!compact && <div className="break-words text-slate-500 leading-snug">{o.ship_to_name ?? o.ship_to_code}{o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}</div>}
+          {compact && <div className="break-words text-slate-500 leading-snug">{o.ship_to_name ?? o.ship_to_code}</div>}
           {fl?.kind === 'REPLACED' && fl.replaced_by && editable && (!tr || editableTrip(tr)) && (
             <button type="button" className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 hover:underline" disabled={replace.isPending}
               onClick={e => { e.stopPropagation(); void doReplace(o.od_number) }}><Replace className="h-3 w-3" /> Thay bằng OD mới {fl.replaced_by}</button>
@@ -347,21 +351,145 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
     </div>
   )
 
+  // ── Nhóm theo dòng xe CHA (thứ tự danh mục Loại xe ở Cài đặt TMS), trong nhóm theo dòng xe CON ──
+  const NO_MODEL = '__none__'
+  const parentRank = useMemo(() => new Map(vtypes.map((v, i) => [v.name, i])), [vtypes])
+  const tripGroups = useMemo(() => {
+    const by = new Map<string, DispatchTrip[]>()
+    for (const t of shownTrips) { const k = t.detail.vehicle_model?.parent_type_name ?? NO_MODEL; by.set(k, [...(by.get(k) ?? []), t]) }
+    const sumOf = (ts: DispatchTrip[]) => ({ pallets: ts.reduce((s, t) => s + Number(t.pallets ?? 0), 0), tons: ts.reduce((s, t) => s + Number(t.tons ?? 0), 0) })
+    return [...by.entries()].map(([k, ts]) => {
+      const sub = new Map<string, DispatchTrip[]>()
+      for (const t of ts) { const n = t.detail.vehicle_model?.name ?? 'Chưa chọn dòng xe'; sub.set(n, [...(sub.get(n) ?? []), t]) }
+      return {
+        k, label: k === NO_MODEL ? 'Chưa chọn dòng xe' : k, trips: ts, ...sumOf(ts),
+        freight: ts.reduce((s, t) => s + Number(t.freight_estimated ?? 0), 0),
+        todo: ts.filter(t => needsWork(t, ctx)).length, over: ts.filter(t => t.oversize).length,
+        subs: [...sub.entries()].map(([sk, sts]) => ({ k: sk, label: sk, trips: sts, ...sumOf(sts) })),
+      }
+    }).sort((a, b) => (Number(a.k !== NO_MODEL) - Number(b.k !== NO_MODEL)) || ((parentRank.get(a.k) ?? 999) - (parentRank.get(b.k) ?? 999)) || a.label.localeCompare(b.label))
+  }, [shownTrips, parentRank, ctx])
+  const openSet = new Set(f.boardOpen)
+  // đang tìm / đang lọc Soát ⇒ mở hết để thấy kết quả (không ghi vào trạng thái nhớ của người dùng)
+  const forceOpen = !!q || !!f.issue || tripGroups.length === 1
+  const allOpen = tripGroups.every(g => openSet.has(g.k))
+  const toggleGroup = (k: string) => { if (forceOpen) return; setF({ boardOpen: openSet.has(k) ? f.boardOpen.filter(x => x !== k) : [...f.boardOpen, k] }) }
+  // rê OD qua đầu nhóm đang đóng ~0,5 s ⇒ nhóm tự mở để thả vào xe bên trong
+  const armRef = useRef<{ k: string; h: number } | null>(null)
+  const armOpen = (k: string) => {
+    if (armRef.current?.k === k) return
+    if (armRef.current) window.clearTimeout(armRef.current.h)
+    armRef.current = { k, h: window.setTimeout(() => { armRef.current = null; if (!useWmsFilterStore.getState().dispatch.boardOpen.includes(k)) setF({ boardOpen: [...useWmsFilterStore.getState().dispatch.boardOpen, k] }) }, 500) }
+  }
+  // xe vừa nhận OD nằm trong nhóm đang đóng ⇒ mở nhóm đó, kẻo thả xong không thấy xe đâu
+  useEffect(() => {
+    if (!justHit || forceOpen) return
+    const g = tripGroups.find(x => x.trips.some(t => t.id === justHit))
+    if (g && !f.boardOpen.includes(g.k)) setF({ boardOpen: [...f.boardOpen, g.k] })
+  }, [justHit]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const flipMode = (t: DispatchTrip, m: DispatchLoadMode) => patchTrip.mutateAsync({ id: t.id, load_mode: m }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được kiểu xe'))
+  // SWITCH Pallet | Xá trên thẻ xe (user 25/09 tối: "nút đổi là switch — đổi từ loại này sang loại kia, thay vì chỉ có cái icon")
+  const modeSwitch = (t: DispatchTrip) => {
+    if (!t.load_mode) return null
+    const can = editableTrip(t) && t.ods.length > 0
+    return (
+      <span className="inline-flex shrink-0 rounded border border-slate-300 overflow-hidden text-[10px] font-semibold" role="group" aria-label="Kiểu xe">
+        {(['PALLET', 'LOOSE'] as const).map(k => {
+          const on = t.load_mode === k
+          return (
+            <button key={k} type="button" disabled={!can || on || patchTrip.isPending} aria-pressed={on}
+              title={on ? `Xe đang đi ${k === 'PALLET' ? 'PALLET' : 'XÁ'}` : `Đổi xe này sang ${k === 'PALLET' ? 'xe PALLET' : 'xe XÁ (xe tải theo tấn, ghép nhiều khách)'} — máy chọn lại dòng xe + ĐVVT`}
+              onClick={e => { e.stopPropagation(); void flipMode(t, k) }}
+              className={`px-1.5 py-0.5 ${on ? (k === 'PALLET' ? 'bg-sky-600 text-white' : 'bg-slate-700 text-white') : can ? 'bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-800' : 'bg-white text-slate-300'}`}>
+              {k === 'PALLET' ? 'Pallet' : 'Xá'}
+            </button>
+          )
+        })}
+      </span>
+    )
+  }
+
+  const tripCard = (t: DispatchTrip) => {
+    const st = tripStatus(t)
+    const ed = editableTrip(t)
+    const iss = ISSUE_ORDER.filter(k => issuesOf(t, ctx).includes(k))
+    const isHover = hover?.target === t.id
+    const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : 'border-slate-200'
+    // xe pallet đếm theo "số khách / xe pallet" của kho (mặc định 1), xe xá theo "điểm giao tối đa"
+    const lim = t.load_mode === 'PALLET' ? (plan.params.pallet_max_stops ?? 1) : (plan.params.max_drops ?? 3)
+    return (
+      <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
+        className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
+        <div className="flex items-center gap-1.5 px-2 pt-1.5">
+          <span className="font-mono text-xs font-semibold" title={`Số xe ${t.group_code}`}>#{t.seq}</span>
+          {modeSwitch(t)}
+          <div className="ml-auto flex items-center gap-0.5 shrink-0">
+            {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
+            {ed && (
+              <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-300 hover:text-slate-600'}`} disabled={patchTrip.isPending}
+                title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'}
+                onClick={() => patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá'))}>
+                {t.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+              </button>
+            )}
+            {ed && !t.ods.length && (
+              <button type="button" className="rounded p-1 text-slate-400 hover:text-red-600" title="Bỏ xe trống" disabled={delTrip.isPending}
+                onClick={() => delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe'))}><X className="h-3.5 w-3.5" /></button>
+            )}
+          </div>
+        </div>
+        <button type="button" className="px-2 text-left text-[11px] font-medium text-slate-800 leading-snug break-words hover:text-sky-700" onClick={() => onOpenTrip(t.id)} title="Mở chi tiết xe — đổi dòng xe, chuyển từng OD">
+          {t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
+        </button>
+        <div className="px-2 flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <DispatchCarrierPicker trip={t} editable={ed} busy={patchTrip.isPending}
+              onPick={id => patchTrip.mutateAsync({ id: t.id, transport_company_id: id }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được ĐVVT'))} />
+          </div>
+          <span className="shrink-0 text-[11px] font-semibold tabular-nums" title={t.detail.freight.reason ?? undefined}>{t.freight_estimated == null ? <span className="font-normal text-amber-700">chưa có cước</span> : money(t.freight_estimated)}</span>
+        </div>
+        <div className="px-2 pt-1">{loadBar(t)}</div>
+        {t.ods.length > 0 && (
+          <div className="px-2 pt-0.5 text-[10px] text-slate-600 leading-snug">
+            <span className={t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}/{lim} {t.load_mode === 'PALLET' ? 'khách' : 'điểm'}</span>
+            <span className="text-slate-300"> · </span>
+            <span className="break-words">{t.wards.join(', ') || '—'}</span>
+          </div>
+        )}
+        {iss.length > 0 && (
+          <div className="px-2 pt-1 flex flex-wrap gap-1">
+            {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${k === 'declined' || k === 'over' || k === 'sapflag' ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{ISSUE_SHORT[k]}</span>)}
+          </div>
+        )}
+        <div className="px-1 pt-1 pb-1.5 space-y-0.5 flex-1">
+          {t.ods.map(o => odRow(o, true))}
+        </div>
+        {isHover && hover && preview(hover)}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col lg:flex-row min-h-0 h-full">
       {/* ── KHUNG CHỜ ── */}
+      {/* KHUNG CHỜ THU GỌN được thành một rãnh 36 px (desktop) để bàn thẻ xe rộng hết màn — vẫn là ô thả "về khung chờ" */}
+      {poolRail ? (
+        <aside data-dispatch-pool {...dropProps('pool', 'pool')}
+          className={`hidden lg:flex w-9 shrink-0 border-r flex-col items-center gap-2 py-2 ${hover?.target === 'pool' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-slate-50'}`}>
+          <button type="button" className="rounded p-1 text-slate-500 hover:bg-slate-200" title="Mở khung chờ" onClick={() => setF({ poolHidden: false })}><ChevronsRight className="h-4 w-4" /></button>
+          <Inbox className="h-4 w-4 text-slate-500" />
+          <span className="text-[10px] font-semibold text-slate-600 [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">Khung chờ · {nf(plan.summary.pool_ods ?? pool.length)} OD</span>
+        </aside>
+      ) : (
       <aside data-dispatch-pool {...dropProps('pool', 'pool')}
         className={`lg:w-[300px] shrink-0 border-b lg:border-b-0 lg:border-r flex flex-col min-h-0 ${hover?.target === 'pool' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-slate-50/60'}`}>
-        <div className="px-3 py-2 border-b bg-white space-y-1.5 shrink-0">
+        <div className="px-3 py-1.5 border-b bg-white space-y-1 shrink-0">
           <div className="flex items-center gap-2">
             <Inbox className="h-4 w-4 text-slate-500 shrink-0" />
             <span className="text-xs font-semibold text-slate-700">Khung chờ</span>
             <span className="text-[11px] text-slate-500 tabular-nums">{nf(plan.summary.pool_ods ?? pool.length)} OD · {nf(plan.summary.pool_pallets ?? 0, 1)} pl</span>
-            {poolShown.length > 0 && editable && (
-              <button type="button" className="ml-auto text-[10px] text-sky-700 hover:underline whitespace-nowrap" onClick={() => toggleMany(poolShown.map(o => o.id))}>
-                {poolShown.every(o => sel.has(o.id)) ? 'Bỏ chọn' : 'Chọn hết'}
-              </button>
-            )}
+            <button type="button" className="ml-auto hidden lg:inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Thu gọn khung chờ — bàn thẻ xe rộng hơn" onClick={() => setF({ poolHidden: true })}><ChevronsLeft className="h-4 w-4" /></button>
           </div>
           <div className="flex items-center gap-1 text-[10px]">
             <span className="text-slate-400">Gom theo</span>
@@ -369,6 +497,11 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
               <button key={k} type="button" onClick={() => setF({ boardGroup: k })}
                 className={`rounded px-1.5 py-0.5 ${f.boardGroup === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{l}</button>
             ))}
+            {poolShown.length > 0 && editable && (
+              <button type="button" className="ml-auto text-[10px] text-sky-700 hover:underline whitespace-nowrap" onClick={() => toggleMany(poolShown.map(o => o.id))}>
+                {poolShown.every(o => sel.has(o.id)) ? 'Bỏ chọn' : 'Chọn hết'}
+              </button>
+            )}
           </div>
           {newOds > 0 && editable && (
             <button type="button" onClick={() => void doRefresh()} disabled={refresh.isPending}
@@ -388,7 +521,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
                   <button type="button" className="text-slate-400" onClick={() => setCollapsed(p => { const n = new Set(p); n.has(g.k) ? n.delete(g.k) : n.add(g.k); return n })}>
                     {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                   </button>
-                  <span className="text-[11px] font-semibold text-slate-700 truncate flex-1 min-w-0" title={g.k}>{g.k}</span>
+                  <span className="text-[11px] font-semibold text-slate-700 break-words flex-1 min-w-0">{g.k}</span>
                   <span className="text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{g.rows.length} OD · {nf(g.pallets, 1)} pl</span>
                   {editable && <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={g.rows.every(o => sel.has(o.id))} onChange={() => toggleMany(g.rows.map(o => o.id))} title="Chọn cả nhóm để kéo một lượt" />}
                 </div>
@@ -421,12 +554,14 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           )}
         </div>
       </aside>
+      )}
 
-      {/* ── LƯỚI THẺ XE ── */}
+      {/* ── LƯỚI THẺ XE — nhóm theo DÒNG XE CHA, đóng mặc định (user 25/09 tối: "sắp xếp group theo thứ tự CHA, mở thì
+          mới ra — mục tiêu để tập trung xem khi cần"); trong nhóm là các dòng xe CON ── */}
       <section className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[180px]" />
-          <div className="w-44 shrink-0" title="Thẻ xe sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
+          <div className="w-44 shrink-0" title="Thẻ xe sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
                 { value: 'region', label: 'Sắp: Vùng → phường' },
@@ -436,94 +571,57 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
                 { value: 'seq', label: 'Sắp: Số xe' },
               ]} />
           </div>
+          {tripGroups.length > 1 && !forceOpen && (
+            <button type="button" className="inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] text-slate-600 bg-slate-100 hover:bg-slate-200 whitespace-nowrap"
+              onClick={() => setF({ boardOpen: allOpen ? [] : tripGroups.map(g => g.k) })}>
+              {allOpen ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}{allOpen ? 'Thu hết' : 'Mở hết'}
+            </button>
+          )}
+          {/* ô thả "xe mới" là một dải nhỏ trên thanh công cụ, không chiếm một ô thẻ trong lưới */}
+          {canDrag && (
+            <div {...dropProps('new', 'new')} title="Thả OD vào đây — máy chọn dòng xe + ĐVVT theo luật ghép"
+              className={`inline-flex items-center gap-1 rounded-md border-2 border-dashed px-2 h-7 text-[11px] font-medium whitespace-nowrap ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-500'}`}>
+              <Plus className="h-3.5 w-3.5" /> Thả vào = xe mới
+            </div>
+          )}
           <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>
           <ActionCluster items={actions} mobileInline />
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-24 lg:pb-3">
-          <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
-            {/* chỉ nơi kéo được mới cần ô thả — điện thoại tạo xe mới qua "Chuyển tới xe…" → Xe mới */}
-            {canDrag && (
-              <div {...dropProps('new', 'new')}
-                className={`self-start rounded-lg border-2 border-dashed p-3 flex flex-col items-center justify-center gap-1 text-center min-h-[120px] ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-400'}`}>
-                <Plus className="h-5 w-5" />
-                <span className="text-xs font-medium">Xe mới</span>
-                <span className="text-[10px]">{canDrag ? 'Thả OD vào đây — máy chọn dòng xe + ĐVVT theo luật ghép' : 'Chọn OD rồi "Chuyển tới xe…" → Xe mới'}</span>
-              </div>
-            )}
-            {shownTrips.map(t => {
-              const st = tripStatus(t)
-              const ed = editableTrip(t)
-              const iss = ISSUE_ORDER.filter(k => issuesOf(t, ctx).includes(k))
-              const isHover = hover?.target === t.id
-              const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : 'border-slate-200'
-              return (
-                <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
-                  className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
-                  <div className="flex items-start gap-1.5 px-2 pt-1.5">
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onOpenTrip(t.id)} title={`${t.group_code} — bấm để đổi dòng xe / ĐVVT`}>
-                      <div className="flex items-center gap-1.5">
-                        <Truck className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                        <span className="font-mono text-xs font-semibold">#{t.seq}</span>
-                        <span className="truncate text-[10px] text-slate-400">{t.group_code}</span>
-                        {t.load_mode && (
-                          <span className={`ml-auto shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[9px] font-semibold ${t.load_mode === 'PALLET' ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'}`}>
-                            {t.load_mode === 'PALLET' ? <Package className="h-2.5 w-2.5" /> : <Truck className="h-2.5 w-2.5" />}{t.load_mode === 'PALLET' ? 'Pallet' : 'Xá'}
-                          </span>
+        <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-24 lg:pb-3 space-y-2">
+          {tripGroups.map(g => {
+            const open = forceOpen || openSet.has(g.k)
+            return (
+              <div key={g.k} className="rounded-lg border border-slate-200 bg-slate-50/70">
+                <button type="button" onClick={() => toggleGroup(g.k)} aria-expanded={open}
+                  onDragOver={canDrag && !open ? e => { if (e.dataTransfer.types.includes(DRAG_MIME)) armOpen(g.k) } : undefined}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-left ${open ? 'border-b border-slate-200' : ''} hover:bg-slate-100 rounded-t-lg`}>
+                  {open ? <ChevronDown className="h-4 w-4 text-slate-500 shrink-0" /> : <ChevronRight className="h-4 w-4 text-slate-500 shrink-0" />}
+                  <span className={`text-xs font-semibold uppercase tracking-wide ${g.k === NO_MODEL ? 'text-red-700' : 'text-slate-700'}`}>{g.label}</span>
+                  <span className="text-[11px] text-slate-500 tabular-nums whitespace-nowrap">{g.trips.length} xe · {nf(g.pallets, 1)} pl · {nf(g.tons, 1)} t</span>
+                  {g.todo > 0 && <span className="rounded bg-amber-100 px-1.5 text-[10px] font-medium text-amber-800 whitespace-nowrap">{g.todo} cần xử lý</span>}
+                  {g.over > 0 && <span className="rounded bg-red-100 px-1.5 text-[10px] font-medium text-red-700 whitespace-nowrap">{g.over} vượt tải</span>}
+                  <span className="ml-auto text-[11px] font-semibold tabular-nums text-slate-700 whitespace-nowrap">{money(g.freight)}</span>
+                </button>
+                {open && (
+                  <div className="p-2 space-y-2">
+                    {g.subs.map(sg => (
+                      <div key={sg.k}>
+                        {g.subs.length > 1 && (
+                          <div className="px-1 pb-1 flex items-center gap-2 text-[11px] text-slate-500">
+                            <span className="font-medium text-slate-700">{sg.label}</span>
+                            <span className="tabular-nums">{sg.trips.length} xe · {nf(sg.pallets, 1)} pl</span>
+                          </div>
                         )}
+                        <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
+                          {sg.trips.map(t => tripCard(t))}
+                        </div>
                       </div>
-                      <div className="truncate text-[11px] text-slate-700">{t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}</div>
-                      <div className="truncate text-[10px] text-slate-500">{t.detail.carrier ? <><b className="font-mono">{t.detail.carrier.code}</b> {t.detail.carrier.name}</> : <span className="text-red-600">Chưa có ĐVVT</span>}</div>
-                    </button>
-                    <div className="flex items-center gap-0.5 shrink-0">
-                      {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-                      {ed && t.ods.length > 0 && (
-                        // đổi CẢ XE pallet ↔ xá (user chốt 25/09): OD trên xe theo kiểu mới, máy chọn lại dòng xe + ĐVVT đúng họ
-                        <button type="button" className="rounded p-1 text-slate-300 hover:text-sky-700" disabled={patchTrip.isPending}
-                          title={`Đổi xe này sang ${t.load_mode === 'PALLET' ? 'xe XÁ (xe tải theo tấn, ghép nhiều khách)' : 'xe PALLET'} — máy chọn lại dòng xe + ĐVVT`}
-                          onClick={() => patchTrip.mutateAsync({ id: t.id, load_mode: t.load_mode === 'PALLET' ? 'LOOSE' : 'PALLET' })
-                            .then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được kiểu xe'))}>
-                          <ArrowLeftRight className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {ed && (
-                        <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-300 hover:text-slate-600'}`} disabled={patchTrip.isPending}
-                          title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'}
-                          onClick={() => patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá'))}>
-                          {t.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
-                        </button>
-                      )}
-                      {ed && !t.ods.length && (
-                        <button type="button" className="rounded p-1 text-slate-400 hover:text-red-600" title="Bỏ xe trống" disabled={delTrip.isPending}
-                          onClick={() => delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe'))}><X className="h-3.5 w-3.5" /></button>
-                      )}
-                    </div>
+                    ))}
                   </div>
-                  <div className="px-2 pt-1">{loadBar(t)}</div>
-                  {t.ods.length > 0 && (
-                    <div className="px-2 pt-0.5 flex items-center gap-1.5 text-[10px] text-slate-600 flex-wrap">
-                      {(() => {
-                        // xe pallet đếm theo "số khách / xe pallet" của kho (mặc định 1), xe xá theo "điểm giao tối đa"
-                        const lim = t.load_mode === 'PALLET' ? (plan.params.pallet_max_stops ?? 1) : (plan.params.max_drops ?? 3)
-                        return <span className={t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}/{lim} {t.load_mode === 'PALLET' ? 'khách' : 'điểm'}</span>
-                      })()}
-                      <span className="text-slate-300">·</span>
-                      <span className="truncate max-w-[110px]" title={t.wards.join(', ')}>{t.wards.slice(0, 2).join(', ') || '—'}{t.wards.length > 2 ? ` +${t.wards.length - 2}` : ''}</span>
-                      <span className="ml-auto font-semibold tabular-nums whitespace-nowrap" title={t.detail.freight.reason ?? undefined}>{t.freight_estimated == null ? <span className="font-normal text-amber-700">chưa có cước</span> : money(t.freight_estimated)}</span>
-                    </div>
-                  )}
-                  {iss.length > 0 && (
-                    <div className="px-2 pt-1 flex flex-wrap gap-1">
-                      {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${k === 'declined' || k === 'over' || k === 'sapflag' ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{ISSUE_SHORT[k]}</span>)}
-                    </div>
-                  )}
-                  <div className="px-1 pt-1 pb-1.5 space-y-0.5 flex-1">
-                    {t.ods.map(o => odRow(o, true))}
-                  </div>
-                  {isHover && hover && preview(hover)}
-                </div>
-              )
-            })}
-          </div>
+                )}
+              </div>
+            )
+          })}
           {!shownTrips.length && trips.length > 0 && (
             <p className="py-8 text-center text-xs text-slate-400">Không xe nào khớp bộ lọc. <button type="button" className="text-sky-700 underline" onClick={() => setF({ issue: '', search: '' })}>Xem tất cả {trips.length} xe</button></p>
           )}

@@ -20,6 +20,28 @@ const delta = (now: number, base: number | undefined, unit: (n: number) => strin
   return <span className={`ml-1 text-[10px] font-medium ${good ? 'text-green-300' : 'text-amber-200'}`}>{d > 0 ? '+' : '−'}{unit(Math.abs(d))}</span>
 }
 
+/** BẢN GỌN (user 25/09 tối: "các thông số nếu không quá cần thiết giấu trong nút info — bàn làm việc rộng rãi nhất có
+ *  thể"): 4 con số người điều vận nhìn liên tục (xe · tải TB · Σ cước · khung chờ) + cờ đỏ khi có xe vượt tải, đứng chung
+ *  hàng với dải Soát. Dải đầy đủ (SummaryBand + tỷ trọng ĐVVT + dòng xe) mở bằng nút "Chỉ số". */
+export function DispatchKpiInline({ plan }: { plan: DispatchPlan }) {
+  const s = plan.summary
+  const b = s.baseline ?? null
+  const over = s.overload ?? 0
+  const under = s.shares?.filter(sh => sh.target_pct != null && (sh.pct ?? 0) < sh.target_pct).length ?? 0
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap text-[11px] text-slate-600 tabular-nums">
+      <span title={b ? `Máy lập ${nf(b.trips)} xe` : undefined}><b className="text-slate-800">{nf(s.trips)}</b> xe{b && s.trips !== b.trips && <span className={s.trips < b.trips ? 'text-green-700' : 'text-amber-700'}> ({s.trips > b.trips ? '+' : '−'}{nf(Math.abs(s.trips - b.trips))})</span>}</span>
+      <span className="text-slate-300">·</span>
+      <span title="Trung bình % tải các xe có dòng xe">tải <b className="text-slate-800">{s.avg_load_pct == null ? '—' : `${nf(s.avg_load_pct, 0)}%`}</b></span>
+      <span className="text-slate-300">·</span>
+      <span title={`${nf(s.freight_total)} ₫${s.unpriced ? ` · ${s.unpriced} xe chưa có cước` : ''}${b ? ` · máy lập ${nf(b.freight_total)} ₫` : ''}`}>Σ <b className="text-slate-800">{money(s.freight_total)}</b></span>
+      {(s.pool_ods ?? 0) > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700" title="OD ở khung chờ KHÔNG đi khi Xác nhận">chờ {nf(s.pool_ods ?? 0)} OD</span></>}
+      {over > 0 && <><span className="text-slate-300">·</span><span className="text-red-600 font-semibold">{over} vượt tải</span></>}
+      {under > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700" title="ĐVVT đang dưới mục tiêu tỷ trọng tháng — mở Chỉ số để xem">{under} ĐVVT dưới tỷ trọng</span></>}
+    </span>
+  )
+}
+
 export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
   const s = plan.summary
   const b = s.baseline ?? null

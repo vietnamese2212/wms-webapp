@@ -11,10 +11,10 @@
 // 3 tab cạnh tiêu đề — Bàn ghép xe (kéo thả, mặc định) · Danh sách xe (bảng soát cũ) · Dữ liệu OD (thô, OD đang ở đâu).
 // Dải chỉ số `DispatchKpiBar` + dải Soát đứng CHUNG trên cả ba tab.
 import { useEffect, useMemo, useState } from 'react'
-import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, Database, RotateCcw } from 'lucide-react'
+import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, Database, RotateCcw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
-import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
+import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
 import { DispatchOdTable } from '@/components/tms/DispatchOdTable'
 import { EDITABLE, tripStatus, ISSUES, TODO_KEYS, ISSUE_ORDER, ISSUE_SHORT, issuesOf, needsWork, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
@@ -351,18 +351,23 @@ export default function Dispatch() {
                 <div className="flex-1 min-w-[140px] sm:flex-none sm:w-48"><SingleSelect searchable={false} value={planId ?? ''} onChange={v => setF({ planId: v })}
                   options={planList.map(p => ({ value: p.id, label: `${STATUS_VI[p.status].label} · ${formatTimestampDate(p.created_at)}`, sub: p.created_by ?? undefined }))} placeholder="Kế hoạch" /></div>
               )}
+              {/* Trạng thái + tham số lập GỌN vào ⓘ (user 25/09 tối: "bàn làm việc rộng rãi nhất có thể") — bản cũ là một
+                  hàng meta riêng dưới thanh công cụ */}
+              {plan && s && (
+                <span className="inline-flex items-center gap-1 shrink-0">
+                  <StatusBadge tone={s.tone}>{s.label}</StatusBadge>
+                  <InfoTip tip={<div className="space-y-0.5 text-xs">
+                    <div><b>{plan.warehouse?.name}</b> · giao {formatDate(plan.plan_date)}</div>
+                    <div>Lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</div>
+                    <div>Xe xá ≤ {plan.params.max_drops ?? 3} điểm giao · xe pallet ≤ {plan.params.pallet_max_stops ?? 1} khách · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
+                    <div>Pool {nf(plan.params.pool_ods)} OD · {nf(plan.params.in_plan)} OD đã có trong Kế hoạch xuất</div>
+                    <div className="text-slate-500">Tham số theo kho: Cài đặt WMS → Kho → "XUẤT — Điều vận".</div>
+                  </div>} />
+                </span>
+              )}
               <ActionCluster items={actionItems} mobileInline />
             </div>
           </div>
-          {plan && (
-            <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
-              {s && <StatusBadge tone={s.tone}>{s.label}</StatusBadge>}
-              {/* Dòng meta phụ chỉ hiện từ sm (skill table-format 20 — kho + ngày đã nằm ngay trên ô chọn) */}
-              <span className="hidden sm:inline">{plan.warehouse?.name} · giao {formatDate(plan.plan_date)} · lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</span>
-              <span className="sm:hidden text-slate-500">lập {formatTimestampDate(plan.created_at, true)}</span>
-              <span className="hidden sm:inline text-slate-400">· ≤ {plan.params.max_drops ?? 3} điểm giao · {plan.params.allow_mix_channels ? 'trộn kênh' : 'không trộn kênh'} · pool {nf(plan.params.pool_ods)} OD ({nf(plan.params.in_plan)} đã có trong Kế hoạch xuất)</span>
-            </div>
-          )}
         </div>
 
         {/* DẢI VIỆC — trả lời "còn bao nhiêu việc" và đưa người tới đó bằng MỘT nhát bấm.
@@ -395,14 +400,25 @@ export default function Dispatch() {
                   {selIds.length === pickable.length ? 'Bỏ chọn' : `Chọn ${pickable.length} xe đang hiện`}
                 </button>
               )}
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none text-[11px] text-slate-500">
-                <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={f.todoFirst} onChange={e => setF({ todoFirst: e.target.checked })} /> xe cần xử lý lên đầu
-              </label>
+              {/* bàn ghép xe có ô "Sắp theo" riêng — công tắc này chỉ có nghĩa ở Danh sách xe */}
+              {tab === 'list' && (
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none text-[11px] text-slate-500">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={f.todoFirst} onChange={e => setF({ todoFirst: e.target.checked })} /> xe cần xử lý lên đầu
+                </label>
+              )}
+              {sum && <span className="hidden md:inline"><DispatchKpiInline plan={plan} /></span>}
+              {sum && (
+                <button type="button" onClick={() => setF({ kpiOpen: !f.kpiOpen })} aria-expanded={f.kpiOpen}
+                  title="Dải chỉ số đầy đủ: OD · pallet · tấn · cước/pallet · Non tải · tỷ trọng ĐVVT · số chuyến theo dòng xe"
+                  className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium ${f.kpiOpen ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>
+                  <BarChart3 className="h-3.5 w-3.5" /> Chỉ số {f.kpiOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {plan && sum && <DispatchKpiBar plan={plan} />}
+        {plan && sum && f.kpiOpen && <DispatchKpiBar plan={plan} />}
 
         <div className={tab === 'board' && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (

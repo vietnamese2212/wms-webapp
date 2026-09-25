@@ -386,3 +386,26 @@ describe('luật 7 — khách Pallet / Xá (user chốt 25/09)', () => {
     expect(r.unplanned[0].reason).toMatch(/Xá/)
   })
 })
+describe('luật 8 — dòng xe dùng cho việc gì (user 25/09: "container chỉ dành cho tuyến trung chuyển giữa các kho")', () => {
+  const T15 = model({ id: 'T15', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP' })
+  const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP', dispatch_use: 'TRANSFER' })
+  const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: 20_000 })], ...over })
+  const inp = (ods: EngineOd[]) => input(ods, { models: [T15, CONT], tariffs: [] })
+  it('OD giao khách 20 tấn ⇒ KHÔNG lên container (chỉ trung chuyển) — tách theo xe 15 tấn / báo vượt, không bao giờ CONT', () => {
+    const r = runDispatch(inp([big('1')]))
+    expect(r.trips.length).toBeGreaterThan(0)
+    expect(r.trips.every(t => t.vehicle_model?.id !== 'CONT')).toBe(true)
+  })
+  it('OD trung chuyển (khách là kho của mình) 20 tấn ⇒ lên container, cờ transfer trên dòng OD', () => {
+    const r = runDispatch(inp([big('2', { internal_wh: 'WH2' })]))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicle_model?.id).toBe('CONT')
+    expect(r.trips[0].ods[0].transfer).toBe(true)
+  })
+  it('SAP flow STO cũng là trung chuyển; dòng xe không khai = dùng cho mọi đơn (hành vi cũ)', () => {
+    const r = runDispatch(inp([big('3', { flow: 'STO' })]))
+    expect(r.trips[0].vehicle_model?.id).toBe('CONT')
+    const r2 = runDispatch(input([big('4')], { models: [T15, model({ ...CONT, dispatch_use: undefined })], tariffs: [] }))
+    expect(r2.trips[0].vehicle_model?.id).toBe('CONT')
+  })
+})

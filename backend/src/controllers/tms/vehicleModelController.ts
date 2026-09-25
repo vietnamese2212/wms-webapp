@@ -45,10 +45,12 @@ const vehicleModelBody = {
   underload_pct:      z.number().int().min(0).max(100),
   is_active:          zBool,
   sort_order:         z.number().int().min(0),
+  // Luật 8 điều vận (25/09): ALL = mọi đơn · TRANSFER = CHỈ trung chuyển giữa các kho (container)
+  dispatch_use:       z.enum(['ALL', 'TRANSFER']),
 }
 export const zVehicleModelCreate = z.object({ sap_code: zText(1, 20), ...vehicleModelBody }).partial({
   parent_type_id: true, temp_mode: true, max_pallets: true, max_tons: true, max_m3: true, max_drops: true,
-  allow_mix_channels: true, tariff_unit: true, underload_pct: true, is_active: true, sort_order: true, capacity_mode: true,
+  allow_mix_channels: true, tariff_unit: true, underload_pct: true, is_active: true, sort_order: true, capacity_mode: true, dispatch_use: true,
 })
 export const zVehicleModelUpdate = z.object(vehicleModelBody).partial()
 export const zAssignParent = z.object({ ids: z.array(zId).min(1).max(200), parent_type_id: zId.nullable() })
@@ -107,7 +109,7 @@ export async function createVehicleModel(req: Request, res: Response) {
       capacity_mode, max_pallets: body.max_pallets ?? null, max_tons: body.max_tons ?? null, max_m3: body.max_m3 ?? null,
       max_drops: body.max_drops ?? null, allow_mix_channels: body.allow_mix_channels ?? true,
       tariff_unit: body.tariff_unit ?? (capacity_mode === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP'),
-      underload_pct: body.underload_pct ?? 70, is_active: body.is_active ?? true, sort_order: body.sort_order ?? 0,
+      underload_pct: body.underload_pct ?? 70, is_active: body.is_active ?? true, sort_order: body.sort_order ?? 0, dispatch_use: body.dispatch_use ?? 'ALL',
       created_by: actor, updated_by: actor, updated_at: new Date().toISOString(),
     }
     const { data, error } = await db.from('vehicle_model').insert(rec).select().single()

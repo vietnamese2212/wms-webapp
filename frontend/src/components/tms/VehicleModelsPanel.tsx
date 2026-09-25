@@ -49,6 +49,7 @@ const COLS = [
   { id: 'name',   label: 'Tên dòng xe',      w: 230 },
   { id: 'parent', label: 'Dòng xe cha',      w: 190 },
   { id: 'cond',   label: 'Điều kiện bảo quản', w: 200 },
+  { id: 'use',    label: 'Điều vận dùng cho', w: 150 },
   { id: 'cap',    label: 'Sức chứa',         w: 130 },
   { id: 'unit',   label: 'Tính cước',        w: 150 },
   { id: 'under',  label: 'Non tải <',        w: 78 },
@@ -103,6 +104,7 @@ function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | 
   const [unit, setUnit] = useState<'PER_PALLET' | 'PER_TRIP'>(row?.tariff_unit ?? 'PER_TRIP')
   const [under, setUnder] = useState(String(row?.underload_pct ?? 70))
   const [active, setActive] = useState(row?.is_active ?? true)
+  const [use, setUse] = useState<'ALL' | 'TRANSFER'>(row?.dispatch_use ?? 'ALL')
   const [err, setErr] = useState('')
   const pending = create.isPending || update.isPending
   const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s))
@@ -111,7 +113,7 @@ function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | 
     const body: VehicleModelPatch = {
       name: name.trim(), parent_type_id: parent || null, storage_conditions: conds, capacity_mode: capMode,
       max_pallets: numOrNull(pallets), max_tons: numOrNull(tons), max_m3: numOrNull(m3), max_drops: numOrNull(drops),
-      tariff_unit: unit, underload_pct: Number(under) || 0, is_active: active,
+      tariff_unit: unit, underload_pct: Number(under) || 0, is_active: active, dispatch_use: use,
     }
     try {
       if (row) await update.mutateAsync({ id: row.id, ...body })
@@ -136,6 +138,10 @@ function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | 
         <div><Label className="text-xs">Đo tải bằng</Label>
           <SingleSelect searchable={false} value={capMode} onChange={v => { const cm = v as 'PALLET' | 'TON'; setCapMode(cm); setUnit(cm === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP') }}
             options={[{ value: 'PALLET', label: 'Pallet (xe pallet)' }, { value: 'TON', label: 'Tấn (xe xá / cont)' }]} /></div>
+        <div><Label className="text-xs">Điều vận dùng dòng xe này cho</Label>
+          <SingleSelect searchable={false} value={use} onChange={v => setUse(v === 'TRANSFER' ? 'TRANSFER' : 'ALL')}
+            options={[{ value: 'ALL', label: 'Mọi đơn (giao khách + trung chuyển)' }, { value: 'TRANSFER', label: 'Chỉ trung chuyển giữa các kho' }]} />
+          <p className="text-[10px] text-slate-500 mt-1">{use === 'TRANSFER' ? 'Máy chỉ xếp lên dòng xe này các đơn đi KHO của mình (khách có trỏ kho, hoặc SAP phân loại STO) — không bao giờ giao khách bằng xe này.' : 'Máy được dùng cho mọi đơn.'}</p></div>
         <div><Label className="text-xs">Điều kiện bảo quản xe chở được</Label>
           <ConditionPicker all={conditions} value={conds} onChange={setConds} /></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -171,8 +177,8 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
   const [activating, setActivating] = useState(false)
   const f = useWmsFilterStore(s => s.vehicleModels)
   const setF = useWmsFilterStore(s => s.setVehicleModels)
-  // _v3: bỏ 2 cột Nhiệt · Trộn kênh (25/09) ⇒ bề rộng đã lưu của người dùng lệch cột nếu giữ khoá cũ
-  const { widths: colW, startResize, totalWidth } = useColumnResize('vehicle_models_col_widths_v3', COLS.map(c => c.w))
+  // _v4: bỏ 2 cột Nhiệt · Trộn kênh, thêm "Điều vận dùng cho" (25/09) ⇒ bề rộng đã lưu lệch cột nếu giữ khoá cũ
+  const { widths: colW, startResize, totalWidth } = useColumnResize('vehicle_models_col_widths_v4', COLS.map(c => c.w))
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [form, setForm] = useState<{ row: VehicleModel | null } | null>(null)
   const [ask, confirmNode] = useConfirmDialog()
@@ -251,6 +257,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       case 'cond':   return (m.storage_conditions ?? []).length
         ? <span title={m.storage_conditions.map(c => conditionLabel(condBy.get(c), c)).join(' · ')}>{m.storage_conditions.map(c => conditionLabel(condBy.get(c), c)).join(' · ')}</span>
         : <span className="text-amber-600" title="Chưa khai = xe được coi là chở được mọi điều kiện">Mọi điều kiện</span>
+      case 'use':    return m.dispatch_use === 'TRANSFER' ? <StatusBadge tone="purple">Chỉ trung chuyển kho</StatusBadge> : <span className="text-slate-500">Mọi đơn</span>
       case 'cap':    return capText(m) ?? <span className="text-slate-300">—</span>
       case 'unit':   return m.tariff_unit === 'PER_PALLET' ? 'Pallet (làm tròn lên)' : 'Trọn chuyến'
       case 'under':  return <span className="tabular-nums">{m.underload_pct} %</span>

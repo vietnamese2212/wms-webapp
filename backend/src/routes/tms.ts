@@ -82,7 +82,8 @@ router.get('/dispatch/plans',                 requirePerm('dispatch', 'view'),  
 router.get('/dispatch/plans/:id',             requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlan)
 router.post('/dispatch/plan',                 requirePerm('dispatch', 'plan'),    validate({ body: dispatch.zPlanBody }),                        dispatch.createPlan)
 router.patch('/dispatch/trips/:id',           requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zTripPatch }),     dispatch.updateTrip)
-router.post('/dispatch/trips/:id/move-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMoveOd }),        dispatch.moveOd)
+router.get('/dispatch/trips/:id/carriers',    requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.tripCarriers)  // ĐVVT xếp hạng theo cước cho xe này
+router.post('/dispatch/trips/:id/move-od',   requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMoveOd }),        dispatch.moveOd)
 router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.confirmPlan)
 // Bàn ghép xe (25/09): kéo thả · xem trước khi thả · tối ưu lại phần chưa khoá · nạp OD mới · thay OD bị SAP thay · bỏ xe trống
 router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)

@@ -5609,6 +5609,7 @@ export interface VehicleModel {
   tariff_unit: 'PER_PALLET' | 'PER_TRIP'
   underload_pct: number
   is_active: boolean; sort_order: number
+  dispatch_use?: 'ALL' | 'TRANSFER'   // điều vận dùng cho: mọi đơn · CHỈ trung chuyển giữa các kho (container) — 25/09
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
 }
 export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by'>>
@@ -5878,8 +5879,17 @@ export interface DispatchTripOd {
   pallets: number | string | null; tons: number | string | null; lines: number; part_index: number | null; part_of: number | null; material_codes: string[]
   conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null; late_days?: number
   load_mode?: DispatchLoadMode | null   // khách đi Pallet / Xá (25/09) — theo danh mục khách, đổi được trên bàn ghép xe
+  is_transfer?: boolean                 // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
 }
 export type DispatchLoadMode = 'PALLET' | 'LOOSE'
+/** ĐVVT xếp hạng theo cước cho MỘT xe (đổi ĐVVT ngay trên thẻ xe, 25/09) — cùng `priceFor` với engine. */
+export interface DispatchCarrierOption { id: string; code: string; name: string; tender_required: boolean; current: boolean; freight: number | null; reason: string | null; share_pct: number | null; target_pct: number | null; alloc: string | null }
+export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-trip-carriers', tripId], enabled: !!tripId && enabled, staleTime: 15_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/trips/${tripId}/carriers`)).data.data as { vehicle_model: { id: string; name: string } | null; items: DispatchCarrierOption[] },
+  })
+}
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
 export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN'; info: string | null; replaced_by?: string | null }
 export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED'; info: string | null }
@@ -5922,11 +5932,11 @@ export interface DispatchPlan {
   in_plan?: { od_number: string; group_code: string }[]
 }
 export type DispatchPlanListItem = Omit<DispatchPlan, 'trips' | 'params' | 'unplanned'>
-const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }) }
+const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] }) }
 /** Thả OD xong server trả NGUYÊN kế hoạch ⇒ đặt thẳng vào cache (không chờ tải lại) rồi mới làm mới danh sách/cờ. */
 const putDispatchPlan = (qc: ReturnType<typeof useQueryClient>, p: DispatchPlan) => {
   qc.setQueryData(['dispatch-plan', p.id], (old: DispatchPlan | undefined) => ({ ...(old ?? {}), ...p }))
-  qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] })
+  qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] })
 }
 export function useDispatchPlanSync(id: string | null, enabled = true) {
   return useQuery({

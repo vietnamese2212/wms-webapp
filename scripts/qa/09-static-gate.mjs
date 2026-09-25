@@ -467,6 +467,38 @@ const RULES = [
       (line, f) => !/TableEmptyRow\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
         && /<(TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*\btext-center\b/.test(line), s),
   },
+  // ── ĐỒNG BỘ GIAO DIỆN module MỚI (25/09, user: "các module mới giao diện chưa đồng bộ, nút action khác các
+  //    giao diện khác — xem skill có chưa, chưa có thì đồng bộ lại cả skill để từ nay không mắc"). Skill
+  //    table-format ĐÃ có luật ActionCluster/StatusBadge/SettingsGroup mà Điều vận · Cước (23–24/09) vẫn lệch ⇒
+  //    luật văn xuôi không tự thi hành. Ba chỗ lệch đếm được bằng máy thì khoá ratchet (nợ cũ dọn dần).
+  {
+    key: 'native_browser_dialog',
+    label: 'gọi confirm()/alert()/prompt() của TRÌNH DUYỆT — dùng useConfirmDialog (components/shared/ConfirmDialog.tsx)',
+    // Khung xám không theo giao diện app, PWA điện thoại kèm tên miền, và trình duyệt cho tích "chặn hộp
+    // thoại của trang này" ⇒ từ đó confirm() trả false ÂM THẦM, nút bấm không làm gì. Điều vận dùng 6 cái
+    // cho đúng bước không quay lại được (Xác nhận kế hoạch, ghi ĐVVT từ chối kèm lý do).
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line, f) => !/ConfirmDialog\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && /(^|[^.\w])(window\.)?(confirm|alert|prompt)\(/.test(line), s),
+  },
+  {
+    key: 'action_item_custom_fill',
+    label: 'ActionItem tự tô NỀN MÀU riêng (className bg-*-600…) — nút chính dùng variant, không chế màu; một cụm một nút chính',
+    // Điều vận 24/09: "Lập lại" xanh dương + "Xác nhận" xanh lá tự chế = màn duy nhất có hai nút chính hai màu.
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        // `.*` chứ không `[^}]*`: bản đầu dừng ở dấu } của ${…} trong tip template ⇒ mù đúng dòng Xác nhận cũ
+        && /key: '[^']+'.*className: '[^']*\bbg-(green|blue|red|sky|amber|emerald|indigo|violet|orange)-[5-7]00/.test(line), s),
+  },
+  {
+    key: 'list_table_not_resizable',
+    label: 'bảng <Table> trong trang KHÔNG table-fixed — bảng nghiệp vụ dùng ResizableTable (kéo giãn cột + cột đầu sticky)',
+    // Cước 23/09: 3.363 dòng cước trên <Table className="min-w-full"> — không kéo cột được, cột đầu trôi mất
+    // khi cuộn ngang trên điện thoại, trong khi Điều vận làm cùng ngày thì đúng chuẩn. Bảng nhỏ trong dialog /
+    // form nằm ở components/ nên không bị đếm.
+    count: (s) => countMatches(['frontend/src/pages'], ['.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line) && /<Table\b/.test(line) && !/table-fixed/.test(line), s),
+  },
   {
     key: 'move_without_ledger',
     label: 'cửa ĐỔI Ô pallet (rpc move_pallets_to_location / fill_scan_apply, hoặc ghi thẳng location_id) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',

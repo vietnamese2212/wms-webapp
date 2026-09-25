@@ -13,6 +13,8 @@ export interface RtColDef {
   label: string
   w: number                       // độ rộng mặc định (px) — user kéo chỉnh, lưu theo storageKey
   align?: 'right' | 'center'
+  /** Cột thao tác cuối bảng rộng → ghim mép phải (cell body tự thêm `sticky right-0 bg-white`) */
+  stickyRight?: boolean
 }
 
 export function ResizableTable({ storageKey, cols, children }: {
@@ -34,7 +36,7 @@ export function ResizableTable({ storageKey, cols, children }: {
               key={c.id}
               className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${
                 c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center px-1' : ''
-              } ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}
+              } ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.stickyRight ? 'sticky right-0 z-20 bg-slate-50' : ''}`}
             >
               {c.label}
               {i > 0 && (

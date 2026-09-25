@@ -23,6 +23,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate } from '@/utils/formatters'
@@ -179,6 +180,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
   const { widths: colW, startResize, totalWidth } = useColumnResize('vehicle_models_col_widths_v2', COLS.map(c => c.w))
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [form, setForm] = useState<{ row: VehicleModel | null } | null>(null)
+  const [ask, confirmNode] = useConfirmDialog()
   const [assignDlg, setAssignDlg] = useState(false)
   const [assignTo, setAssignTo] = useState('')
   const [condDlg, setCondDlg] = useState(false)
@@ -255,7 +257,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       case 'ops':    return (canEdit || canDelete) ? (
         <div className="flex items-center gap-0.5">
           {canEdit && <button className="text-slate-400 hover:text-blue-500 p-1" title="Sửa" onClick={e => { e.stopPropagation(); setForm({ row: m }) }}><Pencil className="h-3.5 w-3.5" /></button>}
-          {canDelete && <button className="text-slate-400 hover:text-red-500 p-1" title="Xoá" onClick={e => { e.stopPropagation(); if (confirm(`Xoá dòng xe "${m.sap_code} · ${m.name}"?`)) del.mutate(m.id, { onError: er => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(er) }) }) }}><Trash2 className="h-3.5 w-3.5" /></button>}
+          {canDelete && <button className="text-slate-400 hover:text-red-500 p-1" title="Xoá" onClick={async e => { e.stopPropagation(); if (await ask({ title: `Xoá dòng xe "${m.sap_code} · ${m.name}"?`, danger: true, confirmLabel: 'Xoá' }) !== null) del.mutate(m.id, { onError: er => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(er) }) }) }}><Trash2 className="h-3.5 w-3.5" /></button>}
         </div>) : null
       default: return null
     }
@@ -349,6 +351,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
         </Dialog>
       )}
       {form && <ModelForm row={form.row} parents={parents} conditions={conditions} onClose={() => setForm(null)} />}
+      {confirmNode}
     </>
   )
 }

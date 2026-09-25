@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react'
 import { Plus, Upload, Pencil, Trash2, Banknote, MapPinned, Percent } from 'lucide-react'
 import type { AxiosError } from 'axios'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,6 +25,8 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { InfoTip } from '@/components/shared/InfoTip'
+import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useTransportCompanies, useVehicleModels,
@@ -55,8 +57,31 @@ const PAGE_TAB_DEFS = [
 type TabKey = typeof PAGE_TAB_DEFS[number]['key']
 
 const PER_LABEL: Record<SurchargePer, string> = { PER_STOP: 'mỗi điểm giao', PER_TRIP: 'mỗi chuyến', PER_PALLET: 'mỗi pallet', PER_TON: 'mỗi tấn' }
-const TH = 'px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+const TD0 = `${TD} sticky left-0 z-10 bg-white`     // cột đầu ghim trái (ResizableTable ghim tiêu đề cột đầu)
+const TDR = `${TD} sticky right-0 z-10 bg-white`    // cột thao tác ghim phải
+// Bảng nghiệp vụ = ResizableTable (skill table-format mục 7): kéo giãn cột + cột đầu sticky — bản 23/09 dùng
+// <Table> tự do nên 3.363 dòng cước không kéo cột được và cột Kho trôi mất khi cuộn ngang trên điện thoại.
+const TARIFF_COLS: RtColDef[] = [
+  { id: 'wh', label: 'Kho xuất', w: 110 }, { id: 'co', label: 'ĐVVT', w: 120 }, { id: 'vm', label: 'Dòng xe (SAP)', w: 190 },
+  { id: 'ward', label: 'Phường / Xã', w: 150 }, { id: 'prov', label: 'Tỉnh (mới)', w: 110 }, { id: 'km', label: 'Km', w: 50, align: 'right' },
+  { id: 'price', label: 'Đơn giá', w: 100, align: 'right' }, { id: 'unit', label: 'Tính', w: 150 }, { id: 'eff', label: 'Hiệu lực', w: 140 },
+  { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'upd', label: 'Sửa', w: 130 },
+]
+const SUR_COLS: RtColDef[] = [
+  { id: 'wh', label: 'Kho xuất', w: 110 }, { id: 'co', label: 'ĐVVT', w: 120 }, { id: 'vm', label: 'Dòng xe', w: 170 },
+  { id: 'kind', label: 'Loại', w: 100 }, { id: 'amt', label: 'Số tiền', w: 100, align: 'right' }, { id: 'per', label: 'Tính theo', w: 240 },
+  { id: 'eff', label: 'Hiệu lực', w: 140 }, { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'note', label: 'Ghi chú', w: 200 },
+]
+const ALLOC_COLS: RtColDef[] = [
+  { id: 'wh', label: 'Kho xuất', w: 110 }, { id: 'kind', label: 'Cấp', w: 90 }, { id: 'area', label: 'Khu vực', w: 150 },
+  { id: 'co', label: 'ĐVVT', w: 140 }, { id: 'pri', label: 'Ưu tiên', w: 70, align: 'center' }, { id: 'eff', label: 'Hiệu lực', w: 140 }, { id: 'st', label: 'Trạng thái', w: 110 },
+]
+const SHARE_COLS: RtColDef[] = [
+  { id: 'wh', label: 'Kho xuất', w: 110 }, { id: 'co', label: 'ĐVVT', w: 140 }, { id: 'pct', label: 'Tỷ trọng', w: 90, align: 'right' },
+  { id: 'basis', label: 'Đo bằng', w: 120 }, { id: 'eff', label: 'Hiệu lực', w: 140 }, { id: 'st', label: 'Trạng thái', w: 110 },
+]
+const withAct = (cols: RtColDef[], on: boolean): RtColDef[] => (on ? [...cols, { id: 'act', label: '', w: 64, stickyRight: true }] : cols)
 const effText = (r: { effective_from: string; effective_to: string | null }) => `${formatDate(r.effective_from)} → ${r.effective_to ? formatDate(r.effective_to) : '∞'}`
 const modelLabel = (m: VehicleModel) => `${m.sap_code} · ${m.name}${m.parent ? '' : ' (chưa gán cha)'}`
 
@@ -373,8 +398,9 @@ export default function Freight() {
     { key: 'co', label: 'ĐVVT', type: 'single', value: f.companyId, onChange: v => setF({ companyId: v, page: 1 }), options: companies },
     ...(f.tab === 'allocation' ? [] : [{ key: 'vm', label: 'Dòng xe', type: 'single' as const, value: f.modelId, onChange: (v: string) => setF({ modelId: v, page: 1 }), options: models.map(m => ({ value: m.id, label: modelLabel(m) })) }]),
   ]
-  const confirmDel = (msg: string, run: () => Promise<unknown>) => {
-    if (!confirm(msg)) return
+  const [ask, confirmNode] = useConfirmDialog()
+  const confirmDel = async (msg: string, run: () => Promise<unknown>) => {
+    if (await ask({ title: msg, danger: true, confirmLabel: 'Xoá' }) === null) return
     run().catch(e => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(e) }))
   }
 
@@ -400,22 +426,27 @@ export default function Freight() {
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-        <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 shrink-0 sm:rounded-t-xl">
+        {/* Tiêu đề + TAB cùng hàng đầu (khuôn Cài đặt TMS / Cài đặt WMS / Khách hàng) — bản 23/09 để tab
+            xuống DƯỚI thanh lọc, trang duy nhất trong app đặt tab ở hàng thứ ba */}
+        <Tabs value={f.tab} onValueChange={v => setF({ tab: v as TabKey, page: 1 })}>
+          <div className="border-b bg-white px-3 py-2 shrink-0 flex items-center gap-2 flex-wrap sm:rounded-t-xl">
+            <span className="text-sm font-semibold text-slate-700 shrink-0 hidden sm:flex items-center gap-1.5"><Banknote className="h-4 w-4 text-slate-500" /> Cước vận chuyển</span>
+            <TabsList className="h-8 max-w-full overflow-x-auto">
+              {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
+            </TabsList>
+          </div>
+          <TabsContent value="tariffs" className="hidden" /><TabsContent value="surcharges" className="hidden" /><TabsContent value="allocation" className="hidden" />
+        </Tabs>
+        <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:space-y-1.5 shrink-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline">Cước vận chuyển</h1>
             {f.tab === 'tariffs' && <SearchInput value={f.search} onChange={v => setF({ search: v, page: 1 })} placeholder="Tìm phường, tỉnh…" className="flex-1 min-w-[160px]" />}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
               <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+              {f.tab !== 'tariffs' && <div className="hidden sm:block flex-1" />}
               <ActionCluster items={actionItems} mobileInline />
             </div>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
-          <Tabs value={f.tab} onValueChange={v => setF({ tab: v as TabKey, page: 1 })}>
-            <TabsList className="h-8 max-w-full overflow-x-auto">
-              {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
-            </TabsList>
-            <TabsContent value="tariffs" className="hidden" /><TabsContent value="surcharges" className="hidden" /><TabsContent value="allocation" className="hidden" />
-          </Tabs>
         </div>
 
         {unassigned > 0 && canManage && (
@@ -432,17 +463,13 @@ export default function Freight() {
             ...(totalPages > 1 ? [{ label: 'Trang', value: `${f.page}/${totalPages}` }] : []),
           ]} />
           <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-            <Table className="min-w-full">
-              <TableHeader><TableRow>
-                {['Kho xuất', 'ĐVVT', 'Dòng xe (SAP)', 'Phường / Xã', 'Tỉnh (mới)', 'Km', 'Đơn giá', 'Tính', 'Hiệu lực', 'Trạng thái', 'Sửa'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
-                {canManage && <TableHead className={`${TH} w-16 sticky right-0 bg-slate-50`} />}
-              </TableRow></TableHeader>
+            <ResizableTable storageKey="freight_tariff_cols_v1" cols={withAct(TARIFF_COLS, canManage)}>
               <TableBody>
                 {tariffs.isLoading && <TableEmptyRow colSpan={12}>Đang tải…</TableEmptyRow>}
                 {!tariffs.isLoading && !tRows.length && <TableEmptyRow colSpan={12}>{f.warehouseId || f.companyId || f.modelId || f.search ? 'Không có dòng cước khớp bộ lọc.' : 'Chưa có dòng cước nào — bấm "Upload cước" để nạp bảng cước theo cột file thật, hoặc "Thêm dòng cước".'}</TableEmptyRow>}
                 {tRows.map(r => (
                   <TableRow key={r.id} className={r.is_active ? '' : 'text-slate-400'}>
-                    <TableCell className={TD}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
+                    <TableCell className={TD0}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
                     <TableCell className={TD}><span className="font-mono font-semibold">{r.company?.code ?? '?'}</span> <span className="text-slate-500">{r.company?.name}</span></TableCell>
                     <TableCell className={TD}><span className="font-mono">{r.model?.sap_code}</span> <span className="text-slate-600">{r.model?.name}</span></TableCell>
                     <TableCell className={TD}><div className="font-medium">{r.ward_code}</div>{r.ward_raw && r.ward_raw !== r.ward_code && <div className="text-[9px] text-slate-400">file: {r.ward_raw}</div>}</TableCell>
@@ -453,11 +480,11 @@ export default function Freight() {
                     <TableCell className={TD}>{effText(r)}</TableCell>
                     <TableCell className={TD}><StatusBadge tone={r.is_active ? 'green' : 'slate'}>{r.is_active ? 'Hoạt động' : 'Tạm dừng'}</StatusBadge></TableCell>
                     <TableCell className={TD}><div className="leading-tight"><div className="text-slate-600">{r.updated_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(r.updated_at, true)}</div></div></TableCell>
-                    {canManage && <TableCell className={`${TD} sticky right-0 bg-white`}><ActBtns onEdit={() => setForm({ kind: 'tariff', row: r })} onDel={() => confirmDel(`Xoá dòng cước ${r.ward_code} (${r.company?.code})?`, () => delTariff.mutateAsync(r.id))} /></TableCell>}
+                    {canManage && <TableCell className={TDR}><ActBtns onEdit={() => setForm({ kind: 'tariff', row: r })} onDel={() => confirmDel(`Xoá dòng cước ${r.ward_code} (${r.company?.code})?`, () => delTariff.mutateAsync(r.id))} /></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </ResizableTable>
             <PagerNav page={f.page} totalPages={totalPages} onPage={p => setF({ page: p })} />
           </div>
           <ListFooter page={f.page} pageSize={f.pageSize} total={tTotal} unit="dòng cước" onPageSize={n => setF({ pageSize: n, page: 1 })}
@@ -472,17 +499,13 @@ export default function Freight() {
             { label: 'ĐVVT có phụ phí', value: nf(new Set(sRows.map(s => s.transport_company_id)).size) },
           ]} />
           <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-            <Table className="min-w-full">
-              <TableHeader><TableRow>
-                {['Kho xuất', 'ĐVVT', 'Dòng xe', 'Loại', 'Số tiền', 'Tính theo', 'Hiệu lực', 'Trạng thái', 'Ghi chú'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
-                {canManage && <TableHead className={`${TH} w-16 sticky right-0 bg-slate-50`} />}
-              </TableRow></TableHeader>
+            <ResizableTable storageKey="freight_surcharge_cols_v1" cols={withAct(SUR_COLS, canManage)}>
               <TableBody>
                 {surcharges.isLoading && <TableEmptyRow colSpan={10}>Đang tải…</TableEmptyRow>}
                 {!surcharges.isLoading && !sRows.length && <TableEmptyRow colSpan={10}>Chưa có phụ phí nào theo bộ lọc — mỗi ĐVVT ở mỗi kho khai riêng rớt điểm / bốc xếp theo hợp đồng.</TableEmptyRow>}
                 {sRows.map(r => (
                   <TableRow key={r.id} className={r.is_active ? '' : 'text-slate-400'}>
-                    <TableCell className={TD}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
+                    <TableCell className={TD0}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
                     <TableCell className={TD}><span className="font-mono font-semibold">{r.company?.code ?? '?'}</span> <span className="text-slate-500">{r.company?.name}</span></TableCell>
                     <TableCell className={TD}>{r.model ? <><span className="font-mono">{r.model.sap_code}</span> {r.model.name}</> : <span className="text-slate-500">Mọi dòng xe</span>}</TableCell>
                     <TableCell className={TD}><StatusBadge tone={r.kind === 'DROP_POINT' ? 'amber' : 'slate'}>{kindLabel(r.kind)}</StatusBadge></TableCell>
@@ -490,14 +513,14 @@ export default function Freight() {
                     <TableCell className={TD}>{PER_LABEL[r.per]}{r.per === 'PER_STOP' && <span className="text-slate-500"> · từ {r.min_stops} điểm · {r.count_mode === 'ALL_STOPS' ? 'đếm mọi điểm' : 'chỉ điểm thêm'}</span>}</TableCell>
                     <TableCell className={TD}>{effText(r)}</TableCell>
                     <TableCell className={TD}><StatusBadge tone={r.is_active ? 'green' : 'slate'}>{r.is_active ? 'Hoạt động' : 'Tạm dừng'}</StatusBadge></TableCell>
-                    <TableCell className={`${TD} max-w-[200px] truncate`}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
-                    {canManage && <TableCell className={`${TD} sticky right-0 bg-white`}><ActBtns onEdit={() => setForm({ kind: 'surcharge', row: r })} onDel={() => confirmDel(`Xoá phụ phí ${kindLabel(r.kind)} của ${r.company?.code}?`, () => delSur.mutateAsync(r.id))} /></TableCell>}
+                    <TableCell className={`${TD} truncate`} title={r.note ?? undefined}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
+                    {canManage && <TableCell className={TDR}><ActBtns onEdit={() => setForm({ kind: 'surcharge', row: r })} onDel={() => confirmDel(`Xoá phụ phí ${kindLabel(r.kind)} của ${r.company?.code}?`, () => delSur.mutateAsync(r.id))} /></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </ResizableTable>
           </div>
-          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">{sRows.length} phụ phí</div>
+          <ListFooter page={1} pageSize={Math.max(1, sRows.length)} total={sRows.length} unit="phụ phí" onPageSize={() => { }} options={[]} />
         </>)}
 
         {/* ── PHÂN TUYẾN ĐVVT ── */}
@@ -512,54 +535,46 @@ export default function Freight() {
               <span className="h-4 w-1 rounded bg-sky-500" /><span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">Ưu tiên ĐVVT theo khu vực</span>
               <InfoTip tip="Engine chọn ĐVVT cho một chuyến: (1) ĐVVT được ưu tiên ở khu vực của điểm đến xa nhất — phường trước, tỉnh/vùng sau; (2) trong số đó, ĐVVT đang dưới tỷ trọng tháng lên trước; (3) hoà thì cước thấp nhất. Không khai gì = chọn rẻ nhất." />
             </div>
-            <Table className="min-w-full">
-              <TableHeader><TableRow>
-                {['Kho xuất', 'Cấp', 'Khu vực', 'ĐVVT', 'Ưu tiên', 'Hiệu lực', 'Trạng thái'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
-                {canManage && <TableHead className={`${TH} w-16 sticky right-0 bg-slate-50`} />}
-              </TableRow></TableHeader>
+            <ResizableTable storageKey="freight_alloc_cols_v1" cols={withAct(ALLOC_COLS, canManage)}>
               <TableBody>
                 {alloc.isLoading && <TableEmptyRow colSpan={8}>Đang tải…</TableEmptyRow>}
                 {!alloc.isLoading && !aRows.length && <TableEmptyRow colSpan={8}>Chưa khai ưu tiên khu vực nào — engine sẽ chọn ĐVVT rẻ nhất.</TableEmptyRow>}
                 {aRows.map(r => (
                   <TableRow key={r.id} className={r.is_active && r.effective_now ? '' : 'text-slate-400'}>
-                    <TableCell className={TD}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
+                    <TableCell className={TD0}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
                     <TableCell className={TD}>{r.area_kind === 'WARD' ? 'Phường' : 'Tỉnh / vùng'}</TableCell>
                     <TableCell className={`${TD} font-medium`}>{r.area_code}</TableCell>
                     <TableCell className={TD}><span className="font-mono font-semibold">{r.company?.code ?? '?'}</span> <span className="text-slate-500">{r.company?.name}</span></TableCell>
                     <TableCell className={`${TD} text-center tabular-nums`}>{r.priority}</TableCell>
                     <TableCell className={TD}>{effText(r)}</TableCell>
                     <TableCell className={TD}><StatusBadge tone={r.is_active && r.effective_now ? 'green' : 'slate'}>{!r.is_active ? 'Tạm dừng' : r.effective_now ? 'Hiệu lực' : 'Ngoài hiệu lực'}</StatusBadge></TableCell>
-                    {canManage && <TableCell className={`${TD} sticky right-0 bg-white`}><ActBtns onEdit={() => setForm({ kind: 'alloc', row: r })} onDel={() => confirmDel(`Xoá ưu tiên ${r.area_code} → ${r.company?.code}?`, () => delAlloc.mutateAsync(r.id))} /></TableCell>}
+                    {canManage && <TableCell className={TDR}><ActBtns onEdit={() => setForm({ kind: 'alloc', row: r })} onDel={() => confirmDel(`Xoá ưu tiên ${r.area_code} → ${r.company?.code}?`, () => delAlloc.mutateAsync(r.id))} /></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </ResizableTable>
             <div className="flex items-center gap-2 bg-slate-100 border-y px-3 py-1.5 mt-3">
               <span className="h-4 w-1 rounded bg-sky-500" /><span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">Tỷ trọng ĐVVT theo tháng</span>
               <InfoTip tip="Tỷ trọng cố định trước (vd ĐVVT 1 = 30 %, ĐVVT 2 = 25 % số chuyến của kho trong tháng). ĐVVT đang dưới tỷ trọng được ưu tiên nhận chuyến kế. Tổng của một kho không quá 100 %." />
             </div>
-            <Table className="min-w-full">
-              <TableHeader><TableRow>
-                {['Kho xuất', 'ĐVVT', 'Tỷ trọng', 'Đo bằng', 'Hiệu lực', 'Trạng thái'].map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
-                {canManage && <TableHead className={`${TH} w-16 sticky right-0 bg-slate-50`} />}
-              </TableRow></TableHeader>
+            <ResizableTable storageKey="freight_share_cols_v1" cols={withAct(SHARE_COLS, canManage)}>
               <TableBody>
                 {!alloc.isLoading && !shRows.length && <TableEmptyRow colSpan={7}>Chưa khai tỷ trọng — mọi ĐVVT tự do theo cước.</TableEmptyRow>}
                 {shRows.map(r => (
                   <TableRow key={r.id} className={r.is_active && r.effective_now ? '' : 'text-slate-400'}>
-                    <TableCell className={TD}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
+                    <TableCell className={TD0}>{r.warehouse?.name ?? r.from_warehouse_id}</TableCell>
                     <TableCell className={TD}><span className="font-mono font-semibold">{r.company?.code ?? '?'}</span> <span className="text-slate-500">{r.company?.name}</span></TableCell>
                     <TableCell className={`${TD} text-right tabular-nums font-semibold`}>{Number(r.share_pct).toLocaleString('vi-VN')} %</TableCell>
                     <TableCell className={TD}>{r.basis === 'TRIPS' ? 'Số chuyến' : r.basis === 'PALLETS' ? 'Pallet' : 'Tấn'} / tháng</TableCell>
                     <TableCell className={TD}>{effText(r)}</TableCell>
                     <TableCell className={TD}><StatusBadge tone={r.is_active && r.effective_now ? 'green' : 'slate'}>{!r.is_active ? 'Tạm dừng' : r.effective_now ? 'Hiệu lực' : 'Ngoài hiệu lực'}</StatusBadge></TableCell>
-                    {canManage && <TableCell className={`${TD} sticky right-0 bg-white`}><ActBtns onEdit={() => setForm({ kind: 'share', row: r })} onDel={() => confirmDel(`Xoá tỷ trọng ${r.company?.code} ${r.share_pct} %?`, () => delShare.mutateAsync(r.id))} /></TableCell>}
+                    {canManage && <TableCell className={TDR}><ActBtns onEdit={() => setForm({ kind: 'share', row: r })} onDel={() => confirmDel(`Xoá tỷ trọng ${r.company?.code} ${r.share_pct} %?`, () => delShare.mutateAsync(r.id))} /></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </ResizableTable>
           </div>
-          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">{aRows.length} ưu tiên · {shRows.length} tỷ trọng</div>
+          <ListFooter page={1} pageSize={Math.max(1, aRows.length)} total={aRows.length} unit="ưu tiên" onPageSize={() => { }} options={[]} right={`${shRows.length} tỷ trọng`} />
         </>)}
       </div>
 
@@ -576,6 +591,7 @@ export default function Freight() {
           onUpload={(file, preflight) => upload.mutateAsync({ file, preflight, warehouse_id: f.warehouseId || undefined })}
         />
       )}
+      {confirmNode}
     </div>
   )
 }

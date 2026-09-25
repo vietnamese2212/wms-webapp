@@ -99,8 +99,14 @@ input[type='password']::-ms-clear { display: none; }
 }
 
 @layer utilities {
-  .touch-target {
-    @apply min-h-[44px] min-w-[44px];
+  /* Sàn điểm chạm 44 px — CHỈ cho thiết bị CẢM ỨNG (25/09). Bản cũ áp mọi khổ màn nên trên PC mọi
+     <Button className="h-7"> thô vẫn cao 44 px (đo: Up ZSD02 / Up VL06O / Up KH điều vận / nút ở trạng
+     thái trống) đứng cạnh nút ActionCluster 28 px — ActionBtn phải tự gỡ bằng !min-h-0. Ngón tay mới cần
+     44 px; con trỏ chuột thì không, và nó đè mất chiều cao người viết đã khai. */
+  @media (pointer: coarse) {
+    .touch-target {
+      @apply min-h-[44px] min-w-[44px];
+    }
   }
 
   .no-scrollbar::-webkit-scrollbar {

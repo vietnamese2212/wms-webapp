@@ -73,7 +73,9 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
           ? `${lo.toLocaleString('vi-VN')}–${hi.toLocaleString('vi-VN')} / ${total.toLocaleString('vi-VN')} ${unit}`
           : `0 ${unit}`}
         {children}
-        <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
+        {/* options={[]} = bảng KHÔNG phân trang (tải trọn, vd Phụ phí / Phân tuyến) ⇒ không có ô Dòng/trang,
+            vẫn dùng chung một chân bảng thay vì tự chế dòng đếm */}
+        {(options ?? PAGE_SIZE_OPTIONS).length > 0 && <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
           <span className="hidden sm:inline">·</span> Dòng/trang:
           <select
             value={pageSize}
@@ -81,7 +83,7 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
             className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
             {(options ?? PAGE_SIZE_OPTIONS).map(n => <option key={n} value={n}>{n}</option>)}
           </select>
-        </label>
+        </label>}
       </span>
       {right && <span className="text-slate-400 min-w-0 flex-1 truncate text-right sm:flex-none sm:shrink-0">{right}</span>}
     </div>

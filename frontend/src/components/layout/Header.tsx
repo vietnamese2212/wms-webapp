@@ -16,41 +16,28 @@ import { MobileNav } from './MobileNav'
 import { GlobalScopePicker } from './GlobalScopePicker'
 import { OfflineQueueHeaderButton } from '@/offline/OfflineQueuePanel'
 import { AppUpdateButton } from '@/components/shared/AppUpdateButton'
+import { navTrail } from '@/config/navigation'
 
-const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath?: string }> = {
-  '/': { label: 'Dashboard' },
-  '/wms/inventory': { label: 'Tồn kho', parent: 'Kho', parentPath: '/wms/inventory' },
-  '/wms/inbound': { label: 'Nhập kho', parent: 'Kho', parentPath: '/wms/inbound' },
-  '/wms/outbound': { label: 'Xuất kho', parent: 'Kho', parentPath: '/wms/outbound' },
-  '/wms/locations': { label: 'Vị trí kho', parent: 'Kho', parentPath: '/wms/locations' },
-  '/wms/move-location': { label: 'Chuyển vị trí', parent: 'Kho', parentPath: '/wms/move-location' },
-  '/tms/bookings':  { label: 'Kế hoạch VC',  parent: 'Điều vận', parentPath: '/tms/bookings' },
-  '/tms/settings':  { label: 'Cài đặt TMS', parent: 'Điều vận', parentPath: '/tms/settings' },
-  '/hr/leaves':   { label: 'Nghỉ phép', parent: 'Nhân sự', parentPath: '/hr/leaves' },
-  '/hr/assignments': { label: 'Phân công', parent: 'Nhân sự', parentPath: '/hr/assignments' },
-  '/hr/attendance': { label: 'Chấm công', parent: 'Nhân sự', parentPath: '/hr/attendance' },
-  '/hr/org': { label: 'Sơ đồ tổ chức', parent: 'Nhân sự', parentPath: '/hr/org' },
-  '/settings': { label: 'Cài đặt' },
+// Trang KHÔNG nằm trên menu nhưng vẫn là trang đích (cài đặt cá nhân, nghỉ phép mở từ Chấm công)
+const OFF_MENU: Record<string, { group: string; page: string }> = {
+  '/settings': { group: 'Tài khoản', page: 'Cài đặt' },
+  '/hr/leaves': { group: 'Nhân sự (HR)', page: 'Nghỉ phép' },
 }
 
+/** Đường dẫn suy từ cây menu (`navTrail`) — không còn bảng chép tay (xem chú thích ở navigation.ts). */
 function Breadcrumb() {
   const { pathname } = useLocation()
-  const crumb = breadcrumbMap[pathname]
-  if (!crumb) return null
-
+  const t = navTrail(pathname) ?? (OFF_MENU[pathname] ? { ...OFF_MENU[pathname], section: undefined, to: pathname, exact: true } : null)
+  if (!t) return null
+  const sep = <ChevronRight className="h-3.5 w-3.5 text-slate-600 shrink-0" />
   return (
-    <nav className="flex items-center gap-1.5 text-sm">
-      <Link to="/" className="text-slate-400 hover:text-white transition-colors">
-        WMS
-      </Link>
-      {crumb.parent && (
-        <>
-          <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
-          <span className="text-slate-400">{crumb.parent}</span>
-        </>
-      )}
-      <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
-      <span className="font-medium text-white">{crumb.label}</span>
+    <nav className="flex items-center gap-1.5 text-sm min-w-0" aria-label="Đường dẫn">
+      <span className="text-slate-400 whitespace-nowrap">{t.group}</span>
+      {t.section && <>{sep}<span className="text-slate-400 whitespace-nowrap">{t.section}</span></>}
+      {sep}
+      {t.exact
+        ? <span className="font-medium text-white truncate">{t.page}</span>
+        : <Link to={t.to} className="font-medium text-white hover:text-sky-300 transition-colors truncate">{t.page}</Link>}
     </nav>
   )
 }

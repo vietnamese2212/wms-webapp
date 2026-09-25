@@ -201,6 +201,17 @@ Dùng `SettingsGroup` + `SettingRow` (`components/shared/SettingRow.tsx`), KHÔN
 - Nhóm xếp **lưới nhiều cột cân đối** (`xl:grid-cols-2` chẵn nhóm) — KHÔNG để cột mồ côi/lỗ trống lớn.
 Mẫu: `StrategyFields.tsx` + form Kho `WMSSettings.tsx` (24/08).
 
+## 22. MODULE MỚI phải trông như app cũ — 8 chỗ hay lệch (user 25/09: "nút action khác các giao diện khác")
+Đo 25/09 trên 38 trang menu bằng cùng một bộ tiêu chí: Điều vận · Cước (23–24/09) lệch ở ĐÚNG những chỗ dưới đây dù mục 17c có từ 10/07 ⇒ ba chỗ đếm được đã thành ratchet (lớp **C40**). Trước khi báo xong một màn MỚI: **chụp nó cạnh một màn chuẩn cùng loại** ở 1280 + 390 (Xuất kho cho list nghiệp vụ, Khách hàng cho danh mục, Cài đặt TMS cho trang có tab) và soi từng dòng dưới đây.
+1. **Một cụm = MỘT nút chính**, `variant: 'default'` (xanh `blue-600` — số đông của app, CTA theo CLAUDE.md). **Không** `className: 'bg-green-600…'` tự chế màu (ratchet `action_item_custom_fill`). Nút chính = **việc kế tiếp** của trạng thái hiện tại (có nháp ⇒ "Xác nhận" chính, "Lập lại" lùi thành nút phụ icon + tooltip / menu ⋮).
+2. **Xác nhận/nhập lý do = `useConfirmDialog()`** (`components/shared/ConfirmDialog.tsx` — `await ask({title, body, danger, input})`, `null` = huỷ). **Cấm `window.confirm/alert/prompt`** (ratchet `native_browser_dialog`): khung xám không theo app, và trình duyệt cho tích "chặn hộp thoại" ⇒ `confirm()` trả `false` âm thầm, nút bấm không làm gì.
+3. **Tab nằm CÙNG HÀNG TIÊU ĐỀ** (khuôn `TMSSettings`: `<Tabs>` bọc hàng tiêu đề + `TabsList`, toolbar tìm/lọc/thao tác ở hàng dưới, FilterBar hàng dưới nữa). Không đặt tab dưới FilterBar.
+4. **Bảng nghiệp vụ trong `pages/` = `ResizableTable`** (hoặc `table-fixed` + `useColumnResize`), ô đầu `sticky left-0 z-10 bg-white`; cột thao tác cuối khai `stickyRight: true` trong `RtColDef` (tiêu đề ghim theo) + ô `sticky right-0 z-10 bg-white`. Ratchet `list_table_not_resizable`.
+5. **Chân bảng = `ListFooter`** kể cả bảng không phân trang (`options={[]}` ⇒ ẩn ô Dòng/trang), không tự chế `<div>` đếm dòng.
+6. **Nút trên toolbar/header đi qua `ActionCluster`**, không `<Button>` thô. Sàn điểm chạm 44 px (`.touch-target`) nay CHỈ áp cho `pointer: coarse` (25/09) — trước đó mọi `<Button className="h-7">` trên PC cao 44 px (Up ZSD02 / VL06O / KH điều vận).
+7. **Đường dẫn đầu trang TỰ CÓ** khi trang nằm trong `config/navigation.ts` (`navTrail()` — nhóm › nhóm chức năng › trang, trang chi tiết khớp tiền tố). Trang ngoài menu mới khai `OFF_MENU` trong `Header.tsx`. Đừng dựng lại bảng đường dẫn chép tay.
+8. **Điện thoại ≤ 2 hàng chrome trước dữ liệu** (mục 20): dải chip/switch nhiều lựa chọn dùng `overflow-x-auto sm:flex-wrap [&>*]:shrink-0` (một hàng cuộn ngang) thay vì wrap 3 hàng; dòng meta dài `hidden sm:inline`. Màn làm việc theo NGỮ CẢNH (kho × ngày như Điều vận) được đặt ô chọn Kho/Ngày trên toolbar — nhưng Kho + Ngày CHUNG một hàng trên điện thoại.
+
 ## Checklist tạo/sửa list page (Manhattan)
 - [ ] Card trên canvas xám (`sm:p-3` + panel trắng bo góc, KHÔNG `overflow-hidden`)
 - [ ] Toolbar (Search + FilterSheetButton + SavedViews + density + action) + FilterBar (hàng 2, `defs`) + SummaryBand
@@ -215,5 +226,6 @@ Mẫu: `StrategyFields.tsx` + form Kho `WMSSettings.tsx` (24/08).
 - [ ] Nút action bọc `can(perms,…)` + `disabled={saving}`; lỗi banner đỏ inline
 - [ ] (Tùy) Pane phải + Live Tiles nếu có ảnh/thao tác nhanh
 - [ ] Detail: card + section-band + SummaryBand chung + header kế thừa màu trạng thái
+- [ ] (Màn MỚI) mục 22: một nút chính màu chuẩn · `useConfirmDialog` · tab cạnh tiêu đề · `ResizableTable` · `ListFooter` · nút qua `ActionCluster` · có trong `navigation.ts` · chụp cạnh màn chuẩn 1280 + 390
 - [ ] Test responsive PC/tablet/phone + (nếu có mutation) realtime 4 case
 - [ ] `tsc --noEmit` + `npm run build` trước khi push

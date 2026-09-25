@@ -24,6 +24,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { InfoTip } from '@/components/shared/InfoTip'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan,
@@ -158,8 +159,9 @@ export default function Dispatch() {
   const [bulk, setBulk] = useState<null | 'carrier' | 'model'>(null)
   const [bulkVal, setBulkVal] = useState('')
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [ask, confirmNode] = useConfirmDialog()
 
-  const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
+  const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   const runPlan = () => {
     if (!f.warehouseId) return
     create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day }).then(p => {
@@ -168,7 +170,7 @@ export default function Dispatch() {
     }).catch(e => err(e, 'Không lập được kế hoạch'))
   }
   const tenderCount = plan ? plan.trips.filter(t => tripStatus(t) === 'DRAFT' && needsTender(t)).length : 0
-  const doConfirm = () => {
+  const doConfirm = async () => {
     if (!plan) return
     const n = plan.trips.filter(t => tripStatus(t) === 'DRAFT' && t.ods.length).length
     // NÓI RA việc chưa xử lý TRƯỚC khi ghi — xác nhận là bước không quay lại được (chuyến + lệnh VC
@@ -186,24 +188,28 @@ export default function Dispatch() {
     const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '']
       .filter(Boolean).join(' · ')
     if (split.length) {
-      window.alert(
-        `KHÔNG xác nhận được: ${split.length} OD đang nằm ở hai xe\n\n` +
-        split.slice(0, 5).map(([od, g]) => `  • ${od}: ${g.join(' + ')}`).join('\n') +
-        (split.length > 5 ? `\n  … và ${split.length - 5} OD nữa` : '') +
-        `\n\nApp chưa tách một DO ra hai xe. Máy tách vì OD vượt sức chứa xe lớn nhất.\n` +
-        `Cách xử lý: mở panel một trong hai xe → chuyển OD đó sang xe kia để gom về MỘT xe ` +
-        `(xe sẽ báo Vượt tải — vẫn xác nhận được), hoặc tách DO ở SAP trước.`,
-      )
+      await ask({
+        title: `Không xác nhận được: ${split.length} OD đang nằm ở hai xe`, danger: true, cancelLabel: null,
+        body: split.slice(0, 5).map(([od, g]) => `• ${od}: ${g.join(' + ')}`).join('\n') +
+          (split.length > 5 ? `\n… và ${split.length - 5} OD nữa` : '') +
+          `\n\nApp chưa tách một DO ra hai xe. Máy tách vì OD vượt sức chứa xe lớn nhất.\n` +
+          `Cách xử lý: mở panel một trong hai xe → chuyển OD đó sang xe kia để gom về MỘT xe ` +
+          `(xe sẽ báo Vượt tải — vẫn xác nhận được), hoặc tách DO ở SAP trước.`,
+      })
       return
     }
-    const q = [
-      tenderCount
-        ? `Xác nhận ${n} xe ngày ${formatDate(plan.plan_date)}: ${n - tenderCount} xe vào Kế hoạch xuất ngay, ${tenderCount} xe CHỜ ĐVVT phản hồi (ĐVVT có cờ "cần phản hồi").`
-        : `Xác nhận ${n} xe vào Kế hoạch xuất ngày ${formatDate(plan.plan_date)}? Sau bước này chuyến + lệnh VC tự sinh, sửa tiếp ở tab Kế hoạch xuất.`,
-      warn ? `\n⚠ Còn ${warn} — vẫn ghi được, nhưng phải sửa ở tab Kế hoạch xuất sau. Bấm Huỷ để quay lại xử lý (dải "Soát" ở đầu bảng).` : '',
-      '\nTiếp tục?',
-    ].filter(Boolean).join('')
-    if (!window.confirm(q)) return
+    const ok = await ask({
+      title: `Xác nhận ${n} xe vào Kế hoạch xuất ngày ${formatDate(plan.plan_date)}?`,
+      confirmLabel: 'Xác nhận',
+      danger: !!warn,
+      body: [
+        tenderCount
+          ? `${n - tenderCount} xe vào Kế hoạch xuất ngay, ${tenderCount} xe CHỜ ĐVVT phản hồi (ĐVVT có cờ "cần phản hồi").`
+          : 'Sau bước này chuyến + lệnh VC tự sinh, sửa tiếp ở tab Kế hoạch xuất.',
+        warn ? `\n⚠ Còn ${warn} — vẫn ghi được, nhưng phải sửa ở tab Kế hoạch xuất sau. Bấm Huỷ để quay lại xử lý (dải "Soát" ở đầu bảng).` : '',
+      ].filter(Boolean).join('\n'),
+    })
+    if (ok === null) return
     confirm.mutateAsync(plan.id).then(r => {
       toast({
         // ⚠️ KHÔNG khẳng định "chuyến đã sinh" khi chưa đo được. Đường dội xuống có thể TỪ CHỐI TRỌN GÓI
@@ -218,25 +224,33 @@ export default function Dispatch() {
       })
     }).catch(e => err(e, 'Không xác nhận được'))
   }
-  const doDiscard = () => {
+  const doDiscard = async () => {
     if (!plan) return
-    const msg = plan.status === 'TENDERED' ? 'Bỏ các xe CHƯA vào Kế hoạch xuất (đang chờ / bị từ chối / nháp)? Xe đã vào Kế hoạch xuất giữ nguyên; OD của xe bị bỏ về lại pool.' : 'Bỏ bản nháp này? OD sẽ về lại pool để lập lại.'
-    if (!window.confirm(msg)) return
+    const tendered = plan.status === 'TENDERED'
+    if (await ask({
+      title: tendered ? 'Bỏ các xe CHƯA vào Kế hoạch xuất?' : 'Bỏ bản nháp này?', danger: true, confirmLabel: tendered ? 'Bỏ xe chưa chốt' : 'Bỏ nháp',
+      body: tendered ? 'Gồm xe đang chờ / bị từ chối / nháp. Xe đã vào Kế hoạch xuất giữ nguyên; OD của xe bị bỏ về lại pool.' : 'OD sẽ về lại pool để lập lại.',
+    }) === null) return
     discard.mutateAsync(plan.id).then(r => { if (r.status === 'DISCARDED') setF({ planId: '' }); toast({ title: `Đã bỏ ${r.discarded_trips} xe` }) }).catch(e => err(e, 'Không bỏ được nháp'))
   }
-  const doSettle = (t: DispatchTrip) => {
+  const doSettle = async (t: DispatchTrip) => {
     const tender = needsTender(t)
-    if (!window.confirm(tender ? `Chào xe ${t.group_code} cho ${t.detail.carrier?.name ?? 'ĐVVT'} — xe sẽ CHỜ ĐVVT phản hồi.` : `Chốt xe ${t.group_code} vào Kế hoạch xuất ngay (ĐVVT không cần phản hồi)?`)) return
+    if (await ask(tender
+      ? { title: `Chào xe ${t.group_code} cho ${t.detail.carrier?.name ?? 'ĐVVT'}?`, body: 'Xe sẽ CHỜ ĐVVT phản hồi.', confirmLabel: 'Chào xe' }
+      : { title: `Chốt xe ${t.group_code} vào Kế hoạch xuất ngay?`, body: 'ĐVVT không cần phản hồi.', confirmLabel: 'Chốt xe' }) === null) return
     settle.mutateAsync(t.id).then(r => toast({
       title: r.derive_failed ? `Xe ${r.group_code}: đã ghi kế hoạch nhưng CHƯA sinh được chuyến` : r.trip_status === 'TENDERED' ? `Xe ${r.group_code} đang chờ ĐVVT phản hồi` : `Xe ${r.group_code} đã vào Kế hoạch xuất`,
       description: r.derive_failed ? (r.derive_message ?? undefined) : (r.replan_error ?? undefined),
       variant: r.replan_error || r.derive_failed ? 'destructive' : undefined,
     })).catch(e => err(e, 'Không chốt được xe'))
   }
-  const doRespond = (t: DispatchTrip, accept: boolean) => {
+  const doRespond = async (t: DispatchTrip, accept: boolean) => {
     let note: string | undefined
-    if (!accept) { const v = window.prompt(`ĐVVT ${t.detail.carrier?.name ?? ''} từ chối xe ${t.group_code} — lý do (ghi lại để đối chiếu):`, ''); if (v === null) return; note = v.trim() || undefined }
-    else if (!window.confirm(`Ghi nhận ĐVVT ${t.detail.carrier?.name ?? ''} ĐÃ NHẬN xe ${t.group_code} — xe vào Kế hoạch xuất ngay?`)) return
+    if (!accept) {
+      const v = await ask({ title: `ĐVVT ${t.detail.carrier?.name ?? ''} từ chối xe ${t.group_code}`, danger: true, confirmLabel: 'Ghi từ chối', input: { label: 'Lý do (ghi lại để đối chiếu)', placeholder: 'vd: hết xe ngày này' } })
+      if (v === null) return
+      note = v || undefined
+    } else if (await ask({ title: `Ghi nhận ĐVVT ${t.detail.carrier?.name ?? ''} ĐÃ NHẬN xe ${t.group_code}?`, body: 'Xe vào Kế hoạch xuất ngay.', confirmLabel: 'ĐVVT đã nhận' }) === null) return
     respond.mutateAsync({ tripId: t.id, accept, note }).then(r => toast({ title: accept ? `Xe ${r.group_code} đã vào Kế hoạch xuất` : `Đã ghi ĐVVT từ chối xe ${r.group_code}`, description: accept ? (r.replan_error ?? undefined) : 'Đổi ĐVVT trong panel xe rồi bấm "Chốt xe này".', variant: r.replan_error ? 'destructive' : undefined })).catch(e => err(e, 'Không ghi được phản hồi'))
   }
   const doExport = async () => {
@@ -254,9 +268,13 @@ export default function Dispatch() {
     saveWorkbook(wb, `dieu-van-${plan.warehouse?.code ?? ''}-${plan.plan_date}.xlsx`)
   }
 
+  // MỘT nút chính mỗi cụm (skill table-format 17c): đang có nháp thì việc kế tiếp là XÁC NHẬN, "Lập lại"
+  // lùi thành nút phụ; chưa có nháp thì "Lập kế hoạch" là nút chính. Không tô màu riêng (bản 24/09 để
+  // nút xanh lá cạnh nút xanh dương — màn duy nhất của app có hai nút chính hai màu).
+  const confirmIsNext = canConfirm && isDraft
   const actionItems: ActionItem[] = []
-  if (canPlan) actionItems.push({ key: 'plan', icon: Play, label: plan ? 'Lập lại' : 'Lập kế hoạch', tip: plan ? 'Chạy lại máy ghép — bản nháp hiện tại (kể cả phần đã sửa tay) bị thay' : 'Máy ghép OD chưa xếp xe của kho × ngày này thành chuyến nháp', primary: true, variant: 'default', onClick: runPlan, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
-  if (canConfirm && isDraft) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', className: 'bg-green-600 hover:bg-green-700 border-green-600 text-white', onClick: doConfirm, disabled: confirm.isPending, busy: confirm.isPending })
+  if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending, busy: confirm.isPending })
+  if (canPlan) actionItems.push({ key: 'plan', icon: Play, label: plan ? 'Lập lại' : 'Lập kế hoạch', tip: plan ? 'Lập lại — chạy lại máy ghép, bản nháp hiện tại (kể cả phần đã sửa tay) bị thay' : 'Máy ghép OD chưa xếp xe của kho × ngày này thành chuyến nháp', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: runPlan, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
   if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, onClick: doDiscard, disabled: discard.isPending })
 
@@ -307,8 +325,9 @@ export default function Dispatch() {
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 shrink-0 sm:rounded-t-xl">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
-            <div className="w-full sm:w-56"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
-            <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[150px] text-xs" title="Ngày giao (ngày xe chạy)" />
+            {/* Kho + Ngày CHUNG một hàng trên điện thoại (bản cũ Kho chiếm trọn một hàng riêng) */}
+            <div className="flex-1 min-w-0 sm:flex-none sm:w-56"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
+            <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[140px] text-xs shrink-0" title="Ngày giao (ngày xe chạy)" />
             {planList.length > 1 && (
               <div className="w-48"><SingleSelect searchable={false} value={planId ?? ''} onChange={v => setF({ planId: v })}
                 options={planList.map(p => ({ value: p.id, label: `${STATUS_VI[p.status].label} · ${formatTimestampDate(p.created_at)}`, sub: p.created_by ?? undefined }))} placeholder="Kế hoạch" /></div>
@@ -320,8 +339,10 @@ export default function Dispatch() {
           {plan && (
             <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
               {s && <StatusBadge tone={s.tone}>{s.label}</StatusBadge>}
-              <span>{plan.warehouse?.name} · giao {formatDate(plan.plan_date)} · lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</span>
-              <span className="text-slate-400">· ≤ {plan.params.max_drops ?? 3} điểm giao · {plan.params.allow_mix_channels ? 'trộn kênh' : 'không trộn kênh'} · pool {nf(plan.params.pool_ods)} OD ({nf(plan.params.in_plan)} đã có trong Kế hoạch xuất)</span>
+              {/* Dòng meta phụ chỉ hiện từ sm (skill table-format 20 — kho + ngày đã nằm ngay trên ô chọn) */}
+              <span className="hidden sm:inline">{plan.warehouse?.name} · giao {formatDate(plan.plan_date)} · lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</span>
+              <span className="sm:hidden text-slate-500">lập {formatTimestampDate(plan.created_at, true)}</span>
+              <span className="hidden sm:inline text-slate-400">· ≤ {plan.params.max_drops ?? 3} điểm giao · {plan.params.allow_mix_channels ? 'trộn kênh' : 'không trộn kênh'} · pool {nf(plan.params.pool_ods)} OD ({nf(plan.params.in_plan)} đã có trong Kế hoạch xuất)</span>
             </div>
           )}
         </div>
@@ -331,7 +352,8 @@ export default function Dispatch() {
             phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại
             vấn đề nào KHÔNG có xe nào thì không hiện — menu đầy lựa chọn ra bảng trắng là vô ích. */}
         {plan && (
-          <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 flex-wrap">
+          // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
+          <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
             {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
                { k: 'todo', label: 'Cần xử lý', n: todoN, tip: 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
@@ -503,6 +525,7 @@ export default function Dispatch() {
           )}
         </SheetContent>
       </Sheet>
+      {confirmNode}
     </div>
   )
 }

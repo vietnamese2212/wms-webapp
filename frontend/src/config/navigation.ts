@@ -152,6 +152,23 @@ export const navItemsOf = (entry: NavEntry): NavItem[] => (isSection(entry) ? en
 /** Mọi trang trên menu, đã phẳng — dùng để dò mục đang active. */
 export const ALL_NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items.flatMap(navItemsOf))
 
+/**
+ * ĐƯỜNG DẪN đầu trang (Header) suy từ CHÍNH cây menu — nhóm › [nhóm chức năng ›] trang.
+ * Vì sao (25/09): Header từng giữ một bảng CHÉP TAY 12 đường dẫn lập từ tháng 7, gốc cứng chữ "WMS"
+ * ⇒ 26/38 trang trên menu (Điều vận, Cước, Khách hàng, DO SAP, Cài đặt WMS…) có thanh đầu trang TRỐNG,
+ * còn Cài đặt TMS lại ghi "WMS › Điều vận". Trang thêm vào menu là tự có đường dẫn, không phải nhớ.
+ * Trang chi tiết (`/wms/outbound/<id>`) khớp theo TIỀN TỐ dài nhất ⇒ hiện đường dẫn của trang cha,
+ * và `page` thành link để quay lại danh sách.
+ */
+export function navTrail(pathname: string): { group: string; section?: string; page: string; to: string; exact: boolean } | null {
+  let best: { group: string; section?: string; item: NavItem } | null = null
+  for (const g of NAV_GROUPS) for (const e of g.items) for (const it of navItemsOf(e)) {
+    const hit = it.to === pathname || (it.to !== '/' && pathname.startsWith(it.to + '/'))
+    if (hit && (!best || it.to.length > best.item.to.length)) best = { group: g.label, section: isSection(e) ? e.label : undefined, item: it }
+  }
+  return best ? { group: best.group, section: best.section, page: best.item.label, to: best.item.to, exact: best.item.to === pathname } : null
+}
+
 export type NavPerms = Parameters<typeof canAccess>[0]
 /** Điều kiện hiển thị MỘT trang (quyền / adminOnly / anyActions). */
 export function canSeeNavItem(item: NavItem, perms: NavPerms, admin: boolean): boolean {

@@ -762,3 +762,12 @@ Dữ liệu production nguyên vẹn: 35.828 tồn · 1.806 mã · 152 kho · 19
 `20260912i_grant_missing_perms_bavi.sql` (cấp thử 73 action cho kho Ba Vì) **cố ý không apply production**;
 production chưa có Loại kho `FG02` (staging khai qua giao diện) và 0 chức danh nắm `external_khvc.create/edit`
 nên chưa ai có `dispatch.confirm` — đó là quyết định quản trị, khai trong app khi cần.
+
+## 2026-09-25 — Điều vận: cấp `dispatch.confirm` (dữ liệu quyền, không đổi schema)
+
+**`20260925_dispatch_confirm_grant.sql`** (đã apply STAGING + PRODUCTION 25/09, user chốt "có cấp").
+Thêm `confirm` vào `JobTitle.module_permissions.dispatch` cho mọi chức danh ĐÃ có `plan` mà phòng ban
+KHÔNG phải đơn vị vận tải (`Department.is_carrier`). Idempotent, không gỡ quyền của ai; guard RAISE nếu
+còn chức danh lập được mà chưa xác nhận được.
+Đo sau áp: production **7 chức danh** xác nhận được (trước: 0/19) · staging 9. "Điều hành ĐVVT" (phòng
+nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_khvc` — chưa cấp, quyết định riêng.

@@ -561,14 +561,14 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
       <section className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px]" />
-          <div className="w-40 shrink-0" title="Thẻ xe sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
+          <div className="w-36 shrink-0" title="Sắp xếp thẻ xe — sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
-                { value: 'region', label: 'Sắp: Vùng → phường' },
-                { value: 'todo', label: 'Sắp: Cần xử lý trước' },
-                { value: 'load', label: 'Sắp: Tải thấp trước' },
-                { value: 'freight', label: 'Sắp: Cước cao trước' },
-                { value: 'seq', label: 'Sắp: Số xe' },
+                { value: 'region', label: 'Vùng → phường' },
+                { value: 'todo', label: 'Cần xử lý trước' },
+                { value: 'load', label: 'Tải thấp trước' },
+                { value: 'freight', label: 'Cước cao trước' },
+                { value: 'seq', label: 'Số xe' },
               ]} />
           </div>
           {tripGroups.length > 1 && !forceOpen && (

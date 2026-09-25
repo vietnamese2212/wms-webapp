@@ -392,7 +392,8 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-24 lg:pb-3">
           <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
-            {editable && (
+            {/* chỉ nơi kéo được mới cần ô thả — điện thoại tạo xe mới qua "Chuyển tới xe…" → Xe mới */}
+            {canDrag && (
               <div {...dropProps('new', 'new')}
                 className={`self-start rounded-lg border-2 border-dashed p-3 flex flex-col items-center justify-center gap-1 text-center min-h-[120px] ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-400'}`}>
                 <Plus className="h-5 w-5" />

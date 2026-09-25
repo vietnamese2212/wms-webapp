@@ -401,7 +401,6 @@ interface DoSapFilters {
 interface VehicleModelFilters {
   search: string
   parents: string[]      // id VehicleType; '__none__' = chưa gán cha
-  temps: string[]        // HOT | COLD | MIXED | DRY | '__none__'
   status: string         // '' | 'active' | 'inactive'
   capMode: string        // '' | 'PALLET' | 'TON'
 }
@@ -674,7 +673,7 @@ function initialFilters() {
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
     dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'board', boardGroup: 'ward', boardSort: 'region', search: '' },
-    vehicleModels: { search: '', parents: [], temps: [], status: '', capMode: '' },
+    vehicleModels: { search: '', parents: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }

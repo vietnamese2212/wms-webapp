@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react'
 import {
   Store, Plus, DownloadCloud, Layers, CalendarClock, Warehouse as WarehouseIcon,
-  Power, Pencil, AlertTriangle,
+  Power, Pencil, AlertTriangle, Package, Truck,
 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -53,6 +53,7 @@ const COLS = [
   { id: 'code',  label: 'Mã ship-to',       w: 96 },
   { id: 'name',  label: 'Tên khách hàng',   w: 240 },
   { id: 'chan',  label: 'Kênh',             w: 120 },
+  { id: 'mode',  label: 'Đi hàng',          w: 76 },
   { id: 'rule',  label: 'Quy định date',    w: 210 },
   { id: 'wh',    label: 'Kho nhận',         w: 170 },
   { id: 'src',   label: 'Nguồn',            w: 86 },
@@ -329,6 +330,10 @@ export default function Customers() {
       tip: 'Đặt %Date riêng, ghi đè mức của kênh', onClick: () => setBulk('date_rule') },
     { key: 'bwh', icon: WarehouseIcon, label: `Trỏ kho (${nf(pickCount)})`,
       tip: 'Khai "nơi nhận này là kho của mình" — kho nhận sẽ xác nhận hàng trong app khi chuyển kho', onClick: () => setBulk('warehouse') },
+    { key: 'bpal', icon: Package, label: `Đi Pallet (${nf(pickCount)})`,
+      tip: 'Khách đi xe pallet (một khách / xe) — áp cho lần lập kế hoạch điều vận sau', onClick: () => runBulk({ load_mode: 'PALLET' }) },
+    { key: 'bloose', icon: Truck, label: `Đi Xá (${nf(pickCount)})`,
+      tip: 'Khách đi xá (xe tải theo tấn, ghép nhiều khách) — mặc định của khách chưa khai', onClick: () => runBulk({ load_mode: 'LOOSE' }) },
     { key: 'boff', icon: Power, label: `Ngừng (${nf(pickCount)})`, danger: true,
       tip: 'Ngừng các khách đang chọn (giữ lịch sử, không còn áp %Date)',
       onClick: () => runBulk({ is_active: false }) },
@@ -445,6 +450,11 @@ export default function Customers() {
                             ? <StatusBadge tone="purple">{chanLabel.get(r.channel) ?? r.channel}</StatusBadge>
                             : <StatusBadge tone="amber" title="Chưa phân kênh — dòng hàng của khách này KHÔNG được cấp %Date tự động">Chưa phân kênh</StatusBadge>}
                         </TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          {r.load_mode === 'PALLET'
+                            ? <StatusBadge tone="blue" title="Đi xe pallet — một khách / xe (số khách tối đa khai ở Cài đặt WMS → Kho)">Pallet</StatusBadge>
+                            : <StatusBadge tone="slate" title="Đi xá — xe tải theo tấn, ghép nhiều khách (mặc định cho khách chưa khai)">Xá</StatusBadge>}
+                        </TableCell>
                         {/* Mức theo LOẠI HÀNG — một khách có thể mang nhiều dòng (FG01 ≥ 70 %,
                             FG02 ≥ 35 ngày). Chưa khai dòng nào thì hiện mức thừa hưởng của kênh. */}
                         <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -559,6 +569,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
   const [drafts, setDrafts] = useState<RuleDraft[]>(draftsOf(row?.rules))
   const [whId, setWhId] = useState(row?.warehouse_id ?? '')
   const [active, setActive] = useState(row?.is_active ?? true)
+  const [loadMode, setLoadMode] = useState<'PALLET' | 'LOOSE'>(row?.load_mode === 'PALLET' ? 'PALLET' : 'LOOSE')
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
   const [err, setErr] = useState('')
@@ -571,7 +582,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
       const saved = await onSave({
         ...(row ? {} : { ship_to_code: code.toUpperCase().trim() }),
         name: name.trim(), channel: channel || null,
-        warehouse_id: whId || null, is_active: active, note: note.trim() || null,
+        warehouse_id: whId || null, is_active: active, note: note.trim() || null, load_mode: loadMode,
       })
       const id = row?.id ?? saved?.id
       if (id) await saveRules.mutateAsync({ scope: 'CUSTOMER', key: id, rules: toPayload(drafts) })
@@ -629,6 +640,18 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
           <p className="mt-1 text-[11px] text-slate-400">
             Trỏ kho = kho nhận vào app xác nhận hàng khi chuyển kho. Khách ngoài = tài xế tự xác nhận.
           </p>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Đi hàng (điều vận)</label>
+          <div className="grid grid-cols-2 gap-1 rounded-md border border-slate-200 p-0.5">
+            {([['PALLET', 'Pallet', 'xe pallet · một khách / xe'], ['LOOSE', 'Xá', 'xe tải · ghép nhiều khách']] as const).map(([v, lb, sub]) => (
+              <button key={v} type="button" onClick={() => setLoadMode(v)}
+                className={`rounded px-2 py-1.5 text-left text-xs ${loadMode === v ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>
+                {lb}<span className="block text-[10px] font-normal text-slate-500">{sub}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Máy ghép chuyến xếp khách Pallet lên xe pallet, khách Xá lên xe tải theo tấn — không trộn. Trên bàn ghép xe vẫn đổi được từng OD / cả xe.</p>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-4 w-4 accent-sky-600" />

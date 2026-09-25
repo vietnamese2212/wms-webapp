@@ -682,7 +682,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_underload_pct?: number | string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_pallet_max_stops?: number; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -746,6 +746,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const [dispMaxDrops,  setDispMaxDrops]  = useState(String(wh?.dispatch_max_drops ?? 3))
   const [dispMix,       setDispMix]       = useState(wh?.dispatch_allow_mix_channels === true)
   const [dispUnderload, setDispUnderload] = useState(wh?.dispatch_underload_pct == null ? '' : String(wh.dispatch_underload_pct))
+  const [dispPalletStops, setDispPalletStops] = useState(String(wh?.dispatch_pallet_max_stops ?? 1))
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
   // %DATE THEO KHÁCH HÀNG / KÊNH (11/09) — chỉ tầng KHO (luật theo KHÁCH, không theo loại hàng).
   // Mặc định OFF cho mọi kho đang chạy: áp tự động là đổi hành vi, không tự bật hộ ai.
@@ -833,7 +834,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), ...rot, ...putaway },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), ...rot, ...putaway },
         {
           // Bật/tắt "Áp %Date tự động" đã ghi thẳng vào đơn đang mở — phải NÓI RA số dòng vừa đổi,
           // không thì lại đúng cảnh "bấm Lưu xong không thấy gì xảy ra" (user 12/09).
@@ -857,7 +858,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -1047,6 +1048,11 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               tip={<>Nhiều điểm giao = ít chuyến hơn nhưng phụ phí rớt điểm cao hơn và xe về muộn hơn. Máy so cước thật trước khi gộp — gộp mà đắt hơn đi hai chuyến thì không gộp.</>}
               control={<Input id="wh-disp-drops" type="number" min={1} max={20} className="h-7 w-24 text-xs text-right"
                 value={dispMaxDrops} onChange={e => setDispMaxDrops(e.target.value)} placeholder="3" />} />
+            <SettingRow label="Số khách tối đa trên một xe pallet"
+              desc="Khách đi Pallet (khai ở Cấu hình → Khách hàng) đi xe pallet riêng — mặc định 1 khách / xe. Khách đi Xá ghép theo 'Điểm giao tối đa' ở trên (1–20)."
+              tip={<>Xe pallet chở nguyên pallet cho MỘT khách là cách chạy phổ biến; tăng số này khi kho cho xe pallet rớt thêm khách cùng tuyến. Trên bàn ghép xe vẫn đổi được một xe pallet sang xe xá bằng nút trên thẻ xe.</>}
+              control={<Input id="wh-disp-pallet-stops" type="number" min={1} max={20} className="h-7 w-24 text-xs text-right"
+                value={dispPalletStops} onChange={e => setDispPalletStops(e.target.value)} placeholder="1" />} />
             <SettingRow label="Cho trộn kênh khách trên một xe"
               desc="Tắt (mặc định) = NPP, BHX, KA… đi xe riêng dù cùng phường. Bật = máy được ghép khách khác kênh vào cùng chuyến."
               htmlFor="wh-disp-mix"

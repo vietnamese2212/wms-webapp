@@ -27,6 +27,7 @@ export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
     { label: 'Chuyến', value: <>{nf(s.trips)}{delta(s.trips, b?.trips, n => nf(n))}</>, tip: b ? `Máy lập ${nf(b.trips)} chuyến` : undefined },
     { label: 'OD trên xe', value: nf(s.ods), tip: `${nf(s.pool_ods ?? 0)} OD còn ở khung chờ · ${nf(plan.unplanned.length)} OD không lên xe` },
     { label: 'Pallet', value: nf(s.pallets, 1) },
+    { label: 'Tấn', value: nf(s.tons, 1), tip: 'Tổng tải trọng hàng trên các xe (tấn) — xe xá đo % tải theo tấn' },
     { label: 'Tải TB', value: s.avg_load_pct == null ? '—' : `${nf(s.avg_load_pct, 1)}%`, tip: 'Trung bình % tải các xe có dòng xe' },
     { label: 'Σ cước', value: <>{money(s.freight_total)}{delta(s.freight_total, b?.freight_total, n => money(n))}</>, tip: `${nf(s.freight_total)} ₫${s.unpriced ? ` · ${s.unpriced} xe chưa có cước (không cộng vào)` : ''}${b ? ` · máy lập ${nf(b.freight_total)} ₫` : ''}` },
     { label: 'Cước / pallet', value: s.freight_per_pallet == null ? '—' : money(s.freight_per_pallet), tip: 'Σ cước ÷ pallet của các xe CÓ cước' },

@@ -95,7 +95,7 @@ const DOSAP_FILTER_CAP = 800
 
 // v2.2 — luật XÓA an toàn: dòng Kế hoạch mà chuyến đã sinh CÓ HÀNG ĐÃ QUÉT → CHẶN xóa cứng.
 type KDelRow = { id: string; group_code: string }
-async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow[]; blocked: (KDelRow & { reason: string })[] }> {
+export async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow[]; blocked: (KDelRow & { reason: string })[] }> {
   const gcs = [...new Set(rows.map(r => r.group_code))]
   const scannedGcs = new Set<string>()
   // CẤM xóa kế hoạch của chuyến ĐÃ HOÀN THÀNH / ĐANG XUẤT (user chốt 03/08: "user xóa đi các đơn hàng

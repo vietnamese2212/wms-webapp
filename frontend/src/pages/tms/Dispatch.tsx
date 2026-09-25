@@ -11,7 +11,7 @@
 // 3 tab cạnh tiêu đề — Bàn ghép xe (kéo thả, mặc định) · Danh sách xe (bảng soát cũ) · Dữ liệu OD (thô, OD đang ở đâu).
 // Dải chỉ số `DispatchKpiBar` + dải Soát đứng CHUNG trên cả ba tab.
 import { useEffect, useMemo, useState } from 'react'
-import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, Database } from 'lucide-react'
+import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, Database, RotateCcw } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
@@ -35,7 +35,7 @@ import { InfoTip } from '@/components/shared/InfoTip'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan,
+  useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan,
   useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
   type DispatchPlan, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow,
@@ -131,7 +131,7 @@ export default function Dispatch() {
   const needsTender = (t: DispatchTrip) => t.transport_company_id ? (tenderBy.get(t.transport_company_id) ?? t.detail.carrier?.tender_required === true) : false
 
   const create = useCreateDispatchPlan(), patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
-  const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip()
+  const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan()
   const [openTripId, setOpenTripId] = useState<string | null>(null)
   const openTrip = plan?.trips.find(t => t.id === openTripId) ?? null
   // CHỌN NHIỀU — 12/61 xe cùng thiếu ĐVVT thì mở 12 panel là 36 thao tác cho một quyết định duy nhất
@@ -225,6 +225,21 @@ export default function Dispatch() {
     }) === null) return
     discard.mutateAsync(plan.id).then(r => { if (r.status === 'DISCARDED') setF({ planId: '' }); toast({ title: `Đã bỏ ${r.discarded_trips} xe` }) }).catch(e => err(e, 'Không bỏ được nháp'))
   }
+  // MỞ LẠI (user chốt 25/09 "lưu rồi có sửa lại được không"): kéo xe đã vào Kế hoạch xuất về nháp — chỉ xe mà chuyến
+  // bên Xuất CHƯA bắt đầu; chuyến đang xuất / đã xong / đang giữ hàng nhặt lẻ giữ nguyên và được liệt kê lý do.
+  const confirmedN = plan ? plan.trips.filter(t => tripStatus(t) === 'CONFIRMED').length : 0
+  const doReopen = async () => {
+    if (!plan) return
+    if (await ask({
+      title: `Mở lại ${confirmedN} xe đã vào Kế hoạch xuất để sửa?`, confirmLabel: 'Mở lại',
+      body: 'Xe về NHÁP trên Bàn ghép xe; chuyến bên Xuất kho tạm NGỪNG và lệnh VC NHẢ khung giờ đã đặt. Sửa xong bấm Xác nhận — cùng Số xe sống lại, khung giờ phải đặt lại.\nXe mà chuyến đang xuất / đã hoàn thành / đang giữ hàng nhặt lẻ KHÔNG mở lại được (giữ nguyên).',
+    }) === null) return
+    reopen.mutateAsync({ plan_id: plan.id }).then(r => toast({
+      title: r.reopened.trips ? `Đã mở lại ${r.reopened.trips} xe — sửa trên Bàn ghép xe rồi Xác nhận lại` : 'Không mở lại được xe nào',
+      description: r.reopened.blocked.length ? `${r.reopened.blocked.length} xe giữ nguyên: ${r.reopened.blocked.slice(0, 3).map(b => `${b.group_code} (${b.reason})`).join('; ')}` : (r.reopened.replan_error ?? undefined),
+      variant: r.reopened.replan_error ? 'destructive' : undefined,
+    })).catch(e => err(e, 'Không mở lại được'))
+  }
   const doSettle = async (t: DispatchTrip) => {
     const tender = needsTender(t)
     if (await ask(tender
@@ -263,10 +278,12 @@ export default function Dispatch() {
   // MỘT nút chính mỗi cụm (skill table-format 17c): đang có nháp thì việc kế tiếp là XÁC NHẬN, "Lập lại"
   // lùi thành nút phụ; chưa có nháp thì "Lập kế hoạch" là nút chính. Không tô màu riêng (bản 24/09 để
   // nút xanh lá cạnh nút xanh dương — màn duy nhất của app có hai nút chính hai màu).
-  const confirmIsNext = canConfirm && isDraft
+  // kế hoạch vừa "Mở lại" một phần (xe khác vẫn trong Kế hoạch xuất) vẫn Xác nhận được các xe nháp
+  const confirmIsNext = canConfirm && (isDraft || (plan?.status === 'TENDERED' && plan.trips.some(t => tripStatus(t) === 'DRAFT' && t.ods.length > 0)))
   const actionItems: ActionItem[] = []
   if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending, busy: confirm.isPending })
   if (canPlan) actionItems.push({ key: 'plan', icon: Play, label: plan ? 'Lập lại' : 'Lập kế hoạch', tip: plan ? 'Lập lại — chạy lại máy ghép, bản nháp hiện tại (kể cả phần đã sửa tay) bị thay' : 'Máy ghép OD chưa xếp xe của kho × ngày này thành chuyến nháp', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: runPlan, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
+  if (canConfirm && confirmedN > 0) actionItems.push({ key: 'reopen', icon: RotateCcw, label: 'Mở lại', tip: `Kéo ${confirmedN} xe đã vào Kế hoạch xuất về nháp để sửa trên Bàn ghép xe (chỉ xe mà chuyến chưa bắt đầu)`, onClick: () => void doReopen(), disabled: reopen.isPending, busy: reopen.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
   if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, onClick: doDiscard, disabled: discard.isPending })
 

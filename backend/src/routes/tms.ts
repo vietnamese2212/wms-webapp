@@ -91,6 +91,8 @@ router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),
 router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.reoptimizePlan)
 router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam }),                                dispatch.refreshPool)
 router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
+router.patch('/dispatch/plans/:id/ods',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zOdMode }),        dispatch.setOdMode)     // đổi kiểu đi Pallet / Xá của OD
+router.post('/dispatch/plans/:id/reopen',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zReopen }),        dispatch.reopenPlan)    // mở lại xe đã vào KH xuất (chuyến chưa bắt đầu)
 router.delete('/dispatch/trips/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.deleteTrip)
 router.post('/dispatch/trips/:id/settle',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.settleTrip)    // chốt MỘT xe (kế hoạch đang chờ ĐVVT)
 router.post('/dispatch/trips/:id/respond',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zRespond }),       dispatch.respondTrip)   // ghi ĐVVT nhận / từ chối

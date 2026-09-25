@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-25T06:55:31.651Z · 108 bảng/view · 171 hàm · 0 enum
+// Sinh lúc 2026-09-25T08:54:20.122Z · 108 bảng/view · 171 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -108,6 +108,7 @@ export type Database = {
           address: string | null
           sold_to_code: string | null
           search_term: string | null
+          load_mode: string
         }
         Insert: {
           id: string
@@ -130,6 +131,7 @@ export type Database = {
           address?: string | null
           sold_to_code?: string | null
           search_term?: string | null
+          load_mode?: string
         }
         Update: {
           id?: string
@@ -152,6 +154,7 @@ export type Database = {
           address?: string | null
           sold_to_code?: string | null
           search_term?: string | null
+          load_mode?: string
         }
         Relationships: []
       }
@@ -2410,6 +2413,7 @@ export type Database = {
           dispatch_max_drops: number
           dispatch_allow_mix_channels: boolean
           dispatch_underload_pct: number | null
+          dispatch_pallet_max_stops: number
         }
         Insert: {
           id: string
@@ -2457,6 +2461,7 @@ export type Database = {
           dispatch_max_drops?: number
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
+          dispatch_pallet_max_stops?: number
         }
         Update: {
           id?: string
@@ -2504,6 +2509,7 @@ export type Database = {
           dispatch_max_drops?: number
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
+          dispatch_pallet_max_stops?: number
         }
         Relationships: []
       }
@@ -3305,6 +3311,7 @@ export type Database = {
           response_note: string | null
           confirmed_at: string | null
           locked: boolean
+          load_mode: string | null
         }
         Insert: {
           id: string
@@ -3332,6 +3339,7 @@ export type Database = {
           response_note?: string | null
           confirmed_at?: string | null
           locked?: boolean
+          load_mode?: string | null
         }
         Update: {
           id?: string
@@ -3359,6 +3367,7 @@ export type Database = {
           response_note?: string | null
           confirmed_at?: string | null
           locked?: boolean
+          load_mode?: string | null
         }
         Relationships: []
       }
@@ -3384,6 +3393,7 @@ export type Database = {
           region_code: string | null
           delivery_date: string | null
           late_days: number
+          load_mode: string | null
         }
         Insert: {
           id: string
@@ -3406,6 +3416,7 @@ export type Database = {
           region_code?: string | null
           delivery_date?: string | null
           late_days?: number
+          load_mode?: string | null
         }
         Update: {
           id?: string
@@ -3428,6 +3439,7 @@ export type Database = {
           region_code?: string | null
           delivery_date?: string | null
           late_days?: number
+          load_mode?: string | null
         }
         Relationships: []
       }
@@ -4881,6 +4893,7 @@ export type Database = {
           created_by: string | null
           updated_by: string | null
           storage_conditions: string[]
+          note: string | null
         }
         Insert: {
           id: string
@@ -4903,6 +4916,7 @@ export type Database = {
           created_by?: string | null
           updated_by?: string | null
           storage_conditions?: string[]
+          note?: string | null
         }
         Update: {
           id?: string
@@ -4925,6 +4939,7 @@ export type Database = {
           created_by?: string | null
           updated_by?: string | null
           storage_conditions?: string[]
+          note?: string | null
         }
         Relationships: []
       }

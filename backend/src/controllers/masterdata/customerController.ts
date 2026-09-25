@@ -90,6 +90,11 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
     }
   }
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
+  // Điều vận (user chốt 25/09): khách đi PALLET (xe pallet, một khách/xe) hay XÁ (xe tải ghép nhiều khách) — mặc định Xá
+  if (body.load_mode !== undefined) {
+    if (body.load_mode !== 'PALLET' && body.load_mode !== 'LOOSE') return bad('Kiểu đi hàng phải là PALLET (đi pallet) hoặc LOOSE (đi xá)')
+    patch.load_mode = body.load_mode
+  }
   if (body.note !== undefined) patch.note = String(body.note ?? '').trim().slice(0, 1000) || null
   return { patch }
 }
@@ -359,7 +364,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
-    const allowed = ['channel', 'warehouse_id', 'is_active']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))

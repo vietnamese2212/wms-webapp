@@ -14,7 +14,7 @@
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, Truck, Trash2 } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, Truck, Trash2, Package, ArrowLeftRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -25,8 +25,8 @@ import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/componen
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useRefreshDispatchPool,
-  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview,
+  useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useRefreshDispatchPool, useSetDispatchOdMode,
+  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchLoadMode,
 } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, type IssueKey } from './dispatchIssues'
@@ -73,7 +73,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const editableTrip = (t: DispatchTrip) => editable && EDITABLE.includes(tripStatus(t))
 
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
-  const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan(), refresh = useRefreshDispatchPool()
+  const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan(), refresh = useRefreshDispatchPool(), setMode = useSetDispatchOdMode()
   const [ask, confirmNode] = useConfirmDialog()
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [undoStack, setUndo] = useState<Op[]>([])
@@ -86,6 +86,14 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const dragIds = useRef<string[]>([])
   const [hover, setHover] = useState<{ target: string; data: DispatchMovePreview | null; loading: boolean } | null>(null)
   const hoverRef = useRef<string | null>(null)
+  // xe VỪA nhận OD — bàn sắp lại sau mỗi lần thả nên xe đó có thể đổi chỗ: tô viền + cuộn tới để không mất dấu
+  const [justHit, setJustHit] = useState<string | null>(null)
+  useEffect(() => {
+    if (!justHit) return
+    document.querySelector(`[data-trip-card="${justHit}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const h = window.setTimeout(() => setJustHit(null), 2500)
+    return () => window.clearTimeout(h)
+  }, [justHit])
   const pvCache = useRef(new Map<string, DispatchMovePreview>())
   useEffect(() => { setSel(new Set()); setUndo([]); setRedo([]); pvCache.current.clear() }, [plan.id])
   useEffect(() => { pvCache.current.clear() }, [plan.updated_at])
@@ -104,6 +112,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
       const created = to === 'new' ? p.trips.find(t => t.ods.some(o => o.id === ids[0]))?.id : undefined
       if (record) { setUndo(s => [...s.slice(-49), { ids, to, to_trip_id, prev, created }]); setRedo([]) }
       setSel(new Set())
+      setJustHit(to === 'trip' ? to_trip_id ?? null : created ?? null)
       return p
     } catch (e) { err(e, 'Không chuyển được OD'); return null } finally { setBusy(false) }
   }, [move, plan.id, tripOf])
@@ -205,8 +214,18 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
     let l = trips.filter(t => !q || t.group_code.toLowerCase().includes(q) || t.ods.some(o => matches(o, q)))
     if (f.issue === 'todo') l = l.filter(t => needsWork(t, ctx))
     else if (f.issue) l = l.filter(t => issuesOf(t, ctx).includes(f.issue as IssueKey))
-    return f.todoFirst ? [...l].sort((a, b) => Number(needsWork(b, ctx)) - Number(needsWork(a, ctx))) : l
-  }, [trips, q, f.issue, f.todoFirst, ctx])
+    // SẮP LẠI SAU MỖI LẦN THẢ (user 25/09: "kéo thả xong thì không sort nữa") — sort ổn định, hoà thì theo số xe
+    const regionOf = (t: DispatchTrip) => `${t.ods[0]?.region_code ?? '~'}|${t.wards[0] ?? '~'}`
+    const by: Record<string, (a: DispatchTrip, b: DispatchTrip) => number> = {
+      region: (a, b) => regionOf(a).localeCompare(regionOf(b)),
+      todo: (a, b) => Number(needsWork(b, ctx)) - Number(needsWork(a, ctx)),
+      load: (a, b) => (a.load_pct == null ? 1e9 : Number(a.load_pct)) - (b.load_pct == null ? 1e9 : Number(b.load_pct)),
+      freight: (a, b) => Number(b.freight_estimated ?? -1) - Number(a.freight_estimated ?? -1),
+      seq: () => 0,
+    }
+    const cmp = by[f.boardSort] ?? by.region
+    return [...l].sort((a, b) => cmp(a, b) || a.seq - b.seq)
+  }, [trips, q, f.issue, f.boardSort, ctx])
 
   const selIds = [...sel].filter(id => rowBy.has(id))
   const toggle = (id: string) => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -245,6 +264,22 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const exBy = excluded.reduce<Record<string, number>>((m, x) => { m[x.kind] = (m[x.kind] ?? 0) + 1; return m }, {})
   const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho' }
 
+  // Kiểu đi của OD (khách Pallet / Xá — danh mục Khách hàng, user chốt 25/09). Bấm = đổi riêng OD này; OD ở nguyên xe,
+  // xe báo "OD khách Xá trên xe pallet" nếu lệch. Muốn đổi cả xe thì dùng nút trên thẻ xe.
+  const modeChip = (o: DispatchTripOd, canEdit: boolean) => {
+    const m: DispatchLoadMode = o.load_mode === 'PALLET' ? 'PALLET' : 'LOOSE'
+    const cls = `rounded px-1 text-[9px] font-semibold ${m === 'PALLET' ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'}`
+    const label = m === 'PALLET' ? 'Pallet' : 'Xá'
+    if (!canEdit) return <span className={cls} title={m === 'PALLET' ? 'Khách đi Pallet' : 'Khách đi Xá'}>{label}</span>
+    return (
+      <button type="button" className={`${cls} hover:ring-1 hover:ring-sky-400`} disabled={setMode.isPending}
+        title={`Khách đi ${label} — bấm để đổi OD này sang ${m === 'PALLET' ? 'Xá' : 'Pallet'}`}
+        onClick={e => { e.stopPropagation(); setMode.mutateAsync({ plan_id: plan.id, ids: sel.has(o.id) ? [...sel] : [o.id], load_mode: m === 'PALLET' ? 'LOOSE' : 'PALLET' }).catch(er => err(er, 'Không đổi được kiểu đi')) }}>
+        {label}
+      </button>
+    )
+  }
+
   const odRow = (o: DispatchTripOd, compact?: boolean) => {
     const fl = flags.get(o.od_number)
     const tr = o.trip_id ? plan.trips.find(t => t.id === o.trip_id) : null
@@ -261,7 +296,8 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
             {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
             {(o.late_days ?? 0) > 0 && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800" title={`Ngày giao ${o.delivery_date ?? '?'} — chưa điều, chưa đi`}>trễ {o.late_days} ngày</span>}
             {fl && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title={fl.info ?? undefined}>{FLAG_VI[fl.kind]}</span>}
-            <span className="ml-auto tabular-nums text-slate-600 whitespace-nowrap">{nf(o.pallets, 1)} pl</span>
+            {modeChip(o, !!editable && (!tr || editableTrip(tr)))}
+            <span className="ml-auto tabular-nums text-slate-600 whitespace-nowrap">{nf(o.pallets, 1)} pl · {nf(o.tons, 1)} t</span>
           </div>
           {!compact && <div className="truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}{o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}</div>}
           {compact && <div className="truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}</div>}
@@ -278,7 +314,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
     if (!t.ods.length) return <div className="text-[10px] text-slate-400 py-1">Xe trống — thả OD vào đây{editableTrip(t) ? ', hoặc bỏ xe (✕)' : ''}</div>
     const l = t.detail.load
     const pct = t.load_pct == null ? l.pct : Number(t.load_pct)
-    if (pct == null) return <div className="text-[10px] text-slate-400 py-1">Không đo được tải</div>
+    if (pct == null) return <div className="text-[10px] text-slate-500 py-1 tabular-nums">{nf(t.pallets, 1)} pl · {nf(t.tons, 1)} t <span className="text-slate-400">— chưa có dòng xe để đo % tải</span></div>
     const color = pct > 100 ? 'bg-red-500' : t.underload ? 'bg-amber-500' : 'bg-green-500'
     return (
       <div className="space-y-0.5" title={`${nf(l.used, 1)} / ${nf(l.cap, 1)} ${l.basis === 'TON' ? 'tấn' : 'pallet'} · ngưỡng Non tải ${l.underload_pct}%`}>
@@ -287,7 +323,10 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           <div className="absolute inset-y-0 w-px bg-slate-500/60" style={{ left: `${l.underload_pct}%` }} />
         </div>
         <div className="flex justify-between text-[10px] tabular-nums">
-          <span className="text-slate-500">{nf(l.used, 1)}/{nf(l.cap, 1)} {l.basis === 'TON' ? 't' : 'pl'}</span>
+          {/* đo theo chiều của dòng xe (pallet hoặc tấn), chiều kia hiện kèm để người xếp thấy đủ hai số */}
+          <span className="text-slate-500">{l.basis === 'TON'
+            ? <>{nf(l.used, 1)}/{nf(l.cap, 1)} t · {nf(t.pallets, 1)} pl</>
+            : <>{nf(l.used, 1)}/{nf(l.cap, 1)} pl · {nf(t.tons, 1)} t</>}</span>
           <span className={pct > 100 ? 'text-red-600 font-semibold' : t.underload ? 'text-amber-700 font-medium' : 'text-slate-600'}>{nf(pct, 1)}%{t.underload ? ' · Non tải' : pct > 100 ? ' · vượt' : ''}</span>
         </div>
       </div>
@@ -387,6 +426,16 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
       <section className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[180px]" />
+          <div className="w-44 shrink-0" title="Thẻ xe sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
+            <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
+              options={[
+                { value: 'region', label: 'Sắp: Vùng → phường' },
+                { value: 'todo', label: 'Sắp: Cần xử lý trước' },
+                { value: 'load', label: 'Sắp: Tải thấp trước' },
+                { value: 'freight', label: 'Sắp: Cước cao trước' },
+                { value: 'seq', label: 'Sắp: Số xe' },
+              ]} />
+          </div>
           <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>
           <ActionCluster items={actions} mobileInline />
         </div>
@@ -408,20 +457,34 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
               const isHover = hover?.target === t.id
               const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : 'border-slate-200'
               return (
-                <div key={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
-                  className={`relative rounded-lg border bg-white shadow-sm flex flex-col ${border} ${isHover ? 'ring-2 ring-sky-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
+                <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
+                  className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
                   <div className="flex items-start gap-1.5 px-2 pt-1.5">
                     <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onOpenTrip(t.id)} title={`${t.group_code} — bấm để đổi dòng xe / ĐVVT`}>
                       <div className="flex items-center gap-1.5">
                         <Truck className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                         <span className="font-mono text-xs font-semibold">#{t.seq}</span>
                         <span className="truncate text-[10px] text-slate-400">{t.group_code}</span>
+                        {t.load_mode && (
+                          <span className={`ml-auto shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[9px] font-semibold ${t.load_mode === 'PALLET' ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'}`}>
+                            {t.load_mode === 'PALLET' ? <Package className="h-2.5 w-2.5" /> : <Truck className="h-2.5 w-2.5" />}{t.load_mode === 'PALLET' ? 'Pallet' : 'Xá'}
+                          </span>
+                        )}
                       </div>
                       <div className="truncate text-[11px] text-slate-700">{t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}</div>
                       <div className="truncate text-[10px] text-slate-500">{t.detail.carrier ? <><b className="font-mono">{t.detail.carrier.code}</b> {t.detail.carrier.name}</> : <span className="text-red-600">Chưa có ĐVVT</span>}</div>
                     </button>
                     <div className="flex items-center gap-0.5 shrink-0">
                       {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
+                      {ed && t.ods.length > 0 && (
+                        // đổi CẢ XE pallet ↔ xá (user chốt 25/09): OD trên xe theo kiểu mới, máy chọn lại dòng xe + ĐVVT đúng họ
+                        <button type="button" className="rounded p-1 text-slate-300 hover:text-sky-700" disabled={patchTrip.isPending}
+                          title={`Đổi xe này sang ${t.load_mode === 'PALLET' ? 'xe XÁ (xe tải theo tấn, ghép nhiều khách)' : 'xe PALLET'} — máy chọn lại dòng xe + ĐVVT`}
+                          onClick={() => patchTrip.mutateAsync({ id: t.id, load_mode: t.load_mode === 'PALLET' ? 'LOOSE' : 'PALLET' })
+                            .then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được kiểu xe'))}>
+                          <ArrowLeftRight className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       {ed && (
                         <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-300 hover:text-slate-600'}`} disabled={patchTrip.isPending}
                           title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'}

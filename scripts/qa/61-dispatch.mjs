@@ -14,10 +14,13 @@ const DAY = '2027-03-16'
 const SAP = 'QA61X09', W1 = 'QA61-W1', W2 = 'QA61-W2', REGION = 'QA61R'
 const OD = ['QA61OD1', 'QA61OD2', 'QA61OD3'], SHIP = ['QA61SHIP1', 'QA61SHIP2', 'QA61SHIP3']
 const nowIso = () => new Date().toISOString()
+// Khách fixture đi PALLET (xe QA là xe pallet) và cho tới 3 khách / xe pallet — để các kịch bản ghép OD1+OD2 cùng xe giữ nguyên;
+// luật mặc định 1 khách / xe pallet được kiểm riêng ở [11] (user chốt 25/09).
 
 await login(); await resolveFixtures()
 const WH = FIX.WH_QR.id
 const PREFIX = `${FIX.WH_QR.code}_X_160327_`
+const PLAN_BODY = { warehouse_id: WH, plan_date: DAY, pallet_max_stops: 3 }
 const cos = await restAll('TransportCompany', `select=id,code,name,tender_required&code=in.(DA,HA)`)
 const DA = cos.find(c => c.code === 'DA'), HA = cos.find(c => c.code === 'HA')
 if (!DA || !HA) throw new Error('Fixture: cần ĐVVT DA và HA trong danh mục TransportCompany')
@@ -96,7 +99,7 @@ try {
   check('0. Fixture: dòng xe con QA61 + cước DA@W1 + HA@W2 → 201', cr.s === 201 && !!vmId && t1.s === 201 && t2.s === 201, `vm=${cr.s} t1=${t1.s} t2=${t2.s} ${t1.j?.error?.message ?? ''}`)
   for (let i = 0; i < 3; i++) {
     const ward = i < 2 ? W1 : W2
-    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, updated_at: nowIso() })
+    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', updated_at: nowIso() })
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
       ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
@@ -114,7 +117,7 @@ try {
   // id rác trên :id (FE ghép /${id} khi state chưa có) → 400, KHÔNG 500: bậc fast 24/09 bắt GET plans/undefined + PATCH trips/undefined ra 500 vì controller ném new Error(message) làm mất mã 22P02
   const g0 = await api('/tms/dispatch/plans/undefined'), p0 = await api('/tms/dispatch/trips/undefined', 'PATCH', { transport_company_id: null }), s0 = await api('/tms/dispatch/trips/undefined/settle', 'POST', {}), r0x = await api('/tms/dispatch/trips/undefined/respond', 'POST', { accept: true }), d0 = await api('/tms/dispatch/plans/undefined', 'DELETE')
   check('1a2. id rác "undefined" trên 5 route :id → 400 (lỗi Postgres = lỗi đầu vào), không 5xx', [g0, p0, s0, r0x, d0].every(r => r.s === 400), `get=${g0.s} patch=${p0.s} settle=${s0.s} respond=${r0x.s} del=${d0.s}`)
-  const p1 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const p1 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   const plan = p1.j?.data
   const trips = plan?.trips ?? []
   const x1 = tripOfOd(plan, OD[0]), x2 = tripOfOd(plan, OD[2])
@@ -139,7 +142,7 @@ try {
     `sum=${JSON.stringify({ t: plan?.summary?.trips, o: plan?.summary?.ods, p: plan?.summary?.pallets, f: plan?.summary?.freight_total })}`)
   const lst = await api(`/tms/dispatch/plans?warehouse_id=${WH}&date_from=${DAY}&date_to=${DAY}`)
   check('1h. GET /dispatch/plans lọc kho + ngày: đúng 1 kế hoạch DRAFT kèm tên kho', lst.s === 200 && (lst.j?.data?.items ?? []).filter(p => p.status === 'DRAFT').length === 1 && !!lst.j?.data?.items?.[0]?.warehouse?.name, `http=${lst.s} n=${lst.j?.data?.items?.length}`)
-  const p1b = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const p1b = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   const lst2 = await api(`/tms/dispatch/plans?warehouse_id=${WH}&date_from=${DAY}&date_to=${DAY}&status=DRAFT`)
   check('1i. Lập lại → nháp cũ bị THAY (vẫn đúng 1 DRAFT, id mới)', p1b.s === 201 && p1b.j?.data?.id !== plan?.id && (lst2.j?.data?.items ?? []).length === 1 && lst2.j?.data?.items?.[0]?.id === p1b.j?.data?.id, `http=${p1b.s} n=${lst2.j?.data?.items?.length}`)
   let P = p1b.j?.data
@@ -190,7 +193,7 @@ try {
   check('3f. Xe CHỜ và xe ĐÃ VÀO KH xuất không sửa được: PATCH → 409 TRIP_NOT_EDITABLE ×2, move-od vào xe đã chốt → 409',
     e1.s === 409 && e1.j?.error?.code === 'TRIP_NOT_EDITABLE' && e2.s === 409 && e2.j?.error?.code === 'TRIP_NOT_EDITABLE' && e3.s === 409,
     `e1=${e1.s}/${e1.j?.error?.code} e2=${e2.s}/${e2.j?.error?.code} e3=${e3.s}/${e3.j?.error?.code}`)
-  const again = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const again = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   check('3g. Lập lại khi kế hoạch đang chờ ĐVVT → 409 PLAN_TENDERED_EXISTS (OD xe chờ chưa vào KH xuất, lập lại là xếp trùng)', again.s === 409 && again.j?.error?.code === 'PLAN_TENDERED_EXISTS', `http=${again.s} code=${again.j?.error?.code}`)
   const r0 = await api(`/tms/dispatch/trips/${T1.id}/respond`, 'POST', { accept: true })
   check('3h. respond cho xe KHÔNG chờ → 409 TRIP_NOT_EDITABLE', r0.s === 409 && r0.j?.error?.code === 'TRIP_NOT_EDITABLE', `http=${r0.s} code=${r0.j?.error?.code}`)
@@ -219,7 +222,7 @@ try {
   check('3n. Chốt lại xe đã chốt → 409 (kế hoạch đã xác nhận)', st2.s === 409, `http=${st2.s} code=${st2.j?.error?.code}`)
 
   // ── [4] Pool sau khi mọi OD đã vào Kế hoạch xuất ──
-  const p3 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const p3 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   check('4a. Lập lại sau khi kế hoạch CONFIRMED → 201, pool trống (in_plan = 3 OD), 0 xe', p3.s === 201 && (p3.j?.data?.trips ?? []).length === 0 && (p3.j?.data?.in_plan ?? []).length === 3, `http=${p3.s} trips=${p3.j?.data?.trips?.length} in_plan=${p3.j?.data?.in_plan?.length}`)
   const dc = await api(`/tms/dispatch/plans/${p3.j?.data?.id}`, 'DELETE')
   check('4b. Bỏ nháp → DISCARDED', dc.s === 200 && dc.j?.data?.status === 'DISCARDED', `http=${dc.s}`)
@@ -256,7 +259,7 @@ try {
         `http=${setCat.s} meta=${JSON.stringify(catNow?.meta ?? null)}`)
 
       await cleanupTrips()
-      const pc = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+      const pc = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
       const tr = (pc.j?.data?.trips ?? [])
       check('7e. Lập kế hoạch: mọi xe đều là dòng xe PHỤC VỤ được mức đó, và chuyến mang điều kiện của hàng',
         pc.s === 201 && tr.length > 0 && tr.every(t => t.vehicle_model_id === vmId) && tr.every(t => JSON.stringify(t.detail?.conditions) === JSON.stringify([COND])),
@@ -265,7 +268,7 @@ try {
       // Gỡ khai khỏi dòng xe QA ⇒ KHÔNG dòng xe nào phục vụ mức QA ⇒ phải nói thẳng thiếu mức nào, không im lặng
       await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: ['AMBIENT'] })
       await cleanupTrips()
-      const pn = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+      const pn = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
       const tn = (pn.j?.data?.trips ?? [])
       check('7f. Không dòng xe nào phục vụ mức hàng đòi → chuyến KHÔNG có dòng xe, cảnh báo gọi đúng TÊN mức + chỉ chỗ khai',
         pn.s === 201 && tn.length > 0 && tn.every(t => !t.vehicle_model_id) && /QA61 2 – 8 °C/.test(tn[0]?.detail?.warnings?.join(' ') ?? '') && /Mã dòng xe/.test(tn[0]?.detail?.warnings?.join(' ') ?? ''),
@@ -286,7 +289,7 @@ try {
   // ── [5] Tắt cờ HA → Xác nhận là vào thẳng (hành vi mặc định — không phản hồi, muốn đổi thì sửa tay) ──
   await cleanupTrips()
   await api(`/tms/transport-companies/${HA.id}`, 'PUT', { tender_required: false })
-  const p5 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const p5 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   const cf5 = await api(`/tms/dispatch/plans/${p5.j?.data?.id}/confirm`, 'POST', {})
   const P5 = await planOf(p5.j?.data?.id)
   check('5a. Cờ HA tắt: Confirm → 2 xe vào Kế hoạch xuất ngay, 0 xe chờ, kế hoạch CONFIRMED (điều vận muốn đổi thì sửa tay ở Kế hoạch xuất)',
@@ -303,7 +306,7 @@ try {
   await cleanupTrips()
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
   const OD4 = 'QA61OD4', MAT_LA = 'QA61MAKHONGCO'
-  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, updated_at: nowIso() })
+  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', updated_at: nowIso() })
   await restWrite('erp_outbound_orders', 'POST', null, {
     id: crypto.randomUUID(), od_number: OD4, od_item: '10', material_code: MAT_LA, qty_base: 2 * perPallet,
     ship_to_code: 'QA61SHIP4', ship_to_name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null,
@@ -311,7 +314,7 @@ try {
   })
   const matGone = (await restAll('Material', `select=material_code&material_code=eq.${MAT_LA}`)).length === 0
   check('8a. Fixture: mã hàng của OD4 KHÔNG có trong danh mục Mã hàng', matGone, matGone ? MAT_LA : 'mã lại có thật — đổi tên fixture')
-  const p8 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const p8 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   const cf8 = await api(`/tms/dispatch/plans/${p8.j?.data?.id}/confirm`, 'POST', {})
   check('8b. Xác nhận kế hoạch có mã hàng LẠ → 422 MATERIAL_UNKNOWN, KHÔNG phải 200 im lặng',
     cf8.s === 422 && cf8.j?.error?.code === 'MATERIAL_UNKNOWN',
@@ -330,7 +333,7 @@ try {
   await cleanupTrips()
   const rowOf = (pl, od) => [...(pl?.trips ?? []).flatMap(t => t.ods), ...(pl?.pool ?? [])].find(o => o.od_number === od)
   const mvB = (pl, body) => api(`/tms/dispatch/plans/${pl.id}/move`, 'POST', body)
-  const pb = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const pb = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   let B = pb.j?.data
   const r1 = rowOf(B, OD[0])
   check('10a. Kế hoạch mới: khung chờ rỗng · summary có mốc máy lập + số chuyến theo dòng xe · dòng OD mang plan_id + điều kiện + tải theo loại',
@@ -440,7 +443,7 @@ try {
     ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'RETURN',
     source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
   })
-  const pl2 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
+  const pl2 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
   const P2 = pl2.j?.data
   const sy4 = await api(`/tms/dispatch/plans/${P2?.id}/sync`)
   check('10q. OD trả về (RETURN) nằm ở "không lên xe" và /sync KHÔNG báo nó là OD mới (0 OD mới ngay sau khi lập)',
@@ -451,6 +454,65 @@ try {
   check('10p. Lập kế hoạch: OD đã xuất kho KHÔNG lên xe và nằm trong danh sách "đã bỏ ra" (SHIPPED) · OD tồn đọng 14/03 lên xe kèm trễ 2 ngày',
     pl2.s === 201 && !rowOf(P2, OD[0]) && ex1?.kind === 'SHIPPED' && !!r6?.trip_id && r6?.late_days === 2 && r6?.delivery_date === LATE && P2?.summary?.late_ods === 1,
     `http=${pl2.s} ${pl2.j?.error?.message ?? ''} ex=${JSON.stringify(ex1 ?? null)} late=${JSON.stringify({ t: r6?.trip_id != null, d: r6?.late_days, dd: r6?.delivery_date, n: P2?.summary?.late_ods })}`)
+
+  // ── [11] KHÁCH PALLET / XÁ + MỞ LẠI (user chốt 25/09 vòng 2) ─────────────────────────────────────────
+  // "Xe pallet bản chất có 1 khách, xá ghép nhiều khách; config số khách · bấm nút trên xe là xe thành xe xá · lưu rồi sửa lại được"
+  await cleanupTrips()
+  await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { mat_doc: null, updated_at: nowIso() })
+  const cust1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
+  const cBad = await api(`/masterdata/customers/${cust1.id}`, 'PUT', { load_mode: 'KHONG' })
+  const cOk = await api(`/masterdata/customers/${cust1.id}`, 'PUT', { load_mode: 'PALLET' })
+  check('11a. Danh mục Khách hàng: kiểu đi sai → 400 · PALLET → 200 và cột lưu đúng', cBad.s === 400 && cOk.s === 200 && cOk.j?.data?.load_mode === 'PALLET',
+    `bad=${cBad.s} ok=${cOk.s} mode=${cOk.j?.data?.load_mode}`)
+  const p11 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })   // KHÔNG đè ⇒ luật kho mặc định 1 khách / xe pallet
+  const P11 = p11.j?.data
+  const palTrips = (P11?.trips ?? []).filter(t => t.load_mode === 'PALLET')
+  check('11b. Khách PALLET, kho mặc định 1 khách / xe pallet ⇒ OD1 và OD2 (cùng phường, khác khách) đi HAI xe; mọi xe pallet chỉ một khách',
+    p11.s === 201 && tripOfOd(P11, OD[0])?.id !== tripOfOd(P11, OD[1])?.id && palTrips.length >= 2 && palTrips.every(t => new Set(t.ods.map(o => o.ship_to_code)).size === 1),
+    `http=${p11.s} ${p11.j?.error?.message ?? ''} trips=${(P11?.trips ?? []).map(t => `${t.load_mode}:${[...new Set(t.ods.map(o => o.ship_to_code))].join('+')}`).join(' ')}`)
+  const X11 = tripOfOd(P11, OD[0])
+  const odm = await api(`/tms/dispatch/plans/${P11.id}/ods`, 'PATCH', { ids: [rowOf(P11, OD[0]).id], load_mode: 'LOOSE' })
+  const X11b = tripOfOd(odm.j?.data, OD[0])
+  check('11c. Đổi kiểu đi của MỘT OD sang Xá → OD ở nguyên xe, dòng OD mang LOOSE, xe cảnh báo "OD khách đi Xá đang nằm trên xe pallet"',
+    odm.s === 200 && X11b?.id === X11?.id && rowOf(odm.j?.data, OD[0])?.load_mode === 'LOOSE' && /khách đi Xá đang nằm trên xe pallet/.test((X11b?.detail?.warnings ?? []).join(' ')),
+    `http=${odm.s} ${odm.j?.error?.message ?? ''} warn=${(X11b?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
+  const odmBad = await api(`/tms/dispatch/plans/${P11.id}/ods`, 'PATCH', { ids: [rowOf(P11, OD[0]).id], load_mode: 'XA' })
+  check('11d. Kiểu đi rác → 400 (zod tại biên)', odmBad.s === 400, `http=${odmBad.s}`)
+  const flip = await api(`/tms/dispatch/trips/${X11.id}`, 'PATCH', { load_mode: 'LOOSE' })
+  const P11c = await planOf(P11.id)
+  const X11c = P11c?.trips?.find(t => t.id === X11.id)
+  check('11e. Nút trên thẻ xe: đổi CẢ XE sang xá → xe LOOSE, mọi OD trên xe LOOSE, máy chọn lại dòng xe KHÁC xe pallet QA (xe tải theo tấn)',
+    flip.s === 200 && X11c?.load_mode === 'LOOSE' && (X11c?.ods ?? []).every(o => o.load_mode === 'LOOSE') && !!X11c?.vehicle_model_id && X11c?.detail?.vehicle_model?.sap_code !== SAP,
+    `http=${flip.s} ${flip.j?.error?.message ?? ''} mode=${X11c?.load_mode} vm=${X11c?.detail?.vehicle_model?.name} ods=${(X11c?.ods ?? []).map(o => o.load_mode).join(',')}`)
+  const ro11 = await api(`/tms/dispatch/plans/${P11.id}/reopen`, 'POST', {})
+  check('11f. Mở lại khi chưa xe nào vào Kế hoạch xuất → 422 NOTHING_TO_REOPEN', ro11.s === 422 && ro11.j?.error?.code === 'NOTHING_TO_REOPEN', `http=${ro11.s} code=${ro11.j?.error?.code}`)
+
+  // Mở lại: xác nhận ⇒ mở lại ⇒ dòng Kế hoạch xuất gỡ, xe về nháp, chuyến bên Xuất GIỮ id ⇒ xác nhận lại ⇒ cùng Số xe sống lại
+  await cleanupTrips()
+  await api(`/tms/transport-companies/${HA.id}`, 'PUT', { tender_required: false })
+  const pR = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+  const cR = await api(`/tms/dispatch/plans/${pR.j?.data?.id}/confirm`, 'POST', {})
+  let PR = await planOf(pR.j?.data?.id)
+  const gcR = (PR?.trips ?? []).map(t => t.group_code)
+  const gdoBefore = await restAll('GroupDeliveryOrder', `select=id,group_code&group_code=like.${PREFIX}*`)
+  // chuyến của xe đầu ĐANG XUẤT ⇒ không được mở lại (chứng từ đã chạy), xe còn lại mở được
+  const busyGc = gcR[0]
+  await restWrite('GroupDeliveryOrder', 'PATCH', `group_code=eq.${busyGc}`, { status: 'IN_PROGRESS', updated_at: nowIso() })
+  const rop = await api(`/tms/dispatch/plans/${PR.id}/reopen`, 'POST', {})
+  PR = await planOf(PR.id)
+  const khAfter = await restAll('khvc_lines', `select=group_code&group_code=like.${PREFIX}*`)
+  check('11g. Mở lại kế hoạch đã xác nhận: xe có chuyến ĐANG XUẤT giữ nguyên (nêu lý do), xe còn lại về NHÁP và dòng Kế hoạch xuất của nó được gỡ',
+    cR.s === 200 && rop.s === 200 && rop.j?.data?.reopened?.blocked?.some(b => b.group_code === busyGc) && rop.j?.data?.reopened?.trips === gcR.length - 1
+    && PR?.trips?.find(t => t.group_code === busyGc)?.status === 'CONFIRMED' && PR?.trips?.filter(t => t.group_code !== busyGc).every(t => t.status === 'DRAFT')
+    && khAfter.every(k => k.group_code === busyGc) && khAfter.length > 0,
+    `cf=${cR.s} reopen=${rop.s} ${JSON.stringify(rop.j?.data?.reopened ?? rop.j?.error)} kh=${khAfter.map(k => k.group_code).join(',')}`)
+  const cR2 = await api(`/tms/dispatch/plans/${PR.id}/confirm`, 'POST', {})
+  PR = await planOf(PR.id)
+  const gdoAfter = await restAll('GroupDeliveryOrder', `select=id,group_code&group_code=like.${PREFIX}*`)
+  const sameIds = gdoBefore.every(g => gdoAfter.some(a => a.id === g.id && a.group_code === g.group_code))
+  check('11h. Xác nhận lại sau khi mở lại (kế hoạch mở một phần) → 200, mọi xe CONFIRMED, chuyến bên Xuất GIỮ NGUYÊN id (không đẻ chuyến mới)',
+    cR2.s === 200 && PR?.status === 'CONFIRMED' && (PR?.trips ?? []).every(t => t.status === 'CONFIRMED') && sameIds && gdoAfter.length === gdoBefore.length,
+    `http=${cR2.s} ${cR2.j?.error?.message ?? ''} plan=${PR?.status} gdo ${gdoBefore.length}→${gdoAfter.length} same=${sameIds}`)
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

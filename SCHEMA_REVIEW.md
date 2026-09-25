@@ -774,6 +774,12 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 
 ## 2026-09-25 — Điều vận v2: bàn ghép xe + pool lũy tiến + OD bị SO sửa thay
 
+**`20260925c_dispatch_pallet_loose.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
+- `Customer.load_mode text NOT NULL DEFAULT 'LOOSE'` CHECK PALLET|LOOSE — khách đi pallet / đi xá (chưa khai = xá).
+- `Warehouse.dispatch_pallet_max_stops integer NOT NULL DEFAULT 1` CHECK 1..20 — số khách tối đa trên một xe pallet.
+- `dispatch_trip.load_mode` · `dispatch_trip_od.load_mode` (text NULL, CHECK) — kiểu đi của xe / của OD trên nháp (người đổi được).
+- `vehicle_model.note text` — ghi chú (staging: đánh dấu sức chứa GIẢ ĐỊNH).
+
 **`20260925b_dispatch_board.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
 - `dispatch_trip_od`: + `plan_id uuid NOT NULL` (backfill từ trip, FK `dispatch_plan` ON DELETE CASCADE, index) · `trip_id` bỏ NOT NULL
   (**NULL = OD nằm KHUNG CHỜ** của kế hoạch) · + `conditions text[]` · `cat_load jsonb` (tải theo Loại kho — nguồn cửa đặt lịch khi OD

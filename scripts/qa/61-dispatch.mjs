@@ -432,8 +432,20 @@ try {
     ship_to_code: SHIP[1], ship_to_name: 'QA61 NPP 2', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: LATE, flow: 'SALE',
     source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
   })
+  // OD TRẢ VỀ đúng ngày: máy đưa vào "không lên xe" — /sync KHÔNG được đếm nó là "OD mới" (Preview 25/09: báo "12 OD mới"
+  // ngay sau khi vừa lập, đúng 12 OD RETURN của Ba Vì)
+  const OD7 = 'QA61OD7'
+  await restWrite('erp_outbound_orders', 'POST', null, {
+    id: crypto.randomUUID(), od_number: OD7, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet,
+    ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'RETURN',
+    source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+  })
   const pl2 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY })
   const P2 = pl2.j?.data
+  const sy4 = await api(`/tms/dispatch/plans/${P2?.id}/sync`)
+  check('10q. OD trả về (RETURN) nằm ở "không lên xe" và /sync KHÔNG báo nó là OD mới (0 OD mới ngay sau khi lập)',
+    (P2?.unplanned ?? []).some(u => u.od_number === OD7) && sy4.s === 200 && !(sy4.j?.data?.new_od_numbers ?? []).includes(OD7) && sy4.j?.data?.new_ods === 0,
+    `unplanned=${(P2?.unplanned ?? []).map(u => u.od_number).join(',')} sync=${sy4.s} new=${JSON.stringify(sy4.j?.data?.new_od_numbers ?? sy4.j?.error)}`)
   const ex1 = (P2?.params?.excluded ?? []).find(x => x.od_number === OD[0])
   const r6 = rowOf(P2, OD6)
   check('10p. Lập kế hoạch: OD đã xuất kho KHÔNG lên xe và nằm trong danh sách "đã bỏ ra" (SHIPPED) · OD tồn đọng 14/03 lên xe kèm trễ 2 ngày',

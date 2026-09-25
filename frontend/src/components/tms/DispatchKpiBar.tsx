@@ -45,20 +45,11 @@ export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
     <div className="shrink-0">
       <SummaryBand tiles={tiles} />
       {(byModel.length > 0 || shares.length > 0) && (
-        <div className="border-b bg-sky-50/60 px-3 py-1 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-slate-600">
-          {byModel.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-              <span className="text-[10px] uppercase tracking-wide text-slate-400">Dòng xe</span>
-              {byModel.map(m => (
-                <span key={m.key} className={`inline-flex items-center gap-1 rounded bg-white border px-1.5 py-0.5 whitespace-nowrap ${m.key === '—' ? 'border-red-200 text-red-700' : 'border-slate-200'}`}
-                  title={`${m.sap_code ?? ''} ${m.name}${m.parent ? ` · cha ${m.parent}` : ''} · ${nf(m.pallets, 1)} pallet`}>
-                  <span className="truncate max-w-[140px]">{m.name}</span><b className="tabular-nums">×{m.trips}</b>
-                </span>
-              ))}
-            </div>
-          )}
+        // MỘT hàng cuộn ngang: kho thật có ~27 dòng xe trong một kế hoạch (Ba Vì 25/09) — trải ra 3 hàng là đẩy bàn ghép xe
+        // xuống nửa dưới màn 1280 px (đo y≈385) và chiếm cả màn điện thoại. Tỷ trọng đứng TRƯỚC (ít, luôn thấy), dòng xe sau.
+        <div className="border-b bg-sky-50/60 px-3 py-1 flex items-center gap-x-4 overflow-x-auto no-scrollbar text-[11px] text-slate-600 [&>*]:shrink-0">
           {shares.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <div className="flex items-center gap-2 whitespace-nowrap">
               <span className="text-[10px] uppercase tracking-wide text-slate-400">Tỷ trọng ĐVVT (tháng)</span>
               {shares.map(sh => {
                 const pct = sh.pct ?? 0
@@ -76,6 +67,17 @@ export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
                   </span>
                 )
               })}
+            </div>
+          )}
+          {byModel.length > 0 && (
+            <div className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-[10px] uppercase tracking-wide text-slate-400">Dòng xe</span>
+              {byModel.map(m => (
+                <span key={m.key} className={`inline-flex items-center gap-1 rounded bg-white border px-1.5 py-0.5 whitespace-nowrap ${m.key === '—' ? 'border-red-200 text-red-700' : 'border-slate-200'}`}
+                  title={`${m.sap_code ?? ''} ${m.name}${m.parent ? ` · cha ${m.parent}` : ''} · ${nf(m.pallets, 1)} pallet`}>
+                  <span className="truncate max-w-[140px]">{m.name}</span><b className="tabular-nums">×{m.trips}</b>
+                </span>
+              ))}
             </div>
           )}
         </div>

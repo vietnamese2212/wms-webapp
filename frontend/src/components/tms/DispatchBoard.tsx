@@ -311,7 +311,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   return (
     <div className="flex flex-col lg:flex-row min-h-0 h-full">
       {/* ── KHUNG CHỜ ── */}
-      <aside {...dropProps('pool', 'pool')}
+      <aside data-dispatch-pool {...dropProps('pool', 'pool')}
         className={`lg:w-[300px] shrink-0 border-b lg:border-b-0 lg:border-r flex flex-col min-h-0 ${hover?.target === 'pool' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-slate-50/60'}`}>
         <div className="px-3 py-2 border-b bg-white space-y-1.5 shrink-0">
           <div className="flex items-center gap-2">
@@ -394,7 +394,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
             {editable && (
               <div {...dropProps('new', 'new')}
-                className={`rounded-lg border-2 border-dashed p-3 flex flex-col items-center justify-center gap-1 text-center min-h-[120px] ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-400'}`}>
+                className={`self-start rounded-lg border-2 border-dashed p-3 flex flex-col items-center justify-center gap-1 text-center min-h-[120px] ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-400'}`}>
                 <Plus className="h-5 w-5" />
                 <span className="text-xs font-medium">Xe mới</span>
                 <span className="text-[10px]">{canDrag ? 'Thả OD vào đây — máy chọn dòng xe + ĐVVT theo luật ghép' : 'Chọn OD rồi "Chuyển tới xe…" → Xe mới'}</span>

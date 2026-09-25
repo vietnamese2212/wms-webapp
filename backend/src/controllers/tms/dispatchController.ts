@@ -214,7 +214,10 @@ async function loadCandidates(wh: WhRow, day: string, condByCat: Map<string, str
   const inPlan = new Map<string, string>()
   for (const k of khvc) if (!inPlan.has(k.do_no)) inPlan.set(k.do_no, k.group_code)
   const split = splitPool(mine, day, { inPlan, otherDraft: drafts })
-  const include = [...split.include.keys()]
+  // CHỈ OD lên xe được mới là "OD mới cần xếp" — OD trả về / chiết khấu đúng ngày vẫn qua splitPool (engine xếp vào
+  // danh sách "không lên xe"), đếm chúng là báo "12 OD mới" ngay sau khi vừa lập (đo Preview 25/09: đúng 12 OD RETURN)
+  const flowOf = new Map(mine.map(r => [r.od_number, String(r.flow)]))
+  const include = [...split.include.keys()].filter(od => LOADABLE_FLOW.has(flowOf.get(od) ?? ''))
   if (opts.countOnly) return { ods: [], meta: new Map(), excluded: split.excluded, include }
   const kept = mine.filter(r => split.include.has(r.od_number))
   const [mats, custs] = await Promise.all([
@@ -898,6 +901,7 @@ export async function planSync(req: Request, res: Response) {
       wh ? loadCandidates(wh, full.plan_date, new Map(), { skipPlanId: full.id, countOnly: true }) : Promise.resolve(null),
     ])
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
+    for (const u of (full.unplanned ?? []) as { od_number?: string }[]) if (u?.od_number) inPlan.add(u.od_number)   // máy đã thấy, không đo được tải
     const fresh = (cand?.include ?? []).filter(od => !inPlan.has(od))
     return ok(res, { flags, new_ods: fresh.length, new_od_numbers: fresh.slice(0, 50) })
   } catch (e) { return failAny(res, e) }

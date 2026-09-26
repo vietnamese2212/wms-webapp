@@ -410,6 +410,12 @@ function chooseCarrier(ctx: Ctx, model: EngineModel, wards: string[], region: st
   return best
 }
 
+/** Xe lớn trước — so TẤN trước rồi mới tới PALLET: họ xá từ 26/09 trộn xe kết hợp đo bằng pallet (17 pallet / 16 tấn) với xe
+ *  tải đo bằng tấn (30 tấn, không khai pallet). So pallet trước thì xe 17 pallet "lớn hơn" xe 30 tấn ⇒ dòng hàng 27 tấn bị coi
+ *  là vượt xe lớn nhất (đo Bàu Bàng 26/09: 6 chuyến). Họ thuần pallet không khai tấn thì tấn = 0 cho mọi xe ⇒ vẫn so pallet. */
+const bigFirst = (a: EngineModel, b: EngineModel) => (numOr(b.max_tons, 0) - numOr(a.max_tons, 0)) || (numOr(b.max_pallets, 0) - numOr(a.max_pallets, 0)) || cmp(a.sap_code, b.sap_code)
+const sizeKey = (m: EngineModel) => `${numOr(m.max_tons, 0)}|${numOr(m.max_pallets, 0)}`
+
 interface Assigned {
   model: EngineModel | null; carrier: EngineCarrier | null; freight: TripFreight; reasons: string[]; warnings: string[]
   cats: string[]; conds: string[]; wards: string[]; stops: number; pallets: number | null; tons: number | null; oversize: boolean
@@ -431,8 +437,12 @@ function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, un
   const oversize = b.units.some(u => u.oversize)
   const mode = b.units[0]?.od.load_mode ?? null
   const family = fleetFor(ctx.models, b.units.map(u => u.od))
-  const cands = family.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
+  const cands0 = family.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
     .sort((a, c) => (numOr(a.max_pallets, 1e9) - numOr(c.max_pallets, 1e9)) || (numOr(a.max_tons, 1e9) - numOr(c.max_tons, 1e9)) || cmp(a.sap_code, c.sap_code))
+  // Chuyến VƯỢT TẢI (một dòng hàng lớn hơn mọi xe): không xe nào "vừa" nên ba bậc bên dưới sẽ chọn xe RẺ NHẤT — đo Bàu Bàng 26/09
+  // ra xe 1 tấn cho dòng 27 tấn (tải 2.737 %). Chỉ giữ các dòng xe CỠ LỚN NHẤT, trong đó mới chọn theo cước.
+  const top = oversize ? [...cands0].sort(bigFirst)[0] : null
+  const cands = top ? cands0.filter(m => sizeKey(m) === sizeKey(top)) : cands0
   const warnings: string[] = []
   const priced: { model: EngineModel; opt: PriceOpt; full: boolean }[] = []
   for (const m of cands) {
@@ -488,7 +498,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
   // CHỈ tính dòng xe CÓ BẢNG CƯỚC cho phường của cụm (bất kỳ ĐVVT): xếp vào xe to không ai chào giá là đẻ ra chuyến
   // "không ĐVVT, không cước" trong khi xe nhỏ hơn có cước chở được (gói QA 61 bắt ngay lượt đầu trên danh mục 60 dòng xe
   // thật). Không dòng xe nào có cước cho phường đó ⇒ rơi về xe lớn nhất chung (vẫn xếp, cước null có lý do).
-  const bigSort = (a: EngineModel, b: EngineModel) => (numOr(b.max_pallets, 0) - numOr(a.max_pallets, 0)) || (numOr(b.max_tons, 0) - numOr(a.max_tons, 0)) || cmp(a.sap_code, b.sap_code)
+  const bigSort = bigFirst
   const pricedByWard = new Map<string, Set<string>>()
   for (const t of effectiveAt(input.tariffs.map(t => ({ ...t, is_active: t.is_active ?? true })), P.day)) { const s = pricedByWard.get(t.ward_code) ?? new Set<string>(); s.add(t.vehicle_model_id); pricedByWard.set(t.ward_code, s) }
   /** Họ dòng xe để xếp một cụm: đúng kiểu đi (pallet / xá) + đúng việc (container chỉ trung chuyển), ưu tiên dòng xe

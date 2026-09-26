@@ -516,3 +516,23 @@ describe('ĐK bảo quản theo VỊ TRÍ (user 26/09: "kho RM01 có cả kho l�
     expect(r.trips[0].conditions).toEqual(['CHILL'])
   })
 })
+describe('xe LỚN NHẤT trong họ xe trộn hai cách đo + chuyến vượt tải (đo Bàu Bàng 26/09: 6 chuyến 18–27 tấn lên xe 1 tấn, tải 2.737 %)', () => {
+  // họ xá sau 26/09 có cả xe kết hợp đo bằng PALLET (17 pallet / 16 tấn) lẫn xe tải đo bằng TẤN (30 tấn)
+  const K17 = model({ id: 'K17', parent_type_name: 'XE SCA', capacity_mode: 'PALLET', max_pallets: 17, max_tons: 16, pallet_truck: false })
+  const T1 = model({ id: 'T1', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 1, tariff_unit: 'PER_TRIP', pallet_truck: false })
+  const T30 = model({ id: 'T30', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 30, tariff_unit: 'PER_TRIP', pallet_truck: false })
+  const tar = [tariff('A', 'K17', 'W1', 50_000), tariff('A', 'T1', 'W1', 300_000), tariff('A', 'T30', 'W1', 5_000_000)]
+  const heavy = (n: string, tons: number) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(tons * 1.06, { kg: tons * 1000 })] })
+  it('dòng hàng 27 tấn · họ có xe 30 tấn ⇒ KHÔNG vượt tải, lên xe 30 tấn (bản cũ coi xe 17 pallet là lớn nhất vì so pallet trước)', () => {
+    const r = runDispatch(input([heavy('1', 27)], { models: [K17, T1, T30], tariffs: tar }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].oversize).toBe(false)
+    expect(r.trips[0].vehicle_model?.id).toBe('T30')
+  })
+  it('dòng hàng 40 tấn lớn hơn MỌI xe ⇒ vượt tải, nhưng xếp lên xe LỚN NHẤT (30 tấn), không phải xe rẻ nhất 1 tấn', () => {
+    const r = runDispatch(input([heavy('2', 40)], { models: [K17, T1, T30], tariffs: tar }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].oversize).toBe(true)
+    expect(r.trips[0].vehicle_model?.id).toBe('T30')
+  })
+})

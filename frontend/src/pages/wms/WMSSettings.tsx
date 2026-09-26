@@ -1425,7 +1425,7 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
               options={[{ value: '', label: '— Chưa khai (không ràng buộc) —' }, ...conditions.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]} />
           </div>
           {flagRow('wt-disp-follow', dispFollow, setDispFollow, 'Đi kèm đơn khi điều vận',
-            <>Bật cho hàng <b>đi theo đơn</b> như POSM: khi ghép chuyến, loại này <b>không bị tách</b> thành chuyến riêng mà đi cùng xe với hàng chính của khách. Tắt (mặc định) = loại này chỉ đi chung chuyến với chính nó, trừ khi kho bật "Cho ghép nhiều Loại kho trên một chuyến".</>)}
+            <>Bật cho hàng <b>đi theo đơn</b> như POSM: khi ghép chuyến, loại này <b>không bị tách</b> thành chuyến riêng mà đi cùng xe với hàng chính của khách, và <b>không áp điều kiện bảo quản của nó lên xe</b> (POSM kèm đơn FG02 lên được xe lạnh). Tắt (mặc định) = loại này chỉ đi chung chuyến với chính nó, trừ khi kho bật "Cho ghép nhiều Loại kho trên một chuyến".</>)}
 
           <div className="space-y-1">
             <Label className="text-xs">Màu hiển thị</Label>

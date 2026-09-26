@@ -269,7 +269,7 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       // Điều kiện bảo quản THEO LOẠI KHO (Cài đặt WMS → Loại kho) — trừ khi hàng đang nằm ở ô khai ĐK RIÊNG (Vị trí kho,
       // 26/09) thì theo ô đó. Loại chưa khai + ô không khai ⇒ rỗng ⇒ không ràng buộc dòng xe (có băng "khai thiếu").
       const catCond = (cat && condByCat.get(cat)) || null
-      const conditions = lineConditions(catCond, r.material_code ? stockBy.get(r.material_code) : undefined)
+      const conditions = lineConditions(catCond, r.material_code ? stockBy.get(r.material_code) : undefined, !!cat && follow.has(cat))
       if (!cat) { gapNoCat.ods.add(od); if (r.material_code) gapNoCat.materials.add(r.material_code) }
       else if (!catCond && !follow.has(cat)) gapCat.set(cat, (gapCat.get(cat) ?? new Set()).add(od))
       return { material_code: r.material_code ?? '?', qty_base: q, pallets: l.pallets, kg: l.kg, category: cat, condition: catCond, conditions }

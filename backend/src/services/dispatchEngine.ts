@@ -229,7 +229,10 @@ export function resolveLoadMode(custMode: string | null | undefined, byCat: Reco
 }
 /** ĐK bảo quản của MỘT dòng hàng (26/09): hàng nằm ở ô KHAI RIÊNG ĐK thì mang ĐK của ô đó; ô không khai (null) và mã không
  *  có tồn ở ô khai riêng ⇒ theo Loại kho. `stock` = các ĐK của những ô đang chứa mã này (null = ô theo loại kho). */
-export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined): string[] {
+export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined, follow = false): string[] {
+  // Hàng "đi kèm đơn" (POSM) đi theo xe của đơn — KHÔNG áp ĐK bảo quản của nó lên xe; không thì POSM khai "Thường" kèm đơn
+  // FG02 (2–8 °C) sẽ đòi xe chở được cả hai mức ⇒ chỉ còn xe kết hợp nhận, sai hẳn ý "POSM đi theo đơn" (đo staging 26/09).
+  if (follow) return []
   if (!stock || !stock.length) return catCond ? [catCond] : []
   return uniq(stock.map(c => c ?? catCond).filter((c): c is string => !!c)).sort(cmp)
 }

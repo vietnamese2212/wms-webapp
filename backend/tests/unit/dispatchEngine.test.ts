@@ -495,6 +495,19 @@ describe('ĐK bảo quản theo VỊ TRÍ (user 26/09: "kho RM01 có cả kho l�
     expect(lineConditions('AMBIENT', [null, 'CHILL'])).toEqual(['AMBIENT', 'CHILL'])
     expect(lineConditions(null, [null])).toEqual([])
   })
+  it('hàng "đi kèm đơn" (POSM) KHÔNG áp ĐK lên xe — kể cả khi Loại kho khai Thường hoặc nằm ở ô lạnh', () => {
+    expect(lineConditions('AMBIENT', undefined, true)).toEqual([])
+    expect(lineConditions('AMBIENT', ['CHILL'], true)).toEqual([])
+  })
+  it('POSM khai Thường đi kèm đơn FG02 (2–8 °C) ⇒ xe LẠNH chở được, không bị ép sang xe kết hợp', () => {
+    const COLD = model({ id: 'COLD', max_pallets: 10, serve_conditions: ['CHILL'] })
+    const MIX = model({ id: 'MIX', max_pallets: 10, serve_conditions: ['CHILL', 'AMBIENT'] })
+    const posm = { material_code: 'P', qty_base: 1, pallets: 1, kg: 100, category: 'PM01', condition: 'AMBIENT', conditions: lineConditions('AMBIENT', undefined, true) }
+    const r = runDispatch(input([od('1', 'W1', 3, { lines: [line(3, { category: 'FG02', condition: 'CHILL' }), posm] })],
+      { models: [COLD, MIX], tariffs: [tariff('A', 'COLD', 'W1', 100_000), tariff('A', 'MIX', 'W1', 150_000)], params: { ...params, allow_mix_categories: false, follow_categories: ['PM01'] } }))
+    expect(r.trips[0].conditions).toEqual(['CHILL'])
+    expect(r.trips[0].vehicle_model?.id).toBe('COLD')
+  })
   it('dòng hàng mang ĐK theo vị trí (conditions) THAY ĐK theo loại ⇒ máy chọn xe lạnh dù Loại kho là hàng thường', () => {
     const AMB = model({ id: 'AMB', max_pallets: 10, serve_conditions: ['AMBIENT'] })
     const COLD = model({ id: 'COLD', max_pallets: 10, serve_conditions: ['CHILL'] })

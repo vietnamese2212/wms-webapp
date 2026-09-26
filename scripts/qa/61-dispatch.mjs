@@ -575,20 +575,6 @@ try {
     check('12c. Lượt lập BẬT cho trộn ⇒ OD hai Loại kho gom MỘT chuyến (xe QA phục vụ mọi điều kiện, còn chỗ)',
       pOn.s === 201 && tripOfOd(pOn.j?.data, OD[0])?.id === tripOfOd(pOn.j?.data, OD8)?.id,
       `http=${pOn.s} trips=${(pOn.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
-
-    // POSM "đi theo đơn": bật cờ đi kèm cho Loại kho 2 qua CỬA APP (bộ lọc meta phải giữ khoá mới) ⇒ kho không cho trộn vẫn đi chung
-    await cleanupTrips()
-    const fl = await api(`/wms/lookup/${cat2Row.id}`, 'PUT', { value: cat2Row.value, meta: { ...CAT2_META0, dispatch_follow: true } })
-    const cat2Now = (await restAll('LookupValue', `select=meta&id=eq.${cat2Row.id}`))[0]
-    check('12d. Loại kho "Đi kèm đơn khi điều vận" → 200 và meta GIỮ khoá mới + cờ cũ (bộ lọc meta vứt khoá lạ nếu quên khai)',
-      fl.s === 200 && cat2Now?.meta?.dispatch_follow === true && cat2Now?.meta?.badge_color === CAT2_META0?.badge_color,
-      `http=${fl.s} meta=${JSON.stringify(cat2Now?.meta ?? null)}`)
-    const pF = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
-    check('12e. Loại kho đi kèm ⇒ kho KHÔNG cho trộn mà OD loại đó vẫn ké vào chuyến của chính khách (không đẻ chuyến riêng)',
-      pF.s === 201 && pF.j?.data?.params?.allow_mix_categories === false && tripOfOd(pF.j?.data, OD[0])?.id === tripOfOd(pF.j?.data, OD8)?.id,
-      `http=${pF.s} trips=${(pF.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
-    await restWrite('LookupValue', 'PATCH', `id=eq.${cat2Row.id}`, { meta: CAT2_META0 })
-
     // Kiểu đi theo KHÁCH × LOẠI KHO
     await cleanupTrips()
     const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
@@ -612,6 +598,22 @@ try {
       bMerge.s === 200 && m1[MAT_CAT] === 'PALLET' && m1[CAT2] === 'LOOSE' && bDel.s === 200 && m2[MAT_CAT] === 'PALLET' && !(CAT2 in m2) && bMix.s === 400,
       `merge=${bMerge.s} ${JSON.stringify(m1)} del=${bDel.s} ${JSON.stringify(m2)} mix=${bMix.s}`)
     await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { load_mode_by_category: {} })
+
+    // ⚠ Đặt SAU phần kiểu đi: meta Loại kho được nhớ 30 s mỗi instance (getWhTypeMetaMap) — bật "đi kèm" cho loại 2 trước
+    // thì các lượt lập kế hoạch ngay sau đó vẫn coi loại 2 là đi kèm (đo 26/09: 12g đỏ oan vì thế).
+
+    // POSM "đi theo đơn": bật cờ đi kèm cho Loại kho 2 qua CỬA APP (bộ lọc meta phải giữ khoá mới) ⇒ kho không cho trộn vẫn đi chung
+    await cleanupTrips()
+    const fl = await api(`/wms/lookup/${cat2Row.id}`, 'PUT', { value: cat2Row.value, meta: { ...CAT2_META0, dispatch_follow: true } })
+    const cat2Now = (await restAll('LookupValue', `select=meta&id=eq.${cat2Row.id}`))[0]
+    check('12d. Loại kho "Đi kèm đơn khi điều vận" → 200 và meta GIỮ khoá mới + cờ cũ (bộ lọc meta vứt khoá lạ nếu quên khai)',
+      fl.s === 200 && cat2Now?.meta?.dispatch_follow === true && cat2Now?.meta?.badge_color === CAT2_META0?.badge_color,
+      `http=${fl.s} meta=${JSON.stringify(cat2Now?.meta ?? null)}`)
+    const pF = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    check('12e. Loại kho đi kèm ⇒ kho KHÔNG cho trộn mà OD loại đó vẫn ké vào chuyến của chính khách (không đẻ chuyến riêng)',
+      pF.s === 201 && pF.j?.data?.params?.allow_mix_categories === false && tripOfOd(pF.j?.data, OD[0])?.id === tripOfOd(pF.j?.data, OD8)?.id,
+      `http=${pF.s} trips=${(pF.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+    await api(`/wms/lookup/${cat2Row.id}`, 'PUT', { value: cat2Row.value, meta: CAT2_META0 })
   }
 
   // ĐK bảo quản theo VỊ TRÍ: ô đang chứa một mã THẬT của kho khai mức riêng ⇒ OD của mã đó mang mức của ô

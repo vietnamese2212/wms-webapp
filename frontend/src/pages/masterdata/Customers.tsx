@@ -218,7 +218,7 @@ export default function Customers() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [allFiltered, setAllFiltered] = useState(false)   // "chọn cả N dòng theo bộ lọc"
   const [form, setForm] = useState<{ row: Customer | null } | null>(null)
-  const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | null>(null)
+  const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'max_tons' | null>(null)
   const [seedOpen, setSeedOpen] = useState(false)
   const [chanEdit, setChanEdit] = useState<ChannelEdit | null>(null)
   const [err, setErr] = useState('')
@@ -336,6 +336,8 @@ export default function Customers() {
       tip: 'Khách đi xá (xe tải theo tấn, ghép nhiều khách) — mặc định của khách chưa khai', onClick: () => runBulk({ load_mode: 'LOOSE' }) },
     { key: 'bpalcat', icon: Package, label: `Kiểu đi theo loại (${nf(pickCount)})`,
       tip: 'Khai kiểu đi RIÊNG cho một Loại kho (vd FG01 đi Pallet, FG02 đi Xá) — loại không khai theo kiểu chung của khách', onClick: () => setBulk('load_mode_cat') },
+    { key: 'btons', icon: Truck, label: `Tải trọng xe tối đa (${nf(pickCount)})`,
+      tip: 'Khai tải trọng xe lớn nhất vào được điểm giao (đường nhỏ / cấm tải) — máy chỉ xếp các khách này lên xe nhỏ hơn hoặc bằng mức đó', onClick: () => setBulk('max_tons') },
     { key: 'boff', icon: Power, label: `Ngừng (${nf(pickCount)})`, danger: true,
       tip: 'Ngừng các khách đang chọn (giữ lịch sử, không còn áp %Date)',
       onClick: () => runBulk({ is_active: false }) },
@@ -462,6 +464,10 @@ export default function Customers() {
                             <span key={c} className={`text-[9px] font-semibold rounded px-1 py-0.5 ${m === 'PALLET' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}
                               title={`Hàng ${c} của khách này đi ${m === 'PALLET' ? 'Pallet' : 'Xá'}`}>{c}: {m === 'PALLET' ? 'Pallet' : 'Xá'}</span>
                           ))}
+                          {r.max_vehicle_tons != null && (
+                            <span className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700"
+                              title="Chỉ nhận xe có tải trọng ≤ mức này (điểm giao đường nhỏ / cấm tải)">≤ {Number(r.max_vehicle_tons).toLocaleString('vi-VN')} tấn</span>
+                          )}
                           </span>
                         </TableCell>
                         {/* Mức theo LOẠI HÀNG — một khách có thể mang nhiều dòng (FG01 ≥ 70 %,
@@ -580,6 +586,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
   const [active, setActive] = useState(row?.is_active ?? true)
   const [loadMode, setLoadMode] = useState<'PALLET' | 'LOOSE'>(row?.load_mode === 'PALLET' ? 'PALLET' : 'LOOSE')
   const [modeByCat, setModeByCat] = useState<Record<string, 'PALLET' | 'LOOSE'>>(row?.load_mode_by_category ?? {})
+  const [maxTons, setMaxTons] = useState(row?.max_vehicle_tons != null ? String(row.max_vehicle_tons).replace('.', ',') : '')
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
   const [err, setErr] = useState('')
@@ -594,6 +601,8 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
         name: name.trim(), channel: channel || null,
         warehouse_id: whId || null, is_active: active, note: note.trim() || null, load_mode: loadMode,
         load_mode_by_category: modeByCat,
+        // trống = không giới hạn — gửi null TƯỜNG MINH để xoá được mức đã khai
+        max_vehicle_tons: maxTons.trim() ? Number(maxTons.trim().replace(',', '.')) : null,
       })
       const id = row?.id ?? saved?.id
       if (id) await saveRules.mutateAsync({ scope: 'CUSTOMER', key: id, rules: toPayload(drafts) })
@@ -694,6 +703,14 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
           )}
           <p className="mt-1 text-[11px] text-slate-400">Máy lấy Loại kho CHÍNH của từng OD (POSM đi kèm không tính). OD có hai loại khai hai kiểu khác nhau thì theo kiểu chung.</p>
         </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Tải trọng xe tối đa vào được (tấn)</label>
+          <div className="relative w-40">
+            <Input value={maxTons} inputMode="decimal" onChange={e => setMaxTons(e.target.value)} placeholder="Không giới hạn" className="h-9 pr-10 text-right" />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">tấn</span>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Điểm giao đường nhỏ / cấm tải: máy chỉ xếp khách này lên dòng xe có tải trọng ≤ mức này — kể cả khi ghép chung với khách khác (theo mức chặt nhất). OD lớn hơn thì tách nhiều chuyến xe nhỏ. Để trống = không giới hạn.</p>
+        </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-4 w-4 accent-sky-600" />
           Đang hoạt động
@@ -711,7 +728,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
 // Dialog GIỮA màn chỉ để XÁC NHẬN (chuẩn: form thêm/sửa mới dùng FormSheet). Câu đầu tiên phải
 // nói rõ PHẠM VI — "áp cho 312 khách theo bộ lọc hiện tại" — chứ không phải áp mù cả bảng.
 function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving, onClose, onApply, onApplyRule }: {
-  kind: 'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat'
+  kind: 'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'max_tons'
   count: number
   byFilter: boolean
   channels: { value: string; label: string }[]
@@ -733,8 +750,11 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
   // Kiểu đi cho MỘT Loại kho (26/09) — gộp vào bảng kiểu đi từng khách, không đè loại khác
   const [lmCat, setLmCat] = useState('')
   const [lmMode, setLmMode] = useState<'PALLET' | 'LOOSE' | ''>('PALLET')
+  const [tons, setTons] = useState('')
+  const tonsNum = tons.trim() ? Number(tons.trim().replace(',', '.')) : null
+  const tonsBad = tonsNum != null && !(tonsNum > 0 && tonsNum <= 100)
   const title = kind === 'channel' ? 'Phân kênh hàng loạt' : kind === 'date_rule' ? 'Đặt quy định date hàng loạt'
-    : kind === 'load_mode_cat' ? 'Kiểu đi theo Loại kho — hàng loạt' : 'Trỏ kho nhận hàng loạt'
+    : kind === 'load_mode_cat' ? 'Kiểu đi theo Loại kho — hàng loạt' : kind === 'max_tons' ? 'Tải trọng xe tối đa — hàng loạt' : 'Trỏ kho nhận hàng loạt'
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
@@ -820,6 +840,16 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
               <p className="text-[11px] text-slate-500">Chỉ đổi kiểu đi của Loại kho đã chọn; các loại khác của từng khách giữ nguyên. Áp cho lần lập kế hoạch điều vận sau.</p>
             </div>
           )}
+          {kind === 'max_tons' && (
+            <div className="space-y-1">
+              <div className="relative w-40">
+                <Input value={tons} inputMode="decimal" onChange={e => setTons(e.target.value)} placeholder="Không giới hạn" className="h-9 pr-10 text-right" />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">tấn</span>
+              </div>
+              {tonsBad && <p className="text-[11px] text-red-600">Nhập số tấn trong khoảng 0–100.</p>}
+              <p className="text-[11px] text-slate-500">Để trống rồi áp = bỏ giới hạn cho các khách đã chọn. Áp cho lần lập kế hoạch điều vận sau.</p>
+            </div>
+          )}
           {(kind === 'channel' || kind === 'date_rule') && (
             <p className="text-[11px] text-amber-700">
               Lưu xong áp NGAY cho cả đơn đang mở của kho đã bật "Áp %Date tự động" — dòng đã chốt tay giữ nguyên.
@@ -828,7 +858,8 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Huỷ</Button>
-          <Button disabled={saving || (kind === 'load_mode_cat' && !lmCat)} onClick={() => {
+          <Button disabled={saving || (kind === 'load_mode_cat' && !lmCat) || (kind === 'max_tons' && tonsBad)} onClick={() => {
+            if (kind === 'max_tons') return onApply({ max_vehicle_tons: tonsNum })
             if (kind === 'date_rule') return onApplyRule({ category: rCat || null, kind: rKind || null, value: rVal })
             if (kind === 'load_mode_cat') return onApply({ load_mode_by_category: { category: lmCat, mode: lmMode || null } })
             onApply(kind === 'channel' ? { channel: channel || null } : { warehouse_id: whId || null })

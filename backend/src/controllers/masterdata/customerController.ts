@@ -117,6 +117,15 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
   }
   // 26/09 (user: "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường"): kiểu đi RIÊNG theo Loại kho — THAY TRỌN map.
   // Loại không khai ⇒ theo kiểu chung ở trên. Khoá phải là Loại kho có trong danh mục (đổi tên loại cascade qua RPC).
+  // 26/09 (user: "một số NPP chỉ đi được xe tải trọng nhỏ"): tải trọng xe LỚN NHẤT vào được điểm giao; trống = không giới hạn
+  if (body.max_vehicle_tons !== undefined) {
+    if (body.max_vehicle_tons === null || body.max_vehicle_tons === '') patch.max_vehicle_tons = null
+    else {
+      const n = typeof body.max_vehicle_tons === 'number' ? body.max_vehicle_tons : Number(String(body.max_vehicle_tons).replace(',', '.'))
+      if (!Number.isFinite(n) || n <= 0 || n > 100) return bad('Tải trọng xe tối đa phải là số tấn trong khoảng 0–100 (để trống = không giới hạn)')
+      patch.max_vehicle_tons = Math.round(n * 100) / 100
+    }
+  }
   if (body.load_mode_by_category !== undefined) {
     const m = await parseLoadModeByCategory(body.load_mode_by_category)
     if ('err' in m) return bad(m.err)
@@ -391,7 +400,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
-    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category', 'max_vehicle_tons']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))

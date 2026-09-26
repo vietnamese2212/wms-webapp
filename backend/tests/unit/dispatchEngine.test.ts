@@ -536,3 +536,57 @@ describe('xe LỚN NHẤT trong họ xe trộn hai cách đo + chuyến vượt 
     expect(r.trips[0].vehicle_model?.id).toBe('T30')
   })
 })
+describe('luật 4b — xe kết hợp chỉ khi ghép (user 26/09: "được ghép thì mới lôi vào")', () => {
+  const AMB = model({ id: 'AMB', max_pallets: 10, serve_conditions: ['AMBIENT'] })
+  const COMBO = model({ id: 'COMBO', max_pallets: 10, serve_conditions: ['CHILL', 'AMBIENT'] })
+  const tar = [tariff('A', 'AMB', 'W1', 150_000), tariff('A', 'COMBO', 'W1', 100_000)]   // xe kết hợp RẺ hơn — bẫy của cước giả định
+  const combo = { ...params, combo_conditions: ['AMBIENT', 'CHILL'], allow_mix_categories: true }
+  const fg01 = (n: string) => od(n, 'W1', 8, { lines: [line(8, { category: 'FG01', condition: 'AMBIENT' })] })
+  it('chuyến chỉ FG01 (Thường) ⇒ xe THƯỜNG dù xe kết hợp rẻ hơn', () => {
+    const r = runDispatch(input([fg01('1')], { models: [AMB, COMBO], tariffs: tar, params: combo }))
+    expect(r.trips[0].vehicle_model?.id).toBe('AMB')
+  })
+  it('chuyến ghép FG01 + FG02 (cần hai mức) ⇒ xe kết hợp', () => {
+    const r = runDispatch(input([od('2', 'W1', 8, { lines: [line(5, { category: 'FG01', condition: 'AMBIENT' }), line(3, { category: 'FG02', condition: 'CHILL', material_code: 'X' })] })],
+      { models: [AMB, COMBO], tariffs: tar, params: combo }))
+    expect(r.trips[0].vehicle_model?.id).toBe('COMBO')
+  })
+  it('không xe thường nào có cước ⇒ rơi về xe kết hợp và NÓI lý do', () => {
+    const r = runDispatch(input([fg01('3')], { models: [AMB, COMBO], tariffs: [tariff('A', 'COMBO', 'W1', 100_000)], params: combo }))
+    expect(r.trips[0].vehicle_model?.id).toBe('COMBO')
+    expect(r.trips[0].carrier_reasons.join(' ')).toMatch(/xe kết hợp/)
+  })
+  it('không khai combo_conditions (dữ liệu/test cũ) ⇒ như trước: rẻ nhất', () => {
+    const r = runDispatch(input([fg01('4')], { models: [AMB, COMBO], tariffs: tar }))
+    expect(r.trips[0].vehicle_model?.id).toBe('COMBO')
+  })
+})
+describe('luật 10 — khách chỉ nhận xe tải trọng nhỏ (user 26/09: "một số NPP chỉ đi được xe tải trọng nhỏ")', () => {
+  const T5 = model({ id: 'T5', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 5, tariff_unit: 'PER_TRIP' })
+  const T15 = model({ id: 'T15', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP', underload_pct: 20 })   // ngưỡng thấp ⇒ 4 tấn vẫn "đủ tải" ⇒ không có giới hạn thì xe 15 tấn RẺ HƠN thắng
+  const tar = [tariff('A', 'T5', 'W1', 900_000), tariff('A', 'T15', 'W1', 800_000)]   // xe to rẻ hơn — phải bị loại vì khách không nhận
+  const tonOd = (n: string, t: number, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: t * 1000, material_code: `m${n}` })], ...over })
+  it('OD 4 tấn của khách ≤ 5 tấn ⇒ xe 5 tấn dù xe 15 tấn rẻ hơn; khách không giới hạn ⇒ xe 15 tấn', () => {
+    const r = runDispatch(input([tonOd('1', 4, { max_vehicle_tons: 5 })], { models: [T5, T15], tariffs: tar }))
+    expect(r.trips[0].vehicle_model?.id).toBe('T5')
+    const r2 = runDispatch(input([tonOd('2', 4)], { models: [T5, T15], tariffs: tar }))
+    expect(r2.trips[0].vehicle_model?.id).toBe('T15')
+  })
+  it('OD 12 tấn nhiều dòng của khách ≤ 5 tấn ⇒ tách theo xe 5 tấn, mọi chuyến ≤ 5 tấn', () => {
+    const lines = [4, 4, 4].map((t, i) => line(1, { kg: t * 1000, material_code: `L${i}` }))
+    const r = runDispatch(input([od('3', 'W1', 0, { load_mode: 'LOOSE', max_vehicle_tons: 5, lines })], { models: [T5, T15], tariffs: tar }))
+    expect(r.trips.length).toBe(3)
+    expect(r.trips.every(t => t.vehicle_model?.id === 'T5' && !t.oversize)).toBe(true)
+  })
+  it('ghép với khách khác ⇒ theo mức CHẶT NHẤT', () => {
+    const r = runDispatch(input([tonOd('4', 2, { max_vehicle_tons: 5 }), tonOd('5', 2)], { models: [T5, T15], tariffs: tar }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicle_model?.id).toBe('T5')
+    expect(r.trips[0].ods.find(o => o.od_number === '4')?.max_vehicle_tons).toBe(5)
+  })
+  it('không dòng xe nào ≤ mức khách ⇒ OD ra "không xếp được", nêu đúng lý do', () => {
+    const r = runDispatch(input([tonOd('6', 2, { max_vehicle_tons: 3 })], { models: [T5, T15], tariffs: tar }))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned[0].reason).toMatch(/chỉ nhận xe ≤ 3 tấn/)
+  })
+})

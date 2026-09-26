@@ -4528,6 +4528,8 @@ export interface Customer {
   load_mode: 'PALLET' | 'LOOSE'
   /** 26/09: kiểu đi RIÊNG theo Loại kho {FG01: 'PALLET', FG02: 'LOOSE'} — loại không khai ⇒ theo `load_mode` */
   load_mode_by_category?: Record<string, 'PALLET' | 'LOOSE'>
+  /** 26/09: tải trọng xe LỚN NHẤT vào được điểm giao (tấn) — null = không giới hạn */
+  max_vehicle_tons?: number | null
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
   // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
   rules: MasterRuleRow[]
@@ -4604,7 +4606,7 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category'>>
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category' | 'max_vehicle_tons'>>
 /** Thao tác hàng loạt "kiểu đi cho MỘT Loại kho" — gộp vào bảng kiểu đi từng khách (mode null = về kiểu chung). */
 export type CustomerBulkPatch = CustomerPatch | { load_mode_by_category: { category: string; mode: 'PALLET' | 'LOOSE' | null } }
 export function useSaveCustomer() {

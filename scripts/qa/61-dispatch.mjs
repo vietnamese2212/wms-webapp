@@ -652,6 +652,48 @@ try {
     const lBack = await api(`/masterdata/locations/${locRow.id}`, 'PUT', { storage_condition: null })
     check('12l. Gửi null → ô về "theo Loại kho"', lBack.s === 200 && lBack.j?.data?.storage_condition === LOC_COND0, `http=${lBack.s} col=${lBack.j?.data?.storage_condition}`)
   }
+
+  // ── [13] KHÁCH CHỈ NHẬN XE TẢI TRỌNG NHỎ (user 26/09: "một số NPP chỉ đi được xe tải trọng nhỏ") ─────────────────────
+  await cleanupTrips()
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(QA61OD8,QA61OD9)`).catch(() => {})
+  {
+    const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
+    const tBad = await Promise.all([0, 150, 'abc'].map(v => api(`/masterdata/customers/${c1.id}`, 'PUT', { max_vehicle_tons: v })))
+    const tOk = await api(`/masterdata/customers/${c1.id}`, 'PUT', { max_vehicle_tons: 3 })
+    check('13a. Khách hàng: tải trọng xe tối đa 0 / 150 / chữ → 400 · 3 tấn → 200 và lưu đúng', tBad.every(r => r.s === 400) && tOk.s === 200 && Number(tOk.j?.data?.max_vehicle_tons) === 3,
+      `bad=${tBad.map(r => r.s).join(',')} ok=${tOk.s} v=${tOk.j?.data?.max_vehicle_tons}`)
+    // Kho QA không có dòng xe pallet nào ≤ 3 tấn (xe pallet nhỏ nhất đang hoạt động là 4 pallet / 4 tấn giả định) ⇒ OD1 không xếp được, nói đúng lý do
+    const vms = (await api('/tms/vehicle-models')).j?.data?.items ?? []
+    const palParents = new Set((await restAll('VehicleType', 'select=id&is_pallet_truck=eq.true')).map(v => v.id))
+    const pal3 = vms.filter(m => m.is_active && palParents.has(m.parent_type_id) && Number(m.max_tons) > 0 && Number(m.max_tons) <= 3)
+    const p3 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const un1 = (p3.j?.data?.unplanned ?? []).find(u => u.od_number === OD[0])
+    check('13b. Khách ≤ 3 tấn mà không xe pallet nào ≤ 3 tấn ⇒ OD không lên xe to hơn: vào "không xếp được" kèm lý do nêu MỨC',
+      p3.s === 201 && (pal3.length ? true : (!!un1 && /chỉ nhận xe ≤ 3 tấn/.test(un1.reason) && !tripOfOd(p3.j?.data, OD[0]))),
+      `http=${p3.s} pallet≤3t=${pal3.length} un=${JSON.stringify(un1 ?? null)} trip=${tripOfOd(p3.j?.data, OD[0])?.detail?.vehicle_model?.name ?? '—'}`)
+    await cleanupTrips()
+    await api(`/masterdata/customers/${c1.id}`, 'PUT', { max_vehicle_tons: 6 })
+    const p6 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const P6 = p6.j?.data
+    const t6 = tripOfOd(P6, OD[0])
+    const vmOf = id => vms.find(m => m.id === id)
+    check('13c. Khách ≤ 6 tấn ⇒ OD lên dòng xe khai tải trọng ≤ 6 tấn (oracle đọc tấn của dòng xe từ danh mục), không lên xe QA 9 pallet chưa khai tấn',
+      p6.s === 201 && !!t6 && Number(vmOf(t6.vehicle_model_id)?.max_tons) > 0 && Number(vmOf(t6.vehicle_model_id)?.max_tons) <= 6 && t6.detail?.vehicle_model?.sap_code !== SAP
+      && rowOf(P6, OD[0])?.max_vehicle_tons != null && Number(rowOf(P6, OD[0]).max_vehicle_tons) === 6,
+      `http=${p6.s} ${p6.j?.error?.message ?? ''} vm=${t6?.detail?.vehicle_model?.name} tấn=${vmOf(t6?.vehicle_model_id)?.max_tons} snap=${rowOf(P6, OD[0])?.max_vehicle_tons}`)
+    // Người kéo OD của khách giới hạn lên xe to hơn ⇒ không chặn (nháp) nhưng cảnh báo nêu khách + mức
+    const big = (P6?.trips ?? []).find(t => t.id !== t6?.id && t.detail?.vehicle_model?.sap_code === SAP)
+    if (big && t6) {
+      const mv = await api(`/tms/dispatch/plans/${P6.id}/move`, 'POST', { ids: [rowOf(P6, OD[0]).id], to: 'trip', to_trip_id: big.id })
+      const bigNow = (await planOf(P6.id))?.trips?.find(t => t.id === big.id)
+      check('13d. Kéo OD của khách ≤ 6 tấn lên xe QA (chưa khai tấn) ⇒ cho thả, xe cảnh báo "chỉ nhận xe ≤ 6 tấn"',
+        mv.s === 200 && (bigNow?.ods ?? []).some(o => o.od_number === OD[0]) && /chỉ nhận xe ≤ 6 tấn/.test((bigNow?.detail?.warnings ?? []).join(' ')),
+        `http=${mv.s} ${mv.j?.error?.message ?? ''} warn=${(bigNow?.detail?.warnings ?? []).join(' | ').slice(0, 160)}`)
+    } else check('13d. Fixture: cần một xe QA khác để kéo OD sang', false, `trips=${(P6?.trips ?? []).map(t => t.detail?.vehicle_model?.sap_code).join(',')}`)
+    const bT = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { max_vehicle_tons: null } })
+    const cNow = (await restAll('Customer', `select=max_vehicle_tons&id=eq.${c1.id}`))[0]
+    check('13e. Hàng loạt "Tải trọng xe tối đa" để trống → bỏ giới hạn', bT.s === 200 && cNow?.max_vehicle_tons == null, `http=${bT.s} v=${cNow?.max_vehicle_tons}`)
+  }
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

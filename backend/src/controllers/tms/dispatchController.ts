@@ -119,7 +119,7 @@ async function loadWarehouse(id: string): Promise<WhRow | null> {
 async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
   const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes] = await Promise.all([
     db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct, max_drops, storage_conditions, is_active, dispatch_use').eq('is_active', true).order('sap_code'),
-    db.from('VehicleType').select('id, name'),
+    db.from('VehicleType').select('id, name, is_pallet_truck'),
     wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
       .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
       .eq('from_warehouse_id', whId).eq('is_active', true).in('ward_code', c).order('id')) as Promise<EngineTariff[]> : Promise.resolve([] as EngineTariff[]),
@@ -130,7 +130,9 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     db.from('carrier_share_target').select('transport_company_id, share_pct, basis, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
   ])
   for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
-  const vtName = new Map(((vtRes.data ?? []) as { id: string; name: string }[]).map(v => [v.id, v.name]))
+  const vtRows = (vtRes.data ?? []) as { id: string; name: string; is_pallet_truck: boolean | null }[]
+  const vtName = new Map(vtRows.map(v => [v.id, v.name]))
+  const vtPallet = new Map(vtRows.map(v => [v.id, v.is_pallet_truck === true]))
   const models: EngineModel[] = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | string | null; max_drops: number | null; storage_conditions: string[] | null; is_active: boolean; dispatch_use: string | null }[]).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
     parent_type_name: m.parent_type_id ? (vtName.get(m.parent_type_id) ?? null) : null,
@@ -140,6 +142,8 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     underload_pct: numOrNull(m.underload_pct), max_drops: numOrNull(m.max_drops), is_active: m.is_active,
     serve_conditions: (m.storage_conditions ?? []).filter(Boolean),   // rỗng = chở được mọi điều kiện
     dispatch_use: m.dispatch_use === 'TRANSFER' ? 'TRANSFER' : 'ALL',   // luật 8: container chỉ trung chuyển giữa kho
+    // họ xe pallet = cha đánh dấu "xe chở hàng đã lên pallet" (Cài đặt TMS → Loại xe) — xe SCA đo bằng pallet vẫn là xe xá
+    pallet_truck: m.parent_type_id ? (vtPallet.get(m.parent_type_id) ?? false) : undefined,
   }))
   const allocations = ((allocRes.data ?? []) as EngineAllocation[]).map(a => ({ ...a, priority: Number(a.priority) }))
   const shareRows = effectiveAt(((shareRes.data ?? []) as (EngineShareTarget & { effective_from: string; effective_to: string | null; is_active: boolean })[]), day)

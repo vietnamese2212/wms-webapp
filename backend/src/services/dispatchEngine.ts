@@ -18,6 +18,8 @@
  *  6. ĐVVT: ưu tiên khu vực của phường xa nhất (WARD trước REGION, theo priority) → ĐVVT đang DƯỚI tỷ trọng kỳ → cước thấp
  *     nhất → mã ĐVVT (ổn định). Tỷ trọng cộng dồn NGAY trong lượt ghép để chuyến sau thấy chuyến trước.
  *  7. PALLET / XÁ (25/09): khách đi pallet ⇒ họ xe pallet, tối đa `pallet_max_stops` khách; khách đi xá ⇒ họ xe tấn.
+ *     Họ xe pallet = dòng xe có cha "xe chở hàng đã lên pallet" (26/09) — xe SCA / kết hợp nóng-lạnh KHÔNG thuộc họ này dù
+ *     đo sức chứa bằng pallet. 7b: khách pallet có hàng cần điều kiện mà xe pallet không phục vụ (lạnh) ⇒ OD đi xe xá/SCA.
  *  8. DÒNG XE DÙNG CHO VIỆC GÌ (25/09): dòng xe khai `dispatch_use = TRANSFER` (container) CHỈ nhận chuyến mà mọi OD đều
  *     là trung chuyển giữa các kho của mình (`isTransferOd`) — giao khách không bao giờ lên container.
  *  Tie-break chung: cước thấp → ít điểm giao → ổn định (cùng input ra cùng output — mọi tập đều sort trước khi duyệt).
@@ -63,6 +65,9 @@ export interface EngineModel {
   is_active: boolean
   /** Luật 8 (25/09): dòng xe dùng cho việc gì — TRANSFER = CHỈ trung chuyển giữa các kho (container). undefined = ALL. */
   dispatch_use?: DispatchUse
+  /** Cha của dòng xe (`VehicleType.is_pallet_truck`) là "xe chở hàng đã lên pallet" (26/09, user: "đi xe pallet mà nhét cả xe
+   *  SCA vào xe pallet là sai"). Có giá trị thì QUYẾT họ xe pallet/xá; undefined = suy theo cách đo sức chứa (dữ liệu/test cũ). */
+  pallet_truck?: boolean
 }
 export type DispatchUse = 'ALL' | 'TRANSFER'
 export interface EngineCarrier { id: string; code: string; name: string; tender_required?: boolean }   // tender_required: ĐVVT cần phản hồi khi chào chuyến (controller đọc lúc Xác nhận, engine không dùng)
@@ -211,8 +216,10 @@ export function fits(m: EngineModel, pallets: number | null, tons: number | null
   if (c.tons != null && tons != null && tons > c.tons + 1e-9) return false
   return true
 }
-/** Họ dòng xe: xe khai theo PALLET = xe pallet; xe khai theo TẤN (xe tải, xe xá, cont) = xe xá. */
-export function modeOfModel(m: Pick<EngineModel, 'capacity_mode' | 'max_pallets'>): LoadMode {
+/** Họ dòng xe theo DÒNG XE CHA (cờ "xe chở hàng đã lên pallet"): xe SCA / xe kết hợp nóng-lạnh đo sức chứa bằng pallet
+ *  vẫn KHÔNG phải xe pallet. Thiếu cờ (dữ liệu/test cũ) ⇒ xe khai theo PALLET = xe pallet, theo TẤN = xe xá. */
+export function modeOfModel(m: Pick<EngineModel, 'capacity_mode' | 'max_pallets' | 'pallet_truck'>): LoadMode {
+  if (m.pallet_truck !== undefined) return m.pallet_truck ? 'PALLET' : 'LOOSE'
   return m.capacity_mode === 'TON' || !(Number(m.max_pallets) > 0) ? 'LOOSE' : 'PALLET'
 }
 /** Dòng xe có thuộc họ của kiểu đi này không (kiểu đi chưa phân ⇒ mọi họ, hành vi cũ). */
@@ -467,6 +474,15 @@ export function runDispatch(input: EngineInput): DispatchResult {
 
   // ── Lọc + tách đơn vị xếp ──
   const units: Unit[] = []
+  // Luật 7b (26/09): khách đi PALLET mà hàng cần điều kiện bảo quản KHÔNG xe pallet nào phục vụ (hàng lạnh — xe pallet là xe
+  // thường) ⇒ OD đó đi xe XÁ (họ có xe SCA / kết hợp phục vụ được), kèm ghi chú trên chuyến. Không xe xá nào phục vụ nốt
+  // thì giữ kiểu Pallet để cảnh báo của luật 4 nói đúng nguyên nhân (thiếu xe lạnh), đừng đổi kiểu cho có.
+  const toLoose = new Set<string>()
+  const fleetServes = (o: EngineOd, mode: LoadMode) => { const c = condsOf(o.lines); return fleetFor(models, [{ ...o, load_mode: mode }]).some(m => servesConditions(m, c)) }
+  for (const [i, o0] of ods.entries()) {
+    if (o0.load_mode !== 'PALLET' || !condsOf(o0.lines).length || fleetServes(o0, 'PALLET') || !fleetServes(o0, 'LOOSE')) continue
+    ods[i] = { ...o0, load_mode: 'LOOSE' }; toLoose.add(o0.od_number)
+  }
   for (const od of ods) {
     if (!LOADABLE.has(od.flow)) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Phân loại ${od.flow} không lên xe` }); continue }
     if (!od.lines.length) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: 'OD không có dòng hàng' }); continue }
@@ -540,7 +556,10 @@ export function runDispatch(input: EngineInput): DispatchResult {
       ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), load_mode: u.od.load_mode ?? null, transfer: isTransferOd(u.od) })),
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
-      warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : [])],
+      warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : []),
+        ...(() => { const sw = uniq(b.units.filter(u => toLoose.has(u.od.od_number)).map(u => u.od.od_number)); return sw.length
+          ? [`${sw.length} OD khách đi Pallet có hàng ${a.conds.map(c => input.condition_labels?.[c] ?? c).join(' + ')} — không xe pallet nào chở được, máy xếp lên ${a.model ? `${a.model.name}${a.model.parent_type_name ? ` (${a.model.parent_type_name})` : ''}` : 'xe xá'} · OD:${sw.slice(0, 3).join(', ')}${sw.length > 3 ? '…' : ''}`]
+          : [] })()],
       merge_hint: null,
     })
     seq++

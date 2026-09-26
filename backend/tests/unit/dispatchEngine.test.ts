@@ -409,3 +409,24 @@ describe('luật 8 — dòng xe dùng cho việc gì (user 25/09: "container ch�
     expect(r2.trips[0].vehicle_model?.id).toBe('CONT')
   })
 })
+describe('luật 7 — họ xe pallet theo dòng xe CHA (user 26/09: "đi xe pallet mà nhét cả xe SCA vào xe pallet là sai")', () => {
+  const COLD = 'CHILL'
+  const P16 = model({ id: 'P16', max_pallets: 16, max_tons: 16, pallet_truck: true, serve_conditions: ['AMBIENT'] })
+  const MIX16 = model({ id: 'MIX16', parent_type_name: 'XE SCA', max_pallets: 16, max_tons: 16, pallet_truck: false, serve_conditions: ['CHILL', 'AMBIENT'] })
+  const coldOd = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'PALLET', lines: [line(5, { condition: COLD })], ...over })
+  it('xe kết hợp nóng/lạnh đo bằng pallet mà cha là XE SCA ⇒ KHÔNG phải xe pallet: khách pallet hàng thường chỉ lên P16', () => {
+    const r = runDispatch(input([od('1', 'W1', 5, { load_mode: 'PALLET', lines: [line(5, { condition: 'AMBIENT' })] })], { models: [P16, MIX16], tariffs: [] }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicle_model?.id).toBe('P16'); expect(r.trips[0].load_mode).toBe('PALLET')
+  })
+  it('khách pallet có hàng LẠNH, xe pallet không chở lạnh ⇒ OD đi xe SCA (xá) kèm ghi chú, không bị bỏ ra ngoài', () => {
+    const r = runDispatch(input([coldOd('2')], { models: [P16, MIX16], tariffs: [] }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips[0].vehicle_model?.id).toBe('MIX16'); expect(r.trips[0].load_mode).toBe('LOOSE')
+    expect(r.trips[0].warnings.join(' ')).toMatch(/khách đi Pallet có hàng .*không xe pallet nào chở được, máy xếp lên MIX16 \(XE SCA\)/)
+  })
+  it('không có xe SCA nào chở lạnh ⇒ giữ kiểu Pallet (luật 4 nói đúng nguyên nhân thiếu xe lạnh), không đổi kiểu cho có', () => {
+    const r = runDispatch(input([coldOd('3')], { models: [P16], tariffs: [] }))
+    expect(r.trips.every(t => t.load_mode !== 'LOOSE')).toBe(true)
+  })
+})

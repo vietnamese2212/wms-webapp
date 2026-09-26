@@ -360,11 +360,38 @@ export default function Dispatch() {
                     <div><b>{plan.warehouse?.name}</b> · giao {formatDate(plan.plan_date)}</div>
                     <div>Lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</div>
                     <div>Xe xá ≤ {plan.params.max_drops ?? 3} điểm giao · xe pallet ≤ {plan.params.pallet_max_stops ?? 1} khách · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
+                    <div>{plan.params.allow_mix_categories === false ? 'Không ghép nhiều Loại kho trên một chuyến' : 'Cho ghép nhiều Loại kho trên một chuyến'}{plan.params.follow_categories?.length ? ` · đi kèm đơn: ${plan.params.follow_categories.join(', ')}` : ''}</div>
                     <div>Pool {nf(plan.params.pool_ods)} OD · {nf(plan.params.in_plan)} OD đã có trong Kế hoạch xuất</div>
                     <div className="text-slate-500">Tham số theo kho: Cài đặt WMS → Kho → "XUẤT — Điều vận".</div>
                   </div>} />
                 </span>
               )}
+              {/* KHAI THIẾU (26/09, user: "không khai báo đúng thì FG02 có thể dùng container mất") — máy xếp sai mà không lỗi
+                  nào nổ, nên phải nói ra; gọn thành MỘT chip, chi tiết trong ⓘ để bàn ghép xe vẫn rộng */}
+              {plan && (() => {
+                const g = plan.params.config_gaps
+                const nCond = g?.no_condition.reduce((a, x) => a + x.ods, 0) ?? 0
+                const nCat = g?.no_category.ods ?? 0
+                if (!nCond && !nCat) return null
+                return (
+                  <span className="inline-flex items-center gap-0.5 shrink-0 rounded-md bg-amber-100 px-2 h-9 sm:h-7 text-[11px] font-medium text-amber-800">
+                    <AlertTriangle className="h-3 w-3" />Khai thiếu
+                    <InfoTip tip={<div className="space-y-1.5 text-xs">
+                      {!!g?.no_condition.length && <div>
+                        <b>Loại kho chưa khai điều kiện bảo quản</b> — máy coi hàng loại này đi <b>xe nào cũng được</b> (kể cả xe lạnh):
+                        <ul className="list-disc pl-4">{g.no_condition.map(x => <li key={x.category}>{x.category}: {nf(x.ods)} OD</li>)}</ul>
+                        Khai ở Cài đặt WMS → Loại kho → Điều kiện bảo quản; POSM đi theo đơn thì bật "Đi kèm đơn khi điều vận".
+                      </div>}
+                      {nCat > 0 && <div>
+                        <b>{nf(nCat)} OD có mã hàng chưa khai Loại kho</b> — không biết điều kiện bảo quản, không tách được theo loại:
+                        <div className="font-mono text-[10px] text-slate-500 break-all">{g!.no_category.materials.slice(0, 12).join(', ')}{g!.no_category.materials.length > 12 ? '…' : ''}</div>
+                        Khai ở Cấu hình → Mã hàng.
+                      </div>}
+                      <div className="text-slate-500">Khai xong bấm "Lập lại" để máy xếp theo cấu hình mới.</div>
+                    </div>} />
+                  </span>
+                )
+              })()}
               <ActionCluster items={actionItems} mobileInline />
             </div>
           </div>

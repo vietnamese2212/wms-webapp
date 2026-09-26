@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
+  resolveLoadMode, mainCatsOf, lineConditions,
   type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
@@ -428,5 +429,77 @@ describe('luật 7 — họ xe pallet theo dòng xe CHA (user 26/09: "đi xe pal
   it('không có xe SCA nào chở lạnh ⇒ giữ kiểu Pallet (luật 4 nói đúng nguyên nhân thiếu xe lạnh), không đổi kiểu cho có', () => {
     const r = runDispatch(input([coldOd('3')], { models: [P16], tariffs: [] }))
     expect(r.trips.every(t => t.load_mode !== 'LOOSE')).toBe(true)
+  })
+})
+describe('luật 9 — không trộn Loại kho trên một chuyến (user 26/09: "FG01 đi FG01, FG02 đi FG02, muốn đi chung phải bật")', () => {
+  // xe khai rỗng điều kiện = chở mọi mức ⇒ ca này CHỈ còn luật 9 quyết tách hay gộp
+  const noMix = { ...params, allow_mix_categories: false, follow_categories: ['PM01'] }
+  const fg = (n: string, cat: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 3, { lines: [line(3, { category: cat })], ...over })
+  it('FG01 + FG02 cùng phường · kho KHÔNG cho trộn ⇒ HAI chuyến, mỗi chuyến một loại', () => {
+    const r = runDispatch(input([fg('1', 'FG01'), fg('2', 'FG02')], { params: noMix }))
+    expect(r.trips).toHaveLength(2)
+    expect(r.trips.map(t => t.categories.join('+')).sort()).toEqual(['FG01', 'FG02'])
+  })
+  it('kho BẬT cho trộn ⇒ một chuyến (hành vi trước 26/09)', () => {
+    const r = runDispatch(input([fg('1', 'FG01'), fg('2', 'FG02')], { params: { ...noMix, allow_mix_categories: true } }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].categories).toEqual(['FG01', 'FG02'])
+  })
+  it('POSM "đi theo đơn": OD chỉ có POSM của CÙNG khách ké vào chuyến FG01 của khách đó, không đẻ chuyến riêng', () => {
+    const r = runDispatch(input([fg('1', 'FG01', { ship_to_code: 'K1' }), od('2', 'W1', 1, { ship_to_code: 'K1', lines: [line(1, { category: 'PM01' })] })], { params: noMix }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['1', '2'])
+  })
+  it('POSM ké ưu tiên chuyến của chính khách đó khi cùng phường có cả chuyến FG01 lẫn FG02', () => {
+    const r = runDispatch(input([fg('1', 'FG01', { ship_to_code: 'K1' }), fg('2', 'FG02', { ship_to_code: 'K2' }), od('3', 'W1', 1, { ship_to_code: 'K2', lines: [line(1, { category: 'PM01' })] })], { params: noMix }))
+    expect(r.trips).toHaveLength(2)
+    expect(r.trips.find(t => t.ods.some(o => o.od_number === '3'))?.categories).toContain('FG02')
+  })
+  it('OD FG01 kèm dòng POSM KHÔNG bị coi là trộn loại (không cảnh báo)', () => {
+    const r = runDispatch(input([od('1', 'W1', 3, { lines: [line(2, { category: 'FG01' }), line(1, { category: 'PM01', material_code: 'P' })] })], { params: noMix }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].warnings.join(' ')).not.toMatch(/nhiều Loại kho/)
+  })
+  it('một OD tự chứa FG01 + FG02 ⇒ không tách được OD: một chuyến kèm cảnh báo nêu số OD', () => {
+    const r = runDispatch(input([od('9', 'W1', 3, { lines: [line(2, { category: 'FG01' }), line(1, { category: 'FG02', material_code: 'X' })] })], { params: noMix }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].warnings.join(' ')).toMatch(/1 OD chứa nhiều Loại kho \(FG01 \+ FG02\).*OD:9/)
+  })
+  it('POSM riêng lẻ không có chuyến nào cùng cụm ⇒ vẫn đi chuyến riêng (không bị bỏ ra ngoài)', () => {
+    const r = runDispatch(input([od('5', 'W2', 1, { lines: [line(1, { category: 'PM01' })] })], { params: noMix }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips).toHaveLength(1)
+  })
+})
+describe('kiểu đi theo KHÁCH × LOẠI KHO (user 26/09: "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường")', () => {
+  it('loại chính có khai ⇒ theo khai; không khai ⇒ kiểu chung của khách; chưa khai gì ⇒ Xá', () => {
+    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET', FG02: 'LOOSE' }, ['FG01'])).toBe('PALLET')
+    expect(resolveLoadMode('PALLET', { FG01: 'PALLET', FG02: 'LOOSE' }, ['FG02'])).toBe('LOOSE')
+    expect(resolveLoadMode('PALLET', { FG01: 'LOOSE' }, ['FG02'])).toBe('PALLET')
+    expect(resolveLoadMode(null, {}, ['FG01'])).toBe('LOOSE')
+  })
+  it('OD hai loại chính khai hai kiểu KHÁC nhau hoặc chỉ khai một loại ⇒ rơi về kiểu chung; hai loại cùng kiểu ⇒ theo khai', () => {
+    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET', FG02: 'LOOSE' }, ['FG01', 'FG02'])).toBe('LOOSE')
+    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET' }, ['FG01', 'FG02'])).toBe('LOOSE')
+    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET', FG02: 'PALLET' }, ['FG01', 'FG02'])).toBe('PALLET')
+  })
+  it('mainCatsOf bỏ loại đi kèm + dòng chưa khai loại', () => {
+    expect(mainCatsOf([{ category: 'PM01' }, { category: 'FG01' }, { category: null }, { category: 'FG01' }], ['PM01'])).toEqual(['FG01'])
+  })
+})
+describe('ĐK bảo quản theo VỊ TRÍ (user 26/09: "kho RM01 có cả kho lạnh, thường — mặc định theo loại kho")', () => {
+  it('mã không nằm ở ô khai riêng ⇒ theo Loại kho; nằm ở ô lạnh ⇒ lạnh; nằm cả ô lạnh lẫn ô theo loại ⇒ cả hai', () => {
+    expect(lineConditions('AMBIENT', undefined)).toEqual(['AMBIENT'])
+    expect(lineConditions(null, [])).toEqual([])
+    expect(lineConditions('AMBIENT', ['CHILL'])).toEqual(['CHILL'])
+    expect(lineConditions('AMBIENT', [null, 'CHILL'])).toEqual(['AMBIENT', 'CHILL'])
+    expect(lineConditions(null, [null])).toEqual([])
+  })
+  it('dòng hàng mang ĐK theo vị trí (conditions) THAY ĐK theo loại ⇒ máy chọn xe lạnh dù Loại kho là hàng thường', () => {
+    const AMB = model({ id: 'AMB', max_pallets: 10, serve_conditions: ['AMBIENT'] })
+    const COLD = model({ id: 'COLD', max_pallets: 10, serve_conditions: ['CHILL'] })
+    const r = runDispatch(input([od('1', 'W1', 3, { lines: [line(3, { category: 'RM01', condition: 'AMBIENT', conditions: ['CHILL'] })] })], { models: [AMB, COLD], tariffs: [] }))
+    expect(r.trips[0].vehicle_model?.id).toBe('COLD')
+    expect(r.trips[0].conditions).toEqual(['CHILL'])
   })
 })

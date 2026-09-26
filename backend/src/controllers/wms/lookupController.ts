@@ -43,6 +43,8 @@ function sanitizeMeta(raw: unknown, type?: string): LookupMeta | null {
   // Loại kho khai điều kiện bảo quản của hàng thuộc loại đó; chuỗi rỗng = gỡ khai (về "không ràng buộc").
   if (typeof o.storage_condition === 'string') out.storage_condition = o.storage_condition.trim() || null
   else if (o.storage_condition === null) out.storage_condition = null
+  // Điều vận (26/09): hàng loại này đi kèm đơn (POSM) — không tính khi tách chuyến theo Loại kho
+  if (typeof o.dispatch_follow === 'boolean') out.dispatch_follow = o.dispatch_follow
   return out
 }
 
@@ -342,11 +344,13 @@ export async function deleteLookup(req: Request, res: Response) {
   if (lk.type === 'storage_condition' && lk.value) {
     const v = lk.value as string
     const cats = [...(await getStorageConditionByCategory()).entries()].filter(([, c]) => c === v).map(([cat]) => cat)
-    const { count: veh } = await supabase.from('vehicle_model')
-      .select('id', { count: 'exact', head: true }).contains('storage_conditions', [v])
-    const used = cats.length + (veh ?? 0)
+    const [{ count: veh }, { count: locs }] = await Promise.all([
+      supabase.from('vehicle_model').select('id', { count: 'exact', head: true }).contains('storage_conditions', [v]),
+      supabase.from('Location').select('id', { count: 'exact', head: true }).eq('storage_condition', v),   // 26/09: ô khai riêng ĐK
+    ])
+    const used = cats.length + (veh ?? 0) + (locs ?? 0)
     if (used > 0) {
-      const parts = [cats.length ? `${cats.length} Loại kho (${cats.join(', ')})` : '', veh ? `${veh} dòng xe` : ''].filter(Boolean)
+      const parts = [cats.length ? `${cats.length} Loại kho (${cats.join(', ')})` : '', veh ? `${veh} dòng xe` : '', locs ? `${locs} vị trí` : ''].filter(Boolean)
       return fail(res, `Điều kiện bảo quản "${v}" đang được dùng ở ${parts.join(' · ')} — gỡ khai ở đó trước khi xoá.`, 409)
     }
   }

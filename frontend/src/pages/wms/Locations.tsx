@@ -6,7 +6,8 @@ import { useMobileTabs } from '@/hooks/useMobileSurface'
 const WarehouseMap = lazy(() => import('./WarehouseMap'))
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers, Map as MapIcon, List } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers, Map as MapIcon, List, Thermometer } from 'lucide-react'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { toast } from '@/components/ui/use-toast'
 import { formatDateTime } from '@/utils/formatters'
@@ -35,7 +36,7 @@ import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import {
   useLocationsPaged, useLocationsSummary, locationsQp, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
-  useUploadLocationsExcel,
+  useUploadLocationsExcel, useStorageConditions, conditionLabel,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
@@ -65,6 +66,7 @@ interface RealLocation {
   is_pick_face:       boolean   // vị trí NHẶT LẺ (với tay tới được) — nguồn của tính năng Fill hàng
   slot_no_in:         boolean | null   // KHÔNG đưa hàng vào (kho tạm/ngoài đường) — mất gợi ý cất + Slotting kéo hàng ra
   slot_no_out:        boolean | null   // KHÔNG lấy hàng đi (hàng kẹt) — Slotting loại khỏi nguồn
+  storage_condition?: string | null     // ĐK bảo quản RIÊNG của ô (26/09) — null = theo Loại kho của hàng nằm ở đó
   warehouse:          { id: string; code: string; name: string }
   created_at?:        string
   updated_at?:        string
@@ -81,12 +83,13 @@ interface WhWithCount {
   _count:     { locations: number }
 }
 
-const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '', max_materials: '' }
+const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '', max_materials: '', storage_condition: '' }
 
 const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',   label: '',                w: 34 },
   { id: 'wh',      label: 'Kho',             w: 160 },
   { id: 'cat',     label: 'Loại kho',        w: 120 },
+  { id: 'cond',    label: 'ĐK bảo quản',     w: 130 },
   { id: 'zone',    label: 'Khu vực kho',     w: 150 },
   { id: 'loc',     label: 'Vị trí',          w: 160 },
   { id: 'pick',    label: 'Nhặt lẻ',         w: 80 },
@@ -190,7 +193,7 @@ export default function Locations() {
     }
   }, [warehouseId, user, setLocationsFilter])
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('locations_col_widths', LOC_COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('locations_col_widths_v2', LOC_COL_DEFAULTS)
   const [dense, setDense] = useState(() => localStorage.getItem('locations_density') !== 'comfortable')
   function toggleDensity() {
     setDense(d => { localStorage.setItem('locations_density', d ? 'comfortable' : 'compact'); return !d })
@@ -212,7 +215,8 @@ export default function Locations() {
   // (vị trí nhặt lẻ) | 'noin' (không đưa hàng vào — kho tạm/ngoài đường, dùng cho quy tắc cất hàng)
   // 'maxmat' KHÔNG nằm trong BULK_MODES: 4 chế độ kia là cờ boolean (bật/tắt), còn đây là
   // khai một CON SỐ (hoặc xoá số = không giới hạn) nên dialog + payload đi nhánh riêng.
-  const [bulkMode,      setBulkMode]      = useState<BulkMode | 'maxmat' | null>(null)
+  const [bulkMode,      setBulkMode]      = useState<BulkMode | 'maxmat' | 'cond' | null>(null)
+  const [condInput,     setCondInput]     = useState('')   // khai ĐK bảo quản hàng loạt ('' = về theo Loại kho)
   const [maxMatInput,   setMaxMatInput]   = useState('')
   // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
   // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
@@ -226,6 +230,14 @@ export default function Locations() {
   // Data
   const { data: whTypes = [] }          = useScopedWhTypes()
   const categoryOptions                  = whTypes.map(t => t.value)
+  // ĐK bảo quản (26/09): ô khai RIÊNG thắng; để trống = theo Loại kho của hàng nằm ở đó (hiện mức của loại để đọc được ngay)
+  const { data: storageConds = [] }      = useStorageConditions()
+  const condLabelOf = (code: string) => conditionLabel(storageConds.find(c => c.value === code), code)
+  const catCondText = (cats: string[] | null) => {
+    const labels = [...new Set((cats ?? []).map(c => whTypes.find(t => t.value === c)?.meta?.storage_condition).filter((x): x is string => !!x))].map(condLabelOf)
+    return labels.length ? labels.join(' · ') : 'chưa khai'
+  }
+  const condOptions = [{ value: '', label: 'Theo Loại kho (mặc định)' }, ...storageConds.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: filterZones = [] }      = useWarehouseZones(warehouseId || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
@@ -275,10 +287,26 @@ export default function Locations() {
     }
   }
 
+  // Khai ĐK bảo quản hàng loạt (26/09). '' = về theo Loại kho — gửi null TƯỜNG MINH (vắng field = không đụng)
+  async function applyBulkCond() {
+    setBulkErr('')
+    try {
+      const v = condInput || null
+      await bulkFlag.mutateAsync(allFiltered
+        ? { by_filter: true, filter: listParams ?? {}, storage_condition: v }
+        : { ids: [...selected], storage_condition: v })
+      setBulkMode(null)
+      setSelected(new Set())
+      setAllFiltered(false)
+    } catch (e: unknown) {
+      setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
+    }
+  }
+
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      const cờ = { [BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].field]: flag }
+      const cờ = { [BULK_MODES[bulkMode === 'maxmat' || bulkMode === 'cond' || !bulkMode ? 'stocktake' : bulkMode].field]: flag }
       await bulkFlag.mutateAsync(allFiltered
         // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
         ? { by_filter: true, filter: listParams ?? {}, ...cờ }
@@ -357,6 +385,7 @@ export default function Locations() {
       shelf:        loc.shelf,
       max_pallets:  String(loc.max_pallets),
       max_materials: loc.max_materials != null ? String(loc.max_materials) : '',
+      storage_condition: loc.storage_condition ?? '',
     })
     setEditIsActive(loc.is_active)
     setEditRequiresStocktake(loc.requires_stocktake ?? false)
@@ -387,6 +416,7 @@ export default function Locations() {
           shelf:        form.shelf.trim() || undefined,
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
           max_materials: form.max_materials.trim() ? Number(form.max_materials) : null,
+          storage_condition: form.storage_condition || null,
         })
       } else if (editing) {
         // Chỉ gửi Khu/Dãy/Tầng khi ĐỔI (ô trống) — gửi kèm khi không đổi là bắt BE kiểm khu/tồn vô ích
@@ -401,6 +431,7 @@ export default function Locations() {
           // Ô trống phải gửi `null` TƯỜNG MINH = "gỡ giới hạn". Gửi `undefined` thì BE hiểu là
           // "đừng đụng cột này" ⇒ xoá số trong ô rồi bấm Lưu sẽ không có tác dụng gì.
           max_materials:      form.max_materials.trim() ? Number(form.max_materials) : null,
+          storage_condition:  form.storage_condition || null,   // '' = về theo Loại kho — gửi null TƯỜNG MINH
           is_active:          editIsActive,
           requires_stocktake: editRequiresStocktake,
           is_pick_face:       editIsPickFace,
@@ -513,7 +544,7 @@ export default function Locations() {
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets,
-      'Số mã tối đa': l.max_materials ?? '', 'Đang dùng': l.used_slots,
+      'Số mã tối đa': l.max_materials ?? '', 'ĐK bảo quản': l.storage_condition ? condLabelOf(l.storage_condition) : 'Theo loại kho', 'Đang dùng': l.used_slots,
       'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '',
       'Không đưa hàng vào': l.slot_no_in ? 'x' : '', 'Không lấy hàng đi': l.slot_no_out ? 'x' : '',
       'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
@@ -682,6 +713,14 @@ export default function Locations() {
                         {loc.categories?.length ? loc.categories.join(', ') : <span className="text-slate-400">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">
+                        {loc.storage_condition
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200"
+                                  title="ĐK bảo quản khai riêng cho ô này — hàng nằm ở đây điều vận đi xe phục vụ đúng mức này">
+                              <Thermometer className="h-2.5 w-2.5" />{condLabelOf(loc.storage_condition)}
+                            </span>
+                          : <span className="text-slate-400" title="Để trống = theo ĐK bảo quản của Loại kho của hàng nằm ở ô">Theo loại · {catCondText(loc.categories)}</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
                         <span className="font-semibold">{loc.sub_code}</span>
                         {showSubName && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
                       </TableCell>
@@ -790,6 +829,7 @@ export default function Locations() {
             <div className="px-3 py-3 space-y-2 text-xs">
               <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{selectedLoc.warehouse?.name ?? '—'}</span></div>
               <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{selectedLoc.categories?.length ? selectedLoc.categories.join(', ') : '—'}</span></div>
+              <div><span className="text-slate-400">ĐK bảo quản:</span> <span className="font-medium">{selectedLoc.storage_condition ? `${condLabelOf(selectedLoc.storage_condition)} (khai riêng)` : `Theo loại kho — ${catCondText(selectedLoc.categories)}`}</span></div>
               <div><span className="text-slate-400">Khu vực:</span> <span className="font-medium">{selectedLoc.sub_code}{selectedLoc.sub_name && selectedLoc.sub_name !== selectedLoc.sub_code ? ` — ${selectedLoc.sub_name}` : ''}</span></div>
               <div><span className="text-slate-400">Loại vị trí:</span> <span className="font-medium">{selectedLoc.sub_type ?? '—'}</span></div>
               <div><span className="text-slate-400">Hàng / Tầng:</span> <span className="font-mono font-semibold">{selectedLoc.row}{selectedLoc.shelf ? ` / ${selectedLoc.shelf}` : ''}</span></div>
@@ -851,6 +891,10 @@ export default function Locations() {
           <button onClick={() => { setBulkErr(''); setMaxMatInput(''); setBulkMode('maxmat') }}
             className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200 transition-colors">
             <Layers className="h-3.5 w-3.5" />Số mã tối đa
+          </button>
+          <button onClick={() => { setBulkErr(''); setCondInput(''); setBulkMode('cond') }}
+            className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
+            <Thermometer className="h-3.5 w-3.5" />ĐK bảo quản
           </button>
           <button onClick={() => { setSelected(new Set()); setAllFiltered(false) }} className="text-slate-400 hover:text-white ml-1">
             <X className="h-3.5 w-3.5" />
@@ -1004,6 +1048,23 @@ export default function Locations() {
                 value={form.max_materials} onChange={e => setField('max_materials', e.target.value)} />
             </div>
 
+            {/* ── ĐK bảo quản riêng của ô (26/09) — mặc định theo Loại kho; khai khi trong kho có phòng lạnh / khu mát ── */}
+            <div>
+              <Label className="text-xs flex items-center gap-1">
+                Điều kiện bảo quản
+                <InfoTip tip={<>
+                  Mặc định ô <b>theo Loại kho</b> của hàng nằm ở đó (khai ở Cài đặt WMS → Loại kho). Khai riêng khi
+                  trong cùng một kho có <b>phòng lạnh / khu mát</b> — ví dụ kho RM01 có cả kho lạnh lẫn kho thường.
+                  <br /><br />
+                  <b>Điều vận</b> đọc chỗ tồn thật: mã hàng đang nằm ở ô khai riêng thì chuyến chở mã đó phải là dòng xe
+                  phục vụ được mức của ô (Cài đặt TMS → Mã dòng xe).
+                </>} />
+              </Label>
+              <div className="mt-1">
+                <SingleSelect searchable={false} value={form.storage_condition} onChange={v => setField('storage_condition', v)} options={condOptions} />
+              </div>
+            </div>
+
             {/* ── Trạng thái + Kiểm kê hàng ngày (chỉ edit) ── */}
             {dialogMode === 'edit' && (
               <div className="space-y-2 pt-1 border-t">
@@ -1095,8 +1156,32 @@ export default function Locations() {
         </DialogContent>
       </Dialog>
 
+      {/* Khai ĐK bảo quản hàng loạt (26/09) — chọn một mức hoặc "Theo Loại kho" để gỡ khai riêng */}
+      <Dialog open={bulkMode === 'cond'} onOpenChange={open => !open && setBulkMode(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-1.5">
+              <Thermometer className="h-4 w-4 text-sky-600" />Điều kiện bảo quản — hàng loạt
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
+            {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
+            {' '}Chọn <b>Theo Loại kho</b> để gỡ khai riêng.
+          </p>
+          <SingleSelect searchable={false} value={condInput} onChange={setCondInput} options={condOptions} />
+          {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
+            <Button size="sm" onClick={applyBulkCond} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? 'Đang lưu…' : 'Áp dụng'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Gắn / bỏ cờ hàng loạt — cần-kiểm kê HOẶC vị trí nhặt lẻ */}
-      <Dialog open={bulkMode !== null && bulkMode !== 'maxmat'} onOpenChange={open => !open && setBulkMode(null)}>
+      <Dialog open={bulkMode !== null && bulkMode !== 'maxmat' && bulkMode !== 'cond'} onOpenChange={open => !open && setBulkMode(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-1.5">
@@ -1104,24 +1189,24 @@ export default function Locations() {
                 : bulkMode === 'noin' ? <Ban className="h-4 w-4 text-red-500" />
                 : bulkMode === 'noout' ? <Lock className="h-4 w-4 text-amber-600" />
                 : <Flag className="h-4 w-4 text-red-500" />}
-              {BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].title}
+              {BULK_MODES[bulkMode === 'maxmat' || bulkMode === 'cond' || !bulkMode ? 'stocktake' : bulkMode].title}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600">
             Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
             {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
-            {' ' + BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].desc}
+            {' ' + BULK_MODES[bulkMode === 'maxmat' || bulkMode === 'cond' || !bulkMode ? 'stocktake' : bulkMode].desc}
           </p>
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
             <Button variant="outline" size="sm" className="border-slate-300"
               onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? '…' : BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].off}
+              {bulkFlag.isPending ? '…' : BULK_MODES[bulkMode === 'maxmat' || bulkMode === 'cond' || !bulkMode ? 'stocktake' : bulkMode].off}
             </Button>
-            <Button size="sm" className={BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].btn}
+            <Button size="sm" className={BULK_MODES[bulkMode === 'maxmat' || bulkMode === 'cond' || !bulkMode ? 'stocktake' : bulkMode].btn}
               onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? 'Đang lưu…' : BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].on}
+              {bulkFlag.isPending ? 'Đang lưu…' : BULK_MODES[bulkMode === 'maxmat' || bulkMode === 'cond' || !bulkMode ? 'stocktake' : bulkMode].on}
             </Button>
           </DialogFooter>
         </DialogContent>

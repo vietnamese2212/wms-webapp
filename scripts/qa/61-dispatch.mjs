@@ -42,6 +42,19 @@ if (MAT_CAT) {
   CAT_META0 = catRow ? { ...(catRow.meta ?? {}) } : null
 }
 
+// [12] (26/09) Luật 9 + kiểu đi theo Loại kho + ĐK theo vị trí: cần một mã hàng thứ HAI thuộc Loại kho KHÁC (có quy cách
+// pallet), một pallet tồn thật ở kho fixture (ô sẽ khai ĐK riêng) — meta Loại kho 2, cờ kho và ĐK của ô đều là dữ liệu dùng
+// chung nên ghi nhớ gốc và trả lại trong cleanup (chạy cả ở ĐẦU gói).
+const COND_LOC = 'QA61L'
+const mat2 = (await restAll('Material', `select=material_code,category,units_per_carton,cartons_per_pallet&category=neq.${encodeURIComponent(MAT_CAT ?? '')}&category=not.is.null&units_per_carton=gt.0&cartons_per_pallet=gt.0&order=material_code&limit=1`))[0] ?? null
+const CAT2 = mat2?.category ?? null
+const cat2Row = CAT2 ? (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(CAT2)}`))[0] ?? null : null
+const CAT2_META0 = cat2Row ? { ...(cat2Row.meta ?? {}) } : null
+const WH_MIX0 = (await restAll('Warehouse', `select=dispatch_allow_mix_categories&id=eq.${WH}`))[0]?.dispatch_allow_mix_categories === true
+const ieLoc = (await restAll('InventoryEntry', `select=location_id,material_id&warehouse_id=eq.${WH}&cartons_remaining=gt.0&location_id=not.is.null&status=in.(IN_STOCK,PARTIAL)&limit=1`))[0] ?? null
+const locRow = ieLoc ? (await restAll('Location', `select=id,storage_condition&id=eq.${ieLoc.location_id}`))[0] ?? null : null
+const LOC_COND0 = locRow?.storage_condition ?? null
+
 async function cleanupTrips() {
   const gdos = await restAll('GroupDeliveryOrder', `select=id&group_code=like.${PREFIX}*`)
   const gids = gdos.map(g => g.id)
@@ -72,7 +85,11 @@ async function cleanup() {
   // Trả Loại kho về meta GỐC trước tiên: để sót `storage_condition` của QA thì mọi kế hoạch điều vận sau đó
   // không tìm được dòng xe nào phục vụ — hỏng cho cả phiên khác đang dùng staging.
   if (catRow && CAT_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${catRow.id}`, { meta: CAT_META0 }).catch(() => {})
+  if (cat2Row && CAT2_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${cat2Row.id}`, { meta: CAT2_META0 }).catch(() => {})
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_allow_mix_categories: WH_MIX0 }).catch(() => {})
+  if (locRow) await restWrite('Location', 'PATCH', `id=eq.${locRow.id}`, { storage_condition: LOC_COND0 }).catch(() => {})
   await restWrite('LookupValue', 'DELETE', `type=eq.storage_condition&value=eq.${COND}`).catch(() => {})
+  await restWrite('LookupValue', 'DELETE', `type=eq.storage_condition&value=eq.${COND_LOC}`).catch(() => {})
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA61*`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=like.QA61*`).catch(() => {})
   await restWrite('freight_tariff', 'DELETE', `ward_code=like.QA61*`).catch(() => {})
@@ -523,6 +540,116 @@ try {
   check('11h. Xác nhận lại sau khi mở lại (kế hoạch mở một phần) → 200, mọi xe CONFIRMED, chuyến bên Xuất GIỮ NGUYÊN id (không đẻ chuyến mới)',
     cR2.s === 200 && PR?.status === 'CONFIRMED' && (PR?.trips ?? []).every(t => t.status === 'CONFIRMED') && sameIds && gdoAfter.length === gdoBefore.length,
     `http=${cR2.s} ${cR2.j?.error?.message ?? ''} plan=${PR?.status} gdo ${gdoBefore.length}→${gdoAfter.length} same=${sameIds}`)
+
+  // ── [12] KHÔNG TRỘN LOẠI KHO · KIỂU ĐI THEO LOẠI KHO · ĐK BẢO QUẢN THEO VỊ TRÍ (user chốt 26/09) ────────────────
+  // "FG01 đi FG01, FG02 đi FG02, muốn đi chung phải bật công tắc" · "POSM đi theo đơn" · "khách A FG01 đi pallet, FG02 đi xe thường"
+  // · "điều kiện bảo quản khai theo cả vị trí — mặc định theo loại kho"
+  await cleanupTrips()
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(QA61OD6,QA61OD7)`).catch(() => {})
+  const whFlag = await api(`/masterdata/warehouses/${WH}`, 'PUT', { dispatch_allow_mix_categories: true })
+  const whNow = (await restAll('Warehouse', `select=dispatch_allow_mix_categories&id=eq.${WH}`))[0]
+  check('12a. Form Kho: "Cho ghép nhiều Loại kho trên một chuyến" lưu được qua cửa app (PUT 200, cột đổi)', whFlag.s === 200 && whNow?.dispatch_allow_mix_categories === true,
+    `http=${whFlag.s} ${whFlag.j?.error?.message ?? ''} col=${whNow?.dispatch_allow_mix_categories}`)
+  await api(`/masterdata/warehouses/${WH}`, 'PUT', { dispatch_allow_mix_categories: false })
+  if (!mat2 || !cat2Row) check('12b. Fixture: cần một mã hàng thuộc Loại kho KHÁC có quy cách pallet', false, `MAT_CAT=${MAT_CAT} mat2=${JSON.stringify(mat2)}`)
+  else {
+    const OD8 = 'QA61OD8'
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: OD8, od_item: '10', material_code: mat2.material_code, qty_base: Number(mat2.units_per_carton) * Number(mat2.cartons_per_pallet),
+      ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+    const rowOfP = (pl, od) => [...(pl?.trips ?? []).flatMap(t => t.ods), ...(pl?.pool ?? [])].find(o => o.od_number === od)
+    const pOff = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const POff = pOff.j?.data
+    check(`12b. Kho KHÔNG cho trộn (mặc định): OD ${MAT_CAT} và OD ${CAT2} cùng khách cùng phường đi HAI chuyến · tham số kế hoạch ghi allow_mix_categories=false`,
+      pOff.s === 201 && POff?.params?.allow_mix_categories === false && !!tripOfOd(POff, OD[0]) && !!tripOfOd(POff, OD8) && tripOfOd(POff, OD[0])?.id !== tripOfOd(POff, OD8)?.id,
+      `http=${pOff.s} ${pOff.j?.error?.message ?? ''} mix=${POff?.params?.allow_mix_categories} trips=${(POff?.trips ?? []).map(t => `${t.group_code}:${t.ods.map(o => o.od_number).join('+')}`).join(' ')}`)
+    const gaps = POff?.params?.config_gaps
+    const cat2Cond = CAT2_META0?.storage_condition || null
+    check('12b2. Kế hoạch mang danh sách KHAI THIẾU: Loại kho không có ĐK bảo quản (và không đi kèm) được liệt kê, loại đã khai thì không',
+      !!gaps && Array.isArray(gaps.no_condition) && (cat2Cond ? !gaps.no_condition.some(x => x.category === CAT2) : gaps.no_condition.some(x => x.category === CAT2)),
+      `cat2=${CAT2} cond=${cat2Cond} gaps=${JSON.stringify(gaps ?? null).slice(0, 160)}`)
+    await cleanupTrips()
+    const pOn = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, allow_mix_categories: true })
+    check('12c. Lượt lập BẬT cho trộn ⇒ OD hai Loại kho gom MỘT chuyến (xe QA phục vụ mọi điều kiện, còn chỗ)',
+      pOn.s === 201 && tripOfOd(pOn.j?.data, OD[0])?.id === tripOfOd(pOn.j?.data, OD8)?.id,
+      `http=${pOn.s} trips=${(pOn.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+
+    // POSM "đi theo đơn": bật cờ đi kèm cho Loại kho 2 qua CỬA APP (bộ lọc meta phải giữ khoá mới) ⇒ kho không cho trộn vẫn đi chung
+    await cleanupTrips()
+    const fl = await api(`/wms/lookup/${cat2Row.id}`, 'PUT', { value: cat2Row.value, meta: { ...CAT2_META0, dispatch_follow: true } })
+    const cat2Now = (await restAll('LookupValue', `select=meta&id=eq.${cat2Row.id}`))[0]
+    check('12d. Loại kho "Đi kèm đơn khi điều vận" → 200 và meta GIỮ khoá mới + cờ cũ (bộ lọc meta vứt khoá lạ nếu quên khai)',
+      fl.s === 200 && cat2Now?.meta?.dispatch_follow === true && cat2Now?.meta?.badge_color === CAT2_META0?.badge_color,
+      `http=${fl.s} meta=${JSON.stringify(cat2Now?.meta ?? null)}`)
+    const pF = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    check('12e. Loại kho đi kèm ⇒ kho KHÔNG cho trộn mà OD loại đó vẫn ké vào chuyến của chính khách (không đẻ chuyến riêng)',
+      pF.s === 201 && pF.j?.data?.params?.allow_mix_categories === false && tripOfOd(pF.j?.data, OD[0])?.id === tripOfOd(pF.j?.data, OD8)?.id,
+      `http=${pF.s} trips=${(pF.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+    await restWrite('LookupValue', 'PATCH', `id=eq.${cat2Row.id}`, { meta: CAT2_META0 })
+
+    // Kiểu đi theo KHÁCH × LOẠI KHO
+    await cleanupTrips()
+    const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
+    const kBad = await api(`/masterdata/customers/${c1.id}`, 'PUT', { load_mode_by_category: { KHONGCOLOAI: 'PALLET' } })
+    const vBad = await api(`/masterdata/customers/${c1.id}`, 'PUT', { load_mode_by_category: { [CAT2]: 'XA' } })
+    const kOk = await api(`/masterdata/customers/${c1.id}`, 'PUT', { load_mode_by_category: { [CAT2]: 'LOOSE' } })
+    check('12f. Khách hàng: kiểu đi theo Loại kho — Loại kho lạ 400 · giá trị lạ 400 · hợp lệ 200 và lưu đúng',
+      kBad.s === 400 && vBad.s === 400 && kOk.s === 200 && kOk.j?.data?.load_mode_by_category?.[CAT2] === 'LOOSE',
+      `bad=${kBad.s} val=${vBad.s} ok=${kOk.s} map=${JSON.stringify(kOk.j?.data?.load_mode_by_category ?? kOk.j?.error)}`)
+    const pM = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, allow_mix_categories: true })
+    const r1 = rowOfP(pM.j?.data, OD[0]), r8 = rowOfP(pM.j?.data, OD8)
+    check(`12g. Khách PALLET nhưng khai ${CAT2} = Xá ⇒ OD ${CAT2} đi Xá, OD ${MAT_CAT} vẫn Pallet, KHÔNG chung xe (kể cả khi kho cho trộn loại)`,
+      pM.s === 201 && r1?.load_mode === 'PALLET' && r8?.load_mode === 'LOOSE' && r1?.trip_id !== r8?.trip_id,
+      `http=${pM.s} od1=${r1?.load_mode} od8=${r8?.load_mode} sameTrip=${r1?.trip_id === r8?.trip_id}`)
+    const bMerge = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { load_mode_by_category: { category: MAT_CAT, mode: 'PALLET' } } })
+    const m1 = (await restAll('Customer', `select=load_mode_by_category&id=eq.${c1.id}`))[0]?.load_mode_by_category ?? {}
+    const bDel = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { load_mode_by_category: { category: CAT2, mode: null } } })
+    const m2 = (await restAll('Customer', `select=load_mode_by_category&id=eq.${c1.id}`))[0]?.load_mode_by_category ?? {}
+    const bMix = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { load_mode_by_category: { category: CAT2, mode: 'LOOSE' }, is_active: true } })
+    check('12h. Hàng loạt: kiểu đi cho MỘT Loại kho GỘP vào bảng từng khách (không đè loại khác) · mode trống = gỡ · đi chung thao tác khác → 400',
+      bMerge.s === 200 && m1[MAT_CAT] === 'PALLET' && m1[CAT2] === 'LOOSE' && bDel.s === 200 && m2[MAT_CAT] === 'PALLET' && !(CAT2 in m2) && bMix.s === 400,
+      `merge=${bMerge.s} ${JSON.stringify(m1)} del=${bDel.s} ${JSON.stringify(m2)} mix=${bMix.s}`)
+    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { load_mode_by_category: {} })
+  }
+
+  // ĐK bảo quản theo VỊ TRÍ: ô đang chứa một mã THẬT của kho khai mức riêng ⇒ OD của mã đó mang mức của ô
+  await cleanupTrips()
+  if (!ieLoc || !locRow) check('12i. Fixture: cần một pallet tồn có vị trí ở kho fixture', false, `wh=${WH}`)
+  else {
+    const m9 = (await restAll('Material', `select=material_code,category,units_per_carton,cartons_per_pallet&id=eq.${ieLoc.material_id}`))[0]
+    const mkL = await api('/wms/lookup', 'POST', { type: 'storage_condition', value: COND_LOC, meta: { label: 'QA61 kho lạnh ô', badge_color: 'sky' } })
+    const lBad = await api(`/masterdata/locations/${locRow.id}`, 'PUT', { storage_condition: 'KHONG_CO_THAT' })
+    const lOk = await api(`/masterdata/locations/${locRow.id}`, 'PUT', { storage_condition: COND_LOC })
+    check('12i. Vị trí: ĐK bảo quản ngoài danh mục → 400 · mức có thật → 200 và cột lưu đúng',
+      mkL.s === 200 && lBad.s === 400 && lOk.s === 200 && lOk.j?.data?.storage_condition === COND_LOC,
+      `mk=${mkL.s} bad=${lBad.s} ok=${lOk.s} col=${lOk.j?.data?.storage_condition}`)
+    // oracle: ĐK của ô cho MỌI chỗ chứa mã này trong kho — ô khai riêng ⇒ COND_LOC, ô khác ⇒ ĐK của Loại kho
+    const ies = await restAll('InventoryEntry', `select=location_id&warehouse_id=eq.${WH}&material_id=eq.${ieLoc.material_id}&cartons_remaining=gt.0&status=in.(IN_STOCK,PARTIAL,QUARANTINE,LOOSE_PICKING)`)
+    const catMeta = m9?.category ? (await restAll('LookupValue', `select=meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(m9.category)}`))[0]?.meta : null
+    const locIds = [...new Set(ies.map(x => x.location_id))]
+    const locConds = locIds.length ? await restAll('Location', `select=id,storage_condition&id=in.(${locIds.filter(Boolean).join(',')})`) : []
+    const byId = new Map(locConds.map(l => [l.id, l.storage_condition]))
+    const expected = [...new Set(ies.map(x => (x.location_id ? byId.get(x.location_id) : null) ?? catMeta?.storage_condition ?? null).filter(Boolean))].sort()
+    const OD9 = 'QA61OD9'
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: OD9, od_item: '10', material_code: m9.material_code, qty_base: Math.max(1, Number(m9.units_per_carton) || 1),
+      ship_to_code: SHIP[2], ship_to_name: 'QA61 NPP 3', ward_code: W2, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE', sap_pallets: 1,
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+    const pL = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const r9 = [...(pL.j?.data?.trips ?? []).flatMap(t => t.ods), ...(pL.j?.data?.pool ?? [])].find(o => o.od_number === OD9)
+    check('12j. OD của mã đang nằm ở ô khai riêng mang ĐÚNG các mức theo chỗ tồn thật (oracle tự tính từ tồn + ô + Loại kho)',
+      pL.s === 201 && !!r9 && JSON.stringify([...(r9.conditions ?? [])].sort()) === JSON.stringify(expected) && expected.includes(COND_LOC),
+      `http=${pL.s} ${pL.j?.error?.message ?? ''} got=${JSON.stringify(r9?.conditions)} expected=${JSON.stringify(expected)} (${ies.length} pallet ở ${locIds.length} ô)`)
+    const condL = (await restAll('LookupValue', `select=id&type=eq.storage_condition&value=eq.${COND_LOC}`))[0]
+    const delL = await api(`/wms/lookup/${condL.id}`, 'DELETE')
+    check('12k. Xoá mức đang được VỊ TRÍ dùng → 409 nêu "vị trí" (không để mã mồ côi trên ô)', delL.s === 409 && /vị trí/.test(delL.j?.error?.message ?? ''),
+      `http=${delL.s} msg=${String(delL.j?.error?.message ?? '').slice(0, 100)}`)
+    const lBack = await api(`/masterdata/locations/${locRow.id}`, 'PUT', { storage_condition: null })
+    check('12l. Gửi null → ô về "theo Loại kho"', lBack.s === 200 && lBack.j?.data?.storage_condition === LOC_COND0, `http=${lBack.s} col=${lBack.j?.data?.storage_condition}`)
+  }
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

@@ -53,6 +53,26 @@ async function warehouseExists(id: string): Promise<boolean> {
   return !!data
 }
 
+async function warehouseTypeValues(): Promise<Set<string>> {
+  const { data } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+  return new Set(((data ?? []) as { value: string }[]).map(r => r.value))
+}
+/** Kiểu đi theo Loại kho {FG01: 'PALLET', FG02: 'LOOSE'} — khoá phải là Loại kho có thật, giá trị PALLET | LOOSE;
+ *  giá trị rỗng/null = gỡ dòng đó (về kiểu chung). */
+async function parseLoadModeByCategory(raw: unknown): Promise<{ map: Record<string, 'PALLET' | 'LOOSE'> } | { err: string }> {
+  if (raw === null) return { map: {} }
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { err: 'Kiểu đi theo Loại kho phải là bảng {Loại kho: PALLET | LOOSE}' }
+  const cats = await warehouseTypeValues()
+  const map: Record<string, 'PALLET' | 'LOOSE'> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v === null || v === '') continue
+    if (!cats.has(k)) return { err: `Loại kho "${k}" không có trong danh mục Loại kho` }
+    if (v !== 'PALLET' && v !== 'LOOSE') return { err: `Kiểu đi của ${k} phải là PALLET (đi pallet) hoặc LOOSE (đi xá)` }
+    map[k] = v
+  }
+  return { map }
+}
+
 /** Đọc + kiểm phần thân chung của Thêm / Sửa. Trả patch đã chuẩn hoá hoặc thông báo lỗi. */
 async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolean): Promise<{ patch: Record<string, unknown> } | { err: { status: number; code: string; msg: string } }> {
   const bad = (msg: string, status = 400, code = 'VALIDATION_ERROR') => ({ err: { status, code, msg } })
@@ -94,6 +114,13 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
   if (body.load_mode !== undefined) {
     if (body.load_mode !== 'PALLET' && body.load_mode !== 'LOOSE') return bad('Kiểu đi hàng phải là PALLET (đi pallet) hoặc LOOSE (đi xá)')
     patch.load_mode = body.load_mode
+  }
+  // 26/09 (user: "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường"): kiểu đi RIÊNG theo Loại kho — THAY TRỌN map.
+  // Loại không khai ⇒ theo kiểu chung ở trên. Khoá phải là Loại kho có trong danh mục (đổi tên loại cascade qua RPC).
+  if (body.load_mode_by_category !== undefined) {
+    const m = await parseLoadModeByCategory(body.load_mode_by_category)
+    if ('err' in m) return bad(m.err)
+    patch.load_mode_by_category = m.map
   }
   if (body.note !== undefined) patch.note = String(body.note ?? '').trim().slice(0, 1000) || null
   return { patch }
@@ -364,11 +391,30 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
-    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))
     if (unknownKey) return fail(res, 400, 'VALIDATION_ERROR', `Thao tác hàng loạt không đổi được trường "${unknownKey}"`)
+    // 26/09: kiểu đi cho MỘT Loại kho trên nhiều khách = GỘP vào map từng khách (RPC), không ghi đè cả map
+    if ('load_mode_by_category' in rawPatch) {
+      if (keys.length > 1) return fail(res, 400, 'VALIDATION_ERROR', 'Kiểu đi theo Loại kho áp riêng, không đi chung thao tác khác')
+      const p = rawPatch.load_mode_by_category as { category?: unknown; mode?: unknown } | null
+      const cat = typeof p?.category === 'string' ? p.category.trim() : ''
+      const mode = p?.mode === null || p?.mode === '' ? null : p?.mode
+      if (!cat || !(await warehouseTypeValues()).has(cat)) return fail(res, 400, 'VALIDATION_ERROR', `Loại kho "${cat}" không có trong danh mục Loại kho`)
+      if (mode !== null && mode !== 'PALLET' && mode !== 'LOOSE') return fail(res, 400, 'VALIDATION_ERROR', 'Kiểu đi phải là PALLET (đi pallet), LOOSE (đi xá) hoặc để trống (theo kiểu chung)')
+      const picked = await resolveBulkTargets(body)
+      if ('err' in picked) return fail(res, picked.err.status, picked.err.code, picked.err.msg)
+      let updated = 0
+      for (let i = 0; i < picked.idList.length; i += 300) {
+        const { data, error } = await supabase.rpc('customer_set_load_mode_cat', { p_ids: picked.idList.slice(i, i + 300), p_category: cat, p_mode: mode as string, p_by: req.user?.name ?? '' })
+        if (error) return fail(res, error)
+        updated += Number(data) || 0
+      }
+      await logAdmin(req, { action: 'CUSTOMER_BULK', target_type: 'Customer', target_label: `${updated} khách hàng`, after: { load_mode_by_category: { [cat]: mode }, count: updated, by_filter: picked.byFilter } })
+      return ok(res, { updated })
+    }
 
     const parsed = await parseCustomerBody(rawPatch, false)
     if ('err' in parsed) return fail(res, parsed.err.status, parsed.err.code, parsed.err.msg)

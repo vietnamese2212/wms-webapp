@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-25T15:05:17.796Z · 108 bảng/view · 171 hàm · 0 enum
+// Sinh lúc 2026-09-26T05:08:39.760Z · 108 bảng/view · 173 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -109,6 +109,7 @@ export type Database = {
           sold_to_code: string | null
           search_term: string | null
           load_mode: string
+          load_mode_by_category: Json
         }
         Insert: {
           id: string
@@ -132,6 +133,7 @@ export type Database = {
           sold_to_code?: string | null
           search_term?: string | null
           load_mode?: string
+          load_mode_by_category?: Json
         }
         Update: {
           id?: string
@@ -155,6 +157,7 @@ export type Database = {
           sold_to_code?: string | null
           search_term?: string | null
           load_mode?: string
+          load_mode_by_category?: Json
         }
         Relationships: []
       }
@@ -1045,6 +1048,7 @@ export type Database = {
           grid_h: number
           dock_capacity: number | null
           serve_categories: string[] | null
+          storage_condition: string | null
         }
         Insert: {
           id: string
@@ -1077,6 +1081,7 @@ export type Database = {
           grid_h?: number
           dock_capacity?: number | null
           serve_categories?: string[] | null
+          storage_condition?: string | null
         }
         Update: {
           id?: string
@@ -1109,6 +1114,7 @@ export type Database = {
           grid_h?: number
           dock_capacity?: number | null
           serve_categories?: string[] | null
+          storage_condition?: string | null
         }
         Relationships: []
       }
@@ -2414,6 +2420,7 @@ export type Database = {
           dispatch_allow_mix_channels: boolean
           dispatch_underload_pct: number | null
           dispatch_pallet_max_stops: number
+          dispatch_allow_mix_categories: boolean
         }
         Insert: {
           id: string
@@ -2462,6 +2469,7 @@ export type Database = {
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
+          dispatch_allow_mix_categories?: boolean
         }
         Update: {
           id?: string
@@ -2510,6 +2518,7 @@ export type Database = {
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
+          dispatch_allow_mix_categories?: boolean
         }
         Relationships: []
       }
@@ -5783,6 +5792,10 @@ export type Database = {
         Args: { arg2?: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: Json
       }
+      customer_set_load_mode_cat: {
+        Args: { p_category: unknown; p_by: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Returns: number
+      }
       cycle_count_info: {
         Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: Json
@@ -5817,6 +5830,10 @@ export type Database = {
       }
       directed_supervision: {
         Args: { p_days: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Returns: Json
+      }
+      dispatch_stock_conditions: {
+        Args: { p_material_codes: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
         Returns: Json
       }
       erp_so_lines_summary: {

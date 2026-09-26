@@ -9,6 +9,7 @@ export interface WhTypeMeta {
   batch_char?: string              // ký tự cố định thế chỗ Máy trong mã lô khi sinh tem V2 (vd 'N')
   badge_color?: string             // blue | purple | orange | green | amber | red | emerald | cyan | slate
   storage_condition?: string | null // điều kiện bảo quản của hàng thuộc loại này (LookupValue storage_condition); null = chưa khai
+  dispatch_follow?: boolean         // điều vận (26/09): hàng loại này đi kèm đơn (POSM) — không tính khi tách chuyến theo Loại kho
 }
 export type WhTypeMetaMap = Map<string, WhTypeMeta>
 

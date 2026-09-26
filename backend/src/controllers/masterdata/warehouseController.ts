@@ -43,6 +43,8 @@ function asUnderloadPct(v: unknown): number | null {
 function applyDispatchBody(body: Record<string, unknown>, target: Record<string, unknown>) {
   if (body.dispatch_max_drops !== undefined)          target.dispatch_max_drops = asMaxDrops(body.dispatch_max_drops)
   if (body.dispatch_allow_mix_channels !== undefined) target.dispatch_allow_mix_channels = Boolean(body.dispatch_allow_mix_channels)
+  // 26/09: cho ghép nhiều Loại kho trên một chuyến (mặc định KHÔNG — "FG01 đi FG01, FG02 đi FG02")
+  if (body.dispatch_allow_mix_categories !== undefined) target.dispatch_allow_mix_categories = body.dispatch_allow_mix_categories === true
   if (body.dispatch_underload_pct !== undefined)      target.dispatch_underload_pct = asUnderloadPct(body.dispatch_underload_pct)
   // 25/09: số KHÁCH tối đa trên một xe pallet (user chốt "xe pallet bản chất là 1 khách, nếu cần thì làm config") — 1..20, mặc định 1
   if (body.dispatch_pallet_max_stops !== undefined)   { const n = Math.trunc(Number(body.dispatch_pallet_max_stops)); target.dispatch_pallet_max_stops = Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 1 }

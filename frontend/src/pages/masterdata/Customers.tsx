@@ -31,7 +31,7 @@ import {
   useCustomers, useCustomerChannels, useCustomerSeedCandidates, useSaveCustomer,
   useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel,
   useSaveDateRules, useBulkSetDateRule, useDateRuleCategories,
-  type Customer, type CustomerCandidate, type CustomerPatch, type UploadPreflight,
+  type Customer, type CustomerCandidate, type CustomerPatch, type CustomerBulkPatch, type UploadPreflight,
   type MasterRuleRow, type DateRuleCategory,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
@@ -218,7 +218,7 @@ export default function Customers() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [allFiltered, setAllFiltered] = useState(false)   // "chọn cả N dòng theo bộ lọc"
   const [form, setForm] = useState<{ row: Customer | null } | null>(null)
-  const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | null>(null)
+  const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | null>(null)
   const [seedOpen, setSeedOpen] = useState(false)
   const [chanEdit, setChanEdit] = useState<ChannelEdit | null>(null)
   const [err, setErr] = useState('')
@@ -267,7 +267,7 @@ export default function Customers() {
     has_rule: f.hasRule || undefined,
   })
 
-  async function runBulk(patch: CustomerPatch) {
+  async function runBulk(patch: CustomerBulkPatch) {
     setErr('')
     try {
       await bulkSave.mutateAsync(allFiltered ? { filter: filterPayload(), patch } : { ids: [...picked], patch })
@@ -334,6 +334,8 @@ export default function Customers() {
       tip: 'Khách đi xe pallet (một khách / xe) — áp cho lần lập kế hoạch điều vận sau', onClick: () => runBulk({ load_mode: 'PALLET' }) },
     { key: 'bloose', icon: Truck, label: `Đi Xá (${nf(pickCount)})`,
       tip: 'Khách đi xá (xe tải theo tấn, ghép nhiều khách) — mặc định của khách chưa khai', onClick: () => runBulk({ load_mode: 'LOOSE' }) },
+    { key: 'bpalcat', icon: Package, label: `Kiểu đi theo loại (${nf(pickCount)})`,
+      tip: 'Khai kiểu đi RIÊNG cho một Loại kho (vd FG01 đi Pallet, FG02 đi Xá) — loại không khai theo kiểu chung của khách', onClick: () => setBulk('load_mode_cat') },
     { key: 'boff', icon: Power, label: `Ngừng (${nf(pickCount)})`, danger: true,
       tip: 'Ngừng các khách đang chọn (giữ lịch sử, không còn áp %Date)',
       onClick: () => runBulk({ is_active: false }) },
@@ -451,9 +453,16 @@ export default function Customers() {
                             : <StatusBadge tone="amber" title="Chưa phân kênh — dòng hàng của khách này KHÔNG được cấp %Date tự động">Chưa phân kênh</StatusBadge>}
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <span className="flex flex-wrap items-center gap-1">
                           {r.load_mode === 'PALLET'
                             ? <StatusBadge tone="blue" title="Đi xe pallet — một khách / xe (số khách tối đa khai ở Cài đặt WMS → Kho)">Pallet</StatusBadge>
                             : <StatusBadge tone="slate" title="Đi xá — xe tải theo tấn, ghép nhiều khách (mặc định cho khách chưa khai)">Xá</StatusBadge>}
+                          {/* kiểu đi RIÊNG theo Loại kho (26/09) — chỉ hiện dòng khác kiểu chung để đọc được ngay chỗ ngoại lệ */}
+                          {Object.entries(r.load_mode_by_category ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([c, m]) => (
+                            <span key={c} className={`text-[9px] font-semibold rounded px-1 py-0.5 ${m === 'PALLET' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}
+                              title={`Hàng ${c} của khách này đi ${m === 'PALLET' ? 'Pallet' : 'Xá'}`}>{c}: {m === 'PALLET' ? 'Pallet' : 'Xá'}</span>
+                          ))}
+                          </span>
                         </TableCell>
                         {/* Mức theo LOẠI HÀNG — một khách có thể mang nhiều dòng (FG01 ≥ 70 %,
                             FG02 ≥ 35 ngày). Chưa khai dòng nào thì hiện mức thừa hưởng của kênh. */}
@@ -570,6 +579,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
   const [whId, setWhId] = useState(row?.warehouse_id ?? '')
   const [active, setActive] = useState(row?.is_active ?? true)
   const [loadMode, setLoadMode] = useState<'PALLET' | 'LOOSE'>(row?.load_mode === 'PALLET' ? 'PALLET' : 'LOOSE')
+  const [modeByCat, setModeByCat] = useState<Record<string, 'PALLET' | 'LOOSE'>>(row?.load_mode_by_category ?? {})
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
   const [err, setErr] = useState('')
@@ -583,6 +593,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
         ...(row ? {} : { ship_to_code: code.toUpperCase().trim() }),
         name: name.trim(), channel: channel || null,
         warehouse_id: whId || null, is_active: active, note: note.trim() || null, load_mode: loadMode,
+        load_mode_by_category: modeByCat,
       })
       const id = row?.id ?? saved?.id
       if (id) await saveRules.mutateAsync({ scope: 'CUSTOMER', key: id, rules: toPayload(drafts) })
@@ -652,6 +663,36 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
             ))}
           </div>
           <p className="mt-1 text-[11px] text-slate-400">Máy ghép chuyến xếp khách Pallet lên xe pallet, khách Xá lên xe tải theo tấn — không trộn. Trên bàn ghép xe vẫn đổi được từng OD / cả xe.</p>
+          {/* Kiểu đi RIÊNG theo Loại kho (26/09, user: "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường") */}
+          {!!(cats ?? []).length && (
+            <div className="mt-2 rounded-md border border-slate-200">
+              <div className="flex items-center justify-between border-b bg-slate-50 px-2 py-1">
+                <span className="text-[11px] font-medium text-slate-600">Riêng theo Loại kho</span>
+                <span className="text-[10px] text-slate-400">để "Theo kiểu chung" = như ô trên</span>
+              </div>
+              <div className="divide-y">
+                {(cats ?? []).map(c => {
+                  const v = modeByCat[c.value] ?? ''
+                  return (
+                    <div key={c.value} className="flex items-center gap-2 px-2 py-1">
+                      <span className="w-14 shrink-0 font-mono text-xs font-semibold">{c.value}</span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">{c.label}</span>
+                      <div className="grid grid-cols-3 gap-0.5 rounded border border-slate-200 p-0.5">
+                        {([['', 'Theo chung'], ['PALLET', 'Pallet'], ['LOOSE', 'Xá']] as const).map(([mv, lb]) => (
+                          <button key={mv} type="button"
+                            onClick={() => setModeByCat(s => { const n = { ...s }; if (mv) n[c.value] = mv; else delete n[c.value]; return n })}
+                            className={`rounded px-1.5 py-1 text-[11px] ${v === mv ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>
+                            {lb}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          <p className="mt-1 text-[11px] text-slate-400">Máy lấy Loại kho CHÍNH của từng OD (POSM đi kèm không tính). OD có hai loại khai hai kiểu khác nhau thì theo kiểu chung.</p>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-4 w-4 accent-sky-600" />
@@ -670,7 +711,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
 // Dialog GIỮA màn chỉ để XÁC NHẬN (chuẩn: form thêm/sửa mới dùng FormSheet). Câu đầu tiên phải
 // nói rõ PHẠM VI — "áp cho 312 khách theo bộ lọc hiện tại" — chứ không phải áp mù cả bảng.
 function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving, onClose, onApply, onApplyRule }: {
-  kind: 'channel' | 'date_rule' | 'warehouse'
+  kind: 'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat'
   count: number
   byFilter: boolean
   channels: { value: string; label: string }[]
@@ -678,7 +719,7 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
   cats: DateRuleCategory[] | undefined
   saving: boolean
   onClose: () => void
-  onApply: (p: CustomerPatch) => void
+  onApply: (p: CustomerBulkPatch) => void
   onApplyRule: (p: { category: string | null; kind: string | null; value: string }) => void
 }) {
   const [channel, setChannel] = useState('')
@@ -689,7 +730,11 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
   const [rKind, setRKind] = useState<'MIN_PCT' | 'MIN_DAYS' | 'FEFO' | ''>('MIN_PCT')
   const [rVal, setRVal] = useState('60')
   const measurable = (cats ?? []).filter(c => c.measurable)
-  const title = kind === 'channel' ? 'Phân kênh hàng loạt' : kind === 'date_rule' ? 'Đặt quy định date hàng loạt' : 'Trỏ kho nhận hàng loạt'
+  // Kiểu đi cho MỘT Loại kho (26/09) — gộp vào bảng kiểu đi từng khách, không đè loại khác
+  const [lmCat, setLmCat] = useState('')
+  const [lmMode, setLmMode] = useState<'PALLET' | 'LOOSE' | ''>('PALLET')
+  const title = kind === 'channel' ? 'Phân kênh hàng loạt' : kind === 'date_rule' ? 'Đặt quy định date hàng loạt'
+    : kind === 'load_mode_cat' ? 'Kiểu đi theo Loại kho — hàng loạt' : 'Trỏ kho nhận hàng loạt'
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
@@ -759,14 +804,33 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
             <WarehouseSingleSelect warehouses={warehouses} value={whId} onChange={setWhId}
               allLabel="— Khách ngoài (bỏ trỏ kho) —" />
           )}
-          <p className="text-[11px] text-amber-700">
-            Lưu xong áp NGAY cho cả đơn đang mở của kho đã bật "Áp %Date tự động" — dòng đã chốt tay giữ nguyên.
-          </p>
+          {kind === 'load_mode_cat' && (
+            <div className="space-y-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Loại kho</label>
+                <SingleSelect options={(cats ?? []).map(c => ({ value: c.value, label: `${c.value} — ${c.label}` }))}
+                  value={lmCat} onChange={setLmCat} placeholder="Chọn Loại kho…" searchable={false} />
+              </div>
+              <div className="grid grid-cols-3 gap-1 rounded-md border border-slate-200 p-0.5">
+                {([['PALLET', 'Đi Pallet'], ['LOOSE', 'Đi Xá'], ['', 'Theo kiểu chung']] as const).map(([v, lb]) => (
+                  <button key={v} type="button" onClick={() => setLmMode(v)}
+                    className={`rounded px-2 py-1.5 text-xs ${lmMode === v ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{lb}</button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-500">Chỉ đổi kiểu đi của Loại kho đã chọn; các loại khác của từng khách giữ nguyên. Áp cho lần lập kế hoạch điều vận sau.</p>
+            </div>
+          )}
+          {(kind === 'channel' || kind === 'date_rule') && (
+            <p className="text-[11px] text-amber-700">
+              Lưu xong áp NGAY cho cả đơn đang mở của kho đã bật "Áp %Date tự động" — dòng đã chốt tay giữ nguyên.
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Huỷ</Button>
-          <Button disabled={saving} onClick={() => {
+          <Button disabled={saving || (kind === 'load_mode_cat' && !lmCat)} onClick={() => {
             if (kind === 'date_rule') return onApplyRule({ category: rCat || null, kind: rKind || null, value: rVal })
+            if (kind === 'load_mode_cat') return onApply({ load_mode_by_category: { category: lmCat, mode: lmMode || null } })
             onApply(kind === 'channel' ? { channel: channel || null } : { warehouse_id: whId || null })
           }}>
             {saving ? 'Đang áp…' : `Áp cho ${nf(count)} khách`}

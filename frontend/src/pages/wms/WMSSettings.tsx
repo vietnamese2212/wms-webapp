@@ -682,7 +682,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_pallet_max_stops?: number; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_pallet_max_stops?: number; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -745,6 +745,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   // Ô số giữ dạng CHUỖI để xoá trắng được; ngưỡng Non tải rỗng = theo dòng xe.
   const [dispMaxDrops,  setDispMaxDrops]  = useState(String(wh?.dispatch_max_drops ?? 3))
   const [dispMix,       setDispMix]       = useState(wh?.dispatch_allow_mix_channels === true)
+  const [dispMixCat,    setDispMixCat]    = useState(wh?.dispatch_allow_mix_categories === true)   // 26/09: ghép nhiều Loại kho trên một chuyến
   const [dispUnderload, setDispUnderload] = useState(wh?.dispatch_underload_pct == null ? '' : String(wh.dispatch_underload_pct))
   const [dispPalletStops, setDispPalletStops] = useState(String(wh?.dispatch_pallet_max_stops ?? 1))
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
@@ -834,7 +835,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), ...rot, ...putaway },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_allow_mix_categories: dispMixCat, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), ...rot, ...putaway },
         {
           // Bật/tắt "Áp %Date tự động" đã ghi thẳng vào đơn đang mở — phải NÓI RA số dòng vừa đổi,
           // không thì lại đúng cảnh "bấm Lưu xong không thấy gì xảy ra" (user 12/09).
@@ -858,7 +859,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_allow_mix_categories: dispMixCat, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -1057,6 +1058,11 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               desc="Tắt (mặc định) = NPP, BHX, KA… đi xe riêng dù cùng phường. Bật = máy được ghép khách khác kênh vào cùng chuyến."
               htmlFor="wh-disp-mix"
               control={<Switch id="wh-disp-mix" checked={dispMix} onCheckedChange={setDispMix} />} />
+            <SettingRow label="Cho ghép nhiều Loại kho trên một chuyến"
+              desc="Tắt (mặc định) = FG01 đi xe FG01, FG02 đi xe FG02 dù cùng phường. Bật = máy được ghép chung khi dòng xe chở được mọi điều kiện bảo quản của hàng (xe kết hợp)."
+              tip={<>Loại kho khai <b>"Đi kèm đơn khi điều vận"</b> (POSM) luôn đi cùng xe với hàng chính và không tính là ghép lẫn. Một OD tự chứa hai Loại kho thì không tách được — máy xếp nó một chuyến và ghi cảnh báo. Trên bàn ghép xe, người vẫn kéo được OD khác loại vào cùng xe; máy chỉ cảnh báo.</>}
+              htmlFor="wh-disp-mix-cat"
+              control={<Switch id="wh-disp-mix-cat" checked={dispMixCat} onCheckedChange={setDispMixCat} />} />
             <SettingRow label="Ngưỡng Non tải của kho (%)"
               desc="Chuyến dưới ngưỡng này bị gắn Non tải và máy cố gộp. Để trống = dùng ngưỡng khai trên từng dòng xe con."
               control={<Input id="wh-disp-underload" type="number" min={1} max={100} className="h-7 w-24 text-xs text-right"
@@ -1275,6 +1281,7 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
   const [storageCond, setStorageCond] = useState(m.storage_condition ?? '')   // điều kiện bảo quản của hàng loại này (24/09)
+  const [dispFollow, setDispFollow] = useState(m.dispatch_follow === true)    // điều vận: hàng đi kèm đơn (POSM, 26/09)
   const { data: conditions = [] } = useStorageConditions()
   const [err, setErr] = useState('')
 
@@ -1308,6 +1315,7 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
       ...m,
       requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa, badge_color: badge,
       storage_condition: storageCond || null,
+      dispatch_follow: dispFollow,
     }
     const cfgNext: WhTypeConfig = {
       type_code: name, ...strat,
@@ -1416,6 +1424,8 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
             <SingleSelect searchable={false} value={storageCond} onChange={setStorageCond}
               options={[{ value: '', label: '— Chưa khai (không ràng buộc) —' }, ...conditions.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]} />
           </div>
+          {flagRow('wt-disp-follow', dispFollow, setDispFollow, 'Đi kèm đơn khi điều vận',
+            <>Bật cho hàng <b>đi theo đơn</b> như POSM: khi ghép chuyến, loại này <b>không bị tách</b> thành chuyến riêng mà đi cùng xe với hàng chính của khách. Tắt (mặc định) = loại này chỉ đi chung chuyến với chính nó, trừ khi kho bật "Cho ghép nhiều Loại kho trên một chuyến".</>)}
 
           <div className="space-y-1">
             <Label className="text-xs">Màu hiển thị</Label>
@@ -2449,6 +2459,7 @@ export default function WMSSettings() {
                     <span className="font-medium">{detailType.meta?.storage_condition
                       ? conditionLabel(storageConds.find(c => c.value === detailType.meta?.storage_condition), detailType.meta.storage_condition)
                       : <span className="text-amber-600">chưa khai (không ràng buộc dòng xe)</span>}</span></div>
+                  <div><span className="text-slate-400">Điều vận:</span> <span className="font-medium">{detailType.meta?.dispatch_follow ? 'Đi kèm đơn (không tách chuyến riêng)' : 'Đi chuyến theo loại'}</span></div>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

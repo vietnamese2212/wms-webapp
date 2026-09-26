@@ -17,6 +17,9 @@ export interface WhTypeMeta {
   // THIẾU/rỗng = CHƯA KHAI = không ràng buộc gì — engine điều vận không loại dòng xe nào.
   // CỐ Ý dùng chung mọi kho (không nằm trong WH_TYPE_META_COLS): hàng lạnh thì kho nào cũng lạnh.
   storage_condition?: string | null
+  // Điều vận (26/09, user: "POSM thì đi theo đơn"): hàng loại này ĐI KÈM đơn — không tính khi tách chuyến theo
+  // Loại kho (luật 9 engine). Mặc định false; cũng dùng chung mọi kho.
+  dispatch_follow?: boolean
 }
 
 // Phòng hộ khi meta chưa seed (migration chưa apply) — đúng hardcode cũ
@@ -61,6 +64,16 @@ export async function getStorageConditionByCategory(): Promise<Map<string, strin
     if (c) out.set(cat, c)
   }
   return out
+}
+
+/** Cấu hình Loại kho cho engine điều vận: ĐK bảo quản theo loại + các loại "đi kèm đơn" + danh sách mọi loại. */
+export async function getDispatchCategoryConfig(): Promise<{ condByCat: Map<string, string>; follow: string[]; all: string[] }> {
+  const map = await getWhTypeMetaMap()
+  return {
+    condByCat: await getStorageConditionByCategory(),
+    follow: [...map.entries()].filter(([, m]) => m.dispatch_follow === true).map(([c]) => c).sort(),
+    all: [...map.keys()].sort(),
+  }
 }
 
 // ─── 3 cờ VẬN HÀNH khai riêng được theo từng kho (21/08) ──────────────────────

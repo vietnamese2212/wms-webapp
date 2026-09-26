@@ -22,6 +22,10 @@
  *     đo sức chứa bằng pallet. 7b: khách pallet có hàng cần điều kiện mà xe pallet không phục vụ (lạnh) ⇒ OD đi xe xá/SCA.
  *  8. DÒNG XE DÙNG CHO VIỆC GÌ (25/09): dòng xe khai `dispatch_use = TRANSFER` (container) CHỈ nhận chuyến mà mọi OD đều
  *     là trung chuyển giữa các kho của mình (`isTransferOd`) — giao khách không bao giờ lên container.
+ *  9. KHÔNG TRỘN LOẠI KHO (26/09, user: "FG01 đi với FG01, FG02 đi FG02, muốn đi chung phải bật công tắc"): khoá cụm mang
+ *     Loại kho CHÍNH của OD (`mainCatsOf` — bỏ Loại kho "đi kèm đơn" như POSM) trừ khi kho bật `allow_mix_categories`.
+ *     OD chỉ có hàng đi kèm (POSM riêng) được xếp ké vào chuyến cùng cụm, ưu tiên chuyến của CHÍNH khách đó.
+ *     OD tự chứa hai Loại kho chính không tách được ⇒ đi một chuyến kèm cảnh báo.
  *  Tie-break chung: cước thấp → ít điểm giao → ổn định (cùng input ra cùng output — mọi tập đều sort trước khi duyệt).
  * Cước dùng chính `computeFreight`/`pickTariff`/`farthestWard` của services/freight.ts — KHÔNG chép luật tính tiền.
  */
@@ -35,6 +39,8 @@ export interface EngineLine {
   material_code: string; qty_base: number; pallets: number | null; kg: number | null
   category: string | null      // Loại kho của mã hàng — quyết cửa đặt lịch (booking_category) + nhãn "chở lẫn"
   condition: string | null     // điều kiện bảo quản suy từ Loại kho; null = chưa khai = không ràng buộc
+  /** 26/09: ĐK bảo quản theo CHỖ TỒN THẬT (ô khai riêng ĐK — `lineConditions`). Có giá trị thì THAY `condition`. */
+  conditions?: string[]
 }
 export interface EngineOd {
   od_number: string
@@ -85,6 +91,10 @@ export interface EngineParams {
   code_prefix: string               // '<MãKho>_X_<ddmmyy>_' — đúng quy ước group_code hiện tại
   start_seq: number                 // STT bắt đầu (tránh trùng Số xe đã có trong Kế hoạch xuất ngày đó)
   pallet_max_stops?: number         // số KHÁCH tối đa trên một xe pallet (kho; mặc định 1 — "xe pallet bản chất đi 1 khách")
+  /** Luật 9 (26/09): cho ghép nhiều Loại kho trên một chuyến. undefined = cho (hành vi trước 26/09 — dữ liệu/test cũ);
+   *  controller luôn truyền giá trị của kho (mặc định false). */
+  allow_mix_categories?: boolean
+  follow_categories?: string[]      // Loại kho "đi kèm đơn" (POSM) — không tính khi tách chuyến theo loại
 }
 export interface EngineInput {
   ods: EngineOd[]
@@ -192,13 +202,36 @@ export function classKey(od: EngineOd): string {
   return od.scan_mode ? 'SCAN' : 'EXT'
 }
 /** Khoá gộp (vùng): các chuyến cùng khoá này mới được gộp với nhau khi Non tải. */
-export function mergeKey(od: EngineOd, allowMixChannels: boolean): string {
+export function mergeKey(od: EngineOd, allowMixChannels: boolean, catPart = ''): string {
   // Luật 7: khách Pallet và khách Xá KHÔNG bao giờ chung xe (user chốt 25/09) — khoá mang luôn kiểu đi
-  return `${od.load_mode ? `${od.load_mode}:` : ''}${classKey(od)}|${od.region_code ?? '?'}${allowMixChannels ? '' : `|${od.channel ?? '?'}`}`
+  // Luật 9: `catPart` = Loại kho chính của OD ('*' = chỉ hàng đi kèm) khi kho KHÔNG cho trộn loại; '' = cho trộn
+  return `${od.load_mode ? `${od.load_mode}:` : ''}${classKey(od)}|${od.region_code ?? '?'}${allowMixChannels ? '' : `|${od.channel ?? '?'}`}${catPart ? `|C:${catPart}` : ''}`
 }
 /** Khoá cụm ban đầu: gộp thêm PHƯỜNG (điểm giao). */
-export function clusterKey(od: EngineOd, allowMixChannels: boolean): string {
-  return `${mergeKey(od, allowMixChannels)}|${od.ward_code ?? od.ship_to_code ?? '?'}`
+export function clusterKey(od: EngineOd, allowMixChannels: boolean, catPart = ''): string {
+  return `${mergeKey(od, allowMixChannels, catPart)}|${od.ward_code ?? od.ship_to_code ?? '?'}`
+}
+/** Khoá bỏ phần Loại kho — để hàng đi kèm (POSM) ké được vào chuyến của Loại kho chính cùng cụm. */
+const baseKey = (k: string) => k.replace(/\|C:[^|]*/, '')
+const catPartOf = (k: string) => /\|C:([^|]*)/.exec(k)?.[1] ?? ''
+/** Luật 9: Loại kho CHÍNH của một tập dòng hàng — bỏ loại "đi kèm đơn" (POSM) và dòng chưa khai loại. */
+export function mainCatsOf(lines: Pick<EngineLine, 'category'>[], follow: ReadonlySet<string> | string[] = []): string[] {
+  const f = follow instanceof Set ? follow : new Set(follow)
+  return uniq(lines.map(l => l.category).filter((c): c is string => !!c && !f.has(c))).sort(cmp)
+}
+/** Kiểu đi của một OD: khai theo (khách × Loại kho chính) trước, rồi kiểu chung của khách, chưa khai gì = Xá (user 26/09:
+ *  "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường"). OD có HAI loại chính khai hai kiểu khác nhau ⇒ theo kiểu chung. */
+export function resolveLoadMode(custMode: string | null | undefined, byCat: Record<string, unknown> | null | undefined, mainCats: string[]): LoadMode {
+  const asM = (v: unknown): LoadMode | null => (v === 'PALLET' || v === 'LOOSE' ? v : null)
+  const modes = uniq(mainCats.map(c => asM(byCat?.[c])).filter((m): m is LoadMode => !!m))
+  if (modes.length === 1 && mainCats.every(c => asM(byCat?.[c]))) return modes[0]
+  return asM(custMode) ?? 'LOOSE'
+}
+/** ĐK bảo quản của MỘT dòng hàng (26/09): hàng nằm ở ô KHAI RIÊNG ĐK thì mang ĐK của ô đó; ô không khai (null) và mã không
+ *  có tồn ở ô khai riêng ⇒ theo Loại kho. `stock` = các ĐK của những ô đang chứa mã này (null = ô theo loại kho). */
+export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined): string[] {
+  if (!stock || !stock.length) return catCond ? [catCond] : []
+  return uniq(stock.map(c => c ?? catCond).filter((c): c is string => !!c)).sort(cmp)
 }
 
 // ── Sức chứa ──
@@ -245,7 +278,7 @@ export function servesConditions(m: EngineModel, conds: string[]): boolean {
   return conds.every(c => sv.includes(c))
 }
 const catsOf = (lines: EngineLine[]): string[] => uniq(lines.map(l => l.category).filter((c): c is string => !!c)).sort(cmp)
-const condsOf = (lines: EngineLine[]): string[] => uniq(lines.map(l => l.condition).filter((c): c is string => !!c)).sort(cmp)
+export const condsOf = (lines: EngineLine[]): string[] => uniq(lines.flatMap(l => l.conditions ?? (l.condition ? [l.condition] : [])).filter(Boolean)).sort(cmp)
 
 // ── Thùng xếp (bin) trong lúc ghép ──
 interface Bin { key: string; mkey: string; units: Unit[]; pallets: number; tons: number }
@@ -493,23 +526,40 @@ export function runDispatch(input: EngineInput): DispatchResult {
     units.push(...splitOversize(od, big))
   }
 
-  // ── Luật 1–3: xếp lớn-trước theo cụm phường ──
+  // ── Luật 1–3 (+9): xếp lớn-trước theo cụm phường — không cho trộn loại thì cụm còn tách theo Loại kho chính ──
+  const mixCats = P.allow_mix_categories !== false
+  const follow = new Set(P.follow_categories ?? [])
+  const catPart = (u: Unit) => (mixCats ? '' : (mainCatsOf(u.od.lines, follow).join('+') || '*'))
   const byCluster = new Map<string, Unit[]>()
-  for (const u of units) { const k = clusterKey(u.od, P.allow_mix_channels); const l = byCluster.get(k) ?? []; l.push(u); byCluster.set(k, l) }
+  for (const u of units) { const k = clusterKey(u.od, P.allow_mix_channels, catPart(u)); const l = byCluster.get(k) ?? []; l.push(u); byCluster.set(k, l) }
   const bins: Bin[] = []
+  const unitSort = (a: Unit, b: Unit) => (b.pallets ?? 0) - (a.pallets ?? 0) || (b.tons ?? 0) - (a.tons ?? 0) || cmp(a.od.od_number, b.od.od_number) || (a.part?.index ?? 0) - (b.part?.index ?? 0)
+  const followOnly: Unit[] = []   // OD chỉ có hàng đi kèm (POSM riêng) — xếp SAU, ké vào chuyến cùng cụm
   for (const key of [...byCluster.keys()].sort(cmp)) {
-    const us = byCluster.get(key)!.sort((a, b) => (b.pallets ?? 0) - (a.pallets ?? 0) || (b.tons ?? 0) - (a.tons ?? 0) || cmp(a.od.od_number, b.od.od_number) || (a.part?.index ?? 0) - (b.part?.index ?? 0))
+    if (!mixCats && catPartOf(key) === '*') { followOnly.push(...byCluster.get(key)!); continue }
+    const us = byCluster.get(key)!.sort(unitSort)
     const mode = us[0].od.load_mode
     const cands = candsFor(us.map(u => u.od))
     const local: Bin[] = []
     for (const u of us) {
-      const mkey = mergeKey(u.od, P.allow_mix_channels)
+      const mkey = mergeKey(u.od, P.allow_mix_channels, catPart(u))
       if (u.oversize) { local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
       const b = local.find(x => !x.units.some(y => y.oversize) && binFits(cands, withUnits(x, [u]), stopsLimit(P, mode)))
       if (b) { const nb = withUnits(b, [u]); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
       else local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
     }
     bins.push(...local)
+  }
+  // Hàng đi kèm (POSM) "đi theo đơn": vào chuyến CÙNG CỤM (cùng kiểu đi · nhóm khách · vùng · kênh · phường) còn chỗ —
+  // ưu tiên chuyến chở chính khách đó. Không chuyến nào nhận ⇒ đi chuyến riêng.
+  for (const u of followOnly.sort(unitSort)) {
+    const key = clusterKey(u.od, P.allow_mix_channels, '*')
+    const fitsIn = (b: Bin) => !b.units.some(y => y.oversize) && baseKey(b.key) === baseKey(key)
+      && binFits(candsFor([...b.units.map(y => y.od), u.od]), withUnits(b, [u]), stopsLimit(P, u.od.load_mode))
+    const same = (b: Bin) => b.units.some(y => (y.od.ship_to_code ?? y.od.od_number) === (u.od.ship_to_code ?? u.od.od_number))
+    const hit = bins.find(b => same(b) && fitsIn(b)) ?? bins.find(b => catPartOf(b.key) !== '*' && fitsIn(b)) ?? bins.find(b => fitsIn(b))
+    if (hit) { const nb = withUnits(hit, [u]); hit.units = nb.units; hit.pallets = nb.pallets; hit.tons = nb.tons }
+    else bins.push({ key, mkey: mergeKey(u.od, P.allow_mix_channels, '*'), units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
   }
 
   // ── Luật 5 + 2: gộp chuyến Non tải cùng VÙNG — chỉ khi vừa xe, đủ điểm giao và KHÔNG ĐẮT HƠN đi riêng ──
@@ -523,7 +573,9 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const srcs = bins.filter(b => !b.units.some(u => u.oversize) && isUnder(b)).sort((a, b) => (a.pallets - b.pallets) || (a.tons - b.tons) || cmp(a.key, b.key))
     for (const src of srcs) {
       const cSrc = costOf(src).freight.total
-      const targets = bins.filter(t => t !== src && t.mkey === src.mkey && !t.units.some(u => u.oversize))
+      // chuyến chỉ có hàng đi kèm (POSM) gộp được vào chuyến của Loại kho chính cùng vùng (luật 9)
+      const sameGroup = (t: Bin) => t.mkey === src.mkey || (!mixCats && catPartOf(src.mkey) === '*' && baseKey(t.mkey) === baseKey(src.mkey))
+      const targets = bins.filter(t => t !== src && sameGroup(t) && !t.units.some(u => u.oversize))
         .map(t => ({ t, merged: withUnits(t, src.units) }))
         .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged, stopsLimit(P, src.units[0].od.load_mode)))
         .map(x => { const cT = costOf(x.t).freight.total, cM = costOf(x.merged).freight.total; return { ...x, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
@@ -557,6 +609,9 @@ export function runDispatch(input: EngineInput): DispatchResult {
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
       warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : []),
+        ...(() => { const mx = mixCats ? [] : uniq(b.units.filter(u => mainCatsOf(u.od.lines, follow).length > 1).map(u => u.od.od_number)); return mx.length
+          ? [`${mx.length} OD chứa nhiều Loại kho (${mainCatsOf(b.units.filter(u => mx.includes(u.od.od_number)).flatMap(u => u.lines), follow).join(' + ')}) — không tách được OD nên đi chung một chuyến dù kho không cho ghép loại · OD:${mx.slice(0, 3).join(', ')}${mx.length > 3 ? '…' : ''}`]
+          : [] })(),
         ...(() => { const sw = uniq(b.units.filter(u => toLoose.has(u.od.od_number)).map(u => u.od.od_number)); return sw.length
           ? [`${sw.length} OD khách đi Pallet có hàng ${a.conds.map(c => input.condition_labels?.[c] ?? c).join(' + ')} — không xe pallet nào chở được, máy xếp lên ${a.model ? `${a.model.name}${a.model.parent_type_name ? ` (${a.model.parent_type_name})` : ''}` : 'xe xá'} · OD:${sw.slice(0, 3).join(', ')}${sw.length > 3 ? '…' : ''}`]
           : [] })()],

@@ -42,7 +42,7 @@ const LOCATION_LITE_COLS =
   'id, location_code, warehouse_id, sub_code, sub_name, categories, row, shelf,' +
   // `max_materials` (trần số mã của ô, 26/08) đi cùng nhóm max_pallets/slot_no_*: picker Nhập kho
   // chấm luật cất hàng ngay trên danh sách nên phải có, không thì ô bị chặn vẫn hiện ★.
-  'max_pallets, max_materials, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out'
+  'max_pallets, max_materials, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out, storage_condition'
 
 // ─── Phân trang SERVER cho TRANG danh mục Vị trí kho ────────────────────────────────────────────
 // 1 kho có thể vài nghìn vị trí (Bàu Bàng 1.517) — trước đây render hết + cộng tổng ở máy.
@@ -570,6 +570,18 @@ export async function getLocation(req: Request, res: Response) {
   }
 }
 
+/** ĐK bảo quản RIÊNG của ô (26/09, user: "trong kho RM01 có thể có cả kho lạnh, thường — mặc định theo loại kho").
+ *  `null`/'' = theo Loại kho; còn lại phải là mã trong danh mục ĐK bảo quản (Cài đặt WMS → ĐK bảo quản). Một bộ đọc
+ *  cho Thêm · Sửa · khai hàng loạt — hai cửa cùng một cột mà khác luật là mẫu lỗi hay gặp nhất. */
+async function parseStorageCondition(v: unknown): Promise<{ value: string | null } | { error: string }> {
+  if (v === null || v === '' || v === undefined) return { value: null }
+  if (typeof v !== 'string') return { error: 'Điều kiện bảo quản không hợp lệ' }
+  const code = v.trim()
+  const { data } = await supabase.from('LookupValue').select('value').eq('type', 'storage_condition').eq('value', code).maybeSingle()
+  if (!data) return { error: `Điều kiện bảo quản "${code}" không có trong danh mục (Cài đặt WMS → ĐK bảo quản)` }
+  return { value: code }
+}
+
 export async function createLocation(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, sub_name, sub_type, row, shelf, max_pallets } = req.body
@@ -577,6 +589,8 @@ export async function createLocation(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code hoặc row')
     const maxMat = parseLocationMaxMaterials(req.body.max_materials)
     if ('error' in maxMat) return fail(res, 400, 'VALIDATION_ERROR', maxMat.error)
+    const cond = await parseStorageCondition(req.body.storage_condition)
+    if ('error' in cond) return fail(res, 400, 'VALIDATION_ERROR', cond.error)
     // Sức chứa ÂM = tắt lá chắn quá tải (RPC chỉ kiểm khi > 0) — xem ghi chú ở updateLocation
     if (max_pallets !== undefined && max_pallets !== null && max_pallets !== ''
         && (!Number.isFinite(Number(max_pallets)) || Number(max_pallets) < 0))
@@ -622,6 +636,7 @@ export async function createLocation(req: Request, res: Response) {
         shelf: String(shelf ?? '').trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
         max_materials: maxMat.value,          // null = không giới hạn (mặc định)
+        storage_condition: cond.value,        // null = theo Loại kho (mặc định)
         created_by: actor, updated_by: actor,
         updated_at: new Date().toISOString(),
       })
@@ -714,6 +729,11 @@ export async function updateLocation(req: Request, res: Response) {
       if ('error' in m) return fail(res, 400, 'VALIDATION_ERROR', m.error)
       patch.max_materials = m.value
     }
+    if (req.body.storage_condition !== undefined) {
+      const c = await parseStorageCondition(req.body.storage_condition)
+      if ('error' in c) return fail(res, 400, 'VALIDATION_ERROR', c.error)
+      patch.storage_condition = c.value
+    }
     // 2 cờ "Vị trí đặc biệt". Trang này là ĐƯỜNG KHAI DUY NHẤT từ 18/08 — khối multi-select
     // replace-all ở tab Cài đặt trang Tối ưu vị trí đã gỡ (user chê khó config; và một cờ hai chỗ
     // khai thì thêm cờ mới là quên một bên).
@@ -751,6 +771,12 @@ export async function bulkFlagLocations(req: Request, res: Response) {
       const m = parseLocationMaxMaterials(req.body.max_materials)
       if ('error' in m) return fail(res, 400, 'VALIDATION_ERROR', m.error)
       flags.max_materials = m.value
+    }
+    // ĐK bảo quản riêng (26/09) — cũng không phải cờ: `null` = "về theo Loại kho", khác `undefined` = không đụng
+    if (req.body.storage_condition !== undefined) {
+      const c = await parseStorageCondition(req.body.storage_condition)
+      if ('error' in c) return fail(res, 400, 'VALIDATION_ERROR', c.error)
+      flags.storage_condition = c.value
     }
     if (Object.keys(flags).length === 0)
       return fail(res, 400, 'INVALID_INPUT', 'Thiếu cờ cần gắn')

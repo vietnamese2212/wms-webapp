@@ -776,7 +776,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; copy_from_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -785,7 +785,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data as WarehouseSaved),
     // Bật/tắt "Áp %Date tự động" ghi thẳng vào dòng hàng của đơn đang mở (BE áp ngay từ 12/09) →
     // phải làm mới cả màn Quy định date và bảng việc, không đợi người dùng bấm lại.
@@ -886,7 +886,7 @@ export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
     // Loại của vị trí KẾ THỪA từ Khu vực (không gửi category — BE tự lấy từ zone)
-    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number; max_materials?: number | null }) =>
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number; max_materials?: number | null; storage_condition?: string | null }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -899,7 +899,7 @@ export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
     // sub_code/row/shelf (14/09): đổi mã khi ô TRỐNG — BE gác 409 nếu còn hàng / việc treo
-    mutationFn: ({ id, ...body }: { id: string; sub_code?: string; row?: string; shelf?: string; sub_name?: string; max_pallets?: number; max_materials?: number | null; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_code?: string; row?: string; shelf?: string; sub_name?: string; max_pallets?: number; max_materials?: number | null; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean; storage_condition?: string | null }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -936,7 +936,9 @@ export function useBulkFlagLocations() {
                          slot_no_in?: boolean; slot_no_out?: boolean
                          // Trần số mã của ô (26/08) — KHÔNG phải cờ: `null` = gỡ giới hạn (giá trị
                          // thật), vắng field = đừng đụng cột. Vì thế kiểu phải cho phép null.
-                         max_materials?: number | null }) =>
+                         max_materials?: number | null
+                         // ĐK bảo quản riêng của ô (26/09): null = về theo Loại kho, vắng = đừng đụng
+                         storage_condition?: string | null }) =>
       apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -4524,6 +4526,8 @@ export interface Customer {
   is_active: boolean; auto_created: boolean; note: string | null
   /** Điều vận (25/09): khách đi PALLET (xe pallet, một khách/xe) hay LOOSE = đi XÁ (xe tải ghép nhiều khách) — mặc định Xá */
   load_mode: 'PALLET' | 'LOOSE'
+  /** 26/09: kiểu đi RIÊNG theo Loại kho {FG01: 'PALLET', FG02: 'LOOSE'} — loại không khai ⇒ theo `load_mode` */
+  load_mode_by_category?: Record<string, 'PALLET' | 'LOOSE'>
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
   // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
   rules: MasterRuleRow[]
@@ -4600,7 +4604,9 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode'>>
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category'>>
+/** Thao tác hàng loạt "kiểu đi cho MỘT Loại kho" — gộp vào bảng kiểu đi từng khách (mode null = về kiểu chung). */
+export type CustomerBulkPatch = CustomerPatch | { load_mode_by_category: { category: string; mode: 'PALLET' | 'LOOSE' | null } }
 export function useSaveCustomer() {
   const qc = useQueryClient()
   return useMutation({
@@ -4621,7 +4627,7 @@ export function useDeactivateCustomer() {
 export function useBulkUpdateCustomers() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { ids?: string[]; filter?: Record<string, unknown>; patch: CustomerPatch }) =>
+    mutationFn: (body: { ids?: string[]; filter?: Record<string, unknown>; patch: CustomerBulkPatch }) =>
       apiClient.patch('/masterdata/customers/bulk', body).then(r => r.data.data as { updated: number }),
     onSettled: () => invalidateCustomers(qc),
   })
@@ -5921,9 +5927,11 @@ export interface DispatchSummary {
   avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; pool_pallets?: number; late_ods?: number; empty_trips?: number; locked?: number
   baseline?: { trips: number; freight_total: number; pallets: number; underload: number; unpriced: number } | null
 }
+/** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (26/09): Loại kho chưa khai ĐK bảo quản · mã hàng chưa khai Loại kho. */
+export interface DispatchConfigGaps { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[] }
+  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null

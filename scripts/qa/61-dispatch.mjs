@@ -51,9 +51,13 @@ const CAT2 = mat2?.category ?? null
 const cat2Row = CAT2 ? (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(CAT2)}`))[0] ?? null : null
 const CAT2_META0 = cat2Row ? { ...(cat2Row.meta ?? {}) } : null
 const WH_MIX0 = (await restAll('Warehouse', `select=dispatch_allow_mix_categories&id=eq.${WH}`))[0]?.dispatch_allow_mix_categories === true
-const ieLoc = (await restAll('InventoryEntry', `select=location_id,material_id&warehouse_id=eq.${WH}&cartons_remaining=gt.0&location_id=not.is.null&status=in.(IN_STOCK,PARTIAL)&limit=1`))[0] ?? null
+const ieLoc = (await restAll('InventoryEntry', `select=location_id,material_id,material:Material(category),loc:Location(categories)&warehouse_id=eq.${WH}&cartons_remaining=gt.0&location_id=not.is.null&status=in.(IN_STOCK,PARTIAL)&limit=200`))
+  .find(x => !(x.loc?.categories ?? []).length || (x.loc.categories).includes(x.material?.category)) ?? null   // ô lạnh chỉ áp cho hàng THUỘC Loại kho của ô (20260926c)
 const locRow = ieLoc ? (await restAll('Location', `select=id,storage_condition&id=eq.${ieLoc.location_id}`))[0] ?? null : null
 const LOC_COND0 = locRow?.storage_condition ?? null
+const ieStray = (await restAll('InventoryEntry', `select=location_id,material_id,material:Material(material_code,category,units_per_carton),loc:Location(categories)&warehouse_id=eq.${WH}&cartons_remaining=gt.0&location_id=not.is.null&status=in.(IN_STOCK,PARTIAL)&limit=500`))
+  .find(x => (x.loc?.categories ?? []).length && x.material?.category && !x.loc.categories.includes(x.material.category) && x.location_id !== ieLoc?.location_id) ?? null
+const STRAY_COND0 = ieStray ? ((await restAll('Location', `select=storage_condition&id=eq.${ieStray.location_id}`))[0]?.storage_condition ?? null) : null
 
 async function cleanupTrips() {
   const gdos = await restAll('GroupDeliveryOrder', `select=id&group_code=like.${PREFIX}*`)
@@ -88,6 +92,7 @@ async function cleanup() {
   if (cat2Row && CAT2_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${cat2Row.id}`, { meta: CAT2_META0 }).catch(() => {})
   await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_allow_mix_categories: WH_MIX0 }).catch(() => {})
   if (locRow) await restWrite('Location', 'PATCH', `id=eq.${locRow.id}`, { storage_condition: LOC_COND0 }).catch(() => {})
+  if (ieStray) await restWrite('Location', 'PATCH', `id=eq.${ieStray.location_id}`, { storage_condition: STRAY_COND0 }).catch(() => {})
   await restWrite('LookupValue', 'DELETE', `type=eq.storage_condition&value=eq.${COND}`).catch(() => {})
   await restWrite('LookupValue', 'DELETE', `type=eq.storage_condition&value=eq.${COND_LOC}`).catch(() => {})
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA61*`).catch(() => {})
@@ -631,8 +636,8 @@ try {
     const ies = await restAll('InventoryEntry', `select=location_id&warehouse_id=eq.${WH}&material_id=eq.${ieLoc.material_id}&cartons_remaining=gt.0&status=in.(IN_STOCK,PARTIAL,QUARANTINE,LOOSE_PICKING)`)
     const catMeta = m9?.category ? (await restAll('LookupValue', `select=meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(m9.category)}`))[0]?.meta : null
     const locIds = [...new Set(ies.map(x => x.location_id))]
-    const locConds = locIds.length ? await restAll('Location', `select=id,storage_condition&id=in.(${locIds.filter(Boolean).join(',')})`) : []
-    const byId = new Map(locConds.map(l => [l.id, l.storage_condition]))
+    const locConds = locIds.length ? await restAll('Location', `select=id,storage_condition,categories&id=in.(${locIds.filter(Boolean).join(',')})`) : []
+    const byId = new Map(locConds.map(l => [l.id, l.storage_condition && (!(l.categories ?? []).length || l.categories.includes(m9?.category)) ? l.storage_condition : null]))
     const expected = [...new Set(ies.map(x => (x.location_id ? byId.get(x.location_id) : null) ?? catMeta?.storage_condition ?? null).filter(Boolean))].sort()
     const OD9 = 'QA61OD9'
     await restWrite('erp_outbound_orders', 'POST', null, {
@@ -645,6 +650,22 @@ try {
     check('12j. OD của mã đang nằm ở ô khai riêng mang ĐÚNG các mức theo chỗ tồn thật (oracle tự tính từ tồn + ô + Loại kho)',
       pL.s === 201 && !!r9 && JSON.stringify([...(r9.conditions ?? [])].sort()) === JSON.stringify(expected) && expected.includes(COND_LOC),
       `http=${pL.s} ${pL.j?.error?.message ?? ''} got=${JSON.stringify(r9?.conditions)} expected=${JSON.stringify(expected)} (${ies.length} pallet ở ${locIds.length} ô)`)
+    // Hàng ĐỂ NHỜ ô lạnh của Loại kho khác (vd FG01 trong Kho Lạnh NVL của RM01) KHÔNG thành hàng lạnh (20260926c — đo Bàu Bàng: 94/97 chuyến bị ép xe kết hợp)
+    if (ieStray) {
+      await cleanupTrips()
+      await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${OD9}`).catch(() => {})
+      await api(`/masterdata/locations/${ieStray.location_id}`, 'PUT', { storage_condition: COND_LOC })
+      await restWrite('erp_outbound_orders', 'POST', null, {
+        id: crypto.randomUUID(), od_number: 'QA61OD10', od_item: '10', material_code: ieStray.material.material_code, qty_base: Math.max(1, Number(ieStray.material.units_per_carton) || 1),
+        ship_to_code: SHIP[2], ship_to_name: 'QA61 NPP 3', ward_code: W2, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE', sap_pallets: 1,
+        source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+      })
+      const pS = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+      const rS = [...(pS.j?.data?.trips ?? []).flatMap(t => t.ods), ...(pS.j?.data?.pool ?? [])].find(o => o.od_number === 'QA61OD10')
+      check(`12j2. Mã ${ieStray.material.category} để nhờ ô Loại kho ${ieStray.loc.categories.join('+')} khai lạnh ⇒ OD KHÔNG mang mức của ô (ô lạnh chỉ nói về hàng thuộc ô)`,
+        pS.s === 201 && !!rS && !(rS.conditions ?? []).includes(COND_LOC), `http=${pS.s} got=${JSON.stringify(rS?.conditions)}`)
+      await api(`/masterdata/locations/${ieStray.location_id}`, 'PUT', { storage_condition: STRAY_COND0 })
+    } else check('12j2. Fixture: cần một pallet để nhờ ô của Loại kho khác', false)
     const condL = (await restAll('LookupValue', `select=id&type=eq.storage_condition&value=eq.${COND_LOC}`))[0]
     const delL = await api(`/wms/lookup/${condL.id}`, 'DELETE')
     check('12k. Xoá mức đang được VỊ TRÍ dùng → 409 nêu "vị trí" (không để mã mồ côi trên ô)', delL.s === 409 && /vị trí/.test(delL.j?.error?.message ?? ''),

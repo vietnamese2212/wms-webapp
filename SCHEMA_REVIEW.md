@@ -774,6 +774,13 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 
 ## 2026-09-25 — Điều vận v2: bàn ghép xe + pool lũy tiến + OD bị SO sửa thay
 
+**`20260926b_customer_max_vehicle_tons.sql`** (đã apply STAGING 26/09).
+- `Customer.max_vehicle_tons numeric` CHECK NULL hoặc 0 < x ≤ 100 — tải trọng xe lớn nhất vào được điểm giao; NULL = không giới hạn.
+- `dispatch_trip_od.max_vehicle_tons numeric` — chụp lúc lập để cửa sửa nháp theo cùng luật.
+
+**`20260926c_stock_conditions_own_category.sql`** (đã apply STAGING 26/09).
+- `dispatch_stock_conditions` — ĐK của ô chỉ áp cho hàng thuộc đúng Loại kho của ô (ô không khai loại = mọi hàng).
+
 **`20260926_dispatch_category_rules.sql`** (đã apply STAGING 26/09; production CHƯA — đi cùng lượt merge dev→main).
 - `Location.storage_condition text` NULL = theo Loại kho — ĐK bảo quản RIÊNG của ô (phòng lạnh trong kho RM01…); index riêng phần `(warehouse_id) WHERE storage_condition IS NOT NULL`.
 - `Warehouse.dispatch_allow_mix_categories boolean NOT NULL DEFAULT false` — điều vận cho ghép nhiều Loại kho trên một chuyến (mặc định KHÔNG).

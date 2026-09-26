@@ -676,7 +676,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
                   return (
                     <div key={c.value} className="flex items-center gap-2 px-2 py-1">
                       <span className="w-14 shrink-0 font-mono text-xs font-semibold">{c.value}</span>
-                      <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">{c.label}</span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">{c.label !== c.value ? c.label : ''}</span>
                       <div className="grid grid-cols-3 gap-0.5 rounded border border-slate-200 p-0.5">
                         {([['', 'Theo chung'], ['PALLET', 'Pallet'], ['LOOSE', 'Xá']] as const).map(([mv, lb]) => (
                           <button key={mv} type="button"

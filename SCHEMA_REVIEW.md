@@ -774,6 +774,15 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 
 ## 2026-09-25 — Điều vận v2: bàn ghép xe + pool lũy tiến + OD bị SO sửa thay
 
+**`20260926_dispatch_category_rules.sql`** (đã apply STAGING 26/09; production CHƯA — đi cùng lượt merge dev→main).
+- `Location.storage_condition text` NULL = theo Loại kho — ĐK bảo quản RIÊNG của ô (phòng lạnh trong kho RM01…); index riêng phần `(warehouse_id) WHERE storage_condition IS NOT NULL`.
+- `Warehouse.dispatch_allow_mix_categories boolean NOT NULL DEFAULT false` — điều vận cho ghép nhiều Loại kho trên một chuyến (mặc định KHÔNG).
+- `Customer.load_mode_by_category jsonb NOT NULL DEFAULT '{}'` CHECK object + giá trị PALLET|LOOSE — kiểu đi riêng theo Loại kho.
+- RPC `customer_set_load_mode_cat(p_ids, p_category, p_mode, p_by)` — gộp một Loại kho vào map từng khách (thao tác hàng loạt).
+- RPC `dispatch_stock_conditions(p_warehouse_id, p_material_codes)` — ĐK của các ô đang chứa mã (chỉ mã có tồn ở ô khai riêng; kho chưa khai ô nào ⇒ `[]` ngay).
+- `rename_warehouse_type` thêm cascade khoá `Customer.load_mode_by_category`.
+- Không cột mới cho "đi kèm đơn": `LookupValue(warehouse_type).meta.dispatch_follow` (khoá mới trong `sanitizeMeta`).
+
 **`20260925d_vehicle_model_dispatch_use.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
 - `vehicle_model.dispatch_use text NOT NULL DEFAULT 'ALL'` CHECK ALL|TRANSFER — điều vận dùng dòng xe cho mọi đơn / CHỈ trung chuyển giữa các kho. Backfill: cha CONT/CONTSCA ⇒ TRANSFER (5 dòng container trên staging).
 - `dispatch_trip_od.is_transfer boolean NOT NULL DEFAULT false` — OD trung chuyển (khách trỏ kho hoặc SAP STO/INTERNAL), chụp lúc máy lập để cửa sửa nháp chọn dòng xe đúng luật.

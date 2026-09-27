@@ -114,7 +114,22 @@ const LIST_FUZZ = [
   `/wms/loosepicking?date_from=2026-13-45&date_to=2026-08-31`,
 ]
 for (const path of LIST_FUZZ) {
-  const r = await api(path)
+  let r = await api(path)
+  // 503/429 = app CỐ Ý nói "đang quá tải" (fail() dịch 57014 → 503 từ 07/09, luật C25) — đó là câu
+  // trả lời ĐÚNG, không phải 500 rác. Staging là SÂN CHUNG (máy NANO): chỉ cần có người chạy bộ QA
+  // tại máy là đọc nặng hết giờ ⇒ CI đỏ ⇒ email, dù sản phẩm không hỏng gì (đo 27/09 lượt 895:
+  // `/wms/inbound-orders/summary` trả 503, bộ kiểm in "→ 500!").
+  // ĐO LẠI MỘT LẦN sau khi lắng rồi mới kết luận: quá tải thì tự hết, endpoint hỏng THẬT thì vẫn 503
+  // ở lần hai ⇒ vẫn đỏ, cổng KHÔNG bị nới.
+  if (r.s === 503 || r.s === 429) {
+    await new Promise(res => setTimeout(res, 8000))
+    const again = await api(path)
+    if (again.s !== 503 && again.s !== 429) {
+      const tag = process.env.GITHUB_ACTIONS === 'true' ? '::notice::' : '⏳ '
+      console.log(`  ${tag}fuzz ${path.slice(0, 60)} — lần đầu HTTP ${r.s} (quá tải), đo lại ${again.s}`)
+    }
+    r = again
+  }
   // 404 = đường dẫn test SAI (route đổi tên) — phải đỏ để sửa test, đừng pass oan.
   const okStatus = r.s < 500 && r.s !== 404
   const okSize = r.bytes < MAX_BYTES

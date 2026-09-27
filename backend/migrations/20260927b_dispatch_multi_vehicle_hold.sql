@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS public.dispatch_od_hold (
   updated_at   timestamptz NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dispatch_od_hold ON public.dispatch_od_hold (warehouse_id, od_number);
+-- mọi bảng public bật RLS, 0 policy (backend đi service_role) — bất biến gói 00 "không bảng nào hở với anon key"
+ALTER TABLE public.dispatch_od_hold ENABLE ROW LEVEL SECURITY;
 
 UPDATE public."JobTitle" j
    SET module_permissions = jsonb_set(

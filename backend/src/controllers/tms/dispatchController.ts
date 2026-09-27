@@ -52,6 +52,9 @@ type WhRow = { id: string; code: string; name: string; sap_plant: string | null;
 
 type TripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
 const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
+/** Theo kịp SAP (thay OD · cập nhật theo SAP) làm được CẢ trên xe đang CHỜ ĐVVT: ghi "ĐVVT nhận" đòi OD khớp SAP, nên chặn ở
+ *  đây là ngõ cụt — lối ra duy nhất từng là ghi "từ chối" dù ĐVVT đã nhận (check-app 27/09 tối). Xe vẫn đứng chờ. */
+const SAP_SYNC_TRIP: TripStatus[] = [...EDITABLE_TRIP, 'TENDERED']
 const OPEN_PLAN = ['DRAFT', 'TENDERED']
 
 const ENGINE_VERSION = '2026-09-25.1'
@@ -1276,7 +1279,7 @@ export async function replaceOd(req: Request, res: Response) {
     if (!olds.length) return fail(res, 'OD không nằm trong kế hoạch này', 404)
     const tripId = olds[0].trip_id
     const tr = tripId ? full.trips.find(x => x.id === tripId) : null
-    if (tr && !EDITABLE_TRIP.includes(statusOf(tr))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${tr.group_code} ${TRIP_STATUS_VI[statusOf(tr)]} — không thay OD ở đây.`)
+    if (tr && !SAP_SYNC_TRIP.includes(statusOf(tr))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${tr.group_code} ${TRIP_STATUS_VI[statusOf(tr)]} — không thay OD ở đây.`)
     const { data: repRow } = await db.from('erp_outbound_orders').select('replaced_by_od').eq('od_number', b.od_number).not('replaced_by_od', 'is', null).limit(1).maybeSingle()
     const newOd = repRow?.replaced_by_od ?? null
     if (!newOd) return fail(res, 422, 'NOT_REPLACED', `OD ${b.od_number} chưa được SAP thay bằng OD nào (ZSD02 chưa có OD mới cho dòng SO này).`)
@@ -1323,7 +1326,7 @@ export async function resyncOd(req: Request, res: Response) {
     const olds = [...full.trips.flatMap(t => t.ods), ...full.pool].filter(o => o.od_number === b.od_number)
     if (!olds.length) return fail(res, 'OD không nằm trong kế hoạch này', 404)
     const tripBy = new Map(full.trips.map(t => [t.id, t]))
-    const locked = olds.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
+    const locked = olds.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !SAP_SYNC_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không cập nhật OD của xe này ở đây.`)
     const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { onlyOds: [b.od_number], skipPlanId: plan.id })
     const od = cand.ods.find(o => o.od_number === b.od_number)

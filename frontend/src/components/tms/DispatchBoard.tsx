@@ -406,11 +406,11 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           {o.note && <div className="mt-0.5 flex items-start gap-1 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-900 leading-snug break-words"><StickyNote className="h-3 w-3 shrink-0 mt-px" />{o.note}</div>}
           {fl?.kind === 'CHANGED' && (
             <div className="mt-0.5 text-[10px] text-red-700 leading-snug break-words">{fl.info}
-              {editable && (!tr || editableTrip(tr)) && <button type="button" className="ml-1 inline-flex items-center gap-1 font-medium text-sky-700 hover:underline" disabled={resync.isPending}
+              {editable && (!tr || editableTrip(tr) || tripStatus(tr) === 'TENDERED') && <button type="button" className="ml-1 inline-flex items-center gap-1 font-medium text-sky-700 hover:underline" disabled={resync.isPending}
                 onClick={e => { e.stopPropagation(); void doResync(o.od_number) }}><RotateCw className="h-3 w-3" /> Cập nhật theo SAP</button>}
             </div>
           )}
-          {fl?.kind === 'REPLACED' && fl.replaced_by && editable && (!tr || editableTrip(tr)) && (
+          {fl?.kind === 'REPLACED' && fl.replaced_by && editable && (!tr || editableTrip(tr) || tripStatus(tr) === 'TENDERED') && (
             <button type="button" className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 hover:underline" disabled={replace.isPending}
               onClick={e => { e.stopPropagation(); void doReplace(o.od_number) }}><Replace className="h-3 w-3" /> Thay bằng OD mới {fl.replaced_by}</button>
           )}

@@ -941,6 +941,7 @@ try {
 
     // XE ĐANG CHỜ ĐVVT mà SAP sửa OD: ghi "ĐVVT nhận" bị chặn (đúng — tải cũ) nhưng "Cập nhật theo SAP" từng từ chối xe CHỜ ⇒
     // ngõ cụt, lối ra duy nhất là ghi "từ chối" dù ĐVVT đã nhận (check-app 27/09 tối). HA cần phản hồi (0b) ⇒ xe OD3 đứng CHỜ.
+    await api(`/tms/transport-companies/${HA.id}`, 'PUT', { tender_required: true })   // cờ đọc LÚC CHỐT (các mục trước đã tắt)
     const cfK = await api(`/tms/dispatch/plans/${kId}/confirm`, 'POST', {})
     const PK = await planOf(kId)
     const tK3 = tripOfOd(PK, OD[2])

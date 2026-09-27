@@ -660,6 +660,9 @@ try {
     check('12d. Loại kho "Đi kèm đơn khi điều vận" → 200 và meta GIỮ khoá mới + cờ cũ (bộ lọc meta vứt khoá lạ nếu quên khai)',
       fl.s === 200 && cat2Now?.meta?.dispatch_follow === true && cat2Now?.meta?.badge_color === CAT2_META0?.badge_color,
       `http=${fl.s} meta=${JSON.stringify(cat2Now?.meta ?? null)}`)
+    // cấu hình Loại kho nhớ 30 s / instance (warehouseTypeMeta) — lời gọi lập rơi vào instance KHÁC thì còn đọc cờ cũ ⇒ đỏ oan
+    // (check-app 27/09: lượt thứ hai liền nhau đỏ [12e], lượt đầu xanh). Chờ hết hạn nhớ rồi mới đo.
+    await new Promise(r => setTimeout(r, 31_000))
     const pF = await mkPlan(PLAN_BODY)
     check('12e. Loại kho đi kèm ⇒ kho KHÔNG cho trộn mà OD loại đó vẫn ké vào chuyến của chính khách (không đẻ chuyến riêng)',
       pF.s === 201 && pF.j?.data?.params?.allow_mix_categories === false && tripOfOd(pF.j?.data, OD[0])?.id === tripOfOd(pF.j?.data, OD8)?.id,

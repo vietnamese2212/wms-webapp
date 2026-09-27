@@ -17,7 +17,9 @@
  *   node scripts/qa/ci-account.mjs provision   → in ra 2 dòng `email=…` / `password=…` (stdout)
  *   node scripts/qa/ci-account.mjs cleanup     → xoá tài khoản của lượt này + mọi tài khoản CI cũ
  */
-import { readFileSync } from 'fs'
+import { readFileSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { randomUUID, randomInt } from 'crypto'
 import bcrypt from 'bcryptjs'
 // Mốc DB → UTC. Tài khoản CI bị đọc SAI TUỔI chính là thứ làm CI đỏ 25–26/09 — xem utcms.mjs.
@@ -66,7 +68,15 @@ function newPassword() {
 // Chạy TẠI MÁY thì không có nó, mà `Date.now()` được tính lại ở MỖI tiến trình ⇒ bước thu hồi đi xoá
 // một số hiệu khác số vừa cấp (đo 27/09: cấp `QACI0479539060`, thu hồi đòi xoá `QACI0479644254`)
 // ⇒ tài khoản vừa dùng nằm lại tới khi quá hạn. Khai `QA_CI_TAG` để hai bước gọi ra cùng một số.
-const runTag = (process.env.GITHUB_RUN_ID || process.env.QA_CI_TAG || String(Date.now())).slice(-10)
+// Chạy TẠI MÁY: provision và cleanup là HAI tiến trình, `Date.now()` tính lại ở mỗi tiến trình nên
+// nếu không ghi lại số hiệu thì cleanup đi xoá một tài khoản không tồn tại và tài khoản SUPERADMIN
+// vừa dùng nằm lại tới khi quá hạn 2 giờ (đo 27/09: 8 tài khoản như vậy còn sống cùng lúc — trước
+// đây chúng bị chính lỗi múi giờ xoá hộ nên không ai thấy). Ghi số hiệu ra file tạm của HỆ ĐIỀU
+// HÀNH (không đụng repo) để mọi người gọi đều được thu hồi đúng, không cần nhớ khai gì.
+const TAG_FILE = join(tmpdir(), 'wms-qa-ci-account-tag')
+const readSavedTag = () => { try { return readFileSync(TAG_FILE, 'utf8').trim() } catch { return '' } }
+const runTag = (process.env.GITHUB_RUN_ID || process.env.QA_CI_TAG
+  || (process.argv[2] === 'cleanup' ? readSavedTag() : '') || String(Date.now())).slice(-10)
 const codeOf = (tag) => `${PREFIX}${tag}`
 
 async function provision() {
@@ -99,6 +109,7 @@ async function provision() {
   // stdout để workflow đọc — mật khẩu được mask ngay ở bước gọi, không lọt vào log
   console.log(`email=${email}`)
   console.log(`password=${password}`)
+  try { writeFileSync(TAG_FILE, runTag) } catch { /* không ghi được thì vẫn còn QA_CI_TAG + lưới dọn quá hạn */ }
   console.log(`tag=${runTag}`)     // gọi tay thì đặt QA_CI_TAG=<tag> cho bước cleanup xoá đúng tài khoản này
 }
 

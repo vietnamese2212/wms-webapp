@@ -888,16 +888,36 @@ async function loadOpenPlan(req: Request, planId: string): Promise<{ plan: PlanR
   if (!OPEN_PLAN.includes(plan.status)) return { err: ['Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp', 409, 'PLAN_NOT_DRAFT'] }
   return { plan: plan as PlanRow }
 }
-/** KHOÁ LẠC QUAN một kế hoạch cho thao tác DỰNG LẠI / CHÈN dòng OD (ghép · tối ưu lại · nạp OD mới · thay OD · cập nhật theo
- *  SAP): CAS trên `updated_at` đọc lúc vào — hai người cùng bấm thì chỉ một người chạy, người sau 409. Đo 27/09 tối (check-app):
- *  hai lượt "Xác nhận & ghép" đồng thời trên Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai lượt 200 — mỗi lượt đọc cùng
- *  khung chờ rồi tự dựng xe. KHÔNG thử lại: lượt thua không có gì để làm, chạy lại là vứt kết quả người thắng. */
-async function claimPlan(plan: PlanRow): Promise<boolean> {
-  const { data, error } = await db.from('dispatch_plan').update({ updated_at: now() }).eq('id', plan.id).eq('updated_at', plan.updated_at).select('id')
+/** THUÊ một kế hoạch cho thao tác DỰNG LẠI / CHÈN dòng OD (ghép · tối ưu lại · nạp OD mới · thay OD · cập nhật theo SAP) — hai
+ *  người cùng bấm thì chỉ một người chạy, người sau 409 PLAN_BUSY. Đo 27/09 tối (check-app): hai lượt "Xác nhận & ghép" đồng thời
+ *  trên Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai 200. Bản vá đầu (CAS trên updated_at lúc vào) chỉ chặn khi hai người
+ *  đọc CÙNG lúc — người tới sau 100 ms đọc mốc mới rồi cũng qua. Thuê có hạn 90 s (tiến trình chết thì tự nhả), nhả ở finally.
+ *  KHÔNG thử lại: lượt thua không có gì để làm, chạy lại là vứt kết quả người thắng. */
+const LEASE_MS = 90_000
+async function leasePlan(planId: string): Promise<string | null> {
+  const token = randomUUID()
+  const { data, error } = await db.from('dispatch_plan').update({ busy_until: new Date(Date.now() + LEASE_MS).toISOString(), busy_token: token })
+    .eq('id', planId).or(`busy_until.is.null,busy_until.lt."${now()}"`).select('id')
   if (error) throw error
-  return (data ?? []).length === 1
+  return (data ?? []).length === 1 ? token : null
 }
-const BUSY: TripErr = { err: ['Kế hoạch vừa được người khác cập nhật (ghép / nạp OD / thay OD) — tải lại trang rồi làm tiếp.', 409, 'PLAN_BUSY'] }
+async function releasePlan(planId: string, token: string) {
+  const { error } = await db.from('dispatch_plan').update({ busy_until: null, busy_token: null }).eq('id', planId).eq('busy_token', token)
+  if (error) console.error('[dispatch] nhả thuê kế hoạch hỏng', planId, error.message)   // hết hạn 90 s thì tự nhả
+}
+/** Bọc một cửa `/plans/:id/...` bằng thuê kế hoạch. Không thuê được mà kế hoạch không tồn tại ⇒ để cửa tự trả 404 / 403 như cũ. */
+const withPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+    const token = await leasePlan(id)
+    if (!token) {
+      const { data } = await db.from('dispatch_plan').select('id').eq('id', id).maybeSingle()
+      if (data) return fail(res, 409, 'PLAN_BUSY', 'Kế hoạch đang được người khác cập nhật (ghép / nạp OD / thay OD) — đợi vài giây, tải lại trang rồi làm tiếp.')
+      return h(req, res)
+    }
+    try { return await h(req, res) } finally { await releasePlan(id, token) }
+  } catch (e) { return failAny(res, e) }
+}
 /** Tính lại (và ghi) các chuyến bị đụng — MỘT lần nạp bảng cước cho hợp các phường. */
 async function repriceMany(plan: PlanRow, trips: PlanTrip[]) {
   if (!trips.length) return
@@ -1100,13 +1120,12 @@ export async function deleteTrip(req: Request, res: Response) {
 // đã xem các OD đó ⇒ đặt luôn mốc "đã xem". `review_all`: xác nhận MỌI OD đang ở khung chờ rồi ghép (nút "Xác nhận N đơn & ghép
 // xe" của bước Xem đơn — gửi cờ chứ không nhồi id, khung chờ có thể vài trăm OD). Không cờ nào: chỉ OD ĐÃ XEM được ghép.
 export const zReoptimize = z.object({ ids: z.array(zId).min(1).max(1000).optional(), review_all: zBool.optional() })
-export async function reoptimizePlan(req: Request, res: Response) {
+async function reoptimizePlanInner(req: Request, res: Response) {
   try {
     const b = (req.body ?? {}) as z.infer<typeof zReoptimize>
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1239,12 +1258,11 @@ export async function planSync(req: Request, res: Response) {
 }
 
 // POST /tms/dispatch/plans/:id/refresh-pool — nạp OD mới (ZSD02 vừa về, lũy tiến) vào KHUNG CHỜ của kế hoạch
-export async function refreshPool(req: Request, res: Response) {
+async function refreshPoolInner(req: Request, res: Response) {
   try {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1264,13 +1282,12 @@ export async function refreshPool(req: Request, res: Response) {
 }
 
 // POST /tms/dispatch/plans/:id/replace-od — OD cũ bị SAP thay (sửa SO) ⇒ đưa OD MỚI vào đúng chỗ của OD cũ (xe hoặc khung chờ)
-export async function replaceOd(req: Request, res: Response) {
+async function replaceOdInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zReplaceOd>
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1313,13 +1330,12 @@ export async function replaceOd(req: Request, res: Response) {
 // POST /tms/dispatch/plans/:id/resync-od — CÙNG OD mà SAP sửa (SL / dòng hàng / ghi chú) sau khi chụp ⇒ chụp lại theo ZSD02
 // hiện tại, OD ở NGUYÊN chỗ (xe hoặc khung chờ; OD đang bị tách phần thì gom về chỗ của phần đầu), xe tính lại tải + cước.
 // Người bấm là đã xem bản mới ⇒ mốc "đã xem" đặt lại. Kiểu đi (Pallet / Xá) người đã đổi trên nháp giữ nguyên.
-export async function resyncOd(req: Request, res: Response) {
+async function resyncOdInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zReplaceOd>
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1749,3 +1765,8 @@ export async function setCustomerVehicles(req: Request, res: Response) {
 }
 
 export { pickBookingCategory }
+
+export const reoptimizePlan = withPlanLease(reoptimizePlanInner)
+export const refreshPool = withPlanLease(refreshPoolInner)
+export const replaceOd = withPlanLease(replaceOdInner)
+export const resyncOd = withPlanLease(resyncOdInner)

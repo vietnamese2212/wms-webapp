@@ -29,7 +29,8 @@ export function DispatchOdDetailSheet({ planId, sum, info, onClose }: { planId: 
   const whMeta = useWhTypeMetaMap()
   const [line, setLine] = useState<DoSapRow | null>(null)
   const matBy = new Map((q.data?.materials ?? []).map(m => [m.material_code, m]))
-  const live = (q.data?.lines ?? []).filter(l => l.sync_status !== 'OBSOLETE')
+  // item SAP là CHỮ ("10", "100", "20") — xếp theo SỐ, không thì 100 đứng trước 20
+  const live = (q.data?.lines ?? []).filter(l => l.sync_status !== 'OBSOLETE').sort((a, b) => (Number(a.od_item) || 0) - (Number(b.od_item) || 0) || a.od_item.localeCompare(b.od_item))
   const gone = (q.data?.lines ?? []).length - live.length
   return (
     <>

@@ -14,7 +14,9 @@ ALTER TABLE public."Customer" ADD COLUMN IF NOT EXISTS dispatch_vehicles jsonb N
 ALTER TABLE public."Customer" DROP CONSTRAINT IF EXISTS customer_dispatch_vehicles_chk;
 ALTER TABLE public."Customer" ADD CONSTRAINT customer_dispatch_vehicles_chk CHECK (
   jsonb_typeof(dispatch_vehicles) = 'object'
-  AND NOT jsonb_path_exists(dispatch_vehicles, '$.* ? (@.type() != "array")')
+  -- STRICT: chế độ lax mặc định tự "mở" mảng rồi soi TỪNG phần tử (chuỗi ≠ "array") ⇒ mọi danh sách hợp lệ bị 23514
+  -- (bắt ở QA 61 [13a] lượt đầu trên Preview 27/09)
+  AND NOT jsonb_path_exists(dispatch_vehicles, 'strict $.* ? (@.type() != "array")')
 );
 COMMENT ON COLUMN public."Customer".dispatch_vehicles IS 'Dòng xe (vehicle_model.id) khách được vào theo Loại kho {"*": [...], "FG02": [...]}; "*" = mọi loại; khoá vắng = theo kênh.';
 

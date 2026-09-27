@@ -774,6 +774,14 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 
 ## 2026-09-25 — Điều vận v2: bàn ghép xe + pool lũy tiến + OD bị SO sửa thay
 
+**`20260927_dispatch_vehicle_allowlist.sql`** (đã apply STAGING 27/09; production CHƯA — đi cùng lượt merge dev→main).
+- `Customer.dispatch_vehicles jsonb NOT NULL DEFAULT '{}'` CHECK object + mọi giá trị là MẢNG (jsonpath `strict` — lax tự mở mảng nên chặn oan mọi danh sách) — dòng xe khách được vào theo Loại kho `{"*": [...], "FG02": [...]}`; khoá vắng = theo kênh. Kênh dùng `LookupValue(customer_channel).meta.dispatch_vehicles` cùng hình dạng (không cột mới).
+- `dispatch_trip.allow_mix_categories boolean` NULL = theo kế hoạch — switch "Ghép Loại kho khác" trên thẻ xe.
+- `dispatch_trip_od.allowed_models text[]` NULL = không giới hạn — chụp lúc lập.
+- RPC `customer_set_dispatch_vehicles(p_ids, p_key, p_mode SET|ADD|REMOVE|CLEAR, p_models, p_by)` — hàng loạt, gộp một khoá vào map từng khách.
+- `rename_warehouse_type` thêm cascade khoá của `Customer.dispatch_vehicles` + `meta.dispatch_vehicles` của kênh.
+- Điều vận KHÔNG gọi `dispatch_stock_conditions` nữa (hàm giữ, không ai dùng) — ĐK của ô là thông tin WMS (user chốt 27/09). `Customer.max_vehicle_tons` / `dispatch_trip_od.max_vehicle_tons` giữ cột, không còn đọc/ghi.
+
 **`20260926b_customer_max_vehicle_tons.sql`** (đã apply STAGING 26/09).
 - `Customer.max_vehicle_tons numeric` CHECK NULL hoặc 0 < x ≤ 100 — tải trọng xe lớn nhất vào được điểm giao; NULL = không giới hạn.
 - `dispatch_trip_od.max_vehicle_tons numeric` — chụp lúc lập để cửa sửa nháp theo cùng luật.

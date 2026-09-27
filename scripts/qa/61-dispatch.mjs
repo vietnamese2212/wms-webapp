@@ -702,7 +702,8 @@ try {
   // ── [13] DÒNG XE ĐƯỢC VÀO theo Kênh → Khách × Loại kho (user 27/09: "khách hàng nào vào được dòng xe nào — multi check box";
   // thay "tải trọng xe tối đa" tự suy theo tấn của 26/09) ──────────────────────────────────────────────────────────────
   await cleanupTrips()
-  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(QA61OD8,QA61OD9)`).catch(() => {})
+  // QA61OD10 (mã loại khác của [12j2]) cũng phải đi — sót nó thì xe QA chở hai Loại kho và [13c] vướng switch ghép loại
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(QA61OD8,QA61OD9,QA61OD10)`).catch(() => {})
   {
     const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
     const vms = (await api('/tms/vehicle-models')).j?.data?.items ?? []
@@ -723,15 +724,14 @@ try {
     check('13b. Khách chỉ được vào MỘT dòng xe ⇒ OD lên đúng dòng xe đó (không lên xe QA rẻ hơn) · dòng OD chụp danh sách',
       pV.s === 201 && tV?.vehicle_model_id === pick?.id && JSON.stringify(rowOf(PV, OD[0])?.allowed_models) === JSON.stringify([pick?.id]),
       `http=${pV.s} ${pV.j?.error?.message ?? ''} vm=${tV?.detail?.vehicle_model?.name} snap=${JSON.stringify(rowOf(PV, OD[0])?.allowed_models)}`)
-    // Người kéo OD lên xe khác (xe QA) ⇒ không chặn (nháp) nhưng xe cảnh báo nêu khách
-    const qaTrip = (PV?.trips ?? []).find(t => t.id !== tV?.id && t.detail?.vehicle_model?.sap_code === SAP)
-    if (qaTrip && tV) {
-      const mv = await api(`/tms/dispatch/plans/${PV.id}/move`, 'POST', { ids: [rowOf(PV, OD[0]).id], to: 'trip', to_trip_id: qaTrip.id })
-      const qNow = (await planOf(PV.id))?.trips?.find(t => t.id === qaTrip.id)
-      check('13c. Kéo OD của khách lên dòng xe không được vào ⇒ cho thả, xe cảnh báo "không được vào dòng xe"',
-        mv.s === 200 && (qNow?.ods ?? []).some(o => o.od_number === OD[0]) && /không được vào dòng xe/.test((qNow?.detail?.warnings ?? []).join(' ')),
-        `http=${mv.s} ${mv.j?.error?.message ?? ''} warn=${(qNow?.detail?.warnings ?? []).join(' | ').slice(0, 160)}`)
-    } else check('13c. Fixture: cần một xe QA khác để kéo OD sang', false, `trips=${(PV?.trips ?? []).map(t => t.detail?.vehicle_model?.sap_code).join(',')}`)
+    // Người tự đổi xe của khách sang dòng xe không được vào (xe QA) ⇒ không chặn (nháp) nhưng xe cảnh báo nêu khách
+    if (tV) {
+      const ch = await api(`/tms/dispatch/trips/${tV.id}`, 'PATCH', { vehicle_model_id: vmId })
+      const qNow = (await planOf(PV.id))?.trips?.find(t => t.id === tV.id)
+      check('13c. Người đổi xe của khách sang dòng xe không được vào ⇒ cho đổi, xe cảnh báo "không được vào dòng xe"',
+        ch.s === 200 && qNow?.vehicle_model_id === vmId && /không được vào dòng xe/.test((qNow?.detail?.warnings ?? []).join(' ')),
+        `http=${ch.s} ${ch.j?.error?.message ?? ''} warn=${(qNow?.detail?.warnings ?? []).join(' | ').slice(0, 160)}`)
+    } else check('13c. Fixture: OD1 phải có xe ở [13b]', false)
     // Hàng loạt: Thêm / Bớt / Về theo kênh gộp vào map từng khách, không đè khoá khác
     const bAdd = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'ADD', vehicle_model_ids: [other?.id] } } })
     const m1 = (await restAll('Customer', `select=dispatch_vehicles&id=eq.${c1.id}`))[0]?.dispatch_vehicles ?? {}

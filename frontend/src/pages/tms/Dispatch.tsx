@@ -341,7 +341,7 @@ export default function Dispatch() {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
             {/* Tab CẠNH tiêu đề (khuôn app — skill table-format 22); điện thoại chiếm trọn hàng đầu */}
-            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none">
+            <Tabs value={showReview ? 'review' : tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none">
               <TabsList className="h-8 max-w-full overflow-x-auto">
                 {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
               </TabsList>

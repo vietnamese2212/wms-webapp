@@ -113,7 +113,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         add('DONE', `DONE|${x.od_number}`, { ...base, held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: 'green', flag: x.info ?? '', until: null, reason: '' })
       }
     }
-    const cmp = (a: Row, b: Row) => a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
+    const cmp = (a: Row, b: Row) => Number(!a.ids.length && !a.held) - Number(!b.ids.length && !b.held) || a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
     for (const k of Object.keys(out) as St[]) out[k].sort(cmp)
     return out
   }, [plan, flags, editable])
@@ -189,16 +189,20 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
     <div className="flex flex-col min-h-0 h-full">
       <div className="shrink-0 border-b bg-white px-3 py-1.5 space-y-1.5">
         {/* SWITCH trạng thái — cả lựa chọn lẫn SỐ của từng tab thấy ngay, không phải bấm thử (khuôn switch 17/09) */}
-        <div className="flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
+        {/* điện thoại: dải switch cuộn ngang riêng một hàng, nút Ghép xe xuống hàng dưới rộng hết màn (nút chính phải THẤY NGAY) */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5">
+        <div className="flex items-center gap-1.5 overflow-x-auto sm:flex-wrap min-w-0 [&>*]:shrink-0">
           {TABS.map(t => (
             <button key={t.k} type="button" title={t.tip} onClick={() => setTab(t.k)} aria-pressed={st === t.k}
               className={`flex items-center gap-1.5 rounded-md px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${st === t.k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               {t.label}
-              <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${st === t.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(new Set(byTab[t.k].map(r => r.od)).size)}</span>
+              {/* Điều đếm ĐƠN ĐIỀU ĐƯỢC — OD "Không lên xe" (hàng trả về / chiết khấu) vẫn hiện cuối tab nhưng không cộng vào số */}
+              <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${st === t.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(new Set((t.k === 'GO' ? goOds : byTab[t.k]).map(r => r.od)).size)}</span>
             </button>
           ))}
+        </div>
           {editable && goOds.length > 0 && (!hasTrips || poolIds.length > 0) && (
-            <Button size="sm" className="ml-auto h-9 sm:h-7 text-[11px]" disabled={busy} onClick={() => void doGroup()}>
+            <Button size="sm" className="sm:ml-auto w-full sm:w-auto shrink-0 h-9 sm:h-7 text-[11px]" disabled={busy} onClick={() => void doGroup()}>
               {hasTrips ? <Sparkles className="h-3.5 w-3.5 mr-1" /> : <ListChecks className="h-3.5 w-3.5 mr-1" />}
               {reopt.isPending ? 'Đang ghép…' : hasTrips ? `Ghép ${nf(poolOds)} đơn ở khung chờ` : `Ghép xe ${nf(new Set(goOds.map(r => r.od)).size)} đơn Điều`}
             </Button>

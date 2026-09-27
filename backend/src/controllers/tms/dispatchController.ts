@@ -915,7 +915,13 @@ const withPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => 
       if (data) return fail(res, 409, 'PLAN_BUSY', 'Kế hoạch đang được người khác cập nhật (ghép / nạp OD / thay OD) — đợi vài giây, tải lại trang rồi làm tiếp.')
       return h(req, res)
     }
-    try { return await h(req, res) } finally { await releasePlan(id, token) }
+    // NHẢ TRƯỚC KHI TRẢ LỜI: nhả trong finally là nhả SAU khi phản hồi đã đi — người bấm tiếp ngay (thay OD rồi cập nhật OD khác)
+    // gặp 409 PLAN_BUSY oan (bậc full 27/09 bắt ở gói 61 [10o][15e3]). Trên serverless việc chạy sau phản hồi còn có thể bị đóng băng.
+    let released = false
+    const release = async () => { if (!released) { released = true; await releasePlan(id, token) } }
+    const send = res.json.bind(res)
+    res.json = ((body: unknown) => { void release().finally(() => send(body)); return res }) as typeof res.json
+    try { return await h(req, res) } finally { await release() }
   } catch (e) { return failAny(res, e) }
 }
 /** Tính lại (và ghi) các chuyến bị đụng — MỘT lần nạp bảng cước cho hợp các phường. */
@@ -1627,7 +1633,7 @@ const heldExcluded = (holds: { od_number: string; hold_until: string | null; rea
   holds.map(h => ({ od_number: h.od_number, kind: 'HELD' as const, info: `${h.hold_until ? `hoãn tới ${h.hold_until}` : 'không điều'} — ${h.reason}` }))
 
 // POST /tms/dispatch/plans/:id/hold — hoãn / không điều các OD đã chọn: OD rời kế hoạch (mọi phần), xe bị đụng tính lại
-export async function holdOds(req: Request, res: Response) {
+async function holdOdsInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zHold>
     const got = await loadOpenPlan(req, String(req.params.id))
@@ -1669,7 +1675,7 @@ export async function holdOds(req: Request, res: Response) {
 }
 
 // POST /tms/dispatch/plans/:id/unhold — bỏ hoãn: OD quay lại KHUNG CHỜ của kế hoạch này ngay (nếu vẫn chưa được lo ở đâu)
-export async function unholdOds(req: Request, res: Response) {
+async function unholdOdsInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zUnhold>
     const got = await loadOpenPlan(req, String(req.params.id))
@@ -1770,3 +1776,5 @@ export const reoptimizePlan = withPlanLease(reoptimizePlanInner)
 export const refreshPool = withPlanLease(refreshPoolInner)
 export const replaceOd = withPlanLease(replaceOdInner)
 export const resyncOd = withPlanLease(resyncOdInner)
+export const holdOds = withPlanLease(holdOdsInner)
+export const unholdOds = withPlanLease(unholdOdsInner)

@@ -73,6 +73,31 @@ async function parseLoadModeByCategory(raw: unknown): Promise<{ map: Record<stri
   return { map }
 }
 
+/** Dòng xe được vào theo Loại kho {"*": [id…], FG02: [id…]} (27/09) — khoá "*" hoặc Loại kho có thật, giá trị = mảng id
+ *  dòng xe CÓ THẬT (danh mục Mã dòng xe). Giá trị null = gỡ khoá đó (về theo kênh); mảng rỗng = cố ý không xe nào. */
+export async function parseDispatchVehicles(raw: unknown): Promise<{ map: Record<string, string[]> } | { err: string }> {
+  if (raw === null) return { map: {} }
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { err: 'Dòng xe được vào phải là bảng {Loại kho: [dòng xe]}' }
+  const cats = await warehouseTypeValues()
+  const map: Record<string, string[]> = {}
+  const ids = new Set<string>()
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v === null) continue
+    if (k !== '*' && !cats.has(k)) return { err: `Loại kho "${k}" không có trong danh mục Loại kho` }
+    if (!Array.isArray(v) || v.length > 100 || v.some(x => typeof x !== 'string' || !x || x.length > 100)) return { err: `Danh sách dòng xe của ${k === '*' ? 'mọi Loại kho' : k} không hợp lệ` }
+    map[k] = [...new Set(v as string[])].sort()
+    map[k].forEach(x => ids.add(x))
+  }
+  if (ids.size) {
+    const { data, error } = await supabase.from('vehicle_model').select('id').in('id', [...ids])
+    if (error) return { err: error.message }
+    const have = new Set(((data ?? []) as { id: string }[]).map(r => r.id))
+    const miss = [...ids].filter(x => !have.has(x))
+    if (miss.length) return { err: `${miss.length} dòng xe không có trong danh mục Mã dòng xe` }
+  }
+  return { map }
+}
+
 /** Đọc + kiểm phần thân chung của Thêm / Sửa. Trả patch đã chuẩn hoá hoặc thông báo lỗi. */
 async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolean): Promise<{ patch: Record<string, unknown> } | { err: { status: number; code: string; msg: string } }> {
   const bad = (msg: string, status = 400, code = 'VALIDATION_ERROR') => ({ err: { status, code, msg } })
@@ -117,14 +142,11 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
   }
   // 26/09 (user: "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường"): kiểu đi RIÊNG theo Loại kho — THAY TRỌN map.
   // Loại không khai ⇒ theo kiểu chung ở trên. Khoá phải là Loại kho có trong danh mục (đổi tên loại cascade qua RPC).
-  // 26/09 (user: "một số NPP chỉ đi được xe tải trọng nhỏ"): tải trọng xe LỚN NHẤT vào được điểm giao; trống = không giới hạn
-  if (body.max_vehicle_tons !== undefined) {
-    if (body.max_vehicle_tons === null || body.max_vehicle_tons === '') patch.max_vehicle_tons = null
-    else {
-      const n = typeof body.max_vehicle_tons === 'number' ? body.max_vehicle_tons : Number(String(body.max_vehicle_tons).replace(',', '.'))
-      if (!Number.isFinite(n) || n <= 0 || n > 100) return bad('Tải trọng xe tối đa phải là số tấn trong khoảng 0–100 (để trống = không giới hạn)')
-      patch.max_vehicle_tons = Math.round(n * 100) / 100
-    }
+  // 27/09 (user: "khách hàng nào vào được dòng xe nào — dạng multi check box"; thay "Tải trọng xe tối đa" tự suy theo tấn): THAY TRỌN map
+  if (body.dispatch_vehicles !== undefined) {
+    const m = await parseDispatchVehicles(body.dispatch_vehicles)
+    if ('err' in m) return bad(m.err)
+    patch.dispatch_vehicles = m.map
   }
   if (body.load_mode_by_category !== undefined) {
     const m = await parseLoadModeByCategory(body.load_mode_by_category)
@@ -400,7 +422,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
-    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category', 'max_vehicle_tons']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category', 'dispatch_vehicles']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))
@@ -422,6 +444,27 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
         updated += Number(data) || 0
       }
       await logAdmin(req, { action: 'CUSTOMER_BULK', target_type: 'Customer', target_label: `${updated} khách hàng`, after: { load_mode_by_category: { [cat]: mode }, count: updated, by_filter: picked.byFilter } })
+      return ok(res, { updated })
+    }
+    // 27/09: dòng xe được vào cho MỘT khoá Loại kho ("*" = mọi loại) trên nhiều khách — Thay / Thêm / Bớt / Về theo kênh
+    if ('dispatch_vehicles' in rawPatch) {
+      if (keys.length > 1) return fail(res, 400, 'VALIDATION_ERROR', 'Dòng xe được vào áp riêng, không đi chung thao tác khác')
+      const p = rawPatch.dispatch_vehicles as { category?: unknown; mode?: unknown; vehicle_model_ids?: unknown } | null
+      const key = typeof p?.category === 'string' && p.category.trim() ? p.category.trim() : '*'
+      const mode = String(p?.mode ?? '')
+      if (!['SET', 'ADD', 'REMOVE', 'CLEAR'].includes(mode)) return fail(res, 400, 'VALIDATION_ERROR', 'Thao tác phải là SET (thay), ADD (thêm), REMOVE (bớt) hoặc CLEAR (về theo kênh)')
+      const parsed = await parseDispatchVehicles(mode === 'CLEAR' ? {} : { [key]: p?.vehicle_model_ids ?? [] })
+      if ('err' in parsed) return fail(res, 400, 'VALIDATION_ERROR', parsed.err)
+      if ((mode === 'ADD' || mode === 'REMOVE') && !(parsed.map[key] ?? []).length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn dòng xe nào')
+      const picked = await resolveBulkTargets(body)
+      if ('err' in picked) return fail(res, picked.err.status, picked.err.code, picked.err.msg)
+      let updated = 0
+      for (let i = 0; i < picked.idList.length; i += 300) {
+        const { data, error } = await supabase.rpc('customer_set_dispatch_vehicles', { p_ids: picked.idList.slice(i, i + 300), p_key: key, p_mode: mode, p_models: parsed.map[key] ?? [], p_by: req.user?.name ?? '' })
+        if (error) return fail(res, error)
+        updated += Number(data) || 0
+      }
+      await logAdmin(req, { action: 'CUSTOMER_BULK', target_type: 'Customer', target_label: `${updated} khách hàng`, after: { dispatch_vehicles: { category: key, mode, vehicle_model_ids: parsed.map[key] ?? [] }, count: updated, by_filter: picked.byFilter } })
       return ok(res, { updated })
     }
 
@@ -479,6 +522,7 @@ export async function listCustomerChannels(_req: Request, res: Response) {
         id: r.id, value: r.value,
         label: String(r.meta?.label ?? r.value),
         rules: (rulesOf.get(r.value) ?? []).sort(byCategory),
+        dispatch_vehicles: (r.meta?.dispatch_vehicles ?? {}) as Record<string, string[]>,   // dòng xe mặc định của kênh theo Loại kho
         sort_order: r.sort_order,
         customers: counts.get(r.value) ?? 0,
       }))
@@ -502,13 +546,19 @@ export async function updateCustomerChannel(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kênh')
     if (b.type !== 'customer_channel') return fail(res, 400, 'VALIDATION_ERROR', 'Mục này không phải Kênh khách hàng')
 
-    const body = (req.body ?? {}) as { label?: unknown }
+    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown }
     const meta: Record<string, unknown> = { ...(b.meta ?? {}) }
     if (body.label !== undefined) {
       const label = String(body.label ?? '').trim()
       if (!label) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu tên kênh')
       if (label.length > 100) return fail(res, 400, 'VALIDATION_ERROR', 'Tên kênh tối đa 100 ký tự')
       meta.label = label
+    }
+    // 27/09: dòng xe MẶC ĐỊNH của kênh theo Loại kho — khách không khai riêng thì theo đây (THAY TRỌN map)
+    if (body.dispatch_vehicles !== undefined) {
+      const m = await parseDispatchVehicles(body.dispatch_vehicles)
+      if ('err' in m) return fail(res, 400, 'VALIDATION_ERROR', m.err)
+      meta.dispatch_vehicles = m.map
     }
 
     const { data, error } = await supabase.from('LookupValue')

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, Trash2, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -99,7 +100,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   }, [justHit])
   const pvCache = useRef(new Map<string, DispatchMovePreview>())
   useEffect(() => { setSel(new Set()); setUndo([]); setRedo([]); pvCache.current.clear() }, [plan.id])
-  useEffect(() => { pvCache.current.clear() }, [plan.updated_at])
+  useEffect(() => { pvCache.current.clear() }, [plan.updated_at, plan.trips])   // bật/tắt switch ghép loại không đổi updated_at của kế hoạch
   // dòng đã chọn mà không còn (người khác vừa chuyển / bỏ) thì bỏ khỏi lựa chọn
   useEffect(() => { setSel(p => { const n = new Set([...p].filter(id => rowBy.has(id))); return n.size === p.size ? p : n }) }, [rowBy])
 
@@ -339,7 +340,9 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
 
   const preview = (p: { data: DispatchMovePreview | null; loading: boolean }) => (
     <div className="absolute inset-x-1 bottom-1 rounded bg-slate-900/90 px-2 py-1 text-[10px] text-white pointer-events-none">
-      {p.loading ? 'Đang tính…' : p.data ? (
+      {p.loading ? 'Đang tính…' : p.data?.blocked ? (
+        <div className="text-red-300 font-semibold whitespace-normal">⛔ Xe không nhận — {p.data.blocked}</div>
+      ) : p.data ? (
         <>
           <div className={p.data.oversize ? 'text-red-300 font-semibold' : p.data.underload ? 'text-amber-200' : 'text-green-300'}>
             → {nf(p.data.pallets, 1)} pl · {p.data.load_pct == null ? '—' : `${nf(p.data.load_pct, 1)}%`} · {p.data.stops} điểm
@@ -410,6 +413,23 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
     )
   }
 
+  // SWITCH "Ghép Loại kho khác" trên TỪNG thẻ xe (user 27/09: "TẮT = chặn thả"): mặc định theo tham số kế hoạch (kho);
+  // tắt thì thả OD khác Loại kho chính vào xe bị từ chối kèm lý do, bật thì cho ghép không cảnh báo
+  const mixOn = (t: DispatchTrip) => (t.allow_mix_categories ?? plan.params.allow_mix_categories) !== false
+  const mixSwitch = (t: DispatchTrip) => {
+    const on = mixOn(t)
+    const can = editableTrip(t)
+    const cats = (t.detail.categories ?? []).filter(c => !(plan.params.follow_categories ?? []).includes(c))
+    return (
+      <label className={`flex items-center gap-1.5 px-2 pt-1 text-[10px] ${can ? 'cursor-pointer' : 'opacity-60'}`}
+        title={on ? 'Đang cho thả OD khác Loại kho vào xe này — tắt để chặn' : `Đang chặn thả OD khác Loại kho${cats.length ? ` (xe chở ${cats.join(', ')})` : ''} — bật để cho ghép`}>
+        <Switch checked={on} disabled={!can || patchTrip.isPending} aria-label="Ghép Loại kho khác"
+          onCheckedChange={v => { patchTrip.mutateAsync({ id: t.id, allow_mix_categories: v }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được switch ghép loại')) }} />
+        <span className={on ? 'text-slate-700' : 'text-slate-500'}>Ghép Loại kho khác{t.allow_mix_categories == null ? <span className="text-slate-400"> · theo kho</span> : null}</span>
+      </label>
+    )
+  }
+
   const tripCard = (t: DispatchTrip) => {
     const st = tripStatus(t)
     const ed = editableTrip(t)
@@ -450,6 +470,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           <span className="shrink-0 text-[11px] font-semibold tabular-nums" title={t.detail.freight.reason ?? undefined}>{t.freight_estimated == null ? <span className="font-normal text-amber-700">chưa có cước</span> : money(t.freight_estimated)}</span>
         </div>
         <div className="px-2 pt-1">{loadBar(t)}</div>
+        {mixSwitch(t)}
         {t.ods.length > 0 && (
           <div className="px-2 pt-0.5 text-[10px] text-slate-600 leading-snug">
             <span className={t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}/{lim} {t.load_mode === 'PALLET' ? 'khách' : 'điểm'}</span>

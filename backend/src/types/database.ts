@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-26T08:11:31.640Z · 108 bảng/view · 173 hàm · 0 enum
+// Sinh lúc 2026-09-27T03:10:29.404Z · 108 bảng/view · 174 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -111,6 +111,7 @@ export type Database = {
           load_mode: string
           load_mode_by_category: Json
           max_vehicle_tons: number | null
+          dispatch_vehicles: Json
         }
         Insert: {
           id: string
@@ -136,6 +137,7 @@ export type Database = {
           load_mode?: string
           load_mode_by_category?: Json
           max_vehicle_tons?: number | null
+          dispatch_vehicles?: Json
         }
         Update: {
           id?: string
@@ -161,6 +163,7 @@ export type Database = {
           load_mode?: string
           load_mode_by_category?: Json
           max_vehicle_tons?: number | null
+          dispatch_vehicles?: Json
         }
         Relationships: []
       }
@@ -3324,6 +3327,7 @@ export type Database = {
           confirmed_at: string | null
           locked: boolean
           load_mode: string | null
+          allow_mix_categories: boolean | null
         }
         Insert: {
           id: string
@@ -3352,6 +3356,7 @@ export type Database = {
           confirmed_at?: string | null
           locked?: boolean
           load_mode?: string | null
+          allow_mix_categories?: boolean | null
         }
         Update: {
           id?: string
@@ -3380,6 +3385,7 @@ export type Database = {
           confirmed_at?: string | null
           locked?: boolean
           load_mode?: string | null
+          allow_mix_categories?: boolean | null
         }
         Relationships: []
       }
@@ -3408,6 +3414,7 @@ export type Database = {
           load_mode: string | null
           is_transfer: boolean
           max_vehicle_tons: number | null
+          allowed_models: string[] | null
         }
         Insert: {
           id: string
@@ -3433,6 +3440,7 @@ export type Database = {
           load_mode?: string | null
           is_transfer?: boolean
           max_vehicle_tons?: number | null
+          allowed_models?: string[] | null
         }
         Update: {
           id?: string
@@ -3458,6 +3466,7 @@ export type Database = {
           load_mode?: string | null
           is_transfer?: boolean
           max_vehicle_tons?: number | null
+          allowed_models?: string[] | null
         }
         Relationships: []
       }
@@ -5798,6 +5807,10 @@ export type Database = {
         Args: { arg2?: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: Json
       }
+      customer_set_dispatch_vehicles: {
+        Args: { p_key: unknown; p_models: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown }
+        Returns: number
+      }
       customer_set_load_mode_cat: {
         Args: { p_category: unknown; p_by: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
         Returns: number
@@ -6315,7 +6328,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
+        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: string
       }
       unaccent_init: {

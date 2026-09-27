@@ -604,6 +604,34 @@ try {
       `merge=${bMerge.s} ${JSON.stringify(m1)} del=${bDel.s} ${JSON.stringify(m2)} mix=${bMix.s}`)
     await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { load_mode_by_category: {} })
 
+    // [14] SWITCH "Ghép Loại kho khác" trên TỪNG thẻ xe (user 27/09: "TẮT = chặn thả")
+    await cleanupTrips()
+    const pX = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const PX = pX.j?.data
+    const tA = tripOfOd(PX, OD[0]), tB = tripOfOd(PX, OD8)
+    const r8x = rowOfP(PX, OD8)
+    if (pX.s !== 201 || !tA || !tB || tA.id === tB.id || !r8x) check('14. Fixture: kế hoạch kho không cho trộn phải có hai xe riêng cho hai Loại kho', false, `http=${pX.s} trips=${(PX?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+    else {
+      const pv = await api(`/tms/dispatch/plans/${PX.id}/preview-move`, 'POST', { ids: [r8x.id], to_trip_id: tA.id })
+      const mvNo = await api(`/tms/dispatch/plans/${PX.id}/move`, 'POST', { ids: [r8x.id], to: 'trip', to_trip_id: tA.id })
+      const still = tripOfOd(await planOf(PX.id), OD8)
+      check(`14a. Switch xe ${MAT_CAT} TẮT (theo kho) ⇒ rê OD ${CAT2} qua: xem trước báo "không nhận" · thả → 409 CATEGORY_MIX_BLOCKED nêu cách bật · OD ở nguyên xe cũ`,
+        pv.s === 200 && !!pv.j?.data?.blocked && mvNo.s === 409 && mvNo.j?.error?.code === 'CATEGORY_MIX_BLOCKED' && /Ghép Loại kho khác/.test(mvNo.j?.error?.message ?? '') && still?.id === tB.id,
+        `pv=${pv.s} blocked=${String(pv.j?.data?.blocked ?? '').slice(0, 60)} mv=${mvNo.s} ${mvNo.j?.error?.code} still=${still?.group_code}`)
+      const on = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { allow_mix_categories: true })
+      const mvOk = await api(`/tms/dispatch/plans/${PX.id}/move`, 'POST', { ids: [r8x.id], to: 'trip', to_trip_id: tA.id })
+      const tAnow = (await planOf(PX.id))?.trips?.find(t => t.id === tA.id)
+      check('14b. Bật switch trên thẻ xe → 200 · thả lại → 200, xe chở cả hai loại, KHÔNG cảnh báo chở lẫn',
+        on.s === 200 && tAnow?.allow_mix_categories === true && mvOk.s === 200 && (tAnow?.ods ?? []).some(o => o.od_number === OD8) && !/chở lẫn/.test((tAnow?.detail?.warnings ?? []).join(' ')),
+        `on=${on.s} col=${tAnow?.allow_mix_categories} mv=${mvOk.s} ${mvOk.j?.error?.message ?? ''} warn=${(tAnow?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
+      const off = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { allow_mix_categories: false })
+      const tOff = (await planOf(PX.id))?.trips?.find(t => t.id === tA.id)
+      const bad = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { allow_mix_categories: 'yes' })
+      check('14c. Tắt lại khi xe ĐANG chở lẫn ⇒ không đẩy OD ra, xe cảnh báo "switch … đang tắt" · giá trị không phải boolean → 400',
+        off.s === 200 && tOff?.allow_mix_categories === false && (tOff?.ods ?? []).some(o => o.od_number === OD8) && /đang tắt/.test((tOff?.detail?.warnings ?? []).join(' ')) && bad.s === 400,
+        `off=${off.s} warn=${(tOff?.detail?.warnings ?? []).join(' | ').slice(0, 120)} bad=${bad.s}`)
+    }
+
     // ⚠ Đặt SAU phần kiểu đi: meta Loại kho được nhớ 30 s mỗi instance (getWhTypeMetaMap) — bật "đi kèm" cho loại 2 trước
     // thì các lượt lập kế hoạch ngay sau đó vẫn coi loại 2 là đi kèm (đo 26/09: 12g đỏ oan vì thế).
 
@@ -632,13 +660,10 @@ try {
     check('12i. Vị trí: ĐK bảo quản ngoài danh mục → 400 · mức có thật → 200 và cột lưu đúng',
       mkL.s === 200 && lBad.s === 400 && lOk.s === 200 && lOk.j?.data?.storage_condition === COND_LOC,
       `mk=${mkL.s} bad=${lBad.s} ok=${lOk.s} col=${lOk.j?.data?.storage_condition}`)
-    // oracle: ĐK của ô cho MỌI chỗ chứa mã này trong kho — ô khai riêng ⇒ COND_LOC, ô khác ⇒ ĐK của Loại kho
-    const ies = await restAll('InventoryEntry', `select=location_id&warehouse_id=eq.${WH}&material_id=eq.${ieLoc.material_id}&cartons_remaining=gt.0&status=in.(IN_STOCK,PARTIAL,QUARANTINE,LOOSE_PICKING)`)
+    // oracle (ĐẢO 27/09, user: "vị trí lấy ĐK bảo quản là để phục vụ cho WMS"): OD chỉ mang ĐK của LOẠI KHO của mã, ô khai
+    // riêng không đi vào điều vận — kể cả ô đang chứa đúng mã đó
     const catMeta = m9?.category ? (await restAll('LookupValue', `select=meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(m9.category)}`))[0]?.meta : null
-    const locIds = [...new Set(ies.map(x => x.location_id))]
-    const locConds = locIds.length ? await restAll('Location', `select=id,storage_condition,categories&id=in.(${locIds.filter(Boolean).join(',')})`) : []
-    const byId = new Map(locConds.map(l => [l.id, l.storage_condition && (!(l.categories ?? []).length || l.categories.includes(m9?.category)) ? l.storage_condition : null]))
-    const expected = [...new Set(ies.map(x => (x.location_id ? byId.get(x.location_id) : null) ?? catMeta?.storage_condition ?? null).filter(Boolean))].sort()
+    const expected = catMeta?.storage_condition && !catMeta?.dispatch_follow ? [catMeta.storage_condition] : []
     const OD9 = 'QA61OD9'
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: OD9, od_item: '10', material_code: m9.material_code, qty_base: Math.max(1, Number(m9.units_per_carton) || 1),
@@ -647,9 +672,9 @@ try {
     })
     const pL = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     const r9 = [...(pL.j?.data?.trips ?? []).flatMap(t => t.ods), ...(pL.j?.data?.pool ?? [])].find(o => o.od_number === OD9)
-    check('12j. OD của mã đang nằm ở ô khai riêng mang ĐÚNG các mức theo chỗ tồn thật (oracle tự tính từ tồn + ô + Loại kho)',
-      pL.s === 201 && !!r9 && JSON.stringify([...(r9.conditions ?? [])].sort()) === JSON.stringify(expected) && expected.includes(COND_LOC),
-      `http=${pL.s} ${pL.j?.error?.message ?? ''} got=${JSON.stringify(r9?.conditions)} expected=${JSON.stringify(expected)} (${ies.length} pallet ở ${locIds.length} ô)`)
+    check('12j. OD của mã đang nằm ở ô khai ĐK riêng chỉ mang ĐK của LOẠI KHO (ĐK vị trí là của WMS, không đi vào điều vận)',
+      pL.s === 201 && !!r9 && JSON.stringify([...(r9.conditions ?? [])].sort()) === JSON.stringify(expected) && !(r9.conditions ?? []).includes(COND_LOC),
+      `http=${pL.s} ${pL.j?.error?.message ?? ''} got=${JSON.stringify(r9?.conditions)} expected=${JSON.stringify(expected)}`)
     // Hàng ĐỂ NHỜ ô lạnh của Loại kho khác (vd FG01 trong Kho Lạnh NVL của RM01) KHÔNG thành hàng lạnh (20260926c — đo Bàu Bàng: 94/97 chuyến bị ép xe kết hợp)
     if (ieStray) {
       await cleanupTrips()
@@ -674,46 +699,68 @@ try {
     check('12l. Gửi null → ô về "theo Loại kho"', lBack.s === 200 && lBack.j?.data?.storage_condition === LOC_COND0, `http=${lBack.s} col=${lBack.j?.data?.storage_condition}`)
   }
 
-  // ── [13] KHÁCH CHỈ NHẬN XE TẢI TRỌNG NHỎ (user 26/09: "một số NPP chỉ đi được xe tải trọng nhỏ") ─────────────────────
+  // ── [13] DÒNG XE ĐƯỢC VÀO theo Kênh → Khách × Loại kho (user 27/09: "khách hàng nào vào được dòng xe nào — multi check box";
+  // thay "tải trọng xe tối đa" tự suy theo tấn của 26/09) ──────────────────────────────────────────────────────────────
   await cleanupTrips()
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(QA61OD8,QA61OD9)`).catch(() => {})
   {
     const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
-    const tBad = await Promise.all([0, 150, 'abc'].map(v => api(`/masterdata/customers/${c1.id}`, 'PUT', { max_vehicle_tons: v })))
-    const tOk = await api(`/masterdata/customers/${c1.id}`, 'PUT', { max_vehicle_tons: 3 })
-    check('13a. Khách hàng: tải trọng xe tối đa 0 / 150 / chữ → 400 · 3 tấn → 200 và lưu đúng', tBad.every(r => r.s === 400) && tOk.s === 200 && Number(tOk.j?.data?.max_vehicle_tons) === 3,
-      `bad=${tBad.map(r => r.s).join(',')} ok=${tOk.s} v=${tOk.j?.data?.max_vehicle_tons}`)
-    // Kho QA không có dòng xe pallet nào ≤ 3 tấn (xe pallet nhỏ nhất đang hoạt động là 4 pallet / 4 tấn giả định) ⇒ OD1 không xếp được, nói đúng lý do
     const vms = (await api('/tms/vehicle-models')).j?.data?.items ?? []
     const palParents = new Set((await restAll('VehicleType', 'select=id&is_pallet_truck=eq.true')).map(v => v.id))
-    const pal3 = vms.filter(m => m.is_active && palParents.has(m.parent_type_id) && Number(m.max_tons) > 0 && Number(m.max_tons) <= 3)
-    const p3 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
-    const un1 = (p3.j?.data?.unplanned ?? []).find(u => u.od_number === OD[0])
-    check('13b. Khách ≤ 3 tấn mà không xe pallet nào ≤ 3 tấn ⇒ OD không lên xe to hơn: vào "không xếp được" kèm lý do nêu MỨC',
-      p3.s === 201 && (pal3.length ? true : (!!un1 && /chỉ nhận xe ≤ 3 tấn/.test(un1.reason) && !tripOfOd(p3.j?.data, OD[0]))),
-      `http=${p3.s} pallet≤3t=${pal3.length} un=${JSON.stringify(un1 ?? null)} trip=${tripOfOd(p3.j?.data, OD[0])?.detail?.vehicle_model?.name ?? '—'}`)
-    await cleanupTrips()
-    await api(`/masterdata/customers/${c1.id}`, 'PUT', { max_vehicle_tons: 6 })
-    const p6 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
-    const P6 = p6.j?.data
-    const t6 = tripOfOd(P6, OD[0])
-    const vmOf = id => vms.find(m => m.id === id)
-    check('13c. Khách ≤ 6 tấn ⇒ OD lên dòng xe khai tải trọng ≤ 6 tấn (oracle đọc tấn của dòng xe từ danh mục), không lên xe QA 9 pallet chưa khai tấn',
-      p6.s === 201 && !!t6 && Number(vmOf(t6.vehicle_model_id)?.max_tons) > 0 && Number(vmOf(t6.vehicle_model_id)?.max_tons) <= 6 && t6.detail?.vehicle_model?.sap_code !== SAP
-      && rowOf(P6, OD[0])?.max_vehicle_tons != null && Number(rowOf(P6, OD[0]).max_vehicle_tons) === 6,
-      `http=${p6.s} ${p6.j?.error?.message ?? ''} vm=${t6?.detail?.vehicle_model?.name} tấn=${vmOf(t6?.vehicle_model_id)?.max_tons} snap=${rowOf(P6, OD[0])?.max_vehicle_tons}`)
-    // Người kéo OD của khách giới hạn lên xe to hơn ⇒ không chặn (nháp) nhưng cảnh báo nêu khách + mức
-    const big = (P6?.trips ?? []).find(t => t.id !== t6?.id && t.detail?.vehicle_model?.sap_code === SAP)
-    if (big && t6) {
-      const mv = await api(`/tms/dispatch/plans/${P6.id}/move`, 'POST', { ids: [rowOf(P6, OD[0]).id], to: 'trip', to_trip_id: big.id })
-      const bigNow = (await planOf(P6.id))?.trips?.find(t => t.id === big.id)
-      check('13d. Kéo OD của khách ≤ 6 tấn lên xe QA (chưa khai tấn) ⇒ cho thả, xe cảnh báo "chỉ nhận xe ≤ 6 tấn"',
-        mv.s === 200 && (bigNow?.ods ?? []).some(o => o.od_number === OD[0]) && /chỉ nhận xe ≤ 6 tấn/.test((bigNow?.detail?.warnings ?? []).join(' ')),
-        `http=${mv.s} ${mv.j?.error?.message ?? ''} warn=${(bigNow?.detail?.warnings ?? []).join(' | ').slice(0, 160)}`)
-    } else check('13d. Fixture: cần một xe QA khác để kéo OD sang', false, `trips=${(P6?.trips ?? []).map(t => t.detail?.vehicle_model?.sap_code).join(',')}`)
-    const bT = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { max_vehicle_tons: null } })
-    const cNow = (await restAll('Customer', `select=max_vehicle_tons&id=eq.${c1.id}`))[0]
-    check('13e. Hàng loạt "Tải trọng xe tối đa" để trống → bỏ giới hạn', bT.s === 200 && cNow?.max_vehicle_tons == null, `http=${bT.s} v=${cNow?.max_vehicle_tons}`)
+    // dòng xe thật đúng họ pallet, đủ chở OD1 (4 pallet) — KHÁC xe QA (xe QA có cước rẻ nên không khai thì máy chọn xe QA)
+    const pick = vms.filter(m => m.is_active && palParents.has(m.parent_type_id) && m.sap_code !== SAP && Number(m.max_pallets) >= 7).sort((x, y) => Number(x.max_pallets) - Number(y.max_pallets))[0]
+    const other = vms.find(m => m.is_active && m.id !== pick?.id && m.sap_code !== SAP)
+    const bad1 = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { KHONGCOLOAI: [pick?.id] } })
+    const bad2 = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { '*': ['khong-co-that'] } })
+    const bad3 = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { '*': 'abc' } })
+    const okV = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { '*': [pick?.id] } })
+    check('13a. Khách hàng: dòng xe được vào — Loại kho lạ / dòng xe không có thật / không phải mảng → 400 · hợp lệ → 200 và lưu đúng',
+      !!pick && bad1.s === 400 && bad2.s === 400 && bad3.s === 400 && okV.s === 200 && JSON.stringify(okV.j?.data?.dispatch_vehicles) === JSON.stringify({ '*': [pick.id] }),
+      `pick=${pick?.name} bad=${bad1.s},${bad2.s},${bad3.s} ok=${okV.s} map=${JSON.stringify(okV.j?.data?.dispatch_vehicles ?? okV.j?.error)}`)
+    const pV = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const PV = pV.j?.data
+    const tV = tripOfOd(PV, OD[0])
+    check('13b. Khách chỉ được vào MỘT dòng xe ⇒ OD lên đúng dòng xe đó (không lên xe QA rẻ hơn) · dòng OD chụp danh sách',
+      pV.s === 201 && tV?.vehicle_model_id === pick?.id && JSON.stringify(rowOf(PV, OD[0])?.allowed_models) === JSON.stringify([pick?.id]),
+      `http=${pV.s} ${pV.j?.error?.message ?? ''} vm=${tV?.detail?.vehicle_model?.name} snap=${JSON.stringify(rowOf(PV, OD[0])?.allowed_models)}`)
+    // Người kéo OD lên xe khác (xe QA) ⇒ không chặn (nháp) nhưng xe cảnh báo nêu khách
+    const qaTrip = (PV?.trips ?? []).find(t => t.id !== tV?.id && t.detail?.vehicle_model?.sap_code === SAP)
+    if (qaTrip && tV) {
+      const mv = await api(`/tms/dispatch/plans/${PV.id}/move`, 'POST', { ids: [rowOf(PV, OD[0]).id], to: 'trip', to_trip_id: qaTrip.id })
+      const qNow = (await planOf(PV.id))?.trips?.find(t => t.id === qaTrip.id)
+      check('13c. Kéo OD của khách lên dòng xe không được vào ⇒ cho thả, xe cảnh báo "không được vào dòng xe"',
+        mv.s === 200 && (qNow?.ods ?? []).some(o => o.od_number === OD[0]) && /không được vào dòng xe/.test((qNow?.detail?.warnings ?? []).join(' ')),
+        `http=${mv.s} ${mv.j?.error?.message ?? ''} warn=${(qNow?.detail?.warnings ?? []).join(' | ').slice(0, 160)}`)
+    } else check('13c. Fixture: cần một xe QA khác để kéo OD sang', false, `trips=${(PV?.trips ?? []).map(t => t.detail?.vehicle_model?.sap_code).join(',')}`)
+    // Hàng loạt: Thêm / Bớt / Về theo kênh gộp vào map từng khách, không đè khoá khác
+    const bAdd = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'ADD', vehicle_model_ids: [other?.id] } } })
+    const m1 = (await restAll('Customer', `select=dispatch_vehicles&id=eq.${c1.id}`))[0]?.dispatch_vehicles ?? {}
+    const bRm = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'REMOVE', vehicle_model_ids: [pick?.id] } } })
+    const m2 = (await restAll('Customer', `select=dispatch_vehicles&id=eq.${c1.id}`))[0]?.dispatch_vehicles ?? {}
+    const bCat = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: MAT_CAT, mode: 'SET', vehicle_model_ids: [pick?.id] } } })
+    const bClr = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'CLEAR', vehicle_model_ids: [] } } })
+    const m3 = (await restAll('Customer', `select=dispatch_vehicles&id=eq.${c1.id}`))[0]?.dispatch_vehicles ?? {}
+    const bMix = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'ADD', vehicle_model_ids: [other?.id] }, is_active: true } })
+    const bEmpty = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'ADD', vehicle_model_ids: [] } } })
+    const setEq = (x, y) => JSON.stringify([...(x ?? [])].sort()) === JSON.stringify([...y].sort())
+    check('13d. Hàng loạt dòng xe: Thêm → cả hai · Bớt → còn một · SET theo Loại kho không đụng "mọi loại" · Về theo kênh gỡ đúng khoá · đi chung thao tác khác / Thêm rỗng → 400',
+      bAdd.s === 200 && setEq(m1['*'], [pick?.id, other?.id]) && bRm.s === 200 && setEq(m2['*'], [other?.id]) && bCat.s === 200 && bClr.s === 200
+      && !('*' in m3) && setEq(m3[MAT_CAT], [pick?.id]) && bMix.s === 400 && bEmpty.s === 400,
+      `add=${bAdd.s} ${JSON.stringify(m1)} rm=${bRm.s} ${JSON.stringify(m2)} cat=${bCat.s} clr=${bClr.s} ${JSON.stringify(m3)} mix=${bMix.s} empty=${bEmpty.s}`)
+    // Kênh: mặc định theo kênh — chỉ đo cửa ghi + đọc lại rồi TRẢ NGAY (kênh là dữ liệu dùng chung của staging); thứ tự áp đo ở test engine
+    const chs = (await api('/masterdata/customer-channels')).j?.data ?? []
+    const ch = chs[0]
+    if (ch) {
+      const before = ch.dispatch_vehicles ?? {}
+      const cBad = await api(`/masterdata/customer-channels/${ch.id}`, 'PUT', { dispatch_vehicles: { '*': ['khong-co-that'] } })
+      const cOk = await api(`/masterdata/customer-channels/${ch.id}`, 'PUT', { dispatch_vehicles: { ...before, [MAT_CAT]: [pick?.id] } })
+      const chNow = ((await api('/masterdata/customer-channels')).j?.data ?? []).find(x => x.id === ch.id)
+      const cBack = await api(`/masterdata/customer-channels/${ch.id}`, 'PUT', { dispatch_vehicles: before })
+      const chBack = ((await api('/masterdata/customer-channels')).j?.data ?? []).find(x => x.id === ch.id)
+      check(`13e. Kênh ${ch.value}: dòng xe mặc định — id lạ → 400 · lưu → danh sách kênh trả lại đúng · trả về như cũ`,
+        cBad.s === 400 && cOk.s === 200 && setEq(chNow?.dispatch_vehicles?.[MAT_CAT], [pick?.id]) && cBack.s === 200 && JSON.stringify(chBack?.dispatch_vehicles ?? {}) === JSON.stringify(before),
+        `bad=${cBad.s} ok=${cOk.s} now=${JSON.stringify(chNow?.dispatch_vehicles)} back=${cBack.s}`)
+    } else check('13e. Fixture: cần ít nhất một Kênh khách hàng', false)
   }
 } finally {
   await cleanup()

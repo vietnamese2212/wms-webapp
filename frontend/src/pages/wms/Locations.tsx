@@ -715,7 +715,7 @@ export default function Locations() {
                       <TableCell className="px-2 py-1 text-[10px]">
                         {loc.storage_condition
                           ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200"
-                                  title="ĐK bảo quản khai riêng cho ô này — hàng nằm ở đây điều vận đi xe phục vụ đúng mức này">
+                                  title="ĐK bảo quản khai riêng cho ô này (thông tin WMS — điều vận chọn xe theo Loại kho của mã hàng)">
                               <Thermometer className="h-2.5 w-2.5" />{condLabelOf(loc.storage_condition)}
                             </span>
                           : <span className="text-slate-400" title="Để trống = theo ĐK bảo quản của Loại kho của hàng nằm ở ô">Theo loại · {catCondText(loc.categories)}</span>}
@@ -1056,8 +1056,8 @@ export default function Locations() {
                   Mặc định ô <b>theo Loại kho</b> của hàng nằm ở đó (khai ở Cài đặt WMS → Loại kho). Khai riêng khi
                   trong cùng một kho có <b>phòng lạnh / khu mát</b> — ví dụ kho RM01 có cả kho lạnh lẫn kho thường.
                   <br /><br />
-                  <b>Điều vận</b> đọc chỗ tồn thật: mã hàng đang nằm ở ô khai riêng thì chuyến chở mã đó phải là dòng xe
-                  phục vụ được mức của ô (Cài đặt TMS → Mã dòng xe).
+                  Đây là thông tin cho <b>WMS</b> (ô này là phòng lạnh / khu mát). <b>Điều vận</b> không đọc ô —
+                  xe được chọn theo ĐK bảo quản của <b>Loại kho</b> của mã hàng trên đơn.
                 </>} />
               </Label>
               <div className="mt-1">

@@ -28,8 +28,10 @@
  *     OD tự chứa hai Loại kho chính không tách được ⇒ đi một chuyến kèm cảnh báo.
  *  4b. XE KẾT HỢP CHỈ KHI GHÉP (26/09): xe chở được ≥ 2 mức mà Loại kho có khai chỉ ưu tiên cho chuyến cần ≥ 2 mức; chuyến một mức
  *     đi xe đúng mức, rơi về xe kết hợp khi không xe đúng mức nào vừa + có cước (ghi lý do).
- * 10. TẢI TRỌNG XE TỐI ĐA CỦA KHÁCH (26/09): khách khai `max_vehicle_tons` ⇒ mọi chuyến chở OD của khách chỉ dùng dòng xe có tấn
- *     ≤ mức đó (mức chặt nhất khi ghép nhiều khách); OD lớn hơn tách theo xe lớn nhất còn vào được.
+ * 10. DÒNG XE ĐƯỢC VÀO (27/09 — thay "tải trọng xe tối đa" tự suy theo tấn của 26/09; user: "tôi không muốn tự động, tôi muốn
+ *     config được"): OD mang `allowed_models` (khai theo Kênh → Khách × Loại kho, controller resolve) ⇒ mọi chuyến chở OD đó chỉ
+ *     dùng dòng xe TRONG danh sách (giao của mọi OD trên chuyến). Danh sách khai TƯỜNG MINH thắng luật 8 (khách xuất khẩu khai
+ *     cont lạnh là được đi cont) và thắng họ xe của luật 7 khi danh sách không có xe nào đúng họ. OD không khai = như cũ.
  *  Tie-break chung: cước thấp → ít điểm giao → ổn định (cùng input ra cùng output — mọi tập đều sort trước khi duyệt).
  * Cước dùng chính `computeFreight`/`pickTariff`/`farthestWard` của services/freight.ts — KHÔNG chép luật tính tiền.
  */
@@ -60,8 +62,8 @@ export interface EngineOd {
   /** Luật 7 (25/09): khách đi PALLET (xe pallet, một khách/xe theo tham số kho) hay XÁ (xe tải theo tấn, ghép nhiều khách).
    *  undefined = không phân (giữ hành vi cũ cho dữ liệu/test trước 25/09). */
   load_mode?: LoadMode
-  /** Luật 10 (26/09): khách chỉ nhận xe tải trọng ≤ N tấn (Customer.max_vehicle_tons); null/undefined = không giới hạn. */
-  max_vehicle_tons?: number | null
+  /** Luật 10 (27/09): dòng xe (id) khách được vào; null/undefined = không giới hạn. */
+  allowed_models?: string[] | null
 }
 export type LoadMode = 'PALLET' | 'LOOSE'
 export interface EngineModel {
@@ -128,7 +130,7 @@ export interface TripOd {
   cat_load: Record<string, number>                  // tải theo Loại kho (pallet + kg/1e6) — nguồn cửa đặt lịch khi OD di chuyển
   load_mode: LoadMode | null                        // kiểu đi của OD (theo khách, người đổi được trên bàn ghép xe)
   transfer: boolean                                 // trung chuyển giữa các kho của mình (luật 8 — dòng xe "chỉ trung chuyển")
-  max_vehicle_tons: number | null                   // luật 10 — tải trọng xe tối đa khách nhận (chụp lúc lập)
+  allowed_models: string[] | null                   // luật 10 — dòng xe khách được vào (chụp lúc lập); null = không giới hạn
 }
 export interface TripFreight {
   total: number | null; base: number | null; billed_pallets: number | null; unit: TariffUnit | null
@@ -237,6 +239,34 @@ export function resolveLoadMode(custMode: string | null | undefined, byCat: Reco
   if (modes.length === 1 && mainCats.every(c => asM(byCat?.[c]))) return modes[0]
   return asM(custMode) ?? 'LOOSE'
 }
+/** Luật 10 (27/09): dòng xe OD được vào. Map {"*": [...], "<Loại kho>": [...]} của KHÁCH rồi của KÊNH; với mỗi Loại kho chính:
+ *  khách×loại → khách×* → kênh×loại → kênh×*. OD nhiều Loại kho chính ⇒ GIAO các danh sách có khai (loại không khai không siết
+ *  thêm). OD chỉ có hàng đi kèm (POSM) ⇒ khoá "*". Không bậc nào khai ⇒ null = không giới hạn. Danh sách RỖNG khai tường minh
+ *  = không xe nào (người khai cố ý chặn) — khác với "không khai". */
+export function resolveAllowedModels(cust: Record<string, unknown> | null | undefined, chan: Record<string, unknown> | null | undefined, mainCats: string[]): string[] | null {
+  const list = (m: Record<string, unknown> | null | undefined, k: string): string[] | null => {
+    const v = m?.[k]
+    return Array.isArray(v) ? uniq(v.filter((x): x is string => typeof x === 'string' && !!x)).sort(cmp) : null
+  }
+  const forCat = (c: string | null) => (c ? list(cust, c) : null) ?? list(cust, '*') ?? (c ? list(chan, c) : null) ?? list(chan, '*')
+  const lists = (mainCats.length ? mainCats.map(forCat) : [forCat(null)]).filter((l): l is string[] => l !== null)
+  if (!lists.length) return null
+  return lists.reduce((a, l) => a.filter(x => l.includes(x)))
+}
+/** Switch "Ghép Loại kho khác" trên thẻ xe (27/09, user: "TẮT = chặn thả"): trả câu lý do nếu xe (sau khi nhận `moving`) chở hơn
+ *  MỘT bộ Loại kho chính; null = cho thả. `allow` = switch của xe, không khai thì của kế hoạch (undefined = cho — kế hoạch cũ).
+ *  Một OD tự chứa hai loại chính không tách được vẫn thả được (chỉ MỘT bộ). Dòng không có tải theo loại (kế hoạch cũ) không tính. */
+export function mixBlockReason(allow: boolean | null | undefined, staying: { cat_load?: unknown }[], moving: { cat_load?: unknown }[], follow: string[] = []): string | null {
+  if (allow !== false) return null
+  const keyOf = (o: { cat_load?: unknown }) => mainCatsOf(Object.keys((o.cat_load ?? {}) as Record<string, unknown>).map(c => ({ category: c })), follow).join('+')
+  const keys = (rs: { cat_load?: unknown }[]) => uniq(rs.map(keyOf).filter(Boolean)).sort(cmp)
+  const all = keys([...staying, ...moving])
+  if (all.length <= 1) return null
+  const on = keys(staying), mv = keys(moving)
+  return on.length
+    ? `Xe đang chở ${on.join(', ')} — OD thả vào là ${mv.filter(k => !on.includes(k)).join(', ') || mv.join(', ')}. Bật "Ghép Loại kho khác" trên thẻ xe để cho ghép.`
+    : `Các OD đang chọn gồm nhiều Loại kho (${mv.join(', ')}) — bật "Ghép Loại kho khác" trên thẻ xe, hoặc thả từng loại vào một xe.`
+}
 /** ĐK bảo quản của MỘT dòng hàng (26/09): hàng nằm ở ô KHAI RIÊNG ĐK thì mang ĐK của ô đó; ô không khai (null) và mã không
  *  có tồn ở ô khai riêng ⇒ theo Loại kho. `stock` = các ĐK của những ô đang chứa mã này (null = ô theo loại kho). */
 export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined, follow = false): string[] {
@@ -275,20 +305,21 @@ export const familyOk = (m: EngineModel, mode: LoadMode | null | undefined) => !
 export const isTransferOd = (od: Pick<EngineOd, 'internal_wh' | 'flow'>) => !!od.internal_wh || od.flow === 'STO' || od.flow === 'INTERNAL'
 /** Dòng xe "chỉ trung chuyển" chỉ nhận chuyến mà MỌI OD đều là trung chuyển; dòng xe thường nhận mọi chuyến. */
 export const useOk = (m: Pick<EngineModel, 'dispatch_use'>, allTransfer: boolean) => m.dispatch_use !== 'TRANSFER' || allTransfer
-/** Họ dòng xe dùng được cho một nhóm OD: đúng kiểu đi (luật 7) + đúng việc (luật 8). */
-export const fleetFor = (models: EngineModel[], ods: Pick<EngineOd, 'internal_wh' | 'flow' | 'load_mode' | 'max_vehicle_tons'>[], opts: { ignoreLimit?: boolean } = {}) => {
+type FleetOd = Pick<EngineOd, 'internal_wh' | 'flow' | 'load_mode' | 'allowed_models'>
+/** Luật 10: OD cho phép dòng xe này không — khai danh sách thì CHỈ danh sách (thắng luật 8); không khai thì theo luật 8. */
+export const odAllows = (m: Pick<EngineModel, 'id' | 'dispatch_use'>, o: FleetOd) =>
+  o.allowed_models ? o.allowed_models.includes(m.id) : useOk(m, isTransferOd(o))
+/** Có OD nào trên nhóm khai danh sách dòng xe riêng không (để câu cảnh báo nói đúng nguyên nhân). */
+export const hasAllowList = (ods: Pick<EngineOd, 'allowed_models'>[]) => ods.some(o => !!o.allowed_models)
+/** Họ dòng xe dùng được cho một nhóm OD: dòng xe MỌI OD đều cho phép (luật 10 + luật 8), đúng kiểu đi (luật 7). Danh sách khai
+ *  tường minh mà không có xe nào đúng họ ⇒ theo danh sách (người khai đã chọn xe cụ thể — ví dụ khách Pallet chỉ nhận xe SCA). */
+export const fleetFor = (models: EngineModel[], ods: FleetOd[], opts: { ignoreAllowList?: boolean } = {}) => {
   const mode = ods[0]?.load_mode ?? null
-  const allTransfer = ods.length > 0 && ods.every(isTransferOd)
-  const lim = opts.ignoreLimit ? null : tonsLimitOf(ods)
-  return models.filter(m => familyOk(m, mode) && useOk(m, allTransfer) && withinTons(m, lim))
+  const eff = opts.ignoreAllowList ? ods.map(o => ({ ...o, allowed_models: null })) : ods
+  const cand = models.filter(m => eff.every(o => odAllows(m, o)))
+  const fam = cand.filter(m => familyOk(m, mode))
+  return fam.length || !hasAllowList(eff) ? fam : cand
 }
-/** Luật 10 (26/09, user: "một số NPP chỉ đi được xe tải trọng nhỏ"): mức CHẶT NHẤT trong các khách của nhóm OD; null = không giới hạn. */
-export const tonsLimitOf = (ods: Pick<EngineOd, 'max_vehicle_tons'>[]): number | null => {
-  const ls = ods.map(o => Number(o.max_vehicle_tons)).filter(n => Number.isFinite(n) && n > 0)
-  return ls.length ? Math.min(...ls) : null
-}
-/** Dòng xe vào được điểm giao có giới hạn tải trọng: phải KHAI tấn và ≤ giới hạn (không khai tấn ⇒ không chứng minh được ⇒ loại). */
-export const withinTons = (m: Pick<EngineModel, 'max_tons'>, lim: number | null) => lim == null || (Number(m.max_tons) > 0 && Number(m.max_tons) <= lim + 1e-9)
 /** Luật 4b (26/09, user: "được ghép thì mới lôi vào"): dòng xe chở được ≥ 2 mức mà Loại kho có khai (xe kết hợp nóng / lạnh)
  *  chỉ dành cho chuyến CẦN ≥ 2 mức; chuyến một mức ưu tiên xe đúng mức, chỉ rơi về xe kết hợp khi không xe đúng mức nào có cước. */
 export const isComboFor = (m: EngineModel, combo: string[]) => combo.filter(c => servesConditions(m, [c])).length >= 2
@@ -506,11 +537,11 @@ function assignVehicle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, un
     const fitIgnoringConds = family.some(m => (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
     const condText = conds.map(condLabel).join(' + ')
     const famText = mode === 'PALLET' ? 'xe pallet' : mode === 'LOOSE' ? 'xe xá (xe tải theo tấn)' : 'dòng xe'
-    const lim = tonsLimitOf(b.units.map(u => u.od))
-    if (lim != null && !family.length && fleetFor(ctx.models, b.units.map(u => u.od), { ignoreLimit: true }).length)
-      warnings.push(`Khách trên chuyến chỉ nhận xe ≤ ${vnNum(lim)} tấn — không ${famText} nào ≤ ${vnNum(lim)} tấn khai tải trọng (Cài đặt TMS → Mã dòng xe) hoặc sửa giới hạn ở Khách hàng`)
-    else if (lim != null && family.length && !family.some(m => oversize || fits(m, pAll, tAll)))
-      warnings.push(`Khách trên chuyến chỉ nhận xe ≤ ${vnNum(lim)} tấn — xe lớn nhất vào được chỉ ${capText(family)}, chuyến này ${loadText(pAll, tAll)}: tách chuyến`)
+    const listed = hasAllowList(b.units.map(u => u.od))
+    if (listed && !family.length)
+      warnings.push('Các khách trên chuyến không có dòng xe CHUNG nào được vào (Khách hàng → Dòng xe được vào) — tách chuyến hoặc sửa danh sách')
+    else if (listed && !family.some(m => oversize || fits(m, pAll, tAll)))
+      warnings.push(`Dòng xe khách được vào lớn nhất chỉ ${capText(family)} — chuyến này ${loadText(pAll, tAll)}: tách chuyến hoặc thêm dòng xe lớn hơn cho khách (Khách hàng → Dòng xe được vào)`)
     else if (!family.length) warnings.push(`Chưa có ${famText} nào khai sức chứa — khai ở Cài đặt TMS → Mã dòng xe, hoặc đổi kiểu đi của xe`)
     else if (!conds.length || !fitIgnoringConds) warnings.push(`Không ${famText} nào vừa tải ${loadText(pAll, tAll)} (lớn nhất ${capText(family)}) — tách chuyến`)
     else if (!serving.length) warnings.push(`Không dòng xe nào phục vụ điều kiện bảo quản ${condText} — khai ở Cài đặt TMS → Mã dòng xe`)
@@ -572,8 +603,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const s = sumLines(od.lines)
     if (s.pallets == null && s.tons == null) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Không đo được tải (${od.lines.filter(l => l.pallets == null && l.kg == null).length} dòng thiếu quy cách thùng/pallet/kg và SAP không có tham chiếu)` }); continue }
     const big = bigForOd(od)
-    const lim = tonsLimitOf([od])
-    if (!big && lim != null && fleetFor(models, [od], { ignoreLimit: true }).length) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Khách chỉ nhận xe ≤ ${vnNum(lim)} tấn — không dòng xe nào ≤ ${vnNum(lim)} tấn có khai tải trọng` }); continue }
+    if (!big && od.allowed_models) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Khách chỉ được vào ${od.allowed_models.length} dòng xe đã khai — không dòng nào đang hoạt động + khai sức chứa (Khách hàng → Dòng xe được vào)` }); continue }
     if (!big) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: od.load_mode === 'PALLET' ? 'Khách đi Pallet nhưng chưa có dòng xe pallet nào khai sức chứa' : od.load_mode === 'LOOSE' ? 'Khách đi Xá nhưng chưa có xe tải theo tấn nào khai sức chứa' : 'Chưa có dòng xe nào khai sức chứa' }); continue }
     units.push(...splitOversize(od, big))
   }
@@ -596,7 +626,9 @@ export function runDispatch(input: EngineInput): DispatchResult {
     for (const u of us) {
       const mkey = mergeKey(u.od, P.allow_mix_channels, catPart(u))
       if (u.oversize) { local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
-      const b = local.find(x => !x.units.some(y => y.oversize) && binFits(cands, withUnits(x, [u]), stopsLimit(P, mode)))
+      // họ xe hỏi theo CHÍNH bin sau khi thêm (luật 10: mỗi khách một danh sách dòng xe — hỏi cả cụm là khách khó tính nhất
+      // áp lên mọi khách cùng phường); danh sách giao nhau rỗng ⇒ không vào chung bin
+      const b = local.find(x => { const nb = withUnits(x, [u]); return !x.units.some(y => y.oversize) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb, stopsLimit(P, mode)) })
       if (b) { const nb = withUnits(b, [u]); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
       else local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
     }
@@ -657,7 +689,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key, load_mode: b.units[0]?.od.load_mode ?? null,
       vehicle_model: a.model, carrier: a.carrier,
-      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), load_mode: u.od.load_mode ?? null, transfer: isTransferOd(u.od), max_vehicle_tons: u.od.max_vehicle_tons ?? null })),
+      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), load_mode: u.od.load_mode ?? null, transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null })),
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
       warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : []),

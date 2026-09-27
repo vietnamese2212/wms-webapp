@@ -27,12 +27,13 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { masterRuleLabel } from '@/components/wms/SetDateRuleSheet'
+import { DispatchVehiclesEditor, VehicleModelChecklist, vehicleListText } from '@/components/tms/DispatchVehiclesEditor'
 import {
   useCustomers, useCustomerChannels, useCustomerSeedCandidates, useSaveCustomer,
   useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel,
-  useSaveDateRules, useBulkSetDateRule, useDateRuleCategories,
+  useSaveDateRules, useBulkSetDateRule, useDateRuleCategories, useVehicleModels,
   type Customer, type CustomerCandidate, type CustomerPatch, type CustomerBulkPatch, type UploadPreflight,
-  type MasterRuleRow, type DateRuleCategory,
+  type MasterRuleRow, type DateRuleCategory, type VehicleModel,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
@@ -218,7 +219,7 @@ export default function Customers() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [allFiltered, setAllFiltered] = useState(false)   // "chọn cả N dòng theo bộ lọc"
   const [form, setForm] = useState<{ row: Customer | null } | null>(null)
-  const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'max_tons' | null>(null)
+  const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'vehicles' | null>(null)
   const [seedOpen, setSeedOpen] = useState(false)
   const [chanEdit, setChanEdit] = useState<ChannelEdit | null>(null)
   const [err, setErr] = useState('')
@@ -238,6 +239,10 @@ export default function Customers() {
   const deact = useDeactivateCustomer()
   const bulkSave = useBulkUpdateCustomers()
   const bulkRule = useBulkSetDateRule()
+  // danh mục dòng xe cho ô "Dòng xe được vào" (27/09) — route đọc mở cho quyền Khách hàng
+  const { data: vmData } = useVehicleModels({ is_active: true })
+  const models = useMemo(() => vmData?.items ?? [], [vmData])
+  const chanVeh = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.dispatch_vehicles ?? {}])), [channels])
 
   const whName = useMemo(() => new Map((whs ?? []).map(w => [(w as { id: string }).id, (w as { name?: string }).name ?? ''])), [whs])
   const chanLabel = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.label])), [channels])
@@ -336,8 +341,8 @@ export default function Customers() {
       tip: 'Khách đi xá (xe tải theo tấn, ghép nhiều khách) — mặc định của khách chưa khai', onClick: () => runBulk({ load_mode: 'LOOSE' }) },
     { key: 'bpalcat', icon: Package, label: `Kiểu đi theo loại (${nf(pickCount)})`,
       tip: 'Khai kiểu đi RIÊNG cho một Loại kho (vd FG01 đi Pallet, FG02 đi Xá) — loại không khai theo kiểu chung của khách', onClick: () => setBulk('load_mode_cat') },
-    { key: 'btons', icon: Truck, label: `Tải trọng xe tối đa (${nf(pickCount)})`,
-      tip: 'Khai tải trọng xe lớn nhất vào được điểm giao (đường nhỏ / cấm tải) — máy chỉ xếp các khách này lên xe nhỏ hơn hoặc bằng mức đó', onClick: () => setBulk('max_tons') },
+    { key: 'bveh', icon: Truck, label: `Dòng xe được vào (${nf(pickCount)})`,
+      tip: 'Khai dòng xe các khách này được vào (theo Loại kho) — thay / thêm / bớt, hoặc về theo kênh', onClick: () => setBulk('vehicles') },
     { key: 'boff', icon: Power, label: `Ngừng (${nf(pickCount)})`, danger: true,
       tip: 'Ngừng các khách đang chọn (giữ lịch sử, không còn áp %Date)',
       onClick: () => runBulk({ is_active: false }) },
@@ -464,10 +469,13 @@ export default function Customers() {
                             <span key={c} className={`text-[9px] font-semibold rounded px-1 py-0.5 ${m === 'PALLET' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}
                               title={`Hàng ${c} của khách này đi ${m === 'PALLET' ? 'Pallet' : 'Xá'}`}>{c}: {m === 'PALLET' ? 'Pallet' : 'Xá'}</span>
                           ))}
-                          {r.max_vehicle_tons != null && (
-                            <span className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700"
-                              title="Chỉ nhận xe có tải trọng ≤ mức này (điểm giao đường nhỏ / cấm tải)">≤ {Number(r.max_vehicle_tons).toLocaleString('vi-VN')} tấn</span>
-                          )}
+                          {/* dòng xe được vào khai RIÊNG cho khách (27/09) — không khai thì theo kênh, không in gì */}
+                          {Object.entries(r.dispatch_vehicles ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([c, ids]) => (
+                            <span key={c} className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700"
+                              title={`Dòng xe được vào${c === '*' ? '' : ` cho hàng ${c}`}: ${vehicleListText(ids, models) || '—'}`}>
+                              Xe{c === '*' ? '' : ` ${c}`}: {ids.length}
+                            </span>
+                          ))}
                           </span>
                         </TableCell>
                         {/* Mức theo LOẠI HÀNG — một khách có thể mang nhiều dòng (FG01 ≥ 70 %,
@@ -526,7 +534,7 @@ export default function Customers() {
               right={pickCount > 0 ? `${nf(pickCount)} đang chọn` : undefined} />
           </>
         ) : (
-          <ChannelsTab canEdit={canChannel} onEdit={setChanEdit} />
+          <ChannelsTab canEdit={canChannel} onEdit={setChanEdit} models={models} />
         )}
       </div>
 
@@ -536,6 +544,8 @@ export default function Customers() {
           channels={(channels ?? []).map(c => ({ value: c.value, label: c.label }))}
           warehouses={(whs ?? []) as { id: string; name: string; code?: string }[]}
           cats={cats}
+          models={models}
+          chanVeh={chanVeh}
           saving={save.isPending || deact.isPending}
           onClose={() => setForm(null)}
           onSave={async patch => {
@@ -552,6 +562,7 @@ export default function Customers() {
           channels={(channels ?? []).map(c => ({ value: c.value, label: c.label }))}
           warehouses={(whs ?? []) as { id: string; name: string; code?: string }[]}
           cats={cats}
+          models={models}
           saving={bulkSave.isPending || bulkRule.isPending}
           onClose={() => setBulk(null)}
           onApply={runBulk}
@@ -562,18 +573,20 @@ export default function Customers() {
       {seedOpen && <SeedDialog onClose={() => setSeedOpen(false)} />}
 
       {chanEdit && (
-        <ChannelForm row={chanEdit} cats={cats} onClose={() => setChanEdit(null)} />
+        <ChannelForm row={chanEdit} cats={cats} models={models} onClose={() => setChanEdit(null)} />
       )}
     </div>
   )
 }
 
 // ─── Form Thêm / Sửa khách hàng ────────────────────────────────────────────────────────────────
-function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave }: {
+function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving, onClose, onSave }: {
   row: Customer | null
   channels: { value: string; label: string }[]
   warehouses: { id: string; name: string; code?: string }[]
   cats: DateRuleCategory[] | undefined
+  models: VehicleModel[]
+  chanVeh: Map<string, Record<string, string[]>>
   saving: boolean
   onClose: () => void
   onSave: (p: CustomerPatch) => Promise<Customer | undefined>
@@ -586,7 +599,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
   const [active, setActive] = useState(row?.is_active ?? true)
   const [loadMode, setLoadMode] = useState<'PALLET' | 'LOOSE'>(row?.load_mode === 'PALLET' ? 'PALLET' : 'LOOSE')
   const [modeByCat, setModeByCat] = useState<Record<string, 'PALLET' | 'LOOSE'>>(row?.load_mode_by_category ?? {})
-  const [maxTons, setMaxTons] = useState(row?.max_vehicle_tons != null ? String(row.max_vehicle_tons).replace('.', ',') : '')
+  const [vehicles, setVehicles] = useState<Record<string, string[]>>(row?.dispatch_vehicles ?? {})
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
   const [err, setErr] = useState('')
@@ -601,8 +614,7 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
         name: name.trim(), channel: channel || null,
         warehouse_id: whId || null, is_active: active, note: note.trim() || null, load_mode: loadMode,
         load_mode_by_category: modeByCat,
-        // trống = không giới hạn — gửi null TƯỜNG MINH để xoá được mức đã khai
-        max_vehicle_tons: maxTons.trim() ? Number(maxTons.trim().replace(',', '.')) : null,
+        dispatch_vehicles: vehicles,
       })
       const id = row?.id ?? saved?.id
       if (id) await saveRules.mutateAsync({ scope: 'CUSTOMER', key: id, rules: toPayload(drafts) })
@@ -704,12 +716,10 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
           <p className="mt-1 text-[11px] text-slate-400">Máy lấy Loại kho CHÍNH của từng OD (POSM đi kèm không tính). OD có hai loại khai hai kiểu khác nhau thì theo kiểu chung.</p>
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Tải trọng xe tối đa vào được (tấn)</label>
-          <div className="relative w-40">
-            <Input value={maxTons} inputMode="decimal" onChange={e => setMaxTons(e.target.value)} placeholder="Không giới hạn" className="h-9 pr-10 text-right" />
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">tấn</span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-400">Điểm giao đường nhỏ / cấm tải: máy chỉ xếp khách này lên dòng xe có tải trọng ≤ mức này — kể cả khi ghép chung với khách khác (theo mức chặt nhất). OD lớn hơn thì tách nhiều chuyến xe nhỏ. Để trống = không giới hạn.</p>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe được vào (điều vận)</label>
+          <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models}
+            inherit={{ label: channel ? (channels.find(c => c.value === channel)?.label ?? channel) : '', map: channel ? (chanVeh.get(channel) ?? {}) : {} }} />
+          <p className="mt-1 text-[11px] text-slate-400">Khách đặc biệt (đường nhỏ, cấm tải, xuất khẩu đi container…) khai riêng ở đây; còn lại theo kênh. Máy chỉ xếp khách lên dòng xe được tick — ghép với khách khác thì chỉ dòng xe CẢ HAI được vào. Container tick cho khách là được dùng dù mặc định chỉ trung chuyển.</p>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-4 w-4 accent-sky-600" />
@@ -727,13 +737,14 @@ function CustomerForm({ row, channels, warehouses, cats, saving, onClose, onSave
 // ─── Hộp xác nhận thao tác hàng loạt ───────────────────────────────────────────────────────────
 // Dialog GIỮA màn chỉ để XÁC NHẬN (chuẩn: form thêm/sửa mới dùng FormSheet). Câu đầu tiên phải
 // nói rõ PHẠM VI — "áp cho 312 khách theo bộ lọc hiện tại" — chứ không phải áp mù cả bảng.
-function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving, onClose, onApply, onApplyRule }: {
-  kind: 'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'max_tons'
+function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, models, saving, onClose, onApply, onApplyRule }: {
+  kind: 'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'vehicles'
   count: number
   byFilter: boolean
   channels: { value: string; label: string }[]
   warehouses: { id: string; name: string; code?: string }[]
   cats: DateRuleCategory[] | undefined
+  models: VehicleModel[]
   saving: boolean
   onClose: () => void
   onApply: (p: CustomerBulkPatch) => void
@@ -750,11 +761,13 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
   // Kiểu đi cho MỘT Loại kho (26/09) — gộp vào bảng kiểu đi từng khách, không đè loại khác
   const [lmCat, setLmCat] = useState('')
   const [lmMode, setLmMode] = useState<'PALLET' | 'LOOSE' | ''>('PALLET')
-  const [tons, setTons] = useState('')
-  const tonsNum = tons.trim() ? Number(tons.trim().replace(',', '.')) : null
-  const tonsBad = tonsNum != null && !(tonsNum > 0 && tonsNum <= 100)
+  // Dòng xe được vào cho MỘT khoá Loại kho (27/09) — Thay / Thêm / Bớt / Về theo kênh
+  const [vCat, setVCat] = useState('')
+  const [vMode, setVMode] = useState<'SET' | 'ADD' | 'REMOVE' | 'CLEAR'>('SET')
+  const [vIds, setVIds] = useState<string[]>([])
+  const vBad = (vMode === 'ADD' || vMode === 'REMOVE') && !vIds.length
   const title = kind === 'channel' ? 'Phân kênh hàng loạt' : kind === 'date_rule' ? 'Đặt quy định date hàng loạt'
-    : kind === 'load_mode_cat' ? 'Kiểu đi theo Loại kho — hàng loạt' : kind === 'max_tons' ? 'Tải trọng xe tối đa — hàng loạt' : 'Trỏ kho nhận hàng loạt'
+    : kind === 'load_mode_cat' ? 'Kiểu đi theo Loại kho — hàng loạt' : kind === 'vehicles' ? 'Dòng xe được vào — hàng loạt' : 'Trỏ kho nhận hàng loạt'
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
@@ -840,14 +853,26 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
               <p className="text-[11px] text-slate-500">Chỉ đổi kiểu đi của Loại kho đã chọn; các loại khác của từng khách giữ nguyên. Áp cho lần lập kế hoạch điều vận sau.</p>
             </div>
           )}
-          {kind === 'max_tons' && (
-            <div className="space-y-1">
-              <div className="relative w-40">
-                <Input value={tons} inputMode="decimal" onChange={e => setTons(e.target.value)} placeholder="Không giới hạn" className="h-9 pr-10 text-right" />
-                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">tấn</span>
+          {kind === 'vehicles' && (
+            <div className="space-y-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Loại kho</label>
+                <SingleSelect options={[{ value: '', label: 'Mọi Loại kho' }, ...(cats ?? []).map(c => ({ value: c.value, label: `${c.value} — ${c.label}` }))]}
+                  value={vCat} onChange={setVCat} placeholder="Mọi Loại kho" searchable={false} />
               </div>
-              {tonsBad && <p className="text-[11px] text-red-600">Nhập số tấn trong khoảng 0–100.</p>}
-              <p className="text-[11px] text-slate-500">Để trống rồi áp = bỏ giới hạn cho các khách đã chọn. Áp cho lần lập kế hoạch điều vận sau.</p>
+              <div className="grid grid-cols-4 gap-1 rounded-md border border-slate-200 p-0.5">
+                {([['SET', 'Thay bằng'], ['ADD', 'Thêm'], ['REMOVE', 'Bớt'], ['CLEAR', 'Theo kênh']] as const).map(([v, lb]) => (
+                  <button key={v} type="button" onClick={() => setVMode(v)}
+                    className={`rounded px-1 py-1.5 text-xs ${vMode === v ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{lb}</button>
+                ))}
+              </div>
+              {vMode !== 'CLEAR' && <VehicleModelChecklist models={models} value={vIds} onChange={setVIds} />}
+              <p className="text-[11px] text-slate-500">
+                {vMode === 'SET' ? 'Danh sách của Loại kho đã chọn trên từng khách được THAY bằng các dòng xe đang tick (tick 0 dòng = cố ý không xe nào).'
+                  : vMode === 'ADD' ? 'Thêm các dòng xe đang tick vào danh sách sẵn có của từng khách.'
+                  : vMode === 'REMOVE' ? 'Bỏ các dòng xe đang tick khỏi danh sách của từng khách.'
+                  : 'Gỡ khai riêng của Loại kho đã chọn — các khách quay về theo kênh.'} Loại kho khác của từng khách giữ nguyên. Áp cho lần lập kế hoạch điều vận sau.
+              </p>
             </div>
           )}
           {(kind === 'channel' || kind === 'date_rule') && (
@@ -858,8 +883,8 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, saving,
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Huỷ</Button>
-          <Button disabled={saving || (kind === 'load_mode_cat' && !lmCat) || (kind === 'max_tons' && tonsBad)} onClick={() => {
-            if (kind === 'max_tons') return onApply({ max_vehicle_tons: tonsNum })
+          <Button disabled={saving || (kind === 'load_mode_cat' && !lmCat) || (kind === 'vehicles' && vBad)} onClick={() => {
+            if (kind === 'vehicles') return onApply({ dispatch_vehicles: { category: vCat || null, mode: vMode, vehicle_model_ids: vMode === 'CLEAR' ? [] : vIds } })
             if (kind === 'date_rule') return onApplyRule({ category: rCat || null, kind: rKind || null, value: rVal })
             if (kind === 'load_mode_cat') return onApply({ load_mode_by_category: { category: lmCat, mode: lmMode || null } })
             onApply(kind === 'channel' ? { channel: channel || null } : { warehouse_id: whId || null })
@@ -1026,11 +1051,12 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
 }
 
 // ─── Tab KÊNH ──────────────────────────────────────────────────────────────────────────────────
-type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[] }
+type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]> }
 
-function ChannelsTab({ canEdit, onEdit }: {
+function ChannelsTab({ canEdit, onEdit, models }: {
   canEdit: boolean
   onEdit: (r: ChannelEdit) => void
+  models: VehicleModel[]
 }) {
   const { data, isLoading } = useCustomerChannels()
   const rows = data ?? []
@@ -1043,13 +1069,13 @@ function ChannelsTab({ canEdit, onEdit }: {
       <Table className="min-w-full">
         <TableHeader>
           <TableRow>
-            {['Mã kênh', 'Tên kênh', 'Quy định date mặc định', 'Số khách', ''].map((h, i) => (
+            {['Mã kênh', 'Tên kênh', 'Quy định date mặc định', 'Dòng xe mặc định', 'Số khách', ''].map((h, i) => (
               <TableHead key={i} className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">{h}</TableHead>
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && <TableEmptyRow colSpan={5}>Đang tải…</TableEmptyRow>}
+          {isLoading && <TableEmptyRow colSpan={6}>Đang tải…</TableEmptyRow>}
           {rows.map(c => (
             <TableRow key={c.id}>
               <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{c.value}</TableCell>
@@ -1068,10 +1094,21 @@ function ChannelsTab({ canEdit, onEdit }: {
                   </span>
                 ) : <span className="text-[9px] text-slate-400">Chưa khai — không áp gì</span>}
               </TableCell>
+              <TableCell className="px-2 py-1">
+                {Object.keys(c.dispatch_vehicles ?? {}).length ? (
+                  <span className="flex flex-wrap gap-1">
+                    {Object.entries(c.dispatch_vehicles ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([k, ids]) => (
+                      <span key={k} className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700" title={vehicleListText(ids, models)}>
+                        {k === '*' ? 'Mọi loại' : k}: {ids.length} dòng xe
+                      </span>
+                    ))}
+                  </span>
+                ) : <span className="text-[9px] text-slate-400">Chưa khai — mọi xe</span>}
+              </TableCell>
               <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{nf(c.customers)}</TableCell>
               <TableCell className="px-2 py-1 whitespace-nowrap">
                 {canEdit && (
-                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [] })}
+                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {} })}
                     className="rounded px-1.5 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" title="Sửa kênh">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -1085,12 +1122,14 @@ function ChannelsTab({ canEdit, onEdit }: {
   )
 }
 
-function ChannelForm({ row, cats, onClose }: {
+function ChannelForm({ row, cats, models, onClose }: {
   row: ChannelEdit
   cats: DateRuleCategory[] | undefined
+  models: VehicleModel[]
   onClose: () => void
 }) {
   const [label, setLabel] = useState(row.label)
+  const [vehicles, setVehicles] = useState<Record<string, string[]>>(row.dispatch_vehicles ?? {})
   const [drafts, setDrafts] = useState<RuleDraft[]>(draftsOf(row.rules))
   const [err, setErr] = useState('')
   const save = useUpdateCustomerChannel()
@@ -1104,7 +1143,7 @@ function ChannelForm({ row, cats, onClose }: {
         <Button disabled={busy || !label.trim()} onClick={async () => {
           setErr('')
           try {
-            await save.mutateAsync({ id: row.id, label: label.trim() })
+            await save.mutateAsync({ id: row.id, label: label.trim(), dispatch_vehicles: vehicles })
             // Mức đi bằng khoá NGHIỆP VỤ của kênh (`value`), không phải id dòng LookupValue
             await saveRules.mutateAsync({ scope: 'CHANNEL', key: row.value, rules: toPayload(drafts) })
             onClose()
@@ -1120,6 +1159,11 @@ function ChannelForm({ row, cats, onClose }: {
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Quy định date mặc định</label>
           <RuleTable drafts={drafts} onChange={setDrafts} cats={cats ?? []} inheritNote="kênh này không áp gì" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe mặc định (điều vận)</label>
+          <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models} />
+          <p className="mt-1 text-[11px] text-slate-400">Khách thuộc kênh này mà không khai riêng thì máy chỉ xếp lên các dòng xe tick ở đây (vd NPP không đi container, BHX chỉ xe nhỏ). Để "Mọi xe" = không giới hạn.</p>
         </div>
       </div>
     </FormSheet>

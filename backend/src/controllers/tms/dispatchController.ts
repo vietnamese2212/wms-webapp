@@ -32,7 +32,7 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, useOk, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd, type LoadMode,
-  stopsLimit, modeOfModel, condsOf, mainCatsOf, resolveLoadMode, lineConditions,
+  stopsLimit, modeOfModel, condsOf, mainCatsOf, resolveLoadMode, lineConditions, resolveAllowedModels, mixBlockReason,
 } from '../../services/dispatchEngine'
 import { splitPool, type ExcludedOd, type PoolCandidateRow } from '../../services/dispatchPool'
 import { replanKhvcGroups } from '../wms/outboundController'
@@ -90,6 +90,7 @@ export const zTripPatch = z.object({
   transport_company_id: zId.nullable().optional(),
   locked: zBool.optional(),            // khoá xe: "Tối ưu lại phần chưa khoá" không đụng vào
   load_mode: z.enum(['PALLET', 'LOOSE']).optional(),   // nút trên thẻ xe: đổi xe pallet ↔ xe xá (máy chọn lại dòng xe đúng họ)
+  allow_mix_categories: zBool.nullable().optional(),   // switch trên thẻ xe (27/09): cho thả OD khác Loại kho; null = theo kế hoạch
 })
 // Bàn ghép xe (25/09): một cửa cho mọi lần thả — id là DÒNG OD của kế hoạch (một OD bị tách có nhiều dòng)
 export const zMove = z.object({
@@ -181,7 +182,7 @@ async function loadShareActual(whId: string, day: string, carriers: EngineCarrie
 // ── POOL LŨY TIẾN: OD ZSD02 của kho — ngày giao đó + tồn đọng — chưa được lo ở đâu (luật: services/dispatchPool) ──────
 type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null }
 type MatRow = LoadMat & { material_code: string; category: string | null }
-type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; load_mode: string | null; load_mode_by_category: Record<string, unknown> | null; max_vehicle_tons: number | string | null }
+type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; load_mode: string | null; load_mode_by_category: Record<string, unknown> | null; dispatch_vehicles: Record<string, unknown> | null }
 type CatCfg = Awaited<ReturnType<typeof getDispatchCategoryConfig>>
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (user 26/09: "nếu không khai báo đúng thì FG02 có thể dùng container
  *  mất") — màn Điều vận hiện băng cảnh báo từ đây. Loại "đi kèm đơn" không cần ĐK bảo quản riêng. */
@@ -239,17 +240,17 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   if (opts.countOnly) return { ods: [], meta: new Map(), excluded: split.excluded, include, gaps: noGaps }
   const kept = mine.filter(r => split.include.has(r.od_number))
   const matCodes = uniq(kept.map(r => r.material_code).filter((x): x is string => !!x))
-  const [mats, custs, stockRes] = await Promise.all([
+  const [mats, custs, chRes] = await Promise.all([
     fetchAllByIdChunks(matCodes, c => db.from('Material')
       .select('material_code, category, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, weight_kg, is_pallet_carrier, is_non_stock').in('material_code', c).order('material_code')) as Promise<MatRow[]>,
     fetchAllByIdChunks(uniq(kept.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
-      .select('ship_to_code, ward_code, region_code, channel, warehouse_id, is_active, load_mode, load_mode_by_category, max_vehicle_tons').in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
-    // ĐK bảo quản theo CHỖ TỒN THẬT (26/09): một lời gọi, mã đi trong thân POST; kho chưa khai ô nào ⇒ rỗng ngay
-    matCodes.length ? db.rpc('dispatch_stock_conditions', { p_warehouse_id: wh.id, p_material_codes: matCodes } as never) : Promise.resolve({ data: [], error: null }),
+      .select('ship_to_code, ward_code, region_code, channel, warehouse_id, is_active, load_mode, load_mode_by_category, dispatch_vehicles').in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
+    // Luật 10 (27/09): dòng xe được vào mặc định theo KÊNH — danh mục 7 dòng
+    db.from('LookupValue').select('value, meta').eq('type', 'customer_channel'),
   ])
-  if (stockRes.error) throw stockRes.error
-  const stockBy = new Map<string, (string | null)[]>()
-  for (const r of ((stockRes.data ?? []) as { material_code: string; condition: string | null }[])) stockBy.set(r.material_code, [...(stockBy.get(r.material_code) ?? []), r.condition])
+  if (chRes.error) throw chRes.error
+  const chanVeh = new Map(((chRes.data ?? []) as { value: string; meta: Record<string, unknown> | null }[])
+    .map(r => [r.value, (r.meta?.dispatch_vehicles ?? null) as Record<string, unknown> | null]))
   const matBy = new Map(mats.map(m => [m.material_code, m]))
   const custBy = new Map(custs.map(c => [c.ship_to_code, c]))
   const gapCat = new Map<string, Set<string>>()
@@ -266,10 +267,11 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       const q = Number(r.qty_base) || 0
       const l = loadOfWithSap(q, mat, wh.id, { sap_pallets: numOrNull(r.sap_pallets), gross_weight_kg: numOrNull(r.gross_weight_kg) })
       const cat = mat?.category ?? null
-      // Điều kiện bảo quản THEO LOẠI KHO (Cài đặt WMS → Loại kho) — trừ khi hàng đang nằm ở ô khai ĐK RIÊNG (Vị trí kho,
-      // 26/09) thì theo ô đó. Loại chưa khai + ô không khai ⇒ rỗng ⇒ không ràng buộc dòng xe (có băng "khai thiếu").
+      // Điều kiện bảo quản THEO LOẠI KHO của mã hàng (Cài đặt WMS → Loại kho) — hàng → đơn → xe. ĐK của VỊ TRÍ là việc của
+      // WMS, KHÔNG đi vào điều vận (user chốt 27/09: "vị trí lấy ĐK bảo quản là để phục vụ cho WMS"). Loại chưa khai ⇒ rỗng
+      // ⇒ không ràng buộc dòng xe (có băng "khai thiếu").
       const catCond = (cat && condByCat.get(cat)) || null
-      const conditions = lineConditions(catCond, r.material_code ? stockBy.get(r.material_code) : undefined, !!cat && follow.has(cat))
+      const conditions = lineConditions(catCond, undefined, !!cat && follow.has(cat))
       if (!cat) { gapNoCat.ods.add(od); if (r.material_code) gapNoCat.materials.add(r.material_code) }
       else if (!catCond && !follow.has(cat)) gapCat.set(cat, (gapCat.get(cat) ?? new Set()).add(od))
       return { material_code: r.material_code ?? '?', qty_base: q, pallets: l.pallets, kg: l.kg, category: cat, condition: catCond, conditions }
@@ -283,7 +285,8 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       // Luật 7 (25/09): khách CHƯA khai / chưa có trong danh mục = đi XÁ (user chốt "khách nào là Pallet, còn lại là xá");
       // 26/09: khai riêng theo Loại kho chính của OD (FG01 đi pallet, FG02 đi xá) thắng kiểu chung
       load_mode: resolveLoadMode(cust?.load_mode, cust?.load_mode_by_category, mainCatsOf(lines, follow)),
-      max_vehicle_tons: numOrNull(cust?.max_vehicle_tons),   // luật 10: khách chỉ nhận xe ≤ N tấn
+      // luật 10 (27/09): dòng xe được vào — Khách × Loại kho → Khách → Kênh × Loại kho → Kênh; không khai = không giới hạn
+      allowed_models: resolveAllowedModels(cust?.dispatch_vehicles, cust?.is_active === false || !cust?.channel ? null : chanVeh.get(cust.channel), mainCatsOf(lines, follow)),
     })
     const inc = split.include.get(od)!
     meta.set(od, { delivery_date: inc.delivery_date, late_days: inc.late_days, region_code: first.region_code ?? cust?.region_code ?? null })
@@ -302,14 +305,14 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
     id: randomUUID(), plan_id: planId, trip_id: tripId, od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code,
     pallets: o.pallets, tons: o.tons, lines: o.lines, part_index: o.part?.index ?? null, part_of: o.part?.of ?? null, material_codes: o.material_codes,
     conditions: o.conditions, cat_load: asJson(o.cat_load), region_code: m?.region_code ?? null, delivery_date: m?.delivery_date ?? null, late_days: m?.late_days ?? 0,
-    load_mode: o.load_mode, is_transfer: o.transfer, max_vehicle_tons: o.max_vehicle_tons, updated_at: t,
+    load_mode: o.load_mode, is_transfer: o.transfer, allowed_models: o.allowed_models, updated_at: t,
   }
 }
 /** Cả một OD (chưa tách) → TripOd — cho OD vào khung chờ (nạp OD mới / thay OD). */
 function wholeOd(od: EngineOd): TripOd {
   const s = sumLines(od.lines)
   return { od_number: od.od_number, ship_to_code: od.ship_to_code, ship_to_name: od.ship_to_name, ward_code: od.ward_code, pallets: s.pallets, tons: s.tons, lines: od.lines.length, part: null,
-    material_codes: od.lines.map(l => l.material_code), conditions: condsOf(od.lines), cat_load: catLoadOf(od.lines), load_mode: od.load_mode ?? null, transfer: isTransferOd(od), max_vehicle_tons: od.max_vehicle_tons ?? null }
+    material_codes: od.lines.map(l => l.material_code), conditions: condsOf(od.lines), cat_load: catLoadOf(od.lines), load_mode: od.load_mode ?? null, transfer: isTransferOd(od), allowed_models: od.allowed_models ?? null }
 }
 const asMode = (v: string | null | undefined): LoadMode | null => (v === 'PALLET' || v === 'LOOSE' ? v : null)
 async function insertOdRows(rows: Tables['dispatch_trip_od']['Insert'][]) {
@@ -626,24 +629,23 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   // Người tự chọn dòng xe thì KHÔNG chặn (đây là bản nháp, người quyết) — nhưng phải nói ra khi xe không phục vụ đủ
   // điều kiện bảo quản của hàng trên xe, kẻo hàng lạnh lên xe thường mà màn hình im lặng.
   // Luật 8: dòng xe "chỉ trung chuyển" (container) chở OD giao khách ⇒ người tự chọn thì không chặn, nhưng nói ra
-  const nonTransfer = trip.ods.filter(o => !o.is_transfer)
+  // (OD có danh sách dòng xe riêng GỒM dòng này thì được — khách xuất khẩu khai cont là đi cont, luật 10 thắng luật 8)
+  const nonTransfer = trip.ods.filter(o => !o.is_transfer && !(model && o.allowed_models?.includes(model.id)))
   if (model && !useOk(model, !nonTransfer.length) && trip.ods.length)
     warnings.push(`Dòng xe ${model.name} chỉ dùng trung chuyển giữa các kho — xe đang chở ${uniq(nonTransfer.map(o => o.od_number)).length} OD giao khách`)
   if (model && conds.length && !servesConditions(model, conds))
     warnings.push(`Dòng xe ${model.name} không phục vụ điều kiện bảo quản ${conds.map(c => condLabels[c] ?? c).join(' + ')}`)
-  // Luật 10: khách chỉ nhận xe tải trọng nhỏ — người tự chọn / kéo OD lên xe to hơn thì không chặn nhưng nói rõ khách nào, mức nào
-  const limRows = trip.ods.filter(o => numOrNull(o.max_vehicle_tons) != null)
-  if (model && limRows.length) {
-    const lim = Math.min(...limRows.map(o => Number(o.max_vehicle_tons)))
-    if (!(Number(model.max_tons) > 0 && Number(model.max_tons) <= lim + 1e-9)) {
-      const who = uniq(limRows.filter(o => Number(o.max_vehicle_tons) === lim).map(o => o.ship_to_name ?? o.ship_to_code ?? o.od_number))
-      warnings.push(`Khách ${who.slice(0, 2).join(', ')}${who.length > 2 ? '…' : ''} chỉ nhận xe ≤ ${lim.toLocaleString('vi-VN')} tấn — dòng xe ${model.name} ${Number(model.max_tons) > 0 ? `là ${Number(model.max_tons).toLocaleString('vi-VN')} tấn` : 'chưa khai tải trọng'}`)
-    }
+  // Luật 10: khách chỉ được vào danh sách dòng xe đã khai — người tự chọn / kéo OD lên xe khác thì không chặn nhưng nói rõ khách nào
+  const outList = model ? trip.ods.filter(o => o.allowed_models && !o.allowed_models.includes(model.id)) : []
+  if (model && outList.length) {
+    const who = uniq(outList.map(o => o.ship_to_name ?? o.ship_to_code ?? o.od_number))
+    warnings.push(`Khách ${who.slice(0, 2).join(', ')}${who.length > 2 ? '…' : ''} không được vào dòng xe ${model.name} (Khách hàng → Dòng xe được vào)`)
   }
-  // Luật 9: kho không cho ghép nhiều Loại kho mà người kéo OD làm xe chở lẫn ⇒ không chặn (nháp, người quyết) nhưng nói ra
+  // Luật 9: xe chở lẫn nhiều Loại kho chính mà switch của xe (không có thì của kế hoạch) đang TẮT — chỉ còn gặp khi một OD tự chứa
+  // hai loại hoặc switch vừa tắt trên xe đang lẫn; cửa thả đã chặn ca kéo thêm (mixBlockReason)
   const mainCats = mainCatsOf(categories.map(c => ({ category: c })), params.follow_categories ?? [])
-  if (params.allow_mix_categories === false && mainCats.length > 1)
-    warnings.push(`Xe chở lẫn ${mainCats.join(' + ')} — kho chưa bật "Cho ghép nhiều Loại kho trên một chuyến"`)
+  if ((trip.allow_mix_categories ?? params.allow_mix_categories) === false && mainCats.length > 1)
+    warnings.push(`Xe chở lẫn ${mainCats.join(' + ')} — switch "Ghép Loại kho khác" của xe đang tắt`)
   const detail: Detail = {
     ...prev, freight, load, warnings, merge_hint: null, conditions: conds, categories, booking_category: booking,
     // chỉ chuyển OD (ĐVVT giữ nguyên) thì lý do chọn ĐVVT của máy vẫn đúng; người đổi ĐVVT thì lý do là người
@@ -677,7 +679,13 @@ export async function updateTrip(req: Request, res: Response) {
       const { error } = await db.from('dispatch_trip').update({ locked: b.locked, updated_at: now() }).eq('id', trip.id)
       if (error) throw error
       // chỉ khoá / mở khoá ⇒ không đụng cước (khoá không đổi gì trên xe)
-      if (b.vehicle_model_id === undefined && b.transport_company_id === undefined && b.load_mode === undefined) { await writeSummary(plan); return ok(res, { ...trip, locked: b.locked }) }
+      if (b.vehicle_model_id === undefined && b.transport_company_id === undefined && b.load_mode === undefined && b.allow_mix_categories === undefined) { await writeSummary(plan); return ok(res, { ...trip, locked: b.locked }) }
+    }
+    if (b.allow_mix_categories !== undefined) {
+      // switch trên thẻ xe — ghi cột rồi tính lại (cảnh báo "xe chở lẫn" đổi theo switch)
+      const { error } = await db.from('dispatch_trip').update({ allow_mix_categories: b.allow_mix_categories, updated_at: now() }).eq('id', trip.id)
+      if (error) throw error
+      trip.allow_mix_categories = b.allow_mix_categories
     }
     const wh = await loadWarehouse(plan.warehouse_id)
     const wards = uniq(trip.ods.map(o => o.ward_code).filter((x): x is string => !!x))
@@ -769,11 +777,14 @@ export async function moveOd(req: Request, res: Response) {
     const t = now()
     let targetId = b.to_trip_id ?? null
     if (targetId) {
-      const tg = (await db.from('dispatch_trip').select('id, plan_id, status, group_code').eq('id', targetId).maybeSingle()).data
+      const tg = (await db.from('dispatch_trip').select('id, plan_id, status, group_code, allow_mix_categories').eq('id', targetId).maybeSingle()).data
       if (!tg || tg.plan_id !== plan.id) return fail(res, 'Chuyến đích không thuộc cùng kế hoạch', 400)
       if (tg.id === src.id) return fail(res, 'Chuyến đích trùng chuyến nguồn', 400)
       const tgSt = (tg.status as TripStatus) ?? 'DRAFT'
       if (!EDITABLE_TRIP.includes(tgSt)) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe đích ${tg.group_code} ${TRIP_STATUS_VI[tgSt]} — không nhận thêm OD ở đây; đổi ở tab Kế hoạch xuất.`)
+      const tgOds0 = ((await db.from('dispatch_trip_od').select('cat_load').eq('trip_id', tg.id)).data ?? []) as { cat_load: unknown }[]
+      const mix = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tgOds0, moving, engineParams(plan).follow_categories)
+      if (mix) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', `Xe ${tg.group_code}: ${mix}`)
     } else {
       // tách ra chuyến MỚI: STT kế tiếp trong nháp, kế thừa dòng xe/ĐVVT của chuyến nguồn
       const params = (plan.params ?? {}) as { code_prefix?: string }
@@ -842,7 +853,7 @@ function actualNow(plan: PlanRow, trips: PlanTrip[]): Record<string, ShareActual
   return out
 }
 // flow 'STO' khi dòng OD mang cờ trung chuyển — chỉ để `isTransferOd` của luật 8 đọc đúng (dòng không còn phân loại SAP gốc)
-const rowAsEngineOd = (o: TripOdRow): EngineOd => ({ od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code, region_code: o.region_code ?? null, channel: null, internal_wh: null, scan_mode: false, flow: o.is_transfer ? 'STO' : 'SALE', lines: [], load_mode: asMode(o.load_mode) ?? undefined, max_vehicle_tons: numOrNull(o.max_vehicle_tons) })
+const rowAsEngineOd = (o: TripOdRow): EngineOd => ({ od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code, region_code: o.region_code ?? null, channel: null, internal_wh: null, scan_mode: false, flow: o.is_transfer ? 'STO' : 'SALE', lines: [], load_mode: asMode(o.load_mode) ?? undefined, allowed_models: o.allowed_models ?? null })
 /** Kiểu đi chiếm đa số trong một nhóm dòng OD (hoà ⇒ Xá — kiểu mặc định của khách chưa khai). */
 const majorityMode = (rows: TripOdRow[]): LoadMode | null => {
   const p = rows.filter(o => asMode(o.load_mode) === 'PALLET').length, l = rows.filter(o => asMode(o.load_mode) === 'LOOSE').length
@@ -887,8 +898,12 @@ export async function moveOds(req: Request, res: Response) {
       const tg = b.to_trip_id ? tripBy.get(b.to_trip_id) : undefined
       if (!tg) return fail(res, 'Xe đích không thuộc kế hoạch này', 400)
       if (!EDITABLE_TRIP.includes(statusOf(tg))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe đích ${tg.group_code} ${TRIP_STATUS_VI[statusOf(tg)]} — không nhận thêm OD ở đây; đổi ở tab Kế hoạch xuất.`)
+      const mix = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tg.ods.filter(o => !ids.includes(o.id)), rows, engineParams(plan).follow_categories)
+      if (mix) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', `Xe ${tg.group_code}: ${mix}`)
       targetId = tg.id
     } else if (b.to === 'new') {
+      const mix = mixBlockReason(engineParams(plan).allow_mix_categories, [], rows, engineParams(plan).follow_categories)
+      if (mix) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', mix)
       // xe mới: máy chọn dòng xe + ĐVVT theo đúng ba bậc của lượt ghép (người vẫn đổi được)
       const wards = uniq(rows.map(o => o.ward_code).filter((x): x is string => !!x))
       const refs = await loadRefs(plan.warehouse_id, plan.plan_date, wards)
@@ -963,6 +978,8 @@ export async function previewMove(req: Request, res: Response) {
     const tg = full.trips.find(x => x.id === b.to_trip_id)
     if (!tg) return fail(res, 'Xe đích không thuộc kế hoạch này', 400)
     const moving = [...full.trips.flatMap(x => x.ods), ...full.pool].filter(o => b.ids.includes(o.id) && o.trip_id !== tg.id)
+    // switch "Ghép Loại kho khác" của xe đang tắt ⇒ rê qua là thấy NGAY xe không nhận, không phải thả rồi mới biết
+    const blocked = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tg.ods, moving, engineParams(plan).follow_categories)
     const next = { ...tg, ods: [...tg.ods, ...moving] }
     const wh = await loadWarehouse(plan.warehouse_id)
     const wards = uniq(next.ods.map(o => o.ward_code).filter((x): x is string => !!x))
@@ -972,6 +989,7 @@ export async function previewMove(req: Request, res: Response) {
     return ok(res, {
       trip_id: tg.id, pallets: p.pallets, tons: p.tons, stops: p.stops, load_pct: p.load_pct, underload: p.underload, oversize: p.oversize,
       freight_estimated: p.freight_estimated, freight_before: tg.freight_estimated, freight_reason: d.freight.reason, warnings: d.warnings,
+      blocked,
     })
   } catch (e) { return failAny(res, e) }
 }

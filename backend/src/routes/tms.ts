@@ -46,7 +46,11 @@ router.delete('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'delete'), 
 
 // vehicle_model (DÒNG XE CON mang mã SAP — 23/09; cha = VehicleType). Cùng module quyền với cha: một danh mục hai tầng.
 // Cửa đọc mở như cha (điều vận + Kế hoạch xuất cần) — cửa ghi theo action riêng.
-router.get('/vehicle-models',                     requireTmsOrGateView,                                 vehicleModel.listVehicleModels)
+// Danh mục dòng xe còn được đọc ở trang Khách hàng (ô "Dòng xe được vào", 27/09) — người chỉ có quyền Khách hàng vẫn phải
+// thấy danh sách để tick; chỉ ĐỌC danh mục, không nới cửa ghi nào
+router.get('/vehicle-models',
+  requireAnyPerm(['tms_plan', 'view'], ['tms_vehicle_types', 'view'], ['tms_slots', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view'], ['gate_registration', 'view'], ['customers', 'view']),
+  vehicleModel.listVehicleModels)
 router.post('/vehicle-models',                    requirePerm('tms_vehicle_types', 'create'), validate({ body: vehicleModel.zVehicleModelCreate }), vehicleModel.createVehicleModel)
 router.patch('/vehicle-models/assign-parent',     requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignParent }),       vehicleModel.assignParent)   // TRƯỚC /:id
 router.patch('/vehicle-models/assign-conditions', requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignConditions }),   vehicleModel.assignConditions) // TRƯỚC /:id

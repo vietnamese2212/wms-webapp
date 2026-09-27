@@ -4528,8 +4528,8 @@ export interface Customer {
   load_mode: 'PALLET' | 'LOOSE'
   /** 26/09: kiểu đi RIÊNG theo Loại kho {FG01: 'PALLET', FG02: 'LOOSE'} — loại không khai ⇒ theo `load_mode` */
   load_mode_by_category?: Record<string, 'PALLET' | 'LOOSE'>
-  /** 26/09: tải trọng xe LỚN NHẤT vào được điểm giao (tấn) — null = không giới hạn */
-  max_vehicle_tons?: number | null
+  /** 27/09: dòng xe (vehicle_model.id) khách được vào theo Loại kho {"*": [...], FG02: [...]} — khoá vắng = theo kênh */
+  dispatch_vehicles?: Record<string, string[]>
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
   // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
   rules: MasterRuleRow[]
@@ -4568,6 +4568,8 @@ export function useCustomers(f: CustomerFilters) {
 
 export interface CustomerChannel {
   id: string; value: string; label: string; rules: MasterRuleRow[]; sort_order: number | null; customers: number
+  /** 27/09: dòng xe MẶC ĐỊNH của kênh theo Loại kho — khách không khai riêng thì theo đây */
+  dispatch_vehicles?: Record<string, string[]>
 }
 export function useCustomerChannels() {
   return useQuery({
@@ -4606,9 +4608,11 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category' | 'max_vehicle_tons'>>
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category' | 'dispatch_vehicles'>>
 /** Thao tác hàng loạt "kiểu đi cho MỘT Loại kho" — gộp vào bảng kiểu đi từng khách (mode null = về kiểu chung). */
 export type CustomerBulkPatch = CustomerPatch | { load_mode_by_category: { category: string; mode: 'PALLET' | 'LOOSE' | null } }
+  /** 27/09: dòng xe được vào cho MỘT khoá Loại kho (null = mọi loại) — Thay / Thêm / Bớt / Về theo kênh */
+  | { dispatch_vehicles: { category: string | null; mode: 'SET' | 'ADD' | 'REMOVE' | 'CLEAR'; vehicle_model_ids: string[] } }
 export function useSaveCustomer() {
   const qc = useQueryClient()
   return useMutation({
@@ -4685,7 +4689,7 @@ export function useBulkSetDateRule() {
 export function useUpdateCustomerChannel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]> }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
     onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })
@@ -5919,6 +5923,7 @@ export interface DispatchTrip {
   status: DispatchTripStatus; tendered_at: string | null; responded_at: string | null; response_by: string | null; response_note: string | null; confirmed_at: string | null
   locked?: boolean
   load_mode?: DispatchLoadMode | null   // xe pallet / xe xá — nút trên thẻ xe đổi được
+  allow_mix_categories?: boolean | null // switch "Ghép Loại kho khác" của xe (27/09); null = theo kế hoạch
   ods: DispatchTripOd[]
 }
 export interface DispatchShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: 'TRIPS' | 'PALLETS' | 'TONS' }
@@ -5964,7 +5969,7 @@ export function useMoveDispatchOds() {
     onError: () => invalidateDispatch(qc),
   })
 }
-export interface DispatchMovePreview { trip_id: string; pallets: number | null; tons: number | null; stops: number; load_pct: number | null; underload: boolean; oversize: boolean; freight_estimated: number | null; freight_before: number | string | null; freight_reason: string | null; warnings: string[] }
+export interface DispatchMovePreview { trip_id: string; pallets: number | null; tons: number | null; stops: number; load_pct: number | null; underload: boolean; oversize: boolean; freight_estimated: number | null; freight_before: number | string | null; freight_reason: string | null; warnings: string[]; blocked?: string | null }
 export const previewDispatchMove = (plan_id: string, ids: string[], to_trip_id: string) =>
   apiClient.post(`/tms/dispatch/plans/${plan_id}/preview-move`, { ids, to_trip_id }).then(r => r.data.data as DispatchMovePreview)
 export function useReoptimizeDispatchPlan() {
@@ -6031,7 +6036,7 @@ export function useCreateDispatchPlan() {
 export function useUpdateDispatchTrip() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; transport_company_id?: string | null; locked?: boolean; load_mode?: DispatchLoadMode }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
+    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; transport_company_id?: string | null; locked?: boolean; load_mode?: DispatchLoadMode; allow_mix_categories?: boolean | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
     onSuccess: () => invalidateDispatch(qc),
   })
 }

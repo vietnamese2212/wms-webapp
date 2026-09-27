@@ -207,6 +207,7 @@ export const MODULES = {
       plan:    'Lập kế hoạch (chạy máy ghép) · sửa nháp: đổi dòng xe / ĐVVT · chuyển OD giữa xe · bỏ nháp',
       confirm: 'Xác nhận kế hoạch → ghi vào Kế hoạch xuất (sinh chuyến + lệnh VC như upload tay)',
       export:  'Xuất Excel kế hoạch ghép chuyến (định dạng file KH điều vận)',
+      customer_vehicles: 'Sửa "Dòng xe được vào" của khách ngay trên bàn ghép xe (chỉ dòng xe — đổi kênh vẫn ở trang Khách hàng)',
     },
   },
   tms_slots: {

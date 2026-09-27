@@ -776,7 +776,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; copy_from_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -785,7 +785,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data as WarehouseSaved),
     // Bật/tắt "Áp %Date tự động" ghi thẳng vào dòng hàng của đơn đang mở (BE áp ngay từ 12/09) →
     // phải làm mới cả màn Quy định date và bảng việc, không đợi người dùng bấm lại.
@@ -3647,6 +3647,7 @@ export interface KhvcRow {
   booking_category: string | null   // CỬA đặt lịch — 1 Số xe chỉ 1 giá trị (trigger DB gác); chỉ dùng cho khung giờ
   vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng tính cước/tải (23/09)
   vehicle_model?: { id: string; sap_code: string; name: string } | null   // enrich từ BE list
+  extra_vehicle_models?: { id: string; sap_code: string; name: string }[]   // xe PHỤ của thẻ nhiều xe (điều vận 27/09) — booking đủ số xe
   export_date: string | null; source: string | null; sync_status: string | null
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO
@@ -5892,6 +5893,8 @@ export interface DispatchTripOd {
   conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null; late_days?: number
   load_mode?: DispatchLoadMode | null   // khách đi Pallet / Xá (25/09) — theo danh mục khách, đổi được trên bàn ghép xe
   is_transfer?: boolean                 // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
+  allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — null = không giới hạn
+  note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
 }
 export type DispatchLoadMode = 'PALLET' | 'LOOSE'
 /** ĐVVT xếp hạng theo cước cho MỘT xe (đổi ĐVVT ngay trên thẻ xe, 25/09) — cùng `priceFor` với engine. */
@@ -5904,13 +5907,15 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
 }
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
 export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN'; info: string | null; replaced_by?: string | null }
-export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED'; info: string | null }
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'; info: string | null }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
   categories: string[]; conditions?: string[]; booking_category: string | null; cluster: string
   carrier_reasons: string[]; warnings: string[]; merge_hint: string | null
   vehicle_model: { id: string; sap_code: string; name: string; parent_type_name: string | null } | null
+  /** thẻ nhiều xe (27/09): các xe + phần tải + cước riêng; 1 phần tử = một xe */
+  vehicles?: { id: string; sap_code: string; name: string; parent_type_name: string | null; pallets: number | null; tons: number | null; freight: number | null }[]
   carrier: { id: string; code: string; name: string; tender_required?: boolean } | null
 }
 /** Vòng đời một xe nháp (24/09): DRAFT → TENDERED (chờ ĐVVT) → CONFIRMED (đã vào Kế hoạch xuất) | DECLINED (ĐVVT từ chối) · DISCARDED (bỏ). */
@@ -5918,6 +5923,7 @@ export type DispatchTripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED'
 export interface DispatchTrip {
   id: string; plan_id: string; seq: number; group_code: string
   vehicle_model_id: string | null; transport_company_id: string | null
+  extra_vehicle_model_ids?: string[]   // xe PHỤ của thẻ (luật 11) — rỗng = một xe
   stops: number; wards: string[]; pallets: number | string | null; tons: number | string | null; load_pct: number | string | null
   underload: boolean; oversize: boolean; freight_estimated: number | string | null; detail: DispatchTripDetail; manual_edited: boolean
   status: DispatchTripStatus; tendered_at: string | null; responded_at: string | null; response_by: string | null; response_note: string | null; confirmed_at: string | null
@@ -5938,7 +5944,7 @@ export interface DispatchSummary {
 export interface DispatchConfigGaps { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps }
+  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; review_first?: boolean; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -5975,8 +5981,39 @@ export const previewDispatchMove = (plan_id: string, ids: string[], to_trip_id: 
 export function useReoptimizeDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } }),
+    mutationFn: (arg: string | { id: string; ids?: string[] }) => { const { id, ids } = typeof arg === 'string' ? { id: arg, ids: undefined } : arg; return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, ids ? { ids } : {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } }) },
     onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+/** HOÃN tới ngày / KHÔNG ĐIỀU các dòng OD (27/09) — dấu giữ qua mọi lần "Nạp OD mới"; OD rời kế hoạch, xe bị đụng tính lại. */
+export function useHoldDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids: string[]; until: string | null; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+export function useUnholdDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+/** Dòng xe được vào của MỘT khách — xem/sửa ngay trên bàn ghép xe (chỉ dòng xe; kênh vẫn đổi ở trang Khách hàng). */
+export interface DispatchCustomerVehicles { ship_to_code: string; name: string; channel: string | null; channel_label: string | null; is_active: boolean; dispatch_vehicles: Record<string, string[]>; channel_vehicles: Record<string, string[]> | null }
+export function useDispatchCustomerVehicles(planId: string | null, shipTo: string | null) {
+  return useQuery({
+    queryKey: ['dispatch-customer-vehicles', planId, shipTo], enabled: !!planId && !!shipTo, staleTime: 0,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/customers/${encodeURIComponent(shipTo!)}/vehicles`)).data.data as DispatchCustomerVehicles,
+  })
+}
+export function useSetDispatchCustomerVehicles() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, ship_to_code, dispatch_vehicles }: { plan_id: string; ship_to_code: string; dispatch_vehicles: Record<string, string[]> }) =>
+      apiClient.put(`/tms/dispatch/plans/${plan_id}/customers/${encodeURIComponent(ship_to_code)}/vehicles`, { dispatch_vehicles }).then(r => r.data.data as DispatchPlan & { customer_vehicles: { ship_to_code: string; ods_updated: number; trips_repriced: number } }),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-customer-vehicles'] }); qc.invalidateQueries({ queryKey: ['customers'] }) },
   })
 }
 export function useRefreshDispatchPool() {
@@ -6028,7 +6065,7 @@ export function useDispatchPlan(id: string | null) {
 export function useCreateDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null }) =>
+    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; review_first?: boolean }) =>
       apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
     onSuccess: () => invalidateDispatch(qc),
   })
@@ -6036,7 +6073,7 @@ export function useCreateDispatchPlan() {
 export function useUpdateDispatchTrip() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; transport_company_id?: string | null; locked?: boolean; load_mode?: DispatchLoadMode; allow_mix_categories?: boolean | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
+    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; vehicle_model_ids?: string[]; transport_company_id?: string | null; locked?: boolean; load_mode?: DispatchLoadMode; allow_mix_categories?: boolean | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
     onSuccess: () => invalidateDispatch(qc),
   })
 }

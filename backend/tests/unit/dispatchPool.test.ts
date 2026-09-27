@@ -96,3 +96,19 @@ describe('xe mới do người kéo OD ra — máy chọn dòng xe + ĐVVT theo 
     expect(r.trips[0].ods[0].cat_load).toEqual({ FG02: 3.0009 })
   })
 })
+
+describe('HOÃN / KHÔNG ĐIỀU (user 27/09: "đơn key một ngày nhưng điều ngày khác — không tự động được, user review trước")', () => {
+  const held = (m: [string, string | null][]) => ({ ...none, held: new Map(m.map(([od, until]) => [od, { until, reason: 'NPP hẹn' }])) })
+  it('hoãn tới ngày SAU ngày lập ⇒ không vào, BÁO kèm ngày + lý do; không điều (không ngày) ⇒ không vào', () => {
+    const s = splitPool([row('1'), row('2')], DAY, held([['1', '2026-09-27'], ['2', null]]))
+    expect(s.include.size).toBe(0)
+    expect(s.excluded).toEqual([{ od_number: '1', kind: 'HELD', info: 'hoãn tới 2026-09-27 — NPP hẹn' }, { od_number: '2', kind: 'HELD', info: 'không điều — NPP hẹn' }])
+  })
+  it('tới ngày hoãn (hoặc đã qua) ⇒ OD quay lại đợt ghép như OD tồn đọng', () => {
+    const s = splitPool([row('1', { delivery_date: '2026-09-22' })], DAY, held([['1', DAY]]))
+    expect(s.include.get('1')!.late_days).toBe(3)
+  })
+  it('OD tồn đọng đang hoãn vẫn được BÁO (quyết định của người phải thấy để còn bỏ hoãn)', () => {
+    expect(splitPool([row('1', { delivery_date: '2026-09-20' })], DAY, held([['1', null]])).excluded.map(x => x.kind)).toEqual(['HELD'])
+  })
+})

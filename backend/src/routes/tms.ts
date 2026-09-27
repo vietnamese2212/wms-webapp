@@ -49,7 +49,7 @@ router.delete('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'delete'), 
 // Danh mục dòng xe còn được đọc ở trang Khách hàng (ô "Dòng xe được vào", 27/09) — người chỉ có quyền Khách hàng vẫn phải
 // thấy danh sách để tick; chỉ ĐỌC danh mục, không nới cửa ghi nào
 router.get('/vehicle-models',
-  requireAnyPerm(['tms_plan', 'view'], ['tms_vehicle_types', 'view'], ['tms_slots', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view'], ['gate_registration', 'view'], ['customers', 'view']),
+  requireAnyPerm(['tms_plan', 'view'], ['tms_vehicle_types', 'view'], ['tms_slots', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view'], ['gate_registration', 'view'], ['customers', 'view'], ['dispatch', 'view']),
   vehicleModel.listVehicleModels)
 router.post('/vehicle-models',                    requirePerm('tms_vehicle_types', 'create'), validate({ body: vehicleModel.zVehicleModelCreate }), vehicleModel.createVehicleModel)
 router.patch('/vehicle-models/assign-parent',     requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignParent }),       vehicleModel.assignParent)   // TRƯỚC /:id
@@ -93,7 +93,12 @@ router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm')
 router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)
 router.post('/dispatch/plans/:id/move',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMove }),          dispatch.moveOds)
 router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zPreview }),       dispatch.previewMove)
-router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.reoptimizePlan)
+router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReoptimize }),     dispatch.reoptimizePlan)   // ids = chỉ ghép dòng OD đã chọn ở khung chờ
+router.post('/dispatch/plans/:id/hold',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zHold }),          dispatch.holdOds)       // Hoãn tới ngày / Không điều (giữ qua mọi lần nạp)
+router.post('/dispatch/plans/:id/unhold',     requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnhold }),        dispatch.unholdOds)
+// Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng
+router.get('/dispatch/plans/:id/customers/:shipTo/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zShipToParam }), dispatch.getCustomerVehicles)
+router.put('/dispatch/plans/:id/customers/:shipTo/vehicles', requireAnyPerm(['dispatch', 'customer_vehicles'], ['customers', 'edit']), validate({ params: dispatch.zShipToParam, body: dispatch.zCustVehicles }), dispatch.setCustomerVehicles)
 router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam }),                                dispatch.refreshPool)
 router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
 router.patch('/dispatch/plans/:id/ods',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zOdMode }),        dispatch.setOdMode)     // đổi kiểu đi Pallet / Xá của OD

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-27T03:10:29.404Z · 108 bảng/view · 174 hàm · 0 enum
+// Sinh lúc 2026-09-27T04:32:21.199Z · 109 bảng/view · 174 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2427,6 +2427,7 @@ export type Database = {
           dispatch_underload_pct: number | null
           dispatch_pallet_max_stops: number
           dispatch_allow_mix_categories: boolean
+          dispatch_max_vehicles_per_trip: number
         }
         Insert: {
           id: string
@@ -2476,6 +2477,7 @@ export type Database = {
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
           dispatch_allow_mix_categories?: boolean
+          dispatch_max_vehicles_per_trip?: number
         }
         Update: {
           id?: string
@@ -2525,6 +2527,7 @@ export type Database = {
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
           dispatch_allow_mix_categories?: boolean
+          dispatch_max_vehicles_per_trip?: number
         }
         Relationships: []
       }
@@ -3251,6 +3254,39 @@ export type Database = {
         }
         Relationships: []
       }
+      dispatch_od_hold: {
+        Row: {
+          id: string
+          warehouse_id: string
+          od_number: string
+          hold_until: string | null
+          reason: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          od_number: string
+          hold_until?: string | null
+          reason: string
+          created_by?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          od_number?: string
+          hold_until?: string | null
+          reason?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       dispatch_plan: {
         Row: {
           id: string
@@ -3328,6 +3364,7 @@ export type Database = {
           locked: boolean
           load_mode: string | null
           allow_mix_categories: boolean | null
+          extra_vehicle_model_ids: string[]
         }
         Insert: {
           id: string
@@ -3357,6 +3394,7 @@ export type Database = {
           locked?: boolean
           load_mode?: string | null
           allow_mix_categories?: boolean | null
+          extra_vehicle_model_ids?: string[]
         }
         Update: {
           id?: string
@@ -3386,6 +3424,7 @@ export type Database = {
           locked?: boolean
           load_mode?: string | null
           allow_mix_categories?: boolean | null
+          extra_vehicle_model_ids?: string[]
         }
         Relationships: []
       }
@@ -3415,6 +3454,7 @@ export type Database = {
           is_transfer: boolean
           max_vehicle_tons: number | null
           allowed_models: string[] | null
+          note: string | null
         }
         Insert: {
           id: string
@@ -3441,6 +3481,7 @@ export type Database = {
           is_transfer?: boolean
           max_vehicle_tons?: number | null
           allowed_models?: string[] | null
+          note?: string | null
         }
         Update: {
           id?: string
@@ -3467,6 +3508,7 @@ export type Database = {
           is_transfer?: boolean
           max_vehicle_tons?: number | null
           allowed_models?: string[] | null
+          note?: string | null
         }
         Relationships: []
       }
@@ -4321,6 +4363,7 @@ export type Database = {
           manual_edited_at: string | null
           booking_category: string | null
           vehicle_model_id: string | null
+          extra_vehicle_model_ids: string[]
         }
         Insert: {
           id: string
@@ -4344,6 +4387,7 @@ export type Database = {
           manual_edited_at?: string | null
           booking_category?: string | null
           vehicle_model_id?: string | null
+          extra_vehicle_model_ids?: string[]
         }
         Update: {
           id?: string
@@ -4367,6 +4411,7 @@ export type Database = {
           manual_edited_at?: string | null
           booking_category?: string | null
           vehicle_model_id?: string | null
+          extra_vehicle_model_ids?: string[]
         }
         Relationships: []
       }

@@ -344,7 +344,8 @@ export async function listKhvc(req: Request, res: Response) {
       for (const r of (raws ?? []) as { od_number: string }[]) readyDos.add(String(r.od_number))
     }
     // (c) tên dòng xe con (mã SAP) — uuid không đọc được trên bảng
-    const vmIds = [...new Set(items.map(i => String(i.vehicle_model_id ?? '')).filter(Boolean))]
+    // + xe PHỤ của thẻ nhiều xe (điều vận luật 11, 27/09) — để ĐVVT booking đủ số xe
+    const vmIds = [...new Set(items.flatMap(i => [String(i.vehicle_model_id ?? ''), ...((i.extra_vehicle_model_ids as string[] | null) ?? [])]).filter(Boolean))]
     const vmById = new Map<string, { id: string; sap_code: string; name: string }>()
     if (vmIds.length) {
       const { data: vms } = await supabase.from('vehicle_model').select('id, sap_code, name').in('id', vmIds.slice(0, 300))
@@ -358,6 +359,7 @@ export async function listKhvc(req: Request, res: Response) {
       i.gdo_date = g?.delivery_date ?? null   // ngày chuyến bên Xuất — FE so với export_date để báo lệch
       i.do_ready = readyDos.has(String(i.do_no ?? ''))
       i.vehicle_model = i.vehicle_model_id ? (vmById.get(String(i.vehicle_model_id)) ?? null) : null
+      i.extra_vehicle_models = ((i.extra_vehicle_model_ids as string[] | null) ?? []).map(id => vmById.get(id) ?? { id, sap_code: '', name: id })
     }
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined, gdo_issue_warning: gdoIssueWarning ?? undefined })
   } catch (e) { return fail(res, String(e)) }
@@ -566,7 +568,8 @@ export async function updateKhvc(req: Request, res: Response) {
     let vehicleModelSynced = 0
     if (changingModel && !movingVehicle) {
       const { data: synced, error: syncErr } = await supabase.from('khvc_lines')
-        .update({ vehicle_model_id: (fields.vehicle_model_id ?? null) as string | null, updated_at: now() })
+        // đổi dòng xe TAY ở đây = thẻ về MỘT xe (xe phụ do bàn ghép xe đề xuất không còn khớp dòng xe chính mới)
+        .update({ vehicle_model_id: (fields.vehicle_model_id ?? null) as string | null, extra_vehicle_model_ids: [], updated_at: now() })
         .eq('group_code', String(cur.group_code ?? '')).neq('sync_status', 'OBSOLETE').select('id')
       if (syncErr) throw new Error(syncErr.message)
       vehicleModelSynced = Math.max(0, (synced ?? []).length - 1)

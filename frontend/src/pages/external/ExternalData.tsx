@@ -1439,8 +1439,8 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                       {r.booking_category || <span className="text-amber-600" title="Chưa chốt cửa đặt lịch — nạp lại KH có cột &quot;Loại kho booking&quot; hoặc sửa tại đây">chưa chốt</span>}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.vehicle_model ? `${r.vehicle_model.sap_code} · ${r.vehicle_model.name}` : undefined}>
-                      {r.vehicle_model ? r.vehicle_model.name : <span className="text-amber-600" title="Chưa chọn dòng xe con — chuyến sẽ không có cước dự tính / % tải. Sửa Số xe để chọn.">chưa chọn</span>}
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.vehicle_model ? [r.vehicle_model, ...(r.extra_vehicle_models ?? [])].map(m => `${m.sap_code} · ${m.name}`).join(' + ') : undefined}>
+                      {r.vehicle_model ? <>{r.vehicle_model.name}{r.extra_vehicle_models?.length ? <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800">+{r.extra_vehicle_models.length} xe</span> : null}</> : <span className="text-amber-600" title="Chưa chọn dòng xe con — chuyến sẽ không có cước dự tính / % tải. Sửa Số xe để chọn.">chưa chọn</span>}
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dvvt || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.priority || <span className="text-slate-300">—</span>}</TableCell>

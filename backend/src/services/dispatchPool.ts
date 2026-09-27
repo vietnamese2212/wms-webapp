@@ -10,6 +10,9 @@
  * OD TỒN ĐỌNG (ngày giao TRƯỚC ngày lập, trong `backlogDays` ngày) đủ ba điều kiện thì cũng vào — user chốt gộp — kèm
  * `late_days` để màn hình đánh dấu "trễ n ngày". Nhóm bị loại chỉ BÁO với OD đúng ngày lập: OD cũ đã đi/đã điều là
  * lịch sử bình thường, liệt kê ra chỉ làm ngập màn hình.
+ * (4) HOÃN (27/09, user: "đơn key một ngày nhưng có thể điều ngày khác · đơn note khác — không tự động được"): OD người đã
+ *     đánh dấu Hoãn tới ngày SAU ngày lập, hoặc Không điều (không ngày), KHÔNG vào đợt ghép — và LUÔN được báo (kể cả OD tồn
+ *     đọng) vì đó là quyết định của người, phải thấy để còn bỏ hoãn. Tới ngày hoãn thì OD quay lại như OD tồn đọng.
  */
 export interface PoolCandidateRow {
   od_number: string
@@ -20,7 +23,7 @@ export interface PoolCandidateRow {
   dvvt_raw: string | null
   license_plate: string | null
 }
-export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED'
+export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'
 export interface ExcludedOd { od_number: string; kind: ExcludeKind; info: string | null }
 export interface PoolSplit {
   include: Map<string, { delivery_date: string | null; late_days: number }>
@@ -33,7 +36,7 @@ const shippedRow = (r: PoolCandidateRow) => !!(r.mat_doc && String(r.mat_doc).tr
 
 export function splitPool(
   rows: PoolCandidateRow[], day: string,
-  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, string> },
+  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, string>; held?: Map<string, { until: string | null; reason: string }> },
 ): PoolSplit {
   const byOd = new Map<string, PoolCandidateRow[]>()
   for (const r of rows) { const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
@@ -46,6 +49,8 @@ export function splitPool(
     const today = dd === day
     const report = (kind: ExcludeKind, info: string | null) => { if (today) excluded.push({ od_number: od, kind, info }) }
     if (ctx.inPlan.has(od)) { report('IN_PLAN', ctx.inPlan.get(od) ?? null); continue }
+    const h = ctx.held?.get(od)
+    if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}` }); continue }
     if (ctx.otherDraft.has(od)) { report('OTHER_DRAFT', ctx.otherDraft.get(od) ?? null); continue }
     if (rs.some(shippedRow)) { report('SHIPPED', rs.find(r => r.mat_doc)?.mat_doc ?? null); continue }
     const asg = rs.find(r => r.sap_dispatch_status === 'ASSIGNED')

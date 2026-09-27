@@ -83,6 +83,7 @@ async function cleanupTrips() {
   }
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
   await restWrite('dispatch_plan', 'DELETE', `warehouse_id=eq.${WH}&plan_date=eq.${DAY}`).catch(() => {})   // cascade trip + trip_od
+  await restWrite('dispatch_od_hold', 'DELETE', `warehouse_id=eq.${WH}&od_number=like.QA61*`).catch(() => {})
 }
 async function cleanup() {
   await cleanupTrips()
@@ -761,6 +762,102 @@ try {
         cBad.s === 400 && cOk.s === 200 && setEq(chNow?.dispatch_vehicles?.[MAT_CAT], [pick?.id]) && cBack.s === 200 && JSON.stringify(chBack?.dispatch_vehicles ?? {}) === JSON.stringify(before),
         `bad=${cBad.s} ok=${cOk.s} now=${JSON.stringify(chNow?.dispatch_vehicles)} back=${cBack.s}`)
     } else check('13e. Fixture: cần ít nhất một Kênh khách hàng', false)
+  }
+
+  // ── [15] (27/09) XEM ĐƠN TRƯỚC KHI GHÉP · HOÃN / KHÔNG ĐIỀU · SỬA DÒNG XE KHÁCH TỪ BÀN · THẺ NHIỀU XE ─────────────────────────
+  // user: "đơn key một ngày nhưng điều ngày khác — không tự động được, user review trước khi tự ghép" · "config dòng xe ngay trên bàn,
+  // đổi KÊNH thì kho làm sai" · "10 tấn có thể 8 + 2 tấn, luôn so tổ hợp" (Xuất kho vẫn một biển — chấp nhận lệch)
+  await cleanupTrips()
+  {
+    const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
+    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { dispatch_vehicles: {} })
+    const next = (() => { const d = new Date(`${DAY}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) })()
+    const pR0 = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, review_first: true })
+    let PR = pR0.j?.data
+    const poolOds = (p) => [...new Set((p?.pool ?? []).map(o => o.od_number))].sort()
+    const pid = (p) => p && p.id   // KHÔNG viết ${PR?.id} trong đường dẫn: thước độ phủ đọc đường dẫn tới dấu '?' đầu tiên
+    check('15a. Lập với "xem đơn trước khi ghép" → 201, máy CHƯA ghép (0 xe), cả 3 OD nằm khung chờ nguyên OD, chưa có mốc máy lập',
+      pR0.s === 201 && (PR?.trips ?? []).length === 0 && JSON.stringify(poolOds(PR)) === JSON.stringify([...OD].sort()) && (PR?.pool ?? []).every(o => !o.part_of)
+      && PR?.params?.review_first === true && PR?.params?.baseline == null,
+      `http=${pR0.s} ${pR0.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} baseline=${JSON.stringify(PR?.params?.baseline)}`)
+    const r3 = (PR?.pool ?? []).find(o => o.od_number === OD[2])
+    const hBad = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: DAY, reason: 'QA hẹn' })
+    const hNoReason = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: null, reason: '' })
+    const hOk = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: next, reason: 'QA NPP hẹn ngày sau' })
+    PR = hOk.j?.data
+    const holdRow = (await restAll('dispatch_od_hold', `select=od_number,hold_until,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))[0]
+    const exH = (PR?.params?.excluded ?? []).find(x => x.od_number === OD[2])
+    check('15b. Hoãn: ngày ≤ ngày lập → 400 · thiếu lý do → 400 · hợp lệ → 200: OD3 rời khung chờ, sổ hoãn có dòng, "OD đã bỏ ra" nêu ngày + lý do',
+      hBad.s === 400 && hNoReason.s === 400 && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow?.hold_until === next && exH?.kind === 'HELD' && /hoãn tới .*QA NPP hẹn/.test(exH?.info ?? ''),
+      `bad=${hBad.s} noReason=${hNoReason.s} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} ex=${JSON.stringify(exH)}`)
+    const syncH = await api(`/tms/dispatch/plans/${pid(PR)}/sync`)
+    const pAgain = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, review_first: true })
+    PR = pAgain.j?.data
+    check('15c. Dấu hoãn GIỮ qua lần nạp / lập lại: "OD mới" không đếm OD3 · lập lại không đưa OD3 vào · vẫn liệt kê HELD',
+      syncH.s === 200 && !(syncH.j?.data?.new_od_numbers ?? []).includes(OD[2]) && pAgain.s === 201 && !poolOds(PR).includes(OD[2])
+      && (PR?.params?.excluded ?? []).some(x => x.od_number === OD[2] && x.kind === 'HELD'),
+      `sync=${syncH.s} new=${JSON.stringify(syncH.j?.data?.new_od_numbers)} again=${pAgain.s} pool=${poolOds(PR).join(',')}`)
+    const r1 = (PR?.pool ?? []).find(o => o.od_number === OD[0])
+    const rs = await api(`/tms/dispatch/plans/${pid(PR)}/reoptimize`, 'POST', { ids: [r1?.id] })
+    PR = rs.j?.data
+    check('15d. "Ghép phần đã chọn": chỉ OD1 lên xe · OD2 vẫn ở khung chờ · lần ghép đầu thành mốc máy lập',
+      rs.s === 200 && (PR?.trips ?? []).length === 1 && !!tripOfOd(PR, OD[0]) && poolOds(PR).join(',') === OD[1] && PR?.params?.baseline?.trips === 1,
+      `http=${rs.s} ${rs.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} base=${JSON.stringify(PR?.params?.baseline)}`)
+    const uOk = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })
+    PR = uOk.j?.data
+    const uAgain = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })
+    const holdLeft = (await restAll('dispatch_od_hold', `select=id&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`)).length
+    check('15e. Bỏ hoãn → OD3 về NGAY khung chờ, sổ hoãn trống, hết dòng HELD · bỏ hoãn lần hai → 404',
+      uOk.s === 200 && uOk.j?.data?.unheld?.back_to_pool === 1 && poolOds(PR).includes(OD[2]) && holdLeft === 0 && !(PR?.params?.excluded ?? []).some(x => x.kind === 'HELD') && uAgain.s === 404,
+      `ok=${uOk.s} ${uOk.j?.error?.message ?? ''} back=${uOk.j?.data?.unheld?.back_to_pool} pool=${poolOds(PR).join(',')} left=${holdLeft} again=${uAgain.s}`)
+    // Dòng xe được vào của KHÁCH sửa từ bàn — chỉ cột dòng xe; OD của khách trên nháp chụp lại danh sách ngay
+    const vms = (await api('/tms/vehicle-models')).j?.data?.items ?? []
+    const pick = vms.find(m => m.is_active && m.id !== vmId && m.sap_code !== SAP)
+    const gV = await api(`/tms/dispatch/plans/${pid(PR)}/customers/${SHIP[0]}/vehicles`)
+    const gNo = await api(`/tms/dispatch/plans/${pid(PR)}/customers/QA61KHONGCO/vehicles`)
+    const pBad = await api(`/tms/dispatch/plans/${pid(PR)}/customers/${SHIP[0]}/vehicles`, 'PUT', { dispatch_vehicles: { '*': ['khong-co-that'] } })
+    const pOk = await api(`/tms/dispatch/plans/${pid(PR)}/customers/${SHIP[0]}/vehicles`, 'PUT', { dispatch_vehicles: { '*': [pick?.id] } })
+    const cNow = (await restAll('Customer', `select=dispatch_vehicles,channel&id=eq.${c1.id}`))[0]
+    const snap = [...(pOk.j?.data?.trips ?? []).flatMap(t => t.ods), ...(pOk.j?.data?.pool ?? [])].find(o => o.od_number === OD[0])
+    const tW = tripOfOd(pOk.j?.data, OD[0])
+    check('15f. Bàn ghép xe: xem dòng xe khách → 200 (kèm kênh) · ship-to lạ → 404 · id lạ → 400 · lưu → Customer đổi, OD1 chụp danh sách mới, xe OD1 cảnh báo khách không được vào xe QA',
+      gV.s === 200 && gV.j?.data?.ship_to_code === SHIP[0] && gNo.s === 404 && pBad.s === 400 && pOk.s === 200 && JSON.stringify(cNow?.dispatch_vehicles) === JSON.stringify({ '*': [pick?.id] })
+      && JSON.stringify(snap?.allowed_models) === JSON.stringify([pick?.id]) && pOk.j?.data?.customer_vehicles?.ods_updated >= 1 && /không được vào dòng xe/.test((tW?.detail?.warnings ?? []).join(' ')),
+      `get=${gV.s} no=${gNo.s} bad=${pBad.s} ok=${pOk.s} ${pOk.j?.error?.message ?? ''} cust=${JSON.stringify(cNow?.dispatch_vehicles)} snap=${JSON.stringify(snap?.allowed_models)} warn=${(tW?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
+
+    // THẺ NHIỀU XE: OD 14 pallet, khách chỉ được vào xe QA 9 pallet ⇒ KHÔNG tách OD, một thẻ 2 × xe QA (9 + 5), cước = Σ từng xe
+    await cleanupTrips()
+    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { dispatch_vehicles: { '*': [vmId] } })
+    const OD11 = 'QA61OD11'
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: OD11, od_item: '10', material_code: FIX.MAT_POOL, qty_base: 14 * perPallet,
+      ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+    const pMV = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const PM = pMV.j?.data
+    const tM = tripOfOd(PM, OD11)
+    const parts = (PM?.trips ?? []).flatMap(t => t.ods).filter(o => o.od_number === OD11)
+    check('15g. OD 14 pallet > xe 9 pallet được vào ⇒ MỘT thẻ, OD nguyên (không phần), 2 xe QA chia 9 + 5, cước = 200.000 × 14 (+ phụ phí), tải 77,8 %',
+      pMV.s === 201 && parts.length === 1 && !parts[0].part_of && JSON.stringify(tM?.extra_vehicle_model_ids) === JSON.stringify([vmId])
+      && (tM?.detail?.vehicles ?? []).map(v => Number(v.pallets)).join('+') === '9+5' && Number(tM?.detail?.freight?.base) === PRICE_DA * 14 && Number(tM?.load_pct) === 77.8,
+      `http=${pMV.s} ${pMV.j?.error?.message ?? ''} parts=${parts.length} extra=${JSON.stringify(tM?.extra_vehicle_model_ids)} veh=${(tM?.detail?.vehicles ?? []).map(v => `${v.name}:${v.pallets}`).join(' + ')} base=${tM?.detail?.freight?.base} load=${tM?.load_pct}`)
+    if (tM) {
+      const one = await api(`/tms/dispatch/trips/${tM.id}`, 'PATCH', { vehicle_model_id: vmId })
+      const two = await api(`/tms/dispatch/trips/${tM.id}`, 'PATCH', { vehicle_model_ids: [vmId, vmId] })
+      const badIds = await api(`/tms/dispatch/trips/${tM.id}`, 'PATCH', { vehicle_model_ids: [vmId, 'd4c5d4c5-0000-4000-8000-000000000000'] })
+      check('15h. Người chọn MỘT xe → thẻ về một xe, cảnh báo vượt sức chứa · chọn 2 xe → lại chia 9 + 5 · dòng xe không có thật → 400',
+        one.s === 200 && (one.j?.data?.extra_vehicle_model_ids ?? []).length === 0 && /Vượt sức chứa/.test((one.j?.data?.detail?.warnings ?? []).join(' '))
+        && two.s === 200 && JSON.stringify(two.j?.data?.extra_vehicle_model_ids) === JSON.stringify([vmId]) && Number(two.j?.data?.load_pct) === 77.8 && badIds.s === 400,
+        `one=${one.s} extra=${JSON.stringify(one.j?.data?.extra_vehicle_model_ids)} two=${two.s} load=${two.j?.data?.load_pct} bad=${badIds.s}`)
+      const cf = await api(`/tms/dispatch/plans/${PM.id}/confirm`, 'POST', {})
+      const kl = await restAll('khvc_lines', `select=do_no,vehicle_model_id,extra_vehicle_model_ids&group_code=eq.${tM.group_code}`)
+      const klist = await api(`/external/khvc?do_no=${OD11}`)
+      const kRow = (klist.j?.data?.items ?? []).find(i => i.do_no === OD11)
+      check('15i. Xác nhận → Kế hoạch xuất ghi dòng xe chính + xe PHỤ (ĐVVT booking đủ xe); danh sách Kế hoạch xuất trả tên xe phụ',
+        cf.s === 200 && kl.length === 1 && kl[0].vehicle_model_id === vmId && JSON.stringify(kl[0].extra_vehicle_model_ids) === JSON.stringify([vmId]) && (kRow?.extra_vehicle_models ?? []).length === 1,
+        `confirm=${cf.s} ${cf.j?.error?.message ?? ''} kl=${JSON.stringify(kl)} list=${klist.s} extra=${JSON.stringify(kRow?.extra_vehicle_models)}`)
+    } else check('15h. Fixture: OD11 phải có xe ở [15g]', false)
   }
 } finally {
   await cleanup()

@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
-  resolveLoadMode, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason,
+  resolveLoadMode, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, splitLoad, priceCombo,
   type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
@@ -642,5 +642,55 @@ describe('mixBlockReason — switch "Ghép Loại kho khác" trên thẻ xe (use
   })
   it('tắt: chọn nhiều OD khác loại thả vào xe trống ⇒ chặn', () => {
     expect(mixBlockReason(false, [], [f1, f2])).toMatch(/nhiều Loại kho \(FG01, FG02\)/)
+  })
+})
+
+describe('luật 11 — nhiều xe trên một thẻ (user 27/09: "10 tấn dùng xe 8 + 2 thay vì 15 tấn" · "luôn so tổ hợp")', () => {
+  it('splitLoad: xe lớn chở đầy trước, phần còn lại sang xe kế; không chở hết / có xe thừa ⇒ null', () => {
+    expect(splitLoad([M16, M9], 20, 10)).toEqual([{ pallets: 16, tons: 8 }, { pallets: 4, tons: 2 }])
+    expect(splitLoad([M16, M9], 26, 13)).toBeNull()
+    expect(splitLoad([M16, M9], 10, 5)).toBeNull()   // M9 không nhận phần nào = xe thừa
+  })
+  it('OD 20 pallet > xe lớn nhất 16: một xe/thẻ ⇒ TÁCH OD ra 2 chuyến (hành vi cũ); cho 2 xe ⇒ MỘT thẻ M16 + M9, OD nguyên', () => {
+    const one = runDispatch(input([od('1', 'W1', 0, { lines: [line(10, { material_code: 'a' }), line(10, { material_code: 'b' })] })]))
+    expect(one.trips).toHaveLength(2)
+    const two = runDispatch(input([od('1', 'W1', 0, { lines: [line(10, { material_code: 'a' }), line(10, { material_code: 'b' })] })], { params: { ...params, max_vehicles: 2 } }))
+    expect(two.trips).toHaveLength(1)
+    const t = two.trips[0]
+    expect(t.ods[0].part).toBeNull()
+    expect(t.vehicles.map(v => v.model.id)).toEqual(['M16', 'M9'])
+    // oracle: A · M16 16 pl × 150k + M9 4 pl × 100k = 2,8 tr — rẻ hơn M16 + M16 (20 × 150k = 3 tr)
+    expect(t.freight.total).toBe(2_800_000)
+    expect(t.vehicles.map(v => v.freight)).toEqual([2_400_000, 400_000])
+    expect(t.load.pct).toBe(80)   // 20 / (16 + 9)
+    expect(t.oversize).toBe(false)
+  })
+  const ton = (id: string, t: number) => model({ id, parent_type_name: 'XE TẢI', capacity_mode: 'TON', max_pallets: null, max_tons: t, tariff_unit: 'PER_TRIP' })
+  const T15 = ton('T15', 15), T8 = ton('T8', 8), T2 = ton('T2', 2)
+  const tonIn = (price15: number, maxVeh: number) => input([od('1', 'W1', 0, { lines: [line(0, { pallets: null, kg: 10_000 })] })], {
+    models: [T15, T8, T2], carriers: [A], tariffs: [tariff('A', 'T15', 'W1', price15), tariff('A', 'T8', 'W1', 1_200_000), tariff('A', 'T2', 'W1', 500_000)],
+    params: { ...params, max_vehicles: maxVeh },
+  })
+  it('10 tấn: một xe ⇒ xe 15 tấn 3 tr; cho so tổ hợp ⇒ xe 8 + xe 2 tấn 1,7 tr', () => {
+    expect(runDispatch(tonIn(3_000_000, 1)).trips[0].vehicles.map(v => v.model.id)).toEqual(['T15'])
+    const t = runDispatch(tonIn(3_000_000, 3)).trips[0]
+    expect(t.vehicles.map(v => v.model.id)).toEqual(['T8', 'T2'])
+    expect(t.freight.total).toBe(1_700_000)
+    expect(t.carrier_reasons[0]).toMatch(/Ghép 2 xe.*rẻ hơn một xe T15/)
+  })
+  it('tổ hợp KHÔNG rẻ hơn ⇒ giữ một xe (15 tấn chỉ 1,5 tr)', () => {
+    expect(runDispatch(tonIn(1_500_000, 3)).trips[0].vehicles.map(v => v.model.id)).toEqual(['T15'])
+  })
+  it('tổ hợp vẫn chỉ trong dòng xe khách được vào (luật 10): khách chỉ vào T15 + T8 ⇒ không có T2', () => {
+    const inp = tonIn(3_000_000, 3)
+    inp.ods[0].allowed_models = ['T15', 'T8']
+    const t = runDispatch(inp).trips[0]
+    expect(t.vehicles.every(v => ['T15', 'T8'].includes(v.model.id))).toBe(true)
+  })
+  it('priceCombo: một xe thiếu cước ⇒ cả thẻ không có cước, nêu lý do', () => {
+    const ctx = buildCtx(input([], { models: [T15, T8, T2], carriers: [A], tariffs: [tariff('A', 'T8', 'W1', 1)] }))
+    const r = priceCombo(ctx, [T8, T2], 'A', ['W1'], 1, null, 10)
+    expect(r.freight.total).toBeNull()
+    expect(r.freight.reason).toMatch(/Chưa có bảng cước.*T2/)
   })
 })

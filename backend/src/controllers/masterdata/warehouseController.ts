@@ -48,6 +48,8 @@ function applyDispatchBody(body: Record<string, unknown>, target: Record<string,
   if (body.dispatch_underload_pct !== undefined)      target.dispatch_underload_pct = asUnderloadPct(body.dispatch_underload_pct)
   // 25/09: số KHÁCH tối đa trên một xe pallet (user chốt "xe pallet bản chất là 1 khách, nếu cần thì làm config") — 1..20, mặc định 1
   if (body.dispatch_pallet_max_stops !== undefined)   { const n = Math.trunc(Number(body.dispatch_pallet_max_stops)); target.dispatch_pallet_max_stops = Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 1 }
+  // luật 11 (27/09): số dòng xe tối đa máy được ghép trên MỘT thẻ (một Số xe) — 1 = một xe như trước
+  if (body.dispatch_max_vehicles_per_trip !== undefined) { const n = Math.trunc(Number(body.dispatch_max_vehicles_per_trip)); target.dispatch_max_vehicles_per_trip = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1 }
 }
 
 function extractCount(arr: unknown): number {

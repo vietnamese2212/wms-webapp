@@ -22,6 +22,7 @@ import type { AxiosError } from 'axios'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
@@ -144,8 +145,9 @@ export default function Dispatch() {
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   const runPlan = () => {
     if (!f.warehouseId) return
-    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day }).then(p => {
+    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day, review_first: f.reviewFirst }).then(p => {
       setF({ planId: p.id })
+      if (p.params.review_first) { toast({ title: `Đã nạp ${p.summary.pool_ods ?? 0} OD vào khung chờ — máy chưa ghép`, description: 'Đọc ghi chú, hoãn OD không đi hôm nay, rồi bấm "Ghép xe" ở khung chờ.' }); return }
       toast({ title: `Đã lập ${p.summary.trips} chuyến cho ${p.summary.ods} OD`, description: p.summary.underload ? `${p.summary.underload} chuyến Non tải · ${p.summary.unpriced} chuyến chưa có cước` : `Σ cước dự tính ${vnd(p.summary.freight_total)}` })
     }).catch(e => err(e, 'Không lập được kế hoạch'))
   }
@@ -265,7 +267,7 @@ export default function Dispatch() {
     const XLSX = await import('xlsx')
     const rows = plan.trips.flatMap(t => t.ods.map(o => ({
       'Số xe': t.group_code, 'DO': o.od_number, 'NPP': o.ship_to_name ?? '', 'Ship-to': o.ship_to_code ?? '', 'Phường': o.ward_code ?? '',
-      'Loại xe': t.detail.vehicle_model?.parent_type_name ?? '', 'Mã xe SAP': t.detail.vehicle_model?.sap_code ?? '', 'Dòng xe': t.detail.vehicle_model?.name ?? '',
+      'Loại xe': t.detail.vehicle_model?.parent_type_name ?? '', 'Mã xe SAP': t.detail.vehicle_model?.sap_code ?? '', 'Dòng xe': (t.detail.vehicles?.length ?? 0) > 1 ? t.detail.vehicles!.map(v => v.name).join(' + ') : t.detail.vehicle_model?.name ?? '',
       'ĐVVT': t.detail.carrier?.name ?? '', 'Trạng thái xe': TRIP_STATUS_VI[tripStatus(t)].label, 'Ngày xuất': plan.plan_date, 'Loại kho booking': t.detail.booking_category ?? '',
       'Pallet OD': o.pallets == null ? '' : Number(o.pallets), 'Tấn OD': o.tons == null ? '' : Number(o.tons),
       'Pallet xe': t.pallets == null ? '' : Number(t.pallets), 'Tải %': t.load_pct == null ? '' : Number(t.load_pct), 'Cước dự tính': t.freight_estimated == null ? '' : Number(t.freight_estimated),
@@ -392,6 +394,12 @@ export default function Dispatch() {
                   </span>
                 )
               })()}
+              {canPlan && (
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-600 whitespace-nowrap cursor-pointer"
+                  title="Bật: Lập kế hoạch chỉ nạp OD vào khung chờ để người đọc ghi chú + hoãn OD không đi, rồi mới bấm Ghép xe. Tắt: máy ghép ngay.">
+                  <Switch checked={f.reviewFirst} onCheckedChange={v => setF({ reviewFirst: v })} aria-label="Xem đơn trước khi ghép" />Xem đơn trước khi ghép
+                </label>
+              )}
               <ActionCluster items={actionItems} mobileInline />
             </div>
           </div>
@@ -495,7 +503,7 @@ export default function Dispatch() {
                           )}
                         </TableCell>
                         {showStatus && <TableCell className={TD} title={st === 'DECLINED' && t.response_note ? `Lý do: ${t.response_note}` : undefined}><StatusBadge tone={TRIP_STATUS_VI[st].tone}>{TRIP_STATUS_VI[st].label}</StatusBadge></TableCell>}
-                        <TableCell className={TD}>{d.vehicle_model ? <><span className="font-mono">{d.vehicle_model.sap_code}</span> <span className="text-slate-600">{d.vehicle_model.name}</span></> : <span className="text-red-600">Chưa chọn</span>}</TableCell>
+                        <TableCell className={TD}>{d.vehicle_model ? <><span className="font-mono">{d.vehicle_model.sap_code}</span> <span className="text-slate-600">{d.vehicle_model.name}</span>{(d.vehicles?.length ?? 0) > 1 && <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800" title={d.vehicles!.map(v => v.name).join(' + ')}>+{d.vehicles!.length - 1} xe</span>}</> : <span className="text-red-600">Chưa chọn</span>}</TableCell>
                         <TableCell className={TD} title={[...d.carrier_reasons, needsTender(t) ? 'ĐVVT cần phản hồi khi chào chuyến' : ''].filter(Boolean).join(' · ') || undefined}>{d.carrier ? <><span className="font-mono font-semibold">{d.carrier.code}</span> <span className="text-slate-500">{d.carrier.name}</span>{needsTender(t) && <Send className="inline h-3 w-3 ml-1 text-sky-600" />}</> : <span className="text-red-600">Chưa chọn</span>}</TableCell>
                         <TableCell className={`${TD} text-right tabular-nums`}>{t.stops}</TableCell>
                         <TableCell className={`${TD} truncate`} title={t.wards.join(', ')}>{d.freight.ward ?? t.wards[0] ?? <span className="text-slate-300">—</span>}{t.wards.length > 1 && <span className="text-slate-400"> +{t.wards.length - 1}</span>}</TableCell>
@@ -567,6 +575,7 @@ export default function Dispatch() {
               models={models.map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
               companies={companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))}
               onModel={v => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_id: v || null }).catch(e => err(e, 'Không đổi được dòng xe'))}
+              onModels={ids => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_ids: ids }).catch(e => err(e, 'Không đổi được các xe của thẻ'))}
               onCarrier={v => patchTrip.mutateAsync({ id: openTrip.id, transport_company_id: v || null }).catch(e => err(e, 'Không đổi được ĐVVT'))}
               onMove={(od, to) => moveOd.mutateAsync({ trip_id: openTrip.id, od_number: od, to_trip_id: to || undefined }).then(p => { if (!p.trips.some(t => t.id === openTrip.id)) setOpenTripId(null) }).catch(e => err(e, 'Không chuyển được OD'))}
               onSettle={() => doSettle(openTrip)} onRespond={a => doRespond(openTrip, a)}
@@ -583,14 +592,15 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return <div className="flex gap-2 text-xs py-1 border-b border-slate-100 last:border-0"><span className="w-32 shrink-0 text-slate-400">{k}</span><span className="min-w-0 font-medium text-slate-700 break-words">{v}</span></div>
 }
 
-function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, models, companies, onModel, onCarrier, onMove, onSettle, onRespond, busy }: {
+function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, models, companies, onModel, onModels, onCarrier, onMove, onSettle, onRespond, busy }: {
   trip: DispatchTrip; plan: DispatchPlan; editable: boolean; canConfirm: boolean; needsTender: boolean
   condBy: Map<string, StorageConditionRow>
   models: { value: string; label: string; sub?: string }[]; companies: { value: string; label: string; sub?: string }[]
-  onModel: (v: string) => void; onCarrier: (v: string) => void; onMove: (od: string, toTripId: string) => void
+  onModel: (v: string) => void; onModels: (ids: string[]) => void; onCarrier: (v: string) => void; onMove: (od: string, toTripId: string) => void
   onSettle: () => void; onRespond: (accept: boolean) => void; busy: boolean
 }) {
   const d = t.detail
+  const extras = t.extra_vehicle_model_ids ?? []
   const st = tripStatus(t)
   const sv = TRIP_STATUS_VI[st]
   const planOpen = plan.status === 'DRAFT' || plan.status === 'TENDERED'
@@ -634,6 +644,27 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, mo
               {editable ? <SingleSelect options={models} value={t.vehicle_model_id ?? ''} onChange={onModel} placeholder="Chọn dòng xe con…" disabled={busy} />
                 : <div className="text-xs font-medium">{d.vehicle_model ? `${d.vehicle_model.sap_code} · ${d.vehicle_model.name}` : '—'}</div>}
             </div>
+            {/* THẺ NHIỀU XE (luật 11, 27/09): xe phụ cùng Số xe — máy chia tải xe lớn trước, cước = Σ từng xe cùng ĐVVT */}
+            {(extras.length > 0 || (editable && t.vehicle_model_id)) && (
+              <div className="rounded border border-slate-200 p-2 space-y-1.5">
+                <div className="text-[10px] text-slate-400 flex items-center gap-1">Xe phụ trên thẻ ({extras.length})
+                  <InfoTip tip="Một Số xe có thể đi nhiều xe (vd 8 tấn + 2 tấn thay cho 15 tấn). Máy tự so tổ hợp khi lập; ở đây người thêm / bớt tay. Bước Xuất kho vẫn là MỘT chuyến một biển số — Kế hoạch xuất ghi đủ các xe để ĐVVT booking." /></div>
+                {extras.map((id, i) => (
+                  <div key={`${id}-${i}`} className="flex items-center gap-1">
+                    <div className="min-w-0 flex-1">{editable
+                      ? <SingleSelect options={models} value={id} onChange={v => onModels([t.vehicle_model_id!, ...extras.map((x, j) => (j === i ? v : x)).filter(Boolean)])} disabled={busy} />
+                      : <div className="text-xs">{models.find(m => m.value === id)?.label ?? id}</div>}</div>
+                    {editable && <Button size="sm" variant="outline" className="h-8 px-2" disabled={busy} title="Bỏ xe này khỏi thẻ" onClick={() => onModels([t.vehicle_model_id!, ...extras.filter((_, j) => j !== i)])}>✕</Button>}
+                  </div>
+                ))}
+                {editable && extras.length < 4 && (
+                  <div className="w-full"><SingleSelect options={models} value="" placeholder="＋ Thêm xe vào thẻ…" disabled={busy} onChange={v => { if (v) onModels([t.vehicle_model_id!, ...extras, v]) }} /></div>
+                )}
+                {(d.vehicles?.length ?? 0) > 1 && d.vehicles!.map((v, i) => (
+                  <div key={`p-${v.id}-${i}`} className="flex gap-2 text-[11px] text-slate-600"><span className="min-w-0 flex-1 break-words">{v.name}</span><span className="tabular-nums">{nf(v.pallets, 1)} pl · {nf(v.tons, 1)} t</span><span className="tabular-nums font-medium">{v.freight == null ? '—' : vnd(v.freight)}</span></div>
+                ))}
+              </div>
+            )}
             <div>
               <div className="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">ĐVVT {d.carrier_reasons.length > 0 && <InfoTip tip={<ul className="list-disc pl-4 space-y-0.5">{d.carrier_reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>} />}</div>
               {editable ? <SingleSelect options={companies} value={t.transport_company_id ?? ''} onChange={onCarrier} placeholder="Chọn ĐVVT…" disabled={busy} />

@@ -35,5 +35,5 @@ export const ISSUE_SHORT: Record<IssueKey, string> = {
 }
 export const ISSUE_ORDER: IssueKey[] = ['declined', 'sapflag', 'over', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
-  REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'Đã xuất kho', SAP_ASSIGNED: 'SAP đã điều', IN_PLAN: 'Đã vào KH xuất',
+  REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'Đã xuất kho', SAP_ASSIGNED: 'SAP đã điều', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',
 }

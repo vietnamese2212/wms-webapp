@@ -22,7 +22,6 @@ import type { AxiosError } from 'axios'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
@@ -145,10 +144,10 @@ export default function Dispatch() {
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   const runPlan = () => {
     if (!f.warehouseId) return
-    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day, review_first: f.reviewFirst }).then(p => {
-      setF({ planId: p.id })
-      if (p.params.review_first) { toast({ title: `Đã nạp ${p.summary.pool_ods ?? 0} OD vào khung chờ — máy chưa ghép`, description: 'Đọc ghi chú, hoãn OD không đi hôm nay, rồi bấm "Ghép xe" ở khung chờ.' }); return }
-      toast({ title: `Đã lập ${p.summary.trips} chuyến cho ${p.summary.ods} OD`, description: p.summary.underload ? `${p.summary.underload} chuyến Non tải · ${p.summary.unpriced} chuyến chưa có cước` : `Σ cước dự tính ${vnd(p.summary.freight_total)}` })
+    // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; bàn ghép xe mở bước Xem đơn
+    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day }).then(p => {
+      setF({ planId: p.id, tab: 'board' })
+      toast({ title: `Bước 1 — xem ${p.summary.pool_ods ?? 0} đơn`, description: 'Đọc ghi chú SAP, hoãn / bỏ đơn không đi, rồi bấm "Xác nhận … đơn & ghép xe".' })
     }).catch(e => err(e, 'Không lập được kế hoạch'))
   }
   const tenderCount = plan ? plan.trips.filter(t => tripStatus(t) === 'DRAFT' && needsTender(t)).length : 0
@@ -177,7 +176,7 @@ export default function Dispatch() {
       await ask({
         title: `Chưa xác nhận được: ${flagged.length} xe có OD đã đổi ở SAP`, danger: true, cancelLabel: null,
         body: flagged.slice(0, 6).map(t => `• #${t.seq} ${t.group_code}: ${t.ods.filter(o => flags.has(o.od_number)).map(o => `${o.od_number} — ${flags.get(o.od_number)?.info ?? ''}`).join('; ')}`).join('\n') +
-          `\n\nTrên Bàn ghép xe: OD "SAP đã thay" có nút "Thay bằng OD mới"; OD đã xuất / đã điều / đã bỏ thì kéo về khung chờ hoặc bỏ khỏi kế hoạch.`,
+          `\n\nTrên Bàn ghép xe: OD "SAP đã sửa" có nút "Cập nhật theo SAP"; OD "SAP đã thay" có nút "Thay bằng OD mới"; OD đã xuất / đã điều / đã bỏ thì kéo về khung chờ hoặc bỏ khỏi kế hoạch.`,
       })
       return
     }
@@ -394,12 +393,6 @@ export default function Dispatch() {
                   </span>
                 )
               })()}
-              {canPlan && (
-                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-600 whitespace-nowrap cursor-pointer"
-                  title="Bật: Lập kế hoạch chỉ nạp OD vào khung chờ để người đọc ghi chú + hoãn OD không đi, rồi mới bấm Ghép xe. Tắt: máy ghép ngay.">
-                  <Switch checked={f.reviewFirst} onCheckedChange={v => setF({ reviewFirst: v })} aria-label="Xem đơn trước khi ghép" />Xem đơn trước khi ghép
-                </label>
-              )}
               <ActionCluster items={actionItems} mobileInline />
             </div>
           </div>

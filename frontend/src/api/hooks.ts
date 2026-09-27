@@ -5895,6 +5895,8 @@ export interface DispatchTripOd {
   is_transfer?: boolean                 // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — null = không giới hạn
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
+  reviewed_at?: string | null           // bước XEM ĐƠN (27/09 tối, bắt buộc): null = chưa xem ⇒ chưa lên xe được
+  reviewed_by?: string | null
 }
 export type DispatchLoadMode = 'PALLET' | 'LOOSE'
 /** ĐVVT xếp hạng theo cước cho MỘT xe (đổi ĐVVT ngay trên thẻ xe, 25/09) — cùng `priceFor` với engine. */
@@ -5906,7 +5908,7 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
   })
 }
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
-export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN'; info: string | null; replaced_by?: string | null }
+export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED'; info: string | null; replaced_by?: string | null }
 export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'; info: string | null }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
@@ -5937,14 +5939,14 @@ export interface DispatchSummary {
   trips: number; ods: number; pallets: number; tons: number; freight_total: number; unpriced: number; underload: number; oversize: number; tendered?: number; declined?: number; confirmed?: number; shares: DispatchShare[]
   // dải chỉ số bàn ghép xe (25/09)
   by_model?: { key: string; sap_code: string | null; name: string; parent: string | null; trips: number; pallets: number }[]
-  avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; pool_pallets?: number; late_ods?: number; empty_trips?: number; locked?: number
+  avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; unreviewed_ods?: number; pool_pallets?: number; late_ods?: number; empty_trips?: number; locked?: number
   baseline?: { trips: number; freight_total: number; pallets: number; underload: number; unpriced: number } | null
 }
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (26/09): Loại kho chưa khai ĐK bảo quản · mã hàng chưa khai Loại kho. */
 export interface DispatchConfigGaps { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; review_first?: boolean; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps }
+  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -5981,7 +5983,8 @@ export const previewDispatchMove = (plan_id: string, ids: string[], to_trip_id: 
 export function useReoptimizeDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (arg: string | { id: string; ids?: string[] }) => { const { id, ids } = typeof arg === 'string' ? { id: arg, ids: undefined } : arg; return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, ids ? { ids } : {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } }) },
+    // ids = ghép (và xác nhận đã xem) các dòng đã chọn · review_all = bước Xem đơn: xác nhận cả khung chờ rồi ghép
+    mutationFn: (arg: string | { id: string; ids?: string[]; review_all?: boolean }) => { const { id, ids, review_all } = typeof arg === 'string' ? { id: arg, ids: undefined, review_all: undefined } : arg; return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, ids ? { ids } : review_all ? { review_all: true } : {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } }) },
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
@@ -6030,6 +6033,14 @@ export function useReplaceDispatchOd() {
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
+/** OD bị SAP SỬA (SL / dòng hàng / ghi chú) sau khi đã xem ⇒ chụp lại theo ZSD02, OD ở nguyên chỗ, xe tính lại. */
+export function useResyncDispatchOd() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/resync-od`, { od_number }).then(r => r.data.data as DispatchPlan & { resynced: { od_number: string; pallets_before: number; pallets_after: number | null; tons_before: number; tons_after: number | null } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
 /** Đổi kiểu đi (Pallet / Xá) của các dòng OD trên nháp — OD ở nguyên xe, xe tính lại cảnh báo. */
 export function useSetDispatchOdMode() {
   const qc = useQueryClient()
@@ -6065,7 +6076,7 @@ export function useDispatchPlan(id: string | null) {
 export function useCreateDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; review_first?: boolean }) =>
+    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null }) =>
       apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
     onSuccess: () => invalidateDispatch(qc),
   })

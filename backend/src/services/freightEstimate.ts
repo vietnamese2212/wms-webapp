@@ -21,6 +21,7 @@ import {
   computeFreight, pickTariff, farthestWard, effectiveAt, loadUtilization,
   type TariffLike, type SurchargeLike, type TariffUnit, type SurchargePer, type StopCountMode, type LoadUtil,
 } from './freight'
+import { splitLoad, comboModel, basisOf, bigFirst, type EngineModel } from './dispatchEngine'
 
 export type FreightBasis = 'PLAN' | 'ACTUAL' | 'AUTO'
 
@@ -40,6 +41,8 @@ export interface FreightDetail {
   incomplete: number             // số dòng hàng không đo được tải (thiếu master)
   load: LoadUtil
   vehicle_model: { id: string; sap_code: string; name: string } | null
+  /** Thẻ NHIỀU xe của điều vận (luật 11): mọi xe của Số xe, phần tải + cước từng xe. Một xe ⇒ không có trường này. */
+  vehicles?: { id: string; sap_code: string; name: string; pallets: number | null; tons: number | null; freight: number | null }[]
   transport_company_id: string | null
   reason: string | null          // vì sao không có cước
 }
@@ -84,6 +87,14 @@ type TariffRow = TariffLike & { from_warehouse_id: string; transport_company_id:
 type SurRow = SurchargeLike & { from_warehouse_id: string; transport_company_id: string; vehicle_model_id: string | null; per: SurchargePer; count_mode: StopCountMode }
 
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
+const numN = (v: unknown): number | null => { const n = Number(v); return v == null || !Number.isFinite(n) ? null : n }
+/** Dòng xe con dưới hình dạng engine điều vận — chỉ để chia tải / cộng sức chứa của thẻ nhiều xe bằng đúng hàm của engine. */
+const asEngineModel = (v: VmRow): EngineModel => ({
+  id: v.id, sap_code: v.sap_code, name: v.name, parent_type_name: null,
+  capacity_mode: v.capacity_mode === 'TON' ? 'TON' : v.capacity_mode === 'PALLET' ? 'PALLET' : null,
+  max_pallets: numN(v.max_pallets), max_tons: numN(v.max_tons), tariff_unit: v.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET',
+  underload_pct: numN(v.underload_pct), serve_conditions: null, max_drops: null, is_active: true,
+})
 const uniq = <T,>(a: T[]) => [...new Set(a)]
 
 export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: FreightBasis } = {}): Promise<{ updated: number; priced: number; unpriced: number; details: Record<string, FreightDetail> }> {
@@ -94,8 +105,16 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
     .select('id, group_code, warehouse_id, dvvt, vehicle_model_id, delivery_date, status, shipto_party').in('id', c).order('id')) as GdoRow[]
   if (!gdos.length) return out
 
+  // Thẻ NHIỀU xe (điều vận luật 11): Kế hoạch xuất giữ các xe PHỤ của Số xe — cước của chuyến là Σ cước các xe, đúng số điều
+  // vận đã so khi chọn tổ hợp (user 27/09: "gom là để tính cước"). Chuyến vẫn một bản ghi; xe thật đi theo booking / cổng / cân.
+  const gcs = uniq(gdos.map(g => g.group_code).filter(Boolean))
+  const khx = gcs.length ? await fetchAllByIdChunks(gcs, c => db.from('khvc_lines').select('group_code, extra_vehicle_model_ids')
+    .in('group_code', c).neq('sync_status', 'OBSOLETE').order('group_code')) as { group_code: string; extra_vehicle_model_ids: string[] | null }[] : []
+  const extrasByGc = new Map<string, string[]>()
+  for (const k of khx) if ((k.extra_vehicle_model_ids ?? []).length && !extrasByGc.has(k.group_code)) extrasByGc.set(k.group_code, k.extra_vehicle_model_ids!)
+
   // ── Danh mục dùng chung ──
-  const vmIds = uniq(gdos.map(g => g.vehicle_model_id).filter((x): x is string => !!x))
+  const vmIds = uniq([...gdos.map(g => g.vehicle_model_id), ...[...extrasByGc.values()].flat()].filter((x): x is string => !!x))
   const [vmRows, dvvtResolve, coRows] = await Promise.all([
     vmIds.length ? fetchAllByIdChunks(vmIds, c => db.from('vehicle_model').select('id, sap_code, name, tariff_unit, capacity_mode, max_pallets, max_tons, underload_pct').in('id', c).order('id')) as Promise<VmRow[]> : Promise.resolve([] as VmRow[]),
     makeDvvtResolver(),
@@ -139,7 +158,7 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
   }
 
   // ── Tính tải + phường + stops từng chuyến (chưa cần bảng cước) ──
-  type Pre = { g: GdoRow; basis: 'PLAN' | 'ACTUAL'; pallets: number | null; tons: number | null; incomplete: number; wards: string[]; stops: number; coId: string | null; vm: VmRow | null }
+  type Pre = { g: GdoRow; basis: 'PLAN' | 'ACTUAL'; pallets: number | null; tons: number | null; incomplete: number; wards: string[]; stops: number; coId: string | null; vm: VmRow | null; fleet: VmRow[] }
   const pres: Pre[] = gdos.map(g => {
     const basis: 'PLAN' | 'ACTUAL' = opts.basis === 'ACTUAL' || (opts.basis !== 'PLAN' && g.status === 'COMPLETED') ? 'ACTUAL' : 'PLAN'
     const gDos = dosByGdo.get(g.id) ?? []
@@ -161,7 +180,9 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
     if (!wards.length && g.shipto_party) { const w = wardByShipto.get(g.shipto_party); if (w) wards.push(w) }
     if (!shiptos.length && g.shipto_party) shiptos.push(g.shipto_party)
     const stops = Math.max(uniq(shiptos).length, uniq(wards).length, gDos.length ? 1 : 0)
-    return { g, basis, pallets: sum.pallets, tons: sum.kg == null ? null : Math.round(sum.kg) / 1000, incomplete: sum.incomplete, wards: uniq(wards), stops, coId: coIdOf(g.dvvt), vm: g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null }
+    const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
+    const fleet = vm ? [vm, ...(extrasByGc.get(g.group_code) ?? []).map(id => vmById.get(id)).filter((x): x is VmRow => !!x)] : []
+    return { g, basis, pallets: sum.pallets, tons: sum.kg == null ? null : Math.round(sum.kg) / 1000, incomplete: sum.incomplete, wards: uniq(wards), stops, coId: coIdOf(g.dvvt), vm, fleet }
   })
 
   // ── Bảng cước + phụ phí cho đúng các bộ (kho, ĐVVT, dòng con) có mặt ──
@@ -181,38 +202,64 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
 
   const computedAt = new Date().toISOString()
   const updates: { id: string; freight_estimated: number | null; freight_tariff_id: string | null; freight_detail: FreightDetail }[] = []
+  type Priced = { total: number | null; base: number | null; billed_pallets: number | null; tariff_id: string | null; surcharges: FreightDetail['surcharges']; ward: string | null; reason: string | null }
+  /** Cước MỘT xe (một dòng xe con) cho phần tải `pallets`/`tons` của chuyến. */
+  const priceOne = (p: Pre, vm: VmRow, pallets: number | null, tons: number | null, day: string): Priced => {
+    const unit: TariffUnit = vm.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET'
+    const none: Priced = { total: null, base: null, billed_pallets: null, tariff_id: null, surcharges: [], ward: null, reason: null }
+    const mine = tariffs.filter(t => t.from_warehouse_id === p.g.warehouse_id && t.transport_company_id === p.coId && t.vehicle_model_id === vm.id && p.wards.includes(t.ward_code))
+    const eff = effectiveAt(mine, day)
+    const kmByWard = new Map<string, number | null>()
+    for (const t of eff) if (!kmByWard.has(t.ward_code) || (t.distance_km != null && kmByWard.get(t.ward_code) == null)) kmByWard.set(t.ward_code, t.distance_km == null ? null : Number(t.distance_km))
+    const ward = farthestWard(eff.map(t => t.ward_code), kmByWard)
+    const tariff = ward ? pickTariff(eff.filter(t => t.ward_code === ward).map(t => ({ ...t, price: Number(t.price), distance_km: t.distance_km == null ? null : Number(t.distance_km) })), day) : null
+    const sur = effectiveAt(surcharges.filter(s => s.from_warehouse_id === p.g.warehouse_id && s.transport_company_id === p.coId && (s.vehicle_model_id == null || s.vehicle_model_id === vm.id)), day)
+      .map(s => ({ ...s, amount: Number(s.amount), min_stops: Number(s.min_stops ?? 2) }))
+    if (!tariff) return { ...none, reason: `Chưa có bảng cước cho (${vm.name} · phường ${p.wards.join(', ')}) của ĐVVT này tại kho xuất` }
+    if (unit === 'PER_PALLET' && pallets == null) return { ...none, reason: `Không đo được số pallet của chuyến (${p.incomplete} dòng hàng thiếu quy cách thùng/pallet trong master)` }
+    const r = computeFreight({ unit, tariff, surcharges: sur, pallets: pallets ?? 0, tons: tons ?? 0, stops: p.stops })
+    return { total: r.total, base: r.base, billed_pallets: r.billed_pallets, tariff_id: r.tariff_id, surcharges: r.surcharges, ward, reason: r.reason }
+  }
   for (const p of pres) {
     const day = String(p.g.delivery_date ?? '').slice(0, 10) || computedAt.slice(0, 10)
     const unit: TariffUnit | null = p.vm ? (p.vm.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET') : null
-    const load = loadUtilization(p.vm, p.pallets, p.tons)
+    // thẻ nhiều xe: % tải theo sức chứa CỘNG của các xe (cùng `comboModel` của điều vận), không theo riêng xe chính
+    const multi = p.fleet.length > 1
+    const ems = multi ? p.fleet.map(asEngineModel).sort(bigFirst) : []
+    const cm = multi ? comboModel(ems) : null
+    const load = loadUtilization(cm ? { ...p.vm!, capacity_mode: cm.capacity_mode, max_pallets: cm.max_pallets, max_tons: cm.max_tons } : p.vm, p.pallets, p.tons)
     let reason: string | null = null
     if (!p.vm) reason = 'Chưa chọn dòng xe con (mã SAP) cho chuyến — chọn ở tab Kế hoạch xuất'
     else if (!p.coId) reason = p.g.dvvt ? `ĐVVT "${p.g.dvvt}" không khớp danh mục ĐVVT` : 'Chuyến chưa có ĐVVT'
     else if (!p.g.warehouse_id) reason = 'Chuyến chưa có kho xuất'
     else if (!p.wards.length) reason = 'Không xác định được phường điểm giao (DO chưa có ward_code từ ZSD02 và khách hàng chưa khai phường)'
 
-    let result = { total: null as number | null, base: null as number | null, billed_pallets: null as number | null, tariff_id: null as string | null, surcharges: [] as FreightDetail['surcharges'], ward: null as string | null }
+    let result: Omit<Priced, 'reason'> = { total: null, base: null, billed_pallets: null, tariff_id: null, surcharges: [], ward: null }
+    let vehicles: FreightDetail['vehicles']
     if (!reason && p.vm && p.coId && p.g.warehouse_id && unit) {
-      const mine = tariffs.filter(t => t.from_warehouse_id === p.g.warehouse_id && t.transport_company_id === p.coId && t.vehicle_model_id === p.vm!.id && p.wards.includes(t.ward_code))
-      const eff = effectiveAt(mine, day)
-      const kmByWard = new Map<string, number | null>()
-      for (const t of eff) if (!kmByWard.has(t.ward_code) || (t.distance_km != null && kmByWard.get(t.ward_code) == null)) kmByWard.set(t.ward_code, t.distance_km == null ? null : Number(t.distance_km))
-      const ward = farthestWard(eff.map(t => t.ward_code), kmByWard)
-      const tariff = ward ? pickTariff(eff.filter(t => t.ward_code === ward).map(t => ({ ...t, price: Number(t.price), distance_km: t.distance_km == null ? null : Number(t.distance_km) })), day) : null
-      const sur = effectiveAt(surcharges.filter(s => s.from_warehouse_id === p.g.warehouse_id && s.transport_company_id === p.coId && (s.vehicle_model_id == null || s.vehicle_model_id === p.vm!.id)), day)
-        .map(s => ({ ...s, amount: Number(s.amount), min_stops: Number(s.min_stops ?? 2) }))
-      if (!tariff) reason = `Chưa có bảng cước cho (${p.vm.name} · phường ${p.wards.join(', ')}) của ĐVVT này tại kho xuất`
-      else if (unit === 'PER_PALLET' && p.pallets == null) reason = `Không đo được số pallet của chuyến (${p.incomplete} dòng hàng thiếu quy cách thùng/pallet trong master)`
+      if (!multi) { const r = priceOne(p, p.vm, p.pallets, p.tons, day); reason = r.reason; result = r }
       else {
-        const r = computeFreight({ unit, tariff, surcharges: sur, pallets: p.pallets ?? 0, tons: p.tons ?? 0, stops: p.stops })
-        result = { total: r.total, base: r.base, billed_pallets: r.billed_pallets, tariff_id: r.tariff_id, surcharges: r.surcharges, ward }
-        reason = r.reason
+        // chia tải xe lớn đầy trước — CÙNG `splitLoad` + cách rơi về chia theo sức chứa của `priceCombo` (điều vận), để số trên
+        // chuyến Xuất kho khớp số điều vận đã so khi chọn tổ hợp
+        const share = splitLoad(ems, p.pallets, p.tons) ?? ems.map(m => {
+          const k = basisOf(m) === 'TON' ? Number(m.max_tons ?? 0) / Number(cm!.max_tons || 1) : Number(m.max_pallets ?? 0) / Number(cm!.max_pallets || 1)
+          return { pallets: p.pallets == null ? null : Math.round(p.pallets * k * 1000) / 1000, tons: p.tons == null ? null : Math.round(p.tons * k * 1000) / 1000 }
+        })
+        const fs = ems.map((m, i) => priceOne(p, vmById.get(m.id)!, share[i].pallets, share[i].tons, day))
+        vehicles = ems.map((m, i) => ({ id: m.id, sap_code: m.sap_code, name: m.name, pallets: share[i].pallets, tons: share[i].tons, freight: fs[i].total }))
+        const miss = fs.find(f => f.total == null)
+        if (miss) reason = miss.reason
+        else result = {
+          total: fs.reduce((s, f) => s + f.total!, 0), base: fs.reduce((s, f) => s + (f.base ?? 0), 0),
+          billed_pallets: fs.every(f => f.billed_pallets != null) ? fs.reduce((s, f) => s + f.billed_pallets!, 0) : null,
+          tariff_id: fs[0].tariff_id, surcharges: fs.flatMap(f => f.surcharges), ward: fs[0].ward,
+        }
       }
     }
     const detail: FreightDetail = {
       computed_at: computedAt, basis: p.basis, unit, total: result.total, base: result.base, billed_pallets: result.billed_pallets, surcharges: result.surcharges,
       ward: result.ward, wards: p.wards, stops: p.stops, pallets: p.pallets, tons: p.tons, incomplete: p.incomplete, load,
-      vehicle_model: p.vm ? { id: p.vm.id, sap_code: p.vm.sap_code, name: p.vm.name } : null, transport_company_id: p.coId, reason,
+      vehicle_model: p.vm ? { id: p.vm.id, sap_code: p.vm.sap_code, name: p.vm.name } : null, ...(vehicles ? { vehicles } : {}), transport_company_id: p.coId, reason,
     }
     out.details[p.g.id] = detail
     if (result.total != null) out.priced++; else out.unpriced++

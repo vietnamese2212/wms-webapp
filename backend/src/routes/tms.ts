@@ -93,7 +93,7 @@ router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm')
 router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)
 router.post('/dispatch/plans/:id/move',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMove }),          dispatch.moveOds)
 router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zPreview }),       dispatch.previewMove)
-router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReoptimize }),     dispatch.reoptimizePlan)   // ids = chỉ ghép dòng OD đã chọn ở khung chờ
+router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReoptimize }),     dispatch.reoptimizePlan)   // ids = chỉ ghép dòng OD đã chọn · review_all = xác nhận cả khung chờ rồi ghép (bước Xem đơn)
 router.post('/dispatch/plans/:id/hold',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zHold }),          dispatch.holdOds)       // Hoãn tới ngày / Không điều (giữ qua mọi lần nạp)
 router.post('/dispatch/plans/:id/unhold',     requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnhold }),        dispatch.unholdOds)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng
@@ -101,6 +101,7 @@ router.get('/dispatch/plans/:id/customers/:shipTo/vehicles', requirePerm('dispat
 router.put('/dispatch/plans/:id/customers/:shipTo/vehicles', requireAnyPerm(['dispatch', 'customer_vehicles'], ['customers', 'edit']), validate({ params: dispatch.zShipToParam, body: dispatch.zCustVehicles }), dispatch.setCustomerVehicles)
 router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam }),                                dispatch.refreshPool)
 router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
+router.post('/dispatch/plans/:id/resync-od', requirePerm('dispatch', 'plan'),     validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.resyncOd)   // OD bị SAP sửa (SL / dòng / ghi chú) ⇒ chụp lại, ở nguyên chỗ
 router.patch('/dispatch/plans/:id/ods',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zOdMode }),        dispatch.setOdMode)     // đổi kiểu đi Pallet / Xá của OD
 router.post('/dispatch/plans/:id/reopen',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zReopen }),        dispatch.reopenPlan)    // mở lại xe đã vào KH xuất (chuyến chưa bắt đầu)
 router.delete('/dispatch/trips/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.deleteTrip)

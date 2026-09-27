@@ -540,7 +540,7 @@ function chooseCarrierBy(ctx: Ctx, price: (carrierId: string) => TripFreight, wa
 /** Xe lớn trước — so TẤN trước rồi mới tới PALLET: họ xá từ 26/09 trộn xe kết hợp đo bằng pallet (17 pallet / 16 tấn) với xe
  *  tải đo bằng tấn (30 tấn, không khai pallet). So pallet trước thì xe 17 pallet "lớn hơn" xe 30 tấn ⇒ dòng hàng 27 tấn bị coi
  *  là vượt xe lớn nhất (đo Bàu Bàng 26/09: 6 chuyến). Họ thuần pallet không khai tấn thì tấn = 0 cho mọi xe ⇒ vẫn so pallet. */
-const bigFirst = (a: EngineModel, b: EngineModel) => (numOr(b.max_tons, 0) - numOr(a.max_tons, 0)) || (numOr(b.max_pallets, 0) - numOr(a.max_pallets, 0)) || cmp(a.sap_code, b.sap_code)
+export const bigFirst = (a: EngineModel, b: EngineModel) => (numOr(b.max_tons, 0) - numOr(a.max_tons, 0)) || (numOr(b.max_pallets, 0) - numOr(a.max_pallets, 0)) || cmp(a.sap_code, b.sap_code)
 const sizeKey = (m: EngineModel) => `${numOr(m.max_tons, 0)}|${numOr(m.max_pallets, 0)}`
 
 interface Assigned {

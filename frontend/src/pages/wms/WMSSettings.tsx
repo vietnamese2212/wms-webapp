@@ -1057,7 +1057,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
                 value={dispPalletStops} onChange={e => setDispPalletStops(e.target.value)} placeholder="1" />} />
             <SettingRow label="Số xe tối đa trên một thẻ (một Số xe)"
               desc="Máy so thêm tổ hợp nhiều xe (vd xe 8 tấn + xe 2 tấn thay cho xe 15 tấn) và chọn khi rẻ hơn; OD lớn hơn mọi xe khách được vào thì đi nguyên trên một thẻ nhiều xe thay vì bị tách. 1 = một xe / thẻ (1–5)."
-              tip={<>Mặc định 3 (ĐVVT có thể book tới 3 xe cho một Số xe). Bước Xuất kho vẫn là MỘT chuyến một biển số — phiếu cân của xe thứ hai không gắn vào chuyến nên cột "Lệch cân − tính" có thể báo lệch; Kế hoạch xuất ghi đủ các xe để ĐVVT booking.</>}
+              tip={<>Mặc định 3. Tổ hợp xe chỉ dùng để TÍNH CƯỚC: cước dự tính của chuyến = tổng cước các xe, Kế hoạch xuất ghi "+N xe" để ĐVVT biết. Booking, đăng ký cổng, phiếu cân vẫn đi theo xe thật ĐVVT điều tới.</>}
               control={<Input id="wh-disp-max-veh" type="number" min={1} max={5} className="h-7 w-24 text-xs text-right"
                 value={dispMaxVeh} onChange={e => setDispMaxVeh(e.target.value)} placeholder="3" />} />
             <SettingRow label="Cho trộn kênh khách trên một xe"

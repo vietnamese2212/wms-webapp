@@ -327,6 +327,10 @@ export function splitLoad(models: EngineModel[], pallets: number | null, tons: n
   }
   return left > 1e-9 ? null : out
 }
+/** Tối đa `n` xe dòng `m` có chở hết tải không — thử 2..n xe (splitLoad coi xe không nhận phần nào là xe THỪA ⇒ null, nên
+ *  hỏi thẳng "đúng n xe" sẽ trả sai khi chỉ cần ít xe hơn: kho cho 3 xe, OD cần 2 — gói 61 [15g] bắt ra 27/09). */
+export const fitsOnN = (m: EngineModel, n: number, pallets: number | null, tons: number | null) =>
+  Array.from({ length: Math.max(0, n - 1) }, (_, i) => i + 2).some(k => !!splitLoad(Array(k).fill(m), pallets, tons))
 /** Sức chứa CỘNG của một tổ hợp (cùng cách đo) — dựng thành một "dòng xe ảo" để đo % tải của cả thẻ bằng đúng `tripLoad`. */
 export function comboModel(models: EngineModel[]): EngineModel {
   const [m0] = models
@@ -586,6 +590,9 @@ function bestCombo(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, K: num
   const priced = (m: EngineModel) => wards.some(w => ctx.pricedByWard.get(w)?.has(m.id))
   for (const list0 of tiers) {
     const list = (list0.some(priced) ? list0.filter(priced) : list0).sort(bigFirst).slice(0, 10)
+    // không dòng xe nào qua luật của bin (vd không xe phục vụ mức bảo quản) ⇒ không có tổ hợp — vòng liệt kê bên dưới
+    // với danh sách rỗng sẽ đọc list[0] = undefined (gói 61 [7f] bắt ra 500 ngay lượt đầu trên Preview 27/09)
+    if (!list.length) continue
     let best: { ms: EngineModel[]; opt: PriceOpt | null } | null = null
     const tryCombo = (ms: EngineModel[]) => {
       if (!ms.every(m => basisOf(m) === basisOf(ms[0])) || !splitLoad(ms, pAll, tAll)) return
@@ -755,7 +762,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     if (!big) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: od.load_mode === 'PALLET' ? 'Khách đi Pallet nhưng chưa có dòng xe pallet nào khai sức chứa' : od.load_mode === 'LOOSE' ? 'Khách đi Xá nhưng chưa có xe tải theo tấn nào khai sức chứa' : 'Chưa có dòng xe nào khai sức chứa' }); continue }
     // Luật 11: OD lớn hơn xe lớn nhất được vào mà N xe (lặp lại xe đó) chở vừa ⇒ giữ NGUYÊN OD, đi thẻ nhiều xe — tách OD ra
     // hai Số xe là ca Xác nhận chặn (OD_SPLIT_ACROSS_TRIPS) và app không tách DO được
-    if (maxVeh > 1 && !fits(big, s.pallets, s.tons) && splitLoad(Array(maxVeh).fill(big), s.pallets, s.tons)) { units.push({ ...unitOf(od, od.lines, null), multi: true }); continue }
+    if (maxVeh > 1 && !fits(big, s.pallets, s.tons) && fitsOnN(big, maxVeh, s.pallets, s.tons)) { units.push({ ...unitOf(od, od.lines, null), multi: true }); continue }
     units.push(...splitOversize(od, big))
   }
 

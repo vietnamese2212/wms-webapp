@@ -769,8 +769,19 @@ try {
   // đổi KÊNH thì kho làm sai" · "10 tấn có thể 8 + 2 tấn, luôn so tổ hợp" (Xuất kho vẫn một biển — chấp nhận lệch)
   await cleanupTrips()
   {
+    // Fixture SẠCH cho [15]: các mục trước đã đánh dấu OD1 đã xuất ([10p]), đổi / xoá OD3, đổi kiểu đi khách ⇒ dựng lại
+    // đúng 3 OD như lúc đầu gói (lượt đầu 27/09 dùng lại trạng thái cũ nên pool ra OD5 thay OD3 và cả dây 15b–15f đổ theo)
+    await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA61OD*`).catch(() => {})
+    for (let i = 0; i < 3; i++) {
+      const ward = i < 2 ? W1 : W2
+      await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[i]}`, { load_mode: 'PALLET', load_mode_by_category: {}, dispatch_vehicles: {}, ward_code: ward, is_active: true })
+      await restWrite('erp_outbound_orders', 'POST', null, {
+        id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
+        ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
+        source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+      })
+    }
     const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
-    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { dispatch_vehicles: {} })
     const next = (() => { const d = new Date(`${DAY}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) })()
     const pR0 = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, review_first: true })
     let PR = pR0.j?.data

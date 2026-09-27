@@ -694,3 +694,17 @@ describe('luật 11 — nhiều xe trên một thẻ (user 27/09: "10 tấn dùn
     expect(r.freight.reason).toMatch(/Chưa có bảng cước.*T2/)
   })
 })
+describe('luật 11 — hai lỗi gói 61 bắt trên Preview 27/09 (phép kiểm này ĐỎ trên 088444d6)', () => {
+  it('kho cho TỐI ĐA 3 xe mà OD chỉ cần 2 ⇒ vẫn một thẻ, không tách OD (splitLoad coi xe thứ 3 là thừa)', () => {
+    const r = runDispatch(input([od('1', 'W1', 14)], { models: [M9], params: { ...params, max_vehicles: 3 } }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicles.map(v => v.model.id)).toEqual(['M9', 'M9'])
+    expect(r.trips[0].vehicles.map(v => v.pallets)).toEqual([9, 5])
+    expect(r.trips[0].oversize).toBe(false)
+  })
+  it('không dòng xe nào phục vụ mức bảo quản của hàng ⇒ KHÔNG ném lỗi (so tổ hợp trên danh sách rỗng), chuyến không dòng xe + cảnh báo', () => {
+    const r = runDispatch(input([od('1', 'W1', 3, { lines: [line(3, { condition: 'CHILL' })] })], { models: [{ ...M9, serve_conditions: ['AMBIENT'] }], params: { ...params, max_vehicles: 3 } }))
+    expect(r.trips[0].vehicle_model).toBeNull()
+    expect(r.trips[0].warnings.join(' ')).toMatch(/phục vụ điều kiện bảo quản/)
+  })
+})

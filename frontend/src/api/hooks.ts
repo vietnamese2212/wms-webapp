@@ -5969,6 +5969,28 @@ export function useDispatchPlanSync(id: string | null, enabled = true) {
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/sync`)).data.data as { flags: DispatchOdFlag[]; new_ods: number; new_od_numbers?: string[] },
   })
 }
+/** Bảng Xem đơn (27/09 khuya): thông tin SAP của từng OD trong kế hoạch — SO, người tạo, ghi chú, SL quy đổi, Loại kho,
+ *  OD này thay OD nào (sửa SO), lần "Không điều ngày này" trước đó. Gọi riêng, không nhồi vào GET kế hoạch. */
+export interface DispatchReviewInfo {
+  so: string[]; so_types: string[]; created_by: string[]; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null
+  sold_to: string | null; route_name: string | null; od_created_at: string | null; flow: string | null
+  lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
+  replaces: { od: string; group_code: string | null }[]
+  held_before: { until: string; reason: string; by: string | null } | null
+}
+export function useDispatchPlanReview(id: string | null, stamp?: string | null) {
+  return useQuery({
+    queryKey: ['dispatch-review', id, stamp ?? ''], enabled: !!id, staleTime: 30_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/review`)).data.data as { ods: Record<string, DispatchReviewInfo> },
+  })
+}
+export interface DispatchOdMaterial { material_code: string; short_name: string | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
+export function useDispatchPlanOd(id: string | null, od: string | null) {
+  return useQuery({
+    queryKey: ['dispatch-od', id, od], enabled: !!id && !!od, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/ods/${encodeURIComponent(od!)}`)).data.data as { od_number: string; lines: DoSapRow[]; materials: DispatchOdMaterial[] },
+  })
+}
 export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove'
 export function useMoveDispatchOds() {
   const qc = useQueryClient()

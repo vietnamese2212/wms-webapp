@@ -90,6 +90,9 @@ router.get('/dispatch/trips/:id/carriers',    requirePerm('dispatch', 'view'),  
 router.post('/dispatch/trips/:id/move-od',   requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMoveOd }),        dispatch.moveOd)
 router.post('/dispatch/plans/:id/confirm',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.confirmPlan)
 // Bàn ghép xe (25/09): kéo thả · xem trước khi thả · tối ưu lại phần chưa khoá · nạp OD mới · thay OD bị SAP thay · bỏ xe trống
+// bảng Xem đơn (27/09 khuya): thông tin SAP từng OD + chi tiết một OD — tách khỏi GET kế hoạch (bàn ghép xe gọi kế hoạch sau mỗi lần thả)
+router.get('/dispatch/plans/:id/review',      requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanReview)
+router.get('/dispatch/plans/:id/ods/:od',     requirePerm('dispatch', 'view'),    validate({ params: dispatch.zPlanOdParam }),                   dispatch.getPlanOd)
 router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)
 router.post('/dispatch/plans/:id/move',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMove }),          dispatch.moveOds)
 router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zPreview }),       dispatch.previewMove)

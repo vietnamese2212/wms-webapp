@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, findReplacedOds, daysBetween, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, findReplacedOds, daysBetween, holdsToCarry, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -111,5 +111,26 @@ describe('HOÃN / KHÔNG ĐIỀU (user 27/09: "đơn key một ngày nhưng đi�
   })
   it('OD tồn đọng đang hoãn vẫn được BÁO (quyết định của người phải thấy để còn bỏ hoãn)', () => {
     expect(splitPool([row('1', { delivery_date: '2026-09-20' })], DAY, held([['1', null]])).excluded.map(x => x.kind)).toEqual(['HELD'])
+  })
+  it('đang Không điều mà SAP đã điều / đã xuất ⇒ về tab Đã điều (SHIPPED / SAP_ASSIGNED), không đứng mãi ở Không điều', () => {
+    const s = splitPool([row('1', { mat_doc: '4900001' }), row('2', { sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'HA' })], DAY, held([['1', null], ['2', '2026-09-30']]))
+    expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'SHIPPED'], ['2', 'SAP_ASSIGNED']])
+  })
+})
+
+describe('SAP thay OD đang Không điều (user chốt 27/09 khuya: "chuyển dấu sang OD mới")', () => {
+  const h = (od: string, until: string | null, wh = 'W1') => ({ warehouse_id: wh, od_number: od, hold_until: until, reason: 'NPP hẹn', created_by: 'A' })
+  it('dấu còn hiệu lực (không ngày / ngày sau hôm nay) chuyển sang OD mới, lý do ghi "thay cho OD cũ"', () => {
+    expect(holdsToCarry([h('1', null), h('2', '2026-09-30')], [['1', '11'], ['2', '22']], [], '2026-09-27')).toEqual([
+      { warehouse_id: 'W1', od_number: '11', hold_until: null, reason: 'NPP hẹn (thay cho OD 1)', created_by: 'A' },
+      { warehouse_id: 'W1', od_number: '22', hold_until: '2026-09-30', reason: 'NPP hẹn (thay cho OD 2)', created_by: 'A' },
+    ])
+  })
+  it('dấu đã hết hạn (ngày điều lại ≤ hôm nay) KHÔNG chuyển — OD mới vào Điều như thường', () => {
+    expect(holdsToCarry([h('1', '2026-09-27'), h('2', '2026-09-20')], [['1', '11'], ['2', '22']], [], '2026-09-27')).toEqual([])
+  })
+  it('OD mới đã có dấu riêng ở kho đó ⇒ giữ dấu đó; hai OD cũ cùng thay bằng một OD mới ⇒ một dấu; kho khác vẫn chuyển', () => {
+    const out = holdsToCarry([h('1', null), h('2', null), h('3', null, 'W2')], [['1', '11'], ['2', '11'], ['3', '33']], [{ warehouse_id: 'W1', od_number: '33' }], '2026-09-27')
+    expect(out.map(x => [x.warehouse_id, x.od_number])).toEqual([['W1', '11'], ['W2', '33']])
   })
 })

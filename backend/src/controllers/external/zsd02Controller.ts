@@ -9,7 +9,7 @@ import { db } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue } from '../../utils/search'
-import { isDay } from '../../utils/dates'
+import { isDay, vnDayOf } from '../../utils/dates'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 import { expandMergedCells, readWorkbookSafe, parseSheetByHeader, BAD_EXCEL_MSG } from '../../utils/excelHeader'
@@ -20,7 +20,7 @@ import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
 import { upsertCustomerGeo } from '../../services/customerGeo'
 import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, RAW_VERSION, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
 import { allowedPlants, plantOrFilter } from './erpOrderController'
-import { findReplacedOds, type ReplaceCandidate } from '../../services/dispatchPool'
+import { findReplacedOds, holdsToCarry, type ReplaceCandidate, type HoldRow } from '../../services/dispatchPool'
 
 const now = () => new Date().toISOString()
 const CHUNK = 500
@@ -206,6 +206,21 @@ export async function uploadZsd02(req: Request, res: Response) {
       const { error } = await db.from('erp_outbound_orders').update({ sync_status: 'OBSOLETE', replaced_by_od: by, replaced_at: t, updated_at: t })
         .eq('od_number', old).eq('sync_status', 'ACTIVE')
       if (error) throw new Error(error.message)
+    }
+    // OD đang "Không điều" / "Không điều ngày này" mà SAP thay bằng OD mới ⇒ dấu CHUYỂN sang OD mới (user chốt 27/09 khuya) —
+    // không chuyển thì OD mới vào lại tab Điều như đơn chưa ai quyết, người đã bảo "không điều" phải quyết lại lần nữa
+    if (repPairs.length) {
+      const oldHolds = (await fetchAllByIdChunks(repPairs.map(([a]) => a), c => db.from('dispatch_od_hold')
+        .select('warehouse_id, od_number, hold_until, reason, created_by').in('od_number', c).order('od_number'))) as HoldRow[]
+      if (oldHolds.length) {
+        const have = (await fetchAllByIdChunks(repPairs.map(([, b]) => b), c => db.from('dispatch_od_hold').select('warehouse_id, od_number').in('od_number', c).order('od_number'))) as { warehouse_id: string; od_number: string }[]
+        const ins = holdsToCarry(oldHolds, repPairs, have, vnDayOf(new Date()) ?? '').map(h => ({ ...h, id: randomUUID(), updated_at: t }))
+        if (ins.length) {
+          const { error } = await db.from('dispatch_od_hold').insert(ins)
+          if (error) throw new Error(error.message)
+          warnings.push(`${ins.length} OD mới thay cho OD đang "Không điều" — giữ nguyên dấu Không điều trên OD mới.`)
+        }
+      }
     }
 
     // ── GHI SỔ SO ──

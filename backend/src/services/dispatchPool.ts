@@ -51,15 +51,36 @@ export function splitPool(
     const today = dd === day
     const report = (kind: ExcludeKind, info: string | null) => { if (today) excluded.push({ od_number: od, kind, info }) }
     if (ctx.inPlan.has(od)) { report('IN_PLAN', ctx.inPlan.get(od) ?? null); continue }
-    const h = ctx.held?.get(od)
-    if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}`, until: h.until, reason: h.reason }); continue }
-    if (ctx.otherDraft.has(od)) { report('OTHER_DRAFT', ctx.otherDraft.get(od) ?? null); continue }
+    // SAP đã xuất / đã điều thắng dấu Không điều (27/09 khuya): đơn đã được lo ở SAP thì nằm tab Đã điều, không đứng mãi ở
+    // "Không điều" chờ người chuyển tay một đơn không còn gì để điều
     if (rs.some(shippedRow)) { report('SHIPPED', rs.find(r => r.mat_doc)?.mat_doc ?? null); continue }
     const asg = rs.find(r => r.sap_dispatch_status === 'ASSIGNED')
     if (asg) { report('SAP_ASSIGNED', [asg.dvvt_raw, asg.license_plate].filter(Boolean).join(' · ') || null); continue }
+    const h = ctx.held?.get(od)
+    if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}`, until: h.until, reason: h.reason }); continue }
+    if (ctx.otherDraft.has(od)) { report('OTHER_DRAFT', ctx.otherDraft.get(od) ?? null); continue }
     include.set(od, { delivery_date: dd, late_days: dd ? Math.max(0, daysBetween(dd, day)) : 0 })
   }
   return { include, excluded }
+}
+
+/** OD đang "Không điều" / "Không điều ngày này" mà SAP THAY bằng OD mới (sửa SO) ⇒ dấu chuyển sang OD mới (user chốt 27/09
+ *  khuya). Chỉ dấu CÒN HIỆU LỰC (không ngày, hoặc ngày điều lại SAU hôm nay); OD mới đã có dấu riêng ở kho đó thì giữ dấu đó;
+ *  một (kho, OD mới) chỉ một dấu. Trả các dòng cần thêm (chưa có id — nơi ghi tự cấp). */
+export type HoldRow = { warehouse_id: string; od_number: string; hold_until: string | null; reason: string; created_by: string | null }
+export function holdsToCarry(oldHolds: HoldRow[], pairs: [string, string][], existing: { warehouse_id: string; od_number: string }[], today: string): HoldRow[] {
+  const byOld = new Map(pairs)
+  const seen = new Set(existing.map(h => `${h.warehouse_id}|${h.od_number}`))
+  const out: HoldRow[] = []
+  for (const h of oldHolds) {
+    const to = byOld.get(h.od_number)
+    if (!to || !(h.hold_until == null || h.hold_until > today)) continue
+    const k = `${h.warehouse_id}|${to}`
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push({ warehouse_id: h.warehouse_id, od_number: to, hold_until: h.hold_until, reason: `${h.reason} (thay cho OD ${h.od_number})`.slice(0, 500), created_by: h.created_by })
+  }
+  return out
 }
 
 /** SO sửa ⇒ SAP bỏ OD cũ, sinh OD mới cho CÙNG (SO, item). Chỉ kết luận "đã thay" khi có bằng chứng trong CHÍNH file:

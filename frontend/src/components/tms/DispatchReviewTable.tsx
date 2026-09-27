@@ -21,9 +21,13 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, type DispatchPlan, type DispatchOdFlag } from '@/api/hooks'
+import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, type DispatchPlan, type DispatchOdFlag } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { whTypeBadgeCls } from '@/utils/cargoCategory'
+import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
 import { EDITABLE, tripStatus, FLAG_VI } from './dispatchIssues'
+import { DispatchOdDetailSheet } from './DispatchOdDetailSheet'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
@@ -59,6 +63,11 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   const [dlg, setDlg] = useState<null | 'DAY' | 'NEVER'>(null)
   const [until, setUntil] = useState('')
   const [reason, setReason] = useState('')
+  // thông tin SAP từng OD (SO · người tạo · ghi chú · SL quy đổi · Loại kho · OD bị thay · lần Không điều trước) — gọi riêng
+  const review = useDispatchPlanReview(plan.id, plan.updated_at)
+  const info = review.data?.ods ?? {}
+  const whMeta = useWhTypeMetaMap()
+  const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
   const busy = hold.isPending || unhold.isPending || reopt.isPending
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
 
@@ -119,7 +128,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   }, [plan, flags, editable])
 
   const q = f.search.trim().toLowerCase()
-  const rows = byTab[st].filter(r => (!notesOnly || !!r.note) && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason].some(v => v.toLowerCase().includes(q))))
+  const extra = (od: string) => { const i = info[od]; return i ? [...i.so, ...i.created_by, i.note_invoice ?? '', i.route_name ?? '', ...i.categories] : [] }
+  const rows = byTab[st].filter(r => (!notesOnly || !!r.note) && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
+  const detailRow = detail ? byTab[st].find(r => r.key === detail) ?? null : null
   const notesN = byTab[st].filter(r => !!r.note).length
   const pick = rows.filter(r => r.selectable)
   const selRows = byTab[st].filter(r => sel.has(r.key))
@@ -175,15 +186,30 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
     ...(editable && st !== 'DONE' ? [{ id: 'sel', label: '', w: 34, align: 'center' as const }] : []),
     { id: 'od', label: 'OD', w: 104 },
     { id: 'where', label: st === 'GO' ? 'Đang ở' : st === 'DONE' ? 'Đã điều ở đâu' : 'Trạng thái', w: 150 },
+    { id: 'so', label: 'SO / PO SAP', w: 110 },
     { id: 'cust', label: 'Khách', w: 220 },
     { id: 'ward', label: 'Phường', w: 140 },
     { id: 'region', label: 'Vùng', w: 110 },
+    { id: 'cat', label: 'Loại kho', w: 96 },
+    { id: 'conv', label: QTY_CONVERTED_LABEL, w: 84, align: 'right' },
     { id: 'pal', label: 'Pallet', w: 64, align: 'right' },
     { id: 'ton', label: 'Tấn', w: 64, align: 'right' },
     { id: 'date', label: 'Ngày giao', w: 96 },
-    { id: 'note', label: 'Ghi chú giao hàng SAP', w: 240 },
+    { id: 'by', label: 'Người tạo', w: 100 },
+    { id: 'note', label: 'Ghi chú giao hàng SAP', w: 280 },
+    { id: 'warn', label: 'Lưu ý', w: 220 },
     { id: 'info', label: st === 'DAY' || st === 'NEVER' ? 'Lý do' : 'Tình trạng SAP', w: 220 },
   ]
+  // Lưu ý = thứ người xếp phải biết mà không nằm ở cột nào: OD này THAY OD cũ (sửa SO — OD cũ có thể đã điều ở xe khác) ·
+  // đơn vừa hết "Không điều ngày này" quay lại
+  const warnOf = (od: string) => {
+    const i = info[od]
+    if (!i) return ''
+    return [
+      ...i.replaces.map(r => r.group_code ? `Thay OD ${r.od} — OD cũ ĐÃ ĐIỀU ở xe ${r.group_code}` : `Thay OD ${r.od} (SAP sửa SO)`),
+      ...(i.held_before && st === 'GO' ? [`Đã không điều tới ${dmy(i.held_before.until)} — ${i.held_before.reason}`] : []),
+    ].join(' · ')
+  }
 
   return (
     <div className="flex flex-col min-h-0 h-full">
@@ -227,13 +253,14 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v1`} cols={cols}>
+        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v2`} cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly
               ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '' }) }}>Xem cả {byTab[st].length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
-            {rows.map(r => (
-              <TableRow key={r.key} className={sel.has(r.key) ? 'bg-sky-50' : ''} onClick={r.selectable ? () => toggle(r.key) : undefined}>
+            {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od); return (
+              // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
+              <TableRow key={r.key} className={`cursor-pointer hover:bg-slate-50 ${sel.has(r.key) ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r.key)}>
                 {editable && st !== 'DONE' && (
                   <TableCell className={`${TD} sticky left-0 z-10 text-center ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
                     {r.selectable && <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={`Chọn ${r.od}`} />}
@@ -241,18 +268,25 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
                 )}
                 <TableCell className={`${TD} font-mono font-semibold ${editable && st !== 'DONE' ? '' : `sticky left-0 z-10 ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}`}>{r.od}</TableCell>
                 <TableCell className={TD}><StatusBadge tone={r.tone}>{r.where}</StatusBadge></TableCell>
+                <TableCell className={`${TD} truncate font-mono`} title={i ? [i.so.join(', '), ...i.so_types].filter(Boolean).join(' · ') : ''}>{i?.so.length ? i.so.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={r.cust}>{r.cust || <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={r.ward}>{r.ward || <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={r.region}>{r.region || <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={TD}>{i?.categories.length ? <span className="inline-flex gap-0.5">{i.categories.map(c => <span key={c} className={`rounded px-1 text-[9px] font-semibold ${whTypeBadgeCls(c, whMeta)}`}>{c}</span>)}</span> : <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} text-right tabular-nums`} title={i ? `${i.lines} dòng · ${i.materials} mã — quy về thùng từng mã rồi cộng` : ''}>{i ? nf(i.qty_conv, 1) : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} text-right tabular-nums`}>{nf(r.pallets, 1)}</TableCell>
                 <TableCell className={`${TD} text-right tabular-nums`}>{nf(r.tons, 2)}</TableCell>
                 <TableCell className={TD}>{r.date ? `${dmy(r.date)}/${r.date.slice(2, 4)}` : <span className="text-slate-300">—</span>}{r.late > 0 && <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800">trễ {r.late}n</span>}</TableCell>
-                <TableCell className={`${TD} truncate ${r.note ? 'text-amber-900' : ''}`} title={r.note}>{r.note || <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.created_by.join(', ')}>{i?.created_by.length ? i.created_by.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} truncate ${r.note ? 'text-amber-900' : ''}`} title={[r.note, i?.note_invoice ? `Hoá đơn: ${i.note_invoice}` : ''].filter(Boolean).join('\n')}>
+                  {r.note || <span className="text-slate-300">—</span>}{i?.note_invoice && <span className="ml-1 text-slate-500">· HĐ: {i.note_invoice}</span>}
+                </TableCell>
+                <TableCell className={`${TD} truncate ${i?.replaces.some(x => x.group_code) ? 'text-red-600 font-medium' : 'text-amber-800'}`} title={warn}>{warn || <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate ${r.flag && st === 'GO' ? 'text-red-600' : 'text-slate-500'}`} title={st === 'DAY' || st === 'NEVER' ? r.reason : r.flag}>
                   {(st === 'DAY' || st === 'NEVER' ? r.reason : r.flag) || <span className="text-slate-300">—</span>}
                 </TableCell>
               </TableRow>
-            ))}
+            ) })}
           </TableBody>
         </ResizableTable>
       </div>
@@ -286,6 +320,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <DispatchOdDetailSheet planId={plan.id} info={detailRow ? info[detailRow.od] : undefined} onClose={() => setDetail(null)}
+        sum={detailRow ? { od: detailRow.od, where: detailRow.where, tone: detailRow.tone, cust: detailRow.cust, ward: detailRow.ward, region: detailRow.region, date: detailRow.date, late: detailRow.late, flag: detailRow.flag, reason: detailRow.reason } : null} />
       {confirmNode}
     </div>
   )

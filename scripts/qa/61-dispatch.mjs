@@ -855,6 +855,19 @@ try {
     check('15e. Bỏ hoãn → OD3 về NGAY khung chờ với mốc ĐÃ XEM (người bỏ hoãn đã quyết), sổ hoãn trống, hết dòng HELD · bỏ hoãn lần hai → 404',
       uOk.s === 200 && uOk.j?.data?.unheld?.back_to_pool === 1 && poolOds(PR).includes(OD[2]) && !!rowNow(PR, OD[2])?.reviewed_at && holdLeft === 0 && !(PR?.params?.excluded ?? []).some(x => x.kind === 'HELD') && uAgain.s === 404,
       `ok=${uOk.s} ${uOk.j?.error?.message ?? ''} back=${uOk.j?.data?.unheld?.back_to_pool} pool=${poolOds(PR).join(',')} rev=${rowNow(PR, OD[2])?.reviewed_at} left=${holdLeft} again=${uAgain.s}`)
+    // BẢNG XEM ĐƠN (27/09 khuya, user: "thiếu SO, người tạo, ghi chú, thùng, loại kho… cần xem được detail"): thông tin SAP
+    // từng OD gọi riêng; "Không điều ngày này" đã tới ngày ⇒ OD về Điều kèm ghi chú lần hoãn trước (giả lập dấu hôm qua hẹn tới hôm nay)
+    const hPrev = await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD[1], hold_until: DAY, reason: 'QA61 hẹn hôm nay', created_by: 'QA61', updated_at: nowIso() })
+    const rv = await api(`/tms/dispatch/plans/${pid(PR)}/review`)
+    const i1 = rv.j?.data?.ods?.[OD[0]], i2 = rv.j?.data?.ods?.[OD[1]]
+    await restWrite('dispatch_od_hold', 'DELETE', `warehouse_id=eq.${WH}&od_number=eq.${OD[1]}`)
+    const dOd = await api(`/tms/dispatch/plans/${pid(PR)}/ods/${OD[0]}`)
+    const dFor = await api(`/tms/dispatch/plans/${pid(PR)}/ods/QA61KHONGCO`)
+    check('15m. Xem đơn: /review có đủ 3 OD kèm SL quy đổi > 0 + số dòng · OD2 hết "Không điều ngày này" mang ghi chú lần hoãn trước · chi tiết OD1 → dòng ZSD02 + quy cách mã · OD không thuộc kế hoạch → 404',
+      hPrev.ok !== false && rv.s === 200 && OD.every(o => !!rv.j?.data?.ods?.[o]) && Number(i1?.qty_conv) > 0 && i1?.lines >= 1
+      && i2?.held_before?.until === DAY && i2?.held_before?.reason === 'QA61 hẹn hôm nay'
+      && dOd.s === 200 && (dOd.j?.data?.lines ?? []).length >= 1 && (dOd.j?.data?.materials ?? []).length >= 1 && dFor.s === 404 && dFor.j?.error?.code === 'OD_NOT_IN_PLAN',
+      `review=${rv.s} ${rv.j?.error?.message ?? ''} i1=${JSON.stringify(i1)?.slice(0, 160)} held=${JSON.stringify(i2?.held_before)} od=${dOd.s}/${(dOd.j?.data?.lines ?? []).length} foreign=${dFor.s}/${dFor.j?.error?.code}`)
     // SAP SỬA ĐƠN sau khi đã xem: cùng OD, SL đổi (OD1 đang trên xe 4 → 5 pallet) · ghi chú đổi (OD3 ở khung chờ)
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { qty_base: 5 * perPallet, updated_at: nowIso() })
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { note_delivery: 'QA61 NPP hẹn giao sáng', updated_at: nowIso() })

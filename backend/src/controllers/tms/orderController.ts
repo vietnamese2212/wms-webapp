@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { vnDayOf } from '../../utils/dates'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
@@ -706,7 +707,15 @@ export async function updateOrder(req: Request, res: Response) {
       if (date < todayVN())
         return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
     }
-    if (eta && String(eta).slice(0, 10) < todayVN())
+    // `date` là NGÀY NGHIỆP VỤ (chuỗi 'YYYY-MM-DD' giờ VN) nên so thẳng với todayVN() là đúng.
+    // `eta` thì KHÁC: nó là MỐC THỜI GIAN (ISO UTC). Cắt 10 ký tự đầu = lấy ngày theo ĐỒNG HỒ UTC
+    // rồi đem so với ngày theo ĐỒNG HỒ VN — từ 00:00 đến 07:00 giờ VN, ngày UTC vẫn còn là HÔM QUA,
+    // nên MỌI eta trong vài giờ tới đều bị phán "ngày quá khứ" và trả 400.
+    // Đo 27/09: chính chỗ này làm bậc full chạy đêm đỏ hai đêm liền (gói 28 chạy lúc 04:48 giờ VN =
+    // 21:48 UTC hôm trước, phép [5] `eta=400` rồi kéo sập 6 phép sau). Ca đêm thật cũng dính y vậy:
+    // điều vận 1 giờ sáng đặt ETA 4 giờ sáng thì app bảo là quá khứ.
+    const etaDay = eta ? vnDayOf(eta) : null
+    if (etaDay && etaDay < todayVN())
       return fail(res, 'Dự kiến giao không thể là ngày quá khứ', 400)
 
     const updates: Record<string, unknown> = { updated_by: user?.name || null, updated_at: now }

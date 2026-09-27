@@ -29,6 +29,7 @@ import { resolveRotation, resolveWorkMode, type WhTypeConfigRow } from '../utils
 import { qaHoldIds, qaNotHeldFilter } from './qaStatus'
 import { logPalletMoves, type MovedPallet } from './palletMoveLog'
 import { qtyLabel, type MatUnits } from '../utils/qtyUnits'
+import { utcMs } from '../utils/dates'
 
 // `InventoryEntry.updated_by` là KHOÁ NGOẠI tới `Employee(id)` — ghi TÊN vào là 23503. Mọi cửa
 // chuyển vị trí trong app đều gác bằng đúng khuôn này (Tồn kho · Slotting · phần dư khi quét).
@@ -195,7 +196,7 @@ async function untouchedTasksOf(gdoId: string): Promise<Array<{ id: string; entr
     .is('lowered_at', null).is('moved_at', null)
   const stale = Date.now() - CLAIM_TTL_MS
   return ((data ?? []) as Array<{ id: string; entry_id: string | null; qty_base: number; claimed_by: string | null; claimed_at: string | null }>)
-    .filter(t => !t.claimed_by || !t.claimed_at || new Date(t.claimed_at).getTime() < stale)
+    .filter(t => !t.claimed_by || !t.claimed_at || utcMs(t.claimed_at) < stale)
 }
 
 /**

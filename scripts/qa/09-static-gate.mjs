@@ -505,6 +505,41 @@ const RULES = [
     count: countMoveWithoutLedger,
   },
   {
+    key: 'naive_db_timestamp_parse',
+    // DB TRỘN HAI KIỂU CỘT: `Employee.created_at` · `GroupDeliveryOrder.started_at` ·
+    // `InventoryEntry.import_date` là `timestamp WITHOUT time zone` (PostgREST trả chuỗi KHÔNG có
+    // offset), còn `gate_registrations.entry_at` · `wms_tasks.claimed_at` thì CÓ. `new Date(chuỗi
+    // không offset)` hiểu là GIỜ MÁY ⇒ đúng trên Vercel/runner (UTC), LỆCH 7 GIỜ trên máy ở VN.
+    // Đo 27/09: chính chỗ này giết CI — tài khoản QA vừa cấp 0,6 giây bị đọc thành 7 giờ tuổi nên
+    // `purgeOld()` xoá tài khoản của lượt CI ĐANG CHẠY mỗi khi có người chạy bộ QA tại máy ⇒
+    // 401 "Tên đăng nhập hoặc mật khẩu không đúng" ⇒ job đỏ ⇒ email. Đi qua `utcMs()` là đúng cho
+    // CẢ HAI kiểu cột (chỉ đắp `Z` khi chuỗi chưa có offset).
+    key_note: 'dùng utcMs() của backend/src/utils/dates.ts (BE) hoặc scripts/qa/ci-account.mjs (script)',
+    label: 'new Date() đọc thẳng cột thời gian của DB — cột `timestamp without time zone` không có offset nên bị hiểu theo GIỜ MÁY (lệch 7h ngoài UTC); dùng utcMs()',
+    // backend/src + scripts/qa đã dọn về 0. Phần còn lại của baseline là NỢ CŨ bên frontend
+    // (`InboundDetail` cửa sổ sửa pallet · `LotTrace` sắp xếp · `OutboundScanLog`) — trình duyệt của
+    // kho cũng ở UTC+7 nên đọc lệch y hệt, nhưng đổi giờ ĐANG HIỂN THỊ là việc phải báo user trước,
+    // không lặng lẽ sửa. Ratchet chặn ĐẺ THÊM; dọn dần khi đụng vào từng file.
+    count: (s) => countMatches(['backend/src', 'scripts/qa', 'frontend/src'], ['.ts', '.tsx', '.mjs'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && !/utcMs\(/.test(line)
+        && /new Date\(\s*[^)]*\.(created_at|updated_at|started_at|import_date|entry_at|exit_at|claimed_at|checked_at|scanned_at|lowered_at|moved_at|done_at)\b/.test(line), s),
+  },
+  {
+    key: 'utc_slice_as_vn_day',
+    // Cắt 10 ký tự đầu của một MỐC (ISO/timestamptz) là lấy ngày theo ĐỒNG HỒ UTC; đem so với
+    // `todayVN()` (đồng hồ VN) thì từ 00:00 đến 07:00 giờ VN hai bên lệch nhau MỘT NGÀY.
+    // Đo 27/09: `PATCH /tms/orders/:id` chặn `eta` kiểu này ⇒ bậc full chạy đêm đỏ hai đêm liền,
+    // và điều vận ca đêm đặt ETA vài giờ tới bị báo "ngày quá khứ". Dùng `vnDayOf()` của utils/dates.
+    label: 'so NGÀY UTC (slice(0,10) của một mốc) với ngày VN (todayVN) — lệch nhau 1 ngày trong khoảng 00:00–07:00 giờ VN; dùng vnDayOf()',
+    // Bắt theo TOÁN HẠNG BỊ CẮT, không bắt theo phép so — vì bug hay viết thành hai bước
+    // (`const d = String(eta).slice(0,10)` rồi dòng sau mới so). Tên mốc thời gian trong schema này
+    // là `eta` hoặc đuôi `_at`; `delivery_date`/`export_date`… là NGÀY NGHIỆP VỤ, cắt 10 ký tự trên
+    // chúng là vô hại nên KHÔNG bắt (bắt vào là lưới kêu oan rồi bị bỏ qua).
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\b(?:eta|[A-Za-z]+_at)\b[^;]{0,40}?\.slice\(\s*0\s*,\s*10\s*\)/.test(line), s),
+  },
+  {
     key: 'hook_after_early_return',
     label: 'hook React gọi SAU lệnh return sớm — render đầu thoát sớm, render sau gọi thêm hook ⇒ TRẮNG TRANG (tsc không bắt được)',
     count: countHookAfterEarlyReturn,

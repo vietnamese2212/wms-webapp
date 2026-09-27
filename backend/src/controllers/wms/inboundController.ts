@@ -19,6 +19,7 @@ import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
 import { putawayEnforces } from '../../utils/putaway'
 import type { MaterialShelfInfo } from '../../utils/shelfLife'
 import { resolveActorId } from '../../utils/actor'
+import { utcMs } from '../../utils/dates'
 
 // Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
 // (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
@@ -1920,7 +1921,7 @@ async function checkDeletePermission(
     if (entry.created_by !== employee_id) {
       return { allowed: false, reason: 'Bạn không có quyền xóa pallet của người khác' }
     }
-    const importDate = new Date(entry.import_date ?? entry.created_at).getTime()
+    const importDate = utcMs(entry.import_date ?? entry.created_at)
     if ((now - importDate) / 86_400_000 > windowDays) {
       return { allowed: false, reason: `Chỉ có thể sửa/xóa pallet trong vòng ${windowDays} ngày sau khi nhập` }
     }

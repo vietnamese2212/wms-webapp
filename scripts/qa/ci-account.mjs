@@ -20,6 +20,10 @@
 import { readFileSync } from 'fs'
 import { randomUUID, randomInt } from 'crypto'
 import bcrypt from 'bcryptjs'
+// Mốc DB → UTC. Tài khoản CI bị đọc SAI TUỔI chính là thứ làm CI đỏ 25–26/09 — xem utcms.mjs.
+// Cố ý KHÔNG import lib.mjs: file đó gắn bộ bắt lỗi toàn cục + có process.exit ở cuối, mà bước
+// cấp tài khoản phải để workflow bắt lỗi bằng `||`.
+import { utcMs } from './utcms.mjs'
 
 const PREFIX = 'QACI'            // employee_code bắt đầu bằng đây = tài khoản do CI cấp
 const MAX_AGE_MS = 2 * 60 * 60 * 1000   // tài khoản CI sống quá 2 giờ = rác của lượt bị huỷ giữa chừng
@@ -58,7 +62,11 @@ function newPassword() {
   return `${UP[randomInt(UP.length)]}${LOW[randomInt(LOW.length)]}${NUM[randomInt(NUM.length)]}${s}`
 }
 
-const runTag = (process.env.GITHUB_RUN_ID ?? String(Date.now())).slice(-10)
+// `GITHUB_RUN_ID` đứng yên suốt một lượt chạy CI nên provision và cleanup gọi ra CÙNG số hiệu.
+// Chạy TẠI MÁY thì không có nó, mà `Date.now()` được tính lại ở MỖI tiến trình ⇒ bước thu hồi đi xoá
+// một số hiệu khác số vừa cấp (đo 27/09: cấp `QACI0479539060`, thu hồi đòi xoá `QACI0479644254`)
+// ⇒ tài khoản vừa dùng nằm lại tới khi quá hạn. Khai `QA_CI_TAG` để hai bước gọi ra cùng một số.
+const runTag = (process.env.GITHUB_RUN_ID || process.env.QA_CI_TAG || String(Date.now())).slice(-10)
 const codeOf = (tag) => `${PREFIX}${tag}`
 
 async function provision() {
@@ -91,12 +99,18 @@ async function provision() {
   // stdout để workflow đọc — mật khẩu được mask ngay ở bước gọi, không lọt vào log
   console.log(`email=${email}`)
   console.log(`password=${password}`)
+  console.log(`tag=${runTag}`)     // gọi tay thì đặt QA_CI_TAG=<tag> cho bước cleanup xoá đúng tài khoản này
 }
 
 /** Xoá tài khoản CI quá hạn — lượt bị huỷ giữa chừng không kịp chạy bước cleanup. */
 async function purgeOld() {
   const rows = await rest(`Employee?employee_code=like.${PREFIX}*&select=id,employee_code,created_at`)
-  const stale = (rows ?? []).filter(r => Date.now() - new Date(r.created_at).getTime() > MAX_AGE_MS)
+  const mine = codeOf(runTag)
+  const stale = (rows ?? []).filter(r => {
+    if (r.employee_code === mine) return false        // tài khoản của CHÍNH lượt này — không bao giờ tự xoá
+    const age = Date.now() - utcMs(r.created_at)
+    return Number.isFinite(age) && age > MAX_AGE_MS   // đọc không ra mốc ⇒ KHÔNG xoá (thà để lại còn hơn xoá nhầm)
+  })
   for (const r of stale) await rest(`Employee?id=eq.${r.id}`, { method: 'DELETE' })
   if (stale.length) console.error(`[ci-account] đã dọn ${stale.length} tài khoản CI quá hạn`)
 }

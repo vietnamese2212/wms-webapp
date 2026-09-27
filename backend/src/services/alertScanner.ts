@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { computePctDate, type SupplierOverride } from '../utils/shelfLife'
 import { qtyLabel } from '../utils/qtyUnits'
+import { utcMs } from '../utils/dates'
 import { recordBackgroundFailure } from '../utils/response'
 import { sendPushToPerm } from './pushService'
 
@@ -155,14 +156,14 @@ async function ruleGateDwell(TH: AlertThresholds): Promise<AlertCandidate[]> {
     .order('entry_at').limit(500)
   if (error) throw new Error(error.message)
   return (data ?? []).map((g) => {
-    const mins = Math.round((Date.now() - new Date(g.entry_at as string).getTime()) / 60_000)
+    const mins = Math.round((Date.now() - utcMs(g.entry_at as string)) / 60_000)
     return {
       rule: 'GATE_DWELL' as const, dedup_key: `GATE|${g.id}`,
       severity: mins >= TH.GATE_CRIT_MIN ? 'CRITICAL' as const : 'WARNING' as const,
       warehouse_id: (g.warehouse_id as string | null) ?? null,
       category: (g.warehouse_type as string | null) ?? null,
       title: `Xe ${g.license_plate ?? '?'} trong cổng ${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}p chưa ra`,
-      detail: `${g.direction === 'OUTBOUND' ? 'Chiều xuất' : 'Chiều nhập'} · vào ${new Date(g.entry_at as string).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' })}${g.company_name_raw ? ` · ${g.company_name_raw}` : ''}${g.content ? ` · ${g.content}` : ''}`,
+      detail: `${g.direction === 'OUTBOUND' ? 'Chiều xuất' : 'Chiều nhập'} · vào ${new Date(utcMs(g.entry_at as string)).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' })}${g.company_name_raw ? ` · ${g.company_name_raw}` : ''}${g.content ? ` · ${g.content}` : ''}`,
       object_url: '/tms/gate',
     }
   })
@@ -201,13 +202,13 @@ async function ruleTripLate(TH: AlertThresholds): Promise<AlertCandidate[]> {
     .order('started_at').limit(500)
   if (e2) throw new Error(e2.message)
   for (const g of (stuck ?? [])) {
-    const hrs = Math.floor((Date.now() - new Date(g.started_at as string).getTime()) / 3600_000)
+    const hrs = Math.floor((Date.now() - utcMs(g.started_at as string)) / 3600_000)
     out.push({
       rule: 'TRIP_LATE', dedup_key: `TRIP|${g.id}|STUCK`, severity: 'WARNING',
       warehouse_id: (g.warehouse_id as string | null) ?? null,
       category: (g.warehouse_type as string | null) ?? null,
       title: `Chuyến ${g.group_code} bắt đầu ${hrs}h chưa hoàn thành`,
-      detail: `Bắt đầu xuất từ ${new Date(g.started_at as string).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' })} — kiểm tra vướng gì (thiếu hàng / quên bấm Hoàn thành).`,
+      detail: `Bắt đầu xuất từ ${new Date(utcMs(g.started_at as string)).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' })} — kiểm tra vướng gì (thiếu hàng / quên bấm Hoàn thành).`,
       object_url: `/wms/outbound/${g.id}`,
     })
   }

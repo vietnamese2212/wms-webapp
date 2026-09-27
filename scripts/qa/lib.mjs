@@ -121,6 +121,7 @@ function readBackendEnv() {
   return out
 }
 const ENV = readBackendEnv()
+export { utcMs } from './utcms.mjs'   // mốc DB → UTC (cột timestamp không offset)
 export const HAS_DB = !!(ENV.SUPABASE_URL && ENV.SUPABASE_SERVICE_ROLE_KEY)
 
 // Thử lại khi ĐỨT MẠNG (DNS/timeout/reset) — KHÔNG thử lại khi server trả lỗi HTTP.

@@ -7,6 +7,7 @@
 // Fixture tag QAAUD, tự dọn (kể cả dòng audit sinh ra trong lúc test).
 import { randomUUID } from 'crypto'
 import { login, api, check, finish, restAll, restWrite, resolveFixtures, FIX, BASE } from './lib.mjs'
+import { utcMs } from './utcms.mjs'
 
 const TAG = 'QAAUD'
 let bcrypt = null
@@ -85,7 +86,7 @@ try {
   const put2 = await api('/wms/settings/dashboard_cache_seconds', 'PUT', { value: oldVal })
   const setRows = (await audit('action=SETTING_UPDATE&search=dashboard_cache_seconds')).filter(r => JSON.stringify(r.after?.value) === String(newVal))
   check('PUT cờ hệ thống → SETTING_UPDATE before/after đúng giá trị', put1.s === 200 && put2.s === 200 && setRows.length >= 1 && JSON.stringify(setRows[0].before?.value) === JSON.stringify(oldVal), `http=${put1.s}/${put2.s} rows=${setRows.length}`)
-  for (const r of (await audit('action=SETTING_UPDATE&search=dashboard_cache_seconds')).filter(r => [newVal, oldVal].includes(r.after?.value) && Date.now() - new Date(r.created_at).getTime() < 120_000))
+  for (const r of (await audit('action=SETTING_UPDATE&search=dashboard_cache_seconds')).filter(r => [newVal, oldVal].includes(r.after?.value) && Date.now() - utcMs(r.created_at) < 120_000))
     await restWrite('admin_audit_events', 'DELETE', `id=eq.${r.id}`).catch(() => {})
 
   check('Lọc action không hợp lệ → 400', (await api('/masterdata/admin-audit?action=HACK')).s === 400)

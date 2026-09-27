@@ -439,12 +439,11 @@ try {
   check('10k. "Nạp OD mới" → OD3 vào KHUNG CHỜ (trip_id null) với 3 pallet', rf.s === 200 && rf.j?.data?.refreshed?.added >= 1 && rowOf(B, OD[2])?.trip_id === null && Number(rowOf(B, OD[2])?.pallets) === 3,
     `http=${rf.s} ${JSON.stringify(rf.j?.data?.refreshed ?? rf.j?.error)}`)
   const mNr = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'new' })
-  const rvN = await api(`/tms/dispatch/plans/${B.id}/reoptimize`, 'POST', { ids: [rowOf(B, OD[2]).id] })
-  check('10k2. OD mới về CHƯA XEM: kéo lên xe → 409 OD_NOT_REVIEWED · "Xác nhận & ghép" riêng OD đó → lên xe mới, mang mốc đã xem, xe cũ giữ nguyên',
-    rowOf(B, OD[2])?.reviewed_at == null && mNr.s === 409 && mNr.j?.error?.code === 'OD_NOT_REVIEWED' && rvN.s === 200 && !!tripOfOd(rvN.j?.data, OD[2]) && !!rowOf(rvN.j?.data, OD[2])?.reviewed_at
-    && tripOfOd(rvN.j?.data, OD[0])?.id === tripOfOd(B, OD[0])?.id,
-    `reviewed=${rowOf(B, OD[2])?.reviewed_at} move=${mNr.s}/${mNr.j?.error?.code} reopt=${rvN.s} ${rvN.j?.error?.message ?? ''}`)
-  B = rvN.j?.data
+  // 27/09 tối (user: "dữ liệu mới không có trong Đã điều thì mặc định là Điều") — OD mới về kéo thẳng lên xe được
+  check('10k2. OD mới về (Nạp OD mới) mặc định ĐIỀU: kéo thẳng vào "Xe mới" → 200, OD3 lên xe mới, xe cũ giữ nguyên',
+    mNr.s === 200 && !!tripOfOd(mNr.j?.data, OD[2]) && tripOfOd(mNr.j?.data, OD[0])?.id === tripOfOd(B, OD[0])?.id,
+    `move=${mNr.s} ${mNr.j?.error?.code ?? ''} ${mNr.j?.error?.message ?? ''}`)
+  B = mNr.j?.data
   await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'QA61 NHA XE', license_plate: '29C99999', updated_at: nowIso() })
   const sy2 = await api(`/tms/dispatch/plans/${B.id}/sync`)
   const fl3 = (sy2.j?.data?.flags ?? []).find(x => x.od_number === OD[2])
@@ -807,28 +806,33 @@ try {
     let PR = pR0.j?.data
     const poolOds = (p) => [...new Set((p?.pool ?? []).map(o => o.od_number))].sort()
     const pid = (p) => p && p.id   // KHÔNG viết ${PR?.id} trong đường dẫn: thước độ phủ đọc đường dẫn tới dấu '?' đầu tiên
-    check('15a. Lập (XEM ĐƠN BẮT BUỘC) → 201, máy CHƯA ghép (0 xe), cả 3 OD nằm khung chờ nguyên OD, mọi dòng CHƯA XEM, summary đếm 3 OD chưa xem, chưa có mốc máy lập',
-      pR0.s === 201 && (PR?.trips ?? []).length === 0 && JSON.stringify(poolOds(PR)) === JSON.stringify([...OD].sort()) && (PR?.pool ?? []).every(o => !o.part_of && o.reviewed_at == null)
-      && PR?.summary?.unreviewed_ods === 3 && PR?.params?.baseline == null,
-      `http=${pR0.s} ${pR0.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} unrev=${PR?.summary?.unreviewed_ods} baseline=${JSON.stringify(PR?.params?.baseline)}`)
+    check('15a. Lập (bước 1 = bảng XEM ĐƠN) → 201, máy CHƯA ghép (0 xe), cả 3 OD nằm khung chờ (tab Điều) nguyên OD, chưa có mốc máy lập',
+      pR0.s === 201 && (PR?.trips ?? []).length === 0 && JSON.stringify(poolOds(PR)) === JSON.stringify([...OD].sort()) && (PR?.pool ?? []).every(o => !o.part_of)
+      && PR?.params?.baseline == null,
+      `http=${pR0.s} ${pR0.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} baseline=${JSON.stringify(PR?.params?.baseline)}`)
     const r1u = (PR?.pool ?? []).find(o => o.od_number === OD[0])
     const mvU = await api(`/tms/dispatch/plans/${pid(PR)}/move`, 'POST', { ids: [r1u?.id], to: 'new' })
     const roU = await api(`/tms/dispatch/plans/${pid(PR)}/reoptimize`, 'POST', {})
     const legacy = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, review_first: false })
     PR = legacy.j?.data
-    check('15a2. OD chưa xem KHÔNG lên xe được: kéo vào "Xe mới" → 409 OD_NOT_REVIEWED · "Tối ưu lại" không cờ → 422 nói còn OD chưa xem · bản cũ gửi review_first=false vẫn KHÔNG được ghép thẳng',
-      mvU.s === 409 && mvU.j?.error?.code === 'OD_NOT_REVIEWED' && roU.s === 422 && /chưa xem/.test(roU.j?.error?.message ?? '') && legacy.s === 201 && (PR?.trips ?? []).length === 0 && PR?.summary?.unreviewed_ods === 3,
-      `move=${mvU.s}/${mvU.j?.error?.code} reopt=${roU.s} ${(roU.j?.error?.message ?? '').slice(0, 60)} legacy=${legacy.s} trips=${(PR?.trips ?? []).length}`)
+    check('15a2. Đơn mặc định ĐIỀU: kéo OD1 vào "Xe mới" → 200 · "Tối ưu lại" không cờ → 200 ghép CẢ khung chờ · lập lại (bản cũ gửi review_first=false) → 201 vẫn 0 xe (bước 1 luôn là Xem đơn)',
+      mvU.s === 200 && roU.s === 200 && (roU.j?.data?.pool ?? []).length === 0 && (roU.j?.data?.trips ?? []).length >= 1 && legacy.s === 201 && (PR?.trips ?? []).length === 0,
+      `move=${mvU.s}/${mvU.j?.error?.code ?? ''} reopt=${roU.s} ${(roU.j?.error?.message ?? '').slice(0, 60)} pool=${(roU.j?.data?.pool ?? []).length} legacy=${legacy.s} trips=${(PR?.trips ?? []).length}`)
     const r3 = (PR?.pool ?? []).find(o => o.od_number === OD[2])
     const hBad = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: DAY, reason: 'QA hẹn' })
-    const hNoReason = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: null, reason: '' })
-    const hOk = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: next, reason: 'QA NPP hẹn ngày sau' })
+    // Bảng Xem đơn (27/09 tối): Điều → "Không điều" (lý do TUỲ CHỌN) → đổi sang "Không điều ngày này" theo SỐ OD (OD đã rời kế hoạch)
+    const hNever = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: null })
+    const exN = (hNever.j?.data?.params?.excluded ?? []).find(x => x.od_number === OD[2])
+    const hNotHeld = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: [OD[1]], until: next })
+    const hOk = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: [OD[2]], until: next, reason: 'QA NPP hẹn ngày sau' })
     PR = hOk.j?.data
-    const holdRow = (await restAll('dispatch_od_hold', `select=od_number,hold_until,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))[0]
+    const holdRow = (await restAll('dispatch_od_hold', `select=od_number,hold_until,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))
     const exH = (PR?.params?.excluded ?? []).find(x => x.od_number === OD[2])
-    check('15b. Hoãn: ngày ≤ ngày lập → 400 · thiếu lý do → 400 · hợp lệ → 200: OD3 rời khung chờ, sổ hoãn có dòng, "OD đã bỏ ra" nêu ngày + lý do',
-      hBad.s === 400 && hNoReason.s === 400 && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow?.hold_until === next && exH?.kind === 'HELD' && /hoãn tới .*QA NPP hẹn/.test(exH?.info ?? ''),
-      `bad=${hBad.s} noReason=${hNoReason.s} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} ex=${JSON.stringify(exH)}`)
+    check('15b. Chuyển trạng thái: ngày ≤ ngày lập → 400 · Điều→Không điều KHÔNG cần lý do → 200 (until null, kèm tên khách + pallet để bảng in dòng) · OD chưa hoãn đổi ngày → 404 · Không điều→Không điều ngày này theo số OD → 200, sổ hoãn MỘT dòng mang ngày mới + lý do',
+      hBad.s === 400 && hNever.s === 200 && exN?.kind === 'HELD' && exN?.until === null && exN?.reason === 'Không điều' && exN?.d?.ship_to_name === 'QA61 NPP 3' && Number(exN?.d?.pallets) > 0
+      && hNotHeld.s === 404 && hNotHeld.j?.error?.code === 'NOT_HELD'
+      && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow.length === 1 && holdRow[0]?.hold_until === next && exH?.kind === 'HELD' && exH?.until === next && /hoãn tới .*QA NPP hẹn/.test(exH?.info ?? '') && exH?.d?.ship_to_name === 'QA61 NPP 3',
+      `bad=${hBad.s} never=${hNever.s} ${hNever.j?.error?.message ?? ''} exN=${JSON.stringify(exN)} notHeld=${hNotHeld.s}/${hNotHeld.j?.error?.code} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} ex=${JSON.stringify(exH)}`)
     const syncH = await api(`/tms/dispatch/plans/${pid(PR)}/sync`)
     const pAgain = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     PR = pAgain.j?.data
@@ -840,9 +844,9 @@ try {
     const rs = await api(`/tms/dispatch/plans/${pid(PR)}/reoptimize`, 'POST', { ids: [r1?.id] })
     PR = rs.j?.data
     const rowNow = (p, od) => [...(p?.trips ?? []).flatMap(t => t.ods), ...(p?.pool ?? [])].find(o => o.od_number === od)
-    check('15d. "Xác nhận & ghép phần đã chọn": chỉ OD1 lên xe và mang mốc ĐÃ XEM · OD2 vẫn ở khung chờ CHƯA XEM · lần ghép đầu thành mốc máy lập',
+    check('15d. "Ghép phần đã chọn": chỉ OD1 lên xe (vết người ghép) · OD2 vẫn ở khung chờ · lần ghép đầu thành mốc máy lập',
       rs.s === 200 && (PR?.trips ?? []).length === 1 && !!tripOfOd(PR, OD[0]) && poolOds(PR).join(',') === OD[1] && PR?.params?.baseline?.trips === 1
-      && !!rowNow(PR, OD[0])?.reviewed_at && !!rowNow(PR, OD[0])?.reviewed_by && rowNow(PR, OD[1])?.reviewed_at == null,
+      && !!rowNow(PR, OD[0])?.reviewed_at && !!rowNow(PR, OD[0])?.reviewed_by,
       `http=${rs.s} ${rs.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} base=${JSON.stringify(PR?.params?.baseline)}`)
     const uOk = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })
     PR = uOk.j?.data

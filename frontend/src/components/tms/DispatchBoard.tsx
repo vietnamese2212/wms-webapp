@@ -11,14 +11,13 @@
 //   • Vượt tải CHO THẢ, đánh dấu đỏ (user chốt) — không chặn như máy; Xác nhận nhắc lại.
 //   • Hoàn tác / Làm lại (Ctrl+Z / Ctrl+Y), khoá xe, bỏ xe trống, "Chuyển tới xe…" cho người không kéo được (điện thoại,
 //     hoặc 80 thẻ xe không kéo chính xác nổi).
-//   • BƯỚC 1 = XEM ĐƠN, BẮT BUỘC (user chốt 27/09 tối: "bước đầu tiên là xem tất cả các đơn open chưa có trong ghép xe —
-//     xác nhận xong mới tới điều xe"): lập kế hoạch xong khung chờ chiếm cả bàn, OD mang dấu "Chưa xem"; OD chưa xem không kéo
-//     lên xe được (409 OD_NOT_REVIEWED). OD về sau (Nạp OD mới · hết hạn hoãn) cũng vào "Chưa xem". SAP sửa OD đã xem (SL /
-//     dòng hàng / ghi chú) ⇒ cờ "SAP đã sửa" + nút "Cập nhật theo SAP"; Xác nhận kế hoạch bị chặn tới khi xử lý.
+//   • BƯỚC 1 = XEM ĐƠN nằm ở BẢNG riêng (DispatchReviewTable, 27/09 tối); chưa có xe nào thì tab này cũng mở bảng đó. Khung chờ
+//     = OD trạng thái ĐIỀU (đơn mới về mặc định là Điều); đơn không đi chuyển sang "Không điều ngày này" / "Không điều".
+//     SAP sửa OD (SL / dòng hàng / ghi chú) ⇒ cờ "SAP đã sửa" + nút "Cập nhật theo SAP"; Xác nhận kế hoạch bị chặn tới khi xử lý.
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, Trash2, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, ListChecks, RotateCw } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -66,9 +65,9 @@ function useIsDesktop() {
 }
 
 const groupKeyOf = (o: DispatchTripOd, g: string) =>
-  g === 'region' ? (o.region_code || 'Chưa có vùng') : g === 'customer' ? (o.ship_to_name || o.ship_to_code || '—') : (o.ward_code || 'Chưa có phường')
+  g === 'region' ? (o.region_name || o.region_code || 'Chưa có vùng') : g === 'customer' ? (o.ship_to_name || o.ship_to_code || '—') : (o.ward_code || 'Chưa có phường')
 const matches = (o: DispatchTripOd, q: string) =>
-  !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.note].some(v => (v ?? '').toLowerCase().includes(q))
+  !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
 export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; newOds: number; onOpenTrip: (id: string) => void
@@ -230,22 +229,11 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   // ── Khung chờ ──
   const poolNotes = pool.filter(o => !!o.note).length
   const poolShown = pool.filter(o => matches(o, q) && (!notesOnly || !!o.note))
-  // BƯỚC XEM ĐƠN: OD chưa xác nhận đứng thành nhóm riêng trên cùng; kế hoạch chưa có xe nào = đang ở bước 1 ⇒ khung chờ chiếm cả bàn
-  const unrev = pool.filter(o => !o.reviewed_at)
-  const unrevOds = uniqStr(unrev.map(o => o.od_number)).length
-  const stage1 = trips.length === 0 && pool.length > 0
-  const sections = useMemo(() => {
-    const groupsOf = (rows: DispatchTripOd[]) => {
-      const m = new Map<string, DispatchTripOd[]>()
-      for (const o of rows) { const k = groupKeyOf(o, f.boardGroup); m.set(k, [...(m.get(k) ?? []), o]) }
-      return [...m.entries()].map(([k, rs]) => ({ k, rows: rs, pallets: rs.reduce((s, o) => s + Number(o.pallets ?? 0), 0) }))
-        .sort((a, b) => b.pallets - a.pallets || a.k.localeCompare(b.k))
-    }
-    const u = poolShown.filter(o => !o.reviewed_at), r = poolShown.filter(o => !!o.reviewed_at)
-    return [
-      { key: 'unrev', title: 'Chưa xem', groups: groupsOf(u), n: uniqStr(u.map(o => o.od_number)).length },
-      { key: 'rev', title: 'Đã xem — chờ xếp xe', groups: groupsOf(r), n: uniqStr(r.map(o => o.od_number)).length },
-    ].filter(x => x.groups.length)
+  const groups = useMemo(() => {
+    const m = new Map<string, DispatchTripOd[]>()
+    for (const o of poolShown) { const k = groupKeyOf(o, f.boardGroup); m.set(k, [...(m.get(k) ?? []), o]) }
+    return [...m.entries()].map(([k, rs]) => ({ k, rows: rs, pallets: rs.reduce((s, o) => s + Number(o.pallets ?? 0), 0) }))
+      .sort((a, b) => b.pallets - a.pallets || a.k.localeCompare(b.k))
   }, [poolShown, f.boardGroup])
 
   // ── Thẻ xe: cùng bộ lọc "Soát" với bảng Danh sách xe ──
@@ -276,53 +264,31 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const doReopt = async () => {
     const lockedN = trips.filter(t => t.locked).length
     if (await ask({ title: 'Tối ưu lại phần chưa khoá?', confirmLabel: 'Tối ưu lại',
-      body: `Máy ghép lại các OD đã xem ở khung chờ (${nf(Math.max(0, (plan.summary.pool_ods ?? 0) - unrevOds))} OD) + mọi xe CHƯA KHOÁ còn sửa được.${unrevOds ? `\n${unrevOds} OD chưa xem nằm lại khung chờ — xác nhận chúng ở đầu khung chờ.` : ''}\n${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'}\nThao tác này KHÔNG hoàn tác được bằng Ctrl+Z.` }) === null) return
+      body: `Máy ghép lại các OD ở khung chờ (${nf(plan.summary.pool_ods ?? 0)} OD) + mọi xe CHƯA KHOÁ còn sửa được.\n${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'}\nThao tác này KHÔNG hoàn tác được bằng Ctrl+Z.` }) === null) return
     reopt.mutateAsync(plan.id).then(r => { setUndo([]); setRedo([]); toast({ title: `Đã ghép lại thành ${r.reoptimized.trips} xe`, description: `${r.reoptimized.kept} xe giữ nguyên${r.reoptimized.left_in_pool ? ` · ${r.reoptimized.left_in_pool} OD vẫn ở khung chờ (không xếp được / đã đổi ở SAP)` : ''}` }) })
       .catch(e => err(e, 'Không tối ưu lại được'))
   }
   const doRefresh = () => refresh.mutateAsync(plan.id)
     .then(r => toast({ title: r.refreshed.added ? `Đã nạp ${r.refreshed.added} OD mới vào khung chờ` : 'Không có OD mới nào', description: r.refreshed.skipped_not_loadable ? `${r.refreshed.skipped_not_loadable} OD không lên xe (trả về / chiết khấu / không đo được tải) — bỏ qua.` : 'Kéo OD từ khung chờ vào xe, hoặc bấm "Tối ưu lại phần chưa khoá".' }))
     .catch(e => err(e, 'Không nạp được OD mới'))
-  const doRemove = async (ids: string[]) => {
-    const ods = [...new Set(ids.map(id => rowBy.get(id)?.od_number).filter(Boolean))]
-    if (await ask({ title: `Bỏ ${ods.length} OD khỏi kế hoạch này?`, danger: true, confirmLabel: 'Bỏ khỏi kế hoạch',
-      body: `${ods.slice(0, 8).join(', ')}${ods.length > 8 ? '…' : ''}\nOD không bị xoá ở SAP — lần "Nạp OD mới" sau sẽ đưa lại nếu nó vẫn chưa được điều. Không hoàn tác được bằng Ctrl+Z.` }) === null) return
-    await run(ids, 'remove', undefined, false)
-  }
-  const openHold = () => {
+  const openHold = (mode: 'date' | 'never') => {
     const d = new Date(`${plan.plan_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)
-    setHoldMode('date'); setHoldUntil(d.toISOString().slice(0, 10))
-    // gợi ý lý do = ghi chú SAP của các OD đang chọn (thường chính là lý do đơn không đi hôm nay)
-    setHoldReason(uniqStr(selIds.map(id => rowBy.get(id)?.note ?? '').filter(Boolean)).join(' · ').slice(0, 500))
+    setHoldMode(mode); setHoldUntil(d.toISOString().slice(0, 10)); setHoldReason('')
     setHoldDlg(true)
   }
   const doHold = () => {
     const ods = uniqStr(selIds.map(id => rowBy.get(id)?.od_number ?? '').filter(Boolean))
-    hold.mutateAsync({ plan_id: plan.id, ids: selIds, until: holdMode === 'date' ? holdUntil : null, reason: holdReason.trim() })
-      .then(r => { setHoldDlg(false); setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ${holdMode === 'date' ? `hoãn ${r.held.ods} OD tới ${holdUntil}` : `đánh dấu ${r.held.ods} OD không điều`}`, description: `${ods.slice(0, 4).join(', ')}${ods.length > 4 ? '…' : ''} — lần nạp / lập sau không đưa lại cho tới ${holdMode === 'date' ? 'ngày đó' : 'khi bỏ hoãn'}.` }) })
-      .catch(e => err(e, 'Không hoãn được'))
+    hold.mutateAsync({ plan_id: plan.id, ids: selIds, until: holdMode === 'date' ? holdUntil : null, reason: holdReason.trim() || undefined })
+      .then(r => { setHoldDlg(false); setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `${r.held.ods} OD → ${holdMode === 'date' ? `Không điều ngày này (điều lại từ ${holdUntil})` : 'Không điều'}`, description: `${ods.slice(0, 4).join(', ')}${ods.length > 4 ? '…' : ''} — xem / chuyển lại ở tab Xem đơn.` }) })
+      .catch(e => err(e, 'Không chuyển được trạng thái'))
   }
   const doUnhold = (od: string) => unhold.mutateAsync({ plan_id: plan.id, od_numbers: [od] })
-    .then(r => toast({ title: `Đã bỏ hoãn ${od}`, description: r.unheld.back_to_pool ? 'OD đã về khung chờ của kế hoạch này.' : 'OD không quay lại khung chờ (đã được lo ở chỗ khác hoặc không còn trong ZSD02).' }))
-    .catch(e => err(e, 'Không bỏ hoãn được'))
-  // ghép RIÊNG các OD đã chọn ở khung chờ — tick là đã xem ⇒ server đặt luôn mốc "đã xem"; xe đang có giữ nguyên
+    .then(r => toast({ title: `${od} → Điều`, description: r.unheld.back_to_pool ? 'OD đã về khung chờ của kế hoạch này.' : 'OD không quay lại khung chờ (đã được lo ở chỗ khác hoặc không còn trong ZSD02).' }))
+    .catch(e => err(e, 'Không chuyển được trạng thái'))
+  // ghép RIÊNG các OD đã chọn ở khung chờ; xe đang có giữ nguyên
   const poolSel = selIds.filter(id => tripOf.get(id) === null)
-  const selUnrev = selIds.filter(id => !rowBy.get(id)?.reviewed_at).length
   const doReoptSel = () => reopt.mutateAsync({ id: plan.id, ids: poolSel })
-    .then(r => { setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ${selUnrev ? 'xác nhận và ' : ''}ghép ${poolSel.length} dòng OD thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Các xe đang có giữ nguyên.' }) })
-    .catch(e => err(e, 'Không ghép được'))
-  // BƯỚC 1 → 2: xác nhận MỌI đơn ở khung chờ rồi máy ghép (gửi cờ, không nhồi id — khung chờ có thể vài trăm OD)
-  const doReviewAll = async () => {
-    const n = uniqStr(pool.map(o => o.od_number)).length
-    if (await ask({ title: `Xác nhận ${n} đơn và ghép xe?`, confirmLabel: 'Xác nhận & ghép xe',
-      body: `Máy ghép xe cho MỌI đơn đang ở khung chờ (${nf(n)} OD${poolNotes ? `, ${poolNotes} OD có ghi chú SAP` : ''}).\nĐơn không đi hôm nay: hoãn / bỏ TRƯỚC khi bấm — sau khi ghép vẫn hoãn hoặc kéo ra được.` }) === null) return
-    reopt.mutateAsync({ id: plan.id, review_all: true })
-      .then(r => { setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã xác nhận ${n} đơn · ghép thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Bước 2: soát thẻ xe, rồi Xác nhận kế hoạch.' }) })
-      .catch(e => err(e, 'Không ghép được'))
-  }
-  // OD về SAU khi đã ghép (Nạp OD mới · hết hạn hoãn): xác nhận riêng các OD đó, máy dựng xe mới cho chúng, xe đang có giữ nguyên
-  const doReviewNew = () => reopt.mutateAsync({ id: plan.id, ids: unrev.map(o => o.id) })
-    .then(r => { setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã xác nhận ${unrevOds} OD mới · thêm ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Các xe đang có giữ nguyên — kéo OD sang xe khác nếu muốn gộp.' }) })
+    .then(r => { setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ghép ${poolSel.length} dòng OD thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Các xe đang có giữ nguyên.' }) })
     .catch(e => err(e, 'Không ghép được'))
   const doResync = (od: string) => resync.mutateAsync({ plan_id: plan.id, od_number: od })
     .then(r => toast({ title: `Đã cập nhật ${od} theo SAP`, description: `${nf(r.resynced.pallets_before, 1)} → ${nf(r.resynced.pallets_after, 1)} pallet · ${nf(r.resynced.tons_before, 1)} → ${nf(r.resynced.tons_after, 1)} tấn — tải + cước của xe đã tính lại.` }))
@@ -332,14 +298,14 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   if (editable) {
     actions.push({ key: 'undo', icon: Undo2, label: 'Hoàn tác', tip: `Hoàn tác lần chuyển OD gần nhất (Ctrl+Z)${undoStack.length ? ` — còn ${undoStack.length} bước` : ''}`, onClick: () => void undo(), disabled: !undoStack.length || busy })
     actions.push({ key: 'redo', icon: Redo2, label: 'Làm lại', tip: 'Làm lại (Ctrl+Y)', onClick: () => void redo(), disabled: !redoStack.length || busy })
-    if (!stage1) actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ĐÃ XEM ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên, OD chưa xem nằm lại chờ xác nhận', onClick: () => void doReopt(), disabled: reopt.isPending || busy, busy: reopt.isPending })
+    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên', onClick: () => void doReopt(), disabled: reopt.isPending || busy, busy: reopt.isPending })
     actions.push({ key: 'refresh', icon: RefreshCw, label: newOds ? `Nạp ${newOds} OD mới` : 'Nạp OD mới', tip: 'Đưa OD mới về từ ZSD02 (chưa điều, chưa đi, chưa nằm kế hoạch nào) vào khung chờ', onClick: () => void doRefresh(), disabled: refresh.isPending, busy: refresh.isPending, className: newOds ? 'border-amber-300 text-amber-800' : undefined })
   }
 
   const targets = trips.filter(editableTrip).map(t => ({ value: t.id, label: `#${t.seq} · ${t.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(t.pallets, 1)} pl · ${t.load_pct == null ? '—' : `${nf(t.load_pct, 0)}%`} · ${t.stops} điểm · ${t.wards.slice(0, 2).join(', ')}` }))
   const excluded = plan.params.excluded ?? []
   const exBy = excluded.reduce<Record<string, number>>((m, x) => { m[x.kind] = (m[x.kind] ?? 0) + 1; return m }, {})
-  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', HELD: 'đang hoãn / không điều' }
+  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', HELD: 'không điều' }
 
   // Kiểu đi của OD (khách Pallet / Xá — danh mục Khách hàng, user chốt 25/09). Bấm = đổi riêng OD này; OD ở nguyên xe,
   // xe báo "OD khách Xá trên xe pallet" nếu lệch. Muốn đổi cả xe thì dùng nút trên thẻ xe.
@@ -373,7 +339,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const odRow = (o: DispatchTripOd, compact?: boolean) => {
     const fl = flags.get(o.od_number)
     const tr = o.trip_id ? plan.trips.find(t => t.id === o.trip_id) : null
-    const dragOk = canDrag && (!tr || editableTrip(tr)) && !!o.reviewed_at   // OD chưa xem không kéo lên xe được
+    const dragOk = canDrag && (!tr || editableTrip(tr))
     return (
       <div key={o.id} draggable={dragOk} onDragStart={dragOk ? e => onDragStart(e, o) : undefined} onDragEnd={dragOk ? onDragEnd : undefined}
         className={`group flex items-start gap-1.5 rounded px-1.5 py-1 text-[11px] ${sel.has(o.id) ? 'bg-sky-100' : 'hover:bg-slate-50'} ${dragOk ? 'cursor-grab active:cursor-grabbing' : ''} ${fl ? 'ring-1 ring-red-200' : ''}`}>
@@ -385,7 +351,6 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
             <span className="font-mono font-semibold">{o.od_number}</span>
             {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
             {(o.late_days ?? 0) > 0 && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800" title={`Ngày giao ${o.delivery_date ?? '?'} — chưa điều, chưa đi`}>trễ {o.late_days} ngày</span>}
-            {!o.reviewed_at && <span className="rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800" title="Chưa qua bước Xem đơn — xác nhận ở đầu khung chờ rồi mới xếp lên xe">Chưa xem</span>}
             {fl && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title={fl.info ?? undefined}>{FLAG_VI[fl.kind]}</span>}
             {modeChip(o, !!editable && (!tr || editableTrip(tr)))}
             {catChips(catsByLoad([o.cat_load]))}
@@ -614,7 +579,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
     <div className="flex flex-col lg:flex-row min-h-0 h-full">
       {/* ── KHUNG CHỜ ── */}
       {/* KHUNG CHỜ THU GỌN được thành một rãnh 36 px (desktop) để bàn thẻ xe rộng hết màn — vẫn là ô thả "về khung chờ" */}
-      {poolRail && !stage1 ? (
+      {poolRail ? (
         <aside data-dispatch-pool {...dropProps('pool', 'pool')}
           className={`hidden lg:flex w-9 shrink-0 border-r flex-col items-center gap-2 py-2 ${hover?.target === 'pool' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-slate-50'}`}>
           <button type="button" className="rounded p-1 text-slate-500 hover:bg-slate-200" title="Mở khung chờ" onClick={() => setF({ poolHidden: false })}><ChevronsRight className="h-4 w-4" /></button>
@@ -623,13 +588,13 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
         </aside>
       ) : (
       <aside data-dispatch-pool {...dropProps('pool', 'pool')}
-        className={`${stage1 ? 'lg:flex-1 lg:min-w-0' : 'lg:w-[300px] shrink-0'} border-b lg:border-b-0 lg:border-r flex flex-col min-h-0 ${hover?.target === 'pool' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-slate-50/60'}`}>
+        className={`lg:w-[300px] shrink-0 border-b lg:border-b-0 lg:border-r flex flex-col min-h-0 ${hover?.target === 'pool' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-slate-50/60'}`}>
         <div className="px-3 py-1.5 border-b bg-white space-y-1 shrink-0">
           <div className="flex items-center gap-2">
             <Inbox className="h-4 w-4 text-slate-500 shrink-0" />
-            <span className="text-xs font-semibold text-slate-700">{stage1 ? 'Bước 1 · Xem đơn' : 'Khung chờ'}</span>
+            <span className="text-xs font-semibold text-slate-700">Khung chờ</span>
             <span className="text-[11px] text-slate-500 tabular-nums">{nf(plan.summary.pool_ods ?? pool.length)} OD · {nf(plan.summary.pool_pallets ?? 0, 1)} pl</span>
-            {!stage1 && <button type="button" className="ml-auto hidden lg:inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Thu gọn khung chờ — bàn thẻ xe rộng hơn" onClick={() => setF({ poolHidden: true })}><ChevronsLeft className="h-4 w-4" /></button>}
+            <button type="button" className="ml-auto hidden lg:inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Thu gọn khung chờ — bàn thẻ xe rộng hơn" onClick={() => setF({ poolHidden: true })}><ChevronsLeft className="h-4 w-4" /></button>
           </div>
           <div className="flex items-center gap-1 text-[10px]">
             <span className="text-slate-400">Gom theo</span>
@@ -650,19 +615,6 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
               <StickyNote className="h-3 w-3" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {poolNotes} OD có ghi chú
             </button>
           )}
-          {/* BƯỚC XEM ĐƠN BẮT BUỘC (27/09 tối) — bước 1: mọi OD mở chưa có trong ghép xe; về sau: OD mới về chưa xem */}
-          {editable && stage1 && (
-            <div className="rounded border border-sky-200 bg-sky-50 px-2 py-1.5 text-[11px] text-sky-900 space-y-1">
-              <div><b>Máy chưa ghép xe nào.</b> Xem hết {nf(uniqStr(pool.map(o => o.od_number)).length)} đơn mở chưa có trong ghép xe: đọc ghi chú SAP, tick đơn không đi hôm nay → <b>Hoãn / Không điều</b> (hoặc <b>Bỏ khỏi kế hoạch</b>). Xong mới bấm xác nhận — máy ghép xe sau bước này.</div>
-              <Button size="sm" className="h-7 text-[11px]" disabled={reopt.isPending} onClick={() => void doReviewAll()}><ListChecks className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : `Xác nhận ${nf(uniqStr(pool.map(o => o.od_number)).length)} đơn & ghép xe`}</Button>
-            </div>
-          )}
-          {editable && !stage1 && unrevOds > 0 && (
-            <div className="rounded border border-sky-200 bg-sky-50 px-2 py-1.5 text-[11px] text-sky-900 space-y-1">
-              <div><b>{unrevOds} OD mới chưa xem</b> (Nạp OD mới / hết hạn hoãn) — chưa lên xe được. Đọc ghi chú, hoãn đơn không đi, rồi xác nhận.</div>
-              <Button size="sm" className="h-7 text-[11px]" disabled={reopt.isPending} onClick={() => void doReviewNew()}><ListChecks className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : `Xác nhận & ghép ${unrevOds} OD`}</Button>
-            </div>
-          )}
           {newOds > 0 && editable && (
             <button type="button" onClick={() => void doRefresh()} disabled={refresh.isPending}
               className="w-full rounded border border-amber-300 bg-amber-50 px-2 py-1 text-left text-[11px] text-amber-900 hover:bg-amber-100">
@@ -670,21 +622,13 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
             </button>
           )}
         </div>
-        <div className={`flex-1 min-h-0 overflow-y-auto ${stage1 ? '' : 'max-h-[40vh] lg:max-h-none'} px-2 py-1.5 space-y-1.5`}>
+        <div className="flex-1 min-h-0 overflow-y-auto max-h-[40vh] lg:max-h-none px-2 py-1.5 space-y-1.5">
           {!pool.length && <p className="px-1 py-3 text-center text-[11px] text-slate-400">{canDrag ? 'Kéo OD từ xe về đây để bỏ khỏi xe — OD ở khung chờ KHÔNG đi khi Xác nhận.' : 'Không có OD nào chờ xếp xe.'}</p>}
           {pool.length > 0 && !poolShown.length && <p className="px-1 py-3 text-center text-[11px] text-slate-400">Không OD nào khớp "{f.search}"</p>}
-          {sections.map(sec => (
-            <div key={sec.key} className="space-y-1.5">
-              {(sections.length > 1 || sec.key === 'unrev') && (
-                <div className={`flex items-center gap-1.5 px-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide ${sec.key === 'unrev' ? 'text-sky-800' : 'text-slate-500'}`}>
-                  {sec.title} · {nf(sec.n)} OD
-                </div>
-              )}
-              <div className={stage1 ? 'grid gap-1.5 lg:grid-cols-2 2xl:grid-cols-3 items-start' : 'space-y-1.5'}>
-          {sec.groups.map(g => {
+          {groups.map(g => {
             const open = !collapsed.has(g.k)
             return (
-              <div key={`${sec.key}|${g.k}`} className="rounded border border-slate-200 bg-white">
+              <div key={g.k} className="rounded border border-slate-200 bg-white">
                 <div className="flex items-center gap-1.5 px-1.5 py-1 border-b border-slate-100">
                   <button type="button" className="text-slate-400" onClick={() => setCollapsed(p => { const n = new Set(p); n.has(g.k) ? n.delete(g.k) : n.add(g.k); return n })}>
                     {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -697,9 +641,6 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
               </div>
             )
           })}
-              </div>
-            </div>
-          ))}
           {(plan.unplanned.length > 0 || excluded.length > 0) && (
             <div className="space-y-1 pt-1">
               {plan.unplanned.length > 0 && (
@@ -721,7 +662,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
                   {showSide === 'excluded' && <ul className="px-2 pb-1.5 space-y-0.5 max-h-48 overflow-auto">{excluded.map(x => (
                     <li key={x.od_number} className="flex items-start gap-1">
                       <span className="min-w-0 flex-1 break-words"><span className="font-mono">{x.od_number}</span> — {x.kind === 'HELD' ? (x.info ?? EX_VI.HELD) : <>{EX_VI[x.kind] ?? x.kind}{x.info ? ` (${x.info})` : ''}</>}</span>
-                      {x.kind === 'HELD' && editable && <button type="button" className="shrink-0 text-[10px] font-medium text-sky-700 hover:underline" disabled={unhold.isPending} onClick={() => void doUnhold(x.od_number)}>Bỏ hoãn</button>}
+                      {x.kind === 'HELD' && editable && <button type="button" className="shrink-0 text-[10px] font-medium text-sky-700 hover:underline" disabled={unhold.isPending} onClick={() => void doUnhold(x.od_number)}>Chuyển lại Điều</button>}
                     </li>
                   ))}</ul>}
                 </div>
@@ -734,7 +675,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
 
       {/* ── LƯỚI THẺ XE — nhóm theo DÒNG XE CHA, đóng mặc định (user 25/09 tối: "sắp xếp group theo thứ tự CHA, mở thì
           mới ra — mục tiêu để tập trung xem khi cần"); trong nhóm là các dòng xe CON ── */}
-      <section className={`${stage1 ? 'lg:w-[320px] lg:flex-none' : 'flex-1'} min-w-0 min-h-0 flex flex-col`}>
+      <section className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px]" />
           <div className="w-36 shrink-0" title="Sắp xếp thẻ xe — sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
@@ -764,14 +705,6 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           <ActionCluster items={actions} mobileInline />
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-24 lg:pb-3 space-y-2">
-          {stage1 && (
-            <ol className="rounded-lg border border-slate-200 bg-white p-3 text-[11px] text-slate-600 space-y-2">
-              <li><b className="text-sky-800">1 · Xem đơn</b> — {nf(unrevOds)} OD chưa xem{poolNotes ? ` · ${poolNotes} có ghi chú SAP` : ''}. Đơn không đi hôm nay: tick → Hoãn / Không điều.</li>
-              <li><b>2 · Ghép xe</b> — bấm "Xác nhận … đơn & ghép xe"; máy dựng thẻ xe, người soát / kéo thả.</li>
-              <li><b>3 · Xác nhận kế hoạch</b> — xe vào Kế hoạch xuất.</li>
-              <li className="text-slate-400">Đơn SAP sửa sau khi đã xem: bàn báo "SAP đã sửa" kèm nút Cập nhật theo SAP; đơn mới về vào lại bước Xem đơn.</li>
-            </ol>
-          )}
           {tripGroups.map(g => {
             const open = forceOpen || openSet.has(g.k)
             return (
@@ -813,11 +746,12 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
       </section>
 
       <FloatingActionBar count={selIds.length} unit="OD đã chọn">
-        {!selUnrev && !stage1 && <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setMoveTarget(''); setMoveDlg(true) }}>Chuyển tới xe…</Button>}
-        {poolSel.length > 0 && poolSel.length === selIds.length && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={reopt.isPending || busy} onClick={() => void doReoptSel()}><Sparkles className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : selUnrev ? 'Xác nhận & ghép phần đã chọn' : 'Ghép phần đã chọn'}</Button>}
-        <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={openHold}><CalendarClock className="h-3.5 w-3.5 mr-1" />Hoãn / Không điều…</Button>
+        <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setMoveTarget(''); setMoveDlg(true) }}>Chuyển tới xe…</Button>
+        {poolSel.length > 0 && poolSel.length === selIds.length && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={reopt.isPending || busy} onClick={() => void doReoptSel()}><Sparkles className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : 'Ghép phần đã chọn'}</Button>}
         {selIds.some(id => tripOf.get(id)) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void run(selIds.filter(id => tripOf.get(id)), 'pool')}>Về khung chờ</Button>}
-        <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER} disabled={busy} onClick={() => void doRemove(selIds)}><Trash2 className="h-3.5 w-3.5 mr-1" />Bỏ khỏi kế hoạch</Button>
+        {/* "Bỏ khỏi kế hoạch" (tạm, không nằm ở tab nào) đã bỏ 27/09 tối — đơn không đi là "Không điều ngày này" */}
+        <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openHold('date')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Không điều ngày này</Button>
+        <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER} disabled={busy} onClick={() => openHold('never')}><Ban className="h-3.5 w-3.5 mr-1" />Không điều</Button>
         <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setSel(new Set())}>Bỏ chọn</Button>
       </FloatingActionBar>
 
@@ -838,26 +772,26 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
       </Dialog>
       <Dialog open={holdDlg} onOpenChange={o => { if (!o && !hold.isPending) setHoldDlg(false) }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="text-sm">Hoãn / không điều {uniqStr(selIds.map(id => rowBy.get(id)?.od_number ?? '')).length} OD</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-sm">{holdMode === 'date' ? 'Không điều ngày này' : 'Không điều'} — {uniqStr(selIds.map(id => rowBy.get(id)?.od_number ?? '')).length} OD</DialogTitle></DialogHeader>
           <div className="space-y-2 text-xs">
             <div className="grid grid-cols-2 gap-1 rounded border border-slate-200 p-0.5">
-              {([['date', 'Hoãn tới ngày'], ['never', 'Không điều']] as const).map(([k, l]) => (
+              {([['date', 'Không điều ngày này'], ['never', 'Không điều']] as const).map(([k, l]) => (
                 <button key={k} type="button" onClick={() => setHoldMode(k)} aria-pressed={holdMode === k}
                   className={`rounded px-2 py-1.5 ${holdMode === k ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{l}</button>
               ))}
             </div>
             {holdMode === 'date'
               ? <label className="block">Điều lại từ ngày <input type="date" className="ml-2 h-8 rounded border border-slate-300 px-2" value={holdUntil} min={(() => { const d = new Date(`${plan.plan_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) })()} onChange={e => setHoldUntil(e.target.value)} /></label>
-              : <p className="text-slate-500">OD không vào đợt ghép nào cho tới khi có người bấm "Bỏ hoãn" (danh sách "OD đã bỏ ra" ở khung chờ).</p>}
+              : <p className="text-slate-500">OD không vào đợt ghép nào — kể cả các ngày sau — tới khi có người chuyển lại Điều (tab Xem đơn).</p>}
             <label className="block">
-              <span className="text-slate-600">Lý do <span className="text-red-600">*</span></span>
-              <textarea className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs" rows={3} maxLength={500} value={holdReason} onChange={e => setHoldReason(e.target.value)} placeholder="vd NPP hẹn giao 10/9 · trả hoá đơn, hàng không đi" />
+              <span className="text-slate-600">Lý do (tuỳ chọn)</span>
+              <textarea className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs" rows={2} maxLength={500} value={holdReason} onChange={e => setHoldReason(e.target.value)} placeholder="vd NPP hẹn giao 10/9 · trả hoá đơn, hàng không đi" />
             </label>
-            <p className="text-[11px] text-slate-500">OD rời kế hoạch này (mọi phần nếu đang tách) và KHÔNG quay lại khi "Nạp OD mới" / lập lại — khác "Bỏ khỏi kế hoạch" chỉ là tạm.</p>
+            <p className="text-[11px] text-slate-500">OD rời kế hoạch này (mọi phần nếu đang tách) và KHÔNG quay lại khi "Nạp OD mới" / lập lại.</p>
           </div>
           <DialogFooter>
             <Button size="sm" variant="outline" className="h-8" disabled={hold.isPending} onClick={() => setHoldDlg(false)}>Huỷ</Button>
-            <Button size="sm" className="h-8" disabled={hold.isPending || !holdReason.trim() || (holdMode === 'date' && !holdUntil)} onClick={doHold}>{hold.isPending ? 'Đang lưu…' : holdMode === 'date' ? 'Hoãn' : 'Không điều'}</Button>
+            <Button size="sm" className="h-8" disabled={hold.isPending || (holdMode === 'date' && !holdUntil)} onClick={doHold}>{hold.isPending ? 'Đang lưu…' : 'Chuyển'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

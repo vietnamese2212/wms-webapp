@@ -423,8 +423,10 @@ interface DispatchFilters {
   // thuộc tính. '' = tất cả · 'todo' = mọi xe cần người quyết · còn lại là từng loại vấn đề.
   issue: string
   todoFirst: boolean     // xe cần xử lý xếp LÊN ĐẦU (mặc định bật — làm từ trên xuống, hết việc là sạch đầu bảng)
-  // 25/09: 'board' bàn ghép xe kéo thả (mặc định) · 'list' bảng soát xe · 'ods' dữ liệu OD thô
+  // 'review' bảng Xem đơn (27/09 tối, thay tab 'ods') · 'board' bàn ghép xe kéo thả · 'list' bảng soát xe
   tab: string
+  // tab trạng thái của bảng Xem đơn: 'GO' Điều · 'DAY' Không điều ngày này · 'NEVER' Không điều · 'DONE' Đã điều
+  reviewTab: string
   boardGroup: string     // khung chờ gom theo 'ward' (phường) | 'region' (vùng) | 'customer' (khách)
   boardSort: string      // thẻ xe sắp theo 'region' (vùng → phường) | 'todo' (cần xử lý trước) | 'load' (tải thấp trước) | 'freight' (cước cao trước) | 'seq' — sắp lại SAU MỖI LẦN THẢ (user 25/09)
   // Bàn làm việc rộng rãi (user 25/09 tối): chỉ số chi tiết giấu sau nút · nhóm xe theo dòng xe CHA đóng mặc định · khung chờ thu gọn được
@@ -676,7 +678,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'board', boardGroup: 'ward', boardSort: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', boardGroup: 'ward', boardSort: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false },
     vehicleModels: { search: '', parents: [], status: '', capMode: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

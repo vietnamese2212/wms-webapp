@@ -24,7 +24,9 @@ export interface PoolCandidateRow {
   license_plate: string | null
 }
 export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'
-export interface ExcludedOd { od_number: string; kind: ExcludeKind; info: string | null }
+/** Thông tin OD để bảng Xem đơn in được dòng của OD không nằm trên kế hoạch (controller điền, hàm thuần này để trống). */
+export interface ExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
+export interface ExcludedOd { od_number: string; kind: ExcludeKind; info: string | null; until?: string | null; reason?: string; d?: ExcludedDetail }
 export interface PoolSplit {
   include: Map<string, { delivery_date: string | null; late_days: number }>
   excluded: ExcludedOd[]
@@ -50,7 +52,7 @@ export function splitPool(
     const report = (kind: ExcludeKind, info: string | null) => { if (today) excluded.push({ od_number: od, kind, info }) }
     if (ctx.inPlan.has(od)) { report('IN_PLAN', ctx.inPlan.get(od) ?? null); continue }
     const h = ctx.held?.get(od)
-    if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}` }); continue }
+    if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}`, until: h.until, reason: h.reason }); continue }
     if (ctx.otherDraft.has(od)) { report('OTHER_DRAFT', ctx.otherDraft.get(od) ?? null); continue }
     if (rs.some(shippedRow)) { report('SHIPPED', rs.find(r => r.mat_doc)?.mat_doc ?? null); continue }
     const asg = rs.find(r => r.sap_dispatch_status === 'ASSIGNED')

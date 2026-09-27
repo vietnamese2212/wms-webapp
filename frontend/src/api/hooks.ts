@@ -5888,14 +5888,14 @@ export function useSlotApplyInfo(params: { warehouse_id?: string; vehicle_type_i
 // ─── Điều vận — kế hoạch ghép chuyến NHÁP (đợt 2, 24/09) ─────────────────────
 export interface DispatchTripOd {
   id: string; plan_id: string; trip_id: string | null   // trip_id null = OD nằm KHUNG CHỜ (bàn ghép xe, 25/09)
-  od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code?: string | null
+  od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code?: string | null; region_name?: string | null
   pallets: number | string | null; tons: number | string | null; lines: number; part_index: number | null; part_of: number | null; material_codes: string[]
   conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null; late_days?: number
   load_mode?: DispatchLoadMode | null   // khách đi Pallet / Xá (25/09) — theo danh mục khách, đổi được trên bàn ghép xe
   is_transfer?: boolean                 // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — null = không giới hạn
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
-  reviewed_at?: string | null           // bước XEM ĐƠN (27/09 tối, bắt buộc): null = chưa xem ⇒ chưa lên xe được
+  reviewed_at?: string | null           // vết ai bấm ghép lúc nào (27/09 tối: đơn mới mặc định ĐIỀU — không còn chặn theo cột này)
   reviewed_by?: string | null
 }
 export type DispatchLoadMode = 'PALLET' | 'LOOSE'
@@ -5909,7 +5909,9 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
 }
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
 export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED'; info: string | null; replaced_by?: string | null }
-export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'; info: string | null }
+export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
+/** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
@@ -5992,7 +5994,8 @@ export function useReoptimizeDispatchPlan() {
 export function useHoldDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids: string[]; until: string | null; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null } }),
+    // ids = dòng OD trên kế hoạch (tab Điều) · od_numbers = OD đang hoãn (đổi giữa Không điều ngày này ⇄ Không điều); reason tuỳ chọn
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null } }),
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }

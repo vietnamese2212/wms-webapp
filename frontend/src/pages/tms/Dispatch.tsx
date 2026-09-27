@@ -11,11 +11,11 @@
 // 3 tab cạnh tiêu đề — Bàn ghép xe (kéo thả, mặc định) · Danh sách xe (bảng soát cũ) · Dữ liệu OD (thô, OD đang ở đâu).
 // Dải chỉ số `DispatchKpiBar` + dải Soát đứng CHUNG trên cả ba tab.
 import { useEffect, useMemo, useState } from 'react'
-import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, Database, RotateCcw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
-import { DispatchOdTable } from '@/components/tms/DispatchOdTable'
+import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
 import { EDITABLE, tripStatus, ISSUES, TODO_KEYS, ISSUE_ORDER, ISSUE_SHORT, issuesOf, needsWork, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
@@ -116,10 +116,11 @@ export default function Dispatch() {
   const flags = useMemo(() => new Map((syncQ.data?.flags ?? []).map(x => [x.od_number, x])), [syncQ.data])
   const ictx = useMemo(() => ({ flags }), [flags])
   const permTabs = useMemo(() => [
-    { key: 'board', label: 'Bàn ghép xe', icon: LayoutGrid }, { key: 'list', label: 'Danh sách xe', icon: List }, { key: 'ods', label: 'Dữ liệu OD', icon: Database },
+    // Xem đơn đứng ĐẦU (27/09 tối): bảng theo trạng thái Điều · Không điều ngày này · Không điều · Đã điều — thay tab "Dữ liệu OD"
+    { key: 'review', label: 'Xem đơn', icon: ListChecks }, { key: 'board', label: 'Bàn ghép xe', icon: LayoutGrid }, { key: 'list', label: 'Danh sách xe', icon: List },
   ], [])
-  const tabs = useMobileTabs('/tms/dispatch', permTabs, f.tab || 'board', (t: string) => setF({ tab: t }))
-  const tab = tabs.some(t => t.key === f.tab) ? f.tab : (tabs[0]?.key ?? 'board')
+  const tabs = useMobileTabs('/tms/dispatch', permTabs, f.tab || 'review', (t: string) => setF({ tab: t }))
+  const tab = tabs.some(t => t.key === f.tab) ? f.tab : (tabs[0]?.key ?? 'review')
 
   const { data: modelsRes } = useVehicleModels({ is_active: true })
   const models = (modelsRes?.items ?? []).filter(m => m.parent)
@@ -144,12 +145,15 @@ export default function Dispatch() {
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   const runPlan = () => {
     if (!f.warehouseId) return
-    // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; bàn ghép xe mở bước Xem đơn
+    // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; mở bảng Xem đơn ở tab Điều
     create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day }).then(p => {
-      setF({ planId: p.id, tab: 'board' })
-      toast({ title: `Bước 1 — xem ${p.summary.pool_ods ?? 0} đơn`, description: 'Đọc ghi chú SAP, hoãn / bỏ đơn không đi, rồi bấm "Xác nhận … đơn & ghép xe".' })
+      setF({ planId: p.id, tab: 'review', reviewTab: 'GO' })
+      toast({ title: `Bước 1 — xem ${p.summary.pool_ods ?? 0} đơn`, description: 'Đơn không đi: chuyển sang "Không điều ngày này" / "Không điều", rồi bấm "Ghép xe … đơn Điều".' })
     }).catch(e => err(e, 'Không lập được kế hoạch'))
   }
+  const noTripYet = !!plan && !plan.trips.some(t => tripStatus(t) !== 'DISCARDED' && t.ods.length > 0)
+  // chưa có xe nào ⇒ Bàn ghép xe cũng mở bảng Xem đơn (bước 1), không để một bàn trống với khung chờ vài trăm đơn
+  const showReview = !!plan && (tab === 'review' || (tab === 'board' && noTripYet))
   const tenderCount = plan ? plan.trips.filter(t => tripStatus(t) === 'DRAFT' && needsTender(t)).length : 0
   const doConfirm = async () => {
     if (!plan) return
@@ -283,8 +287,7 @@ export default function Dispatch() {
   const confirmIsNext = canConfirm && (isDraft || (plan?.status === 'TENDERED' && plan.trips.some(t => tripStatus(t) === 'DRAFT' && t.ods.length > 0)))
   const actionItems: ActionItem[] = []
   // bước Xem đơn (27/09 tối): chưa xe nào ⇒ nút Xác nhận kế hoạch KHOÁ kèm lý do, kẻo lẫn với "Xác nhận N đơn & ghép xe"
-  const noTripYet = !!plan && !plan.trips.some(t => tripStatus(t) !== 'DISCARDED' && t.ods.length > 0)
-  if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: noTripYet ? 'Chưa có xe nào — bước 1: xem đơn rồi bấm "Xác nhận … đơn & ghép xe" ở khung chờ; xác nhận kế hoạch là bước 3' : tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending || noTripYet, busy: confirm.isPending })
+  if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: noTripYet ? 'Chưa có xe nào — bước 1: tab Xem đơn, bấm "Ghép xe … đơn Điều"; xác nhận kế hoạch là bước 3' : tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending || noTripYet, busy: confirm.isPending })
   if (canPlan) actionItems.push({ key: 'plan', icon: Play, label: plan ? 'Lập lại' : 'Lập kế hoạch', tip: plan ? 'Lập lại — chạy lại máy ghép, bản nháp hiện tại (kể cả phần đã sửa tay) bị thay' : 'Máy ghép OD chưa xếp xe của kho × ngày này thành chuyến nháp', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: runPlan, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
   if (canConfirm && confirmedN > 0) actionItems.push({ key: 'reopen', icon: RotateCcw, label: 'Mở lại', tip: `Kéo ${confirmedN} xe đã vào Kế hoạch xuất về nháp để sửa trên Bàn ghép xe (chỉ xe mà chuyến chưa bắt đầu)`, onClick: () => void doReopen(), disabled: reopen.isPending, busy: reopen.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
@@ -404,7 +407,7 @@ export default function Dispatch() {
             Dùng SWITCH hiện sẵn chứ không phải chip trong menu: cả lựa chọn LẪN số của từng lựa chọn
             phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại
             vấn đề nào KHÔNG có xe nào thì không hiện — menu đầy lựa chọn ra bảng trắng là vô ích. */}
-        {plan && tab !== 'ods' && (
+        {plan && !showReview && (
           // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
@@ -450,7 +453,7 @@ export default function Dispatch() {
 
         {plan && sum && f.kpiOpen && <DispatchKpiBar plan={plan} />}
 
-        <div className={tab === 'board' && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
+        <div className={(tab === 'board' || showReview) && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
               <Waypoints className="h-10 w-10 opacity-30" />
@@ -466,10 +469,10 @@ export default function Dispatch() {
               {canPlan ? <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={runPlan} disabled={create.isPending}><Play className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang ghép…' : 'Lập kế hoạch'}</Button>
                 : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ chạy máy ghép.</p>}
             </div>
+          ) : showReview ? (
+            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} />
           ) : tab === 'board' ? (
             <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} newOds={syncQ.data?.new_ods ?? 0} onOpenTrip={setOpenTripId} />
-          ) : tab === 'ods' ? (
-            <DispatchOdTable plan={plan} flags={flags} search={f.search} onSearch={v => setF({ search: v })} />
           ) : (
             <>
               <ResizableTable key={showStatus ? 'st' : 'nost'} storageKey={showStatus ? 'dispatch_cols_v2' : 'dispatch_cols_draft_v1'} cols={cols}>

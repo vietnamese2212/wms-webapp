@@ -885,6 +885,16 @@ async function loadOpenPlan(req: Request, planId: string): Promise<{ plan: PlanR
   if (!OPEN_PLAN.includes(plan.status)) return { err: ['Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp', 409, 'PLAN_NOT_DRAFT'] }
   return { plan: plan as PlanRow }
 }
+/** KHOÁ LẠC QUAN một kế hoạch cho thao tác DỰNG LẠI / CHÈN dòng OD (ghép · tối ưu lại · nạp OD mới · thay OD · cập nhật theo
+ *  SAP): CAS trên `updated_at` đọc lúc vào — hai người cùng bấm thì chỉ một người chạy, người sau 409. Đo 27/09 tối (check-app):
+ *  hai lượt "Xác nhận & ghép" đồng thời trên Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai lượt 200 — mỗi lượt đọc cùng
+ *  khung chờ rồi tự dựng xe. KHÔNG thử lại: lượt thua không có gì để làm, chạy lại là vứt kết quả người thắng. */
+async function claimPlan(plan: PlanRow): Promise<boolean> {
+  const { data, error } = await db.from('dispatch_plan').update({ updated_at: now() }).eq('id', plan.id).eq('updated_at', plan.updated_at).select('id')
+  if (error) throw error
+  return (data ?? []).length === 1
+}
+const BUSY: TripErr = { err: ['Kế hoạch vừa được người khác cập nhật (ghép / nạp OD / thay OD) — tải lại trang rồi làm tiếp.', 409, 'PLAN_BUSY'] }
 /** Tính lại (và ghi) các chuyến bị đụng — MỘT lần nạp bảng cước cho hợp các phường. */
 async function repriceMany(plan: PlanRow, trips: PlanTrip[]) {
   if (!trips.length) return
@@ -1093,6 +1103,7 @@ export async function reoptimizePlan(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
+    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1230,6 +1241,7 @@ export async function refreshPool(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
+    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1255,6 +1267,7 @@ export async function replaceOd(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
+    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
@@ -1303,6 +1316,7 @@ export async function resyncOd(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
+    if (!(await claimPlan(plan))) return sendErr(res, BUSY)   // hai người cùng bấm ⇒ một người chạy
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!

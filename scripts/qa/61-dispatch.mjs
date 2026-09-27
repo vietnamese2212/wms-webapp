@@ -924,6 +924,35 @@ try {
         !!gM && gv.length === 2 && gv.map(v => Number(v.pallets)).join('+') === '9+5' && Number(gM?.freight_detail?.load?.pct) === 77.8 && Number(gM?.freight_estimated) === Number(tM?.freight_estimated ?? two.j?.data?.freight_estimated),
         `gdo=${JSON.stringify({ f: gM?.freight_estimated, veh: gv.map(v => v.pallets), load: gM?.freight_detail?.load?.pct, reason: gM?.freight_detail?.reason })} thẻ=${two.j?.data?.freight_estimated}`)
     } else check('15h. Fixture: OD11 phải có xe ở [15g]', false)
+
+    // HAI NGƯỜI CÙNG BẤM "Xác nhận … đơn & ghép xe" (check-app 27/09 tối: Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai
+    // lượt 200). Bước này nay bắt buộc nên ai mở bàn cũng bấm nó ⇒ chỉ MỘT lượt được chạy, lượt kia 409, mỗi OD đúng một chỗ.
+    await cleanupTrips()
+    const pK = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+    const kId = pK.j?.data?.id
+    const kRes = await Promise.all([0, 1].map(() => api(`/tms/dispatch/plans/${kId}/reoptimize`, 'POST', { review_all: true })))
+    const kRows = await restAll('dispatch_trip_od', `select=od_number,trip_id,part_of&plan_id=eq.${kId}`)
+    const kPlaces = new Map()
+    for (const r of kRows) { const s = kPlaces.get(r.od_number) ?? new Set(); s.add(r.part_of ? `part:${r.trip_id}` : (r.trip_id ?? 'pool')); kPlaces.set(r.od_number, s) }
+    const kDup = [...kPlaces].filter(([od, s]) => s.size > 1 || kRows.filter(r => r.od_number === od && !r.part_of).length > 1)
+    check('15k. Hai người cùng "Xác nhận & ghép": đúng MỘT lượt 200, lượt kia 409 PLAN_BUSY · mỗi OD đúng MỘT dòng, MỘT chỗ',
+      kRes.filter(r => r.s === 200).length === 1 && kRes.some(r => r.s === 409 && r.j?.error?.code === 'PLAN_BUSY') && kDup.length === 0 && kPlaces.size > 0,
+      `codes=${kRes.map(r => `${r.s}/${r.j?.error?.code ?? ''}`).join(' ')} OD=${kPlaces.size} dòng=${kRows.length} trùng=${kDup.map(([od]) => od).join(',')}`)
+
+    // XE ĐANG CHỜ ĐVVT mà SAP sửa OD: ghi "ĐVVT nhận" bị chặn (đúng — tải cũ) nhưng "Cập nhật theo SAP" từng từ chối xe CHỜ ⇒
+    // ngõ cụt, lối ra duy nhất là ghi "từ chối" dù ĐVVT đã nhận (check-app 27/09 tối). HA cần phản hồi (0b) ⇒ xe OD3 đứng CHỜ.
+    const cfK = await api(`/tms/dispatch/plans/${kId}/confirm`, 'POST', {})
+    const PK = await planOf(kId)
+    const tK3 = tripOfOd(PK, OD[2])
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { qty_base: 2 * perPallet, updated_at: nowIso() })
+    const acc1 = await api(`/tms/dispatch/trips/${tK3?.id}/respond`, 'POST', { accept: true })
+    const rsK = await api(`/tms/dispatch/plans/${kId}/resync-od`, 'POST', { od_number: OD[2] })
+    const acc2 = await api(`/tms/dispatch/trips/${tK3?.id}/respond`, 'POST', { accept: true })
+    const khK = await restAll('khvc_lines', `select=do_no&group_code=eq.${tK3?.group_code}`)
+    check('15l. Xe CHỜ ĐVVT có OD bị SAP sửa: ghi nhận → 409 OD_CHANGED_IN_SAP · "Cập nhật theo SAP" làm được trên xe chờ (xe vẫn chờ, 3 → 2 pallet) · ghi nhận lại → 200, xe vào Kế hoạch xuất',
+      cfK.s === 200 && tK3?.status === 'TENDERED' && acc1.s === 409 && acc1.j?.error?.code === 'OD_CHANGED_IN_SAP'
+      && rsK.s === 200 && Number(rsK.j?.data?.resynced?.pallets_after) === 2 && tripOfOd(rsK.j?.data, OD[2])?.status === 'TENDERED' && acc2.s === 200 && khK.length === 1,
+      `confirm=${cfK.s} xe=${tK3?.status} acc1=${acc1.s}/${acc1.j?.error?.code} resync=${rsK.s}/${rsK.j?.error?.code ?? ''} after=${rsK.j?.data?.resynced?.pallets_after} acc2=${acc2.s}/${acc2.j?.error?.code ?? ''} kh=${khK.length}`)
   }
 } finally {
   await cleanup()

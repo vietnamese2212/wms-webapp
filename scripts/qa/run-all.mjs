@@ -27,9 +27,12 @@ const UNIT = offline({ label: 'backend: npm test (unit + mirror BE⇄FE, không 
 const COVERAGE = offline(qa('coverage-surface.mjs', '--ratchet'))
 const STATIC = offline(qa('09-static-gate.mjs'))
 const AUDIT = offline(qa('44-npm-audit.mjs'))
+// 28/09: bản đồ module docs/modules (tách khỏi CLAUDE.md) — mọi module có file + giao thoa hai chiều
+const DOCS = offline({ label: 'docs/modules: bản đồ module + giao thoa hai chiều', cmd: process.execPath, args: [join(ROOT, 'scripts', 'docs', 'check-modules.mjs')], cwd: ROOT })
 
 const FAST = [
   STATIC,                           // cổng tĩnh ratchet (không cần server) — rẻ nhất, fail nhanh nhất
+  DOCS,                             // 28/09: docs/modules đủ module + giao thoa hai chiều (không cần DB)
   AUDIT,                            // lỗ hổng thư viện high/critical không được TĂNG so audit-baseline.json (03/09)
   UNIT,                             // 11/09: helper thuần + mirror BE⇄FE — vài giây, bắt lớp "luật chép tay lệch"
   COVERAGE,                         // 11/09: route/quyền mới chưa gói QA nào chạm → đỏ
@@ -41,6 +44,7 @@ const FAST = [
 
 const FULL = [
   STATIC,
+  DOCS,
   AUDIT,
   UNIT,
   COVERAGE,

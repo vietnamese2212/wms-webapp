@@ -23,3 +23,7 @@ TMS Bookings (tab Đặt lịch + Chuyển kho). **HAI TRẠNG THÁI KHÁC NHAU,
 ## Actions
 
 view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upload_outbound, upload_inbound, **confirm_receipt**=nhận hàng chuyển kho (xác nhận/quét/hoàn thành), **export**=Xuất Excel Báo cáo nhập (menu Báo cáo TMS) 
+
+## 28/09 — lệnh chuyển kho và kho đích
+
+Kho đích của lệnh chuyển kho sinh lúc Hoàn thành = khách trỏ kho (`services/transferDest`), không còn dò theo mã kho / tên. Ship-to chưa trỏ ⇒ lệnh OTHER nằm dưới **kho xuất** (`warehouse_id` = kho xuất, `destination_warehouse_id` null) — migration 20260929 đưa 62 lệnh PENDING/SELF của các kho NPP vừa ngừng về đúng chỗ này. Trỏ kho sau khi chuyến đã hoàn thành ⇒ kho xuất bấm "Đẩy lại cho kho nhận" (module `outbound`), lệnh cũ được đồng bộ tại chỗ (giữ id, kế hoạch nhập sinh lại). Upload Kế hoạch VC tra kho theo mã/tên kho + `shiptos` (khách trỏ kho), không còn `shipto_codes`.

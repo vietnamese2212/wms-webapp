@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-27T11:54:47.925Z · 109 bảng/view · 174 hàm · 0 enum
+// Sinh lúc 2026-09-28T15:11:12.645Z · 109 bảng/view · 174 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -112,6 +112,8 @@ export type Database = {
           load_mode_by_category: Json
           max_vehicle_tons: number | null
           dispatch_vehicles: Json
+          dispatch_separate: boolean
+          max_customers_per_trip: number | null
         }
         Insert: {
           id: string
@@ -138,6 +140,8 @@ export type Database = {
           load_mode_by_category?: Json
           max_vehicle_tons?: number | null
           dispatch_vehicles?: Json
+          dispatch_separate?: boolean
+          max_customers_per_trip?: number | null
         }
         Update: {
           id?: string
@@ -164,6 +168,8 @@ export type Database = {
           load_mode_by_category?: Json
           max_vehicle_tons?: number | null
           dispatch_vehicles?: Json
+          dispatch_separate?: boolean
+          max_customers_per_trip?: number | null
         }
         Relationships: []
       }
@@ -2422,12 +2428,13 @@ export type Database = {
           separate_lowering_forklift: boolean
           cross_trip_pick_radius: number
           auto_fill: boolean
-          dispatch_max_drops: number
+          dispatch_max_drops: number | null
           dispatch_allow_mix_channels: boolean
           dispatch_underload_pct: number | null
           dispatch_pallet_max_stops: number
           dispatch_allow_mix_categories: boolean
           dispatch_max_vehicles_per_trip: number
+          unlinked_shipto_policy: string
         }
         Insert: {
           id: string
@@ -2472,12 +2479,13 @@ export type Database = {
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
           auto_fill?: boolean
-          dispatch_max_drops?: number
+          dispatch_max_drops?: number | null
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
           dispatch_allow_mix_categories?: boolean
           dispatch_max_vehicles_per_trip?: number
+          unlinked_shipto_policy?: string
         }
         Update: {
           id?: string
@@ -2522,12 +2530,13 @@ export type Database = {
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
           auto_fill?: boolean
-          dispatch_max_drops?: number
+          dispatch_max_drops?: number | null
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
           dispatch_allow_mix_categories?: boolean
           dispatch_max_vehicles_per_trip?: number
+          unlinked_shipto_policy?: string
         }
         Relationships: []
       }
@@ -3465,6 +3474,8 @@ export type Database = {
           reviewed_by: string | null
           sap_sig: string | null
           region_name: string | null
+          separate: boolean
+          max_customers: number | null
         }
         Insert: {
           id: string
@@ -3496,6 +3507,8 @@ export type Database = {
           reviewed_by?: string | null
           sap_sig?: string | null
           region_name?: string | null
+          separate?: boolean
+          max_customers?: number | null
         }
         Update: {
           id?: string
@@ -3527,6 +3540,8 @@ export type Database = {
           reviewed_by?: string | null
           sap_sig?: string | null
           region_name?: string | null
+          separate?: boolean
+          max_customers?: number | null
         }
         Relationships: []
       }

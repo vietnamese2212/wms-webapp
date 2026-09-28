@@ -51,6 +51,7 @@ import {
   type AutoApplied, type PolicyCtx,
 } from '../../services/dateRulePolicy'
 import { applyMasterToOpenOrders, APPLY_MASTER_CAP } from '../../services/dateRuleApply'
+import { destInfoOfShipto, destInfoForShiptos, asUnlinkedPolicy, linkCustomersByWarehouseCode, type DestInfo } from '../../services/transferDest'
 
 const now = () => new Date().toISOString()
 
@@ -747,8 +748,14 @@ async function fetchGDOFull(id: string) {
     skipped:  tr.filter(t => t.status === 'SKIPPED').length,
   } : null
 
+  // Kho nhận theo mối nối khách trỏ kho + gợi ý "trông như kho WMS mà chưa trỏ" theo chính sách của kho xuất (28/09)
+  const g0 = gdo as unknown as { warehouse_id?: string | null; shipto_party?: string | null }
+  const unl = await unlinkedShiptoInfo(g0.warehouse_id, g0.shipto_party)
+
   return {
     ...gdo,
+    dest_warehouse: unl.dest ? { id: unl.dest.id, code: unl.dest.code, name: unl.dest.name, inventory_mode: unl.dest.inventory_mode } : null,
+    unlinked_hint: unl.hint && unl.policy !== 'NONE' ? { ...unl.hint, policy: unl.policy } : null,
     planned_vehicle_type: plannedVehicleType,
     weigh_tickets: wtRes.data ?? [],
     weight_estimate: weightEstimate,
@@ -876,7 +883,7 @@ export async function listGDOs(req: Request, res: Response) {
       let rows: any[] = []
       if (ids.length) {
         rows = await fetchAllByIdChunks(ids, chunk => supabase.from('GroupDeliveryOrder')
-          .select('*, warehouse:Warehouse(id,code,name,inventory_mode), forklift_driver:Employee!forklift_driver_id(id,name)')
+          .select('*, warehouse:Warehouse(id,code,name,inventory_mode,unlinked_shipto_policy), forklift_driver:Employee!forklift_driver_id(id,name)')
           .in('id', chunk).order('id'))
         const pos = new Map(ids.map((v, i) => [v, i]))   // `.in()` không giữ thứ tự RPC đã sắp
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -896,7 +903,7 @@ export async function listGDOs(req: Request, res: Response) {
     // (kho nhiều chuyến/khoảng ngày rộng → trước đây mất chuyến từ dòng 1001).
     const buildQuery = (): any | null => {
       let q = supabase.from('GroupDeliveryOrder')
-        .select('*, warehouse:Warehouse(id,code,name,inventory_mode), forklift_driver:Employee!forklift_driver_id(id,name)')
+        .select('*, warehouse:Warehouse(id,code,name,inventory_mode,unlinked_shipto_policy), forklift_driver:Employee!forklift_driver_id(id,name)')
         .order('delivery_date', { ascending: false })
       // Cắt theo Loại hàng được phép: KHÔNG lọc ở SQL nữa — chuyến chở lẫn lưu chuỗi ghép
       // 'FG01+PM01' nên `in.()` (so khớp nguyên chuỗi) ẨN MẤT chuyến (bug 30/07). Lọc bằng
@@ -984,9 +991,13 @@ async function enrichGdos(data: any[]): Promise<any[]> {
       list.push(i)
       itemsByDo.set(i.do_id, list)
     }
+    // Kho nhận (khách trỏ kho) + gợi ý "trông như kho WMS mà chưa trỏ" — hai truy vấn cho cả trang (28/09)
+    const dinfo = await destInfoForShiptos((data ?? []).map((g: any) => g.shipto_party as string | null))
 
     return (data ?? []).map((g: any) => {
       const gdoDOs   = dosByGdo.get(g.id) ?? []
+      const di = dinfo.get(String(g.shipto_party ?? '').trim().toUpperCase()) ?? { dest: null, hint: null }
+      const unlPolicy = asUnlinkedPolicy(g.warehouse?.unlinked_shipto_policy)
       const gdoItems = gdoDOs.flatMap((d: any) => itemsByDo.get(d.id) ?? [])
       const noqrItems = gdoItems.filter((i: any) => isExcludedFromCount(i))
 
@@ -1053,6 +1064,8 @@ async function enrichGdos(data: any[]): Promise<any[]> {
 
       return {
         ...g,
+        dest_warehouse: di.dest ? { id: di.dest.id, code: di.dest.code, name: di.dest.name, inventory_mode: di.dest.inventory_mode } : null,
+        unlinked_hint: !di.dest && di.hint && unlPolicy !== 'NONE' ? { ...di.hint, policy: unlPolicy } : null,
         vehicle_model: vm ? { id: vm.id, sap_code: vm.sap_code, name: vm.name, capacity_mode: vm.capacity_mode, max_pallets: vm.max_pallets, max_tons: vm.max_tons, tariff_unit: vm.tariff_unit, underload_pct: vm.underload_pct } : null,
         load: { pallets: loadSum.pallets, tons, incomplete: loadSum.incomplete, ...util },
         do_count:          gdoDOs.length,
@@ -1264,34 +1277,31 @@ type ShiptoWh = { id: string; code: string; name: string; inventory_mode?: strin
 
 /**
  * KHO ĐÍCH của một mã ship-to — MỘT cửa tra cho cả 3 chỗ đang cần (chuyển kho tự sinh, luật quỹ đạo
- * kho phụ, cặp nội bộ). Thứ tự: **danh mục Khách hàng** (khai tường minh, `Customer.warehouse_id`) →
- * cột `code`/`shipto_codes` của Kho (tương thích dữ liệu cũ) → null = khách ngoài.
- *
- * Vì sao Khách hàng đứng TRƯỚC (user chốt 11/09): đo staging 11/09 thì **0/153 kho** có khai
- * `shipto_codes`, nên đường duy nhất còn chạy là dò TÊN kho — đổi tên kho là luật hỏng âm thầm.
- * Khách vào danh mục KHÔNG đồng nghĩa họ phải xác nhận hàng: chỉ khách có trỏ kho mới là kho nhận.
+ * kho phụ, cặp nội bộ) = `services/transferDest` — CHỈ `Customer.warehouse_id` (user chốt 28/09: kho WMS là
+ * plant, khách trỏ kho là mối nối duy nhất). Nấc `Warehouse.code`/`shipto_codes` và dò TÊN đã bỏ: đo staging
+ * 28/09 chúng là đường thật sự chạy (0/213 khách trỏ kho) và đổi tên kho là luật chuyển kho đổi âm thầm.
  */
 async function warehouseByShipto(shipto: string | null | undefined): Promise<ShiptoWh | null> {
-  const st = String(shipto ?? '').trim()
-  if (!st) return null
-  const code = normShipto(st)
-  if (code) {
-    const { data: cust } = await supabase.from('Customer')
-      .select('warehouse_id, is_active').eq('ship_to_code', code).maybeSingle()
-    const c = cust as { warehouse_id: string | null; is_active: boolean } | null
-    if (c?.warehouse_id && c.is_active !== false) {
-      const { data } = await supabase.from('Warehouse')
-        .select('id, code, name, inventory_mode, parent_warehouse_id')
-        .eq('id', c.warehouse_id).eq('is_active', true).maybeSingle()
-      if (data) return data as ShiptoWh
-    }
-  }
-  const stSafe = safeFilterValue(st)
-  const { data } = await supabase.from('Warehouse')
-    .select('id, code, name, inventory_mode, parent_warehouse_id')
-    .or(`code.eq.${stSafe},shipto_codes.cs.{${stSafe}}`)
-    .eq('is_active', true).maybeSingle()
-  return (data as ShiptoWh | null) ?? null
+  const d = (await destInfoOfShipto(shipto)).dest
+  return d ? { id: d.id, code: d.code, name: d.name, inventory_mode: d.inventory_mode, parent_warehouse_id: d.parent_warehouse_id } : null
+}
+
+/**
+ * Chính sách của KHO XUẤT với ship-to "trông như kho WMS mà chưa trỏ" (`Warehouse.unlinked_shipto_policy`, 28/09):
+ * NONE = im · WARN = màn hình nhắc (chip, không chặn) · BLOCK = không cho Hoàn thành tới khi trỏ kho. Gợi ý = tên khách
+ * trùng đúng một kho đang hoạt động — chính phép dò tên cũ, nay chỉ gợi ý, không tự nối. Khách ngoài không bao giờ bị nhắc.
+ */
+async function unlinkedShiptoInfo(sourceWhId: string | null | undefined, shipto: string | null | undefined): Promise<DestInfo & { policy: 'NONE' | 'WARN' | 'BLOCK' }> {
+  const info = await destInfoOfShipto(shipto)
+  if (info.dest || !info.hint || !sourceWhId) return { ...info, policy: 'NONE' }
+  const { data } = await supabase.from('Warehouse').select('unlinked_shipto_policy').eq('id', sourceWhId).maybeSingle()
+  return { ...info, policy: asUnlinkedPolicy((data as { unlinked_shipto_policy?: string | null } | null)?.unlinked_shipto_policy) }
+}
+async function shiptoBlockError(sourceWhId: string | null | undefined, shipto: string | null | undefined): Promise<string | null> {
+  const u = await unlinkedShiptoInfo(sourceWhId, shipto)
+  return u.policy === 'BLOCK' && u.hint
+    ? `Ship-to ${String(shipto ?? '').trim()} chưa trỏ kho nhận nhưng trùng tên kho "${u.hint.warehouse_name}" trong WMS — kho này đặt CHẶN hoàn thành tới khi khai (Cài đặt WMS → Kho → Ship-to nhận, hoặc Khách hàng → Kho nhận).`
+    : null
 }
 
 async function orbitWhByShipto(shipto: string | null | undefined): Promise<OrbitWh | null> {
@@ -1697,6 +1707,9 @@ export async function quickExportGDO(req: Request, res: Response) {
       const dupErr = await duplicateDoError(delivery_code, delivery_date, warehouse_id ?? null)
       if (dupErr) return fail(res, 409, 'DUPLICATE_DO', dupErr)
     }
+    // Kho xuất đặt CHẶN với ship-to trông như kho WMS mà chưa trỏ (28/09) — "Xuất luôn" chốt chuyến ngay nên gác ở đây
+    const qxBlock = await shiptoBlockError(warehouse_id ?? null, shipto_party ?? null)
+    if (qxBlock) return fail(res, 422, 'SHIPTO_UNLINKED', qxBlock)
 
     // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO, retry+jitter chống đụng số khi tạo đồng thời)
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1893,6 +1906,8 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const { data: dos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId)
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
     if (!doIds.length) return fail(res, 'Chuyến chưa có đơn/mặt hàng', 400)
+    const qxeBlock = await shiptoBlockError(gdo.warehouse_id as string, (gdo as { shipto_party?: string | null }).shipto_party)
+    if (qxeBlock) return fail(res, 422, 'SHIPTO_UNLINKED', qxeBlock)
     const { data: items } = await supabase.from('OutboundItem')
       .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
       .in('do_id', doIds)
@@ -1995,24 +2010,26 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
 // Gỡ hoàn thành GIỮ lệnh + booking (không xóa) → hoàn thành lại rơi vào nhánh SYNC:
 // đồng bộ số liệu/đích vào CHÍNH lệnh cũ, tracking không đứt (user chốt 09/07).
 
-async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
+type TransferSyncResult = { order_code: string; delivery_mode: 'SELF' | 'SCAN'; dest: { id: string; code: string; name: string } | null; lines: number }
+/** `manual` (28/09, nút "Đẩy lại cho kho nhận"): người ở kho xuất chủ động đẩy — bỏ qua cờ Xác nhận giao hàng và trạng thái mồ côi. */
+async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: { manual?: boolean } = {}): Promise<TransferSyncResult | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: gdo } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, shipto_party, transfer_status, license_plate, warehouse_id')
     .eq('id', gdoId).single()
-  if (!gdo) return
+  if (!gdo) return null
 
   // Lệnh cũ còn sống (sau Bỏ hoàn thành) → SYNC thay vì tạo mới
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: existingRows } = await supabase.from('TmsOrder')
     .select('id').eq('transfer_gdo_id', gdoId).limit(1)
   const existing = ((existingRows ?? []) as { id: string }[])[0] ?? null
-  if (!existing && gdo.transfer_status) return   // trạng thái mồ côi (lệnh đã bị xóa tay) — giữ hành vi cũ
+  if (!existing && gdo.transfer_status && !opts.manual) return null   // trạng thái mồ côi (lệnh đã bị xóa tay) — giữ hành vi cũ
 
   // Cờ Xác nhận giao hàng (Cài đặt hệ thống): tắt → không tạo booking MỚI; bật → chỉ tạo cho hình thức được chọn.
   // Lệnh ĐÃ tồn tại thì vẫn sync bất kể cờ (đổi cờ giữa chừng không được làm đứt tracking).
   const dc = await getDeliveryConfirmation()
-  if (!existing && !dc.enabled) return
+  if (!existing && !dc.enabled && !opts.manual) return null
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')
@@ -2022,23 +2039,13 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const custLabel = ((dos ?? [])[0] as { distributor_name?: string | null } | undefined)?.distributor_name?.trim() || 'KH'
 
   type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null; parent_warehouse_id?: string | null }
-  // Kho đích: danh mục Khách hàng trước (khai tường minh), rồi mới tới code/shipto_codes của Kho.
+  // Kho đích = khách trỏ kho, KHÔNG còn dò tên (28/09) — ship-to chưa trỏ ⇒ OTHER, kho xuất nhắc/chặn theo cấu hình của nó.
   let destWh: DestWh | null = gdo.shipto_party ? ((await warehouseByShipto(gdo.shipto_party)) as DestWh | null) : null
-  // Fallback: KHÔNG có/không khớp shipto → dò TÊN khách khớp TÊN kho danh mục (gõ tay không bấm gợi ý,
-  // đơn cũ chưa gắn shipto…). Khớp ĐÚNG 1 kho mới nhận (trùng tên nhiều kho → giữ OTHER cho an toàn).
-  if (!destWh && custLabel !== 'KH') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: byName } = await supabase.from('Warehouse')
-      .select('id, code, name, inventory_mode, parent_warehouse_id')
-      .ilike('name', custLabel.replace(/[%_\\]/g, '\\$&'))   // ilike không wildcard = so bằng không phân hoa/thường
-      .eq('is_active', true).limit(2)
-    if ((byName ?? []).length === 1) destWh = byName![0] as DestWh
-  }
-  // Kho phụ nội bộ của site KHÁC (tên/shipto trùng lọt qua) → không auto-transfer, coi như khách ngoài (OTHER).
+  // Kho phụ nội bộ của site KHÁC → không auto-transfer, coi như khách ngoài (OTHER).
   if (destWh?.parent_warehouse_id && destWh.parent_warehouse_id !== gdo.warehouse_id) destWh = null
   // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
   const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : isQtyLike(destWh.inventory_mode) ? 'QTY' : 'QR') : 'OTHER'
-  if (!existing && !dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking mới)
+  if (!existing && !dc.modes.includes(modeKey) && !opts.manual) return null   // loại này không được chọn → ngắt (không tạo booking mới)
   // NONE / OTHER: tài xế TỰ HOÀN THÀNH (không nhận-quét, không tạo tồn). QR/QTY: nhận-quét như cũ.
   const isSelf = modeKey === 'NONE' || modeKey === 'OTHER'
 
@@ -2057,7 +2064,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
       matMap.set(item.material_id, { material_id: item.material_id, planned_boxes: 0, category: item.material?.category ?? null, units: (item.material ?? null) as MatUnitsQ | null })
     matMap.get(item.material_id)!.planned_boxes += item.cartons_ordered || 0
   }
-  if (!matMap.size) return
+  if (!matMap.size) return null
 
   // OTHER (khách ngoài, không có kho đích): scope + hiển thị theo KHO XUẤT (gdo.warehouse_id); nhãn = shipto/tên KH.
   const orderWarehouseId = destWh ? destWh.id : (gdo.warehouse_id as string)
@@ -2132,6 +2139,45 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('GroupDeliveryOrder')
     .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs }).eq('id', gdoId)
+  return { order_code: orderCode, delivery_mode: isSelf ? 'SELF' : 'SCAN', dest: destWh ? { id: destWh.id, code: destWh.code, name: destWh.name } : null, lines: lineRows.length }
+}
+
+/**
+ * POST /outbound/:id/push-transfer — "Đẩy lại cho kho nhận" (user chốt 28/09: "nếu gắn kho sau thì kho xuất vào đẩy lại
+ * một lượt là chủ động nhất — cái nào đã có thì không đẩy được"). KHÔNG có nối lại tự động khi trỏ kho.
+ * Chặn: chuyến chưa hoàn thành 409 · ship-to chưa trỏ kho 422 SHIPTO_UNLINKED · lệnh đã có kho nhận (đã đẩy) hoặc đã có
+ * người nhận 409 TRANSFER_ALREADY_PUSHED. Chưa có lệnh (cờ OTHER tắt lúc hoàn thành) ⇒ tạo mới.
+ */
+export async function pushTransferOrder(req: Request, res: Response) {
+  try {
+    const gdoId = String(req.params.id)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('id, group_code, status, shipto_party, warehouse_id, transfer_status').eq('id', gdoId).maybeSingle()
+    const g = gdo as { id: string; group_code: string; status: string; shipto_party: string | null; warehouse_id: string | null; transfer_status: string | null } | null
+    if (!g) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy chuyến')
+    if (!inScope(req, g.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
+    if (g.status !== 'COMPLETED') return fail(res, 409, 'NOT_COMPLETED', 'Chỉ đẩy lại được chuyến ĐÃ HOÀN THÀNH')
+    if (!String(g.shipto_party ?? '').trim()) return fail(res, 422, 'SHIPTO_UNLINKED', 'Chuyến không có ship-to — không biết kho nhận nào')
+    const dest = await warehouseByShipto(g.shipto_party)
+    if (!dest) return fail(res, 422, 'SHIPTO_UNLINKED', `Ship-to ${String(g.shipto_party).trim()} chưa trỏ kho nhận — khai ở Cài đặt WMS → Kho → Ship-to nhận (hoặc Khách hàng → Kho nhận) rồi đẩy lại.`)
+    if (dest.parent_warehouse_id && dest.parent_warehouse_id !== g.warehouse_id)
+      return fail(res, 422, 'SHIPTO_UNLINKED', `"${dest.name}" là kho phụ của site khác — không nhận chuyến này`)
+    const { data: ex } = await supabase.from('TmsOrder')
+      .select('id, order_code, destination_warehouse_id, status').eq('transfer_gdo_id', gdoId).limit(1)
+    const cur = ((ex ?? []) as { id: string; order_code: string; destination_warehouse_id: string | null; status: string }[])[0] ?? null
+    if (cur?.destination_warehouse_id)
+      return fail(res, 409, 'TRANSFER_ALREADY_PUSHED', `Lệnh ${cur.order_code} đã đẩy cho kho nhận rồi — không đẩy lại`)
+    if (cur && cur.status !== 'PENDING')
+      return fail(res, 409, 'TRANSFER_ALREADY_PUSHED', `Lệnh ${cur.order_code} đã ${cur.status === 'COMPLETED' ? 'nhận xong' : 'được xử lý'} — không đẩy lại`)
+    if (g.transfer_status && g.transfer_status !== 'IN_TRANSIT')
+      return fail(res, 409, 'TRANSFER_ALREADY_PUSHED', `Kho nhận đã ${g.transfer_status === 'RECEIVING' ? 'bắt đầu nhận' : 'nhận xong'} — không đẩy lại`)
+    const r = await maybeAutoCreateTransferOrder(gdoId, now(), { manual: true })
+    if (!r) return fail(res, 422, 'NO_LINES', 'Chuyến không có dòng hàng để đẩy')
+    await logOutboundEvents([{ group_code: g.group_code, gdo_id: gdoId, event_type: 'TRANSFER_PUSHED', source: 'USER', actor: req.user?.name ?? null,
+      do_number: null, material_code: null, old_value: cur ? 'lệnh chưa có kho nhận' : 'chưa có lệnh', new_value: `${r.order_code} → ${r.dest?.name ?? '?'} (${r.delivery_mode === 'SCAN' ? 'kho nhận xác nhận trong app' : 'tài xế tự xác nhận'})`,
+      detail: `Đẩy lại cho kho nhận: ${r.lines} dòng hàng` }])
+    return ok(res, r)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
 // ─── Delete GDO ───────────────────────────────────────────────
@@ -2615,6 +2661,11 @@ export async function patchGDO(req: Request, res: Response) {
     // SL khóa trên đơn, sửa DO ở tab DO SAP → engine reconcile dội xuống (đã quét thì qua hàng chờ
     // "Cần xử lý" bấm Áp SAP) → khớp → hoàn thành.
     if (status === 'COMPLETED') {
+      // Kho xuất đặt CHẶN hoàn thành với ship-to trông như kho WMS mà chưa trỏ (28/09)
+      const { data: gsp } = await supabase.from('GroupDeliveryOrder').select('warehouse_id, shipto_party').eq('id', req.params.id).maybeSingle()
+      const gspRow = gsp as { warehouse_id: string | null; shipto_party: string | null } | null
+      const blockErr = await shiptoBlockError(gspRow?.warehouse_id, gspRow?.shipto_party)
+      if (blockErr) return fail(res, 422, 'SHIPTO_UNLINKED', blockErr)
       const { data: dos } = await supabase.from('OutboundDelivery')
         .select('id').eq('gdo_id', req.params.id)
       const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
@@ -3945,8 +3996,11 @@ async function processVehicleGroups(
       if (code && !shiptoSeen.has(code))
         shiptoSeen.set(code, String(groupRows[0]['Tên NPP'] ?? '').trim() || code)
     }
-    if (!isPreflight(req) && shiptoSeen.size)
-      await ensureCustomers([...shiptoSeen].map(([ship_to_code, name]) => ({ ship_to_code, name })), req.user?.name ?? null)
+    if (!isPreflight(req) && shiptoSeen.size) {
+      const madeNew = await ensureCustomers([...shiptoSeen].map(([ship_to_code, name]) => ({ ship_to_code, name })), req.user?.name ?? null)
+      // 28/09: ship-to mới trùng MÃ kho đang hoạt động ⇒ tự trỏ kho (cùng luật với cửa ZSD02)
+      if (madeNew > 0) await linkCustomersByWarehouseCode([...shiptoSeen.keys()], req.user?.name ?? null)
+    }
     const policyCtx = await loadPolicyCtx([...whSeen], [...shiptoSeen.keys()])
     const autoApplied: AutoApplied[] = []            // dòng máy vừa áp → soi tồn sau khi ghi xong
 

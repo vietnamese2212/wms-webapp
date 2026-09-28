@@ -712,6 +712,9 @@ export interface GDO {
   warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; work_mode?: string | null; require_weigh_on_start?: boolean; require_gate_on_start?: boolean } | null
   shipto_party?:     string | null
   transfer_status?:  string | null
+  // 28/09 — kho nhận theo mối nối "khách trỏ kho" (BE tra, FE KHÔNG tự so mã/tên); gợi ý khi ship-to trông như kho WMS mà chưa trỏ
+  dest_warehouse?:   { id: string; code: string; name: string; inventory_mode: string | null } | null
+  unlinked_hint?:    { warehouse_id: string; warehouse_name: string; policy: 'WARN' | 'BLOCK' } | null
   dvvt:             string | null
   // Nguồn chuyến (02/08): 'SAP' = sinh từ VL06O+Kế hoạch xuất → phần KẾ HOẠCH khóa trên đơn,
   // sửa ở 2 tab nguồn; 'EXCEL'/'MANUAL'/'LEGACY' = sửa như cũ (kho không làm SAP)

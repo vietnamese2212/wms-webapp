@@ -31,7 +31,7 @@ import { SetDateRuleSheet, dateRuleLabel, dateRuleCols, type DateRuleTarget } fr
 import type { DateRule } from '@/types'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
-  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport, useWarehouseDocks, useChangeDock, useDirectedBoard, useReplanGdo,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO, usePushTransfer, useUpdateTransport, useWarehouseDocks, useChangeDock, useDirectedBoard, useReplanGdo,
   useWaiveWeighGDO, useUnwaiveWeighGDO, useWaiveGateGDO, useUnwaiveGateGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
@@ -413,14 +413,15 @@ function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
-  // Chuyển nội bộ parent↔kho phụ (cùng site): biển số tùy chọn — xe nâng/đẩy tay, BE startGDO cũng nới tương ứng
+  // Chuyển nội bộ parent↔kho phụ (cùng site): biển số tùy chọn — xe nâng/đẩy tay, BE startGDO cũng nới tương ứng.
+  // 28/09: kho đích do BE trả (`dest_warehouse` = khách trỏ kho) — FE không tự so mã kho / `shipto_codes` nữa.
   const { data: whsForInternal = [] } = useWarehouses(true)
   const internalPair = (() => {
-    type W = { id: string; code?: string; parent_warehouse_id?: string | null; shipto_codes?: string[] | null }
+    type W = { id: string; parent_warehouse_id?: string | null }
     const whs = whsForInternal as W[]
-    const st = gdo.shipto_party ?? ''
-    if (!gdo.warehouse_id || !st) return false
-    const dest = whs.find(w => w.code === st || (w.shipto_codes ?? []).includes(st))
+    const destId = gdo.dest_warehouse?.id
+    if (!gdo.warehouse_id || !destId) return false
+    const dest = whs.find(w => w.id === destId)
     if (!dest) return false
     const src = whs.find(w => w.id === gdo.warehouse_id)
     return dest.parent_warehouse_id === gdo.warehouse_id || (src?.parent_warehouse_id ?? null) === dest.id
@@ -1517,6 +1518,7 @@ export default function OutboundDetail() {
   const { mutate: unassignGDO,  isPending: unassigning } = useUnassignGDO()
   const { mutate: unstartGDO,   isPending: unstarting  } = useUnstartGDO()
   const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
+  const pushTransfer = usePushTransfer()
   const manualCompleteMulti = useManualCompleteItem()   // "Lưu tất cả theo KH" — bulk hàng không tem
   const { mutate: quickExportExisting, isPending: quickExporting } = useQuickExportExistingGDO()
   const { mutate: waiveWeigh,   isPending: waiving }     = useWaiveWeighGDO()   // duyệt bỏ qua RULE 2 (cân)
@@ -1925,6 +1927,24 @@ export default function OutboundDetail() {
       onClick: () => doUndo((id, opts) => uncompleteGDO(id, opts)),
     })
   }
+  // ĐẨY LẠI CHO KHO NHẬN (28/09, user: "gắn kho sau thì kho xuất vào đẩy lại một lượt là chủ động nhất; cái nào đã có thì không
+  // đẩy được"): chuyến đã hoàn thành trước khi ship-to được trỏ kho. BE 409 khi lệnh đã có kho nhận / đã nhận; 422 khi chưa trỏ.
+  if (can(perms, 'outbound', 'push_transfer') && gdo.status === 'COMPLETED') {
+    const dest = gdo.dest_warehouse
+    const alreadyPushed = !!gdo.transfer_status && gdo.transfer_status !== 'IN_TRANSIT'
+    actionItems.push({
+      key: 'push-transfer', icon: Truck, label: 'Đẩy lại cho kho nhận',
+      tip: !dest ? `Ship-to ${gdo.shipto_party ?? '?'} chưa trỏ kho nhận — khai ở Cài đặt WMS → Kho → Ship-to nhận (hoặc Khách hàng → Kho nhận) rồi bấm lại`
+        : alreadyPushed ? 'Kho nhận đã bắt đầu nhận / nhận xong — không đẩy lại'
+        : `Sinh (hoặc cập nhật) lệnh chuyển kho + kế hoạch nhập cho ${dest.name} — dùng khi chuyến hoàn thành TRƯỚC khi ship-to được trỏ kho. Lệnh đã có kho nhận thì BE từ chối.`,
+      className: 'border-slate-300 text-slate-600 disabled:opacity-40',
+      disabled: !dest || alreadyPushed, busy: pushTransfer.isPending,
+      onClick: () => pushTransfer.mutate(gdo.id, {
+        onSuccess: r => toast({ title: `Đã đẩy ${r.order_code} cho ${r.dest?.name ?? 'kho nhận'}`, description: `${r.lines} dòng hàng · ${r.delivery_mode === 'SCAN' ? 'kho nhận xác nhận trong app' : 'tài xế tự xác nhận'}` }),
+        onError: e => setBulkErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không đẩy được'),
+      }),
+    })
+  }
   if (can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED')
     actionItems.push({
       key: 'unstart', icon: RotateCcw, label: 'Gỡ bắt đầu',
@@ -2102,6 +2122,26 @@ export default function OutboundDetail() {
               >
                 <Pencil className="h-3 w-3" />
               </button>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* KHO NHẬN (28/09): kho đích theo mối nối khách trỏ kho; ship-to trông như kho WMS mà chưa trỏ ⇒ chip theo cấu hình Nhắc/Chặn của kho xuất */}
+      {(gdo.dest_warehouse || gdo.unlinked_hint) && (
+        <Card className="px-2 py-1 bg-slate-50 border-slate-200">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700">
+            <span className="flex items-center gap-1 font-medium text-slate-500"><Truck className="h-3 w-3" />Kho nhận</span>
+            {gdo.dest_warehouse && (
+              <span>{gdo.dest_warehouse.name} <span className="text-slate-400">· {gdo.dest_warehouse.inventory_mode === 'NONE' ? 'tài xế tự xác nhận' : 'kho nhận xác nhận trong app'}</span></span>
+            )}
+            {gdo.unlinked_hint && (
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${gdo.unlinked_hint.policy === 'BLOCK' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
+                Ship-to {gdo.shipto_party} chưa trỏ kho — trùng tên kho "{gdo.unlinked_hint.warehouse_name}"{gdo.unlinked_hint.policy === 'BLOCK' ? ' · kho CHẶN hoàn thành tới khi khai' : ''}
+              </span>
+            )}
+            {gdo.unlinked_hint && can(perms, 'customers', 'edit') && (
+              <Link to={`/masterdata/customers?search=${encodeURIComponent(gdo.shipto_party ?? '')}`} className="text-[10px] text-sky-700 underline">Trỏ kho ›</Link>
             )}
           </div>
         </Card>

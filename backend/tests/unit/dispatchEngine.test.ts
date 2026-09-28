@@ -19,7 +19,7 @@ const tariff = (carrier: string, m: string, ward: string, price: number, km: num
   ({ id: `${carrier}|${m}|${ward}`, transport_company_id: carrier, vehicle_model_id: m, ward_code: ward, price, distance_km: km, effective_from: '2026-01-01', effective_to: null, is_active: true })
 const line = (pallets: number, over: Partial<EngineLine> = {}): EngineLine => ({ material_code: 'M1', qty_base: 1, pallets, kg: pallets * 500, category: 'FG01', condition: null, ...over })
 const od = (n: string, ward: string, pallets: number, over: Partial<EngineOd> = {}): EngineOd => ({
-  od_number: n, ship_to_code: `S${n}`, ship_to_name: null, ward_code: ward, region_code: 'R1', channel: null, internal_wh: null, scan_mode: false, flow: 'SALE',
+  od_number: n, ship_to_code: `S${n}`, ship_to_name: null, ward_code: ward, region_code: 'R1', channel: null, flow: 'SALE',
   lines: [line(pallets)], ...over,
 })
 const params = { day: '2026-09-25', max_drops: 3, allow_mix_channels: false, underload_pct: null, code_prefix: 'K_X_250926_', start_seq: 1 }
@@ -60,10 +60,10 @@ describe('luật 3 — OD lớn hơn xe lớn nhất tách theo DÒNG HÀNG NGUY
 })
 
 describe('luật 1 + 2 — khoá nhóm bắt buộc và khoá cụm', () => {
-  it('khách nội bộ theo kho đích · khách SCAN · khách ngoài là ba lớp khác nhau', () => {
-    expect(classKey(od('1', 'W1', 1, { internal_wh: 'WH2' }))).toBe('INT:WH2')
-    expect(classKey(od('1', 'W1', 1, { scan_mode: true }))).toBe('SCAN')
-    expect(classKey(od('1', 'W1', 1))).toBe('EXT')
+  it('28/09 — không tự ép: chỉ khách BẬT "Đi xe riêng" mới có khoá riêng theo ship-to, còn lại một lớp chung', () => {
+    expect(classKey(od('1', 'W1', 1, { separate: true }))).toBe('SEP:S1')
+    expect(classKey(od('1', 'W1', 1, { separate: false }))).toBe('ALL')
+    expect(classKey(od('1', 'W1', 1))).toBe('ALL')
   })
   it('kênh nằm trong khoá gộp trừ khi kho cho trộn; phường chỉ nằm ở khoá cụm', () => {
     const npp = od('1', 'W1', 1, { channel: 'NPP' }), bhx = od('2', 'W1', 1, { channel: 'BHX' })
@@ -139,9 +139,26 @@ describe('luật 2 — không trộn kênh / kho nội bộ đi riêng', () => {
     expect(runDispatch(input(ods)).trips).toHaveLength(2)
     expect(runDispatch(input(ods, { params: { ...params, allow_mix_channels: true } })).trips).toHaveLength(1)
   })
-  it('khách là kho nội bộ không đi chung với khách ngoài cùng phường', () => {
-    const r = runDispatch(input([od('1', 'W1', 2, { internal_wh: 'WH2' }), od('2', 'W1', 2)]))
+  it('khách bật "Đi xe riêng" không đi chung với khách khác cùng phường; tắt (mặc định) thì ghép bình thường', () => {
+    expect(runDispatch(input([od('1', 'W1', 2, { separate: true }), od('2', 'W1', 2)])).trips).toHaveLength(2)
+    expect(runDispatch(input([od('1', 'W1', 2), od('2', 'W1', 2)])).trips).toHaveLength(1)
+  })
+})
+
+describe('28/09 — số khách tối đa cùng xe theo KHÁCH / KÊNH (mặc định không giới hạn)', () => {
+  it('OD khai max_customers 1 ⇒ không ghép với khách khác; OD không khai ⇒ ghép; OD khắt khe nhất áp cho cả xe', () => {
+    expect(runDispatch(input([od('1', 'W1', 2, { max_customers: 1 }), od('2', 'W1', 2)])).trips).toHaveLength(2)
+    expect(runDispatch(input([od('1', 'W1', 2, { max_customers: null }), od('2', 'W1', 2)])).trips).toHaveLength(1)
+    // 3 khách: một khách chịu tối đa 2 ⇒ xe chở khách đó chỉ 2 khách, khách thứ ba đi xe khác
+    const r = runDispatch(input([od('1', 'W1', 1, { max_customers: 2 }), od('2', 'W1', 1), od('3', 'W1', 1)]))
     expect(r.trips).toHaveLength(2)
+    const withOne = r.trips.find(t => t.ods.some(o => o.od_number === '1'))!
+    expect(withOne.ods).toHaveLength(2)
+  })
+  it('kho không giới hạn điểm giao (max_drops null) ⇒ 5 khách 1 pallet cùng phường lên một xe', () => {
+    const r = runDispatch(input(['1', '2', '3', '4', '5'].map(n => od(n, 'W1', 1)), { params: { ...params, max_drops: null } }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods).toHaveLength(5)
   })
 })
 
@@ -399,7 +416,7 @@ describe('luật 8 BỎ (user 28/09: "dòng xe chọn theo khai báo của khác
     expect(r.unplanned[0].reason).toMatch(/chưa có dòng xe nào được vào.*theo kênh/)
   })
   it('OD trung chuyển KHÔNG còn luật riêng: kho đích khai container ⇒ container; cờ transfer vẫn chụp trên dòng OD', () => {
-    const r = runDispatch(inp([big('2', { internal_wh: 'WH2', allowed_models: ['CONT'] })]))
+    const r = runDispatch(inp([big('2', { flow: 'STO', allowed_models: ['CONT'] })]))
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].vehicle_model?.id).toBe('CONT')
     expect(r.trips[0].ods[0].transfer).toBe(true)

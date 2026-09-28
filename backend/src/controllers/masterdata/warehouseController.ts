@@ -12,6 +12,7 @@ import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 import { warehouseTypeUsage } from '../wms/lookupController'
 import { asDateRulePolicy } from '../../services/dateRulePolicy'
 import { autoApplyAfterConfigChange } from '../../services/dateRuleApply'
+import { asUnlinkedPolicy, linkCustomersByWarehouseCode } from '../../services/transferDest'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -30,10 +31,12 @@ function asPickRadius(v: unknown): number {
   const n = Math.trunc(Number(v))
   return Number.isFinite(n) ? Math.min(200, Math.max(0, n)) : 0
 }
-// ĐIỀU VẬN (20260924) — tham số cấp KHO cho engine ghép chuyến: kẹp đúng CHECK ở DB (1..20 điểm giao; Non tải 1..100 hoặc NULL = theo dòng xe)
-function asMaxDrops(v: unknown): number {
+// ĐIỀU VẬN (20260924) — tham số cấp KHO cho engine ghép chuyến: kẹp đúng CHECK ở DB (điểm giao 1..50 hoặc NULL = không giới
+// hạn — 28/09 user: "mặc định là không giới hạn"; Non tải 1..100 hoặc NULL = theo dòng xe)
+function asMaxDrops(v: unknown): number | null {
+  if (v === null || v === '' || v === undefined || v === 0 || v === '0') return null
   const n = Math.trunc(Number(v))
-  return Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 3
+  return Number.isFinite(n) ? Math.min(50, Math.max(1, n)) : null
 }
 function asUnderloadPct(v: unknown): number | null {
   if (v === null || v === '' || v === undefined) return null
@@ -42,6 +45,8 @@ function asUnderloadPct(v: unknown): number | null {
 }
 function applyDispatchBody(body: Record<string, unknown>, target: Record<string, unknown>) {
   if (body.dispatch_max_drops !== undefined)          target.dispatch_max_drops = asMaxDrops(body.dispatch_max_drops)
+  // 28/09: ship-to "trông như kho WMS mà chưa trỏ" — NONE (im) · WARN (nhắc, mặc định) · BLOCK (chặn Hoàn thành)
+  if (body.unlinked_shipto_policy !== undefined)      target.unlinked_shipto_policy = asUnlinkedPolicy(body.unlinked_shipto_policy)
   if (body.dispatch_allow_mix_channels !== undefined) target.dispatch_allow_mix_channels = Boolean(body.dispatch_allow_mix_channels)
   // 26/09: cho ghép nhiều Loại kho trên một chuyến (mặc định KHÔNG — "FG01 đi FG01, FG02 đi FG02")
   if (body.dispatch_allow_mix_categories !== undefined) target.dispatch_allow_mix_categories = body.dispatch_allow_mix_categories === true
@@ -233,9 +238,13 @@ export async function listWarehouses(req: Request, res: Response) {
       return query
     })
 
+    // Ship-to nhận vào từng kho = khách trỏ kho (28/09: MỘT chỗ lưu `Customer.warehouse_id`; cột `shipto_codes` không còn được đọc)
+    const links = await fetchAllRowsParallel(() => supabase.from('Customer').select('ship_to_code, warehouse_id').not('warehouse_id', 'is', null).order('ship_to_code'))
+    const shiptosByWh = new Map<string, string[]>()
+    for (const c of (links ?? []) as { ship_to_code: string; warehouse_id: string }[]) { const l = shiptosByWh.get(c.warehouse_id) ?? []; l.push(c.ship_to_code); shiptosByWh.set(c.warehouse_id, l) }
     const result = (data ?? []).map((w) => {
       const { Location, Employee, ...rest } = w as Record<string, unknown>
-      return { ...rest, _count: { locations: extractCount(Location), employees: extractCount(Employee) } }
+      return { ...rest, shiptos: shiptosByWh.get(String(rest.id)) ?? [], _count: { locations: extractCount(Location), employees: extractCount(Employee) } }
     })
     ok(res, result)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -292,7 +301,8 @@ export async function createWarehouse(req: Request, res: Response) {
     if (parentErr) return fail(res, 400, 'VALIDATION_ERROR', parentErr)
 
     const actor = req.user?.name || null
-    const row: Record<string, unknown> = { id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, nmsx_code: nmsx, parent_warehouse_id: parentId, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() }
+    // 28/09: `shipto_codes` không ghi nữa — ship-to nhận = khách trỏ kho (đồng bộ vào Customer sau khi tạo)
+    const row: Record<string, unknown> = { id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, nmsx_code: nmsx, parent_warehouse_id: parentId, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() }
     if (carton_scan_override !== undefined) row.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (carton_scan_categories !== undefined) row.carton_scan_categories = normCartonCats(carton_scan_categories)
     if (carton_scan_require_full !== undefined) row.carton_scan_require_full = Boolean(carton_scan_require_full)
@@ -349,8 +359,10 @@ export async function createWarehouse(req: Request, res: Response) {
         // Bảng chưa apply migration → tạo kho vẫn thành công (không chặn nghiệp vụ vì cấu hình)
         if (seedErr) console.error('seed warehouse_type_configs:', seedErr.message)
       }
-      // Ship-to phụ khai lúc TẠO kho cũng phải vào danh mục Khách hàng (cùng luật với lúc sửa)
+      // Ship-to nhận khai lúc TẠO kho cũng phải vào danh mục Khách hàng (cùng luật với lúc sửa)
       if (shiptoArr.length) await syncShiptoCustomers(newId, String(name).trim(), [], shiptoArr, actor)
+      // 28/09: khách đã có mà mã ship-to trùng MÃ kho vừa tạo ⇒ tự trỏ (khớp định danh)
+      await linkCustomersByWarehouseCode([String(code)], actor)
     }
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -410,23 +422,24 @@ export async function updateWarehouse(req: Request, res: Response) {
       if (nmsxClash) return fail(res, 409, 'DUPLICATE', `Mã NMSX "${nmsxClash}" đã thuộc kho khác`)
       patch.nmsx_code = nmsx
     }
-    // Ship-to phụ: đổi ở đây là đổi cả danh mục Khách hàng (xem `syncShiptoCustomers`). Tính sẵn
-    // "trước → sau" ở đây, còn ghi Customer thì để SAU khi câu UPDATE Kho thành công.
+    // Ship-to nhận vào kho: đổi ở đây là đổi danh mục Khách hàng (xem `syncShiptoCustomers`) — 28/09 MỘT chỗ lưu là
+    // `Customer.warehouse_id`: "trước" đọc từ khách đang trỏ kho này, cột `Warehouse.shipto_codes` KHÔNG ghi nữa.
+    // Ghi Customer thì để SAU khi câu UPDATE Kho thành công.
     let shiptoPlan: { before: string[]; after: string[]; name: string } | null = null
     if (shipto_codes !== undefined) {
       const shiptoArr = normShiptoCodes(shipto_codes)
       const badShipto = invalidShipto(shiptoArr)
       if (badShipto) return fail(res, 400, 'VALIDATION_ERROR', `Mã ship-to "${badShipto}" không hợp lệ — chỉ chữ IN HOA và số, tối đa 50 ký tự`)
       const { data: cur } = await supabase.from('Warehouse')
-        .select('code, name, shipto_codes').eq('id', req.params.id).maybeSingle()
-      const w = (cur as { code?: string; name?: string; shipto_codes?: string[] | null } | null)
+        .select('code, name').eq('id', req.params.id).maybeSingle()
+      const w = (cur as { code?: string; name?: string } | null)
       const clash = await findShiptoClash(shiptoArr, w?.code ?? '', req.params.id)
       if (clash) return fail(res, 409, 'DUPLICATE', `Mã ship-to "${clash}" đã thuộc kho khác`)
       const custClash = await shiptoCustomerClash(shiptoArr, req.params.id)
       if (custClash) return fail(res, 409, 'DUPLICATE', custClash)
-      patch.shipto_codes = shiptoArr
+      const linked = await fetchAllRowsParallel(() => supabase.from('Customer').select('ship_to_code').eq('warehouse_id', req.params.id).order('ship_to_code'))
       shiptoPlan = {
-        before: normShiptoCodes(w?.shipto_codes ?? []),
+        before: normShiptoCodes(((linked ?? []) as { ship_to_code: string }[]).map(c => c.ship_to_code)),
         after: shiptoArr,
         name: String(patch.name ?? w?.name ?? '').trim() || (w?.code ?? ''),
       }

@@ -40,10 +40,17 @@ async function cleanup() {
   }
   await restWrite('outbound_events', 'DELETE', `group_code=like.${TAG}*`).catch(() => {})
   if (created.gdo) await restWrite('receipt_ratings', 'DELETE', `gdo_id=eq.${created.gdo}`).catch(() => {})   // sao chấm ở [8c] (không FK → tự dọn)
-  if (created.item) await restWrite('OutboundItem', 'DELETE', `id=eq.${created.item}`).catch(() => {})
-  if (created.do) await restWrite('OutboundDelivery', 'DELETE', `id=eq.${created.do}`).catch(() => {})
-  if (created.gdo) await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${created.gdo}`).catch(() => {})
+  // MỌI chuyến mang tag (GDO1 + GDO2/GDO3 của [12]) — không chỉ created.gdo
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=like.${TAG}*`).catch(() => [])) {
+    for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`).catch(() => [])) await restWrite('OutboundItem', 'DELETE', `do_id=eq.${d.id}`).catch(() => {})
+    await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`).catch(() => {})
+    await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`).catch(() => {})
+  }
   await restWrite('Material', 'DELETE', `material_code=like.${TAG}*`).catch(() => {})
+  // 28/09: khách fixture (mối nối ship-to → kho) + trả chính sách kho nguồn về như cũ
+  await restWrite('Customer', 'DELETE', `ship_to_code=like.${TAG}*`).catch(() => {})
+  await restWrite('Customer', 'DELETE', `ship_to_code=eq.${FIX.WH_QTY.code}&auto_created=is.true&name=like.${TAG}*`).catch(() => {})
+  await restWrite('Warehouse', 'PATCH', `id=eq.${FIX.WH_QR.id}`, { unlinked_shipto_policy: 'NONE' }).catch(() => {})
   // TRẢ cờ hệ thống qua API (xóa luôn cache 30s của instance đang chạy)
   if (dcBackup) await api('/wms/settings/delivery_confirmation', 'PUT', { value: dcBackup })
 }
@@ -84,6 +91,11 @@ try {
     created_at: nowIso(), updated_at: nowIso(),
   })
   created.mat = mat.id
+  // 28/09 (Kho ↔ Khách: MỘT mối nối): kho đích = khách trỏ kho, KHÔNG còn suy từ `Warehouse.code` = ship-to.
+  // Fixture: khách mang mã ship-to = mã kho đích, trỏ kho đích (đúng thứ ZSD02 sẽ tự nối khi sinh khách trùng mã kho).
+  const custQty = (await restAll('Customer', `select=id,warehouse_id&ship_to_code=eq.${FIX.WH_QTY.code}`))[0]
+  if (!custQty) await restWrite('Customer', 'POST', null, { id: randomUUID(), ship_to_code: FIX.WH_QTY.code, name: `${TAG} kho đích`, warehouse_id: FIX.WH_QTY.id, is_active: true, auto_created: true, updated_at: nowIso() })
+  else if (custQty.warehouse_id !== FIX.WH_QTY.id) await restWrite('Customer', 'PATCH', `id=eq.${custQty.id}`, { warehouse_id: FIX.WH_QTY.id })
   const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
     id: randomUUID(), group_code: `${TAG}-GDO1`, warehouse_id: FIX.WH_QR.id,
     warehouse_type: FIX.MAT_POOL_CAT, delivery_date: vnDate(), planned_date: vnDate(),
@@ -271,6 +283,73 @@ try {
     const vals = [QTY, Number(line?.planned_boxes), Number(impRow?.planned_cartons), Number(impRow?.posm_cartons), Number(pool?.cartons_imported)]
     check('[11] Oracle: SL xuất = KH nhập = planned phiếu = posm đã lưu = tồn pool đích (BASE, 0 lệch)',
       vals.every(v => v === QTY), `[xuất,line,planned,posm,pool]=${JSON.stringify(vals)}`)
+  }
+
+  // ── [12] 28/09 — "ĐẨY LẠI CHO KHO NHẬN" + chính sách ship-to chưa trỏ (user: "gắn kho sau thì kho xuất vào đẩy lại một
+  // lượt là chủ động nhất; cái nào đã có sẽ không đẩy được" · "không tự ép gì cả, config hết") ────────────────────────
+  {
+    const p1 = await api(`/wms/outbound/${created.gdo}/push-transfer`, 'POST', {})
+    check('[12a] Chuyến đã có kho nhận và ĐÃ nhận xong → đẩy lại 409 TRANSFER_ALREADY_PUSHED',
+      p1.s === 409 && p1.j?.error?.code === 'TRANSFER_ALREADY_PUSHED', `http=${p1.s} code=${p1.j?.error?.code}`)
+    // Chuyến 2: ship-to LẠ (chưa có khách / chưa trỏ kho) hoàn thành với cờ OTHER bật ⇒ lệnh SELF không kho đích; đẩy ⇒ 422
+    await api('/wms/settings/delivery_confirmation', 'PUT', { value: { enabled: true, modes: ['QR', 'QTY', 'NONE', 'OTHER'] } })
+    await waitCache()
+    const ST2 = `${TAG}ST2`
+    const [g2] = await restWrite('GroupDeliveryOrder', 'POST', null, {
+      id: randomUUID(), group_code: `${TAG}-GDO2`, warehouse_id: FIX.WH_QR.id, warehouse_type: FIX.MAT_POOL_CAT,
+      delivery_date: vnDate(), planned_date: vnDate(), status: 'IN_PROGRESS', license_plate: `${TAG}XE02`, started_at: nowIso(),
+      shipto_party: ST2, created_at: nowIso(), updated_at: nowIso(),
+    })
+    const [d2] = await restWrite('OutboundDelivery', 'POST', null, { id: randomUUID(), gdo_id: g2.id, delivery_code: `${TAG}-DO2`, distributor_name: `${TAG} NPP 2`, created_at: nowIso(), updated_at: nowIso() })
+    await restWrite('OutboundItem', 'POST', null, { id: randomUUID(), do_id: d2.id, material_id: created.mat, material_code_raw: `${TAG}001`, cartons_ordered: QTY, cartons_scanned: QTY, loose_picking: 0, status: 'PENDING', created_at: nowIso(), updated_at: nowIso() })
+    const c2 = await api(`/wms/outbound/${g2.id}`, 'PATCH', { status: 'COMPLETED' })
+    const o2a = (await restAll('TmsOrder', `select=id,order_code,delivery_mode,destination_warehouse_id,warehouse_id,status&transfer_gdo_id=eq.${g2.id}`))[0]
+    const p2 = await api(`/wms/outbound/${g2.id}/push-transfer`, 'POST', {})
+    check('[12b] Ship-to chưa trỏ kho: hoàn thành ⇒ lệnh OTHER (SELF, không kho đích, nằm dưới KHO XUẤT) · đẩy lại ⇒ 422 SHIPTO_UNLINKED',
+      c2.s === 200 && o2a?.delivery_mode === 'SELF' && o2a?.destination_warehouse_id == null && o2a?.warehouse_id === FIX.WH_QR.id
+      && p2.s === 422 && p2.j?.error?.code === 'SHIPTO_UNLINKED',
+      `complete=${c2.s} ord=${o2a?.order_code}/${o2a?.delivery_mode}/dest=${o2a?.destination_warehouse_id} push=${p2.s} ${p2.j?.error?.code}`)
+    // Trỏ kho SAU khi đã xuất ⇒ không nối tự động; kho xuất bấm đẩy ⇒ CHÍNH lệnh cũ đổi đích + hình thức + kế hoạch nhập
+    const cu = await api('/masterdata/customers', 'POST', { ship_to_code: ST2, name: `${TAG} NPP 2`, warehouse_id: FIX.WH_QTY.id })
+    const o2b = (await restAll('TmsOrder', `select=destination_warehouse_id&transfer_gdo_id=eq.${g2.id}`))[0]
+    const p3 = await api(`/wms/outbound/${g2.id}/push-transfer`, 'POST', {})
+    const o2c = (await restAll('TmsOrder', `select=id,order_code,delivery_mode,destination_warehouse_id,warehouse_id&transfer_gdo_id=eq.${g2.id}`))[0]
+    const lines2 = o2c ? await restAll('inbound_plan_lines', `select=planned_boxes,warehouse_id&tms_order_id=eq.${o2c.id}`) : []
+    const ev = await restAll('outbound_events', `select=event_type&gdo_id=eq.${g2.id}&event_type=eq.TRANSFER_PUSHED`)
+    check('[12c] Trỏ kho sau khi xuất: KHÔNG tự nối (đích vẫn trống) · bấm đẩy ⇒ 200, cùng lệnh (giữ id) đổi sang SCAN + kho đích + KH nhập planned = SL xuất · có sự kiện TRANSFER_PUSHED',
+      cu.s === 201 && o2b?.destination_warehouse_id == null && p3.s === 200 && p3.j?.data?.dest?.id === FIX.WH_QTY.id
+      && o2c?.id === o2a?.id && o2c?.delivery_mode === 'SCAN' && o2c?.destination_warehouse_id === FIX.WH_QTY.id && o2c?.warehouse_id === FIX.WH_QTY.id
+      && lines2.length === 1 && Number(lines2[0]?.planned_boxes) === QTY && ev.length === 1,
+      `cust=${cu.s} ${cu.j?.error?.message ?? ''} before=${o2b?.destination_warehouse_id} push=${p3.s} ${p3.j?.error?.message ?? ''} mode=${o2c?.delivery_mode} lines=${lines2.length} ev=${ev.length}`)
+    const p4 = await api(`/wms/outbound/${g2.id}/push-transfer`, 'POST', {})
+    check('[12d] Đẩy lần 2 khi lệnh đã có kho nhận ⇒ 409 TRANSFER_ALREADY_PUSHED, không sinh lệnh đôi',
+      p4.s === 409 && p4.j?.error?.code === 'TRANSFER_ALREADY_PUSHED' && (await restAll('TmsOrder', `select=id&transfer_gdo_id=eq.${g2.id}`)).length === 1,
+      `http=${p4.s} code=${p4.j?.error?.code}`)
+    // Chính sách kho xuất với ship-to "trông như kho WMS mà chưa trỏ" (tên khách TRÙNG tên kho đích, chưa trỏ): NONE im · WARN nhắc · BLOCK chặn
+    const ST3 = `${TAG}ST3`
+    const whQtyName = (await restAll('Warehouse', `select=name&id=eq.${FIX.WH_QTY.id}`))[0]?.name
+    await api('/masterdata/customers', 'POST', { ship_to_code: ST3, name: whQtyName })
+    const [g3] = await restWrite('GroupDeliveryOrder', 'POST', null, {
+      id: randomUUID(), group_code: `${TAG}-GDO3`, warehouse_id: FIX.WH_QR.id, warehouse_type: FIX.MAT_POOL_CAT,
+      delivery_date: vnDate(), planned_date: vnDate(), status: 'IN_PROGRESS', license_plate: `${TAG}XE03`, started_at: nowIso(),
+      shipto_party: ST3, created_at: nowIso(), updated_at: nowIso(),
+    })
+    const [d3] = await restWrite('OutboundDelivery', 'POST', null, { id: randomUUID(), gdo_id: g3.id, delivery_code: `${TAG}-DO3`, distributor_name: whQtyName, created_at: nowIso(), updated_at: nowIso() })
+    await restWrite('OutboundItem', 'POST', null, { id: randomUUID(), do_id: d3.id, material_id: created.mat, material_code_raw: `${TAG}001`, cartons_ordered: QTY, cartons_scanned: QTY, loose_picking: 0, status: 'PENDING', created_at: nowIso(), updated_at: nowIso() })
+    const pb = await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { unlinked_shipto_policy: 'BLOCK' })
+    const gB = await api(`/wms/outbound/${g3.id}`)
+    const cB = await api(`/wms/outbound/${g3.id}`, 'PATCH', { status: 'COMPLETED' })
+    const pw = await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { unlinked_shipto_policy: 'WARN' })
+    const gW = await api(`/wms/outbound/${g3.id}`)
+    const cW = await api(`/wms/outbound/${g3.id}`, 'PATCH', { status: 'COMPLETED' })
+    const pn = await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { unlinked_shipto_policy: 'NONE' })
+    const gN = await api(`/wms/outbound/${g3.id}`)
+    check('[12e] Kho xuất BLOCK: GET chuyến có unlinked_hint (tên kho, policy BLOCK) · Hoàn thành 422 SHIPTO_UNLINKED · WARN: hint policy WARN, hoàn thành 200 · NONE: không hint · policy lạ không lưu',
+      pb.s === 200 && gB.j?.data?.unlinked_hint?.policy === 'BLOCK' && gB.j?.data?.unlinked_hint?.warehouse_name === whQtyName && gB.j?.data?.dest_warehouse == null
+      && cB.s === 422 && cB.j?.error?.code === 'SHIPTO_UNLINKED'
+      && pw.s === 200 && gW.j?.data?.unlinked_hint?.policy === 'WARN' && cW.s === 200
+      && pn.s === 200 && pn.j?.data?.unlinked_shipto_policy === 'NONE' && gN.j?.data?.unlinked_hint == null,
+      `block=${pb.s} hint=${JSON.stringify(gB.j?.data?.unlinked_hint)} complete=${cB.s}/${cB.j?.error?.code} warn=${pw.s} hintW=${gW.j?.data?.unlinked_hint?.policy} cW=${cW.s} none=${pn.s}/${pn.j?.data?.unlinked_shipto_policy} hintN=${JSON.stringify(gN.j?.data?.unlinked_hint)}`)
   }
 } catch (e) {
   check('gói chạy không nổ', false, String(e))

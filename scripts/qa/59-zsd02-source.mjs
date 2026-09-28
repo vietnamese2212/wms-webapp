@@ -35,7 +35,7 @@ const H = {
   note: 'Ghi chú giao hàng', dd: 'Delivery date', item: 'Item', ic: 'Item Category', su: 'Sales unit', soq: 'SO Qty/ SL SO', socar: 'SO Qty CAR/ SL SO THÙNG',
   odq: 'OD Qty', odcar: 'OD Qty CAR/ SL THÙNG đã điều phối', gi: 'Số lượng đã xuất / nhập', region: 'Region/ Tỉnh.TP', route: 'Route/ Tuyến giao hàng',
   gw: 'Gross Weight', ward: 'Tên Phường', dvvt: 'Đơn vị vận chuyển', mroute: 'Mã Route', base: 'OD Qty (Base Unit)', bunit: 'Base Unit',
-  pal: 'SL SO PALLET', palod: 'SL PALLET đã điều phối', cancel: 'Trạng thái hủy đơn',
+  pal: 'SL SO PALLET', palod: 'SL PALLET đã điều phối', cancel: 'Trạng thái hủy đơn', dc: 'Distribution Channel',
 }
 const row = (o) => ({
   [H.so]: o.so, [H.od]: o.od ?? '', [H.st]: SHIPTO, [H.stn]: 'QA59 KHÁCH TEST', [H.mat]: o.mat, [H.matn]: 'QA59 hàng test',
@@ -45,6 +45,8 @@ const row = (o) => ({
   [H.odq]: o.od ? o.soq : 0, [H.odcar]: o.od ? (o.socar ?? o.soq) : 0, [H.gi]: 0,
   [H.region]: '100-Thành phố Hà Nội', [H.route]: `BV-${WARD}`, [H.gw]: o.gw ?? 0, [H.ward]: WARD, [H.dvvt]: o.dvvt ?? 'Đông Á', [H.mroute]: ROUTE,
   [H.base]: o.od ? o.soq * o.factor : 0, [H.bunit]: o.bunit, [H.pal]: 0.1, [H.palod]: o.od ? 0.1 : 0, [H.cancel]: '',
+  // kênh bán SAP (28/09): khách tự sinh phải mang kênh theo mã đầu cột này — bỏ cột (QA59_NO_DC=1) để chứng minh phép 2h2 ĐỎ
+  ...(process.env.QA59_NO_DC ? {} : { [H.dc]: o.dc ?? '20-Modern Trade' }),
 })
 const ROWS = [
   row({ so: SO1, od: OD1, mat: FIX.MAT_POOL, su: suThung, soq: 10, factor, bunit: bu, gw: 50_000 }),          // có OD — sổ OD
@@ -114,6 +116,16 @@ try {
   check('2h. Tuyến SAP nạp vào sap_route · khách QA59ST tự sinh mang ward_code',
     (await restAll('sap_route', `select=route_code,ward_code&route_code=eq.${ROUTE}`))[0]?.ward_code === WARD
     && (await restAll('Customer', `select=ward_code,region_code&ship_to_code=eq.${SHIPTO}`))[0]?.ward_code === WARD)
+  // 2h2 (28/09): kênh khách = kênh bán SAP — khách CHƯA có kênh được ZSD02 tự điền theo mã đầu cột "Distribution Channel"
+  // ("20-Modern Trade" → kênh khai sap_dist_channel = 20). Kênh tra từ danh mục, không gõ cứng 'MT'.
+  const chans = (await api('/masterdata/customer-channels')).j?.data ?? []
+  const chan20 = chans.find(c => String(c.sap_dist_channel ?? '') === '20')
+  const custRow = (await restAll('Customer', `select=id,channel&ship_to_code=eq.${SHIPTO}`))[0]
+  check('2h2. Khách tự sinh từ ZSD02 mang kênh theo mã SAP 20 của cột Distribution Channel', !!chan20 && custRow?.channel === chan20.value,
+    `kênh có mã SAP 20=${chan20?.value ?? 'KHÔNG CÓ'} channel=${custRow?.channel ?? 'TRỐNG'}`)
+  // gán tay sang kênh khác — nạp lại file ở [3] phải GIỮ kênh gán tay (ZSD02 chỉ điền cho khách chưa kênh)
+  const chanOther = chans.find(c => c.value !== chan20?.value && !/^QA/.test(c.value))
+  const setCh = custRow && chanOther ? await api(`/masterdata/customers/${custRow.id}`, 'PUT', { channel: chanOther.value }) : null
   const soList = await api(`/external/so-lines?date_from=${DELIV}&date_to=${DELIV}&status=OPEN&q=QA59`)
   check('2i. GET /external/so-lines liệt kê dòng chưa OD + summary.open ≥ 1 + cờ loadable',
     soList.s === 200 && soList.j?.data?.items?.some(r => r.so_number === SO2 && r.loadable === true) && Number(soList.j?.data?.summary?.open) >= 1,
@@ -148,6 +160,9 @@ try {
   const d2 = again.j?.data
   check('3a. Upload lại cùng file = NO-OP toàn bộ (không đổi id/updated_at)', again.s === 200 && d2?.od?.noop === 2 && d2?.so?.noop === 3 && d2?.od?.inserted === 0 && d2?.so?.inserted === 0,
     `od=${JSON.stringify(d2?.od)} so=${JSON.stringify(d2?.so)}`)
+  const custAfter = (await restAll('Customer', `select=channel&ship_to_code=eq.${SHIPTO}`))[0]
+  check('3a2. Nạp lại ZSD02 KHÔNG đè kênh đã gán tay của khách', setCh?.s === 200 && !!chanOther && custAfter?.channel === chanOther.value,
+    `put=${setCh?.s} channel=${custAfter?.channel} kỳ vọng ${chanOther?.value}`)
   const od1id = od1?.id
   const vl = [{ Delivery: OD1, Item: '10', Material: FIX.MAT_POOL, 'Item Description': 'x', 'Delivery Quantity': 11, 'Sales Unit': hasEntry ? 'CAR' : bu,
     'Actual delivery qty': 11 * factor, 'Base Unit of Measure': bu, 'Ship-to Party': SHIPTO, 'Name ship-to party': 'QA59', Plant: PLANT, 'Storage Location': 'FG01' }]

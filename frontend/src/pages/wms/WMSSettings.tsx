@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown, Thermometer } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
@@ -37,7 +37,7 @@ import {
   useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
   useStorageConditions, useAddStorageCondition, useUpdateStorageCondition, useDeleteStorageCondition, conditionLabel,
-  useVehicleModels,
+  useVehicleModels, useCustomers,
   useWhTypeConfigs, useSaveWhTypeConfigs, type WhTypeConfig,
   type WarehouseZone, type UnitRow, type UnitRole, type StorageConditionRow,
 } from '@/api/hooks'
@@ -682,7 +682,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; shiptos?: string[]; unlinked_shipto_policy?: string | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -730,7 +730,22 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
   const [scanCodeList,  setScanCodeList]  = useState<string[]>(() => scanListOf(wh?.scan_code_types))
-  const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
+  // SHIP-TO NHẬN VÀO KHO (28/09) = khách trỏ kho (`Customer.warehouse_id`) — chọn nhiều từ danh mục Khách, tìm trên server;
+  // nhãn của mã đã chọn ghim vào options (luật danh mục lớn). Lưu = gửi danh sách mã, BE đồng bộ vào Customer.
+  const [shiptoSel,     setShiptoSel]     = useState<string[]>(wh?.shiptos ?? [])
+  const [shiptoSearch,  setShiptoSearch]  = useState('')
+  const { data: shiptoFound } = useCustomers({ search: shiptoSearch, page: 1, pageSize: 50 })
+  const { data: shiptoLinked } = useCustomers({ warehouseId: wh?.id ?? 'NONE0', page: 1, pageSize: 500 })
+  const shiptoLabels = useRef(new Map<string, string>())
+  for (const r of [...(shiptoLinked?.rows ?? []), ...(shiptoFound?.rows ?? [])]) shiptoLabels.current.set(r.ship_to_code, `${r.ship_to_code} — ${r.name}`)
+  const shiptoOptions = useMemo(() => {
+    const seen = new Set<string>(); const out: { value: string; label: string }[] = []
+    for (const v of [...shiptoSel, ...(shiptoFound?.rows ?? []).map(r => r.ship_to_code)]) {
+      if (seen.has(v)) continue; seen.add(v); out.push({ value: v, label: shiptoLabels.current.get(v) ?? v })
+    }
+    return out
+  }, [shiptoSel, shiptoFound])
+  const [unlinkedPolicy, setUnlinkedPolicy] = useState<'NONE' | 'WARN' | 'BLOCK'>((wh?.unlinked_shipto_policy as 'NONE' | 'WARN' | 'BLOCK') ?? 'NONE')
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
   const [sapSlocs,      setSapSlocs]      = useState((wh?.sap_storage_locations ?? []).join(', '))
@@ -743,7 +758,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const [pickRadius,    setPickRadius]    = useState(String(wh?.cross_trip_pick_radius ?? 0))
   // ĐIỀU VẬN (24/09) — tham số CẤP KHO cho engine ghép chuyến (chỉ theo kho: một chuyến chở lẫn loại, không có bản theo Loại kho).
   // Ô số giữ dạng CHUỖI để xoá trắng được; ngưỡng Non tải rỗng = theo dòng xe.
-  const [dispMaxDrops,  setDispMaxDrops]  = useState(String(wh?.dispatch_max_drops ?? 3))
+  const [dispMaxDrops,  setDispMaxDrops]  = useState(wh?.dispatch_max_drops == null ? '' : String(wh.dispatch_max_drops))   // 28/09: trống = không giới hạn
   const [dispMix,       setDispMix]       = useState(wh?.dispatch_allow_mix_channels === true)
   const [dispMixCat,    setDispMixCat]    = useState(wh?.dispatch_allow_mix_categories === true)   // 26/09: ghép nhiều Loại kho trên một chuyến
   const [dispUnderload, setDispUnderload] = useState(wh?.dispatch_underload_pct == null ? '' : String(wh.dispatch_underload_pct))
@@ -836,7 +851,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_allow_mix_categories: dispMixCat, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), dispatch_max_vehicles_per_trip: Math.min(5, Math.max(1, Math.trunc(Number(dispMaxVeh)) || 1)), ...rot, ...putaway },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoSel.length ? shiptoSel.join(',') : '', unlinked_shipto_policy: unlinkedPolicy, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: dispMaxDrops.trim() === '' ? null : (Number(dispMaxDrops) || null), dispatch_allow_mix_channels: dispMix, dispatch_allow_mix_categories: dispMixCat, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), dispatch_max_vehicles_per_trip: Math.min(5, Math.max(1, Math.trunc(Number(dispMaxVeh)) || 1)), ...rot, ...putaway },
         {
           // Bật/tắt "Áp %Date tự động" đã ghi thẳng vào đơn đang mở — phải NÓI RA số dòng vừa đổi,
           // không thì lại đúng cảnh "bấm Lưu xong không thấy gì xảy ra" (user 12/09).
@@ -860,7 +875,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: Number(dispMaxDrops) || 3, dispatch_allow_mix_channels: dispMix, dispatch_allow_mix_categories: dispMixCat, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), dispatch_max_vehicles_per_trip: Math.min(5, Math.max(1, Math.trunc(Number(dispMaxVeh)) || 1)), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoSel.length ? shiptoSel.join(',') : '', unlinked_shipto_policy: unlinkedPolicy, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, date_rule_policy: dateRulePolicy, separate_lowering_forklift: sepLower, cross_trip_pick_radius: Number(pickRadius) || 0, dispatch_max_drops: dispMaxDrops.trim() === '' ? null : (Number(dispMaxDrops) || null), dispatch_allow_mix_channels: dispMix, dispatch_allow_mix_categories: dispMixCat, dispatch_underload_pct: dispUnderload.trim() === '' ? null : Number(dispUnderload), dispatch_pallet_max_stops: Math.max(1, Math.trunc(Number(dispPalletStops)) || 1), dispatch_max_vehicles_per_trip: Math.min(5, Math.max(1, Math.trunc(Number(dispMaxVeh)) || 1)), ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -940,10 +955,12 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           </div>
           <div className="space-y-1">
             <span className="flex items-center gap-1">
-              <Label className="text-xs">Mã ship-to phụ</Label>
-              <InfoTip tip={<>Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</>} />
+              <Label className="text-xs">Ship-to nhận vào kho này</Label>
+              <InfoTip tip={<>Chuyến xuất tới các ship-to này là <b>chuyển kho về đây</b>: kho nhận có kế hoạch nhập và xác nhận theo chế độ quản tồn của kho (QR / QTY / NONE). Ship-to trùng <b>mã kho</b> tự có sẵn. Một ship-to chỉ trỏ được một kho; đây chính là ô "Kho nhận" trên trang Khách hàng.</>} />
             </span>
-            <Input value={shiptoCodes} onChange={e => setShiptoCodes(e.target.value.toUpperCase())} placeholder="vd: 20000018, 20000019" className="h-8 text-sm" />
+            <MultiSelectFilter label="Ship-to" options={shiptoOptions} selected={shiptoSel} onChange={setShiptoSel}
+              serverSearch onSearchChange={setShiptoSearch} selectedFirst width="w-full" />
+            {shiptoSel.length > 0 && <p className="text-[10px] font-mono text-slate-500 break-all">{shiptoSel.join(', ')}</p>}
           </div>
           <div className="space-y-1">
             <span className="flex items-center gap-1">
@@ -990,6 +1007,18 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               tip={<>Xe không cân được (hỏng cân…) → duyệt <b>Bỏ qua cân</b> trên chuyến như rule 1.</>}
               htmlFor="wh-requireweigh"
               control={<Switch id="wh-requireweigh" checked={requireWeigh} onCheckedChange={setRequireWeigh} />} />
+          </SettingsGroup>
+          {/* KHO NHẬN (28/09): ship-to trông như kho WMS mà chưa trỏ — nhắc / chặn là CẤU HÌNH của kho xuất, mặc định im (hành vi cũ) */}
+          <SettingsGroup area="XUẤT" title="Kho nhận (chuyển kho)">
+            <SettingRow label="Ship-to có vẻ là kho WMS mà chưa trỏ kho"
+              desc="Tên khách trùng tên một kho đang hoạt động nhưng chưa được trỏ kho nhận. Khách ngoài không bao giờ bị nhắc."
+              tip={<>Không: im lặng, chuyến hoàn thành như bán ra ngoài (tài xế tự xác nhận). <b>Nhắc</b>: chip vàng trên chuyến + danh sách, không chặn. <b>Chặn</b>: không cho Hoàn thành tới khi trỏ kho (khai ở ô "Ship-to nhận" phía trên hoặc Khách hàng → Kho nhận). Chuyến đã hoàn thành trước khi trỏ kho thì dùng nút "Đẩy lại cho kho nhận" trên chuyến.</>}
+              control={<select value={unlinkedPolicy} onChange={e => setUnlinkedPolicy(e.target.value as 'NONE' | 'WARN' | 'BLOCK')}
+                className="h-7 rounded-md border border-slate-300 bg-white px-2 text-xs">
+                <option value="NONE">Không</option>
+                <option value="WARN">Nhắc</option>
+                <option value="BLOCK">Chặn hoàn thành</option>
+              </select>} />
           </SettingsGroup>
           <SettingsGroup area="XUẤT" title="Quét tem thùng">
             <SettingRow label="Quét tới THÙNG khi xuất"
@@ -1046,10 +1075,10 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               một chuyến chở lẫn loại hàng nên không có bản khai theo Loại kho. Mặc định = 3 điểm · không trộn kênh · Non tải theo dòng xe. */}
           <SettingsGroup area="XUẤT" title="Điều vận — ghép chuyến">
             <SettingRow label="Điểm giao tối đa một chuyến"
-              desc="Máy chỉ gộp thêm khách vào chuyến khi tổng số điểm giao không vượt số này (1–20)."
+              desc="Máy chỉ gộp thêm khách vào chuyến khi tổng số điểm giao không vượt số này (1–50). Để trống = không giới hạn. Kênh / từng khách khai 'Số khách tối đa cùng xe' riêng thì xe chở khách đó lấy số nhỏ hơn."
               tip={<>Nhiều điểm giao = ít chuyến hơn nhưng phụ phí rớt điểm cao hơn và xe về muộn hơn. Máy so cước thật trước khi gộp — gộp mà đắt hơn đi hai chuyến thì không gộp.</>}
-              control={<Input id="wh-disp-drops" type="number" min={1} max={20} className="h-7 w-24 text-xs text-right"
-                value={dispMaxDrops} onChange={e => setDispMaxDrops(e.target.value)} placeholder="3" />} />
+              control={<Input id="wh-disp-drops" type="number" min={1} max={50} className="h-7 w-28 text-xs text-right"
+                value={dispMaxDrops} onChange={e => setDispMaxDrops(e.target.value)} placeholder="Không giới hạn" />} />
             <SettingRow label="Số khách tối đa trên một xe pallet"
               desc="Khách đi Pallet (khai ở Cấu hình → Khách hàng) đi xe pallet riêng — mặc định 1 khách / xe. Khách đi Xá ghép theo 'Điểm giao tối đa' ở trên (1–20)."
               tip={<>Xe pallet chở nguyên pallet cho MỘT khách là cách chạy phổ biến; tăng số này khi kho cho xe pallet rớt thêm khách cùng tuyến. Trên bàn ghép xe vẫn đổi được một xe pallet sang xe xá bằng nút trên thẻ xe.</>}
@@ -2225,7 +2254,7 @@ export default function WMSSettings() {
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Quản tồn</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">NMSX</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to phụ</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to nhận</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Địa chỉ</TableHead>
                         {canManageWarehouse && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
@@ -2261,7 +2290,7 @@ export default function WMSSettings() {
                             </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
-                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap" title={(wh.shiptos ?? []).join(', ')}>{wh.shiptos?.length ? (wh.shiptos.length <= 3 ? wh.shiptos.join(', ') : `${wh.shiptos.slice(0, 3).join(', ')} +${wh.shiptos.length - 3}`) : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{wh.address ?? '—'}</TableCell>
                           {canManageWarehouse && (
                             <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -2294,7 +2323,7 @@ export default function WMSSettings() {
                 <div><span className="text-slate-400">Quản tồn:</span> <span className="font-medium">{invModeMeta(detailWh.inventory_mode).label}</span></div>
                 <div><span className="text-slate-400">Trực thuộc:</span> <span className="font-medium">{detailWh.parent_warehouse_id ? ((allWh as WhRow[]).find(p => p.id === detailWh.parent_warehouse_id)?.name ?? '?') : '— (kho thường)'}</span></div>
                 <div><span className="text-slate-400">NMSX:</span> <span className="font-mono font-medium">{detailWh.nmsx_code || '—'}</span></div>
-                <div><span className="text-slate-400">Ship-to phụ:</span> <span className="font-mono font-medium">{detailWh.shipto_codes?.length ? detailWh.shipto_codes.join(', ') : '—'}</span></div>
+                <div><span className="text-slate-400">Ship-to nhận:</span> <span className="font-mono font-medium break-all">{detailWh.shiptos?.length ? detailWh.shiptos.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailWh.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

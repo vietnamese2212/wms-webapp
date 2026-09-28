@@ -408,6 +408,8 @@ router.delete('/outbound/:gdoId/weigh-waive',                 requirePerm('outbo
 router.post('/outbound/:gdoId/gate-waive',                    requirePerm('outbound', 'gate_waive'), outbound.waiveGateGDO)     // rule 1 — đăng ký cổng
 router.delete('/outbound/:gdoId/gate-waive',                  requirePerm('outbound', 'gate_waive'), outbound.unwaiveGateGDO)
 router.post('/outbound/:id/uncomplete',                       requirePerm('outbound', 'uncomplete'), outbound.uncompleteGDO)
+// Đẩy lại cho kho nhận (28/09): chuyến ĐÃ hoàn thành mà ship-to mới được trỏ kho — kho xuất chủ động đẩy, đã đẩy thì 409
+router.post('/outbound/:id/push-transfer',                    requirePerm('outbound', 'push_transfer'), validate({ body: z.object({}).passthrough() }), outbound.pushTransferOrder)
 router.post('/outbound/:gdoId/items/:itemId/check-scan',      requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.checkScanItem)
 // Scan/xóa-scan dùng chung cho trang Xuất kho VÀ Nhặt lẻ → chấp nhận quyền của cả 2 module
 router.post('/outbound/:gdoId/items/:itemId/scan',            requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.scanItem)

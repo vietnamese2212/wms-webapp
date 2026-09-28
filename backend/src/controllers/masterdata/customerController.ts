@@ -18,6 +18,7 @@ import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { logAdmin, diffFields } from '../../services/adminAudit'
 import { normShipto, normCategory, parseMasterRule, type MasterScope } from '../../services/dateRulePolicy'
 import { autoApplyAfterConfigChange, warehousesWithPolicyOn } from '../../services/dateRuleApply'
+import { linkCustomersByWarehouseCode } from '../../services/transferDest'
 import type { DateRule } from '../../services/directedTasks'
 
 const now = () => new Date().toISOString()
@@ -154,7 +155,22 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
     patch.load_mode_by_category = m.map
   }
   if (body.note !== undefined) patch.note = String(body.note ?? '').trim().slice(0, 1000) || null
+  // 28/09 (user: "không tự ép gì cả, config hết"): đi xe riêng khi điều vận = ô cấu hình, mặc định tắt — KHÔNG còn suy từ "khách trỏ kho"
+  if (body.dispatch_separate !== undefined) patch.dispatch_separate = Boolean(body.dispatch_separate)
+  // 28/09: số khách tối đa cùng xe — 1, 2, 3… hoặc null = không giới hạn (mặc định); kênh có mức riêng, khách khai thì thắng kênh
+  if (body.max_customers_per_trip !== undefined) {
+    const m = parseMaxCustomers(body.max_customers_per_trip)
+    if ('err' in m) return bad(m.err)
+    patch.max_customers_per_trip = m.value
+  }
   return { patch }
+}
+/** "Số khách tối đa cùng xe": null/''/0 = không giới hạn; còn lại số nguyên 1…50. */
+export function parseMaxCustomers(v: unknown): { value: number | null } | { err: string } {
+  if (v === null || v === undefined || v === '' || v === 0 || v === '0') return { value: null }
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 1 || n > 50) return { err: 'Số khách tối đa cùng xe phải là số nguyên 1–50, hoặc để trống = không giới hạn' }
+  return { value: n }
 }
 
 // ─── GET /masterdata/customers ────────────────────────────────────────────────────────────────
@@ -316,7 +332,12 @@ export async function createCustomer(req: Request, res: Response) {
       ...parsed.patch, created_by: actor, updated_by: actor, created_at: t, updated_at: t,
     }).select().single()
     if (error) return fail(res, error)   // 23505 → 409 (pgUserError), 23514 → 400
-    const row = data as CustomerRow
+    let row = data as CustomerRow
+    // 28/09: mã ship-to trùng MÃ một kho đang hoạt động mà người thêm không chọn kho ⇒ tự trỏ (khớp định danh)
+    if (!row.warehouse_id && (await linkCustomersByWarehouseCode([row.ship_to_code], actor)) > 0) {
+      const { data: again } = await supabase.from('Customer').select('*').eq('id', row.id).maybeSingle()
+      if (again) row = again as CustomerRow
+    }
     await logAdmin(req, {
       action: 'CUSTOMER_CREATE', target_type: 'Customer', target_id: row.id,
       target_label: `${row.ship_to_code} — ${row.name}`, after: parsed.patch,
@@ -422,7 +443,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
   try {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
-    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category', 'dispatch_vehicles']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'load_mode', 'load_mode_by_category', 'dispatch_vehicles', 'dispatch_separate', 'max_customers_per_trip']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))
@@ -523,6 +544,7 @@ export async function listCustomerChannels(_req: Request, res: Response) {
         label: String(r.meta?.label ?? r.value),
         rules: (rulesOf.get(r.value) ?? []).sort(byCategory),
         dispatch_vehicles: (r.meta?.dispatch_vehicles ?? {}) as Record<string, string[]>,   // dòng xe mặc định của kênh theo Loại kho
+        max_customers_per_trip: typeof r.meta?.max_customers_per_trip === 'number' ? r.meta.max_customers_per_trip : null,   // 28/09: null = không giới hạn
         sap_dist_channel: typeof r.meta?.sap_dist_channel === 'string' ? r.meta.sap_dist_channel : null,   // 28/09: tự điền khách từ ZSD02
         sort_order: r.sort_order,
         customers: counts.get(r.value) ?? 0,
@@ -547,8 +569,14 @@ export async function updateCustomerChannel(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kênh')
     if (b.type !== 'customer_channel') return fail(res, 400, 'VALIDATION_ERROR', 'Mục này không phải Kênh khách hàng')
 
-    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown; sap_dist_channel?: unknown }
+    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown; sap_dist_channel?: unknown; max_customers_per_trip?: unknown }
     const meta: Record<string, unknown> = { ...(b.meta ?? {}) }
+    // 28/09: số khách tối đa cùng xe của kênh (khách không khai thì theo đây; null = không giới hạn)
+    if (body.max_customers_per_trip !== undefined) {
+      const m = parseMaxCustomers(body.max_customers_per_trip)
+      if ('err' in m) return fail(res, 400, 'VALIDATION_ERROR', m.err)
+      if (m.value != null) meta.max_customers_per_trip = m.value; else delete meta.max_customers_per_trip
+    }
     if (body.label !== undefined) {
       const label = String(body.label ?? '').trim()
       if (!label) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu tên kênh')

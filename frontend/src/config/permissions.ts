@@ -61,6 +61,7 @@ export const MODULES = {
       gate_waive:  'Duyệt bỏ qua ĐĂNG KÝ CỔNG (rule 1) — xe không đăng ký (giao lẻ/xe máy/NV nhận…), duyệt trên chuyến; duyệt cổng ⇒ biển số tùy chọn',
       set_date:    'Khai Quy định date (≥ % hạn dùng · ≥ số ngày còn lại · NSX chỉ định) cho dòng đơn — VÀ vào trang "Quy định date" (menu Kho WMS) để soi mọi dòng của mọi chuyến rồi khai hàng loạt; dòng chưa khai không lên Việc cần làm',
       rotation_override: 'Duyệt LẤY KHÁC THỨ TỰ luân chuyển — chỉ cần khi kho bật "bắt buộc" trong Cài đặt WMS → Kho; phải chọn lý do, có ghi vết',
+      push_transfer: 'Đẩy lại cho kho nhận — chuyến ĐÃ hoàn thành mà ship-to mới được trỏ kho: kho xuất bấm đẩy để kho nhận có kế hoạch nhập (đã đẩy rồi thì không đẩy lại)',
     },
   },
   scanlog: {

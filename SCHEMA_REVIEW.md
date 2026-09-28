@@ -49,9 +49,12 @@ BV_TP1_1_T1 = {warehouse.code}_{sub_code}_{row}_{shelf}
 ```sql
 id TEXT PK, code TEXT UNIQUE, name TEXT, address TEXT,
 warehouse_type TEXT, inventory_mode TEXT, nmsx_code TEXT,
-shipto_codes TEXT[] DEFAULT '{}',  -- mã ship-to phụ; auto-detect chuyển kho khớp code HOẶC phần tử mảng này
+shipto_codes TEXT[] DEFAULT '{}',  -- CỘT CHẾT từ 20260929: không đọc, không ghi (kho đích = Customer.warehouse_id); DROP ở đợt sau
+unlinked_shipto_policy TEXT NOT NULL DEFAULT 'NONE' CHECK IN (NONE, WARN, BLOCK),  -- 20260929: ship-to trông như kho WMS mà chưa trỏ ⇒ im / nhắc / chặn Hoàn thành
+dispatch_max_drops INT NULL CHECK (NULL OR 1..50),  -- 20260929: NULL = không giới hạn (trước NOT NULL DEFAULT 3, 1..20)
 is_active BOOL DEFAULT true, created_at, updated_at
 ```
+> **20260929_customer_wh_link (đã áp staging 28/09 23:xx, CHƯA production):** `Customer.dispatch_separate bool default false` · `Customer.max_customers_per_trip int null (1..50)` · `dispatch_trip_od.separate bool` · `dispatch_trip_od.max_customers int null` · quyền `outbound.push_transfer` cấp cho chức danh có `outbound.complete` · dữ liệu: khách trùng mã kho đang vận hành ⇒ trỏ kho; **147 kho NPP không vận hành ⇒ `is_active=false`**; lệnh chuyển kho PENDING/SELF dưới kho vừa tắt ⇒ về kho xuất, `destination_warehouse_id=NULL`. Production: đo lại số kho NPP trước khi chạy phần dữ liệu (tiêu chí "không Location · InventoryEntry · UserWarehouseAccess · GDO nguồn").
 
 ### Location
 ```sql

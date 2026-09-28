@@ -60,8 +60,11 @@ export interface EngineOd {
   ward_code: string | null
   region_code: string | null
   channel: string | null            // kênh khách (LookupValue customer_channel) — null = chưa phân kênh
-  internal_wh: string | null        // Customer.warehouse_id — khách là kho của mình (STO / nội bộ)
-  scan_mode: boolean                // Customer.delivery_mode === 'SCAN' (kho nhận xác nhận trong app)
+  /** 28/09 (user: "không tự ép gì cả, config hết"): `Customer.dispatch_separate` — khách đi xe riêng, không ghép khách khác.
+   *  Thay cho luật ngầm cũ "khách trỏ kho (internal_wh) / khách SCAN đi riêng". undefined = ghép bình thường. */
+  separate?: boolean
+  /** 28/09: số khách tối đa cùng xe của OD này (khách → kênh); null/undefined = không giới hạn. Chuyến = nhỏ nhất trong các OD. */
+  max_customers?: number | null
   flow: string
   lines: EngineLine[]
   /** Luật 7 (25/09): khách đi PALLET (xe pallet, một khách/xe theo tham số kho) hay XÁ (xe tải theo tấn, ghép nhiều khách).
@@ -95,7 +98,7 @@ export interface EngineShareTarget { transport_company_id: string; share_pct: nu
 export interface ShareActual { trips: number; pallets: number; tons: number }
 export interface EngineParams {
   day: string                       // ngày giao 'YYYY-MM-DD' (hiệu lực cước)
-  max_drops: number                 // điểm giao tối đa một chuyến (kho)
+  max_drops: number | null          // điểm giao tối đa một chuyến (kho); null = không giới hạn (28/09)
   allow_mix_channels: boolean
   underload_pct: number | null      // ngưỡng Non tải của kho; null = theo dòng xe
   code_prefix: string               // '<MãKho>_X_<ddmmyy>_' — đúng quy ước group_code hiện tại
@@ -133,8 +136,10 @@ export interface TripOd {
   conditions: string[]                              // điều kiện bảo quản của phần OD này — chuyển OD thì chuyến đích tính lại từ đây
   cat_load: Record<string, number>                  // tải theo Loại kho (pallet + kg/1e6) — nguồn cửa đặt lịch khi OD di chuyển
   load_mode: LoadMode | null                        // kiểu đi của OD (theo khách, người đổi được trên bàn ghép xe)
-  transfer: boolean                                 // trung chuyển giữa các kho của mình (cờ thông tin — luật 8 bỏ 28/09)
+  transfer: boolean                                 // trung chuyển theo cờ dòng chảy SAP (STO / nội bộ) — cờ thông tin
   allowed_models: string[] | null                   // luật 10 — dòng xe khách được vào (chụp lúc lập); null = không giới hạn
+  separate: boolean                                 // 28/09 — khách đi xe riêng (cấu hình trên Khách)
+  max_customers: number | null                      // 28/09 — số khách tối đa cùng xe của OD (khách → kênh); null = không giới hạn
 }
 export interface TripFreight {
   total: number | null; base: number | null; billed_pallets: number | null; unit: TariffUnit | null
@@ -218,9 +223,10 @@ function unitOf(od: EngineOd, lines: EngineLine[], part: Unit['part'], oversize 
 }
 
 // ── Luật 1 + 2: khoá nhóm bắt buộc & khoá cụm ──
+/** Luật 1 (28/09): khách bật "Đi xe riêng" ⇒ khoá riêng theo ship-to (không ghép khách khác); còn lại một lớp chung.
+ *  Trước 28/09 máy TỰ tách khách trỏ kho (INT:<kho>) và khách SCAN — user: "không tự ép gì cả, config hết". */
 export function classKey(od: EngineOd): string {
-  if (od.internal_wh) return `INT:${od.internal_wh}`
-  return od.scan_mode ? 'SCAN' : 'EXT'
+  return od.separate ? `SEP:${od.ship_to_code ?? od.od_number}` : 'ALL'
 }
 /** Khoá gộp (vùng): các chuyến cùng khoá này mới được gộp với nhau khi Non tải. */
 export function mergeKey(od: EngineOd, allowMixChannels: boolean, catPart = ''): string {
@@ -344,10 +350,10 @@ export function modeOfModel(m: Pick<EngineModel, 'capacity_mode' | 'max_pallets'
 }
 /** Dòng xe có thuộc họ của kiểu đi này không (kiểu đi chưa phân ⇒ mọi họ, hành vi cũ). */
 export const familyOk = (m: EngineModel, mode: LoadMode | null | undefined) => !mode || modeOfModel(m) === mode
-/** OD trung chuyển = khách là KHO của mình (Customer.warehouse_id) hoặc SAP phân loại STO / INTERNAL — chỉ còn là cờ trên dòng
+/** OD trung chuyển = SAP phân loại STO / INTERNAL (28/09: KHÔNG còn suy từ "khách trỏ kho" — trỏ kho chỉ quyết việc NHẬN) — chỉ còn là cờ trên dòng
  *  OD (`dispatch_trip_od.is_transfer`), không quyết dòng xe nữa (luật 8 bỏ 28/09). */
-export const isTransferOd = (od: Pick<EngineOd, 'internal_wh' | 'flow'>) => !!od.internal_wh || od.flow === 'STO' || od.flow === 'INTERNAL'
-type FleetOd = Pick<EngineOd, 'internal_wh' | 'flow' | 'load_mode' | 'allowed_models'>
+export const isTransferOd = (od: Pick<EngineOd, 'flow'>) => od.flow === 'STO' || od.flow === 'INTERNAL'
+type FleetOd = Pick<EngineOd, 'flow' | 'load_mode' | 'allowed_models'>
 /** Luật 10: OD cho phép dòng xe này không — CHỈ danh sách đã resolve (rỗng = không xe nào); null (dòng cũ / test) = không giới hạn. */
 export const odAllows = (m: Pick<EngineModel, 'id'>, o: FleetOd) => (o.allowed_models ? o.allowed_models.includes(m.id) : true)
 /** Có OD nào trên nhóm khai danh sách dòng xe riêng không (để câu cảnh báo nói đúng nguyên nhân). */
@@ -364,9 +370,16 @@ export const fleetFor = (models: EngineModel[], ods: FleetOd[], opts: { ignoreAl
 /** Luật 4b (26/09, user: "được ghép thì mới lôi vào"): dòng xe chở được ≥ 2 mức mà Loại kho có khai (xe kết hợp nóng / lạnh)
  *  chỉ dành cho chuyến CẦN ≥ 2 mức; chuyến một mức ưu tiên xe đúng mức, chỉ rơi về xe kết hợp khi không xe đúng mức nào có cước. */
 export const isComboFor = (m: EngineModel, combo: string[]) => combo.filter(c => servesConditions(m, [c])).length >= 2
-/** Số điểm giao (khách) tối đa theo kiểu đi: xe pallet theo tham số `pallet_max_stops` (mặc định 1), xe xá theo `max_drops`. */
-export const stopsLimit = (p: Pick<EngineParams, 'max_drops' | 'pallet_max_stops'>, mode: LoadMode | null | undefined) =>
-  mode === 'PALLET' ? Math.max(1, Number(p.pallet_max_stops) || 1) : p.max_drops
+/** Số điểm giao (khách) tối đa theo kiểu đi: xe pallet theo tham số `pallet_max_stops` (mặc định 1), xe xá theo `max_drops`
+ *  (null = không giới hạn, 28/09). */
+export const stopsLimit = (p: Pick<EngineParams, 'max_drops' | 'pallet_max_stops'>, mode: LoadMode | null | undefined): number | null =>
+  mode === 'PALLET' ? Math.max(1, Number(p.pallet_max_stops) || 1) : (p.max_drops ?? null)
+/** 28/09: trần số khách cùng xe do CHÍNH các OD trên xe mang (khách → kênh); OD nào khắt khe nhất áp cho cả xe; null = không OD nào khai. */
+export const odStopsCap = (ods: Pick<EngineOd, 'max_customers'>[]): number | null => {
+  const caps = ods.map(o => o.max_customers).filter((x): x is number => typeof x === 'number' && x >= 1)
+  return caps.length ? Math.min(...caps) : null
+}
+const minCap = (...caps: (number | null | undefined)[]): number | null => { const xs = caps.filter((x): x is number => typeof x === 'number'); return xs.length ? Math.min(...xs) : null }
 /** Luật 4: xe khai rỗng = chở được mọi điều kiện (cùng quy ước `Location.categories` của app). */
 export function servesConditions(m: EngineModel, conds: string[]): boolean {
   const sv = (m.serve_conditions ?? []).filter(Boolean)
@@ -391,9 +404,11 @@ const withUnits = (b: Bin, units: Unit[]): Bin => {
  *  ⚠ Hai vế phải hỏi CÙNG một dòng xe (vá 25/09): bản cũ kiểm "vừa xe lớn nhất" (xe thường 68 pallet) và "có xe nào
  *  phục vụ lạnh" (xe kết hợp 30 pallet) trên HAI xe khác nhau ⇒ gom 54 pallet có hàng lạnh vào một bin mà không xe
  *  nào nhận — đo Ba Vì 25/09: 3 chuyến "chưa chọn dòng xe". `cands` = họ dòng xe của bin (ưu tiên xe có cước). */
-const binFits = (cands: EngineModel[], b: Bin, maxStops: number) => {
+const binFits = (cands: EngineModel[], b: Bin, maxStops: number | null) => {
   const stops = binStops(b)
-  if (stops > maxStops) return false
+  // trần kho/kiểu đi VÀ trần do chính các OD trên bin mang (28/09: khách × kênh khai "số khách tối đa cùng xe")
+  const cap = minCap(maxStops, odStopsCap(b.units.map(u => u.od)))
+  if (cap != null && stops > cap) return false
   const conds = condsOf(b.units.flatMap(u => u.lines))
   return cands.some(m => servesConditions(m, conds) && fits(m, b.pallets, b.tons) && (m.max_drops == null || stops <= m.max_drops))
 }
@@ -848,7 +863,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key, load_mode: b.units[0]?.od.load_mode ?? null,
       vehicle_model: a.model, vehicles: a.vehicles, carrier: a.carrier,
-      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), load_mode: u.od.load_mode ?? null, transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null })),
+      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), load_mode: u.od.load_mode ?? null, transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null, separate: u.od.separate === true, max_customers: u.od.max_customers ?? null })),
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
       warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : []),

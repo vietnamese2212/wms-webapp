@@ -6,6 +6,7 @@ import { db } from '../lib/supabase'
 import { fetchAllByIdChunks } from '../utils/pagination'
 import { ensureCustomers, normShipto } from './dateRulePolicy'
 import { sapChannelMap, channelToFill } from '../utils/sapChannel'
+import { linkCustomersByWarehouseCode } from './transferDest'
 import type { CustomerGeo } from './zsd02Parse'
 import type { Database } from '../types/database'
 
@@ -20,6 +21,8 @@ export async function upsertCustomerGeo(rows: CustomerGeo[], actor: string | nul
   if (!byCode.size) return { created: 0, filled: 0, conflicts: 0, channel_filled: 0 }
 
   const created = await ensureCustomers([...byCode.values()].map(r => ({ ship_to_code: r.ship_to_code, name: r.name })), actor)
+  // 28/09: ship-to trùng MÃ một kho đang hoạt động ⇒ tự trỏ kho (khớp định danh, không suy đoán); khách đã trỏ kho khác thì giữ
+  if (created > 0) await linkCustomersByWarehouseCode([...byCode.keys()], actor)
   // KÊNH (28/09, user: "tự điền từ SAP; kênh là nơi khai riêng — khai thêm kênh không có trên SAP như BHX"): khách CHƯA có kênh
   // ⇒ lấy theo kênh SAP của dòng ZSD02 nếu danh mục có kênh khai mã đó; khách đã có kênh (người gán tay, vd BHX) ⇒ giữ nguyên
   const { data: chans, error: chErr } = await db.from('LookupValue').select('value, meta').eq('type', 'customer_channel')

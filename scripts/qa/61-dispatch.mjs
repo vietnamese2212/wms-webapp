@@ -820,6 +820,36 @@ try {
     check('13g. Khai dòng xe cho khách rồi "Ghép phần đã chọn" ⇒ OD1 lên đúng dòng xe đã khai (không phải lập lại kế hoạch)',
       kv.s === 200 && gN?.s === 200 && tN?.vehicle_model_id === vmId,
       `put=${kv.s} reopt=${gN?.s} ${gN?.j?.error?.message ?? ''} vm=${tN?.vehicle_model_id}`)
+    // [13h][13i] 28/09 (user: "không tự ép gì cả, config hết"): ĐI XE RIÊNG và SỐ KHÁCH TỐI ĐA CÙNG XE là cấu hình trên Khách / Kênh —
+    // OD1 + OD2 cùng phường W1 (4 + 3 pallet ≤ 9) vốn đi CHUNG một xe ([1b]); bật ô nào là tách ra, tắt lại là chung
+    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { dispatch_vehicles: ALLV, channel: null })
+    const c2 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[1]}`))[0]
+    const sepOn = await api(`/masterdata/customers/${c2.id}`, 'PUT', { dispatch_separate: true })
+    await cleanupTrips()
+    const pS = await mkPlan(PLAN_BODY); const PS = pS.j?.data
+    const sepOff = await api(`/masterdata/customers/${c2.id}`, 'PUT', { dispatch_separate: false })
+    await cleanupTrips()
+    const pS2 = await mkPlan(PLAN_BODY); const PS2 = pS2.j?.data
+    check('13h. "Đi xe riêng" bật cho khách 2 ⇒ OD1 và OD2 KHÔNG chung xe, dòng OD chụp separate=true · tắt lại ⇒ chung xe như [1b]',
+      sepOn.s === 200 && sepOn.j?.data?.dispatch_separate === true && pS.s === 201 && !!tripOfOd(PS, OD[0]) && !!tripOfOd(PS, OD[1]) && tripOfOd(PS, OD[0]) !== tripOfOd(PS, OD[1])
+      && rowOf(PS, OD[1])?.separate === true && rowOf(PS, OD[0])?.separate === false
+      && sepOff.s === 200 && pS2.s === 201 && !!tripOfOd(PS2, OD[0]) && tripOfOd(PS2, OD[0]) === tripOfOd(PS2, OD[1]),
+      `on=${sepOn.s} plan=${pS.s} ${pS.j?.error?.message ?? ''} t1=${tripOfOd(PS, OD[0])?.id?.slice(0, 6)} t2=${tripOfOd(PS, OD[1])?.id?.slice(0, 6)} sep=${rowOf(PS, OD[1])?.separate} off=${sepOff.s} plan2=${pS2.s} same=${tripOfOd(PS2, OD[0]) === tripOfOd(PS2, OD[1])}`)
+    const mxBad1 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_per_trip: 'abc' })
+    const mxBad2 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_per_trip: 99 })
+    const mx1 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_per_trip: 1 })
+    await cleanupTrips()
+    const pM = await mkPlan(PLAN_BODY); const PM = pM.j?.data
+    const tM2 = tripOfOd(PM, OD[1])
+    const mxClr = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c2.id], patch: { max_customers_per_trip: null } })
+    const c2Now = (await restAll('Customer', `select=max_customers_per_trip,dispatch_separate&id=eq.${c2.id}`))[0]
+    await cleanupTrips()
+    const pM2 = await mkPlan(PLAN_BODY); const PM2 = pM2.j?.data
+    check('13i. "Số khách tối đa cùng xe" = 1 cho khách 2 ⇒ OD2 đi xe một mình (chụp max_customers=1), OD1 xe khác · hàng loạt về "không giới hạn" ⇒ chung xe · "abc"/99 → 400',
+      mxBad1.s === 400 && mxBad2.s === 400 && mx1.s === 200 && mx1.j?.data?.max_customers_per_trip === 1
+      && pM.s === 201 && !!tM2 && tM2.ods.length === 1 && rowOf(PM, OD[1])?.max_customers === 1 && tripOfOd(PM, OD[0]) !== tM2
+      && mxClr.s === 200 && c2Now?.max_customers_per_trip === null && pM2.s === 201 && tripOfOd(PM2, OD[0]) === tripOfOd(PM2, OD[1]),
+      `bad=${mxBad1.s},${mxBad2.s} set=${mx1.s}/${mx1.j?.data?.max_customers_per_trip} plan=${pM.s} ${pM.j?.error?.message ?? ''} t2ods=${tM2?.ods?.length} snap=${rowOf(PM, OD[1])?.max_customers} clr=${mxClr.s} now=${JSON.stringify(c2Now)} plan2=${pM2.s} same=${tripOfOd(PM2, OD[0]) === tripOfOd(PM2, OD[1])}`)
   }
 
   // ── [15] (27/09) XEM ĐƠN TRƯỚC KHI GHÉP · HOÃN / KHÔNG ĐIỀU · SỬA DÒNG XE KHÁCH TỪ BÀN · THẺ NHIỀU XE ─────────────────────────

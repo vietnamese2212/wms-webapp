@@ -776,7 +776,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number; copy_from_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number | null; unlinked_shipto_policy?: string; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -785,7 +785,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number | null; unlinked_shipto_policy?: string; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_pallet_max_stops?: number; dispatch_max_vehicles_per_trip?: number }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data as WarehouseSaved),
     // Bật/tắt "Áp %Date tự động" ghi thẳng vào dòng hàng của đơn đang mở (BE áp ngay từ 12/09) →
     // phải làm mới cả màn Quy định date và bảng việc, không đợi người dùng bấm lại.
@@ -4531,6 +4531,9 @@ export interface Customer {
   load_mode_by_category?: Record<string, 'PALLET' | 'LOOSE'>
   /** 27/09: dòng xe (vehicle_model.id) khách được vào theo Loại kho {"*": [...], FG02: [...]} — khoá vắng = theo kênh */
   dispatch_vehicles?: Record<string, string[]>
+  /** 28/09 (không tự ép — config hết): đi xe riêng khi điều vận (mặc định tắt) · số khách tối đa cùng xe (null = không giới hạn, theo kênh) */
+  dispatch_separate?: boolean
+  max_customers_per_trip?: number | null
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
   // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
   rules: MasterRuleRow[]
@@ -4573,6 +4576,8 @@ export interface CustomerChannel {
   dispatch_vehicles?: Record<string, string[]>
   /** 28/09: mã kênh SAP (10 = General Trade…) — khách chưa có kênh được tự điền kênh này lúc nạp ZSD02; null = gán tay (vd BHX) */
   sap_dist_channel?: string | null
+  /** 28/09: số khách tối đa cùng xe mặc định của kênh (khách khai riêng thì thắng); null = không giới hạn */
+  max_customers_per_trip?: number | null
 }
 export function useCustomerChannels() {
   return useQuery({
@@ -4611,7 +4616,7 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category' | 'dispatch_vehicles'>>
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'load_mode' | 'load_mode_by_category' | 'dispatch_vehicles' | 'dispatch_separate' | 'max_customers_per_trip'>>
 /** Thao tác hàng loạt "kiểu đi cho MỘT Loại kho" — gộp vào bảng kiểu đi từng khách (mode null = về kiểu chung). */
 export type CustomerBulkPatch = CustomerPatch | { load_mode_by_category: { category: string; mode: 'PALLET' | 'LOOSE' | null } }
   /** 27/09: dòng xe được vào cho MỘT khoá Loại kho (null = mọi loại) — Thay / Thêm / Bớt / Về theo kênh */
@@ -4692,7 +4697,7 @@ export function useBulkSetDateRule() {
 export function useUpdateCustomerChannel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
     onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })
@@ -4838,6 +4843,33 @@ export const useUnstartGDO    = makeUndoGDOMutation('unstart',
 export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
   old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }),
   [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-transfer']])
+
+/** 28/09 — "Đẩy lại cho kho nhận": chuyến ĐÃ hoàn thành mà ship-to mới được trỏ kho; đã đẩy rồi thì BE trả 409. */
+export function usePushTransfer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/wms/outbound/${id}/push-transfer`, {})
+      .then(r => r.data.data as { order_code: string; delivery_mode: 'SELF' | 'SCAN'; dest: { id: string; code: string; name: string } | null; lines: number }),
+    onSuccess: (_d, id) => {
+      for (const k of [['gdo', id], ['gdos'], ['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-transfer'], ['inbound-plan']])
+        qc.invalidateQueries({ queryKey: k })
+    },
+  })
+}
+/** Khách theo ĐÚNG mã ship-to (form Tạo/Sửa chuyến cần biết ship-to đang gõ có trỏ kho nào không — BE là nơi giữ mối nối). */
+export function useCustomerByShipto(code: string | null | undefined) {
+  const c = String(code ?? '').trim().toUpperCase()
+  return useQuery({
+    queryKey: ['customer-by-shipto', c],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/customers', { params: { search: c, page: 1, page_size: 5 } })
+      const rows = (data.data?.rows ?? []) as Customer[]
+      return rows.find(r => r.ship_to_code === c) ?? null
+    },
+    enabled: c.length >= 2,
+    staleTime: 30_000,
+  })
+}
 
 export function useWarehouseEmployees(warehouse_id?: string | null) {
   return useQuery({

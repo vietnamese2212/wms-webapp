@@ -1701,11 +1701,12 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
       ].filter(([k]) => k))
   )
   const whByCode  = new Map<string, string>()
-  ;(warehouses as { code: string; name: string; id: string; shipto_codes?: string[] | null }[]).forEach(w => {
+  // 28/09: ship-to nhận vào kho = khách trỏ kho (list API trả `shiptos`), không còn `shipto_codes`
+  ;(warehouses as { code: string; name: string; id: string; shiptos?: string[] }[]).forEach(w => {
     whByCode.set(String(w.code).trim().toUpperCase(), w.id)
     const nameKey = String(w.name ?? '').trim().toUpperCase()
     if (nameKey) whByCode.set(nameKey, w.id)
-    ;(w.shipto_codes ?? []).forEach(s => { const k = String(s).trim().toUpperCase(); if (k) whByCode.set(k, w.id) })
+    ;(w.shiptos ?? []).forEach(s => { const k = String(s).trim().toUpperCase(); if (k) whByCode.set(k, w.id) })
   })
   const vtNameSet = new Set((vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => String(vt.name)))
 

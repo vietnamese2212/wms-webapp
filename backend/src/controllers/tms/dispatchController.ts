@@ -33,7 +33,7 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd, type LoadMode,
-  stopsLimit, modeOfModel, condsOf, mainCatsOf, resolveLoadMode, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
+  stopsLimit, odStopsCap, modeOfModel, condsOf, mainCatsOf, resolveLoadMode, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
@@ -49,7 +49,7 @@ type Tables = Database['public']['Tables']
 type PlanRow = Tables['dispatch_plan']['Row']
 type TripRow = Tables['dispatch_trip']['Row']
 type TripOdRow = Tables['dispatch_trip_od']['Row']
-type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_pallet_max_stops: number; dispatch_max_vehicles_per_trip: number }
+type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_pallet_max_stops: number; dispatch_max_vehicles_per_trip: number }
 
 type TripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
 const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
@@ -82,7 +82,7 @@ function whAllowed(req: Request, whId: string): boolean {
 export const zPlanBody = z.object({
   warehouse_id: zId,
   plan_date: zDay,
-  max_drops: z.number().int().min(1).max(20).optional(),
+  max_drops: z.number().int().min(1).max(50).nullable().optional(),   // null = không giới hạn (28/09)
   pallet_max_stops: z.number().int().min(1).max(20).optional(),   // đè "số khách tối đa / xe pallet" của kho cho lượt lập này
   allow_mix_channels: zBool.optional(),
   allow_mix_categories: zBool.optional(),   // đè "cho ghép nhiều Loại kho" của kho cho lượt lập này
@@ -191,7 +191,7 @@ async function loadShareActual(whId: string, day: string, carriers: EngineCarrie
 // ── POOL LŨY TIẾN: OD ZSD02 của kho — ngày giao đó + tồn đọng — chưa được lo ở đâu (luật: services/dispatchPool) ──────
 type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null; note_delivery: string | null }
 type MatRow = LoadMat & { material_code: string; category: string | null }
-type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; load_mode: string | null; load_mode_by_category: Record<string, unknown> | null; dispatch_vehicles: Record<string, unknown> | null }
+type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; load_mode: string | null; load_mode_by_category: Record<string, unknown> | null; dispatch_vehicles: Record<string, unknown> | null; dispatch_separate: boolean | null; max_customers_per_trip: number | null }
 type CatCfg = Awaited<ReturnType<typeof getDispatchCategoryConfig>>
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (user 26/09: "nếu không khai báo đúng thì FG02 có thể dùng container
  *  mất") — màn Điều vận hiện băng cảnh báo từ đây. Loại "đi kèm đơn" không cần ĐK bảo quản riêng. */
@@ -281,13 +281,15 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       .select('material_code, category, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, weight_kg, is_pallet_carrier, is_non_stock').in('material_code', c).order('material_code')) as Promise<MatRow[]>,
     // khách của MỌI OD (kể cả OD bị bỏ ra) — bảng Xem đơn in tên vùng cho cả dòng Đã điều / Không điều
     fetchAllByIdChunks(uniq(mine.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
-      .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, load_mode, load_mode_by_category, dispatch_vehicles').in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
+      .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, load_mode, load_mode_by_category, dispatch_vehicles, dispatch_separate, max_customers_per_trip').in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
     // Luật 10 (27/09): dòng xe được vào mặc định theo KÊNH — danh mục 7 dòng
     db.from('LookupValue').select('value, meta').eq('type', 'customer_channel'),
   ])
   if (chRes.error) throw chRes.error
-  const chanVeh = new Map(((chRes.data ?? []) as { value: string; meta: Record<string, unknown> | null }[])
-    .map(r => [r.value, (r.meta?.dispatch_vehicles ?? null) as Record<string, unknown> | null]))
+  const chanRows = (chRes.data ?? []) as { value: string; meta: Record<string, unknown> | null }[]
+  const chanVeh = new Map(chanRows.map(r => [r.value, (r.meta?.dispatch_vehicles ?? null) as Record<string, unknown> | null]))
+  // 28/09: số khách tối đa cùng xe mặc định của KÊNH (khách khai riêng thì thắng); không khai = không giới hạn
+  const chanMax = new Map(chanRows.map(r => [r.value, typeof r.meta?.max_customers_per_trip === 'number' ? r.meta.max_customers_per_trip as number : null]))
   const matBy = new Map(mats.map(m => [m.material_code, m]))
   const custBy = new Map(custs.map(c => [c.ship_to_code, c]))
   const gapCat = new Map<string, Set<string>>()
@@ -317,7 +319,10 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       od_number: od, ship_to_code: first.ship_to_code, ship_to_name: first.ship_to_name,
       ward_code: first.ward_code ?? cust?.ward_code ?? null, region_code: first.region_code ?? cust?.region_code ?? null,
       channel: cust?.is_active === false ? null : (cust?.channel ?? null),
-      internal_wh: cust?.warehouse_id ?? null, scan_mode: !!cust?.warehouse_id,
+      // 28/09 (user: "không tự ép gì cả, config hết"): đi xe riêng + số khách tối đa cùng xe đều là CẤU HÌNH (khách → kênh);
+      // "khách trỏ kho" chỉ quyết việc NHẬN ở Xuất kho, không còn ép xe riêng ở đây
+      separate: cust?.is_active !== false && cust?.dispatch_separate === true,
+      max_customers: cust?.is_active === false ? null : (cust?.max_customers_per_trip ?? (cust?.channel ? chanMax.get(cust.channel) ?? null : null)),
       flow: first.flow ?? 'UNKNOWN', lines,
       // Luật 7 (25/09): khách CHƯA khai / chưa có trong danh mục = đi XÁ (user chốt "khách nào là Pallet, còn lại là xá");
       // 26/09: khai riêng theo Loại kho chính của OD (FG01 đi pallet, FG02 đi xá) thắng kiểu chung
@@ -359,6 +364,7 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
     pallets: o.pallets, tons: o.tons, lines: o.lines, part_index: o.part?.index ?? null, part_of: o.part?.of ?? null, material_codes: o.material_codes,
     conditions: o.conditions, cat_load: asJson(o.cat_load), region_code: m?.region_code ?? null, region_name: m?.region_name ?? null, delivery_date: m?.delivery_date ?? null, late_days: m?.late_days ?? 0,
     load_mode: o.load_mode, is_transfer: o.transfer, allowed_models: o.allowed_models, note: m?.note ?? null, updated_at: t,
+    separate: o.separate, max_customers: o.max_customers,
     sap_sig: m?.sig ?? null, reviewed_at: rev?.at ?? null, reviewed_by: rev?.by ?? null,
   }
 }
@@ -366,7 +372,8 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
 function wholeOd(od: EngineOd): TripOd {
   const s = sumLines(od.lines)
   return { od_number: od.od_number, ship_to_code: od.ship_to_code, ship_to_name: od.ship_to_name, ward_code: od.ward_code, pallets: s.pallets, tons: s.tons, lines: od.lines.length, part: null,
-    material_codes: od.lines.map(l => l.material_code), conditions: condsOf(od.lines), cat_load: catLoadOf(od.lines), load_mode: od.load_mode ?? null, transfer: isTransferOd(od), allowed_models: od.allowed_models ?? null }
+    material_codes: od.lines.map(l => l.material_code), conditions: condsOf(od.lines), cat_load: catLoadOf(od.lines), load_mode: od.load_mode ?? null, transfer: isTransferOd(od), allowed_models: od.allowed_models ?? null,
+    separate: od.separate === true, max_customers: od.max_customers ?? null }
 }
 const asMode = (v: string | null | undefined): LoadMode | null => (v === 'PALLET' || v === 'LOOSE' ? v : null)
 async function insertOdRows(rows: Tables['dispatch_trip_od']['Insert'][]) {
@@ -538,7 +545,8 @@ export async function createPlan(req: Request, res: Response) {
     const prefix = codePrefixOf(wh.code, b.plan_date)
     const params = {
       day: b.plan_date,
-      max_drops: b.max_drops ?? (Number(wh.dispatch_max_drops) || 3),
+      // 28/09: trần điểm giao của kho cho phép TRỐNG = không giới hạn (từng cứng 3)
+      max_drops: b.max_drops !== undefined ? b.max_drops : numOrNull(wh.dispatch_max_drops),
       allow_mix_channels: b.allow_mix_channels ?? wh.dispatch_allow_mix_channels === true,
       underload_pct: b.underload_pct === undefined ? numOrNull(wh.dispatch_underload_pct) : b.underload_pct,
       code_prefix: prefix,
@@ -644,7 +652,7 @@ function engineParams(plan: PlanRow): EngineInput['params'] {
   const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; pallet_max_stops?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number }
   // kế hoạch lập trước 26/09 không có `allow_mix_categories` ⇒ undefined = cho trộn loại như lúc nó được lập;
   // lập trước 27/09 không có `max_vehicles` ⇒ một xe / thẻ như lúc nó được lập
-  return { day: plan.plan_date, max_drops: params.max_drops ?? 3, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1, pallet_max_stops: params.pallet_max_stops ?? 1,
+  return { day: plan.plan_date, max_drops: params.max_drops ?? null, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1, pallet_max_stops: params.pallet_max_stops ?? 1,
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1 }
 }
 /** Tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn và các OD ĐANG nằm trên xe — KHÔNG ghi (bàn ghép xe dùng để xem trước khi thả). */
@@ -688,8 +696,10 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   if (!model && trip.ods.length) warnings.push(`Chưa có dòng xe (xe đang chở ${sum.pallets ?? '?'} pallet / ${sum.tons ?? '?'} tấn) — bấm vào xe để chọn dòng xe, hoặc tách bớt OD`)
   // Luật 7: xe pallet đi tối đa `pallet_max_stops` khách (mặc định 1), xe xá theo số điểm giao của kho
   const kindLimit = stopsLimit(params, tripMode)
-  const maxDrops = model?.max_drops != null ? Math.min(model.max_drops, kindLimit) : kindLimit
-  if (trip.ods.length && stops > maxDrops) warnings.push(tripMode === 'PALLET' ? `Xe pallet đi ${stops} khách (tối đa ${maxDrops}) — tách xe, hoặc đổi xe này sang xe xá` : `Vượt số điểm giao (${stops} > ${maxDrops})`)
+  // 28/09: trần = nhỏ nhất trong (dòng xe · kho/kiểu đi · khách/kênh khắt khe nhất trên xe); mọi tầng trống = không giới hạn
+  const caps = [model?.max_drops ?? null, kindLimit, odStopsCap(trip.ods)].filter((n): n is number => typeof n === 'number')
+  const maxDrops = caps.length ? Math.min(...caps) : null
+  if (trip.ods.length && maxDrops != null && stops > maxDrops) warnings.push(tripMode === 'PALLET' ? `Xe pallet đi ${stops} khách (tối đa ${maxDrops}) — tách xe, hoặc đổi xe này sang xe xá` : `Vượt số khách cùng xe (${stops} > ${maxDrops})`)
   const odOther = tripMode ? trip.ods.filter(o => asMode(o.load_mode) && asMode(o.load_mode) !== tripMode) : []
   if (odOther.length) warnings.push(`${uniq(odOther.map(o => o.od_number)).length} OD khách đi ${tripMode === 'PALLET' ? 'Xá' : 'Pallet'} đang nằm trên xe ${tripMode === 'PALLET' ? 'pallet' : 'xá'}`)
   // Thẻ nhiều xe: MỖI xe phải qua đủ luật như xe chính — hỏi từng xe, câu cảnh báo nêu đúng tên xe
@@ -970,7 +980,7 @@ function actualNow(plan: PlanRow, trips: PlanTrip[]): Record<string, ShareActual
   return out
 }
 // flow 'STO' khi dòng OD mang cờ trung chuyển — chỉ để `isTransferOd` của luật 8 đọc đúng (dòng không còn phân loại SAP gốc)
-const rowAsEngineOd = (o: TripOdRow): EngineOd => ({ od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code, region_code: o.region_code ?? null, channel: null, internal_wh: null, scan_mode: false, flow: o.is_transfer ? 'STO' : 'SALE', lines: [], load_mode: asMode(o.load_mode) ?? undefined, allowed_models: o.allowed_models ?? null })
+const rowAsEngineOd = (o: TripOdRow): EngineOd => ({ od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code, region_code: o.region_code ?? null, channel: null, flow: o.is_transfer ? 'STO' : 'SALE', lines: [], load_mode: asMode(o.load_mode) ?? undefined, allowed_models: o.allowed_models ?? null, separate: o.separate === true, max_customers: o.max_customers ?? null })
 /** Kiểu đi chiếm đa số trong một nhóm dòng OD (hoà ⇒ Xá — kiểu mặc định của khách chưa khai). */
 const majorityMode = (rows: TripOdRow[]): LoadMode | null => {
   const p = rows.filter(o => asMode(o.load_mode) === 'PALLET').length, l = rows.filter(o => asMode(o.load_mode) === 'LOOSE').length

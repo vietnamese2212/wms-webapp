@@ -523,6 +523,7 @@ export async function listCustomerChannels(_req: Request, res: Response) {
         label: String(r.meta?.label ?? r.value),
         rules: (rulesOf.get(r.value) ?? []).sort(byCategory),
         dispatch_vehicles: (r.meta?.dispatch_vehicles ?? {}) as Record<string, string[]>,   // dòng xe mặc định của kênh theo Loại kho
+        sap_dist_channel: typeof r.meta?.sap_dist_channel === 'string' ? r.meta.sap_dist_channel : null,   // 28/09: tự điền khách từ ZSD02
         sort_order: r.sort_order,
         customers: counts.get(r.value) ?? 0,
       }))
@@ -546,13 +547,19 @@ export async function updateCustomerChannel(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kênh')
     if (b.type !== 'customer_channel') return fail(res, 400, 'VALIDATION_ERROR', 'Mục này không phải Kênh khách hàng')
 
-    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown }
+    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown; sap_dist_channel?: unknown }
     const meta: Record<string, unknown> = { ...(b.meta ?? {}) }
     if (body.label !== undefined) {
       const label = String(body.label ?? '').trim()
       if (!label) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu tên kênh')
       if (label.length > 100) return fail(res, 400, 'VALIDATION_ERROR', 'Tên kênh tối đa 100 ký tự')
       meta.label = label
+    }
+    // 28/09: mã kênh SAP (tuỳ chọn) — khách chưa có kênh mà ZSD02 ghi kênh SAP này ⇒ tự điền kênh này
+    if (body.sap_dist_channel !== undefined) {
+      const sap = await sapCodeOrErr(body.sap_dist_channel, b.value)
+      if ('err' in sap) return fail(res, 400, 'VALIDATION_ERROR', sap.err)
+      if (sap.code) meta.sap_dist_channel = sap.code; else delete meta.sap_dist_channel
     }
     // 27/09: dòng xe MẶC ĐỊNH của kênh theo Loại kho — khách không khai riêng thì theo đây (THAY TRỌN map)
     if (body.dispatch_vehicles !== undefined) {
@@ -571,6 +578,40 @@ export async function updateCustomerChannel(req: Request, res: Response) {
       before: { meta: b.meta ?? null }, after: { meta },
     })
     return ok(res, { ...(data as Record<string, unknown>), date_rule_applied: await autoApplyNow(req) })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+/** Mã kênh SAP của một kênh: rỗng/null = bỏ mã; phải là số và KHÔNG trùng kênh khác (hai kênh cùng mã thì tự điền không biết chọn). */
+async function sapCodeOrErr(v: unknown, selfValue: string | null): Promise<{ code: string | null } | { err: string }> {
+  if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) return { code: null }
+  const code = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : ''
+  if (!/^\d{1,3}$/.test(code)) return { err: 'Mã kênh SAP là số (vd 10 = General Trade)' }
+  const { data, error } = await supabase.from('LookupValue').select('value, meta').eq('type', 'customer_channel')
+  if (error) throw error
+  const dup = ((data ?? []) as { value: string; meta: Record<string, unknown> | null }[])
+    .find(c => c.value !== selfValue && String(c.meta?.sap_dist_channel ?? '') === code)
+  return dup ? { err: `Mã kênh SAP ${code} đã gắn cho kênh ${dup.value} — mỗi mã SAP chỉ một kênh` } : { code }
+}
+
+/** POST /masterdata/customer-channels — thêm kênh (28/09). Mức %Date + dòng xe mặc định khai sau ở form sửa kênh. */
+export async function createCustomerChannel(req: Request, res: Response) {
+  try {
+    const b = req.body as { value: string; label: string; sap_dist_channel?: string | null }
+    const { data: ex, error: exErr } = await supabase.from('LookupValue').select('id').eq('type', 'customer_channel').eq('value', b.value).maybeSingle()
+    if (exErr) return fail(res, exErr)
+    if (ex) return fail(res, 409, 'DUPLICATE', `Đã có kênh mã ${b.value}`)
+    const sap = await sapCodeOrErr(b.sap_dist_channel, null)
+    if ('err' in sap) return fail(res, 400, 'VALIDATION_ERROR', sap.err)
+    const { data: last } = await supabase.from('LookupValue').select('sort_order').eq('type', 'customer_channel').order('sort_order', { ascending: false }).limit(1).maybeSingle()
+    const t = now()
+    const meta = { label: b.label, ...(sap.code ? { sap_dist_channel: sap.code } : {}) }
+    const { data, error } = await supabase.from('LookupValue').insert({
+      id: randomUUID(), type: 'customer_channel', value: b.value, sort_order: (Number((last as { sort_order: number | null } | null)?.sort_order) || 0) + 1,
+      meta, created_by: req.user?.name ?? null, updated_by: req.user?.name ?? null, created_at: t, updated_at: t,
+    }).select().single()
+    if (error) return fail(res, error)
+    await logAdmin(req, { action: 'CHANNEL_CREATE', target_type: 'CustomerChannel', target_id: (data as { id: string }).id, target_label: b.value, before: null, after: { meta } })
+    return ok(res, data, 201)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

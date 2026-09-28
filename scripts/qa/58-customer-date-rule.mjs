@@ -10,7 +10,7 @@
 //   (c) đổi master KHÔNG lan ngược cho đơn đang mở — chỉ đổi khi có người bấm "Áp lại theo master".
 //
 // Fixture tự chứa: 2 kho QA58 (xuất + đích chuyển kho) · 1 mã · tồn %Date ≈ 95 % · 4 khách
-// (kênh NPP · rule riêng ≥ 99 · chưa kênh · trỏ kho) · các chuyến sinh từ Kế hoạch xuất. Dọn sạch cuối gói.
+// (kênh GT · rule riêng ≥ 99 · chưa kênh · trỏ kho) · các chuyến sinh từ Kế hoạch xuất. Dọn sạch cuối gói.
 import { login, api, check, finish, restWrite, restAll } from './lib.mjs'
 import { randomUUID } from 'crypto'
 
@@ -112,11 +112,11 @@ try {
   const ruleRowsOf = async (scope, key) =>
     restAll('date_rule_master', `select=category,rule&scope=eq.${scope}&scope_key=eq.${key}`)
 
-  // Kênh NPP có sẵn mức ≥ 60 do migration chuyển sang — đọc lại, không giả định.
-  const chNpp = (await restAll('LookupValue', "select=id,value,meta&type=eq.customer_channel&value=eq.NPP"))[0]
-  const chNppRows = await ruleRowsOf('CHANNEL', 'NPP')
+  // Kênh GT (gộp NPP cũ, 20260928) có sẵn mức ≥ 60 — đọc lại, không giả định.
+  const chNpp = (await restAll('LookupValue', "select=id,value,meta&type=eq.customer_channel&value=eq.GT"))[0]
+  const chNppRows = await ruleRowsOf('CHANNEL', 'GT')
   const chNppPct = Number(chNppRows.find(r => r.category == null)?.rule?.value ?? 0)
-  check('[0a] Kênh NPP có sẵn mức mặc định ≥ 60 % (migration chuyển sang bảng mức)', chNppPct === 60, `mức=${chNppPct}`)
+  check('[0a] Kênh GT có sẵn mức mặc định ≥ 60 % (20260928 — gộp NPP cũ)', chNppPct === 60, `mức=${chNppPct}`)
 
   const mkCust = async (code, patch, rules) => {
     const [c] = await restWrite('Customer', 'POST', null, {
@@ -126,10 +126,10 @@ try {
     if (rules?.length) await setRules('CUSTOMER', c.id, rules)
     return c
   }
-  const custA = await mkCust(SHIP.A, { channel: 'NPP' })
-  const custB = await mkCust(SHIP.B, { channel: 'NPP' }, [{ category: null, kind: 'MIN_PCT', value: 99 }])
+  const custA = await mkCust(SHIP.A, { channel: 'GT' })
+  const custB = await mkCust(SHIP.B, { channel: 'GT' }, [{ category: null, kind: 'MIN_PCT', value: 99 }])
   await mkCust(SHIP.C, {})                                   // chưa phân kênh, chưa khai mức
-  await mkCust(SHIP.D, { channel: 'NPP', warehouse_id: whDest.id })
+  await mkCust(SHIP.D, { channel: 'GT', warehouse_id: whDest.id })
 
   // Dòng raw VL06O — mỗi chuyến MỘT ship-to (ship-to là thuộc tính của CHUYẾN, không phải của dòng)
   const mkRaw = (doNo, ship, note) => restWrite('erp_outbound_orders', 'POST', null, {
@@ -247,7 +247,7 @@ try {
   // Đổi mức mặc định của kênh → ÁP NGAY cho đơn đang mở (user chốt 12/09, đảo luật "không lan ngược"
   // của 11/09). Phép kiểm cũ khẳng định "dòng đang mở GIỮ NGUYÊN mức cũ" — tức khoá đúng cái hành vi
   // user vừa bác (lớp feedback-qa-can-lock-in-the-bug), nên viết lại theo chiều ngược.
-  const rCh = await setRules('CHANNEL', 'NPP', [{ category: null, kind: 'MIN_PCT', value: 65 }])
+  const rCh = await setRules('CHANNEL', 'GT', [{ category: null, kind: 'MIN_PCT', value: 65 }])
   const a1c = (await restAll('OutboundItem', `select=date_rule&id=eq.${a1b.id}`))[0]
   check('[3c] Đổi mức của KÊNH áp NGAY cho dòng đang mở, không chờ ai bấm thêm nút',
     Number(a1c?.date_rule?.value) === 65 && a1c?.date_rule?.source === 'CHANNEL',
@@ -274,7 +274,7 @@ try {
     ev.some(e => e.source === 'SYSTEM'), `n=${ev.length} sources=${[...new Set(ev.map(e => e.source))].join(',')}`)
 
   // Trả kênh về 60 để không ảnh hưởng phép kiểm khác / lượt chạy sau
-  await setRules('CHANNEL', 'NPP', [{ category: null, kind: 'MIN_PCT', value: 60 }])
+  await setRules('CHANNEL', 'GT', [{ category: null, kind: 'MIN_PCT', value: 60 }])
 
   // ═══ [4] CẦN XEM — máy áp mà kho không còn pallet nào đạt ═════════════════════════════════════
   const bNow = (await restAll('OutboundItem', `select=date_rule&id=eq.${b.id}`))[0]
@@ -354,7 +354,7 @@ try {
 
   const custC = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP.C}`))[0]
   const rBulkBoth = await api('/masterdata/customers/bulk', 'PATCH',
-    { ids: [custC.id], filter: { search: T }, patch: { channel: 'NPP' } })
+    { ids: [custC.id], filter: { search: T }, patch: { channel: 'GT' } })
   check('[7f] Gửi CẢ ids lẫn filter → 400 (phạm vi phải rõ ràng, không đoán hộ)',
     rBulkBoth.s === 400, `${rBulkBoth.s} ${err(rBulkBoth)}`)
 
@@ -362,9 +362,9 @@ try {
   check('[7g] Thao tác hàng loạt KHÔNG đổi được trường ngoài danh sách cho phép → 400',
     rBulkBadKey.s === 400, `${rBulkBadKey.s} ${err(rBulkBadKey)}`)
 
-  const rBulkIds = await api('/masterdata/customers/bulk', 'PATCH', { ids: [custC.id], patch: { channel: 'NPP' } })
+  const rBulkIds = await api('/masterdata/customers/bulk', 'PATCH', { ids: [custC.id], patch: { channel: 'GT' } })
   const cAfter = (await restAll('Customer', `select=channel&ship_to_code=eq.${SHIP.C}`))[0]
-  check('[7h] Phân kênh hàng loạt theo danh sách đã tick', rBulkIds.s === 200 && cAfter?.channel === 'NPP',
+  check('[7h] Phân kênh hàng loạt theo danh sách đã tick', rBulkIds.s === 200 && cAfter?.channel === 'GT',
     `${rBulkIds.s} channel=${cAfter?.channel}`)
 
   const rBulkFilter = await api('/masterdata/customers/bulk', 'PATCH',
@@ -372,7 +372,7 @@ try {
   const newAfter = (await restAll('Customer', `select=channel&ship_to_code=eq.${SHIP.NEW}`))[0]
   const aAfter = (await restAll('Customer', `select=channel&ship_to_code=eq.${SHIP.A}`))[0]
   check('[7i] Chọn-tất-cả theo BỘ LỌC: chỉ đụng khách khớp lọc, khách đã có kênh KHÔNG bị đổi',
-    rBulkFilter.s === 200 && newAfter?.channel === 'KHAC' && aAfter?.channel === 'NPP',
+    rBulkFilter.s === 200 && newAfter?.channel === 'KHAC' && aAfter?.channel === 'GT',
     `${rBulkFilter.s} new=${newAfter?.channel} A=${aAfter?.channel}`)
 
   const rSeedCand = await api('/masterdata/customers/seed-candidates')
@@ -686,23 +686,39 @@ try {
   {
     const rChans = await api('/masterdata/customer-channels')
     const chans = rChans.j?.data ?? []
-    const npp = chans.find(c => c.value === 'NPP')
+    const npp = chans.find(c => c.value === 'GT')
     check('[12a] Tab Kênh đọc được: mỗi kênh kèm SỐ KHÁCH và bộ mức đã khai',
       rChans.s === 200 && !!npp && Array.isArray(npp.rules) && typeof npp.customers === 'number',
       `${rChans.s} n=${chans.length} npp.rules=${npp?.rules?.length ?? '—'} khách=${npp?.customers ?? '—'}`)
 
     // Đổi tên kênh: đi một vòng rồi TRẢ LẠI — staging là dữ liệu dùng chung, không để lại vết
-    const oldLabel = npp?.label ?? 'NPP'
+    const oldLabel = npp?.label ?? 'GT'
     const rRename = await api(`/masterdata/customer-channels/${npp?.id}`, 'PUT', { label: `${oldLabel} ${T}` })
-    const mid = (await api('/masterdata/customer-channels')).j?.data?.find(c => c.value === 'NPP')
+    const mid = (await api('/masterdata/customer-channels')).j?.data?.find(c => c.value === 'GT')
     await api(`/masterdata/customer-channels/${npp?.id}`, 'PUT', { label: oldLabel })
-    const back = (await api('/masterdata/customer-channels')).j?.data?.find(c => c.value === 'NPP')
+    const back = (await api('/masterdata/customer-channels')).j?.data?.find(c => c.value === 'GT')
     check('[12b] Đổi TÊN kênh chỉ đụng nhãn, MÃ kênh giữ nguyên (mã là khoá các khách đang trỏ vào)',
-      rRename.s === 200 && mid?.label === `${oldLabel} ${T}` && mid?.value === 'NPP' && back?.label === oldLabel,
+      rRename.s === 200 && mid?.label === `${oldLabel} ${T}` && mid?.value === 'GT' && back?.label === oldLabel,
       `${rRename.s} giữa=${mid?.label ?? '—'} sau=${back?.label ?? '—'}`)
 
     const rBadChan = await api('/masterdata/customer-channels/khong-co-that', 'PUT', { label: 'x' })
     check('[12c] Đổi tên kênh không tồn tại → 404 (không 500)', rBadChan.s === 404, `${rBadChan.s} ${err(rBadChan)}`)
+
+    // THÊM KÊNH (28/09, user: "khai thêm kênh không có trên SAP, vd Bách hoá xanh") — mã SAP tuỳ chọn, mỗi mã SAP một kênh
+    const QCH = `${T}_KENH`
+    const cNew = await api('/masterdata/customer-channels', 'POST', { value: QCH, label: `${T} kênh riêng` })
+    const cDup = await api('/masterdata/customer-channels', 'POST', { value: QCH, label: 'trùng' })
+    const cBadCode = await api('/masterdata/customer-channels', 'POST', { value: 'thuong-co-dau', label: 'x' })
+    const cSapTaken = await api('/masterdata/customer-channels', 'POST', { value: `${T}_K2`, label: 'x', sap_dist_channel: '10' })   // 10 = GT
+    const newRow = ((await api('/masterdata/customer-channels')).j?.data ?? []).find(c => c.value === QCH)
+    const cSetSap = newRow ? await api(`/masterdata/customer-channels/${newRow.id}`, 'PUT', { sap_dist_channel: '77' }) : null
+    const cSapBad = newRow ? await api(`/masterdata/customer-channels/${newRow.id}`, 'PUT', { sap_dist_channel: 'abc' }) : null
+    const after = ((await api('/masterdata/customer-channels')).j?.data ?? []).find(c => c.value === QCH)
+    check('[12e] Thêm kênh không có trên SAP → 201, hiện ở tab Kênh (0 khách, mã SAP trống) · trùng mã → 409 · mã sai dạng → 400 · mã SAP đã thuộc kênh khác → 400 · gắn mã SAP → lưu · mã SAP không phải số → 400',
+      cNew.s === 201 && newRow?.customers === 0 && newRow?.sap_dist_channel === null && cDup.s === 409 && cBadCode.s === 400 && cSapTaken.s === 400
+      && cSetSap?.s === 200 && after?.sap_dist_channel === '77' && cSapBad?.s === 400,
+      `new=${cNew.s} ${err(cNew)} dup=${cDup.s} bad=${cBadCode.s} taken=${cSapTaken.s} ${err(cSapTaken)} set=${cSetSap?.s} sap=${after?.sap_dist_channel} sapBad=${cSapBad?.s}`)
+    await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=like.${T}_*`).catch(() => {})
 
     // NGỪNG khách là xoá MỀM: bản ghi phải còn để chuyến cũ tra ra tên, chỉ thôi tham gia cấp mức
     const rStop = await api(`/masterdata/customers/${custA.id}`, 'DELETE')
@@ -741,6 +757,7 @@ try {
   check('gói chạy tới cuối', false, String(e?.message ?? e).slice(0, 200))
 } finally {
   await cleanup()
+  await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=like.${T}_*`).catch(() => {})
   const left = (await restAll('Customer', `select=id&ship_to_code=like.${T}*`)).length
     + (await restAll('GroupDeliveryOrder', `select=id&group_code=like.${T}*`)).length
   check('[dọn] fixture xoá sạch, không để lại rác', left === 0, `còn ${left} bản ghi`)

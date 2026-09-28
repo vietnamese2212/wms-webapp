@@ -5,7 +5,7 @@
 
 **Trang:** Khách hàng (menu Cấu hình) — kênh · mức date
 
-**Quyền (BE `ALL_PERMISSIONS`):** view · edit · import · manage_channel
+**Quyền (BE `ALL_PERMISSIONS`):** view · edit · import · manage_channel · create_channel
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
@@ -21,3 +21,8 @@
 ## Actions
 
 view, **edit**=thêm/sửa/ngừng + thao tác hàng loạt (Phân kênh · Đặt quy định date theo loại hàng · Trỏ kho · Ngừng; `PATCH /masterdata/customers/bulk` và `/bulk-rule` đều nhận `ids` HOẶC `filter`; sửa bộ mức = `PUT /masterdata/date-rules/CUSTOMER/:id` — THAY TRỌN, hai route tách theo scope để mỗi cái gate đúng quyền), **import**=Nạp từ dữ liệu SAP (2 pha, RPC `customer_seed_candidates`) — **GỢI Ý SẴN KHO** cho từng mã ship-to (`match_by` CODE mã kho / SHIPTO ship-to phụ / NAME trùng tên và tên đó DUY NHẤT; đo 11/09: **44/102 mã chính là kho đã có trong danh mục Kho** — 20 CODE · 24 NAME), cột "Trỏ về kho" tick sẵn nhưng **bỏ tick được từng dòng** và bước kiểm-trước nói rõ *bao nhiêu khách sẽ trỏ kho* + *bao nhiêu trong đó là kho CÓ QUẢN TỒN* (⇒ chuyến tới đó thành chuyển kho, kho nhận phải xác nhận trong app). Máy GỢI Ý, người tick mới ghi — trỏ nhầm kho là đổi nơi nhận của khách đó. Chiều ngược lại: ô **"Ship-to phụ" ở form Kho GHI THẲNG sang danh mục Khách hàng** (`syncShiptoCustomers`) — thêm mã ⇒ khách đã có thì chỉ trỏ kho, chưa có thì tạo (`auto_created`); **bỏ mã ⇒ GỠ liên kết, KHÔNG xoá khách** (khách có thể đang mang kênh/mức/ghi chú do người khai); mã đang trỏ kho khác trong danh mục ⇒ **409**. Hai cửa cùng một sổ vì `warehouseByShipto` tra danh mục Khách hàng TRƯỚC rồi mới tới `Warehouse.code`/`shipto_codes`; form Kho nay chặn mã sai dạng ngay (`^[A-Z0-9]+$`, cùng CHECK của `Customer`) thay vì để chết 23514 lúc đồng bộ, **manage_channel**=tab Kênh (tên + bộ mức mặc định, `PUT /masterdata/date-rules/CHANNEL/:value`) — quyền RIÊNG, KHÔNG đi ké `wms_settings.manage_type` vì đó là taxonomy Loại kho 
+, **create_channel**=nút "Thêm kênh" ở tab Kênh (`POST /masterdata/customer-channels`, 28/09) — quyền RIÊNG với sửa kênh; cấp cho chức danh đang có `manage_channel` (migration `20260928_customer_channel_sap`).
+
+## Kênh = kênh bán SAP + kênh riêng của app (28/09)
+
+User chốt: "kênh của khách là GT, MT… phù hợp phân chia date WMS và gắn xe cơ bản (vẫn modify nhiều trong từng khách)" + "kênh là nơi khai báo riêng — khai thêm kênh không có trên SAP (vd Bách hoá xanh)". Danh mục: **GT (10) · MT (20) · BHX (không mã) · KA (30) · Xuất khẩu XK (40) · Nội bộ (80) · Khác (99)**; KHO_TONG + NPP (cả hai là 10-General Trade bên SAP — khác CẤP khách, không phải kênh) gộp vào GT, khác biệt khai riêng khách. Mức date: GT ≥ 60 % · MT 70 % · KA 70 % · BHX giữ 80 % / FG02 35 % · XK / Nội bộ / Khác trống. **Kênh có `meta.sap_dist_channel`** ⇒ cửa nạp ZSD02 (`upsertCustomerGeo`, hàm thuần `utils/sapChannel.ts`, test `sapChannel.test.ts`) TỰ ĐIỀN kênh cho khách **chưa có kênh** theo cột Distribution Channel; khách đã có kênh (gán tay, vd BHX dù SAP ghi Modern Trade) KHÔNG bị đè; hai kênh cùng mã SAP bị cửa ghi chặn 400 (và hàm map bỏ mã trùng — không đoán). Điền được kênh ⇒ gọi `autoApplyAfterConfigChange` như sửa kênh ở trang (kho bật "Áp %Date tự động" áp ngay). Đo staging sau migration: GT 121 · MT 44 · KA 18 · XK 4 · Nội bộ 10 · Khác 9 · BHX 2 (khách test) · 3 khách không có dòng ZSD02 nên chưa kênh. 24 khách tên `BHX_…` hiện ở MT (SAP ghi Modern Trade) — muốn tách thì "Phân kênh" hàng loạt sang BHX. Gói 58 [12e] + fixture kênh đổi NPP → GT.

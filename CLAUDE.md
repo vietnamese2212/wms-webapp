@@ -285,7 +285,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `stocktake` | Kiểm kho | Kiểm kho (4 tab, Luân phiên ABC) | view, scan, complete, export | [docs/modules/stocktake.md](docs/modules/stocktake.md) |
 | `locations` | Vị trí kho | Vị trí kho (+ tab Sơ đồ kho) | view, create, edit, delete, import, export, print_label | [docs/modules/locations.md](docs/modules/locations.md) |
 | `materials` | Mã hàng | Mã hàng (+ Nhà sản xuất) | view, create, edit, import, delete | [docs/modules/materials.md](docs/modules/materials.md) |
-| `customers` | Khách hàng | Khách hàng (menu Cấu hình) — kênh · mức date | view, edit, import, manage_channel | [docs/modules/customers.md](docs/modules/customers.md) |
+| `customers` | Khách hàng | Khách hàng (menu Cấu hình) — kênh · mức date | view, edit, import, manage_channel, create_channel | [docs/modules/customers.md](docs/modules/customers.md) |
 | `external_do_sap` | Dữ liệu bên ngoài → DO SAP | Dữ liệu bên ngoài → DO SAP · Chưa có OD (ZSD02 / VL06O) | view, create, edit, delete, export | [docs/modules/external_do_sap.md](docs/modules/external_do_sap.md) |
 | `pallet_print` | In tem pallet | In tem pallet | view, generate, reprint, history, audit | [docs/modules/pallet_print.md](docs/modules/pallet_print.md) |
 | `pallet_ops` | Dồn / Tách pallet | Dồn / Tách pallet | view, merge, ungroup, split | [docs/modules/pallet_ops.md](docs/modules/pallet_ops.md) |

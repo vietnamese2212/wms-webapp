@@ -134,6 +134,7 @@ export interface RouteRef { route_code: string; route_name: string; plant: strin
 export interface CustomerGeo {
   ship_to_code: string; name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null
   sales_district: string | null; sales_office: string | null; address: string | null; sold_to_code: string | null; search_term: string | null
+  dist_channel: string | null   // kênh SAP ("10-General Trade") — điền Customer.channel khi khách chưa có kênh (28/09)
 }
 
 export interface Zsd02Parsed {
@@ -252,7 +253,7 @@ export function parseZsd02(rows: Record<string, unknown>[], ctx: Zsd02Ctx): Zsd0
     if (shipTo && !customers.has(shipTo)) customers.set(shipTo, {
       ship_to_code: shipTo, name: shipToName, ward_code: ward, region_code: region.code, region_name: region.name,
       sales_district: cellStr(r.sales_district), sales_office: cellStr(r.sales_office), address: cellStr(r.address),
-      sold_to_code: cellStr(r.sold_to_code), search_term: cellStr(r.search_term),
+      sold_to_code: cellStr(r.sold_to_code), search_term: cellStr(r.search_term), dist_channel: cellStr(r.dist_channel),
     })
     if (routeCode && routeName && !routes.has(routeCode)) routes.set(routeCode, { route_code: routeCode, route_name: routeName, plant, ward_code: ward })
 

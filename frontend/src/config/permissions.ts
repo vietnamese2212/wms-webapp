@@ -367,7 +367,8 @@ export const MODULES = {
       view:           'Xem danh sách Khách hàng / Nơi nhận',
       edit:           'Thêm / sửa / ngừng khách + thao tác hàng loạt (phân kênh, %Date riêng, trỏ kho)',
       import:         'Nạp khách hàng từ dữ liệu SAP',
-      manage_channel: 'Tab Kênh — sửa tên + %Date mặc định của kênh (Kho tổng / NPP / BHX / KA / MT…)',
+      manage_channel: 'Tab Kênh — sửa tên, mã kênh SAP, %Date + dòng xe mặc định của kênh (GT / MT / KA / BHX…)',
+      create_channel: 'Tab Kênh — THÊM kênh mới (kể cả kênh không có trên SAP, vd Bách hoá xanh)',
     },
   },
   pallet_print: {

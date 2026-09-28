@@ -30,7 +30,7 @@ import { masterRuleLabel } from '@/components/wms/SetDateRuleSheet'
 import { DispatchVehiclesEditor, VehicleModelChecklist, vehicleListText } from '@/components/tms/DispatchVehiclesEditor'
 import {
   useCustomers, useCustomerChannels, useCustomerSeedCandidates, useSaveCustomer,
-  useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel,
+  useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel, useCreateCustomerChannel,
   useSaveDateRules, useBulkSetDateRule, useDateRuleCategories, useVehicleModels,
   type Customer, type CustomerCandidate, type CustomerPatch, type CustomerBulkPatch, type UploadPreflight,
   type MasterRuleRow, type DateRuleCategory, type VehicleModel,
@@ -211,6 +211,7 @@ export default function Customers() {
   const canEdit = can(perms, 'customers', 'edit')
   const canImport = can(perms, 'customers', 'import')
   const canChannel = can(perms, 'customers', 'manage_channel')
+  const canCreateChannel = can(perms, 'customers', 'create_channel')
 
   const { data: whs } = useScopedWarehouses(true)
   const { data: channels } = useCustomerChannels()
@@ -222,6 +223,7 @@ export default function Customers() {
   const [bulk, setBulk] = useState<'channel' | 'date_rule' | 'warehouse' | 'load_mode_cat' | 'vehicles' | null>(null)
   const [seedOpen, setSeedOpen] = useState(false)
   const [chanEdit, setChanEdit] = useState<ChannelEdit | null>(null)
+  const [chanNew, setChanNew] = useState(false)
   const [err, setErr] = useState('')
 
   const { data, isLoading } = useCustomers({
@@ -534,7 +536,7 @@ export default function Customers() {
               right={pickCount > 0 ? `${nf(pickCount)} đang chọn` : undefined} />
           </>
         ) : (
-          <ChannelsTab canEdit={canChannel} onEdit={setChanEdit} models={models} />
+          <ChannelsTab canEdit={canChannel} canCreate={canCreateChannel} onEdit={setChanEdit} onCreate={() => setChanNew(true)} models={models} />
         )}
       </div>
 
@@ -572,6 +574,7 @@ export default function Customers() {
 
       {seedOpen && <SeedDialog onClose={() => setSeedOpen(false)} />}
 
+      {chanNew && <ChannelCreateForm onClose={() => setChanNew(false)} />}
       {chanEdit && (
         <ChannelForm row={chanEdit} cats={cats} models={models} onClose={() => setChanEdit(null)} />
       )}
@@ -1051,34 +1054,43 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
 }
 
 // ─── Tab KÊNH ──────────────────────────────────────────────────────────────────────────────────
-type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]> }
+type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null }
 
-function ChannelsTab({ canEdit, onEdit, models }: {
+function ChannelsTab({ canEdit, canCreate, onEdit, onCreate, models }: {
   canEdit: boolean
+  canCreate: boolean
   onEdit: (r: ChannelEdit) => void
+  onCreate: () => void
   models: VehicleModel[]
 }) {
   const { data, isLoading } = useCustomerChannels()
   const rows = data ?? []
   return (
     <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-      <p className="px-3 py-2 text-[11px] text-slate-500">
-        Mức mặc định của kênh. Lưu xong áp NGAY cho đơn đang mở của mọi kho đã bật "Áp %Date tự động";
-        dòng đã chốt tay không bao giờ bị đè, và mỗi dòng đổi đều có vết trong sổ chuyến.
-      </p>
+      <div className="flex flex-wrap items-start gap-2 px-3 py-2">
+        <p className="flex-1 min-w-[200px] text-[11px] text-slate-500">
+          Mức mặc định của kênh. Lưu xong áp NGAY cho đơn đang mở của mọi kho đã bật "Áp %Date tự động";
+          dòng đã chốt tay không bao giờ bị đè, và mỗi dòng đổi đều có vết trong sổ chuyến.
+          Kênh có <b>mã SAP</b> được tự điền cho khách chưa có kênh lúc nạp ZSD02; kênh không có mã (vd Bách hoá xanh) thì gán tay.
+        </p>
+        {canCreate && <Button size="sm" className="h-9 sm:h-7 text-xs shrink-0" onClick={onCreate}><Plus className="h-3.5 w-3.5 mr-1" />Thêm kênh</Button>}
+      </div>
       <Table className="min-w-full">
         <TableHeader>
           <TableRow>
-            {['Mã kênh', 'Tên kênh', 'Quy định date mặc định', 'Dòng xe mặc định', 'Số khách', ''].map((h, i) => (
+            {['Mã kênh', 'Mã SAP', 'Tên kênh', 'Quy định date mặc định', 'Dòng xe mặc định', 'Số khách', ''].map((h, i) => (
               <TableHead key={i} className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">{h}</TableHead>
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && <TableEmptyRow colSpan={6}>Đang tải…</TableEmptyRow>}
+          {isLoading && <TableEmptyRow colSpan={7}>Đang tải…</TableEmptyRow>}
           {rows.map(c => (
             <TableRow key={c.id}>
               <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{c.value}</TableCell>
+              <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap" title={c.sap_dist_channel ? 'Khách chưa có kênh mà ZSD02 ghi kênh SAP này ⇒ tự điền kênh này' : 'Không có mã SAP — gán tay ở tab Khách hàng'}>
+                {c.sap_dist_channel ?? <span className="text-slate-300">gán tay</span>}
+              </TableCell>
               <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{c.label}</TableCell>
               <TableCell className="px-2 py-1">
                 {(c.rules ?? []).length ? (
@@ -1108,7 +1120,7 @@ function ChannelsTab({ canEdit, onEdit, models }: {
               <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{nf(c.customers)}</TableCell>
               <TableCell className="px-2 py-1 whitespace-nowrap">
                 {canEdit && (
-                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {} })}
+                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {}, sap_dist_channel: c.sap_dist_channel ?? null })}
                     className="rounded px-1.5 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" title="Sửa kênh">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -1122,6 +1134,52 @@ function ChannelsTab({ canEdit, onEdit, models }: {
   )
 }
 
+/** Ô "Mã kênh SAP" dùng chung form thêm + sửa kênh. */
+function SapChannelField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-slate-600">Mã kênh SAP (tuỳ chọn)</label>
+      <Input value={value} onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" placeholder="vd 10 = General Trade · 20 = Modern Trade · 40 = Export" className="h-9 font-mono" />
+      <p className="mt-1 text-[11px] text-slate-400">Khách CHƯA có kênh mà ZSD02 ghi kênh SAP này ⇒ tự điền kênh này lúc nạp. Để trống = kênh gán tay (khách đã có kênh không bao giờ bị đè).</p>
+    </div>
+  )
+}
+
+/** Thêm kênh (28/09) — mã + tên + mã SAP; %Date và dòng xe mặc định khai sau ở form sửa kênh. */
+function ChannelCreateForm({ onClose }: { onClose: () => void }) {
+  const [value, setValue] = useState('')
+  const [label, setLabel] = useState('')
+  const [sap, setSap] = useState('')
+  const [err, setErr] = useState('')
+  const create = useCreateCustomerChannel()
+  const okCode = /^[A-Z0-9_]{2,20}$/.test(value)
+  return (
+    <FormSheet open onClose={onClose} title="Thêm kênh" description="Kênh là nơi khai mức %Date + dòng xe mặc định cho nhóm khách — có thể là kênh SAP hoặc kênh riêng (vd Bách hoá xanh)."
+      footer={<>
+        <Button variant="outline" onClick={onClose} disabled={create.isPending}>Huỷ</Button>
+        <Button disabled={create.isPending || !okCode || !label.trim()} onClick={async () => {
+          setErr('')
+          try { await create.mutateAsync({ value, label: label.trim(), sap_dist_channel: sap.trim() || null }); onClose() }
+          catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không thêm được') }
+        }}>{create.isPending ? 'Đang lưu…' : 'Thêm kênh'}</Button>
+      </>}>
+      <div className="space-y-4">
+        {err && <p className="text-xs text-red-600">{err}</p>}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Mã kênh *</label>
+          <Input value={value} onChange={e => setValue(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '').slice(0, 20))} placeholder="vd BHX" className="h-9 font-mono" />
+          <p className="mt-1 text-[11px] text-slate-400">2–20 ký tự: chữ HOA, số, gạch dưới. Không đổi được sau khi tạo.</p>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Tên kênh *</label>
+          <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="vd Bách hoá xanh" className="h-9" />
+        </div>
+        <SapChannelField value={sap} onChange={setSap} />
+      </div>
+    </FormSheet>
+  )
+}
+
 function ChannelForm({ row, cats, models, onClose }: {
   row: ChannelEdit
   cats: DateRuleCategory[] | undefined
@@ -1129,6 +1187,7 @@ function ChannelForm({ row, cats, models, onClose }: {
   onClose: () => void
 }) {
   const [label, setLabel] = useState(row.label)
+  const [sap, setSap] = useState(row.sap_dist_channel ?? '')
   const [vehicles, setVehicles] = useState<Record<string, string[]>>(row.dispatch_vehicles ?? {})
   const [drafts, setDrafts] = useState<RuleDraft[]>(draftsOf(row.rules))
   const [err, setErr] = useState('')
@@ -1143,7 +1202,7 @@ function ChannelForm({ row, cats, models, onClose }: {
         <Button disabled={busy || !label.trim()} onClick={async () => {
           setErr('')
           try {
-            await save.mutateAsync({ id: row.id, label: label.trim(), dispatch_vehicles: vehicles })
+            await save.mutateAsync({ id: row.id, label: label.trim(), dispatch_vehicles: vehicles, sap_dist_channel: sap.trim() || null })
             // Mức đi bằng khoá NGHIỆP VỤ của kênh (`value`), không phải id dòng LookupValue
             await saveRules.mutateAsync({ scope: 'CHANNEL', key: row.value, rules: toPayload(drafts) })
             onClose()
@@ -1156,6 +1215,7 @@ function ChannelForm({ row, cats, models, onClose }: {
           <label className="mb-1 block text-xs font-medium text-slate-600">Tên kênh *</label>
           <Input value={label} onChange={e => setLabel(e.target.value)} className="h-9" />
         </div>
+        <SapChannelField value={sap} onChange={setSap} />
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Quy định date mặc định</label>
           <RuleTable drafts={drafts} onChange={setDrafts} cats={cats ?? []} inheritNote="kênh này không áp gì" />

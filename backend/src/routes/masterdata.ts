@@ -60,6 +60,12 @@ router.delete('/customers/:id',           requirePerm('customers', 'edit'),   cu
 // Kênh khách hàng — quyền RIÊNG, không đi ké wms_settings.manage_type (đó là taxonomy Loại kho)
 router.get('/customer-channels',          customer.listCustomerChannels)      // hở đọc: ô chọn kênh ở nhiều màn
 router.put('/customer-channels/:id',      requirePerm('customers', 'manage_channel'), customer.updateCustomerChannel)
+// Thêm kênh (28/09, user: "tôi có thể khai thêm kênh không có trên SAP, vd Bách hoá xanh?") — mã SAP tuỳ chọn
+router.post('/customer-channels', requirePerm('customers', 'create_channel'), validate({ body: z.object({
+  value: z.string().trim().regex(/^[A-Z0-9_]{2,20}$/, 'mã kênh 2–20 ký tự: CHỮ HOA, số, gạch dưới'),
+  label: zText(1, 100),
+  sap_dist_channel: z.string().trim().regex(/^\d{1,3}$/, 'mã kênh SAP là số (vd 10)').nullable().optional(),
+}) }), customer.createCustomerChannel)
 
 // Mức Quy định date theo (khách|kênh) × loại hàng — MỘT bảng dùng chung hai scope, nhưng HAI route
 // để mỗi cái gate ĐÚNG quyền sở hữu nó: gộp `requireAnyPerm` sẽ cho người chỉ có `edit` sửa luôn

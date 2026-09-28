@@ -18,6 +18,7 @@ import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { sapScopeCheck, activateAwaitingForDos } from '../wms/outboundController'
 import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
 import { upsertCustomerGeo } from '../../services/customerGeo'
+import { autoApplyAfterConfigChange, warehousesWithPolicyOn } from '../../services/dateRuleApply'
 import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, RAW_VERSION, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
 import { allowedPlants, plantOrFilter } from './erpOrderController'
 import { findReplacedOds, holdsToCarry, type ReplaceCandidate, type HoldRow } from '../../services/dispatchPool'
@@ -245,6 +246,11 @@ export async function uploadZsd02(req: Request, res: Response) {
         routesWritten += routeRows.slice(i, i + CHUNK).length
       }
       customers = await upsertCustomerGeo([...out.customers.values()], actor)
+      // khách vừa có kênh (theo kênh SAP) ⇒ %Date mặc định của kênh áp NGAY cho đơn đang mở — cùng đường sửa kênh ở trang Khách hàng
+      if (customers.channel_filled) {
+        const whs = await warehousesWithPolicyOn()
+        if (whs.length) await autoApplyAfterConfigChange({ scopeWh: whs, actor })
+      }
     } catch (e) { console.error('[uploadZsd02] route/customer geo:', e) }
 
     // ── Reconcile + kích hoạt chuyến chờ — đúng hai hàm VL06O đang gọi ──

@@ -4571,6 +4571,8 @@ export interface CustomerChannel {
   id: string; value: string; label: string; rules: MasterRuleRow[]; sort_order: number | null; customers: number
   /** 27/09: dòng xe MẶC ĐỊNH của kênh theo Loại kho — khách không khai riêng thì theo đây */
   dispatch_vehicles?: Record<string, string[]>
+  /** 28/09: mã kênh SAP (10 = General Trade…) — khách chưa có kênh được tự điền kênh này lúc nạp ZSD02; null = gán tay (vd BHX) */
+  sap_dist_channel?: string | null
 }
 export function useCustomerChannels() {
   return useQuery({
@@ -4690,9 +4692,18 @@ export function useBulkSetDateRule() {
 export function useUpdateCustomerChannel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]> }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
     onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
+  })
+}
+/** Thêm kênh (28/09) — kể cả kênh không có trên SAP (vd Bách hoá xanh). */
+export function useCreateCustomerChannel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { value: string; label: string; sap_dist_channel?: string | null }) =>
+      apiClient.post('/masterdata/customer-channels', body).then(r => r.data.data),
+    onSettled: () => invalidateCustomers(qc),
   })
 }
 

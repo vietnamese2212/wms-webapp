@@ -1103,7 +1103,7 @@ function ChannelsTab({ canEdit, onEdit, models }: {
                       </span>
                     ))}
                   </span>
-                ) : <span className="text-[9px] text-slate-400">Chưa khai — mọi xe</span>}
+                ) : <span className="text-[9px] text-amber-700">Chưa khai — không chọn xe</span>}
               </TableCell>
               <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{nf(c.customers)}</TableCell>
               <TableCell className="px-2 py-1 whitespace-nowrap">

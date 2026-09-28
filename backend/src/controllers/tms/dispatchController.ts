@@ -322,7 +322,7 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       // Luật 7 (25/09): khách CHƯA khai / chưa có trong danh mục = đi XÁ (user chốt "khách nào là Pallet, còn lại là xá");
       // 26/09: khai riêng theo Loại kho chính của OD (FG01 đi pallet, FG02 đi xá) thắng kiểu chung
       load_mode: resolveLoadMode(cust?.load_mode, cust?.load_mode_by_category, mainCatsOf(lines, follow)),
-      // luật 10 (27/09): dòng xe được vào — Khách × Loại kho → Khách → Kênh × Loại kho → Kênh; không khai = không giới hạn
+      // luật 10 (27/09): dòng xe được vào — Khách × Loại kho → Khách → Kênh × Loại kho → Kênh; không khai = [] = không xe nào (28/09)
       allowed_models: resolveAllowedModels(cust?.dispatch_vehicles, cust?.is_active === false || !cust?.channel ? null : chanVeh.get(cust.channel), mainCatsOf(lines, follow)),
     })
     const inc = split.include.get(od)!

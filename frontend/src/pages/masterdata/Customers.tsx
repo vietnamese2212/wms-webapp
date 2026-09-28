@@ -1139,8 +1139,8 @@ function SapChannelField({ value, onChange }: { value: string; onChange: (v: str
   return (
     <div>
       <label className="mb-1 block text-xs font-medium text-slate-600">Mã kênh SAP (tuỳ chọn)</label>
-      <Input value={value} onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" placeholder="vd 10 = General Trade · 20 = Modern Trade · 40 = Export" className="h-9 font-mono" />
-      <p className="mt-1 text-[11px] text-slate-400">Khách CHƯA có kênh mà ZSD02 ghi kênh SAP này ⇒ tự điền kênh này lúc nạp. Để trống = kênh gán tay (khách đã có kênh không bao giờ bị đè).</p>
+      <Input value={value} onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" placeholder="vd 10" className="h-9 font-mono" />
+      <p className="mt-1 text-[11px] text-slate-400">Mã đầu cột Distribution Channel của SAP: 10 General Trade · 20 Modern Trade · 30 Key Account · 40 Export · 80 Internal · 99 Others. Khách CHƯA có kênh mà ZSD02 ghi kênh SAP này ⇒ tự điền kênh này lúc nạp. Để trống = kênh gán tay (khách đã có kênh không bao giờ bị đè).</p>
     </div>
   )
 }

@@ -387,27 +387,25 @@ describe('luật 7 — khách Pallet / Xá (user chốt 25/09)', () => {
     expect(r.unplanned[0].reason).toMatch(/Xá/)
   })
 })
-describe('luật 8 — dòng xe dùng cho việc gì (user 25/09: "container chỉ dành cho tuyến trung chuyển giữa các kho")', () => {
+describe('luật 8 BỎ (user 28/09: "dòng xe chọn theo khai báo của khách, khách không khai thì không chọn")', () => {
   const T15 = model({ id: 'T15', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP' })
-  const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP', dispatch_use: 'TRANSFER' })
+  const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP' })
   const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: 20_000 })], ...over })
   const inp = (ods: EngineOd[]) => input(ods, { models: [T15, CONT], tariffs: [] })
-  it('OD giao khách 20 tấn ⇒ KHÔNG lên container (chỉ trung chuyển) — tách theo xe 15 tấn / báo vượt, không bao giờ CONT', () => {
-    const r = runDispatch(inp([big('1')]))
-    expect(r.trips.length).toBeGreaterThan(0)
-    expect(r.trips.every(t => t.vehicle_model?.id !== 'CONT')).toBe(true)
+  it('khách chưa khai (danh sách rỗng) ⇒ KHÔNG chọn xe nào: không chuyến, unplanned code NO_VEHICLE nêu chỗ khai', () => {
+    const r = runDispatch(inp([big('1', { allowed_models: [] })]))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned[0]).toMatchObject({ od_number: '1', code: 'NO_VEHICLE' })
+    expect(r.unplanned[0].reason).toMatch(/chưa có dòng xe nào được vào.*theo kênh/)
   })
-  it('OD trung chuyển (khách là kho của mình) 20 tấn ⇒ lên container, cờ transfer trên dòng OD', () => {
-    const r = runDispatch(inp([big('2', { internal_wh: 'WH2' })]))
+  it('OD trung chuyển KHÔNG còn luật riêng: kho đích khai container ⇒ container; cờ transfer vẫn chụp trên dòng OD', () => {
+    const r = runDispatch(inp([big('2', { internal_wh: 'WH2', allowed_models: ['CONT'] })]))
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].vehicle_model?.id).toBe('CONT')
     expect(r.trips[0].ods[0].transfer).toBe(true)
-  })
-  it('SAP flow STO cũng là trung chuyển; dòng xe không khai = dùng cho mọi đơn (hành vi cũ)', () => {
-    const r = runDispatch(inp([big('3', { flow: 'STO' })]))
-    expect(r.trips[0].vehicle_model?.id).toBe('CONT')
-    const r2 = runDispatch(input([big('4')], { models: [T15, model({ ...CONT, dispatch_use: undefined })], tariffs: [] }))
-    expect(r2.trips[0].vehicle_model?.id).toBe('CONT')
+    // trung chuyển mà kho đích chỉ khai xe 15 tấn ⇒ không lên container
+    const r2 = runDispatch(inp([big('3', { flow: 'STO', allowed_models: ['T15'] })]))
+    expect(r2.trips.every(t => t.vehicle_model?.id === 'T15')).toBe(true)
   })
 })
 describe('luật 7 — họ xe pallet theo dòng xe CHA (user 26/09: "đi xe pallet mà nhét cả xe SCA vào xe pallet là sai")', () => {
@@ -564,7 +562,7 @@ describe('luật 4b — xe kết hợp chỉ khi ghép (user 26/09: "được gh
 describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại kho (user 27/09: "khách hàng nào vào được dòng xe nào")', () => {
   const T5 = model({ id: 'T5', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 5, tariff_unit: 'PER_TRIP' })
   const T15 = model({ id: 'T15', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP', underload_pct: 20 })   // ngưỡng thấp ⇒ 4 tấn vẫn "đủ tải" ⇒ không khai thì xe 15 tấn RẺ HƠN thắng
-  const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP', dispatch_use: 'TRANSFER' })
+  const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP' })
   const tar = [tariff('A', 'T5', 'W1', 900_000), tariff('A', 'T15', 'W1', 800_000), tariff('A', 'CONT', 'W1', 700_000)]
   const tonOd = (n: string, t: number, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: t * 1000, material_code: `m${n}` })], ...over })
   it('khách chỉ được vào xe 5 tấn ⇒ xe 5 tấn dù xe 15 tấn rẻ hơn; khách không khai ⇒ xe 15 tấn', () => {
@@ -592,13 +590,13 @@ describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại k
     expect(r.trips.find(t => t.ods.some(o => o.od_number === '7'))?.vehicle_model?.id).toBe('T5')
     expect(r.trips.find(t => t.ods.some(o => o.od_number === '8'))?.vehicle_model?.id).toBe('T15')
   })
-  it('khách xuất khẩu khai container ⇒ ĐI CONTAINER dù container chỉ dùng trung chuyển (khai tường minh thắng luật 8); khách không khai vẫn không lên container', () => {
+  it('khách xuất khẩu khai container ⇒ ĐI CONTAINER nguyên OD; khách khai xe khác (không tick container) ⇒ không lên container', () => {
     const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: 24_750, material_code: `e${n}` })], ...over })
     const r = runDispatch(input([big('9', { allowed_models: ['CONT'] })], { models: [T5, T15, CONT], tariffs: tar }))
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].vehicle_model?.id).toBe('CONT')
     expect(r.trips[0].ods[0].part).toBeNull()   // nguyên OD một xe, không tách
-    const r2 = runDispatch(input([big('10')], { models: [T5, T15, CONT], tariffs: tar }))
+    const r2 = runDispatch(input([big('10', { allowed_models: ['T5', 'T15'] })], { models: [T5, T15, CONT], tariffs: tar }))
     expect(r2.trips.every(t => t.vehicle_model?.id !== 'CONT')).toBe(true)
   })
   it('danh sách khai không có dòng xe nào đang hoạt động ⇒ OD ra "không xếp được", nêu đúng chỗ sửa', () => {
@@ -615,13 +613,15 @@ describe('resolveAllowedModels — thứ tự Khách × Loại kho → Khách �
     expect(resolveAllowedModels({ FG01: ['P1'] }, chan, ['FG02'])).toEqual(['S1'])
     expect(resolveAllowedModels({}, chan, ['RM01'])).toEqual(['A1', 'A2'])
   })
-  it('không bậc nào khai ⇒ null (không giới hạn); danh sách rỗng khai tường minh ⇒ [] (cố ý chặn)', () => {
-    expect(resolveAllowedModels(null, null, ['FG01'])).toBeNull()
+  it('28/09 — không bậc nào khai ⇒ [] (khách không khai thì KHÔNG chọn xe); {} rỗng cũng là chưa khai; rỗng tường minh ⇒ []', () => {
+    expect(resolveAllowedModels(null, null, ['FG01'])).toEqual([])
+    expect(resolveAllowedModels({}, {}, ['FG01'])).toEqual([])
     expect(resolveAllowedModels({ FG01: [] }, null, ['FG01'])).toEqual([])
   })
-  it('OD hai Loại kho chính ⇒ GIAO hai danh sách; OD chỉ POSM ⇒ khoá "*"', () => {
+  it('OD hai Loại kho chính ⇒ GIAO hai danh sách (loại không bậc nào khai ⇒ không xe nào); OD chỉ POSM ⇒ khoá "*"', () => {
     expect(resolveAllowedModels({ FG01: ['A', 'B'], FG02: ['B', 'C'] }, null, ['FG01', 'FG02'])).toEqual(['B'])
-    expect(resolveAllowedModels({ FG01: ['A'] }, null, ['FG01', 'FG02'])).toEqual(['A'])   // loại không khai không siết thêm
+    expect(resolveAllowedModels({ FG01: ['A'] }, null, ['FG01', 'FG02'])).toEqual([])   // FG02 chưa khai ở đâu ⇒ không chọn
+    expect(resolveAllowedModels({ FG01: ['A'] }, { '*': ['A', 'B'] }, ['FG01', 'FG02'])).toEqual(['A'])   // FG02 lấy theo kênh
     expect(resolveAllowedModels({ '*': ['Z'], FG01: ['A'] }, null, [])).toEqual(['Z'])
   })
 })

@@ -20,8 +20,8 @@
  *  7. PALLET / XÁ (25/09): khách đi pallet ⇒ họ xe pallet, tối đa `pallet_max_stops` khách; khách đi xá ⇒ họ xe tấn.
  *     Họ xe pallet = dòng xe có cha "xe chở hàng đã lên pallet" (26/09) — xe SCA / kết hợp nóng-lạnh KHÔNG thuộc họ này dù
  *     đo sức chứa bằng pallet. 7b: khách pallet có hàng cần điều kiện mà xe pallet không phục vụ (lạnh) ⇒ OD đi xe xá/SCA.
- *  8. DÒNG XE DÙNG CHO VIỆC GÌ (25/09): dòng xe khai `dispatch_use = TRANSFER` (container) CHỈ nhận chuyến mà mọi OD đều
- *     là trung chuyển giữa các kho của mình (`isTransferOd`) — giao khách không bao giờ lên container.
+ *  8. ~~DÒNG XE DÙNG CHO VIỆC GÌ (25/09, `dispatch_use` TRANSFER)~~ — BỎ 28/09 (user: "dòng xe chọn theo khai báo của khách,
+ *     khách không khai thì không chọn — bỏ config ở Mã dòng xe"). Container chỉ đi khi khách / kênh tick nó (luật 10).
  *  9. KHÔNG TRỘN LOẠI KHO (26/09, user: "FG01 đi với FG01, FG02 đi FG02, muốn đi chung phải bật công tắc"): khoá cụm mang
  *     Loại kho CHÍNH của OD (`mainCatsOf` — bỏ Loại kho "đi kèm đơn" như POSM) trừ khi kho bật `allow_mix_categories`.
  *     OD chỉ có hàng đi kèm (POSM riêng) được xếp ké vào chuyến cùng cụm, ưu tiên chuyến của CHÍNH khách đó.
@@ -30,8 +30,9 @@
  *     đi xe đúng mức, rơi về xe kết hợp khi không xe đúng mức nào vừa + có cước (ghi lý do).
  * 10. DÒNG XE ĐƯỢC VÀO (27/09 — thay "tải trọng xe tối đa" tự suy theo tấn của 26/09; user: "tôi không muốn tự động, tôi muốn
  *     config được"): OD mang `allowed_models` (khai theo Kênh → Khách × Loại kho, controller resolve) ⇒ mọi chuyến chở OD đó chỉ
- *     dùng dòng xe TRONG danh sách (giao của mọi OD trên chuyến). Danh sách khai TƯỜNG MINH thắng luật 8 (khách xuất khẩu khai
- *     cont lạnh là được đi cont) và thắng họ xe của luật 7 khi danh sách không có xe nào đúng họ. OD không khai = như cũ.
+ *     dùng dòng xe TRONG danh sách (giao của mọi OD trên chuyến), và thắng họ xe của luật 7 khi danh sách không có xe nào đúng
+ *     họ. 28/09: khách + kênh đều KHÔNG khai ⇒ danh sách RỖNG ⇒ máy không chọn xe (OD nằm khung chờ, cảnh báo khai thiếu).
+ *     `allowed_models` null chỉ còn ở dòng chụp trước 28/09 / test = không giới hạn.
  * 11. NHIỀU XE TRÊN MỘT THẺ (27/09, user: "10 tấn có thể dùng xe 8 tấn + 2 tấn thay vì 15 tấn — tốn tiền hơn" · "luôn so tổ hợp"):
  *     `max_vehicles` > 1 ⇒ mỗi chuyến so thêm các TỔ HỢP 2..N dòng xe (cùng cách đo sức chứa, cùng một ĐVVT, mọi dòng xe đều qua
  *     luật 4/7/8/10) — tổ hợp RẺ HƠN một xe thì chọn tổ hợp. OD lớn hơn mọi xe được vào mà N xe chở vừa ⇒ KHÔNG tách OD, đi một
@@ -81,13 +82,10 @@ export interface EngineModel {
   serve_conditions: string[] | null // điều kiện bảo quản xe phục vụ được; rỗng/null = mọi điều kiện
   max_drops: number | null          // null = theo kho
   is_active: boolean
-  /** Luật 8 (25/09): dòng xe dùng cho việc gì — TRANSFER = CHỈ trung chuyển giữa các kho (container). undefined = ALL. */
-  dispatch_use?: DispatchUse
   /** Cha của dòng xe (`VehicleType.is_pallet_truck`) là "xe chở hàng đã lên pallet" (26/09, user: "đi xe pallet mà nhét cả xe
    *  SCA vào xe pallet là sai"). Có giá trị thì QUYẾT họ xe pallet/xá; undefined = suy theo cách đo sức chứa (dữ liệu/test cũ). */
   pallet_truck?: boolean
 }
-export type DispatchUse = 'ALL' | 'TRANSFER'
 export interface EngineCarrier { id: string; code: string; name: string; tender_required?: boolean }   // tender_required: ĐVVT cần phản hồi khi chào chuyến (controller đọc lúc Xác nhận, engine không dùng)
 export type EngineTariff = TariffLike & { transport_company_id: string; vehicle_model_id: string }
 export type EngineSurcharge = SurchargeLike & { transport_company_id: string; vehicle_model_id: string | null; per: SurchargePer; count_mode: StopCountMode }
@@ -135,7 +133,7 @@ export interface TripOd {
   conditions: string[]                              // điều kiện bảo quản của phần OD này — chuyển OD thì chuyến đích tính lại từ đây
   cat_load: Record<string, number>                  // tải theo Loại kho (pallet + kg/1e6) — nguồn cửa đặt lịch khi OD di chuyển
   load_mode: LoadMode | null                        // kiểu đi của OD (theo khách, người đổi được trên bàn ghép xe)
-  transfer: boolean                                 // trung chuyển giữa các kho của mình (luật 8 — dòng xe "chỉ trung chuyển")
+  transfer: boolean                                 // trung chuyển giữa các kho của mình (cờ thông tin — luật 8 bỏ 28/09)
   allowed_models: string[] | null                   // luật 10 — dòng xe khách được vào (chụp lúc lập); null = không giới hạn
 }
 export interface TripFreight {
@@ -170,7 +168,8 @@ export interface DispatchTrip {
   warnings: string[]
   merge_hint: string | null          // gợi ý gộp khi Non tải
 }
-export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string }
+/** `code` NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — OD vẫn nằm khung chờ để khai xong ghép được, không vào "không lên xe". */
+export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' }
 export interface CarrierShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: ShareBasis }
 export interface DispatchResult {
   trips: DispatchTrip[]
@@ -251,16 +250,15 @@ export function resolveLoadMode(custMode: string | null | undefined, byCat: Reco
 }
 /** Luật 10 (27/09): dòng xe OD được vào. Map {"*": [...], "<Loại kho>": [...]} của KHÁCH rồi của KÊNH; với mỗi Loại kho chính:
  *  khách×loại → khách×* → kênh×loại → kênh×*. OD nhiều Loại kho chính ⇒ GIAO các danh sách có khai (loại không khai không siết
- *  thêm). OD chỉ có hàng đi kèm (POSM) ⇒ khoá "*". Không bậc nào khai ⇒ null = không giới hạn. Danh sách RỖNG khai tường minh
- *  = không xe nào (người khai cố ý chặn) — khác với "không khai". */
-export function resolveAllowedModels(cust: Record<string, unknown> | null | undefined, chan: Record<string, unknown> | null | undefined, mainCats: string[]): string[] | null {
+ *  thêm). OD chỉ có hàng đi kèm (POSM) ⇒ khoá "*". 28/09 (user chốt "khách không khai thì không chọn"): Loại kho chính nào
+ *  không bậc nào khai ⇒ loại đó không xe nào ⇒ OD không xe nào (mảng rỗng) — không còn "null = không giới hạn". */
+export function resolveAllowedModels(cust: Record<string, unknown> | null | undefined, chan: Record<string, unknown> | null | undefined, mainCats: string[]): string[] {
   const list = (m: Record<string, unknown> | null | undefined, k: string): string[] | null => {
     const v = m?.[k]
     return Array.isArray(v) ? uniq(v.filter((x): x is string => typeof x === 'string' && !!x)).sort(cmp) : null
   }
-  const forCat = (c: string | null) => (c ? list(cust, c) : null) ?? list(cust, '*') ?? (c ? list(chan, c) : null) ?? list(chan, '*')
-  const lists = (mainCats.length ? mainCats.map(forCat) : [forCat(null)]).filter((l): l is string[] => l !== null)
-  if (!lists.length) return null
+  const forCat = (c: string | null) => (c ? list(cust, c) : null) ?? list(cust, '*') ?? (c ? list(chan, c) : null) ?? list(chan, '*') ?? []
+  const lists = mainCats.length ? mainCats.map(forCat) : [forCat(null)]
   return lists.reduce((a, l) => a.filter(x => l.includes(x)))
 }
 /** Switch "Ghép Loại kho khác" trên thẻ xe (27/09, user: "TẮT = chặn thả"): trả câu lý do nếu xe (sau khi nhận `moving`) chở hơn
@@ -346,18 +344,15 @@ export function modeOfModel(m: Pick<EngineModel, 'capacity_mode' | 'max_pallets'
 }
 /** Dòng xe có thuộc họ của kiểu đi này không (kiểu đi chưa phân ⇒ mọi họ, hành vi cũ). */
 export const familyOk = (m: EngineModel, mode: LoadMode | null | undefined) => !mode || modeOfModel(m) === mode
-/** Luật 8 (user 25/09: "container chỉ dành cho tuyến trung chuyển giữa các kho"): OD trung chuyển = khách là KHO của mình
- *  (Customer.warehouse_id) hoặc SAP phân loại STO / INTERNAL. */
+/** OD trung chuyển = khách là KHO của mình (Customer.warehouse_id) hoặc SAP phân loại STO / INTERNAL — chỉ còn là cờ trên dòng
+ *  OD (`dispatch_trip_od.is_transfer`), không quyết dòng xe nữa (luật 8 bỏ 28/09). */
 export const isTransferOd = (od: Pick<EngineOd, 'internal_wh' | 'flow'>) => !!od.internal_wh || od.flow === 'STO' || od.flow === 'INTERNAL'
-/** Dòng xe "chỉ trung chuyển" chỉ nhận chuyến mà MỌI OD đều là trung chuyển; dòng xe thường nhận mọi chuyến. */
-export const useOk = (m: Pick<EngineModel, 'dispatch_use'>, allTransfer: boolean) => m.dispatch_use !== 'TRANSFER' || allTransfer
 type FleetOd = Pick<EngineOd, 'internal_wh' | 'flow' | 'load_mode' | 'allowed_models'>
-/** Luật 10: OD cho phép dòng xe này không — khai danh sách thì CHỈ danh sách (thắng luật 8); không khai thì theo luật 8. */
-export const odAllows = (m: Pick<EngineModel, 'id' | 'dispatch_use'>, o: FleetOd) =>
-  o.allowed_models ? o.allowed_models.includes(m.id) : useOk(m, isTransferOd(o))
+/** Luật 10: OD cho phép dòng xe này không — CHỈ danh sách đã resolve (rỗng = không xe nào); null (dòng cũ / test) = không giới hạn. */
+export const odAllows = (m: Pick<EngineModel, 'id'>, o: FleetOd) => (o.allowed_models ? o.allowed_models.includes(m.id) : true)
 /** Có OD nào trên nhóm khai danh sách dòng xe riêng không (để câu cảnh báo nói đúng nguyên nhân). */
 export const hasAllowList = (ods: Pick<EngineOd, 'allowed_models'>[]) => ods.some(o => !!o.allowed_models)
-/** Họ dòng xe dùng được cho một nhóm OD: dòng xe MỌI OD đều cho phép (luật 10 + luật 8), đúng kiểu đi (luật 7). Danh sách khai
+/** Họ dòng xe dùng được cho một nhóm OD: dòng xe MỌI OD đều cho phép (luật 10), đúng kiểu đi (luật 7). Danh sách khai
  *  tường minh mà không có xe nào đúng họ ⇒ theo danh sách (người khai đã chọn xe cụ thể — ví dụ khách Pallet chỉ nhận xe SCA). */
 export const fleetFor = (models: EngineModel[], ods: FleetOd[], opts: { ignoreAllowList?: boolean } = {}) => {
   const mode = ods[0]?.load_mode ?? null
@@ -724,7 +719,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const bigSort = bigFirst
   const pricedByWard = ctx.pricedByWard
   const maxVeh = Math.max(1, Math.min(5, Math.trunc(Number(P.max_vehicles) || 1)))
-  /** Họ dòng xe để xếp một cụm: đúng kiểu đi (pallet / xá) + đúng việc (container chỉ trung chuyển), ưu tiên dòng xe
+  /** Họ dòng xe để xếp một cụm: đúng kiểu đi (pallet / xá) + dòng xe khách được vào, ưu tiên dòng xe
    *  CÓ CƯỚC cho phường của cụm. */
   const candsFor = (group: EngineOd[]): EngineModel[] => {
     const fam = fleetFor(models, group)
@@ -758,7 +753,12 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const s = sumLines(od.lines)
     if (s.pallets == null && s.tons == null) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Không đo được tải (${od.lines.filter(l => l.pallets == null && l.kg == null).length} dòng thiếu quy cách thùng/pallet/kg và SAP không có tham chiếu)` }); continue }
     const big = bigForOd(od)
-    if (!big && od.allowed_models) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Khách chỉ được vào ${od.allowed_models.length} dòng xe đã khai — không dòng nào đang hoạt động + khai sức chứa (Khách hàng → Dòng xe được vào)` }); continue }
+    if (!big && od.allowed_models) {
+      unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, code: 'NO_VEHICLE', reason: od.allowed_models.length
+        ? `Khách chỉ được vào ${od.allowed_models.length} dòng xe đã khai — không dòng nào đang hoạt động + khai sức chứa (Khách hàng → Dòng xe được vào)`
+        : 'Khách chưa có dòng xe nào được vào — khai ở Khách hàng → Dòng xe được vào (theo kênh, hoặc riêng khách)' })
+      continue
+    }
     if (!big) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: od.load_mode === 'PALLET' ? 'Khách đi Pallet nhưng chưa có dòng xe pallet nào khai sức chứa' : od.load_mode === 'LOOSE' ? 'Khách đi Xá nhưng chưa có xe tải theo tấn nào khai sức chứa' : 'Chưa có dòng xe nào khai sức chứa' }); continue }
     // Luật 11: OD lớn hơn xe lớn nhất được vào mà N xe (lặp lại xe đó) chở vừa ⇒ giữ NGUYÊN OD, đi thẻ nhiều xe — tách OD ra
     // hai Số xe là ca Xác nhận chặn (OD_SPLIT_ACROSS_TRIPS) và app không tách DO được

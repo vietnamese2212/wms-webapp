@@ -42,7 +42,9 @@ type Row = {
   where: string; tone: Tone; cust: string; ward: string; region: string
   pallets: number | null; tons: number | null; date: string; late: number; note: string; flag: string; until: string | null; reason: string
   fresh?: boolean
+  noVeh?: boolean   // khách + kênh chưa khai Dòng xe được vào (28/09) — máy không chọn xe
 }
+const noVehOf = (o: { allowed_models?: string[] | null }) => Array.isArray(o.allowed_models) && !o.allowed_models.length
 const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'Đã xuất kho', REDO_DISPATCHED: 'DO tạo lại – đã điều' }
 /** Nhãn OD về ZSD02 SAU khi lập kế hoạch, còn ở khung chờ (user chốt 28/09) — dùng chung bảng Xem đơn + bàn ghép xe. */
 export function NewOdChip() {
@@ -106,7 +108,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       od: o.od_number, ids: [o.id], held: false, selectable: editable, where: 'Khung chờ', tone: 'amber',
       cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
       pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '', late: o.late_days ?? 0,
-      note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number),
+      note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number), noVeh: noVehOf(o),
     })
     // OD máy không đo được tải / không lên xe (hàng trả về, chiết khấu…) — nằm ở Điều để người thấy, nhưng không chọn được
     for (const u of plan.unplanned) if (!agg.has(`GO|${u.od_number}`)) add('GO', `GO|${u.od_number}`, {
@@ -209,10 +211,12 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   ]
   // Lưu ý = thứ người xếp phải biết mà không nằm ở cột nào: OD này THAY OD cũ (sửa SO — OD cũ có thể đã điều ở xe khác) ·
   // đơn vừa hết "Không điều ngày này" quay lại
-  const warnOf = (od: string) => {
+  const warnOf = (od: string, noVeh?: boolean) => {
     const i = info[od]
-    if (!i) return ''
+    const veh = noVeh ? ['Khách chưa khai Dòng xe được vào — máy không chọn xe'] : []
+    if (!i) return veh.join(' · ')
     return [
+      ...veh,
       ...i.replaces.map(r => r.group_code ? `Thay OD ${r.od} — OD cũ ĐÃ ĐIỀU ở xe ${r.group_code}` : `Thay OD ${r.od} (SAP sửa SO)`),
       ...(i.held_before && st === 'GO' ? [`Đã không điều tới ${dmy(i.held_before.until)} — ${i.held_before.reason}`] : []),
     ].join(' · ')
@@ -265,7 +269,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly
               ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '' }) }}>Xem cả {byTab[st].length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
-            {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od); return (
+            {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
               <TableRow key={r.key} className={`cursor-pointer hover:bg-slate-50 ${sel.has(r.key) ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r.key)}>
                 {editable && st !== 'DONE' && (
@@ -288,7 +292,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
                 <TableCell className={`${TD} truncate ${r.note ? 'text-amber-900' : ''}`} title={[r.note, i?.note_invoice ? `Hoá đơn: ${i.note_invoice}` : ''].filter(Boolean).join('\n')}>
                   {r.note || <span className="text-slate-300">—</span>}{i?.note_invoice && <span className="ml-1 text-slate-500">· HĐ: {i.note_invoice}</span>}
                 </TableCell>
-                <TableCell className={`${TD} truncate ${i?.replaces.some(x => x.group_code) ? 'text-red-600 font-medium' : 'text-amber-800'}`} title={warn}>{warn || <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} truncate ${r.noVeh || i?.replaces.some(x => x.group_code) ? 'text-red-600 font-medium' : 'text-amber-800'}`} title={warn}>{warn || <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate ${r.flag && st === 'GO' ? 'text-red-600' : 'text-slate-500'}`} title={st === 'DAY' || st === 'NEVER' ? r.reason : r.flag}>
                   {(st === 'DAY' || st === 'NEVER' ? r.reason : r.flag) || <span className="text-slate-300">—</span>}
                 </TableCell>

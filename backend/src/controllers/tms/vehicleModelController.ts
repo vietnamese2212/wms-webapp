@@ -45,7 +45,7 @@ const vehicleModelBody = {
   underload_pct:      z.number().int().min(0).max(100),
   is_active:          zBool,
   sort_order:         z.number().int().min(0),
-  // Luật 8 điều vận (25/09): ALL = mọi đơn · TRANSFER = CHỈ trung chuyển giữa các kho (container)
+  // Luật 8 điều vận (25/09) — BỎ 28/09: engine không đọc nữa (dòng xe theo khai báo của khách/kênh); form không gửi, giữ để bundle cũ không 400
   dispatch_use:       z.enum(['ALL', 'TRANSFER']),
 }
 export const zVehicleModelCreate = z.object({ sap_code: zText(1, 20), ...vehicleModelBody }).partial({

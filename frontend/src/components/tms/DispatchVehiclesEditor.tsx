@@ -1,6 +1,7 @@
 // DÒNG XE ĐƯỢC VÀO (điều vận, user chốt 27/09: "khách hàng nào vào được dòng xe nào — dạng multi check box theo chuẩn;
 // mặc định theo kênh, khách đặc biệt config riêng"). Map {"*": [id…], "<Loại kho>": [id…]} — "*" = mọi Loại kho.
-// Thứ tự máy áp (backend `resolveAllowedModels`): Khách × Loại kho → Khách → Kênh × Loại kho → Kênh → mọi xe.
+// Thứ tự máy áp (backend `resolveAllowedModels`): Khách × Loại kho → Khách → Kênh × Loại kho → Kênh → KHÔNG xe nào
+// (28/09, user: "dòng xe chọn theo khai báo của khách, không khai thì không chọn" — trước đó rơi về "mọi xe").
 //
 // Danh sách chọn là DÒNG XE CON (mã SAP — đủ để nói "chỉ xe nhỏ"), gom dưới LOẠI XE CHA cho dễ tick cả họ.
 import { useMemo, useState } from 'react'
@@ -47,10 +48,16 @@ export function VehicleModelChecklist({ models, value, onChange }: { models: Veh
     ids.forEach(id => (on ? n.add(id) : n.delete(id)))
     onChange([...n].sort())
   }
+  const allIds = groups.flatMap(g => g.ms.map(m => m.id))
+  const allOn = allIds.length > 0 && allIds.every(id => sel.has(id))
   return (
     <div className="rounded-md border border-slate-200">
-      <div className="border-b bg-slate-50 p-1.5">
-        <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm dòng xe / mã SAP…" className="h-8 text-xs" />
+      <div className="flex items-center gap-1.5 border-b bg-slate-50 p-1.5">
+        <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm dòng xe / mã SAP…" className="h-8 text-xs flex-1 min-w-0" />
+        {/* "mọi xe" cho một kênh = tick hết (28/09: không khai không còn nghĩa là mọi xe) */}
+        <button type="button" className="shrink-0 rounded border border-slate-300 bg-white px-2 h-8 text-[11px] text-slate-700 hover:bg-slate-100" onClick={() => setMany(allIds, !allOn)}>
+          {allOn ? 'Bỏ chọn hết' : 'Chọn tất cả'}
+        </button>
       </div>
       <div className="max-h-64 overflow-y-auto divide-y">
         {groups.map(g => {
@@ -72,7 +79,7 @@ export function VehicleModelChecklist({ models, value, onChange }: { models: Veh
               {isOpen && shown.map(m => (
                 <label key={m.id} className="flex cursor-pointer items-center gap-2 py-1 pl-8 pr-2 hover:bg-slate-50">
                   <input type="checkbox" checked={sel.has(m.id)} onChange={() => setMany([m.id], !sel.has(m.id))} className="h-4 w-4 accent-sky-600" />
-                  <span className="min-w-0 flex-1 text-xs text-slate-700">{m.name}{m.dispatch_use === 'TRANSFER' && <span className="ml-1 text-[10px] text-amber-600">(mặc định chỉ trung chuyển)</span>}</span>
+                  <span className="min-w-0 flex-1 text-xs text-slate-700">{m.name}</span>
                   <span className="shrink-0 text-[10px] text-slate-400 tabular-nums">{capText(m)}</span>
                 </label>
               ))}
@@ -87,27 +94,28 @@ export function VehicleModelChecklist({ models, value, onChange }: { models: Veh
 
 /**
  * Bảng "Dòng xe được vào" theo Loại kho cho MỘT khách hoặc MỘT kênh. Mỗi dòng: Mọi Loại kho / từng Loại kho —
- * "Theo kênh" (khách) hoặc "Mọi xe" (kênh) = không khai khoá đó; "Chọn dòng xe" = khai danh sách.
+ * "Theo kênh" (khách) hoặc "Chưa khai" (kênh) = không khai khoá đó; "Chọn dòng xe" = khai danh sách.
  */
 export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit }: {
   value: Record<string, string[]>
   onChange: (next: Record<string, string[]>) => void
   cats: { value: string; label: string }[]
   models: VehicleModel[]
-  /** Khách: map của kênh để in "theo kênh: …". Kênh: undefined (không khai = mọi xe). */
+  /** Khách: map của kênh để in "theo kênh: …". Kênh: undefined (không khai = không xe nào). */
   inherit?: { label: string; map: Record<string, string[]> } | null
 }) {
   const [editing, setEditing] = useState<string | null>(null)
   const rows = [{ key: '*', label: 'Mọi Loại kho' }, ...cats.map(c => ({ key: c.value, label: c.label !== c.value ? `${c.value} — ${c.label}` : c.value }))]
-  const offWord = inherit !== undefined ? 'Theo kênh' : 'Mọi xe'
-  /** Máy sẽ áp gì cho khoá này nếu KHÔNG khai (để người khai thấy mình đang đè cái gì). */
-  const fallback = (key: string): string => {
-    if (key !== '*' && value['*']) return `theo "Mọi Loại kho": ${vehicleListText(value['*'], models)}`
+  const offWord = inherit !== undefined ? 'Theo kênh' : 'Chưa khai'
+  /** Máy sẽ áp gì cho khoá này nếu KHÔNG khai (để người khai thấy mình đang đè cái gì). Không bậc nào khai ⇒ máy không chọn xe. */
+  const fallback = (key: string): { text: string; none: boolean } => {
+    if (key !== '*' && value['*']) return { text: `theo "Mọi Loại kho": ${vehicleListText(value['*'], models)}`, none: !value['*'].length }
     if (inherit) {
       const l = inherit.map[key] ?? inherit.map['*']
-      return l ? `theo kênh ${inherit.label}: ${vehicleListText(l, models)}` : inherit.label ? `kênh ${inherit.label} chưa khai — mọi xe` : 'chưa phân kênh — mọi xe'
+      return l ? { text: `theo kênh ${inherit.label}: ${vehicleListText(l, models)}`, none: !l.length }
+        : { text: inherit.label ? `kênh ${inherit.label} chưa khai — máy KHÔNG chọn xe` : 'chưa phân kênh — máy KHÔNG chọn xe', none: true }
     }
-    return 'mọi dòng xe'
+    return { text: 'chưa khai — máy KHÔNG chọn xe', none: true }
   }
   const set = (key: string, ids: string[] | null) => {
     const n = { ...value }
@@ -118,6 +126,7 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
     <div className="rounded-md border border-slate-200 divide-y">
       {rows.map(r => {
         const on = Array.isArray(value[r.key])
+        const fb = on ? null : fallback(r.key)
         return (
           <div key={r.key} className="px-2 py-1.5 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -129,10 +138,10 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
                   className={`rounded px-2 py-1 text-[11px] ${on ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>Chọn dòng xe</button>
               </div>
             </div>
-            <p className={`text-[11px] ${on ? (value[r.key].length ? 'text-slate-600' : 'text-red-600') : 'text-slate-400'}`}>
+            <p className={`text-[11px] ${on ? (value[r.key].length ? 'text-slate-600' : 'text-red-600') : fb?.none ? 'text-amber-700' : 'text-slate-400'}`}>
               {on
                 ? (value[r.key].length ? `${nf(value[r.key].length)} dòng xe: ${vehicleListText(value[r.key], models)}` : 'Chưa tick dòng xe nào — máy sẽ không xếp được hàng loại này')
-                : fallback(r.key)}
+                : fb?.text}
               {on && editing !== r.key && <button type="button" className="ml-2 text-sky-700 underline" onClick={() => setEditing(r.key)}>Sửa</button>}
             </p>
             {on && editing === r.key && <VehicleModelChecklist models={models} value={value[r.key]} onChange={ids => set(r.key, ids)} />}

@@ -719,7 +719,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving
           <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe được vào (điều vận)</label>
           <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models}
             inherit={{ label: channel ? (channels.find(c => c.value === channel)?.label ?? channel) : '', map: channel ? (chanVeh.get(channel) ?? {}) : {} }} />
-          <p className="mt-1 text-[11px] text-slate-400">Khách đặc biệt (đường nhỏ, cấm tải, xuất khẩu đi container…) khai riêng ở đây; còn lại theo kênh. Máy chỉ xếp khách lên dòng xe được tick — ghép với khách khác thì chỉ dòng xe CẢ HAI được vào. Container tick cho khách là được dùng dù mặc định chỉ trung chuyển.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Khách đặc biệt (đường nhỏ, cấm tải, xuất khẩu đi container…) khai riêng ở đây; còn lại theo kênh. Máy chỉ xếp khách lên dòng xe được tick — ghép với khách khác thì chỉ dòng xe CẢ HAI được vào. Khách và kênh đều chưa khai ⇒ máy KHÔNG chọn xe cho khách này.</p>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-4 w-4 accent-sky-600" />
@@ -1163,7 +1163,7 @@ function ChannelForm({ row, cats, models, onClose }: {
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe mặc định (điều vận)</label>
           <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models} />
-          <p className="mt-1 text-[11px] text-slate-400">Khách thuộc kênh này mà không khai riêng thì máy chỉ xếp lên các dòng xe tick ở đây (vd NPP không đi container, BHX chỉ xe nhỏ). Để "Mọi xe" = không giới hạn.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Khách thuộc kênh này mà không khai riêng thì máy chỉ xếp lên các dòng xe tick ở đây (vd NPP không đi container, BHX chỉ xe nhỏ). Để "Chưa khai" ⇒ máy KHÔNG chọn xe cho khách của kênh (trừ khách khai riêng) — muốn mọi xe thì "Chọn dòng xe" → "Chọn tất cả".</p>
         </div>
       </div>
     </FormSheet>

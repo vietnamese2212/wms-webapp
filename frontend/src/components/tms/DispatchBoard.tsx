@@ -357,7 +357,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
           {/* KHÔNG cắt "…" (user 25/09 tối: "nội dung trong thẻ đơn hàng bị che bằng dấu …") — tên khách xuống dòng */}
           <div className="flex items-start gap-1">
             <div className="min-w-0 flex-1 break-words text-slate-500 leading-snug">{o.ship_to_name ?? o.ship_to_code}{!compact && o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}
-              {o.allowed_models && <span className="ml-1 rounded bg-indigo-50 px-1 text-[9px] font-medium text-indigo-700" title="Khách chỉ được vào các dòng xe đã khai (Khách hàng / Kênh → Dòng xe được vào)">{o.allowed_models.length} dòng xe</span>}
+              {/* 28/09: mọi OD giờ đều mang danh sách (theo kênh / khách) — chỉ nói khi RỖNG: máy không chọn xe cho khách này */}
+              {o.allowed_models && !o.allowed_models.length && <span className="ml-1 rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title="Khách và kênh của khách chưa khai Dòng xe được vào — máy không chọn xe (Khách hàng → Dòng xe được vào)">Chưa khai xe</span>}
             </div>
             {/* dòng xe được vào của KHÁCH — mở/sửa ngay tại bàn (user 27/09); đổi kênh vẫn ở trang Khách hàng */}
             {o.ship_to_code && (

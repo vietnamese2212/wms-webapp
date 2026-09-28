@@ -390,11 +390,19 @@ export default function Dispatch() {
                 const g = plan.params.config_gaps
                 const nCond = g?.no_condition.reduce((a, x) => a + x.ods, 0) ?? 0
                 const nCat = g?.no_category.ods ?? 0
-                if (!nCond && !nCat) return null
+                // đếm SỐNG từ dòng OD (không từ params — "Ghép" / sửa dòng xe khách trên bàn không cập nhật params)
+                const noVeh = [...(plan.pool ?? []), ...plan.trips.flatMap(t => t.ods)].filter(o => Array.isArray(o.allowed_models) && !o.allowed_models.length)
+                const nVeh = new Set(noVeh.map(o => o.od_number)).size, nVehCust = new Set(noVeh.map(o => o.ship_to_code ?? o.od_number)).size
+                if (!nCond && !nCat && !nVeh) return null
                 return (
                   <span className="inline-flex items-center gap-0.5 shrink-0 rounded-md bg-amber-100 px-2 h-9 sm:h-7 text-[11px] font-medium text-amber-800">
                     <AlertTriangle className="h-3 w-3" />Khai thiếu
                     <InfoTip tip={<div className="space-y-1.5 text-xs">
+                      {/* 28/09 (user: "dòng xe chọn theo khai báo của khách, không khai thì không chọn") */}
+                      {nVeh > 0 && <div>
+                        <b>{nf(nVeh)} OD của {nf(nVehCust)} khách chưa có dòng xe nào được vào</b> — máy KHÔNG chọn xe cho các OD này, chúng nằm ở khung chờ.
+                        Khai ở Cấu hình → Khách hàng → Dòng xe được vào (khai theo KÊNH cho số đông, khai riêng khách khi cần), rồi bấm Ghép xe / Tối ưu lại.
+                      </div>}
                       {!!g?.no_condition.length && <div>
                         <b>Loại kho chưa khai điều kiện bảo quản</b> — máy coi hàng loại này đi <b>xe nào cũng được</b> (kể cả xe lạnh):
                         <ul className="list-disc pl-4">{g.no_condition.map(x => <li key={x.category}>{x.category}: {nf(x.ods)} OD</li>)}</ul>

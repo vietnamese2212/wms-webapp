@@ -131,9 +131,12 @@ try {
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: W1, price: PRICE_DA, distance_km: 15 })
   const t2 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: HA.id, vehicle_model_id: vmId, ward_code: W2, price: PRICE_HA, distance_km: 30 })
   check('0. Fixture: dòng xe con QA61 + cước DA@W1 + HA@W2 → 201', cr.s === 201 && !!vmId && t1.s === 201 && t2.s === 201, `vm=${cr.s} t1=${t1.s} t2=${t2.s} ${t1.j?.error?.message ?? ''}`)
+  // 28/09 (user: "dòng xe chọn theo khai báo của khách, không khai thì không chọn") — khách fixture khai MỌI dòng xe đang hoạt
+  // động để các kịch bản cũ (viết khi "không khai = mọi xe") giữ nguyên ý; luật "không khai ⇒ không chọn" kiểm riêng ở [13f]
+  const ALLV = { '*': (await restAll('vehicle_model', 'select=id&is_active=eq.true')).map(v => v.id) }
   for (let i = 0; i < 3; i++) {
     const ward = i < 2 ? W1 : W2
-    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', updated_at: nowIso() })
+    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', dispatch_vehicles: ALLV, updated_at: nowIso() })
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
       ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
@@ -350,7 +353,7 @@ try {
   await cleanupTrips()
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
   const OD4 = 'QA61OD4', MAT_LA = 'QA61MAKHONGCO'
-  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', updated_at: nowIso() })
+  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', dispatch_vehicles: ALLV, updated_at: nowIso() })
   await restWrite('erp_outbound_orders', 'POST', null, {
     id: crypto.randomUUID(), od_number: OD4, od_item: '10', material_code: MAT_LA, qty_base: 2 * perPallet,
     ship_to_code: 'QA61SHIP4', ship_to_name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null,
@@ -801,6 +804,22 @@ try {
         cBad.s === 400 && cOk.s === 200 && setEq(chNow?.dispatch_vehicles?.[MAT_CAT], [pick?.id]) && cBack.s === 200 && JSON.stringify(chBack?.dispatch_vehicles ?? {}) === JSON.stringify(before),
         `bad=${cBad.s} ok=${cOk.s} now=${JSON.stringify(chNow?.dispatch_vehicles)} back=${cBack.s}`)
     } else check('13e. Fixture: cần ít nhất một Kênh khách hàng', false)
+    // [13f] 28/09 (user: "dòng xe chọn theo khai báo của khách, khách không khai thì không chọn"): khách + kênh chưa khai ⇒ máy
+    // KHÔNG chọn xe, OD nằm KHUNG CHỜ (không vào "không lên xe" — kẹt tới khi lập lại); khai xong ghép phần đã chọn ⇒ lên xe
+    await cleanupTrips()
+    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { dispatch_vehicles: {}, channel: null })
+    const pN = await mkPlan(PLAN_BODY)
+    const PN = pN.j?.data
+    const rN = rowOf(PN, OD[0])
+    check('13f. Khách + kênh CHƯA khai dòng xe ⇒ OD1 ở KHUNG CHỜ (không xe, không "không lên xe"), dòng OD chụp danh sách RỖNG · khách khác vẫn lên xe',
+      pN.s === 201 && rN?.trip_id === null && JSON.stringify(rN?.allowed_models) === '[]' && !(PN?.unplanned ?? []).some(u => u.od_number === OD[0]) && !!tripOfOd(PN, OD[1]),
+      `http=${pN.s} ${pN.j?.error?.message ?? ''} trip=${rN?.trip_id} snap=${JSON.stringify(rN?.allowed_models)} unpl=${JSON.stringify(PN?.unplanned ?? [])}`)
+    const kv = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { '*': [vmId] } })
+    const gN = rN ? await api(`/tms/dispatch/plans/${PN.id}/reoptimize`, 'POST', { ids: [rN.id] }) : null
+    const tN = tripOfOd(gN?.j?.data, OD[0])
+    check('13g. Khai dòng xe cho khách rồi "Ghép phần đã chọn" ⇒ OD1 lên đúng dòng xe đã khai (không phải lập lại kế hoạch)',
+      kv.s === 200 && gN?.s === 200 && tN?.vehicle_model_id === vmId,
+      `put=${kv.s} reopt=${gN?.s} ${gN?.j?.error?.message ?? ''} vm=${tN?.vehicle_model_id}`)
   }
 
   // ── [15] (27/09) XEM ĐƠN TRƯỚC KHI GHÉP · HOÃN / KHÔNG ĐIỀU · SỬA DÒNG XE KHÁCH TỪ BÀN · THẺ NHIỀU XE ─────────────────────────
@@ -813,7 +832,7 @@ try {
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA61OD*`).catch(() => {})
     for (let i = 0; i < 3; i++) {
       const ward = i < 2 ? W1 : W2
-      await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[i]}`, { load_mode: 'PALLET', load_mode_by_category: {}, dispatch_vehicles: {}, ward_code: ward, is_active: true })
+      await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[i]}`, { load_mode: 'PALLET', load_mode_by_category: {}, dispatch_vehicles: ALLV, ward_code: ward, is_active: true })
       await restWrite('erp_outbound_orders', 'POST', null, {
         id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
         ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',

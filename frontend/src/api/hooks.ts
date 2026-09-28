@@ -5622,7 +5622,6 @@ export interface VehicleModel {
   tariff_unit: 'PER_PALLET' | 'PER_TRIP'
   underload_pct: number
   is_active: boolean; sort_order: number
-  dispatch_use?: 'ALL' | 'TRANSFER'   // điều vận dùng cho: mọi đơn · CHỈ trung chuyển giữa các kho (container) — 25/09
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
 }
 export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by'>>
@@ -5893,7 +5892,7 @@ export interface DispatchTripOd {
   conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null; late_days?: number
   load_mode?: DispatchLoadMode | null   // khách đi Pallet / Xá (25/09) — theo danh mục khách, đổi được trên bàn ghép xe
   is_transfer?: boolean                 // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
-  allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — null = không giới hạn
+  allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — [] = khách + kênh chưa khai (28/09: máy không chọn xe) · null = dòng chụp trước 28/09
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
   reviewed_at?: string | null           // vết ai bấm ghép lúc nào (27/09 tối: đơn mới mặc định ĐIỀU — không còn chặn theo cột này)
   reviewed_by?: string | null

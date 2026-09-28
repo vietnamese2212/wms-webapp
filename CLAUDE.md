@@ -4,6 +4,7 @@
 
 ## Quy tắc làm việc
 - Ngôn ngữ trao đổi: **tiếng Việt**.
+- **User CHỈ làm trên `dev` / Preview + DB staging (user chốt 25–26/09 và nhắc lại 28/09: "không có main ở đây").** Báo cáo cho user KHÔNG nhắc `main` / production / merge / migration chờ lên production — đó là nhiễu. Việc cần làm khi lên production chỉ ghi vào `SCHEMA_REVIEW.md` / memory để lúc merge không sót; quy trình merge bên dưới chỉ áp khi user CHỦ ĐỘNG đòi lên production.
 - **Quy trình 2 môi trường (từ 07/07/2026)** — remote `https://github.com/vietnamese2212/wms-webapp.git`:
   - **Làm việc mặc định trên branch `dev`** — push `dev` sau mỗi lần sửa → Vercel Preview (URL riêng) + **DB STAGING** (Supabase cũ `bxxryrmpfabvjitqbdnw`, data test). Dev/test/load-test/seed thoải mái ở đây.
   - **User nghiệm thu trên Preview → mới merge `dev` vào `main`** → Vercel Production (`wms-webapp.vercel.app`) + **DB LOF production** (`svicyfquresxaigfxsdb`). KHÔNG push thẳng main trừ hotfix khẩn (lỗi chặn vận hành) — hotfix phải verify kỹ hơn vì không qua staging.

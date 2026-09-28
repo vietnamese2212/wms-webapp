@@ -10,7 +10,7 @@
 // 25/09 (user: "ghép xe cần một giao diện khác, rawdata nằm ở một tab, kéo thả OD cho trực quan" + "chỉ số phải hiện lên khi sửa"):
 // 3 tab cạnh tiêu đề — Bàn ghép xe (kéo thả, mặc định) · Danh sách xe (bảng soát cũ) · Dữ liệu OD (thô, OD đang ở đâu).
 // Dải chỉ số `DispatchKpiBar` + dải Soát đứng CHUNG trên cả ba tab.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
@@ -36,7 +36,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan,
-  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync,
+  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
   type DispatchPlan, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow,
 } from '@/api/hooks'
@@ -114,6 +114,18 @@ export default function Dispatch() {
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
   const syncQ = useDispatchPlanSync(planId, !!isOpen)
   const flags = useMemo(() => new Map((syncQ.data?.flags ?? []).map(x => [x.od_number, x])), [syncQ.data])
+  // OD MỚI về ZSD02 TỰ vào tab Điều, nhãn "Mới" (user chốt 28/09 — thay nút "Nạp OD mới"). Sync báo có OD mới (realtime khi
+  // ZSD02 nạp) ⇒ người có quyền lập nạp ngay; mỗi tập OD thử một lần, lỗi (vd PLAN_BUSY khi người khác đang ghép) thì 15 s sau thử lại.
+  const refresh = useRefreshDispatchPool()
+  const tried = useRef('')
+  const freshKey = syncQ.data?.new_ods ? `${planId}|${(syncQ.data.new_od_numbers ?? []).join(',')}|${syncQ.data.new_ods}` : ''
+  useEffect(() => {
+    if (!planId || !isOpen || !canPlan || !freshKey || tried.current === freshKey || refresh.isPending) return
+    tried.current = freshKey
+    refresh.mutateAsync(planId)
+      .then(r => { if (r.refreshed.added) toast({ title: `${r.refreshed.added} OD mới vào tab Điều`, description: 'Gắn nhãn "Mới" ở Xem đơn và khung chờ — nhãn hết khi OD lên xe.' }) })
+      .catch(() => { setTimeout(() => { if (tried.current === freshKey) tried.current = '' }, 15_000) })
+  }, [planId, isOpen, canPlan, freshKey, refresh])
   const ictx = useMemo(() => ({ flags }), [flags])
   const permTabs = useMemo(() => [
     // Xem đơn đứng ĐẦU (27/09 tối): bảng theo trạng thái Điều · Không điều ngày này · Không điều · Đã điều — thay tab "Dữ liệu OD"
@@ -472,7 +484,7 @@ export default function Dispatch() {
           ) : showReview ? (
             <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} />
           ) : tab === 'board' ? (
-            <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} newOds={syncQ.data?.new_ods ?? 0} onOpenTrip={setOpenTripId} />
+            <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
           ) : (
             <>
               <ResizableTable key={showStatus ? 'st' : 'nost'} storageKey={showStatus ? 'dispatch_cols_v2' : 'dispatch_cols_draft_v1'} cols={cols}>

@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, findReplacedOds, daysBetween, holdsToCarry, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, findReplacedOds, daysBetween, holdsToCarry, redoDispatchedOf, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -115,6 +115,22 @@ describe('HOÃN / KHÔNG ĐIỀU (user 27/09: "đơn key một ngày nhưng đi�
   it('đang Không điều mà SAP đã điều / đã xuất ⇒ về tab Đã điều (SHIPPED / SAP_ASSIGNED), không đứng mãi ở Không điều', () => {
     const s = splitPool([row('1', { mat_doc: '4900001' }), row('2', { sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'HA' })], DAY, held([['1', null], ['2', '2026-09-30']]))
     expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'SHIPPED'], ['2', 'SAP_ASSIGNED']])
+  })
+})
+
+describe('DO TẠO LẠI – ĐÃ ĐIỀU (user chốt 28/09): OD mới thay OD cũ đã lên xe ⇒ tab Đã điều, không vào đợt ghép', () => {
+  it('OD cũ nằm trong Kế hoạch xuất ⇒ OD mới bị loại, kind REDO_DISPATCHED, câu nêu OD cũ + xe; OD cũ chưa lên xe ⇒ không có dấu', () => {
+    const redo = redoDispatchedOf([{ od_number: '1', replaced_by_od: '11' }, { od_number: '2', replaced_by_od: '22' }], [{ do_no: '1', group_code: 'K_X_280926_4' }])
+    expect([...redo]).toEqual([['11', 'thay OD 1 · xe K_X_280926_4']])
+    const s = splitPool([row('11'), row('22')], DAY, { ...none, redo })
+    expect([...s.include.keys()]).toEqual(['22'])
+    expect(s.excluded).toEqual([{ od_number: '11', kind: 'REDO_DISPATCHED', info: 'thay OD 1 · xe K_X_280926_4' }])
+  })
+  it('LUÔN báo kể cả OD tồn đọng; thắng dấu Không điều; thua SAP đã xuất / OD mới tự đã trong KH xuất', () => {
+    const redo = new Map([['1', 'thay OD 0 · xe G'], ['2', 'x'], ['3', 'y']])
+    const s = splitPool([row('1', { delivery_date: '2026-09-20' }), row('2'), row('3', { mat_doc: '49' })], DAY,
+      { inPlan: new Map(), otherDraft: new Map(), held: new Map([['2', { until: null, reason: 'r' }]]), redo })
+    expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'REDO_DISPATCHED'], ['2', 'REDO_DISPATCHED'], ['3', 'SHIPPED']])
   })
 })
 

@@ -436,8 +436,10 @@ try {
     `rm=${rr.s} sync=${sy.s} new=${JSON.stringify(sy.j?.data?.new_od_numbers ?? sy.j?.error)}`)
   const rf = await api(`/tms/dispatch/plans/${B.id}/refresh-pool`, 'POST', {})
   B = rf.j?.data
-  check('10k. "Nạp OD mới" → OD3 vào KHUNG CHỜ (trip_id null) với 3 pallet', rf.s === 200 && rf.j?.data?.refreshed?.added >= 1 && rowOf(B, OD[2])?.trip_id === null && Number(rowOf(B, OD[2])?.pallets) === 3,
-    `http=${rf.s} ${JSON.stringify(rf.j?.data?.refreshed ?? rf.j?.error)}`)
+  // 28/09: trang tự gọi cửa này khi /sync báo OD mới; OD vừa nạp nằm trong params.fresh_ods ⇒ nhãn "Mới" ở Xem đơn + khung chờ
+  check('10k. Nạp OD mới → OD3 vào KHUNG CHỜ (trip_id null) với 3 pallet + đứng trong fresh_ods (nhãn "Mới")', rf.s === 200 && rf.j?.data?.refreshed?.added >= 1 && rowOf(B, OD[2])?.trip_id === null && Number(rowOf(B, OD[2])?.pallets) === 3
+    && (B?.params?.fresh_ods ?? []).includes(OD[2]),
+    `http=${rf.s} ${JSON.stringify(rf.j?.data?.refreshed ?? rf.j?.error)} fresh=${JSON.stringify(B?.params?.fresh_ods ?? null)}`)
   const mNr = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'new' })
   // 27/09 tối (user: "dữ liệu mới không có trong Đã điều thì mặc định là Điều") — OD mới về kéo thẳng lên xe được
   check('10k2. OD mới về (Nạp OD mới) mặc định ĐIỀU: kéo thẳng vào "Xe mới" → 200, OD3 lên xe mới, xe cũ giữ nguyên',
@@ -562,6 +564,24 @@ try {
   check('11h. Xác nhận lại sau khi mở lại (kế hoạch mở một phần) → 200, mọi xe CONFIRMED, chuyến bên Xuất GIỮ NGUYÊN id (không đẻ chuyến mới)',
     cR2.s === 200 && PR?.status === 'CONFIRMED' && (PR?.trips ?? []).every(t => t.status === 'CONFIRMED') && sameIds && gdoAfter.length === gdoBefore.length,
     `http=${cR2.s} ${cR2.j?.error?.message ?? ''} plan=${PR?.status} gdo ${gdoBefore.length}→${gdoAfter.length} same=${sameIds}`)
+  // DO TẠO LẠI – ĐÃ ĐIỀU (user chốt 28/09): SO sửa ⇒ OD mới thay OD đã nằm Kế hoạch xuất ⇒ OD mới KHÔNG vào đợt ghép, sang tab Đã điều
+  const khR = (await restAll('khvc_lines', `select=do_no,group_code&group_code=like.${PREFIX}*&order=do_no`))[0]
+  const ODR = 'QA61ODR1'
+  if (khR) {
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${khR.do_no}`, { sync_status: 'OBSOLETE', replaced_by_od: ODR, replaced_at: nowIso(), updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: ODR, od_item: '10', material_code: FIX.MAT_POOL, qty_base: 2 * perPallet,
+      ship_to_code: SHIP[2], ship_to_name: 'QA61 NPP 3', ward_code: W2, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+  }
+  const pRd = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
+  const exR = (pRd.j?.data?.params?.excluded ?? []).find(x => x.od_number === ODR)
+  check('11i. OD mới thay OD ĐÃ lên xe → không vào khung chờ, params.excluded kind REDO_DISPATCHED nêu OD cũ + Số xe (tab Đã điều "DO tạo lại – đã điều")',
+    !!khR && pRd.s === 201 && exR?.kind === 'REDO_DISPATCHED' && (exR?.info ?? '').includes(khR.do_no) && (exR?.info ?? '').includes(khR.group_code) && !rowOf(pRd.j?.data, ODR),
+    `kh=${JSON.stringify(khR ?? null)} http=${pRd.s} ${pRd.j?.error?.message ?? ''} ex=${JSON.stringify(exR ?? null)} inPool=${!!rowOf(pRd.j?.data, ODR)}`)
+  if (khR) await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${khR.do_no}`, { sync_status: 'ACTIVE', replaced_by_od: null, replaced_at: null, updated_at: nowIso() })
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODR}`).catch(() => {})
 
   // ── [12] KHÔNG TRỘN LOẠI KHO · KIỂU ĐI THEO LOẠI KHO · ĐK BẢO QUẢN THEO VỊ TRÍ (user chốt 26/09) ────────────────
   // "FG01 đi FG01, FG02 đi FG02, muốn đi chung phải bật công tắc" · "POSM đi theo đơn" · "khách A FG01 đi pallet, FG02 đi xe thường"

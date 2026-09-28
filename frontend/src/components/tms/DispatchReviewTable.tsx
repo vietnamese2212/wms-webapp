@@ -41,13 +41,18 @@ type Row = {
   key: string; od: string; ids: string[]; held: boolean; selectable: boolean
   where: string; tone: Tone; cust: string; ward: string; region: string
   pallets: number | null; tons: number | null; date: string; late: number; note: string; flag: string; until: string | null; reason: string
+  fresh?: boolean
 }
-const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'Đã xuất kho' }
+const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'Đã xuất kho', REDO_DISPATCHED: 'DO tạo lại – đã điều' }
+/** Nhãn OD về ZSD02 SAU khi lập kế hoạch, còn ở khung chờ (user chốt 28/09) — dùng chung bảng Xem đơn + bàn ghép xe. */
+export function NewOdChip() {
+  return <span className="rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800" title="OD mới về ZSD02 sau khi lập kế hoạch — tự vào tab Điều, chưa lên xe">Mới</span>
+}
 const TABS: { k: St; label: string; tip: string }[] = [
   { k: 'GO', label: 'Điều', tip: 'Đơn đi trong đợt ghép này — máy ghép xe CHỈ từ tab này. Đơn mới về ZSD02 mặc định nằm ở đây.' },
   { k: 'DAY', label: 'Không điều ngày này', tip: 'Loại khỏi kế hoạch của ngày này — tới ngày điều lại, đơn tự quay về Điều.' },
   { k: 'NEVER', label: 'Không điều', tip: 'Không điều cho ngày này và các ngày sau — tới khi có người chuyển lại Điều.' },
-  { k: 'DONE', label: 'Đã điều', tip: 'Đơn đã được lo: xe đã xác nhận / chờ ĐVVT, đã có trong Kế hoạch xuất, SAP đã điều, đã xuất kho. Chỉ xem.' },
+  { k: 'DONE', label: 'Đã điều', tip: 'Đơn đã được lo: xe đã xác nhận / chờ ĐVVT, đã có trong Kế hoạch xuất, SAP đã điều, đã xuất kho, DO tạo lại thay cho OD đã lên xe. Chỉ xem.' },
 ]
 
 export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
@@ -96,11 +101,12 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '',
       })
     }
+    const fresh = new Set(plan.params.fresh_ods ?? [])
     for (const o of plan.pool ?? []) add('GO', `GO|${o.od_number}`, {
       od: o.od_number, ids: [o.id], held: false, selectable: editable, where: 'Khung chờ', tone: 'amber',
       cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
       pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '', late: o.late_days ?? 0,
-      note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '',
+      note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number),
     })
     // OD máy không đo được tải / không lên xe (hàng trả về, chiết khấu…) — nằm ở Điều để người thấy, nhưng không chọn được
     for (const u of plan.unplanned) if (!agg.has(`GO|${u.od_number}`)) add('GO', `GO|${u.od_number}`, {
@@ -119,7 +125,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         const tab: St = u ? 'DAY' : 'NEVER'
         add(tab, `${tab}|${x.od_number}`, { ...base, held: true, selectable: editable, where: u ? `Điều lại từ ${dmy(u)}` : 'Không điều', tone: 'slate', flag: '', until: u, reason: x.reason ?? x.info ?? '' })
       } else {
-        add('DONE', `DONE|${x.od_number}`, { ...base, held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: 'green', flag: x.info ?? '', until: null, reason: '' })
+        // DO tạo lại thay OD đã lên xe: tô hổ phách — hàng đã đi dưới số OD cũ, người điều cần biết để sửa số DO trên chuyến
+        add('DONE', `DONE|${x.od_number}`, { ...base, held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: x.kind === 'REDO_DISPATCHED' ? 'amber' : 'green', flag: x.info ?? '', until: null, reason: '' })
       }
     }
     const cmp = (a: Row, b: Row) => Number(!a.ids.length && !a.held) - Number(!b.ids.length && !b.held) || a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
@@ -266,7 +273,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
                     {r.selectable && <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={`Chọn ${r.od}`} />}
                   </TableCell>
                 )}
-                <TableCell className={`${TD} font-mono font-semibold ${editable && st !== 'DONE' ? '' : `sticky left-0 z-10 ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}`}>{r.od}</TableCell>
+                <TableCell className={`${TD} font-mono font-semibold ${editable && st !== 'DONE' ? '' : `sticky left-0 z-10 ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}`}>{r.od}{r.fresh && <span className="ml-1"><NewOdChip /></span>}</TableCell>
                 <TableCell className={TD}><StatusBadge tone={r.tone}>{r.where}</StatusBadge></TableCell>
                 <TableCell className={`${TD} truncate font-mono`} title={i ? [i.so.join(', '), ...i.so_types].filter(Boolean).join(' · ') : ''}>{i?.so.length ? i.so.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={r.cust}>{r.cust || <span className="text-slate-300">—</span>}</TableCell>

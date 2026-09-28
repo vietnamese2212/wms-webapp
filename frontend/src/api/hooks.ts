@@ -5911,7 +5911,7 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
 export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED'; info: string | null; replaced_by?: string | null }
 export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 /** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
-export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
@@ -5948,7 +5948,7 @@ export interface DispatchSummary {
 export interface DispatchConfigGaps { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps }
+  params: { day?: string; max_drops?: number; pallet_max_stops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[] }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -6048,7 +6048,7 @@ export function useRefreshDispatchPool() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/refresh-pool`, {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { refreshed: { added: number; skipped_not_loadable: number } }),
-    onSuccess: p => putDispatchPlan(qc, p),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }) },
   })
 }
 export function useReplaceDispatchOd() {

@@ -13,6 +13,8 @@
  * (4) HOÃN (27/09, user: "đơn key một ngày nhưng có thể điều ngày khác · đơn note khác — không tự động được"): OD người đã
  *     đánh dấu Hoãn tới ngày SAU ngày lập, hoặc Không điều (không ngày), KHÔNG vào đợt ghép — và LUÔN được báo (kể cả OD tồn
  *     đọng) vì đó là quyết định của người, phải thấy để còn bỏ hoãn. Tới ngày hoãn thì OD quay lại như OD tồn đọng.
+ * (5) DO TẠO LẠI – ĐÃ ĐIỀU (28/09, user chốt): SAP sửa SO sinh OD mới thay cho một OD ĐÃ nằm trong Kế hoạch xuất (đã lên
+ *     xe) ⇒ hàng đó đã được điều dưới số OD cũ; để OD mới ở tab Điều là mời điều hai lần. Vào tab Đã điều, LUÔN báo.
  */
 export interface PoolCandidateRow {
   od_number: string
@@ -23,7 +25,7 @@ export interface PoolCandidateRow {
   dvvt_raw: string | null
   license_plate: string | null
 }
-export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD'
+export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED'
 /** Thông tin OD để bảng Xem đơn in được dòng của OD không nằm trên kế hoạch (controller điền, hàm thuần này để trống). */
 export interface ExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 export interface ExcludedOd { od_number: string; kind: ExcludeKind; info: string | null; until?: string | null; reason?: string; d?: ExcludedDetail }
@@ -38,7 +40,7 @@ const shippedRow = (r: PoolCandidateRow) => !!(r.mat_doc && String(r.mat_doc).tr
 
 export function splitPool(
   rows: PoolCandidateRow[], day: string,
-  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, string>; held?: Map<string, { until: string | null; reason: string }> },
+  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, string>; held?: Map<string, { until: string | null; reason: string }>; redo?: Map<string, string> },
 ): PoolSplit {
   const byOd = new Map<string, PoolCandidateRow[]>()
   for (const r of rows) { const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
@@ -56,12 +58,31 @@ export function splitPool(
     if (rs.some(shippedRow)) { report('SHIPPED', rs.find(r => r.mat_doc)?.mat_doc ?? null); continue }
     const asg = rs.find(r => r.sap_dispatch_status === 'ASSIGNED')
     if (asg) { report('SAP_ASSIGNED', [asg.dvvt_raw, asg.license_plate].filter(Boolean).join(' · ') || null); continue }
+    // OD cũ đã lên xe thắng cả dấu Không điều (cùng lý do SAP đã điều thắng): hàng đã đi dưới số OD cũ
+    if (ctx.redo?.has(od)) { excluded.push({ od_number: od, kind: 'REDO_DISPATCHED', info: ctx.redo.get(od) ?? null }); continue }
     const h = ctx.held?.get(od)
     if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}`, until: h.until, reason: h.reason }); continue }
     if (ctx.otherDraft.has(od)) { report('OTHER_DRAFT', ctx.otherDraft.get(od) ?? null); continue }
     include.set(od, { delivery_date: dd, late_days: dd ? Math.max(0, daysBetween(dd, day)) : 0 })
   }
   return { include, excluded }
+}
+
+/** OD mới → câu "thay OD cũ · xe G" cho mọi OD mới mà OD cũ nó thay ĐÃ nằm trong Kế hoạch xuất (luật 5 của splitPool).
+ *  `olds` = dòng erp_outbound_orders có replaced_by_od; `khvc` = dòng Kế hoạch xuất (chưa OBSOLETE) của các OD cũ đó. */
+export function redoDispatchedOf(olds: { od_number: string; replaced_by_od: string }[], khvc: { do_no: string; group_code: string }[]): Map<string, string> {
+  const gc = new Map<string, string>()
+  for (const k of khvc) if (!gc.has(k.do_no)) gc.set(k.do_no, k.group_code)
+  const by = new Map<string, string[]>()
+  for (const o of olds) {
+    const g = gc.get(o.od_number)
+    if (!g) continue
+    const l = by.get(o.replaced_by_od) ?? []
+    const s = `thay OD ${o.od_number} · xe ${g}`
+    if (!l.includes(s)) l.push(s)
+    by.set(o.replaced_by_od, l)
+  }
+  return new Map([...by].map(([od, l]) => [od, l.join(' · ')]))
 }
 
 /** OD đang "Không điều" / "Không điều ngày này" mà SAP THAY bằng OD mới (sửa SO) ⇒ dấu chuyển sang OD mới (user chốt 27/09

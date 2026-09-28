@@ -4,7 +4,7 @@
 // xe), Oracle OTM Workbench (thả là kiểm lại sức chứa), Routific / OptimoRoute (khoá tuyến rồi "tối ưu lại phần chưa khoá").
 // Onwheel không công bố màn kéo thả — chỉ có "% tải" trên từng xe, cũng là thứ đầu tiên thẻ xe ở đây nói.
 //   • Trái = KHUNG CHỜ: OD trong kế hoạch chưa lên xe nào, gom theo PHƯỜNG (khoá cước — nhìn một cụm là biết đi chung được
-//     không) / vùng / khách. OD mới về ZSD02 (lũy tiến) vào đây bằng nút "Nạp OD mới".
+//     không) / vùng / khách. OD mới về ZSD02 (lũy tiến) TỰ vào đây, nhãn "Mới" (28/09 — trang Điều vận tự nạp).
 //   • Phải = LƯỚI THẺ XE: % tải tô màu (Non tải hổ phách · đạt xanh · vượt đỏ), điểm giao, cước, cờ vấn đề.
 //   • Thả = server tính lại cước/tải/điều kiện bảo quản NGAY rồi trả nguyên kế hoạch (dải chỉ số đổi theo).
 //   • Rê qua một xe = XEM TRƯỚC (pallet · % tải · điểm · cước mới) — biết kết quả trước khi thả.
@@ -17,7 +17,7 @@
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, RefreshCw, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -29,7 +29,7 @@ import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/componen
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useRefreshDispatchPool, useSetDispatchOdMode,
+  useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useSetDispatchOdMode,
   useHoldDispatchOds, useUnholdDispatchOds, useResyncDispatchOd,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchLoadMode,
 } from '@/api/hooks'
@@ -38,6 +38,7 @@ import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { DispatchCustomerVehiclesSheet } from './DispatchCustomerVehiclesSheet'
+import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, type IssueKey } from './dispatchIssues'
@@ -69,8 +70,8 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
-  plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; newOds: number; onOpenTrip: (id: string) => void
+export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
+  plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
 }) {
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
@@ -88,7 +89,8 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   const editableTrip = (t: DispatchTrip) => editable && EDITABLE.includes(tripStatus(t))
 
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
-  const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan(), refresh = useRefreshDispatchPool(), setMode = useSetDispatchOdMode()
+  const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan(), setMode = useSetDispatchOdMode()
+  const fresh = useMemo(() => new Set(plan.params.fresh_ods ?? []), [plan.params.fresh_ods])
   const hold = useHoldDispatchOds(), unhold = useUnholdDispatchOds(), resync = useResyncDispatchOd()
   const perms = (useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null) ?? null
   // sửa "Dòng xe được vào" của khách từ bàn (27/09) — quyền riêng của điều vận, hoặc quyền sửa Khách hàng
@@ -268,9 +270,6 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
     reopt.mutateAsync(plan.id).then(r => { setUndo([]); setRedo([]); toast({ title: `Đã ghép lại thành ${r.reoptimized.trips} xe`, description: `${r.reoptimized.kept} xe giữ nguyên${r.reoptimized.left_in_pool ? ` · ${r.reoptimized.left_in_pool} OD vẫn ở khung chờ (không xếp được / đã đổi ở SAP)` : ''}` }) })
       .catch(e => err(e, 'Không tối ưu lại được'))
   }
-  const doRefresh = () => refresh.mutateAsync(plan.id)
-    .then(r => toast({ title: r.refreshed.added ? `Đã nạp ${r.refreshed.added} OD mới vào khung chờ` : 'Không có OD mới nào', description: r.refreshed.skipped_not_loadable ? `${r.refreshed.skipped_not_loadable} OD không lên xe (trả về / chiết khấu / không đo được tải) — bỏ qua.` : 'Kéo OD từ khung chờ vào xe, hoặc bấm "Tối ưu lại phần chưa khoá".' }))
-    .catch(e => err(e, 'Không nạp được OD mới'))
   const openHold = (mode: 'date' | 'never') => {
     const d = new Date(`${plan.plan_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)
     setHoldMode(mode); setHoldUntil(d.toISOString().slice(0, 10)); setHoldReason('')
@@ -298,14 +297,12 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
   if (editable) {
     actions.push({ key: 'undo', icon: Undo2, label: 'Hoàn tác', tip: `Hoàn tác lần chuyển OD gần nhất (Ctrl+Z)${undoStack.length ? ` — còn ${undoStack.length} bước` : ''}`, onClick: () => void undo(), disabled: !undoStack.length || busy })
     actions.push({ key: 'redo', icon: Redo2, label: 'Làm lại', tip: 'Làm lại (Ctrl+Y)', onClick: () => void redo(), disabled: !redoStack.length || busy })
-    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên', onClick: () => void doReopt(), disabled: reopt.isPending || busy, busy: reopt.isPending })
-    actions.push({ key: 'refresh', icon: RefreshCw, label: newOds ? `Nạp ${newOds} OD mới` : 'Nạp OD mới', tip: 'Đưa OD mới về từ ZSD02 (chưa điều, chưa đi, chưa nằm kế hoạch nào) vào khung chờ', onClick: () => void doRefresh(), disabled: refresh.isPending, busy: refresh.isPending, className: newOds ? 'border-amber-300 text-amber-800' : undefined })
-  }
+    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên', onClick: () => void doReopt(), disabled: reopt.isPending || busy, busy: reopt.isPending })  }
 
   const targets = trips.filter(editableTrip).map(t => ({ value: t.id, label: `#${t.seq} · ${t.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(t.pallets, 1)} pl · ${t.load_pct == null ? '—' : `${nf(t.load_pct, 0)}%`} · ${t.stops} điểm · ${t.wards.slice(0, 2).join(', ')}` }))
   const excluded = plan.params.excluded ?? []
   const exBy = excluded.reduce<Record<string, number>>((m, x) => { m[x.kind] = (m[x.kind] ?? 0) + 1; return m }, {})
-  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', HELD: 'không điều' }
+  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', HELD: 'không điều', REDO_DISPATCHED: 'DO tạo lại – đã điều' }
 
   // Kiểu đi của OD (khách Pallet / Xá — danh mục Khách hàng, user chốt 25/09). Bấm = đổi riêng OD này; OD ở nguyên xe,
   // xe báo "OD khách Xá trên xe pallet" nếu lệch. Muốn đổi cả xe thì dùng nút trên thẻ xe.
@@ -350,6 +347,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
           <div className="flex items-center gap-1 flex-wrap">
             <span className="font-mono font-semibold">{o.od_number}</span>
             {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
+            {!o.trip_id && fresh.has(o.od_number) && <NewOdChip />}
             {(o.late_days ?? 0) > 0 && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800" title={`Ngày giao ${o.delivery_date ?? '?'} — chưa điều, chưa đi`}>trễ {o.late_days} ngày</span>}
             {fl && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title={fl.info ?? undefined}>{FLAG_VI[fl.kind]}</span>}
             {modeChip(o, !!editable && (!tr || editableTrip(tr)))}
@@ -615,12 +613,6 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
               <StickyNote className="h-3 w-3" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {poolNotes} OD có ghi chú
             </button>
           )}
-          {newOds > 0 && editable && (
-            <button type="button" onClick={() => void doRefresh()} disabled={refresh.isPending}
-              className="w-full rounded border border-amber-300 bg-amber-50 px-2 py-1 text-left text-[11px] text-amber-900 hover:bg-amber-100">
-              <RefreshCw className="inline h-3 w-3 mr-1" /><b>{newOds} OD mới</b> từ ZSD02 chưa có trong kế hoạch — bấm để nạp vào khung chờ
-            </button>
-          )}
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto max-h-[40vh] lg:max-h-none px-2 py-1.5 space-y-1.5">
           {!pool.length && <p className="px-1 py-3 text-center text-[11px] text-slate-400">{canDrag ? 'Kéo OD từ xe về đây để bỏ khỏi xe — OD ở khung chờ KHÔNG đi khi Xác nhận.' : 'Không có OD nào chờ xếp xe.'}</p>}
@@ -787,7 +779,7 @@ export function DispatchBoard({ plan, editable, flags, newOds, onOpenTrip }: {
               <span className="text-slate-600">Lý do (tuỳ chọn)</span>
               <textarea className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs" rows={2} maxLength={500} value={holdReason} onChange={e => setHoldReason(e.target.value)} placeholder="vd NPP hẹn giao 10/9 · trả hoá đơn, hàng không đi" />
             </label>
-            <p className="text-[11px] text-slate-500">OD rời kế hoạch này (mọi phần nếu đang tách) và KHÔNG quay lại khi "Nạp OD mới" / lập lại.</p>
+            <p className="text-[11px] text-slate-500">OD rời kế hoạch này (mọi phần nếu đang tách) và KHÔNG quay lại khi ZSD02 nạp lại / lập lại.</p>
           </div>
           <DialogFooter>
             <Button size="sm" variant="outline" className="h-8" disabled={hold.isPending} onClick={() => setHoldDlg(false)}>Huỷ</Button>

@@ -36,7 +36,7 @@ import {
   stopsLimit, modeOfModel, condsOf, mainCatsOf, resolveLoadMode, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle,
 } from '../../services/dispatchEngine'
-import { splitPool, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
+import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
 import { logOutboundEvents, actorOf } from '../../services/outboundEvents'
@@ -257,13 +257,18 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   // OD TỒN ĐỌNG chỉ gộp khi LÊN XE được — hàng trả về / chiết khấu của ngày trước không phải việc của hôm nay
   const mine = mine0.filter(r => r.delivery_date === day || LOADABLE_FLOW.has(String(r.flow)))
   const odNos = uniq(mine.map(r => r.od_number))
-  const [khvc, drafts] = await Promise.all([
+  const [khvc, drafts, olds] = await Promise.all([
     fetchAllByIdChunks(odNos, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<{ do_no: string; group_code: string }[]>,
     openDraftOds(wh.id, odNos, opts.skipPlanId ?? null),
+    // OD cũ mà SAP đã thay bằng các OD này (sửa SO) — đa số lần nạp không có dòng nào
+    fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders').select('od_number, replaced_by_od').in('replaced_by_od', c).order('od_number')) as Promise<{ od_number: string; replaced_by_od: string }[]>,
   ])
   const inPlan = new Map<string, string>()
   for (const k of khvc) if (!inPlan.has(k.do_no)) inPlan.set(k.do_no, k.group_code)
-  const split = splitPool(mine, day, { inPlan, otherDraft: drafts, held: holds })
+  // DO tạo lại – đã điều (28/09): OD cũ đã nằm Kế hoạch xuất ⇒ OD mới sang tab Đã điều. Cùng thước "đã có trong KH xuất" như inPlan.
+  const oldOds = uniq(olds.map(o => o.od_number))
+  const oldKhvc = oldOds.length ? (await fetchAllByIdChunks(oldOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; group_code: string }[] : []
+  const split = splitPool(mine, day, { inPlan, otherDraft: drafts, held: holds, redo: redoDispatchedOf(olds, oldKhvc) })
   // CHỈ OD lên xe được mới là "OD mới cần xếp" — OD trả về / chiết khấu đúng ngày vẫn qua splitPool (engine xếp vào
   // danh sách "không lên xe"), đếm chúng là báo "12 OD mới" ngay sau khi vừa lập (đo Preview 25/09: đúng 12 OD RETURN)
   const flowOf = new Map(mine.map(r => [r.od_number, String(r.flow)]))
@@ -1282,9 +1287,13 @@ async function refreshPoolInner(req: Request, res: Response) {
     const fresh = cand.ods.filter(o => !inPlan.has(o.od_number))
     const loadable = fresh.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length)
     const t = now()
-    // OD mới về = CHƯA XEM: nằm khung chờ, không lên xe được tới khi người xác nhận (bước Xem đơn áp cả cho OD về sau)
+    // OD mới về vào khung chờ = tab Điều (user chốt 28/09: tự vào, gắn nhãn "Mới"). `fresh_ods` = OD về SAU khi lập kế hoạch
+    // mà còn nằm khung chờ — nhãn tự hết khi OD lên xe; OD đã rời khung chờ thì lần nạp sau bỏ khỏi danh sách.
     await insertOdRows(loadable.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
-    const params = { ...((plan.params ?? {}) as Record<string, unknown>), excluded: cand.excluded, config_gaps: cand.gaps }
+    const prev = (plan.params ?? {}) as Record<string, unknown>
+    const inPool = new Set(full.pool.map(o => o.od_number))
+    const fresh_ods = uniq([...((prev.fresh_ods ?? []) as string[]).filter(od => inPool.has(od)), ...loadable.map(o => o.od_number)])
+    const params = { ...prev, excluded: cand.excluded, config_gaps: cand.gaps, fresh_ods }
     const { error } = await db.from('dispatch_plan').update({ params: asJson(params), updated_at: t }).eq('id', plan.id)
     if (error) throw error
     await writeSummary({ ...plan, params: asJson(params) })

@@ -967,6 +967,15 @@ try {
 
     // HAI NGƯỜI CÙNG BẤM "Xác nhận … đơn & ghép xe" (check-app 27/09 tối: Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai
     // lượt 200). Bước này nay bắt buộc nên ai mở bàn cũng bấm nó ⇒ chỉ MỘT lượt được chạy, lượt kia 409, mỗi OD đúng một chỗ.
+    //
+    // ⚠ TÁCH LÀM HAI PHÉP (28/09) — đòi "đúng một lượt 409" từ một cuộc ĐUA là đòi thứ không nắm được:
+    // hai lời gọi song song chỉ CHỒNG NHAU khi lượt sau tới lúc lượt đầu còn đang chạy. Fixture này có 4 OD nên máy ghép
+    // xong trong khoảng một giây, còn lượt thứ hai trên Vercel có thể phải chờ dựng một instance mới ⇒ đêm 28/09 hai lượt
+    // đi NỐI ĐUÔI: cả hai 200, dữ liệu vẫn đúng (4 OD · 4 dòng · 0 trùng) mà cổng vẫn đỏ, email gửi về người dùng.
+    //   [15k]  cuộc đua đo ĐÚNG THỨ ĐÃ HỎNG 27/09: mỗi OD nằm đúng MỘT dòng, MỘT chỗ — ghép hai lần là lòi ra ngay.
+    //   [15k2] cửa "thuê kế hoạch" đo TẤT ĐỊNH: tự giữ chỗ (busy_until tương lai) rồi gọi ⇒ phải 409 PLAN_BUSY; thả ra
+    //          thì lại chạy được (không kẹt vĩnh viễn). Đo trên Preview 28/09 cả hai nhánh: không giữ chỗ → cửa cho
+    //          vào tận handler, giữ chỗ → PLAN_BUSY ⇒ phép kiểm phân biệt được thật, không phải câu luôn đúng.
     await cleanupTrips()
     const pK = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     const kId = pK.j?.data?.id
@@ -975,9 +984,18 @@ try {
     const kPlaces = new Map()
     for (const r of kRows) { const s = kPlaces.get(r.od_number) ?? new Set(); s.add(r.part_of ? `part:${r.trip_id}` : (r.trip_id ?? 'pool')); kPlaces.set(r.od_number, s) }
     const kDup = [...kPlaces].filter(([od, s]) => s.size > 1 || kRows.filter(r => r.od_number === od && !r.part_of).length > 1)
-    check('15k. Hai người cùng "Xác nhận & ghép": đúng MỘT lượt 200, lượt kia 409 PLAN_BUSY · mỗi OD đúng MỘT dòng, MỘT chỗ',
-      kRes.filter(r => r.s === 200).length === 1 && kRes.some(r => r.s === 409 && r.j?.error?.code === 'PLAN_BUSY') && kDup.length === 0 && kPlaces.size > 0,
+    check('15k. Hai người cùng "Xác nhận & ghép": mỗi OD đúng MỘT dòng, MỘT chỗ — máy KHÔNG ghép hai lần (lượt kia 409 hay nối đuôi 200 đều được)',
+      kRes.some(r => r.s === 200) && kRes.every(r => r.s === 200 || (r.s === 409 && r.j?.error?.code === 'PLAN_BUSY')) && kDup.length === 0 && kPlaces.size > 0,
       `codes=${kRes.map(r => `${r.s}/${r.j?.error?.code ?? ''}`).join(' ')} OD=${kPlaces.size} dòng=${kRows.length} trùng=${kDup.map(([od]) => od).join(',')}`)
+
+    // Cửa thuê kế hoạch, đo không qua đua: giữ chỗ 2 phút rồi gọi → phải bị chặn; thả ra → phải chạy lại được.
+    await restWrite('dispatch_plan', 'PATCH', `id=eq.${kId}`, { busy_until: new Date(Date.now() + 120_000).toISOString(), busy_token: 'qa61-probe' })
+    const kBusy = await api(`/tms/dispatch/plans/${kId}/reoptimize`, 'POST', { review_all: true })
+    await restWrite('dispatch_plan', 'PATCH', `id=eq.${kId}`, { busy_until: new Date(Date.now() - 1000).toISOString(), busy_token: null })
+    const kFree = await api(`/tms/dispatch/plans/${kId}/reoptimize`, 'POST', { review_all: true })
+    check('15k2. Kế hoạch đang có người thuê → lượt sau 409 PLAN_BUSY; thuê hết hạn → lại làm được (không kẹt vĩnh viễn)',
+      kBusy.s === 409 && kBusy.j?.error?.code === 'PLAN_BUSY' && kFree.s === 200,
+      `đang thuê=${kBusy.s}/${kBusy.j?.error?.code ?? ''} hết hạn=${kFree.s}/${kFree.j?.error?.code ?? ''} ${kFree.j?.error?.message ?? ''}`)
 
     // XE ĐANG CHỜ ĐVVT mà SAP sửa OD: ghi "ĐVVT nhận" bị chặn (đúng — tải cũ) nhưng "Cập nhật theo SAP" từng từ chối xe CHỜ ⇒
     // ngõ cụt, lối ra duy nhất là ghi "từ chối" dù ĐVVT đã nhận (check-app 27/09 tối). HA cần phản hồi (0b) ⇒ xe OD3 đứng CHỜ.

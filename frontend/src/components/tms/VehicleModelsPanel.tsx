@@ -138,10 +138,14 @@ function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | 
         <div><Label className="text-xs">Đo tải bằng</Label>
           <SingleSelect searchable={false} value={capMode} onChange={v => { const cm = v as 'PALLET' | 'TON'; setCapMode(cm); setUnit(cm === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP') }}
             options={[{ value: 'PALLET', label: 'Pallet (xe pallet)' }, { value: 'TON', label: 'Tấn (xe xá / cont)' }]} /></div>
-        <div><Label className="text-xs">Điều vận dùng dòng xe này cho</Label>
+        {/* MẶC ĐỊNH khi khách/kênh CHƯA khai "Dòng xe được vào" — khai tường minh ở Khách hàng / Kênh thắng mặc định này
+            (luật 8 < luật 10 của engine; user 28/09: "khách đặc biệt đi container, vd xuất khẩu, mà không thuộc kênh kho tổng") */}
+        <div><Label className="text-xs">Mặc định điều vận dùng dòng xe này cho</Label>
           <SingleSelect searchable={false} value={use} onChange={v => setUse(v === 'TRANSFER' ? 'TRANSFER' : 'ALL')}
             options={[{ value: 'ALL', label: 'Mọi đơn (giao khách + trung chuyển)' }, { value: 'TRANSFER', label: 'Chỉ trung chuyển giữa các kho' }]} />
-          <p className="text-[10px] text-slate-500 mt-1">{use === 'TRANSFER' ? 'Máy chỉ xếp lên dòng xe này các đơn đi KHO của mình (khách có trỏ kho, hoặc SAP phân loại STO) — không bao giờ giao khách bằng xe này.' : 'Máy được dùng cho mọi đơn.'}</p></div>
+          <p className="text-[10px] text-slate-500 mt-1">{use === 'TRANSFER'
+            ? 'Khách / kênh CHƯA khai "Dòng xe được vào" ⇒ máy chỉ xếp lên xe này đơn đi KHO của mình (khách có trỏ kho, hoặc SAP phân loại STO). Khách đặc biệt (vd xuất khẩu) muốn đi xe này: tick xe này ở Khách hàng → Dòng xe được vào (theo khách hoặc theo kênh) — khai ở đó thắng mặc định ở đây.'
+            : 'Máy được dùng cho mọi đơn — trừ khách / kênh đã khai "Dòng xe được vào" mà không tick xe này.'}</p></div>
         <div><Label className="text-xs">Điều kiện bảo quản xe chở được</Label>
           <ConditionPicker all={conditions} value={conds} onChange={setConds} /></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -257,7 +261,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       case 'cond':   return (m.storage_conditions ?? []).length
         ? <span title={m.storage_conditions.map(c => conditionLabel(condBy.get(c), c)).join(' · ')}>{m.storage_conditions.map(c => conditionLabel(condBy.get(c), c)).join(' · ')}</span>
         : <span className="text-amber-600" title="Chưa khai = xe được coi là chở được mọi điều kiện">Mọi điều kiện</span>
-      case 'use':    return m.dispatch_use === 'TRANSFER' ? <StatusBadge tone="purple">Chỉ trung chuyển kho</StatusBadge> : <span className="text-slate-500">Mọi đơn</span>
+      case 'use':    return m.dispatch_use === 'TRANSFER' ? <StatusBadge tone="purple">Mặc định: chỉ trung chuyển</StatusBadge> : <span className="text-slate-500">Mọi đơn</span>
       case 'cap':    return capText(m) ?? <span className="text-slate-300">—</span>
       case 'unit':   return m.tariff_unit === 'PER_PALLET' ? 'Pallet (làm tròn lên)' : 'Trọn chuyến'
       case 'under':  return <span className="tabular-nums">{m.underload_pct} %</span>

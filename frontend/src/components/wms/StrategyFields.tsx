@@ -122,7 +122,7 @@ function EnforceTri({ state, whOn, onCycle }: { state: EnfState; whOn: boolean; 
       : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
   return (
     <button type="button" onClick={onCycle}
-      title="Bấm để đổi: Theo kho → Bắt buộc → Chỉ cảnh báo. Để 'Theo kho' thì luật này chạy đúng như cấu hình kho."
+      title="Bấm để đổi: Theo kho → Bắt buộc → Chỉ cảnh báo. Để nguyên Theo kho thì luật này chạy đúng như cấu hình kho."
       className={`shrink-0 rounded border px-1.5 py-1 text-[10px] transition-colors ${cls}`}>
       {label}
     </button>

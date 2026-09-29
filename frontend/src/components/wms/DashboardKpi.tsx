@@ -512,7 +512,7 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
   const whTip = (
     <div className="space-y-1 text-left">
       <div>Chọn kho để xem mục tiêu đang áp cho kho đó. Cột <b>Áp dụng</b> nói dòng đó theo mục tiêu chung hay riêng kho.</div>
-      <div>Bấm <b>Sửa</b> rồi đổi dòng cần khác sang <b>Mục tiêu riêng</b> — ô điền sẵn mục tiêu chung để bạn chỉnh. Về "Theo mục tiêu chung" là bỏ ghi đè; mục tiêu riêng để trống cả hai ô = tắt đèn KPI đó ở kho này.</div>
+      <div>Bấm <b>Sửa</b> rồi đổi dòng cần khác sang <b>Mục tiêu riêng</b> — ô điền sẵn mục tiêu chung để bạn chỉnh. Chọn lại mục tiêu chung là bỏ ghi đè; mục tiêu riêng để trống cả hai ô = tắt đèn KPI đó ở kho này.</div>
     </div>
   )
   const paramsTip = 'Pallet nhập kho quá N ngày mà mã không xuất quá N ngày = hàng CHẬM luân chuyển; ngưỡng dài hơn = KHÔNG luân chuyển. Tham số chung cho mọi kho, nuôi 2 KPI Hàng chậm / Hàng không luân chuyển.'
@@ -609,7 +609,7 @@ function KpiTargetSheet({ open, onClose, warehouseId, warehouses, canGlobal, foc
                     <div className="mt-1.5 sm:mt-0">
                       {editing
                         ? <select value={r.mode} onChange={e => setOwnMode(d, e.target.value as WhRowMode)} className="h-7 w-full rounded border border-slate-200 bg-white text-[11px] px-1.5">
-                            <option value="common">Theo mục tiêu chung</option>
+                            <option value="common">Theo mục tiêu chung ({targetText(d, commonOf(d))})</option>
                             <option value="own">Mục tiêu riêng</option>
                           </select>
                         : <StatusBadge tone={isOwn ? 'amber' : 'slate'} className="!text-[9px] !px-1.5">{isOwn ? 'Riêng kho' : 'Theo chung'}</StatusBadge>}

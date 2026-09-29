@@ -1046,6 +1046,21 @@ const RULES = [
     },
   },
   {
+    key: 'inherit_label_without_value',
+    label: 'nhãn "Theo kênh / Theo chung / Theo kho / Theo Loại kho / Mặc định chung" ĐỨNG TRẦN (không in giá trị đang hiệu lực) — người xem phải mở bảng cha ra tra; viết `Theo kênh GT: 3` / `— Theo kho (FEFO) —`',
+    // 29/09 (user: "theo mức của kênh là bao nhiêu ghi rõ, khi người ta xem người ta hiểu luôn chứ ghi mỗi theo kênh
+    // lại phải quay sang bên kênh để xem — nội dung lấy từ bảng cha cũng phải như vậy, không chỉ case này"). Khuôn
+    // đã có ở StrategyFields (`— Theo kho (${label}) —`) và DispatchVehiclesEditor (in danh sách của kênh) nhưng form
+    // Khách vẫn ghi "khách này đang theo mức của kênh" + placeholder "Không giới hạn" cho ô số khách. Bắt nhãn là
+    // CHUỖI TĨNH kết thúc ngay sau cụm "Theo X" (chuỗi mẫu `${…}` có giá trị thì không khớp). Nút HÀNH ĐỘNG "về theo
+    // kênh" (hàng loạt) đặt chữ "Về theo …" để khỏi nhầm với nhãn trạng thái. Đỏ 8 trên bản cũ. Baseline 3 = bộ lọc
+    // nguồn ở Quy định date (giá trị của cột nguồn, không phải ô kế thừa) + nút chọn "Theo kênh" của bảng dòng xe (giá
+    // trị in ở dòng dưới) + badge "Theo chung" bảng KPI kho (ô mục tiêu chung in mờ ngay cạnh).
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && /(['"]|>\s*)(Theo (kênh|chung|kiểu chung|Loại kho|loại kho|kho|mục tiêu chung)|Mặc định chung)(\s*\(mặc định\))?\s*(['"]|<)/.test(line), s),
+  },
+  {
     key: 'today_frozen_at_import',
     label: 'NGÀY HÔM NAY chốt bằng hằng module (tính 1 lần lúc mở app) — PDA/màn kho mở qua đêm sẽ dùng ngày HÔM QUA (min= chặn oan, filter "Hôm nay" sai). Khai dạng HÀM: const TODAY = () => …',
     // CHỈ bắt khai báo CẤP MODULE (không thụt lề) — khai trong thân component thì mỗi lần render

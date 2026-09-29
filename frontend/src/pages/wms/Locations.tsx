@@ -237,7 +237,7 @@ export default function Locations() {
     const labels = [...new Set((cats ?? []).map(c => whTypes.find(t => t.value === c)?.meta?.storage_condition).filter((x): x is string => !!x))].map(condLabelOf)
     return labels.length ? labels.join(' · ') : 'chưa khai'
   }
-  const condOptions = [{ value: '', label: 'Theo Loại kho (mặc định)' }, ...storageConds.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]
+  const condOptions = [{ value: '', label: 'Về theo Loại kho (gỡ khai riêng)' }, ...storageConds.map(c => ({ value: c.value, label: conditionLabel(c), sub: c.value }))]
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: filterZones = [] }      = useWarehouseZones(warehouseId || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
@@ -544,7 +544,7 @@ export default function Locations() {
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets,
-      'Số mã tối đa': l.max_materials ?? '', 'ĐK bảo quản': l.storage_condition ? condLabelOf(l.storage_condition) : 'Theo loại kho', 'Đang dùng': l.used_slots,
+      'Số mã tối đa': l.max_materials ?? '', 'ĐK bảo quản': l.storage_condition ? condLabelOf(l.storage_condition) : `Theo loại kho (${catCondText(l.categories)})`, 'Đang dùng': l.used_slots,
       'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '',
       'Không đưa hàng vào': l.slot_no_in ? 'x' : '', 'Không lấy hàng đi': l.slot_no_out ? 'x' : '',
       'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
@@ -1061,7 +1061,9 @@ export default function Locations() {
                 </>} />
               </Label>
               <div className="mt-1">
-                <SingleSelect searchable={false} value={form.storage_condition} onChange={v => setField('storage_condition', v)} options={condOptions} />
+                {/* 29/09: ô "theo Loại kho" in luôn mức đang hiệu lực của Loại kho ô này mang — khỏi phải sang Cài đặt WMS tra */}
+                <SingleSelect searchable={false} value={form.storage_condition} onChange={v => setField('storage_condition', v)}
+                  options={[{ value: '', label: `Theo Loại kho (${catCondText(editing?.categories ?? filteredZones.find(z => z.code === form.sub_code)?.categories ?? null)})` }, ...condOptions.slice(1)]} />
               </div>
             </div>
 
@@ -1167,7 +1169,7 @@ export default function Locations() {
           <p className="text-sm text-slate-600">
             Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
             {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
-            {' '}Chọn <b>Theo Loại kho</b> để gỡ khai riêng.
+            {' '}Chọn <b>Về theo Loại kho</b> để gỡ khai riêng.
           </p>
           <SingleSelect searchable={false} value={condInput} onChange={setCondInput} options={condOptions} />
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}

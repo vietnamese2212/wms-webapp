@@ -63,6 +63,7 @@
   "axios_post_null_body": 0,
   "detail_blank_on_404": 0,
   "today_frozen_at_import": 0,
+  "inherit_label_without_value": 3,
   "list_param_join_without_empty_guard": 0,
   "bulk_bar_inline_reflows_table": 0,
   "url_param_applied_by_value": 0,

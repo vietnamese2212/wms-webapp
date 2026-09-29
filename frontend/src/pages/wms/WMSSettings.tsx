@@ -2449,7 +2449,7 @@ export default function WMSSettings() {
                             <TableCell className="px-2 py-1 whitespace-nowrap text-[10px]">
                               {nOwnCfg(cfgRowMap.get(t.value)) > 0
                                 ? <span className="font-medium text-sky-700">Riêng · {nOwnCfg(cfgRowMap.get(t.value))} mục</span>
-                                : <span className="text-slate-400">Theo kho</span>}
+                                : <span className="text-slate-400">Không khai riêng</span>}
                             </TableCell>
                             {canManageType && (
                               <TableCell className="px-2 py-1 whitespace-nowrap">

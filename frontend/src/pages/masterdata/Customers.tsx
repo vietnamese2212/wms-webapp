@@ -245,6 +245,10 @@ export default function Customers() {
   const { data: vmData } = useVehicleModels({ is_active: true })
   const models = useMemo(() => vmData?.items ?? [], [vmData])
   const chanVeh = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.dispatch_vehicles ?? {}])), [channels])
+  // 29/09 (user: "theo mức của kênh là bao nhiêu ghi rõ — khỏi phải quay sang bên kênh để xem"): mức + số khách của
+  // từng kênh đưa vào form để ô "theo kênh" in GIÁ TRỊ đang hiệu lực, không chỉ chữ "theo kênh".
+  const chanRules = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.rules ?? []])), [channels])
+  const chanMax = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.max_customers_per_trip ?? null])), [channels])
 
   const whName = useMemo(() => new Map((whs ?? []).map(w => [(w as { id: string }).id, (w as { name?: string }).name ?? ''])), [whs])
   const chanLabel = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.label])), [channels])
@@ -473,11 +477,17 @@ export default function Customers() {
                             <span key={c} className={`text-[9px] font-semibold rounded px-1 py-0.5 ${m === 'PALLET' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}
                               title={`Hàng ${c} của khách này đi ${m === 'PALLET' ? 'Pallet' : 'Xá'}`}>{c}: {m === 'PALLET' ? 'Pallet' : 'Xá'}</span>
                           ))}
-                          {/* dòng xe được vào khai RIÊNG cho khách (27/09) — không khai thì theo kênh, không in gì */}
+                          {/* dòng xe được vào khai RIÊNG cho khách (27/09) — không khai thì in mờ danh sách THEO KÊNH đang hiệu lực (29/09) */}
                           {Object.entries(r.dispatch_vehicles ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([c, ids]) => (
                             <span key={c} className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700"
                               title={`Dòng xe được vào${c === '*' ? '' : ` cho hàng ${c}`}: ${vehicleListText(ids, models) || '—'}`}>
                               Xe{c === '*' ? '' : ` ${c}`}: {ids.length}
+                            </span>
+                          ))}
+                          {!Object.keys(r.dispatch_vehicles ?? {}).length && r.channel && Object.entries(chanVeh.get(r.channel) ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([c, ids]) => (
+                            <span key={`ch-${c}`} className="text-[9px] rounded px-1 py-0.5 bg-slate-50 text-slate-400"
+                              title={`Theo kênh ${chanLabel.get(r.channel!) ?? r.channel}${c === '*' ? '' : ` cho hàng ${c}`}: ${vehicleListText(ids, models) || '—'}`}>
+                              Xe{c === '*' ? '' : ` ${c}`} theo kênh: {ids.length}
                             </span>
                           ))}
                           </span>
@@ -550,6 +560,8 @@ export default function Customers() {
           cats={cats}
           models={models}
           chanVeh={chanVeh}
+          chanRules={chanRules}
+          chanMax={chanMax}
           saving={save.isPending || deact.isPending}
           onClose={() => setForm(null)}
           onSave={async patch => {
@@ -585,13 +597,15 @@ export default function Customers() {
 }
 
 // ─── Form Thêm / Sửa khách hàng ────────────────────────────────────────────────────────────────
-function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving, onClose, onSave }: {
+function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRules, chanMax, saving, onClose, onSave }: {
   row: Customer | null
   channels: { value: string; label: string }[]
   warehouses: { id: string; name: string; code?: string }[]
   cats: DateRuleCategory[] | undefined
   models: VehicleModel[]
   chanVeh: Map<string, Record<string, string[]>>
+  chanRules: Map<string, MasterRuleRow[]>
+  chanMax: Map<string, number | null>
   saving: boolean
   onClose: () => void
   onSave: (p: CustomerPatch) => Promise<Customer | undefined>
@@ -611,6 +625,13 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
   const [err, setErr] = useState('')
+  // Giá trị KÊNH ĐANG CHỌN trong form (không phải kênh đã lưu của dòng) — đổi kênh là câu "theo kênh" đổi theo.
+  const chanName = channel ? (channels.find(c => c.value === channel)?.label ?? channel) : ''
+  const chanRuleText = (chanRules.get(channel) ?? []).map(x => `${x.category ? `${x.category} ` : ''}${masterRuleLabel(x.rule)?.text ?? ''}`).join(' · ')
+  const ruleInheritNote = !channel ? 'chưa phân kênh nên KHÔNG được cấp tự động'
+    : chanRuleText ? `theo kênh ${chanName}: ${chanRuleText}` : `kênh ${chanName} cũng chưa khai mức ⇒ KHÔNG được cấp tự động`
+  const chanMaxN = channel ? chanMax.get(channel) ?? null : null
+  const maxCustPlaceholder = !channel ? 'Không giới hạn (chưa phân kênh)' : chanMaxN ? `Theo kênh ${chanName}: ${chanMaxN}` : `Theo kênh ${chanName}: không giới hạn`
 
   const submit = async () => {
     setErr('')
@@ -665,13 +686,10 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Quy định date</label>
-          <RuleTable drafts={drafts} onChange={setDrafts} cats={cats ?? []}
-            inheritNote={channel ? 'khách này đang theo mức của kênh' : 'chưa phân kênh nên KHÔNG được cấp tự động'} />
-          {/* Mức của KÊNH mà khách đang thừa hưởng — để không khai lại y hệt cái đã có */}
-          {!!(row?.channel_rules ?? []).length && !drafts.length && (
-            <p className="mt-1 text-[11px] text-slate-500">
-              Đang theo kênh: {(row?.channel_rules ?? []).map(x => `${x.category ? `${x.category} ` : ''}${masterRuleLabel(x.rule)?.text ?? ''}`).join(' · ')}
-            </p>
+          <RuleTable drafts={drafts} onChange={setDrafts} cats={cats ?? []} inheritNote={ruleInheritNote} />
+          {/* Đã khai riêng thì vẫn in mức kênh để biết mình đang đè cái gì */}
+          {!!drafts.length && !!channel && (
+            <p className="mt-1 text-[11px] text-slate-500">Mức của kênh {chanName}: {chanRuleText || 'chưa khai'} — khách khai riêng thì thắng.</p>
           )}
         </div>
         <div>
@@ -698,7 +716,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving
             <div className="mt-2 rounded-md border border-slate-200">
               <div className="flex items-center justify-between border-b bg-slate-50 px-2 py-1">
                 <span className="text-[11px] font-medium text-slate-600">Riêng theo Loại kho</span>
-                <span className="text-[10px] text-slate-400">để "Theo kiểu chung" = như ô trên</span>
+                <span className="text-[10px] text-slate-400">để ở Theo chung = như ô trên</span>
               </div>
               <div className="divide-y">
                 {(cats ?? []).map(c => {
@@ -708,7 +726,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving
                       <span className="w-14 shrink-0 font-mono text-xs font-semibold">{c.value}</span>
                       <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">{c.label !== c.value ? c.label : ''}</span>
                       <div className="grid grid-cols-3 gap-0.5 rounded border border-slate-200 p-0.5">
-                        {([['', 'Theo chung'], ['PALLET', 'Pallet'], ['LOOSE', 'Xá']] as const).map(([mv, lb]) => (
+                        {([['', `Theo chung (${loadMode === 'PALLET' ? 'Pallet' : 'Xá'})`], ['PALLET', 'Pallet'], ['LOOSE', 'Xá']] as const).map(([mv, lb]) => (
                           <button key={mv} type="button"
                             onClick={() => setModeByCat(s => { const n = { ...s }; if (mv) n[c.value] = mv; else delete n[c.value]; return n })}
                             className={`rounded px-1.5 py-1 text-[11px] ${v === mv ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>
@@ -733,9 +751,9 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, saving
           </label>
           <div className="mt-2 flex items-center gap-2">
             <span className="text-xs text-slate-600">Số khách tối đa cùng xe</span>
-            <Input value={maxCust} inputMode="numeric" onChange={e => setMaxCust(e.target.value)} placeholder="Không giới hạn" className="h-8 w-36 text-sm text-right" />
+            <Input value={maxCust} inputMode="numeric" onChange={e => setMaxCust(e.target.value)} placeholder={maxCustPlaceholder} className="h-8 w-56 text-sm text-right" />
           </div>
-          <p className="mt-1 text-[11px] text-slate-400">Trống = theo kênh; kênh cũng trống = không giới hạn. Xe chở nhiều khách lấy số nhỏ nhất trong các khách trên xe. Trỏ kho nhận KHÔNG còn tự ép xe riêng.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Trống = theo kênh (giá trị đang hiệu lực in mờ trong ô); kênh cũng trống = không giới hạn. Xe chở nhiều khách lấy số nhỏ nhất trong các khách trên xe. Trỏ kho nhận KHÔNG còn tự ép xe riêng.</p>
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe được vào (điều vận)</label>
@@ -877,7 +895,7 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, models,
                   value={lmCat} onChange={setLmCat} placeholder="Chọn Loại kho…" searchable={false} />
               </div>
               <div className="grid grid-cols-3 gap-1 rounded-md border border-slate-200 p-0.5">
-                {([['PALLET', 'Đi Pallet'], ['LOOSE', 'Đi Xá'], ['', 'Theo kiểu chung']] as const).map(([v, lb]) => (
+                {([['PALLET', 'Đi Pallet'], ['LOOSE', 'Đi Xá'], ['', 'Về theo kiểu chung']] as const).map(([v, lb]) => (
                   <button key={v} type="button" onClick={() => setLmMode(v)}
                     className={`rounded px-2 py-1.5 text-xs ${lmMode === v ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{lb}</button>
                 ))}
@@ -893,7 +911,7 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, models,
                   value={vCat} onChange={setVCat} placeholder="Mọi Loại kho" searchable={false} />
               </div>
               <div className="grid grid-cols-4 gap-1 rounded-md border border-slate-200 p-0.5">
-                {([['SET', 'Thay bằng'], ['ADD', 'Thêm'], ['REMOVE', 'Bớt'], ['CLEAR', 'Theo kênh']] as const).map(([v, lb]) => (
+                {([['SET', 'Thay bằng'], ['ADD', 'Thêm'], ['REMOVE', 'Bớt'], ['CLEAR', 'Về theo kênh']] as const).map(([v, lb]) => (
                   <button key={v} type="button" onClick={() => setVMode(v)}
                     className={`rounded px-1 py-1.5 text-xs ${vMode === v ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{lb}</button>
                 ))}

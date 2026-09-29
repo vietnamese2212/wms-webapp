@@ -144,7 +144,20 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
                 : fb?.text}
               {on && editing !== r.key && <button type="button" className="ml-2 text-sky-700 underline" onClick={() => setEditing(r.key)}>Sửa</button>}
             </p>
-            {on && editing === r.key && <VehicleModelChecklist models={models} value={value[r.key]} onChange={ids => set(r.key, ids)} />}
+            {on && editing === r.key && (
+              <div className="space-y-1">
+                <VehicleModelChecklist models={models} value={value[r.key]} onChange={ids => set(r.key, ids)} />
+                {/* 29/09 (user: "sửa xong phải có nút lưu nhỏ để làm tiếp"): thu gọn bảng tick để đi tiếp các ô khác — dữ liệu đã
+                    nằm trong form, ghi thật khi bấm Lưu của form (một form một nút Lưu) */}
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-[10px] text-slate-400">Ghi khi bấm Lưu của form</span>
+                  <button type="button" onClick={() => setEditing(null)}
+                    className="h-7 rounded border border-sky-600 bg-sky-600 px-2.5 text-[11px] font-medium text-white hover:bg-sky-700">
+                    ✓ Xong{value[r.key].length ? ` (${nf(value[r.key].length)} dòng xe)` : ''}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )
       })}

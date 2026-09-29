@@ -215,15 +215,19 @@ try {
   const putR = sg ? await storagePutSigned(sg.bucket, sg.path, sg.token, xlsxOf(ROWS)) : { s: 0, t: 'no ticket' }
   const pfDirect = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS))
   const pfStore = sg ? await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: sg.path }) : { s: 0, j: null }
-  check('6b. PUT bằng vé 200 · preflight qua storage_path ra CÙNG kết quả với multipart (số dòng, số OD) · file trên bucket đã bị xoá sau nạp',
-    putR.s === 200 && pfDirect.s === 200 && pfStore.s === 200
-    && JSON.stringify([pfStore.j?.data?.rows, pfStore.j?.data?.od?.deliveries ?? pfStore.j?.data?.deliveries]) === JSON.stringify([pfDirect.j?.data?.rows, pfDirect.j?.data?.od?.deliveries ?? pfDirect.j?.data?.deliveries])
+  // so TOÀN BỘ báo cáo preflight (cùng file, cùng thời điểm ⇒ phải y hệt) — so vài ô lẻ thì undefined == undefined cũng "bằng"
+  check('6b. PUT bằng vé 200 · preflight qua storage_path ra Y HỆT báo cáo của multipart · file trên bucket đã bị xoá sau nạp',
+    putR.s === 200 && pfDirect.s === 200 && pfStore.s === 200 && !!pfStore.j?.data
+    && JSON.stringify(pfStore.j?.data) === JSON.stringify(pfDirect.j?.data)
     && !(await storageExists(sg?.bucket, sg?.path)),
-    `put=${putR.s} ${putR.t.slice(0, 80)} direct=${pfDirect.s} store=${pfStore.s} ${pfStore.j?.error?.message ?? ''} rows=${pfStore.j?.data?.rows}/${pfDirect.j?.data?.rows}`)
-  const gone = await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: sg?.path ?? 'u/x/00000000-0000-0000-0000-000000000000.xlsx' })
+    `put=${putR.s} ${putR.t.slice(0, 80)} direct=${pfDirect.s} store=${pfStore.s} ${pfStore.j?.error?.message ?? ''} same=${JSON.stringify(pfStore.j?.data) === JSON.stringify(pfDirect.j?.data)} keys=${Object.keys(pfStore.j?.data ?? {}).join(',')}`)
+  // path đúng dạng nhưng KHÔNG có file (path đã dùng có thể còn trong cache CDN của Storage vài phút — không dựa vào nó)
+  const gone = await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: `u/${(sg?.path ?? 'u/x/').split('/')[1]}/00000000-0000-4000-8000-000000000000.xlsx` })
   const weird = await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: '../../etc/passwd' })
-  check('6c. storage_path đã dùng (file đã xoá) → 400 UPLOAD_MISSING · path rác → 400', gone.s === 400 && gone.j?.error?.code === 'UPLOAD_MISSING' && weird.s === 400,
-    `gone=${gone.s} ${gone.j?.error?.code} weird=${weird.s}`)
+  const other = await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: 'u/nguoikhac/00000000-0000-4000-8000-000000000000.xlsx' })
+  check('6c. storage_path không có file → 400 UPLOAD_MISSING · path rác → 400 · path ngăn người khác → 403 (superadmin thì 400 vì không có file)',
+    gone.s === 400 && gone.j?.error?.code === 'UPLOAD_MISSING' && weird.s === 400 && (other.s === 403 || other.s === 400),
+    `gone=${gone.s} ${gone.j?.error?.code} weird=${weird.s} other=${other.s}`)
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0

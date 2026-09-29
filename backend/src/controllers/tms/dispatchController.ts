@@ -245,10 +245,13 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
     : await fetchAllRowsParallel(() => db.from('erp_outbound_orders').select(POOL_COLS)
       .eq('plant', wh.sap_plant ?? '').gte('delivery_date', shiftDay(day, -BACKLOG_DAYS)).lte('delivery_date', day)
       .eq('sync_status', 'ACTIVE').not('od_number', 'is', null).order('od_number').order('od_item'))) as unknown as PoolRow[]
-  // OD HOÃN tới hôm nay mà ngày giao đã quá cửa sổ tồn đọng — vẫn phải quay lại đợt ghép (người đã hẹn ngày này)
+  // OD HOÃN tới hôm nay mà ngày giao đã quá cửa sổ tồn đọng — vẫn phải quay lại đợt ghép (người đã hẹn ngày này).
+  // Nhưng ngày hẹn cũng chịu cùng cửa sổ 14 ngày (29/09): hẹn 30/09 mà tới 2027 chưa ai điều thì nó là lịch sử như mọi
+  // đơn tồn đọng khác — bản cũ kéo 4 OD hẹn 30/09 vào cả kế hoạch thử nghiệm ngày 16/03/2027 của cùng kho.
   if (!opts.onlyOds) {
     const have = new Set(rows.map(r => r.od_number))
-    const due = [...holds.entries()].filter(([od, h]) => h.until != null && h.until <= day && !have.has(od)).map(([od]) => od)
+    const floor = shiftDay(day, -BACKLOG_DAYS)
+    const due = [...holds.entries()].filter(([od, h]) => h.until != null && h.until <= day && h.until >= floor && !have.has(od)).map(([od]) => od)
     if (due.length) rows.push(...((await fetchAllByIdChunks(due, c => db.from('erp_outbound_orders').select(POOL_COLS).in('od_number', c).eq('plant', wh.sap_plant ?? '').eq('sync_status', 'ACTIVE').order('od_number').order('od_item'))) as unknown as PoolRow[]))
   }
   const mine0 = inSlocs(rows, slocsOf(wh))

@@ -519,6 +519,23 @@ try {
   const fl6 = (sy5.j?.data?.flags ?? []).find(f => f.od_number === OD6)
   check('10p2. OD tồn đọng có thêm dòng CHIẾT KHẤU (không lên xe) trong ZSD02 → /sync KHÔNG gắn cờ "SAP đã sửa" (bản chụp và phép so cùng một luật dòng)',
     sy5.s === 200 && !fl6, `sync=${sy5.s} flag=${JSON.stringify(fl6 ?? null)}`)
+  // 29/09: OD HOÃN tới một ngày cũng chịu cửa sổ tồn đọng 14 ngày — hẹn ngày đã qua > 14 ngày là lịch sử (bản cũ kéo 4 OD
+  // hẹn 30/09/2026 của Ba Vì vào cả kế hoạch thử nghiệm 16/03/2027 này). Hẹn trong cửa sổ thì vẫn quay lại đợt ghép.
+  const OLD_DD = '2027-02-01', OD_H1 = 'QA61ODH1', OD_H2 = 'QA61ODH2'
+  for (const [od, ship] of [[OD_H1, SHIP[0]], [OD_H2, SHIP[1]]]) await restWrite('erp_outbound_orders', 'POST', null, {
+    id: crypto.randomUUID(), od_number: od, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet,
+    ship_to_code: ship, ship_to_name: 'QA61 NPP', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: OLD_DD, flow: 'SALE',
+    source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+  })
+  await cleanupTrips()   // bỏ kế hoạch P2 (OD6/OD7 về sổ) — dấu hoãn QA ghi SAU vì cleanupTrips xoá dấu QA61*
+  await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD_H1, hold_until: '2027-02-20', reason: 'QA61 hẹn quá 14 ngày', created_by: 'QA61', updated_at: nowIso() })
+  await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD_H2, hold_until: '2027-03-10', reason: 'QA61 hẹn trong cửa sổ', created_by: 'QA61', updated_at: nowIso() })
+  const pl3 = await mkPlan(PLAN_BODY)
+  const P3 = pl3.j?.data
+  check('10p3. OD ngày giao ngoài cửa sổ: hẹn 20/02 (quá 14 ngày trước ngày lập) ⇒ KHÔNG vào kế hoạch · hẹn 10/03 (trong cửa sổ) ⇒ quay lại khung chờ',
+    pl3.s === 201 && !rowOf(P3, OD_H1) && !!rowOf(P3, OD_H2) && !rowOf(P3, OD_H2)?.trip_id,
+    `http=${pl3.s} ${pl3.j?.error?.message ?? ''} h1=${!!rowOf(P3, OD_H1)} h2=${JSON.stringify(rowOf(P3, OD_H2) ? { pool: !rowOf(P3, OD_H2)?.trip_id } : null)}`)
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${OD_H1},${OD_H2})`).catch(() => {})
 
   // ── [11] SỐ KHÁCH TRÊN MỘT XE THEO DÒNG XE + MỞ LẠI (29/09 — user: "bỏ loại xe, chọn dòng xe luôn") ────────────
   // Không còn kiểu đi Pallet / Xá. "Xe pallet chỉ một khách" = `max_drops = 1` khai ở CHÍNH dòng xe (Cài đặt TMS → Mã dòng xe);

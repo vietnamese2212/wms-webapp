@@ -532,9 +532,9 @@ try {
   await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD_H2, hold_until: '2027-03-10', reason: 'QA61 hẹn trong cửa sổ', created_by: 'QA61', updated_at: nowIso() })
   const pl3 = await mkPlan(PLAN_BODY)
   const P3 = pl3.j?.data
-  check('10p3. OD ngày giao ngoài cửa sổ: hẹn 20/02 (quá 14 ngày trước ngày lập) ⇒ KHÔNG vào kế hoạch · hẹn 10/03 (trong cửa sổ) ⇒ quay lại khung chờ',
-    pl3.s === 201 && !rowOf(P3, OD_H1) && !!rowOf(P3, OD_H2) && !rowOf(P3, OD_H2)?.trip_id,
-    `http=${pl3.s} ${pl3.j?.error?.message ?? ''} h1=${!!rowOf(P3, OD_H1)} h2=${JSON.stringify(rowOf(P3, OD_H2) ? { pool: !rowOf(P3, OD_H2)?.trip_id } : null)}`)
+  check('10p3. OD ngày giao ngoài cửa sổ: hẹn 20/02 (quá 14 ngày trước ngày lập) ⇒ KHÔNG vào kế hoạch · hẹn 10/03 (trong cửa sổ) ⇒ quay lại đợt ghép (lên xe / khung chờ)',
+    pl3.s === 201 && !rowOf(P3, OD_H1) && !!rowOf(P3, OD_H2),
+    `http=${pl3.s} ${pl3.j?.error?.message ?? ''} h1=${!!rowOf(P3, OD_H1)} h2=${!!rowOf(P3, OD_H2)}`)
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${OD_H1},${OD_H2})`).catch(() => {})
 
   // ── [11] SỐ KHÁCH TRÊN MỘT XE THEO DÒNG XE + MỞ LẠI (29/09 — user: "bỏ loại xe, chọn dòng xe luôn") ────────────

@@ -30,6 +30,7 @@ import * as vision from '../controllers/integration/visionController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 import { validate, z, zText } from '../middlewares/validate'
+import { excelFromStorage, signExcelUpload } from '../middlewares/excelUpload'
 
 // Chỉ nhận file Excel (chặn feed binary lạ vào XLSX.read) + 1 file + trần 10MB.
 // File sai loại → req.file undefined → controller trả 400 "Không có file" (không ném lỗi thô).
@@ -99,7 +100,7 @@ router.get   ('/warehouse-costs/vouchers',      requirePerm('warehouse_cost', 'v
 router.get   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'view'),        warehouseCost.getVoucher)
 router.put   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'edit'),        warehouseCost.saveVoucher)
 router.post  ('/warehouse-costs/copy-previous', requirePerm('warehouse_cost', 'edit'),        warehouseCost.copyPreviousMonth)
-router.post  ('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'),        upload.single('file'), warehouseCost.uploadCostExcel)
+router.post  ('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'),        upload.single('file'), excelFromStorage, warehouseCost.uploadCostExcel)
 router.post  ('/warehouse-costs/lock',          requirePerm('warehouse_cost', 'lock'),        warehouseCost.setCostLock)
 router.post  ('/warehouse-costs/items',         requirePerm('warehouse_cost', 'manage_item'), warehouseCost.saveCostItem)
 router.delete('/warehouse-costs/items/:code',   requirePerm('warehouse_cost', 'manage_item'), warehouseCost.deleteCostItem)
@@ -208,7 +209,10 @@ router.get('/inventory/move-log',                  requireAnyPerm(['inventory', 
 router.get('/inventory/pallet-ledger',             requireAnyPerm(['inventory', 'view'], ['directed_work', 'view'], ['stocktake', 'view']), inventory.palletLedger)
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
-router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), inventory.uploadExcel)
+// 29/09: vé đẩy file Excel > 4MB thẳng lên Storage (Vercel chặn thân > 4,5MB) — ai có quyền nạp bất kỳ cửa Excel nào thì xin được vé
+router.post('/uploads/sign', requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create'], ['external_khvc', 'create'], ['inventory', 'import'], ['materials', 'import'], ['locations', 'import'], ['freight', 'manage'], ['warehouse_cost', 'edit']),
+  validate({ body: z.object({ filename: zText(1, 200) }) }), signExcelUpload)
+router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), excelFromStorage, inventory.uploadExcel)
 // Tra pallet theo QR — dùng chung 2 màn: Kiểm kê (stocktake.scan) + Chuyển vị trí quét QR
 // (inventory.move_location — người chuyển vị trí không bắt buộc có quyền kiểm kê)
 router.post('/inventory/stocktake-check',          requireAnyPerm(['stocktake', 'scan'], ['inventory', 'move_location']), inventory.stocktakeCheck)
@@ -244,12 +248,12 @@ router.get('/outbound',                                       requirePerm('outbo
 router.get('/outbound/summary',                               requirePerm('outbound', 'view'), outbound.listGDOsSummary)
 router.get('/outbound/facets',                                requirePerm('outbound', 'view'), outbound.listGDOsFacets)
 router.post('/outbound',                                      requirePerm('outbound', 'create'), outbound.createGDO)
-router.post('/outbound/upload',                               requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadExcel)
+router.post('/outbound/upload',                               requirePerm('outbound', 'import'), upload.single('file'), excelFromStorage, outbound.uploadExcel)
 // 2 nút nạp NGUỒN đã chuyển sang trang "Dữ liệu bên ngoài" (user chốt 02/08) → nhận quyền của CHÍNH
 // tab đang nạp (external_do_sap.create / external_khvc.create) HOẶC outbound.import như trước, để
 // điều vận không phải xin thêm quyền Xuất kho chỉ để nạp dữ liệu nguồn.
-router.post('/outbound/upload-vl06o',                         requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create']), upload.single('file'), outbound.uploadVl06o)   // raw SAP → erp_outbound_orders
-router.post('/outbound/upload-khvc',                          requireAnyPerm(['outbound', 'import'], ['external_khvc', 'create']), upload.single('file'), outbound.uploadKhvc)      // KHVC join raw → GDO/DO/Item
+router.post('/outbound/upload-vl06o',                         requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create']), upload.single('file'), excelFromStorage, outbound.uploadVl06o)   // raw SAP → erp_outbound_orders
+router.post('/outbound/upload-khvc',                          requireAnyPerm(['outbound', 'import'], ['external_khvc', 'create']), upload.single('file'), excelFromStorage, outbound.uploadKhvc)      // KHVC join raw → GDO/DO/Item
 router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)

@@ -10,6 +10,7 @@ import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 import { validate, zText, z } from '../middlewares/validate'
+import { excelFromStorage } from '../middlewares/excelUpload'
 import multer from 'multer'
 
 const router = Router()
@@ -92,7 +93,7 @@ router.get('/locations',             location.listLocations)    // ?warehouse_id
 router.get('/locations/summary',     location.listLocationsSummary)   // 4 ô SummaryBand (phải trước /:id)
 router.get('/locations/resolve',     location.resolveLocation)  // quét tem vị trí → 1 dòng (phải trước /:id)
 router.post('/locations',            requirePerm('locations', 'create'), location.createLocation)
-router.post('/locations/upload',     requirePerm('locations', 'import'), upload.single('file'), location.uploadExcel)  // phải trước /:id
+router.post('/locations/upload',     requirePerm('locations', 'import'), upload.single('file'), excelFromStorage, location.uploadExcel)  // phải trước /:id
 router.patch('/locations/bulk-flag', requirePerm('locations', 'edit'), location.bulkFlagLocations)  // gắn/bỏ cờ cần-kiểm hàng loạt (phải trước /:id)
 router.get('/locations/:id/contents', location.getLocationContents)   // "ô này đang chứa gì" (phải trước /:id)
 router.get('/locations/:id',         location.getLocation)
@@ -113,7 +114,7 @@ router.get('/materials/categories', requireAnyPerm(['materials', 'view'], ['inbo
 // Tổng SummaryBand trang danh mục Mã hàng (khai TRƯỚC '/materials/:id' để không bị nuốt)
 router.get('/materials/summary',    requirePerm('materials', 'view'),   material.listMaterialsSummary)
 router.post('/materials',           requirePerm('materials', 'create'), material.createMaterial)
-router.post('/materials/upload',    requirePerm('materials', 'import'), upload.single('file'), material.uploadExcel)
+router.post('/materials/upload',    requirePerm('materials', 'import'), upload.single('file'), excelFromStorage, material.uploadExcel)
 router.get('/materials/:id',        requirePerm('materials', 'view'),   material.getMaterial)
 router.put('/materials/:id',        requirePerm('materials', 'edit'),   material.updateMaterial)
 router.delete('/materials/:id',     requirePerm('materials', 'delete'), material.deleteMaterial)

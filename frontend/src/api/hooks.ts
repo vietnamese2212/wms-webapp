@@ -9,6 +9,7 @@ import {
   mockLocations,
 } from '@/utils/mockData'
 import { apiClient } from './client'
+import { supabaseClient } from '@/lib/supabase'
 import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
@@ -3443,29 +3444,38 @@ export function usePatchGDO() {
   })
 }
 
-// Vercel serverless chặn request body >4.5MB (trả 413 text thô, không phải JSON app) —
-// chặn sớm ở FE với ngưỡng 4MB (chừa overhead multipart). Lỗi ném theo shape AxiosError
-// để các chỗ render lỗi upload hiện đúng message mà không phải sửa handler.
-const UPLOAD_MAX_BYTES = 4 * 1024 * 1024
-export const UPLOAD_TOO_LARGE_MSG = 'File quá lớn (giới hạn 4MB) — hãy tách nhỏ file rồi upload từng phần.'
-function guardUploadSize(file: File) {
-  if (file.size <= UPLOAD_MAX_BYTES) return
-  const msg = `File ${(file.size / 1024 / 1024).toFixed(1)}MB vượt giới hạn 4MB — hãy tách nhỏ file rồi upload từng phần.`
-  throw Object.assign(new Error(msg), { response: { data: { error: { message: msg } } } })
+// Vercel serverless chặn request body >4.5MB (trả 413 text thô, không phải JSON app). Tới 28/09 FE chặn từ 4MB và bảo
+// "tách file" — ZSD02 79 cột của SAP 8,4 MB bị chặn (user 29/09: "chuyện gì thế này, sao lại không cho upload file").
+// Nay file > 4MB đi ĐƯỜNG LỚN: xin vé ký (POST /wms/uploads/sign) → đẩy THẲNG lên bucket riêng tư `excel-uploads` bằng vé
+// (không qua Vercel) → gọi cửa nạp như cũ với thân JSON { storage_path } — BE tải về, dựng req.file, xoá file. Trần mới 10MB
+// (multer) / 30MB (bucket). Mọi hook upload Excel đi qua `excelUploadBody`, đừng tự append FormData rải rác.
+const UPLOAD_DIRECT_MAX_BYTES = 4 * 1024 * 1024
+const UPLOAD_STORAGE_MAX_BYTES = 10 * 1024 * 1024
+export const UPLOAD_TOO_LARGE_MSG = 'File quá lớn (giới hạn 10MB) — hãy tách nhỏ file rồi upload từng phần.'
+const uploadErr = (msg: string) => Object.assign(new Error(msg), { response: { data: { error: { message: msg } } } })
+/** Thân request cho cửa nạp Excel: multipart khi file nhỏ; file lớn đẩy lên Storage rồi gửi `{ storage_path }` (+ các ô kèm). */
+export async function excelUploadBody(file: File, extra: Record<string, string | undefined> = {}): Promise<{ body: FormData | Record<string, string>; headers: Record<string, string> }> {
+  if (file.size > UPLOAD_STORAGE_MAX_BYTES) throw uploadErr(`File ${(file.size / 1024 / 1024).toFixed(1)}MB vượt giới hạn 10MB — hãy tách nhỏ file rồi upload từng phần.`)
+  const fields = Object.fromEntries(Object.entries(extra).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== ''))
+  if (file.size <= UPLOAD_DIRECT_MAX_BYTES) {
+    const form = new FormData()
+    form.append('file', file)
+    for (const [k, v] of Object.entries(fields)) form.append(k, v)
+    return { body: form, headers: { 'Content-Type': 'multipart/form-data' } }
+  }
+  if (!supabaseClient) throw uploadErr('Trình duyệt chưa cấu hình Supabase — không tải được file lớn hơn 4MB')
+  const sign = (await apiClient.post('/wms/uploads/sign', { filename: file.name })).data.data as { path: string; token: string; bucket: string }
+  const { error } = await supabaseClient.storage.from(sign.bucket).uploadToSignedUrl(sign.path, sign.token, file, { upsert: false })
+  if (error) throw uploadErr(`Không đẩy được file lên kho tạm: ${error.message}`)
+  return { body: { storage_path: sign.path, ...fields }, headers: {} }
 }
 
 export function useUploadGDOExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, warehouse_id, preflight }: { file: File; warehouse_id?: string; preflight?: boolean }) => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      if (warehouse_id) form.append('warehouse_id', warehouse_id)
-      return apiClient.post(`/wms/outbound/upload${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 60000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, warehouse_id, preflight }: { file: File; warehouse_id?: string; preflight?: boolean }) => {
+      const { body, headers } = await excelUploadBody(file, { warehouse_id })
+      return apiClient.post(`/wms/outbound/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 60000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => { if (!vars.preflight) qc.refetchQueries({ queryKey: ['gdos'] }) },
   })
@@ -3474,13 +3484,9 @@ export function useUploadGDOExcel() {
 // ĐỢT 3: Up VL06O (raw SAP → erp_outbound_orders). Không đụng GDO nên không invalidate.
 export function useUploadVl06o() {
   return useMutation({
-    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      return apiClient.post(`/wms/outbound/upload-vl06o${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
+      const { body, headers } = await excelUploadBody(file)
+      return apiClient.post(`/wms/outbound/upload-vl06o${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
   })
 }
@@ -3497,13 +3503,9 @@ export interface Zsd02UploadResult {
 export function useUploadZsd02() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
+      const { body, headers } = await excelUploadBody(file)
+      return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return
@@ -3548,13 +3550,9 @@ export function useSoLines(params: Record<string, string | number | undefined>, 
 export function useUploadKhvc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      return apiClient.post(`/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
+      const { body, headers } = await excelUploadBody(file)
+      return apiClient.post(`/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => { if (!vars.preflight) qc.refetchQueries({ queryKey: ['gdos'] }) },
   })
@@ -3800,14 +3798,9 @@ export interface UploadPreflight {
 export function useUploadMaterialsExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      return apiClient.post(`/masterdata/materials/upload${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
+      const { body, headers } = await excelUploadBody(file)
+      return apiClient.post(`/masterdata/materials/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
@@ -3820,14 +3813,9 @@ export function useUploadMaterialsExcel() {
 export function useUploadLocationsExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      return apiClient.post(`/masterdata/locations/upload${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
+      const { body, headers } = await excelUploadBody(file)
+      return apiClient.post(`/masterdata/locations/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
@@ -3843,14 +3831,9 @@ export function useUploadLocationsExcel() {
 export function useUploadInventoryExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
-      guardUploadSize(file)
-      const form = new FormData()
-      form.append('file', file)
-      return apiClient.post(`/wms/inventory/upload${preflight ? '?preflight=1' : ''}`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
-      }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
+      const { body, headers } = await excelUploadBody(file)
+      return apiClient.post(`/wms/inventory/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
@@ -5764,12 +5747,9 @@ export function useDeleteFreightTariff() {
 export function useUploadFreightTariffs() {
   const qc = useQueryClient()
   return useMutation<UploadResult & Partial<UploadPreflight>, unknown, { file: File; preflight: boolean; warehouse_id?: string; effective_from?: string }>({
-    mutationFn: ({ file, preflight, warehouse_id, effective_from }) => {
-      guardUploadSize(file)
-      const fd = new FormData(); fd.append('file', file)
-      if (warehouse_id) fd.append('warehouse_id', warehouse_id)
-      if (effective_from) fd.append('effective_from', effective_from)
-      return apiClient.post(`/tms/freight/tariffs/upload${preflight ? '?preflight=1' : ''}`, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }).then(r => r.data.data)
+    mutationFn: async ({ file, preflight, warehouse_id, effective_from }) => {
+      const { body, headers } = await excelUploadBody(file, { warehouse_id, effective_from })
+      return apiClient.post(`/tms/freight/tariffs/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
     },
     onSuccess: (_d, v) => { if (!v.preflight) invalidateFreight(qc) },
   })

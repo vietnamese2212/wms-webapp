@@ -4,7 +4,7 @@ import * as vehicleModel     from '../controllers/tms/vehicleModelController'
 import * as freight          from '../controllers/tms/freightController'
 import * as dispatch         from '../controllers/tms/dispatchController'
 import { validate, zIdParam, z } from '../middlewares/validate'
-import { excelUpload } from '../middlewares/excelUpload'
+import { excelUpload, excelFromStorage } from '../middlewares/excelUpload'
 import * as slotTemplate     from '../controllers/tms/slotTemplateController'
 import * as slot             from '../controllers/tms/slotController'
 import * as order            from '../controllers/tms/orderController'
@@ -60,7 +60,7 @@ router.delete('/vehicle-models/:id',              requirePerm('tms_vehicle_types
 // ── CƯỚC VẬN CHUYỂN (đợt 1 TMS điều vận, 23/09) — module quyền riêng `freight`: view · manage · export ──
 // Bảng cước (kho xuất × ĐVVT × dòng xe con × phường) — phân trang server; upload 2 pha đúng cột file thật
 router.get('/freight/tariffs',            requirePerm('freight', 'view'),   validate({ query: freight.zListQuery }),                          freight.listTariffs)
-router.post('/freight/tariffs/upload',    requirePerm('freight', 'manage'), validate({ query: z.object({ preflight: z.enum(['1']).optional() }).passthrough() }), excelUpload.single('file'), freight.uploadTariffs)
+router.post('/freight/tariffs/upload',    requirePerm('freight', 'manage'), validate({ query: z.object({ preflight: z.enum(['1']).optional() }).passthrough() }), excelUpload.single('file'), excelFromStorage, freight.uploadTariffs)
 router.post('/freight/tariffs',           requirePerm('freight', 'manage'), validate({ body: freight.zTariffCreate }),                        freight.createTariff)
 router.put('/freight/tariffs/:id',        requirePerm('freight', 'manage'), validate({ params: zIdParam, body: freight.zTariffUpdate }),      freight.updateTariff)
 router.delete('/freight/tariffs/:id',     requirePerm('freight', 'manage'), validate({ params: zIdParam }),                                   freight.deleteTariff)

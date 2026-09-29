@@ -6,7 +6,7 @@
 //   [3] Hai nguồn cùng sổ: VL06O nạp SAU không xoá cột ZSD02-only; upload lại cùng file = NO-OP (không đổi id).
 //   [4] DO flow RETURN/DISCOUNT không được lên Kế hoạch xuất; công tắc `sap_do_source` đóng đúng cửa.
 // Fixture QA59_*: dựng bằng file Excel qua API thật, dọn bằng PostgREST.
-import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE, authToken, check, finish } from './lib.mjs'
+import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE, authToken, check, finish, storagePutSigned, storageExists } from './lib.mjs'
 
 const XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default
   ?? await import('../../backend/node_modules/xlsx/xlsx.mjs')
@@ -202,6 +202,28 @@ try {
   check('5b. sap_do_source=VL06O → cửa ZSD02 trả 409 SOURCE_DISABLED (kể cả preflight)', zsBlocked?.s === 409 && zsBlocked?.j?.error?.code === 'SOURCE_DISABLED', `code=${zsBlocked?.j?.error?.code}`)
   await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
   check('5c. Cờ trả về BOTH', (await api('/wms/settings')).j?.data?.find(s => s.key === 'sap_do_source')?.value === 'BOTH')
+
+  // ── [6] FILE LỚN ĐI QUA STORAGE (29/09 — user: ZSD02 8,4 MB bị chặn "vượt giới hạn 4MB") ─────────────────────────
+  // FE: xin vé → PUT thẳng lên bucket bằng vé → gọi cửa nạp với { storage_path }. Kiểm: cùng file ⇒ preflight qua storage
+  // ra CÙNG số dòng như multipart; file trên bucket bị XOÁ sau khi nạp; path lạ / path của người khác ⇒ 400/403; vé đòi quyền.
+  const signBad = await api('/wms/uploads/sign', 'POST', { filename: 'x.txt' })
+  const sign = await api('/wms/uploads/sign', 'POST', { filename: 'zsd02.xlsx' })
+  const sg = sign.j?.data
+  check('6a. Vé đẩy file: .txt → 400 · .xlsx → 200 kèm path theo user + token + bucket excel-uploads',
+    signBad.s === 400 && sign.s === 200 && /^u\/[A-Za-z0-9_-]+\/[0-9a-f-]{36}\.xlsx$/.test(sg?.path ?? '') && !!sg?.token && sg?.bucket === 'excel-uploads',
+    `bad=${signBad.s} ok=${sign.s} path=${sg?.path}`)
+  const putR = sg ? await storagePutSigned(sg.bucket, sg.path, sg.token, xlsxOf(ROWS)) : { s: 0, t: 'no ticket' }
+  const pfDirect = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS))
+  const pfStore = sg ? await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: sg.path }) : { s: 0, j: null }
+  check('6b. PUT bằng vé 200 · preflight qua storage_path ra CÙNG kết quả với multipart (số dòng, số OD) · file trên bucket đã bị xoá sau nạp',
+    putR.s === 200 && pfDirect.s === 200 && pfStore.s === 200
+    && JSON.stringify([pfStore.j?.data?.rows, pfStore.j?.data?.od?.deliveries ?? pfStore.j?.data?.deliveries]) === JSON.stringify([pfDirect.j?.data?.rows, pfDirect.j?.data?.od?.deliveries ?? pfDirect.j?.data?.deliveries])
+    && !(await storageExists(sg?.bucket, sg?.path)),
+    `put=${putR.s} ${putR.t.slice(0, 80)} direct=${pfDirect.s} store=${pfStore.s} ${pfStore.j?.error?.message ?? ''} rows=${pfStore.j?.data?.rows}/${pfDirect.j?.data?.rows}`)
+  const gone = await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: sg?.path ?? 'u/x/00000000-0000-0000-0000-000000000000.xlsx' })
+  const weird = await api('/external/do-sap/upload-zsd02?preflight=1', 'POST', { storage_path: '../../etc/passwd' })
+  check('6c. storage_path đã dùng (file đã xoá) → 400 UPLOAD_MISSING · path rác → 400', gone.s === 400 && gone.j?.error?.code === 'UPLOAD_MISSING' && weird.s === 400,
+    `gone=${gone.s} ${gone.j?.error?.code} weird=${weird.s}`)
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0

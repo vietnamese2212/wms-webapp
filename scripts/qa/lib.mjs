@@ -468,3 +468,15 @@ export async function freeDockFor(whId, plate) {
   const free = docks.find(d => d.capacity == null || d.occupied < d.capacity)
   return (free ?? docks[0]).id
 }
+// 29/09: đẩy file lên bucket Storage bằng VÉ KÝ (đúng đường FE dùng cho file > 4MB — `uploadToSignedUrl` của supabase-js
+// = PUT /storage/v1/object/upload/sign/<bucket>/<path>?token=…). Gateway đòi apikey; dùng service key vì gói QA không có anon.
+export async function storagePutSigned(bucket, path, token, buf) {
+  const r = await fetch(`${ENV.SUPABASE_URL}/storage/v1/object/upload/sign/${bucket}/${path}?token=${encodeURIComponent(token)}`, {
+    method: 'PUT', headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/octet-stream' }, body: buf,
+  })
+  return { s: r.status, t: await r.text() }
+}
+export async function storageExists(bucket, path) {
+  const r = await fetch(`${ENV.SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, { headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` } })
+  return r.status === 200
+}

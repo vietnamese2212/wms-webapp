@@ -539,11 +539,11 @@ try {
   check('11d. Cửa đổi kiểu đi cũ: route /ods không còn (404) · PATCH xe với load_mode không đổi gì (200, không 5xx)',
     oldMode.s === 404 && oldFlip.s === 200 && !oldFlip.j?.data?.load_mode, `ods=${oldMode.s} trip=${oldFlip.s} mode=${oldFlip.j?.data?.load_mode ?? 'null'}`)
   await cleanupTrips()
-  const d0 = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: null })
+  const dNull = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: null })
   const p11e = await mkPlan(PLAN_BODY)
   check('11e. Gỡ max_drops của dòng xe ⇒ OD1 + OD2 lại chung MỘT xe (7/9 pallet) — trần chỉ do cấu hình, không do "kiểu xe"',
-    d0.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id === tripOfOd(p11e.j?.data, OD[1])?.id,
-    `drops=${d0.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+    dNull.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id === tripOfOd(p11e.j?.data, OD[1])?.id,
+    `drops=${dNull.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
   const ro11 = await api(`/tms/dispatch/plans/${p11e.j?.data?.id}/reopen`, 'POST', {})
   check('11f. Mở lại khi chưa xe nào vào Kế hoạch xuất → 422 NOTHING_TO_REOPEN', ro11.s === 422 && ro11.j?.error?.code === 'NOTHING_TO_REOPEN', `http=${ro11.s} code=${ro11.j?.error?.code}`)
 

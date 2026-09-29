@@ -5,6 +5,8 @@
 // 20/08 (user chốt): 2 danh sách dạng CHECKBOX, mục ĐANG TÍCH ghim lên đầu (snapshot lúc MỞ
 // panel — tick/bỏ tick không nhảy hàng) để mở ra là thấy ngay bối cảnh hiện tại. Vẫn chọn-1
 // (tick mục khác thay thế, tick lại = bỏ) vì ~23 slice filter + form chỉ nhận 1 kho.
+// 29/09 (user: "sao không có search"): MỘT ô tìm luôn hiện ở đầu hộp, lọc cả Kho (tên/mã) lẫn Loại kho — bản cũ chỉ hiện
+// ô tìm khi > 8 kho nên staging 6 kho không có, và Loại kho không tìm được.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, MapPinned, X } from 'lucide-react'
@@ -82,7 +84,7 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
 
   const toggleOpen = () => {
     setOpen(o => {
-      if (!o) openSelRef.current = { wh: warehouseId, wt: whType }
+      if (!o) { openSelRef.current = { wh: warehouseId, wt: whType }; setTerm('') }   // mở lại là ô tìm trống
       return !o
     })
   }
@@ -98,12 +100,14 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warehouses, term, open])
 
+  // Một ô tìm lọc CẢ hai danh sách (user 29/09: "sao không có search" — bản cũ chỉ hiện ô tìm khi > 8 kho, loại kho không tìm được)
   const orderedWts = useMemo(() => {
+    const q = term.trim().toLowerCase()
     const pin = openSelRef.current.wt
-    if (!pin) return whTypes
-    return [...whTypes.filter(t => t.value === pin), ...whTypes.filter(t => t.value !== pin)]
+    const rest = whTypes.filter(t => t.value !== pin && (!q || t.value.toLowerCase().includes(q)))
+    return [...whTypes.filter(t => t.value === pin), ...rest]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [whTypes, open])
+  }, [whTypes, term, open])
 
   const active = warehouseId !== '' || whType !== ''
   const khoLabel = current?.name ?? 'Tất cả kho'
@@ -160,16 +164,18 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
             </button>
           </div>
 
+          <div className="px-3 pb-2">
+            <input
+              autoFocus
+              value={term}
+              onChange={e => setTerm(e.target.value)}
+              placeholder="Tìm kho (tên / mã) hoặc loại kho…"
+              className="w-full h-7 px-2 text-xs border border-slate-200 rounded-md outline-none focus:border-sky-400"
+            />
+          </div>
+
           <div className="px-3">
             <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-1">Kho</div>
-            {warehouses.length > 8 && (
-              <input
-                value={term}
-                onChange={e => setTerm(e.target.value)}
-                placeholder="Tìm tên hoặc mã kho…"
-                className="w-full mb-1.5 h-7 px-2 text-xs border border-slate-200 rounded-md outline-none focus:border-sky-400"
-              />
-            )}
             <div className="max-h-52 overflow-auto -mx-1">
               {/* Kho đang tích ghim đầu danh sách (mở panel là thấy ngay bối cảnh hiện tại) */}
               {pinnedWh && <WhCheckRow w={pinnedWh} on={pinnedWh.id === warehouseId} onClick={() => apply(pinnedWh.id === warehouseId ? '' : pinnedWh.id, whType)} />}
@@ -224,6 +230,9 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
                   <span className="flex-1 text-left truncate">{t.value}</span>
                 </button>
               ))}
+              {term.trim() && orderedWts.length === 0 && (
+                <div className="px-2 py-2 text-xs text-slate-400">Không có loại kho khớp</div>
+              )}
             </div>
             <div className="mt-2 text-[10px] text-slate-400 leading-snug">
               Áp cho bộ lọc &amp; giá trị mặc định trong form của toàn app. Vẫn chỉnh lẻ được ở từng trang.

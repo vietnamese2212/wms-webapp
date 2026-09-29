@@ -14,13 +14,23 @@ const nf = (n: number) => n.toLocaleString('vi-VN')
 const capText = (m: VehicleModel) =>
   [m.max_pallets ? `${nf(Number(m.max_pallets))} pallet` : '', m.max_tons ? `${nf(Number(m.max_tons))} tấn` : ''].filter(Boolean).join(' · ') || 'chưa khai sức chứa'
 
-/** Tóm tắt một danh sách để in trên bảng / dòng "theo kênh". */
+/** Dòng xe máy CÒN DÙNG được (đang hoạt động + đã gán cha) trong một danh sách đã lưu — phần còn lại là mã đã ngừng /
+ *  chưa gán cha / không còn trong danh mục. 29/09 (user: "tích có 4 cái nhưng lại đọc thành 5"): kênh Trung chuyển lưu 5 mã,
+ *  1 đã ngừng ⇒ bảng tick hiện 4 mà số đếm in 5; MT/KA/BHX lưu 33 mã từ lúc "Chọn tất cả", 21 đã ngừng sau đó. Máy chỉ đọc
+ *  dòng xe đang hoạt động nên xếp xe không sai — chỉ SỐ ĐẾM sai; mọi chỗ đếm/in tên đi qua hàm này. */
+export function splitVehicleIds(ids: string[], models: VehicleModel[]): { live: string[]; dead: string[] } {
+  const ok = new Set(models.filter(m => m.is_active && m.parent).map(m => m.id))
+  return { live: ids.filter(id => ok.has(id)), dead: ids.filter(id => !ok.has(id)) }
+}
+/** Tóm tắt một danh sách để in trên bảng / dòng "theo kênh" — đếm dòng xe CÒN DÙNG, nêu số mã đã ngừng nếu có. */
 export function vehicleListText(ids: string[] | undefined, models: VehicleModel[]): string {
   if (!ids) return ''
   if (!ids.length) return 'không xe nào'
   const byId = new Map(models.map(m => [m.id, m]))
-  const names = ids.map(id => byId.get(id)?.name).filter((x): x is string => !!x)
-  return names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`
+  const { live, dead } = splitVehicleIds(ids, models)
+  const names = live.map(id => byId.get(id)?.name).filter((x): x is string => !!x)
+  const head = !names.length ? 'không dòng xe nào còn hoạt động' : names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`
+  return dead.length ? `${head} (+${dead.length} mã đã ngừng, máy không dùng)` : head
 }
 
 /** Checkbox cha có trạng thái "một phần" — đặt qua ref vì HTML không có thuộc tính indeterminate. */
@@ -88,7 +98,20 @@ export function VehicleModelChecklist({ models, value, onChange }: { models: Veh
           )
         })}
       </div>
-      <div className="border-t bg-slate-50 px-2 py-1 text-[10px] text-slate-500">Đã chọn {nf(value.length)} dòng xe</div>
+      {(() => {
+        const { live, dead } = splitVehicleIds(value, models)
+        return (
+          <div className="border-t bg-slate-50 px-2 py-1 text-[10px] text-slate-500 flex flex-wrap items-center gap-x-2">
+            <span>Đã chọn {nf(live.length)} dòng xe</span>
+            {dead.length > 0 && (
+              <span className="text-amber-700">
+                · còn {nf(dead.length)} mã đã ngừng / không còn trong danh mục (máy không dùng)
+                <button type="button" className="ml-1 underline" onClick={() => onChange(live)}>gỡ</button>
+              </span>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -154,7 +177,7 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
             </div>
             <p className={`text-[11px] ${on ? (value[r.key].length ? 'text-slate-600' : 'text-red-600') : fb?.none ? 'text-amber-700' : 'text-slate-400'}`}>
               {on
-                ? (value[r.key].length ? `${nf(value[r.key].length)} dòng xe: ${vehicleListText(value[r.key], models)}` : 'Chưa tick dòng xe nào — máy sẽ không xếp được hàng loại này')
+                ? (value[r.key].length ? `${nf(splitVehicleIds(value[r.key], models).live.length)} dòng xe: ${vehicleListText(value[r.key], models)}` : 'Chưa tick dòng xe nào — máy sẽ không xếp được hàng loại này')
                 : fb?.text}
               {on && editing !== r.key && <button type="button" className="ml-2 text-sky-700 underline" onClick={() => setEditing(r.key)}>Sửa</button>}
             </p>
@@ -167,7 +190,7 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
                   <span className="text-[10px] text-slate-400">Ghi khi bấm Lưu của form</span>
                   <button type="button" onClick={() => setEditing(null)}
                     className="h-7 rounded border border-sky-600 bg-sky-600 px-2.5 text-[11px] font-medium text-white hover:bg-sky-700">
-                    ✓ Xong{value[r.key].length ? ` (${nf(value[r.key].length)} dòng xe)` : ''}
+                    ✓ Xong{value[r.key].length ? ` (${nf(splitVehicleIds(value[r.key], models).live.length)} dòng xe)` : ''}
                   </button>
                 </div>
               </div>

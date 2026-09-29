@@ -27,7 +27,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { masterRuleLabel } from '@/components/wms/SetDateRuleSheet'
-import { DispatchVehiclesEditor, VehicleModelChecklist, vehicleListText } from '@/components/tms/DispatchVehiclesEditor'
+import { DispatchVehiclesEditor, VehicleModelChecklist, vehicleListText, splitVehicleIds } from '@/components/tms/DispatchVehiclesEditor'
 import {
   useCustomers, useCustomerChannels, useCustomerSeedCandidates, useSaveCustomer,
   useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel, useCreateCustomerChannel,
@@ -468,13 +468,13 @@ export default function Customers() {
                           {Object.entries(r.dispatch_vehicles ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([c, ids]) => (
                             <span key={c} className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700"
                               title={`Dòng xe được vào${c === '*' ? '' : ` cho hàng ${c}`}: ${vehicleListText(ids, models) || '—'}`}>
-                              Xe{c === '*' ? '' : ` ${c}`}: {ids.length}
+                              Xe{c === '*' ? '' : ` ${c}`}: {splitVehicleIds(ids, models).live.length}
                             </span>
                           ))}
                           {!Object.keys(r.dispatch_vehicles ?? {}).length && r.channel && Object.entries(chanVeh.get(r.channel) ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([c, ids]) => (
                             <span key={`ch-${c}`} className="text-[9px] rounded px-1 py-0.5 bg-slate-50 text-slate-400"
                               title={`Theo kênh ${chanLabel.get(r.channel!) ?? r.channel}${c === '*' ? '' : ` cho hàng ${c}`}: ${vehicleListText(ids, models) || '—'}`}>
-                              Xe{c === '*' ? '' : ` ${c}`} theo kênh: {ids.length}
+                              Xe{c === '*' ? '' : ` ${c}`} theo kênh: {splitVehicleIds(ids, models).live.length}
                             </span>
                           ))}
                           </span>
@@ -1109,7 +1109,7 @@ function ChannelsTab({ canEdit, canCreate, onEdit, onCreate, models }: {
                   <span className="flex flex-wrap gap-1">
                     {Object.entries(c.dispatch_vehicles ?? {}).sort(([a], [b]) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).map(([k, ids]) => (
                       <span key={k} className="text-[9px] font-semibold rounded px-1 py-0.5 bg-amber-50 text-amber-700" title={vehicleListText(ids, models)}>
-                        {k === '*' ? 'Mọi loại' : k}: {ids.length} dòng xe
+                        {k === '*' ? 'Mọi loại' : k}: {splitVehicleIds(ids, models).live.length} dòng xe
                       </span>
                     ))}
                   </span>

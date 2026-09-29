@@ -201,6 +201,10 @@ const noteOf = (rs: { note_delivery: string | null }[]) => uniq(rs.map(r => (r.n
 /** Dòng của kho: kho khai Sloc thì bỏ dòng thuộc Sloc khác (dòng không ghi Sloc vẫn tính) — một luật cho nạp OD lẫn soi đổi. */
 const slocsOf = (wh: Pick<WhRow, 'sap_storage_locations'> | null) => (wh?.sap_storage_locations ?? []).map(s => String(s).trim().toUpperCase()).filter(Boolean)
 const inSlocs = <R extends { storage_location: string | null }>(rows: R[], slocs: string[]) => (slocs.length ? rows.filter(r => !r.storage_location || slocs.includes(String(r.storage_location).trim().toUpperCase())) : rows)
+/** Dòng của MỘT ngày lập: dòng đúng ngày giữ hết; dòng tồn đọng chỉ giữ phân loại lên xe được (chiết khấu / trả về của ngày trước
+ *  không phải việc hôm nay). MỘT luật cho cả nạp OD (bản chụp) lẫn soi đổi (/sync) — 29/09 Ba Vì: 17 OD bị cờ "SAP đã sửa" oan vì
+ *  bản chụp bỏ dòng chiết khấu mã 9100000xx của đơn 25/09 còn phép so đếm cả, người phải bấm "Cập nhật theo SAP" 17 lần cho không gì. */
+const linesOfDay = <R extends { delivery_date: string | null; flow: string | null }>(rows: R[], day: string) => rows.filter(r => r.delivery_date === day || LOADABLE_FLOW.has(String(r.flow)))
 /** Mốc "đã xem" của một dòng OD: người xác nhận đơn ở bước Xem đơn (hoặc thao tác chính tay trên OD đó — bỏ hoãn, thay OD, cập nhật theo SAP). */
 type Rev = { at: string; by: string | null } | null
 const POOL_COLS = 'od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, ward_code, region_code, flow, sap_pallets, gross_weight_kg, storage_location, delivery_date, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate, note_delivery'
@@ -249,7 +253,7 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   }
   const mine0 = inSlocs(rows, slocsOf(wh))
   // OD TỒN ĐỌNG chỉ gộp khi LÊN XE được — hàng trả về / chiết khấu của ngày trước không phải việc của hôm nay
-  const mine = mine0.filter(r => r.delivery_date === day || LOADABLE_FLOW.has(String(r.flow)))
+  const mine = linesOfDay(mine0, day)
   const odNos = uniq(mine.map(r => r.od_number))
   const [khvc, drafts, olds] = await Promise.all([
     fetchAllByIdChunks(odNos, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<{ do_no: string; group_code: string }[]>,
@@ -1159,10 +1163,10 @@ type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_
 /** Bản chụp của OD trên kế hoạch (chữ ký dòng hàng + ghi chú) — để biết SAP đã SỬA cùng OD đó sau khi người xem. */
 type OdSnap = { sig: string | null; note: string | null }
 const snapsOf = (rows: TripOdRow[]) => new Map(rows.map(o => [o.od_number, { sig: o.sap_sig, note: o.note }] as const))
-async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<string, OdSnap> = new Map(), slocs: string[] = []): Promise<OdFlag[]> {
+async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<string, OdSnap> = new Map(), slocs: string[] = [], day: string | null = null): Promise<OdFlag[]> {
   if (!odNos.length) return []
   const [rows, khvc] = await Promise.all([
-    fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders').select('od_number, od_item, material_code, qty_base, note_delivery, storage_location, sync_status, replaced_by_od, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate').in('od_number', c).order('od_number')) as Promise<(SigRow & { od_number: string; note_delivery: string | null; storage_location: string | null; sync_status: string | null; replaced_by_od: string | null; sap_dispatch_status: string | null; mat_doc: string | null; qty_issued_base: number | string | null; dvvt_raw: string | null; license_plate: string | null })[]>,
+    fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders').select('od_number, od_item, material_code, qty_base, note_delivery, storage_location, delivery_date, flow, sync_status, replaced_by_od, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate').in('od_number', c).order('od_number')) as Promise<(SigRow & { od_number: string; note_delivery: string | null; storage_location: string | null; delivery_date: string | null; flow: string | null; sync_status: string | null; replaced_by_od: string | null; sap_dispatch_status: string | null; mat_doc: string | null; qty_issued_base: number | string | null; dvvt_raw: string | null; license_plate: string | null })[]>,
     fetchAllByIdChunks(odNos, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<{ do_no: string; group_code: string }[]>,
   ])
   const by = new Map<string, typeof rows>()
@@ -1185,7 +1189,8 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
     // CÙNG OD mà SAP sửa (SL / dòng hàng / ghi chú giao hàng) sau khi chụp — kế hoạch đang tính tải + cước theo bản CŨ
     const snap = snaps.get(od)
     if (snap?.sig) {
-      const mine = inSlocs(live.filter(r => r.sync_status === 'ACTIVE'), slocs)   // đúng tập dòng lúc chụp (loadCandidates)
+      const active = inSlocs(live.filter(r => r.sync_status === 'ACTIVE'), slocs)
+      const mine = day ? linesOfDay(active, day) : active   // ĐÚNG tập dòng lúc chụp (loadCandidates): Sloc của kho + luật dòng của ngày lập
       const qty = odSig(mine) !== snap.sig, cur = noteOf(mine), note = (cur ?? '') !== (snap.note ?? '')
       if (qty || note) out.push({ od_number: od, kind: 'CHANGED', info: [qty ? 'SAP đã sửa số lượng / dòng hàng' : null, note ? `ghi chú giao hàng đổi thành «${cur ?? 'trống'}»` : null].filter(Boolean).join(' · ') })
     }
@@ -1205,7 +1210,7 @@ export async function planSync(req: Request, res: Response) {
     const odNos = uniq(liveRows.map(o => o.od_number))
     const wh = await loadWarehouse(full.warehouse_id)
     const [flags, cand] = await Promise.all([
-      odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh)),
+      odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh), full.plan_date),
       wh ? loadCandidates(wh, full.plan_date, { condByCat: new Map(), follow: [], all: [] }, { skipPlanId: full.id, countOnly: true }) : Promise.resolve(null),
     ])
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
@@ -1342,7 +1347,7 @@ async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr |
   if (splitOds.length) return { err: [`${splitOds.length} OD đang nằm ở nhiều xe (${splitOds.slice(0, 5).map(od => `${od}: ${tripsByOd.get(od)!.join(' + ')}`).join('; ')}) — app chưa tách một DO ra hai xe, gom OD về một xe trước khi xác nhận.`, 422, 'OD_SPLIT_ACROSS_TRIPS'] }
   // OD đổi tình trạng ở SAP SAU khi lập nháp (25/09 — pool lũy tiến): ghi vào Kế hoạch xuất lúc này là một đơn đi hai lần
   // (SAP đã điều / đã xuất) hoặc một chuyến trỏ tới OD không còn (SAP thay / bỏ). Bàn ghép xe hiện cờ + nút xử lý.
-  const bad = (await odFlags(subOds, [], snapsOf(subset.flatMap(t => t.ods)), slocsOf(await loadWarehouse(full.warehouse_id)))).filter(f => f.kind !== 'IN_PLAN')
+  const bad = (await odFlags(subOds, [], snapsOf(subset.flatMap(t => t.ods)), slocsOf(await loadWarehouse(full.warehouse_id)), full.plan_date)).filter(f => f.kind !== 'IN_PLAN')
   if (bad.length) {
     const odOf = new Map(subset.flatMap(t => t.ods.map(o => [o.od_number, t.group_code] as const)))
     return { err: [`${bad.length} OD đổi tình trạng ở SAP từ lúc lập nháp — ${bad.slice(0, 5).map(f => `${f.od_number} (${odOf.get(f.od_number) ?? '?'}): ${f.info}`).join('; ')}${bad.length > 5 ? '…' : ''}. Trên bàn ghép xe: "Cập nhật theo SAP" (OD bị sửa) · "Thay bằng OD mới" (OD bị thay) · gỡ OD đã điều / đã xuất — rồi xác nhận lại.`, 409, 'OD_CHANGED_IN_SAP'] }

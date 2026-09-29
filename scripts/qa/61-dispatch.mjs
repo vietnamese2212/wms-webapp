@@ -508,6 +508,17 @@ try {
   check('10p. Lập kế hoạch: OD đã xuất kho KHÔNG lên xe và nằm trong danh sách "đã bỏ ra" (SHIPPED) · OD tồn đọng 14/03 lên xe kèm trễ 2 ngày',
     pl2.s === 201 && !rowOf(P2, OD[0]) && ex1?.kind === 'SHIPPED' && !!r6?.trip_id && r6?.late_days === 2 && r6?.delivery_date === LATE && P2?.summary?.late_ods === 1,
     `http=${pl2.s} ${pl2.j?.error?.message ?? ''} ex=${JSON.stringify(ex1 ?? null)} late=${JSON.stringify({ t: r6?.trip_id != null, d: r6?.late_days, dd: r6?.delivery_date, n: P2?.summary?.late_ods })}`)
+  // 29/09 (Ba Vì thật: 17 OD "SAP đã sửa" oan): dòng CHIẾT KHẤU (mã 9100000xx) của OD TỒN ĐỌNG không vào bản chụp (không lên xe
+  // được) ⇒ /sync cũng phải bỏ nó khi so — dòng đó có sẵn trong ZSD02 từ trước, SAP không sửa gì
+  await restWrite('erp_outbound_orders', 'POST', null, {
+    id: crypto.randomUUID(), od_number: OD6, od_item: '20', material_code: '910000060', qty_base: 1,
+    ship_to_code: SHIP[1], ship_to_name: 'QA61 NPP 2', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: LATE, flow: 'DISCOUNT',
+    source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+  })
+  const sy5 = await api(`/tms/dispatch/plans/${P2?.id}/sync`)
+  const fl6 = (sy5.j?.data?.flags ?? []).find(f => f.od_number === OD6)
+  check('10p2. OD tồn đọng có thêm dòng CHIẾT KHẤU (không lên xe) trong ZSD02 → /sync KHÔNG gắn cờ "SAP đã sửa" (bản chụp và phép so cùng một luật dòng)',
+    sy5.s === 200 && !fl6, `sync=${sy5.s} flag=${JSON.stringify(fl6 ?? null)}`)
 
   // ── [11] SỐ KHÁCH TRÊN MỘT XE THEO DÒNG XE + MỞ LẠI (29/09 — user: "bỏ loại xe, chọn dòng xe luôn") ────────────
   // Không còn kiểu đi Pallet / Xá. "Xe pallet chỉ một khách" = `max_drops = 1` khai ở CHÍNH dòng xe (Cài đặt TMS → Mã dòng xe);

@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import type { VehicleModel } from '@/api/hooks'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 const capText = (m: VehicleModel) =>
@@ -105,6 +106,10 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
   inherit?: { label: string; map: Record<string, string[]> } | null
 }) {
   const [editing, setEditing] = useState<string | null>(null)
+  // Loại kho "đi kèm đơn" (POSM — cờ ở Cài đặt WMS → Loại kho): máy chọn xe theo Loại kho CHÍNH của đơn, không hỏi dòng này
+  // (29/09, user: "PM01, RM01, PK01 nếu đi theo đơn thì chọn ở đâu?") ⇒ dòng in ghi chú thay vì ô chọn, khỏi khai vào chỗ máy không đọc
+  const whMeta = useWhTypeMetaMap()
+  const isFollow = (key: string) => key !== '*' && whMeta.get(key)?.dispatch_follow === true
   const rows = [{ key: '*', label: 'Mọi Loại kho' }, ...cats.map(c => ({ key: c.value, label: c.label !== c.value ? `${c.value} — ${c.label}` : c.value }))]
   const offWord = inherit !== undefined ? 'Theo kênh' : 'Chưa khai'
   /** Máy sẽ áp gì cho khoá này nếu KHÔNG khai (để người khai thấy mình đang đè cái gì). Không bậc nào khai ⇒ máy không chọn xe. */
@@ -127,6 +132,15 @@ export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit 
       {rows.map(r => {
         const on = Array.isArray(value[r.key])
         const fb = on ? null : fallback(r.key)
+        if (isFollow(r.key)) return (
+          <div key={r.key} className="px-2 py-1.5 flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 text-xs font-medium text-slate-700">{r.label}</span>
+            <span className="rounded border border-dashed border-slate-300 px-2 py-1 text-[11px] text-slate-500"
+              title='Loại kho này bật "Đi kèm đơn khi điều vận" (Cài đặt WMS → Loại kho): đi cùng xe của hàng chính trên đơn, máy không hỏi dòng xe riêng cho nó. Đơn CHỈ có hàng loại này thì theo "Mọi Loại kho".'>
+              Đi kèm đơn — theo xe của hàng chính{on ? <button type="button" className="ml-2 text-sky-700 underline" onClick={() => set(r.key, null)}>bỏ khai riêng</button> : null}
+            </span>
+          </div>
+        )
         return (
           <div key={r.key} className="px-2 py-1.5 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">

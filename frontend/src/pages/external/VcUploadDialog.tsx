@@ -96,7 +96,12 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
     if (data?.unit_errors?.length) setUnitErrs(data.unit_errors)
     const ve = data?.validation_errors
     if (ve?.length) setGcErrs(ve.flatMap(v => v.errors.map(msg => ({ group_code: v.group_code, msg }))))
-    setErrMsg(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : fallback))
+    // 504 = Vercel cắt vì quá thời gian (text thô, không phải JSON app). Cửa nạp là idempotent (khoá OD/item, SO/item — dòng đã
+    // ghi y hệt = NO-OP) nên bấm lại chỉ ghi tiếp phần còn thiếu, KHÔNG sinh trùng (user hỏi 29/09 sau khi bấm nhiều lần).
+    const timedOut = ax?.response?.status === 504 || ax?.code === 'ECONNABORTED'
+    setErrMsg(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG
+      : timedOut ? 'Máy chủ chạy quá thời gian cho phép nên chưa ghi hết — bấm Xác nhận lại để ghi tiếp phần còn thiếu (dòng đã ghi không bị trùng, không bị ghi đôi).'
+        : fallback))
   }
 
   // PHA 1 — LUÔN kiểm trước (không ghi gì) → báo cáo chờ Xác nhận

@@ -3486,7 +3486,7 @@ export function useUploadVl06o() {
   return useMutation({
     mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
       const { body, headers } = await excelUploadBody(file)
-      return apiClient.post(`/wms/outbound/upload-vl06o${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
+      return apiClient.post(`/wms/outbound/upload-vl06o${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 310000 }).then(r => r.data.data)
     },
   })
 }
@@ -3505,7 +3505,7 @@ export function useUploadZsd02() {
   return useMutation({
     mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
       const { body, headers } = await excelUploadBody(file)
-      return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
+      return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 310000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return
@@ -3552,7 +3552,7 @@ export function useUploadKhvc() {
   return useMutation({
     mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
       const { body, headers } = await excelUploadBody(file)
-      return apiClient.post(`/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 }).then(r => r.data.data)
+      return apiClient.post(`/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 310000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => { if (!vars.preflight) qc.refetchQueries({ queryKey: ['gdos'] }) },
   })

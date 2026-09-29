@@ -25,6 +25,19 @@ import { findReplacedOds, holdsToCarry, type ReplaceCandidate, type HoldRow } fr
 
 const now = () => new Date().toISOString()
 const CHUNK = 500
+// 29/09: file thật 23.867 dòng ⇒ 46 lô OD + 12 lô SO ghi NỐI TIẾP mất > 60 s (lô 500 dòng × 79 cột ~1,6 s trên staging NANO) —
+// Vercel cắt ở 60 s, người dùng bấm Xác nhận nhiều lần mà sổ SO chưa bao giờ được ghi (đo: 18.000/22.943 OD, 0 SO).
+// Ghi 4 lô CÙNG LÚC (pool PostgREST ~10 khe, để chỗ cho người khác) + maxDuration 300 ở vercel.json.
+const WRITE_PARALLEL = 4
+async function upsertChunksParallel<T extends object>(table: 'erp_outbound_orders' | 'erp_so_lines', rows: T[], onConflict: string) {
+  const chunks: T[][] = []
+  for (let i = 0; i < rows.length; i += CHUNK) chunks.push(rows.slice(i, i + CHUNK))
+  for (let i = 0; i < chunks.length; i += WRITE_PARALLEL) {
+    const rs = await Promise.all(chunks.slice(i, i + WRITE_PARALLEL).map(c => db.from(table).upsert(c as never, { onConflict })))
+    const bad = rs.find(r => r.error)
+    if (bad?.error) throw new Error(bad.error.message)
+  }
+}
 const SO_STATUSES = ['OPEN', 'HAS_OD', 'CANCELLED'] as const
 type SoStatus = typeof SO_STATUSES[number]
 
@@ -193,11 +206,8 @@ export async function uploadZsd02(req: Request, res: Response) {
       })
     }
 
-    // ── GHI SỔ OD (đã phân loại ở trên) — chunk 500, OBSOLETE dòng SAP bỏ ──
-    for (let i = 0; i < odWrite.length; i += CHUNK) {
-      const { error } = await db.from('erp_outbound_orders').upsert(odWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
-      if (error) throw new Error(error.message)
-    }
+    // ── GHI SỔ OD (đã phân loại ở trên) — chunk 500 ghi song song, OBSOLETE dòng SAP bỏ ──
+    await upsertChunksParallel('erp_outbound_orders', odWrite, 'od_number,od_item')
     if (removedKeys.length) {
       await Promise.all(removedKeys.map(k => db.from('erp_outbound_orders')
         .update({ sync_status: 'OBSOLETE', updated_at: t }).eq('od_number', k.od_number).eq('od_item', k.od_item)))
@@ -225,10 +235,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     }
 
     // ── GHI SỔ SO ──
-    for (let i = 0; i < soWrite.length; i += CHUNK) {
-      const { error } = await db.from('erp_so_lines').upsert(soWrite.slice(i, i + CHUNK), { onConflict: 'so_number,so_item' })
-      if (error) throw new Error(error.message)
-    }
+    await upsertChunksParallel('erp_so_lines', soWrite, 'so_number,so_item')
     const soObsoleted = soObsoleteIds.length
     for (let i = 0; i < soObsoleteIds.length; i += 300) {
       const { error } = await db.from('erp_so_lines').update({ sync_status: 'OBSOLETE', updated_at: t }).in('id', soObsoleteIds.slice(i, i + 300))

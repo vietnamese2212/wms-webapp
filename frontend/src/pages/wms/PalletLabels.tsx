@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { QrCode, Printer, Trash2, AlertTriangle, History, X, Search } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
@@ -1390,38 +1391,22 @@ export default function PalletLabels() {
             <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 min-h-[40px] py-1.5 flex-wrap">
               {!canReprint ? (
                 <span className="text-[11px] text-slate-400">Bạn không có quyền in lại — chỉ xem lịch sử.</span>
-              ) : histSelBatch ? (
-                /* Bulk-action khi chọn 1 lệnh in — In lại = window.print (thuần PC) */
-                <ActionCluster items={[
-                  {
-                    key: 'reprint-batch', icon: Printer, label: `In lại (${histSelBatchRows.length})`,
-                    tip: `In lại cả lệnh — ${histSelBatchRows.length} tem`,
-                    primary: true, variant: 'default', mobileHidden: true,
-                    onClick: () => reprintRows(histSelBatchRows),
-                  } satisfies ActionItem,
-                  {
-                    key: 'clear', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn lệnh in đang chọn',
-                    onClick: clearHistSel,
-                  } satisfies ActionItem,
-                ]} />
-              ) : histSelTems.size > 0 ? (
-                /* Bulk-action khi tích nhiều tem lẻ */
-                <ActionCluster items={[
-                  {
-                    key: 'reprint-tems', icon: Printer, label: `In lại (${histSelTems.size})`,
-                    tip: `In lại ${histSelTems.size} tem đã chọn (kể cả khác lệnh in)`,
-                    primary: true, variant: 'default', mobileHidden: true,
-                    onClick: () => reprintRows(histSelTemRows),
-                  } satisfies ActionItem,
-                  {
-                    key: 'clear', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn các tem đã tích',
-                    onClick: clearHistSel,
-                  } satisfies ActionItem,
-                ]} />
               ) : (
                 <span className="text-[11px] text-slate-400">Chọn <b>1 lệnh</b> (in cả lệnh) hoặc tích <b>nhiều tem</b> trong chi tiết (in từng tem) để in lại.</span>
               )}
             </div>
+            {/* 29/09: In lại theo lệnh / theo tem đang tick = pill nổi giữa đáy như Tồn kho (trước nằm trong băng tiêu đề).
+                In lại = window.print (thuần PC) nên nút In ẩn dưới sm. */}
+            {canReprint && (
+              <FloatingActionBar count={histSelBatch ? histSelBatchRows.length : histSelTems.size} unit={histSelBatch ? 'tem của lệnh in đang chọn' : 'tem đã tích'}>
+                <button type="button" className={`hidden sm:inline-flex items-center gap-1 rounded-md border px-2 ${FLOATING_BTN}`}
+                  title={histSelBatch ? `In lại cả lệnh — ${histSelBatchRows.length} tem` : `In lại ${histSelTems.size} tem đã chọn (kể cả khác lệnh in)`}
+                  onClick={() => reprintRows(histSelBatch ? histSelBatchRows : histSelTemRows)}>
+                  <Printer className="h-3.5 w-3.5" /> In lại ({histSelBatch ? histSelBatchRows.length : histSelTems.size})
+                </button>
+                <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={clearHistSel}>Bỏ chọn</button>
+              </FloatingActionBar>
+            )}
             <div className="flex-1 min-h-0 overflow-auto">
             <table className="text-[10px] border-collapse table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: histCols.totalWidth + (canReprint ? 36 : 0), minWidth: '100%' }}>
               <colgroup>

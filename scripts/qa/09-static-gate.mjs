@@ -1085,17 +1085,26 @@ const RULES = [
   // Bắt: khối `<X>.size > 0 && (` với X là tên tập chọn, mà thẻ mở đầu ngay sau là <div> KHÔNG có `fixed`.
   {
     key: 'bulk_bar_inline_reflows_table',
-    label: 'thanh thao tác chọn-nhiều là <div> chèn vào luồng (không `fixed`) — bảng bị co khi tick; dùng FloatingActionBar hoặc nút trên header',
+    label: 'thao tác chọn-nhiều đặt ngoài pill nổi (div chèn vào luồng, hoặc nút/Button hiện theo `.size > 0` trên header) — dùng FloatingActionBar (user 29/09: một lối duy nhất, "như Tồn kho, action ở giữa")',
+    // 29/09: mở rộng — trước chỉ bắt <div> chèn luồng; lối "nút h-7 trên header" (22/07) từng được coi là hợp lệ nên Xuất kho ·
+    // DO SAP · Cảnh báo · Luân phiên ABC… mỗi trang một kiểu, Khách hàng thì có pill nhưng thao tác vẫn trên header. Nay mọi
+    // nút/Button hiện theo điều kiện `.size > 0` (hoặc `.length > 0` của tập chọn) mà không nằm trong pill `fixed` đều đỏ.
+    // Bên trong FloatingActionBar, điều kiện hiện nút là quyền/tình trạng (canEdit, isOpen…) chứ không phải `.size > 0`.
     count: (s) => {
       let n = 0
       for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
         const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+        let inPill = false   // đang ở trong <FloatingActionBar …>…</FloatingActionBar> — nút hiện theo tập chọn ở đó là đúng chỗ
         lines.forEach((line, i) => {
-          if (!/\b(sel|selected|picked|checked|checkedIds|selectedIds|selectedOrderIds|selection)\w*\.size > 0 && \($/.test(line)) return
+          if (/<FloatingActionBar\b/.test(line)) inPill = true
+          if (/<\/FloatingActionBar>/.test(line)) inPill = false
+          if (inPill) return
+          // chỉ TẬP CHỌN (`Set.size`) — `.length` của mảng chip trong form (Sổ đóng gói) hay danh sách trong hộp thoại không phải thanh thao tác
+          if (!/\b(sel|selected|picked|checked|checkedIds|selectedIds|selectedOrderIds|selection)\w*\.size > 0\b.*&& \($/.test(line)) return
           for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
             const t = lines[j].trim()
             if (!t || t.startsWith('//') || t.startsWith('{/*') || t.startsWith('/*') || t.startsWith('*')) continue
-            if (/^<div\b/.test(t) && !/\bfixed\b/.test(t)) { n++; if (s && s.length < 5) s.push(`${f.slice(ROOT.length + 1)}:${j + 1}`) }
+            if ((/^<div\b/.test(t) && !/\bfixed\b/.test(t)) || /^<(button|Button)\b/.test(t)) { n++; if (s && s.length < 5) s.push(`${f.slice(ROOT.length + 1)}:${j + 1}`) }
             break
           }
         })

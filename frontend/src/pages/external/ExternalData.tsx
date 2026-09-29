@@ -4,6 +4,7 @@
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, Upload, CalendarDays } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -392,21 +393,16 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
               <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
             </Button>
           )}
-          {/* Action theo selection đặt NGAY TRÊN HEADER (user 22/07) — không chèn bar giữa
-              SummaryBand và bảng nữa (bar hiện/ẩn làm bảng nhảy layout). Nút h-7 = không đổi chiều cao hàng. */}
-          {selected.size > 0 && (canEdit || canCreate) && selectedDos.length > 0 && (
-            // canCreate-không-edit vẫn mở được editor (chỉ để THÊM dòng — ô sửa bị khóa bên trong)
-            <button type="button" onClick={() => setDoEditor(selectedDos)}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
-              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedDos.length > 1 ? `${selectedDos.length} DO` : `DO ${selectedDos[0]}`}
-            </button>
-          )}
-          {selected.size > 0 && (
-            <button type="button" onClick={() => setSelected(new Set())}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors shrink-0">
-              <X className="h-3.5 w-3.5" /> Bỏ chọn ({selected.size})
-            </button>
-          )}
+          {/* Action theo selection = pill NỔI giữa đáy như Tồn kho (user 29/09) — trước là nút h-7 trên header (22/07) */}
+          <FloatingActionBar count={selected.size} unit="dòng">
+            {(canEdit || canCreate) && selectedDos.length > 0 && (
+              // canCreate-không-edit vẫn mở được editor (chỉ để THÊM dòng — ô sửa bị khóa bên trong)
+              <button type="button" onClick={() => setDoEditor(selectedDos)} className={`inline-flex items-center gap-1 rounded-md border px-2 ${FLOATING_BTN}`}>
+                <Pencil className="h-3.5 w-3.5" /> Sửa {selectedDos.length > 1 ? `${selectedDos.length} DO` : `DO ${selectedDos[0]}`}
+              </button>
+            )}
+            <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+          </FloatingActionBar>
           {/* Thêm mới hoàn toàn = UPLOAD (VL06O), không thêm tay ngoài header — user chốt 21/07.
               Thêm dòng vào DO đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor.
               Xóa dòng: CHỈ trong editor (user 22/07 bỏ Xóa bulk ngoài list). */}
@@ -1344,25 +1340,21 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
               <Upload className="h-3.5 w-3.5 mr-1" /> Up KH điều vận
             </Button>
           )}
-          {selected.size > 0 && (canEdit || canCreate) && selectedGroups.length > 0 && (
-            <button type="button" onClick={() => setGroupEditor(selectedGroups)}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
-              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
-            </button>
-          )}
-          {selected.size > 0 && canEdit && selectedGroups.length > 0 && (
-            <button type="button" onClick={() => setDateDialog(true)}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-blue-300 bg-blue-50 text-xs text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
-              title="Đổi Ngày xuất cho CẢ các xe đã tick (1 xe chạy 1 ngày) — chuyến đang xuất/đã hoàn thành sẽ bị chặn">
-              <CalendarDays className="h-3.5 w-3.5" /> Đổi ngày ({selectedGroups.length} xe)
-            </button>
-          )}
-          {selected.size > 0 && (
-            <button type="button" onClick={() => setSelected(new Set())}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors shrink-0">
-              <X className="h-3.5 w-3.5" /> Bỏ chọn ({selected.size})
-            </button>
-          )}
+          {/* Action theo selection = pill NỔI giữa đáy như Tồn kho (user 29/09) — trước là nút h-7 trên header (22/07) */}
+          <FloatingActionBar count={selected.size} unit="dòng">
+            {(canEdit || canCreate) && selectedGroups.length > 0 && (
+              <button type="button" onClick={() => setGroupEditor(selectedGroups)} className={`inline-flex items-center gap-1 rounded-md border px-2 ${FLOATING_BTN}`}>
+                <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
+              </button>
+            )}
+            {canEdit && selectedGroups.length > 0 && (
+              <button type="button" onClick={() => setDateDialog(true)} className={`inline-flex items-center gap-1 rounded-md border px-2 ${FLOATING_BTN}`}
+                title="Đổi Ngày xuất cho CẢ các xe đã tick (1 xe chạy 1 ngày) — chuyến đang xuất/đã hoàn thành sẽ bị chặn">
+                <CalendarDays className="h-3.5 w-3.5" /> Đổi ngày ({selectedGroups.length} xe)
+              </button>
+            )}
+            <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+          </FloatingActionBar>
           {/* Thêm mới hoàn toàn = UPLOAD (KH điều vận), không thêm tay ngoài header — user chốt 21/07.
               Thêm DO vào Số xe đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor.
               Xóa dòng: CHỈ trong editor (user 22/07 bỏ Xóa bulk ngoài list). */}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { Tag, Plus, Upload, Pencil, Trash2, X, Check, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { RowCheck } from '@/components/shared/RowCheck'
 import { toast } from '@/components/ui/use-toast'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
@@ -782,29 +783,25 @@ export default function Materials() {
      </div>
 
       {/* ── Bulk action bar ────────────────────────────────────────────── */}
-      {selected.size > 0 && (
-        <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl">
-          <span className="text-xs text-slate-300">{selected.size} mã đã chọn</span>
-          {canEdit && (
-            <button onClick={() => setBulkPackOpen(true)} className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
-              <Boxes className="h-3.5 w-3.5" />Quy cách xếp xe
-            </button>
-          )}
-          {canEdit && (
-            <button onClick={() => setBulkQrOpen(true)} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
-              <QrCode className="h-3.5 w-3.5" />Không theo dõi QR
-            </button>
-          )}
-          {canDel && (
-            <button onClick={() => setBulkDeleteOpen(true)} className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
-              <Trash2 className="h-3.5 w-3.5" />Ẩn tất cả
-            </button>
-          )}
-          <button onClick={() => setSelected(new Set())} className="text-slate-400 hover:text-white ml-1">
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
+      {/* 29/09: dùng đúng pill dùng chung (FloatingActionBar) — bản tự vẽ trước đó lệch vị trí (bottom-20) và kiểu nút so với Tồn kho */}
+      <FloatingActionBar count={selected.size} unit="mã đã chọn">
+        {canEdit && (
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setBulkPackOpen(true)}>
+            <Boxes className="h-3.5 w-3.5 mr-1" />Quy cách xếp xe
+          </Button>
+        )}
+        {canEdit && (
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setBulkQrOpen(true)}>
+            <QrCode className="h-3.5 w-3.5 mr-1" />Không theo dõi QR
+          </Button>
+        )}
+        {canDel && (
+          <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER} onClick={() => setBulkDeleteOpen(true)}>
+            <Trash2 className="h-3.5 w-3.5 mr-1" />Ẩn tất cả
+          </Button>
+        )}
+        <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+      </FloatingActionBar>
 
       {/* ── Detail Sheet ───────────────────────────────────────────────── */}
       <Sheet open={!!detailMat} onOpenChange={open => !open && setDetailMat(null)}>

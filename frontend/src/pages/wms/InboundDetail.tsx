@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import { ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil, MapPin, Package, AlertTriangle, Clock, Calendar, User, Bookmark, RotateCcw, History } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
@@ -896,6 +897,24 @@ export default function InboundDetail() {
           ...(order.transfer_production_date ? [{ label: 'NSX', value: formatDate(order.transfer_production_date) }] : []),
         ]} />
 
+        {/* 29/09: "Xóa (N)" theo pallet đang tick = pill nổi giữa đáy như Tồn kho (trước nằm trong cụm nút của băng tiêu đề) */}
+        <FloatingActionBar count={selectedIds.size} unit="pallet">
+          {isOpen && (
+            <button type="button" className={`inline-flex items-center gap-1 rounded-md border px-2 ${FLOATING_BTN_DANGER}`}
+              title={`Xóa ${selectedIds.size} pallet đã chọn (không hoàn tác được)`}
+              onClick={() => openConfirm(
+                'Xóa pallet đã chọn',
+                `Xác nhận xóa ${selectedIds.size} pallet? Thao tác này không thể hoàn tác.`,
+                () => deleteEntries(
+                  { orderId: order.id, entryIds: [...selectedIds], employeeId: user?.id },
+                  { onSuccess: () => setSelectedIds(new Set()) }
+                )
+              )}>
+              <Trash2 className="h-3.5 w-3.5" /> Xóa ({selectedIds.size})
+            </button>
+          )}
+          <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSelectedIds(new Set())}>Bỏ chọn</button>
+        </FloatingActionBar>
         {/* Heading + action — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
         <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
@@ -910,19 +929,6 @@ export default function InboundDetail() {
             <div className="flex items-center gap-1.5">
               {gunArmed && <PdaGunHint />}
               <ActionCluster items={[
-              ...(isOpen && selectedIds.size > 0 ? [{
-                key: 'delete-selected', icon: Trash2, label: `Xóa (${selectedIds.size})`,
-                tip: `Xóa ${selectedIds.size} pallet đã chọn (không hoàn tác được)`,
-                danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
-                onClick: () => openConfirm(
-                  'Xóa pallet đã chọn',
-                  `Xác nhận xóa ${selectedIds.size} pallet? Thao tác này không thể hoàn tác.`,
-                  () => deleteEntries(
-                    { orderId: order.id, entryIds: [...selectedIds], employeeId: user?.id },
-                    { onSuccess: () => setSelectedIds(new Set()) }
-                  )
-                ),
-              } satisfies ActionItem] : []),
               ...(isOpen && can(perms, 'inbound', 'scan') ? [isManualEntry ? {
                 key: 'manual', icon: Plus,
                 label: order.posm_entry_id ? 'Đã lưu thủ công' : isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công',

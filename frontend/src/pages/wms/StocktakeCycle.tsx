@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RotateCcw, ClipboardCheck } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -113,17 +114,19 @@ export default function StocktakeCycle() {
             </h1>
             <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm mã / tên hàng…" className="flex-1 min-w-[120px]" />
             <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
-            {sel.size > 0 && (
-              <Button size="sm" className="h-9 sm:h-7 text-[11px]"
-                disabled={!selLocIds.length || selLocIds.length > LOC_ID_CAP}
-                title={selLocIds.length > LOC_ID_CAP
-                  ? `Quá ${LOC_ID_CAP} vị trí — bỏ bớt mã (đang ${selLocIds.length})`
-                  : 'Mở Tổng hợp KK với đúng các vị trí đang chứa những mã này'}
-                onClick={startCount}>
-                <ClipboardCheck className="h-3.5 w-3.5 mr-1" /> Kiểm {sel.size} mã ({selLocIds.length} vị trí)
-              </Button>
-            )}
           </div>
+          {/* 29/09: thao tác theo dòng đang tick = pill nổi giữa đáy như Tồn kho (trước là nút trên header) */}
+          <FloatingActionBar count={sel.size} unit="mã">
+            <Button size="sm" variant="outline" className={FLOATING_BTN}
+              disabled={!selLocIds.length || selLocIds.length > LOC_ID_CAP}
+              title={selLocIds.length > LOC_ID_CAP
+                ? `Quá ${LOC_ID_CAP} vị trí — bỏ bớt mã (đang ${selLocIds.length})`
+                : 'Mở Tổng hợp KK với đúng các vị trí đang chứa những mã này'}
+              onClick={startCount}>
+              <ClipboardCheck className="h-3.5 w-3.5 mr-1" /> Kiểm {sel.size} mã ({selLocIds.length} vị trí)
+            </Button>
+            <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSel(new Set())}>Bỏ chọn</button>
+          </FloatingActionBar>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 

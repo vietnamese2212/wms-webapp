@@ -20,7 +20,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
-import { FloatingActionBar } from '@/components/shared/FloatingActionBar'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -379,7 +379,9 @@ export default function Customers() {
                     giữ toolbar ≤ 2 hàng để dòng dữ liệu đầu tiên không bị đẩy xuống quá sâu. */}
                 <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
                   <FilterSheetButton defs={filterDefs} />
-                  <ActionCluster items={[...bulkItems, ...toolbarItems]} mobileInline />
+                  {/* 29/09 (user: "chọn multi hiện action lại không đồng bộ — phải như Tồn kho, action hiện ở giữa"): thao tác
+                      hàng loạt KHÔNG còn nằm trên header, chúng ở trong pill nổi giữa đáy bên dưới */}
+                  <ActionCluster items={toolbarItems} mobileInline />
                 </div>
               </>
             )}
@@ -391,6 +393,7 @@ export default function Customers() {
           {listTab && (
             <FloatingActionBar count={allFiltered ? total : picked.size}
               unit={allFiltered ? 'khách theo bộ lọc hiện tại' : 'dòng trên trang'}>
+              <ActionCluster className="w-auto shrink-0" items={bulkItems.map(i => ({ ...i, primary: false, className: i.danger ? FLOATING_BTN_DANGER : FLOATING_BTN }))} />
               <label className="flex items-center gap-1.5 sm:hidden text-[11px] text-slate-200">
                 <input type="checkbox" checked={allPicked} onChange={toggleAll} className="h-4 w-4 accent-sky-400" />
                 Chọn cả trang

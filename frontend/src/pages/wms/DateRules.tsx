@@ -14,6 +14,7 @@
 // date để so thì thứ tự lấy rơi xuống QUÃNG ĐƯỜNG tới cửa.
 import { useMemo, useState } from 'react'
 import { CalendarClock, AlertTriangle, RefreshCw } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -190,12 +191,8 @@ export default function DateRules() {
               placeholder="Số xe · biển số · NPP · khách · số DO · mã hàng · ghi chú CS" className="flex-1 min-w-[140px]" />
             <FilterSheetButton defs={filterDefs} />
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+              {/* 29/09: "Quy định date (N)" theo dòng đang tick chuyển xuống pill nổi giữa đáy (đồng bộ mọi trang chọn-nhiều với Tồn kho) */}
               <ActionCluster mobileInline items={[
-                { key: 'set', icon: CalendarClock, label: `Quy định date (${picked.size})`, primary: true,
-                  tip: pickedWhs.size > 1 ? 'Đang chọn dòng của nhiều kho — tồn tra theo kho, hãy lọc về một kho'
-                    : 'Khai mức quy định date cho các dòng đang tick',
-                  disabled: !canSet || picked.size === 0 || pickedWhs.size > 1,
-                  onClick: () => setSheet(toTargets(pickedRows)) },
                 { key: 'master', icon: RefreshCw, label: 'Áp lại theo master',
                   tip: 'Áp mức của Khách hàng / Kênh cho đơn đang mở trong khoảng ngày đang lọc — KHÔNG đụng dòng đã khai tay',
                   disabled: !canSet, onClick: () => setApply(true) },
@@ -203,6 +200,14 @@ export default function DateRules() {
             </div>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
+          <FloatingActionBar count={picked.size} unit="dòng">
+            <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={!canSet || pickedWhs.size > 1}
+              title={pickedWhs.size > 1 ? 'Đang chọn dòng của nhiều kho — tồn tra theo kho, hãy lọc về một kho' : 'Khai mức quy định date cho các dòng đang tick'}
+              onClick={() => setSheet(toTargets(pickedRows))}>
+              <CalendarClock className="h-3.5 w-3.5 mr-1" /> Quy định date ({picked.size})
+            </Button>
+            <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setPicked(new Set())}>Bỏ chọn</button>
+          </FloatingActionBar>
           {pickedWhs.size > 1 && (
             <p className="text-[11px] text-amber-600 flex items-center gap-1">
               <AlertTriangle className="h-3 w-3" /> Đang chọn dòng của {pickedWhs.size} kho khác nhau — tồn tra theo kho, hãy lọc về một kho rồi chốt.

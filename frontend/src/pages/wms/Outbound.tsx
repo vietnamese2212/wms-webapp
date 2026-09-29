@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays, Lock } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -685,20 +686,18 @@ export default function Outbound() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {/* Action theo selection đặt trên toolbar (chuẩn 22/07 — không chèn bar hiện/ẩn làm bảng nhảy) */}
-          {canEditGdo && moveTargets.length > 0 && (
-            <button type="button" onClick={() => { setMoveDate(''); setMoveErrs([]); setMoveOk(null); setShowMoveDate(true) }}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0"
-              title="Chuyển ngày xuất các chuyến đã chọn (đơn rớt sang ngày khác)">
-              <CalendarDays className="h-3.5 w-3.5" /> Chuyển ngày ({moveTargets.length})
-            </button>
-          )}
-          {checkedIds.size > 0 && (
-            <button type="button" onClick={() => setCheckedIds(new Set())}
-              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors shrink-0">
-              <X className="h-3.5 w-3.5" /> Bỏ chọn ({checkedIds.size})
-            </button>
-          )}
+          {/* Action theo selection = pill NỔI giữa đáy như Tồn kho (user 29/09: "chọn multi hiện action phải đồng bộ — action ở giữa");
+              trước đó là nút h-7 trên header (chuẩn 22/07) — hai kiểu sống chung là chính chỗ lệch */}
+          <FloatingActionBar count={checkedIds.size} unit="chuyến">
+            {canEditGdo && moveTargets.length > 0 && (
+              <button type="button" onClick={() => { setMoveDate(''); setMoveErrs([]); setMoveOk(null); setShowMoveDate(true) }}
+                className={`inline-flex items-center gap-1 rounded-md border px-2 ${FLOATING_BTN}`}
+                title="Chuyển ngày xuất các chuyến đã chọn (đơn rớt sang ngày khác)">
+                <CalendarDays className="h-3.5 w-3.5" /> Chuyển ngày ({moveTargets.length})
+              </button>
+            )}
+            <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setCheckedIds(new Set())}>Bỏ chọn</button>
+          </FloatingActionBar>
           <ActionCluster className="shrink-0" mobileInline items={[
             ...(can(perms, 'outbound', 'prepare') ? [{
               key: 'prepare', icon: PackageCheck, label: 'Chuẩn bị hàng', tip: 'Mở bảng Chuẩn bị hàng (soạn hàng theo kế hoạch)',

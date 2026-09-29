@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -284,13 +285,17 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
             <h1 className="text-sm font-semibold text-slate-800 shrink-0">Cảnh báo vận hành</h1>
             <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm nội dung / kho…" className="flex-1 min-w-[120px]" />
             <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
-            {canAck && pickedOpen.length > 0 && (
-              <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]" disabled={busy}
-                title="Đánh dấu đã biết các cảnh báo đã chọn (ẩn khỏi danh sách mặc định)"
-                onClick={bulkAck}>
-                <Check className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang lưu…' : `Đã biết (${pickedOpen.length})`}
-              </Button>
-            )}
+            {/* 29/09: "Đã biết (N)" theo dòng đang tick = pill nổi giữa đáy như Tồn kho (trước là nút trên header) */}
+            <FloatingActionBar count={pickedOpen.length} unit="cảnh báo">
+              {canAck && (
+                <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy}
+                  title="Đánh dấu đã biết các cảnh báo đã chọn (ẩn khỏi danh sách mặc định)"
+                  onClick={bulkAck}>
+                  <Check className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang lưu…' : `Đã biết (${pickedOpen.length})`}
+                </Button>
+              )}
+              <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => setSel(new Set())}>Bỏ chọn</button>
+            </FloatingActionBar>
             {/* Quét THẬT (fresh=1 bỏ throttle 10'), rồi nạp lại danh sách. Trước 21/08 nút này chỉ
                 refetch — lượt quét đi kèm GET nên bấm xong CHƯA CHẮC có quét, chỉ là đọc lại bảng. */}
             <button type="button" title="Quét lại ngay (bình thường tự quét ~10 phút/lần)"

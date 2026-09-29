@@ -7,6 +7,7 @@ const WarehouseMap = lazy(() => import('./WarehouseMap'))
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers, Map as MapIcon, List, Thermometer } from 'lucide-react'
+import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { toast } from '@/components/ui/use-toast'
@@ -861,45 +862,35 @@ export default function Locations() {
      </div>
 
       {/* ── Thanh thao tác hàng loạt (hiện khi có dòng được chọn) ───────────── */}
-      {canEditLoc && selected.size > 0 && (
-        <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl max-w-[95vw] flex-wrap">
-          <span className="text-xs text-slate-300">
-            {allFiltered ? `${totalRows} vị trí (toàn bộ bộ lọc)` : `${selected.size} vị trí đã chọn`}
-          </span>
+      {/* 29/09: dùng đúng pill dùng chung (FloatingActionBar) — bản tự vẽ trước đó lệch vị trí (bottom-20) và kiểu nút so với Tồn kho */}
+      {canEditLoc && (
+        <FloatingActionBar count={allFiltered ? totalRows : selected.size} unit={allFiltered ? 'vị trí (toàn bộ bộ lọc)' : 'vị trí đã chọn'}>
           {/* Chọn hết TRANG rồi mà bộ lọc còn nhiều hơn → cho chọn cả bộ lọc (BE tự resolve theo cờ lọc) */}
           {!allFiltered && allPageSelected && totalRows > locations.length && (
-            <button onClick={() => setAllFiltered(true)} className="text-xs text-sky-300 hover:text-sky-200 underline underline-offset-2">
+            <button type="button" onClick={() => setAllFiltered(true)} className="text-[11px] text-sky-300 hover:text-sky-200 underline underline-offset-2">
               Chọn tất cả {totalRows} vị trí đang lọc
             </button>
           )}
-          <button onClick={() => { setBulkErr(''); setBulkMode('pickface') }}
-            className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
-            <Hand className="h-3.5 w-3.5" />Vị trí nhặt lẻ
-          </button>
-          <button onClick={() => { setBulkErr(''); setBulkMode('noin') }}
-            className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
-            <Ban className="h-3.5 w-3.5" />Không đưa hàng vào
-          </button>
-          <button onClick={() => { setBulkErr(''); setBulkMode('noout') }}
-            className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
-            <Lock className="h-3.5 w-3.5" />Không lấy hàng đi
-          </button>
-          <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
-            className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
-            <Flag className="h-3.5 w-3.5" />Cần kiểm kê
-          </button>
-          <button onClick={() => { setBulkErr(''); setMaxMatInput(''); setBulkMode('maxmat') }}
-            className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200 transition-colors">
-            <Layers className="h-3.5 w-3.5" />Số mã tối đa
-          </button>
-          <button onClick={() => { setBulkErr(''); setCondInput(''); setBulkMode('cond') }}
-            className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
-            <Thermometer className="h-3.5 w-3.5" />ĐK bảo quản
-          </button>
-          <button onClick={() => { setSelected(new Set()); setAllFiltered(false) }} className="text-slate-400 hover:text-white ml-1">
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulkErr(''); setBulkMode('pickface') }}>
+            <Hand className="h-3.5 w-3.5 mr-1" />Vị trí nhặt lẻ
+          </Button>
+          <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER} onClick={() => { setBulkErr(''); setBulkMode('noin') }}>
+            <Ban className="h-3.5 w-3.5 mr-1" />Không đưa hàng vào
+          </Button>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulkErr(''); setBulkMode('noout') }}>
+            <Lock className="h-3.5 w-3.5 mr-1" />Không lấy hàng đi
+          </Button>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}>
+            <Flag className="h-3.5 w-3.5 mr-1" />Cần kiểm kê
+          </Button>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulkErr(''); setMaxMatInput(''); setBulkMode('maxmat') }}>
+            <Layers className="h-3.5 w-3.5 mr-1" />Số mã tối đa
+          </Button>
+          <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setBulkErr(''); setCondInput(''); setBulkMode('cond') }}>
+            <Thermometer className="h-3.5 w-3.5 mr-1" />ĐK bảo quản
+          </Button>
+          <button type="button" className="text-[11px] text-slate-300 hover:text-white hover:underline ml-1" onClick={() => { setSelected(new Set()); setAllFiltered(false) }}>Bỏ chọn</button>
+        </FloatingActionBar>
       )}
 
       {/* Add / Edit FormSheet */}

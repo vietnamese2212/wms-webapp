@@ -2072,33 +2072,6 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const orderId = existing ? existing.id : randomUUID()
-  if (existing) {
-    // SYNC: đích/mã/hình thức có thể đổi sau khi sửa đơn — cập nhật TẠI CHỖ, giữ booking + lịch sử
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await supabase.from('TmsOrder').update({
-      order_code: orderCode, warehouse_id: orderWarehouseId,
-      destination_warehouse_id: destWh ? destWh.id : null,
-      delivery_mode: isSelf ? 'SELF' : 'SCAN',
-      updated_at: nowTs,
-    }).eq('id', orderId)
-    // Kế hoạch nhập làm lại theo số MỚI (chưa ai nhận — Bỏ HT bị chặn từ RECEIVING trở đi)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', orderId)
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await supabase.from('TmsOrder').insert({
-      id: orderId, order_code: orderCode,
-      date: vnDate, warehouse_id: orderWarehouseId,
-      destination_warehouse_id: destWh ? destWh.id : null,
-      direction: 'INBOUND', source_type: 'TRANSFER',
-      transfer_gdo_id: gdoId,
-      delivery_mode: isSelf ? 'SELF' : 'SCAN',
-      planned_boxes: 0, planned_pallets: 0,
-      status: 'PENDING',
-      created_at: nowTs, updated_at: nowTs,
-    })
-  }
-
   const lineRows = [...matMap.values()].map(m => ({
     id: randomUUID(), tms_order_id: orderId, date: vnDate,
     warehouse_id: orderWarehouseId, warehouse_type: m.category || null,
@@ -2106,6 +2079,29 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
     planned_pallets: null, status: 'ACTIVE',
     created_at: nowTs, updated_at: nowTs,
   }))
+  // BASE UNIT: line = base per mã; cache cấp LỆNH (cross-mã) = THÙNG QUY ĐỔI (Σ base ÷ hệ_số)
+  const totalBoxes = [...matMap.values()].reduce((s, m) => s + qtyEntryDecimal(m.planned_boxes, m.units), 0)
+
+  // ⚠️ THỨ TỰ GHI PHẢI ĐỂ LẠI TRẠNG THÁI BẤM LẠI ĐƯỢC (29/09) — "đã đẩy cho kho nhận" = lệnh CÓ kho đích, và
+  // `pushTransferOrder` chặn ngay ở đầu bằng chính dấu đó. Bản trước gắn kho đích + XOÁ dòng cũ TRƯỚC khi chèn dòng
+  // mới ⇒ một cú chèn hỏng để lại lệnh CÓ đích mà KHÔNG dòng nào, và câu 409 PLAN_LINES_FAILED bảo người dùng
+  // "kiểm tra rồi bấm đẩy lại" trong khi bấm lại chỉ nhận 409 TRANSFER_ALREADY_PUSHED: LỐI THOÁT KHÔNG TỒN TẠI.
+  // Nay: chèn dòng MỚI → dọn dòng CŨ → gắn kho đích SAU CÙNG. Hỏng ở bất kỳ bước nào cũng để lại trạng thái CHƯA
+  // đẩy, bấm lại là tự lành. Cùng lớp với "ghi hỏng mà báo thành công" ngay dưới đây.
+  if (!existing) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await supabase.from('TmsOrder').insert({
+      id: orderId, order_code: orderCode,
+      date: vnDate, warehouse_id: orderWarehouseId,
+      destination_warehouse_id: null,          // gắn ở bước cuối, sau khi kế hoạch nhập đã nằm trong DB
+      direction: 'INBOUND', source_type: 'TRANSFER',
+      transfer_gdo_id: gdoId,
+      delivery_mode: 'SELF',
+      planned_boxes: 0, planned_pallets: 0,
+      status: 'PENDING',
+      created_at: nowTs, updated_at: nowTs,
+    })
+  }
   // Ghi kế hoạch nhập KHÔNG được nuốt lỗi (29/09, gói 28 [12c]): bản cũ bỏ qua 23505 của khoá (ngày, kho, NCC, mã) ⇒ lệnh
   // chuyển kho thứ hai cùng mã / cùng kho nhận / cùng ngày im lặng KHÔNG có dòng, kho nhận thấy lệnh mà không thấy hàng.
   // Khoá đã nới theo lệnh (20260929b); còn lỗi gì khác thì ghi error_logs + trả `lines_error` cho cửa gọi nói ra.
@@ -2114,10 +2110,20 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
   const linesError = linesErr ? `Kế hoạch nhập của lệnh ${orderCode} không ghi được: ${linesErr.message}` : null
   if (linesErr) recordBackgroundFailure(linesError!, 'TRANSFER_PLAN_LINES_FAILED', 'outbound.maybeAutoCreateTransferOrder', linesErr)
 
-  // BASE UNIT: line = base per mã; cache cấp LỆNH (cross-mã) = THÙNG QUY ĐỔI (Σ base ÷ hệ_số)
-  const totalBoxes = [...matMap.values()].reduce((s, m) => s + qtyEntryDecimal(m.planned_boxes, m.units), 0)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await supabase.from('TmsOrder').update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
+  if (!linesErr) {
+    // Kế hoạch nhập làm lại theo số MỚI (chưa ai nhận — Bỏ HT bị chặn từ RECEIVING trở đi). Dọn dòng CŨ lọc theo
+    // MỐC chứ không theo danh sách id: id đi trên URL, nhiều mã hàng là vượt trần ~300 id của PostgREST.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (existing) await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', orderId).lt('created_at', nowTs)
+    // SYNC: đích/mã/hình thức có thể đổi sau khi sửa đơn — cập nhật TẠI CHỖ, giữ booking + lịch sử.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await supabase.from('TmsOrder').update({
+      order_code: orderCode, warehouse_id: orderWarehouseId,
+      destination_warehouse_id: destWh ? destWh.id : null,
+      delivery_mode: isSelf ? 'SELF' : 'SCAN',
+      planned_boxes: totalBoxes, updated_at: nowTs,
+    }).eq('id', orderId)
+  }
 
   const plate: string | null = gdo.license_plate || null
   if (existing) {
@@ -2178,7 +2184,9 @@ export async function pushTransferOrder(req: Request, res: Response) {
       return fail(res, 409, 'TRANSFER_ALREADY_PUSHED', `Kho nhận đã ${g.transfer_status === 'RECEIVING' ? 'bắt đầu nhận' : 'nhận xong'} — không đẩy lại`)
     const r = await maybeAutoCreateTransferOrder(gdoId, now(), { manual: true })
     if (!r) return fail(res, 422, 'NO_LINES', 'Chuyến không có dòng hàng để đẩy')
-    if (r.lines_error) return fail(res, 409, 'PLAN_LINES_FAILED', `${r.lines_error} — lệnh đã trỏ ${r.dest?.name ?? 'kho nhận'} nhưng chưa có kế hoạch nhập, kiểm tra rồi bấm đẩy lại.`)
+    // Lệnh CHƯA được gắn kho đích khi bước này hỏng (xem ghi chú thứ tự ghi trong maybeAutoCreateTransferOrder),
+    // nên "bấm đẩy lại" là lối thoát THẬT — không bị chính guard TRANSFER_ALREADY_PUSHED chặn.
+    if (r.lines_error) return fail(res, 409, 'PLAN_LINES_FAILED', `${r.lines_error} — chưa đẩy được cho ${r.dest?.name ?? 'kho nhận'}, bấm đẩy lại sau ít phút.`)
     await logOutboundEvents([{ group_code: g.group_code, gdo_id: gdoId, event_type: 'TRANSFER_PUSHED', source: 'USER', actor: req.user?.name ?? null,
       do_number: null, material_code: null, old_value: cur ? 'lệnh chưa có kho nhận' : 'chưa có lệnh', new_value: `${r.order_code} → ${r.dest?.name ?? '?'} (${r.delivery_mode === 'SCAN' ? 'kho nhận xác nhận trong app' : 'tài xế tự xác nhận'})`,
       detail: `Đẩy lại cho kho nhận: ${r.lines} dòng hàng` }])

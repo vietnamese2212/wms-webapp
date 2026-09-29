@@ -3481,12 +3481,18 @@ export function useUploadGDOExcel() {
   })
 }
 
-// ĐỢT 3: Up VL06O (raw SAP → erp_outbound_orders). Không đụng GDO nên không invalidate.
+// ĐỢT 3: Up VL06O (raw SAP → erp_outbound_orders). Bảng DO SAP đang mở phải đổi ngay (user 29/09: "up vào thì hiện luôn trên table");
+// ['gdos'] vì chuyến chờ dữ liệu SAP tự kích hoạt khi DO về.
 export function useUploadVl06o() {
+  const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
       const { body, headers } = await excelUploadBody(file)
       return apiClient.post(`/wms/outbound/upload-vl06o${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 310000 }).then(r => r.data.data)
+    },
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return
+      for (const key of [['do-sap'], ['do-sap-facets'], ['gdos']]) qc.invalidateQueries({ queryKey: key })
     },
   })
 }
@@ -3554,7 +3560,12 @@ export function useUploadKhvc() {
       const { body, headers } = await excelUploadBody(file)
       return apiClient.post(`/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 310000 }).then(r => r.data.data)
     },
-    onSuccess: (_d, vars) => { if (!vars.preflight) qc.refetchQueries({ queryKey: ['gdos'] }) },
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return
+      qc.refetchQueries({ queryKey: ['gdos'] })
+      // tab Kế hoạch xuất (khvc_lines) + cột "Trong KH" của DO SAP phải đổi ngay sau khi nạp (29/09)
+      for (const key of [['khvc'], ['khvc-facets'], ['do-sap']]) qc.invalidateQueries({ queryKey: key })
+    },
   })
 }
 

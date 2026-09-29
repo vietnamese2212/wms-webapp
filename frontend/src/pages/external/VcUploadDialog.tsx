@@ -74,7 +74,8 @@ function downloadKhvcTemplate(sampleCategory: string) {
 
 const nf = (v: number | undefined | null) => (v ?? 0).toLocaleString('vi-VN')
 
-export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose: () => void }) {
+/** `onUploaded` = ghi thật xong (không gọi ở pha kiểm) — trang chủ dùng để đặt bộ lọc bảng về "Ngày nạp = hôm nay" cho dữ liệu vừa nạp hiện ngay (user 29/09). */
+export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMode; onClose: () => void; onUploaded?: () => void }) {
   const isVl = mode === 'vl06o', isZs = mode === 'zsd02'
   const { mutate: uploadVl06o, isPending: vlBusy } = useUploadVl06o()
   const { mutate: uploadKhvc,  isPending: khBusy } = useUploadKhvc()
@@ -121,7 +122,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
     if (isVl) {
       uploadVl06o({ file }, {
         onSuccess: (r: { rows: number; deliveries: number; skipped_no_key: number; warning_count: number; warnings: string[] }) => {
-          setPf(null)
+          setPf(null); onUploaded?.()
           const parts = [`Lưu ${r.rows} dòng · ${r.deliveries} DO`]
           if (r.skipped_no_key) parts.push(`bỏ ${r.skipped_no_key} dòng thiếu Delivery/Item`)
           let msg = parts.join(' · ')
@@ -133,7 +134,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
     } else if (isZs) {
       uploadZsd02({ file }, {
         onSuccess: (r: Zsd02UploadResult) => {
-          setPf(null)
+          setPf(null); onUploaded?.()
           // Hai sổ nói riêng — người nạp phải thấy dòng CHƯA OD đi đâu, không thì tưởng "mất dòng"
           const lines = [
             `Sổ OD: ${nf(r.od.rows)} dòng · ${nf(r.od.deliveries)} OD — thêm ${nf(r.od.inserted)} · sửa ${nf(r.od.updated)} · giữ nguyên ${nf(r.od.noop)}${r.od.obsoleted ? ` · SAP đã bỏ ${nf(r.od.obsoleted)}` : ''}`,
@@ -152,7 +153,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
       uploadKhvc({ file }, {
         onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }>
           awaiting?: { awaiting?: number; cleared?: number; reopened?: number } }) => {
-          setPf(null)
+          setPf(null); onUploaded?.()
           const items = result.created ?? []
           const nCreated = items.filter(r => r.created && !r.merged).length
           const nMerged  = items.filter(r => r.merged).length

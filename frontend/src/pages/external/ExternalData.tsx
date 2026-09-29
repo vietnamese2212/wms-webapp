@@ -560,7 +560,8 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setDoEditor(null); setSelected(new Set()) }}
         />
       )}
-      {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} />}
+      {/* Nạp xong ⇒ bảng lọc về Ngày nạp = hôm nay, bỏ lọc Ngày giao, về trang 1 — dữ liệu vừa nạp hiện ngay, không phải tự đi chọn ngày (user 29/09) */}
+      {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} onUploaded={() => setDoSap({ dateFrom: TODAY_VN(), dateTo: TODAY_VN(), deliveryFrom: '', deliveryTo: '', page: 1 })} />}
       <SapLineDetailSheet row={detail} kind="od" onClose={() => setDetail(null)} />
     </div>
   )
@@ -1474,7 +1475,8 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setGroupEditor(null); setSelected(new Set()) }}
         />
       )}
-      {showUpload && <VcUploadDialog mode="khvc" onClose={() => setShowUpload(false)} />}
+      {/* Nạp xong ⇒ lọc Ngày nạp = hôm nay (bỏ lọc Ngày xuất, về trang 1) — dữ liệu vừa nạp hiện ngay (user 29/09) */}
+      {showUpload && <VcUploadDialog mode="khvc" onClose={() => setShowUpload(false)} onUploaded={() => setKhvc({ dateFrom: TODAY_VN(), dateTo: TODAY_VN(), exportFrom: '', exportTo: '', page: 1 })} />}
       {dateDialog && (
         <KhvcBulkDateDialog
           ids={[...selected]}

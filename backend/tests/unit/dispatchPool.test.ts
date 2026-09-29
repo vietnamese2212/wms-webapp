@@ -38,6 +38,11 @@ describe('pool lũy tiến — OD đã được lo thì KHÔNG vào đợt ghép
     expect(s.include.size).toBe(0)
     expect(s.excluded).toEqual([])
   })
+  it('tồn đọng đang nằm ở NHÁP MỞ ngày khác ⇒ loại nhưng LUÔN báo (29/09: 223 OD 25/09 kẹt trong nháp 28/09 bị quên, KH 29/09 tưởng đủ)', () => {
+    const s = splitPool([row('5', { delivery_date: '2026-09-21' })], DAY, { ...none, otherDraft: new Map([['5', 'nháp ngày 2026-09-24']]) })
+    expect(s.include.size).toBe(0)
+    expect(s.excluded).toEqual([{ od_number: '5', kind: 'OTHER_DRAFT', info: 'nháp ngày 2026-09-24' }])
+  })
   it('daysBetween theo lịch, không theo giờ', () => { expect(daysBetween('2026-09-30', '2026-10-01')).toBe(1) })
 })
 

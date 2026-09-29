@@ -9,7 +9,8 @@
  *   (3) chưa xuất kho — không dòng nào có chứng từ xuất (mat_doc) hay số đã xuất > 0.
  * OD TỒN ĐỌNG (ngày giao TRƯỚC ngày lập, trong `backlogDays` ngày) đủ ba điều kiện thì cũng vào — user chốt gộp — kèm
  * `late_days` để màn hình đánh dấu "trễ n ngày". Nhóm bị loại chỉ BÁO với OD đúng ngày lập: OD cũ đã đi/đã điều là
- * lịch sử bình thường, liệt kê ra chỉ làm ngập màn hình.
+ * lịch sử bình thường, liệt kê ra chỉ làm ngập màn hình — TRỪ OD đang nằm ở bản nháp mở của ngày khác (LUÔN báo, 29/09:
+ * đó là việc bị giữ ở chỗ khác, người phải thấy để bỏ nháp kia hoặc kéo về).
  * (4) HOÃN (27/09, user: "đơn key một ngày nhưng có thể điều ngày khác · đơn note khác — không tự động được"): OD người đã
  *     đánh dấu Hoãn tới ngày SAU ngày lập, hoặc Không điều (không ngày), KHÔNG vào đợt ghép — và LUÔN được báo (kể cả OD tồn
  *     đọng) vì đó là quyết định của người, phải thấy để còn bỏ hoãn. Tới ngày hoãn thì OD quay lại như OD tồn đọng.
@@ -62,7 +63,9 @@ export function splitPool(
     if (ctx.redo?.has(od)) { excluded.push({ od_number: od, kind: 'REDO_DISPATCHED', info: ctx.redo.get(od) ?? null }); continue }
     const h = ctx.held?.get(od)
     if (h && (h.until == null || h.until > day)) { excluded.push({ od_number: od, kind: 'HELD', info: `${h.until ? `hoãn tới ${h.until}` : 'không điều'} — ${h.reason}`, until: h.until, reason: h.reason }); continue }
-    if (ctx.otherDraft.has(od)) { report('OTHER_DRAFT', ctx.otherDraft.get(od) ?? null); continue }
+    // Bản nháp KHÁC đang giữ OD ⇒ LUÔN báo, kể cả OD tồn đọng (29/09): Ba Vì lập KH 29/09 thấy 191 OD tưởng đủ, trong khi
+    // 223 OD ngày 25/09 nằm im trong bản nháp 28/09 ai đó quên — không phải lịch sử, là việc đang bị giữ ở chỗ khác.
+    if (ctx.otherDraft.has(od)) { excluded.push({ od_number: od, kind: 'OTHER_DRAFT', info: ctx.otherDraft.get(od) ?? null }); continue }
     include.set(od, { delivery_date: dd, late_days: dd ? Math.max(0, daysBetween(dd, day)) : 0 })
   }
   return { include, excluded }

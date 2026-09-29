@@ -377,7 +377,7 @@ export default function Dispatch() {
                   <InfoTip tip={<div className="space-y-0.5 text-xs">
                     <div><b>{plan.warehouse?.name}</b> · giao {formatDate(plan.plan_date)}</div>
                     <div>Lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</div>
-                    <div>Xe xá ≤ {plan.params.max_drops ?? 3} điểm giao · xe pallet ≤ {plan.params.pallet_max_stops ?? 1} khách · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
+                    <div>Tối đa {plan.params.max_drops ?? 'không giới hạn'} điểm giao / xe (dòng xe · kênh · khách khai riêng thì lấy số nhỏ nhất) · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
                     <div>{plan.params.allow_mix_categories === false ? 'Không ghép nhiều Loại kho trên một chuyến' : 'Cho ghép nhiều Loại kho trên một chuyến'}{plan.params.follow_categories?.length ? ` · đi kèm đơn: ${plan.params.follow_categories.join(', ')}` : ''}</div>
                     <div>Pool {nf(plan.params.pool_ods)} OD · {nf(plan.params.in_plan)} OD đã có trong Kế hoạch xuất</div>
                     <div className="text-slate-500">Tham số theo kho: Cài đặt WMS → Kho → "XUẤT — Điều vận".</div>

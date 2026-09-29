@@ -812,7 +812,7 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 - `dispatch_trip_od.is_transfer boolean NOT NULL DEFAULT false` — OD trung chuyển (khách trỏ kho hoặc SAP STO/INTERNAL), chụp lúc máy lập để cửa sửa nháp chọn dòng xe đúng luật.
 
 **`20260925c_dispatch_pallet_loose.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
-- `Customer.load_mode text NOT NULL DEFAULT 'LOOSE'` CHECK PALLET|LOOSE — khách đi pallet / đi xá (chưa khai = xá).
+- ~~`Customer.load_mode`~~ · ~~`Warehouse.dispatch_pallet_max_stops`~~ · ~~`dispatch_trip(.od).load_mode`~~ · ~~`Customer.load_mode_by_category`~~ · ~~RPC `customer_set_load_mode_cat`~~ — **CHẾT từ 29/09 (`20260929c_drop_load_mode.sql`, đã áp staging: COMMENT + backfill `vehicle_model.max_drops = 1` cho dòng xe con của Loại xe pallet)** — app không đọc/ghi; DROP ở đợt dọn (cùng `Warehouse.shipto_codes`).
 - `Warehouse.dispatch_pallet_max_stops integer NOT NULL DEFAULT 1` CHECK 1..20 — số khách tối đa trên một xe pallet.
 - `dispatch_trip.load_mode` · `dispatch_trip_od.load_mode` (text NULL, CHECK) — kiểu đi của xe / của OD trên nháp (người đổi được).
 - `vehicle_model.note text` — ghi chú (staging: đánh dấu sức chứa GIẢ ĐỊNH).

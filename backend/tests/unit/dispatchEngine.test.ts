@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
-  resolveLoadMode, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, splitLoad, priceCombo,
+  mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, splitLoad, priceCombo,
   type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
@@ -375,39 +375,40 @@ describe('vá 25/09 — bin có hàng lạnh phải vừa MỘT dòng xe vừa p
   })
 })
 
-describe('luật 7 — khách Pallet / Xá (user chốt 25/09)', () => {
-  const P10 = model({ id: 'P10', max_pallets: 10 })
+describe('luật 7 BỎ (user 29/09: "dòng xe là đơn vị thấp hơn của loại xe — bỏ loại xe, chọn dòng xe luôn")', () => {
+  // Không còn kiểu đi Pallet / Xá của khách hay của xe. "Xe pallet một khách" = `max_drops = 1` khai ở CHÍNH dòng xe;
+  // hai khách chung xe hay không do danh sách "Dòng xe được vào" GIAO nhau quyết.
+  const P10 = model({ id: 'P10', max_pallets: 10, max_drops: 1 })
   const T8 = model({ id: 'T8', capacity_mode: 'TON', max_pallets: null, max_tons: 8, tariff_unit: 'PER_TRIP' })
-  const inp = (ods: EngineOd[], p: Partial<typeof params & { pallet_max_stops: number }> = {}) => input(ods, { models: [P10, T8], tariffs: [], params: { ...params, ...p } })
-  it('hai khách PALLET cùng phường ⇒ HAI xe pallet (mặc định 1 khách / xe pallet)', () => {
-    const r = runDispatch(inp([od('1', 'W1', 3, { load_mode: 'PALLET' }), od('2', 'W1', 3, { load_mode: 'PALLET' })]))
+  const inp = (ods: EngineOd[], models: EngineModel[] = [P10, T8]) => input(ods, { models, tariffs: [] })
+  it('dòng xe khai max_drops = 1 ⇒ hai khách cùng phường được vào đúng dòng đó đi HAI xe, mỗi xe một khách', () => {
+    const r = runDispatch(inp([od('1', 'W1', 3, { allowed_models: ['P10'] }), od('2', 'W1', 3, { allowed_models: ['P10'] })]))
     expect(r.trips).toHaveLength(2)
-    expect(r.trips.every(t => t.vehicle_model?.id === 'P10' && t.stops === 1 && t.load_mode === 'PALLET')).toBe(true)
+    expect(r.trips.every(t => t.vehicle_model?.id === 'P10' && t.stops === 1)).toBe(true)
   })
-  it('tham số kho cho 2 khách / xe pallet ⇒ MỘT xe', () => {
-    const r = runDispatch(inp([od('1', 'W1', 3, { load_mode: 'PALLET' }), od('2', 'W1', 3, { load_mode: 'PALLET' })], { pallet_max_stops: 2 }))
+  it('dòng xe đó khai max_drops = 2 ⇒ MỘT xe hai khách (cấu hình ở Mã dòng xe, không phải tham số kho)', () => {
+    const r = runDispatch(inp([od('1', 'W1', 3, { allowed_models: ['P10'] }), od('2', 'W1', 3, { allowed_models: ['P10'] })], [model({ ...P10, max_drops: 2 }), T8]))
     expect(r.trips).toHaveLength(1); expect(r.trips[0].stops).toBe(2)
   })
-  it('khách XÁ ⇒ xe tải theo tấn, ghép nhiều khách; KHÔNG chung xe với khách Pallet cùng phường', () => {
-    const r = runDispatch(inp([
-      od('1', 'W1', 2, { load_mode: 'LOOSE' }), od('2', 'W1', 2, { load_mode: 'LOOSE' }), od('3', 'W1', 2, { load_mode: 'PALLET' }),
-    ]))
-    const loose = r.trips.filter(t => t.load_mode === 'LOOSE')
-    expect(loose).toHaveLength(1)
-    expect(loose[0].vehicle_model?.id).toBe('T8'); expect(loose[0].stops).toBe(2)
-    const pal = r.trips.filter(t => t.load_mode === 'PALLET')
-    expect(pal).toHaveLength(1); expect(pal[0].vehicle_model?.id).toBe('P10')
+  it('khách A chỉ vào T8, khách B chỉ vào P10 ⇒ không dòng xe chung ⇒ hai xe; cả hai cùng vào T8 ⇒ một xe', () => {
+    const r = runDispatch(inp([od('1', 'W1', 2, { allowed_models: ['T8'] }), od('2', 'W1', 2, { allowed_models: ['P10'] })]))
+    expect(r.trips).toHaveLength(2)
+    expect(r.trips.map(t => t.vehicle_model?.id).sort()).toEqual(['P10', 'T8'])
+    const r2 = runDispatch(inp([od('1', 'W1', 2, { allowed_models: ['T8'] }), od('2', 'W1', 2, { allowed_models: ['T8'] })]))
+    expect(r2.trips).toHaveLength(1); expect(r2.trips[0].vehicle_model?.id).toBe('T8'); expect(r2.trips[0].stops).toBe(2)
   })
-  it('khách Xá mà đội xe không có xe tấn ⇒ OD vào danh sách không lên xe, nói rõ lý do', () => {
-    const r = runDispatch(input([od('1', 'W1', 2, { load_mode: 'LOOSE' })], { models: [P10], tariffs: [] }))
-    expect(r.trips).toHaveLength(0)
-    expect(r.unplanned[0].reason).toMatch(/Xá/)
+  it('không còn họ xe ngầm: OD không khai danh sách (dòng cũ) mà đội xe chỉ có xe đo bằng pallet vẫn lên xe đó, câu lý do không nói "Pallet / Xá"', () => {
+    const r = runDispatch(inp([od('1', 'W1', 2), od('2', 'W1', 2)], [model({ id: 'P9' })]))
+    expect(r.trips).toHaveLength(1); expect(r.trips[0].stops).toBe(2)
+    const r2 = runDispatch(inp([od('3', 'W1', 2)], [model({ id: 'Z', max_pallets: null })]))
+    expect(r2.trips).toHaveLength(0)
+    expect(r2.unplanned[0].reason).not.toMatch(/Pallet|Xá/)
   })
 })
 describe('luật 8 BỎ (user 28/09: "dòng xe chọn theo khai báo của khách, khách không khai thì không chọn")', () => {
   const T15 = model({ id: 'T15', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP' })
   const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP' })
-  const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: 20_000 })], ...over })
+  const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { lines: [line(1, { kg: 20_000 })], ...over })
   const inp = (ods: EngineOd[]) => input(ods, { models: [T15, CONT], tariffs: [] })
   it('khách chưa khai (danh sách rỗng) ⇒ KHÔNG chọn xe nào: không chuyến, unplanned code NO_VEHICLE nêu chỗ khai', () => {
     const r = runDispatch(inp([big('1', { allowed_models: [] })]))
@@ -425,25 +426,26 @@ describe('luật 8 BỎ (user 28/09: "dòng xe chọn theo khai báo của khác
     expect(r2.trips.every(t => t.vehicle_model?.id === 'T15')).toBe(true)
   })
 })
-describe('luật 7 — họ xe pallet theo dòng xe CHA (user 26/09: "đi xe pallet mà nhét cả xe SCA vào xe pallet là sai")', () => {
+describe('hàng lạnh của khách vào xe pallet lẫn xe SCA (29/09: không còn luật 7b đổi kiểu đi — chỉ còn danh sách + điều kiện bảo quản)', () => {
   const COLD = 'CHILL'
-  const P16 = model({ id: 'P16', max_pallets: 16, max_tons: 16, pallet_truck: true, serve_conditions: ['AMBIENT'] })
-  const MIX16 = model({ id: 'MIX16', parent_type_name: 'XE SCA', max_pallets: 16, max_tons: 16, pallet_truck: false, serve_conditions: ['CHILL', 'AMBIENT'] })
-  const coldOd = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'PALLET', lines: [line(5, { condition: COLD })], ...over })
-  it('xe kết hợp nóng/lạnh đo bằng pallet mà cha là XE SCA ⇒ KHÔNG phải xe pallet: khách pallet hàng thường chỉ lên P16', () => {
-    const r = runDispatch(input([od('1', 'W1', 5, { load_mode: 'PALLET', lines: [line(5, { condition: 'AMBIENT' })] })], { models: [P16, MIX16], tariffs: [] }))
+  const P16 = model({ id: 'P16', max_pallets: 16, max_tons: 16, serve_conditions: ['AMBIENT'] })
+  const MIX16 = model({ id: 'MIX16', parent_type_name: 'XE SCA', max_pallets: 16, max_tons: 16, serve_conditions: ['CHILL', 'AMBIENT'] })
+  const coldOd = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { allowed_models: ['P16', 'MIX16'], lines: [line(5, { condition: COLD })], ...over })
+  it('hàng thường ⇒ lên xe đúng mức (P16), không rơi về xe kết hợp', () => {
+    const r = runDispatch(input([od('1', 'W1', 5, { allowed_models: ['P16', 'MIX16'], lines: [line(5, { condition: 'AMBIENT' })] })], { models: [P16, MIX16], tariffs: [], params: { ...params, combo_conditions: ['AMBIENT', 'CHILL'] } }))
     expect(r.trips).toHaveLength(1)
-    expect(r.trips[0].vehicle_model?.id).toBe('P16'); expect(r.trips[0].load_mode).toBe('PALLET')
+    expect(r.trips[0].vehicle_model?.id).toBe('P16')
   })
-  it('khách pallet có hàng LẠNH, xe pallet không chở lạnh ⇒ OD đi xe SCA (xá) kèm ghi chú, không bị bỏ ra ngoài', () => {
+  it('hàng LẠNH ⇒ chỉ MIX16 phục vụ ⇒ lên MIX16, không cảnh báo "khách đi Pallet"', () => {
     const r = runDispatch(input([coldOd('2')], { models: [P16, MIX16], tariffs: [] }))
     expect(r.unplanned).toHaveLength(0)
-    expect(r.trips[0].vehicle_model?.id).toBe('MIX16'); expect(r.trips[0].load_mode).toBe('LOOSE')
-    expect(r.trips[0].warnings.join(' ')).toMatch(/khách đi Pallet có hàng .*không xe pallet nào chở được, máy xếp lên MIX16 \(XE SCA\)/)
+    expect(r.trips[0].vehicle_model?.id).toBe('MIX16')
+    expect(r.trips[0].warnings.join(' ')).not.toMatch(/Pallet|Xá/)
   })
-  it('không có xe SCA nào chở lạnh ⇒ giữ kiểu Pallet (luật 4 nói đúng nguyên nhân thiếu xe lạnh), không đổi kiểu cho có', () => {
-    const r = runDispatch(input([coldOd('3')], { models: [P16], tariffs: [] }))
-    expect(r.trips.every(t => t.load_mode !== 'LOOSE')).toBe(true)
+  it('không xe nào trong danh sách chở lạnh ⇒ cảnh báo luật 4 nói đúng "không dòng xe nào phục vụ điều kiện bảo quản"', () => {
+    const r = runDispatch(input([coldOd('3', { allowed_models: ['P16'] })], { models: [P16], tariffs: [] }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].warnings.join(' ')).toMatch(/không dòng xe nào phục vụ điều kiện bảo quản/i)
   })
 })
 describe('luật 9 — không trộn Loại kho trên một chuyến (user 26/09: "FG01 đi FG01, FG02 đi FG02, muốn đi chung phải bật")', () => {
@@ -486,18 +488,7 @@ describe('luật 9 — không trộn Loại kho trên một chuyến (user 26/09
     expect(r.trips).toHaveLength(1)
   })
 })
-describe('kiểu đi theo KHÁCH × LOẠI KHO (user 26/09: "khách A nếu FG01 thì đi pallet, nếu FG02 thì đi xe thường")', () => {
-  it('loại chính có khai ⇒ theo khai; không khai ⇒ kiểu chung của khách; chưa khai gì ⇒ Xá', () => {
-    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET', FG02: 'LOOSE' }, ['FG01'])).toBe('PALLET')
-    expect(resolveLoadMode('PALLET', { FG01: 'PALLET', FG02: 'LOOSE' }, ['FG02'])).toBe('LOOSE')
-    expect(resolveLoadMode('PALLET', { FG01: 'LOOSE' }, ['FG02'])).toBe('PALLET')
-    expect(resolveLoadMode(null, {}, ['FG01'])).toBe('LOOSE')
-  })
-  it('OD hai loại chính khai hai kiểu KHÁC nhau hoặc chỉ khai một loại ⇒ rơi về kiểu chung; hai loại cùng kiểu ⇒ theo khai', () => {
-    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET', FG02: 'LOOSE' }, ['FG01', 'FG02'])).toBe('LOOSE')
-    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET' }, ['FG01', 'FG02'])).toBe('LOOSE')
-    expect(resolveLoadMode('LOOSE', { FG01: 'PALLET', FG02: 'PALLET' }, ['FG01', 'FG02'])).toBe('PALLET')
-  })
+describe('Loại kho chính của OD', () => {
   it('mainCatsOf bỏ loại đi kèm + dòng chưa khai loại', () => {
     expect(mainCatsOf([{ category: 'PM01' }, { category: 'FG01' }, { category: null }, { category: 'FG01' }], ['PM01'])).toEqual(['FG01'])
   })
@@ -533,11 +524,11 @@ describe('ĐK bảo quản theo VỊ TRÍ (user 26/09: "kho RM01 có cả kho l�
 })
 describe('xe LỚN NHẤT trong họ xe trộn hai cách đo + chuyến vượt tải (đo Bàu Bàng 26/09: 6 chuyến 18–27 tấn lên xe 1 tấn, tải 2.737 %)', () => {
   // họ xá sau 26/09 có cả xe kết hợp đo bằng PALLET (17 pallet / 16 tấn) lẫn xe tải đo bằng TẤN (30 tấn)
-  const K17 = model({ id: 'K17', parent_type_name: 'XE SCA', capacity_mode: 'PALLET', max_pallets: 17, max_tons: 16, pallet_truck: false })
+  const K17 = model({ id: 'K17', parent_type_name: 'XE SCA', capacity_mode: 'PALLET', max_pallets: 17, max_tons: 16 })
   const T1 = model({ id: 'T1', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 1, tariff_unit: 'PER_TRIP', pallet_truck: false })
   const T30 = model({ id: 'T30', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 30, tariff_unit: 'PER_TRIP', pallet_truck: false })
   const tar = [tariff('A', 'K17', 'W1', 50_000), tariff('A', 'T1', 'W1', 300_000), tariff('A', 'T30', 'W1', 5_000_000)]
-  const heavy = (n: string, tons: number) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(tons * 1.06, { kg: tons * 1000 })] })
+  const heavy = (n: string, tons: number) => od(n, 'W1', 0, { lines: [line(tons * 1.06, { kg: tons * 1000 })] })
   it('dòng hàng 27 tấn · họ có xe 30 tấn ⇒ KHÔNG vượt tải, lên xe 30 tấn (bản cũ coi xe 17 pallet là lớn nhất vì so pallet trước)', () => {
     const r = runDispatch(input([heavy('1', 27)], { models: [K17, T1, T30], tariffs: tar }))
     expect(r.trips).toHaveLength(1)
@@ -581,7 +572,7 @@ describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại k
   const T15 = model({ id: 'T15', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP', underload_pct: 20 })   // ngưỡng thấp ⇒ 4 tấn vẫn "đủ tải" ⇒ không khai thì xe 15 tấn RẺ HƠN thắng
   const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP' })
   const tar = [tariff('A', 'T5', 'W1', 900_000), tariff('A', 'T15', 'W1', 800_000), tariff('A', 'CONT', 'W1', 700_000)]
-  const tonOd = (n: string, t: number, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: t * 1000, material_code: `m${n}` })], ...over })
+  const tonOd = (n: string, t: number, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { lines: [line(1, { kg: t * 1000, material_code: `m${n}` })], ...over })
   it('khách chỉ được vào xe 5 tấn ⇒ xe 5 tấn dù xe 15 tấn rẻ hơn; khách không khai ⇒ xe 15 tấn', () => {
     const r = runDispatch(input([tonOd('1', 4, { allowed_models: ['T5'] })], { models: [T5, T15, CONT], tariffs: tar }))
     expect(r.trips[0].vehicle_model?.id).toBe('T5')
@@ -590,7 +581,7 @@ describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại k
   })
   it('OD 12 tấn nhiều dòng của khách chỉ vào xe 5 tấn ⇒ tách theo xe 5 tấn, mọi chuyến là xe 5 tấn', () => {
     const lines = [4, 4, 4].map((t, i) => line(1, { kg: t * 1000, material_code: `L${i}` }))
-    const r = runDispatch(input([od('3', 'W1', 0, { load_mode: 'LOOSE', allowed_models: ['T5'], lines })], { models: [T5, T15], tariffs: tar }))
+    const r = runDispatch(input([od('3', 'W1', 0, { allowed_models: ['T5'], lines })], { models: [T5, T15], tariffs: tar }))
     expect(r.trips.length).toBe(3)
     expect(r.trips.every(t => t.vehicle_model?.id === 'T5' && !t.oversize)).toBe(true)
   })
@@ -608,7 +599,7 @@ describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại k
     expect(r.trips.find(t => t.ods.some(o => o.od_number === '8'))?.vehicle_model?.id).toBe('T15')
   })
   it('khách xuất khẩu khai container ⇒ ĐI CONTAINER nguyên OD; khách khai xe khác (không tick container) ⇒ không lên container', () => {
-    const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { load_mode: 'LOOSE', lines: [line(1, { kg: 24_750, material_code: `e${n}` })], ...over })
+    const big = (n: string, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { lines: [line(1, { kg: 24_750, material_code: `e${n}` })], ...over })
     const r = runDispatch(input([big('9', { allowed_models: ['CONT'] })], { models: [T5, T15, CONT], tariffs: tar }))
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].vehicle_model?.id).toBe('CONT')

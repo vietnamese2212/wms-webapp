@@ -29,9 +29,9 @@ import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/componen
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan, useSetDispatchOdMode,
+  useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
   useHoldDispatchOds, useUnholdDispatchOds, useResyncDispatchOd,
-  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchLoadMode,
+  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview,
 } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -89,7 +89,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   const editableTrip = (t: DispatchTrip) => editable && EDITABLE.includes(tripStatus(t))
 
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
-  const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan(), setMode = useSetDispatchOdMode()
+  const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan()
   const fresh = useMemo(() => new Set(plan.params.fresh_ods ?? []), [plan.params.fresh_ods])
   const hold = useHoldDispatchOds(), unhold = useUnholdDispatchOds(), resync = useResyncDispatchOd()
   const perms = (useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null) ?? null
@@ -304,21 +304,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   const exBy = excluded.reduce<Record<string, number>>((m, x) => { m[x.kind] = (m[x.kind] ?? 0) + 1; return m }, {})
   const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', HELD: 'không điều', REDO_DISPATCHED: 'DO tạo lại – đã điều' }
 
-  // Kiểu đi của OD (khách Pallet / Xá — danh mục Khách hàng, user chốt 25/09). Bấm = đổi riêng OD này; OD ở nguyên xe,
-  // xe báo "OD khách Xá trên xe pallet" nếu lệch. Muốn đổi cả xe thì dùng nút trên thẻ xe.
-  const modeChip = (o: DispatchTripOd, canEdit: boolean) => {
-    const m: DispatchLoadMode = o.load_mode === 'PALLET' ? 'PALLET' : 'LOOSE'
-    const cls = `rounded px-1 text-[9px] font-semibold ${m === 'PALLET' ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'}`
-    const label = m === 'PALLET' ? 'Pallet' : 'Xá'
-    if (!canEdit) return <span className={cls} title={m === 'PALLET' ? 'Khách đi Pallet' : 'Khách đi Xá'}>{label}</span>
-    return (
-      <button type="button" className={`${cls} hover:ring-1 hover:ring-sky-400`} disabled={setMode.isPending}
-        title={`Khách đi ${label} — bấm để đổi OD này sang ${m === 'PALLET' ? 'Xá' : 'Pallet'}`}
-        onClick={e => { e.stopPropagation(); setMode.mutateAsync({ plan_id: plan.id, ids: sel.has(o.id) ? [...sel] : [o.id], load_mode: m === 'PALLET' ? 'LOOSE' : 'PALLET' }).catch(er => err(er, 'Không đổi được kiểu đi')) }}>
-        {label}
-      </button>
-    )
-  }
+  // (29/09: chip Pallet / Xá của OD bỏ — kiểu đi không còn là cấu hình; dòng xe khách được vào quyết tất cả)
 
   // Chip LOẠI KHO cùng màu badge của WMS (Cài đặt WMS → Loại kho, user 27/09: "khớp màu trong wms") — xe chở loại nào nhìn là biết.
   // Loại "đi kèm đơn" (POSM) in viền đứt: nó ké theo đơn, không quyết loại của xe. Thứ tự = loại chiếm tải lớn nhất trước.
@@ -350,7 +336,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
             {!o.trip_id && fresh.has(o.od_number) && <NewOdChip />}
             {(o.late_days ?? 0) > 0 && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800" title={`Ngày giao ${o.delivery_date ?? '?'} — chưa điều, chưa đi`}>trễ {o.late_days} ngày</span>}
             {fl && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title={fl.info ?? undefined}>{FLAG_VI[fl.kind]}</span>}
-            {modeChip(o, !!editable && (!tr || editableTrip(tr)))}
             {catChips(catsByLoad([o.cat_load]))}
             <span className="ml-auto tabular-nums text-slate-600 whitespace-nowrap">{nf(o.pallets, 1)} pl · {nf(o.tons, 1)} t</span>
           </div>
@@ -459,27 +444,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     if (g && !f.boardOpen.includes(g.k)) setF({ boardOpen: [...f.boardOpen, g.k] })
   }, [justHit]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const flipMode = (t: DispatchTrip, m: DispatchLoadMode) => patchTrip.mutateAsync({ id: t.id, load_mode: m }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được kiểu xe'))
-  // SWITCH Pallet | Xá trên thẻ xe (user 25/09 tối: "nút đổi là switch — đổi từ loại này sang loại kia, thay vì chỉ có cái icon")
-  const modeSwitch = (t: DispatchTrip) => {
-    if (!t.load_mode) return null
-    const can = editableTrip(t) && t.ods.length > 0
-    return (
-      <span className="inline-flex shrink-0 rounded border border-slate-300 overflow-hidden text-[10px] font-semibold" role="group" aria-label="Kiểu xe">
-        {(['PALLET', 'LOOSE'] as const).map(k => {
-          const on = t.load_mode === k
-          return (
-            <button key={k} type="button" disabled={!can || on || patchTrip.isPending} aria-pressed={on}
-              title={on ? `Xe đang đi ${k === 'PALLET' ? 'PALLET' : 'XÁ'}` : `Đổi xe này sang ${k === 'PALLET' ? 'xe PALLET' : 'xe XÁ (xe tải theo tấn, ghép nhiều khách)'} — máy chọn lại dòng xe + ĐVVT`}
-              onClick={e => { e.stopPropagation(); void flipMode(t, k) }}
-              className={`px-1.5 py-0.5 ${on ? (k === 'PALLET' ? 'bg-sky-600 text-white' : 'bg-slate-700 text-white') : can ? 'bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-800' : 'bg-white text-slate-300'}`}>
-              {k === 'PALLET' ? 'Pallet' : 'Xá'}
-            </button>
-          )
-        })}
-      </span>
-    )
-  }
+  // (29/09: switch Pallet | Xá trên thẻ xe bỏ — đổi xe = "Đổi dòng xe" trong panel xe)
 
   // SWITCH "Ghép Loại kho khác" trên TỪNG thẻ xe (user 27/09: "TẮT = chặn thả"): mặc định theo tham số kế hoạch (kho);
   // tắt thì thả OD khác Loại kho chính vào xe bị từ chối kèm lý do, bật thì cho ghép không cảnh báo
@@ -504,14 +469,13 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     const iss = ISSUE_ORDER.filter(k => issuesOf(t, ctx).includes(k))
     const isHover = hover?.target === t.id
     const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : 'border-slate-200'
-    // xe pallet đếm theo "số khách / xe pallet" của kho (mặc định 1), xe xá theo "điểm giao tối đa"
-    const lim = t.load_mode === 'PALLET' ? (plan.params.pallet_max_stops ?? 1) : (plan.params.max_drops ?? 3)
+    // trần điểm giao của KHO (dòng xe / kênh / khách khắt khe hơn thì xe báo qua cảnh báo "Vượt số khách cùng xe"); null = không giới hạn
+    const lim = plan.params.max_drops ?? null
     return (
       <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
         className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
         <div className="flex items-center gap-1.5 px-2 pt-1.5">
           <span className="font-mono text-xs font-semibold" title={`Số xe ${t.group_code}`}>#{t.seq}</span>
-          {modeSwitch(t)}
           <div className="ml-auto flex items-center gap-0.5 shrink-0">
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
             {ed && (
@@ -556,7 +520,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
         {mixSwitch(t)}
         {t.ods.length > 0 && (
           <div className="px-2 pt-0.5 text-[10px] text-slate-600 leading-snug">
-            <span className={t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}/{lim} {t.load_mode === 'PALLET' ? 'khách' : 'điểm'}</span>
+            <span className={lim != null && t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}{lim != null ? `/${lim}` : ''} điểm</span>
             <span className="text-slate-300"> · </span>
             <span className="break-words">{t.wards.join(', ') || '—'}</span>
           </div>

@@ -14,13 +14,13 @@ const DAY = '2027-03-16'
 const SAP = 'QA61X09', W1 = 'QA61-W1', W2 = 'QA61-W2', REGION = 'QA61R'
 const OD = ['QA61OD1', 'QA61OD2', 'QA61OD3'], SHIP = ['QA61SHIP1', 'QA61SHIP2', 'QA61SHIP3']
 const nowIso = () => new Date().toISOString()
-// Khách fixture đi PALLET (xe QA là xe pallet) và cho tới 3 khách / xe pallet — để các kịch bản ghép OD1+OD2 cùng xe giữ nguyên;
-// luật mặc định 1 khách / xe pallet được kiểm riêng ở [11] (user chốt 25/09).
+// 29/09 (user: "bỏ loại xe, chọn dòng xe luôn"): KHÔNG còn kiểu đi Pallet / Xá của khách hay của xe. Dòng xe QA không khai
+// `max_drops` ⇒ OD1+OD2 cùng xe như các kịch bản cũ; "xe pallet chỉ một khách" = `max_drops = 1` trên dòng xe, kiểm ở [11].
 
 await login(); await resolveFixtures()
 const WH = FIX.WH_QR.id
 const PREFIX = `${FIX.WH_QR.code}_X_160327_`
-const PLAN_BODY = { warehouse_id: WH, plan_date: DAY, pallet_max_stops: 3 }
+const PLAN_BODY = { warehouse_id: WH, plan_date: DAY }
 const cos = await restAll('TransportCompany', `select=id,code,name,tender_required&code=in.(DA,HA)`)
 const DA = cos.find(c => c.code === 'DA'), HA = cos.find(c => c.code === 'HA')
 if (!DA || !HA) throw new Error('Fixture: cần ĐVVT DA và HA trong danh mục TransportCompany')
@@ -136,7 +136,7 @@ try {
   const ALLV = { '*': (await restAll('vehicle_model', 'select=id&is_active=eq.true')).map(v => v.id) }
   for (let i = 0; i < 3; i++) {
     const ward = i < 2 ? W1 : W2
-    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', dispatch_vehicles: ALLV, updated_at: nowIso() })
+    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, updated_at: nowIso() })
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
       ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
@@ -353,7 +353,7 @@ try {
   await cleanupTrips()
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
   const OD4 = 'QA61OD4', MAT_LA = 'QA61MAKHONGCO'
-  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, load_mode: 'PALLET', dispatch_vehicles: ALLV, updated_at: nowIso() })
+  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, updated_at: nowIso() })
   await restWrite('erp_outbound_orders', 'POST', null, {
     id: crypto.randomUUID(), od_number: OD4, od_item: '10', material_code: MAT_LA, qty_base: 2 * perPallet,
     ship_to_code: 'QA61SHIP4', ship_to_name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null,
@@ -509,36 +509,42 @@ try {
     pl2.s === 201 && !rowOf(P2, OD[0]) && ex1?.kind === 'SHIPPED' && !!r6?.trip_id && r6?.late_days === 2 && r6?.delivery_date === LATE && P2?.summary?.late_ods === 1,
     `http=${pl2.s} ${pl2.j?.error?.message ?? ''} ex=${JSON.stringify(ex1 ?? null)} late=${JSON.stringify({ t: r6?.trip_id != null, d: r6?.late_days, dd: r6?.delivery_date, n: P2?.summary?.late_ods })}`)
 
-  // ── [11] KHÁCH PALLET / XÁ + MỞ LẠI (user chốt 25/09 vòng 2) ─────────────────────────────────────────
-  // "Xe pallet bản chất có 1 khách, xá ghép nhiều khách; config số khách · bấm nút trên xe là xe thành xe xá · lưu rồi sửa lại được"
+  // ── [11] SỐ KHÁCH TRÊN MỘT XE THEO DÒNG XE + MỞ LẠI (29/09 — user: "bỏ loại xe, chọn dòng xe luôn") ────────────
+  // Không còn kiểu đi Pallet / Xá. "Xe pallet chỉ một khách" = `max_drops = 1` khai ở CHÍNH dòng xe (Cài đặt TMS → Mã dòng xe);
+  // hai khách cùng phường được vào cùng một dòng xe thì ghép hay không do trần đó quyết.
   await cleanupTrips()
   await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { mat_doc: null, updated_at: nowIso() })
-  const cust1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
-  const cBad = await api(`/masterdata/customers/${cust1.id}`, 'PUT', { load_mode: 'KHONG' })
-  const cOk = await api(`/masterdata/customers/${cust1.id}`, 'PUT', { load_mode: 'PALLET' })
-  check('11a. Danh mục Khách hàng: kiểu đi sai → 400 · PALLET → 200 và cột lưu đúng', cBad.s === 400 && cOk.s === 200 && cOk.j?.data?.load_mode === 'PALLET',
-    `bad=${cBad.s} ok=${cOk.s} mode=${cOk.j?.data?.load_mode}`)
-  const p11 = await mkPlan({ warehouse_id: WH, plan_date: DAY })   // KHÔNG đè ⇒ luật kho mặc định 1 khách / xe pallet
+  const cust1 = (await restAll('Customer', `select=id,dispatch_separate&ship_to_code=eq.${SHIP[0]}`))[0]
+  const cOld = await api(`/masterdata/customers/${cust1.id}`, 'PUT', { load_mode: 'PALLET', load_mode_by_category: { [MAT_CAT]: 'PALLET' } })
+  const cOldRow = (await restAll('Customer', `select=load_mode,load_mode_by_category&id=eq.${cust1.id}`))[0]
+  const bOld = await api('/masterdata/customers/bulk', 'PATCH', { ids: [cust1.id], patch: { load_mode: 'PALLET' } })
+  check('11a. Kiểu đi Pallet / Xá KHÔNG còn là cấu hình: form gửi load_mode bị bỏ qua (200, cột giữ mặc định) · hàng loạt → 400 nêu tên trường',
+    cOld.s === 200 && cOldRow?.load_mode === 'LOOSE' && !Object.keys(cOldRow?.load_mode_by_category ?? {}).length && bOld.s === 400 && /load_mode/.test(bOld.j?.error?.message ?? ''),
+    `put=${cOld.s} row=${JSON.stringify(cOldRow)} bulk=${bOld.s} ${bOld.j?.error?.message ?? ''}`)
+  const d1 = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: 1 })
+  const p11 = await mkPlan(PLAN_BODY)
   const P11 = p11.j?.data
-  const palTrips = (P11?.trips ?? []).filter(t => t.load_mode === 'PALLET')
-  check('11b. Khách PALLET, kho mặc định 1 khách / xe pallet ⇒ OD1 và OD2 (cùng phường, khác khách) đi HAI xe; mọi xe pallet chỉ một khách',
-    p11.s === 201 && tripOfOd(P11, OD[0])?.id !== tripOfOd(P11, OD[1])?.id && palTrips.length >= 2 && palTrips.every(t => new Set(t.ods.map(o => o.ship_to_code)).size === 1),
-    `http=${p11.s} ${p11.j?.error?.message ?? ''} trips=${(P11?.trips ?? []).map(t => `${t.load_mode}:${[...new Set(t.ods.map(o => o.ship_to_code))].join('+')}`).join(' ')}`)
+  check('11b. Dòng xe QA khai max_drops = 1 ⇒ OD1 và OD2 (cùng phường, khác khách, cùng dòng xe) đi HAI xe, mỗi xe một khách',
+    d1.s === 200 && p11.s === 201 && !!tripOfOd(P11, OD[0]) && !!tripOfOd(P11, OD[1]) && tripOfOd(P11, OD[0])?.id !== tripOfOd(P11, OD[1])?.id
+    && (P11?.trips ?? []).every(t => new Set(t.ods.map(o => o.ship_to_code)).size <= 1),
+    `drops=${d1.s} http=${p11.s} ${p11.j?.error?.message ?? ''} trips=${(P11?.trips ?? []).map(t => [...new Set(t.ods.map(o => o.ship_to_code))].join('+')).join(' ')}`)
   const X11 = tripOfOd(P11, OD[0])
-  const odm = await api(`/tms/dispatch/plans/${P11.id}/ods`, 'PATCH', { ids: [rowOf(P11, OD[0]).id], load_mode: 'LOOSE' })
-  const X11b = tripOfOd(odm.j?.data, OD[0])
-  check('11c. Đổi kiểu đi của MỘT OD sang Xá → OD ở nguyên xe, dòng OD mang LOOSE, xe cảnh báo "OD khách đi Xá đang nằm trên xe pallet"',
-    odm.s === 200 && X11b?.id === X11?.id && rowOf(odm.j?.data, OD[0])?.load_mode === 'LOOSE' && /khách đi Xá đang nằm trên xe pallet/.test((X11b?.detail?.warnings ?? []).join(' ')),
-    `http=${odm.s} ${odm.j?.error?.message ?? ''} warn=${(X11b?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
-  const odmBad = await api(`/tms/dispatch/plans/${P11.id}/ods`, 'PATCH', { ids: [rowOf(P11, OD[0]).id], load_mode: 'XA' })
-  check('11d. Kiểu đi rác → 400 (zod tại biên)', odmBad.s === 400, `http=${odmBad.s}`)
-  const flip = await api(`/tms/dispatch/trips/${X11.id}`, 'PATCH', { load_mode: 'LOOSE' })
-  const P11c = await planOf(P11.id)
-  const X11c = P11c?.trips?.find(t => t.id === X11.id)
-  check('11e. Nút trên thẻ xe: đổi CẢ XE sang xá → xe LOOSE, mọi OD trên xe LOOSE, máy chọn lại dòng xe KHÁC xe pallet QA (xe tải theo tấn)',
-    flip.s === 200 && X11c?.load_mode === 'LOOSE' && (X11c?.ods ?? []).every(o => o.load_mode === 'LOOSE') && !!X11c?.vehicle_model_id && X11c?.detail?.vehicle_model?.sap_code !== SAP,
-    `http=${flip.s} ${flip.j?.error?.message ?? ''} mode=${X11c?.load_mode} vm=${X11c?.detail?.vehicle_model?.name} ods=${(X11c?.ods ?? []).map(o => o.load_mode).join(',')}`)
-  const ro11 = await api(`/tms/dispatch/plans/${P11.id}/reopen`, 'POST', {})
+  const mv11 = await api(`/tms/dispatch/plans/${P11.id}/move`, 'POST', { ids: [rowOf(P11, OD[1]).id], to: 'trip', to_trip_id: X11.id })
+  const X11b = mv11.j?.data?.trips?.find(t => t.id === X11.id)
+  check('11c. Người kéo khách thứ hai lên xe có dòng xe max_drops = 1 ⇒ cho thả nhưng xe cảnh báo "Vượt số khách cùng xe (2 > 1)"',
+    mv11.s === 200 && X11b?.ods?.length === 2 && /Vượt số khách cùng xe \(2 > 1\)/.test((X11b?.detail?.warnings ?? []).join(' ')),
+    `http=${mv11.s} ${mv11.j?.error?.message ?? ''} warn=${(X11b?.detail?.warnings ?? []).join(' | ').slice(0, 140)}`)
+  const oldMode = await api(`/tms/dispatch/plans/${P11.id}/ods`, 'PATCH', { ids: [rowOf(P11, OD[0]).id], load_mode: 'LOOSE' })
+  const oldFlip = await api(`/tms/dispatch/trips/${X11.id}`, 'PATCH', { load_mode: 'LOOSE' })
+  check('11d. Cửa đổi kiểu đi cũ: route /ods không còn (404) · PATCH xe với load_mode không đổi gì (200, không 5xx)',
+    oldMode.s === 404 && oldFlip.s === 200 && !oldFlip.j?.data?.load_mode, `ods=${oldMode.s} trip=${oldFlip.s} mode=${oldFlip.j?.data?.load_mode ?? 'null'}`)
+  await cleanupTrips()
+  const d0 = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: null })
+  const p11e = await mkPlan(PLAN_BODY)
+  check('11e. Gỡ max_drops của dòng xe ⇒ OD1 + OD2 lại chung MỘT xe (7/9 pallet) — trần chỉ do cấu hình, không do "kiểu xe"',
+    d0.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id === tripOfOd(p11e.j?.data, OD[1])?.id,
+    `drops=${d0.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+  const ro11 = await api(`/tms/dispatch/plans/${p11e.j?.data?.id}/reopen`, 'POST', {})
   check('11f. Mở lại khi chưa xe nào vào Kế hoạch xuất → 422 NOTHING_TO_REOPEN', ro11.s === 422 && ro11.j?.error?.code === 'NOTHING_TO_REOPEN', `http=${ro11.s} code=${ro11.j?.error?.code}`)
 
   // Mở lại: xác nhận ⇒ mở lại ⇒ dòng Kế hoạch xuất gỡ, xe về nháp, chuyến bên Xuất GIỮ id ⇒ xác nhận lại ⇒ cùng Số xe sống lại
@@ -620,29 +626,7 @@ try {
     check('12c. Lượt lập BẬT cho trộn ⇒ OD hai Loại kho gom MỘT chuyến (xe QA phục vụ mọi điều kiện, còn chỗ)',
       pOn.s === 201 && tripOfOd(pOn.j?.data, OD[0])?.id === tripOfOd(pOn.j?.data, OD8)?.id,
       `http=${pOn.s} trips=${(pOn.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
-    // Kiểu đi theo KHÁCH × LOẠI KHO
-    await cleanupTrips()
-    const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
-    const kBad = await api(`/masterdata/customers/${c1.id}`, 'PUT', { load_mode_by_category: { KHONGCOLOAI: 'PALLET' } })
-    const vBad = await api(`/masterdata/customers/${c1.id}`, 'PUT', { load_mode_by_category: { [CAT2]: 'XA' } })
-    const kOk = await api(`/masterdata/customers/${c1.id}`, 'PUT', { load_mode_by_category: { [CAT2]: 'LOOSE' } })
-    check('12f. Khách hàng: kiểu đi theo Loại kho — Loại kho lạ 400 · giá trị lạ 400 · hợp lệ 200 và lưu đúng',
-      kBad.s === 400 && vBad.s === 400 && kOk.s === 200 && kOk.j?.data?.load_mode_by_category?.[CAT2] === 'LOOSE',
-      `bad=${kBad.s} val=${vBad.s} ok=${kOk.s} map=${JSON.stringify(kOk.j?.data?.load_mode_by_category ?? kOk.j?.error)}`)
-    const pM = await mkPlan({ ...PLAN_BODY, allow_mix_categories: true })
-    const r1 = rowOfP(pM.j?.data, OD[0]), r8 = rowOfP(pM.j?.data, OD8)
-    check(`12g. Khách PALLET nhưng khai ${CAT2} = Xá ⇒ OD ${CAT2} đi Xá, OD ${MAT_CAT} vẫn Pallet, KHÔNG chung xe (kể cả khi kho cho trộn loại)`,
-      pM.s === 201 && r1?.load_mode === 'PALLET' && r8?.load_mode === 'LOOSE' && r1?.trip_id !== r8?.trip_id,
-      `http=${pM.s} od1=${r1?.load_mode} od8=${r8?.load_mode} sameTrip=${r1?.trip_id === r8?.trip_id}`)
-    const bMerge = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { load_mode_by_category: { category: MAT_CAT, mode: 'PALLET' } } })
-    const m1 = (await restAll('Customer', `select=load_mode_by_category&id=eq.${c1.id}`))[0]?.load_mode_by_category ?? {}
-    const bDel = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { load_mode_by_category: { category: CAT2, mode: null } } })
-    const m2 = (await restAll('Customer', `select=load_mode_by_category&id=eq.${c1.id}`))[0]?.load_mode_by_category ?? {}
-    const bMix = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { load_mode_by_category: { category: CAT2, mode: 'LOOSE' }, is_active: true } })
-    check('12h. Hàng loạt: kiểu đi cho MỘT Loại kho GỘP vào bảng từng khách (không đè loại khác) · mode trống = gỡ · đi chung thao tác khác → 400',
-      bMerge.s === 200 && m1[MAT_CAT] === 'PALLET' && m1[CAT2] === 'LOOSE' && bDel.s === 200 && m2[MAT_CAT] === 'PALLET' && !(CAT2 in m2) && bMix.s === 400,
-      `merge=${bMerge.s} ${JSON.stringify(m1)} del=${bDel.s} ${JSON.stringify(m2)} mix=${bMix.s}`)
-    await restWrite('Customer', 'PATCH', `id=eq.${c1.id}`, { load_mode_by_category: {} })
+    // (29/09: [12f–12h] "kiểu đi theo Khách × Loại kho" bỏ theo luật 7 — kiểm ở [11a]; kho cho trộn ⇒ hai loại chung xe là [12c])
 
     // [14] SWITCH "Ghép Loại kho khác" trên TỪNG thẻ xe (user 27/09: "TẮT = chặn thả")
     await cleanupTrips()
@@ -862,7 +846,7 @@ try {
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA61OD*`).catch(() => {})
     for (let i = 0; i < 3; i++) {
       const ward = i < 2 ? W1 : W2
-      await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[i]}`, { load_mode: 'PALLET', load_mode_by_category: {}, dispatch_vehicles: ALLV, ward_code: ward, is_active: true })
+      await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[i]}`, { dispatch_vehicles: ALLV, ward_code: ward, is_active: true })
       await restWrite('erp_outbound_orders', 'POST', null, {
         id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
         ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',

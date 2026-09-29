@@ -54,6 +54,7 @@ unlinked_shipto_policy TEXT NOT NULL DEFAULT 'NONE' CHECK IN (NONE, WARN, BLOCK)
 dispatch_max_drops INT NULL CHECK (NULL OR 1..50),  -- 20260929: NULL = không giới hạn (trước NOT NULL DEFAULT 3, 1..20)
 is_active BOOL DEFAULT true, created_at, updated_at
 ```
+> **20260929b_plan_line_key_per_order (đã áp staging 29/09, CHƯA production):** `uq_inbound_plan_line_active_key` thêm `tms_order_id` vào khoá `(date, warehouse_id, ncc_id, material_id, tms_order_id) NULLS NOT DISTINCT` — hai lệnh chuyển kho cùng ngày · kho nhận · mã hàng từng đụng khoá và code nuốt 23505 (gói 28 [12c]); dòng upload NCC vẫn cùng lệnh theo nhóm (`findOrCreateTmsOrder`) nên guard chống đua giữ nguyên.
 > **20260929_customer_wh_link (đã áp staging 28/09 23:xx, CHƯA production):** `Customer.dispatch_separate bool default false` · `Customer.max_customers_per_trip int null (1..50)` · `dispatch_trip_od.separate bool` · `dispatch_trip_od.max_customers int null` · quyền `outbound.push_transfer` cấp cho chức danh có `outbound.complete` · dữ liệu: khách trùng mã kho đang vận hành ⇒ trỏ kho; **147 kho NPP không vận hành ⇒ `is_active=false`**; lệnh chuyển kho PENDING/SELF dưới kho vừa tắt ⇒ về kho xuất, `destination_warehouse_id=NULL`. Production: đo lại số kho NPP trước khi chạy phần dữ liệu (tiêu chí "không Location · InventoryEntry · UserWarehouseAccess · GDO nguồn").
 
 ### Location

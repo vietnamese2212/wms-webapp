@@ -179,7 +179,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const canDelete = can(perms, 'external_do_sap', 'delete')
 
   // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
-  const { doSap: f, setDoSap } = useWmsFilterStore()
+  const { doSap: f, setDoSap, setSoLines } = useWmsFilterStore()
   const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, used: fUsed, page, pageSize } = f
   const fFlow = f.flow ?? [], fDispatch = f.dispatch ?? '', fDelivFrom = f.deliveryFrom ?? '', fDelivTo = f.deliveryTo ?? ''
   // Công tắc nguồn DO SAP (Cài đặt WMS → Hệ thống): BOTH = hai nút · ZSD02 = ẩn nút VL06O · VL06O = ẩn nút ZSD02
@@ -560,8 +560,12 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setDoEditor(null); setSelected(new Set()) }}
         />
       )}
-      {/* Nạp xong ⇒ bảng lọc về Ngày nạp = hôm nay, bỏ lọc Ngày giao, về trang 1 — dữ liệu vừa nạp hiện ngay, không phải tự đi chọn ngày (user 29/09) */}
-      {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} onUploaded={() => setDoSap({ dateFrom: TODAY_VN(), dateTo: TODAY_VN(), deliveryFrom: '', deliveryTo: '', page: 1 })} />}
+      {/* Nạp xong ⇒ bảng lọc về Ngày nạp = hôm nay, bỏ lọc Ngày giao, về trang 1 — dữ liệu vừa nạp hiện ngay, không phải tự đi chọn ngày (user 29/09).
+          ZSD02 còn nuôi tab "Chưa có OD" (lọc theo NGÀY GIAO, không có Ngày nạp) ⇒ đặt khoảng Ngày giao của file cho tab đó. */}
+      {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} onUploaded={r => {
+        setDoSap({ dateFrom: TODAY_VN(), dateTo: TODAY_VN(), deliveryFrom: '', deliveryTo: '', page: 1 })
+        if (r?.delivery_range) setSoLines({ dateFrom: r.delivery_range.from, dateTo: r.delivery_range.to, page: 1 })
+      }} />}
       <SapLineDetailSheet row={detail} kind="od" onClose={() => setDetail(null)} />
     </div>
   )

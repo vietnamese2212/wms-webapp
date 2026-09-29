@@ -269,9 +269,13 @@ export async function uploadZsd02(req: Request, res: Response) {
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadZsd02:', e) }
     }
     const activated = await activateAwaitingForDos(req, fileDos, 'uploadZsd02')
+    // Khoảng Ngày giao của file — tab "Chưa có OD" lọc theo Ngày giao (không có Ngày nạp) nên FE đặt bộ lọc theo đây
+    // để dòng vừa nạp hiện ngay (user 29/09: "tab nào lấy dữ liệu ZSD02 thì làm tương tự")
+    const days = out.so.map(r => r.delivery_date).filter((d): d is string => typeof d === 'string' && d.length === 10).sort()
+    const delivery_range = days.length ? { from: days[0], to: days[days.length - 1] } : null
 
     return ok(res, {
-      rows: st.rows, skipped_no_key: st.skipped,
+      rows: st.rows, skipped_no_key: st.skipped, delivery_range,
       od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length, replaced: repPairs.map(([od_number, by]) => ({ od_number, by })) },
       raw_refreshed: rawRefreshed,
       so: { rows: st.so_rows, orders: st.so_numbers, without_od: soWithoutOd, inserted: soInserted, updated: soUpdated, noop: soNoop, obsoleted: soObsoleted, unresolved: st.so_unresolved, cancelled: st.cancelled },

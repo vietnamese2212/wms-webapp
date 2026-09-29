@@ -88,6 +88,9 @@ try {
   const d = up.j?.data
   check('1c. Ghi thật: sổ OD 2 dòng (OD1 + OD3), sổ SO 3 dòng, 1 dòng chưa OD', up.s === 200 && d?.od?.inserted === 2 && d?.so?.inserted === 3 && d?.so?.without_od === 1,
     `http=${up.s} od=${JSON.stringify(d?.od)} so=${JSON.stringify(d?.so)}`)
+  // 29/09: FE đặt bộ lọc tab "Chưa có OD" (lọc theo Ngày giao) theo khoảng ngày của file để dòng vừa nạp hiện ngay
+  check('1d. Kết quả nạp trả khoảng Ngày giao của file (from ≤ to, đúng ngày fixture)', d?.delivery_range?.from === DELIV && d?.delivery_range?.to === DELIV,
+    `delivery_range=${JSON.stringify(d?.delivery_range)} kỳ vọng ${DELIV}`)
 
   // ── [2] Sổ đúng, số đúng, đơn vị đúng ──
   const od1 = (await restAll('erp_outbound_orders', `select=*&od_number=eq.${OD1}`))[0]

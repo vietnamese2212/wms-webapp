@@ -74,8 +74,9 @@ function downloadKhvcTemplate(sampleCategory: string) {
 
 const nf = (v: number | undefined | null) => (v ?? 0).toLocaleString('vi-VN')
 
-/** `onUploaded` = ghi thật xong (không gọi ở pha kiểm) — trang chủ dùng để đặt bộ lọc bảng về "Ngày nạp = hôm nay" cho dữ liệu vừa nạp hiện ngay (user 29/09). */
-export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMode; onClose: () => void; onUploaded?: () => void }) {
+/** `onUploaded` = ghi thật xong (không gọi ở pha kiểm) — trang chủ dùng để đặt bộ lọc bảng về "Ngày nạp = hôm nay" cho dữ liệu vừa nạp
+ *  hiện ngay (user 29/09); ZSD02 kèm khoảng Ngày giao của file để tab "Chưa có OD" (lọc theo Ngày giao) cũng hiện ngay. */
+export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMode; onClose: () => void; onUploaded?: (r?: { delivery_range: Zsd02UploadResult['delivery_range'] }) => void }) {
   const isVl = mode === 'vl06o', isZs = mode === 'zsd02'
   const { mutate: uploadVl06o, isPending: vlBusy } = useUploadVl06o()
   const { mutate: uploadKhvc,  isPending: khBusy } = useUploadKhvc()
@@ -134,7 +135,7 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
     } else if (isZs) {
       uploadZsd02({ file }, {
         onSuccess: (r: Zsd02UploadResult) => {
-          setPf(null); onUploaded?.()
+          setPf(null); onUploaded?.({ delivery_range: r.delivery_range ?? null })
           // Hai sổ nói riêng — người nạp phải thấy dòng CHƯA OD đi đâu, không thì tưởng "mất dòng"
           const lines = [
             `Sổ OD: ${nf(r.od.rows)} dòng · ${nf(r.od.deliveries)} OD — thêm ${nf(r.od.inserted)} · sửa ${nf(r.od.updated)} · giữ nguyên ${nf(r.od.noop)}${r.od.obsoleted ? ` · SAP đã bỏ ${nf(r.od.obsoleted)}` : ''}`,

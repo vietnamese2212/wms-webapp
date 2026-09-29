@@ -3500,6 +3500,7 @@ export function useUploadVl06o() {
 // ZSD02 (22/09): nguồn DO thay VL06O — dòng CÓ OD vào sổ OD (`erp_outbound_orders`), MỌI dòng vào sổ SO (`erp_so_lines`).
 export interface Zsd02UploadResult {
   rows: number; skipped_no_key: number
+  delivery_range: { from: string; to: string } | null   // khoảng Ngày giao của file — tab "Chưa có OD" lọc theo đây sau khi nạp
   od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number }
   so: { rows: number; orders: number; without_od: number; inserted: number; updated: number; noop: number; obsoleted: number; unresolved: number; cancelled: number }
   flows: Record<string, number>; not_loadable: number

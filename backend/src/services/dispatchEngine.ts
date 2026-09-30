@@ -752,11 +752,19 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const custOf = (u: Unit) => u.od.ship_to_code ?? u.od.od_number
   // THẺ NHIỀU XE của CÙNG KHÁCH nhận thêm OD nhỏ / hàng đi kèm khi tổ hợp N xe còn chở vừa (user 30/09: Ba Vì #68 Xe 16 pallet
   // chở 0,7 pallet POSM của Dũng Tiến đứng cạnh #70 Dũng Tiến 17,3 pallet đi 2 × 17 — xe thứ hai còn 16 pallet trống)
+  // CHỈ lấp chỗ trống của các xe đang có — thêm OD mà thẻ phải thêm xe thì thôi (gói 61 [15g]: 14 pallet đi 9 + 5, thêm 5 pallet
+  // nữa thành 3 xe là một thẻ khó điều, không hơn gì xe riêng)
+  const vehiclesNeeded = (big: EngineModel, pallets: number, tons: number) => {
+    for (let k = 1; k <= maxVeh; k++) if (k === 1 ? fits(big, pallets, tons) : !!splitLoad(Array(k).fill(big), pallets, tons)) return k
+    return Infinity
+  }
   const multiTakes = (b: Bin, u: Unit) => {
     if (maxVeh < 2 || !b.units.some(y => y.multi) || !b.units.some(y => custOf(y) === custOf(u))) return false
     const big = bigForOd(b.units[0].od)
+    if (!big) return false
     const nb = withUnits(b, [u])
-    return !!big && fitsOnN(big, maxVeh, nb.pallets, nb.tons)
+    const after = vehiclesNeeded(big, nb.pallets, nb.tons)
+    return Number.isFinite(after) && after === vehiclesNeeded(big, b.pallets, b.tons)
   }
   for (const key of [...byCluster.keys()].sort(cmp)) {
     if (!mixCats && catPartOf(key) === '*') { followOnly.push(...byCluster.get(key)!); continue }

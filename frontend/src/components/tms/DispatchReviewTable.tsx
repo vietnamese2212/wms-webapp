@@ -21,7 +21,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, type DispatchPlan, type DispatchOdFlag } from '@/api/hooks'
+import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, type DispatchPlan, type DispatchOdFlag } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
@@ -136,11 +136,23 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
     return out
   }, [plan, flags, editable])
 
+  // TỒN ĐỌNG ĐÃ ĐI (30/09, user: "170 đơn đi đâu mất, sao không nằm trong Đã điều"): máy loại đúng nhưng không nằm trong kế hoạch
+  // (ở kho lớn là hơn 2.000 dòng lịch sử) — tab Đã điều tải theo yêu cầu, hiện kèm ngày giao để người thấy nó đi đâu
+  const [showBacklog, setShowBacklog] = useState(false)
+  const backlog = useDispatchPlanBacklog(plan.id, showBacklog && st === 'DONE')
+  const daysLate = (d: string) => Math.max(0, Math.round((Date.parse(`${plan.plan_date}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000))
+  const backlogRows = useMemo<Row[]>(() => (showBacklog && st === 'DONE' ? (backlog.data?.excluded ?? []) : []).map(x => ({
+    key: `BL|${x.od_number}`, od: x.od_number, ids: [], held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: 'slate',
+    cust: x.d?.ship_to_name ?? x.d?.ship_to_code ?? '', ward: x.d?.ward_code ?? '', region: x.d?.region_name ?? x.d?.region_code ?? '',
+    pallets: x.d?.pallets ?? null, tons: x.d?.tons ?? null, date: x.d?.delivery_date ?? '', late: x.d?.delivery_date ? daysLate(x.d.delivery_date) : 0,
+    note: x.d?.note ?? '', flag: `Tồn đọng · ${EX_VI[x.kind] ?? x.kind}${x.info ? ` — ${x.info}` : ''}`, until: null, reason: '',
+  })), [showBacklog, st, backlog.data, plan.plan_date]) // eslint-disable-line react-hooks/exhaustive-deps
+  const tabRows = backlogRows.length ? [...byTab[st], ...backlogRows] : byTab[st]
   const q = f.search.trim().toLowerCase()
   const extra = (od: string) => { const i = info[od]; return i ? [...i.so, ...i.created_by, i.note_invoice ?? '', i.route_name ?? '', ...i.categories] : [] }
-  const rows = byTab[st].filter(r => (!notesOnly || !!r.note) && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
-  const detailRow = detail ? byTab[st].find(r => r.key === detail) ?? null : null
-  const notesN = byTab[st].filter(r => !!r.note).length
+  const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
+  const detailRow = detail ? tabRows.find(r => r.key === detail) ?? null : null
+  const notesN = tabRows.filter(r => !!r.note).length
   const pick = rows.filter(r => r.selectable)
   const selRows = byTab[st].filter(r => sel.has(r.key))
   const setTab = (k: St) => { setSel(new Set()); setNotesOnly(false); setF({ reviewTab: k }) }
@@ -254,6 +266,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
               <StickyNote className="h-3.5 w-3.5" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {notesN} OD có ghi chú
             </button>
           )}
+          {st === 'DONE' && (
+            <button type="button" onClick={() => setShowBacklog(v => !v)} aria-pressed={showBacklog}
+              className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] ${showBacklog ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              title="Đơn tồn đọng (14 ngày trước ngày lập) máy đã loại vì đã xuất kho / SAP đã điều / đã có trong Kế hoạch xuất — không nằm trong kế hoạch, tải khi bấm">
+              {showBacklog ? (backlog.isLoading ? 'Đang tải tồn đọng đã đi…' : `Đang xem ${nf(backlogRows.length)} đơn tồn đọng đã đi · ẩn`) : 'Xem cả đơn tồn đọng đã đi (14 ngày)'}
+            </button>
+          )}
           {editable && pick.length > 0 && (
             <button type="button" className="text-[11px] text-sky-700 hover:underline whitespace-nowrap" title="Chỉ tick các đơn ĐANG HIỆN theo tìm kiếm / bộ lọc"
               onClick={() => setSel(pick.every(r => sel.has(r.key)) ? new Set() : new Set(pick.map(r => r.key)))}>
@@ -267,7 +286,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v2`} cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly
-              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '' }) }}>Xem cả {byTab[st].length} đơn</button></>
+              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '' }) }}>Xem cả {tabRows.length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick

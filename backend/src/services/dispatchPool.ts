@@ -41,7 +41,9 @@ const shippedRow = (r: PoolCandidateRow) => !!(r.mat_doc && String(r.mat_doc).tr
 
 export function splitPool(
   rows: PoolCandidateRow[], day: string,
-  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, string>; held?: Map<string, { until: string | null; reason: string }>; redo?: Map<string, string> },
+  // `reportAll` (30/09): báo CẢ OD tồn đọng đã đi / đã điều — cho cửa "Xem cả đơn tồn đọng đã đi" của tab Đã điều (user: "170 đơn
+  // đi đâu mất, sao không nằm trong Đã điều"); lập kế hoạch vẫn để false để params không phình 2.000 dòng lịch sử
+  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, string>; held?: Map<string, { until: string | null; reason: string }>; redo?: Map<string, string>; reportAll?: boolean },
 ): PoolSplit {
   const byOd = new Map<string, PoolCandidateRow[]>()
   for (const r of rows) { const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
@@ -52,7 +54,7 @@ export function splitPool(
     // ngày giao của OD = ngày MUỘN nhất trong các dòng (SAP có thể dời một phần) — OD còn dòng đúng ngày lập là OD của hôm nay
     const dd = rs.map(r => r.delivery_date).filter((x): x is string => !!x).sort().pop() ?? null
     const today = dd === day
-    const report = (kind: ExcludeKind, info: string | null) => { if (today) excluded.push({ od_number: od, kind, info }) }
+    const report = (kind: ExcludeKind, info: string | null) => { if (today || ctx.reportAll) excluded.push({ od_number: od, kind, info }) }
     if (ctx.inPlan.has(od)) { report('IN_PLAN', ctx.inPlan.get(od) ?? null); continue }
     // SAP đã xuất / đã điều thắng dấu Không điều (27/09 khuya): đơn đã được lo ở SAP thì nằm tab Đã điều, không đứng mãi ở
     // "Không điều" chờ người chuyển tay một đơn không còn gì để điều

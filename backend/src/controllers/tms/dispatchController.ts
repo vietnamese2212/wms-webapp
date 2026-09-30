@@ -236,7 +236,7 @@ async function loadHolds(whId: string): Promise<Map<string, { until: string | nu
   return new Map(rows.map(r => [r.od_number, { until: r.hold_until, reason: r.reason }]))
 }
 /** Nạp ứng viên + phân loại lũy tiến. `onlyOds` = chỉ những OD này (tối ưu lại / thay OD), bỏ lọc theo ngày. */
-async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyOds?: string[]; skipPlanId?: string | null; countOnly?: boolean } = {}): Promise<{ ods: EngineOd[]; meta: Map<string, OdMeta>; excluded: ExcludedOd[]; include: string[]; gaps: ConfigGaps }> {
+async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyOds?: string[]; skipPlanId?: string | null; countOnly?: boolean; reportAll?: boolean } = {}): Promise<{ ods: EngineOd[]; meta: Map<string, OdMeta>; excluded: ExcludedOd[]; include: string[]; gaps: ConfigGaps }> {
   const { condByCat } = cfg
   const follow = new Set(cfg.follow)
   const holds = await loadHolds(wh.id)
@@ -269,13 +269,22 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   // DO tạo lại – đã điều (28/09): OD cũ đã nằm Kế hoạch xuất ⇒ OD mới sang tab Đã điều. Cùng thước "đã có trong KH xuất" như inPlan.
   const oldOds = uniq(olds.map(o => o.od_number))
   const oldKhvc = oldOds.length ? (await fetchAllByIdChunks(oldOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; group_code: string }[] : []
-  const split = splitPool(mine, day, { inPlan, otherDraft: drafts, held: holds, redo: redoDispatchedOf(olds, oldKhvc) })
+  const split = splitPool(mine, day, { inPlan, otherDraft: drafts, held: holds, redo: redoDispatchedOf(olds, oldKhvc), reportAll: opts.reportAll })
   // CHỈ OD lên xe được mới là "OD mới cần xếp" — OD trả về / chiết khấu đúng ngày vẫn qua splitPool (engine xếp vào
   // danh sách "không lên xe"), đếm chúng là báo "12 OD mới" ngay sau khi vừa lập (đo Preview 25/09: đúng 12 OD RETURN)
   const flowOf = new Map(mine.map(r => [r.od_number, String(r.flow)]))
   const include = [...split.include.keys()].filter(od => LOADABLE_FLOW.has(flowOf.get(od) ?? ''))
   const noGaps: ConfigGaps = { no_condition: [], no_category: { ods: 0, materials: [] } }
-  if (opts.countOnly) return { ods: [], meta: new Map(), excluded: split.excluded, include, gaps: noGaps }
+  if (opts.countOnly) {
+    if (!opts.reportAll) return { ods: [], meta: new Map(), excluded: split.excluded, include, gaps: noGaps }
+    // cửa "Xem cả đơn tồn đọng đã đi": bảng Xem đơn cần khách · phường · vùng · pallet · ngày của từng OD bị loại
+    const allBy0 = new Map<string, PoolRow[]>()
+    for (const r of mine) { const l = allBy0.get(r.od_number) ?? []; l.push(r); allBy0.set(r.od_number, l) }
+    const custs0 = (await fetchAllByIdChunks(uniq(mine.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
+      .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip').in('ship_to_code', c).order('ship_to_code'))) as CustRow[]
+    const custBy0 = new Map(custs0.map(c => [c.ship_to_code, c]))
+    return { ods: [], meta: new Map(), excluded: split.excluded.map(x => ({ ...x, d: odDetailOf(allBy0.get(x.od_number) ?? [], custBy0) })), include, gaps: noGaps }
+  }
   const kept = mine.filter(r => split.include.has(r.od_number))
   const matCodes = uniq(kept.map(r => r.material_code).filter((x): x is string => !!x))
   const [mats, custs, chRes] = await Promise.all([
@@ -1837,6 +1846,25 @@ export async function getPlanReview(req: Request, res: Response) {
       }
     }
     return ok(res, { ods: out })
+  } catch (e) { return failAny(res, e) }
+}
+
+// GET /tms/dispatch/plans/:id/backlog — OD TỒN ĐỌNG (trong cửa sổ 14 ngày) mà máy đã loại vì đã đi / SAP đã điều / đã có trong
+// Kế hoạch xuất / DO tạo lại. Không ghi vào params (hơn 2.000 dòng lịch sử ở kho lớn) — tab Đã điều tải theo yêu cầu (user 30/09:
+// "170 đơn đi đâu mất, sao không nằm trong Đã điều").
+export async function getPlanBacklog(req: Request, res: Response) {
+  try {
+    const got = await planOdSet(String(req.params.id))
+    if (!got) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    const { plan } = got
+    if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const wh = await loadWarehouse(plan.warehouse_id)
+    if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    const cand = await loadCandidates(wh, plan.plan_date, { condByCat: new Map(), follow: [], all: [] }, { skipPlanId: plan.id, countOnly: true, reportAll: true })
+    const kinds = new Set(['SHIPPED', 'SAP_ASSIGNED', 'IN_PLAN', 'REDO_DISPATCHED'])
+    const excluded = cand.excluded.filter(x => kinds.has(x.kind) && x.d?.delivery_date !== plan.plan_date)
+      .sort((a, b) => (b.d?.delivery_date ?? '').localeCompare(a.d?.delivery_date ?? '') || (a.d?.ship_to_name ?? '').localeCompare(b.d?.ship_to_name ?? '') || a.od_number.localeCompare(b.od_number))
+    return ok(res, { excluded, backlog_days: BACKLOG_DAYS })
   } catch (e) { return failAny(res, e) }
 }
 

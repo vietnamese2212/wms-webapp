@@ -519,6 +519,21 @@ try {
   const fl6 = (sy5.j?.data?.flags ?? []).find(f => f.od_number === OD6)
   check('10p2. OD tồn đọng có thêm dòng CHIẾT KHẤU (không lên xe) trong ZSD02 → /sync KHÔNG gắn cờ "SAP đã sửa" (bản chụp và phép so cùng một luật dòng)',
     sy5.s === 200 && !fl6, `sync=${sy5.s} flag=${JSON.stringify(fl6 ?? null)}`)
+  // 30/09 (user: "170 đơn đi đâu mất, sao không nằm trong Đã điều"): OD TỒN ĐỌNG đã đi không nằm trong params.excluded (2.000 dòng
+  // lịch sử) nhưng phải xem được qua GET /backlog — kèm ngày giao + khách; OD tồn đọng ĐANG trên xe (OD6) thì không nằm đó
+  const OD9 = 'QA61OD9'
+  await restWrite('erp_outbound_orders', 'POST', null, {
+    id: crypto.randomUUID(), od_number: OD9, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet,
+    ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: LATE, flow: 'SALE', mat_doc: 'QA61MD9',
+    source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+  })
+  const bl = await api(`/tms/dispatch/plans/${P2?.id}/backlog`)
+  const bl9 = (bl.j?.data?.excluded ?? []).find(x => x.od_number === OD9)
+  check('10p4. GET /backlog: OD tồn đọng ĐÃ XUẤT (không trong kế hoạch) hiện với kind SHIPPED + ngày giao + khách · OD tồn đọng đang trên xe (OD6) và OD đúng ngày (OD1) KHÔNG nằm trong đó · id rác → 400',
+    bl.s === 200 && bl9?.kind === 'SHIPPED' && bl9?.d?.delivery_date === LATE && bl9?.d?.ship_to_name === 'QA61 NPP 1'
+    && !(bl.j?.data?.excluded ?? []).some(x => x.od_number === OD6 || x.od_number === OD[0]) && (await api('/tms/dispatch/plans/xx/backlog')).s === 400,
+    `http=${bl.s} ${bl.j?.error?.message ?? ''} od9=${JSON.stringify(bl9 ?? null)?.slice(0, 200)} n=${(bl.j?.data?.excluded ?? []).length}`)
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${OD9}`).catch(() => {})
   // 29/09: OD HOÃN tới một ngày cũng chịu cửa sổ tồn đọng 14 ngày — hẹn ngày đã qua > 14 ngày là lịch sử (bản cũ kéo 4 OD
   // hẹn 30/09/2026 của Ba Vì vào cả kế hoạch thử nghiệm 16/03/2027 này). Hẹn trong cửa sổ thì vẫn quay lại đợt ghép.
   const OLD_DD = '2027-02-01', OD_H1 = 'QA61ODH1', OD_H2 = 'QA61ODH2'

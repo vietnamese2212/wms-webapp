@@ -6011,6 +6011,14 @@ export function useDispatchPlanReview(id: string | null, stamp?: string | null) 
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/review`)).data.data as { ods: Record<string, DispatchReviewInfo> },
   })
 }
+/** Tab Đã điều — "Xem cả đơn tồn đọng đã đi" (30/09): OD trong cửa sổ 14 ngày máy đã loại (đã xuất · SAP đã điều · đã có trong
+ *  KH xuất · DO tạo lại), không ghi vào kế hoạch, tải theo yêu cầu. */
+export function useDispatchPlanBacklog(id: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['dispatch-backlog', id], enabled: !!id && enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/backlog`)).data.data as { excluded: DispatchExcluded[]; backlog_days: number },
+  })
+}
 export interface DispatchOdMaterial { material_code: string; short_name: string | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
 export function useDispatchPlanOd(id: string | null, od: string | null) {
   return useQuery({

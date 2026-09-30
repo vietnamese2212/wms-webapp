@@ -43,6 +43,11 @@ describe('pool lũy tiến — OD đã được lo thì KHÔNG vào đợt ghép
     expect(s.include.size).toBe(0)
     expect(s.excluded).toEqual([{ od_number: '5', kind: 'OTHER_DRAFT', info: 'nháp ngày 2026-09-24' }])
   })
+  it('reportAll (30/09 — cửa "Xem cả đơn tồn đọng đã đi"): tồn đọng đã đi / đã điều CÓ báo, kèm kind + info', () => {
+    const s = splitPool([row('8', { delivery_date: '2026-09-20', sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'HA' }), row('7', { delivery_date: '2026-09-21', mat_doc: 'x' })], DAY, { ...none, reportAll: true })
+    expect(s.include.size).toBe(0)
+    expect(s.excluded).toEqual([{ od_number: '7', kind: 'SHIPPED', info: 'x' }, { od_number: '8', kind: 'SAP_ASSIGNED', info: 'HA' }])
+  })
   it('daysBetween theo lịch, không theo giờ', () => { expect(daysBetween('2026-09-30', '2026-10-01')).toBe(1) })
 })
 

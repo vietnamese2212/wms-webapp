@@ -28,3 +28,5 @@
 ## Actions
 
 view, create (= Up VL06O/ZSD02 tại trang này, hoặc `outbound.import`), edit, delete, export 
+
+**30/09 — "đã xuất" của ZSD02:** file thật không có cột "đã xuất"; `qty_issued_base` suy từ "Số lượng còn lại chưa xuất / nhập" (đơn vị BÁN) × hệ số base/bán; còn lại 0 = xuất trọn; `billing_no` = "Billing" hoặc "Số hóa đơn". Điều vận dùng cột này để loại đơn đã đi (không chỉ Mat Doc). Chi tiết ở [dispatch.md](dispatch.md).

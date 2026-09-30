@@ -80,6 +80,16 @@ describe('zsd02Parse — bất biến dựng tay', () => {
     expect(bizHash({ ...o1, raw: null, updated_at: 'x' } as Record<string, unknown>, ZSD02_BIZ)).toBe(h1)
     expect(bizHash({ ...o1, qty_base: 1441 } as Record<string, unknown>, ZSD02_BIZ)).not.toBe(h1)
   })
+  it('ĐÃ XUẤT suy từ "Số lượng còn lại chưa xuất / nhập" (đơn vị BÁN) khi file không có cột đã xuất; còn lại 0 = xuất trọn; Số hóa đơn → billing_no (30/09)', () => {
+    const base = { so_number: 'S1', material: '510000219', plant: '1102', sales_unit: 'Thùng', base_unit: 'HOP', delivery_date: 46266, so_type: 'ZOR1-SO Standard', item_category: 'ZTA1-IC Sales Standard', ship_to_code: 'C1' }
+    const out = parseZsd02([
+      { ...base, item: '10', od_number: 'O1', so_qty: 60, od_qty: 60, od_qty_base: 1440, remain_qty: 15, invoice_no: '1C26TAF-00257830' },   // đã xuất 45 thùng
+      { ...base, item: '20', od_number: 'O1', so_qty: 10, od_qty: 10, od_qty_base: 240, remain_qty: 0 },                                    // xuất trọn
+      { ...base, item: '30', od_number: 'O1', so_qty: 10, od_qty: 10, od_qty_base: 240, remain_qty: 10 },                                   // chưa xuất
+      { ...base, item: '40', od_number: 'O1', so_qty: 10, od_qty: 10, od_qty_base: 240 },                                                   // không có cột ⇒ không kết luận
+    ], ctx)
+    expect(out.od.map(r => [r.od_item, r.qty_issued_base, r.billing_no])).toEqual([['10', 1080, '1C26TAF-00257830'], ['20', 240, null], ['30', 0, null], ['40', null, null]])
+  })
 })
 
 describe.skipIf(!HAS_SAMPLE)('zsd02Parse — file mẫu SAP 01–25/09/2026 (số đo độc lập 22/09)', () => {

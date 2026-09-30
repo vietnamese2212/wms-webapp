@@ -270,8 +270,13 @@ export function parseZsd02(rows: Record<string, unknown>[], ctx: Zsd02Ctx): Zsd0
           else if (upc > 0 && Math.round(odq * upc) !== Math.round(odBase)) warnings.push(`OD ${odNo}/${item} mã ${mc}: ${odq} ${suRaw} × ${upc} ≠ ${odBase} ${bu} (Base)`)
         }
         const factor = odq != null && odq > 0 && odBase != null ? odBase / odq : (su === 'CAR' ? upc : 1)
+        // ĐÃ XUẤT: file thật KHÔNG có cột "đã xuất" — chỉ có "Số lượng còn lại chưa xuất / nhập" (đơn vị BÁN, đo staging 30/09:
+        // 1.599/1.599 dòng còn lại = SL bán). Trước đây `qty_issued_base` luôn null ⇒ đơn đã giao mà SAP chưa ghi Mat Doc vẫn bị
+        // coi là chưa đi (Ba Vì 29/09: 190/355 OD tồn đọng có còn lại = 0 lên xe lại). Còn lại = 0 ⇒ đã xuất trọn.
         const issued = cellNum(r.issued_qty)
-        const issuedBase = issued != null && factor > 0 ? Math.round(issued * factor) : null
+        const remain = cellNum(r.remain_qty)
+        const issuedSales = issued ?? (remain != null && odq != null ? Math.max(0, odq - remain) : null)
+        const issuedBase = issuedSales != null && factor > 0 ? Math.round(issuedSales * factor) : null
         // Lệch khối lượng master ↔ SAP > 5 % → gom theo mã (đo: 510000219 master 4,965 vs SAP 4,97 = 0,1 %)
         if (mat && odBase != null && odBase > 0 && gwKg != null && gwKg > 0) {
           const l = loadOf(odBase, mat, null)
@@ -293,7 +298,7 @@ export function parseZsd02(rows: Record<string, unknown>[], ctx: Zsd02Ctx): Zsd0
           sap_dispatch_status: normDispatchStatus(r.dispatch),
           qty_so_sales: cellNum(r.so_qty), qty_issued_base: issuedBase,
           gross_weight_kg: gwKg, sap_pallets: cellNum(r.od_pallets), sap_m3: cellNum(r.od_m3),
-          mat_doc: cellStr(r.mat_doc), billing_no: cellStr(r.billing),
+          mat_doc: cellStr(r.mat_doc), billing_no: cellStr(r.billing) ?? cellStr(r.invoice_no),   // file thật chỉ có "Số hóa đơn" (30/09)
           so_created_at: parseExcelDate(r.so_created), od_created_at: parseExcelDate(r.od_created),
           approval_status: cellStr(r.approval), customer_ref: cellStr(r.customer_ref),
           source: 'ZSD02', raw: rawOf(r), uploaded_by: ctx.actor, sync_status: 'ACTIVE', last_synced_at: t, updated_at: t,

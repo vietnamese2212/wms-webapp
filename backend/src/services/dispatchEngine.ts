@@ -164,8 +164,9 @@ export interface DispatchTrip {
   warnings: string[]
   merge_hint: string | null          // gợi ý gộp khi Non tải
 }
-/** `code` NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — OD vẫn nằm khung chờ để khai xong ghép được, không vào "không lên xe". */
-export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' }
+/** `code` = OD vẫn NẰM KHUNG CHỜ (không vào "không lên xe"): NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — khai xong ghép được;
+ *  FOLLOW_ONLY = chỉ có hàng đi kèm đơn (POSM) chưa có chuyến chính cùng cụm — đơn chính về là ké theo (30/09). */
+export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' | 'FOLLOW_ONLY' }
 export interface CarrierShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: ShareBasis }
 export interface DispatchResult {
   trips: DispatchTrip[]
@@ -748,6 +749,15 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const bins: Bin[] = []
   const unitSort = (a: Unit, b: Unit) => (b.pallets ?? 0) - (a.pallets ?? 0) || (b.tons ?? 0) - (a.tons ?? 0) || cmp(a.od.od_number, b.od.od_number) || (a.part?.index ?? 0) - (b.part?.index ?? 0)
   const followOnly: Unit[] = []   // OD chỉ có hàng đi kèm (POSM riêng) — xếp SAU, ké vào chuyến cùng cụm
+  const custOf = (u: Unit) => u.od.ship_to_code ?? u.od.od_number
+  // THẺ NHIỀU XE của CÙNG KHÁCH nhận thêm OD nhỏ / hàng đi kèm khi tổ hợp N xe còn chở vừa (user 30/09: Ba Vì #68 Xe 16 pallet
+  // chở 0,7 pallet POSM của Dũng Tiến đứng cạnh #70 Dũng Tiến 17,3 pallet đi 2 × 17 — xe thứ hai còn 16 pallet trống)
+  const multiTakes = (b: Bin, u: Unit) => {
+    if (maxVeh < 2 || !b.units.some(y => y.multi) || !b.units.some(y => custOf(y) === custOf(u))) return false
+    const big = bigForOd(b.units[0].od)
+    const nb = withUnits(b, [u])
+    return !!big && fitsOnN(big, maxVeh, nb.pallets, nb.tons)
+  }
   for (const key of [...byCluster.keys()].sort(cmp)) {
     if (!mixCats && catPartOf(key) === '*') { followOnly.push(...byCluster.get(key)!); continue }
     const us = byCluster.get(key)!.sort(unitSort)
@@ -758,22 +768,23 @@ export function runDispatch(input: EngineInput): DispatchResult {
       if (u.oversize || u.multi) { local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
       // họ xe hỏi theo CHÍNH bin sau khi thêm (luật 10: mỗi khách một danh sách dòng xe — hỏi cả cụm là khách khó tính nhất
       // áp lên mọi khách cùng phường); danh sách giao nhau rỗng ⇒ không vào chung bin
-      const b = local.find(x => { const nb = withUnits(x, [u]); return !solo(x) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb, P.max_drops) })
+      const b = local.find(x => { const nb = withUnits(x, [u]); return (!solo(x) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb, P.max_drops)) || multiTakes(x, u) })
       if (b) { const nb = withUnits(b, [u]); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
       else local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
     }
     bins.push(...local)
   }
-  // Hàng đi kèm (POSM) "đi theo đơn": vào chuyến CÙNG CỤM (cùng nhóm khách · vùng · kênh · phường) còn chỗ —
-  // ưu tiên chuyến chở chính khách đó. Không chuyến nào nhận ⇒ đi chuyến riêng.
+  // Hàng đi kèm (POSM) "đi theo đơn": vào chuyến CÙNG CỤM (cùng nhóm khách · vùng · kênh · phường) còn chỗ — ưu tiên chuyến chở
+  // chính khách đó (kể cả thẻ nhiều xe). Không chuyến nào nhận ⇒ Ở LẠI KHUNG CHỜ, KHÔNG đi xe riêng (user 30/09: "POSM thì đi
+  // chung hàng, setting của nó là vậy — không được tự ghép POSM đi một xe riêng"; bản cũ đẻ Xe 4 pallet chở 0,3 pallet POSM).
   for (const u of followOnly.sort(unitSort)) {
     const key = clusterKey(u.od, P.allow_mix_channels, '*')
     const fitsIn = (b: Bin) => !solo(b) && baseKey(b.key) === baseKey(key)
       && binFits(candsFor([...b.units.map(y => y.od), u.od]), withUnits(b, [u]), P.max_drops)
-    const same = (b: Bin) => b.units.some(y => (y.od.ship_to_code ?? y.od.od_number) === (u.od.ship_to_code ?? u.od.od_number))
-    const hit = bins.find(b => same(b) && fitsIn(b)) ?? bins.find(b => catPartOf(b.key) !== '*' && fitsIn(b)) ?? bins.find(b => fitsIn(b))
+    const same = (b: Bin) => b.units.some(y => custOf(y) === custOf(u))
+    const hit = bins.find(b => same(b) && (fitsIn(b) || multiTakes(b, u))) ?? bins.find(b => catPartOf(b.key) !== '*' && fitsIn(b)) ?? bins.find(b => fitsIn(b))
     if (hit) { const nb = withUnits(hit, [u]); hit.units = nb.units; hit.pallets = nb.pallets; hit.tons = nb.tons }
-    else bins.push({ key, mkey: mergeKey(u.od, P.allow_mix_channels, '*'), units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
+    else unplanned.push({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, code: 'FOLLOW_ONLY', reason: 'Chỉ có hàng đi kèm đơn (POSM) — không đi xe riêng, chờ đơn hàng chính cùng cụm' })
   }
 
   // ── Luật 5 + 2: gộp chuyến Non tải cùng VÙNG — chỉ khi vừa xe, đủ điểm giao và KHÔNG ĐẮT HƠN đi riêng ──

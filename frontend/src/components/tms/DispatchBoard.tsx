@@ -353,6 +353,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
             <div className="min-w-0 flex-1 break-words text-slate-500 leading-snug">{o.ship_to_name ?? o.ship_to_code}{!compact && o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}
               {/* 28/09: mọi OD giờ đều mang danh sách (theo kênh / khách) — chỉ nói khi RỖNG: máy không chọn xe cho khách này */}
               {o.allowed_models && !o.allowed_models.length && <span className="ml-1 rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title="Khách và kênh của khách chưa khai Dòng xe được vào — máy không chọn xe (Khách hàng → Dòng xe được vào)">Chưa khai xe</span>}
+              {/* OD chỉ có hàng đi kèm (POSM) ở khung chờ: máy KHÔNG cho đi xe riêng (user 30/09) — chờ đơn chính cùng cụm hoặc người kéo lên xe của khách */}
+              {!o.trip_id && o.cat_load && Object.keys(o.cat_load).length > 0 && Object.keys(o.cat_load).every(c => follow.has(c)) && <span className="ml-1 rounded bg-violet-100 px-1 text-[9px] font-medium text-violet-800" title="Chỉ có hàng đi kèm đơn (POSM) — máy không xếp xe riêng; sẽ ké khi có đơn hàng chính của khách, hoặc kéo tay lên xe của khách">Chờ đơn chính</span>}
             </div>
             {/* dòng xe được vào của KHÁCH — mở/sửa ngay tại bàn (user 27/09); đổi kênh vẫn ở trang Khách hàng */}
             {o.ship_to_code && (

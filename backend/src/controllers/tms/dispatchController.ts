@@ -563,7 +563,7 @@ export async function createPlan(req: Request, res: Response) {
     const result = runDispatch({ ods, ...refs, share_actual, condition_labels, params })
     // OD thiếu KHAI BÁO dòng xe (khách/kênh chưa khai — 28/09) vẫn vào khung chờ: khai xong bấm Ghép là máy xếp được; để vào
     // "không lên xe" thì OD kẹt ở đó tới khi lập lại cả kế hoạch
-    const unplannedReal = result.unplanned.filter(u => u.code !== 'NO_VEHICLE')
+    const unplannedReal = result.unplanned.filter(u => !u.code)   // có `code` = OD ở lại khung chờ (chưa khai xe · chỉ POSM chờ đơn chính)
     const unplannedSet = new Set(unplannedReal.map(u => u.od_number))
 
     // MỘT bản nháp mỗi kho×ngày: nháp cũ (kể cả người đã sửa) bị thay — người bấm "Lập kế hoạch" là chủ ý chạy lại

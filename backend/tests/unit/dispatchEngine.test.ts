@@ -482,10 +482,25 @@ describe('luật 9 — không trộn Loại kho trên một chuyến (user 26/09
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].warnings.join(' ')).toMatch(/1 OD chứa nhiều Loại kho \(FG01 \+ FG02\).*OD:9/)
   })
-  it('POSM riêng lẻ không có chuyến nào cùng cụm ⇒ vẫn đi chuyến riêng (không bị bỏ ra ngoài)', () => {
+  it('POSM riêng lẻ không có chuyến nào cùng cụm ⇒ Ở LẠI khung chờ với lý do, KHÔNG đi xe riêng (user 30/09: "POSM đi chung hàng, không được tự ghép POSM đi một xe riêng")', () => {
     const r = runDispatch(input([od('5', 'W2', 1, { lines: [line(1, { category: 'PM01' })] })], { params: noMix }))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned).toEqual([{ od_number: '5', ship_to_code: 'S5', code: 'FOLLOW_ONLY', reason: expect.stringMatching(/hàng đi kèm .*chờ đơn hàng chính/) }])
+  })
+  it('THẺ NHIỀU XE của cùng khách nhận POSM và OD nhỏ của khách đó khi N xe còn chở vừa (Ba Vì 30/09: #68 0,7 pallet POSM cạnh #70 2 × 17 pallet)', () => {
+    // OD 20 pallet > xe lớn nhất 16 ⇒ đi 2 × M16 (còn 12 pallet trống); POSM 1 pallet + OD nhỏ 2 pallet CÙNG khách phải ké vào
+    const big = od('1', 'W1', 20, { ship_to_code: 'K1' })
+    const posm = od('2', 'W1', 1, { ship_to_code: 'K1', lines: [line(1, { category: 'PM01' })] })
+    const small = od('3', 'W1', 2, { ship_to_code: 'K1' })
+    const r = runDispatch(input([big, posm, small], { params: { ...noMix, max_vehicles: 2 } }))
     expect(r.unplanned).toHaveLength(0)
     expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicles).toHaveLength(2)
+    expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['1', '2', '3'])
+    // khách KHÁC thì không ké vào thẻ nhiều xe (chỉ khách của chính thẻ)
+    const other = od('4', 'W1', 2, { ship_to_code: 'K2' })
+    const r2 = runDispatch(input([big, other], { params: { ...noMix, max_vehicles: 2 } }))
+    expect(r2.trips).toHaveLength(2)
   })
 })
 describe('Loại kho chính của OD', () => {

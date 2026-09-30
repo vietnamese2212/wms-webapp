@@ -239,12 +239,19 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   }, [poolShown, f.boardGroup])
 
   // ── Thẻ xe: cùng bộ lọc "Soát" với bảng Danh sách xe ──
+  // KHÁCH CHÍNH của xe = khách chiếm nhiều pallet nhất — khoá sắp xếp để xe cùng khách ĐỨNG CẠNH NHAU (user 30/09: "sort đơn
+  // của chung 1 khách hàng gần nhau là bắt buộc — máy tách 17 pallet một xe, 0,5 pallet một xe thì tôi cần nhìn gần nhau để quyết")
+  const mainCustOf = (t: DispatchTrip) => {
+    const by = new Map<string, number>()
+    for (const o of t.ods) { const k = o.ship_to_name || o.ship_to_code || ''; by.set(k, (by.get(k) ?? 0) + Number(o.pallets ?? 0)) }
+    return [...by.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? ''
+  }
   const shownTrips = useMemo(() => {
     let l = trips.filter(t => !q || t.group_code.toLowerCase().includes(q) || t.ods.some(o => matches(o, q)))
     if (f.issue === 'todo') l = l.filter(t => needsWork(t, ctx))
     else if (f.issue) l = l.filter(t => issuesOf(t, ctx).includes(f.issue as IssueKey))
     // SẮP LẠI SAU MỖI LẦN THẢ (user 25/09: "kéo thả xong thì không sort nữa") — sort ổn định, hoà thì theo số xe
-    const regionOf = (t: DispatchTrip) => `${t.ods[0]?.region_code ?? '~'}|${t.wards[0] ?? '~'}`
+    const regionOf = (t: DispatchTrip) => `${t.ods[0]?.region_code ?? '~'}|${t.wards[0] ?? '~'}|${mainCustOf(t)}`
     const by: Record<string, (a: DispatchTrip, b: DispatchTrip) => number> = {
       region: (a, b) => regionOf(a).localeCompare(regionOf(b)),
       todo: (a, b) => Number(needsWork(b, ctx)) - Number(needsWork(a, ctx)),
@@ -275,6 +282,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     setHoldMode(mode); setHoldUntil(d.toISOString().slice(0, 10)); setHoldReason('')
     setHoldDlg(true)
   }
+  // nút trên thẻ (30/09): chọn đúng các dòng OD đó rồi mở hộp Không điều — cùng cửa ghi với thanh nổi
+  const openHoldFor = (ids: string[]) => { setSel(new Set(ids)); openHold('date') }
   const doHold = () => {
     const ods = uniqStr(selIds.map(id => rowBy.get(id)?.od_number ?? '').filter(Boolean))
     hold.mutateAsync({ plan_id: plan.id, ids: selIds, until: holdMode === 'date' ? holdUntil : null, reason: holdReason.trim() || undefined })
@@ -350,6 +359,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
               <button type="button" className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-sky-700" title={`Dòng xe được vào của khách ${o.ship_to_name ?? o.ship_to_code}${canCustVeh ? ' — xem / sửa' : ' — xem'}`}
                 onClick={e => { e.stopPropagation(); setCustSheet(o.ship_to_code) }}><Truck className="h-3.5 w-3.5" /></button>
             )}
+            {/* KHÔNG ĐIỀU từng OD ngay trên dòng (user 30/09) — hiện khi rê chuột, luôn hiện trên màn cảm ứng */}
+            {editable && (!tr || editableTrip(tr)) && (
+              <button type="button" className="shrink-0 rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-600 [@media(pointer:coarse)]:text-slate-400 lg:opacity-0 lg:group-hover:opacity-100 focus:opacity-100" title="Không điều OD này (chọn ngày điều lại hoặc không điều)" disabled={busy}
+                onClick={e => { e.stopPropagation(); openHoldFor([o.id]) }}><Ban className="h-3.5 w-3.5" /></button>
+            )}
           </div>
           {/* ghi chú giao hàng SAP (27/09) — người review đọc: "GIAO 10/9", "NPP không nhận CN"… máy KHÔNG đọc */}
           {o.note && <div className="mt-0.5 flex items-start gap-1 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-900 leading-snug break-words"><StickyNote className="h-3 w-3 shrink-0 mt-px" />{o.note}</div>}
@@ -407,29 +421,36 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     </div>
   )
 
-  // ── Nhóm theo dòng xe CHA (thứ tự danh mục Loại xe ở Cài đặt TMS), trong nhóm theo dòng xe CON ──
+  // ── Nhóm thẻ xe: theo VÙNG (mặc định 30/09 — người điều nghĩ theo tuyến, và xe cùng khách phải nằm cùng nhóm) hoặc theo
+  //    dòng xe CHA (thứ tự danh mục Loại xe ở Cài đặt TMS). Không còn tiêu đề phụ theo dòng xe con — tên dòng xe đã ở tiêu đề thẻ. ──
   const NO_MODEL = '__none__'
+  const byVtype = f.boardTripGroup === 'vtype'
   const parentRank = useMemo(() => new Map(vtypes.map((v, i) => [v.name, i])), [vtypes])
   const tripGroups = useMemo(() => {
     const by = new Map<string, DispatchTrip[]>()
-    for (const t of shownTrips) { const k = t.detail.vehicle_model?.parent_type_name ?? NO_MODEL; by.set(k, [...(by.get(k) ?? []), t]) }
-    const sumOf = (ts: DispatchTrip[]) => ({ pallets: ts.reduce((s, t) => s + Number(t.pallets ?? 0), 0), tons: ts.reduce((s, t) => s + Number(t.tons ?? 0), 0) })
-    return [...by.entries()].map(([k, ts]) => {
-      const sub = new Map<string, DispatchTrip[]>()
-      for (const t of ts) { const n = t.detail.vehicle_model?.name ?? 'Chưa chọn dòng xe'; sub.set(n, [...(sub.get(n) ?? []), t]) }
-      return {
-        k, label: k === NO_MODEL ? 'Chưa chọn dòng xe' : k, trips: ts, ...sumOf(ts),
-        freight: ts.reduce((s, t) => s + Number(t.freight_estimated ?? 0), 0),
-        todo: ts.filter(t => needsWork(t, ctx)).length, over: ts.filter(t => t.oversize).length,
-        subs: [...sub.entries()].map(([sk, sts]) => ({ k: sk, label: sk, trips: sts, ...sumOf(sts) })),
-      }
-    }).sort((a, b) => (Number(a.k !== NO_MODEL) - Number(b.k !== NO_MODEL)) || ((parentRank.get(a.k) ?? 999) - (parentRank.get(b.k) ?? 999)) || a.label.localeCompare(b.label))
-  }, [shownTrips, parentRank, ctx])
+    const keyOf = (t: DispatchTrip) => byVtype ? (t.detail.vehicle_model?.parent_type_name ?? NO_MODEL) : (t.ods[0]?.region_name || t.ods[0]?.region_code || 'Chưa có vùng')
+    for (const t of shownTrips) { const k = keyOf(t); by.set(k, [...(by.get(k) ?? []), t]) }
+    return [...by.entries()].map(([k, ts]) => ({
+      k, label: k === NO_MODEL ? 'Chưa chọn dòng xe' : k, trips: ts,
+      pallets: ts.reduce((s, t) => s + Number(t.pallets ?? 0), 0), tons: ts.reduce((s, t) => s + Number(t.tons ?? 0), 0),
+      freight: ts.reduce((s, t) => s + Number(t.freight_estimated ?? 0), 0),
+      todo: ts.filter(t => needsWork(t, ctx)).length, over: ts.filter(t => t.oversize).length,
+    })).sort((a, b) => byVtype
+      ? (Number(a.k !== NO_MODEL) - Number(b.k !== NO_MODEL)) || ((parentRank.get(a.k) ?? 999) - (parentRank.get(b.k) ?? 999)) || a.label.localeCompare(b.label)
+      : a.label.localeCompare(b.label))
+  }, [shownTrips, parentRank, ctx, byVtype])
   const openSet = new Set(f.boardOpen)
-  // đang tìm / đang lọc Soát ⇒ mở hết để thấy kết quả (không ghi vào trạng thái nhớ của người dùng)
-  const forceOpen = !!q || !!f.issue || tripGroups.length === 1
+  // đang tìm ⇒ mở hết để thấy kết quả. Lọc Soát: MỞ HẾT MỘT LẦN khi đổi chip nhưng vẫn đóng/mở được (user 30/09: "vào các tab
+  // thì không đóng mở được dòng loại xe nữa" — bản cũ khoá nút toggle suốt lúc đang lọc)
+  const forceOpen = !!q || tripGroups.length === 1
   const allOpen = tripGroups.every(g => openSet.has(g.k))
   const toggleGroup = (k: string) => { if (forceOpen) return; setF({ boardOpen: openSet.has(k) ? f.boardOpen.filter(x => x !== k) : [...f.boardOpen, k] }) }
+  const issueRef = useRef(f.issue)
+  useEffect(() => {
+    if (issueRef.current === f.issue) return
+    issueRef.current = f.issue
+    if (f.issue) setF({ boardOpen: uniqStr([...f.boardOpen, ...tripGroups.map(g => g.k)]) })
+  }, [f.issue]) // eslint-disable-line react-hooks/exhaustive-deps
   // rê OD qua đầu nhóm đang đóng ~0,5 s ⇒ nhóm tự mở để thả vào xe bên trong
   const armRef = useRef<{ k: string; h: number } | null>(null)
   const armOpen = (k: string) => {
@@ -474,12 +495,31 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     return (
       <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
         className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
-        <div className="flex items-center gap-1.5 px-2 pt-1.5">
-          <span className="font-mono text-xs font-semibold" title={`Số xe ${t.group_code}`}>#{t.seq}</span>
-          <div className="ml-auto flex items-center gap-0.5 shrink-0">
+        {/* TIÊU ĐỀ THẺ = thanh khung màu trung tính (user 30/09): "#số · dòng xe" + cảnh báo cần xử lý ngay trong thanh; nút xe bên phải */}
+        <div className="flex items-start gap-1.5 rounded-t-lg border-b border-slate-200 bg-slate-100 px-2 py-1">
+          <button type="button" className="min-w-0 flex-1 text-left leading-snug hover:text-sky-700" onClick={() => onOpenTrip(t.id)} title={`Số xe ${t.group_code} — mở chi tiết xe: đổi dòng xe, chuyển từng OD`}>
+            <span className="font-mono text-xs font-bold text-slate-800">#{t.seq}</span>
+            <span className="mx-1 text-slate-400">·</span>
+            <span className="text-[11px] font-semibold text-slate-800 break-words">
+              {(t.detail.vehicles?.length ?? 0) > 1
+                ? <><span className="mr-1 rounded bg-sky-600 px-1 text-[9px] font-bold text-white align-middle">{t.detail.vehicles!.length} XE</span>{t.detail.vehicles!.map(v => v.name).join(' + ')}</>
+                : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
+            </span>
+            {iss.length > 0 && (
+              <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
+                {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${k === 'declined' || k === 'over' || k === 'sapflag' ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-500 border border-slate-200'}`}>{ISSUE_SHORT[k]}</span>)}
+              </span>
+            )}
+          </button>
+          <div className="flex items-center gap-0.5 shrink-0">
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
+            {/* KHÔNG ĐIỀU cả xe — một nhát bấm chuyển mọi OD của xe (user 30/09: "trên thẻ cần nút chuyển thẳng trạng thái về không ghép của cả xe") */}
+            {ed && t.ods.length > 0 && (
+              <button type="button" className="rounded p-1 text-slate-400 hover:bg-white hover:text-red-600" title="Không điều cả xe — mọi OD của xe rời kế hoạch (chọn ngày điều lại hoặc không điều)" disabled={busy}
+                onClick={() => openHoldFor(t.ods.map(o => o.id))}><Ban className="h-3.5 w-3.5" /></button>
+            )}
             {ed && (
-              <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-300 hover:text-slate-600'}`} disabled={patchTrip.isPending}
+              <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
                 title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'}
                 onClick={() => patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá'))}>
                 {t.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
@@ -491,11 +531,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
             )}
           </div>
         </div>
-        <button type="button" className="px-2 text-left text-[11px] font-medium text-slate-800 leading-snug break-words hover:text-sky-700" onClick={() => onOpenTrip(t.id)} title="Mở chi tiết xe — đổi dòng xe, chuyển từng OD">
-          {(t.detail.vehicles?.length ?? 0) > 1
-            ? <><span className="mr-1 rounded bg-sky-600 px-1 text-[9px] font-bold text-white">{t.detail.vehicles!.length} XE</span>{t.detail.vehicles!.map(v => v.name).join(' + ')}</>
-            : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
-        </button>
         {/* thẻ NHIỀU XE (luật 11, 27/09): phần tải + cước của từng xe — một Số xe, ĐVVT booking đủ số xe */}
         {(t.detail.vehicles?.length ?? 0) > 1 && (
           <div className="mx-2 mt-0.5 rounded border border-sky-100 bg-sky-50/60 px-1.5 py-0.5 space-y-0.5">
@@ -517,17 +552,14 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
           <span className="shrink-0 text-[11px] font-semibold tabular-nums" title={t.detail.freight.reason ?? undefined}>{t.freight_estimated == null ? <span className="font-normal text-amber-700">chưa có cước</span> : money(t.freight_estimated)}</span>
         </div>
         <div className="px-2 pt-1">{loadBar(t)}</div>
+        {/* gợi ý gộp của máy cho xe Non tải (30/09: trước chỉ có ở Danh sách xe, bàn ghép không thấy) */}
+        {t.underload && t.detail.merge_hint && <div className="mx-2 mt-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-900 leading-snug break-words">{t.detail.merge_hint}</div>}
         {mixSwitch(t)}
         {t.ods.length > 0 && (
           <div className="px-2 pt-0.5 text-[10px] text-slate-600 leading-snug">
             <span className={lim != null && t.stops > lim ? 'text-red-600 font-semibold' : ''}>{t.stops}{lim != null ? `/${lim}` : ''} điểm</span>
             <span className="text-slate-300"> · </span>
             <span className="break-words">{t.wards.join(', ') || '—'}</span>
-          </div>
-        )}
-        {iss.length > 0 && (
-          <div className="px-2 pt-1 flex flex-wrap gap-1">
-            {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${k === 'declined' || k === 'over' || k === 'sapflag' ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{ISSUE_SHORT[k]}</span>)}
           </div>
         )}
         <div className="px-1 pt-1 pb-1.5 space-y-0.5 flex-1">
@@ -635,10 +667,18 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
       <section className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px]" />
-          <div className="w-36 shrink-0" title="Sắp xếp thẻ xe — sắp lại ngay sau mỗi lần thả (trong từng nhóm dòng xe); xe vừa nhận OD được tô viền xanh">
+          {/* NHÓM thẻ xe: Vùng (mặc định — xe cùng khách nằm cạnh nhau) | Loại xe */}
+          <div className="flex items-center gap-1 text-[10px] shrink-0" title="Nhóm thẻ xe theo vùng (xe cùng khách nằm cạnh nhau) hay theo loại xe">
+            <span className="text-slate-400">Nhóm</span>
+            {([['region', 'Vùng'], ['vtype', 'Loại xe']] as const).map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setF({ boardTripGroup: k, boardOpen: [] })}
+                className={`rounded px-1.5 py-0.5 ${(f.boardTripGroup || 'region') === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{l}</button>
+            ))}
+          </div>
+          <div className="w-36 shrink-0" title="Sắp xếp thẻ xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
-                { value: 'region', label: 'Vùng → phường' },
+                { value: 'region', label: 'Phường → khách' },
                 { value: 'todo', label: 'Cần xử lý trước' },
                 { value: 'load', label: 'Tải thấp trước' },
                 { value: 'freight', label: 'Cước cao trước' },
@@ -677,20 +717,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
                   <span className="ml-auto text-[11px] font-semibold tabular-nums text-slate-700 whitespace-nowrap">{money(g.freight)}</span>
                 </button>
                 {open && (
-                  <div className="p-2 space-y-2">
-                    {g.subs.map(sg => (
-                      <div key={sg.k}>
-                        {g.subs.length > 1 && (
-                          <div className="px-1 pb-1 flex items-center gap-2 text-[11px] text-slate-500">
-                            <span className="font-medium text-slate-700">{sg.label}</span>
-                            <span className="tabular-nums">{sg.trips.length} xe · {nf(sg.pallets, 1)} pl</span>
-                          </div>
-                        )}
-                        <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
-                          {sg.trips.map(t => tripCard(t))}
-                        </div>
-                      </div>
-                    ))}
+                  <div className="p-2 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
+                    {g.trips.map(t => tripCard(t))}
                   </div>
                 )}
               </div>

@@ -32,7 +32,8 @@ export function DispatchCarrierPicker({ trip, editable, busy, onPick }: {
   }, [open])
 
   const c = trip.detail.carrier
-  const label = c ? <><b className="font-mono">{c.code}</b> <span className="break-words">{c.name}</span></> : <span className="text-red-600">Chưa có ĐVVT</span>
+  // chỉ TÊN (user 30/09: "đã có tên đầy đủ rồi lại còn tên dạng ngắn"); mã ĐVVT nằm trong tooltip
+  const label = c ? <span className="break-words" title={`ĐVVT ${c.code}`}>{c.name}</span> : <span className="text-red-600">Chưa có ĐVVT</span>
   if (!editable) return <div className="text-[10px] text-slate-600 leading-tight">{label}</div>
   const items = q.data?.items ?? []
   const cur = items.find(i => i.current)?.freight ?? null

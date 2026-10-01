@@ -8,10 +8,11 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl })
 
-// Nền OpenStreetMap chuẩn qua ba máy chủ con a/b/c (mặc định của Leaflet). Đo 01/10: gọi thẳng `tile.openstreetmap.org` không
-// subdomain bị reset kết nối ở PC; CARTO Voyager nay đòi khoá API (ô nền in "API KEY REQUIRED"). Mức dùng của vài người điều vận
-// nằm trong "light usage" của OSM. Có khoá Goong rồi có thể đổi sang tile Goong (tính vào map loads). Đổi nền = đổi ba dòng này.
-export const OSM_TILE = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+// Nền OpenStreetMap từ máy chủ FOSSGIS (tile.openstreetmap.de). Đo 01/10 từ mạng công ty bằng curl: `*.tile.openstreetmap.org`
+// bị RESET ở tầng SSL (chặn mạng, không phải lỗi app — bản đồ xám trên PC); CARTO nay đòi khoá API ("API KEY REQUIRED"); thông:
+// openstreetmap.de 1,5 s · openstreetmap.fr 1,1 s · Esri 0,35 s. Chọn OSM Đức vì cùng dữ liệu + nhãn tiếng Việt + cho ứng dụng dùng.
+// Có khoá Goong rồi có thể đổi sang tile Goong (tính vào map loads). Đổi nền = đổi ba dòng này.
+export const OSM_TILE = 'https://tile.openstreetmap.de/{z}/{x}/{y}.png'
 export const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 export const OSM_SUBDOMAINS = 'abc'
 /** Tâm Việt Nam khi chưa có ghim nào */

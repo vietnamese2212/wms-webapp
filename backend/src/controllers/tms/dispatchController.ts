@@ -732,9 +732,10 @@ export async function measurePlanGeo(req: Request, res: Response) {
     const g = await planGeoInput(String(req.params.id))
     if (!g) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, g.full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    // việc người sửa được NGAY trong app (ghim kho) nói trước, việc cần IT (khoá nhà cung cấp) nói sau
+    if (!g.whNode) return fail(res, 422, 'WAREHOUSE_NOT_LOCATED', `${g.wh?.name ?? 'Kho xuất'} chưa có toạ độ — chấm ghim kho ở Cài đặt WMS → Kho trước.`)
     const st = await geoProviderStatus()
     if (!st.ready) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.reason ?? 'Chưa cấu hình máy định vị')
-    if (!g.whNode) return fail(res, 422, 'WAREHOUSE_NOT_LOCATED', `Kho ${g.wh?.name ?? ''} chưa có toạ độ — chấm ghim kho ở Cài đặt WMS → Kho trước.`)
     const todo = await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])
     const r = await measurePairs(todo, { maxCalls: 200 })
     const pending = (await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])).length

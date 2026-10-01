@@ -84,6 +84,7 @@ router.delete('/freight/shares/:id',      requirePerm('freight', 'manage'), vali
 // Máy đề xuất (POST plan) → người sửa nháp (PATCH trip · move-od) → Xác nhận = ghi khvc_lines → dội xuống chuyến như upload KH tay.
 router.get('/dispatch/plans',                 requirePerm('dispatch', 'view'),    validate({ query: dispatch.zListQuery }),                     dispatch.listPlans)
 router.get('/dispatch/plans/:id',             requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlan)
+router.get('/dispatch/plans/:id/geo',         requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanGeo)   // tab Bản đồ (01/10)
 router.post('/dispatch/plan',                 requirePerm('dispatch', 'plan'),    validate({ body: dispatch.zPlanBody }),                        dispatch.createPlan)
 router.patch('/dispatch/trips/:id',           requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zTripPatch }),     dispatch.updateTrip)
 router.get('/dispatch/trips/:id/carriers',    requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.tripCarriers)  // ĐVVT xếp hạng theo cước cho xe này

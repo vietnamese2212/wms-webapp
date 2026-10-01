@@ -370,6 +370,8 @@ export const MODULES = {
       import:         'Nạp khách hàng từ dữ liệu SAP',
       manage_channel: 'Tab Kênh — sửa tên, mã kênh SAP, %Date + dòng xe mặc định của kênh (GT / MT / KA / BHX…)',
       create_channel: 'Tab Kênh — THÊM kênh mới (kể cả kênh không có trên SAP, vd Bách hoá xanh)',
+      locate:         'Định vị điểm giao của khách: chấm trên bản đồ hoặc lấy GPS điện thoại tại chỗ',
+      geocode:        'Máy định vị tự động từ địa chỉ cho các khách còn trống toạ độ (dịch vụ bản đồ)',
     },
   },
   pallet_print: {

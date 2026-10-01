@@ -11,7 +11,8 @@
 // 3 tab cạnh tiêu đề — Bàn ghép xe (kéo thả, mặc định) · Danh sách xe (bảng soát cũ) · Dữ liệu OD (thô, OD đang ở đâu).
 // Dải chỉ số `DispatchKpiBar` + dải Soát đứng CHUNG trên cả ba tab.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, List, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp, Map as MapIcon } from 'lucide-react'
+import { DispatchMap } from '@/components/tms/DispatchMap'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
@@ -132,7 +133,9 @@ export default function Dispatch() {
   const ictx = useMemo(() => ({ flags }), [flags])
   const permTabs = useMemo(() => [
     // Xem đơn đứng ĐẦU (27/09 tối): bảng theo trạng thái Điều · Không điều ngày này · Không điều · Đã điều — thay tab "Dữ liệu OD"
-    { key: 'review', label: 'Xem đơn', icon: ListChecks }, { key: 'board', label: 'Bàn ghép xe', icon: LayoutGrid }, { key: 'list', label: 'Danh sách xe', icon: List },
+    { key: 'review', label: 'Xem đơn', icon: ListChecks }, { key: 'board', label: 'Bàn ghép xe', icon: LayoutGrid },
+    // Bản đồ (01/10, đợt 1 chỉ xem): ghim khách tô màu theo xe — toạ độ từ danh mục Khách hàng
+    { key: 'map', label: 'Bản đồ', icon: MapIcon }, { key: 'list', label: 'Danh sách xe', icon: List },
   ], [])
   const tabs = useMobileTabs('/tms/dispatch', permTabs, f.tab || 'review', (t: string) => setF({ tab: t }))
   const tab = tabs.some(t => t.key === f.tab) ? f.tab : (tabs[0]?.key ?? 'review')
@@ -487,7 +490,7 @@ export default function Dispatch() {
 
         {plan && sum && f.kpiOpen && <DispatchKpiBar plan={plan} />}
 
-        <div className={(tab === 'board' || showReview) && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
+        <div className={(tab === 'board' || showReview || tab === 'map') && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
               <Waypoints className="h-10 w-10 opacity-30" />
@@ -507,6 +510,8 @@ export default function Dispatch() {
             <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} />
           ) : tab === 'board' ? (
             <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
+          ) : tab === 'map' ? (
+            <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={plan} onOpenTrip={setOpenTripId} /></div>
           ) : (
             <>
               <ResizableTable key={showStatus ? 'st' : 'nost'} storageKey={showStatus ? 'dispatch_cols_v2' : 'dispatch_cols_draft_v1'} cols={cols}>

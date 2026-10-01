@@ -728,6 +728,41 @@ try {
       `${rStop.s} còn=${!!stopped} active=${stopped?.is_active}`)
   }
 
+  // ═══ [13] TOẠ ĐỘ ĐIỂM GIAO (01/10, điều vận trên bản đồ — đợt 1) ═══════════════════════════════
+  // Một ô, ba nguồn: MANUAL / GPS do người, GOONG do máy. Người thắng máy; dải lat/lng chặn ở zod (400) VÀ CHECK ở DB.
+  {
+    const geoOf = async () => (await restAll('Customer', `select=geo_lat,geo_lng,geo_source,geo_accuracy_m,geo_by&ship_to_code=eq.${SHIP.A}`))[0]
+    const gManual = await api(`/masterdata/customers/${custA.id}/location`, 'PATCH', { lat: 21.0285, lng: 105.8542, source: 'MANUAL' })
+    const g1 = await geoOf()
+    check('[13a] Chấm tay (MANUAL) → 200, toạ độ + nguồn + người ghi lưu đúng',
+      gManual.s === 200 && Number(g1?.geo_lat) === 21.0285 && Number(g1?.geo_lng) === 105.8542 && g1?.geo_source === 'MANUAL' && !!g1?.geo_by,
+      `${gManual.s} ${err(gManual)} row=${JSON.stringify(g1)}`)
+    const gBadLat = await api(`/masterdata/customers/${custA.id}/location`, 'PATCH', { lat: 95, lng: 105, source: 'MANUAL' })
+    const gBadSrc = await api(`/masterdata/customers/${custA.id}/location`, 'PATCH', { lat: 21, lng: 105, source: 'GOONG' })
+    const gNoId = await api(`/masterdata/customers/${randomUUID()}/location`, 'PATCH', { lat: 21, lng: 105, source: 'MANUAL' })
+    check('[13b] Vĩ độ ngoài dải → 400 · nguồn GOONG không được ghi qua cửa người → 400 · khách không có → 404',
+      gBadLat.s === 400 && gBadSrc.s === 400 && gNoId.s === 404, `lat=${gBadLat.s} src=${gBadSrc.s} noid=${gNoId.s}`)
+    const gGps = await api(`/masterdata/customers/${custA.id}/location`, 'PATCH', { lat: 21.03, lng: 105.85, source: 'GPS', accuracy_m: 12.4 })
+    const g2 = await geoOf()
+    check('[13c] GPS tại chỗ kèm sai số → 200, accuracy lưu, nguồn GPS', gGps.s === 200 && g2?.geo_source === 'GPS' && Number(g2?.geo_accuracy_m) === 12.4, `${gGps.s} row=${JSON.stringify(g2)}`)
+    const st = await api('/masterdata/customers/geo-status')
+    check('[13d] geo-status → 200: đếm đã/chưa định vị + trạng thái máy định vị (ready + reason)',
+      st.s === 200 && Number(st.j?.data?.located) >= 1 && typeof st.j?.data?.remaining === 'number' && typeof st.j?.data?.provider?.ready === 'boolean',
+      `${st.s} ${JSON.stringify(st.j?.data ?? null).slice(0, 160)}`)
+    // Máy định vị KHÔNG đè nguồn người: staging không có khoá ⇒ 422 GEO_NOT_CONFIGURED; có khoá ⇒ 200 nhưng khách GPS không nằm trong done
+    const gc = await api('/masterdata/customers/geocode', 'POST', { ids: [custA.id] })
+    const g3 = await geoOf()
+    check('[13e] Máy định vị không đè ghim GPS của người (422 chưa cấu hình, hoặc 200 mà không chạm khách này) · limit lạ → 400',
+      (gc.s === 422 && gc.j?.error?.code === 'GEO_NOT_CONFIGURED' || (gc.s === 200 && !(gc.j?.data?.done ?? []).some(x => x.id === custA.id))) && g3?.geo_source === 'GPS'
+        && (await api('/masterdata/customers/geocode', 'POST', { limit: 0 })).s === 400,
+      `${gc.s} ${err(gc)} src=${g3?.geo_source}`)
+    const gClear = await api(`/masterdata/customers/${custA.id}/location`, 'PATCH', { lat: null, lng: null })
+    const g4 = await geoOf()
+    check('[13f] Xoá ghim → 200, toạ độ + nguồn về null', gClear.s === 200 && g4?.geo_lat == null && g4?.geo_source == null, `${gClear.s} row=${JSON.stringify(g4)}`)
+    const aGeo = await restAll('admin_audit_events', `select=action,target_id&action=eq.CUSTOMER_GEO&target_id=eq.${custA.id}&limit=5`)
+    check('[13g] Dời ghim có vết Nhật ký quản trị CUSTOMER_GEO', aGeo.length >= 1, `n=${aGeo.length}`)
+  }
+
   // ═══ [8] Nhật ký quản trị ═════════════════════════════════════════════════════════════════════
   const audit = await restAll('admin_audit_events', "select=action&action=in.(CUSTOMER_BULK,CHANNEL_UPDATE)&order=created_at.desc&limit=20")
   check('[8a] Đổi danh mục Khách hàng / Kênh có vết Nhật ký quản trị',

@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react'
 import {
   Store, Plus, DownloadCloud, Layers, CalendarClock, Warehouse as WarehouseIcon,
-  Power, Pencil, AlertTriangle, Truck,
+  Power, Pencil, AlertTriangle, Truck, MapPin,
 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -32,9 +32,11 @@ import {
   useCustomers, useCustomerChannels, useCustomerSeedCandidates, useSaveCustomer,
   useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel, useCreateCustomerChannel,
   useSaveDateRules, useBulkSetDateRule, useDateRuleCategories, useVehicleModels,
+  useCustomerGeoStatus, useSetCustomerLocation, useGeocodeCustomers, GEO_SOURCE_VI,
   type Customer, type CustomerCandidate, type CustomerPatch, type CustomerBulkPatch, type UploadPreflight,
   type MasterRuleRow, type DateRuleCategory, type VehicleModel,
 } from '@/api/hooks'
+import { GeoPicker } from '@/components/shared/GeoPicker'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -57,6 +59,7 @@ const COLS = [
   { id: 'mode',  label: 'Dòng xe',          w: 110 },
   { id: 'rule',  label: 'Quy định date',    w: 210 },
   { id: 'wh',    label: 'Kho nhận',         w: 170 },
+  { id: 'geo',   label: 'Định vị',          w: 96 },
   { id: 'src',   label: 'Nguồn',            w: 86 },
   { id: 'act',   label: 'Trạng thái',       w: 90 },
   { id: 'upd',   label: 'Sửa',              w: 110 },
@@ -212,6 +215,20 @@ export default function Customers() {
   const canImport = can(perms, 'customers', 'import')
   const canChannel = can(perms, 'customers', 'manage_channel')
   const canCreateChannel = can(perms, 'customers', 'create_channel')
+  // Toạ độ điểm giao (01/10): locate = chấm tay / GPS trong form · geocode = máy định vị hàng loạt (nút trên thanh công cụ)
+  const canLocate = can(perms, 'customers', 'locate')
+  const canGeocode = can(perms, 'customers', 'geocode')
+  const geoStatus = useCustomerGeoStatus(canGeocode)
+  const geocode = useGeocodeCustomers()
+  const setLoc = useSetCustomerLocation()
+  const [geoMsg, setGeoMsg] = useState('')
+  const runGeocode = async () => {
+    setErr(''); setGeoMsg('')
+    try {
+      const r = await geocode.mutateAsync({})
+      setGeoMsg(`Định vị được ${nf(r.done.length)} khách${r.failed.length ? ` · ${nf(r.failed.length)} không tìm thấy (${r.failed.slice(0, 3).map(x => x.ship_to_code).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}${r.remaining ? ` · còn ${nf(r.remaining)} khách — bấm lại để tiếp` : ' · xong'}`)
+    } catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không định vị được') }
+  }
 
   const { data: whs } = useScopedWarehouses(true)
   const { data: channels } = useCustomerChannels()
@@ -332,6 +349,16 @@ export default function Customers() {
       tip: 'Nạp mã ship-to đã thấy trong VL06O / trên chuyến vào danh mục (khách mới chưa có mức nào)',
       onClick: () => setSeedOpen(true),
     } satisfies ActionItem] : []),
+    // Máy định vị từ địa chỉ (01/10) — nói thẳng số còn trống + lý do chưa sẵn sàng (chưa có khoá / đang tắt) thay vì bấm rồi lỗi
+    ...(canGeocode ? [{
+      key: 'geocode', icon: MapPin, label: `Định vị tự động${geoStatus.data ? ` (${nf(geoStatus.data.remaining)})` : ''}`,
+      mobileHidden: true, busy: geocode.isPending,
+      disabled: geocode.isPending || !geoStatus.data?.provider.ready || !geoStatus.data?.remaining,
+      tip: geoStatus.data?.provider.ready
+        ? `Máy định vị các khách còn trống toạ độ từ địa chỉ SAP (mỗi lượt tối đa 100 khách) — ${nf(geoStatus.data?.located ?? 0)}/${nf(geoStatus.data?.total_active ?? 0)} khách đã có ghim`
+        : (geoStatus.data?.provider.reason ?? 'Đang kiểm tra máy định vị…'),
+      onClick: () => void runGeocode(),
+    } satisfies ActionItem] : []),
   ]
 
   const bulkItems: ActionItem[] = canEdit && pickCount > 0 ? [
@@ -407,6 +434,7 @@ export default function Customers() {
             </FloatingActionBar>
           )}
           {err && <p className="text-[11px] text-red-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {err}</p>}
+          {geoMsg && <p className="text-[11px] text-slate-600 flex items-center gap-1"><MapPin className="h-3 w-3 text-sky-600" /> {geoMsg}</p>}
         </div>
 
         {listTab ? (
@@ -511,6 +539,15 @@ export default function Customers() {
                             ? (whName.get(r.warehouse_id) ?? r.warehouse_id)
                             : <span className="text-slate-400">Khách ngoài</span>}
                         </TableCell>
+                        {/* Toạ độ điểm giao (01/10): nguồn người (GPS / chấm tay) đậm hơn máy; chưa có = vàng để đi định vị */}
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          {r.geo_lat != null && r.geo_source
+                            ? <StatusBadge tone={r.geo_source === 'GOONG' ? 'slate' : r.geo_source === 'GPS' ? 'green' : 'sky'}
+                                title={`${r.geo_lat}, ${r.geo_lng}${r.geo_accuracy_m != null ? ` ±${Math.round(r.geo_accuracy_m)} m` : ''}${r.geo_by ? ` · ${r.geo_by}` : ''}`}>
+                                {GEO_SOURCE_VI[r.geo_source]}
+                              </StatusBadge>
+                            : <StatusBadge tone="amber" title="Chưa có toạ độ — chấm trên bản đồ / GPS trong form, hoặc nút Định vị tự động">Chưa định vị</StatusBadge>}
+                        </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
                           {r.auto_created
                             ? <StatusBadge tone="slate" title="Sinh tự động khi upload kế hoạch gặp mã ship-to lạ">Tự tạo</StatusBadge>
@@ -544,7 +581,7 @@ export default function Customers() {
 
       {form && (
         <CustomerForm
-          row={form.row}
+          row={form.row ? (rows.find(r => r.id === form.row!.id) ?? form.row) : null}   // dòng SỐNG: lưu vị trí xong ghim trong form đổi theo
           channels={(channels ?? []).map(c => ({ value: c.value, label: c.label }))}
           warehouses={(whs ?? []) as { id: string; name: string; code?: string }[]}
           cats={cats}
@@ -553,6 +590,13 @@ export default function Customers() {
           chanRules={chanRules}
           chanMax={chanMax}
           saving={save.isPending || deact.isPending}
+          canLocate={canLocate}
+          locSaving={setLoc.isPending}
+          onSaveLocation={form.row ? (async p => {
+            setErr('')
+            try { await setLoc.mutateAsync(p ? { id: form.row!.id, ...p } : { id: form.row!.id, lat: null, lng: null }) }
+            catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không lưu được vị trí'); throw e }
+          }) : undefined}
           onClose={() => setForm(null)}
           onSave={async patch => {
             setErr('')
@@ -587,7 +631,7 @@ export default function Customers() {
 }
 
 // ─── Form Thêm / Sửa khách hàng ────────────────────────────────────────────────────────────────
-function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRules, chanMax, saving, onClose, onSave }: {
+function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRules, chanMax, saving, canLocate, locSaving, onSaveLocation, onClose, onSave }: {
   row: Customer | null
   channels: { value: string; label: string }[]
   warehouses: { id: string; name: string; code?: string }[]
@@ -597,6 +641,10 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
   chanRules: Map<string, MasterRuleRow[]>
   chanMax: Map<string, number | null>
   saving: boolean
+  /** Toạ độ điểm giao (01/10) — cửa ghi RIÊNG (customers.locate), chỉ có khi sửa khách đã tồn tại */
+  canLocate: boolean
+  locSaving: boolean
+  onSaveLocation?: (p: { lat: number; lng: number; source: 'MANUAL' | 'GPS'; accuracy_m: number | null } | null) => Promise<unknown>
   onClose: () => void
   onSave: (p: CustomerPatch) => Promise<Customer | undefined>
 }) {
@@ -679,6 +727,21 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
             <p className="mt-1 text-[11px] text-slate-500">Mức của kênh {chanName}: {chanRuleText || 'chưa khai'} — khách khai riêng thì thắng.</p>
           )}
         </div>
+        {/* ĐIỂM GIAO TRÊN BẢN ĐỒ (01/10): lưu bằng nút riêng trong ô (cửa customers.locate), không đi chung nút Lưu hồ sơ.
+            Khách mới chưa có id ⇒ lưu hồ sơ trước rồi mở lại để chấm. */}
+        {row && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">Điểm giao trên bản đồ</label>
+            <GeoPicker
+              value={row.geo_lat != null && row.geo_lng != null ? { lat: Number(row.geo_lat), lng: Number(row.geo_lng) } : null}
+              meta={{ source: row.geo_source ?? null, accuracy_m: row.geo_accuracy_m == null ? null : Number(row.geo_accuracy_m), at: row.geo_at ?? null, by: row.geo_by ?? null }}
+              address={row.address}
+              canEdit={canLocate && !!onSaveLocation}
+              saving={locSaving}
+              onSave={p => onSaveLocation ? onSaveLocation(p) : Promise.resolve()} />
+            <p className="mt-1 text-[11px] text-slate-400">Toạ độ do người ghi (chấm tay, GPS) thắng máy định vị — máy chỉ điền ô còn trống. Điều vận dùng ghim này để vẽ bản đồ và (đợt 2) ghép tuyến theo đường đi.</p>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Kho nhận</label>
           <WarehouseSingleSelect warehouses={warehouses} value={whId} onChange={setWhId}

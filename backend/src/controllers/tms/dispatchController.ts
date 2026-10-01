@@ -652,6 +652,21 @@ export async function listPlans(req: Request, res: Response) {
     return ok(res, { items: (data ?? []).map(p => ({ ...p, warehouse: whBy.get(p.warehouse_id) ?? null })) })
   } catch (e) { return failAny(res, e) }
 }
+// GET /tms/dispatch/plans/:id/geo — toạ độ khách của kế hoạch cho tab Bản đồ (01/10): CHỈ đọc Customer.geo_* (của mình),
+// không gọi dịch vụ ngoài — nhà cung cấp định vị sập giữa ngày thì bàn vẫn vẽ. Khách chưa có toạ độ trả về với lat/lng null
+// để màn hình liệt kê "chưa định vị" thay vì im lặng thiếu ghim.
+export async function getPlanGeo(req: Request, res: Response) {
+  try {
+    const full = await readPlan(String(req.params.id))
+    if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const codes = uniq([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.ship_to_code).filter((x): x is string => !!x))
+    const customers = codes.length ? (await fetchAllByIdChunks(codes, c => db.from('Customer')
+      .select('ship_to_code, name, geo_lat, geo_lng, geo_source, geo_accuracy_m').in('ship_to_code', c).order('ship_to_code'))) as
+      { ship_to_code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: string | null; geo_accuracy_m: number | null }[] : []
+    return ok(res, { customers })
+  } catch (e) { return failAny(res, e) }
+}
 export async function getPlan(req: Request, res: Response) {
   try {
     const full = await readPlan(String(req.params.id))

@@ -6,10 +6,11 @@ import * as material    from '../controllers/masterdata/materialController'
 import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as machine     from '../controllers/wms/machineController'
 import * as customer    from '../controllers/masterdata/customerController'
+import * as customerGeo from '../controllers/masterdata/customerGeoController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
-import { validate, zText, z } from '../middlewares/validate'
+import { validate, zText, zIdParam, z } from '../middlewares/validate'
 import { excelFromStorage } from '../middlewares/excelUpload'
 import multer from 'multer'
 
@@ -55,8 +56,12 @@ router.patch('/customers/bulk-rule',      requirePerm('customers', 'edit'),
     kind: z.enum(['FEFO', 'MIN_PCT', 'MIN_DAYS', '']).nullable().optional(),
     value: z.union([z.number(), z.string(), z.null()]).optional(),
   }) }), customer.bulkSetDateRule)
+// Toạ độ điểm giao (01/10, điều vận trên bản đồ) — quyền RIÊNG: locate = chấm tay / GPS, geocode = máy định vị hàng loạt
+router.get('/customers/geo-status',       requirePerm('customers', 'view'),    customerGeo.customerGeoStatus)
+router.post('/customers/geocode',         requirePerm('customers', 'geocode'), validate({ body: customerGeo.zGeocodeBody }), customerGeo.geocodeCustomers)
 router.post('/customers',                 requirePerm('customers', 'edit'),   customer.createCustomer)
 router.put('/customers/:id',              requirePerm('customers', 'edit'),   customer.updateCustomer)
+router.patch('/customers/:id/location',   requirePerm('customers', 'locate'), validate({ params: zIdParam, body: customerGeo.zLocationBody }), customerGeo.setCustomerLocation)
 router.delete('/customers/:id',           requirePerm('customers', 'edit'),   customer.deactivateCustomer) // ngừng (mềm)
 // Kênh khách hàng — quyền RIÊNG, không đi ké wms_settings.manage_type (đó là taxonomy Loại kho)
 router.get('/customer-channels',          customer.listCustomerChannels)      // hở đọc: ô chọn kênh ở nhiều màn

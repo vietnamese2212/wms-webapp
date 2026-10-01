@@ -14,6 +14,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   // Mức Quy định date theo (khách|kênh) × loại hàng (11/09 đợt 2) — đổi một ô ở đây là đổi mức
   // lấy hàng của mọi đơn sinh sau, nên phải có vết riêng chứ không gộp vào CUSTOMER_UPDATE.
   'DATE_RULE_MASTER',
+  // Toạ độ điểm giao (01/10) — chấm tay / GPS / máy định vị đổi chỗ xe đến giao: phải biết ai dời ghim, từ đâu sang đâu
+  'CUSTOMER_GEO',
 ] as const
 export type AdminAuditAction = typeof ADMIN_AUDIT_ACTIONS[number]
 export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel' | 'DateRuleMaster'

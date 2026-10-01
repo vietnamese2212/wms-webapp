@@ -12,6 +12,7 @@ import {
   parseStandardWorkHours,
   parsePctDateBands,
   parseSapDoSource,
+  parseGeoProvider,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -163,6 +164,9 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   // Nguồn nạp dòng DO SAP (22/09): BOTH = nhận cả VL06O lẫn ZSD02 (mặc định, giai đoạn đối chiếu) ·
   // ZSD02 = nguồn duy nhất, cửa VL06O 409 · VL06O = đường lui. Hai nguồn ghi cùng sổ theo khoá (od, item).
   sap_do_source: { validate: v => parseSapDoSource(v) !== null, hint: "'BOTH' | 'ZSD02' | 'VL06O'" },
+  // Nhà cung cấp định vị / đo km cho điều vận trên bản đồ (01/10): goong (khoá GOONG_API_KEY ở biến môi trường) · none = tắt máy
+  // định vị, khách mới chấm tay / GPS; toạ độ và km đã đo vẫn là của mình.
+  geo_provider: { validate: v => parseGeoProvider(v) !== null, hint: "'goong' | 'none'" },
   monitor_cache_seconds: {
     validate: v => parseMonitorCacheSeconds(v) !== null,
     hint: 'số giây 0–3600 cho Giám sát vận hành + Slotting (0 = tắt cache, tính sống mỗi lần)',

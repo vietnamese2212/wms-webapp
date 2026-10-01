@@ -4525,10 +4525,57 @@ export interface Customer {
   /** 28/09 (không tự ép — config hết): đi xe riêng khi điều vận (mặc định tắt) · số khách tối đa cùng xe (null = không giới hạn, theo kênh) */
   dispatch_separate?: boolean
   max_customers_per_trip?: number | null
+  /** Địa chỉ + phường + vùng từ ZSD02 (22/09) */
+  address?: string | null; ward_code?: string | null; region_code?: string | null; region_name?: string | null
+  /** 01/10: toạ độ điểm giao — nguồn MANUAL (chấm bản đồ) · GPS (điện thoại tại chỗ) · GOONG (máy định vị); null = chưa định vị */
+  geo_lat?: number | null; geo_lng?: number | null; geo_source?: CustomerGeoSource | null
+  geo_accuracy_m?: number | null; geo_address?: string | null; geo_at?: string | null; geo_by?: string | null
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
   // Mức của CHÍNH khách này, và mức của KÊNH khách thuộc về (chỉ để hiện "đang thừa hưởng gì")
   rules: MasterRuleRow[]
   channel_rules: MasterRuleRow[]
+}
+export type CustomerGeoSource = 'MANUAL' | 'GPS' | 'GOONG'
+export const GEO_SOURCE_VI: Record<CustomerGeoSource, string> = { MANUAL: 'Chấm tay', GPS: 'GPS tại chỗ', GOONG: 'Máy định vị' }
+/** Toạ độ của một khách (cột trên dòng Customer) */
+export type CustomerGeo = Pick<Customer, 'id' | 'ship_to_code' | 'name' | 'address' | 'geo_lat' | 'geo_lng' | 'geo_source' | 'geo_accuracy_m' | 'geo_address' | 'geo_at' | 'geo_by'>
+export function useCustomerGeoStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['customer-geo-status'],
+    queryFn: async () => (await apiClient.get('/masterdata/customers/geo-status')).data.data as {
+      total_active: number; located: number; remaining: number; by_source: Record<string, number>
+      provider: { provider: string; ready: boolean; reason: string | null }
+    },
+    enabled, staleTime: 30_000,
+  })
+}
+/** Chấm tay / GPS / xoá ghim — quyền customers.locate (riêng, không đi ké edit) */
+export function useSetCustomerLocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & ({ lat: number; lng: number; source: 'MANUAL' | 'GPS'; accuracy_m?: number | null } | { lat: null; lng: null })) =>
+      apiClient.patch(`/masterdata/customers/${id}/location`, body).then(r => r.data.data as CustomerGeo),
+    onSettled: () => { invalidateCustomers(qc); qc.invalidateQueries({ queryKey: ['customer-geo-status'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
+  })
+}
+/** Máy định vị hàng loạt (quyền customers.geocode) — mỗi lượt tối đa 100 khách, trả `remaining` để bấm tiếp */
+export function useGeocodeCustomers() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids?: string[]; limit?: number } = {}) => apiClient.post('/masterdata/customers/geocode', body).then(r => r.data.data as {
+      done: { id: string; ship_to_code: string; lat: number; lng: number }[]; failed: { id: string; ship_to_code: string; reason: string }[]; remaining: number
+    }),
+    onSettled: () => { invalidateCustomers(qc); qc.invalidateQueries({ queryKey: ['customer-geo-status'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
+  })
+}
+/** Toạ độ khách của một kế hoạch điều vận (tab Bản đồ) — chỉ đọc cột geo_* của Customer, không gọi dịch vụ ngoài */
+export interface DispatchPlanGeoCustomer { ship_to_code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null; geo_accuracy_m: number | null }
+export function useDispatchPlanGeo(planId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['dispatch-plan-geo', planId],
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/geo`)).data.data as { customers: DispatchPlanGeoCustomer[] },
+    enabled: !!planId, staleTime: 60_000,
+  })
 }
 export interface CustomerFilters {
   search?: string; channel?: string[]; hasChannel?: '' | '1' | '0'

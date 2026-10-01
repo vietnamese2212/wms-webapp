@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-01T05:39:52.544Z · 109 bảng/view · 174 hàm · 0 enum
+// Sinh lúc 2026-10-01T10:33:12.559Z · 109 bảng/view · 174 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -114,6 +114,13 @@ export type Database = {
           dispatch_vehicles: Json
           dispatch_separate: boolean
           max_customers_per_trip: number | null
+          geo_lat: number | null
+          geo_lng: number | null
+          geo_source: string | null
+          geo_accuracy_m: number | null
+          geo_address: string | null
+          geo_at: string | null
+          geo_by: string | null
         }
         Insert: {
           id: string
@@ -142,6 +149,13 @@ export type Database = {
           dispatch_vehicles?: Json
           dispatch_separate?: boolean
           max_customers_per_trip?: number | null
+          geo_lat?: number | null
+          geo_lng?: number | null
+          geo_source?: string | null
+          geo_accuracy_m?: number | null
+          geo_address?: string | null
+          geo_at?: string | null
+          geo_by?: string | null
         }
         Update: {
           id?: string
@@ -170,6 +184,13 @@ export type Database = {
           dispatch_vehicles?: Json
           dispatch_separate?: boolean
           max_customers_per_trip?: number | null
+          geo_lat?: number | null
+          geo_lng?: number | null
+          geo_source?: string | null
+          geo_accuracy_m?: number | null
+          geo_address?: string | null
+          geo_at?: string | null
+          geo_by?: string | null
         }
         Relationships: []
       }

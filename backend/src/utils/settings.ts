@@ -225,6 +225,17 @@ export const parseSapDoSource = (raw: unknown): SapDoSource | null =>
   typeof raw === 'string' && (SAP_DO_SOURCES as readonly string[]).includes(raw) ? (raw as SapDoSource) : null
 export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_DEFAULT, parseSapDoSource)
 
+// ── geo_provider — NHÀ CUNG CẤP định vị địa chỉ / đo km cho điều vận trên bản đồ (01/10, user chốt Goong) ──
+// 'goong' (mặc định): gọi Goong với khoá GOONG_API_KEY trong biến môi trường (KHÔNG qua SystemSetting — cờ đọc được
+// bởi mọi tài khoản). 'none': tắt máy định vị — khách mới chấm tay / GPS; toạ độ và km ĐÃ ĐO vẫn nằm trong DB của mình.
+// Đổi nhà cung cấp = thêm giá trị ở đây + một nhánh trong services/geo.ts, máy ghép và bàn không đổi.
+export const GEO_PROVIDERS = ['goong', 'none'] as const
+export type GeoProvider = typeof GEO_PROVIDERS[number]
+export const GEO_PROVIDER_DEFAULT: GeoProvider = 'goong'
+export const parseGeoProvider = (raw: unknown): GeoProvider | null =>
+  typeof raw === 'string' && (GEO_PROVIDERS as readonly string[]).includes(raw) ? (raw as GeoProvider) : null
+export const getGeoProvider = () => readSetting('geo_provider', GEO_PROVIDER_DEFAULT, parseGeoProvider)
+
 // ── pct_date_bands — thang màu %Date toàn app (xanh > good, vàng > low, còn lại đỏ) ──
 // Cờ này có từ trước ở systemSettingController (validator `isPctDateBands`); getter đặt ở đây để tab
 // KPI dùng `low` làm ngưỡng "tồn cận date" — cùng con số người dùng đang thấy đỏ ở trang Tồn kho.

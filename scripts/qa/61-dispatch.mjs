@@ -748,6 +748,12 @@ try {
       check('12f. Tắt cờ đi kèm rồi Tối ưu lại kế hoạch đang mở ⇒ vẫn theo BẢN CHỤP của kế hoạch: OD loại 2 vẫn ké xe khách, danh sách dòng xe của OD không đổi',
         re.s === 200 && PR?.params?.follow_categories?.includes(CAT2) && tripOfOd(PR, OD[0])?.id === tripOfOd(PR, OD8)?.id && JSON.stringify(rowOfP(PR, OD8)?.allowed_models ?? null) === a8,
         `http=${re.s} ${re.j?.error?.message ?? ''} follow=${JSON.stringify(PR?.params?.follow_categories ?? null)} trips=${(PR?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')} allowed ${a8} → ${JSON.stringify(rowOfP(PR, OD8)?.allowed_models ?? null)}`)
+      // [12g] (01/10) Tab Bản đồ: toạ độ khách của kế hoạch — chỉ đọc Customer.geo_*, khách chưa định vị vẫn có mặt (lat null)
+      const geo = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo`)
+      const gc = geo.j?.data?.customers ?? []
+      check('12g. GET /plans/:id/geo → 200, có đủ khách của kế hoạch kể cả khách chưa định vị (lat null) · id rác → 400',
+        geo.s === 200 && gc.some(c => c.ship_to_code === SHIP[0]) && gc.every(c => 'geo_lat' in c) && (await api('/tms/dispatch/plans/undefined/geo')).s === 400,
+        `http=${geo.s} n=${gc.length} ships=${gc.map(c => c.ship_to_code).join(',')}`)
     }
   }
 

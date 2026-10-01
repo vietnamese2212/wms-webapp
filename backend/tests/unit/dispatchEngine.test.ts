@@ -780,3 +780,47 @@ describe('01/10 — dải tải theo dòng xe cha (load_bands / load_bypass)', (
     expect(tripLoad({ ...P9, load_min_pct: 85, load_max_pct: 105 }, 9.2, null, null)).toMatchObject({ pct: 102.2, underload: false, underload_pct: 85, max_pct: 105 })
   })
 })
+
+// 01/10 chiều — mã CHƯA KHAI Loại kho là TRUNG TÍNH (user: "#1–#4 ghép sai": An Sơn 0,057 pallet mẫu đi Xe 16 pallet riêng cạnh
+// #3 An Sơn 13,3 pallet cùng phường — bản 01/10 sáng tách cụm '?' riêng khi kho không cho trộn loại).
+describe('01/10 chiều — OD toàn mã chưa khai Loại kho ké chuyến cùng cụm, không tách cụm riêng', () => {
+  const NOCAT = (p: number, over: Partial<EngineLine> = {}) => line(p, { category: null, ...over })
+  it('kho KHÔNG trộn loại: OD 0,05 pallet mã chưa khai của CÙNG KHÁCH lên đúng xe FG01 của khách đó (một chuyến, không xe riêng)', () => {
+    const r = runDispatch(input([od('1', 'W1', 7), od('2', 'W1', 0, { ship_to_code: 'S1', lines: [NOCAT(0.05)] })], { params: { ...params, allow_mix_categories: false } }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['1', '2'])
+    expect(r.unplanned).toHaveLength(0)
+  })
+  it('không chuyến nào cùng cụm ⇒ vẫn xe riêng (khác POSM: không nằm lại khung chờ); POSM của khách ké được vào xe đó', () => {
+    const r = runDispatch(input([od('1', 'W1', 0, { lines: [NOCAT(2)] }), od('2', 'W1', 0, { ship_to_code: 'S1', lines: [line(0.3, { category: 'PM01' })] })],
+      { params: { ...params, allow_mix_categories: false, follow_categories: ['PM01'] } }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['1', '2'])
+    expect(r.unplanned).toHaveLength(0)
+  })
+  it('chuyến chỉ mã chưa khai loại Non tải gộp được vào chuyến FG01 cùng vùng (luật 5 không chặn vì khác "loại")', () => {
+    const r = runDispatch(input([od('1', 'W1', 6), od('2', 'W2', 0, { lines: [NOCAT(1)] })], { params: { ...params, allow_mix_categories: false } }))
+    expect(r.trips).toHaveLength(1)
+  })
+})
+
+// 01/10 chiều — POSM đi theo đơn chính NGAY LÚC XẾP: dải tải 105 % làm xe đầy sát trần ở vòng chính, POSM xếp sau hết chỗ mà không
+// được xe riêng ⇒ kẹt (Mỹ Phát Hưng Yên bàn 29/09: 12,4 + 5,2 lên một xe 17 pallet 103,5 %, ba OD POSM 0,6 pallet rơi lại khung chờ).
+describe('01/10 chiều — POSM đi theo đơn chính ngay lúc xếp, không bị dải tải đẩy ra', () => {
+  const PT = { ...model({ id: 'P17', max_pallets: 17, parent_type_id: 'PT1' }) }
+  const posm = (n: string, p: number) => od(n, 'W1', 0, { ship_to_code: 'MP', lines: [line(p, { category: 'PM01', condition: null })] })
+  const main = (n: string, p: number) => od(n, 'W1', p, { ship_to_code: 'MP' })
+  const P = { ...params, allow_mix_categories: false, follow_categories: ['PM01'], load_bands: { PT1: { min: 70, max: 105 } } }
+  it('12,4 + 5,2 + POSM 0,6 trên xe 17 (trần 105 = 17,85): KHÔNG nhồi 17,6 rồi bỏ POSM — 2 xe, POSM đi cùng đơn chính lớn, 0 OD kẹt', () => {
+    const r = runDispatch(input([main('A', 12.4), main('B', 5.2), posm('P1', 0.313), posm('P2', 0.25), posm('P3', 0.049)], { models: [PT], params: P }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips).toHaveLength(2)
+    const big = r.trips.find(t => t.ods.some(o => o.od_number === 'A'))!
+    expect(big.ods.map(o => o.od_number).sort()).toEqual(['A', 'P1', 'P2', 'P3'])
+  })
+  it('vừa cả cụm thì vẫn MỘT xe: 12 + 4 + POSM 0,6 = 16,6 ≤ 17,85', () => {
+    const r = runDispatch(input([main('A', 12), main('B', 4), posm('P1', 0.6)], { models: [PT], params: P }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.unplanned).toHaveLength(0)
+  })
+})

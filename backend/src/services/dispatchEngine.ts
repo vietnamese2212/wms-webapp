@@ -812,8 +812,23 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const after = vehiclesNeeded(big, nb.pallets, nb.tons)
     return Number.isFinite(after) && after === vehiclesNeeded(big, b.pallets, b.tons)
   }
+  // OD toàn mã CHƯA KHAI Loại kho ('?') là TRUNG TÍNH (01/10 chiều, user: "#1–#4 ghép sai" — An Sơn 0,057 pallet mẫu "không tăng tồn
+  // NPP" đi Xe 16 pallet riêng cạnh #3 An Sơn 13,3 pallet cùng phường): không tách cụm riêng theo loại, xếp SAU như POSM — ké vào
+  // chuyến cùng cụm (ưu tiên cùng khách); khác POSM ở chỗ không ai nhận thì vẫn ĐƯỢC xe riêng (hàng thường, không phải đi kèm).
+  const neutral: Unit[] = []
+  const mainKeys: string[] = []
   for (const key of [...byCluster.keys()].sort(cmp)) {
-    if (!mixCats && catPartOf(key) === '*') { followOnly.push(...byCluster.get(key)!); continue }
+    if (!mixCats && catPartOf(key) === '*') followOnly.push(...byCluster.get(key)!)
+    else if (!mixCats && catPartOf(key) === '?') neutral.push(...byCluster.get(key)!)
+    else mainKeys.push(key)
+  }
+  // POSM của khách đi THEO đơn chính của khách NGAY LÚC XẾP (01/10 chiều): dải tải cho xếp tới 105 % nên xe đầy sát trần ngay ở
+  // vòng xếp chính, POSM xếp sau không còn chỗ mà lại không được xe riêng ⇒ rơi lại khung chờ (Mỹ Phát Hưng Yên: 12,4 + 5,2 lên một
+  // xe 17 pallet 103,5 %, ba OD POSM 0,6 pallet kẹt). Nay đơn chính LỚN NHẤT của khách mang theo cả POSM khi hỏi "vừa bin": vừa cả
+  // cụm ⇒ vào cùng, không vừa ⇒ chỉ đơn chính vào, POSM chờ ké sau như thường.
+  const tailOf = (u: Unit) => followOnly.filter(f => custOf(f) === custOf(u))
+  const dropTail = (t: Unit[]) => { for (const f of t) followOnly.splice(followOnly.indexOf(f), 1) }
+  for (const key of mainKeys) {
     const us = byCluster.get(key)!.sort(unitSort)
     const cands = candsFor(us.map(u => u.od))
     const local: Bin[] = []
@@ -822,11 +837,41 @@ export function runDispatch(input: EngineInput): DispatchResult {
       if (u.oversize || u.multi) { local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
       // họ xe hỏi theo CHÍNH bin sau khi thêm (luật 10: mỗi khách một danh sách dòng xe — hỏi cả cụm là khách khó tính nhất
       // áp lên mọi khách cùng phường); danh sách giao nhau rỗng ⇒ không vào chung bin
-      const b = local.find(x => { const nb = withUnits(x, [u]); return (!solo(x) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb, P.max_drops)) || multiTakes(x, u) })
-      if (b) { const nb = withUnits(b, [u]); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
-      else local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
+      const fitsBin = (x: Bin, add: Unit[]) => { const nb = withUnits(x, add); return !solo(x) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb, P.max_drops) }
+      const tail = tailOf(u)
+      let add = tail.length ? [u, ...tail] : [u]
+      let b = tail.length ? local.find(x => fitsBin(x, add)) : undefined
+      if (!b) { add = [u]; b = local.find(x => fitsBin(x, [u]) || multiTakes(x, u)) }
+      if (b) { const nb = withUnits(b, add); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
+      else {
+        const fresh: Bin = { key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }
+        add = tail.length && binFits(candsFor([u.od, ...tail.map(y => y.od)]), withUnits(fresh, tail), P.max_drops) ? [u, ...tail] : [u]
+        local.push(add.length > 1 ? withUnits(fresh, tail) : fresh)
+      }
+      if (add.length > 1) dropTail(tail)
     }
     bins.push(...local)
+  }
+  // Mã chưa khai Loại kho: ké chuyến cùng cụm (cùng khách trước), không ai nhận ⇒ xe riêng cụm '?' (như hàng thường).
+  // Xếp TRƯỚC POSM: POSM của khách đó còn ké được vào xe này (đo bàn 29/09: để sau là 7 OD POSM rơi lại khung chờ).
+  for (const u of neutral.sort(unitSort)) {
+    const key = clusterKey(u.od, P.allow_mix_channels, '?')
+    const mkey = mergeKey(u.od, P.allow_mix_channels, '?')
+    if (u.oversize || u.multi) { bins.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
+    const fitsWith = (b: Bin, us: Unit[]) => !solo(b) && baseKey(b.key) === baseKey(key)
+      && binFits(candsFor([...b.units.map(y => y.od), ...us.map(y => y.od)]), withUnits(b, us), P.max_drops)
+    const same = (b: Bin) => b.units.some(y => custOf(y) === custOf(u))
+    // POSM của CHÍNH khách này chưa xếp: ké xe khách KHÁC thì phải kéo theo cả POSM (không thì POSM mất chỗ ké, rơi lại khung chờ —
+    // đo bàn 29/09: 22 → 25 OD "chờ đơn chính" khi chưa có vế này); không vừa cả cụm ⇒ xe riêng, POSM ké sau như thường
+    const tail = followOnly.filter(f => custOf(f) === custOf(u))
+    const own = bins.find(b => same(b) && (fitsWith(b, [u]) || multiTakes(b, u)))
+    const other = own ? null : bins.find(b => catPartOf(b.key) !== '*' && fitsWith(b, [u, ...tail]))
+    const hit = own ?? other
+    if (hit) {
+      const add = own ? [u] : [u, ...tail]
+      if (!own) for (const f of tail) followOnly.splice(followOnly.indexOf(f), 1)
+      const nb = withUnits(hit, add); hit.units = nb.units; hit.pallets = nb.pallets; hit.tons = nb.tons
+    } else bins.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 })
   }
   // Hàng đi kèm (POSM) "đi theo đơn": vào chuyến CÙNG CỤM (cùng nhóm khách · vùng · kênh · phường) còn chỗ — ưu tiên chuyến chở
   // chính khách đó (kể cả thẻ nhiều xe). Không chuyến nào nhận ⇒ Ở LẠI KHUNG CHỜ, KHÔNG đi xe riêng (user 30/09: "POSM thì đi
@@ -853,7 +898,8 @@ export function runDispatch(input: EngineInput): DispatchResult {
     for (const src of srcs) {
       const cSrc = costOf(src).freight.total
       // chuyến chỉ có hàng đi kèm (POSM) gộp được vào chuyến của Loại kho chính cùng vùng (luật 9)
-      const sameGroup = (t: Bin) => t.mkey === src.mkey || (!mixCats && catPartOf(src.mkey) === '*' && baseKey(t.mkey) === baseKey(src.mkey))
+      // chuyến chỉ POSM ('*') hay chỉ mã chưa khai loại ('?') gộp được vào chuyến bất kỳ loại nào cùng vùng; chuyến '?' cũng nhận
+      const sameGroup = (t: Bin) => t.mkey === src.mkey || (!mixCats && baseKey(t.mkey) === baseKey(src.mkey) && (['*', '?'].includes(catPartOf(src.mkey)) || catPartOf(t.mkey) === '?'))
       const targets = bins.filter(t => t !== src && sameGroup(t) && !solo(t))
         .map(t => ({ t, merged: withUnits(t, src.units) }))
         .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged, P.max_drops))

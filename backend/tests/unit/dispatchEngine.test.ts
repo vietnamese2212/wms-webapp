@@ -823,4 +823,17 @@ describe('01/10 chiều — POSM đi theo đơn chính ngay lúc xếp, không b
     expect(r.trips).toHaveLength(1)
     expect(r.unplanned).toHaveLength(0)
   })
+  // Blue Star 01/10: khách khai FG01 = Xe 4/6 pallet, OD POSM của khách lấy "*" của kênh GT = Xe 16/17 ⇒ hai danh sách giao nhau
+  // rỗng ⇒ bản cũ: đơn chính đi Xe 4 pallet một mình, POSM 0,313 kẹt "chờ đơn chính" mãi. OD chỉ POSM đi xe của ĐƠN CHÍNH, không mang
+  // danh sách riêng ⇒ 4,0 + 0,313 lên Xe 6 pallet (Xe 4 với trần 105 % = 4,2 không vừa).
+  it('OD chỉ POSM của khách khai xe nhỏ: không mang danh sách dòng xe riêng — ké xe của đơn chính (Xe 6 pallet), 0 OD kẹt', () => {
+    const P4 = model({ id: 'P4', max_pallets: 4, parent_type_id: 'PT1' }), P6 = model({ id: 'P6', max_pallets: 6, parent_type_id: 'PT1' }), P16 = model({ id: 'P16', max_pallets: 16, parent_type_id: 'PT1' })
+    const tf = ['P4', 'P6', 'P16'].map(m => tariff('A', m, 'W1', 100_000))
+    const r = runDispatch(input([main('A', 4), { ...posm('P1', 0.313), allowed_models: ['P16'] }].map(o => (o.od_number === 'A' ? { ...o, allowed_models: ['P4', 'P6'] } : o)),
+      { models: [P4, P6, P16], tariffs: tf, params: P }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicle_model?.id).toBe('P6')
+    expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['A', 'P1'])
+  })
 })

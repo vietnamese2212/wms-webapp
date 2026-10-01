@@ -755,7 +755,10 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
       warnings.push(`Dòng xe ${m.name} không phục vụ điều kiện bảo quản ${conds.map(c => condLabels[c] ?? c).join(' + ')}`)
     // Luật 10: khách chỉ được vào danh sách dòng xe đã khai — người tự chọn / kéo OD lên xe khác thì không chặn nhưng nói rõ khách nào
     // (khách chưa khai = danh sách rỗng, câu riêng ở dưới vòng lặp)
-    const outList = trip.ods.filter(o => o.allowed_models?.length && !o.allowed_models.includes(m.id))
+    // OD CHỈ hàng đi kèm (POSM) đi xe của đơn chính, không mang danh sách riêng (01/10 — cùng luật `followOnlyOd` của engine)
+    const posmOnly = (o: TripOdRow) => params.allow_mix_categories === false && Object.keys((o.cat_load ?? {}) as Record<string, unknown>).length > 0
+      && !mainCatsOf(Object.keys((o.cat_load ?? {}) as Record<string, unknown>).map(k => ({ category: k })), params.follow_categories ?? []).length
+    const outList = trip.ods.filter(o => o.allowed_models?.length && !o.allowed_models.includes(m.id) && !posmOnly(o))
     if (outList.length) {
       const who = uniq(outList.map(o => o.ship_to_name ?? o.ship_to_code ?? o.od_number))
       warnings.push(`Khách ${who.slice(0, 2).join(', ')}${who.length > 2 ? '…' : ''} không được vào dòng xe ${m.name} (Khách hàng → Dòng xe được vào)`)

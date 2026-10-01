@@ -758,8 +758,15 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const underPct = (m: EngineModel | null) => underPctOf(m, P.underload_pct)
 
   // ── Lọc + tách đơn vị xếp ──
+  const mixCats = P.allow_mix_categories !== false
+  const follow = new Set(P.follow_categories ?? [])
+  // OD CHỈ có hàng đi kèm (POSM) không bao giờ có xe riêng khi kho không trộn loại — nó đi xe của ĐƠN CHÍNH nên KHÔNG mang danh sách dòng
+  // xe riêng (01/10: Blue Star khai FG01 = Xe 4/6 pallet, OD POSM của khách lấy "*" của kênh GT = Xe 16/17 ⇒ hai danh sách giao nhau
+  // rỗng ⇒ POSM không ké được xe nào của chính khách, kẹt khung chờ mãi với lý do "chờ đơn chính")
+  const followOnlyOd = (o: EngineOd) => !mixCats && o.lines.length > 0 && o.lines.every(l => !!l.category) && !mainCatsOf(o.lines, follow).length
   const units: Unit[] = []
-  for (const od of ods) {
+  for (const od0 of ods) {
+    const od = followOnlyOd(od0) ? { ...od0, allowed_models: null } : od0
     if (!LOADABLE.has(od.flow)) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: `Phân loại ${od.flow} không lên xe` }); continue }
     if (!od.lines.length) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: 'OD không có dòng hàng' }); continue }
     const s = sumLines(od.lines)
@@ -779,8 +786,6 @@ export function runDispatch(input: EngineInput): DispatchResult {
   }
 
   // ── Luật 1–3 (+9): xếp lớn-trước theo cụm phường — không cho trộn loại thì cụm còn tách theo Loại kho chính ──
-  const mixCats = P.allow_mix_categories !== false
-  const follow = new Set(P.follow_categories ?? [])
   // '*' = OD CHỈ có hàng đi kèm (POSM) ⇒ ké chuyến chính, không xe riêng. OD mà mã hàng CHƯA KHAI Loại kho (01/10: 5 mã SAP
   // chưa có trong Mã hàng — 17 OD Ba Vì kẹt khung chờ với lý do "chỉ POSM") KHÔNG phải POSM: cụm riêng '?' như hàng thường, kèm
   // băng "Khai thiếu" đã có.

@@ -1123,14 +1123,16 @@ try {
       source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
     })
     const BAND = { [XEPALLET.id]: { min: 80, max: 115 } }
+    // jsonb trả khoá theo thứ tự chữ cái ({max,min}) — so theo GIÁ TRỊ, đừng so chuỗi JSON
+    const bandEq = (o, min, max) => Number(o?.[XEPALLET.id]?.min) === min && Number(o?.[XEPALLET.id]?.max) === max && Object.keys(o ?? {}).length === 1
     const p16 = await mkPlan({ ...PLAN_BODY, load_bands: BAND })
     const P16 = p16.j?.data
     const p16Id = P16?.id ?? ''   // máy quét độ phủ (coverage-surface) không đọc được `${P16?.id}` trong đường dẫn — dấu ? cắt chuỗi
     const t16 = (P16?.trips ?? []).filter(t => t.ods?.length)
     const whB = (await restAll('Warehouse', `select=dispatch_load_bands&id=eq.${WH}`))[0]?.dispatch_load_bands
     check('16a. Lập + ghép với dải XEPALLET 80–115 %: params.load_bands ghi đúng · 3 OD gộp MỘT xe 10/9 = 111,1 % không vượt · kho nhớ dải',
-      p16.s === 201 && JSON.stringify(P16?.params?.load_bands) === JSON.stringify(BAND) && t16.length === 1 && Number(t16[0].load_pct) === 111.1
-      && t16[0].oversize === false && t16[0].underload === false && Number(t16[0].detail?.load?.max_pct) === 115 && JSON.stringify(whB) === JSON.stringify(BAND),
+      p16.s === 201 && bandEq(P16?.params?.load_bands, 80, 115) && t16.length === 1 && Number(t16[0].load_pct) === 111.1
+      && t16[0].oversize === false && t16[0].underload === false && Number(t16[0].detail?.load?.max_pct) === 115 && bandEq(whB, 80, 115),
       `s=${p16.s} bands=${JSON.stringify(P16?.params?.load_bands)} xe=${t16.length} tải=${t16.map(t => `${t.load_pct}%/over=${t.oversize}/under=${t.underload}/max=${t.detail?.load?.max_pct}`).join(' ')} kho=${JSON.stringify(whB)}`)
     const by1 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bypass: true })
     const tb = (by1.j?.data?.trips ?? []).filter(t => t.ods?.length)
@@ -1138,7 +1140,7 @@ try {
     const tb0 = (by0.j?.data?.trips ?? []).filter(t => t.ods?.length)
     check('16b. PATCH params bỏ qua dải: xe 111 % thành VƯỢT (trần 100), không ghép lại; bỏ bypass ⇒ lại trong dải (dải cũ còn giữ)',
       by1.s === 200 && by1.j?.data?.params?.load_bypass === true && tb.length === 1 && tb[0].oversize === true && Number(by1.j?.data?.summary?.oversize) === 1
-      && by0.s === 200 && tb0.length === 1 && tb0[0].oversize === false && JSON.stringify(by0.j?.data?.params?.load_bands) === JSON.stringify(BAND),
+      && by0.s === 200 && tb0.length === 1 && tb0[0].oversize === false && bandEq(by0.j?.data?.params?.load_bands, 80, 115),
       `bypass=${by1.s} over=${tb[0]?.oversize} sum=${by1.j?.data?.summary?.oversize} · bỏ bypass=${by0.s} over=${tb0[0]?.oversize} bands=${JSON.stringify(by0.j?.data?.params?.load_bands)}`)
     const bad = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bands: { [XEPALLET.id]: { min: 50, max: 200 } } })
     const bad2 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bands: { [XEPALLET.id]: { min: 90, max: 80 } } })
@@ -1146,7 +1148,7 @@ try {
     const back = await api(`/tms/dispatch/plans/${p16Id}/reoptimize`, 'POST', { review_all: true, load_bands: { [XEPALLET.id]: { min: 70, max: 100 } } })
     const tBack = (back.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => Number(t.pallets)).sort((a, b) => b - a)
     check('16d. Tối ưu lại với dải 70–100 % gửi kèm: máy xếp lại thành 2 xe (7 + 3) — dải của lượt ghép thắng dải cũ của kế hoạch',
-      back.s === 200 && tBack.join('+') === '7+3' && JSON.stringify(back.j?.data?.params?.load_bands) === JSON.stringify({ [XEPALLET.id]: { min: 70, max: 100 } }),
+      back.s === 200 && tBack.join('+') === '7+3' && bandEq(back.j?.data?.params?.load_bands, 70, 100),
       `s=${back.s} xe=${tBack.join('+')} bands=${JSON.stringify(back.j?.data?.params?.load_bands)}`)
   } else check('16a. Fixture: cần Loại xe cha XEPALLET', false)
 } finally {

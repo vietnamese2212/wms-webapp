@@ -229,19 +229,30 @@ export async function resolveFixtures() {
   FIX.LOC_QR_CODE = hit.location_code
 }
 
-// Gọi thẳng 1 RPC (Postgres function) — dùng để kiểm ĐÚNG câu lọc dưới DB, không qua controller
+// Gọi thẳng 1 RPC (Postgres function) — dùng để kiểm ĐÚNG câu lọc dưới DB, không qua controller.
+//
+// 57014 ĐƯỢC THỬ LẠI y hệt `restPage` (01/10) — lưới nới cho quá tải phải phủ ĐỦ MỌI CỬA ĐỌC, không
+// chỉ cửa mình đang nhìn lúc viết nó. Bản 15/09 chỉ vá `restPage`, nên `restRpc` vẫn ném thẳng ⇒ gói
+// `00-invariant` CHẾT GIỮA CHỪNG trước `finish()`, cả `retryOnFail` lẫn lưới nhận-diện-fixture đều
+// không chạy. Đo 01/10: 4 lượt `qa-smoke` đỏ trong một buổi, cả 4 cùng `57014 statement timeout`,
+// 3 lượt ở RPC `warehouse_productivity` — chạy lại tay thì xanh. Cùng khuôn "phép kiểm có điểm mù
+// theo CHIỀU" (C18/C25).
+// KHÔNG che được lỗi thật: chỉ 57014 mới thử lại, tối đa 3 lượt — chậm DAI DẲNG vẫn đỏ như cũ.
 export async function restRpc(fn, args = {}) {
-  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
-    method: 'POST',
-    headers: {
-      apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(args),
-  })
-  const t = await r.text()
-  if (!r.ok) throw new Error(`RPC ${fn}: ${r.status} ${t}`)
-  try { return JSON.parse(t) } catch { return null }
+  const url = `${ENV.SUPABASE_URL}/rest/v1/rpc/${fn}`
+  const headers = {
+    apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  }
+  for (let i = 0; ; i++) {
+    const r = await fetchNetRetry(url, { method: 'POST', headers, body: JSON.stringify(args) })
+    const t = await r.text()
+    if (r.ok) { try { return JSON.parse(t) } catch { return null } }
+    const overload = /57014|statement timeout/i.test(t)
+    if (!overload || i >= 2) throw new Error(`RPC ${fn}: ${r.status} ${t}`)
+    console.log(`  ⏳ RPC ${fn}: DB quá tải (57014) — đợi rồi gọi lại (lần ${i + 2}/3)`)
+    await new Promise(res => setTimeout(res, 3000 * (i + 1) + Math.random() * 1000))
+  }
 }
 
 export function chunk(arr, n = 300) {

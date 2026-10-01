@@ -72,17 +72,20 @@ export async function setCustomerLocation(req: Request, res: Response) {
 // GET /masterdata/customers/geo-status — đếm đã/chưa định vị + máy định vị có sẵn sàng không (để nút nói thẳng)
 export async function customerGeoStatus(_req: Request, res: Response) {
   try {
-    const [{ count: total, error: e1 }, { data: src, error: e2 }, provider] = await Promise.all([
+    const [{ count: total, error: e1 }, { data: src, error: e2 }, { count: untried, error: e3 }, provider] = await Promise.all([
       db.from('Customer').select('id', { count: 'exact', head: true }).eq('is_active', true),
       db.from('Customer').select('geo_source').eq('is_active', true).not('geo_lat', 'is', null).limit(1000),
+      // khách máy CHƯA THỬ (có địa chỉ, chưa ghim, chưa có lần thử nào) — nút Định vị tự động đếm số này; số còn lại là máy đã thử mà không ra ⇒ chấm tay
+      db.from('Customer').select('id', { count: 'exact', head: true }).eq('is_active', true).is('geo_lat', null).not('address', 'is', null).is('geo_at', null),
       geoProviderStatus(),
     ])
     if (e1) return fail(res, e1)
     if (e2) return fail(res, e2)
+    if (e3) return fail(res, e3)
     const by: Record<string, number> = {}
     for (const r of src ?? []) { const k = r.geo_source ?? '?'; by[k] = (by[k] ?? 0) + 1 }
     const located = (src ?? []).length
-    return ok(res, { total_active: total ?? 0, located, remaining: Math.max(0, (total ?? 0) - located), by_source: by, provider })
+    return ok(res, { total_active: total ?? 0, located, remaining: Math.max(0, (total ?? 0) - located), untried: untried ?? 0, by_source: by, provider })
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
 }
 
@@ -129,7 +132,10 @@ export async function geocodeCustomers(req: Request, res: Response) {
       await new Promise(r2 => setTimeout(r2, GEOCODE_GAP_MS))
     }
     if (done.length) await logAdmin(req, { action: 'CUSTOMER_GEO', target_type: 'Customer', target_label: `${done.length} khách (máy định vị)`, after: { done: done.length, failed: failed.length, provider: st.provider } })
-    const { count } = await db.from('Customer').select('id', { count: 'exact', head: true }).eq('is_active', true).is('geo_lat', null).not('address', 'is', null)
-    return ok(res, { done, failed, remaining: count ?? 0, provider: st.provider, precision: st.precision, stopped_at_deadline: stoppedAtDeadline })
+    const [{ count }, { count: untried }] = await Promise.all([
+      db.from('Customer').select('id', { count: 'exact', head: true }).eq('is_active', true).is('geo_lat', null).not('address', 'is', null),
+      db.from('Customer').select('id', { count: 'exact', head: true }).eq('is_active', true).is('geo_lat', null).not('address', 'is', null).is('geo_at', null),
+    ])
+    return ok(res, { done, failed, remaining: count ?? 0, untried: untried ?? 0, provider: st.provider, precision: st.precision, stopped_at_deadline: stoppedAtDeadline })
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
 }

@@ -128,8 +128,8 @@ const PLACE_RANK: Record<string, number> = { suburb: 0, quarter: 0, town: 0, cit
  * (thử sống 02/10: không lọc tỉnh thì "Đức Lập, Tây Ninh" trả về Đức Lập ở Lâm Đồng, "Tân Hòa, Cần Thơ" trả về Tân Hòa ở TP.HCM).
  * Tỉnh không nhận ra (địa chỉ hỏng) ⇒ nhận kết quả đúng tên đầu tiên.
  */
-async function photonWard(q: string, ward: string, province: string | null): Promise<GeoPoint | null> {
-  const u = `${PHOTON}?q=${encodeURIComponent(q)}&limit=8&bbox=${VN_BBOX}&osm_tag=place`
+async function photonWard(q: string, ward: string, province: string | null, tag: 'place' | 'boundary:administrative' = 'place'): Promise<GeoPoint | null> {
+  const u = `${PHOTON}?q=${encodeURIComponent(q)}&limit=8&bbox=${VN_BBOX}&osm_tag=${encodeURIComponent(tag)}`
   const j = await fetchJson<{ features?: PhotonFeature[] }>(u, { 'User-Agent': PHOTON_UA })
   const group = provinceGroup(province)
   const hits = (j.features ?? [])
@@ -151,9 +151,11 @@ async function geocodeOsm(address: string, hint?: GeocodeHint): Promise<GeoPoint
   const ward = parsed.ward ?? hint?.ward ?? null
   if (!ward) return null
   const province = provinceGroup(parsed.province) ? parsed.province : provinceGroup(hint?.province) ? (hint?.province ?? null) : parsed.province
-  const withProv = province ? await photonWard(`${ward}, ${stripProvincePrefix(province)}`, ward, province) : null
-  if (withProv) return withProv
-  return photonWard(ward, ward, province)
+  const q = province ? `${ward}, ${stripProvincePrefix(province)}` : ward
+  // 1) địa danh "phường, tỉnh" · 2) địa danh tên trần · 3) ranh giới hành chính (OSM có "Xã Vạn Ninh" là boundary, không là place) — cùng lưới tên + tỉnh
+  return (await photonWard(q, ward, province))
+    ?? (province ? await photonWard(ward, ward, province) : null)
+    ?? (await photonWard(q, ward, province, 'boundary:administrative'))
 }
 
 export interface PlaceHit { label: string; lat: number; lng: number }

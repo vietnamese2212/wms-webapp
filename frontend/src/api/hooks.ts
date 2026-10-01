@@ -4550,7 +4550,7 @@ export function useCustomerGeoStatus(enabled = true) {
   return useQuery({
     queryKey: ['customer-geo-status'],
     queryFn: async () => (await apiClient.get('/masterdata/customers/geo-status')).data.data as {
-      total_active: number; located: number; remaining: number; by_source: Record<string, number>
+      total_active: number; located: number; remaining: number; untried: number; by_source: Record<string, number>
       provider: GeoProviderStatus
     },
     enabled, staleTime: 30_000,
@@ -4571,7 +4571,7 @@ export function useGeocodeCustomers() {
   return useMutation({
     mutationFn: (body: { ids?: string[]; limit?: number } = {}) => apiClient.post('/masterdata/customers/geocode', body).then(r => r.data.data as {
       done: { id: string; ship_to_code: string; lat: number; lng: number }[]; failed: { id: string; ship_to_code: string; reason: string }[]; remaining: number
-      provider: string; precision: 'exact' | 'ward' | null; stopped_at_deadline: boolean
+      untried: number; provider: string; precision: 'exact' | 'ward' | null; stopped_at_deadline: boolean
     }),
     onSettled: () => { invalidateCustomers(qc); qc.invalidateQueries({ queryKey: ['customer-geo-status'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
   })

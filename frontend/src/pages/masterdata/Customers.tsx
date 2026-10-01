@@ -226,7 +226,7 @@ export default function Customers() {
     setErr(''); setGeoMsg('')
     try {
       const r = await geocode.mutateAsync({})
-      setGeoMsg(`Định vị được ${nf(r.done.length)} khách${r.precision === 'ward' ? ' (tâm phường/xã theo địa chỉ)' : ''}${r.failed.length ? ` · ${nf(r.failed.length)} không tìm thấy (${r.failed.slice(0, 3).map(x => x.ship_to_code).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}${r.remaining ? ` · còn ${nf(r.remaining)} khách — bấm lại để tiếp` : ' · xong'}`)
+      setGeoMsg(`Định vị được ${nf(r.done.length)} khách${r.precision === 'ward' ? ' (tâm phường/xã theo địa chỉ)' : ''}${r.failed.length ? ` · ${nf(r.failed.length)} không tìm thấy (${r.failed.slice(0, 3).map(x => x.ship_to_code).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}${r.untried ? ` · còn ${nf(r.untried)} khách chưa thử — bấm lại để tiếp` : r.remaining ? ` · ${nf(r.remaining)} khách máy không tìm được — mở form, tìm địa chỉ hoặc chấm trên bản đồ` : ' · xong'}`)
     } catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không định vị được') }
   }
 
@@ -351,11 +351,12 @@ export default function Customers() {
     } satisfies ActionItem] : []),
     // Máy định vị từ địa chỉ (01/10) — nói thẳng số còn trống + lý do chưa sẵn sàng (chưa có khoá / đang tắt) thay vì bấm rồi lỗi
     ...(canGeocode ? [{
-      key: 'geocode', icon: MapPin, label: `Định vị tự động${geoStatus.data ? ` (${nf(geoStatus.data.remaining)})` : ''}`,
+      // đếm khách máy CHƯA THỬ — khách máy đã thử mà không ra thì bấm nữa cũng vậy, phải mở form tìm địa chỉ / chấm tay
+      key: 'geocode', icon: MapPin, label: `Định vị tự động${geoStatus.data ? ` (${nf(geoStatus.data.untried)})` : ''}`,
       mobileHidden: true, busy: geocode.isPending,
-      disabled: geocode.isPending || !geoStatus.data?.provider.ready || !geoStatus.data?.remaining,
+      disabled: geocode.isPending || !geoStatus.data?.provider.ready || !geoStatus.data?.untried,
       tip: geoStatus.data?.provider.ready
-        ? `Máy định vị các khách còn trống toạ độ từ địa chỉ SAP (mỗi lượt tối đa 100 khách)${geoStatus.data?.provider.provider === 'osm' ? ' — OpenStreetMap miễn phí, ghim đặt ở TÂM PHƯỜNG/XÃ; kéo ghim trong form khi cần chính xác hơn' : ''} — ${nf(geoStatus.data?.located ?? 0)}/${nf(geoStatus.data?.total_active ?? 0)} khách đã có ghim`
+        ? `Máy định vị các khách chưa thử từ địa chỉ SAP${geoStatus.data?.provider.provider === 'osm' ? ' — OpenStreetMap miễn phí, ghim đặt ở TÂM PHƯỜNG/XÃ; kéo ghim trong form khi cần chính xác hơn' : ''} — ${nf(geoStatus.data?.located ?? 0)}/${nf(geoStatus.data?.total_active ?? 0)} khách đã có ghim${geoStatus.data && geoStatus.data.remaining > geoStatus.data.untried ? ` · ${nf(geoStatus.data.remaining - geoStatus.data.untried)} khách máy không tìm được (chấm tay trong form)` : ''}`
         : (geoStatus.data?.provider.reason ?? 'Đang kiểm tra máy định vị…'),
       onClick: () => void runGeocode(),
     } satisfies ActionItem] : []),

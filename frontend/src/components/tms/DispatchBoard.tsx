@@ -15,7 +15,7 @@
 //     = OD trạng thái ĐIỀU (đơn mới về mặc định là Điều); đơn không đi chuyển sang "Không điều ngày này" / "Không điều".
 //     SAP sửa OD (SL / dòng hàng / ghi chú) ⇒ cờ "SAP đã sửa" + nút "Cập nhật theo SAP"; Xác nhận kế hoạch bị chặn tới khi xử lý.
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -727,7 +727,27 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
                 </button>
                 {open && (
                   <div className="p-2 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
-                    {g.trips.map(t => tripCard(t))}
+                    {/* nhóm Loại xe + sắp theo vùng (01/10, user: "bên cạnh sort theo khách cũng cần sort theo vùng — vùng nào gần nằm cạnh nhau"):
+                        thẻ đã đứng theo vùng → phường → khách nhưng không có dấu ranh giới nên nhìn như sắp theo khách ⇒ chèn dải tên vùng
+                        trước mỗi cụm thẻ (thứ tự vùng = mã vùng SAP; thứ tự theo TUYẾN đường cần bảng hành lang, chưa có) */}
+                    {g.trips.map((t, i) => {
+                      const regionLabel = (x: DispatchTrip) => x.ods[0]?.region_name || x.ods[0]?.region_code || 'Chưa có vùng'
+                      const band = byVtype && (f.boardSort || 'region') === 'region' && (i === 0 || regionLabel(g.trips[i - 1]) !== regionLabel(t))
+                      if (!band) return tripCard(t)
+                      let n = 0
+                      while (i + n < g.trips.length && regionLabel(g.trips[i + n]) === regionLabel(t)) n++
+                      const run = g.trips.slice(i, i + n)
+                      return (
+                        <Fragment key={`r-${t.id}`}>
+                          <div className="col-span-full flex items-center gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            <span className="h-px flex-1 bg-slate-200" /><span>{regionLabel(t)}</span>
+                            <span className="font-normal normal-case tabular-nums text-slate-400">{run.length} xe · {nf(run.reduce((s, x) => s + Number(x.pallets ?? 0), 0), 1)} pl</span>
+                            <span className="h-px flex-1 bg-slate-200" />
+                          </div>
+                          {tripCard(t)}
+                        </Fragment>
+                      )
+                    })}
                   </div>
                 )}
               </div>

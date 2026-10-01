@@ -684,6 +684,14 @@ async function loadTrip(req: Request, tripId: string, opts: { editable?: boolean
 }
 const loadDraftTrip = (req: Request, tripId: string) => loadTrip(req, tripId, { editable: true })
 
+/** Cấu hình Loại kho cho một kế hoạch ĐANG MỞ: danh sách "đi kèm đơn" lấy từ BẢN CHỤP của kế hoạch (`params.follow_categories`),
+ *  cùng nguồn với máy ghép (`engineParams`). 01/10: Tối ưu lại đọc cờ SỐNG để nạp OD (dòng xe được vào, Loại kho chính) còn máy ghép đọc
+ *  bản chụp ⇒ gói QA 61 tạm bật "đi kèm" cho FG01 trên staging 35 s, lượt Tối ưu lại của người dùng rơi đúng cửa sổ đó: Blue Star khai
+ *  Xe 4/6 pallet riêng mà OD chụp danh sách của kênh (16/17) — hai cửa cùng một kế hoạch khác luật. Đổi cờ ⇒ "Lập lại" mới áp. */
+async function planCatCfg(plan: PlanRow): Promise<CatCfg> {
+  const cfg = await getDispatchCategoryConfig()
+  return { ...cfg, follow: engineParams(plan).follow_categories ?? cfg.follow }
+}
 function engineParams(plan: PlanRow): EngineInput['params'] {
   const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean }
   // kế hoạch lập trước 26/09 không có `allow_mix_categories` ⇒ undefined = cho trộn loại như lúc nó được lập;
@@ -1172,8 +1180,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     if (!odNos.length) return fail(res, 422, 'NOTHING_TO_OPTIMIZE', 'Không còn OD nào ngoài các xe đã khoá — mở khoá xe hoặc kéo OD về khung chờ trước.')
     const t0 = now()
     const revBy = new Map([...redo.flatMap(x => x.ods).map(o => [o.od_number, { at: o.reviewed_at ?? t0, by: o.reviewed_by }] as const), ...await markReviewed(src, req.user?.name ?? null, t0)])
-    const catCfg = await getDispatchCategoryConfig()
-    const cand = await loadCandidates(wh, plan.plan_date, catCfg, { onlyOds: odNos, skipPlanId: plan.id })
+    const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: odNos, skipPlanId: plan.id })
     const wards = uniq(cand.ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const [refs, condition_labels] = await Promise.all([loadRefs(wh.id, plan.plan_date, wards), loadConditionLabels()])
     const startSeq = Math.max(0, ...full.trips.map(x => x.seq)) + 1
@@ -1355,7 +1362,7 @@ async function replaceOdInner(req: Request, res: Response) {
       const { error } = await db.from('dispatch_trip_od').update({ trip_id: tripId, updated_at: t, ...(poolNew.some(o => !o.reviewed_at) ? { reviewed_at: rev.at, reviewed_by: rev.by } : {}) }).in('id', poolNew.map(o => o.id).slice(0, 300))
       if (error) throw error
     } else if (!all.some(o => o.od_number === newOd)) {
-      const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { onlyOds: [newOd], skipPlanId: plan.id })
+      const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: [newOd], skipPlanId: plan.id })
       const od = cand.ods.find(o => o.od_number === newOd)
       if (!od) {
         const ex = cand.excluded.find(x => x.od_number === newOd)
@@ -1389,7 +1396,7 @@ async function resyncOdInner(req: Request, res: Response) {
     const tripBy = new Map(full.trips.map(t => [t.id, t]))
     const locked = olds.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !SAP_SYNC_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không cập nhật OD của xe này ở đây.`)
-    const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { onlyOds: [b.od_number], skipPlanId: plan.id })
+    const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: [b.od_number], skipPlanId: plan.id })
     const od = cand.ods.find(o => o.od_number === b.od_number)
     if (!od || !od.lines.length) {
       const ex = cand.excluded.find(x => x.od_number === b.od_number)
@@ -1754,7 +1761,7 @@ async function unholdOdsInner(req: Request, res: Response) {
     if (!gone?.length) return fail(res, 404, 'NOT_HELD', 'Các OD này không đang hoãn ở kho này')
     const full = (await readPlan(plan.id))!
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
-    const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { onlyOds: ods, skipPlanId: plan.id })
+    const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: ods, skipPlanId: plan.id })
     const back = cand.ods.filter(o => !inPlan.has(o.od_number) && LOADABLE_FLOW.has(o.flow) && o.lines.length)
     const t = now()
     // người bỏ hoãn là đã quyết OD này đi ⇒ về khung chờ với mốc ĐÃ XEM (ghép được ngay)

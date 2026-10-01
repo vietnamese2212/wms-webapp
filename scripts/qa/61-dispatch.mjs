@@ -46,10 +46,14 @@ if (MAT_CAT) {
 // pallet), một pallet tồn thật ở kho fixture (ô sẽ khai ĐK riêng) — meta Loại kho 2, cờ kho và ĐK của ô đều là dữ liệu dùng
 // chung nên ghi nhớ gốc và trả lại trong cleanup (chạy cả ở ĐẦU gói).
 const COND_LOC = 'QA61L'
-const mat2 = (await restAll('Material', `select=material_code,category,units_per_carton,cartons_per_pallet&category=neq.${encodeURIComponent(MAT_CAT ?? '')}&category=not.is.null&units_per_carton=gt.0&cartons_per_pallet=gt.0&order=material_code&limit=1`))[0] ?? null
-const CAT2 = mat2?.category ?? null
-const cat2Row = CAT2 ? (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(CAT2)}`))[0] ?? null : null
-const CAT2_META0 = cat2Row ? { ...(cat2Row.meta ?? {}) } : null
+// Loại kho THỨ HAI là của RIÊNG gói (01/10). Bản cũ lấy Loại kho THẬT khác MAT_CAT (= FG01, loại của 346 mã bán) rồi bật/tắt cờ
+// "Đi kèm đơn" của nó ~35 s mỗi lượt CI: lượt Tối ưu lại của người dùng trên bàn Ba Vì 29/09 rơi đúng cửa sổ đó (07:37:03, cờ trả
+// lại 07:37:05) ⇒ mọi OD FG01 chụp danh sách dòng xe của KÊNH, Blue Star mất Xe 4/6 pallet đã khai riêng. Dữ liệu dùng chung không
+// được là fixture — mã + Loại kho QA tạo ở đầu [12], xoá trong cleanup (chạy cả ở ĐẦU gói).
+const CAT2 = 'QA61F'
+const MAT2 = 'QA61MAT2'
+const CAT2_META0 = { label: 'QA61 Loại kho 2', badge_color: 'blue', storage_condition: 'AMBIENT' }
+let cat2Row = null, mat2 = null
 const WH_MIX0 = (await restAll('Warehouse', `select=dispatch_allow_mix_categories&id=eq.${WH}`))[0]?.dispatch_allow_mix_categories === true
 // [16] (01/10) dải tải theo dòng xe cha: lượt ghép có gửi dải thì kho NHỚ (Warehouse.dispatch_load_bands) — kho fixture là kho THẬT, trả lại gốc
 const WH_BANDS0 = (await restAll('Warehouse', `select=dispatch_load_bands&id=eq.${WH}`))[0]?.dispatch_load_bands ?? null
@@ -92,7 +96,13 @@ async function cleanup() {
   // Trả Loại kho về meta GỐC trước tiên: để sót `storage_condition` của QA thì mọi kế hoạch điều vận sau đó
   // không tìm được dòng xe nào phục vụ — hỏng cho cả phiên khác đang dùng staging.
   if (catRow && CAT_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${catRow.id}`, { meta: CAT_META0 }).catch(() => {})
-  if (cat2Row && CAT2_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${cat2Row.id}`, { meta: CAT2_META0 }).catch(() => {})
+  // Loại kho + mã hàng RIÊNG của gói ([12]): mã trước, loại sau (cửa xoá Loại kho đếm mã hàng đang dùng; qua cửa app để dọn cả dòng gán kho)
+  await restWrite('erp_outbound_orders', 'DELETE', `material_code=eq.${MAT2}`).catch(() => {})
+  await restWrite('Material', 'DELETE', `material_code=eq.${MAT2}`).catch(() => {})
+  for (const lk of await restAll('LookupValue', `select=id&type=eq.warehouse_type&value=eq.${CAT2}`)) {
+    const d = await api(`/wms/lookup/${lk.id}`, 'DELETE').catch(() => ({ s: 0 }))
+    if (d.s !== 200) { await restWrite('warehouse_type_configs', 'DELETE', `type_code=eq.${CAT2}`).catch(() => {}); await restWrite('LookupValue', 'DELETE', `id=eq.${lk.id}`).catch(() => {}) }
+  }
   await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_allow_mix_categories: WH_MIX0, dispatch_load_bands: WH_BANDS0 }).catch(() => {})
   if (locRow) await restWrite('Location', 'PATCH', `id=eq.${locRow.id}`, { storage_condition: LOC_COND0 }).catch(() => {})
   if (ieStray) await restWrite('Location', 'PATCH', `id=eq.${ieStray.location_id}`, { storage_condition: STRAY_COND0 }).catch(() => {})
@@ -650,7 +660,12 @@ try {
   check('12a. Form Kho: "Cho ghép nhiều Loại kho trên một chuyến" lưu được qua cửa app (PUT 200, cột đổi)', whFlag.s === 200 && whNow?.dispatch_allow_mix_categories === true,
     `http=${whFlag.s} ${whFlag.j?.error?.message ?? ''} col=${whNow?.dispatch_allow_mix_categories}`)
   await api(`/masterdata/warehouses/${WH}`, 'PUT', { dispatch_allow_mix_categories: false })
-  if (!mat2 || !cat2Row) check('12b. Fixture: cần một mã hàng thuộc Loại kho KHÁC có quy cách pallet', false, `MAT_CAT=${MAT_CAT} mat2=${JSON.stringify(mat2)}`)
+  // Loại kho + mã hàng RIÊNG của gói (01/10 — xem chú thích ở CAT2): qua cửa app để Loại kho có dòng gán kho như loại thật
+  const mkCat2 = await api('/wms/lookup', 'POST', { type: 'warehouse_type', value: CAT2, meta: CAT2_META0 })
+  cat2Row = (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${CAT2}`))[0] ?? null
+  const mkMat2 = await api('/masterdata/materials', 'POST', { material_code: MAT2, material_description: 'QA61 hàng Loại kho 2', category: CAT2, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 12, cartons_per_pallet: 40 })
+  mat2 = (await restAll('Material', `select=material_code,category,units_per_carton,cartons_per_pallet&material_code=eq.${MAT2}`))[0] ?? null
+  if (!mat2 || !cat2Row || mat2.category !== CAT2) check('12b. Fixture: Loại kho + mã hàng riêng của gói dựng được qua cửa app', false, `cat=${mkCat2.s} ${mkCat2.j?.error?.message ?? ''} mat=${mkMat2.s} ${mkMat2.j?.error?.message ?? ''} mat2=${JSON.stringify(mat2)}`)
   else {
     const OD8 = 'QA61OD8'
     await restWrite('erp_outbound_orders', 'POST', null, {
@@ -722,6 +737,18 @@ try {
       pF.s === 201 && pF.j?.data?.params?.allow_mix_categories === false && tripOfOd(pF.j?.data, OD[0])?.id === tripOfOd(pF.j?.data, OD8)?.id,
       `http=${pF.s} trips=${(pF.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
     await api(`/wms/lookup/${cat2Row.id}`, 'PUT', { value: cat2Row.value, meta: CAT2_META0 })
+    // [12f] (01/10) Cờ "đi kèm" đã TẮT ngoài danh mục nhưng kế hoạch ĐANG MỞ giữ bản chụp: Tối ưu lại phải nạp OD theo bản chụp
+    // (cùng nguồn với máy ghép) — bản lỗi nạp theo cờ SỐNG ⇒ OD loại 2 thành loại chính, kho không trộn ⇒ tách xe, và danh sách
+    // dòng xe của OD chụp lại theo Loại kho chính thay vì "*" (chính ca Blue Star mất Xe 4/6 pallet). Chờ hết 30 s nhớ meta.
+    if (pF.s === 201 && pF.j?.data?.id) {
+      await new Promise(r => setTimeout(r, 31_000))
+      const a8 = JSON.stringify(rowOfP(pF.j.data, OD8)?.allowed_models ?? null)
+      const re = await api(`/tms/dispatch/plans/${pF.j.data.id}/reoptimize`, 'POST', { review_all: true })
+      const PR = re.j?.data
+      check('12f. Tắt cờ đi kèm rồi Tối ưu lại kế hoạch đang mở ⇒ vẫn theo BẢN CHỤP của kế hoạch: OD loại 2 vẫn ké xe khách, danh sách dòng xe của OD không đổi',
+        re.s === 200 && PR?.params?.follow_categories?.includes(CAT2) && tripOfOd(PR, OD[0])?.id === tripOfOd(PR, OD8)?.id && JSON.stringify(rowOfP(PR, OD8)?.allowed_models ?? null) === a8,
+        `http=${re.s} ${re.j?.error?.message ?? ''} follow=${JSON.stringify(PR?.params?.follow_categories ?? null)} trips=${(PR?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')} allowed ${a8} → ${JSON.stringify(rowOfP(PR, OD8)?.allowed_models ?? null)}`)
+    }
   }
 
   // ĐK bảo quản theo VỊ TRÍ: ô đang chứa một mã THẬT của kho khai mức riêng ⇒ OD của mã đó mang mức của ô

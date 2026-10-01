@@ -31,6 +31,8 @@ export async function geoSearch(req: Request, res: Response) {
 const now = () => new Date().toISOString()
 const GEO_COLS = 'id, ship_to_code, name, address, ward_code, region_name, geo_lat, geo_lng, geo_source, geo_accuracy_m, geo_address, geo_at, geo_by'
 const GEOCODE_MAX = 100          // một lượt gọi tối đa — 5 lượt/giây của Goong ⇒ ~25 s, dưới trần hàm Vercel
+const GEOCODE_MAX_OSM = 40       // Photon từ Vercel 1–3 s/khách ⇒ 40 khách ≈ 1–2 phút
+const GEOCODE_DEADLINE_MS = 200_000   // ngắt lượt trước trần hàm (300 s) — phần dở trả về `remaining`, bấm tiếp
 const GEOCODE_GAP_MS = 220
 
 export const zLocationBody = z.union([
@@ -91,34 +93,43 @@ export async function geocodeCustomers(req: Request, res: Response) {
     const b = req.body as z.infer<typeof zGeocodeBody>
     const st = await geoProviderStatus()
     if (!st.ready) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.reason ?? 'Chưa cấu hình máy định vị')
-    const limit = b.limit ?? GEOCODE_MAX
     // nguồn ghi theo máy đang hiệu lực; máy chỉ đè ghim của MÁY (GOONG/OSM), không bao giờ đè MANUAL/GPS
     const source: MachineGeoSource = st.provider === 'goong' ? 'GOONG' : 'OSM'
-    let q = db.from('Customer').select(GEO_COLS).eq('is_active', true).not('address', 'is', null).order('ship_to_code').limit(limit)
+    // OSM (Photon) từ Vercel chậm hơn Goong nhiều (1–3 s/khách, có khi 2 lượt hỏi) — 100 khách/lượt vượt trần hàm ("An error occurred
+    // with your deployment", đo 02/10 lượt 3) ⇒ lượt OSM nhỏ hơn + ngắt theo đồng hồ, trả `remaining` để bấm tiếp
+    const limit = b.limit ?? (source === 'OSM' ? GEOCODE_MAX_OSM : GEOCODE_MAX)
+    // khách CHƯA THỬ đi trước (geo_at null) — lần thử hỏng ghi geo_at để không đứng đầu hàng chặn mãi những khách chưa thử
+    let q = db.from('Customer').select(GEO_COLS).eq('is_active', true).not('address', 'is', null)
+      .order('geo_at', { ascending: true, nullsFirst: true }).order('ship_to_code').limit(limit)
     q = b.ids?.length ? q.in('id', b.ids.slice(0, GEOCODE_MAX)).or(`geo_source.is.null,geo_source.in.(${MACHINE_GEO_SOURCES.join(',')})`) : q.is('geo_lat', null)
     const { data: rows, error } = await q
     if (error) return fail(res, error)
     const done: { id: string; ship_to_code: string; lat: number; lng: number }[] = []
     const failed: { id: string; ship_to_code: string; reason: string }[] = []
     const by = req.user?.name ?? null
+    const t0 = Date.now()
+    let stoppedAtDeadline = false
+    const markTried = async (id: string, addr: string) => { await db.from('Customer').update({ geo_at: now(), geo_address: addr, updated_at: now() }).eq('id', id).is('geo_lat', null) }
     for (const r of rows ?? []) {
+      if (Date.now() - t0 > GEOCODE_DEADLINE_MS) { stoppedAtDeadline = true; break }
       const addr = String(r.address ?? '').trim()
       if (!addr) { failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: 'Không có địa chỉ' }); continue }
       try {
         // địa chỉ không ghi Phường/Xã (11/334 trên staging) ⇒ máy OSM lấy tên phường từ cột ward_code của SAP ("H.Phòng-Ngô Quyền")
         const p = await geocodeAddress(addr, { ward: wardFromSapCode(r.ward_code), province: r.region_name })
-        if (!p) { failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: source === 'OSM' ? 'Không tìm thấy phường/xã trong địa chỉ trên OpenStreetMap' : 'Dịch vụ không tìm thấy địa chỉ' }); continue }
+        if (!p) { await markTried(r.id, addr); failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: source === 'OSM' ? 'Không tìm thấy phường/xã trong địa chỉ trên OpenStreetMap' : 'Dịch vụ không tìm thấy địa chỉ' }); continue }
         const { error: eu } = await db.from('Customer').update({ geo_lat: p.lat, geo_lng: p.lng, geo_source: source, geo_accuracy_m: p.accuracy_m, geo_address: addr, geo_at: now(), geo_by: by, updated_at: now() }).eq('id', r.id)
         if (eu) { failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: eu.message }); continue }
         done.push({ id: r.id, ship_to_code: r.ship_to_code, lat: p.lat, lng: p.lng })
       } catch (e) {
         if (e instanceof GeoNotConfigured) return fail(res, 422, 'GEO_NOT_CONFIGURED', e.message)
+        await markTried(r.id, addr)
         failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: e instanceof Error ? e.message : String(e) })
       }
       await new Promise(r2 => setTimeout(r2, GEOCODE_GAP_MS))
     }
     if (done.length) await logAdmin(req, { action: 'CUSTOMER_GEO', target_type: 'Customer', target_label: `${done.length} khách (máy định vị)`, after: { done: done.length, failed: failed.length, provider: st.provider } })
     const { count } = await db.from('Customer').select('id', { count: 'exact', head: true }).eq('is_active', true).is('geo_lat', null).not('address', 'is', null)
-    return ok(res, { done, failed, remaining: count ?? 0, provider: st.provider, precision: st.precision })
+    return ok(res, { done, failed, remaining: count ?? 0, provider: st.provider, precision: st.precision, stopped_at_deadline: stoppedAtDeadline })
   } catch (e) { return fail(res, e instanceof Error ? e.message : String(e), 500) }
 }

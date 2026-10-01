@@ -4571,7 +4571,7 @@ export function useGeocodeCustomers() {
   return useMutation({
     mutationFn: (body: { ids?: string[]; limit?: number } = {}) => apiClient.post('/masterdata/customers/geocode', body).then(r => r.data.data as {
       done: { id: string; ship_to_code: string; lat: number; lng: number }[]; failed: { id: string; ship_to_code: string; reason: string }[]; remaining: number
-      provider: string; precision: 'exact' | 'ward' | null
+      provider: string; precision: 'exact' | 'ward' | null; stopped_at_deadline: boolean
     }),
     onSettled: () => { invalidateCustomers(qc); qc.invalidateQueries({ queryKey: ['customer-geo-status'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
   })

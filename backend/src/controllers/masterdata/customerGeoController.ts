@@ -12,7 +12,7 @@ import { ok, fail } from '../../utils/response'
 import { z, zId } from '../../middlewares/validate'
 import { logAdmin } from '../../services/adminAudit'
 import { geocodeAddress, geoProviderStatus, GeoNotConfigured, MACHINE_GEO_SOURCES, searchPlaces, type MachineGeoSource } from '../../services/geo'
-import { wardFromSapCode } from '../../utils/vnAddress'
+import { wardFromSapCode, looksLikeAddress } from '../../utils/vnAddress'
 
 export const zGeoSearchQuery = z.object({ q: z.string().trim().min(2).max(200) })
 // GET /masterdata/geo/search?q= — ô tìm địa điểm trên bản đồ (user 02/10 "search được địa chỉ như Google Map"): trả ≤ 6 ứng viên,
@@ -117,6 +117,8 @@ export async function geocodeCustomers(req: Request, res: Response) {
       if (Date.now() - t0 > GEOCODE_DEADLINE_MS) { stoppedAtDeadline = true; break }
       const addr = String(r.address ?? '').trim()
       if (!addr) { failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: 'Không có địa chỉ' }); continue }
+      // địa chỉ rác (".", "MB1.2") mà không có phường từ SAP ⇒ đừng hỏi máy (máy trả điểm bất kỳ)
+      if (!looksLikeAddress(addr) && !wardFromSapCode(r.ward_code)) { await markTried(r.id, addr); failed.push({ id: r.id, ship_to_code: r.ship_to_code, reason: `Địa chỉ "${addr}" quá ngắn để định vị` }); continue }
       try {
         // địa chỉ không ghi Phường/Xã (11/334 trên staging) ⇒ máy OSM lấy tên phường từ cột ward_code của SAP ("H.Phòng-Ngô Quyền")
         const p = await geocodeAddress(addr, { ward: wardFromSapCode(r.ward_code), province: r.region_name })

@@ -92,6 +92,12 @@ export function placeNameMatches(resultName: string | null | undefined, ward: st
   return !!w && r === w
 }
 
+/** Địa chỉ có đủ để đưa cho máy định vị không — máy nào cũng trả MỘT điểm cho chuỗi rác ("MB1.2", ".") nên phải chặn trước: ≥ 2 từ, ≥ 8 ký tự, có chữ. */
+export function looksLikeAddress(s: string | null | undefined): boolean {
+  const t = String(s ?? '').normalize('NFC').trim()
+  return t.length >= 8 && /\p{L}{2,}/u.test(t) && t.split(/\s+/).length >= 2
+}
+
 /** Tên phường/xã từ cột Customer.ward_code của SAP ("H.Phòng-Ngô Quyền" → "Ngô Quyền") — đường lùi khi địa chỉ không ghi Phường/Xã. */
 export function wardFromSapCode(code: string | null | undefined): string | null {
   const s = String(code ?? '').trim()

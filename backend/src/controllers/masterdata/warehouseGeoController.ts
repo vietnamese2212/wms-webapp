@@ -9,7 +9,7 @@ import { ok, fail } from '../../utils/response'
 import type { z } from '../../middlewares/validate'
 import { zLocationBody } from './customerGeoController'
 import { geocodeAddress, geoProviderStatus, GeoNotConfigured, type MachineGeoSource } from '../../services/geo'
-import { wardFromSapCode } from '../../utils/vnAddress'
+import { wardFromSapCode, looksLikeAddress } from '../../utils/vnAddress'
 
 const now = () => new Date().toISOString()
 const GEO_COLS = 'id, code, name, address, geo_lat, geo_lng, geo_source, geo_accuracy_m, geo_at, geo_by'
@@ -26,6 +26,8 @@ export async function geocodeWarehouse(req: Request, res: Response) {
     if (wh.geo_source === 'MANUAL' || wh.geo_source === 'GPS') return fail(res, 409, 'HUMAN_PIN', 'Kho đã có ghim do người chấm — máy không đè. Muốn định vị lại thì xoá ghim trước.')
     const addr = String(wh.address ?? '').trim()
     if (!addr) return fail(res, 422, 'NO_ADDRESS', 'Kho chưa có địa chỉ — khai địa chỉ ở form Kho hoặc chấm ghim trên bản đồ.')
+    // địa chỉ rác ("MB1.2") vẫn được Goong trả MỘT điểm nào đó (đo 02/10: An Sơn rơi vào Phú Mỹ Hưng, Bluestar lên Lai Châu) ⇒ chặn trước
+    if (!looksLikeAddress(addr)) return fail(res, 422, 'NO_ADDRESS', `Địa chỉ kho "${addr}" quá ngắn để định vị — khai địa chỉ đầy đủ (đường, phường/xã, tỉnh) hoặc tìm / chấm trên bản đồ.`)
     const st = await geoProviderStatus()
     if (!st.ready) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.reason ?? 'Chưa cấu hình máy định vị')
     const source: MachineGeoSource = st.provider === 'goong' ? 'GOONG' : 'OSM'

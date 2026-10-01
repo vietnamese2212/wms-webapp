@@ -104,10 +104,11 @@ export function DispatchMap({ plan, warehouseId, canPlan, onOpenTrip }: { plan: 
   const rowsMissing = useMemo(() => shownRows.filter(r => r.geo_lat == null), [shownRows])
   const toggleCh = (k: string) => setHiddenCh(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
 
-  const fitPoints: [number, number][] = view === 'trips'
+  const loading = view === 'trips' ? geo.isLoading : cm.isLoading
+  // đang tải thì KHÔNG vừa khung (chụp 02/10: lúc đổi cách xem chỉ còn ghim kho ⇒ bản đồ phóng sát kho rồi mới nhận dữ liệu)
+  const fitPoints: [number, number][] = loading ? [] : view === 'trips'
     ? [...(depot ? [depot] : []), ...located.map(c => [c.geo_lat!, c.geo_lng!] as [number, number])]
     : [...(depot ? [depot] : []), ...rowsLocated.map(r => [Number(r.geo_lat), Number(r.geo_lng)] as [number, number])]
-  const loading = view === 'trips' ? geo.isLoading : cm.isLoading
 
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0">

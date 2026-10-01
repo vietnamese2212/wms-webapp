@@ -766,11 +766,12 @@ try {
         const byCh = new Map()
         for (const r of rows) { const k = r.channel ?? '—'; const l = byCh.get(k) ?? []; l.push(r); byCh.set(k, l) }
         const okTop = [...byCh.values()].every(l => { const top = l.find(r => r.rank_in_channel === 1); return top && l.every(r => r.pallets <= top.pallets) })
-        check('12i. GET /dispatch/customers-map → 200 có warehouse/from/to/rows, mỗi dòng có hạng trong kênh ≥ 1 + toạ độ, hạng 1 là pallet lớn nhất của kênh · days=5 → 400 · kho rác → 400',
-          cm.s === 200 && typeof cm.j?.data?.from === 'string' && Array.isArray(rows) && okRank && okTop
-            && (await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=5`)).s === 400
-            && (await api('/tms/dispatch/customers-map?warehouse_id=undefined&days=30')).s === 400,
-          `http=${cm.s} n=${rows.length} from=${cm.j?.data?.from} kênh=${[...byCh.keys()].join(',')} okRank=${okRank} okTop=${okTop}`)
+        // id kho đi trên QUERY (không phải :param) nên lưới id-rác của app.ts không chạm; zId nhận text (48/82 bảng khoá TEXT) ⇒ kho lạ = 404
+        const d5 = await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=5`)
+        const whBad = await api('/tms/dispatch/customers-map?warehouse_id=undefined&days=30')
+        check('12i. GET /dispatch/customers-map → 200 có warehouse/from/to/rows, mỗi dòng có hạng trong kênh ≥ 1 + toạ độ, hạng 1 là pallet lớn nhất của kênh · days=5 → 400 · kho lạ → 404',
+          cm.s === 200 && typeof cm.j?.data?.from === 'string' && Array.isArray(rows) && okRank && okTop && d5.s === 400 && whBad.s === 404,
+          `http=${cm.s} n=${rows.length} from=${cm.j?.data?.from} kênh=${[...byCh.keys()].join(',')} okRank=${okRank} okTop=${okTop} days5=${d5.s} whBad=${whBad.s}`)
       }
       // [12h] (02/10) Ghim KHO + đo km: kho fixture là Ba Vì THẬT ⇒ đọc ghim gốc, chấm thử, trả lại. Đo km: chưa có khoá Goong trên
       // staging ⇒ 422 GEO_NOT_CONFIGURED (có khoá ⇒ 200 với counts) — kho chưa ghim ⇒ 422 WAREHOUSE_NOT_LOCATED.

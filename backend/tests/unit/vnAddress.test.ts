@@ -1,6 +1,11 @@
 // Bộ tách địa chỉ VN cho máy định vị OSM (02/10) — mẫu lấy từ Customer.address thật trên staging + các ca máy trả SAI khi thử sống.
 import { describe, it, expect } from 'vitest'
-import { parseVnAddress, placeNameMatches, stripProvincePrefix, provinceGroup, provinceMatches, wardFromSapCode, PROVINCE_GROUPS } from '../../src/utils/vnAddress'
+import { parseVnAddress, placeNameMatches, stripProvincePrefix, provinceGroup, provinceMatches, wardFromSapCode, looksLikeAddress, PROVINCE_GROUPS } from '../../src/utils/vnAddress'
+
+describe('looksLikeAddress — địa chỉ rác không được đưa cho máy định vị (đo 02/10: "MB1.2" → Goong trả Phú Mỹ Hưng, "MB1.1" → Lai Châu)', () => {
+  it('rác → false', () => { for (const s of ['MB1.2', '.', 'Đà Nẵng', '12345678', '', null]) expect(looksLikeAddress(s)).toBe(false) })
+  it('địa chỉ thật → true', () => { for (const s of ['Suối Hai, Hà Nội', 'Bàu Bàng, TP HCM', 'Số 7 Ngõ 28 Thiên Đức, Xã Phù Đổng']) expect(looksLikeAddress(s)).toBe(true) })
+})
 
 describe('parseVnAddress — phường/xã + tỉnh từ địa chỉ SAP tự do', () => {
   it('số nhà + Xã + Thành phố', () => {

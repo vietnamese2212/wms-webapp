@@ -109,6 +109,9 @@ async function cleanup() {
   await restWrite('TransportCompany', 'PATCH', `id=eq.${HA.id}`, { tender_required: HA_FLAG0 }).catch(() => {})
 }
 await cleanup()
+// Kho fixture là Ba Vì THẬT: người dùng chọn dải trên bàn (vd XE PALLET 90–105) là mọi kịch bản cũ của gói đổi kết quả (7/9 thành
+// Non tải, 14 pallet chia 9,45 + 4,55 — lượt 01/10). Gói chạy với kho KHÔNG có dải mặc định; cleanup trả lại WH_BANDS0.
+await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_load_bands: null })
 
 const planOf = async (id) => (await api(`/tms/dispatch/plans/${id}`)).j?.data
 // XEM ĐƠN LÀ BƯỚC BẮT BUỘC (27/09 tối): lập = mọi OD vào khung chờ CHƯA XEM, 0 xe. Các kịch bản đo MÁY GHÉP ⇒ lập rồi

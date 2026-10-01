@@ -322,9 +322,14 @@ export const basisOf = (m: EngineModel): 'PALLET' | 'TON' => (m.capacity_mode ==
  *  cả pallet lẫn tấn: hàng trên xe là một lát cắt của cả chuyến). null = N xe không chở hết, HOẶC có xe thừa (không nhận phần
  *  nào) — tổ hợp có xe thừa luôn đắt hơn tổ hợp bỏ xe đó nên không cần xét. `models` phải xếp lớn → nhỏ. */
 export function splitLoad(models: EngineModel[], pallets: number | null, tons: number | null): { pallets: number | null; tons: number | null }[] | null {
+  // Dải tải (01/10): chia theo sức chứa DANH ĐỊNH trước; chỉ khi N xe không chở hết ở 100 % mới dùng tới trần dải. Không thì
+  // xe đầu bị nhồi 105 % trong khi xe sau còn chỗ (14 pallet trên 2 × 9: 9,45 + 4,55 thay vì 9 + 5 — gói 61 [15g] bắt ra lượt đầu).
+  return splitWith(models, pallets, tons, capOf) ?? (models.some(m => maxPctOf(m) !== 100) ? splitWith(models, pallets, tons, capFit) : null)
+}
+function splitWith(models: EngineModel[], pallets: number | null, tons: number | null, cap: (m: EngineModel) => Cap): { pallets: number | null; tons: number | null }[] | null {
   if (!models.length) return null
   const fmax = (m: EngineModel) => {
-    const c = capFit(m)
+    const c = cap(m)
     if (basisOf(m) === 'TON') return tons == null || c.tons == null ? 0 : tons <= 0 ? Infinity : c.tons / tons
     if (pallets == null) return 0
     const byP = pallets <= 0 ? Infinity : c.pallets! / pallets

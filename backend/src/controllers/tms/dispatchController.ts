@@ -1364,19 +1364,13 @@ async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr |
     const odOf = new Map(subset.flatMap(t => t.ods.map(o => [o.od_number, t.group_code] as const)))
     return { err: [`${bad.length} OD đổi tình trạng ở SAP từ lúc lập nháp — ${bad.slice(0, 5).map(f => `${f.od_number} (${odOf.get(f.od_number) ?? '?'}): ${f.info}`).join('; ')}${bad.length > 5 ? '…' : ''}. Trên bàn ghép xe: "Cập nhật theo SAP" (OD bị sửa) · "Thay bằng OD mới" (OD bị thay) · gỡ OD đã điều / đã xuất — rồi xác nhận lại.`, 409, 'OD_CHANGED_IN_SAP'] }
   }
-  const noCat = subset.filter(t => !detailOf(t).booking_category)
-  if (noCat.length) return { err: [`${noCat.length} xe không xác định được Loại kho booking (mã hàng chưa khai loại): ${noCat.slice(0, 5).map(t => t.group_code).join(', ')}`, 422, 'BOOKING_CATEGORY_REQUIRED'] }
-  const taken = (await fetchAllByIdChunks(subOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; group_code: string }[]
-  if (taken.length) return { err: [`${uniq(taken.map(x => x.do_no)).length} OD đã có trong Kế hoạch xuất từ lúc lập nháp (${taken.slice(0, 5).map(x => `${x.do_no} → ${x.group_code}`).join('; ')}) — lập lại kế hoạch để loại các OD đó.`, 409, 'OD_ALREADY_PLANNED'] }
-  const gcs = subset.map(t => t.group_code)
-  const usedGc = (await fetchAllByIdChunks(gcs, c => db.from('khvc_lines').select('group_code').in('group_code', c).neq('sync_status', 'OBSOLETE').order('group_code'))) as { group_code: string }[]
-  if (usedGc.length) return { err: [`Số xe ${uniq(usedGc.map(x => x.group_code)).slice(0, 5).join(', ')} đã có trong Kế hoạch xuất — lập lại kế hoạch để lấy STT mới.`, 409, 'GROUP_CODE_TAKEN'] }
   // MÃ HÀNG PHẢI CÓ TRONG DANH MỤC — chặn TẠI ĐÂY thay vì để đường derive từ chối sau khi đã ghi.
   // Vì sao (đo 24/09): 5 % dòng OD của SAP trỏ tới mã chưa đồng bộ sang WMS (4 mã: 810000020 ·
   // 510000442 · 510000444 · 510000440 ⇒ 47 OD Ba Vì + 19 OD Bàu Bàng). Đường `replanKhvcGroups`
   // → derive validate mã hàng và từ chối TRỌN GÓI ("18 chuyến xe lỗi — không upload"), nên xác nhận
   // 50 xe xong ra **0 chuyến** trong khi API vẫn trả 200. Chặn trước khi ghi thì không có trạng thái
   // nửa vời (kế hoạch đã vào sổ mà không chuyến nào), và người dùng biết ĐÍCH DANH mã phải khai.
+  // Kiểm TRƯỚC "Loại kho booking": xe toàn mã lạ thì không có Loại kho — nói "khai mã X" mới là việc làm được (01/10).
   const odMats = (await fetchAllByIdChunks(subOds, c => db.from('erp_outbound_orders')
     .select('od_number, material_code').in('od_number', c).eq('sync_status', 'ACTIVE').order('od_number'))) as { od_number: string; material_code: string | null }[]
   const wantMats = uniq(odMats.map(r => r.material_code).filter((x): x is string => !!x))
@@ -1390,6 +1384,13 @@ async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr |
       return { err: [`${missing.length} mã hàng chưa có trong danh mục Mã hàng: ${missing.slice(0, 6).join(', ')} — ${hitGc.length} xe vướng (${hitGc.slice(0, 4).join(', ')}). Khai mã ở Cài đặt → Mã hàng rồi xác nhận lại; nếu không, kế hoạch ghi vào sổ mà KHÔNG sinh được chuyến nào.`, 422, 'MATERIAL_UNKNOWN'] }
     }
   }
+  const noCat = subset.filter(t => !detailOf(t).booking_category)
+  if (noCat.length) return { err: [`${noCat.length} xe không xác định được Loại kho booking (mã hàng chưa khai loại): ${noCat.slice(0, 5).map(t => t.group_code).join(', ')}`, 422, 'BOOKING_CATEGORY_REQUIRED'] }
+  const taken = (await fetchAllByIdChunks(subOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; group_code: string }[]
+  if (taken.length) return { err: [`${uniq(taken.map(x => x.do_no)).length} OD đã có trong Kế hoạch xuất từ lúc lập nháp (${taken.slice(0, 5).map(x => `${x.do_no} → ${x.group_code}`).join('; ')}) — lập lại kế hoạch để loại các OD đó.`, 409, 'OD_ALREADY_PLANNED'] }
+  const gcs = subset.map(t => t.group_code)
+  const usedGc = (await fetchAllByIdChunks(gcs, c => db.from('khvc_lines').select('group_code').in('group_code', c).neq('sync_status', 'OBSOLETE').order('group_code'))) as { group_code: string }[]
+  if (usedGc.length) return { err: [`Số xe ${uniq(usedGc.map(x => x.group_code)).slice(0, 5).join(', ')} đã có trong Kế hoạch xuất — lập lại kế hoạch để lấy STT mới.`, 409, 'GROUP_CODE_TAKEN'] }
   return null
 }
 

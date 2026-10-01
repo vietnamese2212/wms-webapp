@@ -54,6 +54,9 @@ function applyDispatchBody(body: Record<string, unknown>, target: Record<string,
   // 25/09: số KHÁCH tối đa trên một xe pallet (user chốt "xe pallet bản chất là 1 khách, nếu cần thì làm config") — 1..20, mặc định 1
   // luật 11 (27/09): số dòng xe tối đa máy được ghép trên MỘT thẻ (một Số xe) — 1 = một xe như trước
   if (body.dispatch_max_vehicles_per_trip !== undefined) { const n = Math.trunc(Number(body.dispatch_max_vehicles_per_trip)); target.dispatch_max_vehicles_per_trip = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1 }
+  // 02/10 (điều vận trên bản đồ): gộp xe Non tải KHÁC TỈNH khi đường vòng ≤ N % so với đi thẳng tới điểm xa nhất; trống/0 = tắt
+  // (hành vi cũ: chỉ gộp cùng tỉnh). Cần kho + khách có ghim; km đã đo (Goong) hoặc ước lượng chim bay × 1,3.
+  if (body.dispatch_detour_pct !== undefined) { const n = Number(body.dispatch_detour_pct); target.dispatch_detour_pct = body.dispatch_detour_pct === null || body.dispatch_detour_pct === '' || !Number.isFinite(n) || n <= 0 ? null : Math.min(100, Math.round(n * 10) / 10) }
 }
 
 function extractCount(arr: unknown): number {

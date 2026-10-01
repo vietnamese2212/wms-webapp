@@ -124,7 +124,7 @@ export function DispatchMap({ plan, canPlan, onOpenTrip }: { plan: DispatchPlan;
             </Button>
           )}
         </div>
-        {geo.data && !depot && <div className="px-3 py-1.5 border-b bg-amber-50 text-[11px] text-amber-900">Kho {wh?.name ?? ''} chưa có ghim trên bản đồ — chấm ở Cài đặt WMS → Kho để đo km từ kho.</div>}
+        {geo.data && !depot && <div className="px-3 py-1.5 border-b bg-amber-50 text-[11px] text-amber-900">{wh?.name ?? 'Kho xuất'} chưa có ghim trên bản đồ — chấm ở Cài đặt WMS → Kho để đo km từ kho.</div>}
         <div className="px-2 py-1.5 space-y-0.5">
           {trips.map(t => {
             const pin = pinOfTrip(t)

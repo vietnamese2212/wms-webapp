@@ -45,6 +45,7 @@ import {
   computeFreight, pickTariff, farthestWard, effectiveAt, loadUtilization, billedPallets,
   type TariffLike, type SurchargeLike, type TariffUnit, type SurchargePer, type StopCountMode, type LoadUtil,
 } from './freight'
+import { estimateRoadKm, kmLookup, routeKm, detourOk } from '../utils/geoMath'
 
 // ── Kiểu đầu vào ──
 export interface EngineLine {
@@ -118,8 +119,19 @@ export interface EngineParams {
    *  dải: xếp theo sức chứa danh định (100 %), không báo Non tải (min 0) — người bật là người chịu. */
   load_bands?: Record<string, LoadBand>
   load_bypass?: boolean
+  /** 02/10 — điều vận trên bản đồ: gộp xe Non tải KHÁC TỈNH khi đường vòng ≤ N % (`Warehouse.dispatch_detour_pct`). null/undefined =
+   *  tắt = chỉ gộp cùng tỉnh như trước. Cần `input.geo` có ghim kho + mọi điểm giao của hai xe. */
+  detour_pct?: number | null
+}
+/** Toạ độ + km cho máy ghép (02/10). `points` theo ship_to_code; `km` khoá `A|B` (A, B = 'WH' hoặc ship_to) — số đo Goong hay ước
+ *  lượng chim bay × 1,3 do controller điền (engine không phân biệt, màn hình mới nói "ước lượng"). Thiếu km ⇒ engine tự ước lượng. */
+export interface EngineGeo {
+  wh: { lat: number; lng: number } | null
+  points: Record<string, { lat: number; lng: number }>
+  km: Record<string, number>
 }
 export interface EngineInput {
+  geo?: EngineGeo
   ods: EngineOd[]
   models: EngineModel[]
   carriers: EngineCarrier[]
@@ -896,6 +908,22 @@ export function runDispatch(input: EngineInput): DispatchResult {
   for (const [k, v] of Object.entries(input.share_actual)) snapshot[k] = { ...v }
   const costOf = (b: Bin) => assignVehicle(ctx, b, snapshot, underPct)
   const isUnder = (b: Bin) => { const a = costOf(b); if (!a.model) return true; const u = loadUtilization({ capacity_mode: a.model.capacity_mode, max_pallets: a.model.max_pallets, max_tons: a.model.max_tons, underload_pct: underPct(a.model) }, a.pallets, a.tons); return u.pct != null && u.pct < underPct(a.model) }
+  // 02/10 — ĐƯỜNG VÒNG (điều vận trên bản đồ): kho bật `detour_pct` ⇒ hai xe KHÁC TỈNH cũng gộp được khi quãng kho → các điểm giao
+  // (gần trước) không dài hơn đường thẳng tới điểm xa nhất quá N %. Km lấy từ `input.geo.km` (số đo Goong / ước lượng controller
+  // điền), thiếu thì ước lượng chim bay × 1,3 từ toạ độ; thiếu toạ độ của kho hay một điểm ⇒ KHÔNG gộp (không đoán). Mọi luật khác
+  // (lớp, kênh, Loại kho, dòng xe chung, điểm giao, không đắt hơn đi riêng) giữ nguyên — chỉ phần TỈNH của khoá được nới.
+  const geo = input.geo
+  const detourPct = P.detour_pct != null && Number.isFinite(Number(P.detour_pct)) && Number(P.detour_pct) > 0 && geo?.wh ? Number(P.detour_pct) : null
+  const geoDist = (a: string, b: string): number | undefined => {
+    if (!geo) return undefined
+    const hit = kmLookup(geo.km, a, b)
+    if (hit != null) return hit
+    const pa = a === 'WH' ? geo.wh : geo.points[a], pb = b === 'WH' ? geo.wh : geo.points[b]
+    return pa && pb ? estimateRoadKm(pa, pb) : undefined
+  }
+  const stopsOf = (b: Bin) => uniq(b.units.map(u => u.od.ship_to_code).filter((x): x is string => !!x))
+  const regionless = (k: string) => k.split('|').filter((_, i) => i !== 1).join('|')
+  const detourMergeOk = (merged: Bin) => detourPct != null && detourOk(routeKm(stopsOf(merged), geoDist), detourPct)
   let changed = true
   while (changed) {
     changed = false
@@ -905,9 +933,12 @@ export function runDispatch(input: EngineInput): DispatchResult {
       // chuyến chỉ có hàng đi kèm (POSM) gộp được vào chuyến của Loại kho chính cùng vùng (luật 9)
       // chuyến chỉ POSM ('*') hay chỉ mã chưa khai loại ('?') gộp được vào chuyến bất kỳ loại nào cùng vùng; chuyến '?' cũng nhận
       const sameGroup = (t: Bin) => t.mkey === src.mkey || (!mixCats && baseKey(t.mkey) === baseKey(src.mkey) && (['*', '?'].includes(catPartOf(src.mkey)) || catPartOf(t.mkey) === '?'))
-      const targets = bins.filter(t => t !== src && sameGroup(t) && !solo(t))
-        .map(t => ({ t, merged: withUnits(t, src.units) }))
+      // khác tỉnh nhưng cùng lớp · kênh · Loại kho ⇒ ứng viên đường vòng (kiểm km sau khi ghép thử)
+      const crossRegion = (t: Bin) => detourPct != null && t.mkey !== src.mkey && regionless(t.mkey) === regionless(src.mkey)
+      const targets = bins.filter(t => t !== src && (sameGroup(t) || crossRegion(t)) && !solo(t))
+        .map(t => ({ t, merged: withUnits(t, src.units), cross: !sameGroup(t) }))
         .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged, P.max_drops))
+        .filter(x => !x.cross || detourMergeOk(x.merged))
         .map(x => { const cT = costOf(x.t).freight.total, cM = costOf(x.merged).freight.total; return { ...x, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
         .filter(x => x.ok)
         .sort((a, b) => ((a.cM ?? Infinity) - (b.cM ?? Infinity)) || (b.t.pallets - a.t.pallets) || cmp(a.t.key, b.t.key))

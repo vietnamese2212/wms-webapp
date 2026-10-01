@@ -36,7 +36,7 @@ import {
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
   odStopsCap, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
-  type TripVehicle, withLoadBands, type LoadBand,
+  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
 import { replanKhvcGroups } from '../wms/outboundController'
@@ -51,7 +51,7 @@ type Tables = Database['public']['Tables']
 type PlanRow = Tables['dispatch_plan']['Row']
 type TripRow = Tables['dispatch_trip']['Row']
 type TripOdRow = Tables['dispatch_trip_od']['Row']
-type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown }
+type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown; dispatch_detour_pct: number | string | null }
 
 type TripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
 const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
@@ -132,7 +132,7 @@ export const zRespond = z.object({
 type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' | 'allocations' | 'share_targets'>
 
 async function loadWarehouse(id: string): Promise<WhRow | null> {
-  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_max_drops, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_max_drops, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands, dispatch_detour_pct').eq('id', id).maybeSingle()
   if (error) throw error
   return (data as WhRow | null) ?? null
 }
@@ -558,6 +558,29 @@ async function writeSummary(plan: PlanRow) {
 }
 
 // ── POST /tms/dispatch/plan ────────────────────────────────────────────────────────────────────────────
+/** Toạ độ + km cho máy ghép (02/10): ghim kho, ghim khách của các OD, km đã đo (GOONG) hoặc ước lượng cho kho→khách và khách↔khách
+ *  gần nhau (≤ 80 km chim bay). Kho chưa ghim ⇒ geo.wh null ⇒ engine không gộp khác tỉnh (không đoán). Chỉ đọc DB, không gọi ngoài. */
+async function engineGeo(whId: string, ods: EngineOd[]): Promise<EngineGeo | undefined> {
+  const codes = uniq(ods.map(o => o.ship_to_code).filter((x): x is string => !!x))
+  if (!codes.length) return undefined
+  const [{ data: wh }, custs] = await Promise.all([
+    db.from('Warehouse').select('geo_lat, geo_lng').eq('id', whId).maybeSingle(),
+    fetchAllByIdChunks(codes, c => db.from('Customer').select('ship_to_code, geo_lat, geo_lng').in('ship_to_code', c).not('geo_lat', 'is', null).order('ship_to_code')) as Promise<{ ship_to_code: string; geo_lat: number; geo_lng: number }[]>,
+  ])
+  const points: EngineGeo['points'] = {}
+  for (const c of custs) points[c.ship_to_code] = { lat: Number(c.geo_lat), lng: Number(c.geo_lng) }
+  const whPt = wh?.geo_lat != null && wh.geo_lng != null ? { lat: Number(wh.geo_lat), lng: Number(wh.geo_lng) } : null
+  const km: Record<string, number> = {}
+  if (whPt && custs.length) {
+    const whNode = { key: whKey(whId), pt: whPt }
+    const nodes = custs.map(c => ({ key: custKey(c.ship_to_code), pt: points[c.ship_to_code] }))
+    const pairs = [...nodes.map(n => ({ from: whNode, to: n })), ...custPairs(nodes)]
+    const ds = await distancesFor(pairs)
+    const label = (k: string) => (k.startsWith('WH:') ? 'WH' : k.slice(3))
+    pairs.forEach((p, i) => { km[`${label(p.from.key)}|${label(p.to.key)}`] = ds[i].km })
+  }
+  return { wh: whPt, points, km }
+}
 export async function createPlan(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zPlanBody>
@@ -596,12 +619,14 @@ export async function createPlan(req: Request, res: Response) {
       // dải tải theo dòng xe cha (01/10): gửi lên = dùng + nhớ cho kho; không gửi = lần chọn gần nhất của kho
       load_bands: b.load_bands !== undefined ? loadBandsOf(b.load_bands) : loadBandsOf(wh.dispatch_load_bands),
       load_bypass: b.load_bypass === true,
+      // 02/10: gộp xe Non tải khác tỉnh theo đường vòng (form Kho, nhóm XUẤT — Điều vận); null = tắt
+      detour_pct: numOrNull(wh.dispatch_detour_pct),
     }
     if (b.load_bands !== undefined) await rememberLoadBands(wh.id, params.load_bands)
     // XEM ĐƠN LÀ BƯỚC BẮT BUỘC (user chốt 27/09 tối: "bước đầu tiên trên bàn làm việc là xem tất cả các đơn open chưa có trong
     // ghép xe — xác nhận xong mới tới điều xe"). Máy chạy ở đây CHỈ để biết OD nào không lên xe được (trả về · không đo được tải…);
     // mọi OD còn lại vào khung chờ CHƯA XEM, không xe nào được dựng. Ghép = reoptimize sau khi người xác nhận đơn.
-    const result = runDispatch({ ods, ...refs, share_actual, condition_labels, params })
+    const result = runDispatch({ ods, ...refs, share_actual, condition_labels, params, geo: await engineGeo(wh.id, ods) })
     // OD thiếu KHAI BÁO dòng xe (khách/kênh chưa khai — 28/09) vẫn vào khung chờ: khai xong bấm Ghép là máy xếp được; để vào
     // "không lên xe" thì OD kẹt ở đó tới khi lập lại cả kế hoạch
     const unplannedReal = result.unplanned.filter(u => !u.code)   // có `code` = OD ở lại khung chờ (chưa khai xe · chỉ POSM chờ đơn chính)
@@ -760,12 +785,12 @@ async function planCatCfg(plan: PlanRow): Promise<CatCfg> {
   return { ...cfg, follow: engineParams(plan).follow_categories ?? cfg.follow }
 }
 function engineParams(plan: PlanRow): EngineInput['params'] {
-  const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean }
+  const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean; detour_pct?: number | null }
   // kế hoạch lập trước 26/09 không có `allow_mix_categories` ⇒ undefined = cho trộn loại như lúc nó được lập;
   // lập trước 27/09 không có `max_vehicles` ⇒ một xe / thẻ như lúc nó được lập; `pallet_max_stops` của kế hoạch cũ bỏ qua (29/09)
   return { day: plan.plan_date, max_drops: params.max_drops ?? null, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1,
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
-    load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true }
+    load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true, detour_pct: numOrNull(params.detour_pct) }
 }
 /** Tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn và các OD ĐANG nằm trên xe — KHÔNG ghi (bàn ghép xe dùng để xem trước khi thả). */
 function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null, condLabels: Record<string, string> = {}) {
@@ -1254,7 +1279,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const wards = uniq(cand.ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const [refs, condition_labels] = await Promise.all([loadRefs(wh.id, plan.plan_date, wards), loadConditionLabels()])
     const startSeq = Math.max(0, ...full.trips.map(x => x.seq)) + 1
-    const result = runDispatch({ ods: cand.ods, ...refs, share_actual: actualNow(plan, keep), condition_labels, params: { ...engineParams(plan), start_seq: startSeq } })
+    const result = runDispatch({ ods: cand.ods, ...refs, share_actual: actualNow(plan, keep), condition_labels, params: { ...engineParams(plan), start_seq: startSeq }, geo: await engineGeo(wh.id, cand.ods) })
     const t = now()
     // OD của xe bị làm lại về khung chờ trước, rồi mới xoá xe — OD máy không xếp được (hoặc đã bị SAP điều/thay) nằm lại khung chờ
     const redoIds = redo.map(x => x.id)

@@ -24,16 +24,9 @@ export async function geoProviderStatus(): Promise<{ provider: string; ready: bo
 
 const inRange = (lat: number, lng: number) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
 
-export interface LatLng { lat: number; lng: number }
-/** Đường chim bay (km) — đường lùi khi chưa có nhà cung cấp; ×1,3 ≈ đường bộ (hệ số thường dùng cho đường liên tỉnh VN). */
-export function haversineKm(a: LatLng, b: LatLng): number {
-  const R = 6371, toRad = (d: number) => (d * Math.PI) / 180
-  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng)
-  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)))
-}
-export const ROAD_FACTOR = 1.3
-export const estimateRoadKm = (a: LatLng, b: LatLng) => Number((haversineKm(a, b) * ROAD_FACTOR).toFixed(2))
+// Toán thuần (chim bay, hệ số đường bộ, đường vòng) ở utils/geoMath.ts — máy ghép và test đơn vị dùng không cần env/DB
+export { haversineKm, estimateRoadKm, ROAD_FACTOR, type LatLng } from '../utils/geoMath'
+import type { LatLng } from '../utils/geoMath'
 
 const GOONG_MATRIX = 'https://rsapi.goong.io/DistanceMatrix'
 /** Một lượt gọi tối đa bao nhiêu điểm đích — Goong không công bố, giữ 25 như Google để không bị 400 giữa chừng. */

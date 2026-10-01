@@ -837,3 +837,31 @@ describe('01/10 chiều — POSM đi theo đơn chính ngay lúc xếp, không b
     expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['A', 'P1'])
   })
 })
+
+// 02/10 — ĐIỀU VẬN TRÊN BẢN ĐỒ: gộp xe Non tải KHÁC TỈNH khi đường vòng ≤ N % (Warehouse.dispatch_detour_pct); mặc định tắt.
+// Kho Ba Vì; A (Hưng Yên) nằm trên đường đi B (Hải Phòng); C (Phú Thọ) ngược hướng. Km không khai ⇒ engine ước lượng chim bay × 1,3.
+describe('02/10 — gộp xe Non tải khác tỉnh theo đường vòng (input.geo + params.detour_pct)', () => {
+  const WH = { lat: 21.1958, lng: 105.3936 }
+  const geo = { wh: WH, points: { SA: { lat: 20.95, lng: 106.05 }, SB: { lat: 20.85, lng: 106.69 }, SC: { lat: 21.40, lng: 105.20 } }, km: {} }
+  const A = od('A', 'W1', 2, { region_code: 'HY' }), B = od('B', 'W2', 2, { region_code: 'HP' }), C = od('C', 'W3', 2, { region_code: 'PT' })
+  it('tắt (mặc định): ba tỉnh = ba xe dù đều Non tải', () => {
+    const r = runDispatch(input([A, B, C], { geo }))
+    expect(r.trips).toHaveLength(3)
+  })
+  it('bật 15 %: A ké xe đi B (cùng đường) ⇒ 2 xe; C ngược hướng vẫn xe riêng', () => {
+    const r = runDispatch(input([A, B, C], { geo, params: { ...params, detour_pct: 15 } }))
+    expect(r.trips).toHaveLength(2)
+    const ab = r.trips.find(t => t.ods.some(o => o.od_number === 'B'))!
+    expect(ab.ods.map(o => o.od_number).sort()).toEqual(['A', 'B'])
+    expect(r.trips.find(t => t.ods.some(o => o.od_number === 'C'))!.ods).toHaveLength(1)
+  })
+  it('bật nhưng thiếu ghim kho hoặc ghim một khách ⇒ không gộp khác tỉnh (không đoán)', () => {
+    expect(runDispatch(input([A, B], { geo: { ...geo, wh: null }, params: { ...params, detour_pct: 15 } })).trips).toHaveLength(2)
+    expect(runDispatch(input([A, B], { geo: { ...geo, points: { SA: geo.points.SA } }, params: { ...params, detour_pct: 15 } })).trips).toHaveLength(2)
+  })
+  it('km đã đo trong bảng thắng ước lượng: khai B rất xa đường ⇒ không gộp', () => {
+    const km = { 'WH|SA': 70, 'WH|SB': 150, 'SA|SB': 160 }   // kho→A→B = 230 so với 150 ⇒ vòng 53 %
+    expect(runDispatch(input([A, B], { geo: { ...geo, km }, params: { ...params, detour_pct: 15 } })).trips).toHaveLength(2)
+    expect(runDispatch(input([A, B], { geo: { ...geo, km }, params: { ...params, detour_pct: 60 } })).trips).toHaveLength(1)
+  })
+})

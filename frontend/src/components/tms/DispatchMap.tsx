@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import { MapPin, ExternalLink } from 'lucide-react'
-import { OSM_TILE, OSM_ATTR, VN_CENTER, VN_ZOOM, dotIcon, L } from '@/components/shared/leafletSetup'
+import { OSM_TILE, OSM_ATTR, OSM_SUBDOMAINS, VN_CENTER, VN_ZOOM, dotIcon, L } from '@/components/shared/leafletSetup'
 import { useDispatchPlanGeo, GEO_SOURCE_VI, type DispatchPlan, type DispatchTrip } from '@/api/hooks'
 
 const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5', '#0d9488', '#be123c', '#854d0e', '#1d4ed8']
@@ -55,7 +55,7 @@ export function DispatchMap({ plan, onOpenTrip }: { plan: DispatchPlan; onOpenTr
     <div className="flex flex-col lg:flex-row h-full min-h-0">
       <div className="relative flex-1 min-h-[55vh] lg:min-h-0">
         <MapContainer center={VN_CENTER} zoom={VN_ZOOM} scrollWheelZoom className="h-full w-full">
-          <TileLayer url={OSM_TILE} attribution={OSM_ATTR} />
+          <TileLayer url={OSM_TILE} attribution={OSM_ATTR} subdomains={OSM_SUBDOMAINS} />
           <FitPins points={located.map(c => [c.geo_lat!, c.geo_lng!])} />
           <FlyTo to={focus} />
           {located.map(c => {
@@ -83,9 +83,10 @@ export function DispatchMap({ plan, onOpenTrip }: { plan: DispatchPlan; onOpenTr
             )
           })}
         </MapContainer>
-        {geo.isLoading && <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-xs text-slate-500">Đang tải toạ độ…</div>}
+        {/* lớp phủ phải đứng TRÊN các pane của Leaflet (z-index 400–700) — không thì băng báo nằm dưới ô nền, chỉ máy đọc được chữ */}
+        {geo.isLoading && <div className="absolute inset-0 z-[800] flex items-center justify-center bg-white/60 text-xs text-slate-500">Đang tải toạ độ…</div>}
         {!geo.isLoading && custs.length > 0 && !located.length && (
-          <div className="absolute inset-x-0 top-2 mx-auto w-fit rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 shadow">
+          <div className="absolute inset-x-2 top-2 z-[800] mx-auto w-fit max-w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 shadow">
             Chưa khách nào của kế hoạch có toạ độ — định vị ở trang Khách hàng (chấm tay, GPS, hoặc máy định vị).
           </div>
         )}

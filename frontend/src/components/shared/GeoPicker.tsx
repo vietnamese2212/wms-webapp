@@ -7,7 +7,7 @@ import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-lea
 import type { Marker as LMarker } from 'leaflet'
 import { Crosshair, MapPin, Trash2, LocateFixed } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { OSM_TILE, OSM_ATTR, VN_CENTER, VN_ZOOM } from './leafletSetup'
+import { OSM_TILE, OSM_ATTR, OSM_SUBDOMAINS, VN_CENTER, VN_ZOOM } from './leafletSetup'
 import { GEO_SOURCE_VI, type CustomerGeoSource } from '@/api/hooks'
 import { formatDateTime } from '@/utils/formatters'
 
@@ -60,7 +60,7 @@ export function GeoPicker({ value, meta, address, canEdit, saving, onSave }: {
     <div className="space-y-1.5">
       <div className="h-56 sm:h-64 w-full overflow-hidden rounded-md border border-slate-200">
         <MapContainer center={shown ? [shown.lat, shown.lng] : VN_CENTER} zoom={shown ? PIN_ZOOM : VN_ZOOM} scrollWheelZoom className="h-full w-full">
-          <TileLayer url={OSM_TILE} attribution={OSM_ATTR} />
+          <TileLayer url={OSM_TILE} attribution={OSM_ATTR} subdomains={OSM_SUBDOMAINS} />
           <Viewport at={shown} />
           <ClickToPin enabled={canEdit && !saving} onPick={p => setDraft({ ...p, source: 'MANUAL', accuracy_m: null })} />
           {shown && (

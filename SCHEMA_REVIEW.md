@@ -830,6 +830,8 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
   OBSOLETE) · index một phần `(so_number, so_item) WHERE sync_status='ACTIVE'`.
 Bảng đã có `trg_wms_notify`; `TABLE_QUERY_MAP` thêm `dispatch_trip_od` + khoá `dispatch-sync`.
 
+**02/10/2026 — RPC `dispatch_customer_rank(p_plant, p_from, p_to)` (migration `20261002d_dispatch_customer_rank.sql`, đã áp staging).** Tab Bản đồ cách xem "Theo khách hàng": gom `erp_outbound_orders` theo ship-to (pallet SAP, tấn, số OD; ngày giao trong khoảng; flow SALE/STO/INTERNAL/PALLET; bỏ OBSOLETE) nối `Customer` (kênh, ghim), `rank()` trong kênh và toàn kho; trả jsonb mảng dòng — một lời gọi, không kéo ZSD02 về. `database.ts` sinh lại (174 hàm).
+
 **02/10/2026 — nguồn toạ độ `OSM` (migration `20261002c_geo_source_osm.sql`, đã áp staging).** CHECK `customer_geo_source_chk` / `warehouse_geo_source_chk` nhận thêm `'OSM'` — máy định vị OpenStreetMap (Photon, miễn phí, không khoá) điền ghim cấp phường/xã khi chưa có khoá Goong; `geo_accuracy_m` ghi 1500 cho ghim cấp này. Chỉ đổi CHECK, không đổi kiểu cột ⇒ `database.ts` không đổi.
 
 **02/10/2026 — `geo_distance` BẬT RLS (migration `20261002b_geo_distance_rls.sql`, đã áp staging).** Bảng mới của `20261002_warehouse_geo_distance.sql` thiếu `ENABLE ROW LEVEL SECURITY` — gói QA `00-invariant` bắt ngay (lượt CI 964 đỏ "HỞ: geo_distance"). Sau khi áp: RPC `rls_gap_tables` trả `[]`, không còn bảng public nào tắt RLS. Không policy nào (giống `dispatch_plan`/`dispatch_od_hold`) — backend đi `service_role` nên bỏ qua RLS.

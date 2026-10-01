@@ -725,6 +725,30 @@ export async function getPlanGeo(req: Request, res: Response) {
     })
   } catch (e) { return failAny(res, e) }
 }
+// GET /tms/dispatch/customers-map?warehouse_id=&days=30 — cách xem "THEO KHÁCH HÀNG" của tab Bản đồ (02/10, user: "ghim là vị trí
+// của khách, icon theo kênh, số = hạng pallet quy đổi đã xuất trong kênh, để thấy top khách ở đâu"). Một RPC trả dòng đã xếp hạng
+// (pallet SAP theo ngày giao, dòng chảy lên xe được, plant của kho) — không kéo ZSD02 về cộng.
+export const zCustomersMapQuery = z.object({ warehouse_id: zId, days: z.coerce.number().int().refine(n => [7, 30, 90, 180].includes(n), 'days ∈ 7|30|90|180').default(30) })
+export interface CustomerRankRow {
+  ship_to_code: string; name: string | null; channel: string | null; is_active: boolean | null
+  geo_lat: number | null; geo_lng: number | null; geo_source: string | null; region_name: string | null; ward_code: string | null
+  pallets: number; tons: number; ods: number; last_date: string | null; rank_in_channel: number; rank_all: number
+}
+export async function getCustomersMap(req: Request, res: Response) {
+  try {
+    const { warehouse_id, days } = req.query as unknown as z.infer<typeof zCustomersMapQuery>
+    if (!whAllowed(req, warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const wh = await loadWarehouse(warehouse_id)
+    if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    if (!wh.sap_plant) return ok(res, { warehouse: { id: wh.id, name: wh.name, sap_plant: null }, from: null, to: null, days, rows: [] })
+    const vnDay = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const to = vnDay(Date.now()), from = vnDay(Date.now() - (days - 1) * 86_400_000)
+    // `as never`: bộ sinh kiểu đọc tham số hàm SQL chưa đúng tên (cùng khuôn fill_reconcile_* / erp_so_lines_summary)
+    const { data, error } = await db.rpc('dispatch_customer_rank', { p_plant: wh.sap_plant, p_from: from, p_to: to } as never)
+    if (error) return fail(res, error)
+    return ok(res, { warehouse: { id: wh.id, name: wh.name, sap_plant: wh.sap_plant }, from, to, days, rows: (data ?? []) as unknown as CustomerRankRow[] })
+  } catch (e) { return failAny(res, e) }
+}
 // POST /tms/dispatch/plans/:id/geo/measure — đo km đường bộ (Goong, xe tải) cho kho → khách và khách ↔ khách gần nhau của kế hoạch,
 // ghi sổ geo_distance. Mỗi lượt tối đa 200 lời gọi (~45 s, dưới trần hàm) — trả `pending` để bấm tiếp. 422 khi chưa có máy đo.
 export async function measurePlanGeo(req: Request, res: Response) {

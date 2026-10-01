@@ -746,8 +746,9 @@ try {
     const g2 = await geoOf()
     check('[13c] GPS tại chỗ kèm sai số → 200, accuracy lưu, nguồn GPS', gGps.s === 200 && g2?.geo_source === 'GPS' && Number(g2?.geo_accuracy_m) === 12.4, `${gGps.s} row=${JSON.stringify(g2)}`)
     const st = await api('/masterdata/customers/geo-status')
-    check('[13d] geo-status → 200: đếm đã/chưa định vị + trạng thái máy định vị (ready + reason)',
-      st.s === 200 && Number(st.j?.data?.located) >= 1 && typeof st.j?.data?.remaining === 'number' && typeof st.j?.data?.provider?.ready === 'boolean',
+    // custA đã NGỪNG ở [12d] nên không nằm trong đếm (geo-status chỉ đếm khách đang hoạt động) — kiểm hình dạng + đẳng thức đếm
+    check('[13d] geo-status → 200: đếm đã/chưa định vị khớp tổng khách hoạt động + trạng thái máy định vị (ready + reason)',
+      st.s === 200 && Number(st.j?.data?.located) + Number(st.j?.data?.remaining) === Number(st.j?.data?.total_active) && typeof st.j?.data?.provider?.ready === 'boolean' && (st.j?.data?.provider?.ready || typeof st.j?.data?.provider?.reason === 'string'),
       `${st.s} ${JSON.stringify(st.j?.data ?? null).slice(0, 160)}`)
     // Máy định vị KHÔNG đè nguồn người: staging không có khoá ⇒ 422 GEO_NOT_CONFIGURED; có khoá ⇒ 200 nhưng khách GPS không nằm trong done
     const gc = await api('/masterdata/customers/geocode', 'POST', { ids: [custA.id] })

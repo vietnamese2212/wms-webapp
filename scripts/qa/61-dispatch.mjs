@@ -1110,6 +1110,15 @@ try {
   if (XEPALLET?.id) {
     await api(`/tms/transport-companies/${HA.id}`, 'PUT', { tender_required: false })
     await cleanupTrips()
+    // Các mục trước đã sửa SL / thay OD / thêm OD11 14 pallet… nên tập OD lúc này không còn là 4 + 3 + 3 (lượt đầu 01/10: 9,5 + 3 + 2).
+    // Dựng ĐÚNG fixture cho mục này: ẩn mọi OD QA61 cũ (OBSOLETE) rồi tạo 3 OD mới 4 / 3 / 3 pallet — cleanup xoá cả QA61* nên không rác.
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61*`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+    const OD16 = ['QA61OD16A', 'QA61OD16B', 'QA61OD16C']
+    for (let i = 0; i < 3; i++) await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: OD16[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
+      ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: i < 2 ? W1 : W2, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
     const BAND = { [XEPALLET.id]: { min: 80, max: 115 } }
     const p16 = await mkPlan({ ...PLAN_BODY, load_bands: BAND })
     const P16 = p16.j?.data

@@ -28,6 +28,7 @@ import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
 import { EDITABLE, tripStatus, FLAG_VI } from './dispatchIssues'
 import { DispatchOdDetailSheet } from './DispatchOdDetailSheet'
+import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
@@ -190,18 +191,16 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       toast({ title: `${n} OD → Điều`, description: back === n ? 'Đơn đã về khung chờ — máy ghép khi bấm Ghép xe.' : `${n - back} OD không quay lại (đã được lo ở chỗ khác hoặc không còn trong ZSD02).` })
     } catch (e) { err(e, n ? `Đã chuyển ${n} OD, phần còn lại chưa chuyển được` : 'Không chuyển được trạng thái') }
   }
-  // ── ghép xe từ tab Điều ──
-  const doGroup = async () => {
-    const all = !hasTrips
-    const n = all ? new Set(goOds.map(r => r.od)).size : poolOds
-    if (await ask({ title: all ? `Ghép xe cho ${n} đơn Điều?` : `Ghép ${n} đơn đang ở khung chờ?`, confirmLabel: 'Ghép xe',
-      body: all
-        ? `Máy ghép xe cho MỌI đơn ở tab Điều (${nf(n)} OD). Đơn không đi: chuyển sang "Không điều ngày này" / "Không điều" TRƯỚC khi bấm — sau khi ghép vẫn chuyển được.`
-        : `Máy dựng xe mới cho ${nf(n)} OD đang ở khung chờ. Các xe đang có giữ nguyên.` }) === null) return
-    reopt.mutateAsync(all ? { id: plan.id, review_all: true } : { id: plan.id, ids: poolIds })
-      .then(r => { toast({ title: `Đã ghép thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Soát thẻ xe ở Bàn ghép xe, rồi Xác nhận kế hoạch.' }); onGrouped() })
+  // ── ghép xe từ tab Điều — hộp thoại DẢI % TẢI theo dòng xe cha (01/10) đứng trước lượt ghép ──
+  const bandParents = useLoadBandParents()
+  const [bandDlg, setBandDlg] = useState(false)
+  const groupAll = !hasTrips
+  const groupN = groupAll ? new Set(goOds.map(r => r.od)).size : poolOds
+  const doGroup = () => setBandDlg(true)
+  const doGroupWith = (d: LoadBandDraft) =>
+    reopt.mutateAsync({ id: plan.id, ...(groupAll ? { review_all: true } : { ids: poolIds }), load_bands: d.bands, load_bypass: d.bypass })
+      .then(r => { setBandDlg(false); toast({ title: `Đã ghép thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Soát thẻ xe ở Bàn ghép xe, rồi Xác nhận kế hoạch.' }); onGrouped() })
       .catch(e => err(e, 'Không ghép được'))
-  }
 
   const cols: RtColDef[] = [
     ...(editable && st !== 'DONE' ? [{ id: 'sel', label: '', w: 34, align: 'center' as const }] : []),
@@ -251,7 +250,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
           ))}
         </div>
           {editable && goOds.length > 0 && (!hasTrips || poolIds.length > 0) && (
-            <Button size="sm" className="sm:ml-auto w-full sm:w-auto shrink-0 h-9 sm:h-7 text-[11px]" disabled={busy} onClick={() => void doGroup()}>
+            <Button size="sm" className="sm:ml-auto w-full sm:w-auto shrink-0 h-9 sm:h-7 text-[11px]" disabled={busy} onClick={doGroup}>
               {hasTrips ? <Sparkles className="h-3.5 w-3.5 mr-1" /> : <ListChecks className="h-3.5 w-3.5 mr-1" />}
               {reopt.isPending ? 'Đang ghép…' : hasTrips ? `Ghép ${nf(poolOds)} đơn ở khung chờ` : `Ghép xe ${nf(new Set(goOds.map(r => r.od)).size)} đơn Điều`}
             </Button>
@@ -350,6 +349,12 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <DispatchLoadBandDialog open={bandDlg} onClose={() => setBandDlg(false)} title={groupAll ? `Ghép xe cho ${nf(groupN)} đơn Điều` : `Ghép ${nf(groupN)} đơn đang ở khung chờ`} confirmLabel="Ghép xe"
+        intro={groupAll
+          ? `Máy ghép xe cho MỌI đơn ở tab Điều (${nf(groupN)} OD). Đơn không đi: chuyển sang "Không điều ngày này" / "Không điều" TRƯỚC khi bấm — sau khi ghép vẫn chuyển được.`
+          : `Máy dựng xe mới cho ${nf(groupN)} OD đang ở khung chờ. Các xe đang có giữ nguyên (tính lại Non tải / vượt theo dải mới).`}
+        parents={bandParents} initial={{ bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={reopt.isPending}
+        onConfirm={doGroupWith} />
       <DispatchOdDetailSheet planId={plan.id} info={detailRow ? info[detailRow.od] : undefined} onClose={() => setDetail(null)}
         sum={detailRow ? { od: detailRow.od, where: detailRow.where, tone: detailRow.tone, cust: detailRow.cust, ward: detailRow.ward, region: detailRow.region, date: detailRow.date, late: detailRow.late, flag: detailRow.flag, reason: detailRow.reason } : null} />
       {confirmNode}

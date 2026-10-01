@@ -737,3 +737,43 @@ describe('luật 11 — hai lỗi gói 61 bắt trên Preview 27/09 (phép kiể
     expect(r.trips[0].warnings.join(' ')).toMatch(/phục vụ điều kiện bảo quản/)
   })
 })
+
+// 01/10 — DẢI TẢI THEO DÒNG XE CHA (user: "rank theo %: container SCA 60–100 %, xe pallet 16–17 90–105 %; nút tick bỏ qua %").
+// Khoá = parent_type_id; min = ngưỡng Non tải; max = trần xếp. Bypass = 0 / 100 cho mọi xe.
+describe('01/10 — dải tải theo dòng xe cha (load_bands / load_bypass)', () => {
+  const P9 = { ...M9, parent_type_id: 'PT1' }
+  it('trần 110 %: OD 9,5 pallet lên xe 9 pallet thành MỘT chuyến 105,6 %, không vượt, không tách — không dải thì tách hai phần', () => {
+    const o = od('1', 'W1', 0, { lines: [line(5, { material_code: 'a' }), line(4.5, { material_code: 'b' })] })
+    const r0 = runDispatch(input([o], { models: [P9] }))
+    expect(r0.trips[0].ods[0].part?.of).toBe(2)
+    const r = runDispatch(input([o], { models: [P9], params: { ...params, load_bands: { PT1: { min: 70, max: 110 } } } }))
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods[0].part).toBeNull()
+    expect(r.trips[0].load.pct).toBe(105.6)       // % tải vẫn so với sức chứa DANH ĐỊNH
+    expect(r.trips[0].load.max_pct).toBe(110)
+    expect(r.trips[0].oversize).toBe(false)
+    expect(r.trips[0].underload).toBe(false)
+  })
+  it('ngưỡng tối thiểu 90 %: xe 7/9 (77,8 %) là Non tải; dải chỉ áp cho cha có trong bảng, cha khác giữ 70', () => {
+    const r = runDispatch(input([od('1', 'W1', 7)], { models: [P9], params: { ...params, load_bands: { PT1: { min: 90, max: 100 } } } }))
+    expect(r.trips[0].underload).toBe(true)
+    expect(r.trips[0].load.underload_pct).toBe(90)
+    const other = runDispatch(input([od('1', 'W1', 7)], { models: [P9], params: { ...params, load_bands: { PT_KHAC: { min: 90, max: 100 } } } }))
+    expect(other.trips[0].underload).toBe(false)
+    expect(other.trips[0].load.underload_pct).toBe(70)
+  })
+  it('bỏ qua dải (load_bypass): không báo Non tải (ngưỡng 0) và xếp theo 100 % — 9,5 pallet lại tách', () => {
+    const r = runDispatch(input([od('1', 'W1', 2)], { models: [P9], params: { ...params, load_bands: { PT1: { min: 90, max: 110 } }, load_bypass: true } }))
+    expect(r.trips[0].underload).toBe(false)
+    expect(r.trips[0].load.underload_pct).toBe(0)
+    const o = od('2', 'W1', 0, { lines: [line(5, { material_code: 'a' }), line(4.5, { material_code: 'b' })] })
+    const r2 = runDispatch(input([o], { models: [P9], params: { ...params, load_bands: { PT1: { min: 90, max: 110 } }, load_bypass: true } }))
+    expect(r2.trips[0].ods[0].part?.of).toBe(2)
+  })
+  it('fits / splitLoad đọc trần dải: 9,9 pallet vừa xe 9 khi load_max_pct 110; tripLoad in max_pct', () => {
+    expect(fits({ ...P9, load_max_pct: 110 }, 9.9, null)).toBe(true)
+    expect(fits(P9, 9.9, null)).toBe(false)
+    expect(splitLoad([{ ...P9, load_max_pct: 110 }, { ...P9, load_max_pct: 110 }], 19.8, null)?.map(x => x.pallets)).toEqual([9.9, 9.9])
+    expect(tripLoad({ ...P9, load_min_pct: 85, load_max_pct: 105 }, 9.2, null, null)).toMatchObject({ pct: 102.2, underload: false, underload_pct: 85, max_pct: 105 })
+  })
+})

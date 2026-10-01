@@ -97,7 +97,8 @@ router.get('/dispatch/plans/:id/ods/:od',     requirePerm('dispatch', 'view'),  
 router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)
 router.post('/dispatch/plans/:id/move',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMove }),          dispatch.moveOds)
 router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zPreview }),       dispatch.previewMove)
-router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReoptimize }),     dispatch.reoptimizePlan)   // ids = chỉ ghép dòng OD đã chọn · review_all = xác nhận cả khung chờ rồi ghép (bước Xem đơn)
+router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReoptimize }),     dispatch.reoptimizePlan)   // ids = chỉ ghép dòng OD đã chọn · review_all = xác nhận cả khung chờ rồi ghép (bước Xem đơn) · load_bands/load_bypass = dải tải lượt này
+router.patch('/dispatch/plans/:id/params',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zPlanParams }),     dispatch.updatePlanParams) // dải tải theo dòng xe cha / bypass — xe nháp tính lại, không ghép lại (01/10)
 router.post('/dispatch/plans/:id/hold',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zHold }),          dispatch.holdOds)       // Hoãn tới ngày / Không điều (giữ qua mọi lần nạp)
 router.post('/dispatch/plans/:id/unhold',     requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnhold }),        dispatch.unholdOds)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng

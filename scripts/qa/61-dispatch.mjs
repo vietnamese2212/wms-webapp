@@ -51,6 +51,8 @@ const CAT2 = mat2?.category ?? null
 const cat2Row = CAT2 ? (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(CAT2)}`))[0] ?? null : null
 const CAT2_META0 = cat2Row ? { ...(cat2Row.meta ?? {}) } : null
 const WH_MIX0 = (await restAll('Warehouse', `select=dispatch_allow_mix_categories&id=eq.${WH}`))[0]?.dispatch_allow_mix_categories === true
+// [16] (01/10) dải tải theo dòng xe cha: lượt ghép có gửi dải thì kho NHỚ (Warehouse.dispatch_load_bands) — kho fixture là kho THẬT, trả lại gốc
+const WH_BANDS0 = (await restAll('Warehouse', `select=dispatch_load_bands&id=eq.${WH}`))[0]?.dispatch_load_bands ?? null
 const ieLoc = (await restAll('InventoryEntry', `select=location_id,material_id,material:Material(category),loc:Location(categories)&warehouse_id=eq.${WH}&cartons_remaining=gt.0&location_id=not.is.null&status=in.(IN_STOCK,PARTIAL)&limit=200`))
   .find(x => !(x.loc?.categories ?? []).length || (x.loc.categories).includes(x.material?.category)) ?? null   // ô lạnh chỉ áp cho hàng THUỘC Loại kho của ô (20260926c)
 const locRow = ieLoc ? (await restAll('Location', `select=id,storage_condition&id=eq.${ieLoc.location_id}`))[0] ?? null : null
@@ -91,7 +93,7 @@ async function cleanup() {
   // không tìm được dòng xe nào phục vụ — hỏng cho cả phiên khác đang dùng staging.
   if (catRow && CAT_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${catRow.id}`, { meta: CAT_META0 }).catch(() => {})
   if (cat2Row && CAT2_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${cat2Row.id}`, { meta: CAT2_META0 }).catch(() => {})
-  await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_allow_mix_categories: WH_MIX0 }).catch(() => {})
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_allow_mix_categories: WH_MIX0, dispatch_load_bands: WH_BANDS0 }).catch(() => {})
   if (locRow) await restWrite('Location', 'PATCH', `id=eq.${locRow.id}`, { storage_condition: LOC_COND0 }).catch(() => {})
   if (ieStray) await restWrite('Location', 'PATCH', `id=eq.${ieStray.location_id}`, { storage_condition: STRAY_COND0 }).catch(() => {})
   await restWrite('LookupValue', 'DELETE', `type=eq.storage_condition&value=eq.${COND}`).catch(() => {})
@@ -1101,6 +1103,40 @@ try {
       && rsK.s === 200 && Number(rsK.j?.data?.resynced?.pallets_after) === 2 && tripOfOd(rsK.j?.data, OD[2])?.status === 'TENDERED' && acc2.s === 200 && khK.length === 1,
       `confirm=${cfK.s} xe=${tK3?.status} acc1=${acc1.s}/${acc1.j?.error?.code} resync=${rsK.s}/${rsK.j?.error?.code ?? ''} after=${rsK.j?.data?.resynced?.pallets_after} acc2=${acc2.s}/${acc2.j?.error?.code ?? ''} kh=${khK.length}`)
   }
+
+  // [16] DẢI TẢI THEO DÒNG XE CHA (01/10, user: "rank theo %, chỉnh ngay trên bàn lúc Ghép / Lập lại, hiện lên bàn, có nút bỏ qua %").
+  // Fixture 4 + 3 + 3 pallet trên xe 9: mặc định = 2 xe (7/9 · 3/9). Dải XEPALLET 80–115 % ⇒ trần xếp 10,35 pallet ⇒ máy GỘP cả ba
+  // thành MỘT xe 10/9 = 111,1 % (không vượt — trong dải), và kho nhớ dải. Bypass ⇒ xếp theo 100 %: xe đó thành VƯỢT. Dải 200 % ⇒ 400.
+  if (XEPALLET?.id) {
+    await api(`/tms/transport-companies/${HA.id}`, 'PUT', { tender_required: false })
+    await cleanupTrips()
+    const BAND = { [XEPALLET.id]: { min: 80, max: 115 } }
+    const p16 = await mkPlan({ ...PLAN_BODY, load_bands: BAND })
+    const P16 = p16.j?.data
+    const p16Id = P16?.id ?? ''   // máy quét độ phủ (coverage-surface) không đọc được `${P16?.id}` trong đường dẫn — dấu ? cắt chuỗi
+    const t16 = (P16?.trips ?? []).filter(t => t.ods?.length)
+    const whB = (await restAll('Warehouse', `select=dispatch_load_bands&id=eq.${WH}`))[0]?.dispatch_load_bands
+    check('16a. Lập + ghép với dải XEPALLET 80–115 %: params.load_bands ghi đúng · 3 OD gộp MỘT xe 10/9 = 111,1 % không vượt · kho nhớ dải',
+      p16.s === 201 && JSON.stringify(P16?.params?.load_bands) === JSON.stringify(BAND) && t16.length === 1 && Number(t16[0].load_pct) === 111.1
+      && t16[0].oversize === false && t16[0].underload === false && Number(t16[0].detail?.load?.max_pct) === 115 && JSON.stringify(whB) === JSON.stringify(BAND),
+      `s=${p16.s} bands=${JSON.stringify(P16?.params?.load_bands)} xe=${t16.length} tải=${t16.map(t => `${t.load_pct}%/over=${t.oversize}/under=${t.underload}/max=${t.detail?.load?.max_pct}`).join(' ')} kho=${JSON.stringify(whB)}`)
+    const by1 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bypass: true })
+    const tb = (by1.j?.data?.trips ?? []).filter(t => t.ods?.length)
+    const by0 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bypass: false })
+    const tb0 = (by0.j?.data?.trips ?? []).filter(t => t.ods?.length)
+    check('16b. PATCH params bỏ qua dải: xe 111 % thành VƯỢT (trần 100), không ghép lại; bỏ bypass ⇒ lại trong dải (dải cũ còn giữ)',
+      by1.s === 200 && by1.j?.data?.params?.load_bypass === true && tb.length === 1 && tb[0].oversize === true && Number(by1.j?.data?.summary?.oversize) === 1
+      && by0.s === 200 && tb0.length === 1 && tb0[0].oversize === false && JSON.stringify(by0.j?.data?.params?.load_bands) === JSON.stringify(BAND),
+      `bypass=${by1.s} over=${tb[0]?.oversize} sum=${by1.j?.data?.summary?.oversize} · bỏ bypass=${by0.s} over=${tb0[0]?.oversize} bands=${JSON.stringify(by0.j?.data?.params?.load_bands)}`)
+    const bad = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bands: { [XEPALLET.id]: { min: 50, max: 200 } } })
+    const bad2 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bands: { [XEPALLET.id]: { min: 90, max: 80 } } })
+    check('16c. Dải sai (trần 200 % · tối thiểu > tối đa) → 400, không ghi', bad.s === 400 && bad2.s === 400, `max200=${bad.s} min>max=${bad2.s}`)
+    const back = await api(`/tms/dispatch/plans/${p16Id}/reoptimize`, 'POST', { review_all: true, load_bands: { [XEPALLET.id]: { min: 70, max: 100 } } })
+    const tBack = (back.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => Number(t.pallets)).sort((a, b) => b - a)
+    check('16d. Tối ưu lại với dải 70–100 % gửi kèm: máy xếp lại thành 2 xe (7 + 3) — dải của lượt ghép thắng dải cũ của kế hoạch',
+      back.s === 200 && tBack.join('+') === '7+3' && JSON.stringify(back.j?.data?.params?.load_bands) === JSON.stringify({ [XEPALLET.id]: { min: 70, max: 100 } }),
+      `s=${back.s} xe=${tBack.join('+')} bands=${JSON.stringify(back.j?.data?.params?.load_bands)}`)
+  } else check('16a. Fixture: cần Loại xe cha XEPALLET', false)
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

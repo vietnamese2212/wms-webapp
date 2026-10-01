@@ -82,7 +82,15 @@ export interface EngineModel {
   serve_conditions: string[] | null // điều kiện bảo quản xe phục vụ được; rỗng/null = mọi điều kiện
   max_drops: number | null          // null = theo kho — 29/09: đây cũng là chỗ khai "xe pallet chỉ một khách" (= 1)
   is_active: boolean
+  /** 01/10 — DẢI TẢI theo dòng xe CHA (`params.load_bands[parent_type_id]`), `withLoadBands` điền vào bản sao dòng xe cho lượt ghép:
+   *  `load_min_pct` = ngưỡng Non tải (thay kho/dòng xe khi có), `load_max_pct` = trần xếp (105 = cho vượt 5 % sức chứa danh định).
+   *  null/undefined = như trước (Non tải theo kho → dòng xe → 70; trần 100). */
+  parent_type_id?: string | null
+  load_min_pct?: number | null
+  load_max_pct?: number | null
 }
+/** Dải % tải một dòng xe cha: `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (> 100 = dung sai vượt). */
+export interface LoadBand { min: number; max: number }
 export interface EngineCarrier { id: string; code: string; name: string; tender_required?: boolean }   // tender_required: ĐVVT cần phản hồi khi chào chuyến (controller đọc lúc Xác nhận, engine không dùng)
 export type EngineTariff = TariffLike & { transport_company_id: string; vehicle_model_id: string }
 export type EngineSurcharge = SurchargeLike & { transport_company_id: string; vehicle_model_id: string | null; per: SurchargePer; count_mode: StopCountMode }
@@ -106,6 +114,10 @@ export interface EngineParams {
   combo_conditions?: string[]
   /** Luật 11 (27/09): số dòng xe tối đa trên MỘT thẻ (một Số xe). undefined/1 = một xe (hành vi trước 27/09). */
   max_vehicles?: number
+  /** 01/10 — dải % tải theo dòng xe CHA (VehicleType.id → {min,max}); cha không có trong bảng = như trước. `load_bypass` = bỏ qua
+   *  dải: xếp theo sức chứa danh định (100 %), không báo Non tải (min 0) — người bật là người chịu. */
+  load_bands?: Record<string, LoadBand>
+  load_bypass?: boolean
 }
 export interface EngineInput {
   ods: EngineOd[]
@@ -281,9 +293,23 @@ function capOf(m: EngineModel): Cap {
   const p = Number(m.max_pallets), t = Number(m.max_tons)
   return { pallets: Number.isFinite(p) && p > 0 ? p : null, tons: Number.isFinite(t) && t > 0 ? t : null }
 }
+/** Sức chứa ĐỂ XẾP = sức chứa danh định × trần dải tải (`load_max_pct`, mặc định 100). Hiển thị % tải vẫn so với danh định
+ *  (`capOf`), chỉ phép "vừa xe" mới nới — 17,4 pallet lên xe 17 với dải 90–105 % là 102,4 %, không phải 97 %. */
+const maxPctOf = (m: Pick<EngineModel, 'load_max_pct'>) => { const x = Number(m.load_max_pct); return Number.isFinite(x) && x > 0 ? x : 100 }
+function capFit(m: EngineModel): Cap {
+  const c = capOf(m), k = maxPctOf(m) / 100
+  return { pallets: c.pallets == null ? null : c.pallets * k, tons: c.tons == null ? null : c.tons * k }
+}
+/** Dải tải áp cho dòng xe theo cha (01/10): bản sao dòng xe mang `load_min_pct`/`load_max_pct`; bypass ⇒ 0 / 100 cho mọi xe. */
+export function withLoadBands(models: EngineModel[], P: Pick<EngineParams, 'load_bands' | 'load_bypass'>): EngineModel[] {
+  if (P.load_bypass) return models.map(m => ({ ...m, load_min_pct: 0, load_max_pct: 100 }))
+  const bands = P.load_bands ?? {}
+  if (!Object.keys(bands).length) return models
+  return models.map(m => { const b = m.parent_type_id ? bands[m.parent_type_id] : undefined; return b ? { ...m, load_min_pct: b.min, load_max_pct: b.max } : m })
+}
 /** Đo theo chế độ của dòng xe: PALLET → pallet (gác thêm tấn nếu khai); TON → tấn. Tải null ở chiều cần đo → false. */
 export function fits(m: EngineModel, pallets: number | null, tons: number | null): boolean {
-  const c = capOf(m)
+  const c = capFit(m)
   const byTon = m.capacity_mode === 'TON' || c.pallets == null
   if (byTon) return c.tons != null && tons != null && tons <= c.tons + 1e-9
   if (pallets == null || pallets > c.pallets! + 1e-9) return false
@@ -298,7 +324,7 @@ export const basisOf = (m: EngineModel): 'PALLET' | 'TON' => (m.capacity_mode ==
 export function splitLoad(models: EngineModel[], pallets: number | null, tons: number | null): { pallets: number | null; tons: number | null }[] | null {
   if (!models.length) return null
   const fmax = (m: EngineModel) => {
-    const c = capOf(m)
+    const c = capFit(m)
     if (basisOf(m) === 'TON') return tons == null || c.tons == null ? 0 : tons <= 0 ? Infinity : c.tons / tons
     if (pallets == null) return 0
     const byP = pallets <= 0 ? Infinity : c.pallets! / pallets
@@ -415,7 +441,8 @@ export interface Ctx {
 const tKey = (c: string, m: string) => `${c}|${m}`
 /** Dựng bối cảnh từ input — controller dùng lại để tính lại cước khi người đổi dòng xe/ĐVVT/chuyển OD trên bản nháp. */
 export function buildCtx(input: EngineInput): Ctx {
-  const models = input.models.filter(m => m.is_active && m.parent_type_name && (capOf(m).pallets != null || capOf(m).tons != null)).sort((a, b) => cmp(a.sap_code, b.sap_code))
+  // dải tải theo cha (01/10) đi vào bản sao dòng xe ngay từ đây — mọi chỗ hỏi "vừa xe" / "đủ tải" của engine đều đọc ctx.models
+  const models = withLoadBands(input.models, input.params).filter(m => m.is_active && m.parent_type_name && (capOf(m).pallets != null || capOf(m).tons != null)).sort((a, b) => cmp(a.sap_code, b.sap_code))
   const tariffsBy = new Map<string, EngineTariff[]>()
   for (const t of input.tariffs) { const k = tKey(t.transport_company_id, t.vehicle_model_id); const l = tariffsBy.get(k) ?? []; l.push(t); tariffsBy.set(k, l) }
   const surBy = new Map<string, EngineSurcharge[]>()
@@ -424,9 +451,15 @@ export function buildCtx(input: EngineInput): Ctx {
   for (const t of effectiveAt(input.tariffs.map(t => ({ ...t, is_active: t.is_active ?? true })), input.params.day)) { const s = pricedByWard.get(t.ward_code) ?? new Set<string>(); s.add(t.vehicle_model_id); pricedByWard.set(t.ward_code, s) }
   return { input, models, tariffsBy, surBy, allocs: effectiveAt(input.allocations.map(a => ({ ...a, is_active: a.is_active ?? true })), input.params.day), pricedByWard }
 }
-/** Tải + Non tải của một chuyến theo dòng xe đã chọn (ngưỡng kho đè ngưỡng dòng xe). */
+/** Ngưỡng Non tải của một dòng xe: dải theo cha (01/10) → ngưỡng kho → ngưỡng dòng xe → 70. `load_min_pct = 0` (bypass) là hợp lệ. */
+export const underPctOf = (m: EngineModel | null | undefined, whUnderloadPct: number | null | undefined): number =>
+  (m?.load_min_pct != null && Number.isFinite(Number(m.load_min_pct)) ? Number(m.load_min_pct) : null) ?? whUnderloadPct ?? numOr(m?.underload_pct, 70)
+/** Tải + Non tải của một chuyến theo dòng xe đã chọn (dải theo cha đè ngưỡng kho, kho đè dòng xe); `max_pct` = trần xếp để màn in "vượt" đúng mốc. */
 export function tripLoad(model: EngineModel | null, pallets: number | null, tons: number | null, whUnderloadPct: number | null): LoadUtil {
-  return loadUtilization(model ? { capacity_mode: model.capacity_mode, max_pallets: model.max_pallets, max_tons: model.max_tons, underload_pct: whUnderloadPct ?? numOr(model.underload_pct, 70) } : null, pallets, tons)
+  const u = loadUtilization(model ? { capacity_mode: model.capacity_mode, max_pallets: model.max_pallets, max_tons: model.max_tons, underload_pct: underPctOf(model, whUnderloadPct) } : null, pallets, tons)
+  // loadUtilization coi underload_pct ≤ 0 là "không khai" ⇒ 70; bypass (0) phải là 0 thật
+  const up = underPctOf(model, whUnderloadPct)
+  return { ...u, underload_pct: up, underload: u.pct == null ? null : u.pct < up, max_pct: model ? maxPctOf(model) : 100 }
 }
 
 // ── Luật 6: chọn ĐVVT cho (chuyến, dòng xe) ──
@@ -717,7 +750,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const serving = cs.filter(m => servesConditions(m, conds))
     return [...(serving.length ? serving : cs)].sort(bigSort)[0] ?? null
   }
-  const underPct = (m: EngineModel | null) => P.underload_pct ?? numOr(m?.underload_pct, 70)
+  const underPct = (m: EngineModel | null) => underPctOf(m, P.underload_pct)
 
   // ── Lọc + tách đơn vị xếp ──
   const units: Unit[] = []
@@ -843,7 +876,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const a = assignVehicle(ctx, b, actual, underPct, true)
     if (a.carrier) { const cur = actual[a.carrier.id] ?? { trips: 0, pallets: 0, tons: 0 }; cur.trips += 1; cur.pallets += a.pallets ?? 0; cur.tons += a.tons ?? 0; actual[a.carrier.id] = cur }
     const lm = a.loadModel
-    const load = loadUtilization(lm ? { capacity_mode: lm.capacity_mode, max_pallets: lm.max_pallets, max_tons: lm.max_tons, underload_pct: underPct(lm) } : null, a.pallets, a.tons)
+    const load = tripLoad(lm, a.pallets, a.tons, P.underload_pct)
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key,
       vehicle_model: a.model, vehicles: a.vehicles, carrier: a.carrier,
@@ -891,7 +924,7 @@ export function bookingFromCatLoads(loads: (Record<string, number> | null | unde
  *  của lượt ghép thay vì để xe mới trống dòng xe/ĐVVT. Mỗi OD dựng thành dòng giả mang tải tổng + điều kiện của nó. */
 export function suggestVehicle(input: EngineInput, ods: { od: EngineOd; pallets: number | null; tons: number | null; conditions: string[] }[], actual: Record<string, ShareActual>) {
   const ctx = buildCtx(input)
-  const underPct = (m: EngineModel | null) => input.params.underload_pct ?? numOr(m?.underload_pct, 70)
+  const underPct = (m: EngineModel | null) => underPctOf(m, input.params.underload_pct)
   const units: Unit[] = ods.map(x => {
     const lines: EngineLine[] = [{ material_code: '', qty_base: 0, pallets: x.pallets, kg: x.tons == null ? null : x.tons * 1000, category: null, condition: null },
       ...x.conditions.map(c => ({ material_code: '', qty_base: 0, pallets: 0, kg: 0, category: null, condition: c }))]

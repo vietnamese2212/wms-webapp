@@ -813,6 +813,7 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 
 **`20260925c_dispatch_pallet_loose.sql`** (đã apply STAGING 25/09; production CHƯA — đi cùng lượt merge dev→main).
 - ~~`Customer.load_mode`~~ · ~~`Warehouse.dispatch_pallet_max_stops`~~ · ~~`dispatch_trip(.od).load_mode`~~ · ~~`Customer.load_mode_by_category`~~ · ~~RPC `customer_set_load_mode_cat`~~ — **CHẾT từ 29/09 (`20260929c_drop_load_mode.sql`, đã áp staging: COMMENT + backfill `vehicle_model.max_drops = 1` cho dòng xe con của Loại xe pallet)** — app không đọc/ghi; DROP ở đợt dọn (cùng `Warehouse.shipto_codes`).
+- **`20261001_dispatch_load_bands.sql`** (đã áp staging 01/10): `Warehouse.dispatch_load_bands jsonb` NULL — dải % tải theo dòng xe CHA `{"<VehicleType.id>": {"min","max"}}`, chỉ là LẦN CHỌN GẦN NHẤT trên bàn ghép xe (mặc định cho hộp thoại lần sau); dải của từng lượt ghép nằm ở `dispatch_plan.params.load_bands` + `load_bypass`. Không form riêng, không cột mới nào khác.
 - **`20260929d_excel_uploads_bucket.sql`** (đã áp staging 29/09): bucket Storage riêng tư `excel-uploads` (30 MB, mime xlsx/xls/octet-stream) — trạm trung chuyển file Excel > 4 MB (Vercel chặn thân > 4,5 MB); FE đẩy bằng vé ký, BE (service role) tải + xoá. Không policy nào cho anon/authenticated (luật 0 quyền giữ nguyên).
 - `Warehouse.dispatch_pallet_max_stops integer NOT NULL DEFAULT 1` CHECK 1..20 — số khách tối đa trên một xe pallet.
 - `dispatch_trip.load_mode` · `dispatch_trip_od.load_mode` (text NULL, CHECK) — kiểu đi của xe / của OD trên nháp (người đổi được).

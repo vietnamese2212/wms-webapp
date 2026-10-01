@@ -38,6 +38,7 @@ import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { DispatchCustomerVehiclesSheet } from './DispatchCustomerVehiclesSheet'
+import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -270,13 +271,14 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   const doReplace = (od: string) => replace.mutateAsync({ plan_id: plan.id, od_number: od })
     .then(r => toast({ title: `Đã thay ${r.replaced.from} bằng ${r.replaced.to}`, description: 'Tải + cước của xe đã tính lại theo OD mới.' }))
     .catch(e => err(e, 'Không thay được OD'))
-  const doReopt = async () => {
-    const lockedN = trips.filter(t => t.locked).length
-    if (await ask({ title: 'Tối ưu lại phần chưa khoá?', confirmLabel: 'Tối ưu lại',
-      body: `Máy ghép lại các OD ở khung chờ (${nf(plan.summary.pool_ods ?? 0)} OD) + mọi xe CHƯA KHOÁ còn sửa được.\n${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'}\nThao tác này KHÔNG hoàn tác được bằng Ctrl+Z.` }) === null) return
-    reopt.mutateAsync(plan.id).then(r => { setUndo([]); setRedo([]); toast({ title: `Đã ghép lại thành ${r.reoptimized.trips} xe`, description: `${r.reoptimized.kept} xe giữ nguyên${r.reoptimized.left_in_pool ? ` · ${r.reoptimized.left_in_pool} OD vẫn ở khung chờ (không xếp được / đã đổi ở SAP)` : ''}` }) })
+  // TỐI ƯU LẠI — hộp thoại DẢI % TẢI theo dòng xe cha (01/10) đứng trước lượt ghép; dải chọn ở đây ghi vào kế hoạch + nhớ cho kho
+  const bandParents = useLoadBandParents()
+  const [reoptDlg, setReoptDlg] = useState(false)
+  const lockedN = trips.filter(t => t.locked).length
+  const doReopt = () => setReoptDlg(true)
+  const doReoptWith = (d: LoadBandDraft) =>
+    reopt.mutateAsync({ id: plan.id, load_bands: d.bands, load_bypass: d.bypass }).then(r => { setReoptDlg(false); setUndo([]); setRedo([]); toast({ title: `Đã ghép lại thành ${r.reoptimized.trips} xe`, description: `${r.reoptimized.kept} xe giữ nguyên${r.reoptimized.left_in_pool ? ` · ${r.reoptimized.left_in_pool} OD vẫn ở khung chờ (không xếp được / đã đổi ở SAP)` : ''}` }) })
       .catch(e => err(e, 'Không tối ưu lại được'))
-  }
   const openHold = (mode: 'date' | 'never') => {
     const d = new Date(`${plan.plan_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)
     setHoldMode(mode); setHoldUntil(d.toISOString().slice(0, 10)); setHoldReason('')
@@ -306,7 +308,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   if (editable) {
     actions.push({ key: 'undo', icon: Undo2, label: 'Hoàn tác', tip: `Hoàn tác lần chuyển OD gần nhất (Ctrl+Z)${undoStack.length ? ` — còn ${undoStack.length} bước` : ''}`, onClick: () => void undo(), disabled: !undoStack.length || busy })
     actions.push({ key: 'redo', icon: Redo2, label: 'Làm lại', tip: 'Làm lại (Ctrl+Y)', onClick: () => void redo(), disabled: !redoStack.length || busy })
-    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên', onClick: () => void doReopt(), disabled: reopt.isPending || busy, busy: reopt.isPending })  }
+    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
 
   const targets = trips.filter(editableTrip).map(t => ({ value: t.id, label: `#${t.seq} · ${t.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(t.pallets, 1)} pl · ${t.load_pct == null ? '—' : `${nf(t.load_pct, 0)}%`} · ${t.stops} điểm · ${t.wards.slice(0, 2).join(', ')}` }))
   const excluded = plan.params.excluded ?? []
@@ -389,9 +391,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     const l = t.detail.load
     const pct = t.load_pct == null ? l.pct : Number(t.load_pct)
     if (pct == null) return <div className="text-[10px] text-slate-500 py-1 tabular-nums">{nf(t.pallets, 1)} pl · {nf(t.tons, 1)} t <span className="text-slate-400">— chưa có dòng xe để đo % tải</span></div>
-    const color = pct > 100 ? 'bg-red-500' : t.underload ? 'bg-amber-500' : 'bg-green-500'
+    // 01/10: "vượt" = quá TRẦN dải tải của dòng xe cha (vd 105 %); 100 < pct ≤ trần là dung sai cho phép, không đỏ
+    const mx = l.max_pct ?? 100
+    const color = pct > mx ? 'bg-red-500' : t.underload ? 'bg-amber-500' : 'bg-green-500'
     return (
-      <div className="space-y-0.5" title={`${nf(l.used, 1)} / ${nf(l.cap, 1)} ${l.basis === 'TON' ? 'tấn' : 'pallet'} · ngưỡng Non tải ${l.underload_pct}%`}>
+      <div className="space-y-0.5" title={`${nf(l.used, 1)} / ${nf(l.cap, 1)} ${l.basis === 'TON' ? 'tấn' : 'pallet'} · dải ${l.underload_pct}–${mx}%`}>
         <div className="relative h-2 rounded-full bg-slate-200 overflow-hidden">
           <div className={`absolute inset-y-0 left-0 ${color}`} style={{ width: `${Math.min(100, pct)}%` }} />
           <div className="absolute inset-y-0 w-px bg-slate-500/60" style={{ left: `${l.underload_pct}%` }} />
@@ -401,7 +405,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
           <span className="text-slate-500">{l.basis === 'TON'
             ? <>{nf(l.used, 1)}/{nf(l.cap, 1)} t · {nf(t.pallets, 1)} pl</>
             : <>{nf(l.used, 1)}/{nf(l.cap, 1)} pl · {nf(t.tons, 1)} t</>}</span>
-          <span className={pct > 100 ? 'text-red-600 font-semibold' : t.underload ? 'text-amber-700 font-medium' : 'text-slate-600'}>{nf(pct, 1)}%{t.underload ? ' · Non tải' : pct > 100 ? ' · vượt' : ''}</span>
+          <span className={pct > mx ? 'text-red-600 font-semibold' : t.underload ? 'text-amber-700 font-medium' : 'text-slate-600'}>{nf(pct, 1)}%{t.underload ? ' · Non tải' : pct > mx ? ' · vượt' : pct > 100 ? ' · dung sai' : ''}</span>
         </div>
       </div>
     )
@@ -677,6 +681,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
                 className={`rounded px-1.5 py-0.5 ${(f.boardTripGroup || 'region') === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{l}</button>
             ))}
           </div>
+          {/* DẢI % TẢI đang áp (01/10, user: "config chọn xong hiện lên trên bàn") — bấm để đổi ngay trên kế hoạch */}
+          <DispatchLoadBandChip plan={plan} editable={editable} />
           <div className="w-36 shrink-0" title="Sắp xếp thẻ xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
@@ -782,6 +788,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <DispatchLoadBandDialog open={reoptDlg} onClose={() => setReoptDlg(false)} title="Tối ưu lại phần chưa khoá" confirmLabel="Tối ưu lại"
+        intro={`Máy ghép lại các OD ở khung chờ (${nf(plan.summary.pool_ods ?? 0)} OD) + mọi xe CHƯA KHOÁ còn sửa được theo dải % tải dưới đây.\n${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'}\nThao tác này KHÔNG hoàn tác được bằng Ctrl+Z.`}
+        parents={bandParents} initial={{ bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={reopt.isPending}
+        onConfirm={doReoptWith} />
       <DispatchCustomerVehiclesSheet planId={plan.id} shipTo={custSheet} canEdit={canCustVeh && editable} onClose={() => setCustSheet(null)} />
       {confirmNode}
     </div>

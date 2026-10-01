@@ -34,7 +34,7 @@ import {
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
   odStopsCap, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
-  type TripVehicle,
+  type TripVehicle, withLoadBands, type LoadBand,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
 import { replanKhvcGroups } from '../wms/outboundController'
@@ -49,7 +49,7 @@ type Tables = Database['public']['Tables']
 type PlanRow = Tables['dispatch_plan']['Row']
 type TripRow = Tables['dispatch_trip']['Row']
 type TripOdRow = Tables['dispatch_trip_od']['Row']
-type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number }
+type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown }
 
 type TripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
 const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
@@ -58,7 +58,7 @@ const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
 const SAP_SYNC_TRIP: TripStatus[] = [...EDITABLE_TRIP, 'TENDERED']
 const OPEN_PLAN = ['DRAFT', 'TENDERED']
 
-const ENGINE_VERSION = '2026-09-25.1'
+const ENGINE_VERSION = '2026-10-01.1'   // dải tải theo dòng xe cha
 /** OD tồn đọng: ngày giao trước ngày lập tối đa bấy nhiêu ngày (user chốt 25/09 gộp tồn đọng; quá xa là lịch sử, không phải việc). */
 const BACKLOG_DAYS = 14
 const now = () => new Date().toISOString()
@@ -79,6 +79,11 @@ function whAllowed(req: Request, whId: string): boolean {
 }
 
 // ── Zod ────────────────────────────────────────────────────────────────────────────────────────────────
+// DẢI TẢI theo dòng xe CHA (01/10, user: "container SCA 60–100 %, xe pallet 16–17 90–105 %; chỉnh ngay trên bàn lúc Ghép / Lập lại;
+// có nút tick bỏ qua %"): khoá = VehicleType.id; min = ngưỡng Non tải, max = trần xếp (≤ 130 — hơn thế là xe không chở nổi, không
+// phải dung sai). Tối đa 50 cha. `load_bypass` = bỏ qua dải (min 0 / max 100 cho mọi xe).
+const zLoadBand = z.object({ min: z.number().min(0).max(100), max: z.number().min(50).max(130) }).refine(b => b.min <= b.max, 'Tối thiểu phải ≤ tối đa')
+export const zLoadBands = z.record(z.string().min(1).max(64), zLoadBand).refine(o => Object.keys(o).length <= 50, 'Tối đa 50 dòng xe cha')
 export const zPlanBody = z.object({
   warehouse_id: zId,
   plan_date: zDay,
@@ -86,9 +91,13 @@ export const zPlanBody = z.object({
   allow_mix_channels: zBool.optional(),
   allow_mix_categories: zBool.optional(),   // đè "cho ghép nhiều Loại kho" của kho cho lượt lập này
   underload_pct: z.number().min(1).max(100).nullable().optional(),
+  load_bands: zLoadBands.optional(),        // thiếu = lần chọn gần nhất của kho (Warehouse.dispatch_load_bands)
+  load_bypass: zBool.optional(),
   // Bản PWA cũ còn gửi cờ này (27/09 chiều là công tắc tuỳ chọn). Từ 27/09 tối XEM ĐƠN LÀ BẮT BUỘC — cờ được nhận nhưng bỏ qua.
   review_first: zBool.optional(),
 })
+// PATCH /dispatch/plans/:id/params — đổi dải tải / bypass trên kế hoạch ĐANG MỞ mà không ghép lại: xe nháp tính lại cờ Non tải / vượt
+export const zPlanParams = z.object({ load_bands: zLoadBands.optional(), load_bypass: zBool.optional() }).refine(b => b.load_bands !== undefined || b.load_bypass !== undefined, 'Không có gì để đổi')
 export const zListQuery = z.object({
   warehouse_id: zId.optional(), date_from: zDay.optional(), date_to: zDay.optional(),
   status: z.enum(['DRAFT', 'TENDERED', 'CONFIRMED', 'DISCARDED']).optional(),
@@ -121,9 +130,25 @@ export const zRespond = z.object({
 type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' | 'allocations' | 'share_targets'>
 
 async function loadWarehouse(id: string): Promise<WhRow | null> {
-  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_max_drops, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_max_drops, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands').eq('id', id).maybeSingle()
   if (error) throw error
   return (data as WhRow | null) ?? null
+}
+/** Dải tải đọc từ jsonb (kho nhớ lần chọn gần nhất / params kế hoạch) — chỉ giữ phần tử đúng dạng, phần còn lại coi như không khai. */
+function loadBandsOf(raw: unknown): Record<string, LoadBand> {
+  const out: Record<string, LoadBand> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const b = v as { min?: unknown; max?: unknown } | null
+    const min = Number(b?.min), max = Number(b?.max)
+    if (Number.isFinite(min) && Number.isFinite(max) && min >= 0 && max > 0 && min <= max) out[k] = { min, max }
+  }
+  return out
+}
+/** Nhớ dải tải vừa chọn làm mặc định cho kho (hộp thoại trên bàn là chỗ khai duy nhất — không có form riêng). */
+async function rememberLoadBands(whId: string, bands: Record<string, LoadBand>) {
+  const { error } = await db.from('Warehouse').update({ dispatch_load_bands: asJson(bands) }).eq('id', whId)
+  if (error) throw error
 }
 
 async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
@@ -144,6 +169,7 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
   const vtName = new Map(vtRows.map(v => [v.id, v.name]))
   const models: EngineModel[] = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | string | null; max_drops: number | null; storage_conditions: string[] | null; is_active: boolean }[]).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
+    parent_type_id: m.parent_type_id ?? null,   // khoá dải tải theo cha (01/10)
     parent_type_name: m.parent_type_id ? (vtName.get(m.parent_type_id) ?? null) : null,
     capacity_mode: m.capacity_mode === 'TON' ? 'TON' : m.capacity_mode === 'PALLET' ? 'PALLET' : null,
     max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons),
@@ -565,7 +591,11 @@ export async function createPlan(req: Request, res: Response) {
       combo_conditions: uniq([...catCfg.condByCat.entries()].filter(([c]) => !catCfg.follow.includes(c)).map(([, v]) => v)).sort(),
       // luật 11 (27/09): số dòng xe tối đa trên một thẻ — form Kho, nhóm "XUẤT — Điều vận" (1 = một xe như trước)
       max_vehicles: Math.min(5, Math.max(1, Number(wh.dispatch_max_vehicles_per_trip) || 1)),
+      // dải tải theo dòng xe cha (01/10): gửi lên = dùng + nhớ cho kho; không gửi = lần chọn gần nhất của kho
+      load_bands: b.load_bands !== undefined ? loadBandsOf(b.load_bands) : loadBandsOf(wh.dispatch_load_bands),
+      load_bypass: b.load_bypass === true,
     }
+    if (b.load_bands !== undefined) await rememberLoadBands(wh.id, params.load_bands)
     // XEM ĐƠN LÀ BƯỚC BẮT BUỘC (user chốt 27/09 tối: "bước đầu tiên trên bàn làm việc là xem tất cả các đơn open chưa có trong
     // ghép xe — xác nhận xong mới tới điều xe"). Máy chạy ở đây CHỈ để biết OD nào không lên xe được (trả về · không đo được tải…);
     // mọi OD còn lại vào khung chờ CHƯA XEM, không xe nào được dựng. Ghép = reoptimize sau khi người xác nhận đơn.
@@ -655,17 +685,20 @@ async function loadTrip(req: Request, tripId: string, opts: { editable?: boolean
 const loadDraftTrip = (req: Request, tripId: string) => loadTrip(req, tripId, { editable: true })
 
 function engineParams(plan: PlanRow): EngineInput['params'] {
-  const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number }
+  const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean }
   // kế hoạch lập trước 26/09 không có `allow_mix_categories` ⇒ undefined = cho trộn loại như lúc nó được lập;
   // lập trước 27/09 không có `max_vehicles` ⇒ một xe / thẻ như lúc nó được lập; `pallet_max_stops` của kế hoạch cũ bỏ qua (29/09)
   return { day: plan.plan_date, max_drops: params.max_drops ?? null, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1,
-    allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1 }
+    allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
+    load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true }
 }
 /** Tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn và các OD ĐANG nằm trên xe — KHÔNG ghi (bàn ghép xe dùng để xem trước khi thả). */
 function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null, condLabels: Record<string, string> = {}) {
   const params = engineParams(plan)
   const ctx = buildCtx({ ods: [], ...refs, share_actual: {}, params })
-  const model = modelId ? refs.models.find(m => m.id === modelId) ?? null : null
+  // dải tải theo cha của KẾ HOẠCH (01/10) đi vào bản sao dòng xe — % tải, Non tải, "vượt" của xe sửa tay đọc cùng dải máy ghép
+  const banded = withLoadBands(refs.models, params)
+  const model = modelId ? banded.find(m => m.id === modelId) ?? null : null
   const carrier = carrierId ? refs.carriers.find(c => c.id === carrierId) ?? null : null
   const lines = trip.ods.map(o => ({ material_code: '', qty_base: 0, pallets: o.pallets == null ? null : Number(o.pallets), kg: o.tons == null ? null : Number(o.tons) * 1000, category: null, condition: null }))
   const sum = trip.ods.length ? sumLines(lines) : { pallets: 0, tons: 0 }
@@ -681,7 +714,7 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   const booking = fromOds ? bookingFromCatLoads(catLoads) : prev.booking_category
   const warnings: string[] = []
   // Luật 11: thẻ nhiều xe — dòng xe chính + các xe phụ (`extra_vehicle_model_ids`); dòng xe phụ đã ngừng dùng thì bỏ ra
-  const extras = model ? (trip.extra_vehicle_model_ids ?? []).map(id => refs.models.find(m => m.id === id)).filter((m): m is EngineModel => !!m) : []
+  const extras = model ? (trip.extra_vehicle_model_ids ?? []).map(id => banded.find(m => m.id === id)).filter((m): m is EngineModel => !!m) : []
   const fleet = model ? [model, ...extras] : []
   const loadModel = fleet.length > 1 ? comboModel(fleet) : model
   let freight: TripFreight
@@ -693,8 +726,10 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
     if (fleet.length > 1) { const sh = splitLoad(fleet, sum.pallets, sum.tons); vehicles = fleet.map((m, i) => ({ model: m, pallets: sh?.[i].pallets ?? null, tons: sh?.[i].tons ?? null, freight: null })) }
   } else { const pc = priceCombo(ctx, fleet, carrier.id, wards, stops, sum.pallets, sum.tons); freight = pc.freight; vehicles = pc.parts }
   const load = tripLoad(loadModel, sum.pallets, sum.tons, whUnderloadPct ?? params.underload_pct ?? null)
-  // Vượt tải KHÔNG chặn (user chốt 25/09: "cho thả, đánh dấu đỏ") — xe vượt là việc Cần xử lý + hộp thoại Xác nhận nhắc lại
-  if (model && load.pct != null && load.pct > 100) warnings.push(fleet.length > 1 ? `Vượt sức chứa ${fleet.length} xe cộng lại (${load.pct}%) — thêm xe hoặc tách OD` : `Vượt sức chứa dòng xe ${model.name} (${load.pct}%)`)
+  const maxPct = load.max_pct ?? 100
+  // Vượt tải KHÔNG chặn (user chốt 25/09: "cho thả, đánh dấu đỏ") — xe vượt là việc Cần xử lý + hộp thoại Xác nhận nhắc lại.
+  // 01/10: "vượt" = quá TRẦN DẢI TẢI của dòng xe cha (vd 105 %), không phải quá 100 % — trong dải là máy được xếp, người cũng vậy.
+  if (model && load.pct != null && load.pct > maxPct) warnings.push(fleet.length > 1 ? `Vượt sức chứa ${fleet.length} xe cộng lại (${load.pct}% > trần ${maxPct}%) — thêm xe hoặc tách OD` : `Vượt sức chứa dòng xe ${model.name} (${load.pct}% > trần ${maxPct}%)`)
   if (fleet.length > 1 && uniq(fleet.map(basisOf)).length > 1)
     warnings.push('Các xe trên thẻ đo sức chứa khác nhau (pallet / tấn) — % tải chỉ tính gần đúng')
   // Xe không có dòng xe mà IM LẶNG là lỗi đã gặp (Ba Vì 25/09: 2 xe kéo tay "chưa chọn dòng xe" không một cảnh báo nào)
@@ -739,7 +774,7 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   return {
     vehicle_model_id: model?.id ?? null, extra_vehicle_model_ids: extras.map(m => m.id), transport_company_id: carrier?.id ?? null,
     stops, wards, pallets: sum.pallets, tons: sum.tons, load_pct: load.pct, underload: load.pct != null && load.pct < load.underload_pct,
-    oversize: load.pct != null && load.pct > 100, freight_estimated: freight.total, detail: asJson(detail), manual_edited: true,
+    oversize: load.pct != null && load.pct > maxPct, freight_estimated: freight.total, detail: asJson(detail), manual_edited: true,
     status: (statusOf(trip) === 'DECLINED' ? 'DRAFT' : statusOf(trip)) as TripStatus, updated_at: now(),
   }
 }
@@ -1099,7 +1134,19 @@ export async function deleteTrip(req: Request, res: Response) {
 // Khung chờ = OD trạng thái ĐIỀU (27/09 tối, user: "dữ liệu mới không có trong Đã điều thì mặc định là Điều") — máy ghép MỌI OD
 // ở khung chờ; OD không đi thì người chuyển sang "Không điều ngày này" / "Không điều" ở bảng Xem đơn trước khi bấm.
 // `review_all` giữ cho bundle cũ (nay trùng nghĩa mặc định); mốc reviewed_at chỉ còn là VẾT ai bấm ghép lúc nào.
-export const zReoptimize = z.object({ ids: z.array(zId).min(1).max(1000).optional(), review_all: zBool.optional() })
+// `load_bands` / `load_bypass` (01/10): dải tải theo dòng xe cha CHO LƯỢT GHÉP NÀY — ghi vào params kế hoạch (và nhớ cho kho) trước khi máy chạy
+export const zReoptimize = z.object({ ids: z.array(zId).min(1).max(1000).optional(), review_all: zBool.optional(), load_bands: zLoadBands.optional(), load_bypass: zBool.optional() })
+/** Ghi dải tải / bypass vào params của kế hoạch đang mở (+ nhớ dải cho kho). Trả về true khi có gì đổi. */
+async function applyLoadBands(plan: PlanRow, b: { load_bands?: Record<string, LoadBand>; load_bypass?: boolean }, t: string): Promise<boolean> {
+  if (b.load_bands === undefined && b.load_bypass === undefined) return false
+  const pp = (plan.params ?? {}) as Record<string, unknown>
+  const next = { ...pp, ...(b.load_bands !== undefined ? { load_bands: loadBandsOf(b.load_bands) } : {}), ...(b.load_bypass !== undefined ? { load_bypass: b.load_bypass === true } : {}) }
+  const { error } = await db.from('dispatch_plan').update({ params: asJson(next), updated_at: t }).eq('id', plan.id)
+  if (error) throw error
+  plan.params = asJson(next)
+  if (b.load_bands !== undefined) await rememberLoadBands(plan.warehouse_id, loadBandsOf(b.load_bands))
+  return true
+}
 async function reoptimizePlanInner(req: Request, res: Response) {
   try {
     const b = (req.body ?? {}) as z.infer<typeof zReoptimize>
@@ -1108,6 +1155,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const { plan } = got
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    const bandsChanged = await applyLoadBands(plan, b, now())
     const full = (await readPlan(plan.id))!
     let redo = full.trips.filter(t => !t.locked && EDITABLE_TRIP.includes(statusOf(t)))
     let src = full.pool
@@ -1118,6 +1166,8 @@ async function reoptimizePlanInner(req: Request, res: Response) {
       redo = []
     }
     const keep = full.trips.filter(t => !redo.includes(t))
+    // dải tải vừa đổi ⇒ xe GIỮ NGUYÊN (khoá / không ghép lại) cũng phải đọc dải mới, kẻo hai xe cạnh nhau hai thước Non tải
+    if (bandsChanged) await repriceMany(plan, keep.filter(t => EDITABLE_TRIP.includes(statusOf(t))))
     const odNos = uniq([...redo.flatMap(t => t.ods), ...src].map(o => o.od_number))
     if (!odNos.length) return fail(res, 422, 'NOTHING_TO_OPTIMIZE', 'Không còn OD nào ngoài các xe đã khoá — mở khoá xe hoặc kéo OD về khung chờ trước.')
     const t0 = now()
@@ -1166,6 +1216,22 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     }
     await writeSummary(plan)
     return ok(res, { ...(await readPlan(plan.id)), reoptimized: { trips: result.trips.length, kept: keep.length, left_in_pool: odNos.length - placed.length } })
+  } catch (e) { return failAny(res, e) }
+}
+
+// ── PATCH /tms/dispatch/plans/:id/params — dải tải / bypass đổi NGAY TRÊN BÀN (01/10, user: "config chọn xong hiện lên bàn") ────
+// Không ghép lại: mọi xe nháp tính lại % tải · Non tải · vượt theo dải mới (cùng `computeTripPatch` của mọi cửa sửa tay).
+export async function updatePlanParams(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zPlanParams>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    await applyLoadBands(plan, b, now())
+    const full = (await readPlan(plan.id))!
+    await repriceMany(plan, full.trips.filter(t => EDITABLE_TRIP.includes(statusOf(t))))
+    await writeSummary(plan)
+    return ok(res, await readPlan(plan.id))
   } catch (e) { return failAny(res, e) }
 }
 

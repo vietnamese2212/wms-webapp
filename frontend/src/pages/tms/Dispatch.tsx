@@ -16,6 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
+import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from '@/components/tms/DispatchLoadBandDialog'
 import { EDITABLE, tripStatus, ISSUES, TODO_KEYS, ISSUE_ORDER, ISSUE_SHORT, issuesOf, needsWork, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
@@ -83,8 +84,10 @@ const colsFor = (showStatus: boolean): RtColDef[] => [
 function LoadCell({ t }: { t: DispatchTrip }) {
   const l = t.detail.load
   if (l.pct == null) return <span className="text-slate-300" title={t.detail.freight.reason ?? 'Không đo được tải'}>—</span>
-  const cls = t.oversize || l.pct > 100 ? 'text-red-600 font-semibold' : t.underload ? 'text-red-600' : 'text-slate-700'
-  return <span className={`tabular-nums ${cls}`} title={`${nf(l.used, 1)} / ${nf(l.cap, 1)} ${l.basis === 'TON' ? 'tấn' : 'pallet'} · ngưỡng Non tải ${l.underload_pct}%`}>{nf(l.pct, 1)}%{t.underload && <span className="ml-1 text-[9px]">Non tải</span>}</span>
+  // 01/10: "vượt" = quá TRẦN dải tải của dòng xe cha (vd 105 %), không phải quá 100 %
+  const mx = l.max_pct ?? 100
+  const cls = t.oversize || l.pct > mx ? 'text-red-600 font-semibold' : t.underload ? 'text-red-600' : 'text-slate-700'
+  return <span className={`tabular-nums ${cls}`} title={`${nf(l.used, 1)} / ${nf(l.cap, 1)} ${l.basis === 'TON' ? 'tấn' : 'pallet'} · dải ${l.underload_pct}–${mx}%`}>{nf(l.pct, 1)}%{t.underload && <span className="ml-1 text-[9px]">Non tải</span>}{!t.underload && l.pct > 100 && l.pct <= mx && <span className="ml-1 text-[9px] text-slate-500">dung sai</span>}</span>
 }
 
 export default function Dispatch() {
@@ -96,7 +99,7 @@ export default function Dispatch() {
   const day = f.planDate || tomorrowVN()
 
   const { data: warehouses = [] } = useScopedWarehouses(true)
-  const whs = warehouses as { id: string; code?: string; name: string }[]
+  const whs = warehouses as { id: string; code?: string; name: string; dispatch_underload_pct?: number | string | null; dispatch_load_bands?: Record<string, { min: number; max: number }> | null }[]
   // 1 kho trong phạm vi → tự chọn
   useEffect(() => { if (!f.warehouseId && whs.length === 1) setF({ warehouseId: whs[0].id }) }, [whs, f.warehouseId, setF])
 
@@ -155,10 +158,21 @@ export default function Dispatch() {
   const [ask, confirmNode] = useConfirmDialog()
 
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
-  const runPlan = () => {
+  // DẢI TẢI theo dòng xe cha (01/10): hộp thoại đứng trước "Lập kế hoạch / Lập lại" — mặc định = dải của kế hoạch đang mở,
+  // không có thì lần chọn gần nhất của kho (Warehouse.dispatch_load_bands), chưa từng chọn thì ngưỡng Non tải của kho–100 %
+  const bandParents = useLoadBandParents()
+  const [bandDlg, setBandDlg] = useState(false)
+  const curWh = whs.find(w => w.id === f.warehouseId)
+  const whUnder = curWh?.dispatch_underload_pct == null ? null : Number(curWh.dispatch_underload_pct)
+  const bandInitial: LoadBandDraft = plan && isOpen
+    ? { bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct ?? whUnder), bypass: plan.params.load_bypass === true }
+    : { bands: fullBands(bandParents, curWh?.dispatch_load_bands, whUnder), bypass: false }
+  const runPlan = () => { if (f.warehouseId) setBandDlg(true) }
+  const runPlanWith = (d: LoadBandDraft) => {
     if (!f.warehouseId) return
     // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; mở bảng Xem đơn ở tab Điều
-    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day }).then(p => {
+    return create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day, load_bands: d.bands, load_bypass: d.bypass }).then(p => {
+      setBandDlg(false)
       setF({ planId: p.id, tab: 'review', reviewTab: 'GO' })
       toast({ title: `Bước 1 — xem ${p.summary.pool_ods ?? 0} đơn`, description: 'Đơn không đi: chuyển sang "Không điều ngày này" / "Không điều", rồi bấm "Ghép xe … đơn Điều".' })
     }).catch(e => err(e, 'Không lập được kế hoạch'))
@@ -586,6 +600,10 @@ export default function Dispatch() {
         </DialogContent>
       </Dialog>
 
+      <DispatchLoadBandDialog open={bandDlg} onClose={() => setBandDlg(false)} title={plan ? 'Lập lại kế hoạch — dải % tải' : 'Lập kế hoạch — dải % tải'}
+        confirmLabel={plan ? 'Lập lại' : 'Lập kế hoạch'} parents={bandParents} initial={bandInitial} busy={create.isPending}
+        intro={plan ? 'Bản nháp hiện tại (kể cả phần đã sửa tay) bị thay. Máy lập theo dải % tải dưới đây.' : 'Máy nạp đơn của kho × ngày này vào bảng Xem đơn; dải % tải dưới đây áp cho lượt ghép.'}
+        onConfirm={runPlanWith} />
       <Sheet open={!!openTrip} onOpenChange={o => !o && setOpenTripId(null)}>
         <SheetContent side="right" className="w-full sm:max-w-lg p-0 flex flex-col">
           {openTrip && plan && (

@@ -5942,7 +5942,7 @@ export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_n
 export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
-  load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number }
+  load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number; max_pct?: number }   // max_pct (01/10): trần dải tải — quá mức này mới là "vượt"
   categories: string[]; conditions?: string[]; booking_category: string | null; cluster: string
   carrier_reasons: string[]; warnings: string[]; merge_hint: string | null
   vehicle_model: { id: string; sap_code: string; name: string; parent_type_name: string | null } | null
@@ -5973,9 +5973,11 @@ export interface DispatchSummary {
 }
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (26/09): Loại kho chưa khai ĐK bảo quản · mã hàng chưa khai Loại kho. */
 export interface DispatchConfigGaps { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
+/** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
+export type DispatchLoadBands = Record<string, { min: number; max: number }>
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
-  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[] }
+  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -6043,8 +6045,22 @@ export function useReoptimizeDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
     // ids = ghép (và xác nhận đã xem) các dòng đã chọn · review_all = bước Xem đơn: xác nhận cả khung chờ rồi ghép
-    mutationFn: (arg: string | { id: string; ids?: string[]; review_all?: boolean }) => { const { id, ids, review_all } = typeof arg === 'string' ? { id: arg, ids: undefined, review_all: undefined } : arg; return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, ids ? { ids } : review_all ? { review_all: true } : {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } }) },
+    // load_bands / load_bypass (01/10) = dải tải theo dòng xe cha cho lượt ghép này (ghi vào kế hoạch + nhớ cho kho)
+    mutationFn: (arg: string | { id: string; ids?: string[]; review_all?: boolean; load_bands?: DispatchLoadBands; load_bypass?: boolean }) => {
+      const { id, ids, review_all, load_bands, load_bypass } = typeof arg === 'string' ? { id: arg, ids: undefined, review_all: undefined, load_bands: undefined, load_bypass: undefined } : arg
+      const body = { ...(ids ? { ids } : review_all ? { review_all: true } : {}), ...(load_bands ? { load_bands } : {}), ...(load_bypass !== undefined ? { load_bypass } : {}) }
+      return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } })
+    },
     onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+/** Đổi dải tải / bypass của kế hoạch ĐANG MỞ ngay trên bàn (01/10) — xe nháp tính lại Non tải / vượt, không ghép lại. */
+export function useUpdateDispatchPlanParams() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; load_bands?: DispatchLoadBands; load_bypass?: boolean }) =>
+      apiClient.patch(`/tms/dispatch/plans/${plan_id}/params`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['warehouses'] }) },
   })
 }
 /** HOÃN tới ngày / KHÔNG ĐIỀU các dòng OD (27/09) — dấu giữ qua mọi lần "Nạp OD mới"; OD rời kế hoạch, xe bị đụng tính lại. */
@@ -6128,9 +6144,9 @@ export function useDispatchPlan(id: string | null) {
 export function useCreateDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null }) =>
+    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean }) =>
       apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
-    onSuccess: () => invalidateDispatch(qc),
+    onSuccess: () => { invalidateDispatch(qc); qc.invalidateQueries({ queryKey: ['warehouses'] }) },
   })
 }
 export function useUpdateDispatchTrip() {

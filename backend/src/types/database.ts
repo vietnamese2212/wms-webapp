@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-09-28T15:11:12.645Z · 109 bảng/view · 174 hàm · 0 enum
+// Sinh lúc 2026-10-01T05:39:52.544Z · 109 bảng/view · 174 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2435,6 +2435,7 @@ export type Database = {
           dispatch_allow_mix_categories: boolean
           dispatch_max_vehicles_per_trip: number
           unlinked_shipto_policy: string
+          dispatch_load_bands: Json | null
         }
         Insert: {
           id: string
@@ -2486,6 +2487,7 @@ export type Database = {
           dispatch_allow_mix_categories?: boolean
           dispatch_max_vehicles_per_trip?: number
           unlinked_shipto_policy?: string
+          dispatch_load_bands?: Json | null
         }
         Update: {
           id?: string
@@ -2537,6 +2539,7 @@ export type Database = {
           dispatch_allow_mix_categories?: boolean
           dispatch_max_vehicles_per_trip?: number
           unlinked_shipto_policy?: string
+          dispatch_load_bands?: Json | null
         }
         Relationships: []
       }

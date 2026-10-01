@@ -72,6 +72,7 @@ export interface LoadUtil {
   pct: number | null                // % tải, làm tròn 1 chữ số
   underload: boolean | null         // pct < underload_pct; null khi không đo được
   underload_pct: number
+  max_pct?: number                  // 01/10 — trần xếp theo dải tải (105 = cho vượt 5 %); thiếu = 100. Chỉ `tripLoad` điền.
 }
 const DEFAULT_UNDERLOAD_PCT = 70
 /** % tải = tải thật ÷ sức chứa dòng xe. Không đo được (thiếu sức chứa hay thiếu tải) ⇒ null, KHÔNG đoán. */

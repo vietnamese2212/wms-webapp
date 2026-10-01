@@ -829,3 +829,5 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
 - `erp_outbound_orders`: + `replaced_by_od text` · `replaced_at timestamptz` (cửa nạp ZSD02 ghi khi SAP thay OD do sửa SO — dòng cũ
   OBSOLETE) · index một phần `(so_number, so_item) WHERE sync_status='ACTIVE'`.
 Bảng đã có `trg_wms_notify`; `TABLE_QUERY_MAP` thêm `dispatch_trip_od` + khoá `dispatch-sync`.
+
+**02/10/2026 — `geo_distance` BẬT RLS (migration `20261002b_geo_distance_rls.sql`, đã áp staging).** Bảng mới của `20261002_warehouse_geo_distance.sql` thiếu `ENABLE ROW LEVEL SECURITY` — gói QA `00-invariant` bắt ngay (lượt CI 964 đỏ "HỞ: geo_distance"). Sau khi áp: RPC `rls_gap_tables` trả `[]`, không còn bảng public nào tắt RLS. Không policy nào (giống `dispatch_plan`/`dispatch_od_hold`) — backend đi `service_role` nên bỏ qua RLS.

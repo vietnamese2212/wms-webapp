@@ -1,0 +1,13 @@
+-- 02/10/2026 — BẬT RLS cho `geo_distance`: bảng mới ở migration `20261002_warehouse_geo_distance.sql`
+-- thiếu đúng một dòng này, trong khi MỌI bảng public khác đều có (mẫu gần nhất: `dispatch_plan`,
+-- `dispatch_trip_od`, `dispatch_od_hold`, `carrier_share_target` — đều RLS bật · 0 policy).
+--
+-- Luật dự án: bảng public nào cũng phải bật RLS; `anon`/`authenticated` có 0 quyền bảng · 0 policy,
+-- backend đi bằng `service_role` (bỏ qua RLS) nên KHÔNG cần policy nào. Bật RLS mà không có policy =
+-- khoá kín với mọi vai khác service_role — đúng ý đồ, không đổi hành vi app.
+--
+-- Lưới đã bắt: gói QA `00-invariant` (RPC `rls_gap_tables`) ⇒ lượt CI 964 đỏ "HỞ: geo_distance".
+-- Đo lúc vá: đây là bảng public DUY NHẤT còn tắt RLS trên staging (32 kB), và nó chưa từng được
+-- GRANT cho `anon`/`authenticated` nên chưa đọc được qua anon key — nhưng để tắt là chờ lần GRANT
+-- diện rộng kế tiếp mở cửa hộ.
+ALTER TABLE public.geo_distance ENABLE ROW LEVEL SECURITY;

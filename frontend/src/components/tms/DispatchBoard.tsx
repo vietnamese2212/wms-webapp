@@ -308,7 +308,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   if (editable) {
     actions.push({ key: 'undo', icon: Undo2, label: 'Hoàn tác', tip: `Hoàn tác lần chuyển OD gần nhất (Ctrl+Z)${undoStack.length ? ` — còn ${undoStack.length} bước` : ''}`, onClick: () => void undo(), disabled: !undoStack.length || busy })
     actions.push({ key: 'redo', icon: Redo2, label: 'Làm lại', tip: 'Làm lại (Ctrl+Y)', onClick: () => void redo(), disabled: !redoStack.length || busy })
-    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
+    // nút CHÍNH của cụm — hiện chữ (01/10, user: "nút tối ưu lại là nút nào vậy" — bản cũ chỉ là icon ✦ không chữ)
+    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá theo dải % tải; xe đã khoá giữ nguyên', primary: true, variant: 'default', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
 
   const targets = trips.filter(editableTrip).map(t => ({ value: t.id, label: `#${t.seq} · ${t.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(t.pallets, 1)} pl · ${t.load_pct == null ? '—' : `${nf(t.load_pct, 0)}%`} · ${t.stops} điểm · ${t.wards.slice(0, 2).join(', ')}` }))
   const excluded = plan.params.excluded ?? []

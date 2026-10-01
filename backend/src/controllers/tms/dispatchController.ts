@@ -1660,8 +1660,15 @@ async function holdOdsInner(req: Request, res: Response) {
     const touched = uniq(leaving.filter(o => o.trip_id).map(o => o.trip_id!))
     const after = (await readPlan(plan.id))!
     await repriceMany(plan, after.trips.filter(x => touched.includes(x.id) && x.ods.length))
+    // xe bị rút HẾT đơn ⇒ bỏ luôn (01/10: Ba Vì xe #2 / #10 trống mà vẫn ghi 3,3 pallet · 812 k, đếm vào Non tải) — khác kéo thả,
+    // ở đó người có thể cố ý để xe trống làm chỗ thả
+    const emptied = after.trips.filter(x => touched.includes(x.id) && !x.ods.length && EDITABLE_TRIP.includes(statusOf(x))).map(x => x.id)
+    if (emptied.length) {
+      const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', plan.id)
+      if (error) throw error
+    }
     await writeSummary({ ...plan, params: asJson(p2) })
-    return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until } })
+    return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until, trips_removed: emptied.length } })
   } catch (e) { return failAny(res, e) }
 }
 

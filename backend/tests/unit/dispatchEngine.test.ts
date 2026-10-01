@@ -487,6 +487,12 @@ describe('luật 9 — không trộn Loại kho trên một chuyến (user 26/09
     expect(r.trips).toHaveLength(0)
     expect(r.unplanned).toEqual([{ od_number: '5', ship_to_code: 'S5', code: 'FOLLOW_ONLY', reason: expect.stringMatching(/hàng đi kèm .*chờ đơn hàng chính/) }])
   })
+  it('OD toàn mã CHƯA KHAI Loại kho KHÔNG phải POSM: vẫn lên xe như hàng thường (01/10: 17 OD Ba Vì kẹt khung chờ oan với lý do "chỉ POSM")', () => {
+    const r = runDispatch(input([od('6', 'W2', 2, { lines: [line(2, { category: null })] })], { params: noMix }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods.map(o => o.od_number)).toEqual(['6'])
+  })
   it('THẺ NHIỀU XE của cùng khách nhận POSM và OD nhỏ của khách đó khi N xe còn chở vừa (Ba Vì 30/09: #68 0,7 pallet POSM cạnh #70 2 × 17 pallet)', () => {
     // OD 20 pallet > xe lớn nhất 16 ⇒ đi 2 × M16 (còn 12 pallet trống); POSM 1 pallet + OD nhỏ 2 pallet CÙNG khách phải ké vào
     const big = od('1', 'W1', 20, { ship_to_code: 'K1' })

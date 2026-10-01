@@ -743,7 +743,15 @@ export function runDispatch(input: EngineInput): DispatchResult {
   // ── Luật 1–3 (+9): xếp lớn-trước theo cụm phường — không cho trộn loại thì cụm còn tách theo Loại kho chính ──
   const mixCats = P.allow_mix_categories !== false
   const follow = new Set(P.follow_categories ?? [])
-  const catPart = (u: Unit) => (mixCats ? '' : (mainCatsOf(u.od.lines, follow).join('+') || '*'))
+  // '*' = OD CHỈ có hàng đi kèm (POSM) ⇒ ké chuyến chính, không xe riêng. OD mà mã hàng CHƯA KHAI Loại kho (01/10: 5 mã SAP
+  // chưa có trong Mã hàng — 17 OD Ba Vì kẹt khung chờ với lý do "chỉ POSM") KHÔNG phải POSM: cụm riêng '?' như hàng thường, kèm
+  // băng "Khai thiếu" đã có.
+  const catPart = (u: Unit) => {
+    if (mixCats) return ''
+    const main = mainCatsOf(u.od.lines, follow)
+    if (main.length) return main.join('+')
+    return u.od.lines.some(l => !l.category) ? '?' : '*'
+  }
   const byCluster = new Map<string, Unit[]>()
   for (const u of units) { const k = clusterKey(u.od, P.allow_mix_channels, catPart(u)); const l = byCluster.get(k) ?? []; l.push(u); byCluster.set(k, l) }
   const bins: Bin[] = []

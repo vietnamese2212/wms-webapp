@@ -944,6 +944,18 @@ try {
       rs.s === 200 && (PR?.trips ?? []).length === 1 && !!tripOfOd(PR, OD[0]) && poolOds(PR).join(',') === OD[1] && PR?.params?.baseline?.trips === 1
       && !!rowNow(PR, OD[0])?.reviewed_at && !!rowNow(PR, OD[0])?.reviewed_by,
       `http=${rs.s} ${rs.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} base=${JSON.stringify(PR?.params?.baseline)}`)
+    // 01/10 (Ba Vì: xe #2/#10 trống mà vẫn 3,3 pallet · 812 k, đếm Non tải): Không điều rút HẾT đơn của xe ⇒ xe bị bỏ, không để xe trống số cũ
+    const r1t = rowNow(PR, OD[0])
+    const hT = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r1t?.id], until: next, reason: 'QA rút hết xe' })
+    const PH = hT.j?.data
+    check('15d2. Không điều OD duy nhất của một xe → xe đó bị BỎ (held.trips_removed = 1, 0 xe, summary.empty_trips = 0), OD về HELD',
+      hT.s === 200 && hT.j?.data?.held?.trips_removed === 1 && (PH?.trips ?? []).length === 0 && (PH?.summary?.empty_trips ?? 0) === 0 && (PH?.params?.excluded ?? []).some(x => x.od_number === OD[0] && x.kind === 'HELD'),
+      `http=${hT.s} ${hT.j?.error?.message ?? ''} removed=${hT.j?.data?.held?.trips_removed} trips=${(PH?.trips ?? []).length} empty=${PH?.summary?.empty_trips}`)
+    // trả về trạng thái sau 15d cho các phép sau: bỏ hoãn OD1 → về khung chờ → ghép riêng OD1 lên xe
+    await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[0]] })
+    const prBack = await api(`/tms/dispatch/plans/${pid(PR)}`)
+    const r1b = (prBack.j?.data?.pool ?? []).find(o => o.od_number === OD[0])
+    PR = (await api(`/tms/dispatch/plans/${pid(PR)}/reoptimize`, 'POST', { ids: [r1b?.id] })).j?.data ?? PR
     const uOk = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })
     PR = uOk.j?.data
     const uAgain = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })

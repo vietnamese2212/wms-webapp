@@ -27,6 +27,7 @@ import * as warehouseMap from '../controllers/wms/warehouseMapController'
 import * as directed from '../controllers/wms/directedWorkController'
 import * as integrationKeys from '../controllers/integration/keyController'
 import * as vision from '../controllers/integration/visionController'
+import * as geoConfig from '../controllers/integration/geoConfigController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 import { validate, z, zText } from '../middlewares/validate'
@@ -126,6 +127,12 @@ router.get('/vision-config',       vision.getVisionConfig)
 router.put('/vision-config',       vision.saveVisionConfig)
 router.post('/vision-config/test', vision.testVisionConfig)
 router.post('/vision-config/models', vision.listVisionModels)   // liệt kê model đọc-ảnh của chính key
+
+// Khoá Goong cho máy định vị / đo km (02/10, user chốt dán trong app) — cùng khuôn AI Vision: lưu MÃ HOÁ ở cờ bí mật
+// geo_api, CHỈ superadmin (kiểm trong controller), GET chỉ trả đuôi che. Cửa ghi duy nhất (PUT /wms/settings/geo_api bị chặn).
+router.get('/geo-config',       geoConfig.getGeoConfig)
+router.put('/geo-config',       validate({ body: geoConfig.zGeoConfigBody }), geoConfig.saveGeoConfig)
+router.post('/geo-config/test', validate({ body: z.object({}) }), geoConfig.testGeoConfig)   // không nhận tham số — thử đúng 1 địa chỉ cố định
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)

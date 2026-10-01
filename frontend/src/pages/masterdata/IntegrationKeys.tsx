@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
-import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen, Sparkles } from 'lucide-react'
+import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen, Sparkles, MapPin } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { isAdmin } from '@/config/permissions'
@@ -193,6 +193,95 @@ function VisionConfigCard() {
             <Button size="sm" variant="ghost" className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50" disabled={busy}
               onClick={() => { setMsg(null); saveMut.mutate({ api_key: null }) }}>
               Gỡ key
+            </Button>
+          )}
+        </div>
+        {msg && (
+          <div className={`rounded px-2 py-1.5 text-[12px] ${msg.kind === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>{msg.text}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Bản đồ Goong (Điều vận) — khoá định vị địa chỉ / đo km đường bộ (user chốt 02/10: "dán trong app, có module chứa API mà") ──
+// Khoá lưu MÃ HOÁ ở cờ bí mật geo_api, cùng cơ chế AI Vision; máy ghép và bàn điều vận chỉ đọc toạ độ/km đã ghi trong DB.
+interface GeoCfg { configured: boolean; source: 'app' | 'env' | null; key_tail: string | null; provider: string; ready: boolean; reason: string | null }
+const GOONG_KEY_PAGE = 'account.goong.io'
+function GeoConfigCard() {
+  const qc = useQueryClient()
+  const [keyInput, setKeyInput] = useState('')
+  const [keyLocked, setKeyLocked] = useState(true)   // chặn trình duyệt tự điền mật khẩu vào ô key (cùng bẫy 14/08 của AI Vision)
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  const { data: cfg } = useQuery<GeoCfg>({
+    queryKey: ['geo-config'],
+    queryFn: () => apiClient.get('/wms/geo-config').then(r => r.data.data),
+  })
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['geo-config'] })
+    // Nút "Định vị tự động" (Khách hàng) và "Đo km" (Điều vận) đọc trạng thái máy định vị — có khoá là phải sáng ngay
+    qc.invalidateQueries({ queryKey: ['customer-geo-status'] })
+    qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] })
+  }
+  const saveMut = useMutation({
+    mutationFn: (body: { api_key: string | null }) => apiClient.put('/wms/geo-config', body).then(r => r.data.data as { configured: boolean }),
+    onSuccess: (d) => {
+      setKeyInput(''); setKeyLocked(true)
+      setMsg({ kind: 'ok', text: d.configured ? 'Đã lưu — bấm "Kiểm tra" để thử khoá' : 'Đã gỡ khoá — máy định vị tắt, khách mới chấm tay / GPS' })
+      invalidate()
+    },
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+  const testMut = useMutation({
+    mutationFn: () => apiClient.post('/wms/geo-config/test').then(r => r.data.data as { address: string; lat: number; lng: number; latency_ms: number }),
+    onSuccess: (d) => setMsg({ kind: 'ok', text: `Khoá hoạt động — "${d.address}" → ${d.lat}, ${d.lng} (${d.latency_ms} ms)` }),
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+  const busy = saveMut.isPending || testMut.isPending
+  const badge = !cfg ? null
+    : !cfg.configured ? { cls: 'bg-amber-100 text-amber-700', text: 'Chưa có khoá — Định vị tự động và Đo km đang tắt' }
+    : !cfg.ready ? { cls: 'bg-slate-200 text-slate-600', text: `Có khoá ${cfg.key_tail} · ${cfg.reason ?? 'máy định vị đang tắt'}` }
+    : { cls: 'bg-green-100 text-green-700', text: `Đang dùng · khoá ${cfg.key_tail}${cfg.source === 'env' ? ' (biến môi trường máy chủ)' : ''}` }
+  return (
+    <div className="shrink-0 mt-3 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm border-t sm:border-t-slate-200">
+      <div className="px-3 py-2 border-b flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+          <MapPin className="h-4 w-4 text-sky-500" /> Bản đồ Goong — định vị khách & đo km (Điều vận)
+        </span>
+        {badge && <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.text}</span>}
+      </div>
+      <div className="px-3 py-2.5 space-y-2 text-[12px] text-slate-600">
+        <div className="flex items-end gap-2 flex-wrap">
+          <div>
+            <SettingLabel text="API key Goong" tip={<>Khoá dùng cho hai việc: <b>Định vị tự động</b> địa chỉ khách (trang Khách hàng) và
+              <b> Đo km</b> đường bộ xe tải giữa kho và điểm giao (tab Bản đồ — Điều vận). Gói miễn phí 30.000 lượt/tháng.<br />
+              Khoá được lưu <b>mã hoá</b>, không hiện lại và không lộ qua API đọc chung. Toạ độ và km đã đo nằm trong dữ liệu của mình —
+              gỡ khoá hay Goong ngừng dịch vụ thì bản đồ, ghim và km đã đo vẫn còn; chỉ không đo thêm được, khách mới chấm tay / GPS.<br />
+              Tạo khoá: kiểu <b>API Key</b> (không phải Maptiles Key), tab Giới hạn để trống vì gọi từ máy chủ.</>} />
+            <Input type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
+              readOnly={keyLocked} onFocus={() => setKeyLocked(false)}
+              name="wms-goong-key" autoComplete="new-password" spellCheck={false}
+              data-lpignore="true" data-1p-ignore="true"
+              placeholder="dán khoá Goong (API Key)"
+              className="h-8 w-72 text-[12px] font-mono" />
+            <span className="block text-[9px] text-slate-400 mt-0.5">
+              {cfg?.configured ? `Đang dùng khoá ${cfg.key_tail} · ` : ''}Lấy khoá tại{' '}
+              <a href={`https://${GOONG_KEY_PAGE}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{GOONG_KEY_PAGE}</a>
+            </span>
+          </div>
+          <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={busy || keyInput.trim().length < 20}
+            onClick={() => { setMsg(null); saveMut.mutate({ api_key: keyInput.trim() }) }}>
+            {saveMut.isPending ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+          <Button size="sm" variant="outline" className="h-8" disabled={busy || !cfg?.configured}
+            onClick={() => { setMsg(null); testMut.mutate() }}>
+            {testMut.isPending ? 'Đang thử…' : 'Kiểm tra'}
+          </Button>
+          {cfg?.source === 'app' && (
+            <Button size="sm" variant="ghost" className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50" disabled={busy}
+              onClick={() => { setMsg(null); saveMut.mutate({ api_key: null }) }}>
+              Gỡ khoá
             </Button>
           )}
         </div>
@@ -401,6 +490,9 @@ export default function IntegrationKeys() {
 
       {/* AI Vision — key Gemini cho Sổ đóng gói (đặt cùng trang kết nối để Admin thay khi hết hạn) */}
       <VisionConfigCard />
+
+      {/* Bản đồ Goong — khoá định vị / đo km cho Điều vận (02/10, user chốt dán trong app thay vì biến môi trường) */}
+      <GeoConfigCard />
 
       {/* Form tạo key */}
       <FormSheet

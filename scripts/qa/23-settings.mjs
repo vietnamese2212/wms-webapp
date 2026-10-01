@@ -31,8 +31,50 @@ await login()
 }
 {
   const r = await api('/wms/settings', 'GET')
-  const leaked = (r.j?.data ?? []).some(s => s.key === 'vision_api')
-  check('GET hở đọc KHÔNG lộ cờ bí mật vision_api', r.s === 200 && !leaked, `http=${r.s} leaked=${leaked}`)
+  const leaked = (r.j?.data ?? []).filter(s => s.key === 'vision_api' || s.key === 'geo_api').map(s => s.key)
+  check('GET hở đọc KHÔNG lộ cờ bí mật vision_api / geo_api', r.s === 200 && leaked.length === 0, `http=${r.s} leaked=${leaked.join(',')}`)
+}
+
+// Khoá Goong (02/10, user chốt dán trong app): cửa ghi DUY NHẤT là /wms/geo-config; /wms/settings/geo_api bị chặn;
+// GET chỉ trả đuôi che. Có khoá THẬT trên staging thì không đè — chỉ bắn giá trị bậy + kịch bản khoá giả khi đang trống.
+{
+  const viaSettings = await api('/wms/settings/geo_api', 'PUT', { value: { key_enc: 'x' } })
+  check('geo-config: ghi geo_api qua /wms/settings bị chặn 400 UNKNOWN_SETTING',
+    viaSettings.s === 400 && viaSettings.j?.error?.code === 'UNKNOWN_SETTING', `http=${viaSettings.s} code=${viaSettings.j?.error?.code}`)
+  for (const [label, body] of [
+    ['khoá quá ngắn', { api_key: 'abc' }],
+    ['khoá có ký tự lạ', { api_key: 'abcdefghij klmnopqrstuvwxyz0123456789' }],
+    ['thiếu api_key', {}],
+    ['api_key là số', { api_key: 12345678901234567890 }],
+  ]) {
+    const r = await api('/wms/geo-config', 'PUT', body)
+    check(`geo-config: ${label} → 400`, r.s === 400, `http=${r.s}`)
+  }
+  const pre = await api('/wms/geo-config', 'GET')
+  const d0 = pre.j?.data ?? {}
+  check('geo-config: GET → 200 có configured/source/key_tail/ready, KHÔNG lộ khoá',
+    pre.s === 200 && typeof d0.configured === 'boolean' && 'source' in d0 && 'ready' in d0 && !('key_enc' in d0) && !('api_key' in d0)
+      && (d0.key_tail == null || /^••••.{4}$/.test(d0.key_tail)),
+    `http=${pre.s} d=${JSON.stringify(d0).slice(0, 160)}`)
+  if (!d0.configured) {
+    const fake = `qa23fakegoongkey${Date.now()}abcdef`
+    const saved = await api('/wms/geo-config', 'PUT', { api_key: fake })
+    const after = (await api('/wms/geo-config', 'GET')).j?.data ?? {}
+    // Khoá giả: Goong trả 4xx ⇒ test phải là 422 (không 5xx), và máy định vị báo "sẵn sàng" vì chỉ kiểm có khoá
+    const t = await api('/wms/geo-config/test', 'POST', {})
+    const off = await api('/wms/geo-config', 'PUT', { api_key: null })
+    const gone = (await api('/wms/geo-config', 'GET')).j?.data ?? {}
+    check('geo-config: lưu khoá giả → 200 đuôi che đúng · GET source=app · test khoá giả → 422 không 5xx · gỡ → configured=false',
+      saved.s === 200 && saved.j?.data?.key_tail === `••••${fake.slice(-4)}` && after.source === 'app' && after.key_tail === `••••${fake.slice(-4)}`
+        && t.s === 422 && off.s === 200 && gone.configured === false,
+      `save=${saved.s} after=${JSON.stringify(after).slice(0, 120)} test=${t.s}/${t.j?.error?.code} off=${off.s} gone=${gone.configured}`)
+    const audit = await restAll('admin_audit_events', `select=action,target_id&action=eq.GEO_CONFIG&target_id=eq.geo_api&limit=5`)
+    check('geo-config: dán / gỡ khoá có vết Nhật ký quản trị GEO_CONFIG', audit.length >= 1, `n=${audit.length}`)
+  } else {
+    console.log(`ℹ️  geo-config đã có khoá thật (${d0.source}) — bỏ qua kịch bản khoá giả (không đè khoá của đơn vị)`)
+    const t = await api('/wms/geo-config/test', 'POST', {})
+    check('geo-config: khoá thật → test 200 trả toạ độ (hoặc 422 nếu Goong từ chối), không 5xx', t.s === 200 || t.s === 422, `http=${t.s} ${JSON.stringify(t.j?.data ?? t.j?.error).slice(0, 120)}`)
+  }
 }
 
 // Cấu hình AI Vision (nhà cung cấp Gemini/GPT — 14/08): CHỈ bắn giá trị BẬY để không đụng key thật

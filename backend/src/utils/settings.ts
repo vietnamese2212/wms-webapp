@@ -226,8 +226,8 @@ export const parseSapDoSource = (raw: unknown): SapDoSource | null =>
 export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_DEFAULT, parseSapDoSource)
 
 // ── geo_provider — NHÀ CUNG CẤP định vị địa chỉ / đo km cho điều vận trên bản đồ (01/10, user chốt Goong) ──
-// 'goong' (mặc định): gọi Goong với khoá GOONG_API_KEY trong biến môi trường (KHÔNG qua SystemSetting — cờ đọc được
-// bởi mọi tài khoản). 'none': tắt máy định vị — khách mới chấm tay / GPS; toạ độ và km ĐÃ ĐO vẫn nằm trong DB của mình.
+// 'goong' (mặc định): gọi Goong với khoá dán ở trang Kết nối & API key (SystemSetting `geo_api` MÃ HOÁ, thuộc SECRET_SETTINGS
+// nên không lộ qua GET hở đọc; biến môi trường GOONG_API_KEY là đường lùi). 'none': tắt máy định vị — khách mới chấm tay / GPS; toạ độ và km ĐÃ ĐO vẫn nằm trong DB của mình.
 // Đổi nhà cung cấp = thêm giá trị ở đây + một nhánh trong services/geo.ts, máy ghép và bàn không đổi.
 export const GEO_PROVIDERS = ['goong', 'none'] as const
 export type GeoProvider = typeof GEO_PROVIDERS[number]

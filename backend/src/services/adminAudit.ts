@@ -16,6 +16,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'DATE_RULE_MASTER',
   // Toạ độ điểm giao (01/10) — chấm tay / GPS / máy định vị đổi chỗ xe đến giao: phải biết ai dời ghim, từ đâu sang đâu
   'CUSTOMER_GEO',
+  // Khoá Goong của máy định vị / đo km (02/10) — dán / gỡ trong app: ghi CÓ đổi khoá, KHÔNG ghi khoá
+  'GEO_CONFIG',
 ] as const
 export type AdminAuditAction = typeof ADMIN_AUDIT_ACTIONS[number]
 export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel' | 'DateRuleMaster'

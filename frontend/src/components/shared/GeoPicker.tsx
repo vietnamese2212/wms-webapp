@@ -5,11 +5,18 @@
 import { useEffect, useState } from 'react'
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet'
 import type { Marker as LMarker } from 'leaflet'
-import { Crosshair, MapPin, Trash2, LocateFixed } from 'lucide-react'
+import { Crosshair, MapPin, Trash2, LocateFixed, Search, X } from 'lucide-react'
+import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { apiClient } from '@/api/client'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { OSM_TILE, OSM_ATTR, OSM_SUBDOMAINS, VN_CENTER, VN_ZOOM } from './leafletSetup'
 import { GEO_SOURCE_VI, type CustomerGeoSource } from '@/api/hooks'
 import { formatDateTime } from '@/utils/formatters'
+
+/** Ứng viên của ô tìm địa điểm (BE /masterdata/geo/search — Goong hay OSM tuỳ máy đang hiệu lực) */
+interface PlaceHit { label: string; lat: number; lng: number }
 
 export interface GeoValue { lat: number; lng: number }
 export interface GeoMeta { source: CustomerGeoSource | null; accuracy_m: number | null; at: string | null; by: string | null }
@@ -45,6 +52,25 @@ export function GeoPicker({ value, meta, address, canEdit, saving, onSave }: {
   const shown: GeoValue | null = draft ?? value
   const dirty = !!draft && (!value || draft.lat !== value.lat || draft.lng !== value.lng)
 
+  // Ô TÌM ĐỊA ĐIỂM như Google Maps (user 02/10): gõ → chờ 400 ms → hỏi BE → bấm ứng viên là ghim nhảy tới (chưa lưu, vẫn kéo chỉnh được)
+  const [q, setQ] = useState('')
+  const qDeb = useDebouncedValue(q, 400)
+  const [hits, setHits] = useState<PlaceHit[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchErr, setSearchErr] = useState('')
+  useEffect(() => {
+    const term = qDeb.trim()
+    if (!canEdit || term.length < 2) { setHits(null); setSearchErr(''); return }
+    let alive = true
+    setSearching(true); setSearchErr('')
+    apiClient.get('/masterdata/geo/search', { params: { q: term } })
+      .then(r => { if (alive) setHits(r.data.data as PlaceHit[]) })
+      .catch((e: AxiosError<{ error?: { message?: string } }>) => { if (alive) { setHits([]); setSearchErr(e.response?.data?.error?.message ?? 'Không tìm được') } })
+      .finally(() => { if (alive) setSearching(false) })
+    return () => { alive = false }
+  }, [qDeb, canEdit])
+  const pickHit = (h: PlaceHit) => { setDraft({ lat: round6(h.lat), lng: round6(h.lng), source: 'MANUAL', accuracy_m: null }); setQ(''); setHits(null) }
+
   const useGps = () => {
     setGpsErr('')
     if (!('geolocation' in navigator)) { setGpsErr('Trình duyệt này không có định vị'); return }
@@ -58,6 +84,27 @@ export function GeoPicker({ value, meta, address, canEdit, saving, onSave }: {
 
   return (
     <div className="space-y-1.5">
+      {canEdit && (
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm địa chỉ, tên công ty, KCN… rồi bấm chọn để đặt ghim"
+            className="h-9 sm:h-8 pl-7 pr-7 text-[12px]" autoComplete="off" spellCheck={false} />
+          {q && <button type="button" aria-label="Xoá ô tìm" className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600" onClick={() => { setQ(''); setHits(null) }}><X className="h-3.5 w-3.5" /></button>}
+          {(hits || searching || searchErr) && q.trim().length >= 2 && (
+            <div className="absolute z-[900] left-0 right-0 mt-1 rounded-md border border-slate-200 bg-white shadow-md text-[12px] max-h-56 overflow-y-auto">
+              {searching && <div className="px-2.5 py-1.5 text-slate-400">Đang tìm…</div>}
+              {!searching && searchErr && <div className="px-2.5 py-1.5 text-red-600">{searchErr}</div>}
+              {!searching && !searchErr && hits?.length === 0 && <div className="px-2.5 py-1.5 text-slate-500">Không thấy — thử tên phường/xã + tỉnh, hoặc bấm thẳng lên bản đồ</div>}
+              {!searching && hits?.map((h, i) => (
+                <button key={`${h.lat},${h.lng},${i}`} type="button" onClick={() => pickHit(h)}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-sky-50 flex items-start gap-1.5 border-b last:border-b-0 border-slate-100">
+                  <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0 text-sky-600" /><span className="min-w-0 break-words">{h.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="h-56 sm:h-64 w-full overflow-hidden rounded-md border border-slate-200">
         <MapContainer center={shown ? [shown.lat, shown.lng] : VN_CENTER} zoom={shown ? PIN_ZOOM : VN_ZOOM} scrollWheelZoom className="h-full w-full">
           <TileLayer url={OSM_TILE} attribution={OSM_ATTR} subdomains={OSM_SUBDOMAINS} />

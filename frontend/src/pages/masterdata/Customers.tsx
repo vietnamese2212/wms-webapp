@@ -226,7 +226,7 @@ export default function Customers() {
     setErr(''); setGeoMsg('')
     try {
       const r = await geocode.mutateAsync({})
-      setGeoMsg(`Định vị được ${nf(r.done.length)} khách${r.failed.length ? ` · ${nf(r.failed.length)} không tìm thấy (${r.failed.slice(0, 3).map(x => x.ship_to_code).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}${r.remaining ? ` · còn ${nf(r.remaining)} khách — bấm lại để tiếp` : ' · xong'}`)
+      setGeoMsg(`Định vị được ${nf(r.done.length)} khách${r.precision === 'ward' ? ' (tâm phường/xã theo địa chỉ)' : ''}${r.failed.length ? ` · ${nf(r.failed.length)} không tìm thấy (${r.failed.slice(0, 3).map(x => x.ship_to_code).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}${r.remaining ? ` · còn ${nf(r.remaining)} khách — bấm lại để tiếp` : ' · xong'}`)
     } catch (e) { setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không định vị được') }
   }
 
@@ -355,7 +355,7 @@ export default function Customers() {
       mobileHidden: true, busy: geocode.isPending,
       disabled: geocode.isPending || !geoStatus.data?.provider.ready || !geoStatus.data?.remaining,
       tip: geoStatus.data?.provider.ready
-        ? `Máy định vị các khách còn trống toạ độ từ địa chỉ SAP (mỗi lượt tối đa 100 khách) — ${nf(geoStatus.data?.located ?? 0)}/${nf(geoStatus.data?.total_active ?? 0)} khách đã có ghim`
+        ? `Máy định vị các khách còn trống toạ độ từ địa chỉ SAP (mỗi lượt tối đa 100 khách)${geoStatus.data?.provider.provider === 'osm' ? ' — OpenStreetMap miễn phí, ghim đặt ở TÂM PHƯỜNG/XÃ; kéo ghim trong form khi cần chính xác hơn' : ''} — ${nf(geoStatus.data?.located ?? 0)}/${nf(geoStatus.data?.total_active ?? 0)} khách đã có ghim`
         : (geoStatus.data?.provider.reason ?? 'Đang kiểm tra máy định vị…'),
       onClick: () => void runGeocode(),
     } satisfies ActionItem] : []),
@@ -542,8 +542,8 @@ export default function Customers() {
                         {/* Toạ độ điểm giao (01/10): nguồn người (GPS / chấm tay) đậm hơn máy; chưa có = vàng để đi định vị */}
                         <TableCell className="px-2 py-1 whitespace-nowrap">
                           {r.geo_lat != null && r.geo_source
-                            ? <StatusBadge tone={r.geo_source === 'GOONG' ? 'slate' : r.geo_source === 'GPS' ? 'green' : 'sky'}
-                                title={`${r.geo_lat}, ${r.geo_lng}${r.geo_accuracy_m != null ? ` ±${Math.round(r.geo_accuracy_m)} m` : ''}${r.geo_by ? ` · ${r.geo_by}` : ''}`}>
+                            ? <StatusBadge tone={r.geo_source === 'GPS' ? 'green' : r.geo_source === 'MANUAL' ? 'sky' : 'slate'}
+                                title={`${r.geo_lat}, ${r.geo_lng}${r.geo_accuracy_m != null ? ` ±${Math.round(r.geo_accuracy_m).toLocaleString('vi-VN')} m` : ''}${r.geo_source === 'OSM' ? ' · tâm phường/xã theo địa chỉ — kéo ghim trong form nếu cần chính xác hơn' : ''}${r.geo_by ? ` · ${r.geo_by}` : ''}`}>
                                 {GEO_SOURCE_VI[r.geo_source]}
                               </StatusBadge>
                             : <StatusBadge tone="amber" title="Chưa có toạ độ — chấm trên bản đồ / GPS trong form, hoặc nút Định vị tự động">Chưa định vị</StatusBadge>}

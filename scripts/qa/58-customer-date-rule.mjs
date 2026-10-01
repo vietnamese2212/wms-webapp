@@ -762,6 +762,15 @@ try {
     check('[13f] Xoá ghim → 200, toạ độ + nguồn về null', gClear.s === 200 && g4?.geo_lat == null && g4?.geo_source == null, `${gClear.s} row=${JSON.stringify(g4)}`)
     const aGeo = await restAll('admin_audit_events', `select=action,target_id&action=eq.CUSTOMER_GEO&target_id=eq.${custA.id}&limit=5`)
     check('[13g] Dời ghim có vết Nhật ký quản trị CUSTOMER_GEO', aGeo.length >= 1, `n=${aGeo.length}`)
+    // [13h] (02/10) Ô tìm địa điểm trên bản đồ: máy định vị sẵn sàng (OSM miễn phí mặc định) ⇒ 200 mảng {label,lat,lng} có kết quả cho
+    // một địa danh chắc chắn; máy tắt ⇒ 422 GEO_NOT_CONFIGURED; q quá ngắn ⇒ 400. Không ghi gì.
+    const gs = await api('/masterdata/geo/search?q=' + encodeURIComponent('Hồ Hoàn Kiếm, Hà Nội'))
+    const hits = Array.isArray(gs.j?.data) ? gs.j.data : []
+    check('[13h] Tìm địa điểm → 200 có ứng viên {label,lat,lng} trong dải VN (hoặc 422 khi máy tắt) · q 1 ký tự → 400',
+      ((gs.s === 200 && hits.length >= 1 && hits.every(h => typeof h.label === 'string' && h.lat > 8 && h.lat < 24 && h.lng > 102 && h.lng < 110))
+        || (gs.s === 422 && gs.j?.error?.code === 'GEO_NOT_CONFIGURED'))
+        && (await api('/masterdata/geo/search?q=a')).s === 400,
+      `${gs.s} n=${hits.length} first=${JSON.stringify(hits[0] ?? null).slice(0, 100)}`)
   }
 
   // ═══ [8] Nhật ký quản trị ═════════════════════════════════════════════════════════════════════

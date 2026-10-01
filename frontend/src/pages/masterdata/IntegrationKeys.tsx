@@ -206,7 +206,7 @@ function VisionConfigCard() {
 
 // ─── Bản đồ Goong (Điều vận) — khoá định vị địa chỉ / đo km đường bộ (user chốt 02/10: "dán trong app, có module chứa API mà") ──
 // Khoá lưu MÃ HOÁ ở cờ bí mật geo_api, cùng cơ chế AI Vision; máy ghép và bàn điều vận chỉ đọc toạ độ/km đã ghi trong DB.
-interface GeoCfg { configured: boolean; source: 'app' | 'env' | null; key_tail: string | null; provider: string; ready: boolean; reason: string | null }
+interface GeoCfg { configured: boolean; source: 'app' | 'env' | null; key_tail: string | null; provider: string; ready: boolean; matrix: boolean; precision: 'exact' | 'ward' | null; reason: string | null }
 const GOONG_KEY_PAGE = 'account.goong.io'
 function GeoConfigCard() {
   const qc = useQueryClient()
@@ -239,10 +239,12 @@ function GeoConfigCard() {
     onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
   })
   const busy = saveMut.isPending || testMut.isPending
+  // Không khoá ≠ không chạy (02/10): máy miễn phí OpenStreetMap định vị tới phường/xã; Goong thêm số nhà + km đường bộ
   const badge = !cfg ? null
+    : !cfg.configured && cfg.provider === 'osm' ? { cls: 'bg-sky-100 text-sky-800', text: 'Chưa có khoá — đang dùng OpenStreetMap miễn phí: định vị tới phường/xã · Đo km đường bộ cần Goong' }
     : !cfg.configured ? { cls: 'bg-amber-100 text-amber-700', text: 'Chưa có khoá — Định vị tự động và Đo km đang tắt' }
     : !cfg.ready ? { cls: 'bg-slate-200 text-slate-600', text: `Có khoá ${cfg.key_tail} · ${cfg.reason ?? 'máy định vị đang tắt'}` }
-    : { cls: 'bg-green-100 text-green-700', text: `Đang dùng · khoá ${cfg.key_tail}${cfg.source === 'env' ? ' (biến môi trường máy chủ)' : ''}` }
+    : { cls: 'bg-green-100 text-green-700', text: `Đang dùng Goong · khoá ${cfg.key_tail}${cfg.source === 'env' ? ' (biến môi trường máy chủ)' : ''} · định vị tới số nhà + đo km đường bộ` }
   return (
     <div className="shrink-0 mt-3 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm border-t sm:border-t-slate-200">
       <div className="px-3 py-2 border-b flex items-center gap-2 flex-wrap">

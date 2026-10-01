@@ -61,6 +61,8 @@ router.patch('/customers/bulk-rule',      requirePerm('customers', 'edit'),
   }) }), customer.bulkSetDateRule)
 // Toạ độ điểm giao (01/10, điều vận trên bản đồ) — quyền RIÊNG: locate = chấm tay / GPS, geocode = máy định vị hàng loạt
 router.get('/customers/geo-status',       requirePerm('customers', 'view'),    customerGeo.customerGeoStatus)
+// Ô tìm địa điểm trên bản đồ (02/10, "search như Google Map") — ai dời được ghim (khách hoặc kho) thì tìm được; chỉ đọc dịch vụ ngoài
+router.get('/geo/search', requireAnyPerm(['customers', 'locate'], ['wms_settings', 'manage_warehouse']), validate({ query: customerGeo.zGeoSearchQuery }), customerGeo.geoSearch)
 router.post('/customers/geocode',         requirePerm('customers', 'geocode'), validate({ body: customerGeo.zGeocodeBody }), customerGeo.geocodeCustomers)
 router.post('/customers',                 requirePerm('customers', 'edit'),   customer.createCustomer)
 router.put('/customers/:id',              requirePerm('customers', 'edit'),   customer.updateCustomer)

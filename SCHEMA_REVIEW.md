@@ -830,4 +830,6 @@ nhà xe) cố ý không cấp. Production vẫn 0/19 chức danh có `external_k
   OBSOLETE) · index một phần `(so_number, so_item) WHERE sync_status='ACTIVE'`.
 Bảng đã có `trg_wms_notify`; `TABLE_QUERY_MAP` thêm `dispatch_trip_od` + khoá `dispatch-sync`.
 
+**02/10/2026 — nguồn toạ độ `OSM` (migration `20261002c_geo_source_osm.sql`, đã áp staging).** CHECK `customer_geo_source_chk` / `warehouse_geo_source_chk` nhận thêm `'OSM'` — máy định vị OpenStreetMap (Photon, miễn phí, không khoá) điền ghim cấp phường/xã khi chưa có khoá Goong; `geo_accuracy_m` ghi 1500 cho ghim cấp này. Chỉ đổi CHECK, không đổi kiểu cột ⇒ `database.ts` không đổi.
+
 **02/10/2026 — `geo_distance` BẬT RLS (migration `20261002b_geo_distance_rls.sql`, đã áp staging).** Bảng mới của `20261002_warehouse_geo_distance.sql` thiếu `ENABLE ROW LEVEL SECURITY` — gói QA `00-invariant` bắt ngay (lượt CI 964 đỏ "HỞ: geo_distance"). Sau khi áp: RPC `rls_gap_tables` trả `[]`, không còn bảng public nào tắt RLS. Không policy nào (giống `dispatch_plan`/`dispatch_od_hold`) — backend đi `service_role` nên bỏ qua RLS.

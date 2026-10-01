@@ -117,8 +117,8 @@ export function DispatchMap({ plan, canPlan, onOpenTrip }: { plan: DispatchPlan;
           <span><b>{located.length}</b>/{custs.length} khách có ghim · <b>{trips.length}</b> xe</span>
           {/* ĐO KM đường bộ (02/10): nút nói thẳng số cặp còn thiếu + lý do chưa đo được (kho chưa ghim / chưa có khoá) */}
           {canPlan && geo.data && (
-            <Button size="sm" variant="outline" className="ml-auto h-7 text-[11px]" disabled={measure.isPending || !depot || !geo.data.measure.provider.ready || !geo.data.measure.pending}
-              title={!depot ? 'Kho chưa có ghim — chấm ở Cài đặt WMS → Kho' : !geo.data.measure.provider.ready ? (geo.data.measure.provider.reason ?? '') : geo.data.measure.pending ? `Đo ${geo.data.measure.pending.toLocaleString('vi-VN')} cặp kho→khách, khách↔khách (dưới 80 km) bằng Goong, ghi sổ dùng lại` : 'Mọi cặp đã có số đo'}
+            <Button size="sm" variant="outline" className="ml-auto h-7 text-[11px]" disabled={measure.isPending || !depot || !geo.data.measure.provider.matrix || !geo.data.measure.pending}
+              title={!depot ? 'Kho chưa có ghim — chấm ở Cài đặt WMS → Kho' : !geo.data.measure.provider.matrix ? (geo.data.measure.provider.matrix_reason ?? '') : geo.data.measure.pending ? `Đo ${geo.data.measure.pending.toLocaleString('vi-VN')} cặp kho→khách, khách↔khách (dưới 80 km) bằng Goong, ghi sổ dùng lại` : 'Mọi cặp đã có số đo'}
               onClick={() => void doMeasure()}>
               <Ruler className="h-3.5 w-3.5 mr-1" />{measure.isPending ? 'Đang đo…' : `Đo km${geo.data.measure.pending ? ` (${geo.data.measure.pending.toLocaleString('vi-VN')})` : ''}`}
             </Button>

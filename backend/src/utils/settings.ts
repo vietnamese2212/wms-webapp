@@ -229,9 +229,11 @@ export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_D
 // 'goong' (mặc định): gọi Goong với khoá dán ở trang Kết nối & API key (SystemSetting `geo_api` MÃ HOÁ, thuộc SECRET_SETTINGS
 // nên không lộ qua GET hở đọc; biến môi trường GOONG_API_KEY là đường lùi). 'none': tắt máy định vị — khách mới chấm tay / GPS; toạ độ và km ĐÃ ĐO vẫn nằm trong DB của mình.
 // Đổi nhà cung cấp = thêm giá trị ở đây + một nhánh trong services/geo.ts, máy ghép và bàn không đổi.
-export const GEO_PROVIDERS = ['goong', 'none'] as const
+// 02/10: thêm 'osm' (OpenStreetMap/Photon — miễn phí, không khoá, định vị tới PHƯỜNG/XÃ, KHÔNG đo được km đường bộ) và 'auto'
+// (mặc định: có khoá Goong thì Goong, không thì OSM) — user chưa có khoá Goong mà không muốn chấm tay 334 khách.
+export const GEO_PROVIDERS = ['auto', 'goong', 'osm', 'none'] as const
 export type GeoProvider = typeof GEO_PROVIDERS[number]
-export const GEO_PROVIDER_DEFAULT: GeoProvider = 'goong'
+export const GEO_PROVIDER_DEFAULT: GeoProvider = 'auto'
 export const parseGeoProvider = (raw: unknown): GeoProvider | null =>
   typeof raw === 'string' && (GEO_PROVIDERS as readonly string[]).includes(raw) ? (raw as GeoProvider) : null
 export const getGeoProvider = () => readSetting('geo_provider', GEO_PROVIDER_DEFAULT, parseGeoProvider)

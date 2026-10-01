@@ -4535,8 +4535,15 @@ export interface Customer {
   rules: MasterRuleRow[]
   channel_rules: MasterRuleRow[]
 }
-export type CustomerGeoSource = 'MANUAL' | 'GPS' | 'GOONG'
-export const GEO_SOURCE_VI: Record<CustomerGeoSource, string> = { MANUAL: 'Chấm tay', GPS: 'GPS tại chỗ', GOONG: 'Máy định vị' }
+// OSM (02/10): máy định vị OpenStreetMap miễn phí — ghim ở TÂM PHƯỜNG/XÃ theo địa chỉ, không tới số nhà
+export type CustomerGeoSource = 'MANUAL' | 'GPS' | 'GOONG' | 'OSM'
+export const GEO_SOURCE_VI: Record<CustomerGeoSource, string> = { MANUAL: 'Chấm tay', GPS: 'GPS tại chỗ', GOONG: 'Máy định vị', OSM: 'Máy · phường/xã' }
+/** Trạng thái máy định vị / máy đo km (BE services/geo geoProviderStatus) */
+export interface GeoProviderStatus {
+  provider: 'goong' | 'osm' | 'none'; configured: string
+  ready: boolean; matrix: boolean; precision: 'exact' | 'ward' | null
+  reason: string | null; matrix_reason: string | null
+}
 /** Toạ độ của một khách (cột trên dòng Customer) */
 export type CustomerGeo = Pick<Customer, 'id' | 'ship_to_code' | 'name' | 'address' | 'geo_lat' | 'geo_lng' | 'geo_source' | 'geo_accuracy_m' | 'geo_address' | 'geo_at' | 'geo_by'>
 export function useCustomerGeoStatus(enabled = true) {
@@ -4544,7 +4551,7 @@ export function useCustomerGeoStatus(enabled = true) {
     queryKey: ['customer-geo-status'],
     queryFn: async () => (await apiClient.get('/masterdata/customers/geo-status')).data.data as {
       total_active: number; located: number; remaining: number; by_source: Record<string, number>
-      provider: { provider: string; ready: boolean; reason: string | null }
+      provider: GeoProviderStatus
     },
     enabled, staleTime: 30_000,
   })
@@ -4564,6 +4571,7 @@ export function useGeocodeCustomers() {
   return useMutation({
     mutationFn: (body: { ids?: string[]; limit?: number } = {}) => apiClient.post('/masterdata/customers/geocode', body).then(r => r.data.data as {
       done: { id: string; ship_to_code: string; lat: number; lng: number }[]; failed: { id: string; ship_to_code: string; reason: string }[]; remaining: number
+      provider: string; precision: 'exact' | 'ward' | null
     }),
     onSettled: () => { invalidateCustomers(qc); qc.invalidateQueries({ queryKey: ['customer-geo-status'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
   })
@@ -4576,7 +4584,7 @@ export interface DispatchPlanGeo {
   warehouse: { id: string; code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null } | null
   customers: DispatchPlanGeoCustomer[]
   /** cặp (kho→khách, khách↔khách gần nhau) CHƯA có số đo + máy đo có sẵn sàng không */
-  measure: { pending: number; provider: { provider: string; ready: boolean; reason: string | null } }
+  measure: { pending: number; provider: GeoProviderStatus }
 }
 export function useDispatchPlanGeo(planId: string | null | undefined) {
   return useQuery({

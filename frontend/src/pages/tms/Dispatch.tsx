@@ -403,7 +403,7 @@ export default function Dispatch() {
               )}
               {/* KHAI THIẾU (26/09, user: "không khai báo đúng thì FG02 có thể dùng container mất") — máy xếp sai mà không lỗi
                   nào nổ, nên phải nói ra; gọn thành MỘT chip, chi tiết trong ⓘ để bàn ghép xe vẫn rộng */}
-              {plan && (() => {
+              {plan && tab !== 'map' && (() => {
                 const g = plan.params.config_gaps
                 const nCond = g?.no_condition.reduce((a, x) => a + x.ods, 0) ?? 0
                 const nCat = g?.no_category.ods ?? 0
@@ -435,7 +435,9 @@ export default function Dispatch() {
                   </span>
                 )
               })()}
-              <ActionCluster items={actionItems} mobileInline />
+              {/* Tab Bản đồ chỉ để XEM (user 02/10: "action không liên quan tới tab bản đồ thì bỏ") — Xác nhận / Lập lại / Excel / Bỏ nháp,
+                  chip Khai thiếu, dải Soát và dải Chỉ số đều thuộc bàn ghép xe; ở đây chỉ còn Kho · Ngày · Kế hoạch · trạng thái */}
+              {tab !== 'map' && <ActionCluster items={actionItems} mobileInline />}
             </div>
           </div>
         </div>
@@ -444,7 +446,7 @@ export default function Dispatch() {
             Dùng SWITCH hiện sẵn chứ không phải chip trong menu: cả lựa chọn LẪN số của từng lựa chọn
             phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại
             vấn đề nào KHÔNG có xe nào thì không hiện — menu đầy lựa chọn ra bảng trắng là vô ích. */}
-        {plan && !showReview && (
+        {plan && !showReview && tab !== 'map' && (
           // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
@@ -488,7 +490,7 @@ export default function Dispatch() {
           </div>
         )}
 
-        {plan && sum && f.kpiOpen && <DispatchKpiBar plan={plan} />}
+        {plan && sum && f.kpiOpen && tab !== 'map' && <DispatchKpiBar plan={plan} />}
 
         <div className={(tab === 'board' || showReview || tab === 'map') && plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (

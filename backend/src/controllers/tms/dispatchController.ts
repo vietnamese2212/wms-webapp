@@ -735,7 +735,7 @@ export async function measurePlanGeo(req: Request, res: Response) {
     // việc người sửa được NGAY trong app (ghim kho) nói trước, việc cần IT (khoá nhà cung cấp) nói sau
     if (!g.whNode) return fail(res, 422, 'WAREHOUSE_NOT_LOCATED', `${g.wh?.name ?? 'Kho xuất'} chưa có toạ độ — chấm ghim kho ở Cài đặt WMS → Kho trước.`)
     const st = await geoProviderStatus()
-    if (!st.ready) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.reason ?? 'Chưa cấu hình máy định vị')
+    if (!st.matrix) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.matrix_reason ?? 'Chưa cấu hình máy đo km')
     const todo = await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])
     const r = await measurePairs(todo, { maxCalls: 200 })
     const pending = (await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])).length

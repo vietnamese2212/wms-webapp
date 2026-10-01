@@ -34,6 +34,8 @@ router.get('/warehouses/:id',    warehouse.getWarehouse)
 router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
 // Toạ độ kho (02/10, điều vận trên bản đồ) — cửa riêng, cùng zod với khách; ghim kho = cấu hình của kho
 router.patch('/warehouses/:id/location', requirePerm('wms_settings', 'manage_warehouse'), validate({ params: zIdParam, body: customerGeo.zLocationBody }), warehouseGeo.setWarehouseLocation)
+// máy định vị kho từ địa chỉ (02/10) — không đè ghim do người (409 HUMAN_PIN)
+router.post('/warehouses/:id/geocode',   requirePerm('wms_settings', 'manage_warehouse'), validate({ params: zIdParam, body: z.object({}) }), warehouseGeo.geocodeWarehouse)
 router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)
 // LOẠI KHO CỦA TỪNG KHO (user chốt 21/08: loại kho thuộc về kho, không có danh mục chung để quản)
 // → nhận CẢ HAI quyền: manage_warehouse (đây là cấu hình của kho) và manage_type (tab Loại kho chỉ

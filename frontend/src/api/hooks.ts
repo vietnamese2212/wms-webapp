@@ -4601,6 +4601,30 @@ export function useMeasurePlanGeo() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }),
   })
 }
+/** Bản đồ theo KHÁCH HÀNG (02/10): hạng pallet SAP đã xuất trong kênh của kho × N ngày (RPC dispatch_customer_rank) */
+export interface DispatchCustomerRank {
+  ship_to_code: string; name: string | null; channel: string | null; is_active: boolean | null
+  geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null; region_name: string | null; ward_code: string | null
+  pallets: number; tons: number; ods: number; last_date: string | null; rank_in_channel: number; rank_all: number
+}
+export type CustomersMapDays = 7 | 30 | 90 | 180
+export function useDispatchCustomersMap(warehouseId: string | null | undefined, days: CustomersMapDays, enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-customers-map', warehouseId, days],
+    queryFn: async () => (await apiClient.get('/tms/dispatch/customers-map', { params: { warehouse_id: warehouseId, days } })).data.data as {
+      warehouse: { id: string; name: string; sap_plant: string | null }; from: string | null; to: string | null; days: number; rows: DispatchCustomerRank[]
+    },
+    enabled: enabled && !!warehouseId, staleTime: 120_000,
+  })
+}
+/** Máy định vị kho từ địa chỉ (02/10) — 409 HUMAN_PIN khi kho đã có ghim do người, 422 khi máy tắt / không thấy */
+export function useGeocodeWarehouse() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/masterdata/warehouses/${id}/geocode`).then(r => r.data.data as { id: string; geo_lat: number; geo_lng: number; geo_source: CustomerGeoSource; precision: 'exact' | 'ward'; formatted: string | null }),
+    onSettled: () => { qc.invalidateQueries({ queryKey: ['warehouses'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
+  })
+}
 /** Ghim kho (Cài đặt WMS → Kho) — quyền wms_settings.manage_warehouse */
 export function useSetWarehouseLocation() {
   const qc = useQueryClient()

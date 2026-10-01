@@ -757,22 +757,42 @@ try {
         geo.s === 200 && gc.some(c => c.ship_to_code === SHIP[0]) && gc.every(c => 'geo_lat' in c) && 'warehouse' in (geo.j?.data ?? {}) && typeof geo.j?.data?.measure?.pending === 'number'
           && (await api('/tms/dispatch/plans/undefined/geo')).s === 400,
         `http=${geo.s} n=${gc.length} ships=${gc.map(c => c.ship_to_code).join(',')} wh=${JSON.stringify(geo.j?.data?.warehouse ?? null).slice(0, 80)}`)
+      // [12i] (02/10) Bản đồ theo KHÁCH HÀNG: hạng pallet SAP trong kênh của kho × N ngày — RPC trả dòng; days lạ → 400; kho rác → 400
+      {
+        const cm = await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=30`)
+        const rows = cm.j?.data?.rows ?? []
+        const okRank = rows.every(r => typeof r.ship_to_code === 'string' && typeof r.pallets === 'number' && Number.isInteger(r.rank_in_channel) && r.rank_in_channel >= 1 && 'geo_lat' in r)
+        // hạng 1 của mỗi kênh có pallet ≥ mọi khách khác cùng kênh
+        const byCh = new Map()
+        for (const r of rows) { const k = r.channel ?? '—'; const l = byCh.get(k) ?? []; l.push(r); byCh.set(k, l) }
+        const okTop = [...byCh.values()].every(l => { const top = l.find(r => r.rank_in_channel === 1); return top && l.every(r => r.pallets <= top.pallets) })
+        check('12i. GET /dispatch/customers-map → 200 có warehouse/from/to/rows, mỗi dòng có hạng trong kênh ≥ 1 + toạ độ, hạng 1 là pallet lớn nhất của kênh · days=5 → 400 · kho rác → 400',
+          cm.s === 200 && typeof cm.j?.data?.from === 'string' && Array.isArray(rows) && okRank && okTop
+            && (await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=5`)).s === 400
+            && (await api('/tms/dispatch/customers-map?warehouse_id=undefined&days=30')).s === 400,
+          `http=${cm.s} n=${rows.length} from=${cm.j?.data?.from} kênh=${[...byCh.keys()].join(',')} okRank=${okRank} okTop=${okTop}`)
+      }
       // [12h] (02/10) Ghim KHO + đo km: kho fixture là Ba Vì THẬT ⇒ đọc ghim gốc, chấm thử, trả lại. Đo km: chưa có khoá Goong trên
       // staging ⇒ 422 GEO_NOT_CONFIGURED (có khoá ⇒ 200 với counts) — kho chưa ghim ⇒ 422 WAREHOUSE_NOT_LOCATED.
       const wh0 = (await restAll('Warehouse', `select=geo_lat,geo_lng,geo_source,geo_accuracy_m&id=eq.${WH}`))[0] ?? {}
       try {
         const clr = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: null, lng: null })
         const mNoWh = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo/measure`, 'POST', {})
+        // (02/10) máy định vị kho từ địa chỉ: ghim trống ⇒ 200 nguồn GOONG/OSM, hoặc 422 (máy tắt / không thấy) — không 5xx
+        const gw = await api(`/masterdata/warehouses/${WH}/geocode`, 'POST', {})
         const setWh = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: 21.1958, lng: 105.3936, source: 'MANUAL' })
         const whNow = (await restAll('Warehouse', `select=geo_lat,geo_lng,geo_source&id=eq.${WH}`))[0]
+        const gw2 = await api(`/masterdata/warehouses/${WH}/geocode`, 'POST', {})   // đã có ghim NGƯỜI ⇒ máy không đè: 409
         const geo2 = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo`)
         const m = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo/measure`, 'POST', {})
         const bad = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: 91, lng: 0, source: 'MANUAL' })
-        check('12h. Ghim kho: xoá → đo km 422 WAREHOUSE_NOT_LOCATED · chấm MANUAL → 200, cột lưu, /geo trả toạ độ kho · đo km → 422 chưa cấu hình hoặc 200 · lat 91 → 400',
+        check('12h. Ghim kho: xoá → đo km 422 WAREHOUSE_NOT_LOCATED · máy định vị kho 200 (GOONG/OSM) hoặc 422 · chấm MANUAL → 200, cột lưu, /geo trả toạ độ kho · máy không đè ghim người 409 · đo km → 422 chưa cấu hình hoặc 200 · lat 91 → 400',
           clr.s === 200 && mNoWh.s === 422 && mNoWh.j?.error?.code === 'WAREHOUSE_NOT_LOCATED'
+            && ((gw.s === 200 && ['GOONG', 'OSM'].includes(gw.j?.data?.geo_source)) || gw.s === 422)
             && setWh.s === 200 && Number(whNow?.geo_lat) === 21.1958 && whNow?.geo_source === 'MANUAL' && Number(geo2.j?.data?.warehouse?.geo_lat) === 21.1958
+            && gw2.s === 409 && gw2.j?.error?.code === 'HUMAN_PIN'
             && ((m.s === 422 && m.j?.error?.code === 'GEO_NOT_CONFIGURED') || (m.s === 200 && typeof m.j?.data?.measured === 'number')) && bad.s === 400,
-          `clr=${clr.s} noWh=${mNoWh.s}/${mNoWh.j?.error?.code} set=${setWh.s} col=${JSON.stringify(whNow)} geoWh=${geo2.j?.data?.warehouse?.geo_lat} measure=${m.s}/${m.j?.error?.code ?? 'ok'} bad=${bad.s}`)
+          `clr=${clr.s} noWh=${mNoWh.s}/${mNoWh.j?.error?.code} gw=${gw.s}/${gw.j?.data?.geo_source ?? gw.j?.error?.code} set=${setWh.s} col=${JSON.stringify(whNow)} gw2=${gw2.s}/${gw2.j?.error?.code} geoWh=${geo2.j?.data?.warehouse?.geo_lat} measure=${m.s}/${m.j?.error?.code ?? 'ok'} bad=${bad.s}`)
       } finally {
         await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { geo_lat: wh0.geo_lat ?? null, geo_lng: wh0.geo_lng ?? null, geo_source: wh0.geo_source ?? null, geo_accuracy_m: wh0.geo_accuracy_m ?? null }).catch(() => {})
       }

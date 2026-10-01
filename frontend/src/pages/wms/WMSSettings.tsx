@@ -29,7 +29,7 @@ import { OutboundStrategyFields, InboundStrategyFields, STRATEGY_EMPTY, type Str
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
-  useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse, useSetWarehouseLocation,
+  useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse, useSetWarehouseLocation, useGeocodeWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType,
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
   useImportShifts, useCreateImportShift, useUpdateImportShift,
@@ -683,7 +683,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; shiptos?: string[]; unlinked_shipto_policy?: string | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_max_vehicles_per_trip?: number; dispatch_detour_pct?: number | string | null; geo_lat?: number | null; geo_lng?: number | null; geo_source?: 'MANUAL' | 'GPS' | 'GOONG' | null; geo_accuracy_m?: number | null; geo_at?: string | null; geo_by?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; shiptos?: string[]; unlinked_shipto_policy?: string | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_max_drops?: number | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_max_vehicles_per_trip?: number; dispatch_detour_pct?: number | string | null; geo_lat?: number | null; geo_lng?: number | null; geo_source?: 'MANUAL' | 'GPS' | 'GOONG' | 'OSM' | null; geo_accuracy_m?: number | null; geo_at?: string | null; geo_by?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -809,6 +809,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const { data: allWhForParent = [] } = useWarehouses(false)
   // Ghim kho (02/10, điều vận trên bản đồ): cửa ghi RIÊNG, dòng SỐNG từ danh sách để lưu xong ghim trong form đổi theo
   const setLoc = useSetWarehouseLocation()
+  const geocodeWh = useGeocodeWarehouse()
   const liveWh = (allWhForParent as WhRow[]).find(w => w.id === wh?.id) ?? wh
   const parentOpts = [
     { value: '__none__', label: '— Kho thường (không trực thuộc) —' },
@@ -925,7 +926,17 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
                 canEdit
                 saving={setLoc.isPending}
                 onSave={p => setLoc.mutateAsync(p ? { id: liveWh.id, ...p } : { id: liveWh.id, lat: null, lng: null }).catch(e => { setErr(apiMsg(e)); throw e })} />
-              <p className="text-[11px] text-slate-400">Điều vận đo km từ ghim này tới từng khách — kho chưa có ghim thì tab Bản đồ không đo được.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* máy định vị theo địa chỉ kho (02/10) — không đè ghim do người; muốn máy làm lại thì Xoá ghim trước */}
+                {(liveWh.geo_lat == null || liveWh.geo_source === 'GOONG' || liveWh.geo_source === 'OSM') && (
+                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={geocodeWh.isPending || !liveWh.address}
+                    title={!liveWh.address ? 'Kho chưa có địa chỉ' : 'Máy định vị theo địa chỉ kho (Goong tới số nhà; không khoá thì OpenStreetMap tới phường/xã)'}
+                    onClick={() => { setErr(''); geocodeWh.mutate(liveWh.id, { onError: e => setErr(apiMsg(e)) }) }}>
+                    <MapPin className="h-3.5 w-3.5 mr-1" />{geocodeWh.isPending ? 'Đang định vị…' : 'Định vị theo địa chỉ'}
+                  </Button>
+                )}
+                <p className="text-[11px] text-slate-400">Điều vận đo km từ ghim này tới từng khách — kho chưa có ghim thì tab Bản đồ không đo được.</p>
+              </div>
             </div>
           )}
           <div className="space-y-1">

@@ -26,7 +26,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
-  Warehouse:           [['warehouses']],
+  Warehouse:           [['warehouses'], ['dispatch-plan-geo']],
   // Danh mục Khách hàng nuôi quy định date tự động ⇒ đổi khách là màn Quy định date phải đổi theo (11/09)
   Customer:            [['customers'], ['customer-channels'], ['customer-seed-candidates'], ['date-rule-lines'], ['customer-geo-status'], ['dispatch-plan-geo']],
   // Mức theo (khách|kênh) × loại hàng — cùng bộ màn với Customer vì nó là phần "mức" của chính khách

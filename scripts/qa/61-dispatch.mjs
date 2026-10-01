@@ -753,9 +753,29 @@ try {
       // [12g] (01/10) Tab Bản đồ: toạ độ khách của kế hoạch — chỉ đọc Customer.geo_*, khách chưa định vị vẫn có mặt (lat null)
       const geo = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo`)
       const gc = geo.j?.data?.customers ?? []
-      check('12g. GET /plans/:id/geo → 200, có đủ khách của kế hoạch kể cả khách chưa định vị (lat null) · id rác → 400',
-        geo.s === 200 && gc.some(c => c.ship_to_code === SHIP[0]) && gc.every(c => 'geo_lat' in c) && (await api('/tms/dispatch/plans/undefined/geo')).s === 400,
-        `http=${geo.s} n=${gc.length} ships=${gc.map(c => c.ship_to_code).join(',')}`)
+      check('12g. GET /plans/:id/geo → 200, có đủ khách của kế hoạch kể cả khách chưa định vị (lat null) · có khối kho + measure · id rác → 400',
+        geo.s === 200 && gc.some(c => c.ship_to_code === SHIP[0]) && gc.every(c => 'geo_lat' in c) && 'warehouse' in (geo.j?.data ?? {}) && typeof geo.j?.data?.measure?.pending === 'number'
+          && (await api('/tms/dispatch/plans/undefined/geo')).s === 400,
+        `http=${geo.s} n=${gc.length} ships=${gc.map(c => c.ship_to_code).join(',')} wh=${JSON.stringify(geo.j?.data?.warehouse ?? null).slice(0, 80)}`)
+      // [12h] (02/10) Ghim KHO + đo km: kho fixture là Ba Vì THẬT ⇒ đọc ghim gốc, chấm thử, trả lại. Đo km: chưa có khoá Goong trên
+      // staging ⇒ 422 GEO_NOT_CONFIGURED (có khoá ⇒ 200 với counts) — kho chưa ghim ⇒ 422 WAREHOUSE_NOT_LOCATED.
+      const wh0 = (await restAll('Warehouse', `select=geo_lat,geo_lng,geo_source,geo_accuracy_m&id=eq.${WH}`))[0] ?? {}
+      try {
+        const clr = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: null, lng: null })
+        const mNoWh = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo/measure`, 'POST', {})
+        const setWh = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: 21.1958, lng: 105.3936, source: 'MANUAL' })
+        const whNow = (await restAll('Warehouse', `select=geo_lat,geo_lng,geo_source&id=eq.${WH}`))[0]
+        const geo2 = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo`)
+        const m = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo/measure`, 'POST', {})
+        const bad = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: 91, lng: 0, source: 'MANUAL' })
+        check('12h. Ghim kho: xoá → đo km 422 WAREHOUSE_NOT_LOCATED · chấm MANUAL → 200, cột lưu, /geo trả toạ độ kho · đo km → 422 chưa cấu hình hoặc 200 · lat 91 → 400',
+          clr.s === 200 && mNoWh.s === 422 && mNoWh.j?.error?.code === 'WAREHOUSE_NOT_LOCATED'
+            && setWh.s === 200 && Number(whNow?.geo_lat) === 21.1958 && whNow?.geo_source === 'MANUAL' && Number(geo2.j?.data?.warehouse?.geo_lat) === 21.1958
+            && ((m.s === 422 && m.j?.error?.code === 'GEO_NOT_CONFIGURED') || (m.s === 200 && typeof m.j?.data?.measured === 'number')) && bad.s === 400,
+          `clr=${clr.s} noWh=${mNoWh.s}/${mNoWh.j?.error?.code} set=${setWh.s} col=${JSON.stringify(whNow)} geoWh=${geo2.j?.data?.warehouse?.geo_lat} measure=${m.s}/${m.j?.error?.code ?? 'ok'} bad=${bad.s}`)
+      } finally {
+        await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { geo_lat: wh0.geo_lat ?? null, geo_lng: wh0.geo_lng ?? null, geo_source: wh0.geo_source ?? null, geo_accuracy_m: wh0.geo_accuracy_m ?? null }).catch(() => {})
+      }
     }
   }
 

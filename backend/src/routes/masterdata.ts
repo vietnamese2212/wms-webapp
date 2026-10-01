@@ -7,6 +7,7 @@ import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as machine     from '../controllers/wms/machineController'
 import * as customer    from '../controllers/masterdata/customerController'
 import * as customerGeo from '../controllers/masterdata/customerGeoController'
+import * as warehouseGeo from '../controllers/masterdata/warehouseGeoController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
@@ -31,6 +32,8 @@ router.post('/warehouses',       requirePerm('wms_settings', 'manage_warehouse')
 router.get('/warehouses/type-flag-overrides', warehouse.listWhTypeFlagOverrides)
 router.get('/warehouses/:id',    warehouse.getWarehouse)
 router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
+// Toạ độ kho (02/10, điều vận trên bản đồ) — cửa riêng, cùng zod với khách; ghim kho = cấu hình của kho
+router.patch('/warehouses/:id/location', requirePerm('wms_settings', 'manage_warehouse'), validate({ params: zIdParam, body: customerGeo.zLocationBody }), warehouseGeo.setWarehouseLocation)
 router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)
 // LOẠI KHO CỦA TỪNG KHO (user chốt 21/08: loại kho thuộc về kho, không có danh mục chung để quản)
 // → nhận CẢ HAI quyền: manage_warehouse (đây là cấu hình của kho) và manage_type (tab Loại kho chỉ

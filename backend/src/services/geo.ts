@@ -24,6 +24,44 @@ export async function geoProviderStatus(): Promise<{ provider: string; ready: bo
 
 const inRange = (lat: number, lng: number) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
 
+export interface LatLng { lat: number; lng: number }
+/** Đường chim bay (km) — đường lùi khi chưa có nhà cung cấp; ×1,3 ≈ đường bộ (hệ số thường dùng cho đường liên tỉnh VN). */
+export function haversineKm(a: LatLng, b: LatLng): number {
+  const R = 6371, toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng)
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)))
+}
+export const ROAD_FACTOR = 1.3
+export const estimateRoadKm = (a: LatLng, b: LatLng) => Number((haversineKm(a, b) * ROAD_FACTOR).toFixed(2))
+
+const GOONG_MATRIX = 'https://rsapi.goong.io/DistanceMatrix'
+/** Một lượt gọi tối đa bao nhiêu điểm đích — Goong không công bố, giữ 25 như Google để không bị 400 giữa chừng. */
+export const MATRIX_MAX_DEST = 25
+export interface MatrixCell { km: number; minutes: number | null }
+/** Đo km ĐƯỜNG BỘ (xe tải) từ MỘT điểm đi tới nhiều điểm đến. null ở ô nào nhà cung cấp không tìm được đường. Ném GeoNotConfigured khi chưa có máy đo. */
+export async function distanceMatrix(origin: LatLng, dests: LatLng[]): Promise<(MatrixCell | null)[]> {
+  const st = await geoProviderStatus()
+  if (!st.ready) throw new GeoNotConfigured(st.reason ?? 'Chưa cấu hình máy định vị')
+  if (!dests.length) return []
+  if (dests.length > MATRIX_MAX_DEST) throw new Error(`Tối đa ${MATRIX_MAX_DEST} điểm đến mỗi lượt`)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  try {
+    const q = new URLSearchParams({ origins: `${origin.lat},${origin.lng}`, destinations: dests.map(d => `${d.lat},${d.lng}`).join('|'), vehicle: 'truck', api_key: process.env.GOONG_API_KEY ?? '' })
+    const r = await fetch(`${GOONG_MATRIX}?${q.toString()}`, { signal: ctrl.signal })
+    if (!r.ok) throw new Error(`Goong trả HTTP ${r.status}`)
+    const j = (await r.json()) as { rows?: { elements?: { status?: string; distance?: { value?: unknown }; duration?: { value?: unknown } }[] }[] }
+    const els = j.rows?.[0]?.elements ?? []
+    return dests.map((_, i) => {
+      const e = els[i]
+      const m = Number(e?.distance?.value), s = Number(e?.duration?.value)
+      if (!e || (e.status && e.status !== 'OK') || !Number.isFinite(m) || m < 0) return null
+      return { km: Number((m / 1000).toFixed(2)), minutes: Number.isFinite(s) ? Number((s / 60).toFixed(1)) : null }
+    })
+  } finally { clearTimeout(timer) }
+}
+
 /** Định vị MỘT địa chỉ. null = nhà cung cấp không tìm thấy. Ném GeoNotConfigured khi chưa có máy định vị; ném Error khi gọi hỏng. */
 export async function geocodeAddress(address: string): Promise<GeoPoint | null> {
   const st = await geoProviderStatus()

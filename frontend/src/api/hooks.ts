@@ -4569,12 +4569,37 @@ export function useGeocodeCustomers() {
   })
 }
 /** Toạ độ khách của một kế hoạch điều vận (tab Bản đồ) — chỉ đọc cột geo_* của Customer, không gọi dịch vụ ngoài */
-export interface DispatchPlanGeoCustomer { ship_to_code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null; geo_accuracy_m: number | null }
+/** km từ kho tới khách — GOONG = đã đo đường bộ · HAVERSINE = ước lượng chim bay × 1,3 (chưa đo) */
+export interface GeoDist { km: number; minutes: number | null; source: 'GOONG' | 'HAVERSINE' }
+export interface DispatchPlanGeoCustomer { ship_to_code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null; geo_accuracy_m: number | null; from_wh: GeoDist | null }
+export interface DispatchPlanGeo {
+  warehouse: { id: string; code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null } | null
+  customers: DispatchPlanGeoCustomer[]
+  /** cặp (kho→khách, khách↔khách gần nhau) CHƯA có số đo + máy đo có sẵn sàng không */
+  measure: { pending: number; provider: { provider: string; ready: boolean; reason: string | null } }
+}
 export function useDispatchPlanGeo(planId: string | null | undefined) {
   return useQuery({
     queryKey: ['dispatch-plan-geo', planId],
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/geo`)).data.data as { customers: DispatchPlanGeoCustomer[] },
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/geo`)).data.data as DispatchPlanGeo,
     enabled: !!planId, staleTime: 60_000,
+  })
+}
+/** Đo km đường bộ (Goong) cho kế hoạch, ghi sổ — quyền dispatch.plan; 422 GEO_NOT_CONFIGURED / WAREHOUSE_NOT_LOCATED nói thẳng lý do */
+export function useMeasurePlanGeo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (planId: string) => apiClient.post(`/tms/dispatch/plans/${planId}/geo/measure`).then(r => r.data.data as { measured: number; failed: number; calls: number; stopped_at_limit: boolean; pending: number; located: number; unlocated: number }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }),
+  })
+}
+/** Ghim kho (Cài đặt WMS → Kho) — quyền wms_settings.manage_warehouse */
+export function useSetWarehouseLocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & ({ lat: number; lng: number; source: 'MANUAL' | 'GPS'; accuracy_m?: number | null } | { lat: null; lng: null })) =>
+      apiClient.patch(`/masterdata/warehouses/${id}/location`, body).then(r => r.data.data as { id: string; geo_lat: number | null; geo_lng: number | null; geo_source: CustomerGeoSource | null }),
+    onSettled: () => { qc.invalidateQueries({ queryKey: ['warehouses'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan-geo'] }) },
   })
 }
 export interface CustomerFilters {

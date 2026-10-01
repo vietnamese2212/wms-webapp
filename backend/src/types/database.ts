@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-01T10:33:12.559Z · 109 bảng/view · 174 hàm · 0 enum
+// Sinh lúc 2026-10-01T11:52:03.132Z · 110 bảng/view · 174 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2457,6 +2457,12 @@ export type Database = {
           dispatch_max_vehicles_per_trip: number
           unlinked_shipto_policy: string
           dispatch_load_bands: Json | null
+          geo_lat: number | null
+          geo_lng: number | null
+          geo_source: string | null
+          geo_accuracy_m: number | null
+          geo_at: string | null
+          geo_by: string | null
         }
         Insert: {
           id: string
@@ -2509,6 +2515,12 @@ export type Database = {
           dispatch_max_vehicles_per_trip?: number
           unlinked_shipto_policy?: string
           dispatch_load_bands?: Json | null
+          geo_lat?: number | null
+          geo_lng?: number | null
+          geo_source?: string | null
+          geo_accuracy_m?: number | null
+          geo_at?: string | null
+          geo_by?: string | null
         }
         Update: {
           id?: string
@@ -2561,6 +2573,12 @@ export type Database = {
           dispatch_max_vehicles_per_trip?: number
           unlinked_shipto_policy?: string
           dispatch_load_bands?: Json | null
+          geo_lat?: number | null
+          geo_lng?: number | null
+          geo_source?: string | null
+          geo_accuracy_m?: number | null
+          geo_at?: string | null
+          geo_by?: string | null
         }
         Relationships: []
       }
@@ -4334,6 +4352,51 @@ export type Database = {
           booking_planned_boxes?: string | null
           booking_planned_pallets?: string | null
           visit_group_id?: string | null
+        }
+        Relationships: []
+      }
+      geo_distance: {
+        Row: {
+          id: string
+          from_key: string
+          to_key: string
+          from_lat: number
+          from_lng: number
+          to_lat: number
+          to_lng: number
+          km: number
+          minutes: number | null
+          source: string
+          measured_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          from_key: string
+          to_key: string
+          from_lat: number
+          from_lng: number
+          to_lat: number
+          to_lng: number
+          km: number
+          minutes?: number | null
+          source: string
+          measured_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          from_key?: string
+          to_key?: string
+          from_lat?: number
+          from_lng?: number
+          to_lat?: number
+          to_lng?: number
+          km?: number
+          minutes?: number | null
+          source?: string
+          measured_at?: string
+          updated_at?: string
         }
         Relationships: []
       }

@@ -20,6 +20,8 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
+import { haversineKm, geoProviderStatus, GeoNotConfigured } from '../../services/geo'
+import { distancesFor, unmeasured, measurePairs, whKey, custKey } from '../../services/geoDistance'
 import { ok, fail, type PgLikeError } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
@@ -655,17 +657,67 @@ export async function listPlans(req: Request, res: Response) {
 // GET /tms/dispatch/plans/:id/geo — toạ độ khách của kế hoạch cho tab Bản đồ (01/10): CHỈ đọc Customer.geo_* (của mình),
 // không gọi dịch vụ ngoài — nhà cung cấp định vị sập giữa ngày thì bàn vẫn vẽ. Khách chưa có toạ độ trả về với lat/lng null
 // để màn hình liệt kê "chưa định vị" thay vì im lặng thiếu ghim.
+type PlanGeoCust = { ship_to_code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: string | null; geo_accuracy_m: number | null }
+async function planGeoInput(planId: string) {
+  const full = await readPlan(planId)
+  if (!full) return null
+  const codes = uniq([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.ship_to_code).filter((x): x is string => !!x))
+  const customers = codes.length ? (await fetchAllByIdChunks(codes, c => db.from('Customer')
+    .select('ship_to_code, name, geo_lat, geo_lng, geo_source, geo_accuracy_m').in('ship_to_code', c).order('ship_to_code'))) as PlanGeoCust[] : []
+  const { data: wh } = await db.from('Warehouse').select('id, code, name, geo_lat, geo_lng, geo_source').eq('id', full.warehouse_id).maybeSingle()
+  const whNode = wh?.geo_lat != null && wh.geo_lng != null ? { key: whKey(wh.id), pt: { lat: Number(wh.geo_lat), lng: Number(wh.geo_lng) } } : null
+  const nodes = customers.filter(c => c.geo_lat != null && c.geo_lng != null).map(c => ({ key: custKey(c.ship_to_code), pt: { lat: Number(c.geo_lat), lng: Number(c.geo_lng) } }))
+  return { full, customers, wh, whNode, nodes }
+}
+// Cặp khách ↔ khách đáng đo: cùng kế hoạch VÀ đường chim bay dưới ngưỡng (hai khách cách nhau 400 km không bao giờ chung xe,
+// đo là đốt lượt). Ba Vì 179 khách: đủ cặp là 32.000, dưới 80 km còn vài nghìn.
+const PAIR_MAX_KM = 80
+function custPairs(nodes: { key: string; pt: { lat: number; lng: number } }[]) {
+  const out: { from: typeof nodes[number]; to: typeof nodes[number] }[] = []
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++)
+    if (haversineKm(nodes[i].pt, nodes[j].pt) <= PAIR_MAX_KM) out.push({ from: nodes[i], to: nodes[j] })
+  return out
+}
+// GET /tms/dispatch/plans/:id/geo — toạ độ kho + khách của kế hoạch cho tab Bản đồ (01/10; 02/10 thêm kho + km từ kho): CHỈ đọc
+// DB của mình, không gọi dịch vụ ngoài lúc xem. Khách chưa có toạ độ trả về với lat/lng null để màn hình liệt kê "chưa định vị".
+// km từ kho: số đo GOONG nếu đã đo, chưa thì ước lượng chim bay × 1,3 (nguồn HAVERSINE) — màn hình phải nói "ước lượng".
 export async function getPlanGeo(req: Request, res: Response) {
   try {
-    const full = await readPlan(String(req.params.id))
-    if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
-    if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const codes = uniq([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.ship_to_code).filter((x): x is string => !!x))
-    const customers = codes.length ? (await fetchAllByIdChunks(codes, c => db.from('Customer')
-      .select('ship_to_code, name, geo_lat, geo_lng, geo_source, geo_accuracy_m').in('ship_to_code', c).order('ship_to_code'))) as
-      { ship_to_code: string; name: string; geo_lat: number | null; geo_lng: number | null; geo_source: string | null; geo_accuracy_m: number | null }[] : []
-    return ok(res, { customers })
+    const g = await planGeoInput(String(req.params.id))
+    if (!g) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, g.full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const kmBy = new Map<string, { km: number; minutes: number | null; source: string }>()
+    if (g.whNode && g.nodes.length) {
+      const ds = await distancesFor(g.nodes.map(n => ({ from: g.whNode!, to: n })))
+      g.nodes.forEach((n, i) => kmBy.set(n.key, ds[i]))
+    }
+    const pairs = g.whNode ? custPairs(g.nodes) : []
+    const pending = g.whNode ? (await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...pairs])).length : 0
+    return ok(res, {
+      warehouse: g.wh ? { id: g.wh.id, code: g.wh.code, name: g.wh.name, geo_lat: g.wh.geo_lat, geo_lng: g.wh.geo_lng, geo_source: g.wh.geo_source } : null,
+      customers: g.customers.map(c => ({ ...c, from_wh: kmBy.get(custKey(c.ship_to_code)) ?? null })),
+      measure: { pending, provider: await geoProviderStatus() },
+    })
   } catch (e) { return failAny(res, e) }
+}
+// POST /tms/dispatch/plans/:id/geo/measure — đo km đường bộ (Goong, xe tải) cho kho → khách và khách ↔ khách gần nhau của kế hoạch,
+// ghi sổ geo_distance. Mỗi lượt tối đa 200 lời gọi (~45 s, dưới trần hàm) — trả `pending` để bấm tiếp. 422 khi chưa có máy đo.
+export async function measurePlanGeo(req: Request, res: Response) {
+  try {
+    const g = await planGeoInput(String(req.params.id))
+    if (!g) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, g.full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const st = await geoProviderStatus()
+    if (!st.ready) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.reason ?? 'Chưa cấu hình máy định vị')
+    if (!g.whNode) return fail(res, 422, 'WAREHOUSE_NOT_LOCATED', `Kho ${g.wh?.name ?? ''} chưa có toạ độ — chấm ghim kho ở Cài đặt WMS → Kho trước.`)
+    const todo = await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])
+    const r = await measurePairs(todo, { maxCalls: 200 })
+    const pending = (await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])).length
+    return ok(res, { ...r, pending, located: g.nodes.length, unlocated: g.customers.length - g.nodes.length })
+  } catch (e) {
+    if (e instanceof GeoNotConfigured) return fail(res, 422, 'GEO_NOT_CONFIGURED', e.message)
+    return failAny(res, e)
+  }
 }
 export async function getPlan(req: Request, res: Response) {
   try {

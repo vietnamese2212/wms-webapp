@@ -511,7 +511,7 @@ export default function Dispatch() {
           ) : tab === 'board' ? (
             <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
           ) : tab === 'map' ? (
-            <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={plan} onOpenTrip={setOpenTripId} /></div>
+            <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={plan} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           ) : (
             <>
               <ResizableTable key={showStatus ? 'st' : 'nost'} storageKey={showStatus ? 'dispatch_cols_v2' : 'dispatch_cols_draft_v1'} cols={cols}>

@@ -665,6 +665,8 @@ try {
   cat2Row = (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${CAT2}`))[0] ?? null
   const mkMat2 = await api('/masterdata/materials', 'POST', { material_code: MAT2, material_description: 'QA61 hàng Loại kho 2', category: CAT2, base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 12, cartons_per_pallet: 40 })
   mat2 = (await restAll('Material', `select=material_code,category,units_per_carton,cartons_per_pallet&material_code=eq.${MAT2}`))[0] ?? null
+  // meta Loại kho (ĐK bảo quản) nhớ 30 s mỗi instance — loại vừa tạo mà lập ngay thì instance khác coi là "chưa khai ĐK" ([12b2] đỏ oan 01/10)
+  await new Promise(r => setTimeout(r, 31_000))
   if (!mat2 || !cat2Row || mat2.category !== CAT2) check('12b. Fixture: Loại kho + mã hàng riêng của gói dựng được qua cửa app', false, `cat=${mkCat2.s} ${mkCat2.j?.error?.message ?? ''} mat=${mkMat2.s} ${mkMat2.j?.error?.message ?? ''} mat2=${JSON.stringify(mat2)}`)
   else {
     const OD8 = 'QA61OD8'

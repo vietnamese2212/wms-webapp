@@ -8,11 +8,12 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl })
 
-// Nền CARTO Voyager (dữ liệu OpenStreetMap, máy chủ tile CARTO cho phép ứng dụng dùng miễn phí ở mức vừa; máy chủ
-// tile.openstreetmap.org tự nhận "không dành cho ứng dụng" và đo 01/10 có lúc reset kết nối). Đổi nền = đổi hai dòng này.
-export const OSM_TILE = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-export const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-export const OSM_SUBDOMAINS = 'abcd'
+// Nền OpenStreetMap chuẩn qua ba máy chủ con a/b/c (mặc định của Leaflet). Đo 01/10: gọi thẳng `tile.openstreetmap.org` không
+// subdomain bị reset kết nối ở PC; CARTO Voyager nay đòi khoá API (ô nền in "API KEY REQUIRED"). Mức dùng của vài người điều vận
+// nằm trong "light usage" của OSM. Có khoá Goong rồi có thể đổi sang tile Goong (tính vào map loads). Đổi nền = đổi ba dòng này.
+export const OSM_TILE = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+export const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+export const OSM_SUBDOMAINS = 'abc'
 /** Tâm Việt Nam khi chưa có ghim nào */
 export const VN_CENTER: [number, number] = [16.2, 107.6]
 export const VN_ZOOM = 5

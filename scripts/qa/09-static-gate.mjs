@@ -500,6 +500,15 @@ const RULES = [
       (line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line) && /<Table\b/.test(line) && !/table-fixed/.test(line), s),
   },
   {
+    key: 'raw_table_outside_resizable',
+    label: 'bảng <Table> thô (tự kéo cột / tự vẽ tiêu đề) ngoài ResizableTable.tsx — bảng nghiệp vụ MỚI phải dùng ResizableTable + ListFooter (luật C40); luật trên chỉ bắt thiếu table-fixed nên tab Mã dòng xe (components/) lọt lưới tới 03/10',
+    // 03/10 (user: "khi tạo cái gì mới phải tuân thủ nguyên tắc CLAUDE.md về tạo bảng — tab Mã dòng xe không có"): tab viết 23/09 tự
+    // kéo cột bằng useColumnResize + chân bảng tự vẽ, qua được `list_table_not_resizable` vì có table-fixed và vì luật đó chỉ quét
+    // pages/. Đếm CẢ pages/ lẫn components/ (trừ chính ResizableTable); baseline = nợ cũ, code mới không được tăng.
+    count: (s) => countMatches(['frontend/src/pages', 'frontend/src/components'], ['.tsx'],
+      (line, file) => !/ResizableTable\.tsx$/.test(file ?? '') && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line) && /<Table\b/.test(line), s),
+  },
+  {
     key: 'move_without_ledger',
     label: 'cửa ĐỔI Ô pallet (rpc move_pallets_to_location / fill_scan_apply, hoặc ghi thẳng location_id) mà không gọi logPalletMoves — pallet đổi chỗ không để lại vết trong sổ Chuyển vị trí',
     count: countMoveWithoutLedger,

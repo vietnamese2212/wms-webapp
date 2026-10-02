@@ -13,6 +13,7 @@
   "native_browser_dialog": 31,
   "action_item_custom_fill": 1,
   "list_table_not_resizable": 45,
+  "raw_table_outside_resizable": 81,
   "move_without_ledger": 0,
   "naive_db_timestamp_parse": 7,
   "utc_slice_as_vn_day": 0,

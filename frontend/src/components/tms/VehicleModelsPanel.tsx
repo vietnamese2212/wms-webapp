@@ -12,7 +12,9 @@
 import { useMemo, useState } from 'react'
 import { Plus, Pencil, Trash2, Link2, Thermometer, PauseCircle, PlayCircle, Undo2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableBody, TableCell, TableRow } from '@/components/ui/table'
+import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
+import { ListFooter } from '@/components/shared/ListPager'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,7 +24,6 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
-import { useColumnResize } from '@/components/shared/useColumnResize'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -42,12 +43,13 @@ import {
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được'
 const nf = (n: number) => n.toLocaleString('vi-VN')
 const NONE = '__none__'
-const TH = 'text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+const TD0 = `${TD} sticky left-0 z-10`     // cột đầu ghim trái (ResizableTable ghim tiêu đề cột đầu)
 
+// Bảng nghiệp vụ = ResizableTable (skill table-format mục 7 / luật C40): kéo giãn cột + cột đầu sticky + cột thao tác ghim phải.
 // Cột: NGHIỆP VỤ đứng trước, cột phụ (điểm giao, sửa) ra sau — phone thấy phần chính không phải kéo ngang.
 // Chế độ KHO thêm cột "Cấu hình" (Riêng / Theo chung) ngay cạnh sức chứa — người xem biết số đang in là của kho hay của Chung.
-const COLS_SHARED = [
+const COLS_SHARED: RtColDef[] = [
   { id: 'pick',   label: '',                 w: 36 },
   { id: 'sap',    label: 'Mã SAP',           w: 100 },
   { id: 'name',   label: 'Tên dòng xe',      w: 230 },
@@ -58,9 +60,9 @@ const COLS_SHARED = [
   { id: 'drops',  label: 'Điểm giao tối đa', w: 110 },
   { id: 'act',    label: 'Trạng thái',       w: 90 },
   { id: 'upd',    label: 'Sửa',              w: 110 },
-  { id: 'ops',    label: '',                 w: 64 },
+  { id: 'ops',    label: '',                 w: 64, stickyRight: true },
 ]
-const COLS_WH = [
+const COLS_WH: RtColDef[] = [
   { id: 'pick',   label: '',                 w: 36 },
   { id: 'sap',    label: 'Mã SAP',           w: 100 },
   { id: 'name',   label: 'Tên dòng xe',      w: 230 },
@@ -69,9 +71,9 @@ const COLS_WH = [
   { id: 'cap',    label: 'Sức chứa tại kho', w: 130 },
   { id: 'drops',  label: 'Điểm giao tối đa', w: 110 },
   { id: 'act',    label: 'Dùng ở kho',       w: 90 },
-  { id: 'cfg',    label: 'Cấu hình',         w: 110 },
+  { id: 'cfg',    label: 'Cấu hình',         w: 170 },
   { id: 'unit',   label: 'Tính cước',        w: 150 },
-  { id: 'ops',    label: '',                 w: 64 },
+  { id: 'ops',    label: '',                 w: 64, stickyRight: true },
 ]
 
 /** Sức chứa theo MỘT thước đo (02/10): in số của thước đo đã chọn; số kia (nếu khai) chỉ là ghi chú trong tooltip. */
@@ -264,8 +266,6 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
   const setWh = useSetWarehouseVehicleModel()
   const [activating, setActivating] = useState(false)
   const COLS = whId ? COLS_WH : COLS_SHARED
-  // _v5: bỏ cột Non tải (02/10); chế độ kho có bộ cột riêng
-  const { widths: colW, startResize, totalWidth } = useColumnResize(whId ? 'vehicle_models_col_widths_v5_wh' : 'vehicle_models_col_widths_v5', COLS.map(c => c.w))
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [form, setForm] = useState<{ row: VehicleModel | null } | null>(null)
   const [whForm, setWhForm] = useState<VehicleModel | null>(null)
@@ -375,9 +375,6 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       default: return null
     }
   }
-  // Cột ghim trái: tick + Mã SAP (giữ ngữ cảnh khi cuộn ngang trên phone)
-  const stickyLeft = (i: number) => (i === 0 ? 'sticky left-0 z-10' : i === 1 ? `sticky z-10` : '')
-  const stickyStyle = (i: number) => (i === 1 ? { left: colW[0] } : undefined)
   const scopeBtn = (id: string, label: string) => (
     <button key={id || '__shared'} type="button" onClick={() => { setF({ whId: id }); setPicked(new Set()) }} aria-pressed={whId === id}
       className={`h-9 sm:h-7 px-2.5 rounded-full border text-[11px] font-medium whitespace-nowrap transition-colors ${whId === id ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
@@ -404,21 +401,8 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       </div>
       <SummaryBand tiles={tiles} />
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"
-          style={{ width: totalWidth, minWidth: '100%' }}>
-          <colgroup>{COLS.map((c, i) => <col key={c.id} style={{ width: colW[i] }} />)}</colgroup>
-          <TableHeader>
-            <TableRow>
-              {COLS.map((c, i) => (
-                <TableHead key={c.id} className={`${TH} ${stickyLeft(i)} bg-slate-50 ${i <= 1 ? 'z-20' : ''}`} style={stickyStyle(i)}>
-                  {c.id === 'pick'
-                    ? (canEdit && <input type="checkbox" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(rows.map(r => r.id)))} className="h-3.5 w-3.5 accent-sky-600" />)
-                    : c.label}
-                  <span onPointerDown={e => startResize(i, e)} className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70" />
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
+        {/* _v6: ResizableTable (03/10, luật C40); hai chế độ hai bộ cột ⇒ hai khoá nhớ độ rộng, key remount khi đổi chế độ */}
+        <ResizableTable key={whId ? 'wh' : 'shared'} storageKey={whId ? 'vehicle_models_cols_v6_wh' : 'vehicle_models_cols_v6'} cols={COLS}>
           <TableBody>
             {isLoading && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
             {!isLoading && !rows.length && (
@@ -427,24 +411,27 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
             {rows.map(m => (
               <TableRow key={m.id} className={`${m.is_active ? '' : 'text-slate-400 line-through'} ${picked.has(m.id) ? 'bg-sky-50' : ''}`}>
                 {COLS.map((c, i) => (
-                  <TableCell key={c.id} className={`${TD} ${stickyLeft(i)} ${i <= 1 ? (picked.has(m.id) ? 'bg-sky-50' : 'bg-white') : ''}`} style={stickyStyle(i)}>
+                  <TableCell key={c.id} className={`${i === 0 ? TD0 : TD} ${c.stickyRight ? 'sticky right-0 z-10' : ''} ${i === 0 || c.stickyRight ? (picked.has(m.id) ? 'bg-sky-50' : 'bg-white') : ''}`}>
                     {cell(m, c.id)}
                   </TableCell>
                 ))}
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </ResizableTable>
       </div>
-      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0 flex items-center gap-2 flex-wrap">
-        <span className="whitespace-nowrap">1–{rows.length} / {items.length} dòng xe con{whId ? ` · ${whName}` : ' · bản Chung'}</span>
-        <span className="flex-1 min-w-0 truncate text-slate-400">{whId
+      <ListFooter page={1} pageSize={Math.max(1, rows.length)} total={rows.length} unit={`dòng xe con${whId ? ` · ${whName}` : ' · bản Chung'}`} onPageSize={() => { }} options={[]}
+        right={whId
           ? 'Số in ở đây là số ĐANG HIỆU LỰC tại kho: Riêng = kho đã chỉnh · còn lại đang lấy từ bản Chung. Bấm bút chì để chỉnh riêng hoặc về theo chung.'
-          : 'Bản Chung cho mọi kho. Chọn một kho ở dải trên để bật/tắt dòng xe và chỉnh sức chứa, điểm giao riêng cho kho đó.'}</span>
-      </div>
+          : 'Bản Chung cho mọi kho. Chọn một kho ở dải trên để bật/tắt dòng xe và chỉnh sức chứa, điểm giao riêng cho kho đó.'} />
 
       {canEdit && picked.size > 0 && (
         <FloatingActionBar count={picked.size} unit="dòng xe">
+          {/* chọn-cả-danh-sách đứng trong pill (cùng luật trang Khách hàng) — tiêu đề cột đầu của ResizableTable không chứa ô tick */}
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-200">
+            <input type="checkbox" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(rows.map(r => r.id)))} className="h-4 w-4 accent-sky-400" />
+            Chọn cả {rows.length}
+          </label>
           {!whId && <Button size="sm" variant="outline" className={`${FLOATING_BTN} gap-1`} onClick={() => setAssignDlg(true)}><Link2 className="h-3.5 w-3.5" />Gán cha</Button>}
           {!whId && <Button size="sm" variant="outline" className={`${FLOATING_BTN} gap-1`} onClick={() => { setCondPick([]); setCondDlg(true) }}><Thermometer className="h-3.5 w-3.5" />Điều kiện bảo quản</Button>}
           <Button size="sm" variant="outline" className={`${FLOATING_BTN} gap-1`} disabled={activating} onClick={() => doSetActive(false)}><PauseCircle className="h-3.5 w-3.5" />{activating ? 'Đang lưu…' : whId ? 'Không dùng ở kho' : 'Tạm dừng'}</Button>

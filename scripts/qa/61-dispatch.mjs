@@ -1329,7 +1329,8 @@ try {
     check('17b. RÀO theo HỌ: DO mới thay cho DO đang ở KH xuất ngày khác → chặn, câu nêu "cùng họ" · quan hệ đã giải quyết → cho',
       /OD_ALREADY_PLANNED.*cùng họ/.test(e3 ?? '') && e4 === null, `e3=${(e3 ?? 'KHÔNG CHẶN').slice(0, 160)} e4=${e4 ? e4.slice(0, 80) : 'ok'}`)
     // cổng SAP ở KHO: chuyến Xuất kho của xe DA; DO1 bị SAP bỏ (mọi dòng OBSOLETE) ⇒ Bắt đầu chuyến 409 SAP_ISSUE_OPEN
-    const gdoA = khA.find(k => k.do_no === OD[0])?.gdo_id
+    const gcA = khA.find(k => k.do_no === OD[0])?.group_code
+    const gdoA = khA.find(k => k.do_no === OD[0])?.gdo_id ?? (gcA ? (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${gcA}`))[0]?.id : null)
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
     const st17 = gdoA ? await api(`/wms/outbound/${gdoA}/start`, 'POST', { license_plate: '29C12345' }) : { s: 0, j: null }
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { sync_status: 'ACTIVE', updated_at: nowIso() })
@@ -1377,9 +1378,10 @@ try {
     const outR2 = idB ? await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { ids: [idB], reason: 'QA61 SAP đã post' }) : { s: 0, j: null }
     const outBad = await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { od_numbers: [OD[1]], reason: '' })
     check('17h2. Ngoài app theo dòng kế hoạch (ids) → 200, OD rời khung chờ · lý do rỗng → 400', outR2.s === 200 && !rowOf(outR2.j?.data, OD[2]) && outBad.s === 400, `ids=${outR2.s} ${outR2.j?.error?.message ?? ''} bad=${outBad.s}`)
-    // Đơn QUÁ cửa sổ chưa quyết (ngày giao 01/02 < 03/03): /stale liệt kê · Không điều theo số OD (không có dòng kế hoạch) → rời danh sách
+    // Đơn QUÁ cửa sổ chưa quyết: /stale liệt kê · Không điều theo số OD (không có dòng kế hoạch) → rời danh sách.
+    // Ngày giao đặt RẤT cũ (2020) vì /stale trả 500 dòng cũ nhất — kho Ba Vì thật có ~3.600 đơn quá hạn, ngày 2027 sẽ bị cắt khỏi trang đầu
     const ODST = 'QA61ODSTALE'
-    await restWrite('erp_outbound_orders', 'POST', null, { id: crypto.randomUUID(), od_number: ODST, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet, ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: '2027-02-01', flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'POST', null, { id: crypto.randomUUID(), od_number: ODST, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet, ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: '2020-01-01', flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso() })
     const stl = await api(`/tms/dispatch/plans/${BID}/stale`)
     const hs = await api(`/tms/dispatch/plans/${BID}/hold`, 'POST', { od_numbers: [ODST], until: null, reason: 'QA61 quá hạn — không điều' })
     const stl2 = await api(`/tms/dispatch/plans/${BID}/stale`)
@@ -1388,6 +1390,8 @@ try {
       `stale=${stl.s} n=${stl.j?.data?.count} có=${(stl.j?.data?.rows ?? []).some(r => r.od_number === ODST)} hold=${hs.s} ${hs.j?.error?.message ?? ''} sau=${(stl2.j?.data?.rows ?? []).some(r => r.od_number === ODST)}`)
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODST}`).catch(() => {})
     await cleanupTrips()
+    // trả OD1–3 về OBSOLETE như [16] đã đặt — không thì [16d] ghép 4+3+3 của OD1–3 lẫn 4+3+3 của OD16A–C thành 9+6+5
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
   }
   // [16c–16d] tiếp — cần kế hoạch p16 còn nguyên: dựng lại nếu [17] đã dọn (cleanupTrips xoá mọi kế hoạch của kho × DAY)
   {

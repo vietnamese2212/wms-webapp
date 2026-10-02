@@ -1864,13 +1864,16 @@ async function holdOdsInner(req: Request, res: Response) {
     const full = (await readPlan(plan.id))!
     const all = [...full.trips.flatMap(t => t.ods), ...full.pool]
     const ids = uniq(b.ids ?? [])
-    const picked = all.filter(o => ids.includes(o.id))
-    if (picked.length !== ids.length) return fail(res, 'Có dòng OD không thuộc kế hoạch này (tải lại trang)', 404)
+    const byId = all.filter(o => ids.includes(o.id))
+    if (byId.length !== ids.length) return fail(res, 'Có dòng OD không thuộc kế hoạch này (tải lại trang)', 404)
+    // od_numbers trỏ tới OD ĐANG trên kế hoạch này ⇒ xử như chọn theo dòng (rời kế hoạch) — hai cửa một luật (02/10, gói 61 [15b]/[17h])
+    const odNums = uniq(b.od_numbers ?? [])
+    const picked = uniq([...byId, ...all.filter(o => odNums.includes(o.od_number))])
     const tripBy = new Map(full.trips.map(t => [t.id, t]))
     const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không hoãn OD của xe này ở đây.`)
     const planOds = uniq(picked.map(o => o.od_number))
-    const heldOds = uniq(b.od_numbers ?? []).filter(od => !planOds.includes(od))
+    const heldOds = odNums.filter(od => !planOds.includes(od))
     const ods = [...planOds, ...heldOds]
     const t = now()
     const actor = req.user?.name ?? null
@@ -2048,13 +2051,15 @@ async function outsideOdsInner(req: Request, res: Response) {
     const full = (await readPlan(plan.id))!
     const all = [...full.trips.flatMap(t => t.ods), ...full.pool]
     const ids = uniq(b.ids ?? [])
-    const picked = all.filter(o => ids.includes(o.id))
-    if (picked.length !== ids.length) return fail(res, 'Có dòng OD không thuộc kế hoạch này (tải lại trang)', 404)
+    const byId = all.filter(o => ids.includes(o.id))
+    if (byId.length !== ids.length) return fail(res, 'Có dòng OD không thuộc kế hoạch này (tải lại trang)', 404)
+    const odNums = uniq(b.od_numbers ?? [])
+    const picked = uniq([...byId, ...all.filter(o => odNums.includes(o.od_number))])   // như hold: OD đang trên kế hoạch thì rời kế hoạch
     const tripBy = new Map(full.trips.map(t => [t.id, t]))
     const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không đánh dấu OD của xe này ở đây.`)
     const planOds = uniq(picked.map(o => o.od_number))
-    const extra = uniq(b.od_numbers ?? []).filter(od => !planOds.includes(od))
+    const extra = odNums.filter(od => !planOds.includes(od))
     const bad = await odsOutsidePlant(plan.warehouse_id, extra)
     if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
     const ods = [...planOds, ...extra]

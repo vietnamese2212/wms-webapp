@@ -610,7 +610,7 @@ try {
     dNull.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id !== tripOfOd(p11e.j?.data, OD[1])?.id && (gaps11?.models ?? []).includes('QA61 Xe 9 Pallet')
     && d3.s === 200 && p11e2.s === 201 && tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id && !(p11e2.j?.data?.params?.config_gaps?.no_drops?.models ?? []).includes('QA61 Xe 9 Pallet'),
     `drops=${dNull.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')} gaps=${JSON.stringify(gaps11)} re=${d3.s}/${p11e2.s} same=${tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id}`)
-  const ro11 = await api(`/tms/dispatch/plans/${p11e.j?.data?.id}/reopen`, 'POST', {})
+  const ro11 = await api(`/tms/dispatch/plans/${p11e2.j?.data?.id}/reopen`, 'POST', {})   // p11e đã bị cleanupTrips dọn ở [11e]
   check('11f. Mở lại khi chưa xe nào vào Kế hoạch xuất → 422 NOTHING_TO_REOPEN', ro11.s === 422 && ro11.j?.error?.code === 'NOTHING_TO_REOPEN', `http=${ro11.s} code=${ro11.j?.error?.code}`)
 
   // Mở lại: xác nhận ⇒ mở lại ⇒ dòng Kế hoạch xuất gỡ, xe về nháp, chuyến bên Xuất GIỮ id ⇒ xác nhận lại ⇒ cùng Số xe sống lại

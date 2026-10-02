@@ -47,6 +47,7 @@
   "hardcoded_warehouse_type_code": 0,
   "mojibake_double_utf8": 0,
   "superadmin_by_name": 0,
+  "new_table_without_rls": 1,
   "location_write_without_move_rpc": 1,
   "putaway_door_unreviewed": 0,
   "task_status_written_outside_service": 0,

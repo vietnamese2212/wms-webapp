@@ -826,6 +826,40 @@ const RULES = [
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
         && /\.name\s*[!=]==\s*'Admin'|\.employee_code\s*[!=]==\s*'ADMIN'|name\.eq\.Admin/.test(line), s),
   },
+  // BẢNG MỚI PHẢI TỰ KHAI `ENABLE ROW LEVEL SECURITY` — gói `00-invariant` đã gác việc này, nhưng nó
+  // chỉ đo được SAU khi migration đã apply + CI chạy xong, tức sau khi email đỏ đã gửi. Đo thật:
+  // `geo_distance` (01/10) và `warehouse_vehicle_model` (02/10) — hai bảng trong hai ngày, riêng cái
+  // thứ hai làm ĐỎ NĂM lượt CI liên tiếp cho đúng MỘT dòng thiếu. Luật này bắt ngay ở `git push`.
+  // Ranh giới theo NGÀY, không theo đếm mò: migration `20260805c_rls_close_remaining.sql` đã quét bật
+  // RLS cho mọi bảng có trước nó bằng vòng lặp `DO` (nên chúng không có dòng `ALTER TABLE … ENABLE`
+  // nào để tìm). Từ sau mốc đó, bảng mới phải tự khai — 46 bảng đã tạo, chỉ 2 thiếu.
+  // Baseline 1 = `bak_20260815` (bảng sao lưu của một migration dữ liệu, đã DROP khỏi DB — soi
+  // `pg_class` 02/10 không còn bảng `bak%` nào). KHÔNG miễn trừ theo tiền tố `bak_`: đúng cảnh báo
+  // Supabase 03/08 là "StocktakeLog + 10 bảng BACKUP hở" — bảng sao lưu chứa dữ liệu thật y như bảng
+  // gốc, miễn nó là miễn đúng chỗ nguy hiểm nhất.
+  {
+    key: 'new_table_without_rls',
+    label: 'bảng TẠO MỚI trong migration (sau đợt quét 20260805c) mà không có `ALTER TABLE … ENABLE ROW LEVEL SECURITY`',
+    count: (s) => {
+      const SWEEP = '20260805c'
+      const created = new Map(), rlsOn = new Set()
+      for (const f of filesOf('backend/migrations', ['.sql'])) {
+        const name = f.slice(f.lastIndexOf('/') + 1).replace(/^.*[\\]/, '')
+        const code = readFileSync(f, 'utf8').split(/\r?\n/).filter(l => !/^\s*--/.test(l)).join('\n')
+        for (const m of code.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?/gi))
+          if (!created.has(m[1])) created.set(m[1], name)
+        for (const m of code.matchAll(/ALTER\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi))
+          rlsOn.add(m[1])
+      }
+      let n = 0
+      for (const [table, file] of created) {
+        if (file <= SWEEP || rlsOn.has(table)) continue
+        n++
+        if (s && s.length < 5) s.push(`${file}: bảng ${table}`)
+      }
+      return n
+    },
+  },
   // Đổi VỊ TRÍ pallet phải đi qua RPC `move_pallets_to_location` — RPC khoá dòng Location rồi mới
   // đếm sức chứa DƯỚI LOCK. Ghi thẳng `location_id` bằng UPDATE là bỏ qua hàng rào đó: hai người
   // cùng dồn vào một ô 1 slot thì cả hai cùng "thành công", và tồn kho ghi 2 pallet ở chỗ chỉ chứa

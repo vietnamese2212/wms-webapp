@@ -1,0 +1,11 @@
+-- 03/10/2026 — BẬT RLS cho `warehouse_vehicle_model` (bảng "dòng xe cấu hình theo kho", tạo ở
+-- `20261003a_warehouse_vehicle_model.sql` mà thiếu đúng dòng này).
+--
+-- Đây là lần THỨ HAI trong hai ngày: `geo_distance` hôm 01/10, bảng này hôm 02/10 — và riêng nó làm
+-- ĐỎ NĂM lượt CI liên tiếp (985 · 986 · 987 · 989 · 990), năm email, cho một dòng.
+-- Vì vậy kèm theo bản vá này là luật tĩnh `new_table_without_rls` ở cổng 09: bảng mới tạo sau đợt
+-- quét `20260805c` mà không tự khai RLS thì CHẶN NGAY Ở `git push`, không đợi CI đo hộ.
+--
+-- Không policy nào — backend đi `service_role` (bỏ qua RLS) nên hành vi app không đổi; `anon` /
+-- `authenticated` vốn đã 0 quyền bảng. Bật RLS không có policy = khoá kín với mọi vai khác.
+ALTER TABLE public.warehouse_vehicle_model ENABLE ROW LEVEL SECURITY;

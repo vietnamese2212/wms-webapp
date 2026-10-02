@@ -240,7 +240,7 @@ function MobileFilterSheet({ defs, activeCount, onClearAll, className }: {
                     <span className="text-sm text-slate-700">{def.label}</span>
                     <span className="flex items-center gap-1 min-w-0">
                       <span className={`text-xs truncate max-w-[160px] ${active ? 'font-medium text-blue-700' : 'text-slate-400'}`}>
-                        {active ? chipValue(def) : 'Tất cả'}
+                        {active ? chipValue(def) : (def.type === 'single' && def.allLabel) || 'Tất cả'}
                       </span>
                       <ChevronRight className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
                     </span>
@@ -287,7 +287,9 @@ function FilterChip({ def, open, onToggle, onClose }: {
       }`}>
         <button type="button" onClick={onToggle} className="h-full pl-2.5 pr-1.5 inline-flex items-center gap-1">
           <span className="text-slate-500">{def.label}</span>
-          {active && <span className="font-medium text-slate-800 max-w-[160px] truncate">{chipValue(def)}</span>}
+          {/* 03/10: lọc đơn có `allLabel` (vd "Chung") in nhãn đó khi trống — chip ghim không đứng trần một chữ nhãn */}
+          {active ? <span className="font-medium text-slate-800 max-w-[160px] truncate">{chipValue(def)}</span>
+            : def.type === 'single' && def.allLabel ? <span className="font-medium text-slate-800 max-w-[160px] truncate">{def.allLabel}</span> : null}
           <ChevronDown className="h-3 w-3 text-slate-400 shrink-0" />
         </button>
         {active && (

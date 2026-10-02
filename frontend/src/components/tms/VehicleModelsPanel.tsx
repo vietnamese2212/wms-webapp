@@ -319,6 +319,10 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
   }
 
   const filterDefs: FilterDef[] = [
+    // 03/10 (user: "để đỡ rối, filter tại bảng: Chung | Kho…"): bộ lọc GHIM đầu bar như "Kho xuất" ở Cước — trống = bản Chung (master data),
+    // chọn kho = cấu hình riêng của kho đó; theo bối cảnh Kho ở Header qua sweepGlobalScope
+    { key: 'wh', label: 'Cấu hình', type: 'single', pinned: true, allLabel: 'Chung (mọi kho)', value: whId, onChange: v => { setF({ whId: v }); setPicked(new Set()) },
+      options: whs.map(w => ({ value: w.id, label: w.code ? `${w.code} · ${w.name}` : w.name })) },
     { key: 'parent', label: 'Dòng xe cha', type: 'multi', selected: f.parents, onChange: v => setF({ parents: v }), options: parentOpts },
     { key: 'cap', label: 'Đo tải', type: 'single', value: f.capMode, onChange: v => setF({ capMode: v }), options: [{ value: 'PALLET', label: 'Pallet' }, { value: 'TON', label: 'Tấn' }] },
     { key: 'status', label: whId ? 'Dùng ở kho' : 'Trạng thái', type: 'single', value: f.status, onChange: v => setF({ status: v }), options: [{ value: 'active', label: whId ? 'Đang dùng' : 'Hoạt động' }, { value: 'inactive', label: whId ? 'Không dùng' : 'Tạm dừng' }] },
@@ -375,21 +379,9 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       default: return null
     }
   }
-  const scopeBtn = (id: string, label: string) => (
-    <button key={id || '__shared'} type="button" onClick={() => { setF({ whId: id }); setPicked(new Set()) }} aria-pressed={whId === id}
-      className={`h-9 sm:h-7 px-2.5 rounded-full border text-[11px] font-medium whitespace-nowrap transition-colors ${whId === id ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-      {label}
-    </button>
-  )
-
   return (
     <>
       <div className="border-b px-3 py-1.5 space-y-1 sm:space-y-1.5 shrink-0">
-        {/* Dải chọn phạm vi (03/10): "Chung" = master data · "Kho …" = cấu hình riêng của kho. Hàng cuộn ngang khi nhiều kho (360 px). */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mb-0.5">
-          {scopeBtn('', 'Chung')}
-          {whs.map(w => scopeBtn(w.id, w.code ? `${w.code} · ${w.name}` : w.name))}
-        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm mã SAP, tên dòng xe…" className="flex-1 min-w-[160px]" />
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">

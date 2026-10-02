@@ -1429,18 +1429,20 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
     }
     const k = khvc.find(x => x.do_no === od && !ownGroupCodes.includes(x.group_code))
     if (k) { out.push({ od_number: od, kind: 'IN_PLAN', info: `đã có trong Kế hoạch xuất (${k.group_code})` }); continue }
-    const sh = live.find(r => (r.mat_doc && String(r.mat_doc).trim()) || Number(r.qty_issued_base ?? 0) > 0)
-    if (sh) { out.push({ od_number: od, kind: 'SHIPPED', info: `đã xuất kho${sh.mat_doc ? ` (${sh.mat_doc})` : ''}` }); continue }
-    const as = live.find(r => r.sap_dispatch_status === 'ASSIGNED')
-    if (as) { out.push({ od_number: od, kind: 'SAP_ASSIGNED', info: `SAP đã điều: ${[as.dvvt_raw, as.license_plate].filter(Boolean).join(' · ') || 'đã điều phối'}` }); continue }
-    // CÙNG OD mà SAP sửa (SL / dòng hàng / ghi chú giao hàng) sau khi chụp — kế hoạch đang tính tải + cước theo bản CŨ
+    // CÙNG OD mà SAP sửa (SL / dòng hàng / ghi chú giao hàng) sau khi chụp — kế hoạch đang tính tải + cước theo bản CŨ.
+    // Xét TRƯỚC hai cờ tham chiếu bên dưới (02/10, gói 61 [10m] bắt): từ 03/10 SHIPPED / SAP_ASSIGNED không chặn Xác nhận nữa,
+    // nên nếu để chúng `continue` trước thì một OD vừa "SAP đã gắn xe" vừa "SAP đã sửa số lượng" lọt qua cổng với tải cũ.
     const snap = snaps.get(od)
     if (snap?.sig) {
       const active = inSlocs(live.filter(r => r.sync_status === 'ACTIVE'), slocs)
       const mine = day ? linesOfDay(active, day) : active   // ĐÚNG tập dòng lúc chụp (loadCandidates): Sloc của kho + luật dòng của ngày lập
       const qty = odSig(mine) !== snap.sig, cur = noteOf(mine), note = (cur ?? '') !== (snap.note ?? '')
-      if (qty || note) out.push({ od_number: od, kind: 'CHANGED', info: [qty ? 'SAP đã sửa số lượng / dòng hàng' : null, note ? `ghi chú giao hàng đổi thành «${cur ?? 'trống'}»` : null].filter(Boolean).join(' · ') })
+      if (qty || note) { out.push({ od_number: od, kind: 'CHANGED', info: [qty ? 'SAP đã sửa số lượng / dòng hàng' : null, note ? `ghi chú giao hàng đổi thành «${cur ?? 'trống'}»` : null].filter(Boolean).join(' · ') }); continue }
     }
+    const sh = live.find(r => (r.mat_doc && String(r.mat_doc).trim()) || Number(r.qty_issued_base ?? 0) > 0)
+    if (sh) { out.push({ od_number: od, kind: 'SHIPPED', info: `đã xuất kho${sh.mat_doc ? ` (${sh.mat_doc})` : ''}` }); continue }
+    const as = live.find(r => r.sap_dispatch_status === 'ASSIGNED')
+    if (as) out.push({ od_number: od, kind: 'SAP_ASSIGNED', info: `SAP đã điều: ${[as.dvvt_raw, as.license_plate].filter(Boolean).join(' · ') || 'đã điều phối'}` })
   }
   return out
 }

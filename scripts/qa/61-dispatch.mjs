@@ -785,7 +785,8 @@ try {
         const whNow = (await restAll('Warehouse', `select=geo_lat,geo_lng,geo_source&id=eq.${WH}`))[0]
         const gw2 = await api(`/masterdata/warehouses/${WH}/geocode`, 'POST', {})   // đã có ghim NGƯỜI ⇒ máy không đè: 409
         const geo2 = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo`)
-        const m = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo/measure`, 'POST', {})
+        // max_calls 1: ghim kho ở đây là toạ độ GIẢ ⇒ mọi cặp đo ra không bao giờ dùng; không giới hạn thì mỗi lượt CI đốt ~30 lượt Goong (user hỏi phí 02/10)
+        const m = await api(`/tms/dispatch/plans/${pF.j.data.id}/geo/measure`, 'POST', { max_calls: 1 })
         const bad = await api(`/masterdata/warehouses/${WH}/location`, 'PATCH', { lat: 91, lng: 0, source: 'MANUAL' })
         check('12h. Ghim kho: xoá → đo km 422 WAREHOUSE_NOT_LOCATED · máy định vị kho 200 (GOONG/OSM) hoặc 422 · chấm MANUAL → 200, cột lưu, /geo trả toạ độ kho · máy không đè ghim người 409 · đo km → 422 chưa cấu hình hoặc 200 · lat 91 → 400',
           clr.s === 200 && mNoWh.s === 422 && mNoWh.j?.error?.code === 'WAREHOUSE_NOT_LOCATED'

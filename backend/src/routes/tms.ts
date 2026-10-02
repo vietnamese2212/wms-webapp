@@ -86,7 +86,7 @@ router.get('/dispatch/plans',                 requirePerm('dispatch', 'view'),  
 router.get('/dispatch/plans/:id',             requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlan)
 router.get('/dispatch/plans/:id/geo',         requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanGeo)   // tab Bản đồ (01/10)
 router.get('/dispatch/customers-map',         requirePerm('dispatch', 'view'),    validate({ query: dispatch.zCustomersMapQuery }),             dispatch.getCustomersMap)   // tab Bản đồ — theo khách hàng, hạng pallet trong kênh (02/10)
-router.post('/dispatch/plans/:id/geo/measure', requirePerm('dispatch', 'plan'),   validate({ params: zIdParam }),                                dispatch.measurePlanGeo)   // đo km Goong, ghi sổ geo_distance (02/10)
+router.post('/dispatch/plans/:id/geo/measure', requirePerm('dispatch', 'plan'),   validate({ params: zIdParam, body: dispatch.zMeasureBody }),  dispatch.measurePlanGeo)   // đo km Goong, ghi sổ geo_distance (02/10); max_calls trần lượt gọi
 router.post('/dispatch/plan',                 requirePerm('dispatch', 'plan'),    validate({ body: dispatch.zPlanBody }),                        dispatch.createPlan)
 router.patch('/dispatch/trips/:id',           requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zTripPatch }),     dispatch.updateTrip)
 router.get('/dispatch/trips/:id/carriers',    requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.tripCarriers)  // ĐVVT xếp hạng theo cước cho xe này

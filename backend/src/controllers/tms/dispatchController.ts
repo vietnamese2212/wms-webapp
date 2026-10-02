@@ -751,6 +751,7 @@ export async function getCustomersMap(req: Request, res: Response) {
 }
 // POST /tms/dispatch/plans/:id/geo/measure — đo km đường bộ (Goong, xe tải) cho kho → khách và khách ↔ khách gần nhau của kế hoạch,
 // ghi sổ geo_distance. Mỗi lượt tối đa 200 lời gọi (~45 s, dưới trần hàm) — trả `pending` để bấm tiếp. 422 khi chưa có máy đo.
+export const zMeasureBody = z.object({ max_calls: z.number().int().min(1).max(200).optional() })
 export async function measurePlanGeo(req: Request, res: Response) {
   try {
     const g = await planGeoInput(String(req.params.id))
@@ -761,7 +762,9 @@ export async function measurePlanGeo(req: Request, res: Response) {
     const st = await geoProviderStatus()
     if (!st.matrix) return fail(res, 422, 'GEO_NOT_CONFIGURED', st.matrix_reason ?? 'Chưa cấu hình máy đo km')
     const todo = await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])
-    const r = await measurePairs(todo, { maxCalls: 200 })
+    // max_calls: trần lượt gọi nhà cung cấp cho MỘT lần bấm (mặc định 200). Gói QA 61 [12h] chấm ghim kho GIẢ rồi bấm Đo km mỗi lượt CI ⇒
+    // trước đây mỗi lượt kiểm đốt vài chục lượt Goong đo cặp không bao giờ dùng (user hỏi phí 02/10) — QA truyền 1.
+    const r = await measurePairs(todo, { maxCalls: (req.body as z.infer<typeof zMeasureBody>).max_calls ?? 200 })
     const pending = (await unmeasured([...g.nodes.map(n => ({ from: g.whNode!, to: n })), ...custPairs(g.nodes)])).length
     return ok(res, { ...r, pending, located: g.nodes.length, unlocated: g.customers.length - g.nodes.length })
   } catch (e) {

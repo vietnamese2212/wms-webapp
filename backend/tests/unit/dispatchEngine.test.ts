@@ -390,6 +390,20 @@ describe('luật 7 BỎ (user 29/09: "dòng xe là đơn vị thấp hơn của 
     const r = runDispatch(inp([od('1', 'W1', 3, { allowed_models: ['P10'] }), od('2', 'W1', 3, { allowed_models: ['P10'] })], [model({ ...P10, max_drops: 2 }), T8]))
     expect(r.trips).toHaveLength(1); expect(r.trips[0].stops).toBe(2)
   })
+  // 02/10 (user: "dòng xe cho phép ghép nhiều, riêng khách đó chỉ đi 1 — cài đặt WMS tham gia làm gì?"): số của kho chỉ là MẶC ĐỊNH
+  // cho dòng xe không khai, không đè lên dòng xe đã khai; khách muốn đi một mình thì tự hạ bằng "Số khách tối đa cùng xe" / "Đi xe riêng"
+  it('kho mặc định 3 nhưng dòng xe khai 5 ⇒ 5 khách 1 pallet lên MỘT xe (đỏ trên bản cũ: kho đè còn 3 + 2)', () => {
+    const P50 = model({ id: 'P50', max_pallets: 50, max_drops: 5 })
+    const r = runDispatch(inp(['1', '2', '3', '4', '5'].map(n => od(n, 'W1', 1, { allowed_models: ['P50'] })), [P50]))
+    expect(r.trips).toHaveLength(1); expect(r.trips[0].stops).toBe(5)
+  })
+  it('dòng xe khai 5 nhưng MỘT khách khai "số khách tối đa cùng xe" = 1 ⇒ khách đó đi riêng, 4 khách còn lại chung xe', () => {
+    const P50 = model({ id: 'P50', max_pallets: 50, max_drops: 5 })
+    const ods = ['1', '2', '3', '4'].map(n => od(n, 'W1', 1, { allowed_models: ['P50'] }))
+    const r = runDispatch(inp([...ods, od('5', 'W1', 1, { allowed_models: ['P50'], max_customers: 1 })], [P50]))
+    expect(r.trips).toHaveLength(2)
+    expect(r.trips.map(t => t.stops).sort()).toEqual([1, 4])
+  })
   it('khách A chỉ vào T8, khách B chỉ vào P10 ⇒ không dòng xe chung ⇒ hai xe; cả hai cùng vào T8 ⇒ một xe', () => {
     const r = runDispatch(inp([od('1', 'W1', 2, { allowed_models: ['T8'] }), od('2', 'W1', 2, { allowed_models: ['P10'] })]))
     expect(r.trips).toHaveLength(2)

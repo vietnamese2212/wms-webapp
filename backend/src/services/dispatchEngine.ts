@@ -19,8 +19,10 @@
  *     nhất → mã ĐVVT (ổn định). Tỷ trọng cộng dồn NGAY trong lượt ghép để chuyến sau thấy chuyến trước.
  *  7. ~~PALLET / XÁ (25/09)~~ — BỎ 29/09 (user: "dòng xe là đơn vị thấp hơn của loại xe — bỏ loại xe, chọn dòng xe luôn"):
  *     không còn kiểu đi của khách / của xe; họ xe = ĐÚNG danh sách "Dòng xe được vào" (luật 10). Số khách tối đa trên một xe
- *     = nhỏ nhất trong (điểm giao của kho `max_drops` · `max_drops` của dòng xe · số khách khai ở kênh/khách) — "xe pallet
- *     một khách" nay là `max_drops = 1` khai ở Mã dòng xe (migration 20260929c đặt sẵn cho dòng xe con của Loại xe pallet).
+ *     = nhỏ nhất trong (`max_drops` của DÒNG XE — không khai thì theo mặc định của kho `params.max_drops` · số khách khai ở
+ *     kênh/khách, chỉ HẠ xuống). 02/10 (user: "dòng xe cho phép ghép nhiều, riêng khách đó chỉ đi 1"): số của kho KHÔNG còn là trần
+ *     chung đè lên dòng xe đã khai. "Xe pallet một khách" = `max_drops = 1` khai ở Mã dòng xe (20260929c đặt sẵn); khách phải đi
+ *     một mình = tick "Đi xe riêng" hoặc "Số khách tối đa cùng xe" = 1 ở khách / kênh.
  *  8. ~~DÒNG XE DÙNG CHO VIỆC GÌ (25/09, `dispatch_use` TRANSFER)~~ — BỎ 28/09 (user: "dòng xe chọn theo khai báo của khách,
  *     khách không khai thì không chọn — bỏ config ở Mã dòng xe"). Container chỉ đi khi khách / kênh tick nó (luật 10).
  *  9. KHÔNG TRỘN LOẠI KHO (26/09, user: "FG01 đi với FG01, FG02 đi FG02, muốn đi chung phải bật công tắc"): khoá cụm mang
@@ -418,13 +420,16 @@ const withUnits = (b: Bin, units: Unit[]): Bin => {
  *  nào nhận — đo Ba Vì 25/09: 3 chuyến "chưa chọn dòng xe". `cands` = họ dòng xe của bin (ưu tiên xe có cước). */
 const binFits = (cands: EngineModel[], b: Bin, maxStops: number | null) => {
   const stops = binStops(b)
-  // trần kho VÀ trần do chính các OD trên bin mang (28/09: khách × kênh khai "số khách tối đa cùng xe"); trần của
-  // từng dòng xe (`max_drops`, vd xe pallet = 1) hỏi ở vế dưới cùng với tải + điều kiện bảo quản
-  const cap = minCap(maxStops, odStopsCap(b.units.map(u => u.od)))
+  // trần do chính các OD trên bin mang (28/09: khách × kênh khai "số khách tối đa cùng xe" — chỉ HẠ xuống); trần của từng dòng xe
+  // (`max_drops`, vd xe pallet = 1) hỏi ở vế dưới cùng với tải + điều kiện bảo quản. 02/10 (user: "dòng xe cho phép ghép nhiều, riêng
+  // khách đó chỉ đi 1"): số của KHO không còn là trần chung — chỉ là MẶC ĐỊNH cho dòng xe không khai (`maxStops`).
+  const cap = odStopsCap(b.units.map(u => u.od))
   if (cap != null && stops > cap) return false
   const conds = condsOf(b.units.flatMap(u => u.lines))
-  return cands.some(m => servesConditions(m, conds) && fits(m, b.pallets, b.tons) && (m.max_drops == null || stops <= m.max_drops))
+  return cands.some(m => servesConditions(m, conds) && fits(m, b.pallets, b.tons) && stops <= modelDrops(m, maxStops))
 }
+/** Điểm giao tối đa của một dòng xe: khai ở Mã dòng xe; không khai thì theo mặc định của kho; cả hai trống = không giới hạn. */
+const modelDrops = (m: EngineModel, whDefault: number | null | undefined) => m.max_drops ?? whDefault ?? Infinity
 
 /** Luật 3 (tách): OD vượt xe lớn nhất → cắt theo dòng hàng nguyên (lớn trước), mỗi phần ≤ sức chứa; dòng đơn lẻ vượt → phần riêng `oversize`. */
 export function splitOversize(od: EngineOd, big: EngineModel): Unit[] {
@@ -612,7 +617,7 @@ function bestCombo(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, K: num
   const region = b.units[0]?.od.region_code ?? null
   const pAll = b.units.every(u => u.pallets != null) ? r3(b.pallets) : null
   const tAll = b.units.every(u => u.tons != null) ? r3(b.tons) : null
-  const all = fleetFor(ctx.models, b.units.map(u => u.od)).filter(m => servesConditions(m, conds) && (m.max_drops == null || stops <= m.max_drops))
+  const all = fleetFor(ctx.models, b.units.map(u => u.od)).filter(m => servesConditions(m, conds) && stops <= modelDrops(m, ctx.input.params.max_drops))
   const combo = ctx.input.params.combo_conditions ?? []
   const needCombo = combo.filter(c => conds.includes(c)).length >= 2
   const single = combo.length >= 2 && !needCombo ? all.filter(m => !isComboFor(m, combo)) : all
@@ -671,7 +676,7 @@ function assignSingle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, und
   const tAll = b.units.every(u => u.tons != null) ? r3(b.tons) : null
   const oversize = b.units.some(u => u.oversize)
   const family = fleetFor(ctx.models, b.units.map(u => u.od))
-  const cands0 = family.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
+  const cands0 = family.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && stops <= modelDrops(m, ctx.input.params.max_drops))
     .sort((a, c) => (numOr(a.max_pallets, 1e9) - numOr(c.max_pallets, 1e9)) || (numOr(a.max_tons, 1e9) - numOr(c.max_tons, 1e9)) || cmp(a.sap_code, c.sap_code))
   // Chuyến VƯỢT TẢI (một dòng hàng lớn hơn mọi xe): không xe nào "vừa" nên ba bậc bên dưới sẽ chọn xe RẺ NHẤT — đo Bàu Bàng 26/09
   // ra xe 1 tấn cho dòng 27 tấn (tải 2.737 %). Chỉ giữ các dòng xe CỠ LỚN NHẤT, trong đó mới chọn theo cước.
@@ -717,7 +722,7 @@ function assignSingle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, und
     // lời giục sẽ tick bừa xe thường thành xe lạnh, tức đẩy hàng lạnh lên xe không có lạnh. Đo Ba Vì 07/09
     // sau khi khai FG02 = 2–8 °C: đúng 1 chuyến rơi vào ca này (31,564 pallet, xe lạnh lớn nhất 30 pallet).
     const serving = conds.length ? family.filter(m => servesConditions(m, conds)) : family
-    const fitIgnoringConds = family.some(m => (oversize || fits(m, pAll, tAll)) && (m.max_drops == null || stops <= m.max_drops))
+    const fitIgnoringConds = family.some(m => (oversize || fits(m, pAll, tAll)) && stops <= modelDrops(m, ctx.input.params.max_drops))
     const condText = conds.map(condLabel).join(' + ')
     const famText = 'dòng xe'
     const listed = hasAllowList(b.units.map(u => u.od))

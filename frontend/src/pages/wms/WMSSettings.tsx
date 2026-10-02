@@ -1105,9 +1105,9 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           {/* ĐIỀU VẬN (24/09) — tham số cho máy ghép chuyến (trang Điều vận). CHỈ tầng kho: ghép chuyến là việc của cả kho,
               một chuyến chở lẫn loại hàng nên không có bản khai theo Loại kho. Mặc định = 3 điểm · không trộn kênh · Non tải theo dòng xe. */}
           <SettingsGroup area="XUẤT" title="Điều vận — ghép chuyến">
-            <SettingRow label="Điểm giao tối đa một chuyến"
-              desc="Máy chỉ gộp thêm khách vào chuyến khi tổng số điểm giao không vượt số này (1–50). Để trống = không giới hạn. Kênh / từng khách khai 'Số khách tối đa cùng xe' và dòng xe khai 'Điểm giao tối đa' (vd xe pallet = 1) thì xe lấy số nhỏ nhất."
-              tip={<>Nhiều điểm giao = ít chuyến hơn nhưng phụ phí rớt điểm cao hơn và xe về muộn hơn. Máy so cước thật trước khi gộp — gộp mà đắt hơn đi hai chuyến thì không gộp.</>}
+            <SettingRow label="Điểm giao mặc định khi dòng xe không khai"
+              desc="Chỉ áp cho dòng xe CHƯA khai 'Điểm giao tối đa' ở Cài đặt TMS → Mã dòng xe (1–50; trống = không giới hạn). Dòng xe đã khai thì theo dòng xe (vd xe pallet = 1). Kênh / từng khách khai 'Số khách tối đa cùng xe' hoặc 'Đi xe riêng' chỉ HẠ xuống cho khách đó."
+              tip={<>Thứ tự (02/10): dòng xe quyết số điểm giao → kho chỉ điền chỗ dòng xe bỏ trống → khách / kênh hạ xuống khi muốn đi riêng. Nhiều điểm giao = ít chuyến hơn nhưng phụ phí rớt điểm cao hơn và xe về muộn hơn; máy so cước thật trước khi gộp.</>}
               control={<Input id="wh-disp-drops" type="number" min={1} max={50} className="h-7 w-28 text-xs text-right"
                 value={dispMaxDrops} onChange={e => setDispMaxDrops(e.target.value)} placeholder="Không giới hạn" />} />
             <SettingRow label="Số xe tối đa trên một thẻ (một Số xe)"

@@ -30,3 +30,6 @@
 view, create (= Up VL06O/ZSD02 tại trang này, hoặc `outbound.import`), edit, delete, export 
 
 **30/09 — "đã xuất" của ZSD02:** file thật không có cột "đã xuất"; `qty_issued_base` suy từ "Số lượng còn lại chưa xuất / nhập" (đơn vị BÁN) × hệ số base/bán; còn lại 0 = xuất trọn; `billing_no` = "Billing" hoặc "Số hóa đơn". Điều vận dùng cột này để loại đơn đã đi (không chỉ Mat Doc). Chi tiết ở [dispatch.md](dispatch.md).
+
+## 03/10 — bảng DO SAP in thêm 14 cột ZSD02 ở CUỐI bảng (user: "như ở Xem đơn, các thông tin chưa có nạp ra phía sau của table — đặc biệt quan trọng là Ngày tạo")
+Thứ tự cột cũ giữ nguyên (độ rộng người dùng đã kéo không lệch; khoá nhớ `dosap_col_widths_v7`), nối thêm: Ngày tạo OD (`od_created_at`) · Ngày tạo SO (`so_created_at`) · Loại SO · Người tạo (`raw.created_by` — ZSD02 không có cột riêng) · Vùng · Khu vực bán · Kênh PP · Tham chiếu KH · Lái xe SAP · m³ SAP · SL đã xuất · Mat.doc · Hoá đơn · Duyệt. Dòng VL06O / nhập tay để trống các cột này. 26 cột ZSD02 không có cột riêng vẫn chỉ ở panel chi tiết. Không đổi API (`GET /external/do-sap` đã trả `select('*')`).

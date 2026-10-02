@@ -112,8 +112,25 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'plan_date',  label: 'Ngày xuất (KH)' },
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
+  // 03/10 (user: "như ở Xem đơn, các thông tin chưa có nạp ra phía sau của table — đặc biệt Ngày tạo"): phần còn lại của ZSD02
+  // có cột riêng đứng CUỐI bảng, giữ thứ tự cột cũ (độ rộng đã lưu của người dùng không lệch). 26 cột không có cột riêng vẫn ở panel.
+  { id: 'od_created', label: 'Ngày tạo OD' },
+  { id: 'so_created', label: 'Ngày tạo SO' },
+  { id: 'so_type',    label: 'Loại SO' },
+  { id: 'created_by', label: 'Người tạo' },
+  { id: 'region',     label: 'Vùng' },
+  { id: 'district',   label: 'Khu vực bán' },
+  { id: 'dchan',      label: 'Kênh PP' },
+  { id: 'cref',       label: 'Tham chiếu KH' },
+  { id: 'driver',     label: 'Lái xe SAP' },
+  { id: 'm3',         label: 'm³ SAP', align: 'right' },
+  { id: 'issued',     label: 'SL đã xuất', align: 'right' },
+  { id: 'matdoc',     label: 'Mat.doc' },
+  { id: 'billing',    label: 'Hoá đơn' },
+  { id: 'approval',   label: 'Duyệt' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 100, 110, 160, 90, 90, 95, 135, 70, 90, 90, 80, 110, 150, 75, 85, 75, 75, 100, 70, 160, 90, 65, 150, 95, 80, 110]
+const COL_DEFAULTS = [40, 110, 55, 100, 110, 160, 90, 90, 95, 135, 70, 90, 90, 80, 110, 150, 75, 85, 75, 75, 100, 70, 160, 90, 65, 150, 95, 80, 110,
+  90, 90, 70, 110, 70, 100, 70, 130, 110, 70, 90, 100, 100, 80]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -196,7 +213,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // Nút nạp nguồn: ai import được bên Xuất, hoặc ai được tạo dữ liệu SAP tại chính trang này
   const canUploadVl06o = can(perms, 'outbound', 'import') || can(perms, 'external_do_sap', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v6', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v7', COL_DEFAULTS)   // v7: +14 cột ZSD02 cuối bảng (03/10)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -537,6 +554,21 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                         <div className="text-[9px] text-slate-400">{r.updated_at ? formatTimestampDate(r.updated_at, true) : ''}</div>
                       </div>
                     </TableCell>
+                    {/* 03/10 — phần ZSD02 còn lại, cuối bảng (VL06O / tay để trống) */}
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.od_created_at ? formatDate(r.od_created_at) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.so_created_at ? formatDate(r.so_created_at) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.so_type || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={typeof r.raw?.created_by === 'string' ? r.raw.created_by : undefined}>{typeof r.raw?.created_by === 'string' && r.raw.created_by ? r.raw.created_by : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.region_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.sales_district ?? undefined}>{r.sales_district || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dist_channel || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.customer_ref ?? undefined}>{r.customer_ref || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.driver_name ?? undefined}>{r.driver_name || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.sap_m3 != null ? Number(r.sap_m3).toLocaleString('vi-VN', { maximumFractionDigits: 3 }) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.qty_issued_base != null ? num(Number(r.qty_issued_base)) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.mat_doc || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.billing_no || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.approval_status || <span className="text-slate-300">—</span>}</TableCell>
                   </TableRow>
                 )
               })}

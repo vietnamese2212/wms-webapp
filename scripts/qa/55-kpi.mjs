@@ -211,31 +211,49 @@ try {
   }
 
   // ═══ [5] Mục tiêu 3 tầng: mặc định → công ty → riêng kho ═══
+  //
+  // ⚠️ ĐỌC NGAY SAU KHI GHI LÀ ĐỎ NGẪU NHIÊN (bậc đêm 01/10, [5f]): mục tiêu KPI nằm trong
+  // `SystemSetting`, mà `utils/settings.ts` cache 30 s **mỗi INSTANCE** — `invalidateSettingsCache()`
+  // chỉ xoá cache của lambda xử lý PUT, còn GET rơi vào lambda khác vẫn trả bản CŨ tới khi hết TTL.
+  // Trúng cùng instance thì xanh, trúng instance khác thì đỏ; đo được cả hai kết quả trên CÙNG bản code
+  // trong hai lượt chạy liền nhau. Gói 28 và 61 đã vấp lớp này và ngủ cứng 31 s.
+  // Ở đây ĐỌC LẠI tới khi thấy giá trị mới (tối đa 35 s) — chắc như ngủ cứng mà nhanh hơn hẳn khi trúng
+  // cùng instance. KHÔNG khoá lỗi lại: hết giờ vẫn trả lần đọc CUỐI để phép kiểm tự đỏ với số thật.
+  const apiFresh = async (path, ok, ms = 35_000) => {
+    const t0 = Date.now()
+    let last = await api(path)
+    while (!ok(last) && Date.now() - t0 < ms) {
+      await new Promise(res => setTimeout(res, 2000))
+      last = await api(path)
+    }
+    return last
+  }
+  const srcOf = (res, id) => res.j?.data?.kpis?.find(x => x.id === id)?.t_source
   r = await api('/wms/kpi/targets')
   check('[5a] GET targets → 200 + default/by_warehouse/params/defs', r.s === 200 && r.j?.data?.default && r.j.data.by_warehouse && r.j.data.params && Array.isArray(r.j.data.defs), `http=${r.s}`)
   r = await api('/wms/kpi/targets', 'PUT', { warehouse_id: null, targets: { otif: [99, 97], doh: [20, 30, 40] }, params: { slow_days: 60, dead_days: 120 } })
   check('[5b] PUT mặc định công ty (otif 99/97, doh dải 20–30–40, ngưỡng chậm 60/120) → 200', r.s === 200 && r.j?.data?.default?.otif?.[0] === 99 && r.j.data.params.slow_days === 60, `http=${r.s} ${err(r)}`)
-  r = await api(q())
+  r = await apiFresh(q(), x => srcOf(x, 'otif') === 'global')
   let k = r.j?.data?.kpis?.find(x => x.id === 'otif')
-  check('[5c] GET kpi: otif dùng mục tiêu CÔNG TY [99,97], t_source=global; ngưỡng chậm 60 ngày lọt xuống RPC', k?.t?.[0] === 99 && k?.t_source === 'global' && r.j?.data?.slow_days === 60, `t=${JSON.stringify(k?.t)} src=${k?.t_source} slow=${r.j?.data?.slow_days}`)
+  check('[5c] GET kpi: otif dùng mục tiêu CÔNG TY [99,97], t_source=global; ngưỡng chậm 60 ngày lọt xuống RPC', k?.t?.[0] === 99 && k?.t_source === 'global' && r.j?.data?.slow_days === 60, `http=${r.s} t=${JSON.stringify(k?.t)} src=${k?.t_source} slow=${r.j?.data?.slow_days}`)
   k = r.j?.data?.kpis?.find(x => x.id === 'fill')
-  check('[5d] KPI không đặt → vẫn dùng mặc định bộ KPI (fill 98/95, t_source=default)', k?.t?.[0] === 98 && k?.t_source === 'default', `t=${JSON.stringify(k?.t)} src=${k?.t_source}`)
+  check('[5d] KPI không đặt → vẫn dùng mặc định bộ KPI (fill 98/95, t_source=default)', k?.t?.[0] === 98 && k?.t_source === 'default', `http=${r.s} t=${JSON.stringify(k?.t)} src=${k?.t_source}`)
   r = await api('/wms/kpi/targets', 'PUT', { warehouse_id: WH, targets: { otif: null, fill: [97, 90] } })
   check('[5e] PUT riêng kho Ba Vì (otif: không đặt · fill 97/90) → 200', r.s === 200 && r.j?.data?.by_warehouse?.[WH]?.fill?.[0] === 97 && r.j.data.by_warehouse[WH].otif === null, `http=${r.s} ${err(r)}`)
-  r = await api(q(`&warehouse_id=${WH}`))
+  r = await apiFresh(q(`&warehouse_id=${WH}`), x => srcOf(x, 'fill') === 'warehouse')
   const kO = r.j?.data?.kpis?.find(x => x.id === 'otif'), kF = r.j?.data?.kpis?.find(x => x.id === 'fill')
   check('[5f] Xem kho Ba Vì: otif KHÔNG mục tiêu (đèn null, t_source=warehouse) · fill 97/90 riêng kho', kO?.t === null && kO?.rag === null && kO?.t_source === 'warehouse' && kF?.t?.[0] === 97 && kF?.t_source === 'warehouse',
-    `otif=${JSON.stringify(kO?.t)}/${kO?.rag}/${kO?.t_source} fill=${JSON.stringify(kF?.t)}/${kF?.t_source}`)
+    `http=${r.s} otif=${JSON.stringify(kO?.t)}/${kO?.rag}/${kO?.t_source} fill=${JSON.stringify(kF?.t)}/${kF?.t_source}`)
   r = await api(q())
   k = r.j?.data?.kpis?.find(x => x.id === 'otif')
   const rowBV = r.j?.data?.by_warehouse?.find(w => w.warehouse_id === WH)
   check('[5g] Xem toàn công ty: tổng dùng mục tiêu công ty [99,97]; dòng kho Ba Vì trong bảng theo mục tiêu RIÊNG kho', k?.t?.[0] === 99 && k?.t_source === 'global' && (!rowBV || rowBV.kpis.find(x => x.id === 'fill')?.t_source === 'warehouse'),
-    `tổng=${JSON.stringify(k?.t)} bavi=${rowBV ? rowBV.kpis.find(x => x.id === 'fill')?.t_source : 'không có dòng'}`)
+    `http=${r.s} tổng=${JSON.stringify(k?.t)} bavi=${rowBV ? rowBV.kpis.find(x => x.id === 'fill')?.t_source : 'không có dòng'}`)
   r = await api('/wms/kpi/targets', 'PUT', { warehouse_id: WH, targets: {} })
   check('[5h] PUT riêng kho = {} → gỡ ghi đè, kho về theo công ty', r.s === 200 && !(WH in (r.j?.data?.by_warehouse ?? {})), `http=${r.s}`)
-  r = await api(q(`&warehouse_id=${WH}`))
+  r = await apiFresh(q(`&warehouse_id=${WH}`), x => srcOf(x, 'otif') === 'global')
   k = r.j?.data?.kpis?.find(x => x.id === 'otif')
-  check('[5i] Sau khi gỡ: kho Ba Vì dùng lại mục tiêu công ty (t_source=global)', k?.t?.[0] === 99 && k?.t_source === 'global', `src=${k?.t_source}`)
+  check('[5i] Sau khi gỡ: kho Ba Vì dùng lại mục tiêu công ty (t_source=global)', k?.t?.[0] === 99 && k?.t_source === 'global', `http=${r.s} src=${k?.t_source}`)
 
   // Validator
   for (const [label, body] of [

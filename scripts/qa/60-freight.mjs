@@ -125,32 +125,42 @@ try {
 
   // ── [1e] DÒNG XE THEO KHO (03/10 — user: "mỗi kho sẽ có setting khác nhau: Bàu Bàng có xe 1,9 tấn, Ba Vì không";
   //        "thêm dòng xe thì bắt buộc thêm ở Chung, không cho master data khác nhau ở các kho") ──
+  // RIÊNG THEO TỪNG Ô (03/10 chiều, user: "đổi 1 điểm tại kho mà mọi setting Chung không với tới nữa — chưa hợp lý")
   const ov1 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: 12 })
   const atWh = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
   const shared = ((await api('/tms/vehicle-models')).j?.data?.items ?? []).find(m => m.id === vmId)
-  check('1e. PUT cấu hình riêng kho (chỉ pallet 12) → 201 bản chụp đủ 4 giá trị (chép is_active + max_drops từ Chung) · GET ?warehouse_id= in 12 + wh_override + shared 9 · GET Chung vẫn 9',
-    ov1.s === 201 && ov1.j?.data?.max_pallets === 12 && ov1.j?.data?.max_drops === 3 && ov1.j?.data?.is_active === true
-    && atWh?.max_pallets === 12 && atWh?.wh_override === true && atWh?.shared?.max_pallets === 9 && shared?.max_pallets === 9 && shared?.wh_override === false,
-    `put=${ov1.s} ${ov1.j?.error?.message ?? ''} row=${JSON.stringify(ov1.j?.data ? { p: ov1.j.data.max_pallets, d: ov1.j.data.max_drops, a: ov1.j.data.is_active } : null)} atWh=${atWh?.max_pallets}/${atWh?.wh_override} shared=${shared?.max_pallets}`)
+  check('1e. PUT riêng kho CHỈ pallet 12 → 201, wh_fields = [max_pallets] (is_active + điểm giao vẫn theo Chung) · GET ?warehouse_id= in 12 + shared 9 · GET Chung vẫn 9',
+    ov1.s === 201 && ov1.j?.data?.max_pallets === 12 && ov1.j?.data?.max_drops === 3 && ov1.j?.data?.is_active === true && JSON.stringify(ov1.j?.data?.wh_fields) === '["max_pallets"]'
+    && atWh?.max_pallets === 12 && atWh?.wh_override === true && JSON.stringify(atWh?.wh_fields) === '["max_pallets"]' && atWh?.shared?.max_pallets === 9 && shared?.max_pallets === 9 && shared?.wh_override === false,
+    `put=${ov1.s} ${ov1.j?.error?.message ?? ''} row=${JSON.stringify(ov1.j?.data ? { p: ov1.j.data.max_pallets, d: ov1.j.data.max_drops, a: ov1.j.data.is_active, f: ov1.j.data.wh_fields } : null)} atWh=${atWh?.max_pallets}/${JSON.stringify(atWh?.wh_fields)} shared=${shared?.max_pallets}`)
   const ov2 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { is_active: false })
-  const upShared = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: 10 })
+  const upShared = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: 10, max_drops: 4 })
   const atWh2 = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
   const activeAtWh = ((await api(`/tms/vehicle-models?warehouse_id=${WH}&is_active=true`)).j?.data?.items ?? []).some(m => m.id === vmId)
-  check('1e2. PUT lần hai (tắt ở kho) → 200 giữ 12 (bản chụp, không về Chung) · đổi Chung lên 10 KHÔNG lan sang kho (vẫn 12) · ?is_active=true tại kho không còn dòng này',
-    ov2.s === 200 && ov2.j?.data?.is_active === false && ov2.j?.data?.max_pallets === 12 && upShared.s === 200 && atWh2?.max_pallets === 12 && atWh2?.is_active === false && atWh2?.shared?.max_pallets === 10 && !activeAtWh,
-    `put2=${ov2.s}/${ov2.j?.data?.is_active}/${ov2.j?.data?.max_pallets} shared=${upShared.s} atWh=${atWh2?.max_pallets}/${atWh2?.is_active}/${atWh2?.shared?.max_pallets} active=${activeAtWh}`)
+  check('1e2. PUT thêm tắt ở kho → 200, wh_fields = [is_active, max_pallets], pallet riêng giữ 12 · đổi Chung (pallet 10, điểm giao 4): kho VẪN 12 pallet nhưng điểm giao THEO CHUNG = 4 · ?is_active=true tại kho không còn dòng này',
+    ov2.s === 200 && ov2.j?.data?.is_active === false && ov2.j?.data?.max_pallets === 12 && upShared.s === 200
+    && atWh2?.max_pallets === 12 && atWh2?.is_active === false && atWh2?.max_drops === 4 && atWh2?.shared?.max_pallets === 10 && JSON.stringify(atWh2?.wh_fields) === '["is_active","max_pallets"]' && !activeAtWh,
+    `put2=${ov2.s}/${ov2.j?.data?.is_active}/${ov2.j?.data?.max_pallets} shared=${upShared.s} atWh=${atWh2?.max_pallets}/${atWh2?.is_active}/drops=${atWh2?.max_drops}/${JSON.stringify(atWh2?.wh_fields)} active=${activeAtWh}`)
   const ovZero = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: 0 })
-  const ovNull = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: null })
   const ovWh = await api(`/tms/vehicle-models/${vmId}/warehouses/khong-co-kho`, 'PUT', { is_active: true })
   const ovVm = await api(`/tms/vehicle-models/00000000-0000-0000-0000-000000000000/warehouses/${WH}`, 'PUT', { is_active: true })
-  check('1e3. pallet 0 → 400 · pallet null trên dòng đo bằng Pallet → 400 CAPACITY_REQUIRED · kho rác → 404 · dòng xe rác → 404',
-    ovZero.s === 400 && ovNull.s === 400 && ovNull.j?.error?.code === 'CAPACITY_REQUIRED' && ovWh.s === 404 && ovVm.s === 404, `zero=${ovZero.s} null=${ovNull.s}/${ovNull.j?.error?.code} wh=${ovWh.s} vm=${ovVm.s}`)
+  // pallet null = ô sức chứa VỀ THEO CHUNG (10) — còn ô dùng/không vẫn riêng (false)
+  const ovNull = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: null })
+  check('1e3. pallet 0 → 400 · kho rác → 404 · dòng xe rác → 404 · pallet null = ô đó về theo Chung (10), ô dùng/không vẫn riêng (wh_fields = [is_active])',
+    ovZero.s === 400 && ovWh.s === 404 && ovVm.s === 404 && ovNull.s === 200 && ovNull.j?.data?.max_pallets === 10 && ovNull.j?.data?.is_active === false && JSON.stringify(ovNull.j?.data?.wh_fields) === '["is_active"]',
+    `zero=${ovZero.s} wh=${ovWh.s} vm=${ovVm.s} null=${ovNull.s}/${ovNull.j?.data?.max_pallets}/${JSON.stringify(ovNull.j?.data?.wh_fields)}`)
+  // ô cuối cùng về theo Chung ⇒ không còn dòng riêng ⇒ DELETE "Về theo chung" 404 (không có gì để bỏ)
+  const ovLast = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { is_active: null })
+  const clr0 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE')
+  const ovAgain = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_drops: 2, is_active: true })
   const clr = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE')
   const clr2 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE')
   const atWh3 = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
-  check('1e4. DELETE "Về theo chung" → 200, kho đọc lại bản Chung (10, hoạt động, wh_override=false) · DELETE lần hai → 404',
-    clr.s === 200 && clr2.s === 404 && atWh3?.max_pallets === 10 && atWh3?.is_active === true && atWh3?.wh_override === false, `del=${clr.s}/${clr2.s} atWh=${atWh3?.max_pallets}/${atWh3?.is_active}/${atWh3?.wh_override}`)
-  await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: 9 })
+  check('1e4. Ô riêng cuối về theo Chung ⇒ wh_override=false, dòng riêng tự xoá (DELETE → 404) · khai lại 2 ô → 201 · DELETE "Về theo chung" → 200, kho đọc lại Chung (10 · 4 điểm · hoạt động) · DELETE lần hai → 404',
+    ovLast.s === 200 && ovLast.j?.data?.wh_override === false && clr0.s === 404 && ovAgain.s === 201 && JSON.stringify(ovAgain.j?.data?.wh_fields) === '["is_active","max_drops"]'
+    && clr.s === 200 && clr2.s === 404 && atWh3?.max_pallets === 10 && atWh3?.max_drops === 4 && atWh3?.is_active === true && atWh3?.wh_override === false,
+    `last=${ovLast.s}/${ovLast.j?.data?.wh_override} del0=${clr0.s} again=${ovAgain.s}/${JSON.stringify(ovAgain.j?.data?.wh_fields)} del=${clr.s}/${clr2.s} atWh=${atWh3?.max_pallets}/${atWh3?.max_drops}/${atWh3?.is_active}/${atWh3?.wh_override}`)
+  await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: 9, max_drops: 3 })
 
   // ── [2] Bảng cước ──
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: WARD1, price: 250000, distance_km: 12 })

@@ -61,10 +61,10 @@ export const zVehicleModelListQuery = z.object({
   parent_type_id: zId.optional(), unassigned: z.string().optional(), is_active: z.enum(['true', 'false']).optional(),
   warehouse_id: zId.optional(),   // 03/10: trả giá trị ĐANG HIỆU LỰC tại kho + cờ wh_override
 })
-/** Cấu hình riêng của kho cho một dòng xe — chỉ bốn giá trị này, master data không vào đây. Thiếu ô nào ⇒ lấy từ dòng kho đang có
- *  rồi từ bản Chung (bản chụp luôn đủ bốn giá trị). `max_drops: null` là chủ ý "chưa khai = 1 khách". */
+/** Cấu hình riêng của kho cho một dòng xe — RIÊNG THEO TỪNG Ô (03/10 chiều): gửi ô nào thì ghi ô đó; `null` = ô đó VỀ THEO CHUNG;
+ *  không gửi = giữ nguyên. Master data không vào đây. */
 export const zWarehouseModelBody = z.object({
-  is_active:   zBool.optional(),
+  is_active:   zBool.nullable().optional(),
   max_pallets: nullable(zPosInt),
   max_tons:    nullable(zPosNum),
   max_drops:   nullable(zPosInt),
@@ -117,7 +117,7 @@ export async function listVehicleModels(req: Request, res: Response) {
           const s = base.find(b => b.id === r.id)!
           return { ...r, shared: { is_active: s.is_active, max_pallets: s.max_pallets, max_tons: s.max_tons, max_drops: s.max_drops } }
         })
-      : base.map(r => ({ ...r, wh_override: false, shared: null }))
+      : base.map(r => ({ ...r, wh_override: false, wh_fields: [] as string[], shared: null }))
     const rows = is_active !== undefined && warehouse_id ? scoped.filter(r => r.is_active === (is_active === 'true')) : scoped
     return ok(res, {
       items: rows,
@@ -229,8 +229,9 @@ export async function deleteVehicleModel(req: Request, res: Response) {
 }
 
 // ── DÒNG XE THEO KHO (03/10) ─────────────────────────────────────────────────────────────────────────────────────────────
-// PUT /tms/vehicle-models/:id/warehouses/:warehouse_id — kho cấu hình riêng (dùng/không · sức chứa · điểm giao). Lần đầu = chụp
-// bản Chung rồi đè các ô gửi lên; lần sau = đè lên dòng kho đang có. Từ đó kho KHÔNG theo Chung nữa cho tới khi "Về theo chung".
+// PUT /tms/vehicle-models/:id/warehouses/:warehouse_id — kho chỉnh RIÊNG TỪNG Ô (dùng/không · sức chứa · điểm giao): gửi ô nào ghi ô
+// đó, `null` = ô đó về theo Chung, không gửi = giữ. Các ô NULL vẫn đọc từ Chung (đổi Chung là kho đổi theo). Cả bốn ô NULL ⇒ xoá dòng
+// (kho theo Chung hoàn toàn). Trả bản HIỆU LỰC tại kho + `wh_fields` (ô đang riêng).
 export async function setWarehouseVehicleModel(req: Request, res: Response) {
   try {
     const { id, warehouse_id } = req.params as z.infer<typeof zWarehouseModelParams>
@@ -246,25 +247,34 @@ export async function setWarehouseVehicleModel(req: Request, res: Response) {
     if (e2) return fail(res, e2)
     if (!vm) return fail(res, 'Không tìm thấy dòng xe', 404)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-    const base = cur ?? vm   // bản chụp: dòng kho đang có, chưa có thì bản Chung
+    const numN = (v: unknown) => (v == null ? null : Number(v))
+    // dòng kho SAU khi ghép: ô gửi lên (kể cả null = về theo Chung) đè ô đang có; ô không gửi giữ nguyên; chưa có dòng = toàn NULL
     const next = {
-      is_active:   body.is_active ?? base.is_active,
-      max_pallets: body.max_pallets === undefined ? (base.max_pallets == null ? null : Number(base.max_pallets)) : body.max_pallets,
-      max_tons:    body.max_tons === undefined ? (base.max_tons == null ? null : Number(base.max_tons)) : body.max_tons,
-      max_drops:   body.max_drops === undefined ? (base.max_drops == null ? null : Number(base.max_drops)) : body.max_drops,
+      is_active:   body.is_active   === undefined ? (cur?.is_active ?? null) : body.is_active,
+      max_pallets: body.max_pallets === undefined ? numN(cur?.max_pallets) : body.max_pallets,
+      max_tons:    body.max_tons    === undefined ? numN(cur?.max_tons) : body.max_tons,
+      max_drops:   body.max_drops   === undefined ? numN(cur?.max_drops) : body.max_drops,
     }
-    const capErr = capacityError(vm.capacity_mode, next.max_pallets, next.max_tons)
+    // sức chứa HIỆU LỰC (riêng ?? Chung) phải đủ theo thước đo của Chung
+    const capErr = capacityError(vm.capacity_mode, next.max_pallets ?? vm.max_pallets, next.max_tons ?? numN(vm.max_tons))
     if (capErr) return fail(res, 400, 'CAPACITY_REQUIRED', `${capErr} (thước đo là của bản Chung, kho chỉ đổi con số)`)
     const t = new Date().toISOString(), actor = req.user?.name || null
-    const { data, error } = cur
-      ? await db.from('warehouse_vehicle_model').update({ ...next, updated_at: t, updated_by: actor }).eq('id', cur.id).select().single()
-      : await db.from('warehouse_vehicle_model').insert({ id: randomUUID(), warehouse_id, vehicle_model_id: id, ...next, created_at: t, updated_at: t, created_by: actor, updated_by: actor }).select().single()
-    if (error) return fail(res, error)
-    return ok(res, { ...data, max_tons: data.max_tons == null ? null : Number(data.max_tons), wh_override: true }, cur ? 200 : 201)
+    const allNull = next.is_active == null && next.max_pallets == null && next.max_tons == null && next.max_drops == null
+    if (allNull) {
+      if (cur) { const { error } = await db.from('warehouse_vehicle_model').delete().eq('id', cur.id); if (error) return fail(res, error) }
+    } else {
+      const { error } = cur
+        ? await db.from('warehouse_vehicle_model').update({ ...next, updated_at: t, updated_by: actor }).eq('id', cur.id)
+        : await db.from('warehouse_vehicle_model').insert({ id: randomUUID(), warehouse_id, vehicle_model_id: id, ...next, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
+      if (error) return fail(res, error)
+    }
+    const shared = { id: vm.id, is_active: vm.is_active, max_pallets: vm.max_pallets, max_tons: numN(vm.max_tons), max_drops: vm.max_drops }
+    const [eff] = applyWarehouseOverrides([shared], allNull ? [] : [{ vehicle_model_id: id, ...next }])
+    return ok(res, { ...eff, warehouse_id, shared: { is_active: shared.is_active, max_pallets: shared.max_pallets, max_tons: shared.max_tons, max_drops: shared.max_drops } }, cur || allNull ? 200 : 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
-// DELETE /tms/vehicle-models/:id/warehouses/:warehouse_id — "Về theo chung": bỏ cấu hình riêng, kho chạy lại theo bản Chung.
+// DELETE /tms/vehicle-models/:id/warehouses/:warehouse_id — "Về theo chung" CẢ bốn ô: xoá dòng riêng, kho chạy lại theo bản Chung.
 export async function clearWarehouseVehicleModel(req: Request, res: Response) {
   try {
     const { id, warehouse_id } = req.params as z.infer<typeof zWarehouseModelParams>

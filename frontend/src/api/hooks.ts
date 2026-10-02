@@ -5761,12 +5761,15 @@ export interface VehicleModel extends VehicleModelWhValues {
   tariff_unit: 'PER_PALLET' | 'PER_TRIP'
   sort_order: number
   created_at: string; updated_at: string; created_by: string | null; updated_by: string | null
-  /** Khi gọi với `warehouse_id`: is_active / sức chứa / điểm giao là giá trị ĐANG HIỆU LỰC tại kho; `wh_override` = kho có cấu hình
-   *  riêng (không theo Chung nữa); `shared` = bản Chung để in "Theo chung: 16". Không có kho ⇒ wh_override false, shared null. */
+  /** Khi gọi với `warehouse_id`: is_active / sức chứa / điểm giao là giá trị ĐANG HIỆU LỰC tại kho (ô kho đã chỉnh ?? bản Chung);
+   *  `wh_fields` = các ô kho đang giữ RIÊNG (ô khác vẫn theo Chung — 03/10 chiều), `wh_override` = có ô nào riêng; `shared` = bản
+   *  Chung để in "Theo chung: 16". Không có kho ⇒ wh_override false, wh_fields rỗng, shared null. */
   wh_override: boolean
+  wh_fields: VehicleModelWhField[]
   shared: VehicleModelWhValues | null
 }
-export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by' | 'wh_override' | 'shared'>>
+export type VehicleModelWhField = 'is_active' | 'max_pallets' | 'max_tons' | 'max_drops'
+export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by' | 'wh_override' | 'wh_fields' | 'shared'>>
 export function useVehicleModels(params?: { parent_type_id?: string; unassigned?: boolean; is_active?: boolean; warehouse_id?: string }) {
   return useQuery({
     queryKey: ['vehicle-models', params ?? null],
@@ -5782,16 +5785,16 @@ export function useVehicleModels(params?: { parent_type_id?: string; unassigned?
     },
   })
 }
-/** Kho cấu hình riêng một dòng xe (dùng/không · sức chứa · điểm giao). Lần đầu = chụp bản Chung rồi đè ô gửi lên. */
+/** Kho chỉnh RIÊNG TỪNG Ô một dòng xe: gửi ô nào ghi ô đó, `null` = ô đó về theo Chung, không gửi = giữ. Trả bản hiệu lực + wh_fields. */
 export function useSetWarehouseVehicleModel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, warehouse_id, ...body }: Partial<VehicleModelWhValues> & { id: string; warehouse_id: string }) =>
-      apiClient.put(`/tms/vehicle-models/${id}/warehouses/${warehouse_id}`, body).then(r => r.data.data as VehicleModelWhValues & { id: string; wh_override: true }),
+    mutationFn: ({ id, warehouse_id, ...body }: { id: string; warehouse_id: string; is_active?: boolean | null; max_pallets?: number | null; max_tons?: number | null; max_drops?: number | null }) =>
+      apiClient.put(`/tms/vehicle-models/${id}/warehouses/${warehouse_id}`, body).then(r => r.data.data as VehicleModelWhValues & { id: string; wh_override: boolean; wh_fields: VehicleModelWhField[] }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
   })
 }
-/** "Về theo chung": bỏ cấu hình riêng của kho cho dòng xe. */
+/** "Về theo chung" CẢ bốn ô: bỏ cấu hình riêng của kho cho dòng xe. */
 export function useClearWarehouseVehicleModel() {
   const qc = useQueryClient()
   return useMutation({

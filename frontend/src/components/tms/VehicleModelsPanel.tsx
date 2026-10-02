@@ -37,7 +37,7 @@ import { formatTimestampDate } from '@/utils/formatters'
 import {
   useVehicleTypes, useVehicleModels, useCreateVehicleModel, useUpdateVehicleModel, useAssignVehicleModelParent, useDeleteVehicleModel,
   useStorageConditions, useAssignVehicleModelConditions, conditionLabel, useSetWarehouseVehicleModel, useClearWarehouseVehicleModel,
-  type VehicleModel, type VehicleModelPatch, type StorageConditionRow,
+  type VehicleModel, type VehicleModelPatch, type StorageConditionRow, type VehicleModelWhField,
 } from '@/api/hooks'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được'
@@ -184,41 +184,45 @@ function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | 
   )
 }
 
-/** Form cấu hình RIÊNG của một kho cho một dòng xe (03/10). Ô trống ở sức chứa = lấy theo Chung (placeholder in giá trị Chung — luật C47);
- *  điểm giao trống = chưa khai (1 khách), là lựa chọn chủ ý nên không rơi về Chung. */
+/** Form cấu hình RIÊNG của một kho cho một dòng xe — RIÊNG THEO TỪNG Ô (03/10 chiều, user: "đổi 1 điểm tại kho mà mọi setting Chung
+ *  không với tới nữa — chưa hợp lý"): mỗi ô có lựa chọn "Theo chung: <giá trị>" (luật C47 in giá trị cha); ô để trống / chọn theo chung
+ *  = gửi null = ô đó về theo Chung, Chung đổi là kho đổi theo. Chỉ ô có số riêng mới đứng ngoài Chung. */
 function WarehouseModelForm({ row, whId, whName, onClose }: { row: VehicleModel; whId: string; whName: string; onClose: () => void }) {
   const set = useSetWarehouseVehicleModel(), clear = useClearWarehouseVehicleModel()
   const [ask, confirmNode] = useConfirmDialog()
   const shared = row.shared ?? { is_active: row.is_active, max_pallets: row.max_pallets, max_tons: row.max_tons, max_drops: row.max_drops }
-  const [active, setActive] = useState(row.is_active)
-  const [pallets, setPallets] = useState(row.max_pallets == null ? '' : String(row.max_pallets))
-  const [tons, setTons] = useState(row.max_tons == null ? '' : String(row.max_tons))
-  const [drops, setDrops] = useState(row.max_drops == null ? '' : String(row.max_drops))
+  const own = new Set<VehicleModelWhField>(row.wh_fields ?? [])
+  // is_active: '' = theo Chung · 'on' / 'off' = riêng
+  const [active, setActive] = useState<'' | 'on' | 'off'>(own.has('is_active') ? (row.is_active ? 'on' : 'off') : '')
+  const byPallet = row.capacity_mode === 'PALLET'
+  const capField: VehicleModelWhField = byPallet ? 'max_pallets' : 'max_tons'
+  const [cap, setCap] = useState(own.has(capField) ? String(byPallet ? row.max_pallets ?? '' : row.max_tons ?? '') : '')
+  const [drops, setDrops] = useState(own.has('max_drops') ? String(row.max_drops ?? '') : '')
   const [err, setErr] = useState('')
   const pending = set.isPending || clear.isPending
-  const byPallet = row.capacity_mode === 'PALLET'
   const sharedCap = byPallet ? shared.max_pallets : shared.max_tons
+  const sharedActiveText = shared.is_active ? 'đang hoạt động' : 'tạm dừng'
   const submit = async () => {
     setErr('')
     try {
-      await set.mutateAsync({
-        id: row.id, warehouse_id: whId, is_active: active,
-        // sức chứa trống ⇒ không gửi ⇒ BE lấy theo dòng kho đang có rồi theo Chung; điểm giao trống ⇒ gửi null (chưa khai)
-        ...(byPallet ? (pallets.trim() ? { max_pallets: Number(pallets) } : {}) : (tons.trim() ? { max_tons: Number(tons) } : {})),
+      const r = await set.mutateAsync({
+        id: row.id, warehouse_id: whId,
+        is_active: active === '' ? null : active === 'on',
+        [capField]: cap.trim() ? Number(cap) : null,
         max_drops: drops.trim() ? Number(drops) : null,
       })
-      toast({ title: `Đã lưu cấu hình riêng tại ${whName}`, description: `${row.sap_code} · ${row.name} — kho này không theo bản Chung nữa` })
+      toast({ title: r.wh_fields.length ? `Đã lưu ${r.wh_fields.length} ô riêng tại ${whName}` : `${row.sap_code} tại ${whName} theo Chung hoàn toàn`, description: `${row.sap_code} · ${row.name}${r.wh_fields.length ? ' — các ô còn lại vẫn theo bản Chung' : ''}` })
       onClose()
     } catch (e) { setErr(apiMsg(e)) }
   }
   const reset = async () => {
-    if (await ask({ title: `Về theo chung tại ${whName}?`, body: `Bỏ cấu hình riêng của kho cho "${row.sap_code} · ${row.name}". Kho sẽ dùng số của bản Chung: ${shared.is_active ? 'đang hoạt động' : 'tạm dừng'} · ${capText({ ...row, ...shared }) ?? 'chưa khai sức chứa'} · điểm giao ${shared.max_drops ?? 'chưa khai (1)'}.`, confirmLabel: 'Về theo chung' }) === null) return
+    if (await ask({ title: `Về theo chung tại ${whName}?`, body: `Bỏ mọi ô riêng của kho cho "${row.sap_code} · ${row.name}". Kho sẽ dùng số của bản Chung: ${sharedActiveText} · ${capText({ ...row, ...shared }) ?? 'chưa khai sức chứa'} · điểm giao ${shared.max_drops ?? 'chưa khai (1)'}.`, confirmLabel: 'Về theo chung' }) === null) return
     try { await clear.mutateAsync({ id: row.id, warehouse_id: whId }); toast({ title: `${row.sap_code} tại ${whName} đã về theo chung` }); onClose() }
     catch (e) { setErr(apiMsg(e)) }
   }
   return (
     <FormSheet open onClose={onClose} title={`${row.sap_code} · ${row.name} — tại ${whName}`}
-      description="Cấu hình riêng của kho: dùng hay không, sức chứa, điểm giao. Đã lưu riêng thì đổi số ở bản Chung không lan sang kho này."
+      description="Riêng theo từng ô: ô nào có số riêng thì kho dùng số đó, ô để theo chung vẫn đổi theo bản Chung."
       footer={<>
         {err && <span className="text-[11px] text-red-600 flex-1 truncate">{err}</span>}
         {row.wh_override && <Button variant="outline" size="sm" className="gap-1" onClick={reset} disabled={pending}><Undo2 className="h-3.5 w-3.5" />Về theo chung</Button>}
@@ -227,17 +231,19 @@ function WarehouseModelForm({ row, whId, whName, onClose }: { row: VehicleModel;
       </>}>
       <div className="space-y-3">
         <div className="text-[11px] text-slate-600 rounded border bg-slate-50 px-2 py-1.5">
-          Bản Chung: {shared.is_active ? 'đang hoạt động' : 'tạm dừng'} · {capText({ ...row, ...shared }) ?? 'chưa khai sức chứa'} · điểm giao {shared.max_drops ?? 'chưa khai (1 khách)'} · đo bằng {byPallet ? 'pallet' : 'tấn'} · {row.parent?.name ?? 'chưa gán cha'}
-          {row.wh_override ? <span className="ml-1 text-sky-700 font-medium">· kho đang cấu hình RIÊNG</span> : <span className="ml-1 text-slate-400">· kho đang theo Chung</span>}
+          Bản Chung: {sharedActiveText} · {capText({ ...row, ...shared }) ?? 'chưa khai sức chứa'} · điểm giao {shared.max_drops ?? 'chưa khai (1 khách)'} · đo bằng {byPallet ? 'pallet' : 'tấn'} · {row.parent?.name ?? 'chưa gán cha'}
+          {row.wh_override ? <span className="ml-1 text-sky-700 font-medium">· kho đang giữ riêng {own.size} ô</span> : <span className="ml-1 text-slate-400">· kho đang theo Chung</span>}
         </div>
-        <div className="flex items-center gap-2"><Switch id="wvm-active" checked={active} onCheckedChange={setActive} /><Label htmlFor="wvm-active" className="text-sm cursor-pointer">Dùng ở kho này</Label></div>
+        <div><Label className="text-xs">Dùng ở kho này</Label>
+          <SingleSelect searchable={false} value={active} onChange={v => setActive(v as '' | 'on' | 'off')}
+            options={[{ value: '', label: `Theo chung: ${sharedActiveText}` }, { value: 'on', label: 'Dùng (riêng kho này)' }, { value: 'off', label: 'Không dùng (riêng kho này)' }]} /></div>
         <div className="grid grid-cols-2 gap-2">
-          {byPallet
-            ? <div><Label className="text-xs">Pallet tối đa tại kho</Label><Input type="number" min={1} value={pallets} onChange={e => setPallets(e.target.value)} className="h-9 tabular-nums" placeholder={`Theo chung: ${sharedCap ?? '—'}`} /></div>
-            : <div><Label className="text-xs">Tấn tối đa tại kho</Label><Input type="number" min={0.1} step={0.1} value={tons} onChange={e => setTons(e.target.value)} className="h-9 tabular-nums" placeholder={`Theo chung: ${sharedCap ?? '—'}`} /></div>}
-          <div><Label className="text-xs">Điểm giao tối đa tại kho</Label><Input type="number" min={1} value={drops} onChange={e => setDrops(e.target.value)} className="h-9 tabular-nums" placeholder="Trống = chưa khai (1 khách)" /></div>
+          <div><Label className="text-xs">{byPallet ? 'Pallet tối đa tại kho' : 'Tấn tối đa tại kho'}</Label>
+            <Input type="number" min={byPallet ? 1 : 0.1} step={byPallet ? 1 : 0.1} value={cap} onChange={e => setCap(e.target.value)} className="h-9 tabular-nums" placeholder={`Theo chung: ${sharedCap ?? '—'}`} /></div>
+          <div><Label className="text-xs">Điểm giao tối đa tại kho</Label>
+            <Input type="number" min={1} value={drops} onChange={e => setDrops(e.target.value)} className="h-9 tabular-nums" placeholder={`Theo chung: ${shared.max_drops ?? 'chưa khai (1)'}`} /></div>
         </div>
-        <p className="text-[10px] text-slate-500">Mã SAP, tên, cha, điều kiện bảo quản, thước đo, cách tính cước là của bản Chung — sửa ở chế độ "Chung".</p>
+        <p className="text-[10px] text-slate-500">Ô để trống = theo bản Chung. Mã SAP, tên, cha, điều kiện bảo quản, thước đo, cách tính cước luôn là của bản Chung — sửa ở chế độ "Chung".</p>
       </div>
       {confirmNode}
     </FormSheet>
@@ -309,7 +315,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
     const ids = [...picked].filter(id => items.find(m => m.id === id)?.is_active !== on)
     if (!ids.length) { toast({ title: on ? 'Các dòng đã chọn đều đang hoạt động' : 'Các dòng đã chọn đều đang tạm dừng' }); return }
     const where = whId ? ` tại ${whName}` : ''
-    if (!on && await ask({ title: `Tạm dừng ${ids.length} dòng xe${where}?`, body: `Máy điều vận sẽ không xếp hàng lên các dòng xe này${whId ? ' ở kho này (các kho khác không đổi)' : ' ở mọi kho chưa cấu hình riêng'}. Cước và lịch sử giữ nguyên, bật lại được bất cứ lúc nào. Nháp điều vận đang mở chỉ đổi khi bấm "Tối ưu lại".`, confirmLabel: 'Tạm dừng' }) === null) return
+    if (!on && await ask({ title: `Tạm dừng ${ids.length} dòng xe${where}?`, body: `Máy điều vận sẽ không xếp hàng lên các dòng xe này${whId ? ' ở kho này (chỉ ô dùng/không của kho đổi; các kho khác và các ô khác không đổi)' : ' ở mọi kho chưa khai riêng ô dùng/không'}. Cước và lịch sử giữ nguyên, bật lại được bất cứ lúc nào. Nháp điều vận đang mở chỉ đổi khi bấm "Tối ưu lại".`, confirmLabel: 'Tạm dừng' }) === null) return
     setActivating(true)
     const res = await Promise.allSettled(ids.map(id => whId ? setWh.mutateAsync({ id, warehouse_id: whId, is_active: on }) : update.mutateAsync({ id, is_active: on })))
     setActivating(false)
@@ -333,7 +339,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
     ? [
       { label: 'Dòng xe', value: filtering ? `${nf(rows.length)} / ${nf(items.length)}` : nf(items.length) },
       { label: 'Đang dùng ở kho', value: nf(items.filter(m => m.is_active).length), tip: 'Máy điều vận của kho này chỉ xếp lên các dòng xe đang dùng' },
-      { label: 'Cấu hình riêng', value: nf(items.filter(m => m.wh_override).length), tip: 'Dòng xe kho đã chỉnh riêng — không theo bản Chung nữa cho tới khi "Về theo chung"' },
+      { label: 'Có ô riêng', value: nf(items.filter(m => m.wh_override).length), tip: 'Dòng xe kho đã chỉnh ít nhất một ô (dùng/không · sức chứa · điểm giao); ô còn lại vẫn theo bản Chung' },
       { label: 'Chưa khai điểm giao', value: nf(items.filter(m => m.is_active && m.max_drops == null).length), danger: items.some(m => m.is_active && m.max_drops == null), tip: 'Đang dùng mà chưa khai điểm giao tối đa = mỗi khách một xe' },
       { label: 'Không dùng', value: nf(items.filter(m => !m.is_active).length) },
     ]
@@ -366,10 +372,14 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       case 'act':    return whId
         ? <StatusBadge tone={m.is_active ? 'green' : 'slate'}>{m.is_active ? 'Đang dùng' : 'Không dùng'}</StatusBadge>
         : <StatusBadge tone={m.is_active ? 'green' : 'slate'}>{m.is_active ? 'Hoạt động' : 'Tạm dừng'}</StatusBadge>
-      case 'cfg':    return m.wh_override
-        ? <StatusBadge tone="sky">Riêng</StatusBadge>
-        // luật C47: ô "theo cha" in GIÁ TRỊ cha đang áp, không ghi trần "Theo chung"
-        : <span className="text-slate-400" title={`Đang lấy từ bản Chung: ${m.shared?.is_active ? 'hoạt động' : 'tạm dừng'} · ${capText({ ...m, ...(m.shared ?? {}) }) ?? 'chưa khai'} · điểm giao ${m.shared?.max_drops ?? '— (1)'}`}>{`Theo chung: ${capText({ ...m, ...(m.shared ?? {}) }) ?? 'chưa khai'} · ${m.shared?.max_drops ?? 1} điểm`}</span>
+      case 'cfg': {
+        // riêng theo TỪNG Ô: in tên ô đang riêng; ô còn lại theo Chung (luật C47: in giá trị Chung đang áp, không ghi trần)
+        const own = m.wh_fields ?? []
+        const sharedTxt = `${capText({ ...m, ...(m.shared ?? {}) }) ?? 'chưa khai'} · ${m.shared?.max_drops ?? 1} điểm · ${m.shared?.is_active ? 'hoạt động' : 'tạm dừng'}`
+        if (!own.length) return <span className="text-slate-400" title={`Đang lấy từ bản Chung: ${sharedTxt}`}>{`Theo chung: ${sharedTxt}`}</span>
+        const ownTxt = own.map(k => k === 'is_active' ? 'dùng/không' : k === 'max_drops' ? 'điểm giao' : 'sức chứa').join(', ')
+        return <span title={`Riêng: ${ownTxt} · còn lại theo Chung (${sharedTxt})`}><StatusBadge tone="sky">Riêng: {ownTxt}</StatusBadge>{own.length < 3 && <span className="text-slate-400 ml-1">còn lại theo chung</span>}</span>
+      }
       case 'upd':    return <div className="leading-tight"><div className="text-slate-600 truncate max-w-[100px]">{m.updated_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(m.updated_at, true)}</div></div>
       case 'ops':    return (canEdit || canDelete) ? (
         <div className="flex items-center gap-0.5">

@@ -4,34 +4,45 @@
  *
  * Một bảng master `vehicle_model` (bản CHUNG: mã SAP · tên · cha · điều kiện bảo quản · thước đo · cách tính cước · số mặc định)
  * + bảng `warehouse_vehicle_model` = cấu hình RIÊNG của kho cho một dòng xe: dùng hay không + sức chứa + điểm giao.
- * Kho chưa có dòng ⇒ chạy theo Chung. Đã có dòng ⇒ BẢN CHỤP đầy đủ (user: "config riêng rồi thì không lấy theo chung nữa").
+ * RIÊNG THEO TỪNG Ô (03/10 chiều, user: "thay đổi 1 điểm tại kho riêng thì mọi setting của Chung không còn với tới kho — chưa hợp
+ * lý"): ô nào của dòng kho là NULL thì ô đó theo Chung; kho chỉ giữ ô đã chỉnh. Không có dòng = theo Chung hoàn toàn.
  * Mọi cửa đọc dòng xe "của một kho" (điều vận · cước · cột Tải ở Xuất kho · danh sách ở tab Mã dòng xe) đi qua đây — không
  * tự join rải rác.
  */
 import { db } from '../lib/supabase'
 import { fetchAllRowsParallel } from '../utils/pagination'
 
+export const WH_MODEL_FIELDS = ['is_active', 'max_pallets', 'max_tons', 'max_drops'] as const
+export type WhModelField = typeof WH_MODEL_FIELDS[number]
 export interface WhModelOverride {
   vehicle_model_id: string
-  is_active: boolean
+  is_active: boolean | null       // NULL = theo Chung
   max_pallets: number | null
   max_tons: number | null
   max_drops: number | null
 }
 export interface ScopableModel { id: string; is_active: boolean; max_pallets: number | null; max_tons: number | null; max_drops: number | null }
-export type ScopedModel<T> = T & { wh_override: boolean }
+/** `wh_fields` = các ô kho đã chỉnh riêng (rỗng = theo Chung hoàn toàn); `wh_override` = có ô nào riêng. */
+export type ScopedModel<T> = T & { wh_override: boolean; wh_fields: WhModelField[] }
 
 const numOrNull = (v: unknown): number | null => { const n = Number(v); return v == null || !Number.isFinite(n) ? null : n }
 
-/** Thuần: đè bản chụp của kho lên bản Chung. Có dòng kho ⇒ CẢ BỐN giá trị lấy theo kho (kể cả is_active: Chung tắt mà kho bật
- *  = kho dùng). Không có ⇒ nguyên bản Chung. `wh_override` để màn hình in "Riêng" / "Theo chung". */
+/** Thuần: đè TỪNG Ô kho đã chỉnh lên bản Chung. Ô NULL ở dòng kho = theo Chung (kể cả is_active). Không có dòng ⇒ nguyên bản Chung.
+ *  Lưu ý: `max_drops` kho = null nghĩa là THEO CHUNG, không phải "chưa khai" — kho muốn mỗi khách một xe thì khai 1. */
 export function applyWarehouseOverrides<T extends ScopableModel>(models: T[], overrides: WhModelOverride[]): ScopedModel<T>[] {
   const by = new Map(overrides.map(o => [o.vehicle_model_id, o]))
   return models.map(m => {
     const o = by.get(m.id)
-    return o
-      ? { ...m, is_active: o.is_active, max_pallets: o.max_pallets, max_tons: o.max_tons, max_drops: o.max_drops, wh_override: true }
-      : { ...m, wh_override: false }
+    if (!o) return { ...m, wh_override: false, wh_fields: [] }
+    const fields = WH_MODEL_FIELDS.filter(k => o[k] != null)
+    return {
+      ...m,
+      is_active:   o.is_active   ?? m.is_active,
+      max_pallets: o.max_pallets ?? m.max_pallets,
+      max_tons:    o.max_tons    ?? m.max_tons,
+      max_drops:   o.max_drops   ?? m.max_drops,
+      wh_override: fields.length > 0, wh_fields: fields,
+    }
   })
 }
 
@@ -46,12 +57,14 @@ export function underloadPctAt(wh: { dispatch_load_bands?: unknown; dispatch_und
   return w != null && w > 0 ? w : 70
 }
 
+type OvRow = { warehouse_id?: string; vehicle_model_id: string; is_active: boolean | null; max_pallets: number | null; max_tons: number | string | null; max_drops: number | null }
+const ovOf = (r: OvRow): WhModelOverride => ({ vehicle_model_id: r.vehicle_model_id, is_active: r.is_active ?? null, max_pallets: numOrNull(r.max_pallets), max_tons: numOrNull(r.max_tons), max_drops: numOrNull(r.max_drops) })
+
 /** Dòng cấu hình riêng của MỘT kho (danh mục nhỏ: ≤ số dòng xe). */
 export async function loadWarehouseOverrides(whId: string): Promise<WhModelOverride[]> {
   const rows = await fetchAllRowsParallel(() => db.from('warehouse_vehicle_model')
-    .select('vehicle_model_id, is_active, max_pallets, max_tons, max_drops').eq('warehouse_id', whId).order('vehicle_model_id')) as
-    { vehicle_model_id: string; is_active: boolean; max_pallets: number | null; max_tons: number | string | null; max_drops: number | null }[]
-  return rows.map(r => ({ vehicle_model_id: r.vehicle_model_id, is_active: r.is_active, max_pallets: numOrNull(r.max_pallets), max_tons: numOrNull(r.max_tons), max_drops: numOrNull(r.max_drops) }))
+    .select('vehicle_model_id, is_active, max_pallets, max_tons, max_drops').eq('warehouse_id', whId).order('vehicle_model_id')) as OvRow[]
+  return rows.map(ovOf)
 }
 
 /** Dòng cấu hình riêng của NHIỀU kho, gom theo kho (cước ước tính của chuyến Xuất kho: mỗi chuyến một kho). */
@@ -60,11 +73,10 @@ export async function loadWarehouseOverridesMany(whIds: string[]): Promise<Map<s
   const ids = [...new Set(whIds.filter(Boolean))]
   if (!ids.length) return out
   const rows = await fetchAllRowsParallel(() => db.from('warehouse_vehicle_model')
-    .select('warehouse_id, vehicle_model_id, is_active, max_pallets, max_tons, max_drops').in('warehouse_id', ids.slice(0, 300)).order('id')) as
-    { warehouse_id: string; vehicle_model_id: string; is_active: boolean; max_pallets: number | null; max_tons: number | string | null; max_drops: number | null }[]
+    .select('warehouse_id, vehicle_model_id, is_active, max_pallets, max_tons, max_drops').in('warehouse_id', ids.slice(0, 300)).order('id')) as (OvRow & { warehouse_id: string })[]
   for (const r of rows) {
     const l = out.get(r.warehouse_id) ?? []
-    l.push({ vehicle_model_id: r.vehicle_model_id, is_active: r.is_active, max_pallets: numOrNull(r.max_pallets), max_tons: numOrNull(r.max_tons), max_drops: numOrNull(r.max_drops) })
+    l.push(ovOf(r))
     out.set(r.warehouse_id, l)
   }
   return out

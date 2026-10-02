@@ -19,10 +19,10 @@
  *     nhất → mã ĐVVT (ổn định). Tỷ trọng cộng dồn NGAY trong lượt ghép để chuyến sau thấy chuyến trước.
  *  7. ~~PALLET / XÁ (25/09)~~ — BỎ 29/09 (user: "dòng xe là đơn vị thấp hơn của loại xe — bỏ loại xe, chọn dòng xe luôn"):
  *     không còn kiểu đi của khách / của xe; họ xe = ĐÚNG danh sách "Dòng xe được vào" (luật 10). Số khách tối đa trên một xe
- *     = nhỏ nhất trong (`max_drops` của DÒNG XE — không khai thì theo mặc định của kho `params.max_drops` · số khách khai ở
- *     kênh/khách, chỉ HẠ xuống). 02/10 (user: "dòng xe cho phép ghép nhiều, riêng khách đó chỉ đi 1"): số của kho KHÔNG còn là trần
- *     chung đè lên dòng xe đã khai. "Xe pallet một khách" = `max_drops = 1` khai ở Mã dòng xe (20260929c đặt sẵn); khách phải đi
- *     một mình = tick "Đi xe riêng" hoặc "Số khách tối đa cùng xe" = 1 ở khách / kênh.
+ *     = nhỏ nhất trong (`max_drops` của DÒNG XE · "số khách tối đa cùng xe" của khách → kênh). 02/10 (user: "bỏ cài đặt WMS đi,
+ *     các khách và dòng xe muốn được ghép chuyến phải khai — không khai thì có cảnh báo"): KHÔNG còn số của kho; dòng xe hay khách
+ *     CHƯA KHAI = 1 (một khách một xe), controller đưa vào `config_gaps.no_drops` để chip "Khai thiếu" nêu tên. Khách phải đi một
+ *     mình = tick "Đi xe riêng" hoặc "Số khách tối đa cùng xe" = 1.
  *  8. ~~DÒNG XE DÙNG CHO VIỆC GÌ (25/09, `dispatch_use` TRANSFER)~~ — BỎ 28/09 (user: "dòng xe chọn theo khai báo của khách,
  *     khách không khai thì không chọn — bỏ config ở Mã dòng xe"). Container chỉ đi khi khách / kênh tick nó (luật 10).
  *  9. KHÔNG TRỘN LOẠI KHO (26/09, user: "FG01 đi với FG01, FG02 đi FG02, muốn đi chung phải bật công tắc"): khoá cụm mang
@@ -83,7 +83,7 @@ export interface EngineModel {
   tariff_unit: TariffUnit
   underload_pct: number | null
   serve_conditions: string[] | null // điều kiện bảo quản xe phục vụ được; rỗng/null = mọi điều kiện
-  max_drops: number | null          // null = theo kho — 29/09: đây cũng là chỗ khai "xe pallet chỉ một khách" (= 1)
+  max_drops: number | null          // điểm giao tối đa; null = CHƯA KHAI = 1 khách (02/10 — muốn ghép phải khai, thiếu thì chip Khai thiếu)
   is_active: boolean
   /** 01/10 — DẢI TẢI theo dòng xe CHA (`params.load_bands[parent_type_id]`), `withLoadBands` điền vào bản sao dòng xe cho lượt ghép:
    *  `load_min_pct` = ngưỡng Non tải (thay kho/dòng xe khi có), `load_max_pct` = trần xếp (105 = cho vượt 5 % sức chứa danh định).
@@ -103,7 +103,6 @@ export interface EngineShareTarget { transport_company_id: string; share_pct: nu
 export interface ShareActual { trips: number; pallets: number; tons: number }
 export interface EngineParams {
   day: string                       // ngày giao 'YYYY-MM-DD' (hiệu lực cước)
-  max_drops: number | null          // điểm giao tối đa một chuyến (kho); null = không giới hạn (28/09)
   allow_mix_channels: boolean
   underload_pct: number | null      // ngưỡng Non tải của kho; null = theo dòng xe
   code_prefix: string               // '<MãKho>_X_<ddmmyy>_' — đúng quy ước group_code hiện tại
@@ -157,7 +156,7 @@ export interface TripOd {
   transfer: boolean                                 // trung chuyển theo cờ dòng chảy SAP (STO / nội bộ) — cờ thông tin
   allowed_models: string[] | null                   // luật 10 — dòng xe khách được vào (chụp lúc lập); null = không giới hạn
   separate: boolean                                 // 28/09 — khách đi xe riêng (cấu hình trên Khách)
-  max_customers: number | null                      // 28/09 — số khách tối đa cùng xe của OD (khách → kênh); null = không giới hạn
+  max_customers: number | null                      // 28/09 — số khách tối đa cùng xe của OD (khách → kênh); null = CHƯA KHAI = 1 (02/10)
 }
 export interface TripFreight {
   total: number | null; base: number | null; billed_pallets: number | null; unit: TariffUnit | null
@@ -388,10 +387,11 @@ export const fleetFor = (models: EngineModel[], ods: FleetOd[], opts: { ignoreAl
 /** Luật 4b (26/09, user: "được ghép thì mới lôi vào"): dòng xe chở được ≥ 2 mức mà Loại kho có khai (xe kết hợp nóng / lạnh)
  *  chỉ dành cho chuyến CẦN ≥ 2 mức; chuyến một mức ưu tiên xe đúng mức, chỉ rơi về xe kết hợp khi không xe đúng mức nào có cước. */
 export const isComboFor = (m: EngineModel, combo: string[]) => combo.filter(c => servesConditions(m, [c])).length >= 2
-/** 28/09: trần số khách cùng xe do CHÍNH các OD trên xe mang (khách → kênh); OD nào khắt khe nhất áp cho cả xe; null = không OD nào khai. */
-export const odStopsCap = (ods: Pick<EngineOd, 'max_customers'>[]): number | null => {
-  const caps = ods.map(o => o.max_customers).filter((x): x is number => typeof x === 'number' && x >= 1)
-  return caps.length ? Math.min(...caps) : null
+/** 28/09: trần số khách cùng xe do CHÍNH các OD trên xe mang (khách → kênh); OD nào khắt khe nhất áp cho cả xe.
+ *  02/10 (user: "khách muốn được ghép phải khai, không khai thì cảnh báo"): OD chưa khai = 1 ⇒ xe chở OD đó chỉ một khách. Bin rỗng = ∞. */
+export const odStopsCap = (ods: Pick<EngineOd, 'max_customers'>[]): number => {
+  const caps = ods.map(o => (typeof o.max_customers === 'number' && o.max_customers >= 1 ? o.max_customers : 1))
+  return caps.length ? Math.min(...caps) : Infinity
 }
 export const minCap = (...caps: (number | null | undefined)[]): number | null => { const xs = caps.filter((x): x is number => typeof x === 'number'); return xs.length ? Math.min(...xs) : null }
 /** Luật 4: xe khai rỗng = chở được mọi điều kiện (cùng quy ước `Location.categories` của app). */
@@ -418,18 +418,17 @@ const withUnits = (b: Bin, units: Unit[]): Bin => {
  *  ⚠ Hai vế phải hỏi CÙNG một dòng xe (vá 25/09): bản cũ kiểm "vừa xe lớn nhất" (xe thường 68 pallet) và "có xe nào
  *  phục vụ lạnh" (xe kết hợp 30 pallet) trên HAI xe khác nhau ⇒ gom 54 pallet có hàng lạnh vào một bin mà không xe
  *  nào nhận — đo Ba Vì 25/09: 3 chuyến "chưa chọn dòng xe". `cands` = họ dòng xe của bin (ưu tiên xe có cước). */
-const binFits = (cands: EngineModel[], b: Bin, maxStops: number | null) => {
+const binFits = (cands: EngineModel[], b: Bin) => {
   const stops = binStops(b)
-  // trần do chính các OD trên bin mang (28/09: khách × kênh khai "số khách tối đa cùng xe" — chỉ HẠ xuống); trần của từng dòng xe
-  // (`max_drops`, vd xe pallet = 1) hỏi ở vế dưới cùng với tải + điều kiện bảo quản. 02/10 (user: "dòng xe cho phép ghép nhiều, riêng
-  // khách đó chỉ đi 1"): số của KHO không còn là trần chung — chỉ là MẶC ĐỊNH cho dòng xe không khai (`maxStops`).
-  const cap = odStopsCap(b.units.map(u => u.od))
-  if (cap != null && stops > cap) return false
+  // 02/10 (user: "bỏ cài đặt WMS; khách và dòng xe muốn được ghép phải KHAI, không khai thì cảnh báo"): hai trần, cả hai mặc định 1 —
+  // (a) khách/kênh "số khách tối đa cùng xe" (`odStopsCap`, OD khắt khe nhất áp cho cả xe); (b) dòng xe `max_drops` hỏi ở vế dưới
+  // cùng với tải + điều kiện bảo quản. Không còn số của kho.
+  if (stops > odStopsCap(b.units.map(u => u.od))) return false
   const conds = condsOf(b.units.flatMap(u => u.lines))
-  return cands.some(m => servesConditions(m, conds) && fits(m, b.pallets, b.tons) && stops <= modelDrops(m, maxStops))
+  return cands.some(m => servesConditions(m, conds) && fits(m, b.pallets, b.tons) && stops <= modelDrops(m))
 }
-/** Điểm giao tối đa của một dòng xe: khai ở Mã dòng xe; không khai thì theo mặc định của kho; cả hai trống = không giới hạn. */
-const modelDrops = (m: EngineModel, whDefault: number | null | undefined) => m.max_drops ?? whDefault ?? Infinity
+/** Điểm giao tối đa của một dòng xe: khai ở Mã dòng xe; KHÔNG khai = 1 (một khách) — muốn ghép phải khai (02/10). */
+export const modelDrops = (m: Pick<EngineModel, 'max_drops'>) => m.max_drops ?? 1
 
 /** Luật 3 (tách): OD vượt xe lớn nhất → cắt theo dòng hàng nguyên (lớn trước), mỗi phần ≤ sức chứa; dòng đơn lẻ vượt → phần riêng `oversize`. */
 export function splitOversize(od: EngineOd, big: EngineModel): Unit[] {
@@ -617,7 +616,7 @@ function bestCombo(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, K: num
   const region = b.units[0]?.od.region_code ?? null
   const pAll = b.units.every(u => u.pallets != null) ? r3(b.pallets) : null
   const tAll = b.units.every(u => u.tons != null) ? r3(b.tons) : null
-  const all = fleetFor(ctx.models, b.units.map(u => u.od)).filter(m => servesConditions(m, conds) && stops <= modelDrops(m, ctx.input.params.max_drops))
+  const all = fleetFor(ctx.models, b.units.map(u => u.od)).filter(m => servesConditions(m, conds) && stops <= modelDrops(m))
   const combo = ctx.input.params.combo_conditions ?? []
   const needCombo = combo.filter(c => conds.includes(c)).length >= 2
   const single = combo.length >= 2 && !needCombo ? all.filter(m => !isComboFor(m, combo)) : all
@@ -676,7 +675,7 @@ function assignSingle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, und
   const tAll = b.units.every(u => u.tons != null) ? r3(b.tons) : null
   const oversize = b.units.some(u => u.oversize)
   const family = fleetFor(ctx.models, b.units.map(u => u.od))
-  const cands0 = family.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && stops <= modelDrops(m, ctx.input.params.max_drops))
+  const cands0 = family.filter(m => servesConditions(m, conds) && (oversize || fits(m, pAll, tAll)) && stops <= modelDrops(m))
     .sort((a, c) => (numOr(a.max_pallets, 1e9) - numOr(c.max_pallets, 1e9)) || (numOr(a.max_tons, 1e9) - numOr(c.max_tons, 1e9)) || cmp(a.sap_code, c.sap_code))
   // Chuyến VƯỢT TẢI (một dòng hàng lớn hơn mọi xe): không xe nào "vừa" nên ba bậc bên dưới sẽ chọn xe RẺ NHẤT — đo Bàu Bàng 26/09
   // ra xe 1 tấn cho dòng 27 tấn (tải 2.737 %). Chỉ giữ các dòng xe CỠ LỚN NHẤT, trong đó mới chọn theo cước.
@@ -722,7 +721,7 @@ function assignSingle(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, und
     // lời giục sẽ tick bừa xe thường thành xe lạnh, tức đẩy hàng lạnh lên xe không có lạnh. Đo Ba Vì 07/09
     // sau khi khai FG02 = 2–8 °C: đúng 1 chuyến rơi vào ca này (31,564 pallet, xe lạnh lớn nhất 30 pallet).
     const serving = conds.length ? family.filter(m => servesConditions(m, conds)) : family
-    const fitIgnoringConds = family.some(m => (oversize || fits(m, pAll, tAll)) && stops <= modelDrops(m, ctx.input.params.max_drops))
+    const fitIgnoringConds = family.some(m => (oversize || fits(m, pAll, tAll)) && stops <= modelDrops(m))
     const condText = conds.map(condLabel).join(' + ')
     const famText = 'dòng xe'
     const listed = hasAllowList(b.units.map(u => u.od))
@@ -859,7 +858,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
       if (u.oversize || u.multi) { local.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
       // họ xe hỏi theo CHÍNH bin sau khi thêm (luật 10: mỗi khách một danh sách dòng xe — hỏi cả cụm là khách khó tính nhất
       // áp lên mọi khách cùng phường); danh sách giao nhau rỗng ⇒ không vào chung bin
-      const fitsBin = (x: Bin, add: Unit[]) => { const nb = withUnits(x, add); return !solo(x) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb, P.max_drops) }
+      const fitsBin = (x: Bin, add: Unit[]) => { const nb = withUnits(x, add); return !solo(x) && binFits(hasAllowList(nb.units.map(y => y.od)) ? candsFor(nb.units.map(y => y.od)) : cands, nb) }
       const tail = tailOf(u)
       let add = tail.length ? [u, ...tail] : [u]
       let b = tail.length ? local.find(x => fitsBin(x, add)) : undefined
@@ -867,7 +866,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
       if (b) { const nb = withUnits(b, add); b.units = nb.units; b.pallets = nb.pallets; b.tons = nb.tons }
       else {
         const fresh: Bin = { key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }
-        add = tail.length && binFits(candsFor([u.od, ...tail.map(y => y.od)]), withUnits(fresh, tail), P.max_drops) ? [u, ...tail] : [u]
+        add = tail.length && binFits(candsFor([u.od, ...tail.map(y => y.od)]), withUnits(fresh, tail)) ? [u, ...tail] : [u]
         local.push(add.length > 1 ? withUnits(fresh, tail) : fresh)
       }
       if (add.length > 1) dropTail(tail)
@@ -881,7 +880,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const mkey = mergeKey(u.od, P.allow_mix_channels, '?')
     if (u.oversize || u.multi) { bins.push({ key, mkey, units: [u], pallets: u.pallets ?? 0, tons: u.tons ?? 0 }); continue }
     const fitsWith = (b: Bin, us: Unit[]) => !solo(b) && baseKey(b.key) === baseKey(key)
-      && binFits(candsFor([...b.units.map(y => y.od), ...us.map(y => y.od)]), withUnits(b, us), P.max_drops)
+      && binFits(candsFor([...b.units.map(y => y.od), ...us.map(y => y.od)]), withUnits(b, us))
     const same = (b: Bin) => b.units.some(y => custOf(y) === custOf(u))
     // POSM của CHÍNH khách này chưa xếp: ké xe khách KHÁC thì phải kéo theo cả POSM (không thì POSM mất chỗ ké, rơi lại khung chờ —
     // đo bàn 29/09: 22 → 25 OD "chờ đơn chính" khi chưa có vế này); không vừa cả cụm ⇒ xe riêng, POSM ké sau như thường
@@ -901,7 +900,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
   for (const u of followOnly.sort(unitSort)) {
     const key = clusterKey(u.od, P.allow_mix_channels, '*')
     const fitsIn = (b: Bin) => !solo(b) && baseKey(b.key) === baseKey(key)
-      && binFits(candsFor([...b.units.map(y => y.od), u.od]), withUnits(b, [u]), P.max_drops)
+      && binFits(candsFor([...b.units.map(y => y.od), u.od]), withUnits(b, [u]))
     const same = (b: Bin) => b.units.some(y => custOf(y) === custOf(u))
     const hit = bins.find(b => same(b) && (fitsIn(b) || multiTakes(b, u))) ?? bins.find(b => catPartOf(b.key) !== '*' && fitsIn(b)) ?? bins.find(b => fitsIn(b))
     if (hit) { const nb = withUnits(hit, [u]); hit.units = nb.units; hit.pallets = nb.pallets; hit.tons = nb.tons }
@@ -942,7 +941,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
       const crossRegion = (t: Bin) => detourPct != null && t.mkey !== src.mkey && regionless(t.mkey) === regionless(src.mkey)
       const targets = bins.filter(t => t !== src && (sameGroup(t) || crossRegion(t)) && !solo(t))
         .map(t => ({ t, merged: withUnits(t, src.units), cross: !sameGroup(t) }))
-        .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged, P.max_drops))
+        .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged))
         .filter(x => !x.cross || detourMergeOk(x.merged))
         .map(x => { const cT = costOf(x.t).freight.total, cM = costOf(x.merged).freight.total; return { ...x, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
         .filter(x => x.ok)

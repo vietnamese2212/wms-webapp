@@ -31,20 +31,15 @@ function asPickRadius(v: unknown): number {
   const n = Math.trunc(Number(v))
   return Number.isFinite(n) ? Math.min(200, Math.max(0, n)) : 0
 }
-// ĐIỀU VẬN (20260924) — tham số cấp KHO cho engine ghép chuyến: kẹp đúng CHECK ở DB (điểm giao 1..50 hoặc NULL = không giới
-// hạn — 28/09 user: "mặc định là không giới hạn"; Non tải 1..100 hoặc NULL = theo dòng xe)
-function asMaxDrops(v: unknown): number | null {
-  if (v === null || v === '' || v === undefined || v === 0 || v === '0') return null
-  const n = Math.trunc(Number(v))
-  return Number.isFinite(n) ? Math.min(50, Math.max(1, n)) : null
-}
+// ĐIỀU VẬN (20260924) — tham số cấp KHO cho engine ghép chuyến (Non tải 1..100 hoặc NULL = theo dòng xe).
+// 02/10: BỎ "điểm giao tối đa" của kho (cột dispatch_max_drops DROP, migration 20261002e) — user: "các khách và dòng xe muốn được
+// ghép chuyến phải khai, không khai thì có cảnh báo"; body gửi lên bị bỏ qua.
 function asUnderloadPct(v: unknown): number | null {
   if (v === null || v === '' || v === undefined) return null
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? Math.min(100, Math.round(n * 10) / 10) : null
 }
 function applyDispatchBody(body: Record<string, unknown>, target: Record<string, unknown>) {
-  if (body.dispatch_max_drops !== undefined)          target.dispatch_max_drops = asMaxDrops(body.dispatch_max_drops)
   // 28/09: ship-to "trông như kho WMS mà chưa trỏ" — NONE (im) · WARN (nhắc, mặc định) · BLOCK (chặn Hoàn thành)
   if (body.unlinked_shipto_policy !== undefined)      target.unlinked_shipto_policy = asUnlinkedPolicy(body.unlinked_shipto_policy)
   if (body.dispatch_allow_mix_channels !== undefined) target.dispatch_allow_mix_channels = Boolean(body.dispatch_allow_mix_channels)

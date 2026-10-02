@@ -35,7 +35,7 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
-  odStopsCap, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
+  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
@@ -51,7 +51,7 @@ type Tables = Database['public']['Tables']
 type PlanRow = Tables['dispatch_plan']['Row']
 type TripRow = Tables['dispatch_trip']['Row']
 type TripOdRow = Tables['dispatch_trip_od']['Row']
-type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_max_drops: number | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown; dispatch_detour_pct: number | string | null }
+type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown; dispatch_detour_pct: number | string | null }
 
 type TripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
 const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
@@ -89,7 +89,6 @@ export const zLoadBands = z.record(z.string().min(1).max(64), zLoadBand).refine(
 export const zPlanBody = z.object({
   warehouse_id: zId,
   plan_date: zDay,
-  max_drops: z.number().int().min(1).max(50).nullable().optional(),   // null = không giới hạn (28/09)
   allow_mix_channels: zBool.optional(),
   allow_mix_categories: zBool.optional(),   // đè "cho ghép nhiều Loại kho" của kho cho lượt lập này
   underload_pct: z.number().min(1).max(100).nullable().optional(),
@@ -132,7 +131,7 @@ export const zRespond = z.object({
 type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' | 'allocations' | 'share_targets'>
 
 async function loadWarehouse(id: string): Promise<WhRow | null> {
-  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_max_drops, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands, dispatch_detour_pct').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands, dispatch_detour_pct').eq('id', id).maybeSingle()
   if (error) throw error
   return (data as WhRow | null) ?? null
 }
@@ -218,7 +217,19 @@ type CustRow = { ship_to_code: string; ward_code: string | null; region_code: st
 type CatCfg = Awaited<ReturnType<typeof getDispatchCategoryConfig>>
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (user 26/09: "nếu không khai báo đúng thì FG02 có thể dùng container
  *  mất") — màn Điều vận hiện băng cảnh báo từ đây. Loại "đi kèm đơn" không cần ĐK bảo quản riêng. */
-export type ConfigGaps = { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
+export type ConfigGaps = {
+  no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] }
+  /** 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): dòng xe chưa khai điểm giao · kênh chưa khai số khách cùng xe · OD của khách không kênh */
+  no_drops?: { models: string[]; channels: string[]; no_channel_ods: number }
+}
+/** Chưa khai số điểm giao / số khách cùng xe = máy xếp MỖI khách một xe — phải nói ra, không thì người tưởng máy không biết ghép. */
+function dropGaps(ods: EngineOd[], models: Pick<EngineModel, 'id' | 'name' | 'max_drops' | 'is_active'>[]): NonNullable<ConfigGaps['no_drops']> {
+  const listed = new Set(ods.flatMap(o => o.allowed_models ?? []))
+  const anyOpen = ods.some(o => !o.allowed_models)
+  const noDrops = models.filter(m => m.is_active && m.max_drops == null && (anyOpen || listed.has(m.id))).map(m => m.name).sort()
+  const open = ods.filter(o => o.max_customers == null)
+  return { models: noDrops, channels: uniq(open.map(o => o.channel).filter((x): x is string => !!x)).sort(), no_channel_ods: open.filter(o => !o.channel).length }
+}
 type OdMeta = { delivery_date: string | null; late_days: number; region_code: string | null; region_name: string | null; note: string | null; sig: string }
 /** Chữ ký dòng hàng SAP của một OD (item | mã | SL base) lúc chụp — ZSD02 nạp lại mà chữ ký khác = SAP đã SỬA đơn sau khi người
  *  đã xem (27/09 tối, user: "chú ý việc sửa đơn, điều chỉnh thì xử lý thế nào"). */
@@ -603,8 +614,7 @@ export async function createPlan(req: Request, res: Response) {
     const prefix = codePrefixOf(wh.code, b.plan_date)
     const params = {
       day: b.plan_date,
-      // 28/09: trần điểm giao của kho cho phép TRỐNG = không giới hạn (từng cứng 3)
-      max_drops: b.max_drops !== undefined ? b.max_drops : numOrNull(wh.dispatch_max_drops),
+      // 02/10: không còn "điểm giao tối đa" của kho — dòng xe (`max_drops`) và khách/kênh ("số khách tối đa cùng xe") tự khai, chưa khai = 1
       allow_mix_channels: b.allow_mix_channels ?? wh.dispatch_allow_mix_channels === true,
       underload_pct: b.underload_pct === undefined ? numOrNull(wh.dispatch_underload_pct) : b.underload_pct,
       code_prefix: prefix,
@@ -641,7 +651,7 @@ export async function createPlan(req: Request, res: Response) {
       id: planId, warehouse_id: wh.id, plan_date: b.plan_date, status: 'DRAFT', engine_version: ENGINE_VERSION,
       params: asJson({
         ...params, pool_ods: ods.length, in_plan: in_plan.length, share_base: share_actual, share_targets: refs.share_targets, carriers: refs.carriers, wh_code: wh.code,
-        backlog_days: BACKLOG_DAYS, late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: gaps,
+        backlog_days: BACKLOG_DAYS, late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: { ...gaps, no_drops: dropGaps(ods, refs.models) },
         // mốc "máy lập" để dải chỉ số nói người sửa đã làm tốt hơn hay tệ hơn đề xuất — đặt ở lần ghép đầu (sau bước Xem đơn)
         baseline: null,
       }),
@@ -816,7 +826,7 @@ function engineParams(plan: PlanRow): EngineInput['params'] {
   const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean; detour_pct?: number | null }
   // kế hoạch lập trước 26/09 không có `allow_mix_categories` ⇒ undefined = cho trộn loại như lúc nó được lập;
   // lập trước 27/09 không có `max_vehicles` ⇒ một xe / thẻ như lúc nó được lập; `pallet_max_stops` của kế hoạch cũ bỏ qua (29/09)
-  return { day: plan.plan_date, max_drops: params.max_drops ?? null, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1,
+  return { day: plan.plan_date, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1,
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
     load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true, detour_pct: numOrNull(params.detour_pct) }
 }
@@ -862,11 +872,9 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
     warnings.push('Các xe trên thẻ đo sức chứa khác nhau (pallet / tấn) — % tải chỉ tính gần đúng')
   // Xe không có dòng xe mà IM LẶNG là lỗi đã gặp (Ba Vì 25/09: 2 xe kéo tay "chưa chọn dòng xe" không một cảnh báo nào)
   if (!model && trip.ods.length) warnings.push(`Chưa có dòng xe (xe đang chở ${sum.pallets ?? '?'} pallet / ${sum.tons ?? '?'} tấn) — bấm vào xe để chọn dòng xe, hoặc tách bớt OD`)
-  // 28/09: trần = nhỏ nhất trong (dòng xe · điểm giao của kho · khách/kênh khắt khe nhất trên xe); mọi tầng trống = không giới hạn
-  // (29/09: không còn "kiểu đi" — xe pallet chỉ một khách là `max_drops = 1` khai ở Mã dòng xe)
-  const caps = [model?.max_drops ?? null, params.max_drops, odStopsCap(trip.ods)].filter((n): n is number => typeof n === 'number')
-  const maxDrops = caps.length ? Math.min(...caps) : null
-  if (trip.ods.length && maxDrops != null && stops > maxDrops) warnings.push(`Vượt số khách cùng xe (${stops} > ${maxDrops})`)
+  // 02/10: trần = nhỏ nhất trong (dòng xe `max_drops` · khách/kênh khắt khe nhất trên xe); CHƯA KHAI = 1 (không còn số của kho)
+  const maxDrops = Math.min(model ? modelDrops(model) : Infinity, odStopsCap(trip.ods))
+  if (trip.ods.length && Number.isFinite(maxDrops) && stops > maxDrops) warnings.push(`Vượt số khách cùng xe (${stops} > ${maxDrops})`)
   // Thẻ nhiều xe: MỖI xe phải qua đủ luật như xe chính — hỏi từng xe, câu cảnh báo nêu đúng tên xe
   for (const m of uniq(fleet)) {
     // Người tự chọn dòng xe thì KHÔNG chặn (đây là bản nháp, người quyết) — nhưng phải nói ra khi xe không phục vụ đủ
@@ -1448,7 +1456,8 @@ async function refreshPoolInner(req: Request, res: Response) {
     const prev = (plan.params ?? {}) as Record<string, unknown>
     const inPool = new Set(full.pool.map(o => o.od_number))
     const fresh_ods = uniq([...((prev.fresh_ods ?? []) as string[]).filter(od => inPool.has(od)), ...loadable.map(o => o.od_number)])
-    const params = { ...prev, excluded: cand.excluded, config_gaps: cand.gaps, fresh_ods }
+    const { data: vmRows } = await db.from('vehicle_model').select('id, name, max_drops, is_active').eq('is_active', true)
+    const params = { ...prev, excluded: cand.excluded, config_gaps: { ...cand.gaps, no_drops: dropGaps(cand.ods, (vmRows ?? []).map(m => ({ ...m, max_drops: numOrNull(m.max_drops) }))) }, fresh_ods }
     const { error } = await db.from('dispatch_plan').update({ params: asJson(params), updated_at: t }).eq('id', plan.id)
     if (error) throw error
     await writeSummary({ ...plan, params: asJson(params) })

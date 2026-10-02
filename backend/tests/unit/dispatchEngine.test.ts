@@ -9,7 +9,8 @@ import {
 
 const model = (o: Partial<EngineModel> & { id: string }): EngineModel => ({
   sap_code: o.id, name: o.id, parent_type_name: 'XE PALLET', capacity_mode: 'PALLET', max_pallets: 9, max_tons: null,
-  tariff_unit: 'PER_PALLET', underload_pct: 70, serve_conditions: null, max_drops: null, is_active: true, ...o,
+  // 02/10: dòng xe / khách CHƯA KHAI = 1 ⇒ fixture khai sẵn 9 để các luật khác vẫn thấy xe ghép được; ca "chưa khai" kiểm riêng
+  tariff_unit: 'PER_PALLET', underload_pct: 70, serve_conditions: null, max_drops: 9, is_active: true, ...o,
 })
 const M9 = model({ id: 'M9' })
 const M16 = model({ id: 'M16', max_pallets: 16 })
@@ -20,9 +21,9 @@ const tariff = (carrier: string, m: string, ward: string, price: number, km: num
 const line = (pallets: number, over: Partial<EngineLine> = {}): EngineLine => ({ material_code: 'M1', qty_base: 1, pallets, kg: pallets * 500, category: 'FG01', condition: null, ...over })
 const od = (n: string, ward: string, pallets: number, over: Partial<EngineOd> = {}): EngineOd => ({
   od_number: n, ship_to_code: `S${n}`, ship_to_name: null, ward_code: ward, region_code: 'R1', channel: null, flow: 'SALE',
-  lines: [line(pallets)], ...over,
+  lines: [line(pallets)], max_customers: 9, ...over,
 })
-const params = { day: '2026-09-25', max_drops: 3, allow_mix_channels: false, underload_pct: null, code_prefix: 'K_X_250926_', start_seq: 1 }
+const params = { day: '2026-09-25', allow_mix_channels: false, underload_pct: null, code_prefix: 'K_X_250926_', start_seq: 1 }
 // A có cước cho MỌI phường ở cả hai dòng xe (M9 rẻ hơn M16 theo pallet); B chỉ có ở W1 và đắt hơn
 const TARIFFS = ['W1', 'W2', 'W3', 'W4'].flatMap(w => [tariff('A', 'M9', w, 100_000), tariff('A', 'M16', w, 150_000)]).concat([tariff('B', 'M9', 'W1', 120_000), tariff('B', 'M16', 'W1', 170_000)])
 const input = (ods: EngineOd[], extra: Partial<EngineInput> = {}): EngineInput =>
@@ -123,8 +124,8 @@ describe('runDispatch — xếp lớn trước theo cụm, hạ xe rẻ nhất, 
     expect(r.trips[0].oversize).toBe(true)
     expect(r.trips[0].warnings.join(' ')).toMatch(/lớn hơn xe lớn nhất/)
   })
-  it('max_drops 3: 4 khách 1 pallet cùng phường ⇒ 2 chuyến (3 điểm + 1 điểm) dù vừa một xe', () => {
-    const r = runDispatch(input(['1', '2', '3', '4'].map(n => od(n, 'W1', 1))))
+  it('dòng xe khai max_drops 3: 4 khách 1 pallet cùng phường ⇒ 2 chuyến (3 điểm + 1 điểm) dù vừa một xe', () => {
+    const r = runDispatch(input(['1', '2', '3', '4'].map(n => od(n, 'W1', 1)), { models: [model({ id: 'M9', max_drops: 3 }), model({ id: 'M16', max_pallets: 16, max_drops: 3 })] }))
     expect(r.trips.map(t => t.stops).sort()).toEqual([1, 3])
   })
   it('Số xe nối tiếp từ start_seq (STT đã có trong Kế hoạch xuất)', () => {
@@ -145,20 +146,22 @@ describe('luật 2 — không trộn kênh / kho nội bộ đi riêng', () => {
   })
 })
 
-describe('28/09 — số khách tối đa cùng xe theo KHÁCH / KÊNH (mặc định không giới hạn)', () => {
-  it('OD khai max_customers 1 ⇒ không ghép với khách khác; OD không khai ⇒ ghép; OD khắt khe nhất áp cho cả xe', () => {
+describe('28/09 → 02/10 — số khách tối đa cùng xe theo KHÁCH / KÊNH; CHƯA KHAI = 1 (user: "muốn được ghép phải khai")', () => {
+  it('OD khai max_customers 1 ⇒ không ghép với khách khác; OD KHÔNG khai (null) ⇒ cũng không ghép; OD khắt khe nhất áp cho cả xe', () => {
     expect(runDispatch(input([od('1', 'W1', 2, { max_customers: 1 }), od('2', 'W1', 2)])).trips).toHaveLength(2)
-    expect(runDispatch(input([od('1', 'W1', 2, { max_customers: null }), od('2', 'W1', 2)])).trips).toHaveLength(1)
+    expect(runDispatch(input([od('1', 'W1', 2, { max_customers: null }), od('2', 'W1', 2)])).trips).toHaveLength(2)   // đỏ trên bản cũ (null = không giới hạn)
     // 3 khách: một khách chịu tối đa 2 ⇒ xe chở khách đó chỉ 2 khách, khách thứ ba đi xe khác
     const r = runDispatch(input([od('1', 'W1', 1, { max_customers: 2 }), od('2', 'W1', 1), od('3', 'W1', 1)]))
     expect(r.trips).toHaveLength(2)
     const withOne = r.trips.find(t => t.ods.some(o => o.od_number === '1'))!
     expect(withOne.ods).toHaveLength(2)
   })
-  it('kho không giới hạn điểm giao (max_drops null) ⇒ 5 khách 1 pallet cùng phường lên một xe', () => {
-    const r = runDispatch(input(['1', '2', '3', '4', '5'].map(n => od(n, 'W1', 1)), { params: { ...params, max_drops: null } }))
+  it('dòng xe khai 9 + khách khai 9 ⇒ 5 khách 1 pallet cùng phường lên một xe; dòng xe KHÔNG khai ⇒ mỗi khách một xe', () => {
+    const r = runDispatch(input(['1', '2', '3', '4', '5'].map(n => od(n, 'W1', 1))))
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].ods).toHaveLength(5)
+    const r2 = runDispatch(input(['1', '2', '3'].map(n => od(n, 'W1', 1)), { models: [model({ id: 'M9', max_drops: null })] }))
+    expect(r2.trips).toHaveLength(3)   // đỏ trên bản cũ (null = theo kho / không giới hạn)
   })
 })
 
@@ -169,8 +172,8 @@ describe('luật 5 — gộp chuyến Non tải cùng vùng khi vừa xe, đủ 
     expect(r.trips[0].wards.sort()).toEqual(['W1', 'W2'])
     expect(r.trips[0].freight.total).toBe(4 * 100_000)
   })
-  it('max_drops 1 ⇒ không gộp được, chuyến Non tải giữ merge_hint nói vì sao', () => {
-    const r = runDispatch(input([od('1', 'W1', 2), od('2', 'W2', 2)], { params: { ...params, max_drops: 1 } }))
+  it('dòng xe max_drops 1 ⇒ không gộp được, chuyến Non tải giữ merge_hint nói vì sao', () => {
+    const r = runDispatch(input([od('1', 'W1', 2), od('2', 'W2', 2)], { models: [model({ id: 'M9', max_drops: 1 }), model({ id: 'M16', max_pallets: 16, max_drops: 1 })] }))
     expect(r.trips).toHaveLength(2)
     expect(r.trips.every(t => t.underload)).toBe(true)
     expect(r.trips[0].merge_hint).toMatch(/Non tải/)
@@ -390,9 +393,9 @@ describe('luật 7 BỎ (user 29/09: "dòng xe là đơn vị thấp hơn của 
     const r = runDispatch(inp([od('1', 'W1', 3, { allowed_models: ['P10'] }), od('2', 'W1', 3, { allowed_models: ['P10'] })], [model({ ...P10, max_drops: 2 }), T8]))
     expect(r.trips).toHaveLength(1); expect(r.trips[0].stops).toBe(2)
   })
-  // 02/10 (user: "dòng xe cho phép ghép nhiều, riêng khách đó chỉ đi 1 — cài đặt WMS tham gia làm gì?"): số của kho chỉ là MẶC ĐỊNH
-  // cho dòng xe không khai, không đè lên dòng xe đã khai; khách muốn đi một mình thì tự hạ bằng "Số khách tối đa cùng xe" / "Đi xe riêng"
-  it('kho mặc định 3 nhưng dòng xe khai 5 ⇒ 5 khách 1 pallet lên MỘT xe (đỏ trên bản cũ: kho đè còn 3 + 2)', () => {
+  // 02/10 (user: "bỏ cài đặt WMS; dòng xe cho phép ghép nhiều, riêng khách đó chỉ đi 1"): không còn số của kho — dòng xe khai bao nhiêu
+  // là bấy nhiêu; khách muốn đi một mình thì tự hạ bằng "Số khách tối đa cùng xe" / "Đi xe riêng"
+  it('dòng xe khai 5 ⇒ 5 khách 1 pallet lên MỘT xe (đỏ trên bản cũ: kho 3 đè còn 3 + 2)', () => {
     const P50 = model({ id: 'P50', max_pallets: 50, max_drops: 5 })
     const r = runDispatch(inp(['1', '2', '3', '4', '5'].map(n => od(n, 'W1', 1, { allowed_models: ['P50'] })), [P50]))
     expect(r.trips).toHaveLength(1); expect(r.trips[0].stops).toBe(5)

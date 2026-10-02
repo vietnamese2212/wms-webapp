@@ -394,7 +394,7 @@ export default function Dispatch() {
                   <InfoTip tip={<div className="space-y-0.5 text-xs">
                     <div><b>{plan.warehouse?.name}</b> · giao {formatDate(plan.plan_date)}</div>
                     <div>Lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</div>
-                    <div>Tối đa {plan.params.max_drops ?? 'không giới hạn'} điểm giao / xe (dòng xe · kênh · khách khai riêng thì lấy số nhỏ nhất) · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
+                    <div>Số khách cùng xe = nhỏ nhất trong (dòng xe · kênh / khách) — chưa khai = một khách một xe · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
                     <div>{plan.params.allow_mix_categories === false ? 'Không ghép nhiều Loại kho trên một chuyến' : 'Cho ghép nhiều Loại kho trên một chuyến'}{plan.params.follow_categories?.length ? ` · đi kèm đơn: ${plan.params.follow_categories.join(', ')}` : ''}</div>
                     <div>Pool {nf(plan.params.pool_ods)} OD · {nf(plan.params.in_plan)} OD đã có trong Kế hoạch xuất</div>
                     <div className="text-slate-500">Tham số theo kho: Cài đặt WMS → Kho → "XUẤT — Điều vận".</div>
@@ -410,7 +410,10 @@ export default function Dispatch() {
                 // đếm SỐNG từ dòng OD (không từ params — "Ghép" / sửa dòng xe khách trên bàn không cập nhật params)
                 const noVeh = [...(plan.pool ?? []), ...plan.trips.flatMap(t => t.ods)].filter(o => Array.isArray(o.allowed_models) && !o.allowed_models.length)
                 const nVeh = new Set(noVeh.map(o => o.od_number)).size, nVehCust = new Set(noVeh.map(o => o.ship_to_code ?? o.od_number)).size
-                if (!nCond && !nCat && !nVeh) return null
+                // 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): chưa khai = máy xếp mỗi khách một xe
+                const nd = g?.no_drops
+                const nDrops = (nd?.models.length ?? 0) + (nd?.channels.length ?? 0) + (nd?.no_channel_ods ?? 0)
+                if (!nCond && !nCat && !nVeh && !nDrops) return null
                 return (
                   <span className="inline-flex items-center gap-0.5 shrink-0 rounded-md bg-amber-100 px-2 h-9 sm:h-7 text-[11px] font-medium text-amber-800">
                     <AlertTriangle className="h-3 w-3" />Khai thiếu
@@ -419,6 +422,15 @@ export default function Dispatch() {
                       {nVeh > 0 && <div>
                         <b>{nf(nVeh)} OD của {nf(nVehCust)} khách chưa có dòng xe nào được vào</b> — máy KHÔNG chọn xe cho các OD này, chúng nằm ở khung chờ.
                         Khai ở Cấu hình → Khách hàng → Dòng xe được vào (khai theo KÊNH cho số đông, khai riêng khách khi cần), rồi bấm Ghép xe / Tối ưu lại.
+                      </div>}
+                      {nDrops > 0 && <div>
+                        <b>Chưa khai số điểm giao — máy xếp mỗi khách MỘT xe:</b>
+                        <ul className="list-disc pl-4">
+                          {!!nd?.models.length && <li>Dòng xe chưa khai "Điểm giao tối đa" (Cài đặt TMS → Mã dòng xe): {nd.models.join(', ')}</li>}
+                          {!!nd?.channels.length && <li>Kênh chưa khai "Số khách tối đa cùng xe" (Cấu hình → Khách hàng → Kênh): {nd.channels.join(', ')}</li>}
+                          {!!nd?.no_channel_ods && <li>{nf(nd.no_channel_ods)} OD của khách chưa có kênh và chưa khai riêng</li>}
+                        </ul>
+                        Khách nào phải đi riêng thì tick "Đi xe riêng" hoặc khai "Số khách tối đa cùng xe" = 1 ở chính khách đó.
                       </div>}
                       {!!g?.no_condition.length && <div>
                         <b>Loại kho chưa khai điều kiện bảo quản</b> — máy coi hàng loại này đi <b>xe nào cũng được</b> (kể cả xe lạnh):

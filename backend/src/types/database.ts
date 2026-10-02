@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-01T15:39:40.742Z · 110 bảng/view · 175 hàm · 0 enum
+// Sinh lúc 2026-10-02T01:53:01.965Z · 110 bảng/view · 175 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2449,7 +2449,6 @@ export type Database = {
           separate_lowering_forklift: boolean
           cross_trip_pick_radius: number
           auto_fill: boolean
-          dispatch_max_drops: number | null
           dispatch_allow_mix_channels: boolean
           dispatch_underload_pct: number | null
           dispatch_pallet_max_stops: number
@@ -2508,7 +2507,6 @@ export type Database = {
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
           auto_fill?: boolean
-          dispatch_max_drops?: number | null
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number
@@ -2567,7 +2565,6 @@ export type Database = {
           separate_lowering_forklift?: boolean
           cross_trip_pick_radius?: number
           auto_fill?: boolean
-          dispatch_max_drops?: number | null
           dispatch_allow_mix_channels?: boolean
           dispatch_underload_pct?: number | null
           dispatch_pallet_max_stops?: number

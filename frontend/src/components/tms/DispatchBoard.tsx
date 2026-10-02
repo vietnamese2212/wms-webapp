@@ -497,8 +497,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     const iss = ISSUE_ORDER.filter(k => issuesOf(t, ctx).includes(k))
     const isHover = hover?.target === t.id
     const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : 'border-slate-200'
-    // trần điểm giao của KHO (dòng xe / kênh / khách khắt khe hơn thì xe báo qua cảnh báo "Vượt số khách cùng xe"); null = không giới hạn
-    const lim = plan.params.max_drops ?? null
+    // 02/10: không còn trần điểm giao của KHO — trần thật (dòng xe · kênh / khách) xe báo qua cảnh báo "Vượt số khách cùng xe"
+    const lim: number | null = null
     return (
       <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
         className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>

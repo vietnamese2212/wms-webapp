@@ -777,7 +777,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number | null; unlinked_shipto_policy?: string; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_max_vehicles_per_trip?: number; dispatch_detour_pct?: number | null; copy_from_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; unlinked_shipto_policy?: string; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_max_vehicles_per_trip?: number; dispatch_detour_pct?: number | null; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -786,7 +786,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; dispatch_max_drops?: number | null; unlinked_shipto_policy?: string; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_max_vehicles_per_trip?: number; dispatch_detour_pct?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; scan_code_types?: string; date_rule_policy?: string; separate_lowering_forklift?: boolean; cross_trip_pick_radius?: number; unlinked_shipto_policy?: string; dispatch_allow_mix_channels?: boolean; dispatch_allow_mix_categories?: boolean; dispatch_underload_pct?: number | null; dispatch_max_vehicles_per_trip?: number; dispatch_detour_pct?: number | null }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data as WarehouseSaved),
     // Bật/tắt "Áp %Date tự động" ghi thẳng vào dòng hàng của đơn đang mở (BE áp ngay từ 12/09) →
     // phải làm mới cả màn Quy định date và bảng việc, không đợi người dùng bấm lại.
@@ -6076,7 +6076,11 @@ export interface DispatchSummary {
   baseline?: { trips: number; freight_total: number; pallets: number; underload: number; unpriced: number } | null
 }
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (26/09): Loại kho chưa khai ĐK bảo quản · mã hàng chưa khai Loại kho. */
-export interface DispatchConfigGaps { no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] } }
+export interface DispatchConfigGaps {
+  no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] }
+  /** 02/10: dòng xe chưa khai điểm giao · kênh chưa khai số khách cùng xe · OD của khách không kênh — chưa khai = mỗi khách một xe */
+  no_drops?: { models: string[]; channels: string[]; no_channel_ods: number }
+}
 /** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
 export type DispatchLoadBands = Record<string, { min: number; max: number }>
 export interface DispatchPlan {

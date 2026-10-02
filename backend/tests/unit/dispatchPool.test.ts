@@ -89,11 +89,11 @@ describe('cửa đặt lịch khi OD di chuyển — suy từ tải theo loại 
 })
 
 describe('xe mới do người kéo OD ra — máy chọn dòng xe + ĐVVT theo đúng ba bậc', () => {
-  const m = (id: string, max: number): EngineModel => ({ id, sap_code: id, name: id, parent_type_name: 'XE', capacity_mode: 'PALLET', max_pallets: max, max_tons: null, tariff_unit: 'PER_PALLET', underload_pct: 70, serve_conditions: null, max_drops: null, is_active: true })
+  const m = (id: string, max: number): EngineModel => ({ id, sap_code: id, name: id, parent_type_name: 'XE', capacity_mode: 'PALLET', max_pallets: max, max_tons: null, tariff_unit: 'PER_PALLET', underload_pct: 70, serve_conditions: null, max_drops: 3, is_active: true })
   const A: EngineCarrier = { id: 'A', code: 'A', name: 'A' }
   const t = (mid: string, price: number): EngineTariff => ({ id: mid, transport_company_id: 'A', vehicle_model_id: mid, ward_code: 'W1', price, distance_km: 5, effective_from: '2026-01-01', effective_to: null, is_active: true })
   const od: EngineOd = { od_number: '1', ship_to_code: 'S', ship_to_name: null, ward_code: 'W1', region_code: 'R', channel: null, flow: 'SALE', lines: [] }
-  const input = { ods: [], models: [m('M9', 9), m('M16', 16)], carriers: [A], tariffs: [t('M9', 100_000), t('M16', 90_000)], surcharges: [], allocations: [], share_targets: [], share_actual: {}, params: { day: DAY, max_drops: 3, allow_mix_channels: false, underload_pct: null, code_prefix: 'K_', start_seq: 1 } }
+  const input = { ods: [], models: [m('M9', 9), m('M16', 16)], carriers: [A], tariffs: [t('M9', 100_000), t('M16', 90_000)], surcharges: [], allocations: [], share_targets: [], share_actual: {}, params: { day: DAY, allow_mix_channels: false, underload_pct: null, code_prefix: 'K_', start_seq: 1 } }
   it('8 pallet: M9 đủ tải (89 %) còn M16 Non tải (50 %) ⇒ chọn M9 dù cước/pallet M16 rẻ hơn', () => {
     const s = suggestVehicle(input, [{ od, pallets: 8, tons: 4, conditions: [] }], {})
     expect(s.model?.id).toBe('M9')

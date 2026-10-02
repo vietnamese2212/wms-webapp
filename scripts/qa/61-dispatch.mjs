@@ -140,7 +140,8 @@ const sur = (t) => (t?.detail?.freight?.surcharges ?? []).reduce((s, x) => s + N
 
 try {
   // ── Fixture: dòng xe con 9 pallet (gán cha) · cước DA@W1 · cước HA@W2 · 3 OD ZSD02 + khách (phường/vùng) ──
-  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET' })
+  // 02/10: dòng xe / khách CHƯA KHAI số điểm giao = 1 ⇒ fixture khai 3 để các kịch bản ghép (OD1+OD2) vẫn đúng; ca "chưa khai" kiểm ở [11e]/[13i]
+  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3 })
   const vmId = cr.j?.data?.id
   await api('/tms/vehicle-models/assign-parent', 'PATCH', { ids: [vmId], parent_type_id: XEPALLET?.id })
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: W1, price: PRICE_DA, distance_km: 15 })
@@ -151,7 +152,7 @@ try {
   const ALLV = { '*': (await restAll('vehicle_model', 'select=id&is_active=eq.true')).map(v => v.id) }
   for (let i = 0; i < 3; i++) {
     const ward = i < 2 ? W1 : W2
-    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, updated_at: nowIso() })
+    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, max_customers_per_trip: 3, updated_at: nowIso() })
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
       ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
@@ -368,7 +369,7 @@ try {
   await cleanupTrips()
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
   const OD4 = 'QA61OD4', MAT_LA = 'QA61MAKHONGCO'
-  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, updated_at: nowIso() })
+  await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: 'QA61SHIP4', name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, max_customers_per_trip: 3, updated_at: nowIso() })
   await restWrite('erp_outbound_orders', 'POST', null, {
     id: crypto.randomUUID(), od_number: OD4, od_item: '10', material_code: MAT_LA, qty_base: 2 * perPallet,
     ship_to_code: 'QA61SHIP4', ship_to_name: 'QA61 NPP 4', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null,
@@ -597,11 +598,18 @@ try {
   check('11d. Cửa đổi kiểu đi cũ: route /ods không còn (404) · PATCH xe với load_mode không đổi gì (200, không 5xx)',
     oldMode.s === 404 && oldFlip.s === 200 && !oldFlip.j?.data?.load_mode, `ods=${oldMode.s} trip=${oldFlip.s} mode=${oldFlip.j?.data?.load_mode ?? 'null'}`)
   await cleanupTrips()
+  // 02/10 (user: "dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): gỡ max_drops ⇒ dòng xe CHƯA KHAI = 1 ⇒ vẫn hai xe, và
+  // config_gaps.no_drops nêu tên dòng xe; khai lại 3 ⇒ chung xe
   const dNull = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: null })
   const p11e = await mkPlan(PLAN_BODY)
-  check('11e. Gỡ max_drops của dòng xe ⇒ OD1 + OD2 lại chung MỘT xe (7/9 pallet) — trần chỉ do cấu hình, không do "kiểu xe"',
-    dNull.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id === tripOfOd(p11e.j?.data, OD[1])?.id,
-    `drops=${dNull.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')}`)
+  const gaps11 = p11e.j?.data?.params?.config_gaps?.no_drops
+  await cleanupTrips()
+  const d3 = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: 3 })
+  const p11e2 = await mkPlan(PLAN_BODY)
+  check('11e. Gỡ max_drops của dòng xe ⇒ CHƯA KHAI = 1: OD1 và OD2 vẫn HAI xe + Khai thiếu nêu tên dòng xe · khai lại 3 ⇒ chung MỘT xe (7/9 pallet)',
+    dNull.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id !== tripOfOd(p11e.j?.data, OD[1])?.id && (gaps11?.models ?? []).includes('QA61 Xe 9 Pallet')
+    && d3.s === 200 && p11e2.s === 201 && tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id && !(p11e2.j?.data?.params?.config_gaps?.no_drops?.models ?? []).includes('QA61 Xe 9 Pallet'),
+    `drops=${dNull.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')} gaps=${JSON.stringify(gaps11)} re=${d3.s}/${p11e2.s} same=${tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id}`)
   const ro11 = await api(`/tms/dispatch/plans/${p11e.j?.data?.id}/reopen`, 'POST', {})
   check('11f. Mở lại khi chưa xe nào vào Kế hoạch xuất → 422 NOTHING_TO_REOPEN', ro11.s === 422 && ro11.j?.error?.code === 'NOTHING_TO_REOPEN', `http=${ro11.s} code=${ro11.j?.error?.code}`)
 
@@ -950,15 +958,20 @@ try {
     await cleanupTrips()
     const pM = await mkPlan(PLAN_BODY); const PM = pM.j?.data
     const tM2 = tripOfOd(PM, OD[1])
+    // 02/10: hàng loạt về null = CHƯA KHAI = 1 (không còn "không giới hạn") ⇒ vẫn xe riêng + Khai thiếu đếm OD của khách không kênh; khai lại 3 ⇒ chung xe
     const mxClr = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c2.id], patch: { max_customers_per_trip: null } })
     const c2Now = (await restAll('Customer', `select=max_customers_per_trip,dispatch_separate&id=eq.${c2.id}`))[0]
     await cleanupTrips()
     const pM2 = await mkPlan(PLAN_BODY); const PM2 = pM2.j?.data
-    check('13i. "Số khách tối đa cùng xe" = 1 cho khách 2 ⇒ OD2 đi xe một mình (chụp max_customers=1), OD1 xe khác · hàng loạt về "không giới hạn" ⇒ chung xe · "abc"/99 → 400',
+    const mx3 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_per_trip: 3 })
+    await cleanupTrips()
+    const pM3 = await mkPlan(PLAN_BODY); const PM3 = pM3.j?.data
+    check('13i. "Số khách tối đa cùng xe" = 1 cho khách 2 ⇒ OD2 đi xe một mình (chụp max_customers=1) · về null = CHƯA KHAI ⇒ vẫn xe riêng + Khai thiếu đếm OD không kênh · khai 3 ⇒ chung xe · "abc"/99 → 400',
       mxBad1.s === 400 && mxBad2.s === 400 && mx1.s === 200 && mx1.j?.data?.max_customers_per_trip === 1
       && pM.s === 201 && !!tM2 && tM2.ods.length === 1 && rowOf(PM, OD[1])?.max_customers === 1 && tripOfOd(PM, OD[0]) !== tM2
-      && mxClr.s === 200 && c2Now?.max_customers_per_trip === null && pM2.s === 201 && tripOfOd(PM2, OD[0]) === tripOfOd(PM2, OD[1]),
-      `bad=${mxBad1.s},${mxBad2.s} set=${mx1.s}/${mx1.j?.data?.max_customers_per_trip} plan=${pM.s} ${pM.j?.error?.message ?? ''} t2ods=${tM2?.ods?.length} snap=${rowOf(PM, OD[1])?.max_customers} clr=${mxClr.s} now=${JSON.stringify(c2Now)} plan2=${pM2.s} same=${tripOfOd(PM2, OD[0]) === tripOfOd(PM2, OD[1])}`)
+      && mxClr.s === 200 && c2Now?.max_customers_per_trip === null && pM2.s === 201 && tripOfOd(PM2, OD[0]) !== tripOfOd(PM2, OD[1]) && (PM2?.params?.config_gaps?.no_drops?.no_channel_ods ?? 0) >= 1
+      && mx3.s === 200 && pM3.s === 201 && tripOfOd(PM3, OD[0]) === tripOfOd(PM3, OD[1]),
+      `bad=${mxBad1.s},${mxBad2.s} set=${mx1.s}/${mx1.j?.data?.max_customers_per_trip} plan=${pM.s} ${pM.j?.error?.message ?? ''} t2ods=${tM2?.ods?.length} snap=${rowOf(PM, OD[1])?.max_customers} clr=${mxClr.s} now=${JSON.stringify(c2Now)} plan2=${pM2.s} sep=${tripOfOd(PM2, OD[0]) !== tripOfOd(PM2, OD[1])} gaps=${JSON.stringify(PM2?.params?.config_gaps?.no_drops)} re=${mx3.s}/${pM3.s} same=${tripOfOd(PM3, OD[0]) === tripOfOd(PM3, OD[1])}`)
   }
 
   // ── [15] (27/09) XEM ĐƠN TRƯỚC KHI GHÉP · HOÃN / KHÔNG ĐIỀU · SỬA DÒNG XE KHÁCH TỪ BÀN · THẺ NHIỀU XE ─────────────────────────

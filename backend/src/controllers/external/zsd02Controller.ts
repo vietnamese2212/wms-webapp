@@ -7,13 +7,13 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue } from '../../utils/search'
 import { isDay, vnDayOf } from '../../utils/dates'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 import { expandMergedCells, readWorkbookSafe, parseSheetByHeader, BAD_EXCEL_MSG } from '../../utils/excelHeader'
-import { getSapDoSource } from '../../utils/settings'
+import { getSapDoSource, getZsd02CoverageMode } from '../../utils/settings'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { sapScopeCheck, activateAwaitingForDos } from '../wms/outboundController'
 import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
@@ -40,6 +40,29 @@ async function upsertChunksParallel<T extends object>(table: 'erp_outbound_order
 }
 const SO_STATUSES = ['OPEN', 'HAS_OD', 'CANCELLED'] as const
 type SoStatus = typeof SO_STATUSES[number]
+
+// ── KHOẢNG PHỦ NGÀY TẠO của file (03/10 tối) ──
+// SAP chỉ đổ ZSD02 theo NGÀY TẠO (không có "ngày sửa cuối"), nên app chỉ được kết luận "SAP đã xoá / đã thay" cho OD có ngày tạo
+// NẰM TRONG khoảng file phủ. Khoảng = người khai khi nạp (`created_from/created_to`, điền sẵn = min/max ngày tạo OD thật trong
+// file); không khai thì lấy khoảng thật của file. Đơn CHƯA ĐI (lịch sử app) có ngày tạo ngoài khoảng ⇒ thiếu phủ: REQUIRE từ chối,
+// REMIND cảnh báo (công tắc `zsd02_coverage_mode`).
+type CoverageDay = { date: string; ods: number }
+type CoverageRpc = { pending_ods: number; sap_posted_ods: number; no_created_date: number; by_od_created: CoverageDay[]; by_so_created: CoverageDay[]; sap_max_od_created: string | null }
+export type PlantCoverage = { plant: string; pending_ods: number; required: CoverageDay[]; missing: CoverageDay[]; suggest: { from: string; to: string } | null; sap_max_od_created: string | null }
+const dmyOf = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
+async function coverageOfPlant(plant: string): Promise<CoverageRpc> {
+  const { data, error } = await db.rpc('zsd02_coverage', { p_plant: plant } as never)
+  if (error) throw new Error(error.message)
+  return (data ?? { pending_ods: 0, sap_posted_ods: 0, no_created_date: 0, by_od_created: [], by_so_created: [], sap_max_od_created: null }) as unknown as CoverageRpc
+}
+/** Ngày tạo của đơn chưa đi KHÔNG nằm trong khoảng khai. */
+function missingCoverage(required: CoverageDay[], declared: { from: string; to: string } | null): CoverageDay[] {
+  if (!declared) return required
+  return required.filter(d => d.date < declared.from || d.date > declared.to)
+}
+/** Mỗi lần nạp quá nhiều OD "biến mất" so với đơn chưa đi của plant ⇒ nhiều khả năng KHAI SAI khoảng (file nhỏ hơn khoảng khai) chứ
+ *  không phải SAP xoá hàng loạt — đòi người xác nhận tường minh (`confirm_gone=1`) thay vì đánh bỏ cả sổ. */
+const GONE_SUSPECT = (pending: number) => Math.max(20, Math.ceil(pending * 0.1))
 
 // POST /external/do-sap/upload-zsd02 (?preflight=1) — quyền: outbound.import | external_do_sap.create
 export async function uploadZsd02(req: Request, res: Response) {
@@ -79,6 +102,38 @@ export async function uploadZsd02(req: Request, res: Response) {
     const soWithoutOd = out.so.filter(r => !r.od_number).length
     const unitErrors = [...out.unitErrs.values()].map(u => `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`)
     const warnings = [...out.warnings]
+    const coverageErrors: string[] = []
+
+    // ── KHOẢNG PHỦ NGÀY TẠO + đơn chưa đi phải nằm trong khoảng (03/10 tối) ──
+    const body = (req.body ?? {}) as Record<string, unknown>
+    const bodyDay = (k: string) => (isDay(body[k]) ? String(body[k]) : null)
+    const fileCreated = out.od.map(r => r.od_created_at).filter((x): x is string => typeof x === 'string' && x.length === 10).sort()
+    const fileRange = fileCreated.length ? { from: fileCreated[0], to: fileCreated[fileCreated.length - 1] } : null
+    const declared = (() => {
+      const from = bodyDay('created_from') ?? fileRange?.from ?? null, to = bodyDay('created_to') ?? fileRange?.to ?? null
+      return from && to && from <= to ? { from, to } : null
+    })()
+    const coverageMode = await getZsd02CoverageMode()
+    const plantsInFile = [...new Set(out.od.map(r => r.plant).filter((x): x is string => !!x))]
+    const plantCoverage: PlantCoverage[] = []
+    const pendingByPlant = new Map<string, number>()
+    for (const plant of plantsInFile) {
+      const cov = await coverageOfPlant(plant)
+      pendingByPlant.set(plant, Number(cov.pending_ods) || 0)
+      const required = cov.by_od_created
+      const missing = missingCoverage(required, declared)
+      const suggest = required.length ? { from: required[0].date, to: required[required.length - 1].date } : null
+      plantCoverage.push({ plant, pending_ods: Number(cov.pending_ods) || 0, required, missing, suggest, sap_max_od_created: cov.sap_max_od_created })
+      if (missing.length) {
+        const msg = `Plant ${plant} — file chưa phủ ngày tạo của ${missing.reduce((a, d) => a + d.ods, 0)} đơn chưa đi: ${missing.slice(0, 8).map(d => `${dmyOf(d.date)} (${d.ods} OD)`).join(', ')}${missing.length > 8 ? ` … +${missing.length - 8} ngày` : ''}. Đổ lại ZSD02 với Ngày tạo từ ${suggest ? dmyOf(suggest.from) : '?'} đến ${suggest ? dmyOf(suggest.to) : '?'}${declared ? ` (file này khai ${dmyOf(declared.from)} → ${dmyOf(declared.to)})` : ''}.`
+        if (coverageMode === 'REQUIRE') coverageErrors.push(`Phủ ngày tạo — ${msg}`); else warnings.push(`Phủ ngày tạo: ${msg}`)
+      }
+      // E15 — file CŨ hơn sổ: khoảng khai kết thúc trước ngày tạo OD mới nhất sổ đã có ⇒ nạp lại file cũ sẽ "xoá" oan OD mới hơn
+      if (declared && cov.sap_max_od_created && declared.to < cov.sap_max_od_created) {
+        const msg = `Plant ${plant} — file kết thúc ở ngày tạo ${dmyOf(declared.to)} nhưng sổ đã có OD tạo tới ${dmyOf(cov.sap_max_od_created)}: đây là file CŨ hơn sổ. Nạp file cũ không xoá OD mới hơn, nhưng mọi "SAP đã sửa/bỏ" trong khoảng ${dmyOf(declared.from)} → ${dmyOf(declared.to)} sẽ được coi là thật.`
+        if (body.allow_old === '1' || coverageMode !== 'REQUIRE') warnings.push(`File cũ: ${msg}`); else coverageErrors.push(`File cũ — ${msg} Tick "Đúng là tôi muốn nạp file cũ hơn" để nạp.`)
+      }
+    }
     if (st.unknown_dvvt.length) warnings.push(`ĐVVT không khớp danh mục (khai vào Cài đặt TMS → ĐVVT hoặc thêm mã tương ứng ở ô "Mã khác"): ${st.unknown_dvvt.join(' · ')}`)
     if (st.unknown_flow_codes.length) warnings.push(`Mã SAP chưa có trong bảng phân loại (Cài đặt WMS → Hệ thống → Phân loại dòng SAP), dòng sẽ mang flow UNKNOWN và KHÔNG lên xe: ${st.unknown_flow_codes.join(' · ')}`)
     if (st.weight_mismatch_mats.length) warnings.push(`${st.weight_mismatch_mats.length} mã lệch khối lượng master ↔ SAP > 5 % (kiểm Material.weight_kg): ${st.weight_mismatch_mats.slice(0, 20).join(', ')}${st.weight_mismatch_mats.length > 20 ? '…' : ''}`)
@@ -125,13 +180,46 @@ export async function uploadZsd02(req: Request, res: Response) {
     // mới trong file, ngày giao OD cũ nằm trong khoảng ngày của file. Luật thuần ở services/dispatchPool (có test).
     const fileSos = [...new Set(out.od.map(r => String(r.so_number ?? '')).filter(Boolean))]
     const priorBySo = await fetchAllByIdChunks(fileSos, chunk => db.from('erp_outbound_orders')
-      .select('od_number, od_item, so_number, so_item, delivery_date, mat_doc, qty_issued_base')
+      .select('od_number, od_item, so_number, so_item, delivery_date, mat_doc, qty_issued_base, od_created_at')
       .in('so_number', chunk).eq('sync_status', 'ACTIVE').order('id')) as ReplaceCandidate[]
-    const rep = findReplacedOds(out.od.map(r => ({ od_number: String(r.od_number), so_number: r.so_number ?? null, so_item: r.so_item ?? null, delivery_date: r.delivery_date ?? null })), priorBySo)
+    // 03/10 tối: kết luận "thay" chỉ trong KHOẢNG PHỦ ngày tạo đã khai; OD cũ ngoài khoảng ⇒ tín hiệu `uncertain` cho người quyết
+    const rep = findReplacedOds(out.od.map(r => ({ od_number: String(r.od_number), so_number: r.so_number ?? null, so_item: r.so_item ?? null, delivery_date: r.delivery_date ?? null })), priorBySo, declared)
     const replacedOds = [...new Set(rep.replaced.map(r => r.od_number))]
     const repPairs = [...new Map(rep.replaced.map(r => [r.od_number, r.by])).entries()]
-    if (repPairs.length) warnings.push(`${repPairs.length} OD cũ đã được SAP THAY bằng OD mới (sửa SO) — OD cũ sẽ bị bỏ, xe nào đang chở OD cũ sẽ được báo: ${repPairs.slice(0, 15).map(([a, b]) => `${a} → ${b}`).join(' · ')}${repPairs.length > 15 ? '…' : ''}`)
-    if (rep.shipped_conflicts.length) warnings.push(`${rep.shipped_conflicts.length} dòng SO có OD MỚI trong khi OD cũ ĐÃ XUẤT KHO — kiểm lại ở SAP, app không tự bỏ OD đã xuất: ${rep.shipped_conflicts.slice(0, 15).map(x => `${x.so}: ${x.od_number} (đã xuất) + ${x.by}`).join(' · ')}`)
+    const splitN = rep.edges.filter(e => e.kind === 'SPLIT').length, mergeN = rep.edges.filter(e => e.kind === 'MERGE').length
+    if (repPairs.length) warnings.push(`${repPairs.length} OD cũ đã được SAP THAY bằng OD mới (sửa SO${splitN ? ` · ${splitN} cặp là TÁCH 1→nhiều` : ''}${mergeN ? ` · ${mergeN} cặp là GỘP nhiều→1` : ''}) — OD cũ sẽ bị bỏ, xe nào đang chở OD cũ sẽ được báo; phả hệ ghi vào od_lineage: ${repPairs.slice(0, 15).map(([a, b]) => `${a} → ${b}`).join(' · ')}${repPairs.length > 15 ? '…' : ''}`)
+    if (rep.shipped_conflicts.length) warnings.push(`${rep.shipped_conflicts.length} dòng SO có OD MỚI trong khi OD cũ ĐÃ POST ở SAP — app không tự bỏ OD đã post; OD mới mang cờ đỏ "họ hàng đã đi" và rào DB không cho đi ngày khác: ${rep.shipped_conflicts.slice(0, 15).map(x => `${x.so}: ${x.od_number} (đã post) + ${x.by}`).join(' · ')}`)
+    if (rep.uncertain.length) warnings.push(`${rep.uncertain.length} dòng SO có OD MỚI trong khi OD cũ (tạo NGOÀI khoảng ngày tạo của file) không có mặt — thay thế hay giao thêm? App KHÔNG kết luận; OD cũ giữ nguyên, kiểm ở Điều vận → Xem đơn: ${rep.uncertain.slice(0, 15).map(x => `${x.so}: ${x.od_number} ? ${x.by}`).join(' · ')}`)
+    // E4 — OD BIẾN MẤT khỏi file dù ngày tạo nằm trong khoảng phủ, không có OD thay cùng SO Item ⇒ SAP đã xoá (bản cũ chỉ bắt được
+    // Item mất trong DO còn hiện diện). OD đã post thì không bỏ (chỉ cảnh báo). Quá nhiều ⇒ nghi khai sai khoảng, đòi xác nhận.
+    const goneKeys: OdKey[] = []
+    const goneOds: string[] = []
+    let goneBlocked = false
+    if (declared) {
+      const fileDoSet = new Set(odNumbers)
+      const handled = new Set([...replacedOds, ...rep.shipped_conflicts.map(x => x.od_number), ...rep.uncertain.map(x => x.od_number)])
+      const posted: string[] = []
+      for (const plant of plantsInFile) {
+        const rows = (await fetchAllRowsParallel(() => db.from('erp_outbound_orders')
+          .select('od_number, od_item, mat_doc, qty_issued_base')
+          .eq('plant', plant).eq('sync_status', 'ACTIVE').not('od_number', 'is', null)
+          .gte('od_created_at', declared.from).lte('od_created_at', declared.to).order('id'))) as { od_number: string; od_item: string; mat_doc: string | null; qty_issued_base: number | string | null }[]
+        const byOd = new Map<string, typeof rows>()
+        for (const r of rows) { if (fileDoSet.has(r.od_number) || handled.has(r.od_number)) continue; const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
+        for (const [od, rs] of byOd) {
+          if (rs.some(r => (r.mat_doc && String(r.mat_doc).trim()) || Number(r.qty_issued_base ?? 0) > 0)) { posted.push(od); continue }
+          goneOds.push(od); for (const r of rs) goneKeys.push({ od_number: od, od_item: r.od_item })
+        }
+      }
+      const pendingTotal = [...pendingByPlant.values()].reduce((a, b) => a + b, 0)
+      if (goneOds.length) {
+        if (goneOds.length > GONE_SUSPECT(pendingTotal) && body.confirm_gone !== '1') {
+          goneBlocked = true
+          coverageErrors.push(`SAP xoá hàng loạt? — ${goneOds.length} OD có ngày tạo trong khoảng ${dmyOf(declared.from)} → ${dmyOf(declared.to)} không còn trong file (vd ${goneOds.slice(0, 6).join(', ')}). Nhiều hơn mức thường (${GONE_SUSPECT(pendingTotal)}) nên nghi khoảng khai rộng hơn file thật. Kiểm lại khoảng Ngày tạo đã khai; nếu đúng là SAP xoá, tick "Đúng là SAP đã xoá các OD này" rồi nạp lại.`)
+        } else warnings.push(`${goneOds.length} OD không còn trong file dù ngày tạo nằm trong khoảng phủ ⇒ SAP đã XOÁ, app đánh dấu "SAP đã bỏ" (xe đang chở sẽ được báo): ${goneOds.slice(0, 15).join(', ')}${goneOds.length > 15 ? '…' : ''}`)
+      }
+      if (posted.length) warnings.push(`${posted.length} OD đã post không còn trong file (trong khoảng phủ) — giữ nguyên, chỉ ghi nhận: ${posted.slice(0, 10).join(', ')}${posted.length > 10 ? '…' : ''}`)
+    }
     // SỔ SO: cùng khuôn theo khoá (so_number, so_item)
     const soNumbers = [...new Set(out.so.map(r => String(r.so_number)))]
     const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
@@ -192,10 +280,21 @@ export async function uploadZsd02(req: Request, res: Response) {
         ...(odNoop + soNoop ? [{ label: 'Không đổi (đã có y hệt)', value: odNoop + soNoop }] : []),
         ...(removedKeys.length + soObsoleteIds.length ? [{ label: 'Dòng SAP đã bỏ → OBSOLETE', value: removedKeys.length + soObsoleteIds.length, warn: true }] : []),
         ...(replacedOds.length ? [{ label: 'OD cũ bị thay bằng OD mới (SO sửa)', value: replacedOds.length, warn: true }] : []),
-        ...(rep.shipped_conflicts.length ? [{ label: 'SO có OD mới mà OD cũ đã xuất', value: rep.shipped_conflicts.length, warn: true }] : []),
+        ...(rep.shipped_conflicts.length ? [{ label: 'SO có OD mới mà OD cũ đã post', value: rep.shipped_conflicts.length, warn: true }] : []),
+        ...(rep.uncertain.length ? [{ label: 'SO có OD mới, OD cũ ngoài khoảng file (chưa kết luận)', value: rep.uncertain.length, warn: true }] : []),
+        ...(goneOds.length ? [{ label: 'OD biến mất trong khoảng phủ → SAP đã xoá', value: goneOds.length, warn: true }] : []),
+        { label: 'Khoảng ngày tạo khai', value: declared ? `${dmyOf(declared.from)} → ${dmyOf(declared.to)}` : '—' },
+        ...plantCoverage.map(p => ({ label: `Đơn chưa đi plant ${p.plant}`, value: p.missing.length ? `${p.pending_ods} · thiếu ${p.missing.length} ngày` : `${p.pending_ods} · phủ đủ`, warn: p.missing.length > 0 })),
         { label: 'Phân loại', value: Object.entries(st.flows).map(([k, v]) => `${k} ${v}`).join(' · ') },
       ]
-      return ok(res, buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated, skipped: st.skipped, errors: unitErrors, warnings, extra }))
+      return ok(res, { ...buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated, skipped: st.skipped, errors: [...unitErrors, ...coverageErrors], warnings, extra }),
+        coverage: { mode: coverageMode, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked, uncertain: rep.uncertain.slice(0, 50) } })
+    }
+
+    // Lỗi phủ ngày tạo / file cũ / nghi xoá hàng loạt chặn ở cả cửa ghi (kiểm-trước và ghi là CÙNG một đoạn kiểm — luật uploadPreflight)
+    if (coverageErrors.length) {
+      return res.status(422).json({ success: false, error: { code: goneBlocked ? 'COVERAGE_SUSPECT' : 'COVERAGE_MISSING', message: coverageErrors.join('\n') },
+        coverage: { mode: coverageMode, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked } })
     }
 
     if (out.unitErrs.size) {
@@ -217,6 +316,20 @@ export async function uploadZsd02(req: Request, res: Response) {
       const { error } = await db.from('erp_outbound_orders').update({ sync_status: 'OBSOLETE', replaced_by_od: by, replaced_at: t, updated_at: t })
         .eq('od_number', old).eq('sync_status', 'ACTIVE')
       if (error) throw new Error(error.message)
+    }
+    // E4 — OD SAP đã xoá (trong khoảng phủ): OBSOLETE, không có OD thay ⇒ bàn ghép xe hiện cờ "SAP đã bỏ OD này"
+    for (let i = 0; i < goneOds.length; i += 200) {
+      const { error } = await db.from('erp_outbound_orders').update({ sync_status: 'OBSOLETE', updated_at: t })
+        .in('od_number', goneOds.slice(i, i + 200)).eq('sync_status', 'ACTIVE')
+      if (error) throw new Error(error.message)
+    }
+    // PHẢ HỆ DO (03/10 tối): mọi cặp cũ → mới (thay · tách · gộp · tạo lại sau post) — rào DB "một đơn một ngày xuất" kiểm trên cả họ
+    if (rep.edges.length) {
+      const rows = rep.edges.map(e => ({ id: randomUUID(), so_number: e.so_number, so_item: e.so_item, old_od: e.old_od, new_od: e.new_od, kind: e.kind, detected_at: t, source: 'ZSD02', updated_at: t }))
+      for (let i = 0; i < rows.length; i += 300) {
+        const { error } = await db.from('od_lineage').upsert(rows.slice(i, i + 300), { onConflict: 'old_od,new_od', ignoreDuplicates: true })
+        if (error) throw new Error(error.message)
+      }
     }
     // OD đang "Không điều" / "Không điều ngày này" mà SAP thay bằng OD mới ⇒ dấu CHUYỂN sang OD mới (user chốt 27/09 khuya) —
     // không chuyển thì OD mới vào lại tab Điều như đơn chưa ai quyết, người đã bảo "không điều" phải quyết lại lần nữa
@@ -263,7 +376,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     // ── Reconcile + kích hoạt chuyến chờ — đúng hai hàm VL06O đang gọi ──
     let reconcile: Awaited<ReturnType<typeof reconcileFromSap>> | null = null
     let reconcile_error: string | null = null
-    const changedKeys = [...updatedKeys, ...removedKeys, ...rep.replaced.map(r => ({ od_number: r.od_number, od_item: r.od_item }))]
+    const changedKeys = [...updatedKeys, ...removedKeys, ...goneKeys, ...rep.replaced.map(r => ({ od_number: r.od_number, od_item: r.od_item }))]
     if (changedKeys.length) {
       try { reconcile = await reconcileFromSap(changedKeys, { actor: actor || 'SAP-UPLOAD' }) }
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadZsd02:', e) }
@@ -276,7 +389,8 @@ export async function uploadZsd02(req: Request, res: Response) {
 
     return ok(res, {
       rows: st.rows, skipped_no_key: st.skipped, delivery_range,
-      od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length, replaced: repPairs.map(([od_number, by]) => ({ od_number, by })) },
+      od: { rows: st.od_rows, deliveries: st.od_numbers, inserted: odInserted, updated: odUpdated, noop: odNoop, obsoleted: removedKeys.length, replaced: repPairs.map(([od_number, by]) => ({ od_number, by })), gone: goneOds.length, lineage_edges: rep.edges.length, uncertain: rep.uncertain.length },
+      coverage: { mode: coverageMode, declared, file_range: fileRange, plants: plantCoverage },
       raw_refreshed: rawRefreshed,
       so: { rows: st.so_rows, orders: st.so_numbers, without_od: soWithoutOd, inserted: soInserted, updated: soUpdated, noop: soNoop, obsoleted: soObsoleted, unresolved: st.so_unresolved, cancelled: st.cancelled },
       flows: st.flows, not_loadable: st.not_loadable,

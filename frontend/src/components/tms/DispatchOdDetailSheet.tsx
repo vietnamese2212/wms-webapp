@@ -11,7 +11,7 @@ import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 
-export type OdSummary = { od: string; where: string; tone: 'green' | 'amber' | 'slate' | 'red' | 'blue'; cust: string; ward: string; region: string; date: string; late: number; flag: string; reason: string }
+export type OdSummary = { od: string; where: string; tone: 'green' | 'amber' | 'slate' | 'red' | 'blue' | 'purple'; cust: string; ward: string; region: string; date: string; late: number; flag: string; reason: string }
 
 function DRow({ label, value }: { label: string; value: ReactNode }) {
   if (value == null || value === '' || (Array.isArray(value) && !value.length)) return null

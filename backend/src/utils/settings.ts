@@ -225,6 +225,17 @@ export const parseSapDoSource = (raw: unknown): SapDoSource | null =>
   typeof raw === 'string' && (SAP_DO_SOURCES as readonly string[]).includes(raw) ? (raw as SapDoSource) : null
 export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_DEFAULT, parseSapDoSource)
 
+// ── zsd02_coverage_mode — FILE ZSD02 PHẢI PHỦ NGÀY TẠO của đơn CHƯA ĐI (03/10, user: "app biết đơn nào còn pending ⇒ bắt buộc
+// file phải có ngày tạo của chúng; có switch Bắt buộc / Nhắc nhở"). SAP chỉ đổ ZSD02 theo NGÀY TẠO và không có cột "ngày sửa cuối",
+// nên DO cũ bị sửa chỉ lọt vào app khi file phủ ngày tạo của nó. 'REQUIRE' (mặc định, user chốt): thiếu ngày của đơn chưa đi là
+// từ chối nạp (422 COVERAGE_MISSING, nêu từng ngày + số OD). 'REMIND': chỉ cảnh báo vàng ở bảng kiểm trước, vẫn nạp.
+export const ZSD02_COVERAGE_MODES = ['REQUIRE', 'REMIND'] as const
+export type Zsd02CoverageMode = typeof ZSD02_COVERAGE_MODES[number]
+export const ZSD02_COVERAGE_MODE_DEFAULT: Zsd02CoverageMode = 'REQUIRE'
+export const parseZsd02CoverageMode = (raw: unknown): Zsd02CoverageMode | null =>
+  typeof raw === 'string' && (ZSD02_COVERAGE_MODES as readonly string[]).includes(raw) ? (raw as Zsd02CoverageMode) : null
+export const getZsd02CoverageMode = () => readSetting('zsd02_coverage_mode', ZSD02_COVERAGE_MODE_DEFAULT, parseZsd02CoverageMode)
+
 // ── geo_provider — NHÀ CUNG CẤP định vị địa chỉ / đo km cho điều vận trên bản đồ (01/10, user chốt Goong) ──
 // 'goong' (mặc định): gọi Goong với khoá dán ở trang Kết nối & API key (SystemSetting `geo_api` MÃ HOÁ, thuộc SECRET_SETTINGS
 // nên không lộ qua GET hở đọc; biến môi trường GOONG_API_KEY là đường lùi). 'none': tắt máy định vị — khách mới chấm tay / GPS; toạ độ và km ĐÃ ĐO vẫn nằm trong DB của mình.

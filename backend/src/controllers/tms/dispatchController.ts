@@ -24,6 +24,7 @@ import { haversineKm, geoProviderStatus, GeoNotConfigured } from '../../services
 import { distancesFor, unmeasured, measurePairs, whKey, custKey } from '../../services/geoDistance'
 import { ok, fail, type PgLikeError } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
+import { utcMs } from '../../utils/dates'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
 import { normDvvt } from '../../utils/sapUnits'
 import { getDispatchCategoryConfig } from '../../utils/warehouseTypeMeta'
@@ -38,7 +39,7 @@ import {
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo,
 } from '../../services/dispatchEngine'
-import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
+import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { applyWarehouseOverrides, loadWarehouseOverrides } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
@@ -257,23 +258,34 @@ const POOL_COLS = 'od_number, od_item, material_code, qty_base, ship_to_code, sh
 const shiftDay = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
 
 /** OD đang nằm trong bản nháp ĐANG MỞ của kho (trừ `skipPlanId`) — xe chưa bỏ / chưa vào Kế hoạch xuất, hoặc khung chờ. */
-async function openDraftOds(whId: string, odNos: string[], skipPlanId: string | null): Promise<Map<string, string>> {
-  const out = new Map<string, string>()
+/** OD đang LÊN XE ở một kế hoạch đang mở KHÁC của kho (03/10 tối: khung chờ không giữ chỗ — chỉ xe mới giữ; rào DB
+ *  `trg_dispatch_od_one_open_vehicle` là lớp cứng, hàm này là lớp báo cho người). Kèm nháp ngày nào · ai lập · lúc nào · xe số mấy. */
+async function openDraftOds(whId: string, odNos: string[], skipPlanId: string | null): Promise<Map<string, OtherDraft>> {
+  const out = new Map<string, OtherDraft>()
   if (!odNos.length) return out
-  const rows = (await fetchAllByIdChunks(odNos, c => db.from('dispatch_trip_od').select('od_number, plan_id, trip_id').in('od_number', c).order('id'))) as { od_number: string; plan_id: string; trip_id: string | null }[]
+  const rows = (await fetchAllByIdChunks(odNos, c => db.from('dispatch_trip_od').select('od_number, plan_id, trip_id').in('od_number', c).not('trip_id', 'is', null).order('id'))) as { od_number: string; plan_id: string; trip_id: string | null }[]
   const planIds = uniq(rows.map(r => r.plan_id).filter(p => p !== skipPlanId))
   if (!planIds.length) return out
-  const plans = (await fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id, plan_date, status, warehouse_id').in('id', c).order('id'))) as { id: string; plan_date: string; status: string; warehouse_id: string }[]
-  const openBy = new Map(plans.filter(p => OPEN_PLAN.includes(p.status) && p.warehouse_id === whId).map(p => [p.id, p.plan_date]))
+  const plans = (await fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id, plan_date, status, warehouse_id, created_by, created_at').in('id', c).order('id'))) as { id: string; plan_date: string; status: string; warehouse_id: string; created_by: string | null; created_at: string }[]
+  const openBy = new Map(plans.filter(p => OPEN_PLAN.includes(p.status) && p.warehouse_id === whId).map(p => [p.id, p]))
   const tripIds = uniq(rows.filter(r => openBy.has(r.plan_id) && r.trip_id).map(r => r.trip_id!))
-  const trips = tripIds.length ? (await fetchAllByIdChunks(tripIds, c => db.from('dispatch_trip').select('id, status').in('id', c).order('id'))) as { id: string; status: string }[] : []
-  const deadTrip = new Set(trips.filter(t => t.status === 'DISCARDED' || t.status === 'CONFIRMED').map(t => t.id))
+  const trips = tripIds.length ? (await fetchAllByIdChunks(tripIds, c => db.from('dispatch_trip').select('id, status, seq').in('id', c).order('id'))) as { id: string; status: string; seq: number }[] : []
+  const tripBy = new Map(trips.map(t => [t.id, t]))
   for (const r of rows) {
-    const d = openBy.get(r.plan_id)
-    if (!d || (r.trip_id && deadTrip.has(r.trip_id))) continue
-    if (!out.has(r.od_number)) out.set(r.od_number, `nháp ngày ${d}`)
+    const p = openBy.get(r.plan_id)
+    const t = r.trip_id ? tripBy.get(r.trip_id) : undefined
+    if (!p || !t || t.status === 'DISCARDED') continue
+    if (!out.has(r.od_number)) {
+      const at = new Date(utcMs(p.created_at)).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+      out.set(r.od_number, { info: `nháp ngày ${p.plan_date} · xe #${t.seq} · ${p.created_by ?? '?'} · ${at}`, plan_id: p.id, plan_date: p.plan_date, created_by: p.created_by, created_at: p.created_at, seq: t.seq })
+    }
   }
   return out
+}
+/** Dấu "Ngoài app" của kho (03/10 tối) — bảng nhỏ, đọc trọn như holds. */
+async function loadOutside(whId: string): Promise<Map<string, { reason: string; by: string | null }>> {
+  const rows = (await fetchAllRowsParallel(() => db.from('dispatch_od_outside').select('od_number, reason, created_by').eq('warehouse_id', whId).order('od_number'))) as { od_number: string; reason: string; created_by: string | null }[]
+  return new Map(rows.map(r => [r.od_number, { reason: r.reason, by: r.created_by }]))
 }
 
 /** OD đang HOÃN / KHÔNG ĐIỀU của kho (27/09) — bảng nhỏ (một dòng mỗi OD người đánh dấu), đọc trọn. */
@@ -285,7 +297,7 @@ async function loadHolds(whId: string): Promise<Map<string, { until: string | nu
 async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyOds?: string[]; skipPlanId?: string | null; countOnly?: boolean; reportAll?: boolean } = {}): Promise<{ ods: EngineOd[]; meta: Map<string, OdMeta>; excluded: ExcludedOd[]; include: string[]; gaps: ConfigGaps }> {
   const { condByCat } = cfg
   const follow = new Set(cfg.follow)
-  const holds = await loadHolds(wh.id)
+  const [holds, outside] = await Promise.all([loadHolds(wh.id), loadOutside(wh.id)])
   const rows = (opts.onlyOds
     ? await fetchAllByIdChunks(opts.onlyOds, c => db.from('erp_outbound_orders').select(POOL_COLS).in('od_number', c).eq('sync_status', 'ACTIVE').order('od_number').order('od_item'))
     : await fetchAllRowsParallel(() => db.from('erp_outbound_orders').select(POOL_COLS)
@@ -315,7 +327,7 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   // DO tạo lại – đã điều (28/09): OD cũ đã nằm Kế hoạch xuất ⇒ OD mới sang tab Đã điều. Cùng thước "đã có trong KH xuất" như inPlan.
   const oldOds = uniq(olds.map(o => o.od_number))
   const oldKhvc = oldOds.length ? (await fetchAllByIdChunks(oldOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; group_code: string }[] : []
-  const split = splitPool(mine, day, { inPlan, otherDraft: drafts, held: holds, redo: redoDispatchedOf(olds, oldKhvc), reportAll: opts.reportAll })
+  const split = splitPool(mine, day, { inPlan, otherDraft: drafts, held: holds, redo: redoDispatchedOf(olds, oldKhvc), outside, reportAll: opts.reportAll })
   // CHỈ OD lên xe được mới là "OD mới cần xếp" — OD trả về / chiết khấu đúng ngày vẫn qua splitPool (engine xếp vào
   // danh sách "không lên xe"), đếm chúng là báo "12 OD mới" ngay sau khi vừa lập (đo Preview 25/09: đúng 12 OD RETURN)
   const flowOf = new Map(mine.map(r => [r.od_number, String(r.flow)]))
@@ -1580,9 +1592,10 @@ async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr |
   const subOds = uniq(subset.flatMap(t => t.ods.map(o => o.od_number)))
   const splitOds = subOds.filter(od => (tripsByOd.get(od) ?? []).length > 1)
   if (splitOds.length) return { err: [`${splitOds.length} OD đang nằm ở nhiều xe (${splitOds.slice(0, 5).map(od => `${od}: ${tripsByOd.get(od)!.join(' + ')}`).join('; ')}) — app chưa tách một DO ra hai xe, gom OD về một xe trước khi xác nhận.`, 422, 'OD_SPLIT_ACROSS_TRIPS'] }
-  // OD đổi tình trạng ở SAP SAU khi lập nháp (25/09 — pool lũy tiến): ghi vào Kế hoạch xuất lúc này là một đơn đi hai lần
-  // (SAP đã điều / đã xuất) hoặc một chuyến trỏ tới OD không còn (SAP thay / bỏ). Bàn ghép xe hiện cờ + nút xử lý.
-  const bad = (await odFlags(subOds, [], snapsOf(subset.flatMap(t => t.ods)), slocsOf(await loadWarehouse(full.warehouse_id)), full.plan_date)).filter(f => f.kind !== 'IN_PLAN')
+  // OD đổi tình trạng ở SAP SAU khi lập nháp (25/09 — pool lũy tiến): một chuyến trỏ tới OD không còn (SAP thay / bỏ) hoặc OD bị
+  // SAP sửa mà chưa cập nhật ⇒ chặn. 03/10 tối: "SAP đã post" / "SAP đã gắn xe" chỉ là cờ THAM CHIẾU (người đã quyết ở tab Điều khi
+  // không đánh dấu Ngoài app) — không chặn ở đây; FE hỏi lại một lần trước khi gửi.
+  const bad = (await odFlags(subOds, [], snapsOf(subset.flatMap(t => t.ods)), slocsOf(await loadWarehouse(full.warehouse_id)), full.plan_date)).filter(f => f.kind !== 'IN_PLAN' && f.kind !== 'SHIPPED' && f.kind !== 'SAP_ASSIGNED')
   if (bad.length) {
     const odOf = new Map(subset.flatMap(t => t.ods.map(o => [o.od_number, t.group_code] as const)))
     return { err: [`${bad.length} OD đổi tình trạng ở SAP từ lúc lập nháp — ${bad.slice(0, 5).map(f => `${f.od_number} (${odOf.get(f.od_number) ?? '?'}): ${f.info}`).join('; ')}${bad.length > 5 ? '…' : ''}. Trên bàn ghép xe: "Cập nhật theo SAP" (OD bị sửa) · "Thay bằng OD mới" (OD bị thay) · gỡ OD đã điều / đã xuất — rồi xác nhận lại.`, 409, 'OD_CHANGED_IN_SAP'] }
@@ -1861,8 +1874,13 @@ async function holdOdsInner(req: Request, res: Response) {
     const actor = req.user?.name ?? null
     const prev = (await fetchAllByIdChunks(ods, c => db.from('dispatch_od_hold').select('id, od_number').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number'))) as { id: string; od_number: string }[]
     const idOf = new Map(prev.map(p => [p.od_number, p.id]))
+    // od_numbers không đang hoãn: từ 03/10 tối cũng được — đơn QUÁ cửa sổ 14 ngày (băng "quá hạn chưa quyết") không nằm trong kế
+    // hoạch nên không có `ids`; chỉ cần OD thuộc plant của kho này
     const notHeld = heldOds.filter(od => !idOf.has(od))
-    if (notHeld.length) return fail(res, 404, 'NOT_HELD', `${notHeld.slice(0, 5).join(', ')} không đang ở "Không điều" của kho này (tải lại trang)`)
+    if (notHeld.length) {
+      const bad = await odsOutsidePlant(plan.warehouse_id, notHeld)
+      if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
+    }
     const reason = b.reason?.trim() || holdLabel(b.until)
     const rows = ods.map(od => ({ id: idOf.get(od) ?? randomUUID(), warehouse_id: plan.warehouse_id, od_number: od, hold_until: b.until, reason, created_by: actor, updated_at: t }))
     const { error: hErr } = await db.from('dispatch_od_hold').upsert(rows, { onConflict: 'id' })
@@ -2001,6 +2019,175 @@ export const resyncOd = withPlanLease(resyncOdInner)
 export const holdOds = withPlanLease(holdOdsInner)
 export const unholdOds = withPlanLease(unholdOdsInner)
 
+/** OD nào trong danh sách KHÔNG có dòng ZSD02 còn hiệu lực thuộc plant của kho — để cửa dấu tay không nhận số OD gõ bừa. */
+async function odsOutsidePlant(whId: string, ods: string[]): Promise<string[]> {
+  if (!ods.length) return []
+  const wh = await loadWarehouse(whId)
+  const rows = (await fetchAllByIdChunks(ods, c => db.from('erp_outbound_orders').select('od_number').eq('plant', wh?.sap_plant ?? '').eq('sync_status', 'ACTIVE').in('od_number', c).order('od_number'))) as { od_number: string }[]
+  const have = new Set(rows.map(r => r.od_number))
+  return ods.filter(od => !have.has(od))
+}
+
+// ══ DẤU "NGOÀI APP" (03/10 tối — user: "lấy theo đơn đã điều (lịch sử của app) và manual xác nhận của user"): đơn đã được xử lý
+// ngoài bàn này (điều tay · trước khi dùng app · SAP tự gắn xe). Cờ SAP (Mat Doc / gắn xe) không tự loại đơn nữa — người bấm dấu này,
+// thường hàng loạt theo bộ lọc "SAP đã post". Đơn mang dấu rời tab Điều, không tính vào "ngày tạo cần phủ" khi nạp ZSD02. ══
+export const zOutside = z.object({
+  ids: z.array(zId).max(300).optional(),                   // dòng OD của kế hoạch (khung chờ / xe còn sửa được)
+  od_numbers: z.array(zText(1, 50)).max(300).optional(),   // OD không nằm trong kế hoạch (quá cửa sổ · đang hoãn) — phải thuộc plant kho
+  reason: zText(1, 500),
+}).refine(v => (v.ids?.length ?? 0) + (v.od_numbers?.length ?? 0) > 0, { message: 'Chọn ít nhất một OD', path: ['ids'] })
+export const zUnoutside = z.object({ od_numbers: z.array(zText(1, 50)).min(1).max(300) })
+async function outsideOdsInner(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zOutside>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    const full = (await readPlan(plan.id))!
+    const all = [...full.trips.flatMap(t => t.ods), ...full.pool]
+    const ids = uniq(b.ids ?? [])
+    const picked = all.filter(o => ids.includes(o.id))
+    if (picked.length !== ids.length) return fail(res, 'Có dòng OD không thuộc kế hoạch này (tải lại trang)', 404)
+    const tripBy = new Map(full.trips.map(t => [t.id, t]))
+    const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
+    if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không đánh dấu OD của xe này ở đây.`)
+    const planOds = uniq(picked.map(o => o.od_number))
+    const extra = uniq(b.od_numbers ?? []).filter(od => !planOds.includes(od))
+    const bad = await odsOutsidePlant(plan.warehouse_id, extra)
+    if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
+    const ods = [...planOds, ...extra]
+    const t = now(), actor = req.user?.name ?? null
+    const reason = b.reason.trim()
+    const prev = (await fetchAllByIdChunks(ods, c => db.from('dispatch_od_outside').select('id, od_number').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number'))) as { id: string; od_number: string }[]
+    const idOf = new Map(prev.map(p => [p.od_number, p.id]))
+    const rows = ods.map(od => ({ id: idOf.get(od) ?? randomUUID(), warehouse_id: plan.warehouse_id, od_number: od, reason, created_by: actor, updated_at: t }))
+    const { error: xErr } = await db.from('dispatch_od_outside').upsert(rows, { onConflict: 'id' })
+    if (xErr) throw xErr
+    // dấu Ngoài app thay cho dấu hoãn (một đơn một trạng thái)
+    await db.from('dispatch_od_hold').delete().eq('warehouse_id', plan.warehouse_id).in('od_number', ods.slice(0, 300))
+    const leaving = all.filter(o => planOds.includes(o.od_number))
+    const rowIds = leaving.map(o => o.id)
+    for (let i = 0; i < rowIds.length; i += 300) {
+      const { error } = await db.from('dispatch_trip_od').delete().in('id', rowIds.slice(i, i + 300)).eq('plan_id', plan.id)
+      if (error) throw error
+    }
+    const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
+    const old = new Map((params.excluded ?? []).map(x => [x.od_number, x]))
+    const detail = new Map<string, ExcludedDetail | undefined>(ods.map(od => [od, planOds.includes(od) ? rowDetail(leaving.filter(o => o.od_number === od)) : old.get(od)?.d]))
+    const excluded = [...(params.excluded ?? []).filter(x => !ods.includes(x.od_number)),
+      ...ods.map(od => ({ od_number: od, kind: 'OUTSIDE_APP' as const, info: `ngoài app — ${reason}`, reason, d: detail.get(od) }))]
+    const p2 = { ...(plan.params as Record<string, unknown>), excluded }
+    const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: t }).eq('id', plan.id)
+    if (pErr) throw pErr
+    const touched = uniq(leaving.filter(o => o.trip_id).map(o => o.trip_id!))
+    const after = (await readPlan(plan.id))!
+    await repriceMany(plan, after.trips.filter(x => touched.includes(x.id) && x.ods.length))
+    const emptied = after.trips.filter(x => touched.includes(x.id) && !x.ods.length && EDITABLE_TRIP.includes(statusOf(x))).map(x => x.id)
+    if (emptied.length) { const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', plan.id); if (error) throw error }
+    await writeSummary({ ...plan, params: asJson(p2) })
+    return ok(res, { ...(await readPlan(plan.id)), outside: { ods: ods.length, trips_removed: emptied.length } })
+  } catch (e) { return failAny(res, e) }
+}
+async function unoutsideOdsInner(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zUnoutside>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    const wh = await loadWarehouse(plan.warehouse_id)
+    if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    const ods = uniq(b.od_numbers)
+    const { data: gone, error } = await db.from('dispatch_od_outside').delete().eq('warehouse_id', plan.warehouse_id).in('od_number', ods.slice(0, 300)).select('od_number')
+    if (error) throw error
+    if (!gone?.length) return fail(res, 404, 'NOT_OUTSIDE', 'Các OD này không mang dấu Ngoài app ở kho này')
+    const full = (await readPlan(plan.id))!
+    const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
+    const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: ods, skipPlanId: plan.id })
+    const back = cand.ods.filter(o => !inPlan.has(o.od_number) && LOADABLE_FLOW.has(o.flow) && o.lines.length)
+    const t = now()
+    await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: req.user?.name ?? null })))
+    const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
+    const p2 = { ...(plan.params as Record<string, unknown>), excluded: [...(params.excluded ?? []).filter(x => !(x.kind === 'OUTSIDE_APP' && ods.includes(x.od_number))), ...cand.excluded.filter(x => x.kind !== 'OUTSIDE_APP')] }
+    const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: t }).eq('id', plan.id)
+    if (pErr) throw pErr
+    await writeSummary({ ...plan, params: asJson(p2) })
+    return ok(res, { ...(await readPlan(plan.id)), unoutside: { ods: gone.length, back_to_pool: back.length } })
+  } catch (e) { return failAny(res, e) }
+}
+export const outsideOds = withPlanLease(outsideOdsInner)
+export const unoutsideOds = withPlanLease(unoutsideOdsInner)
+
+// ══ KÉO VỀ ĐÂY (03/10 tối): OD đang XẾP trên xe nháp của kế hoạch khác ⇒ gỡ khỏi xe kia (xe kia tính lại tải/cước, xe rỗng tự bỏ), đưa
+// vào khung chờ kế hoạch này. Thuê cả hai kế hoạch; xe kia đang chờ ĐVVT / đã vào KH xuất thì không kéo (bên kia phải gỡ trước). ══
+export const zPullOd = z.object({ od_number: zText(1, 50) })
+async function pullOdInner(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zPullOd>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    const wh = await loadWarehouse(plan.warehouse_id)
+    if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    const other = (await openDraftOds(plan.warehouse_id, [b.od_number], plan.id)).get(b.od_number)
+    if (!other || typeof other === 'string') return fail(res, 404, 'NOT_ELSEWHERE', `OD ${b.od_number} không đang xếp trên xe của nháp nào khác — tải lại trang.`)
+    const token = await leasePlan(other.plan_id)
+    if (!token) return fail(res, 409, 'PLAN_BUSY', `Nháp ngày ${other.plan_date} đang được người khác cập nhật — đợi vài giây rồi kéo lại.`)
+    try {
+      const src = (await readPlan(other.plan_id))!
+      const rows = [...src.trips.flatMap(t => t.ods), ...src.pool].filter(o => o.od_number === b.od_number)
+      const tripBy = new Map(src.trips.map(t => [t.id, t]))
+      const locked = rows.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
+      if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} của nháp ${other.plan_date} ${TRIP_STATUS_VI[statusOf(locked)]} — bên đó phải gỡ OD trước.`)
+      const t = now()
+      const ids = rows.map(o => o.id)
+      for (let i = 0; i < ids.length; i += 300) {
+        const { error } = await db.from('dispatch_trip_od').delete().in('id', ids.slice(i, i + 300)).eq('plan_id', other.plan_id)
+        if (error) throw error
+      }
+      const touched = uniq(rows.filter(o => o.trip_id).map(o => o.trip_id!))
+      const after = (await readPlan(other.plan_id))!
+      await repriceMany(src, after.trips.filter(x => touched.includes(x.id) && x.ods.length))
+      const emptied = after.trips.filter(x => touched.includes(x.id) && !x.ods.length && EDITABLE_TRIP.includes(statusOf(x))).map(x => x.id)
+      if (emptied.length) { const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', other.plan_id); if (error) throw error }
+      await writeSummary(src)
+      // vào khung chờ kế hoạch này (đã rời xe kia nên không còn là OTHER_DRAFT)
+      const full = (await readPlan(plan.id))!
+      const inPlan = new Set([...full.trips.flatMap(x => x.ods), ...full.pool].map(o => o.od_number))
+      const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: [b.od_number], skipPlanId: plan.id })
+      const back = cand.ods.filter(o => !inPlan.has(o.od_number) && LOADABLE_FLOW.has(o.flow) && o.lines.length)
+      await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: req.user?.name ?? null })))
+      const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
+      // vết: ai kéo, lúc nào, từ nháp nào — ghi vào params của CẢ hai kế hoạch (bên kia mở ra thấy "OD X bị kéo sang 03/10 bởi Lâm")
+      const pullNote = { od_number: b.od_number, at: t, by: req.user?.name ?? null, from_plan_id: other.plan_id, from_plan_date: other.plan_date, from_by: other.created_by, to_plan_id: plan.id, to_plan_date: plan.plan_date }
+      const pulls = ((params as { pull_log?: unknown[] }).pull_log ?? []).slice(-49)
+      const p2 = { ...(plan.params as Record<string, unknown>), excluded: [...(params.excluded ?? []).filter(x => x.od_number !== b.od_number), ...cand.excluded], pull_log: [...pulls, pullNote] }
+      const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: t }).eq('id', plan.id)
+      if (pErr) throw pErr
+      const srcParams = (src.params ?? {}) as { pulled_away?: unknown[] }
+      await db.from('dispatch_plan').update({ params: asJson({ ...(src.params as Record<string, unknown>), pulled_away: [...(srcParams.pulled_away ?? []).slice(-49), pullNote] }), updated_at: t }).eq('id', other.plan_id)
+      await writeSummary({ ...plan, params: asJson(p2) })
+      return ok(res, { ...(await readPlan(plan.id)), pulled: { od_number: b.od_number, from_plan_date: other.plan_date, from_by: other.created_by, back_to_pool: back.length, trips_removed_there: emptied.length } })
+    } finally { await releasePlan(other.plan_id, token) }
+  } catch (e) { return failAny(res, e) }
+}
+export const pullOd = withPlanLease(pullOdInner)
+
+// GET /tms/dispatch/plans/:id/stale — đơn QUÁ cửa sổ tồn đọng chưa ai quyết (không rớt im lặng — băng đỏ ở Xem đơn, 03/10 tối)
+export async function getPlanStale(req: Request, res: Response) {
+  try {
+    const { data: plan, error } = await db.from('dispatch_plan').select('id, warehouse_id, plan_date').eq('id', String(req.params.id)).maybeSingle()
+    if (error) throw error
+    if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const wh = await loadWarehouse(plan.warehouse_id)
+    if (!wh?.sap_plant) return ok(res, { count: 0, rows: [], before: null })
+    const before = shiftDay(plan.plan_date, -BACKLOG_DAYS)
+    const { data, error: rErr } = await db.rpc('dispatch_stale_ods', { p_plant: wh.sap_plant, p_warehouse_id: wh.id, p_before: before } as never)
+    if (rErr) throw rErr
+    return ok(res, { ...(data as unknown as { count: number; rows: unknown[] }), before, backlog_days: BACKLOG_DAYS })
+  } catch (e) { return failAny(res, e) }
+}
+
 // ══ BẢNG XEM ĐƠN — thông tin SAP của từng OD (27/09 khuya, user: "thiếu nhiều thông tin quá: SO, người tạo, ghi chú đủ chưa,
 // thùng, loại kho… và cần xem được detail"). Tách khỏi GET kế hoạch: bàn ghép xe gọi kế hoạch sau MỖI lần thả, còn mấy cột
 // này chỉ tab Xem đơn cần — nhồi vào kế hoạch là bắt mọi lần thả kéo thêm vài nghìn dòng ZSD02. ══
@@ -2011,6 +2198,7 @@ type ReviewInfo = {
   so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null
   license_plate: string | null; sap_pallets: number | null; sap_m3: number | null; qty_issued_base: number | null
   mat_doc: string | null; billing_no: string | null; approval_status: string | null
+  last_synced_at: string | null   // 03/10 tối: tuổi dữ liệu SAP của OD — chip "SAP N ngày" khi quá cũ
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]            // SO sửa ⇒ OD này THAY OD cũ (có thể đã điều ở xe khác)
   held_before: { until: string; reason: string; by: string | null } | null   // đã "Không điều ngày này", nay về lại Điều
@@ -2026,9 +2214,9 @@ async function planOdSet(planId: string): Promise<{ plan: PlanRow; ods: string[]
 }
 type RevLine = { od_number: string; material_code: string | null; qty_base: number | string | null; so_number: string | null; so_type: string | null; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null; sold_to_code: string | null; route_name: string | null; od_created_at: string | null; flow: string | null; created_by: string | null
   so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null; license_plate: string | null
-  sap_pallets: number | string | null; sap_m3: number | string | null; qty_issued_base: number | string | null; mat_doc: string | null; billing_no: string | null; approval_status: string | null }
+  sap_pallets: number | string | null; sap_m3: number | string | null; qty_issued_base: number | string | null; mat_doc: string | null; billing_no: string | null; approval_status: string | null; last_synced_at: string | null }
 const REVIEW_COLS = 'od_number, material_code, qty_base, so_number, so_type, note_delivery, note_invoice, customer_ref, sold_to_code, route_name, od_created_at, flow, created_by:raw->>created_by, '
-  + 'so_created_at, sales_district, dist_channel, dvvt_raw, driver_name, license_plate, sap_pallets, sap_m3, qty_issued_base, mat_doc, billing_no, approval_status'
+  + 'so_created_at, sales_district, dist_channel, dvvt_raw, driver_name, license_plate, sap_pallets, sap_m3, qty_issued_base, mat_doc, billing_no, approval_status, last_synced_at'
 const sumN = (rs: RevLine[], k: 'sap_pallets' | 'sap_m3' | 'qty_issued_base'): number | null => {
   const vs = rs.map(r => r[k]).filter(v => v != null && v !== '').map(Number).filter(n => Number.isFinite(n))
   return vs.length ? Math.round(vs.reduce((a, b) => a + b, 0) * 1000) / 1000 : null
@@ -2087,6 +2275,7 @@ export async function getPlanReview(req: Request, res: Response) {
         driver_name: f?.driver_name ?? null, license_plate: f?.license_plate ?? null,
         sap_pallets: sumN(rs, 'sap_pallets'), sap_m3: sumN(rs, 'sap_m3'), qty_issued_base: sumN(rs, 'qty_issued_base'),
         mat_doc: joinU(rs, 'mat_doc'), billing_no: joinU(rs, 'billing_no'), approval_status: joinU(rs, 'approval_status'),
+        last_synced_at: rs.map(r => r.last_synced_at).filter((x): x is string => !!x).sort().pop() ?? null,
         lines: rs.length, materials: new Set(rs.map(r => r.material_code)).size, qty_conv: Math.round(conv * 1000) / 1000, units: [...units], categories: [...cats].sort(),
         replaces: repBy.get(od) ?? [],
         // hoãn có ngày đã tới ⇒ OD về lại Điều — nói ra lần hoãn trước (user chốt 27/09 khuya)

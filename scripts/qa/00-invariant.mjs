@@ -449,4 +449,29 @@ for (const [table, label] of [
     over.length ? over.slice(0, 3).join(' · ') : `soi ${itemIds.length} dòng có việc`)
 }
 
+// ── 03/10 tối — RÀO "MỘT ĐƠN MỘT NGÀY XUẤT" (user: "double 2 lần cho kế hoạch đi hàng các ngày khác nhau ⇒ hậu quả nghiêm trọng").
+// Trigger DB chặn ba cửa ghi khvc_lines; bất biến này là lớp đo lại (kể cả cửa thứ tư: chuyến Xuất kho tạo tay không có khvc).
+{
+  const kl = await restAll('khvc_lines', 'select=do_no,export_date,group_code,sync_status,gdo_id')
+  const act = kl.filter(k => k.sync_status !== 'OBSOLETE' && k.do_no && k.export_date)
+  const gids = [...new Set(act.map(k => k.gdo_id).filter(Boolean))]
+  const cancelled = new Set()
+  for (const c of chunk(gids)) for (const g of await restAll('GroupDeliveryOrder', `select=id,status&id=in.(${c.join(',')})&status=eq.CANCELLED`)) cancelled.add(g.id)
+  const byDo = new Map()
+  for (const k of act) { if (k.gdo_id && cancelled.has(k.gdo_id)) continue; const s = byDo.get(k.do_no) ?? new Set(); s.add(k.export_date); byDo.set(k.do_no, s) }
+  const dup = [...byDo].filter(([, s]) => s.size > 1)
+  check('Không DO nào nằm ở HAI ngày xuất còn hiệu lực trong Kế hoạch xuất (rào trg_khvc_one_export_day)', dup.length === 0,
+    dup.length ? `${dup.length} DO, vd ${dup[0][0]}: ${[...dup[0][1]].join(' | ')}` : `soi ${byDo.size} DO`)
+  // OD trên xe của HAI kế hoạch điều vận đang mở — khung chờ thì tự do, xe thì không
+  const openPlans = await restAll('dispatch_plan', 'select=id,plan_date&status=in.(DRAFT,TENDERED)')
+  const pids = openPlans.map(p => p.id)
+  const onVeh = []
+  for (const c of chunk(pids)) onVeh.push(...await restAll('dispatch_trip_od', `select=od_number,plan_id&plan_id=in.(${c.join(',')})&trip_id=not.is.null`))
+  const byOd = new Map()
+  for (const r of onVeh) { const s = byOd.get(r.od_number) ?? new Set(); s.add(r.plan_id); byOd.set(r.od_number, s) }
+  const dup2 = [...byOd].filter(([, s]) => s.size > 1)
+  check('Không OD nào đang lên xe ở HAI kế hoạch điều vận mở (rào trg_dispatch_od_one_open_vehicle)', dup2.length === 0,
+    dup2.length ? `${dup2.length} OD, vd ${dup2[0][0]}` : `soi ${byOd.size} OD trên xe của ${pids.length} kế hoạch mở`)
+}
+
 finish('INVARIANT', { retryOnFail: true })

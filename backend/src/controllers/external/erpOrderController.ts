@@ -11,6 +11,7 @@ import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { parseListParam } from '../../utils/httpQuery'
 import { isFlow } from '../../services/zsd02Parse'
+import { getZsd02CoverageMode } from '../../utils/settings'
 
 const now = () => new Date().toISOString()
 
@@ -274,6 +275,26 @@ export async function listDoSap(req: Request, res: Response) {
       i.mat_units = m ?? null
     }
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// GET /external/do-sap/coverage?plant= — NGÀY TẠO CẦN PHỦ khi đổ ZSD02 (03/10 tối, user: "app biết đơn nào còn pending ⇒ bắt buộc file
+// phải có ngày tạo của chúng"). Đơn chưa đi theo lịch sử app (RPC zsd02_coverage): còn hiệu lực · lên xe được · chưa có chuyến Xuất
+// kho hoàn thành · chưa mang dấu Ngoài app. Trả theo cả ngày tạo OD lẫn ngày tạo SO (SAP lọc theo cột nào thì người đổ file biết).
+export async function doSapCoverage(req: Request, res: Response) {
+  try {
+    const plant = String(req.query.plant ?? '').trim()
+    if (!plant || plant.length > 20 || !/^[\w-]+$/.test(plant)) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu hoặc sai plant')
+    const plants = await allowedPlants(req)
+    if (plants && !plantAllowed(plants, plant)) return fail(res, 'Nhà máy (plant) ngoài phạm vi kho được phân quyền', 403)
+    const { data, error } = await supabase.rpc('zsd02_coverage', { p_plant: plant } as never)
+    if (error) throw new Error(error.message)
+    const cov = (data ?? {}) as Record<string, unknown>
+    const byOd = (cov.by_od_created ?? []) as { date: string; ods: number }[]
+    const bySo = (cov.by_so_created ?? []) as { date: string; ods: number }[]
+    const span = (l: { date: string }[]) => (l.length ? { from: l[0].date, to: l[l.length - 1].date } : null)
+    return ok(res, { plant, mode: await getZsd02CoverageMode(), pending_ods: Number(cov.pending_ods) || 0, sap_posted_ods: Number(cov.sap_posted_ods) || 0, no_created_date: Number(cov.no_created_date) || 0,
+      by_od_created: byOd, by_so_created: bySo, od_span: span(byOd), so_span: span(bySo), sap_max_od_created: (cov.sap_max_od_created as string | null) ?? null })
   } catch (e) { return fail(res, String(e)) }
 }
 

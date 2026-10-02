@@ -3501,17 +3501,20 @@ export function useUploadVl06o() {
 export interface Zsd02UploadResult {
   rows: number; skipped_no_key: number
   delivery_range: { from: string; to: string } | null   // khoảng Ngày giao của file — tab "Chưa có OD" lọc theo đây sau khi nạp
-  od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number }
+  od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number; gone?: number; lineage_edges?: number; uncertain?: number }
   so: { rows: number; orders: number; without_od: number; inserted: number; updated: number; noop: number; obsoleted: number; unresolved: number; cancelled: number }
   flows: Record<string, number>; not_loadable: number
   routes: number; customers: { created: number; filled: number; conflicts: number } | null
   sap_unmapped: number; warning_count: number; warnings: string[]
+  coverage?: Zsd02Coverage
 }
+/** Trường kèm file ZSD02 (03/10 tối): khoảng Ngày tạo đã khai · xác nhận nạp file cũ hơn sổ · xác nhận SAP xoá hàng loạt */
+export type Zsd02UploadFields = { created_from?: string; created_to?: string; allow_old?: '1'; confirm_gone?: '1' }
 export function useUploadZsd02() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ file, preflight }: { file: File; preflight?: boolean }) => {
-      const { body, headers } = await excelUploadBody(file)
+    mutationFn: async ({ file, preflight, fields }: { file: File; preflight?: boolean; fields?: Zsd02UploadFields }) => {
+      const { body, headers } = await excelUploadBody(file, fields ?? {})
       return apiClient.post(`/external/do-sap/upload-zsd02${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 310000 }).then(r => r.data.data)
     },
     onSuccess: (_d, vars) => {
@@ -3805,6 +3808,18 @@ export interface UploadPreflight {
   warnings: string[]
   warnings_total: number
   extra: { label: string; value: string | number; warn?: boolean }[]
+  /** ZSD02 (03/10 tối): khoảng ngày tạo đã khai · đơn chưa đi phải phủ theo từng plant · cờ nghi xoá hàng loạt */
+  coverage?: Zsd02Coverage
+}
+export interface Zsd02PlantCoverage { plant: string; pending_ods: number; required: { date: string; ods: number }[]; missing: { date: string; ods: number }[]; suggest: { from: string; to: string } | null; sap_max_od_created: string | null }
+export interface Zsd02Coverage { mode: 'REQUIRE' | 'REMIND'; declared: { from: string; to: string } | null; file_range: { from: string; to: string } | null; plants: Zsd02PlantCoverage[]; gone_blocked?: boolean; uncertain?: { od_number: string; by: string; so: string }[] }
+/** GET /external/do-sap/coverage — ngày tạo cần phủ khi đổ ZSD02 cho một plant (đơn chưa đi theo lịch sử app). */
+export interface Zsd02CoverageNeed { plant: string; mode: 'REQUIRE' | 'REMIND'; pending_ods: number; sap_posted_ods: number; no_created_date: number; by_od_created: { date: string; ods: number }[]; by_so_created: { date: string; ods: number }[]; od_span: { from: string; to: string } | null; so_span: { from: string; to: string } | null; sap_max_od_created: string | null }
+export function useZsd02Coverage(plant: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['zsd02-coverage', plant], enabled: !!plant && enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/external/do-sap/coverage', { params: { plant } })).data.data as Zsd02CoverageNeed,
+  })
 }
 
 export function useUploadMaterialsExcel() {
@@ -6069,7 +6084,9 @@ export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' |
 export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 /** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
 // NO_MATERIAL (03/10): OD có mã chưa khai trong Mã hàng — máy không ghép, nằm ở tab Điều dạng "Không lên xe" cho tới khi khai mã
-export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED' | 'NO_MATERIAL'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
+// OUTSIDE_APP (03/10 tối): dấu tay "Ngoài app" — đơn đã xử lý ngoài bàn; `ref` (OTHER_DRAFT): nháp nào · ai · xe số mấy đang xếp đơn
+export interface DispatchOtherDraftRef { plan_id: string; plan_date: string; created_by: string | null; created_at: string; seq: number | null }
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED' | 'NO_MATERIAL' | 'OUTSIDE_APP'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail; ref?: DispatchOtherDraftRef }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number; max_pct?: number }   // max_pct (01/10): trần dải tải — quá mức này mới là "vượt"
@@ -6143,6 +6160,7 @@ export interface DispatchReviewInfo {
   so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null
   license_plate: string | null; sap_pallets: number | null; sap_m3: number | null; qty_issued_base: number | null
   mat_doc: string | null; billing_no: string | null; approval_status: string | null
+  last_synced_at: string | null   // 03/10 tối: lần ZSD02 cuối chạm OD này — chip "SAP N ngày" khi cũ
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]
   held_before: { until: string; reason: string; by: string | null } | null
@@ -6217,6 +6235,37 @@ export function useUnholdDispatchOds() {
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
     onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+// 03/10 tối — dấu tay "Ngoài app" (đơn đã xử lý ngoài bàn này; cờ SAP post / gắn xe chỉ còn là tham chiếu) · bỏ dấu
+export function useOutsideDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/outside`, body).then(r => r.data.data as DispatchPlan & { outside: { ods: number; trips_removed: number } }),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
+  })
+}
+export function useUnoutsideDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unoutside`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unoutside: { ods: number; back_to_pool: number } }),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
+  })
+}
+/** Kéo OD đang XẾP trên xe của nháp khác về khung chờ kế hoạch này (gỡ bên kia, có vết ở cả hai kế hoạch). */
+export function usePullDispatchOd() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/pull-od`, { od_number }).then(r => r.data.data as DispatchPlan & { pulled: { od_number: string; from_plan_date: string; from_by: string | null; back_to_pool: number; trips_removed_there: number } }),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }) },
+  })
+}
+/** Đơn QUÁ cửa sổ tồn đọng (14 ngày) chưa ai quyết — băng đỏ ở Xem đơn, không rớt im lặng (03/10 tối). */
+export interface DispatchStaleOd { od_number: string; dd: string | null; odc: string | null; ship_to_code: string | null; ship_to_name: string | null; sap_pallets: number | string | null; sap_posted: boolean }
+export function useDispatchPlanStale(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-stale', id], enabled: !!id && enabled, staleTime: 60_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/stale`)).data.data as { count: number; rows: DispatchStaleOd[]; before: string | null; backlog_days: number },
   })
 }
 /** Dòng xe được vào của MỘT khách — xem/sửa ngay trên bàn ghép xe (chỉ dòng xe; kênh vẫn đổi ở trang Khách hàng). */

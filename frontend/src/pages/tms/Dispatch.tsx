@@ -106,6 +106,11 @@ export default function Dispatch() {
 
   const plans = useDispatchPlans({ warehouse_id: f.warehouseId || undefined, date_from: day, date_to: day }, !!f.warehouseId)
   const planList = plans.data?.items ?? []
+  // NHÁP QUÁ NGÀY chưa xác nhận (03/10 tối — user: 283 đơn bị nháp 30/09 "giữ" mà không ai biết nháp của ai, cũng không thấy nút xoá):
+  // băng cảnh báo trên mọi ngày của kho, kèm Mở / Bỏ nháp. Không tự huỷ.
+  const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const oldPlansQ = useDispatchPlans({ warehouse_id: f.warehouseId || undefined, date_to: yesterday }, !!f.warehouseId)
+  const stalePlans = (oldPlansQ.data?.items ?? []).filter(p => (p.status === 'DRAFT' || p.status === 'TENDERED') && p.plan_date < day)
   // kế hoạch đang mở: người chọn → bản nháp mới nhất → bản mới nhất bất kỳ
   const planId = useMemo(() => {
     if (f.planId && planList.some(p => p.id === f.planId)) return f.planId
@@ -202,15 +207,19 @@ export default function Dispatch() {
     const split = [...odTrips].filter(([, g]) => g.length > 1)
     const over = open.filter(t => t.ods.length && t.oversize).length
     const poolN = plan.summary.pool_ods ?? 0
-    const flagged = open.filter(t => t.ods.some(o => flags.has(o.od_number)))
-    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD còn ở KHUNG CHỜ (sẽ KHÔNG đi)` : '']
+    // 03/10 tối: cờ "SAP đã post" / "SAP đã gắn xe" chỉ THAM CHIẾU — hỏi lại một lần, không chặn (người không đánh dấu Ngoài app là đã quyết điều)
+    const hard = (od: string) => { const k = flags.get(od)?.kind; return !!k && k !== 'SHIPPED' && k !== 'SAP_ASSIGNED' }
+    const flagged = open.filter(t => t.ods.some(o => hard(o.od_number)))
+    const softOds = new Set(open.flatMap(t => t.ods.map(o => o.od_number)).filter(od => { const k = flags.get(od)?.kind; return k === 'SHIPPED' || k === 'SAP_ASSIGNED' }))
+    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD còn ở KHUNG CHỜ (sẽ KHÔNG đi)` : '',
+      softOds.size ? `${softOds.size} OD SAP báo ĐÃ POST / ĐÃ GẮN XE mà vẫn trên xe (đúng là đã đi thì về Xem đơn bấm "Ngoài app" trước)` : '']
       .filter(Boolean).join(' · ')
-    // OD đã đổi ở SAP sau khi lập (thay / bỏ / đã xuất / đã điều) ⇒ cửa Xác nhận trả 409 — nói TRƯỚC
+    // OD đã đổi ở SAP sau khi lập (thay / bỏ / sửa / đã vào KH xuất) ⇒ cửa Xác nhận trả 409 — nói TRƯỚC
     if (flagged.length) {
       await ask({
         title: `Chưa xác nhận được: ${flagged.length} xe có OD đã đổi ở SAP`, danger: true, cancelLabel: null,
-        body: flagged.slice(0, 6).map(t => `• #${t.seq} ${t.group_code}: ${t.ods.filter(o => flags.has(o.od_number)).map(o => `${o.od_number} — ${flags.get(o.od_number)?.info ?? ''}`).join('; ')}`).join('\n') +
-          `\n\nTrên Bàn ghép xe: OD "SAP đã sửa" có nút "Cập nhật theo SAP"; OD "SAP đã thay" có nút "Thay bằng OD mới"; OD đã xuất / đã điều / đã bỏ thì kéo về khung chờ hoặc bỏ khỏi kế hoạch.`,
+        body: flagged.slice(0, 6).map(t => `• #${t.seq} ${t.group_code}: ${t.ods.filter(o => hard(o.od_number)).map(o => `${o.od_number} — ${flags.get(o.od_number)?.info ?? ''}`).join('; ')}`).join('\n') +
+          `\n\nTrên Bàn ghép xe: OD "SAP đã sửa" có nút "Cập nhật theo SAP"; OD "SAP đã thay" có nút "Thay bằng OD mới"; OD SAP đã bỏ / đã vào KH xuất thì kéo về khung chờ hoặc bỏ khỏi kế hoạch.`,
       })
       return
     }
@@ -321,7 +330,8 @@ export default function Dispatch() {
   if (canPlan) actionItems.push({ key: 'plan', icon: Play, label: plan ? 'Lập lại' : 'Lập kế hoạch', tip: plan ? 'Lập lại — chạy lại máy ghép, bản nháp hiện tại (kể cả phần đã sửa tay) bị thay' : 'Máy ghép OD chưa xếp xe của kho × ngày này thành chuyến nháp', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: runPlan, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
   if (canConfirm && confirmedN > 0) actionItems.push({ key: 'reopen', icon: RotateCcw, label: 'Mở lại', tip: `Kéo ${confirmedN} xe đã vào Kế hoạch xuất về nháp để sửa trên Bàn ghép xe (chỉ xe mà chuyến chưa bắt đầu)`, onClick: () => void doReopen(), disabled: reopen.isPending, busy: reopen.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
-  if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, onClick: doDiscard, disabled: discard.isPending })
+  // 03/10 tối (user: "tôi thậm chí còn không thấy thao tác xoá nó ở đâu cả"): nút Bỏ nháp có CHỮ, không chỉ icon thùng rác
+  if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, primary: true, variant: 'outline', className: 'text-red-600 border-red-200 hover:bg-red-50', onClick: doDiscard, disabled: discard.isPending })
 
   const all = plan?.trips ?? []
   const todoN = useMemo(() => all.filter(t => needsWork(t, ictx)).length, [all, ictx])
@@ -462,6 +472,22 @@ export default function Dispatch() {
           </div>
         </div>
 
+        {/* NHÁP QUÁ NGÀY chưa xác nhận (03/10 tối): nêu nháp ngày nào · ai lập · lúc nào · còn bao nhiêu đơn; Mở để xử, Bỏ nháp để nhả đơn */}
+        {stalePlans.length > 0 && tab !== 'map' && (
+          <div className="shrink-0 border-b bg-amber-50 px-3 py-1.5 space-y-1">
+            {stalePlans.slice(0, 3).map(p => (
+              <div key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-amber-900">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>Nháp ngày <b>{formatDate(p.plan_date)}</b>{p.created_by ? ` của ${p.created_by}` : ''} (lập {formatTimestampDate(p.created_at)}) đã quá ngày mà chưa xác nhận — còn {nf(p.summary?.ods ?? 0)} đơn trên xe, {nf(p.summary?.pool_ods ?? 0)} đơn khung chờ.</span>
+                <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planDate: p.plan_date, planId: p.id, tab: 'review', reviewTab: 'GO' })}>Mở nháp</button>
+                {canPlan && <button type="button" className="font-medium text-red-700 hover:underline" disabled={discard.isPending}
+                  onClick={async () => { if (await ask({ title: `Bỏ nháp ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Bỏ nháp', body: 'Đơn trên xe của nháp này được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).' }) === null) return
+                    discard.mutateAsync(p.id).then(r => toast({ title: `Đã bỏ nháp ${formatDate(p.plan_date)} — ${r.discarded_trips} xe` })).catch(e => err(e, 'Không bỏ được nháp')) }}>Bỏ nháp</button>}
+              </div>
+            ))}
+            {stalePlans.length > 3 && <div className="text-[11px] text-amber-800">… và {stalePlans.length - 3} nháp quá ngày nữa</div>}
+          </div>
+        )}
         {/* DẢI VIỆC — trả lời "còn bao nhiêu việc" và đưa người tới đó bằng MỘT nhát bấm.
             Dùng SWITCH hiện sẵn chứ không phải chip trong menu: cả lựa chọn LẪN số của từng lựa chọn
             phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại

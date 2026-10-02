@@ -12,6 +12,8 @@ const router = Router()
 // Tab "DO SAP" — module quyền external_do_sap
 router.get('/do-sap',              requirePerm('external_do_sap', 'view'),   erp.listDoSap)
 router.get('/do-sap/facets',       requirePerm('external_do_sap', 'view'),   erp.doSapFacets)
+// 03/10 tối — ngày tạo cần phủ khi đổ ZSD02 (đơn chưa đi theo lịch sử app); màn upload và bàn điều vận cùng đọc
+router.get('/do-sap/coverage',     requireAnyPerm(['external_do_sap', 'view'], ['dispatch', 'view']), erp.doSapCoverage)
 // Nạp ZSD02 (22/09) — nguồn DO thay VL06O; cùng quyền với cửa VL06O (outbound.import hoặc external_do_sap.create)
 router.post('/do-sap/upload-zsd02', requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create']),
   validate({ query: z.object({ preflight: z.enum(['1']).optional() }) }), excelUpload.single('file'), excelFromStorage, zsd.uploadZsd02)

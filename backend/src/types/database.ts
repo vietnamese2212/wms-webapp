@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-02T05:55:42.022Z · 111 bảng/view · 175 hàm · 0 enum
+// Sinh lúc 2026-10-02T15:00:25.057Z · 113 bảng/view · 178 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3338,6 +3338,36 @@ export type Database = {
         }
         Relationships: []
       }
+      dispatch_od_outside: {
+        Row: {
+          id: string
+          warehouse_id: string
+          od_number: string
+          reason: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          od_number: string
+          reason: string
+          created_by?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          od_number?: string
+          reason?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       dispatch_plan: {
         Row: {
           id: string
@@ -4551,6 +4581,60 @@ export type Database = {
         Update: {
           employee_id?: string
           prefs?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      od_lineage: {
+        Row: {
+          id: string
+          so_number: string | null
+          so_item: string | null
+          old_od: string
+          new_od: string
+          kind: string
+          qty_old: number | null
+          qty_new: number | null
+          detected_at: string
+          source: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          resolution: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          so_number?: string | null
+          so_item?: string | null
+          old_od: string
+          new_od: string
+          kind: string
+          qty_old?: number | null
+          qty_new?: number | null
+          detected_at?: string
+          source?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolution?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          so_number?: string | null
+          so_item?: string | null
+          old_od?: string
+          new_od?: string
+          kind?: string
+          qty_old?: number | null
+          qty_new?: number | null
+          detected_at?: string
+          source?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolution?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -6056,6 +6140,10 @@ export type Database = {
         Args: { p_from: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
         Returns: Json
       }
+      dispatch_stale_ods: {
+        Args: { p_warehouse_id: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Returns: Json
+      }
       dispatch_stock_conditions: {
         Args: { p_material_codes: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
         Returns: Json
@@ -6308,6 +6396,10 @@ export type Database = {
         Args: { p_location_id: unknown; p_update_date: unknown; p_max_materials: unknown; p_putaway_violation: unknown; arg10: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown }
         Returns: string
       }
+      od_family: {
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Returns: unknown
+      }
       omni_location_ids: {
         Args: { id: unknown; arg6?: unknown }
         Returns: Record<string, unknown>[]
@@ -6533,7 +6625,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
         Returns: string
       }
       unaccent_init: {
@@ -6635,6 +6727,10 @@ export type Database = {
       zone_used_pallets: {
         Args: { warehouse_id: unknown }
         Returns: Record<string, unknown>[]
+      }
+      zsd02_coverage: {
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Returns: Json
       }
     }
     Enums: {

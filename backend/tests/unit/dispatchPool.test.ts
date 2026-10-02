@@ -16,37 +16,47 @@ describe('pool lũy tiến — OD đã được lo thì KHÔNG vào đợt ghép
     expect(s.include.get('1')!.late_days).toBe(0)
     expect(s.excluded).toEqual([])
   })
-  it('SAP đã điều ở BẤT KỲ dòng nào của OD ⇒ loại, báo ĐVVT + biển số', () => {
+  // 03/10 tối (user: "dựa theo SAP sẽ rối loạn — SAP có đơn return, đã đi chưa post, đã post chưa đi; lấy theo lịch sử của app và dấu
+  // tay"): cờ SAP KHÔNG loại đơn nữa — đơn vào Điều, cờ vàng do odFlags cắm, người quyết bằng dấu Ngoài app. Hai phép dưới đây đảo
+  // kết quả của bản 25/09 (đỏ trên bản cũ).
+  it('SAP đã điều ở một dòng của OD ⇒ VẪN vào đợt ghép (chỉ là cờ tham chiếu)', () => {
     const s = splitPool([row('1'), row('1', { sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'HẢI AN', license_plate: '29C12345' })], DAY, none)
+    expect([...s.include.keys()]).toEqual(['1'])
+    expect(s.excluded).toEqual([])
+  })
+  it('đã post ở SAP (Mat Doc / số đã xuất) ⇒ VẪN vào đợt ghép — người đánh dấu Ngoài app nếu đúng là đã đi', () => {
+    expect([...splitPool([row('1', { mat_doc: '4900001' })], DAY, none).include.keys()]).toEqual(['1'])
+    expect([...splitPool([row('2', { qty_issued_base: 24 })], DAY, none).include.keys()]).toEqual(['2'])
+  })
+  it('dấu Ngoài app của kho ⇒ loại, kind OUTSIDE_APP, luôn báo kèm lý do (kể cả tồn đọng)', () => {
+    const s = splitPool([row('1'), row('2', { delivery_date: '2026-09-20' })], DAY, { ...none, outside: new Map([['1', { reason: 'SAP đã post', by: 'A' }], ['2', { reason: 'điều tay', by: null }]]) })
     expect(s.include.size).toBe(0)
-    expect(s.excluded).toEqual([{ od_number: '1', kind: 'SAP_ASSIGNED', info: 'HẢI AN · 29C12345' }])
+    expect(s.excluded.map(x => [x.od_number, x.kind, x.reason])).toEqual([['1', 'OUTSIDE_APP', 'SAP đã post'], ['2', 'OUTSIDE_APP', 'điều tay']])
   })
-  it('đã xuất kho (chứng từ xuất HOẶC số đã xuất > 0) ⇒ loại — kể cả SAP còn ghi chưa điều', () => {
-    expect(splitPool([row('1', { mat_doc: '4900001' })], DAY, none).excluded[0].kind).toBe('SHIPPED')
-    expect(splitPool([row('2', { qty_issued_base: 24 })], DAY, none).excluded[0].kind).toBe('SHIPPED')
-  })
-  it('đã trong Kế hoạch xuất / nháp mở ngày khác ⇒ loại, thứ tự ưu tiên Kế hoạch xuất trước', () => {
-    const s = splitPool([row('1'), row('2')], DAY, { inPlan: new Map([['1', 'K_X_250926_3']]), otherDraft: new Map([['1', 'nháp'], ['2', 'nháp ngày 2026-09-24']]) })
-    expect(s.excluded).toEqual([{ od_number: '1', kind: 'IN_PLAN', info: 'K_X_250926_3' }, { od_number: '2', kind: 'OTHER_DRAFT', info: 'nháp ngày 2026-09-24' }])
+  it('đã trong Kế hoạch xuất / đang XẾP ở nháp mở khác ⇒ loại, thứ tự ưu tiên Kế hoạch xuất trước; nháp khác mang ref (nháp nào · ai · xe)', () => {
+    const ref = { info: 'nháp ngày 2026-09-24 · xe #2 · Lâm · 14:03 02/10', plan_id: 'P', plan_date: '2026-09-24', created_by: 'Lâm', created_at: '2026-10-02T07:03:00Z', seq: 2 }
+    const s = splitPool([row('1'), row('2')], DAY, { inPlan: new Map([['1', 'K_X_250926_3']]), otherDraft: new Map([['1', 'nháp'], ['2', ref]]) })
+    expect(s.excluded).toEqual([{ od_number: '1', kind: 'IN_PLAN', info: 'K_X_250926_3' },
+      { od_number: '2', kind: 'OTHER_DRAFT', info: ref.info, ref: { plan_id: 'P', plan_date: '2026-09-24', created_by: 'Lâm', created_at: '2026-10-02T07:03:00Z', seq: 2 } }])
   })
   it('TỒN ĐỌNG (ngày giao trước) chưa điều chưa đi ⇒ VÀO kèm số ngày trễ (user chốt gộp)', () => {
     const s = splitPool([row('9', { delivery_date: '2026-09-22' })], DAY, none)
     expect(s.include.get('9')!.late_days).toBe(3)
   })
-  it('tồn đọng ĐÃ điều / đã đi ⇒ loại nhưng KHÔNG báo (lịch sử bình thường, không phải việc hôm nay)', () => {
+  it('tồn đọng ĐÃ post / SAP đã điều ⇒ vẫn VÀO kèm số ngày trễ (03/10 tối — lịch sử app mới là sự thật, SAP chỉ tham chiếu)', () => {
     const s = splitPool([row('8', { delivery_date: '2026-09-20', sap_dispatch_status: 'ASSIGNED' }), row('7', { delivery_date: '2026-09-21', mat_doc: 'x' })], DAY, none)
-    expect(s.include.size).toBe(0)
-    expect(s.excluded).toEqual([])
+    expect([...s.include.keys()].sort()).toEqual(['7', '8'])
+    expect(s.include.get('8')!.late_days).toBe(5)
   })
-  it('tồn đọng đang nằm ở NHÁP MỞ ngày khác ⇒ loại nhưng LUÔN báo (29/09: 223 OD 25/09 kẹt trong nháp 28/09 bị quên, KH 29/09 tưởng đủ)', () => {
+  it('tồn đọng đang XẾP ở NHÁP MỞ ngày khác ⇒ loại nhưng LUÔN báo (29/09: 223 OD 25/09 kẹt trong nháp 28/09 bị quên, KH 29/09 tưởng đủ)', () => {
     const s = splitPool([row('5', { delivery_date: '2026-09-21' })], DAY, { ...none, otherDraft: new Map([['5', 'nháp ngày 2026-09-24']]) })
     expect(s.include.size).toBe(0)
     expect(s.excluded).toEqual([{ od_number: '5', kind: 'OTHER_DRAFT', info: 'nháp ngày 2026-09-24' }])
   })
-  it('reportAll (30/09 — cửa "Xem cả đơn tồn đọng đã đi"): tồn đọng đã đi / đã điều CÓ báo, kèm kind + info', () => {
-    const s = splitPool([row('8', { delivery_date: '2026-09-20', sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'HA' }), row('7', { delivery_date: '2026-09-21', mat_doc: 'x' })], DAY, { ...none, reportAll: true })
+  it('reportAll (30/09 — cửa "Xem cả đơn tồn đọng đã đi"): tồn đọng ĐÃ Ở Kế hoạch xuất có báo kèm kind + info', () => {
+    const s = splitPool([row('8', { delivery_date: '2026-09-20' })], DAY, { ...none, inPlan: new Map([['8', 'K_X_200926_1']]), reportAll: true })
     expect(s.include.size).toBe(0)
-    expect(s.excluded).toEqual([{ od_number: '7', kind: 'SHIPPED', info: 'x' }, { od_number: '8', kind: 'SAP_ASSIGNED', info: 'HA' }])
+    expect(s.excluded).toEqual([{ od_number: '8', kind: 'IN_PLAN', info: 'K_X_200926_1' }])
   })
   it('daysBetween theo lịch, không theo giờ', () => { expect(daysBetween('2026-09-30', '2026-10-01')).toBe(1) })
 })
@@ -67,10 +77,36 @@ describe('SO sửa ⇒ OD mới — chỉ kết luận "đã thay" khi có bằn
   it('khác dòng SO ⇒ KHÔNG thay', () => {
     expect(findReplacedOds(file, [cand('OLD', { so_item: '20' })]).replaced).toEqual([])
   })
-  it('OD cũ ĐÃ xuất kho ⇒ không bỏ, chỉ báo xung đột', () => {
+  it('OD cũ ĐÃ post ⇒ không bỏ, báo xung đột + phả hệ AFTER_POST (rào DB chặn OD mới đi ngày khác)', () => {
     const r = findReplacedOds(file, [cand('OLD', { mat_doc: '49' })])
     expect(r.replaced).toEqual([])
     expect(r.shipped_conflicts).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
+    expect(r.edges).toEqual([{ old_od: 'OLD', new_od: 'NEW', kind: 'AFTER_POST', so_number: 'S1', so_item: '10' }])
+  })
+  // 03/10 tối — KHOẢNG PHỦ theo NGÀY TẠO (SAP đổ ZSD02 theo ngày tạo; file lọc 2 ngày không chứa DO cũ chưa post thì vắng mặt không nói lên gì)
+  const c2 = (od: string, created: string, o: Partial<{ so_item: string; mat_doc: string | null }> = {}) => ({ ...cand(od, o), od_created_at: created })
+  const COV = { from: '2026-09-24', to: '2026-09-25' }
+  it('khai khoảng phủ: OD cũ tạo TRONG khoảng mà vắng ⇒ thay (bất kể ngày giao)', () => {
+    const r = findReplacedOds(file, [c2('OLD', '2026-09-24', {})], COV)
+    expect(r.replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'NEW' }])
+    expect(r.edges).toEqual([{ old_od: 'OLD', new_od: 'NEW', kind: 'REPLACE', so_number: 'S1', so_item: '10' }])
+  })
+  it('OD cũ tạo NGOÀI khoảng ⇒ KHÔNG kết luận thay, chỉ tín hiệu uncertain (giao thêm hay thay? người quyết) — đỏ bản 25/09', () => {
+    const r = findReplacedOds(file, [c2('OLD', '2026-09-10')], COV)
+    expect(r.replaced).toEqual([])
+    expect(r.uncertain).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
+    expect(r.edges).toEqual([])
+  })
+  it('TÁCH 1 → N: một OD cũ vắng, hai OD mới cùng SO Item ⇒ hai cạnh SPLIT; `replaced.by` = OD mới đầu tiên', () => {
+    const two = [{ od_number: 'N1', so_number: 'S1', so_item: '10', delivery_date: DAY }, { od_number: 'N2', so_number: 'S1', so_item: '10', delivery_date: DAY }]
+    const r = findReplacedOds(two, [c2('OLD', '2026-09-24')], COV)
+    expect(r.replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'N1' }])
+    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind])).toEqual([['OLD', 'N1', 'SPLIT'], ['OLD', 'N2', 'SPLIT']])
+  })
+  it('GỘP N → 1: hai OD cũ vắng, một OD mới ⇒ hai cạnh MERGE', () => {
+    const r = findReplacedOds(file, [c2('O1', '2026-09-24'), c2('O2', '2026-09-25')], COV)
+    expect(r.replaced.map(x => x.od_number).sort()).toEqual(['O1', 'O2'])
+    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind]).sort()).toEqual([['O1', 'NEW', 'MERGE'], ['O2', 'NEW', 'MERGE']])
   })
 })
 
@@ -122,9 +158,9 @@ describe('HOÃN / KHÔNG ĐIỀU (user 27/09: "đơn key một ngày nhưng đi�
   it('OD tồn đọng đang hoãn vẫn được BÁO (quyết định của người phải thấy để còn bỏ hoãn)', () => {
     expect(splitPool([row('1', { delivery_date: '2026-09-20' })], DAY, held([['1', null]])).excluded.map(x => x.kind)).toEqual(['HELD'])
   })
-  it('đang Không điều mà SAP đã điều / đã xuất ⇒ về tab Đã điều (SHIPPED / SAP_ASSIGNED), không đứng mãi ở Không điều', () => {
+  it('đang Không điều mà SAP đã post / đã điều ⇒ VẪN Không điều (03/10 tối: dấu tay của người thắng cờ SAP; bản 27/09 để SAP thắng)', () => {
     const s = splitPool([row('1', { mat_doc: '4900001' }), row('2', { sap_dispatch_status: 'ASSIGNED', dvvt_raw: 'HA' })], DAY, held([['1', null], ['2', '2026-09-30']]))
-    expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'SHIPPED'], ['2', 'SAP_ASSIGNED']])
+    expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'HELD'], ['2', 'HELD']])
   })
 })
 
@@ -136,11 +172,11 @@ describe('DO TẠO LẠI – ĐÃ ĐIỀU (user chốt 28/09): OD mới thay OD 
     expect([...s.include.keys()]).toEqual(['22'])
     expect(s.excluded).toEqual([{ od_number: '11', kind: 'REDO_DISPATCHED', info: 'thay OD 1 · xe K_X_280926_4' }])
   })
-  it('LUÔN báo kể cả OD tồn đọng; thắng dấu Không điều; thua SAP đã xuất / OD mới tự đã trong KH xuất', () => {
+  it('LUÔN báo kể cả OD tồn đọng; thắng dấu Không điều; thua OD mới tự đã trong KH xuất (cờ SAP đã post không còn thắng — 03/10 tối)', () => {
     const redo = new Map([['1', 'thay OD 0 · xe G'], ['2', 'x'], ['3', 'y']])
     const s = splitPool([row('1', { delivery_date: '2026-09-20' }), row('2'), row('3', { mat_doc: '49' })], DAY,
-      { inPlan: new Map(), otherDraft: new Map(), held: new Map([['2', { until: null, reason: 'r' }]]), redo })
-    expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'REDO_DISPATCHED'], ['2', 'REDO_DISPATCHED'], ['3', 'SHIPPED']])
+      { inPlan: new Map([['3', 'K_X']]), otherDraft: new Map(), held: new Map([['2', { until: null, reason: 'r' }]]), redo })
+    expect(s.excluded.map(x => [x.od_number, x.kind])).toEqual([['1', 'REDO_DISPATCHED'], ['2', 'REDO_DISPATCHED'], ['3', 'IN_PLAN']])
   })
 })
 

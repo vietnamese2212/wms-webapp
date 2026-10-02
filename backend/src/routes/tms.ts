@@ -108,6 +108,11 @@ router.post('/dispatch/plans/:id/reoptimize', requirePerm('dispatch', 'plan'),  
 router.patch('/dispatch/plans/:id/params',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zPlanParams }),     dispatch.updatePlanParams) // dải tải theo dòng xe cha / bypass — xe nháp tính lại, không ghép lại (01/10)
 router.post('/dispatch/plans/:id/hold',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zHold }),          dispatch.holdOds)       // Hoãn tới ngày / Không điều (giữ qua mọi lần nạp)
 router.post('/dispatch/plans/:id/unhold',     requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnhold }),        dispatch.unholdOds)
+// 03/10 tối — dấu tay "Ngoài app" (đơn đã xử lý ngoài bàn; cờ SAP không tự loại đơn nữa) · Kéo OD đang xếp ở nháp khác về đây · đơn quá cửa sổ chưa quyết
+router.post('/dispatch/plans/:id/outside',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zOutside }),       dispatch.outsideOds)
+router.post('/dispatch/plans/:id/unoutside',  requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnoutside }),     dispatch.unoutsideOds)
+router.post('/dispatch/plans/:id/pull-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zPullOd }),        dispatch.pullOd)
+router.get('/dispatch/plans/:id/stale',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanStale)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng
 router.get('/dispatch/plans/:id/customers/:shipTo/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zShipToParam }), dispatch.getCustomerVehicles)
 router.put('/dispatch/plans/:id/customers/:shipTo/vehicles', requireAnyPerm(['dispatch', 'customer_vehicles'], ['customers', 'edit']), validate({ params: dispatch.zShipToParam, body: dispatch.zCustVehicles }), dispatch.setCustomerVehicles)

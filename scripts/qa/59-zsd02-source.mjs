@@ -58,13 +58,17 @@ const ROWS = [
   row({ so: SO3, od: OD3, mat: loscam, su: 'Cái', soq: 2, factor: 1, bunit: 'EA', sotype: 'ZRE3-SO Return Pallet', ic: 'ZRE3-Pallet Return' }),  // RETURN
 ]
 const xlsxOf = (rows) => { const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Data'); return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) }
-async function upload(path, buf, name = 'zsd02.xlsx') {
+async function upload(path, buf, name = 'zsd02.xlsx', fields = {}) {
   const fd = new FormData(); fd.append('file', new Blob([buf]), name)
+  for (const [k, v] of Object.entries(fields)) if (v != null && v !== '') fd.append(k, String(v))
   const r = await fetch(`${BASE}/api${path}`, { method: 'POST', headers: { Authorization: `Bearer ${authToken()}` }, body: fd })
   let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
   return { s: r.status, j }
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+// cờ hệ thống cache 30 s theo instance ⇒ đo lại tới 45 s
+const waitFor = async (fn) => { for (let i = 0; i < 9; i++) { const r = await fn(); if (r) return r; await sleep(5000) } return null }
+const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
 
 async function cleanup() {
   for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC}`)) {
@@ -73,14 +77,21 @@ async function cleanup() {
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
   }
   await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC}`).catch(() => {})
-  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${OD1},${OD3})`)
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA59*`)
   await restWrite('erp_so_lines', 'DELETE', `so_number=like.QA59SO*`)
+  await restWrite('od_lineage', 'DELETE', `old_od=like.QA59*`).catch(() => {})
   await restWrite('sap_route', 'DELETE', `route_code=eq.${ROUTE}`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIPTO}&auto_created=is.true`).catch(() => {})
   await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
+  // 03/10 tối: trả công tắc phủ ngày tạo về mặc định Bắt buộc (user chốt)
+  await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REQUIRE' })
 }
 await cleanup()
 await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
+// Fixture tạo OD ở ngày xa tương lai ⇒ KHÔNG phủ ngày tạo của đơn chưa đi thật trên staging ⇒ mặc định Bắt buộc sẽ 422. Gói chạy ở chế
+// độ Nhắc nhở (cảnh báo, vẫn nạp); riêng [7d] bật lại Bắt buộc để đo đúng hành vi chặn. Cleanup trả về REQUIRE.
+await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REMIND' })
+await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS)); return r.s === 200 && r.j?.data?.errors_total === 0 ? r : null })
 
 try {
   // ── [1] Kiểm-trước rồi ghi ──
@@ -213,7 +224,6 @@ try {
   check('4c. Cùng cửa với DO bán hàng (flow SALE) → vẫn nhận (201)', khOk.s === 201, `http=${khOk.s} ${(khOk.j?.error?.message ?? '').slice(0, 100)}`)
 
   // ── [5] Công tắc nguồn — cache cờ 30s theo instance nên đo lại tới 40s ──
-  const waitFor = async (fn) => { for (let i = 0; i < 9; i++) { const r = await fn(); if (r) return r; await sleep(5000) } return null }
   await api('/wms/settings/sap_do_source', 'PUT', { value: 'ZSD02' })
   const vlBlocked = await waitFor(async () => { const r = await upload('/wms/outbound/upload-vl06o', xlsxOf(vl), 'vl06o.xlsx'); return r.s === 409 ? r : null })
   check('5a. sap_do_source=ZSD02 → cửa VL06O trả 409 SOURCE_DISABLED', vlBlocked?.s === 409 && vlBlocked?.j?.error?.code === 'SOURCE_DISABLED', `code=${vlBlocked?.j?.error?.code}`)
@@ -248,6 +258,44 @@ try {
   check('6c. storage_path không có file → 400 UPLOAD_MISSING · path rác → 400 · path ngăn người khác → 403 (superadmin thì 400 vì không có file)',
     gone.s === 400 && gone.j?.error?.code === 'UPLOAD_MISSING' && weird.s === 400 && (other.s === 403 || other.s === 400),
     `gone=${gone.s} ${gone.j?.error?.code} weird=${weird.s} other=${other.s}`)
+
+  // ── [7] (03/10 tối) KHOẢNG PHỦ NGÀY TẠO · PHẢ HỆ DO · SAP XOÁ TRONG KHOẢNG · CÔNG TẮC BẮT BUỘC ──
+  // SAP chỉ đổ ZSD02 theo NGÀY TẠO, không có "ngày sửa cuối" ⇒ app chỉ được kết luận "thay / xoá" cho DO có ngày tạo TRONG khoảng
+  // file phủ (khai khi nạp, mặc định = khoảng thật của file). Fixture: mọi OD tạo OD_CREATED (xa tương lai, không đụng đơn thật).
+  const rowSo1 = (od) => row({ so: SO1, od, mat: FIX.MAT_POOL, su: suThung, soq: 10, factor, bunit: bu, gw: 50_000 })
+  const up7 = await upload('/external/do-sap/upload-zsd02', xlsxOf([rowSo1('QA59OD1B'), ROWS[2]]))
+  const od1x = (await restAll('erp_outbound_orders', `select=sync_status,replaced_by_od&od_number=eq.${OD1}`))[0]
+  const lin = await restAll('od_lineage', `select=old_od,new_od,kind,so_number,resolved_at&old_od=eq.${OD1}`)
+  check('7a. SO1 đổi DO: OD1 vắng file, OD1B cùng SO Item, OD1 tạo TRONG khoảng phủ → OD1 OBSOLETE thay bởi OD1B · od_lineage ghi cạnh REPLACE',
+    up7.s === 200 && up7.j?.data?.od?.replaced?.[0]?.od_number === OD1 && od1x?.sync_status === 'OBSOLETE' && od1x?.replaced_by_od === 'QA59OD1B'
+    && lin.length === 1 && lin[0].kind === 'REPLACE' && lin[0].new_od === 'QA59OD1B' && up7.j?.data?.od?.lineage_edges === 1,
+    `http=${up7.s} replaced=${JSON.stringify(up7.j?.data?.od?.replaced)} od1=${od1x?.sync_status}/${od1x?.replaced_by_od} lin=${JSON.stringify(lin)}`)
+  const DAY_AFTER = shiftDay(OD_CREATED, 1)
+  const up7b = await upload('/external/do-sap/upload-zsd02', xlsxOf([rowSo1('QA59OD1C')]), 'zsd02.xlsx', { created_from: DAY_AFTER, created_to: DAY_AFTER })
+  const od1bRow = (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OD1B`))[0]
+  check('7b. OD cũ (OD1B) tạo NGOÀI khoảng khai mà vắng file, SO Item có OD1C mới → KHÔNG kết luận thay (uncertain=1, cảnh báo), OD1B vẫn ACTIVE, không ghi phả hệ — đỏ bản 25/09 (coi là thay)',
+    up7b.s === 200 && up7b.j?.data?.od?.uncertain === 1 && od1bRow?.sync_status === 'ACTIVE' && (await restAll('od_lineage', 'select=id&new_od=eq.QA59OD1C')).length === 0
+    && (up7b.j?.data?.warnings ?? []).some(w => /chưa kết luận|KHÔNG kết luận/i.test(w)),
+    `http=${up7b.s} uncertain=${up7b.j?.data?.od?.uncertain} od1b=${od1bRow?.sync_status} warn=${(up7b.j?.data?.warnings ?? []).filter(w => /kết luận/i.test(w)).join(' | ').slice(0, 160)}`)
+  // E4: file chỉ còn OD3, khai khoảng = OD_CREATED ⇒ OD1B và OD1C (tạo OD_CREATED, ACTIVE, vắng, SO Item không có OD mới) = SAP đã XOÁ
+  const up7c = await upload('/external/do-sap/upload-zsd02', xlsxOf([ROWS[2]]), 'zsd02.xlsx', { created_from: OD_CREATED, created_to: OD_CREATED })
+  const goneRows = await restAll('erp_outbound_orders', `select=od_number,sync_status,replaced_by_od&od_number=in.(QA59OD1B,QA59OD1C)`)
+  check('7c. DO biến mất khỏi file dù ngày tạo TRONG khoảng khai, không DO thay → SAP đã xoá: OBSOLETE, không replaced_by (gone=2); OD3 còn trong file giữ ACTIVE',
+    up7c.s === 200 && up7c.j?.data?.od?.gone === 2 && goneRows.length === 2 && goneRows.every(r => r.sync_status === 'OBSOLETE' && !r.replaced_by_od)
+    && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.${OD3}`))[0]?.sync_status === 'ACTIVE',
+    `http=${up7c.s} gone=${up7c.j?.data?.od?.gone} rows=${JSON.stringify(goneRows)}`)
+  // Công tắc BẮT BUỘC: fixture không phủ ngày tạo của đơn chưa đi thật ⇒ kiểm trước có lỗi "Phủ ngày tạo" (will_write 0), ghi thật 422 COVERAGE_MISSING
+  await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REQUIRE' })
+  const pf7 = await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS)); return r.s === 200 && (r.j?.data?.errors_total ?? 0) > 0 ? r : null })
+  const wr7 = await upload('/external/do-sap/upload-zsd02', xlsxOf(ROWS))
+  const covPlant = pf7?.j?.data?.coverage?.plants?.find(p => p.plant === PLANT)
+  check('7d. Công tắc Bắt buộc: file không phủ ngày tạo của đơn chưa đi (plant 1102) → kiểm trước lỗi "Phủ ngày tạo" nêu ngày + số OD + khoảng nên đổ, will_write 0 · ghi thật 422 COVERAGE_MISSING',
+    !!pf7 && pf7.j?.data?.will_write === 0 && (pf7.j?.data?.errors ?? []).some(e => /Phủ ngày tạo/.test(e) && /Đổ lại ZSD02/.test(e)) && (covPlant?.missing?.length ?? 0) > 0 && pf7.j?.data?.coverage?.mode === 'REQUIRE'
+    && wr7.s === 422 && wr7.j?.error?.code === 'COVERAGE_MISSING',
+    `pf=${pf7?.s ?? 'timeout'} will=${pf7?.j?.data?.will_write} err0=${(pf7?.j?.data?.errors ?? [])[0]?.slice(0, 120)} missing=${covPlant?.missing?.length} write=${wr7.s}/${wr7.j?.error?.code}`)
+  const cov7 = await api(`/external/do-sap/coverage?plant=${PLANT}`)
+  check('7e. GET /external/do-sap/coverage?plant= → pending_ods · by_od_created[] · od_span · mode', cov7.s === 200 && typeof cov7.j?.data?.pending_ods === 'number' && Array.isArray(cov7.j?.data?.by_od_created) && cov7.j?.data?.mode === 'REQUIRE',
+    `http=${cov7.s} pending=${cov7.j?.data?.pending_ods} days=${cov7.j?.data?.by_od_created?.length} span=${JSON.stringify(cov7.j?.data?.od_span)}`)
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0

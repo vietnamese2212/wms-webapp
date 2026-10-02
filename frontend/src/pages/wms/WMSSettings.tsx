@@ -64,6 +64,11 @@ const SAP_SRC_OPTS = [
   { value: 'ZSD02', label: 'Chỉ ZSD02',                 sub: 'cửa VL06O đóng (409)' },
   { value: 'VL06O', label: 'Chỉ VL06O (đường lui)',     sub: 'cửa ZSD02 đóng' },
 ]
+// 03/10 tối: file ZSD02 phải phủ NGÀY TẠO của đơn chưa đi (user: "có 1 switch Bắt buộc / Nhắc nhở")
+const ZSD02_COV_OPTS = [
+  { value: 'REQUIRE', label: 'Bắt buộc',  sub: 'thiếu ngày của đơn chưa đi → không nạp (422)' },
+  { value: 'REMIND',  label: 'Nhắc nhở',  sub: 'chỉ cảnh báo vàng ở bảng kiểm trước' },
+]
 const LABEL_FORMAT_OPTS = [
   { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_…' },
   { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã;QA;Lô;NSX;HSD…' },
@@ -305,8 +310,10 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const rateRow  = settings.find(s => s.key === 'receipt_rating')
   const msfRow   = settings.find(s => s.key === 'mobile_surface')
   const sapSrcRow = settings.find(s => s.key === 'sap_do_source')
+  const covRow   = settings.find(s => s.key === 'zsd02_coverage_mode')
   const srvMsf   = parseMobileSurface(msfRow?.value)
   const srvSapSrc = sapSrcRow?.value === 'ZSD02' || sapSrcRow?.value === 'VL06O' ? sapSrcRow.value : 'BOTH'
+  const srvCov   = covRow?.value === 'REMIND' ? 'REMIND' : 'REQUIRE'
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -349,14 +356,15 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const [draftRate, setDraftRate] = useState<string>(srvRate)
   const [draftMsf, setDraftMsf] = useState<MobileSurfaceDraft>(msfDraftOf(srvMsf))
   const [draftSapSrc, setDraftSapSrc] = useState<string>(srvSapSrc)
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvMon, srvRate, srvMsf, srvSapSrc])
+  const [draftCov, setDraftCov] = useState<string>(srvCov)
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvMon, srvRate, srvMsf, srvSapSrc, srvCov])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
     setDraftStd(String(srvStd)); setDraftDash(String(srvDash)); setDraftMon(String(srvMon)); setDraftRate(srvRate)
-    setDraftMsf(msfDraftOf(srvMsf)); setDraftSapSrc(srvSapSrc)
+    setDraftMsf(msfDraftOf(srvMsf)); setDraftSapSrc(srvSapSrc); setDraftCov(srvCov)
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -380,9 +388,10 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   // chỉ có thể true với superadmin; vẫn đi chung một nút Lưu (user 21/09: hai nút Lưu trên một tab gây hiểu nhầm "đã lưu").
   const msfDirty   = isMsfDirty(draftMsf, srvMsf)
   const sapSrcDirty = draftSapSrc !== srvSapSrc
+  const covDirty   = draftCov !== srvCov
   // Cờ nào có ô nhập thì PHẢI có mặt ở đây — thiếu là đổi riêng cờ đó nút Lưu vẫn mờ, người dùng
   // tưởng "không lưu được" (bug thật 02/09: cờ Chấm sao chuyến giao bị bỏ quên).
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty || msfDirty || sapSrcDirty
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || monDirty || orgDirty || holDirty || stdDirty || rateDirty || msfDirty || sapSrcDirty || covDirty
 
   async function applyChanges() {
     setErr('')
@@ -462,6 +471,7 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
       if (rateDirty)  await save({ key: 'receipt_rating', value: { mode: draftRate } })
       if (msfDirty)   await save({ key: 'mobile_surface', value: msfValueOf(draftMsf) })
       if (sapSrcDirty) await save({ key: 'sap_do_source', value: draftSapSrc })
+      if (covDirty)    await save({ key: 'zsd02_coverage_mode', value: draftCov })
       toast({ title: msfDirty ? 'Đã lưu cấu hình hệ thống — bố cục điện thoại áp cho mọi người khi tải lại app' : 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
@@ -494,6 +504,12 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
                 Hai nguồn ghi CÙNG sổ theo khoá (DO, Item). Giai đoạn chuyển: để <b>VL06O + ZSD02</b>, nạp cả hai cùng ngày để đối chiếu; đủ 5 ngày không lệch thì chuyển <b>Chỉ ZSD02</b> — cửa VL06O trả 409 để không ai nạp nhầm.</>}>
               <SingleSelect options={SAP_SRC_OPTS} value={draftSapSrc}
                 onChange={setDraftSapSrc} searchable={false} triggerClassName="w-full" />
+            </SettingField>
+            <SettingField label="Phủ ngày tạo khi nạp ZSD02"
+              tip={<>SAP chỉ đổ ZSD02 theo <b>Ngày tạo</b> và không có "ngày sửa cuối", nên DO cũ bị sửa chỉ lọt vào app khi file phủ ngày tạo của nó. Màn nạp liệt kê ngày tạo của mọi đơn <b>chưa đi</b> theo lịch sử app (tab Điều · đang xếp · đã xác nhận · kho đang xuất, trừ đơn đã đánh dấu Ngoài app).<br />
+                <b>Bắt buộc</b>: file thiếu ngày của đơn chưa đi thì không nạp — đổ lại SAP đúng khoảng. <b>Nhắc nhở</b>: vẫn nạp, cảnh báo vàng. Khoảng phải phủ do đơn CŨ NHẤT chưa quyết quyết định: quyết đơn cũ (Không điều · Ngoài app · điều thật) thì khoảng tự ngắn lại.</>}>
+              <SingleSelect options={ZSD02_COV_OPTS} value={draftCov}
+                onChange={setDraftCov} searchable={false} triggerClassName="w-full" />
             </SettingField>
           </SettingGroup>
 

@@ -222,6 +222,41 @@ function inertError(gdo: GdoInertState | null | undefined): string | null {
 }
 const INERT_COLS = 'awaiting_sap, awaiting_dos, plan_dropped'
 
+// CỔNG SAP Ở KHO (03/10 tối — user: "sai lệch ở khâu đơn hàng nếu không được sửa thì cũng ngăn ở xuất hàng, vì xuất hàng lấy chung dữ
+// liệu ZSD02"): chuyến có đơn mà SAP đã BỎ / đã THAY (mọi dòng ZSD02 của DO đã OBSOLETE) hoặc còn việc "Cần xử lý" chưa quyết (số
+// lượng SAP đổi sau khi đã quét) thì KHÔNG Bắt đầu · không quét · không Lưu thủ công · không Xuất luôn · không Hoàn thành. Người
+// quyết ở Dữ liệu bên ngoài → Cần xử lý hoặc Điều vận → Xem đơn, rồi mới làm tiếp. Nhớ 30 s theo chuyến để lượt quét không tốn thêm
+// hai câu mỗi phát (pool PostgREST là tài nguyên hiếm).
+const sapIssueCache = new Map<string, { at: number; msg: string | null }>()
+export function clearSapIssueCache(gdoId?: string) { if (gdoId) sapIssueCache.delete(gdoId); else sapIssueCache.clear() }
+export async function sapIssueError(gdoId: string, action: string): Promise<string | null> {
+  const hit = sapIssueCache.get(gdoId)
+  if (hit && Date.now() - hit.at < 30_000) return hit.msg
+  const [{ data: dvs }, { data: tasks }] = await Promise.all([
+    supabase.from('OutboundDelivery').select('delivery_code').eq('gdo_id', gdoId),
+    supabase.from('reconcile_tasks').select('od_number, detail').eq('gdo_id', gdoId).eq('status', 'OPEN').limit(20),
+  ])
+  const dos = [...new Set(((dvs ?? []) as { delivery_code: string | null }[]).flatMap(d => String(d.delivery_code ?? '').split(/,\s*/)).map(s => s.trim()).filter(Boolean))]
+  const issues: string[] = []
+  if (dos.length) {
+    const rows = (await fetchAllByIdChunks(dos, c => supabase.from('erp_outbound_orders').select('od_number, sync_status, replaced_by_od').in('od_number', c).order('od_number'))) as { od_number: string; sync_status: string | null; replaced_by_od: string | null }[]
+    const by = new Map<string, typeof rows>()
+    for (const r of rows) { const l = by.get(r.od_number) ?? []; l.push(r); by.set(r.od_number, l) }
+    for (const [od, rs] of by) {
+      if (rs.some(r => r.sync_status !== 'OBSOLETE')) continue
+      const rep = rs.find(r => r.replaced_by_od)?.replaced_by_od
+      issues.push(rep ? `DO ${od} đã bị SAP THAY bằng ${rep}` : `DO ${od} đã bị SAP BỎ`)
+    }
+  }
+  const tk = (tasks ?? []) as { od_number: string | null; detail: string | null }[]
+  if (tk.length) issues.push(`${tk.length} việc "Cần xử lý" chưa quyết (${tk[0].od_number ?? '?'}: ${(tk[0].detail ?? '').slice(0, 80)})`)
+  const msg = issues.length
+    ? `Chuyến có đơn SAP đã đổi chưa xử lý — ${issues.slice(0, 4).join(' · ')}${issues.length > 4 ? ` … +${issues.length - 4}` : ''}. Xử lý ở Dữ liệu bên ngoài → Cần xử lý (số lượng) hoặc Điều vận → Xem đơn (DO bị thay / bỏ: Đổi số DO · Gỡ khỏi kế hoạch · Giữ và ghi cần sửa bên SAP) rồi mới ${action}.`
+    : null
+  sapIssueCache.set(gdoId, { at: Date.now(), msg })
+  return msg
+}
+
 // Chuyến ĐÃ BẮT ĐẦU thì KHÔNG được đẩy Ngày xuất sang TƯƠNG LAI: hàng đã ghi nhận/trừ tồn mà ngày
 // nhảy lên tương lai là mâu thuẫn (xuất trước ngày xuất), và trước khi có luật này nó tạo ra NGÕ CỤT —
 // mọi đường ghi đều 422 nên tồn đã trừ không trả lại được (probe 02/08 B2). Kéo ngày về hôm nay/quá
@@ -1881,6 +1916,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (gdo.status === 'CANCELLED')  return fail(res, 'Chuyến đã hủy', 400)
     { const inertErr = inertError(gdo as GdoInertState)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
+    { const sapErr = await sapIssueError(gdoId, 'Xuất luôn'); if (sapErr) return fail(res, 409, 'SAP_ISSUE_OPEN', sapErr) }
     const qxeFutErr = futureDateError((gdo as { delivery_date?: string | null }).delivery_date)
     if (qxeFutErr)                   return fail(res, 422, 'FUTURE_DATE', qxeFutErr)
     // PAUSED vẫn cho: user tạm dừng để sửa kế hoạch → "Xuất luôn" = ngầm Tiếp tục + chốt chuyến.
@@ -2697,6 +2733,7 @@ export async function patchGDO(req: Request, res: Response) {
       const gspRow = gsp as { warehouse_id: string | null; shipto_party: string | null } | null
       const blockErr = await shiptoBlockError(gspRow?.warehouse_id, gspRow?.shipto_party)
       if (blockErr) return fail(res, 422, 'SHIPTO_UNLINKED', blockErr)
+      { const sapErr = await sapIssueError(req.params.id, 'Hoàn thành chuyến'); if (sapErr) return fail(res, 409, 'SAP_ISSUE_OPEN', sapErr) }
       const { data: dos } = await supabase.from('OutboundDelivery')
         .select('id').eq('gdo_id', req.params.id)
       const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
@@ -3013,6 +3050,7 @@ export async function startGDO(req: Request, res: Response) {
     if ((cur as { started_at?: string | null } | null)?.started_at || curStatus === 'COMPLETED' || curStatus === 'CANCELLED') {
       return fail(res, 'Chuyến đã bắt đầu hoặc đã kết thúc — dùng "Sửa thông tin xe" nếu cần đổi biển số', 400)
     }
+    { const sapErr = await sapIssueError(req.params.id, 'Bắt đầu chuyến'); if (sapErr) return fail(res, 409, 'SAP_ISSUE_OPEN', sapErr) }
     const startFutErr = futureDateError((cur as { delivery_date?: string | null } | null)?.delivery_date)
     if (startFutErr) return fail(res, 422, 'FUTURE_DATE', startFutErr)
     { const inertErr = inertError(cur as GdoInertState | null)
@@ -6425,6 +6463,7 @@ export async function scanItem(req: Request, res: Response) {
     // vì ở đây chuyến chưa/không còn dòng hàng để soạn, không phải chuyện sớm hay muộn.
     { const inertErr = inertError(gdo as GdoInertState | null)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
+    { const sapErr = await sapIssueError(gdoId, 'quét tiếp'); if (sapErr) return fail(res, 409, 'SAP_ISSUE_OPEN', sapErr) }
     // Chưa Bắt đầu → không quét (bug 01/08: quét lật IN_PROGRESS + trừ tồn, lách rule cổng/cân).
     // Nhặt lẻ pre-start (xe chưa tới) là chủ đích → miễn.
     if (!loose_picking_mode && !gdo?.started_at)
@@ -7378,6 +7417,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     { const inertErr = inertError(gdo as GdoInertState | null)
       if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
+    { const sapErr = await sapIssueError(gdoId, 'Lưu thủ công'); if (sapErr) return fail(res, 409, 'SAP_ISSUE_OPEN', sapErr) }
     // Chưa Bắt đầu → không "Lưu thủ công" (bug 01/08: đường này lật IN_PROGRESS + trừ pool tồn,
     // lách rule cổng/cân — kho QTY/NONE dùng đường này là chính nên lỗ càng rộng)
     if (!(gdo as { started_at?: string | null } | null)?.started_at)

@@ -79,6 +79,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   dispatch_trip:         [['dispatch-plan']],
   dispatch_trip_od:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau
   dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
+  dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-stale'], ['zsd02-coverage']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
+  od_lineage:            [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
   outbound_events:     [['gdo-events']],
   khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],

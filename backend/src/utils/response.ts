@@ -171,6 +171,17 @@ const PG_MAP: Record<string, { status: number; message: string }> = {
 }
 
 /** Lỗi Postgres có nghĩa với người dùng không? Trả null nếu không (⇒ giữ nguyên đường 5xx cũ). */
+/** Trigger DB nói bằng tiếng người: `RAISE EXCEPTION 'MÃ_LỖI: câu cho người dùng' USING ERRCODE = '23505'` (rào cứng điều vận 03/10 —
+ *  OD_ALREADY_PLANNED · OD_ON_OTHER_PLAN). Tiền tố MÃ_LỖI thành `error.code`, phần sau thành câu hiển thị — không rơi về câu chung
+ *  "Giá trị này đã tồn tại". Chỉ nhận tiền tố viết hoa ≥ 4 ký tự để không nhầm với thông điệp Postgres thường. */
+const RAISED_RE = /^([A-Z][A-Z0-9_]{3,}): (.+)$/s
+export function raisedUserError(err: unknown): { status: number; code: string; message: string } | null {
+  const e = err as PgLikeError | null
+  if (!e || (e.code !== '23505' && e.code !== 'P0001')) return null
+  const m = RAISED_RE.exec(String(e.message ?? '').trim())
+  return m ? { status: 409, code: m[1], message: m[2] } : null
+}
+
 export function pgUserError(err: unknown): { status: number; message: string } | null {
   const e = err as PgLikeError | null
   const code = e?.code
@@ -211,6 +222,8 @@ export function fail(res: Response, arg2: string | number | PgLikeError, arg3?: 
     // Nhặt lẻ trả 500 "canceling statement due to statement timeout" ×7 dưới 8 luồng ghi — dịch ở đây
     // thì 150+ chỗ `fail(res, error)` cùng được, không phải vá từng controller.
     if (isQueryTimeout(arg2)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    const raised = raisedUserError(arg2)
+    if (raised) return res.status(raised.status).json({ success: false, error: { code: raised.code, message: raised.message } })
     const mapped = pgUserError(arg2)
     if (mapped) {
       return res.status(mapped.status).json({ success: false, error: { code: arg2.code ?? 'ERROR', message: mapped.message } })

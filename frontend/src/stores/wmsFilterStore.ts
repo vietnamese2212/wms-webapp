@@ -395,6 +395,8 @@ interface DoSapFilters {
   deliveryTo: string
   createdFrom: string    // khoảng Ngày tạo OD (od_created_at, cột ZSD02 "Thời gian tạo OD" — user 03/10: "ngày tạo là dữ liệu tôi cần filter")
   createdTo: string
+  soCreatedFrom: string  // khoảng Ngày tạo SO (so_created_at, "Thời gian tạo SO") — user 03/10: "tôi nói filter của nó cơ mà"
+  soCreatedTo: string
   page: number
   pageSize: number
 }
@@ -440,6 +442,8 @@ interface DispatchFilters {
   search: string         // tìm OD / khách / phường / Số xe trên bàn ghép xe + tab Dữ liệu OD
   createdFrom: string    // bảng Xem đơn: khoảng Ngày tạo OD (ZSD02 "Thời gian tạo OD") — lọc tại chỗ trên dữ liệu đã nạp
   createdTo: string
+  soCreatedFrom: string  // bảng Xem đơn: khoảng Ngày tạo SO (ZSD02 "Thời gian tạo SO")
+  soCreatedTo: string
 }
 interface SoLinesFilters {
   search: string
@@ -681,10 +685,10 @@ function initialFilters() {
     // nghỉ mỗi lần mở trang; vài trăm nhân sự × vài năm là vượt trần 10.000 dòng → trang chết hẳn
     // (400 "thu hẹp khoảng ngày") chứ không chỉ chậm. Cần xem năm cũ thì tự nới khoảng ngày.
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
-    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', page: 1, pageSize: 50 },
+    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, createdFrom: '', createdTo: '' },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '' },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

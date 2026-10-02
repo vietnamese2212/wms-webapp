@@ -157,11 +157,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   const extra = (od: string) => { const i = info[od]; return i ? [...i.so, ...i.created_by, i.note_invoice ?? '', i.route_name ?? '', ...i.categories] : [] }
   // Khoảng NGÀY TẠO OD (ZSD02 "Thời gian tạo OD", user 03/10) — lọc tại chỗ trên thông tin SAP đã nạp; chờ nạp xong mới lọc
   // (lọc lúc info còn trống thì cả bảng biến mất một nhịp). OD không có ngày tạo (nhập tay / VL06O) không khớp khoảng.
-  const cFrom = f.createdFrom ?? '', cTo = f.createdTo ?? ''
-  const createdOn = !!(cFrom || cTo) && !!review.data
-  const inCreated = (od: string) => { const d = info[od]?.od_created_at; return !!d && (!cFrom || d >= cFrom) && (!cTo || d <= cTo) }
+  const cFrom = f.createdFrom ?? '', cTo = f.createdTo ?? '', sFrom = f.soCreatedFrom ?? '', sTo = f.soCreatedTo ?? ''
+  const createdOn = !!(cFrom || cTo || sFrom || sTo) && !!review.data
+  const inRange = (d: string | null | undefined, from: string, to: string) => (!from && !to) || (!!d && (!from || d >= from) && (!to || d <= to))
+  const inCreated = (od: string) => inRange(info[od]?.od_created_at, cFrom, cTo) && inRange(info[od]?.so_created_at, sFrom, sTo)
   const filterDefs: FilterDef[] = [
     { key: 'created', label: 'Ngày tạo OD', type: 'daterange', from: cFrom, to: cTo, onChange: (from, to) => setF({ createdFrom: from, createdTo: to }) },
+    { key: 'soCreated', label: 'Ngày tạo SO', type: 'daterange', from: sFrom, to: sTo, onChange: (from, to) => setF({ soCreatedFrom: from, soCreatedTo: to }) },
   ]
   const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!createdOn || inCreated(r.od))
     && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
@@ -320,7 +322,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v4`} cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || createdOn
-              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '', createdFrom: '', createdTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
+              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick

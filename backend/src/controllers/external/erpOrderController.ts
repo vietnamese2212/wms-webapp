@@ -79,7 +79,7 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 export async function listDoSap(req: Request, res: Response) {
   try {
     const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan, used,
-      flow, dispatch, delivery_from, delivery_to, created_from, created_to } = req.query as Record<string, string>
+      flow, dispatch, delivery_from, delivery_to, created_from, created_to, so_created_from, so_created_to } = req.query as Record<string, string>
     // Bộ lọc cột ZSD02 (22/09): flow (SALE/STO/…; CSV — `?flow=` rỗng = KHÔNG dòng nào, luật parseListParam) ·
     // dispatch (ASSIGNED/UNASSIGNED) · khoảng Ngày giao (delivery_date) · khoảng Ngày tạo OD (od_created_at, cột date — 03/10,
     // user: "ngày tạo là dữ liệu tôi cần filter trong ZSD02"; dòng VL06O / nhập tay không có ngày tạo nên không khớp khoảng)
@@ -117,6 +117,8 @@ export async function listDoSap(req: Request, res: Response) {
         if (lteTo)   wq = wq.lte('created_at', lteTo)
         if (created_from) wq = wq.gte('od_created_at', created_from)
         if (created_to)   wq = wq.lte('od_created_at', created_to)
+        if (so_created_from) wq = wq.gte('so_created_at', so_created_from)
+        if (so_created_to)   wq = wq.lte('so_created_at', so_created_to)
         if (od_number)     wq = wq.ilike('od_number', `%${safeFilterValue(od_number)}%`)
         if (material_code) wq = wq.ilike('material_code', `%${safeFilterValue(material_code)}%`)
         if (ship_to_code)  wq = wq.eq('ship_to_code', ship_to_code)
@@ -154,6 +156,8 @@ export async function listDoSap(req: Request, res: Response) {
           if (lteTo)   wq = wq.lte('created_at', lteTo)
           if (created_from) wq = wq.gte('od_created_at', created_from)
           if (created_to)   wq = wq.lte('od_created_at', created_to)
+          if (so_created_from) wq = wq.gte('so_created_at', so_created_from)
+          if (so_created_to)   wq = wq.lte('so_created_at', so_created_to)
           if (od_number)     wq = wq.ilike('od_number', `%${safeFilterValue(od_number)}%`)
           if (material_code) wq = wq.ilike('material_code', `%${safeFilterValue(material_code)}%`)
           if (ship_to_code)  wq = wq.eq('ship_to_code', ship_to_code)
@@ -199,6 +203,8 @@ export async function listDoSap(req: Request, res: Response) {
     if (delivery_to)   query = query.lte('delivery_date', delivery_to)
     if (created_from)  query = query.gte('od_created_at', created_from)
     if (created_to)    query = query.lte('od_created_at', created_to)
+    if (so_created_from) query = query.gte('so_created_at', so_created_from)
+    if (so_created_to)   query = query.lte('so_created_at', so_created_to)
     if (searchOr) query = query.or(searchOr)
     if (restrictOds) query = query.in('od_number', restrictOds)
     const plants = await allowedPlants(req)

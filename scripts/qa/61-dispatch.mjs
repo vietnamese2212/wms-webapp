@@ -1081,16 +1081,21 @@ try {
     // Bảng Xem đơn (27/09 tối): Điều → "Không điều" (lý do TUỲ CHỌN) → đổi sang "Không điều ngày này" theo SỐ OD (OD đã rời kế hoạch)
     const hNever = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: null })
     const exN = (hNever.j?.data?.params?.excluded ?? []).find(x => x.od_number === OD[2])
-    const hNotHeld = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: [OD[1]], until: next })
+    // 03/10 tối: hoãn theo SỐ OD nay nhận cả OD CHƯA hoãn miễn thuộc plant (đơn quá cửa sổ 14 ngày không có `ids`) → 200, rồi bỏ hoãn
+    // ngay để các phép sau giữ nguyên trạng thái; OD không có trong ZSD02 của kho → 404 OD_NOT_FOUND
+    const hNotHeld = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: ['QA61KHONGCO'], until: next })
+    const hFree = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: [OD[1]], until: next, reason: 'QA hoãn theo số OD' })
+    const hFreeRow = (await restAll('dispatch_od_hold', `select=hold_until&warehouse_id=eq.${WH}&od_number=eq.${OD[1]}`))[0]
+    await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[1]] })
     const hOk = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: [OD[2]], until: next, reason: 'QA NPP hẹn ngày sau' })
     PR = hOk.j?.data
     const holdRow = (await restAll('dispatch_od_hold', `select=od_number,hold_until,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))
     const exH = (PR?.params?.excluded ?? []).find(x => x.od_number === OD[2])
-    check('15b. Chuyển trạng thái: ngày ≤ ngày lập → 400 · Điều→Không điều KHÔNG cần lý do → 200 (until null, kèm tên khách + pallet để bảng in dòng) · OD chưa hoãn đổi ngày → 404 · Không điều→Không điều ngày này theo số OD → 200, sổ hoãn MỘT dòng mang ngày mới + lý do',
+    check('15b. Chuyển trạng thái: ngày ≤ ngày lập → 400 · Điều→Không điều KHÔNG cần lý do → 200 (until null, kèm tên khách + pallet để bảng in dòng) · hoãn theo số OD không có trong ZSD02 kho → 404 OD_NOT_FOUND · OD CHƯA hoãn theo số OD → 200 ghi sổ (03/10: đơn quá 14 ngày) · Không điều→Không điều ngày này theo số OD → 200, sổ hoãn MỘT dòng mang ngày mới + lý do',
       hBad.s === 400 && hNever.s === 200 && exN?.kind === 'HELD' && exN?.until === null && exN?.reason === 'Không điều' && exN?.d?.ship_to_name === 'QA61 NPP 3' && Number(exN?.d?.pallets) > 0
-      && hNotHeld.s === 404 && hNotHeld.j?.error?.code === 'NOT_HELD'
+      && hNotHeld.s === 404 && hNotHeld.j?.error?.code === 'OD_NOT_FOUND' && hFree.s === 200 && hFreeRow?.hold_until === next
       && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow.length === 1 && holdRow[0]?.hold_until === next && exH?.kind === 'HELD' && exH?.until === next && /hoãn tới .*QA NPP hẹn/.test(exH?.info ?? '') && exH?.d?.ship_to_name === 'QA61 NPP 3',
-      `bad=${hBad.s} never=${hNever.s} ${hNever.j?.error?.message ?? ''} exN=${JSON.stringify(exN)} notHeld=${hNotHeld.s}/${hNotHeld.j?.error?.code} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} ex=${JSON.stringify(exH)}`)
+      `bad=${hBad.s} never=${hNever.s} ${hNever.j?.error?.message ?? ''} exN=${JSON.stringify(exN)} notFound=${hNotHeld.s}/${hNotHeld.j?.error?.code} free=${hFree.s}/${hFreeRow?.hold_until} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} ex=${JSON.stringify(exH)}`)
     const syncH = await api(`/tms/dispatch/plans/${pid(PR)}/sync`)
     const pAgain = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     PR = pAgain.j?.data

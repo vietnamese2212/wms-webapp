@@ -515,7 +515,7 @@ try {
   const fl3b = (sy3.j?.data?.flags ?? []).find(x => x.od_number === OD[2])
   const tripOf3 = tripOfOd(B, OD[2])?.id
   const rp = await api(`/tms/dispatch/plans/${B.id}/replace-od`, 'POST', { od_number: OD[2] })
-  B = rp.j?.data
+  B = rp.j?.data ?? B // thất bại thì giữ kế hoạch cũ — đừng để một phép đỏ giết cả gói (02/10: "reading 'id'")
   check('10n. OD bị SAP thay → cờ REPLACED chỉ OD mới; "Thay bằng OD mới" → OD5 nằm ĐÚNG xe của OD3 với 2 pallet, OD3 rời kế hoạch',
     fl3b?.kind === 'REPLACED' && fl3b?.replaced_by === OD5 && rp.s === 200 && tripOfOd(B, OD5)?.id === tripOf3 && Number(rowOf(B, OD5)?.pallets) === 2 && !rowOf(B, OD[2]),
     `flag=${JSON.stringify(fl3b ?? null)} http=${rp.s} ${rp.j?.error?.message ?? ''} same_trip=${tripOfOd(B, OD5)?.id === tripOf3}`)

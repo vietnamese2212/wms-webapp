@@ -414,11 +414,18 @@ export default function Dispatch() {
                 // 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): chưa khai = máy xếp mỗi khách một xe
                 const nd = g?.no_drops
                 const nDrops = (nd?.models.length ?? 0) + (nd?.channels.length ?? 0) + (nd?.no_channel_ods ?? 0)
-                if (!nCond && !nCat && !nVeh && !nDrops) return null
+                // 03/10 (user: "mã chưa có thì phải xử lý trước khi ghép đơn"): OD có mã lạ bị loại khỏi đợt ghép — việc phải làm là khai mã
+                const nMat = g?.no_material?.ods ?? 0
+                if (!nCond && !nCat && !nVeh && !nDrops && !nMat) return null
                 return (
                   <span className="inline-flex items-center gap-0.5 shrink-0 rounded-md bg-amber-100 px-2 h-9 sm:h-7 text-[11px] font-medium text-amber-800">
                     <AlertTriangle className="h-3 w-3" />Khai thiếu
                     <InfoTip tip={<div className="space-y-1.5 text-xs">
+                      {nMat > 0 && <div>
+                        <b>{nf(nMat)} OD có mã hàng CHƯA KHAI trong Mã hàng — máy KHÔNG ghép các OD này</b> (tab Điều, dòng "Không lên xe", không đo được tải / điều kiện bảo quản):
+                        <div className="font-mono text-[10px] text-slate-500 break-all">{g!.no_material!.materials.slice(0, 12).join(', ')}{g!.no_material!.materials.length > 12 ? '…' : ''}</div>
+                        Khai ở Cấu hình → Mã hàng (đủ đơn vị gốc · hộp/thùng · thùng/pallet · khối lượng · Loại kho). Khai xong OD tự vào khung chờ ở lần đồng bộ kế tiếp.
+                      </div>}
                       {/* 28/09 (user: "dòng xe chọn theo khai báo của khách, không khai thì không chọn") */}
                       {nVeh > 0 && <div>
                         <b>{nf(nVeh)} OD của {nf(nVehCust)} khách chưa có dòng xe nào được vào</b> — máy KHÔNG chọn xe cho các OD này, chúng nằm ở khung chờ.

@@ -224,6 +224,8 @@ type CatCfg = Awaited<ReturnType<typeof getDispatchCategoryConfig>>
  *  mất") — màn Điều vận hiện băng cảnh báo từ đây. Loại "đi kèm đơn" không cần ĐK bảo quản riêng. */
 export type ConfigGaps = {
   no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] }
+  /** 03/10: OD có mã KHÔNG có trong Mã hàng — bị loại khỏi đợt ghép (excluded NO_MATERIAL) cho tới khi khai mã */
+  no_material?: { ods: number; materials: string[] }
   /** 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): dòng xe chưa khai điểm giao · kênh chưa khai số khách cùng xe · OD của khách không kênh */
   no_drops?: { models: string[]; channels: string[]; no_channel_ods: number }
 }
@@ -317,23 +319,35 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   // CHỈ OD lên xe được mới là "OD mới cần xếp" — OD trả về / chiết khấu đúng ngày vẫn qua splitPool (engine xếp vào
   // danh sách "không lên xe"), đếm chúng là báo "12 OD mới" ngay sau khi vừa lập (đo Preview 25/09: đúng 12 OD RETURN)
   const flowOf = new Map(mine.map(r => [r.od_number, String(r.flow)]))
-  const include = [...split.include.keys()].filter(od => LOADABLE_FLOW.has(flowOf.get(od) ?? ''))
-  const noGaps: ConfigGaps = { no_condition: [], no_category: { ods: 0, materials: [] } }
+  const include0 = [...split.include.keys()].filter(od => LOADABLE_FLOW.has(flowOf.get(od) ?? ''))
+  // MÃ CHƯA KHAI ⇒ OD KHÔNG VÀO ĐỢT GHÉP (03/10, user: "mã chưa có thì phải xử lý trước khi ghép đơn"). Trước đó mã lạ cho
+  // mat = null ⇒ tải rơi về số SAP (OD chỉ mã lạ ghi 0,007 pallet), category null ⇒ ĐK bảo quản rỗng ⇒ xe nào cũng nhận, và
+  // chỉ cửa Xác nhận mới chặn (422 MATERIAL_UNKNOWN) — tức người ghép xong 50 xe mới biết. Nay loại ngay lúc nạp: OD nằm ở
+  // tab Điều dạng "Không lên xe" nêu đích danh mã, chip Khai thiếu liệt kê; khai xong thì cửa sync thấy OD "mới" ⇒ tự vào khung chờ.
+  // Danh mục tra TRƯỚC nhánh countOnly vì cửa sync (đếm OD mới) cũng phải loại chúng — không thì sync báo "có OD mới" mãi.
+  const kept = mine.filter(r => split.include.has(r.od_number))
+  const matCodes = uniq(kept.map(r => r.material_code).filter((x): x is string => !!x))
+  const mats = (await fetchAllByIdChunks(matCodes, c => db.from('Material')
+    .select('material_code, category, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, weight_kg, is_pallet_carrier, is_non_stock').in('material_code', c).order('material_code'))) as MatRow[]
+  const matBy = new Map(mats.map(m => [m.material_code, m]))
+  const missingBy = new Map<string, string[]>()
+  for (const r of kept) if (r.material_code && !matBy.has(r.material_code)) { const l = missingBy.get(r.od_number) ?? []; if (!l.includes(r.material_code)) l.push(r.material_code); missingBy.set(r.od_number, l) }
+  const noMat: ExcludedOd[] = [...missingBy.entries()].map(([od, codes]) => ({ od_number: od, kind: 'NO_MATERIAL', info: `Mã chưa khai trong Mã hàng: ${[...codes].sort().join(', ')}` }))
+  const include = include0.filter(od => !missingBy.has(od))
+  const gapNoMat = { ods: missingBy.size, materials: uniq([...missingBy.values()].flat()).sort().slice(0, 50) }
+  const noGaps: ConfigGaps = { no_condition: [], no_category: { ods: 0, materials: [] }, no_material: gapNoMat }
+  const excluded0 = [...split.excluded, ...noMat]
   if (opts.countOnly) {
-    if (!opts.reportAll) return { ods: [], meta: new Map(), excluded: split.excluded, include, gaps: noGaps }
+    if (!opts.reportAll) return { ods: [], meta: new Map(), excluded: excluded0, include, gaps: noGaps }
     // cửa "Xem cả đơn tồn đọng đã đi": bảng Xem đơn cần khách · phường · vùng · pallet · ngày của từng OD bị loại
     const allBy0 = new Map<string, PoolRow[]>()
     for (const r of mine) { const l = allBy0.get(r.od_number) ?? []; l.push(r); allBy0.set(r.od_number, l) }
     const custs0 = (await fetchAllByIdChunks(uniq(mine.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
       .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip').in('ship_to_code', c).order('ship_to_code'))) as CustRow[]
     const custBy0 = new Map(custs0.map(c => [c.ship_to_code, c]))
-    return { ods: [], meta: new Map(), excluded: split.excluded.map(x => ({ ...x, d: odDetailOf(allBy0.get(x.od_number) ?? [], custBy0) })), include, gaps: noGaps }
+    return { ods: [], meta: new Map(), excluded: excluded0.map(x => ({ ...x, d: odDetailOf(allBy0.get(x.od_number) ?? [], custBy0) })), include, gaps: noGaps }
   }
-  const kept = mine.filter(r => split.include.has(r.od_number))
-  const matCodes = uniq(kept.map(r => r.material_code).filter((x): x is string => !!x))
-  const [mats, custs, chRes] = await Promise.all([
-    fetchAllByIdChunks(matCodes, c => db.from('Material')
-      .select('material_code, category, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, weight_kg, is_pallet_carrier, is_non_stock').in('material_code', c).order('material_code')) as Promise<MatRow[]>,
+  const [custs, chRes] = await Promise.all([
     // khách của MỌI OD (kể cả OD bị bỏ ra) — bảng Xem đơn in tên vùng cho cả dòng Đã điều / Không điều
     fetchAllByIdChunks(uniq(mine.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
       .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip').in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
@@ -345,12 +359,11 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   const chanVeh = new Map(chanRows.map(r => [r.value, (r.meta?.dispatch_vehicles ?? null) as Record<string, unknown> | null]))
   // 28/09: số khách tối đa cùng xe mặc định của KÊNH (khách khai riêng thì thắng); không khai = không giới hạn
   const chanMax = new Map(chanRows.map(r => [r.value, typeof r.meta?.max_customers_per_trip === 'number' ? r.meta.max_customers_per_trip as number : null]))
-  const matBy = new Map(mats.map(m => [m.material_code, m]))
   const custBy = new Map(custs.map(c => [c.ship_to_code, c]))
   const gapCat = new Map<string, Set<string>>()
   const gapNoCat = { ods: new Set<string>(), materials: new Set<string>() }
   const byOd = new Map<string, PoolRow[]>()
-  for (const r of kept) { const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
+  for (const r of kept) if (!missingBy.has(r.od_number)) { const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
   const meta = new Map<string, OdMeta>()
   const ods: EngineOd[] = []
   for (const [od, rs] of byOd) {
@@ -389,11 +402,12 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   const gaps: ConfigGaps = {
     no_condition: [...gapCat.entries()].map(([category, s]) => ({ category, ods: s.size })).sort((a, b) => b.ods - a.ods || a.category.localeCompare(b.category)),
     no_category: { ods: gapNoCat.ods.size, materials: [...gapNoCat.materials].sort().slice(0, 50) },
+    no_material: gapNoMat,
   }
   // OD bị bỏ ra mang theo thông tin để bảng Xem đơn in được dòng của nó (tab Đã điều / Không điều ngày này / Không điều)
   const allBy = new Map<string, PoolRow[]>()
   for (const r of mine) { const l = allBy.get(r.od_number) ?? []; l.push(r); allBy.set(r.od_number, l) }
-  const excluded = split.excluded.map(x => ({ ...x, d: odDetailOf(allBy.get(x.od_number) ?? [], custBy) }))
+  const excluded = excluded0.map(x => ({ ...x, d: odDetailOf(allBy.get(x.od_number) ?? [], custBy) }))
   return { ods, meta, excluded, include, gaps }
 }
 /** Tóm tắt một OD từ dòng ZSD02 thô (pallet/tấn theo số SAP — OD bị bỏ ra không qua bộ đo tải của máy). */
@@ -1993,6 +2007,10 @@ export const unholdOds = withPlanLease(unholdOdsInner)
 type ReviewInfo = {
   so: string[]; so_types: string[]; created_by: string[]; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null
   sold_to: string | null; route_name: string | null; od_created_at: string | null; flow: string | null
+  // 03/10 (user: "sao không có Ngày tạo SO và các dữ liệu khác ở phía sau table"): phần còn lại của ZSD02 nối cuối bảng Xem đơn
+  so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null
+  license_plate: string | null; sap_pallets: number | null; sap_m3: number | null; qty_issued_base: number | null
+  mat_doc: string | null; billing_no: string | null; approval_status: string | null
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]            // SO sửa ⇒ OD này THAY OD cũ (có thể đã điều ở xe khác)
   held_before: { until: string; reason: string; by: string | null } | null   // đã "Không điều ngày này", nay về lại Điều
@@ -2006,7 +2024,16 @@ async function planOdSet(planId: string): Promise<{ plan: PlanRow; ods: string[]
   const un = ((plan.unplanned ?? []) as { od_number?: string }[]).map(u => u?.od_number).filter((x): x is string => !!x)
   return { plan: plan as PlanRow, ods: uniq([...rows.map(r => r.od_number), ...(p.excluded ?? []).map(x => x.od_number), ...un]) }
 }
-type RevLine = { od_number: string; material_code: string | null; qty_base: number | string | null; so_number: string | null; so_type: string | null; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null; sold_to_code: string | null; route_name: string | null; od_created_at: string | null; flow: string | null; created_by: string | null }
+type RevLine = { od_number: string; material_code: string | null; qty_base: number | string | null; so_number: string | null; so_type: string | null; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null; sold_to_code: string | null; route_name: string | null; od_created_at: string | null; flow: string | null; created_by: string | null
+  so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null; license_plate: string | null
+  sap_pallets: number | string | null; sap_m3: number | string | null; qty_issued_base: number | string | null; mat_doc: string | null; billing_no: string | null; approval_status: string | null }
+const REVIEW_COLS = 'od_number, material_code, qty_base, so_number, so_type, note_delivery, note_invoice, customer_ref, sold_to_code, route_name, od_created_at, flow, created_by:raw->>created_by, '
+  + 'so_created_at, sales_district, dist_channel, dvvt_raw, driver_name, license_plate, sap_pallets, sap_m3, qty_issued_base, mat_doc, billing_no, approval_status'
+const sumN = (rs: RevLine[], k: 'sap_pallets' | 'sap_m3' | 'qty_issued_base'): number | null => {
+  const vs = rs.map(r => r[k]).filter(v => v != null && v !== '').map(Number).filter(n => Number.isFinite(n))
+  return vs.length ? Math.round(vs.reduce((a, b) => a + b, 0) * 1000) / 1000 : null
+}
+const joinU = (rs: RevLine[], k: 'mat_doc' | 'billing_no' | 'approval_status'): string | null => uniq(rs.map(r => (r[k] ?? '').trim()).filter(Boolean)).join(' · ') || null
 
 // GET /tms/dispatch/plans/:id/review — mỗi OD của kế hoạch (trên xe · khung chờ · không điều · đã điều) một khối thông tin SAP
 export async function getPlanReview(req: Request, res: Response) {
@@ -2017,8 +2044,8 @@ export async function getPlanReview(req: Request, res: Response) {
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     const [lines, olds, holds] = await Promise.all([
       fetchAllByIdChunks(ods, c => db.from('erp_outbound_orders')
-        .select('od_number, material_code, qty_base, so_number, so_type, note_delivery, note_invoice, customer_ref, sold_to_code, route_name, od_created_at, flow, created_by:raw->>created_by')
-        .in('od_number', c).neq('sync_status', 'OBSOLETE').order('od_number').order('od_item')) as Promise<RevLine[]>,
+        .select(REVIEW_COLS)
+        .in('od_number', c).neq('sync_status', 'OBSOLETE').order('od_number').order('od_item')) as unknown as Promise<RevLine[]>,
       // OD cũ mà SAP đã thay bằng OD của kế hoạch này (sửa SO)
       fetchAllByIdChunks(ods, c => db.from('erp_outbound_orders').select('od_number, replaced_by_od').in('replaced_by_od', c).order('od_number')) as Promise<{ od_number: string; replaced_by_od: string }[]>,
       fetchAllByIdChunks(ods, c => db.from('dispatch_od_hold').select('od_number, hold_until, reason, created_by').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number')) as Promise<{ od_number: string; hold_until: string | null; reason: string; created_by: string | null }[]>,
@@ -2056,6 +2083,10 @@ export async function getPlanReview(req: Request, res: Response) {
         note_delivery: noteOf(rs), note_invoice: uniq(rs.map(r => (r.note_invoice ?? '').trim()).filter(Boolean)).join(' · ') || null,
         customer_ref: uniq(rs.map(r => (r.customer_ref ?? '').trim()).filter(Boolean)).join(' · ') || null,
         sold_to: f?.sold_to_code ?? null, route_name: f?.route_name ?? null, od_created_at: f?.od_created_at ?? null, flow: f?.flow ?? null,
+        so_created_at: f?.so_created_at ?? null, sales_district: f?.sales_district ?? null, dist_channel: f?.dist_channel ?? null, dvvt_raw: f?.dvvt_raw ?? null,
+        driver_name: f?.driver_name ?? null, license_plate: f?.license_plate ?? null,
+        sap_pallets: sumN(rs, 'sap_pallets'), sap_m3: sumN(rs, 'sap_m3'), qty_issued_base: sumN(rs, 'qty_issued_base'),
+        mat_doc: joinU(rs, 'mat_doc'), billing_no: joinU(rs, 'billing_no'), approval_status: joinU(rs, 'approval_status'),
         lines: rs.length, materials: new Set(rs.map(r => r.material_code)).size, qty_conv: Math.round(conv * 1000) / 1000, units: [...units], categories: [...cats].sort(),
         replaces: repBy.get(od) ?? [],
         // hoãn có ngày đã tới ⇒ OD về lại Điều — nói ra lần hoãn trước (user chốt 27/09 khuya)

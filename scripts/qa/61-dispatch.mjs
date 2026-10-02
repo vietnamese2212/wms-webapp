@@ -382,16 +382,32 @@ try {
   })
   const matGone = (await restAll('Material', `select=material_code&material_code=eq.${MAT_LA}`)).length === 0
   check('8a. Fixture: mã hàng của OD4 KHÔNG có trong danh mục Mã hàng', matGone, matGone ? MAT_LA : 'mã lại có thật — đổi tên fixture')
+  // 03/10 (user: "mã chưa có thì phải xử lý TRƯỚC khi ghép đơn"): OD mã lạ bị loại NGAY lúc nạp (excluded NO_MATERIAL, nêu đích danh mã),
+  // không vào khung chờ / xe nào; chip Khai thiếu đếm; khai mã xong ⇒ cửa sync thấy OD "mới" ⇒ nạp vào khung chờ. Bản cũ chỉ chặn ở Xác nhận
+  // (422 MATERIAL_UNKNOWN — vẫn giữ làm lưới thứ hai) nên người ghép xong 50 xe mới biết.
   const p8 = await mkPlan(PLAN_BODY)
-  const cf8 = await api(`/tms/dispatch/plans/${p8.j?.data?.id}/confirm`, 'POST', {})
-  check('8b. Xác nhận kế hoạch có mã hàng LẠ → 422 MATERIAL_UNKNOWN, KHÔNG phải 200 im lặng',
-    cf8.s === 422 && cf8.j?.error?.code === 'MATERIAL_UNKNOWN',
-    `http=${cf8.s} code=${cf8.j?.error?.code ?? '-'} ${String(cf8.j?.error?.message ?? '').slice(0, 120)}`)
-  check('8c. Thông điệp nêu ĐÍCH DANH mã phải khai (người dùng biết làm gì tiếp)',
-    String(cf8.j?.error?.message ?? '').includes(MAT_LA), String(cf8.j?.error?.message ?? '').slice(0, 140))
+  const d8 = p8.j?.data
+  const ex8 = (d8?.params?.excluded ?? []).find(x => x.od_number === OD4)
+  const onBoard8 = [...(d8?.pool ?? []), ...(d8?.trips ?? []).flatMap(t => t.ods)].some(o => o.od_number === OD4)
+  check('8b. Lập kế hoạch: OD mã lạ bị LOẠI (excluded NO_MATERIAL), KHÔNG vào khung chờ / xe; ô Khai thiếu đếm 1 OD + nêu mã',
+    p8.s === 201 && ex8?.kind === 'NO_MATERIAL' && !onBoard8 && d8?.params?.config_gaps?.no_material?.ods === 1 && (d8?.params?.config_gaps?.no_material?.materials ?? []).includes(MAT_LA),
+    `http=${p8.s} kind=${ex8?.kind ?? '-'} onBoard=${onBoard8} gaps=${JSON.stringify(d8?.params?.config_gaps?.no_material ?? null)}`)
+  check('8c. Lý do loại nêu ĐÍCH DANH mã phải khai (người dùng biết làm gì tiếp)', String(ex8?.info ?? '').includes(MAT_LA), String(ex8?.info ?? '').slice(0, 140))
+  const sy8 = await api(`/tms/dispatch/plans/${d8?.id}/sync`)
+  check('8c2. Cửa sync KHÔNG đếm OD mã lạ là "OD mới" (không thì bàn tự nạp mãi)', sy8.s === 200 && !(sy8.j?.data?.new_od_numbers ?? []).includes(OD4), `http=${sy8.s} new=${sy8.j?.data?.new_ods}`)
   const kh8 = await restAll('khvc_lines', `select=do_no&group_code=like.${PREFIX}*`)
-  check('8d. Bị chặn thì KHÔNG ghi dòng Kế hoạch xuất nào (không có trạng thái nửa vời)', kh8.length === 0, `n=${kh8.length}`)
+  check('8d. Không ghi dòng Kế hoạch xuất nào cho OD mã lạ (không có trạng thái nửa vời)', kh8.length === 0, `n=${kh8.length}`)
+  // khai mã qua cửa app ⇒ sync thấy OD4 là "mới" ⇒ refresh-pool đưa vào khung chờ (đúng đường bàn làm việc tự chạy)
+  const mk8 = await api('/masterdata/materials', 'POST', { material_code: MAT_LA, material_description: 'QA61 mã khai sau', category: mat2?.category ?? 'FG01', base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 12, cartons_per_pallet: 40, weight_kg: 5 })
+  const sy8b = await api(`/tms/dispatch/plans/${d8?.id}/sync`)
+  const rf8 = await api(`/tms/dispatch/plans/${d8?.id}/refresh-pool`, 'POST', {})
+  const inPool8 = (rf8.j?.data?.pool ?? []).some(o => o.od_number === OD4)
+  const ex8b = (rf8.j?.data?.params?.excluded ?? []).find(x => x.od_number === OD4)
+  check('8e. Khai mã xong → sync báo OD4 là OD mới → nạp OD mới đưa OD4 vào khung chờ, hết dấu NO_MATERIAL',
+    [200, 201].includes(mk8.s) && sy8b.s === 200 && (sy8b.j?.data?.new_od_numbers ?? []).includes(OD4) && rf8.s === 200 && inPool8 && !ex8b,
+    `mat=${mk8.s} ${mk8.j?.error?.message ?? ''} sync=${sy8b.j?.data?.new_ods} refresh=${rf8.s} inPool=${inPool8} ex=${ex8b?.kind ?? '-'}`)
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${OD4}`).catch(() => {})
+  await restWrite('Material', 'DELETE', `material_code=eq.${MAT_LA}`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.QA61SHIP4`).catch(() => {})
 
   // ── [10] BÀN GHÉP XE + POOL LŨY TIẾN (user chốt 25/09) ──────────────────────────────────────────────

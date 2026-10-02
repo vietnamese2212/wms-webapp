@@ -6068,7 +6068,8 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
 export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED'; info: string | null; replaced_by?: string | null }
 export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 /** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
-export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
+// NO_MATERIAL (03/10): OD có mã chưa khai trong Mã hàng — máy không ghép, nằm ở tab Điều dạng "Không lên xe" cho tới khi khai mã
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED' | 'NO_MATERIAL'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail }
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number; max_pct?: number }   // max_pct (01/10): trần dải tải — quá mức này mới là "vượt"
@@ -6105,6 +6106,8 @@ export interface DispatchConfigGaps {
   no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] }
   /** 02/10: dòng xe chưa khai điểm giao · kênh chưa khai số khách cùng xe · OD của khách không kênh — chưa khai = mỗi khách một xe */
   no_drops?: { models: string[]; channels: string[]; no_channel_ods: number }
+  /** 03/10: OD có mã KHÔNG có trong Mã hàng — loại khỏi đợt ghép cho tới khi khai */
+  no_material?: { ods: number; materials: string[] }
 }
 /** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
 export type DispatchLoadBands = Record<string, { min: number; max: number }>
@@ -6136,6 +6139,10 @@ export function useDispatchPlanSync(id: string | null, enabled = true) {
 export interface DispatchReviewInfo {
   so: string[]; so_types: string[]; created_by: string[]; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null
   sold_to: string | null; route_name: string | null; od_created_at: string | null; flow: string | null
+  // 03/10: phần còn lại của ZSD02 nối cuối bảng Xem đơn (số = cộng các dòng của OD; mã chứng từ = gộp duy nhất)
+  so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null
+  license_plate: string | null; sap_pallets: number | null; sap_m3: number | null; qty_issued_base: number | null
+  mat_doc: string | null; billing_no: string | null; approval_status: string | null
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]
   held_before: { until: string; reason: string; by: string | null } | null

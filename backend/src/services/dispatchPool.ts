@@ -26,7 +26,9 @@ export interface PoolCandidateRow {
   dvvt_raw: string | null
   license_plate: string | null
 }
-export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED'
+// NO_MATERIAL (03/10, user: "mã chưa có thì phải xử lý trước khi ghép đơn"): OD có dòng mang mã KHÔNG có trong Mã hàng — máy không
+// đo được tải / điều kiện bảo quản (bản cũ ghi ~0 pallet, ĐK rỗng ⇒ xếp "miễn phí" lên xe nào cũng được). Controller điền, không qua splitPool.
+export type ExcludeKind = 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED' | 'NO_MATERIAL'
 /** Thông tin OD để bảng Xem đơn in được dòng của OD không nằm trên kế hoạch (controller điền, hàm thuần này để trống). */
 export interface ExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 export interface ExcludedOd { od_number: string; kind: ExcludeKind; info: string | null; until?: string | null; reason?: string; d?: ExcludedDetail }

@@ -47,7 +47,7 @@ type Row = {
   noVeh?: boolean   // khách + kênh chưa khai Dòng xe được vào (28/09) — máy không chọn xe
 }
 const noVehOf = (o: { allowed_models?: string[] | null }) => Array.isArray(o.allowed_models) && !o.allowed_models.length
-const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'Đã xuất kho', REDO_DISPATCHED: 'DO tạo lại – đã điều' }
+const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'Đã xuất kho', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'Mã chưa khai trong Mã hàng' }
 /** Nhãn OD về ZSD02 SAU khi lập kế hoạch, còn ở khung chờ (user chốt 28/09) — dùng chung bảng Xem đơn + bàn ghép xe. */
 export function NewOdChip() {
   return <span className="rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800" title="OD mới về ZSD02 sau khi lập kế hoạch — tự vào tab Điều, chưa lên xe">Mới</span>
@@ -128,6 +128,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         const u = x.until !== undefined ? x.until : (x.info?.match(/hoãn tới (\d{4}-\d{2}-\d{2})/)?.[1] ?? null)
         const tab: St = u ? 'DAY' : 'NEVER'
         add(tab, `${tab}|${x.od_number}`, { ...base, held: true, selectable: editable, where: u ? `Điều lại từ ${dmy(u)}` : 'Không điều', tone: 'slate', flag: '', until: u, reason: x.reason ?? x.info ?? '' })
+      } else if (x.kind === 'NO_MATERIAL') {
+        // 03/10: mã chưa khai trong Mã hàng ⇒ máy không ghép — nằm ở Điều để người thấy việc phải làm (khai mã), không chọn được
+        if (!agg.has(`GO|${x.od_number}`)) add('GO', `GO|${x.od_number}`, { ...base, held: false, selectable: false, where: 'Không lên xe', tone: 'red', flag: x.info ?? EX_VI.NO_MATERIAL, until: null, reason: '' })
       } else {
         // DO tạo lại thay OD đã lên xe: tô hổ phách — hàng đã đi dưới số OD cũ, người điều cần biết để sửa số DO trên chuyến
         add('DONE', `DONE|${x.od_number}`, { ...base, held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: x.kind === 'REDO_DISPATCHED' ? 'amber' : 'green', flag: x.info ?? '', until: null, reason: '' })
@@ -230,7 +233,26 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
     { id: 'note', label: 'Ghi chú giao hàng SAP', w: 280 },
     { id: 'warn', label: 'Lưu ý', w: 220 },
     { id: 'info', label: st === 'DAY' || st === 'NEVER' ? 'Lý do' : 'Tình trạng SAP', w: 220 },
+    // 03/10 (user: "sao không có Ngày tạo SO và các dữ liệu khác ở phía sau table"): phần còn lại của ZSD02, thứ tự cột cũ giữ nguyên
+    { id: 'so_created', label: 'Ngày tạo SO', w: 90 },
+    { id: 'so_type', label: 'Loại SO', w: 120 },
+    { id: 'sold_to', label: 'Sold-to', w: 90 },
+    { id: 'route', label: 'Tuyến SAP', w: 150 },
+    { id: 'cref', label: 'Tham chiếu KH', w: 120 },
+    { id: 'district', label: 'Khu vực bán', w: 120 },
+    { id: 'dchan', label: 'Kênh PP', w: 110 },
+    { id: 'dvvt', label: 'ĐVVT SAP', w: 110 },
+    { id: 'driver', label: 'Lái xe SAP', w: 110 },
+    { id: 'plate', label: 'Biển số SAP', w: 96 },
+    { id: 'sap_pal', label: 'Pallet SAP', w: 80, align: 'right' },
+    { id: 'm3', label: 'm³ SAP', w: 72, align: 'right' },
+    { id: 'issued', label: 'SL đã xuất', w: 90, align: 'right' },
+    { id: 'matdoc', label: 'Mat.doc', w: 110 },
+    { id: 'billing', label: 'Hoá đơn', w: 110 },
+    { id: 'approval', label: 'Duyệt', w: 100 },
   ]
+  const dmyY = (d: string | null | undefined) => (d ? `${dmy(d)}/${d.slice(2, 4)}` : '')
+  const dash = <span className="text-slate-300">—</span>
   // Lưu ý = thứ người xếp phải biết mà không nằm ở cột nào: OD này THAY OD cũ (sửa SO — OD cũ có thể đã điều ở xe khác) ·
   // đơn vừa hết "Không điều ngày này" quay lại
   const warnOf = (od: string, noVeh?: boolean) => {
@@ -295,7 +317,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v3`} cols={cols}>
+        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v4`} cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || createdOn
               ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '', createdFrom: '', createdTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
@@ -328,6 +350,22 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
                 <TableCell className={`${TD} truncate ${r.flag && st === 'GO' ? 'text-red-600' : 'text-slate-500'}`} title={st === 'DAY' || st === 'NEVER' ? r.reason : r.flag}>
                   {(st === 'DAY' || st === 'NEVER' ? r.reason : r.flag) || <span className="text-slate-300">—</span>}
                 </TableCell>
+                <TableCell className={TD} title={i?.so_created_at ?? ''}>{i?.so_created_at ? dmyY(i.so_created_at) : dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.so_types.join(' · ')}>{i?.so_types.length ? i.so_types.join(' · ') : dash}</TableCell>
+                <TableCell className={`${TD} font-mono`}>{i?.sold_to || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.route_name ?? ''}>{i?.route_name || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.customer_ref ?? ''}>{i?.customer_ref || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.sales_district ?? ''}>{i?.sales_district || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.dist_channel ?? ''}>{i?.dist_channel || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.dvvt_raw ?? ''}>{i?.dvvt_raw || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.driver_name ?? ''}>{i?.driver_name || dash}</TableCell>
+                <TableCell className={`${TD} font-mono`}>{i?.license_plate || dash}</TableCell>
+                <TableCell className={`${TD} text-right tabular-nums`}>{i?.sap_pallets != null ? nf(i.sap_pallets, 2) : dash}</TableCell>
+                <TableCell className={`${TD} text-right tabular-nums`}>{i?.sap_m3 != null ? nf(i.sap_m3, 2) : dash}</TableCell>
+                <TableCell className={`${TD} text-right tabular-nums`} title="Số lượng đã xuất theo SAP, đơn vị gốc (cộng các dòng của OD)">{i?.qty_issued_base != null ? nf(i.qty_issued_base) : dash}</TableCell>
+                <TableCell className={`${TD} font-mono truncate`} title={i?.mat_doc ?? ''}>{i?.mat_doc || dash}</TableCell>
+                <TableCell className={`${TD} font-mono truncate`} title={i?.billing_no ?? ''}>{i?.billing_no || dash}</TableCell>
+                <TableCell className={`${TD} truncate`} title={i?.approval_status ?? ''}>{i?.approval_status || dash}</TableCell>
               </TableRow>
             ) })}
           </TableBody>

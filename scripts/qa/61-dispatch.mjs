@@ -141,9 +141,11 @@ const sur = (t) => (t?.detail?.freight?.surcharges ?? []).reduce((s, x) => s + N
 try {
   // ── Fixture: dòng xe con 9 pallet (gán cha) · cước DA@W1 · cước HA@W2 · 3 OD ZSD02 + khách (phường/vùng) ──
   // 02/10: dòng xe / khách CHƯA KHAI số điểm giao = 1 ⇒ fixture khai 3 để các kịch bản ghép (OD1+OD2) vẫn đúng; ca "chưa khai" kiểm ở [11e]/[13i]
-  // 02/10: tạo dòng con BẮT BUỘC cha + điều kiện bảo quản (lấy đúng mức của Loại kho fixture để các kịch bản cũ không đổi) + sức chứa theo thước đo
-  const FIX_COND = catRow?.meta?.storage_condition ?? 'AMBIENT'
-  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: [FIX_COND], capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3 })
+  // 02/10: tạo dòng con BẮT BUỘC cha + điều kiện bảo quản + sức chứa theo thước đo. Xe QA khai MỌI mức trong danh mục = đúng nghĩa
+  // "chở được mọi điều kiện" của fixture cũ (khai rỗng) — mã fixture là hàng THẬT có tồn ở ô khai ĐK riêng của Ba Vì, khai một mức
+  // thì [12c] đỏ oan (hàng đòi mức khác, OD CAT2 không ghép được vì không xe nào chở cả hai mức)
+  const ALL_CONDS = (await restAll('LookupValue', 'select=value&type=eq.storage_condition')).map(r => r.value)
+  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: ALL_CONDS, capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3 })
   const vmId = cr.j?.data?.id
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: W1, price: PRICE_DA, distance_km: 15 })
   const t2 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: HA.id, vehicle_model_id: vmId, ward_code: W2, price: PRICE_HA, distance_km: 30 })
@@ -344,9 +346,9 @@ try {
       check('7g. Xoá điều kiện đang được Loại kho dùng → 409 nêu rõ nơi đang dùng (không để lại mã mồ côi)',
         delUsed.s === 409 && /Loại kho/.test(delUsed.j?.error?.message ?? ''), `http=${delUsed.s} msg=${delUsed.j?.error?.message?.slice(0, 90)}`)
       await api(`/wms/lookup/${catRow.id}`, 'PUT', { value: catRow.value, meta: { ...CAT_META0, storage_condition: null } })
-      // 02/10: không còn khai RỖNG (ĐK bắt buộc) — gỡ mức QA khỏi xe = khai lại mức của Loại kho fixture
+      // 02/10: không còn khai RỖNG (ĐK bắt buộc) — gỡ mức QA khỏi xe = khai lại mọi mức của danh mục (như fixture)
       const emptyC = await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [] })
-      await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [FIX_COND] })
+      await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: ALL_CONDS })
       const delFree = await api(`/wms/lookup/${condRow.id}`, 'DELETE')
       check('7h. Khai rỗng → 400 (ĐK bắt buộc) · gỡ mức QA khỏi hai bên rồi xoá → 200', emptyC.s === 400 && delFree.s === 200, `empty=${emptyC.s} http=${delFree.s} ${delFree.j?.error?.message ?? ''}`)
     }

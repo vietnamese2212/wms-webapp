@@ -120,7 +120,8 @@ try {
   const badU = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: null })
   check('1d. PUT xoá pallet tối đa của dòng xe đo bằng Pallet → 400 CAPACITY_REQUIRED (kiểm trên bản sau khi ghép)', badU.s === 400 && badU.j?.error?.code === 'CAPACITY_REQUIRED', `http=${badU.s} code=${badU.j?.error?.code}`)
   const okU = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: 3, underload_pct: 60, max_m3: 5 })
-  check('1d2. PUT hợp lệ → 200, giữ giá trị; underload_pct / max_m3 của bundle cũ bị bỏ qua (không 400, không lưu)', okU.s === 200 && okU.j?.data?.max_drops === 3 && okU.j?.data?.underload_pct === undefined && okU.j?.data?.max_m3 === undefined, `http=${okU.s} keys=${Object.keys(okU.j?.data ?? {}).filter(k => /underload|m3/.test(k)).join(',')}`)
+  // cột underload_pct / max_m3 còn tồn tại tới khi migration 20261003b áp (sau Preview) ⇒ chỉ kiểm KHÔNG LƯU giá trị gửi lên, không kiểm khoá vắng mặt
+  check('1d2. PUT hợp lệ → 200, giữ giá trị; underload_pct / max_m3 của bundle cũ bị bỏ qua (không 400, không lưu)', okU.s === 200 && okU.j?.data?.max_drops === 3 && okU.j?.data?.underload_pct !== 60 && okU.j?.data?.max_m3 !== 5, `http=${okU.s} under=${okU.j?.data?.underload_pct} m3=${okU.j?.data?.max_m3}`)
 
   // ── [1e] DÒNG XE THEO KHO (03/10 — user: "mỗi kho sẽ có setting khác nhau: Bàu Bàng có xe 1,9 tấn, Ba Vì không";
   //        "thêm dòng xe thì bắt buộc thêm ở Chung, không cho master data khác nhau ở các kho") ──
@@ -288,7 +289,10 @@ try {
     check('6e. GET outbound (list phân trang): chuyến có vehicle_model.name · load.pct (so sức chứa 9 pallet) · freight_estimated',
       listG.s === 200 && g6?.vehicle_model?.sap_code === SAP && g6?.load?.basis === 'PALLET' && Number(g6?.load?.cap) === 9 && g6?.load?.pct != null && Number(g6?.freight_estimated) === expectFreight,
       `http=${listG.s} vm=${g6?.vehicle_model?.sap_code} load=${JSON.stringify(g6?.load ?? null)} freight=${g6?.freight_estimated}`)
-    check('6e2. Chuyến 0,02 pallet trên xe 9 pallet ⇒ NON TẢI (pct < 60 đã đặt ở 1d2)', g6?.load?.underload === true && Number(g6?.load?.underload_pct) === 60, `load=${JSON.stringify(g6?.load ?? null)}`)
+    // 02/10: ô Non tải của dòng xe đã bỏ — ngưỡng đọc từ KHO (dải tải theo cha → ngưỡng kho → 70); kho fixture không khai dải cho XEPALLET ⇒ 70
+    const whUnder = (await restAll('Warehouse', `select=dispatch_underload_pct,dispatch_load_bands&id=eq.${WH}`))[0]
+    const expectUnder = Number(whUnder?.dispatch_load_bands?.[XEPALLET?.id]?.min) >= 0 ? Number(whUnder.dispatch_load_bands[XEPALLET.id].min) : (Number(whUnder?.dispatch_underload_pct) > 0 ? Number(whUnder.dispatch_underload_pct) : 70)
+    check('6e2. Chuyến 0,02 pallet trên xe 9 pallet ⇒ NON TẢI; ngưỡng là của KHO (dải theo cha → ngưỡng kho → 70), không còn ô của dòng xe', g6?.load?.underload === true && Number(g6?.load?.underload_pct) === expectUnder, `load=${JSON.stringify(g6?.load ?? null)} expect=${expectUnder}`)
 
     // Bỏ dòng xe con → chuyến mất cước, lý do nói rõ "Chưa chọn dòng xe con"
     const un = await api(`/external/khvc/${khId}`, 'PUT', { group_code: GC6, do_no: DO6, npp: 'QA60 NPP', export_date: today, veh_type: vtName, dvvt: 'Đông Á', booking_category: BK_CAT, vehicle_model_id: null })

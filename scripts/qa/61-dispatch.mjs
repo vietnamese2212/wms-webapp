@@ -495,10 +495,14 @@ try {
   const sy2 = await api(`/tms/dispatch/plans/${B.id}/sync`)
   const fl3 = (sy2.j?.data?.flags ?? []).find(x => x.od_number === OD[2])
   check('10l. SAP ghi "Đã điều" cho OD3 SAU khi lập → /sync gắn cờ SAP_ASSIGNED nêu ĐVVT + biển số', fl3?.kind === 'SAP_ASSIGNED' && /QA61 NHA XE/.test(fl3?.info ?? '') && /29C99999/.test(fl3?.info ?? ''), `flag=${JSON.stringify(fl3 ?? null)}`)
+  // 03/10 tối: cờ "SAP đã gắn xe" chỉ THAM CHIẾU — KHÔNG chặn Xác nhận nữa (người quyết bằng dấu Ngoài app); chặn chỉ với SAP SỬA / THAY / BỎ.
+  // Giả lập SAP SỬA số lượng OD3 (khác bản chụp lúc lập) ⇒ cờ CHANGED ⇒ 409; rồi trả lại số cũ.
+  await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { qty_base: PAL[2] * perPallet + 1, updated_at: nowIso() })
   const cfb = await api(`/tms/dispatch/plans/${B.id}/confirm`, 'POST', {})
   const khb = await restAll('khvc_lines', `select=id&group_code=like.${PREFIX}*`)
-  check('10m. Xác nhận khi còn OD đổi ở SAP → 409 OD_CHANGED_IN_SAP nêu OD, KHÔNG ghi dòng Kế hoạch xuất nào',
+  check('10m. Xác nhận khi còn OD SAP ĐÃ SỬA (cờ CHANGED) → 409 OD_CHANGED_IN_SAP nêu OD, KHÔNG ghi dòng Kế hoạch xuất nào (cờ SAP gắn xe một mình không chặn — 03/10 tối)',
     cfb.s === 409 && cfb.j?.error?.code === 'OD_CHANGED_IN_SAP' && String(cfb.j?.error?.message ?? '').includes(OD[2]) && khb.length === 0, `http=${cfb.s} code=${cfb.j?.error?.code} kh=${khb.length}`)
+  await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { qty_base: PAL[2] * perPallet, updated_at: nowIso() })
   // SO sửa ⇒ SAP thay OD3 bằng OD5 (cửa nạp ZSD02 ghi OBSOLETE + replaced_by_od — luật thuần có test đơn vị riêng)
   const OD5 = 'QA61OD5'
   await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { sap_dispatch_status: 'UNASSIGNED', sync_status: 'OBSOLETE', replaced_by_od: OD5, replaced_at: nowIso(), updated_at: nowIso() })

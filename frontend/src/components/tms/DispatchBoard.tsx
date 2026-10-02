@@ -272,7 +272,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     .then(r => toast({ title: `Đã thay ${r.replaced.from} bằng ${r.replaced.to}`, description: 'Tải + cước của xe đã tính lại theo OD mới.' }))
     .catch(e => err(e, 'Không thay được OD'))
   // TỐI ƯU LẠI — hộp thoại DẢI % TẢI theo dòng xe cha (01/10) đứng trước lượt ghép; dải chọn ở đây ghi vào kế hoạch + nhớ cho kho
-  const bandParents = useLoadBandParents()
+  const bandParents = useLoadBandParents(plan.warehouse_id)
   const [reoptDlg, setReoptDlg] = useState(false)
   const lockedN = trips.filter(t => t.locked).length
   const doReopt = () => setReoptDlg(true)

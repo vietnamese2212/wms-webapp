@@ -50,12 +50,16 @@ router.delete('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'delete'), 
 // thấy danh sách để tick; chỉ ĐỌC danh mục, không nới cửa ghi nào
 router.get('/vehicle-models',
   requireAnyPerm(['tms_plan', 'view'], ['tms_vehicle_types', 'view'], ['tms_slots', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view'], ['gate_registration', 'view'], ['customers', 'view'], ['dispatch', 'view']),
+  validate({ query: vehicleModel.zVehicleModelListQuery.passthrough() }),
   vehicleModel.listVehicleModels)
 router.post('/vehicle-models',                    requirePerm('tms_vehicle_types', 'create'), validate({ body: vehicleModel.zVehicleModelCreate }), vehicleModel.createVehicleModel)
 router.patch('/vehicle-models/assign-parent',     requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignParent }),       vehicleModel.assignParent)   // TRƯỚC /:id
 router.patch('/vehicle-models/assign-conditions', requirePerm('tms_vehicle_types', 'edit'),   validate({ body: vehicleModel.zAssignConditions }),   vehicleModel.assignConditions) // TRƯỚC /:id
 router.put('/vehicle-models/:id',                 requirePerm('tms_vehicle_types', 'edit'),   validate({ params: zIdParam, body: vehicleModel.zVehicleModelUpdate }), vehicleModel.updateVehicleModel)
 router.delete('/vehicle-models/:id',              requirePerm('tms_vehicle_types', 'delete'), validate({ params: zIdParam }),                        vehicleModel.deleteVehicleModel)
+// Dòng xe theo KHO (03/10): kho cấu hình riêng dùng/không · sức chứa · điểm giao; master data chỉ ở bản Chung. "Về theo chung" = DELETE.
+router.put('/vehicle-models/:id/warehouses/:warehouse_id',    requirePerm('tms_vehicle_types', 'edit'), validate({ params: vehicleModel.zWarehouseModelParams, body: vehicleModel.zWarehouseModelBody }), vehicleModel.setWarehouseVehicleModel)
+router.delete('/vehicle-models/:id/warehouses/:warehouse_id', requirePerm('tms_vehicle_types', 'edit'), validate({ params: vehicleModel.zWarehouseModelParams }),                                       vehicleModel.clearWarehouseVehicleModel)
 
 // ── CƯỚC VẬN CHUYỂN (đợt 1 TMS điều vận, 23/09) — module quyền riêng `freight`: view · manage · export ──
 // Bảng cước (kho xuất × ĐVVT × dòng xe con × phường) — phân trang server; upload 2 pha đúng cột file thật

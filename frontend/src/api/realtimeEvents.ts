@@ -70,6 +70,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-od']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
   vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
+  warehouse_vehicle_model: [['vehicle-models']],                 // cấu hình riêng của KHO cho dòng xe (03/10) — cùng danh sách
   freight_tariff:        [['freight-tariffs']],                  // bảng cước
   freight_surcharge:     [['freight-surcharges']],               // phụ phí
   carrier_allocation:    [['freight-allocations']],              // ưu tiên ĐVVT theo khu vực

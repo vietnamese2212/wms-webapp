@@ -39,6 +39,7 @@ import {
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow } from '../../services/dispatchPool'
+import { applyWarehouseOverrides, loadWarehouseOverrides } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
 import { logOutboundEvents, actorOf } from '../../services/outboundEvents'
@@ -153,8 +154,9 @@ async function rememberLoadBands(whId: string, bands: Record<string, LoadBand>) 
 }
 
 async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
-  const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes] = await Promise.all([
-    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct, max_drops, storage_conditions, is_active').eq('is_active', true).order('sap_code'),
+  // 03/10: dòng xe theo KHO — nạp CẢ danh mục (kể cả Chung tắt: kho có thể bật riêng), đè bản chụp của kho rồi mới lọc is_active
+  const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes, overrides] = await Promise.all([
+    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, max_drops, storage_conditions, is_active').order('sap_code'),
     db.from('VehicleType').select('id, name'),
     wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
       .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
@@ -164,18 +166,21 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
       .eq('from_warehouse_id', whId).eq('is_active', true).order('id')) as Promise<EngineSurcharge[]>,
     db.from('carrier_allocation').select('area_kind, area_code, transport_company_id, priority, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
     db.from('carrier_share_target').select('transport_company_id, share_pct, basis, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
+    loadWarehouseOverrides(whId),
   ])
   for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
   const vtRows = (vtRes.data ?? []) as { id: string; name: string }[]
   const vtName = new Map(vtRows.map(v => [v.id, v.name]))
-  const models: EngineModel[] = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; underload_pct: number | string | null; max_drops: number | null; storage_conditions: string[] | null; is_active: boolean }[]).map(m => ({
+  const vmRaw = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; max_drops: number | null; storage_conditions: string[] | null; is_active: boolean }[])
+    .map(m => ({ ...m, max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons), max_drops: numOrNull(m.max_drops) }))
+  const models: EngineModel[] = applyWarehouseOverrides(vmRaw, overrides).filter(m => m.is_active).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
     parent_type_id: m.parent_type_id ?? null,   // khoá dải tải theo cha (01/10)
     parent_type_name: m.parent_type_id ? (vtName.get(m.parent_type_id) ?? null) : null,
     capacity_mode: m.capacity_mode === 'TON' ? 'TON' : m.capacity_mode === 'PALLET' ? 'PALLET' : null,
-    max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons),
+    max_pallets: m.max_pallets, max_tons: m.max_tons,
     tariff_unit: m.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET',
-    underload_pct: numOrNull(m.underload_pct), max_drops: numOrNull(m.max_drops), is_active: m.is_active,
+    max_drops: m.max_drops, is_active: m.is_active,
     serve_conditions: (m.storage_conditions ?? []).filter(Boolean),   // rỗng = chở được mọi điều kiện
   }))
   const allocations = ((allocRes.data ?? []) as EngineAllocation[]).map(a => ({ ...a, priority: Number(a.priority) }))
@@ -1456,8 +1461,7 @@ async function refreshPoolInner(req: Request, res: Response) {
     const prev = (plan.params ?? {}) as Record<string, unknown>
     const inPool = new Set(full.pool.map(o => o.od_number))
     const fresh_ods = uniq([...((prev.fresh_ods ?? []) as string[]).filter(od => inPool.has(od)), ...loadable.map(o => o.od_number)])
-    const { data: vmRows } = await db.from('vehicle_model').select('id, name, max_drops, is_active').eq('is_active', true)
-    const params = { ...prev, excluded: cand.excluded, config_gaps: { ...cand.gaps, no_drops: dropGaps(cand.ods, (vmRows ?? []).map(m => ({ ...m, max_drops: numOrNull(m.max_drops) }))) }, fresh_ods }
+    const params = { ...prev, excluded: cand.excluded, config_gaps: { ...cand.gaps, no_drops: dropGaps(cand.ods, (await loadRefs(plan.warehouse_id, plan.plan_date, [])).models) }, fresh_ods }
     const { error } = await db.from('dispatch_plan').update({ params: asJson(params), updated_at: t }).eq('id', plan.id)
     if (error) throw error
     await writeSummary({ ...plan, params: asJson(params) })

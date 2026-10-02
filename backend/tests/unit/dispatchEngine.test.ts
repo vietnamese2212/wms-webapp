@@ -10,7 +10,7 @@ import {
 const model = (o: Partial<EngineModel> & { id: string }): EngineModel => ({
   sap_code: o.id, name: o.id, parent_type_name: 'XE PALLET', capacity_mode: 'PALLET', max_pallets: 9, max_tons: null,
   // 02/10: dòng xe / khách CHƯA KHAI = 1 ⇒ fixture khai sẵn 9 để các luật khác vẫn thấy xe ghép được; ca "chưa khai" kiểm riêng
-  tariff_unit: 'PER_PALLET', underload_pct: 70, serve_conditions: null, max_drops: 9, is_active: true, ...o,
+  tariff_unit: 'PER_PALLET', serve_conditions: null, max_drops: 9, is_active: true, ...o,
 })
 const M9 = model({ id: 'M9' })
 const M16 = model({ id: 'M16', max_pallets: 16 })
@@ -35,12 +35,15 @@ describe('sức chứa — fits đo theo chế độ dòng xe', () => {
     expect(fits(M9, 9.001, 4)).toBe(false)
     expect(fits(M9, null, 4)).toBe(false)
   })
-  it('PALLET có khai thêm tấn ⇒ gác cả tấn; TON ⇒ chỉ tấn', () => {
+  it('MỘT thước đo (02/10): PALLET có khai thêm tấn ⇒ KHÔNG gác tấn (đỏ bản cũ: 8 pallet / 4,5 tấn trên xe 9 pallet · 4 tấn từng bị loại); TON ⇒ chỉ tấn', () => {
     const both = model({ id: 'X', max_pallets: 9, max_tons: 4 })
-    expect(fits(both, 8, 4.5)).toBe(false)
+    expect(fits(both, 8, 4.5)).toBe(true)
+    expect(fits(both, 9.5, 1)).toBe(false)
     const ton = model({ id: 'T', capacity_mode: 'TON', max_pallets: null, max_tons: 5 })
     expect(fits(ton, 99, 4.9)).toBe(true)
     expect(fits(ton, 1, 5.1)).toBe(false)
+    // chia tải thẻ nhiều xe cũng theo một thước đo: 2 × xe 9 pallet (khai 4 tấn) chở 16 pallet / 12 tấn ⇒ 9 + 7, không vướng tấn
+    expect(splitLoad([both, both], 16, 12)?.map(x => x.pallets)).toEqual([9, 7])
   })
 })
 
@@ -607,7 +610,8 @@ describe('luật 4b — xe kết hợp chỉ khi ghép (user 26/09: "được gh
 })
 describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại kho (user 27/09: "khách hàng nào vào được dòng xe nào")', () => {
   const T5 = model({ id: 'T5', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 5, tariff_unit: 'PER_TRIP' })
-  const T15 = model({ id: 'T15', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP', underload_pct: 20 })   // ngưỡng thấp ⇒ 4 tấn vẫn "đủ tải" ⇒ không khai thì xe 15 tấn RẺ HƠN thắng
+  // dải tải theo cha min 20 (02/10: ô Non tải của dòng xe đã bỏ) ⇒ 4 tấn vẫn "đủ tải" ⇒ không khai thì xe 15 tấn RẺ HƠN thắng
+  const T15 = model({ id: 'T15', parent_type_name: 'XE XÁ', capacity_mode: 'TON', max_pallets: null, max_tons: 15, tariff_unit: 'PER_TRIP', load_min_pct: 20 })
   const CONT = model({ id: 'CONT', parent_type_name: 'XE CONTAINER', capacity_mode: 'TON', max_pallets: null, max_tons: 26, tariff_unit: 'PER_TRIP' })
   const tar = [tariff('A', 'T5', 'W1', 900_000), tariff('A', 'T15', 'W1', 800_000), tariff('A', 'CONT', 'W1', 700_000)]
   const tonOd = (n: string, t: number, over: Partial<EngineOd> = {}) => od(n, 'W1', 0, { lines: [line(1, { kg: t * 1000, material_code: `m${n}` })], ...over })

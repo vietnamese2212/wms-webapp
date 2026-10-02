@@ -97,22 +97,59 @@ try {
   const m05 = seeded.find(m => m.sap_code === '910000005')
   check('1a2. 910000005 "Xe tải 3,5 tấn (nóng)" parse = 3,5 tấn · HOT · PER_TRIP', Number(m05?.max_tons) === 3.5 && m05?.temp_mode === 'HOT' && m05?.tariff_unit === 'PER_TRIP', JSON.stringify(m05 ? { t: m05.max_tons, tm: m05.temp_mode, u: m05.tariff_unit } : null))
 
-  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA60 Xe 9 Pallet', capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET' })
+  // 02/10 (user): tạo dòng con BẮT BUỘC cha + điều kiện bảo quản + sức chứa theo thước đo — thiếu là 400, không còn "chưa gán cha"
+  const BODY = { sap_code: SAP, name: 'QA60 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: ['AMBIENT'], capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET' }
+  const noP = await api('/tms/vehicle-models', 'POST', { ...BODY, parent_type_id: undefined })
+  const noC = await api('/tms/vehicle-models', 'POST', { ...BODY, storage_conditions: [] })
+  const noCap = await api('/tms/vehicle-models', 'POST', { ...BODY, max_pallets: undefined, max_tons: 9 })
+  check('1b0. POST thiếu cha → 400 · thiếu điều kiện bảo quản → 400 · đo bằng Pallet mà không khai pallet (chỉ khai tấn) → 400 CAPACITY_REQUIRED',
+    noP.s === 400 && noC.s === 400 && noCap.s === 400 && noCap.j?.error?.code === 'CAPACITY_REQUIRED', `cha=${noP.s} đk=${noC.s} cap=${noCap.s}/${noCap.j?.error?.code}`)
+  const cr = await api('/tms/vehicle-models', 'POST', BODY)
   const vmId = cr.j?.data?.id
-  check('1b. POST vehicle-models → 201 (cha NULL = chưa gán)', cr.s === 201 && !!vmId && cr.j?.data?.parent_type_id === null, `http=${cr.s}`)
-  const dup = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'trùng', capacity_mode: 'PALLET', max_pallets: 9 })
+  check('1b. POST vehicle-models đủ cha + ĐK + sức chứa → 201', cr.s === 201 && !!vmId && cr.j?.data?.parent_type_id === XEPALLET?.id && JSON.stringify(cr.j?.data?.storage_conditions) === '["AMBIENT"]', `http=${cr.s} ${cr.j?.error?.message ?? ''}`)
+  const dup = await api('/tms/vehicle-models', 'POST', { ...BODY, name: 'trùng' })
   check('1b2. POST cùng mã SAP lần hai → 409', dup.s === 409, `http=${dup.s}`)
   const badP = await api('/tms/vehicle-models/assign-parent', 'PATCH', { ids: [vmId], parent_type_id: 'khong-co-that' })
   check('1c. Gán cha rác → 400', badP.s === 400, `http=${badP.s}`)
   const asg = await api('/tms/vehicle-models/assign-parent', 'PATCH', { ids: [vmId], parent_type_id: XEPALLET?.id })
   const after = (await api('/tms/vehicle-models?unassigned=1')).j?.data?.items ?? []
   const mine = ((await api('/tms/vehicle-models')).j?.data?.items ?? []).find(m => m.id === vmId)
-  check('1c2. Gán cha XEPALLET → updated 1 · dòng mang parent.code XEPALLET · không còn trong ?unassigned=1',
-    asg.s === 200 && asg.j?.data?.updated === 1 && mine?.parent?.code === 'XEPALLET' && !after.some(m => m.id === vmId), `http=${asg.s} parent=${mine?.parent?.code}`)
-  const badU = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { underload_pct: 150 })
-  check('1d. PUT underload_pct 150 → 400 VALIDATION (zod tại biên)', badU.s === 400 && badU.j?.error?.code === 'VALIDATION', `http=${badU.s} code=${badU.j?.error?.code}`)
-  const okU = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { underload_pct: 60, max_drops: 3 })
-  check('1d2. PUT hợp lệ → 200, giữ giá trị', okU.s === 200 && okU.j?.data?.underload_pct === 60 && okU.j?.data?.max_drops === 3, `http=${okU.s}`)
+  check('1c2. Gán cha XEPALLET → updated 1 · dòng mang parent.code XEPALLET · không trong ?unassigned=1 · gỡ cha (null) → 400',
+    asg.s === 200 && asg.j?.data?.updated === 1 && mine?.parent?.code === 'XEPALLET' && !after.some(m => m.id === vmId)
+    && (await api('/tms/vehicle-models/assign-parent', 'PATCH', { ids: [vmId], parent_type_id: null })).s === 400, `http=${asg.s} parent=${mine?.parent?.code}`)
+  const badU = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: null })
+  check('1d. PUT xoá pallet tối đa của dòng xe đo bằng Pallet → 400 CAPACITY_REQUIRED (kiểm trên bản sau khi ghép)', badU.s === 400 && badU.j?.error?.code === 'CAPACITY_REQUIRED', `http=${badU.s} code=${badU.j?.error?.code}`)
+  const okU = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: 3, underload_pct: 60, max_m3: 5 })
+  check('1d2. PUT hợp lệ → 200, giữ giá trị; underload_pct / max_m3 của bundle cũ bị bỏ qua (không 400, không lưu)', okU.s === 200 && okU.j?.data?.max_drops === 3 && okU.j?.data?.underload_pct === undefined && okU.j?.data?.max_m3 === undefined, `http=${okU.s} keys=${Object.keys(okU.j?.data ?? {}).filter(k => /underload|m3/.test(k)).join(',')}`)
+
+  // ── [1e] DÒNG XE THEO KHO (03/10 — user: "mỗi kho sẽ có setting khác nhau: Bàu Bàng có xe 1,9 tấn, Ba Vì không";
+  //        "thêm dòng xe thì bắt buộc thêm ở Chung, không cho master data khác nhau ở các kho") ──
+  const ov1 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: 12 })
+  const atWh = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
+  const shared = ((await api('/tms/vehicle-models')).j?.data?.items ?? []).find(m => m.id === vmId)
+  check('1e. PUT cấu hình riêng kho (chỉ pallet 12) → 201 bản chụp đủ 4 giá trị (chép is_active + max_drops từ Chung) · GET ?warehouse_id= in 12 + wh_override + shared 9 · GET Chung vẫn 9',
+    ov1.s === 201 && ov1.j?.data?.max_pallets === 12 && ov1.j?.data?.max_drops === 3 && ov1.j?.data?.is_active === true
+    && atWh?.max_pallets === 12 && atWh?.wh_override === true && atWh?.shared?.max_pallets === 9 && shared?.max_pallets === 9 && shared?.wh_override === false,
+    `put=${ov1.s} ${ov1.j?.error?.message ?? ''} row=${JSON.stringify(ov1.j?.data ? { p: ov1.j.data.max_pallets, d: ov1.j.data.max_drops, a: ov1.j.data.is_active } : null)} atWh=${atWh?.max_pallets}/${atWh?.wh_override} shared=${shared?.max_pallets}`)
+  const ov2 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { is_active: false })
+  const upShared = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: 10 })
+  const atWh2 = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
+  const activeAtWh = ((await api(`/tms/vehicle-models?warehouse_id=${WH}&is_active=true`)).j?.data?.items ?? []).some(m => m.id === vmId)
+  check('1e2. PUT lần hai (tắt ở kho) → 200 giữ 12 (bản chụp, không về Chung) · đổi Chung lên 10 KHÔNG lan sang kho (vẫn 12) · ?is_active=true tại kho không còn dòng này',
+    ov2.s === 200 && ov2.j?.data?.is_active === false && ov2.j?.data?.max_pallets === 12 && upShared.s === 200 && atWh2?.max_pallets === 12 && atWh2?.is_active === false && atWh2?.shared?.max_pallets === 10 && !activeAtWh,
+    `put2=${ov2.s}/${ov2.j?.data?.is_active}/${ov2.j?.data?.max_pallets} shared=${upShared.s} atWh=${atWh2?.max_pallets}/${atWh2?.is_active}/${atWh2?.shared?.max_pallets} active=${activeAtWh}`)
+  const ovZero = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: 0 })
+  const ovNull = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { max_pallets: null })
+  const ovWh = await api(`/tms/vehicle-models/${vmId}/warehouses/khong-co-kho`, 'PUT', { is_active: true })
+  const ovVm = await api(`/tms/vehicle-models/00000000-0000-0000-0000-000000000000/warehouses/${WH}`, 'PUT', { is_active: true })
+  check('1e3. pallet 0 → 400 · pallet null trên dòng đo bằng Pallet → 400 CAPACITY_REQUIRED · kho rác → 404 · dòng xe rác → 404',
+    ovZero.s === 400 && ovNull.s === 400 && ovNull.j?.error?.code === 'CAPACITY_REQUIRED' && ovWh.s === 404 && ovVm.s === 404, `zero=${ovZero.s} null=${ovNull.s}/${ovNull.j?.error?.code} wh=${ovWh.s} vm=${ovVm.s}`)
+  const clr = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE')
+  const clr2 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE')
+  const atWh3 = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
+  check('1e4. DELETE "Về theo chung" → 200, kho đọc lại bản Chung (10, hoạt động, wh_override=false) · DELETE lần hai → 404',
+    clr.s === 200 && clr2.s === 404 && atWh3?.max_pallets === 10 && atWh3?.is_active === true && atWh3?.wh_override === false, `del=${clr.s}/${clr2.s} atWh=${atWh3?.max_pallets}/${atWh3?.is_active}/${atWh3?.wh_override}`)
+  await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_pallets: 9 })
 
   // ── [2] Bảng cước ──
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: WARD1, price: 250000, distance_km: 12 })

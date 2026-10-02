@@ -192,7 +192,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
     } catch (e) { err(e, n ? `Đã chuyển ${n} OD, phần còn lại chưa chuyển được` : 'Không chuyển được trạng thái') }
   }
   // ── ghép xe từ tab Điều — hộp thoại DẢI % TẢI theo dòng xe cha (01/10) đứng trước lượt ghép ──
-  const bandParents = useLoadBandParents()
+  const bandParents = useLoadBandParents(plan.warehouse_id)
   const [bandDlg, setBandDlg] = useState(false)
   const groupAll = !hasTrips
   const groupN = groupAll ? new Set(goOds.map(r => r.od)).size : poolOds

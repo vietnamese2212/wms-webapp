@@ -141,9 +141,10 @@ const sur = (t) => (t?.detail?.freight?.surcharges ?? []).reduce((s, x) => s + N
 try {
   // ── Fixture: dòng xe con 9 pallet (gán cha) · cước DA@W1 · cước HA@W2 · 3 OD ZSD02 + khách (phường/vùng) ──
   // 02/10: dòng xe / khách CHƯA KHAI số điểm giao = 1 ⇒ fixture khai 3 để các kịch bản ghép (OD1+OD2) vẫn đúng; ca "chưa khai" kiểm ở [11e]/[13i]
-  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3 })
+  // 02/10: tạo dòng con BẮT BUỘC cha + điều kiện bảo quản (lấy đúng mức của Loại kho fixture để các kịch bản cũ không đổi) + sức chứa theo thước đo
+  const FIX_COND = catRow?.meta?.storage_condition ?? 'AMBIENT'
+  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: [FIX_COND], capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3 })
   const vmId = cr.j?.data?.id
-  await api('/tms/vehicle-models/assign-parent', 'PATCH', { ids: [vmId], parent_type_id: XEPALLET?.id })
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: W1, price: PRICE_DA, distance_km: 15 })
   const t2 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: HA.id, vehicle_model_id: vmId, ward_code: W2, price: PRICE_HA, distance_km: 30 })
   check('0. Fixture: dòng xe con QA61 + cước DA@W1 + HA@W2 → 201', cr.s === 201 && !!vmId && t1.s === 201 && t2.s === 201, `vm=${cr.s} t1=${t1.s} t2=${t2.s} ${t1.j?.error?.message ?? ''}`)
@@ -309,8 +310,8 @@ try {
     const okC = await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [COND] })
     const listVm = await api('/tms/vehicle-models')
     const mine = (listVm.j?.data?.items ?? []).find(m => m.id === vmId)
-    check('7c. Khai hàng loạt → updated 1 · dòng xe mang đúng mã · ô đếm "chưa khai" giảm 1',
-      okC.s === 200 && okC.j?.data?.updated === 1 && JSON.stringify(mine?.storage_conditions) === JSON.stringify([COND]) && listVm.j?.data?.unconditioned === before - 1,
+    check('7c. Khai hàng loạt → updated 1 · dòng xe mang đúng mã · ô đếm "chưa khai" không đổi (fixture đã có ĐK từ lúc tạo — 02/10 bắt buộc)',
+      okC.s === 200 && okC.j?.data?.updated === 1 && JSON.stringify(mine?.storage_conditions) === JSON.stringify([COND]) && listVm.j?.data?.unconditioned === before,
       `http=${okC.s} conds=${JSON.stringify(mine?.storage_conditions)} unconditioned ${before}→${listVm.j?.data?.unconditioned}`)
 
     if (catRow) {
@@ -343,9 +344,11 @@ try {
       check('7g. Xoá điều kiện đang được Loại kho dùng → 409 nêu rõ nơi đang dùng (không để lại mã mồ côi)',
         delUsed.s === 409 && /Loại kho/.test(delUsed.j?.error?.message ?? ''), `http=${delUsed.s} msg=${delUsed.j?.error?.message?.slice(0, 90)}`)
       await api(`/wms/lookup/${catRow.id}`, 'PUT', { value: catRow.value, meta: { ...CAT_META0, storage_condition: null } })
-      await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [] })
+      // 02/10: không còn khai RỖNG (ĐK bắt buộc) — gỡ mức QA khỏi xe = khai lại mức của Loại kho fixture
+      const emptyC = await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [] })
+      await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: [FIX_COND] })
       const delFree = await api(`/wms/lookup/${condRow.id}`, 'DELETE')
-      check('7h. Gỡ khai hai bên rồi xoá → 200', delFree.s === 200, `http=${delFree.s} ${delFree.j?.error?.message ?? ''}`)
+      check('7h. Khai rỗng → 400 (ĐK bắt buộc) · gỡ mức QA khỏi hai bên rồi xoá → 200', emptyC.s === 400 && delFree.s === 200, `empty=${emptyC.s} http=${delFree.s} ${delFree.j?.error?.message ?? ''}`)
     }
   }
 
@@ -972,6 +975,29 @@ try {
       && mxClr.s === 200 && c2Now?.max_customers_per_trip === null && pM2.s === 201 && tripOfOd(PM2, OD[0]) !== tripOfOd(PM2, OD[1]) && (PM2?.params?.config_gaps?.no_drops?.no_channel_ods ?? 0) >= 1
       && mx3.s === 200 && pM3.s === 201 && tripOfOd(PM3, OD[0]) === tripOfOd(PM3, OD[1]),
       `bad=${mxBad1.s},${mxBad2.s} set=${mx1.s}/${mx1.j?.data?.max_customers_per_trip} plan=${pM.s} ${pM.j?.error?.message ?? ''} t2ods=${tM2?.ods?.length} snap=${rowOf(PM, OD[1])?.max_customers} clr=${mxClr.s} now=${JSON.stringify(c2Now)} plan2=${pM2.s} sep=${tripOfOd(PM2, OD[0]) !== tripOfOd(PM2, OD[1])} gaps=${JSON.stringify(PM2?.params?.config_gaps?.no_drops)} re=${mx3.s}/${pM3.s} same=${tripOfOd(PM3, OD[0]) === tripOfOd(PM3, OD[1])}`)
+  }
+
+  // ── [13j] DÒNG XE THEO KHO (03/10 — user: "mỗi kho sẽ có setting khác nhau"; "config riêng rồi thì không lấy theo chung nữa") ──
+  // Máy của kho đọc bản HIỆU LỰC tại kho: tắt ở kho ⇒ không xếp lên dòng xe QA dù Chung vẫn hoạt động; sức chứa 5 tại kho ⇒ OD1 (4) + OD2 (3)
+  // không chung xe nữa; "Về theo chung" ⇒ 9 ⇒ chung xe như [1b].
+  {
+    await cleanupTrips()
+    const off = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { is_active: false })
+    const pOff = await mkPlan(PLAN_BODY); const POff = pOff.j?.data
+    const usedOff = (POff?.trips ?? []).some(t => t.vehicle_model_id === vmId)
+    const sharedStill = ((await api('/tms/vehicle-models')).j?.data?.items ?? []).find(m => m.id === vmId)
+    await cleanupTrips()
+    const cap5 = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { is_active: true, max_pallets: 5 })
+    const p5 = await mkPlan(PLAN_BODY); const P5 = p5.j?.data
+    const t1 = tripOfOd(P5, OD[0]), t2 = tripOfOd(P5, OD[1])
+    await cleanupTrips()
+    const back = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE')
+    const pBack = await mkPlan(PLAN_BODY); const PBack = pBack.j?.data
+    check('13j. Tắt dòng xe QA TẠI KHO ⇒ kế hoạch không xe nào dùng nó (Chung vẫn hoạt động) · bật lại với 5 pallet tại kho ⇒ OD1 (4) và OD2 (3) HAI xe, đều dòng xe QA · Về theo chung ⇒ 9 ⇒ chung MỘT xe',
+      off.s === 201 && pOff.s === 201 && !usedOff && sharedStill?.is_active === true && sharedStill?.max_pallets === 9
+      && cap5.s === 200 && p5.s === 201 && !!t1 && !!t2 && t1.id !== t2.id && t1.vehicle_model_id === vmId && t2.vehicle_model_id === vmId
+      && back.s === 200 && pBack.s === 201 && !!tripOfOd(PBack, OD[0]) && tripOfOd(PBack, OD[0]) === tripOfOd(PBack, OD[1]),
+      `off=${off.s}/${pOff.s} used=${usedOff} shared=${sharedStill?.is_active}/${sharedStill?.max_pallets} cap5=${cap5.s}/${p5.s} t1=${t1?.vehicle_model_id === vmId}/${t1?.pallets} t2=${t2?.vehicle_model_id === vmId}/${t2?.pallets} same5=${t1?.id === t2?.id} back=${back.s}/${pBack.s} same=${tripOfOd(PBack, OD[0]) === tripOfOd(PBack, OD[1])} ${pOff.j?.error?.message ?? p5.j?.error?.message ?? ''}`)
   }
 
   // ── [15] (27/09) XEM ĐƠN TRƯỚC KHI GHÉP · HOÃN / KHÔNG ĐIỀU · SỬA DÒNG XE KHÁCH TỪ BÀN · THẺ NHIỀU XE ─────────────────────────

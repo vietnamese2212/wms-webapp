@@ -140,7 +140,8 @@ export default function Dispatch() {
   const tabs = useMobileTabs('/tms/dispatch', permTabs, f.tab || 'review', (t: string) => setF({ tab: t }))
   const tab = tabs.some(t => t.key === f.tab) ? f.tab : (tabs[0]?.key ?? 'review')
 
-  const { data: modelsRes } = useVehicleModels({ is_active: true })
+  // 03/10: dòng xe ĐANG DÙNG TẠI KHO đang điều vận (kho cấu hình riêng thì bật/tắt + sức chứa theo kho)
+  const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: f.warehouseId || undefined })
   const models = (modelsRes?.items ?? []).filter(m => m.parent)
   const { data: companiesRaw = [] } = useTransportCompanies(true, 'ĐVVT')
   const { data: conditions = [] } = useStorageConditions()
@@ -163,7 +164,7 @@ export default function Dispatch() {
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   // DẢI TẢI theo dòng xe cha (01/10): hộp thoại đứng trước "Lập kế hoạch / Lập lại" — mặc định = dải của kế hoạch đang mở,
   // không có thì lần chọn gần nhất của kho (Warehouse.dispatch_load_bands), chưa từng chọn thì ngưỡng Non tải của kho–100 %
-  const bandParents = useLoadBandParents()
+  const bandParents = useLoadBandParents(f.warehouseId)
   const [bandDlg, setBandDlg] = useState(false)
   const curWh = whs.find(w => w.id === f.warehouseId)
   const whUnder = curWh?.dispatch_underload_pct == null ? null : Number(curWh.dispatch_underload_pct)

@@ -7,6 +7,7 @@ import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventor
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { sumLoads, type LoadMat } from '../../utils/loadCalc'
 import { loadUtilization } from '../../services/freight'
+import { applyWarehouseOverrides, loadWarehouseOverridesMany, underloadPctAt } from '../../services/vehicleModelScope'
 import { estimateFreightSafely, sapLoadRefs, sapRefKey, loadOfWithSap } from '../../services/freightEstimate'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
@@ -883,7 +884,7 @@ export async function listGDOs(req: Request, res: Response) {
       let rows: any[] = []
       if (ids.length) {
         rows = await fetchAllByIdChunks(ids, chunk => supabase.from('GroupDeliveryOrder')
-          .select('*, warehouse:Warehouse(id,code,name,inventory_mode,unlinked_shipto_policy), forklift_driver:Employee!forklift_driver_id(id,name)')
+          .select('*, warehouse:Warehouse(id,code,name,inventory_mode,unlinked_shipto_policy,dispatch_load_bands,dispatch_underload_pct), forklift_driver:Employee!forklift_driver_id(id,name)')
           .in('id', chunk).order('id'))
         const pos = new Map(ids.map((v, i) => [v, i]))   // `.in()` không giữ thứ tự RPC đã sắp
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -959,9 +960,24 @@ async function enrichGdos(data: any[]): Promise<any[]> {
 
     // Dòng xe CON của chuyến (23/09) — tên + sức chứa để in cột Tải / Non tải; freight_* đi thẳng từ select('*')
     const vmIds = [...new Set((data ?? []).map((g: any) => g.vehicle_model_id).filter(Boolean))] as string[]
-    const vmRows = vmIds.length ? await fetchAllByIdChunks(vmIds, chunk => supabase.from('vehicle_model')
-      .select('id, sap_code, name, capacity_mode, max_pallets, max_tons, tariff_unit, underload_pct').in('id', chunk).order('id')) : []
-    const vmById = new Map<string, any>(vmRows.map((v: any) => [v.id, v]))
+    const whIdsOfGdos = [...new Set((data ?? []).map((g: any) => g.warehouse_id).filter(Boolean))] as string[]
+    type VmLite = { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; max_drops: number | null; tariff_unit: string | null; is_active: boolean }
+    const [vmRows, vmOverridesBy] = await Promise.all([
+      vmIds.length ? fetchAllByIdChunks(vmIds, chunk => supabase.from('vehicle_model')
+        .select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, max_drops, tariff_unit, is_active').in('id', chunk).order('id')) as Promise<VmLite[]> : Promise.resolve([] as VmLite[]),
+      loadWarehouseOverridesMany(whIdsOfGdos),
+    ])
+    // 03/10: sức chứa HIỆU LỰC theo kho của chuyến; ngưỡng Non tải đọc từ kho (dải theo cha → ngưỡng kho → 70), ô của dòng xe đã bỏ
+    const vmByWh = new Map<string, Map<string, VmLite>>()
+    const vmAt = (whId: string | null, id: string): VmLite | null => {
+      const k = whId ?? ''
+      let m = vmByWh.get(k)
+      if (!m) {
+        const scoped = applyWarehouseOverrides(vmRows.map(v => ({ ...v, max_tons: v.max_tons == null ? null : Number(v.max_tons) })), whId ? (vmOverridesBy.get(whId) ?? []) : [])
+        m = new Map(scoped.map(v => [v.id, v])); vmByWh.set(k, m)
+      }
+      return m.get(id) ?? null
+    }
     // Số tham chiếu SAP theo (OD, mã) — tải rơi về đây khi master thiếu quy cách (cùng luật với freightEstimate)
     const sapRefs = await sapLoadRefs((dos ?? []).map((d: any) => d.delivery_code).filter(Boolean))
     const doCodeById = new Map<string, string | null>((dos ?? []).map((d: any) => [d.id, d.delivery_code ?? null]))
@@ -1058,15 +1074,16 @@ async function enrichGdos(data: any[]): Promise<any[]> {
       const loads = gdoItems.map((i: any) => loadOfWithSap(Number(i.cartons_ordered ?? 0), (i.material ?? null) as LoadMat | null, g.warehouse_id ?? null,
         sapRefs.get(sapRefKey(doCodeById.get(i.do_id), i.material_code_raw))))
       const loadSum = sumLoads(loads)
-      const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
+      const vm = g.vehicle_model_id ? vmAt(g.warehouse_id ?? null, g.vehicle_model_id) : null
       const tons = loadSum.kg == null ? null : Math.round(loadSum.kg) / 1000
-      const util = loadUtilization(vm, loadSum.pallets, tons)
+      const underload_pct = underloadPctAt(g.warehouse ?? null, vm?.parent_type_id ?? null)
+      const util = loadUtilization(vm ? { ...vm, underload_pct } : null, loadSum.pallets, tons)
 
       return {
         ...g,
         dest_warehouse: di.dest ? { id: di.dest.id, code: di.dest.code, name: di.dest.name, inventory_mode: di.dest.inventory_mode } : null,
         unlinked_hint: !di.dest && di.hint && unlPolicy !== 'NONE' ? { ...di.hint, policy: unlPolicy } : null,
-        vehicle_model: vm ? { id: vm.id, sap_code: vm.sap_code, name: vm.name, capacity_mode: vm.capacity_mode, max_pallets: vm.max_pallets, max_tons: vm.max_tons, tariff_unit: vm.tariff_unit, underload_pct: vm.underload_pct } : null,
+        vehicle_model: vm ? { id: vm.id, sap_code: vm.sap_code, name: vm.name, capacity_mode: vm.capacity_mode, max_pallets: vm.max_pallets, max_tons: vm.max_tons, tariff_unit: vm.tariff_unit, underload_pct } : null,
         load: { pallets: loadSum.pallets, tons, incomplete: loadSum.incomplete, ...util },
         do_count:          gdoDOs.length,
         distributor_names: distributorNames as string[],

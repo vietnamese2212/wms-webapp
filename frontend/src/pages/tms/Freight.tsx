@@ -377,7 +377,8 @@ export default function Freight() {
   const whs = warehouses as { id: string; code?: string; name: string }[]
   const { data: companiesRaw = [] } = useTransportCompanies(true, 'ĐVVT')
   const companies = useMemo(() => companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}` })), [companiesRaw])
-  const { data: modelsRes } = useVehicleModels({ is_active: true })
+  // 03/10: đã chọn kho xuất ⇒ chỉ dòng xe ĐANG DÙNG tại kho đó (bảng cước là của kho); chưa chọn ⇒ bản Chung
+  const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: f.warehouseId || undefined })
   const models = modelsRes?.items ?? []
 
   const listParams = { warehouse_id: f.warehouseId || undefined, company_id: f.companyId || undefined, model_id: f.modelId || undefined }

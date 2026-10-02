@@ -18,9 +18,10 @@ export type LoadBandDraft = { bands: DispatchLoadBands; bypass: boolean }
 export const DEFAULT_BAND = { min: 70, max: 100 }
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
 
-/** Dòng xe CHA có ít nhất một dòng xe con đang hoạt động — thứ tự theo danh mục Loại xe (Cài đặt TMS). */
-export function useLoadBandParents() {
-  const { data: modelsRes } = useVehicleModels({ is_active: true })
+/** Dòng xe CHA có ít nhất một dòng xe con đang hoạt động — thứ tự theo danh mục Loại xe (Cài đặt TMS).
+ *  `warehouseId` (03/10): đang dùng TẠI KHO đó (dòng xe theo kho); thiếu ⇒ bản Chung. */
+export function useLoadBandParents(warehouseId?: string | null) {
+  const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: warehouseId || undefined })
   const { data: vtypes = [] } = useVehicleTypes()
   return useMemo(() => {
     const rank = new Map(vtypes.map((v, i) => [v.id, i]))
@@ -113,7 +114,7 @@ export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, int
 
 /** Chip trên bàn ghép xe: dải đang áp cho kế hoạch — bấm để đổi ngay (xe nháp tính lại, không ghép lại). */
 export function DispatchLoadBandChip({ plan, editable }: { plan: DispatchPlan; editable: boolean }) {
-  const parents = useLoadBandParents()
+  const parents = useLoadBandParents(plan.warehouse_id)
   const [open, setOpen] = useState(false)
   const update = useUpdateDispatchPlanParams()
   const text = bandSummary(parents, plan.params.load_bands, plan.params.load_bypass, plan.params.underload_pct)

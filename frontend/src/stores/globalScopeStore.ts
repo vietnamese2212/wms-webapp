@@ -70,6 +70,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setTmsBookings({ warehouseId: wid, page: 1 })
     s.setFreight({ warehouseId: wid, page: 1 })   // Cước vận chuyển: bảng cước khoá theo kho XUẤT
     s.setDispatch({ warehouseId: wid, planId: '' })   // Điều vận: kế hoạch theo kho xuất — đổi kho là đổi kế hoạch đang mở
+    s.setVehicleModels({ whId: wid })   // Mã dòng xe (03/10): chọn kho ⇒ tab mở ở cấu hình riêng của kho; "Tất cả" ⇒ bản Chung
     s.setControlTower({ warehouse_ids: one(wid) })
     // đổi Kho ⇒ lọc PHỤ THUỘC KHO (khu vực / vị trí thuộc kho cũ) phải reset kèm
     s.setLocations({ warehouseId: wid, zoneFilter: [], page: 1 })

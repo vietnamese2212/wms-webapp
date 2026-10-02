@@ -403,6 +403,7 @@ interface VehicleModelFilters {
   parents: string[]      // id VehicleType; '__none__' = chưa gán cha
   status: string         // '' | 'active' | 'inactive'
   capMode: string        // '' | 'PALLET' | 'TON'
+  whId: string           // 03/10: '' = bản CHUNG (master data) · id kho = cấu hình riêng của kho đó (theo bối cảnh Kho ở Header)
 }
 // Cước vận chuyển (23/09): bộ lọc dùng chung 3 tab — kho xuất · ĐVVT · dòng xe · tìm phường
 interface FreightFilters {
@@ -680,7 +681,7 @@ function initialFilters() {
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
     dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false },
-    vehicleModels: { search: '', parents: [], status: '', capMode: '' },
+    vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }

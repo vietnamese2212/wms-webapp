@@ -22,6 +22,7 @@ import {
   type TariffLike, type SurchargeLike, type TariffUnit, type SurchargePer, type StopCountMode, type LoadUtil,
 } from './freight'
 import { splitLoad, comboModel, basisOf, bigFirst, type EngineModel } from './dispatchEngine'
+import { applyWarehouseOverrides, loadWarehouseOverridesMany, underloadPctAt } from './vehicleModelScope'
 
 export type FreightBasis = 'PLAN' | 'ACTUAL' | 'AUTO'
 
@@ -48,7 +49,9 @@ export interface FreightDetail {
 }
 
 type GdoRow = { id: string; group_code: string; warehouse_id: string | null; dvvt: string | null; vehicle_model_id: string | null; delivery_date: string | null; status: string; shipto_party: string | null }
-type VmRow = { id: string; sap_code: string; name: string; tariff_unit: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; underload_pct: number | null }
+// 03/10: sức chứa là bản HIỆU LỰC tại kho của chuyến (services/vehicleModelScope); ngưỡng Non tải đọc từ KHO (dải theo cha → ngưỡng kho → 70)
+type VmRow = { id: string; sap_code: string; name: string; parent_type_id: string | null; tariff_unit: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | null; max_drops: number | null; is_active: boolean }
+type WhRow = { id: string; dispatch_load_bands: unknown; dispatch_underload_pct: number | string | null }
 type ItemRow = { do_id: string; material_code_raw: string | null; cartons_ordered: number | string | null; cartons_scanned: number | string | null; material: LoadMat | null }
 
 /**
@@ -93,7 +96,7 @@ const asEngineModel = (v: VmRow): EngineModel => ({
   id: v.id, sap_code: v.sap_code, name: v.name, parent_type_name: null,
   capacity_mode: v.capacity_mode === 'TON' ? 'TON' : v.capacity_mode === 'PALLET' ? 'PALLET' : null,
   max_pallets: numN(v.max_pallets), max_tons: numN(v.max_tons), tariff_unit: v.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET',
-  underload_pct: numN(v.underload_pct), serve_conditions: null, max_drops: null, is_active: true,
+  serve_conditions: null, max_drops: null, is_active: true,
 })
 const uniq = <T,>(a: T[]) => [...new Set(a)]
 
@@ -115,12 +118,26 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
 
   // ── Danh mục dùng chung ──
   const vmIds = uniq([...gdos.map(g => g.vehicle_model_id), ...[...extrasByGc.values()].flat()].filter((x): x is string => !!x))
-  const [vmRows, dvvtResolve, coRows] = await Promise.all([
-    vmIds.length ? fetchAllByIdChunks(vmIds, c => db.from('vehicle_model').select('id, sap_code, name, tariff_unit, capacity_mode, max_pallets, max_tons, underload_pct').in('id', c).order('id')) as Promise<VmRow[]> : Promise.resolve([] as VmRow[]),
+  const whIdsAll = uniq(gdos.map(g => g.warehouse_id).filter((x): x is string => !!x))
+  type VmRaw = Omit<VmRow, 'max_tons'> & { max_tons: number | string | null }
+  const [vmRaw, dvvtResolve, coRows, whRows, overridesBy] = await Promise.all([
+    vmIds.length ? fetchAllByIdChunks(vmIds, c => db.from('vehicle_model').select('id, sap_code, name, parent_type_id, tariff_unit, capacity_mode, max_pallets, max_tons, max_drops, is_active').in('id', c).order('id')) as Promise<VmRaw[]> : Promise.resolve([] as VmRaw[]),
     makeDvvtResolver(),
     db.from('TransportCompany').select('id, code'),
+    whIdsAll.length ? fetchAllByIdChunks(whIdsAll, c => db.from('Warehouse').select('id, dispatch_load_bands, dispatch_underload_pct').in('id', c).order('id')) as Promise<WhRow[]> : Promise.resolve([] as WhRow[]),
+    loadWarehouseOverridesMany(whIdsAll),
   ])
-  const vmById = new Map(vmRows.map(v => [v.id, v]))
+  const vmRows: VmRow[] = vmRaw.map(v => ({ ...v, max_tons: numN(v.max_tons) }))
+  const whById = new Map(whRows.map(w => [w.id, w]))
+  // Dòng xe HIỆU LỰC theo kho của chuyến (03/10): kho có cấu hình riêng thì sức chứa theo kho — cùng số điều vận đã xếp
+  const vmByWh = new Map<string, Map<string, VmRow>>()
+  const vmAt = (whId: string | null, id: string): VmRow | null => {
+    const k = whId ?? ''
+    const m = vmByWh.get(k) ?? new Map<string, VmRow>(applyWarehouseOverrides(vmRows, whId ? (overridesBy.get(whId) ?? []) : []).map(v => [v.id, v]))
+    vmByWh.set(k, m)
+    return m.get(id) ?? null
+  }
+  const underAt = (whId: string | null, vm: VmRow | null) => underloadPctAt(whId ? whById.get(whId) : null, vm?.parent_type_id)
   const coIdByCode = new Map(((coRows.data ?? []) as { id: string; code: string }[]).map(c => [c.code, c.id]))
   const coIdOf = (dvvt: string | null): string | null => {
     const code = dvvtResolve(normDvvt(dvvt) ?? '')
@@ -180,8 +197,8 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
     if (!wards.length && g.shipto_party) { const w = wardByShipto.get(g.shipto_party); if (w) wards.push(w) }
     if (!shiptos.length && g.shipto_party) shiptos.push(g.shipto_party)
     const stops = Math.max(uniq(shiptos).length, uniq(wards).length, gDos.length ? 1 : 0)
-    const vm = g.vehicle_model_id ? vmById.get(g.vehicle_model_id) ?? null : null
-    const fleet = vm ? [vm, ...(extrasByGc.get(g.group_code) ?? []).map(id => vmById.get(id)).filter((x): x is VmRow => !!x)] : []
+    const vm = g.vehicle_model_id ? vmAt(g.warehouse_id, g.vehicle_model_id) : null
+    const fleet = vm ? [vm, ...(extrasByGc.get(g.group_code) ?? []).map(id => vmAt(g.warehouse_id, id)).filter((x): x is VmRow => !!x)] : []
     return { g, basis, pallets: sum.pallets, tons: sum.kg == null ? null : Math.round(sum.kg) / 1000, incomplete: sum.incomplete, wards: uniq(wards), stops, coId: coIdOf(g.dvvt), vm, fleet }
   })
 
@@ -227,7 +244,8 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
     const multi = p.fleet.length > 1
     const ems = multi ? p.fleet.map(asEngineModel).sort(bigFirst) : []
     const cm = multi ? comboModel(ems) : null
-    const load = loadUtilization(cm ? { ...p.vm!, capacity_mode: cm.capacity_mode, max_pallets: cm.max_pallets, max_tons: cm.max_tons } : p.vm, p.pallets, p.tons)
+    const underload_pct = underAt(p.g.warehouse_id, p.vm)
+    const load = loadUtilization(p.vm ? (cm ? { capacity_mode: cm.capacity_mode, max_pallets: cm.max_pallets, max_tons: cm.max_tons, underload_pct } : { ...p.vm, underload_pct }) : null, p.pallets, p.tons)
     let reason: string | null = null
     if (!p.vm) reason = 'Chưa chọn dòng xe con (mã SAP) cho chuyến — chọn ở tab Kế hoạch xuất'
     else if (!p.coId) reason = p.g.dvvt ? `ĐVVT "${p.g.dvvt}" không khớp danh mục ĐVVT` : 'Chuyến chưa có ĐVVT'
@@ -245,7 +263,7 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
           const k = basisOf(m) === 'TON' ? Number(m.max_tons ?? 0) / Number(cm!.max_tons || 1) : Number(m.max_pallets ?? 0) / Number(cm!.max_pallets || 1)
           return { pallets: p.pallets == null ? null : Math.round(p.pallets * k * 1000) / 1000, tons: p.tons == null ? null : Math.round(p.tons * k * 1000) / 1000 }
         })
-        const fs = ems.map((m, i) => priceOne(p, vmById.get(m.id)!, share[i].pallets, share[i].tons, day))
+        const fs = ems.map((m, i) => priceOne(p, vmAt(p.g.warehouse_id, m.id)!, share[i].pallets, share[i].tons, day))
         vehicles = ems.map((m, i) => ({ id: m.id, sap_code: m.sap_code, name: m.name, pallets: share[i].pallets, tons: share[i].tons, freight: fs[i].total }))
         const miss = fs.find(f => f.total == null)
         if (miss) reason = miss.reason

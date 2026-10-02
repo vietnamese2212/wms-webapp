@@ -23,6 +23,8 @@
  *     các khách và dòng xe muốn được ghép chuyến phải khai — không khai thì có cảnh báo"): KHÔNG còn số của kho; dòng xe hay khách
  *     CHƯA KHAI = 1 (một khách một xe), controller đưa vào `config_gaps.no_drops` để chip "Khai thiếu" nêu tên. Khách phải đi một
  *     mình = tick "Đi xe riêng" hoặc "Số khách tối đa cùng xe" = 1.
+ *     03/10 — DÒNG XE THEO KHO: `models` controller truyền vào đã là bản HIỆU LỰC tại kho (services/vehicleModelScope: kho có cấu
+ *     hình riêng thì dùng/không + sức chứa + điểm giao theo kho, không thì theo Chung). Engine không biết kho, chỉ thấy danh sách.
  *  8. ~~DÒNG XE DÙNG CHO VIỆC GÌ (25/09, `dispatch_use` TRANSFER)~~ — BỎ 28/09 (user: "dòng xe chọn theo khai báo của khách,
  *     khách không khai thì không chọn — bỏ config ở Mã dòng xe"). Container chỉ đi khi khách / kênh tick nó (luật 10).
  *  9. KHÔNG TRỘN LOẠI KHO (26/09, user: "FG01 đi với FG01, FG02 đi FG02, muốn đi chung phải bật công tắc"): khoá cụm mang
@@ -81,7 +83,7 @@ export interface EngineModel {
   max_pallets: number | null
   max_tons: number | null
   tariff_unit: TariffUnit
-  underload_pct: number | null
+  // 02/10: KHÔNG còn `underload_pct` của dòng xe — ngưỡng Non tải = dải tải theo cha (`load_min_pct`) → ngưỡng kho → 70
   serve_conditions: string[] | null // điều kiện bảo quản xe phục vụ được; rỗng/null = mọi điều kiện
   max_drops: number | null          // điểm giao tối đa; null = CHƯA KHAI = 1 khách (02/10 — muốn ghép phải khai, thiếu thì chip Khai thiếu)
   is_active: boolean
@@ -320,14 +322,13 @@ export function withLoadBands(models: EngineModel[], P: Pick<EngineParams, 'load
   if (!Object.keys(bands).length) return models
   return models.map(m => { const b = m.parent_type_id ? bands[m.parent_type_id] : undefined; return b ? { ...m, load_min_pct: b.min, load_max_pct: b.max } : m })
 }
-/** Đo theo chế độ của dòng xe: PALLET → pallet (gác thêm tấn nếu khai); TON → tấn. Tải null ở chiều cần đo → false. */
+/** Đo theo chế độ của dòng xe — MỘT thước đo (02/10, user: "đo tải bằng gì kê khai bằng đó, không ảnh hưởng tới điều kiện khác"):
+ *  PALLET → chỉ pallet (tấn khai thêm chỉ là ghi chú, trước 02/10 còn gác thêm tấn); TON → chỉ tấn. Tải null ở chiều cần đo → false. */
 export function fits(m: EngineModel, pallets: number | null, tons: number | null): boolean {
   const c = capFit(m)
   const byTon = m.capacity_mode === 'TON' || c.pallets == null
   if (byTon) return c.tons != null && tons != null && tons <= c.tons + 1e-9
-  if (pallets == null || pallets > c.pallets! + 1e-9) return false
-  if (c.tons != null && tons != null && tons > c.tons + 1e-9) return false
-  return true
+  return pallets != null && pallets <= c.pallets! + 1e-9
 }
 /** Dòng xe đo sức chứa bằng gì — tổ hợp nhiều xe (luật 11) chỉ ghép các xe CÙNG cách đo để % tải cộng được. */
 export const basisOf = (m: EngineModel): 'PALLET' | 'TON' => (m.capacity_mode === 'TON' || capOf(m).pallets == null ? 'TON' : 'PALLET')
@@ -345,9 +346,7 @@ function splitWith(models: EngineModel[], pallets: number | null, tons: number |
     const c = cap(m)
     if (basisOf(m) === 'TON') return tons == null || c.tons == null ? 0 : tons <= 0 ? Infinity : c.tons / tons
     if (pallets == null) return 0
-    const byP = pallets <= 0 ? Infinity : c.pallets! / pallets
-    const byT = c.tons != null && tons != null && tons > 0 ? c.tons / tons : Infinity
-    return Math.min(byP, byT)
+    return pallets <= 0 ? Infinity : c.pallets! / pallets   // một thước đo (02/10): xe pallet chia theo pallet, không gác tấn
   }
   let left = 1
   const out: { pallets: number | null; tons: number | null }[] = []
@@ -472,10 +471,11 @@ export function buildCtx(input: EngineInput): Ctx {
   for (const t of effectiveAt(input.tariffs.map(t => ({ ...t, is_active: t.is_active ?? true })), input.params.day)) { const s = pricedByWard.get(t.ward_code) ?? new Set<string>(); s.add(t.vehicle_model_id); pricedByWard.set(t.ward_code, s) }
   return { input, models, tariffsBy, surBy, allocs: effectiveAt(input.allocations.map(a => ({ ...a, is_active: a.is_active ?? true })), input.params.day), pricedByWard }
 }
-/** Ngưỡng Non tải của một dòng xe: dải theo cha (01/10) → ngưỡng kho → ngưỡng dòng xe → 70. `load_min_pct = 0` (bypass) là hợp lệ. */
+/** Ngưỡng Non tải của một dòng xe: dải theo cha (01/10) → ngưỡng kho → 70. `load_min_pct = 0` (bypass) là hợp lệ.
+ *  02/10: ô "Non tải dưới %" của dòng xe BỎ (bàn điều vận là chỗ khai duy nhất, kho là mặc định khi mở bàn). */
 export const underPctOf = (m: EngineModel | null | undefined, whUnderloadPct: number | null | undefined): number =>
-  (m?.load_min_pct != null && Number.isFinite(Number(m.load_min_pct)) ? Number(m.load_min_pct) : null) ?? whUnderloadPct ?? numOr(m?.underload_pct, 70)
-/** Tải + Non tải của một chuyến theo dòng xe đã chọn (dải theo cha đè ngưỡng kho, kho đè dòng xe); `max_pct` = trần xếp để màn in "vượt" đúng mốc. */
+  (m?.load_min_pct != null && Number.isFinite(Number(m.load_min_pct)) ? Number(m.load_min_pct) : null) ?? (whUnderloadPct != null && whUnderloadPct > 0 ? whUnderloadPct : 70)
+/** Tải + Non tải của một chuyến theo dòng xe đã chọn (dải theo cha đè ngưỡng kho); `max_pct` = trần xếp để màn in "vượt" đúng mốc. */
 export function tripLoad(model: EngineModel | null, pallets: number | null, tons: number | null, whUnderloadPct: number | null): LoadUtil {
   const u = loadUtilization(model ? { capacity_mode: model.capacity_mode, max_pallets: model.max_pallets, max_tons: model.max_tons, underload_pct: underPctOf(model, whUnderloadPct) } : null, pallets, tons)
   // loadUtilization coi underload_pct ≤ 0 là "không khai" ⇒ 70; bypass (0) phải là 0 thật
@@ -790,7 +790,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const big = bigForOd(od)
     if (!big && od.allowed_models) {
       unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, code: 'NO_VEHICLE', reason: od.allowed_models.length
-        ? `Khách chỉ được vào ${od.allowed_models.length} dòng xe đã khai — không dòng nào đang hoạt động + khai sức chứa (Khách hàng → Dòng xe được vào)`
+        ? `Khách chỉ được vào ${od.allowed_models.length} dòng xe đã khai — không dòng nào đang dùng ở kho này + khai sức chứa (Khách hàng → Dòng xe được vào · Cài đặt TMS → Mã dòng xe → chọn kho)`
         : 'Khách chưa có dòng xe nào được vào — khai ở Khách hàng → Dòng xe được vào (theo kênh, hoặc riêng khách)' })
       continue
     }

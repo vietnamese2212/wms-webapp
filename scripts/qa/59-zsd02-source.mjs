@@ -14,6 +14,7 @@ const PACK = '59-zsd02-source'
 const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const dmy = (iso) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}` }
 const DELIV = new Date(Date.now() + 40 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // xa tương lai — không đụng dữ liệu thật
+const OD_CREATED = new Date(Date.now() + 35 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // "Thời gian tạo OD" — khác DELIV để lọc Ngày tạo OD không ăn theo Ngày giao
 const SO1 = 'QA59SO1', SO2 = 'QA59SO2', SO3 = 'QA59SO3', OD1 = 'QA59OD1', OD3 = 'QA59OD3'
 const SHIPTO = 'QA59ST', ROUTE = 'BVQA59', WARD = 'QA59-Test', PLANT = '1102'
 const GC = `${FIX.WH_QR.code}_X_${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}_959`
@@ -36,6 +37,7 @@ const H = {
   odq: 'OD Qty', odcar: 'OD Qty CAR/ SL THÙNG đã điều phối', gi: 'Số lượng đã xuất / nhập', region: 'Region/ Tỉnh.TP', route: 'Route/ Tuyến giao hàng',
   gw: 'Gross Weight', ward: 'Tên Phường', dvvt: 'Đơn vị vận chuyển', mroute: 'Mã Route', base: 'OD Qty (Base Unit)', bunit: 'Base Unit',
   pal: 'SL SO PALLET', palod: 'SL PALLET đã điều phối', cancel: 'Trạng thái hủy đơn', dc: 'Distribution Channel',
+  odc: 'Thời gian tạo OD',
 }
 const row = (o) => ({
   [H.so]: o.so, [H.od]: o.od ?? '', [H.st]: SHIPTO, [H.stn]: 'QA59 KHÁCH TEST', [H.mat]: o.mat, [H.matn]: 'QA59 hàng test',
@@ -45,6 +47,7 @@ const row = (o) => ({
   [H.odq]: o.od ? o.soq : 0, [H.odcar]: o.od ? (o.socar ?? o.soq) : 0, [H.gi]: 0,
   [H.region]: '100-Thành phố Hà Nội', [H.route]: `BV-${WARD}`, [H.gw]: o.gw ?? 0, [H.ward]: WARD, [H.dvvt]: o.dvvt ?? 'Đông Á', [H.mroute]: ROUTE,
   [H.base]: o.od ? o.soq * o.factor : 0, [H.bunit]: o.bunit, [H.pal]: 0.1, [H.palod]: o.od ? 0.1 : 0, [H.cancel]: '',
+  [H.odc]: o.od ? dmy(OD_CREATED) : '',
   // kênh bán SAP (28/09): khách tự sinh phải mang kênh theo mã đầu cột này — bỏ cột (QA59_NO_DC=1) để chứng minh phép 2h2 ĐỎ
   ...(process.env.QA59_NO_DC ? {} : { [H.dc]: o.dc ?? '20-Modern Trade' }),
 })
@@ -150,6 +153,13 @@ try {
   const doList = await api(`/external/do-sap?flow=RETURN&delivery_from=${DELIV}&delivery_to=${DELIV}&date_from=${todayVN}&date_to=${todayVN}`)
   check('2j. GET /external/do-sap lọc flow=RETURN + khoảng Ngày giao → thấy OD3, không thấy OD1',
     doList.s === 200 && doList.j?.data?.items?.some(r => r.od_number === OD3) && !doList.j?.data?.items?.some(r => r.od_number === OD1), `http=${doList.s} n=${doList.j?.data?.items?.length}`)
+  // 2j2 (03/10, user: "ngày tạo là dữ liệu tôi cần filter trong ZSD02"): khoảng Ngày tạo OD (`od_created_at`, cột "Thời gian tạo OD")
+  // là khoảng MỞ dữ liệu độc lập với Ngày nạp — fixture có cột đó = OD_CREATED; khoảng không chứa ngày ⇒ 0 dòng QA59, chứa ⇒ thấy OD1
+  const cIn = await api(`/external/do-sap?q=QA59&created_from=${OD_CREATED}&created_to=${OD_CREATED}`)
+  const cOut = await api(`/external/do-sap?q=QA59&created_from=2000-01-01&created_to=2000-01-02`)
+  check('2j2. GET /external/do-sap lọc khoảng Ngày tạo OD (không cần Ngày nạp): trúng ngày → thấy OD1 · lệch ngày → 0 dòng',
+    cIn.s === 200 && cIn.j?.data?.items?.some(r => r.od_number === OD1 && r.od_created_at === OD_CREATED) && cOut.s === 200 && (cOut.j?.data?.items?.length ?? -1) === 0,
+    `in: http=${cIn.s} n=${cIn.j?.data?.items?.length} · out: http=${cOut.s} n=${cOut.j?.data?.items?.length}`)
 
   // ── [3] Idempotent + hai nguồn cùng sổ ──
   // 3a0 (kiểm lại 22/09): bảng KIỂM-TRƯỚC phải so với sổ đang có — nạp lại đúng file đã nạp thì "Sẽ thêm 0 · Sẽ cập nhật 0 ·

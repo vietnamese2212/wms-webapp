@@ -393,6 +393,8 @@ interface DoSapFilters {
   dispatch: string   // '' | 'ASSIGNED' | 'UNASSIGNED' — trạng thái điều phối xe theo SAP
   deliveryFrom: string   // khoảng Ngày giao (delivery_date) — độc lập với Ngày nạp
   deliveryTo: string
+  createdFrom: string    // khoảng Ngày tạo OD (od_created_at, cột ZSD02 "Thời gian tạo OD" — user 03/10: "ngày tạo là dữ liệu tôi cần filter")
+  createdTo: string
   page: number
   pageSize: number
 }
@@ -436,6 +438,8 @@ interface DispatchFilters {
   boardOpen: string[]    // khoá nhóm dòng xe CHA đang MỞ trên bàn ghép xe
   poolHidden: boolean
   search: string         // tìm OD / khách / phường / Số xe trên bàn ghép xe + tab Dữ liệu OD
+  createdFrom: string    // bảng Xem đơn: khoảng Ngày tạo OD (ZSD02 "Thời gian tạo OD") — lọc tại chỗ trên dữ liệu đã nạp
+  createdTo: string
 }
 interface SoLinesFilters {
   search: string
@@ -677,10 +681,10 @@ function initialFilters() {
     // nghỉ mỗi lần mở trang; vài trăm nhân sự × vài năm là vượt trần 10.000 dòng → trang chết hẳn
     // (400 "thu hẹp khoảng ngày") chứ không chỉ chậm. Cần xem năm cũ thì tự nới khoảng ngày.
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
-    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', page: 1, pageSize: 50 },
+    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, createdFrom: '', createdTo: '' },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

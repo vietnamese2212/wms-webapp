@@ -18,6 +18,7 @@ import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ListFooter } from '@/components/shared/ListPager'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
@@ -151,7 +152,16 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   const tabRows = backlogRows.length ? [...byTab[st], ...backlogRows] : byTab[st]
   const q = f.search.trim().toLowerCase()
   const extra = (od: string) => { const i = info[od]; return i ? [...i.so, ...i.created_by, i.note_invoice ?? '', i.route_name ?? '', ...i.categories] : [] }
-  const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
+  // Khoảng NGÀY TẠO OD (ZSD02 "Thời gian tạo OD", user 03/10) — lọc tại chỗ trên thông tin SAP đã nạp; chờ nạp xong mới lọc
+  // (lọc lúc info còn trống thì cả bảng biến mất một nhịp). OD không có ngày tạo (nhập tay / VL06O) không khớp khoảng.
+  const cFrom = f.createdFrom ?? '', cTo = f.createdTo ?? ''
+  const createdOn = !!(cFrom || cTo) && !!review.data
+  const inCreated = (od: string) => { const d = info[od]?.od_created_at; return !!d && (!cFrom || d >= cFrom) && (!cTo || d <= cTo) }
+  const filterDefs: FilterDef[] = [
+    { key: 'created', label: 'Ngày tạo OD', type: 'daterange', from: cFrom, to: cTo, onChange: (from, to) => setF({ createdFrom: from, createdTo: to }) },
+  ]
+  const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!createdOn || inCreated(r.od))
+    && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
   const detailRow = detail ? tabRows.find(r => r.key === detail) ?? null : null
   const notesN = tabRows.filter(r => !!r.note).length
   const pick = rows.filter(r => r.selectable)
@@ -215,6 +225,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
     { id: 'pal', label: 'Pallet', w: 64, align: 'right' },
     { id: 'ton', label: 'Tấn', w: 64, align: 'right' },
     { id: 'date', label: 'Ngày giao', w: 96 },
+    { id: 'created', label: 'Ngày tạo OD', w: 90 },
     { id: 'by', label: 'Người tạo', w: 100 },
     { id: 'note', label: 'Ghi chú giao hàng SAP', w: 280 },
     { id: 'warn', label: 'Lưu ý', w: 220 },
@@ -258,6 +269,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm OD, khách, phường, vùng, ghi chú…" className="flex-1 min-w-[160px] sm:max-w-sm" />
+          <FilterBar defs={filterDefs} />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {notesN > 0 && (
             <button type="button" onClick={() => setNotesOnly(v => !v)} aria-pressed={notesOnly}
               className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] ${notesOnly ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'}`}
@@ -282,10 +295,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v2`} cols={cols}>
+        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v3`} cols={cols}>
           <TableBody>
-            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly
-              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '' }) }}>Xem cả {tabRows.length} đơn</button></>
+            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || createdOn
+              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '', createdFrom: '', createdTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
@@ -306,6 +319,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
                 <TableCell className={`${TD} text-right tabular-nums`}>{nf(r.pallets, 1)}</TableCell>
                 <TableCell className={`${TD} text-right tabular-nums`}>{nf(r.tons, 2)}</TableCell>
                 <TableCell className={TD}>{r.date ? `${dmy(r.date)}/${r.date.slice(2, 4)}` : <span className="text-slate-300">—</span>}{r.late > 0 && <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800">trễ {r.late}n</span>}</TableCell>
+                <TableCell className={TD} title={i?.od_created_at ?? ''}>{i?.od_created_at ? `${dmy(i.od_created_at)}/${i.od_created_at.slice(2, 4)}` : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={i?.created_by.join(', ')}>{i?.created_by.length ? i.created_by.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate ${r.note ? 'text-amber-900' : ''}`} title={[r.note, i?.note_invoice ? `Hoá đơn: ${i.note_invoice}` : ''].filter(Boolean).join('\n')}>
                   {r.note || <span className="text-slate-300">—</span>}{i?.note_invoice && <span className="ml-1 text-slate-500">· HĐ: {i.note_invoice}</span>}

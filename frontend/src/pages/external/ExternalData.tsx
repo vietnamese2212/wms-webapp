@@ -199,6 +199,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const { doSap: f, setDoSap, setSoLines } = useWmsFilterStore()
   const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, used: fUsed, page, pageSize } = f
   const fFlow = f.flow ?? [], fDispatch = f.dispatch ?? '', fDelivFrom = f.deliveryFrom ?? '', fDelivTo = f.deliveryTo ?? ''
+  const fCreatedFrom = f.createdFrom ?? '', fCreatedTo = f.createdTo ?? ''   // Ngày tạo OD (ZSD02) — 03/10
   // Công tắc nguồn DO SAP (Cài đặt WMS → Hệ thống): BOTH = hai nút · ZSD02 = ẩn nút VL06O · VL06O = ẩn nút ZSD02
   const { data: sysSettings } = useSystemSettings()
   const sapSrc = (() => { const v = sysSettings?.find(s => s.key === 'sap_do_source')?.value; return v === 'ZSD02' || v === 'VL06O' ? v : 'BOTH' })()
@@ -216,7 +217,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v7', COL_DEFAULTS)   // v7: +14 cột ZSD02 cuối bảng (03/10)
   const { data: facets } = useDoSapFacets()
 
-  const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
+  // BẮT BUỘC chọn một khoảng ngày mới hiện dữ liệu (không tự kéo cả bảng): Ngày nạp HOẶC Ngày tạo OD (03/10 — người lọc theo
+  // ngày SAP tạo OD không phải chọn thêm Ngày nạp cho có)
+  const hasDate = !!(dateFrom || dateTo || fCreatedFrom || fCreatedTo)
 
   const params = useMemo(() => ({
     q:             search.trim() || undefined,
@@ -234,9 +237,11 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     dispatch:      fDispatch || undefined,
     delivery_from: fDelivFrom || undefined,
     delivery_to:   fDelivTo || undefined,
+    created_from:  fCreatedFrom || undefined,
+    created_to:    fCreatedTo || undefined,
     page,
     page_size:     pageSize,
-  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, page, pageSize])
+  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, fCreatedFrom, fCreatedTo, page, pageSize])
 
   const { data, isLoading, isError, error } = useDoSapOrders(params, hasDate)
   const items = data?.items ?? []
@@ -245,7 +250,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const planWarn = data?.plan_filter_warning
 
   // Đổi filter/search/pageSize → về trang 1 (filterKey KHÔNG gồm page để tránh vòng lặp)
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, fFlow, fDispatch, fDelivFrom, fDelivTo, fCreatedFrom, fCreatedTo, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
@@ -256,6 +261,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (from, to) => setDoSap({ dateFrom: from, dateTo: to }) },
+    // Ngày SAP tạo OD (cột ZSD02 "Thời gian tạo OD") — thay được cho Ngày nạp làm khoảng mở dữ liệu (03/10)
+    { key: 'created', label: 'Ngày tạo OD', type: 'daterange', from: fCreatedFrom, to: fCreatedTo,
+      onChange: (from, to) => setDoSap({ createdFrom: from, createdTo: to }) },
     { key: 'source', label: 'Nguồn', type: 'single', allLabel: 'Tất cả nguồn', value: fSource,
       options: (facets?.sources ?? []).map(s => ({ value: s, label: s })), onChange: v => setDoSap({ source: v }) },
     { key: 'plant', label: 'Plant', type: 'single', allLabel: 'Tất cả plant', value: fPlant,
@@ -441,8 +449,8 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         {!hasDate ? (
           <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
             <Database className="h-10 w-10 opacity-30" />
-            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> để xem dữ liệu</p>
-            <p className="text-xs">Dữ liệu vừa upload nằm ở <b>Ngày nạp = hôm nay</b> (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
+            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> hoặc <b>Ngày tạo OD</b> để xem dữ liệu</p>
+            <p className="text-xs">Dữ liệu vừa upload nằm ở <b>Ngày nạp = hôm nay</b>; Ngày tạo OD là ngày SAP tạo OD trong ZSD02 (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
             <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setDoSap({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
               Xem hôm nay
             </Button>

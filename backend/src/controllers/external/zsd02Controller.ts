@@ -6,7 +6,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
-import { ok, fail } from '../../utils/response'
+import { ok, fail, failAny } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue } from '../../utils/search'
 import { isDay, vnDayOf } from '../../utils/dates'
@@ -315,20 +315,20 @@ export async function uploadZsd02(req: Request, res: Response) {
     for (const [old, by] of repPairs) {
       const { error } = await db.from('erp_outbound_orders').update({ sync_status: 'OBSOLETE', replaced_by_od: by, replaced_at: t, updated_at: t })
         .eq('od_number', old).eq('sync_status', 'ACTIVE')
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     // E4 — OD SAP đã xoá (trong khoảng phủ): OBSOLETE, không có OD thay ⇒ bàn ghép xe hiện cờ "SAP đã bỏ OD này"
     for (let i = 0; i < goneOds.length; i += 200) {
       const { error } = await db.from('erp_outbound_orders').update({ sync_status: 'OBSOLETE', updated_at: t })
         .in('od_number', goneOds.slice(i, i + 200)).eq('sync_status', 'ACTIVE')
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     // PHẢ HỆ DO (03/10 tối): mọi cặp cũ → mới (thay · tách · gộp · tạo lại sau post) — rào DB "một đơn một ngày xuất" kiểm trên cả họ
     if (rep.edges.length) {
       const rows = rep.edges.map(e => ({ id: randomUUID(), so_number: e.so_number, so_item: e.so_item, old_od: e.old_od, new_od: e.new_od, kind: e.kind, detected_at: t, source: 'ZSD02', updated_at: t }))
       for (let i = 0; i < rows.length; i += 300) {
         const { error } = await db.from('od_lineage').upsert(rows.slice(i, i + 300), { onConflict: 'old_od,new_od', ignoreDuplicates: true })
-        if (error) throw new Error(error.message)
+        if (error) throw error
       }
     }
     // OD đang "Không điều" / "Không điều ngày này" mà SAP thay bằng OD mới ⇒ dấu CHUYỂN sang OD mới (user chốt 27/09 khuya) —
@@ -341,7 +341,7 @@ export async function uploadZsd02(req: Request, res: Response) {
         const ins = holdsToCarry(oldHolds, repPairs, have, vnDayOf(new Date()) ?? '').map(h => ({ ...h, id: randomUUID(), updated_at: t }))
         if (ins.length) {
           const { error } = await db.from('dispatch_od_hold').insert(ins)
-          if (error) throw new Error(error.message)
+          if (error) throw error
           warnings.push(`${ins.length} OD mới thay cho OD đang "Không điều" — giữ nguyên dấu Không điều trên OD mới.`)
         }
       }
@@ -352,7 +352,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     const soObsoleted = soObsoleteIds.length
     for (let i = 0; i < soObsoleteIds.length; i += 300) {
       const { error } = await db.from('erp_so_lines').update({ sync_status: 'OBSOLETE', updated_at: t }).in('id', soObsoleteIds.slice(i, i + 300))
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
 
     // ── Tuyến SAP + địa lý khách hàng (AUGMENT — lỗi không làm hỏng upload cốt lõi) ──
@@ -362,7 +362,7 @@ export async function uploadZsd02(req: Request, res: Response) {
       const routeRows = [...out.routes.values()].map(r => ({ ...r, updated_at: t }))
       for (let i = 0; i < routeRows.length; i += CHUNK) {
         const { error } = await db.from('sap_route').upsert(routeRows.slice(i, i + CHUNK), { onConflict: 'route_code' })
-        if (error) throw new Error(error.message)
+        if (error) throw error
         routesWritten += routeRows.slice(i, i + CHUNK).length
       }
       customers = await upsertCustomerGeo([...out.customers.values()], actor)
@@ -399,7 +399,7 @@ export async function uploadZsd02(req: Request, res: Response) {
       reconcile, reconcile_error, ...(activated ? { activated } : {}),
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // GET /external/so-lines — sổ SO (tab "Chưa có OD"): phân trang + lọc theo Ngày giao / plant / trạng thái / flow / tìm.
@@ -438,10 +438,10 @@ export async function listSoLines(req: Request, res: Response) {
         p_plants: plant ? [plant] : plants, p_status: statuses, p_flows: flows?.length ? flows : null, p_q: s || null,
       }),
     ])
-    if (error) throw new Error(error.message)
+    if (error) throw error
     if (sum.error) throw new Error(sum.error.message)
     // Cờ "được lên xe" tính tại chỗ từ flow (một nguồn LOADABLE_FLOWS) để FE không chép danh sách
     const items = (data ?? []).map(r => ({ ...r, loadable: LOADABLE_FLOWS.has(String(r.flow)) }))
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, summary: sum.data })
-  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }

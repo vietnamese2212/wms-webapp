@@ -4,7 +4,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { ok, fail } from '../../utils/response'
+import { ok, fail, failAny } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { replanKhvcGroups, looseHeldGdoIds } from '../wms/outboundController'
@@ -318,7 +318,7 @@ export async function listKhvc(req: Request, res: Response) {
       .range((page - 1) * pageSize, page * pageSize - 1)
 
     const { data, count, error } = await query
-    if (error) throw new Error(error.message)
+    if (error) throw error
     const items = (data ?? []) as Record<string, unknown>[]
 
     // Enrich per-dòng của TRANG (bounded ≤ pageSize):
@@ -362,7 +362,7 @@ export async function listKhvc(req: Request, res: Response) {
       i.extra_vehicle_models = ((i.extra_vehicle_model_ids as string[] | null) ?? []).map(id => vmById.get(id) ?? { id, sap_code: '', name: id })
     }
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined, gdo_issue_warning: gdoIssueWarning ?? undefined })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // GET /external/khvc/facets — giá trị lọc
@@ -375,7 +375,7 @@ export async function khvcFacets(_req: Request, res: Response) {
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()
     const npps = [...new Set((data ?? []).map(r => r.npp).filter(Boolean))].sort()
     return ok(res, { warehouses, veh_types: vehTypes, sources, npps })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // POST /external/khvc — thêm tay 1 dòng
@@ -454,7 +454,7 @@ export async function createKhvc(req: Request, res: Response) {
       uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now(),
     }
     const { data, error } = await supabase.from('khvc_lines').insert(row).select().single()
-    if (error) throw new Error(error.message)
+    if (error) throw error
     // Dòng mới khai dòng xe con cho xe CHƯA có → áp cho mọi dòng còn sống của xe (1 xe 1 dòng xe)
     if (syncVehicleModelToGroup) {
       await supabase.from('khvc_lines').update({ vehicle_model_id: String(fields.vehicle_model_id), updated_at: now() })
@@ -467,7 +467,7 @@ export async function createKhvc(req: Request, res: Response) {
     }])
     const extra = await replanAfterCrud(req, [String(fields.group_code)])
     return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(awaitingData ? { awaiting_sap: true } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}), ...(vehicleModelForcedTo !== null ? { vehicle_model_forced_to: vehicleModelForcedTo } : {}) }, 201)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // PUT /external/khvc/:id — sửa tay
@@ -577,7 +577,7 @@ export async function updateKhvc(req: Request, res: Response) {
     const { data, error } = await supabase.from('khvc_lines')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
-    if (error) throw new Error(error.message)
+    if (error) throw error
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
     // NGÀY XUẤT là thuộc tính CẤP XE lưu per-dòng (1 xe vật lý chạy 1 ngày; chuyến lấy ngày dòng đầu):
     // đổi ngày 1 dòng → ĐỒNG BỘ mọi dòng còn sống của xe, không thì xe mang 2 ngày + ngày chuyến
@@ -625,7 +625,7 @@ export async function updateKhvc(req: Request, res: Response) {
     }
     const extra = await replanAfterCrud(req, gcs)
     return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatSynced ? { booking_category_synced_lines: bookingCatSynced } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}), ...(vehicleModelSynced ? { vehicle_model_synced_lines: vehicleModelSynced } : {}), ...(vehicleModelForcedTo !== null ? { vehicle_model_forced_to: vehicleModelForcedTo } : {}) })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // DELETE /external/khvc/:id (?check=1 = chỉ kiểm, không xóa)
@@ -641,7 +641,7 @@ export async function deleteKhvc(req: Request, res: Response) {
     if (!deletable.length) return fail(res, blocked[0]?.reason ?? 'Không xóa được dòng này', 409)
     const { data: full } = await supabase.from('khvc_lines').select('do_no').eq('id', req.params.id).maybeSingle()
     const { error } = await supabase.from('khvc_lines').delete().eq('id', req.params.id)
-    if (error) throw new Error(error.message)
+    if (error) throw error
     await logOutboundEvents([{
       group_code: dr.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN', actor: actorOf(req),
       do_number: (full as { do_no?: string } | null)?.do_no ?? null,
@@ -649,7 +649,7 @@ export async function deleteKhvc(req: Request, res: Response) {
     }])
     const extra = await replanAfterCrud(req, [dr.group_code])
     return ok(res, { deleted: 1, blocked, ...extra })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // POST /external/khvc/bulk-date { ids, export_date } — ĐỔI NGÀY XUẤT HÀNG LOẠT (user chốt 02/08:
@@ -682,12 +682,12 @@ export async function bulkDateKhvc(req: Request, res: Response) {
       const { data: upd, error } = await supabase.from('khvc_lines')
         .update({ export_date, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
         .in('group_code', allowed.slice(i, i + 300)).neq('sync_status', 'OBSOLETE').select('id')
-      if (error) throw new Error(error.message)
+      if (error) throw error
       updatedLines += (upd ?? []).length
     }
     const extra = allowed.length ? await replanAfterCrud(req, allowed) : {}
     return ok(res, { updated_groups: allowed.length, updated_lines: updatedLines, blocked, ...extra })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // POST /external/khvc/bulk-delete (?check=1 = chỉ kiểm) — xóa nhiều, guard từng dòng
@@ -713,7 +713,7 @@ export async function bulkDeleteKhvc(req: Request, res: Response) {
     }
     for (let i = 0; i < delIds.length; i += 300) {
       const { error } = await supabase.from('khvc_lines').delete().in('id', delIds.slice(i, i + 300))
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     await logOutboundEvents(deletable.map(d => ({
       group_code: d.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor: actorOf(req),
@@ -722,5 +722,5 @@ export async function bulkDeleteKhvc(req: Request, res: Response) {
     })))
     const extra = await replanAfterCrud(req, [...new Set(deletable.map(d => d.group_code))])
     return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut, ...extra })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }

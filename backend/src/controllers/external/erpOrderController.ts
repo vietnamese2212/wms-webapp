@@ -4,7 +4,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { ok, fail, type PgLikeError } from '../../utils/response'
+import { ok, fail, failAny } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
@@ -214,7 +214,7 @@ export async function listDoSap(req: Request, res: Response) {
       .range((page - 1) * pageSize, page * pageSize - 1)
 
     const { data, count, error } = await query
-    if (error) throw new Error(error.message)
+    if (error) throw error
     const items = (data ?? []) as Record<string, unknown>[]
 
     // Enrich per-dòng của TRANG (bounded ≤ pageSize): (a) đã sinh chuyến chưa (used); (b) lệch đơn vị vs Material;
@@ -275,7 +275,7 @@ export async function listDoSap(req: Request, res: Response) {
       i.mat_units = m ?? null
     }
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // GET /external/do-sap/coverage?plant= — NGÀY TẠO CẦN PHỦ khi đổ ZSD02 (03/10 tối, user: "app biết đơn nào còn pending ⇒ bắt buộc file
@@ -295,7 +295,7 @@ export async function doSapCoverage(req: Request, res: Response) {
     const span = (l: { date: string }[]) => (l.length ? { from: l[0].date, to: l[l.length - 1].date } : null)
     return ok(res, { plant, mode: await getZsd02CoverageMode(), pending_ods: Number(cov.pending_ods) || 0, sap_posted_ods: Number(cov.sap_posted_ods) || 0, no_created_date: Number(cov.no_created_date) || 0,
       by_od_created: byOd, by_so_created: bySo, od_span: span(byOd), so_span: span(bySo), sap_max_od_created: (cov.sap_max_od_created as string | null) ?? null })
-  } catch (e) { return e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // GET /external/do-sap/facets — giá trị lọc (plant, source, ship_to) — gọn, lấy distinct từ trang đầu lớn
@@ -310,7 +310,7 @@ export async function doSapFacets(req: Request, res: Response) {
     const shiptos = [...new Map((data ?? []).filter(r => r.ship_to_code).map(r => [r.ship_to_code, r.ship_to_name])).entries()]
       .map(([code, name]) => ({ code, name })).sort((a, b) => String(a.code).localeCompare(String(b.code)))
     return ok(res, { plants, sources, shiptos, flows })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // POST /external/do-sap — thêm tay 1 dòng
@@ -335,9 +335,9 @@ export async function createDoSap(req: Request, res: Response) {
     if (qErr) return fail(res, qErr, 422)
     const row = { id: randomUUID(), ...fields, source: fields.source ?? 'MANUAL', uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() }
     const { data, error } = await supabase.from('erp_outbound_orders').insert(row).select().single()
-    if (error) throw new Error(error.message)
+    if (error) throw error
     return ok(res, data, 201)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // PUT /external/do-sap/:id — sửa tay
@@ -374,7 +374,7 @@ export async function updateDoSap(req: Request, res: Response) {
     const { data, error } = await supabase.from('erp_outbound_orders')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
-    if (error) throw new Error(error.message)
+    if (error) throw error
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
     // Sửa raw tay → đối chiếu lại các đơn WMS dùng dòng OD này.
     // TRẢ KẾT QUẢ ĐỐI CHIẾU cho FE (10/09): dòng đã quét thì engine KHÔNG tự áp mà đẩy sang hàng chờ
@@ -383,7 +383,7 @@ export async function updateDoSap(req: Request, res: Response) {
     // "n thay đổi cần duyệt ở tab Cần xử lý".
     const rec = await reconcileQuiet([{ od_number: String(data.od_number), od_item: String(data.od_item) }], req.user?.name ?? null)
     return ok(res, { ...(data as Record<string, unknown>), reconcile: rec })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // v2.2 — luật XÓA an toàn: dòng OD ĐÃ DÙNG + ĐÃ QUÉT (od_refs của item có cartons_scanned>0) → CHẶN xóa cứng
@@ -424,10 +424,10 @@ export async function deleteDoSap(req: Request, res: Response) {
     if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
     if (!deletable.length) return fail(res, blocked[0]?.reason ?? 'Không xóa được dòng này', 409)
     const { error } = await supabase.from('erp_outbound_orders').delete().eq('id', req.params.id)
-    if (error) throw new Error(error.message)
+    if (error) throw error
     await reconcileQuiet([{ od_number: dr.od_number, od_item: dr.od_item }], req.user?.name ?? null)
     return ok(res, { deleted: 1, blocked })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }
 
 // POST /external/do-sap/bulk-delete (?check=1 = chỉ kiểm) — xóa nhiều, guard từng dòng
@@ -452,9 +452,9 @@ export async function bulkDeleteDoSap(req: Request, res: Response) {
     const delIds = deletable.map(d => d.id)
     for (let i = 0; i < delIds.length; i += 300) {
       const { error } = await supabase.from('erp_outbound_orders').delete().in('id', delIds.slice(i, i + 300))
-      if (error) throw new Error(error.message)
+      if (error) throw error
     }
     if (deletable.length) await reconcileQuiet(deletable.map(d => ({ od_number: d.od_number, od_item: d.od_item })), req.user?.name ?? null)
     return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return failAny(res, e) }
 }

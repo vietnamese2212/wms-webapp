@@ -210,6 +210,10 @@ export function pgUserError(err: unknown): { status: number; message: string } |
   return PG_MAP[code]
 }
 
+/** `catch (e)` không biết e là gì: đối tượng lỗi (PostgREST / trigger / timeout) thì để fail() dịch mã (409 · 503 · 400),
+ *  còn lại mới là 500. ĐỪNG `fail(res, String(e))` — chuỗi hoá là mất mã: rào DB 23505 "OD_ALREADY_PLANNED: …" thành 500,
+ *  statement timeout thành 500 (error_logs 02–03/10: 11 ca ở /external). */
+export const failAny = (res: Response, e: unknown): Response => (e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e), 500))
 export function fail(res: Response, error: PgLikeError, status?: number): Response
 export function fail(res: Response, message: string, status?: number, code?: string): Response
 export function fail(res: Response, status: number, code: string, message: string): Response

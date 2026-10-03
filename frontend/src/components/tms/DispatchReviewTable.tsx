@@ -390,6 +390,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
               {showStale ? `Đang xem ${nf(staleRows.length)} đơn quá hạn chưa quyết · ẩn` : `${nf(stale.data?.count)} đơn quá ${stale.data?.backlog_days ?? 14} ngày chưa quyết · Xem`}
             </button>
           )}
+          {st === 'GO' && stale.isError && (
+            // 03/10: /stale 503 lúc máy bận — đơn quá hạn không được RỚT IM LẶNG, kể cả khi chưa đếm được
+            <button type="button" onClick={() => void stale.refetch()} disabled={stale.isFetching}
+              className="inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium bg-amber-100 text-amber-900 hover:bg-amber-200 disabled:opacity-60">
+              {stale.isFetching ? 'Đang đếm đơn quá hạn…' : 'Chưa đếm được đơn quá hạn (hệ thống bận) · Thử lại'}
+            </button>
+          )}
           {st === 'DONE' && (
             <button type="button" onClick={() => setShowBacklog(v => !v)} aria-pressed={showBacklog}
               className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] ${showBacklog ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}

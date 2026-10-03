@@ -99,17 +99,20 @@ Mỗi dòng: DO cũ · DO mới (họ) · sự kiện · trạng thái app · ch
 
 Chân bảng Xem đơn: `OD lên xe được trong cửa sổ = Điều + Đang xếp + Đã điều (B+C+D) + Không điều + Ngoài app`. Lệch → đỏ. Đơn quá 14 ngày chưa dấu nào nằm ở băng "quá hạn chưa quyết", không biến mất.
 
-## 9. Thứ tự làm
+## 9. Thứ tự làm — trạng thái 03/10 tối
 
-1. Rào cứng (mục 5) + `od_lineage` + bộ phát hiện E5–E9, E14, E15 + bất biến + ô Giám sát.
-2. Trạng thái theo app (mục 2), tab Đang xếp, cột cờ SAP, dấu Ngoài app + nút hàng loạt, khung chờ tự do, đối chiếu chân bảng, nút Bỏ nháp có chữ, băng nháp quá ngày.
-3. Hàng chờ Cần xử lý theo ma trận cột B/C + chốt chặn Bắt đầu chuyến + công tắc `dispatch_sap_change_mode`.
-4. Workflow gỡ chủ động (mục 7) + nhật ký.
-5. Nhiều nháp cùng ngày theo người.
+1. ✅ Rào cứng (mục 5) + `od_lineage` + bộ phát hiện E4–E9, E14 + bất biến gói 00 (đợt 1). E15 (file lùi) = cổng `COVERAGE_SUSPECT` ở cửa nạp. Ô Giám sát vận hành: chưa (bất biến đã nằm ở gói 00 hằng đêm).
+2. ✅ Trạng thái theo app, tab Đang xếp nơi khác, cờ SAP tham chiếu, dấu Ngoài app, khung chờ tự do, đối chiếu chân bảng, nút Bỏ nháp, băng nháp quá ngày (đợt 1).
+3. ✅ **Hàng chờ Cần xử lý** (RPC `dispatch_decisions`, tab "Cần xử lý" ở Xem đơn) cho cột B/C/D: GONE · REPLACED · KIN · QTY, nút đúng ô (Gỡ khỏi kế hoạch · Đổi số DO · Ngoài app · Xác nhận đơn bổ sung · link Cần xử lý của kho); chốt chặn Bắt đầu chuyến = `sapIssueError` (đợt 1). **Công tắc `dispatch_sap_change_mode` KHÔNG làm** — user chốt "không tự ép gì", mọi ô là người bấm (= MANUAL vĩnh viễn; AUTO chỉ làm khi có yêu cầu).
+4. ✅ Gỡ chủ động bậc B có lý do + nhật ký (`POST /tms/dispatch/khvc/remove`, nút "Gỡ khỏi KH xuất" ở tab Đã điều kèm tiến độ kho). Bậc "đã đặt lịch / đăng ký cổng": replan hiện có nhả khung giờ khi chuyến ngừng; chưa có bước "báo ĐVVT".
+5. ✖ **Nhiều nháp cùng ngày theo người — KHÔNG làm** (quyết 03/10 sau khi đo: 30 ngày không có hai người cùng lập một ngày; nhiều nháp làm "OD mới tự vào Điều" và đối chiếu chân bảng mất nghĩa). Thay bằng lưới `PLAN_RECENTLY_EDITED` khi "Lập lại" đè nháp người khác vừa sửa.
 
-## 10. Điểm chờ user chốt
+**Còn mở sau đợt 2:** E10 đổi ngày giao · E11 đổi khách trên đơn đã vào KH xuất (dòng KH xuất không chụp ngày giao / ship-to SAP nên chưa so được — cần thêm bản chụp hoặc so với `delivery_date` của GDO) · E2/E3 ở cột B hiện vẫn TỰ ÁP ở mức dòng hàng qua `reconcileFromSap` (Z1/Z2) như trước 03/10 — chỉ ghi `reconcile_tasks` RESOLVED, không hiện ở hàng chờ · ô Giám sát vận hành cho bất biến trùng ngày.
 
-- Mặc định công tắc kho: `MANUAL` (mọi thay đổi SAP ở cột B phải bấm) hay `AUTO` (giảm/xoá/thay 1→1 tự áp như EWM)?
-- E6 ở cột A: các phần cùng ngày **tự lên cùng xe**, hay về khung chờ để người kéo?
-- Cột D: cho "Xác nhận đơn bổ sung" để điều tiếp họ hàng của DO đã đi, hay chỉ cho Ngoài app?
-- Tên dấu "Ngoài app".
+## 10. Điểm user đã chốt
+
+- Công tắc kho: **MANUAL** (không có AUTO).
+- E6 ở cột A: các phần cùng ngày về **khung chờ** như OD mới (chip họ) — người kéo; không tự lên xe.
+- Cột D: **cho "Xác nhận đơn bổ sung"** (chốt (b) 03/10) — và Ngoài app khi hàng đã đi dưới số cũ.
+- Tên dấu: **"Ngoài app"**.
+- Chuyến đã bắt đầu mà DO bị SAP bỏ / thay: **huỷ rồi điều lại** (chốt (c) 03/10), không có "giữ và chạy tiếp".

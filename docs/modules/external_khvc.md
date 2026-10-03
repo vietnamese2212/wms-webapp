@@ -22,6 +22,8 @@
 
 _Không có dòng riêng trong bảng cũ — luật của Kế hoạch xuất nằm ở [`outbound`](outbound.md) (XUẤT = KẾT QUẢ DẪN XUẤT, KẾ HOẠCH ĐI TRƯỚC SAP), [`dispatch`](dispatch.md) (Xác nhận ghi khvc_lines) và [`tms_plan`](tms_plan.md) (lệnh VC tự sinh)._
 
+**03/10 tối — hai cửa ghi `khvc_lines` MỚI từ bàn Điều vận** (đợt 2 vòng đời OD, chi tiết ở [`dispatch`](dispatch.md)): `POST /tms/dispatch/khvc/remove` (gỡ một DO khỏi một Số xe, lý do + nhật ký) và `POST /tms/dispatch/khvc/renumber` (đổi `do_no` sang DO SAP thay thế, tách 1→N thêm dòng cùng Số xe). Cả hai đi qua **cùng gác `classifyKhvcDelete`** và **cùng `replanKhvcGroups`** như xoá / sửa ở tab Kế hoạch xuất — luật "hai cửa cùng một sổ phải cùng luật"; quyền `dispatch.confirm` HOẶC `external_khvc.delete/edit`. Rào DB `trg_khvc_one_export_day` vẫn kiểm cả UPDATE `do_no`.
+
 ## Actions
 
 view, create, edit, delete

@@ -40,8 +40,11 @@ export async function getMaterialCategoryRules(): Promise<{ c: string; sl: boole
 
 let _cache: { map: Map<string, WhTypeMeta>; at: number } | null = null
 
-export async function getWhTypeMetaMap(): Promise<Map<string, WhTypeMeta>> {
-  if (_cache && Date.now() - _cache.at < 30_000) return _cache.map
+/** `fresh` (03/10): bỏ qua cache 30 s của instance này — cache sống theo TỪNG lambda nên lambda khác vừa sửa meta thì ở đây vẫn
+ *  bản cũ tới 30 s: gói 61 [7e]/[7g] đỏ ngẫu nhiên (lập kế hoạch không mang ĐK bảo quản vừa khai; xoá ĐK "đang được Loại kho dùng"
+ *  mà cửa gác cho qua). Cửa GÁC và lúc LẬP kế hoạch (không phải đường nóng) đọc tươi; đường nóng (hiển thị) giữ cache. */
+export async function getWhTypeMetaMap(fresh = false): Promise<Map<string, WhTypeMeta>> {
+  if (!fresh && _cache && Date.now() - _cache.at < 30_000) return _cache.map
   const { data } = await supabase.from('LookupValue').select('value, meta').eq('type', 'warehouse_type')
   const map = new Map<string, WhTypeMeta>()
   for (const row of (data ?? []) as { value: string; meta?: WhTypeMeta | null }[]) {
@@ -57,9 +60,9 @@ export function invalidateWhTypeMetaCache() { _cache = null; _whCache.clear() }
  * Loại kho → ĐIỀU KIỆN BẢO QUẢN (24/09). Chỉ trả những loại ĐÃ KHAI; loại chưa khai vắng mặt trong map
  * ⇒ nơi gọi hiểu là "không ràng buộc", đúng mặc định = hành vi trước khi có tính năng này.
  */
-export async function getStorageConditionByCategory(): Promise<Map<string, string>> {
+export async function getStorageConditionByCategory(fresh = false): Promise<Map<string, string>> {
   const out = new Map<string, string>()
-  for (const [cat, meta] of (await getWhTypeMetaMap()).entries()) {
+  for (const [cat, meta] of (await getWhTypeMetaMap(fresh)).entries()) {
     const c = typeof meta.storage_condition === 'string' ? meta.storage_condition.trim() : ''
     if (c) out.set(cat, c)
   }
@@ -68,9 +71,9 @@ export async function getStorageConditionByCategory(): Promise<Map<string, strin
 
 /** Cấu hình Loại kho cho engine điều vận: ĐK bảo quản theo loại + các loại "đi kèm đơn" + danh sách mọi loại. */
 export async function getDispatchCategoryConfig(): Promise<{ condByCat: Map<string, string>; follow: string[]; all: string[] }> {
-  const map = await getWhTypeMetaMap()
+  const map = await getWhTypeMetaMap(true)   // lập / ghép kế hoạch đọc TƯƠI — một kế hoạch tính theo ĐK bảo quản cũ 30 s là xe lạnh/nóng xếp sai
   return {
-    condByCat: await getStorageConditionByCategory(),
+    condByCat: await getStorageConditionByCategory(true),
     follow: [...map.entries()].filter(([, m]) => m.dispatch_follow === true).map(([c]) => c).sort(),
     all: [...map.keys()].sort(),
   }

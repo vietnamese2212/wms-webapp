@@ -234,7 +234,8 @@ export async function sapIssueError(gdoId: string, action: string): Promise<stri
   if (hit && Date.now() - hit.at < 30_000) return hit.msg
   const [{ data: dvs }, { data: tasks }] = await Promise.all([
     supabase.from('OutboundDelivery').select('delivery_code').eq('gdo_id', gdoId),
-    supabase.from('reconcile_tasks').select('od_number, detail').eq('gdo_id', gdoId).eq('status', 'OPEN').limit(20),
+    // chỉ việc do SAP ĐỔI ĐƠN (số lượng / dòng hàng); KHVC_CHANGED là người sửa Kế hoạch xuất khi chuyến đang xuất — không phải sai lệch đơn hàng, không chặn kho (gói 12 bắt 03/10)
+    supabase.from('reconcile_tasks').select('od_number, detail').eq('gdo_id', gdoId).eq('status', 'OPEN').neq('change_type', 'KHVC_CHANGED').limit(20),
   ])
   const dos = [...new Set(((dvs ?? []) as { delivery_code: string | null }[]).flatMap(d => String(d.delivery_code ?? '').split(/,\s*/)).map(s => s.trim()).filter(Boolean))]
   const issues: string[] = []

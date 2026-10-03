@@ -343,7 +343,7 @@ export async function deleteLookup(req: Request, res: Response) {
   // buộc nhiệt, xe khai phục vụ một mã không còn trong danh mục (đúng lớp lỗi "tên ma" của Loại kho).
   if (lk.type === 'storage_condition' && lk.value) {
     const v = lk.value as string
-    const cats = [...(await getStorageConditionByCategory()).entries()].filter(([, c]) => c === v).map(([cat]) => cat)
+    const cats = [...(await getStorageConditionByCategory(true)).entries()].filter(([, c]) => c === v).map(([cat]) => cat)   // cửa GÁC đọc tươi, không tin cache 30 s của instance
     const [{ count: veh }, { count: locs }] = await Promise.all([
       supabase.from('vehicle_model').select('id', { count: 'exact', head: true }).contains('storage_conditions', [v]),
       supabase.from('Location').select('id', { count: 'exact', head: true }).eq('storage_condition', v),   // 26/09: ô khai riêng ĐK

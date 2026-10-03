@@ -40,7 +40,7 @@ import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan,
   useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
-  type DispatchPlan, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow,
+  type DispatchPlan, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow, type DispatchSegment, SEGMENT_VI,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -106,8 +106,14 @@ export default function Dispatch() {
   // 1 kho trong phạm vi → tự chọn
   useEffect(() => { if (!f.warehouseId && whs.length === 1) setF({ warehouseId: whs[0].id }) }, [whs, f.warehouseId, setF])
 
+  // MẢNG (03/10 tối, user: "một kế hoạch tổng, mỗi người lo một mảng — Trung chuyển và Bán hàng, lên kế hoạch riêng cho hai mảng"):
+  // cùng kho × ngày có hai kế hoạch; bàn làm việc theo mảng đang chọn (nhớ theo người), Xem đơn có tab Trung chuyển | Bán hàng
+  const seg: DispatchSegment = f.segment === 'TRANSFER' ? 'TRANSFER' : 'SALES'
+  const otherSeg: DispatchSegment = seg === 'TRANSFER' ? 'SALES' : 'TRANSFER'
   const plans = useDispatchPlans({ warehouse_id: f.warehouseId || undefined, date_from: day, date_to: day }, !!f.warehouseId)
-  const planList = plans.data?.items ?? []
+  const planListAll = plans.data?.items ?? []
+  const planList = planListAll.filter(p => (p.segment ?? 'SALES') === seg)
+  const otherPlan = planListAll.filter(p => (p.segment ?? 'SALES') === otherSeg).find(p => p.status === 'DRAFT') ?? planListAll.find(p => (p.segment ?? 'SALES') === otherSeg && p.status !== 'DISCARDED') ?? null
   // NHÁP QUÁ NGÀY chưa xác nhận (03/10 tối — user: 283 đơn bị nháp 30/09 "giữ" mà không ai biết nháp của ai, cũng không thấy nút xoá):
   // băng cảnh báo trên mọi ngày của kho, kèm Mở / Bỏ nháp. Không tự huỷ.
   const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -120,6 +126,13 @@ export default function Dispatch() {
   }, [f.planId, planList])
   const planQ = useDispatchPlan(planId)
   const plan = planQ.data ?? null
+  // "Không liên quan" của CHÍNH người xem (03/10 tối): bàn ghép xe không thấy các đơn đó ở khung chờ; bảng Xem đơn gom chúng vào tab riêng
+  const hidden = useMemo(() => new Set(plan?.hidden ?? []), [plan?.hidden])
+  const planView = useMemo(() => {
+    if (!plan || !hidden.size) return plan
+    const pool = (plan.pool ?? []).filter(o => !hidden.has(o.od_number))
+    return { ...plan, pool, summary: { ...plan.summary, pool_ods: new Set(pool.map(o => o.od_number)).size } }
+  }, [plan, hidden])
   const isDraft = plan?.status === 'DRAFT'
   const isOpen = plan?.status === 'DRAFT' || plan?.status === 'TENDERED'
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
@@ -182,7 +195,7 @@ export default function Dispatch() {
   const runPlanWith = (d: LoadBandDraft) => {
     if (!f.warehouseId) return
     // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; mở bảng Xem đơn ở tab Điều
-    const body = { warehouse_id: f.warehouseId, plan_date: day, load_bands: d.bands, load_bypass: d.bypass }
+    const body = { warehouse_id: f.warehouseId, plan_date: day, segment: seg, load_bands: d.bands, load_bypass: d.bypass }
     const done = (p: DispatchPlan) => {
       setBandDlg(false)
       setF({ planId: p.id, tab: 'review', reviewTab: 'GO' })
@@ -403,6 +416,13 @@ export default function Dispatch() {
             {/* min-w: không có thì flex-1 co ô Kho về ~20 px khi hàng còn chỗ cho ô ngày (đo 390 px, 25/09) */}
             <div className="flex-1 min-w-[150px] sm:flex-none sm:w-56"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
             <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[140px] text-xs shrink-0" title="Ngày giao (ngày xe chạy)" />
+            {/* MẢNG (03/10 tối): hai kế hoạch riêng cùng kho × ngày — switch nhỏ, nhớ theo người; ở Xem đơn còn có tab Trung chuyển | Bán hàng */}
+            <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" title="Mảng điều vận — mỗi mảng một kế hoạch riêng cùng kho × ngày. Khách tick 'Trung chuyển' ở Khách hàng thì đơn vào Trung chuyển, còn lại Bán hàng; lấy đơn sang mảng mình ở tab Xem đơn.">
+              {(['SALES', 'TRANSFER'] as const).map(s => (
+                <button key={s} type="button" onClick={() => setF({ segment: s, planId: '' })} aria-pressed={seg === s}
+                  className={`rounded px-2 h-8 sm:h-6 text-[11px] font-medium ${seg === s ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{SEGMENT_VI[s]}</button>
+              ))}
+            </div>
             {/* Điện thoại: ô Kế hoạch CHUNG hàng với nút thao tác (desktop sm:contents → như cũ) */}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
               {planList.length > 1 && (
@@ -490,8 +510,8 @@ export default function Dispatch() {
             {stalePlans.slice(0, 3).map(p => (
               <div key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-amber-900">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                <span>Nháp ngày <b>{formatDate(p.plan_date)}</b>{p.created_by ? ` của ${p.created_by}` : ''} (lập {formatTimestampDate(p.created_at)}) đã quá ngày mà chưa xác nhận — còn {nf(p.summary?.ods ?? 0)} đơn trên xe, {nf(p.summary?.pool_ods ?? 0)} đơn khung chờ.</span>
-                <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planDate: p.plan_date, planId: p.id, tab: 'review', reviewTab: 'GO' })}>Mở nháp</button>
+                <span>Nháp <b>{SEGMENT_VI[p.segment ?? 'SALES']}</b> ngày <b>{formatDate(p.plan_date)}</b>{p.created_by ? ` của ${p.created_by}` : ''} (lập {formatTimestampDate(p.created_at)}) đã quá ngày mà chưa xác nhận — còn {nf(p.summary?.ods ?? 0)} đơn trên xe, {nf(p.summary?.pool_ods ?? 0)} đơn khung chờ.</span>
+                <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planDate: p.plan_date, planId: p.id, segment: p.segment ?? 'SALES', tab: 'review', reviewTab: 'GO' })}>Mở nháp</button>
                 {canPlan && <button type="button" className="font-medium text-red-700 hover:underline" disabled={discard.isPending}
                   onClick={async () => { if (await ask({ title: `Bỏ nháp ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Bỏ nháp', body: 'Đơn trên xe của nháp này được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).' }) === null) return
                     discard.mutateAsync(p.id).then(r => toast({ title: `Đã bỏ nháp ${formatDate(p.plan_date)} — ${r.discarded_trips} xe` })).catch(e => err(e, 'Không bỏ được nháp')) }}>Bỏ nháp</button>}
@@ -562,14 +582,15 @@ export default function Dispatch() {
           ) : !plan ? (
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
               <Waypoints className="h-10 w-10 opacity-30" />
-              <p className="text-sm font-medium text-slate-500">Chưa có kế hoạch cho kho này ngày {formatDate(day)}</p>
+              <p className="text-sm font-medium text-slate-500">Chưa có kế hoạch <b>{SEGMENT_VI[seg]}</b> cho kho này ngày {formatDate(day)}{otherPlan ? ` — mảng ${SEGMENT_VI[otherSeg]} đã có nháp` : ''}</p>
               {canPlan ? <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={runPlan} disabled={create.isPending}><Play className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang ghép…' : 'Lập kế hoạch'}</Button>
                 : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ chạy máy ghép.</p>}
             </div>
           ) : showReview ? (
-            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} canAct={canActKhvc} />
+            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} canAct={canActKhvc}
+              hidden={hidden} otherPlanId={otherPlan?.id ?? null} otherPoolCount={otherPlan?.summary?.pool_ods ?? null} onSwitchSegment={s => setF({ segment: s, planId: '', reviewTab: 'GO' })} />
           ) : tab === 'board' ? (
-            <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
+            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
           ) : tab === 'map' ? (
             <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           ) : (

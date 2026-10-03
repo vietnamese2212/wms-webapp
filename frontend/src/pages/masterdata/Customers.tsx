@@ -372,7 +372,7 @@ export default function Customers() {
     { key: 'bveh', icon: Truck, label: `Dòng xe được vào (${nf(pickCount)})`,
       tip: 'Khai dòng xe các khách này được vào (theo Loại kho) — thay / thêm / bớt, hoặc về theo kênh', onClick: () => setBulk('vehicles') },
     { key: 'bdisp', icon: Truck, label: `Ghép xe (${nf(pickCount)})`,
-      tip: 'Đi xe riêng bật/tắt · số khách tối đa cùng xe — áp cho lần lập kế hoạch điều vận sau', onClick: () => setBulk('dispatch') },
+      tip: 'Mảng Trung chuyển / Bán hàng · đi xe riêng bật/tắt · số khách tối đa cùng xe — áp cho lần lập kế hoạch điều vận sau', onClick: () => setBulk('dispatch') },
     { key: 'boff', icon: Power, label: `Ngừng (${nf(pickCount)})`, danger: true,
       tip: 'Ngừng các khách đang chọn (giữ lịch sử, không còn áp %Date)',
       onClick: () => runBulk({ is_active: false }) },
@@ -658,6 +658,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
   const [vehicles, setVehicles] = useState<Record<string, string[]>>(row?.dispatch_vehicles ?? {})
   // 28/09 (user: "không tự ép gì cả, config hết"): đi xe riêng (mặc định tắt) · số khách tối đa cùng xe (trống = không giới hạn, theo kênh)
   const [sep, setSep] = useState(row?.dispatch_separate === true)
+  const [transfer, setTransfer] = useState(row?.dispatch_transfer === true)   // 03/10 tối: mảng Trung chuyển trên bàn điều vận
   const [maxCust, setMaxCust] = useState(row?.max_customers_per_trip == null ? '' : String(row.max_customers_per_trip))
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
@@ -681,6 +682,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
         warehouse_id: whId || null, is_active: active, note: note.trim() || null,
         dispatch_vehicles: vehicles,
         dispatch_separate: sep, max_customers_per_trip: maxCust.trim() === '' ? null : (Number(maxCust) || null),
+        dispatch_transfer: transfer,
       })
       const id = row?.id ?? saved?.id
       if (id) await saveRules.mutateAsync({ scope: 'CUSTOMER', key: id, rules: toPayload(drafts) })
@@ -756,7 +758,12 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
         {/* GHÉP XE (28/09): trước đây máy TỰ tách khách trỏ kho đi xe riêng — nay là hai ô cấu hình, mặc định không ép gì */}
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Ghép xe (điều vận)</label>
+          {/* 03/10 tối (user: "Bàu Bàng, Đà Nẵng, Ba Vì là trung chuyển, user tự setting trong khách hàng; STO của NPP đi chung NPP") */}
           <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="h-4 w-4 accent-sky-600" />
+            Trung chuyển — đơn của khách này vào mảng <b>Trung chuyển</b> trên bàn điều vận (không tick = Bán hàng)
+          </label>
+          <label className="mt-1.5 flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={sep} onChange={e => setSep(e.target.checked)} className="h-4 w-4 accent-sky-600" />
             Đi xe riêng — không ghép khách khác lên cùng xe
           </label>
@@ -816,9 +823,11 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, models,
   const vBad = (vMode === 'ADD' || vMode === 'REMOVE') && !vIds.length
   // Ghép xe (28/09): mỗi ô "không đổi" là bỏ qua ô đó — chỉ ghi trường người thật sự chọn
   const [dSep, setDSep] = useState<'' | 'ON' | 'OFF'>('')
+  const [dTransfer, setDTransfer] = useState<'' | 'ON' | 'OFF'>('')   // 03/10 tối: mảng Trung chuyển
   const [dMax, setDMax] = useState<'' | 'UNLIMITED' | 'N'>('')
   const [dMaxN, setDMaxN] = useState('2')
   const dPatch: CustomerBulkPatch = {
+    ...(dTransfer ? { dispatch_transfer: dTransfer === 'ON' } : {}),
     ...(dSep ? { dispatch_separate: dSep === 'ON' } : {}),
     ...(dMax === 'UNLIMITED' ? { max_customers_per_trip: null } : dMax === 'N' ? { max_customers_per_trip: Number(dMaxN) || 1 } : {}),
   }
@@ -919,6 +928,15 @@ function BulkDialog({ kind, count, byFilter, channels, warehouses, cats, models,
           )}
           {kind === 'dispatch' && (
             <div className="space-y-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Trung chuyển (mảng trên bàn điều vận)</label>
+                <div className="grid grid-cols-3 gap-1 rounded-md border border-slate-200 p-0.5">
+                  {([['', 'Không đổi'], ['ON', 'Trung chuyển'], ['OFF', 'Bán hàng']] as const).map(([v, lb]) => (
+                    <button key={v} type="button" onClick={() => setDTransfer(v)}
+                      className={`rounded px-2 py-1.5 text-xs ${dTransfer === v ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{lb}</button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Đi xe riêng</label>
                 <div className="grid grid-cols-3 gap-1 rounded-md border border-slate-200 p-0.5">

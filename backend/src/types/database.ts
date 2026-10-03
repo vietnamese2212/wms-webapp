@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-03T09:35:53.364Z · 113 bảng/view · 180 hàm · 0 enum
+// Sinh lúc 2026-10-03T15:27:02.584Z · 115 bảng/view · 180 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -121,6 +121,7 @@ export type Database = {
           geo_address: string | null
           geo_at: string | null
           geo_by: string | null
+          dispatch_transfer: boolean
         }
         Insert: {
           id: string
@@ -156,6 +157,7 @@ export type Database = {
           geo_address?: string | null
           geo_at?: string | null
           geo_by?: string | null
+          dispatch_transfer?: boolean
         }
         Update: {
           id?: string
@@ -191,6 +193,7 @@ export type Database = {
           geo_address?: string | null
           geo_at?: string | null
           geo_by?: string | null
+          dispatch_transfer?: boolean
         }
         Relationships: []
       }
@@ -3305,6 +3308,33 @@ export type Database = {
         }
         Relationships: []
       }
+      dispatch_od_hidden: {
+        Row: {
+          id: string
+          plan_id: string
+          od_number: string
+          user_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          plan_id: string
+          od_number: string
+          user_id: string
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          plan_id?: string
+          od_number?: string
+          user_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       dispatch_od_hold: {
         Row: {
           id: string
@@ -3368,6 +3398,36 @@ export type Database = {
         }
         Relationships: []
       }
+      dispatch_od_segment: {
+        Row: {
+          id: string
+          warehouse_id: string
+          od_number: string
+          segment: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          od_number: string
+          segment: string
+          created_by?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          od_number?: string
+          segment?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       dispatch_plan: {
         Row: {
           id: string
@@ -3385,6 +3445,7 @@ export type Database = {
           updated_at: string
           busy_until: string | null
           busy_token: string | null
+          segment: string
         }
         Insert: {
           id: string
@@ -3402,6 +3463,7 @@ export type Database = {
           updated_at: string
           busy_until?: string | null
           busy_token?: string | null
+          segment?: string
         }
         Update: {
           id?: string
@@ -3419,6 +3481,7 @@ export type Database = {
           updated_at?: string
           busy_until?: string | null
           busy_token?: string | null
+          segment?: string
         }
         Relationships: []
       }
@@ -6145,7 +6208,7 @@ export type Database = {
         Returns: Json
       }
       dispatch_new_ods: {
-        Args: { p_from: unknown; p_day: unknown; p_warehouse_id: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown }
+        Args: { p_from: unknown; p_day: unknown; p_warehouse_id: unknown; p_segment: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown }
         Returns: unknown
       }
       dispatch_stale_ods: {

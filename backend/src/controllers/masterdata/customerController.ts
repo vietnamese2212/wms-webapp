@@ -133,6 +133,8 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
   if (body.note !== undefined) patch.note = String(body.note ?? '').trim().slice(0, 1000) || null
   // 28/09 (user: "không tự ép gì cả, config hết"): đi xe riêng khi điều vận = ô cấu hình, mặc định tắt — KHÔNG còn suy từ "khách trỏ kho"
   if (body.dispatch_separate !== undefined) patch.dispatch_separate = Boolean(body.dispatch_separate)
+  // 03/10 tối (user: "khách setting Trung chuyển tự vào mảng Trung chuyển, còn lại Bán hàng; STO của NPP vẫn đi chung NPP"): ô tick là nguồn DUY NHẤT
+  if (body.dispatch_transfer !== undefined) patch.dispatch_transfer = Boolean(body.dispatch_transfer)
   // 28/09: số khách tối đa cùng xe — 1, 2, 3… hoặc null = không giới hạn (mặc định); kênh có mức riêng, khách khai thì thắng kênh
   if (body.max_customers_per_trip !== undefined) {
     const m = parseMaxCustomers(body.max_customers_per_trip)
@@ -420,7 +422,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
     // 29/09: `load_mode` / `load_mode_by_category` (Pallet / Xá) không còn là cấu hình — không nằm trong danh sách cho phép
-    const allowed = ['channel', 'warehouse_id', 'is_active', 'dispatch_vehicles', 'dispatch_separate', 'max_customers_per_trip']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'dispatch_vehicles', 'dispatch_separate', 'max_customers_per_trip', 'dispatch_transfer']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))

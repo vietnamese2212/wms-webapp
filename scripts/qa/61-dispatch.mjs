@@ -95,6 +95,7 @@ async function cleanupTrips() {
   await restWrite('dispatch_od_outside', 'DELETE', `warehouse_id=eq.${WH}&od_number=like.QA61*`).catch(() => {})
   await restWrite('od_lineage', 'DELETE', `old_od=like.QA61*`).catch(() => {})
   await restWrite('khvc_lines', 'DELETE', `group_code=like.QA61RAIL*`).catch(() => {})
+  await restWrite('dispatch_od_segment', 'DELETE', `warehouse_id=eq.${WH}&od_number=like.QA61*`).catch(() => {})   // [19] dấu lấy sang mảng
 }
 async function cleanup() {
   await cleanupTrips()
@@ -1518,6 +1519,63 @@ try {
       pB2.s === 201 && again.s === 409 && again.j?.error?.code === 'PLAN_RECENTLY_EDITED' && /QA61 Người khác/.test(again.j?.error?.message ?? '') && forced.s === 201,
       `first=${pB2.s} again=${again.s}/${again.j?.error?.code} forced=${forced.s} ${forced.j?.error?.message ?? ''}`)
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODR3}`).catch(() => {})
+
+    // ── [19] MẢNG Trung chuyển / Bán hàng (03/10 tối — user: "một kế hoạch tổng, mỗi người lo một mảng; khách setting Trung chuyển tự vào
+    // Trung chuyển, còn lại Bán hàng; user lấy được DO của bên kia; lên kế hoạch riêng cho hai mảng") + "Không liên quan" theo từng người ──
+    await cleanupTrips()
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'ACTIVE', replaced_by_od: null, updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61OD16*`, { sync_status: 'OBSOLETE', updated_at: nowIso() })   // chỉ còn OD1–3 cho dễ đếm
+    const c3_19 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[2]}`))[0]
+    const tk3_19 = await api(`/masterdata/customers/${c3_19?.id}`, 'PUT', { dispatch_transfer: true })
+    const pS19 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)                                   // Bán hàng (mặc định)
+    const pT19 = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, segment: 'TRANSFER' })      // Trung chuyển — kế hoạch RIÊNG cùng kho × ngày
+    const S = pS19.j?.data, T = pT19.j?.data
+    const SID19 = S?.id ?? '', TID19 = T?.id ?? ''
+    check('19a. Khách tick "Trung chuyển" → kế hoạch Bán hàng có OD1, OD2, KHÔNG có OD3 · kế hoạch Trung chuyển (riêng, cùng kho × ngày, cùng mở) chỉ có OD3 · cột segment ghi đúng',
+      tk3_19.s === 200 && pS19.s === 201 && pT19.s === 201 && S?.segment === 'SALES' && T?.segment === 'TRANSFER' && !!rowOf(S, OD[0]) && !!rowOf(S, OD[1]) && !rowOf(S, OD[2]) && !!rowOf(T, OD[2]) && !rowOf(T, OD[0]) && !rowOf(T, OD[1]),
+      `tick=${tk3_19.s} S=${pS19.s}/${S?.segment} ${pS19.j?.error?.message ?? ''} T=${pT19.s}/${T?.segment} ${pT19.j?.error?.message ?? ''} S:[${[0, 1, 2].map(i => !!rowOf(S, OD[i])).join(',')}] T:[${[0, 1, 2].map(i => !!rowOf(T, OD[i])).join(',')}]`)
+    // 19b — sync Bán hàng không coi OD3 là "OD mới" · lấy OD1 sang Trung chuyển (dấu kho × OD) · nạp OD mới bên Bán hàng không kéo OD1 về
+    const sy19 = await api(`/tms/dispatch/plans/${SID19}/sync`)
+    const take1 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[0]], segment: 'TRANSFER', plan_id: TID19 })
+    const S19b = await planOf(SID19), T19b = await planOf(TID19)
+    const segRow = (await restAll('dispatch_od_segment', `select=segment,created_by&warehouse_id=eq.${WH}&od_number=eq.${OD[0]}`))[0]
+    const rf19 = await api(`/tms/dispatch/plans/${SID19}/refresh-pool`, 'POST', {})
+    const syT = await api(`/tms/dispatch/plans/${TID19}/sync`)
+    check('19b. /sync Bán hàng không đếm OD3 là OD mới · "Lấy sang Trung chuyển" OD1 → rời khung chờ Bán hàng, vào khung chờ Trung chuyển, dấu (kho, OD)=TRANSFER có người · nạp OD mới bên Bán hàng KHÔNG kéo OD1 về · /sync Trung chuyển không báo OD1/OD2 mới',
+      sy19.s === 200 && !(sy19.j?.data?.new_od_numbers ?? []).includes(OD[2]) && take1.s === 200 && take1.j?.data?.added_to_plan === 1 && !rowOf(S19b, OD[0]) && !!rowOf(T19b, OD[0])
+      && segRow?.segment === 'TRANSFER' && !!segRow?.created_by && rf19.s === 200 && !rowOf(rf19.j?.data, OD[0]) && syT.s === 200 && Number(syT.j?.data?.new_ods) === 0,
+      `syncS=${sy19.s} new=${JSON.stringify(sy19.j?.data?.new_od_numbers)} take=${take1.s} ${take1.j?.error?.message ?? ''} added=${take1.j?.data?.added_to_plan} inS=${!!rowOf(S19b, OD[0])} inT=${!!rowOf(T19b, OD[0])} seg=${JSON.stringify(segRow ?? null)} refresh=${rf19.s} back=${!!rowOf(rf19.j?.data, OD[0])} syncT=${syT.s}/${syT.j?.data?.new_ods}`)
+    // 19c — "Không liên quan" theo NGƯỜI trên kế hoạch Bán hàng: GET kế hoạch trả `hidden` của chính người xem; bỏ dấu → hết
+    const hd19 = await api(`/tms/dispatch/plans/${SID19}/hide`, 'POST', { od_numbers: [OD[1]] })
+    const gS19 = await api(`/tms/dispatch/plans/${SID19}`)
+    const hdRow19 = (await restAll('dispatch_od_hidden', `select=user_id&plan_id=eq.${SID19}&od_number=eq.${OD[1]}`))[0]
+    const unhd19 = await api(`/tms/dispatch/plans/${SID19}/unhide`, 'POST', { od_numbers: [OD[1]] })
+    const gS19b = await api(`/tms/dispatch/plans/${SID19}`)
+    check('19c. "Không liên quan" theo người: đánh dấu → GET kế hoạch trả hidden=[OD2] cho chính người đó (dòng có user_id), OD2 VẪN ở khung chờ kế hoạch (người khác thấy) · bỏ dấu → hidden rỗng',
+      hd19.s === 200 && (hd19.j?.data?.hidden ?? []).includes(OD[1]) && (gS19.j?.data?.hidden ?? []).includes(OD[1]) && !!rowOf(gS19.j?.data, OD[1]) && !!hdRow19?.user_id && unhd19.s === 200 && (gS19b.j?.data?.hidden ?? []).length === 0,
+      `hide=${hd19.s} ${hd19.j?.error?.message ?? ''} hidden=${JSON.stringify(gS19.j?.data?.hidden)} inPool=${!!rowOf(gS19.j?.data, OD[1])} user=${hdRow19?.user_id ? 'có' : 'KHÔNG'} unhide=${unhd19.s} after=${JSON.stringify(gS19b.j?.data?.hidden)}`)
+    // 19d — hai mảng ghép xe RIÊNG → Số xe KHÔNG trùng giữa hai kế hoạch cùng kho × ngày (nextSeq đếm cả kế hoạch mảng kia)
+    const gpS19 = await api(`/tms/dispatch/plans/${SID19}/reoptimize`, 'POST', { review_all: true })
+    const gpT19 = await api(`/tms/dispatch/plans/${TID19}/reoptimize`, 'POST', { review_all: true })
+    const gcS19 = (gpS19.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => t.group_code), gcT19 = (gpT19.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => t.group_code)
+    const dup19 = gcS19.filter(g => gcT19.includes(g))
+    // lấy OD2 đang trên XE NHÁP bên Bán hàng sang Trung chuyển → xe bên đó rỗng tự bỏ, OD2 vào khung chờ Trung chuyển
+    const take2 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[1]], segment: 'TRANSFER', plan_id: TID19 })
+    const S19c = await planOf(SID19), T19c = await planOf(TID19)
+    check('19d. Hai mảng ghép riêng → Số xe không trùng giữa hai kế hoạch cùng kho × ngày · lấy OD2 đang trên xe NHÁP Bán hàng sang Trung chuyển → xe rỗng bên Bán hàng tự bỏ, OD2 vào khung chờ Trung chuyển, vết taken_away',
+      gpS19.s === 200 && gpT19.s === 200 && gcS19.length >= 1 && gcT19.length >= 1 && dup19.length === 0 && take2.s === 200 && (take2.j?.data?.moved_from ?? [])[0]?.rows === 1 && (take2.j?.data?.moved_from ?? [])[0]?.trips_removed === 1
+      && !(S19c?.trips ?? []).some(t => t.ods?.some(o => o.od_number === OD[1])) && !!rowOf(T19c, OD[1]) && !rowOf(T19c, OD[1])?.trip_id && (S19c?.params?.taken_away ?? []).some(x => x.od_number === OD[1]),
+      `gS19=${gpS19.s} ${gcS19.join(',')} gT=${gpT19.s} ${gcT19.join(',')} dup19=${dup19.join(',')} take2=${take2.s} ${take2.j?.error?.message ?? ''} moved=${JSON.stringify(take2.j?.data?.moved_from)} inT=${!!rowOf(T19c, OD[1])} away=${(S19c?.params?.taken_away ?? []).length}`)
+    // 19e — xe đã CHỐT bên kia thì không lấy đơn được (409) — Trung chuyển ghép lại + xác nhận (3 OD), rồi Bán hàng đòi OD3
+    const gpT19b = await api(`/tms/dispatch/plans/${TID19}/reoptimize`, 'POST', { review_all: true })
+    const cfT19 = await api(`/tms/dispatch/plans/${TID19}/confirm`, 'POST', {})
+    const kh19 = await restAll('khvc_lines', `select=do_no,group_code&group_code=like.${PREFIX}*`)
+    const take3 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[2]], segment: 'SALES' })
+    check('19e. Trung chuyển ghép lại + xác nhận → 3 OD vào Kế hoạch xuất · lấy đơn đang ở kế hoạch ĐÃ CHỐT (không còn mở) → chỉ ghi dấu, không đụng Kế hoạch xuất (200, moved_from rỗng)',
+      gpT19b.s === 200 && cfT19.s === 200 && [0, 1, 2].every(i => kh19.some(k => k.do_no === OD[i])) && take3.s === 200 && (take3.j?.data?.moved_from ?? []).length === 0 && kh19.some(k => k.do_no === OD[2]),
+      `gT2=${gpT19b.s} cf=${cfT19.s} ${cfT19.j?.error?.message ?? ''} kh=${kh19.map(k => k.do_no).join(',')} take3=${take3.s} moved=${JSON.stringify(take3.j?.data?.moved_from)}`)
+    await restWrite('Customer', 'PATCH', `id=eq.${c3_19?.id}`, { dispatch_transfer: false }).catch(() => {})
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61OD16*`, { sync_status: 'ACTIVE', updated_at: nowIso() })
     await cleanupTrips()
     // trả OD1–3 về OBSOLETE như [16] đã đặt — không thì [16d] ghép 4+3+3 của OD1–3 lẫn 4+3+3 của OD16A–C thành 9+6+5
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })

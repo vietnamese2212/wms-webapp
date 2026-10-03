@@ -88,9 +88,15 @@ function whAllowed(req: Request, whId: string): boolean {
 // phải dung sai). Tối đa 50 cha. `load_bypass` = bỏ qua dải (min 0 / max 100 cho mọi xe).
 const zLoadBand = z.object({ min: z.number().min(0).max(100), max: z.number().min(50).max(130) }).refine(b => b.min <= b.max, 'Tối thiểu phải ≤ tối đa')
 export const zLoadBands = z.record(z.string().min(1).max(64), zLoadBand).refine(o => Object.keys(o).length <= 50, 'Tối đa 50 dòng xe cha')
+// MẢNG điều vận (03/10 tối, user: "một kế hoạch tổng, mỗi người lo một mảng — Trung chuyển và Bán hàng; lên kế hoạch riêng cho hai mảng"):
+// mỗi kho × ngày có MỘT nháp mở cho MỖI mảng. Mảng của đơn = dấu "lấy sang" (kho, OD) → ô tick Trung chuyển của khách → Bán hàng.
+export type Segment = 'TRANSFER' | 'SALES'
+export const zSegment = z.enum(['TRANSFER', 'SALES'])
+const SEGMENT_VI: Record<Segment, string> = { TRANSFER: 'Trung chuyển', SALES: 'Bán hàng' }
 export const zPlanBody = z.object({
   warehouse_id: zId,
   plan_date: zDay,
+  segment: zSegment.optional(),              // thiếu = Bán hàng (kế hoạch cũ)
   allow_mix_channels: zBool.optional(),
   allow_mix_categories: zBool.optional(),   // đè "cho ghép nhiều Loại kho" của kho cho lượt lập này
   underload_pct: z.number().min(1).max(100).nullable().optional(),
@@ -222,6 +228,20 @@ async function loadShareActual(whId: string, day: string, carriers: EngineCarrie
 type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null; note_delivery: string | null }
 type MatRow = LoadMat & { material_code: string; category: string | null }
 type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; dispatch_vehicles: Record<string, unknown> | null; dispatch_separate: boolean | null; max_customers_per_trip: number | null }
+/** Mảng của từng OD (03/10 tối): dấu "lấy sang" của kho thắng ô tick "Trung chuyển" của khách; không có gì = Bán hàng. */
+async function segmentOfOds(whId: string, rows: { od_number: string; ship_to_code: string | null }[]): Promise<Map<string, Segment>> {
+  const ods = uniq(rows.map(r => r.od_number))
+  const ships = uniq(rows.map(r => r.ship_to_code).filter((x): x is string => !!x))
+  const [ov, custs] = await Promise.all([
+    fetchAllByIdChunks(ods, c => db.from('dispatch_od_segment').select('od_number, segment').eq('warehouse_id', whId).in('od_number', c).order('od_number')) as Promise<{ od_number: string; segment: string }[]>,
+    fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, dispatch_transfer').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; dispatch_transfer: boolean | null }[]>,
+  ])
+  const ovBy = new Map(ov.map(o => [o.od_number, o.segment as Segment]))
+  const transfer = new Set(custs.filter(c => c.dispatch_transfer === true).map(c => c.ship_to_code))
+  const out = new Map<string, Segment>()
+  for (const r of rows) if (!out.has(r.od_number)) out.set(r.od_number, ovBy.get(r.od_number) ?? (r.ship_to_code && transfer.has(r.ship_to_code) ? 'TRANSFER' : 'SALES'))
+  return out
+}
 type CatCfg = Awaited<ReturnType<typeof getDispatchCategoryConfig>>
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (user 26/09: "nếu không khai báo đúng thì FG02 có thể dùng container
  *  mất") — màn Điều vận hiện băng cảnh báo từ đây. Loại "đi kèm đơn" không cần ĐK bảo quản riêng. */
@@ -297,7 +317,7 @@ async function loadHolds(whId: string): Promise<Map<string, { until: string | nu
   return new Map(rows.map(r => [r.od_number, { until: r.hold_until, reason: r.reason }]))
 }
 /** Nạp ứng viên + phân loại lũy tiến. `onlyOds` = chỉ những OD này (tối ưu lại / thay OD), bỏ lọc theo ngày. */
-async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyOds?: string[]; skipPlanId?: string | null; countOnly?: boolean; reportAll?: boolean } = {}): Promise<{ ods: EngineOd[]; meta: Map<string, OdMeta>; excluded: ExcludedOd[]; include: string[]; gaps: ConfigGaps }> {
+async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyOds?: string[]; skipPlanId?: string | null; countOnly?: boolean; reportAll?: boolean; segment?: Segment | null } = {}): Promise<{ ods: EngineOd[]; meta: Map<string, OdMeta>; excluded: ExcludedOd[]; include: string[]; gaps: ConfigGaps }> {
   const { condByCat } = cfg
   const follow = new Set(cfg.follow)
   const [holds, outside] = await Promise.all([loadHolds(wh.id), loadOutside(wh.id)])
@@ -317,7 +337,13 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   }
   const mine0 = inSlocs(rows, slocsOf(wh))
   // OD TỒN ĐỌNG chỉ gộp khi LÊN XE được — hàng trả về / chiết khấu của ngày trước không phải việc của hôm nay
-  const mine = linesOfDay(mine0, day)
+  let mine = linesOfDay(mine0, day)
+  // MẢNG (03/10 tối): kế hoạch của một mảng chỉ thấy đơn của mảng đó — đơn mảng kia không vào pool cũng không vào "bị bỏ ra"
+  // (nó đứng ở tab của mảng kia). Cửa `onlyOds` (tối ưu lại / thay OD) không lọc: dòng đã ở trên kế hoạch thì giữ.
+  if (opts.segment && !opts.onlyOds) {
+    const segBy = await segmentOfOds(wh.id, mine)
+    mine = mine.filter(r => segBy.get(r.od_number) === opts.segment)
+  }
   const odNos = uniq(mine.map(r => r.od_number))
   const [khvc, drafts, olds] = await Promise.all([
     fetchAllByIdChunks(odNos, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<{ do_no: string; group_code: string }[]>,
@@ -475,11 +501,15 @@ async function loadConditionLabels(): Promise<Record<string, string>> {
   return out
 }
 
-/** STT bắt đầu = max STT đã có trong Kế hoạch xuất của kho×ngày + 1 (Số xe không được trùng xe thật). */
+/** STT kế tiếp = max STT đã có trong Kế hoạch xuất của kho×ngày VÀ trên xe nháp của MỌI kế hoạch còn sống cùng kho×ngày + 1
+ *  (03/10 tối: hai mảng Trung chuyển / Bán hàng là hai kế hoạch cùng tiền tố Số xe — đếm riêng từng kế hoạch là trùng Số xe khi xác nhận). */
 async function nextSeq(prefix: string): Promise<number> {
-  const rows = (await fetchAllRowsParallel(() => db.from('khvc_lines').select('group_code').like('group_code', `${prefix}%`).order('group_code'))) as { group_code: string }[]
+  const [kh, tr] = await Promise.all([
+    fetchAllRowsParallel(() => db.from('khvc_lines').select('group_code').like('group_code', `${prefix}%`).order('group_code')) as Promise<{ group_code: string }[]>,
+    fetchAllRowsParallel(() => db.from('dispatch_trip').select('group_code').like('group_code', `${prefix}%`).neq('status', 'DISCARDED').order('group_code')) as Promise<{ group_code: string }[]>,
+  ])
   let max = 0
-  for (const r of rows) { const n = Number(r.group_code.slice(prefix.length)); if (Number.isFinite(n) && n > max) max = n }
+  for (const r of [...kh, ...tr]) { const n = Number(r.group_code.slice(prefix.length)); if (Number.isFinite(n) && n > max) max = n }
   return max + 1
 }
 
@@ -633,13 +663,14 @@ export async function createPlan(req: Request, res: Response) {
     const wh = await loadWarehouse(b.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     if (!wh.sap_plant) return fail(res, 422, 'PLANT_REQUIRED', `Kho ${wh.name} chưa khai "Plant SAP" (Cài đặt WMS → Kho) — không xác định được pool OD ZSD02 của kho.`)
+    const seg: Segment = b.segment ?? 'SALES'
     // kế hoạch đang CHỜ ĐVVT phản hồi: OD của các xe chờ chưa nằm trong Kế hoạch xuất nên lập lại sẽ xếp trùng — xử lý xong (nhận / từ chối / bỏ xe chờ) rồi mới lập lại
-    const { data: open } = await db.from('dispatch_plan').select('id, status').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('status', 'TENDERED').maybeSingle()
-    if (open) return fail(res, 409, 'PLAN_TENDERED_EXISTS', 'Kho × ngày này đang có kế hoạch chờ ĐVVT phản hồi — ghi phản hồi (nhận / từ chối) hoặc bỏ các xe chờ trước khi lập lại.')
+    const { data: open } = await db.from('dispatch_plan').select('id, status').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).eq('status', 'TENDERED').maybeSingle()
+    if (open) return fail(res, 409, 'PLAN_TENDERED_EXISTS', `Kho × ngày này (mảng ${SEGMENT_VI[seg]}) đang có kế hoạch chờ ĐVVT phản hồi — ghi phản hồi (nhận / từ chối) hoặc bỏ các xe chờ trước khi lập lại.`)
 
     const [catCfg, condition_labels] = await Promise.all([getDispatchCategoryConfig(), loadConditionLabels()])
-    // kế hoạch nháp CŨ của chính kho×ngày này sắp bị thay ⇒ OD của nó không tính là "đang nằm nháp khác"
-    const { data: oldDrafts } = await db.from('dispatch_plan').select('id, created_by, updated_at').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('status', 'DRAFT')
+    // kế hoạch nháp CŨ của chính kho×ngày×mảng này sắp bị thay ⇒ OD của nó không tính là "đang nằm nháp khác"
+    const { data: oldDrafts } = await db.from('dispatch_plan').select('id, created_by, updated_at').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).eq('status', 'DRAFT')
     // MỘT nháp mỗi kho×ngày (chốt 03/10 sau khi đo: 9 người có quyền lập ở Ba Vì nhưng 30 ngày không có hai người cùng lập một ngày) —
     // lưới rẻ nhất cho ca nhiều điều vận: nháp của NGƯỜI KHÁC vừa cập nhật (≤ 15 phút) thì "Lập lại" phải xác nhận ghi đè (force),
     // không thì phần họ đang kéo thả mất không ai hay. Cùng người hoặc nháp đã yên lâu ⇒ như cũ.
@@ -649,7 +680,7 @@ export async function createPlan(req: Request, res: Response) {
       const hm = new Date(utcMs(busyOther.updated_at)).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' })
       return fail(res, 409, 'PLAN_RECENTLY_EDITED', `Nháp ngày này do ${busyOther.created_by} lập và vừa cập nhật lúc ${hm} — Lập lại sẽ xoá phần họ đang làm (xe đã sửa tay, đơn đã hoãn). Trao đổi với họ trước, hoặc xác nhận ghi đè.`)
     }
-    const { ods, meta, excluded, gaps } = await loadCandidates(wh, b.plan_date, catCfg, { skipPlanId: oldDrafts?.[0]?.id ?? null })
+    const { ods, meta, excluded, gaps } = await loadCandidates(wh, b.plan_date, catCfg, { skipPlanId: oldDrafts?.[0]?.id ?? null, segment: seg })
     const in_plan = excluded.filter(x => x.kind === 'IN_PLAN').map(x => ({ od_number: x.od_number, group_code: x.info ?? '' }))
     const wards = uniq(ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const refs = await loadRefs(wh.id, b.plan_date, wards)
@@ -685,13 +716,13 @@ export async function createPlan(req: Request, res: Response) {
     const unplannedReal = result.unplanned.filter(u => !u.code)   // có `code` = OD ở lại khung chờ (chưa khai xe · chỉ POSM chờ đơn chính)
     const unplannedSet = new Set(unplannedReal.map(u => u.od_number))
 
-    // MỘT bản nháp mỗi kho×ngày: nháp cũ (kể cả người đã sửa) bị thay — người bấm "Lập kế hoạch" là chủ ý chạy lại
-    const { error: delErr } = await db.from('dispatch_plan').delete().eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('status', 'DRAFT')
+    // MỘT bản nháp mỗi kho×ngày×MẢNG: nháp cũ (kể cả người đã sửa) bị thay — người bấm "Lập kế hoạch" là chủ ý chạy lại
+    const { error: delErr } = await db.from('dispatch_plan').delete().eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).eq('status', 'DRAFT')
     if (delErr) throw delErr
     const t = now()
     const planId = randomUUID()
     const { error: pErr } = await db.from('dispatch_plan').insert({
-      id: planId, warehouse_id: wh.id, plan_date: b.plan_date, status: 'DRAFT', engine_version: ENGINE_VERSION,
+      id: planId, warehouse_id: wh.id, plan_date: b.plan_date, segment: seg, status: 'DRAFT', engine_version: ENGINE_VERSION,
       params: asJson({
         ...params, pool_ods: ods.length, in_plan: in_plan.length, share_base: share_actual, share_targets: refs.share_targets, carriers: refs.carriers, wh_code: wh.code,
         backlog_days: BACKLOG_DAYS, late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: { ...gaps, no_drops: dropGaps(ods, refs.models) },
@@ -713,7 +744,7 @@ export async function createPlan(req: Request, res: Response) {
 export async function listPlans(req: Request, res: Response) {
   try {
     const q = req.query as z.infer<typeof zListQuery>
-    let query = db.from('dispatch_plan').select('id, warehouse_id, plan_date, status, summary, engine_version, created_by, confirmed_by, confirmed_at, created_at, updated_at').order('plan_date', { ascending: false }).order('created_at', { ascending: false }).limit(200)
+    let query = db.from('dispatch_plan').select('id, warehouse_id, plan_date, segment, status, summary, engine_version, created_by, confirmed_by, confirmed_at, created_at, updated_at').order('plan_date', { ascending: false }).order('created_at', { ascending: false }).limit(200)
     if (q.warehouse_id) {
       if (!whAllowed(req, q.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
       query = query.eq('warehouse_id', q.warehouse_id)
@@ -830,10 +861,16 @@ export async function getPlan(req: Request, res: Response) {
     const full = await readPlan(String(req.params.id))
     if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const wh = (await db.from('Warehouse').select('id, code, name').eq('id', full.warehouse_id).maybeSingle()).data ?? null
-    return ok(res, { ...full, warehouse: wh })
+    const [wh, hidden] = await Promise.all([
+      db.from('Warehouse').select('id, code, name').eq('id', full.warehouse_id).maybeSingle().then(r => r.data ?? null),
+      // "Không liên quan" của CHÍNH người đang xem (03/10 tối) — người khác không thấy dấu này
+      db.from('dispatch_od_hidden').select('od_number').eq('plan_id', full.id).eq('user_id', userKey(req)).limit(1000).then(r => { if (r.error) throw r.error; return uniq((r.data ?? []).map(x => x.od_number)) }),
+    ])
+    return ok(res, { ...full, warehouse: wh, hidden })
   } catch (e) { return failAny(res, e) }
 }
+/** Khoá người dùng cho dấu theo-người (id tài khoản; không có thì tên). */
+const userKey = (req: Request) => String(req.user?.sub ?? req.user?.name ?? '')
 
 // ── Sửa nháp: tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn (cùng `priceFor` của engine) ────────────
 type TripErr = { err: [string, number, string?] }
@@ -1079,8 +1116,7 @@ export async function moveOd(req: Request, res: Response) {
     } else {
       // tách ra chuyến MỚI: STT kế tiếp trong nháp, kế thừa dòng xe/ĐVVT của chuyến nguồn
       const params = (plan.params ?? {}) as { code_prefix?: string }
-      const { data: maxRow } = await db.from('dispatch_trip').select('seq').eq('plan_id', plan.id).order('seq', { ascending: false }).limit(1).maybeSingle()
-      const seq = Number(maxRow?.seq ?? 0) + 1
+      const seq = await nextSeq(params.code_prefix ?? '')   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
       targetId = randomUUID()
       const { error } = await db.from('dispatch_trip').insert({
         id: targetId, plan_id: plan.id, seq, group_code: `${params.code_prefix ?? ''}${seq}`,
@@ -1240,7 +1276,7 @@ export async function moveOds(req: Request, res: Response) {
       const refs = await loadRefs(plan.warehouse_id, plan.plan_date, wards)
       const sug = suggestVehicle({ ods: [], ...refs, share_actual: {}, params: engineParams(plan) },
         rows.map(o => ({ od: rowAsEngineOd(o), pallets: numOrNull(o.pallets), tons: numOrNull(o.tons), conditions: o.conditions ?? [] })), actualNow(plan, full.trips))
-      const seq = Math.max(0, ...full.trips.map(x => x.seq)) + 1
+      const seq = await nextSeq(engineParams(plan).code_prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
       targetId = randomUUID()
       const { error } = await db.from('dispatch_trip').insert({
         id: targetId, plan_id: plan.id, seq, group_code: `${engineParams(plan).code_prefix}${seq}`,
@@ -1357,7 +1393,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: odNos, skipPlanId: plan.id })
     const wards = uniq(cand.ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const [refs, condition_labels] = await Promise.all([loadRefs(wh.id, plan.plan_date, wards), loadConditionLabels()])
-    const startSeq = Math.max(0, ...full.trips.map(x => x.seq)) + 1
+    const startSeq = await nextSeq(engineParams(plan).code_prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
     const result = runDispatch({ ods: cand.ods, ...refs, share_actual: actualNow(plan, keep), condition_labels, params: { ...engineParams(plan), start_seq: startSeq }, geo: await engineGeo(wh.id, cand.ods) })
     const t = now()
     // OD của xe bị làm lại về khung chờ trước, rồi mới xoá xe — OD máy không xếp được (hoặc đã bị SAP điều/thay) nằm lại khung chờ
@@ -1484,7 +1520,7 @@ export async function planSync(req: Request, res: Response) {
       odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh), full.plan_date),
       wh?.sap_plant
         ? db.rpc('dispatch_new_ods', { p_plant: wh.sap_plant, p_from: shiftDay(full.plan_date, -BACKLOG_DAYS), p_to: full.plan_date, p_day: full.plan_date,
-            p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id } as never).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
+            p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id, p_segment: full.segment } as never).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
         : Promise.resolve([] as string[]),
     ])
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
@@ -1504,7 +1540,7 @@ async function refreshPoolInner(req: Request, res: Response) {
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
-    const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { skipPlanId: plan.id })
+    const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { skipPlanId: plan.id, segment: plan.segment as Segment })
     const fresh = cand.ods.filter(o => !inPlan.has(o.od_number))
     const loadable = fresh.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length)
     const t = now()
@@ -2245,6 +2281,112 @@ async function confirmSupplementInner(req: Request, res: Response) {
 }
 export const confirmSupplement = withPlanLease(confirmSupplementInner)
 
+// ══ MẢNG ĐIỀU VẬN — "lấy đơn của bên kia về mảng mình" (03/10 tối) ══
+// Kho × ngày có hai kế hoạch (Trung chuyển · Bán hàng). Người bên Bán hàng muốn ghép một đơn trung chuyển lên xe NPP thì LẤY đơn đó sang
+// mảng mình: dấu (kho, OD) → mảng mới (thắng ô tick của khách, giữ qua mọi lần nạp / lập lại); đơn rời khung chờ / xe nháp của mảng cũ
+// (xe đã chốt / chờ ĐVVT ⇒ 409, bên kia phải Mở lại trước); có `plan_id` kế hoạch đích đang mở ⇒ đơn vào thẳng khung chờ bên đó.
+export const zSegmentTake = z.object({ warehouse_id: zId, od_numbers: z.array(zText(1, 50)).min(1).max(300), segment: zSegment, plan_id: zId.optional() })
+export async function takeSegment(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zSegmentTake>
+    if (!whAllowed(req, b.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const wh = await loadWarehouse(b.warehouse_id)
+    if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    const ods = uniq(b.od_numbers)
+    const bad = await odsOutsidePlant(wh.id, ods)
+    if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
+    // dòng của các OD này trên mọi kế hoạch ĐANG MỞ của kho thuộc mảng KHÁC
+    const rows = (await fetchAllByIdChunks(ods, c => db.from('dispatch_trip_od').select('id, od_number, plan_id, trip_id').in('od_number', c).order('id'))) as { id: string; od_number: string; plan_id: string; trip_id: string | null }[]
+    const planIds = uniq(rows.map(r => r.plan_id))
+    const plans = planIds.length ? (await fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id, warehouse_id, plan_date, status, segment, params').in('id', c).order('id'))) as PlanRow[] : []
+    const srcPlans = plans.filter(p => p.warehouse_id === wh.id && OPEN_PLAN.includes(p.status) && p.segment !== b.segment)
+    const srcIds = new Set(srcPlans.map(p => p.id))
+    const leaving = rows.filter(r => srcIds.has(r.plan_id))
+    const tripIds = uniq(leaving.map(r => r.trip_id).filter((x): x is string => !!x))
+    const trips = tripIds.length ? (await fetchAllByIdChunks(tripIds, c => db.from('dispatch_trip').select('id, plan_id, group_code, status').in('id', c).order('id'))) as { id: string; plan_id: string; group_code: string; status: string | null }[] : []
+    const locked = trips.find(t => !EDITABLE_TRIP.includes((t.status as TripStatus) ?? 'DRAFT'))
+    if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} bên mảng kia ${TRIP_STATUS_VI[(locked.status as TripStatus) ?? 'DRAFT']} — bên đó phải "Mở lại" xe rồi mới lấy đơn sang được.`)
+    const t = now(), actor = req.user?.name ?? null
+    // 1. dấu mảng (kho, OD)
+    const prev = (await fetchAllByIdChunks(ods, c => db.from('dispatch_od_segment').select('id, od_number').eq('warehouse_id', wh.id).in('od_number', c).order('od_number'))) as { id: string; od_number: string }[]
+    const idOf = new Map(prev.map(p => [p.od_number, p.id]))
+    const { error: sErr } = await db.from('dispatch_od_segment').upsert(ods.map(od => ({ id: idOf.get(od) ?? randomUUID(), warehouse_id: wh.id, od_number: od, segment: b.segment, created_by: actor, updated_at: t })), { onConflict: 'id' })
+    if (sErr) throw sErr
+    // 2. rời kế hoạch mảng cũ (khung chờ + xe nháp); xe rỗng bỏ; tải/cước xe tính lại; vết `params.taken_away`
+    const moved_from: { plan_id: string; plan_date: string; segment: string; rows: number; trips_removed: number }[] = []
+    for (const p of srcPlans) {
+      const mine = leaving.filter(r => r.plan_id === p.id)
+      for (let i = 0; i < mine.length; i += 300) { const { error } = await db.from('dispatch_trip_od').delete().in('id', mine.slice(i, i + 300).map(r => r.id)).eq('plan_id', p.id); if (error) throw error }
+      const touched = uniq(mine.map(r => r.trip_id).filter((x): x is string => !!x))
+      const after = (await readPlan(p.id))!
+      await repriceMany(p, after.trips.filter(x => touched.includes(x.id) && x.ods.length))
+      const emptied = after.trips.filter(x => touched.includes(x.id) && !x.ods.length && EDITABLE_TRIP.includes(statusOf(x))).map(x => x.id)
+      if (emptied.length) { const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', p.id); if (error) throw error }
+      const prevP = (p.params ?? {}) as Record<string, unknown>
+      const taken = [...((prevP.taken_away ?? []) as unknown[]), ...uniq(mine.map(r => r.od_number)).map(od => ({ od_number: od, at: t, by: actor, to_segment: b.segment }))].slice(-500)
+      const params = { ...prevP, taken_away: taken }
+      const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(params), updated_at: t }).eq('id', p.id)
+      if (pErr) throw pErr
+      await writeSummary({ ...p, params: asJson(params) })
+      moved_from.push({ plan_id: p.id, plan_date: p.plan_date, segment: String(p.segment), rows: mine.length, trips_removed: emptied.length })
+    }
+    // 3. vào khung chờ kế hoạch đích (nếu người gửi kế hoạch đang mở của mảng đích, cùng kho)
+    let added = 0
+    if (b.plan_id) {
+      const { data: dest, error } = await db.from('dispatch_plan').select('*').eq('id', b.plan_id).maybeSingle()
+      if (error) throw error
+      if (dest && dest.warehouse_id === wh.id && dest.segment === b.segment && OPEN_PLAN.includes(dest.status)) {
+        const full = (await readPlan(dest.id))!
+        const have = new Set([...full.trips.flatMap(x => x.ods), ...full.pool].map(o => o.od_number))
+        const want = ods.filter(od => !have.has(od))
+        if (want.length) {
+          const cand = await loadCandidates(wh, dest.plan_date, await planCatCfg(dest as PlanRow), { onlyOds: want, skipPlanId: dest.id })
+          const loadable = cand.ods.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length)
+          await insertOdRows(loadable.map(o => odRow(dest.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: actor })))
+          added = loadable.length
+          await writeSummary(dest as PlanRow)
+        }
+      }
+    }
+    return ok(res, { taken: ods.length, segment: b.segment, moved_from, added_to_plan: added })
+  } catch (e) { return failAny(res, e) }
+}
+
+// ══ "KHÔNG LIÊN QUAN" THEO TỪNG NGƯỜI (03/10 tối, user: "user 1 loại DO khỏi kế hoạch cho lần điều đó, chỉ mình user 1 thấy là đã
+// loại, user khác vẫn làm việc bình thường") — dấu (kế hoạch, OD, người): đơn vẫn nằm trong kế hoạch, người đánh dấu không thấy ở
+// Điều / bàn ghép xe và máy ghép của người đó bỏ qua (FE gửi `ids` loại trừ); người khác thấy như thường. Xoá theo kế hoạch.
+export const zHide = z.object({ od_numbers: z.array(zText(1, 50)).min(1).max(300) })
+export async function hideOds(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zHide>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    const ods = uniq(b.od_numbers), uid = userKey(req), t = now()
+    const prev = (await fetchAllByIdChunks(ods, c => db.from('dispatch_od_hidden').select('id, od_number').eq('plan_id', plan.id).eq('user_id', uid).in('od_number', c).order('od_number'))) as { id: string; od_number: string }[]
+    const idOf = new Map(prev.map(p => [p.od_number, p.id]))
+    const { error } = await db.from('dispatch_od_hidden').upsert(ods.map(od => ({ id: idOf.get(od) ?? randomUUID(), plan_id: plan.id, od_number: od, user_id: uid, updated_at: t })), { onConflict: 'id' })
+    if (error) throw error
+    const { data } = await db.from('dispatch_od_hidden').select('od_number').eq('plan_id', plan.id).eq('user_id', uid).limit(1000)
+    return ok(res, { hidden: uniq((data ?? []).map(x => x.od_number)), added: ods.length })
+  } catch (e) { return failAny(res, e) }
+}
+export async function unhideOds(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zHide>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    const ods = uniq(b.od_numbers), uid = userKey(req)
+    for (let i = 0; i < ods.length; i += 300) {
+      const { error } = await db.from('dispatch_od_hidden').delete().eq('plan_id', plan.id).eq('user_id', uid).in('od_number', ods.slice(i, i + 300))
+      if (error) throw error
+    }
+    const { data } = await db.from('dispatch_od_hidden').select('od_number').eq('plan_id', plan.id).eq('user_id', uid).limit(1000)
+    return ok(res, { hidden: uniq((data ?? []).map(x => x.od_number)), removed: ods.length })
+  } catch (e) { return failAny(res, e) }
+}
+
 // ══ HÀNG CHỜ "CẦN XỬ LÝ" CỦA ĐIỀU VẬN — đợt 2 vòng đời OD (03/10; thiết kế docs/plans/DISPATCH_OD_LIFECYCLE_2026-10-03.md mục 6) ══
 // Đợt 1 cắm cờ trên bàn và rào ở DB; chỗ còn thiếu là MỘT danh sách gom mọi việc người điều vận phải quyết sau khi ZSD02 đổi:
 //   GONE / REPLACED — DO đã ở Kế hoạch xuất mà SAP bỏ / thay (cột B chưa bắt đầu: Gỡ khỏi kế hoạch · Đổi số DO; cột C đang xuất: chỉ
@@ -2537,7 +2679,7 @@ export async function getPlanBacklog(req: Request, res: Response) {
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-    const cand = await loadCandidates(wh, plan.plan_date, { condByCat: new Map(), follow: [], all: [] }, { skipPlanId: plan.id, countOnly: true, reportAll: true })
+    const cand = await loadCandidates(wh, plan.plan_date, { condByCat: new Map(), follow: [], all: [] }, { skipPlanId: plan.id, countOnly: true, reportAll: true, segment: plan.segment as Segment })
     const kinds = new Set(['SHIPPED', 'SAP_ASSIGNED', 'IN_PLAN', 'REDO_DISPATCHED'])
     const excluded = cand.excluded.filter(x => kinds.has(x.kind) && x.d?.delivery_date !== plan.plan_date)
       .sort((a, b) => (b.d?.delivery_date ?? '').localeCompare(a.d?.delivery_date ?? '') || (a.d?.ship_to_name ?? '').localeCompare(b.d?.ship_to_name ?? '') || a.od_number.localeCompare(b.od_number))

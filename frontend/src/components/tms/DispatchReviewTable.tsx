@@ -22,7 +22,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useDispatchPlanStale, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
+import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useDispatchPlanStale, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
 import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -33,6 +33,7 @@ import { DispatchOdDetailSheet } from './DispatchOdDetailSheet'
 import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
+const uniq = <T,>(a: T[]) => [...new Set(a)]
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const dmy = (d: string | null | undefined) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '')
@@ -45,7 +46,11 @@ const nextDay = (d: string) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCD
 //   • Băng "quá N ngày chưa quyết": đơn ngoài cửa sổ tồn đọng không rớt im lặng — tải khi bấm, tick được để Không điều / Ngoài app.
 //   • ISSUE "Cần xử lý" (03/10 đợt 2) = hàng chờ quyết định theo KHO: đơn ĐÃ VÀO Kế hoạch xuất mà SAP bỏ / thay, họ hàng đã đi, SL đổi
 //     sau khi kho quét — bảng riêng (DispatchDecisionQueue), không phải dòng OD của kế hoạch này.
-type St = 'GO' | 'ELSEWHERE' | 'DAY' | 'NEVER' | 'OUTSIDE' | 'DONE' | 'ISSUE'
+//   • GO nay là HAI tab theo MẢNG (03/10 tối): "Trung chuyển" | "Bán hàng" — mỗi mảng một kế hoạch riêng cùng kho × ngày; tab của mảng
+//     kia chỉ chuyển kế hoạch đang xem. Tick đơn → "Lấy sang <mảng kia>" (dấu theo kho × OD, đơn rời bên này, vào khung chờ bên kia).
+//   • HIDDEN "Không liên quan" = dấu RIÊNG của người xem trên kế hoạch này: đơn vẫn trong kế hoạch, người khác thấy như thường, máy ghép
+//     của người này bỏ qua (Ghép xe gửi ids loại trừ).
+type St = 'GO' | 'ELSEWHERE' | 'DAY' | 'NEVER' | 'OUTSIDE' | 'DONE' | 'ISSUE' | 'HIDDEN'
 type Tone = 'green' | 'amber' | 'slate' | 'red' | 'blue' | 'purple'
 type Row = {
   key: string; od: string; ids: string[]; held: boolean; selectable: boolean
@@ -72,8 +77,10 @@ function SapAgeChip({ at }: { at: string | null | undefined }) {
   if (days < 1) return null
   return <span className={`ml-1 rounded px-1 text-[9px] font-medium ${days >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`} title={`Dữ liệu SAP của OD này nạp lần cuối ${days} ngày trước — đổ ZSD02 phủ ngày tạo của nó để chắc là mới nhất`}>SAP {days}n</span>
 }
-const TABS: { k: St; label: string; tip: string }[] = [
-  { k: 'GO', label: 'Điều', tip: 'Đơn đi trong đợt ghép này — máy ghép xe CHỈ từ tab này. Đơn mới về ZSD02 mặc định nằm ở đây. Cờ vàng "SAP đã post / đã gắn xe" chỉ là tham chiếu — đúng là đã đi thì tick và bấm "Ngoài app".' },
+const TABS: { k: St; seg?: DispatchSegment; label: string; tip: string }[] = [
+  { k: 'GO', seg: 'TRANSFER', label: 'Trung chuyển', tip: 'Đơn của khách tick "Trung chuyển" (Khách hàng) + đơn người lấy sang — kế hoạch RIÊNG của mảng Trung chuyển. Máy ghép xe của mảng này chỉ lấy từ đây. Cờ vàng "SAP đã post / đã gắn xe" chỉ là tham chiếu.' },
+  { k: 'GO', seg: 'SALES', label: 'Bán hàng', tip: 'Đơn còn lại (NPP, KA, MT… kể cả STO của NPP) — kế hoạch RIÊNG của mảng Bán hàng. Máy ghép xe của mảng này chỉ lấy từ đây. Tick đơn rồi "Lấy sang Trung chuyển" nếu muốn bên kia điều.' },
+  { k: 'HIDDEN', label: 'Không liên quan', tip: 'Đơn BẠN đã loại khỏi lần điều này — chỉ bạn thấy ở đây, người khác vẫn thấy ở Điều và vẫn ghép được. Máy ghép của bạn bỏ qua các đơn này. Tick → "Điều lại" để đưa về.' },
   { k: 'ELSEWHERE', label: 'Đang xếp nơi khác', tip: 'Đơn đang nằm TRÊN XE của một bản nháp khác (ghi rõ nháp ngày nào, ai lập, xe số mấy). Mở nháp đó để xử, hoặc Kéo về đây — bên kia tính lại xe.' },
   { k: 'DAY', label: 'Không điều ngày này', tip: 'Loại khỏi kế hoạch của ngày này — tới ngày điều lại, đơn tự quay về Điều.' },
   { k: 'NEVER', label: 'Không điều', tip: 'Không điều cho ngày này và các ngày sau — tới khi có người chuyển lại Điều.' },
@@ -82,16 +89,22 @@ const TABS: { k: St; label: string; tip: string }[] = [
   { k: 'ISSUE', label: 'Cần xử lý', tip: 'Việc phải quyết cho đơn ĐÃ VÀO Kế hoạch xuất của kho (mọi ngày) sau khi ZSD02 đổi: SAP bỏ / thay DO · họ hàng của DO đã đi · số lượng đổi sau khi kho quét. Dòng tự hết khi xử xong.' },
 ]
 
-export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct = false }: {
+export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct = false, hidden = new Set<string>(), otherPlanId = null, otherPoolCount = null, onSwitchSegment }: {
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onGrouped: () => void
   canAct?: boolean   // dispatch.confirm hoặc external_khvc.delete — gỡ / đổi số DO trên sổ Kế hoạch xuất (03/10 đợt 2)
+  hidden?: Set<string>                 // "Không liên quan" của người xem (03/10 tối)
+  otherPlanId?: string | null          // kế hoạch của MẢNG KIA cùng kho × ngày (đích của "Lấy sang"); null = bên kia chưa lập
+  otherPoolCount?: number | null       // số đơn khung chờ bên kia — in trên tab mảng kia
+  onSwitchSegment?: (s: DispatchSegment) => void
 }) {
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
-  const st: St = (['GO', 'ELSEWHERE', 'DAY', 'NEVER', 'OUTSIDE', 'DONE', 'ISSUE'] as const).find(x => x === f.reviewTab) ?? 'GO'
+  const st: St = (['GO', 'ELSEWHERE', 'DAY', 'NEVER', 'OUTSIDE', 'DONE', 'ISSUE', 'HIDDEN'] as const).find(x => x === f.reviewTab) ?? 'GO'
   const hold = useHoldDispatchOds(), unhold = useUnholdDispatchOds(), reopt = useReoptimizeDispatchPlan()
   const outside = useOutsideDispatchOds(), unoutside = useUnoutsideDispatchOds(), pull = usePullDispatchOd(), sup = useConfirmSupplementDispatchOds()
   const removeKhvc = useRemoveKhvcOd()
+  const take = useTakeDispatchSegment(), hide = useHideDispatchOds()
+  const seg: DispatchSegment = plan.segment ?? 'SALES', otherSeg: DispatchSegment = seg === 'TRANSFER' ? 'SALES' : 'TRANSFER'
   const decisions = useDispatchDecisions(plan.warehouse_id)   // số trên tab "Cần xử lý" — tập nhỏ, poll 120 s
   const [ask, confirmNode] = useConfirmDialog()
   const [sel, setSel] = useState<Set<string>>(new Set())
@@ -104,13 +117,17 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const info = review.data?.ods ?? {}
   const whMeta = useWhTypeMetaMap()
   const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
-  const busy = hold.isPending || unhold.isPending || reopt.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending
+  const busy = hold.isPending || unhold.isPending || reopt.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending || take.isPending || hide.isPending
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
 
   const byTab = useMemo(() => {
-    const out: Record<St, Row[]> = { GO: [], ELSEWHERE: [], DAY: [], NEVER: [], OUTSIDE: [], DONE: [], ISSUE: [] }
+    const out: Record<St, Row[]> = { GO: [], ELSEWHERE: [], DAY: [], NEVER: [], OUTSIDE: [], DONE: [], ISSUE: [], HIDDEN: [] }
     const agg = new Map<string, Row>()
-    const add = (tab: St, key: string, r: Omit<Row, 'key'>) => {
+    const add = (tab0: St, key0: string, r: Omit<Row, 'key'>) => {
+      // "Không liên quan" của người xem (03/10 tối): dòng Điều của OD đã đánh dấu sang tab riêng — người khác vẫn thấy nó ở Điều
+      const hid = tab0 === 'GO' && hidden.has(r.od)
+      const tab: St = hid ? 'HIDDEN' : tab0, key = hid ? `HIDDEN|${r.od}` : key0
+      if (hid) r = { ...r, where: `${r.where} · chỉ bạn thấy là đã loại`, tone: 'slate', selectable: editable }
       const cur = agg.get(key)
       if (cur) {   // OD máy tách nhiều phần: một dòng, gộp số + nơi đang ở
         cur.ids.push(...r.ids); cur.pallets = (cur.pallets ?? 0) + (r.pallets ?? 0); cur.tons = (cur.tons ?? 0) + (r.tons ?? 0)
@@ -176,7 +193,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     const cmp = (a: Row, b: Row) => Number(!a.ids.length && !a.held) - Number(!b.ids.length && !b.held) || a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
     for (const k of Object.keys(out) as St[]) out[k].sort(cmp)
     return out
-  }, [plan, flags, editable])
+  }, [plan, flags, editable, hidden])
 
   // TỒN ĐỌNG ĐÃ ĐI (30/09, user: "170 đơn đi đâu mất, sao không nằm trong Đã điều"): máy loại đúng nhưng không nằm trong kế hoạch
   // (ở kho lớn là hơn 2.000 dòng lịch sử) — tab Đã điều tải theo yêu cầu, hiện kèm ngày giao để người thấy nó đi đâu
@@ -221,8 +238,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
 
   const goOds = byTab.GO.filter(r => r.ids.length)
   const hasTrips = plan.trips.some(t => tripStatus(t) !== 'DISCARDED' && t.ods.length > 0)
-  const poolIds = (plan.pool ?? []).map(o => o.id)
-  const poolOds = new Set((plan.pool ?? []).map(o => o.od_number)).size
+  // khung chờ TRỪ đơn người xem đã "Không liên quan" — máy ghép của người này không đụng chúng
+  const poolVisible = (plan.pool ?? []).filter(o => !hidden.has(o.od_number))
+  const poolIds = poolVisible.map(o => o.id)
+  const poolOds = new Set(poolVisible.map(o => o.od_number)).size
   // số OD cờ SAP post trong các dòng đang chọn — gợi ý lý do Ngoài app
   const selPosted = selRows.filter(r => { const fl = flags.get(r.od); return fl && SOFT_FLAG.has(fl.kind) }).length
 
@@ -302,6 +321,29 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       .catch(e => err(e, 'Không kéo được'))
   }
   const openOther = (r: Row) => { if (r.ref) setF({ planDate: r.ref.plan_date, planId: r.ref.plan_id, tab: 'review', reviewTab: 'GO' }) }
+  // LẤY ĐƠN SANG MẢNG KIA (03/10 tối): dấu theo kho × OD (thắng ô tick của khách, giữ qua mọi lần nạp); đơn rời khung chờ / xe nháp bên này,
+  // vào khung chờ kế hoạch bên kia nếu bên kia đang mở; xe đã chốt bên này ⇒ BE 409 (Mở lại trước)
+  const doTake = async () => {
+    const ods = uniq(selRows.map(r => r.od))
+    if (!ods.length) return
+    if (await ask({ title: `Lấy ${ods.length} đơn sang mảng ${SEGMENT_VI[otherSeg]}?`, confirmLabel: `Lấy sang ${SEGMENT_VI[otherSeg]}`,
+      body: `Đơn rời kế hoạch ${SEGMENT_VI[seg]} này (xe đang chở tính lại tải, xe rỗng tự bỏ) và ${otherPlanId ? `vào khung chờ kế hoạch ${SEGMENT_VI[otherSeg]} của ngày này` : `chờ bên ${SEGMENT_VI[otherSeg]} lập kế hoạch`}. Dấu giữ cho mọi lần nạp ZSD02 / lập lại — muốn trả về thì bên kia lấy lại.` }) === null) return
+    try {
+      const r = await take.mutateAsync({ warehouse_id: plan.warehouse_id, od_numbers: ods, segment: otherSeg, plan_id: otherPlanId ?? undefined })
+      setSel(new Set())
+      toast({ title: `${r.taken} đơn → ${SEGMENT_VI[otherSeg]}`, description: r.added_to_plan ? `Đã vào khung chờ bên ${SEGMENT_VI[otherSeg]}.` : `Bên ${SEGMENT_VI[otherSeg]} chưa lập kế hoạch ngày này — lập là thấy.` })
+    } catch (e) { err(e, 'Không lấy sang được') }
+  }
+  // KHÔNG LIÊN QUAN theo từng người (03/10 tối): dấu riêng, không đổi kế hoạch
+  const doHide = async (undo: boolean) => {
+    const ods = uniq(selRows.map(r => r.od))
+    if (!ods.length) return
+    try {
+      await hide.mutateAsync({ plan_id: plan.id, od_numbers: ods, undo })
+      setSel(new Set())
+      toast({ title: undo ? `${ods.length} đơn → Điều` : `${ods.length} đơn → Không liên quan`, description: undo ? 'Đơn lại nằm trong đợt ghép của bạn.' : 'Chỉ bạn thấy là đã loại — người khác vẫn thấy ở Điều; máy ghép của bạn bỏ qua các đơn này.' })
+    } catch (e) { err(e, 'Không đánh dấu được') }
+  }
   // GỠ CHỦ ĐỘNG bậc "Đã xác nhận" (03/10 đợt 2, thiết kế mục 7): đơn đã vào Kế hoạch xuất mà chuyến CHƯA bắt đầu — gỡ ngay tại tab Đã điều,
   // bắt lý do, ghi nhật ký chuyến; chuyến bên Xuất dựng lại (hết dòng ⇒ ngừng, nhả khung giờ). Đang xuất / đã đi ⇒ BE 409, không có nút.
   const doRemoveKhvc = async (od: string, gc: string) => {
@@ -320,8 +362,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const groupAll = !hasTrips
   const groupN = groupAll ? new Set(goOds.map(r => r.od)).size : poolOds
   const doGroup = () => setBandDlg(true)
+  // có đơn "Không liên quan" của người này ⇒ KHÔNG gửi review_all (máy sẽ ghép cả chúng) mà gửi đúng danh sách dòng khung chờ còn lại
   const doGroupWith = (d: LoadBandDraft) =>
-    reopt.mutateAsync({ id: plan.id, ...(groupAll ? { review_all: true } : { ids: poolIds }), load_bands: d.bands, load_bypass: d.bypass })
+    reopt.mutateAsync({ id: plan.id, ...(groupAll && !hidden.size ? { review_all: true } : { ids: poolIds }), load_bands: d.bands, load_bypass: d.bypass })
       .then(r => { setBandDlg(false); toast({ title: `Đã ghép thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Soát thẻ xe ở Bàn ghép xe, rồi Xác nhận kế hoạch.' }); onGrouped() })
       .catch(e => err(e, 'Không ghép được'))
 
@@ -384,14 +427,19 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         {/* điện thoại: dải switch cuộn ngang riêng một hàng, nút Ghép xe xuống hàng dưới rộng hết màn (nút chính phải THẤY NGAY) */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-1.5">
         <div className="flex items-center gap-1.5 overflow-x-auto sm:flex-wrap min-w-0 [&>*]:shrink-0">
-          {TABS.map(t => (
-            <button key={t.k} type="button" title={t.tip} onClick={() => setTab(t.k)} aria-pressed={st === t.k}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${st === t.k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+          {TABS.map(t => {
+            const other = !!t.seg && t.seg !== seg
+            const active = st === t.k && !other
+            const n = t.k === 'ISSUE' ? nf(decisions.data?.count ?? 0) : other ? (otherPoolCount == null ? '—' : nf(otherPoolCount)) : nf(new Set((t.k === 'GO' ? goOds : byTab[t.k]).map(r => r.od)).size)
+            return (
+            <button key={`${t.k}|${t.seg ?? ''}`} type="button" title={other ? `${t.tip} Bấm để chuyển sang kế hoạch ${t.label} của ngày này.` : t.tip} aria-pressed={active}
+              onClick={() => (other ? onSwitchSegment?.(t.seg!) : setTab(t.k))}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${active ? 'bg-slate-800 text-white' : other ? 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               {t.label}
-              {/* Điều đếm ĐƠN ĐIỀU ĐƯỢC — OD "Không lên xe" (hàng trả về / chiết khấu) vẫn hiện cuối tab nhưng không cộng vào số */}
-              <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${st === t.k ? 'bg-white/25 text-white' : t.k === 'ISSUE' && (decisions.data?.count ?? 0) > 0 ? 'bg-red-600 text-white' : 'bg-white text-slate-500'}`}>{t.k === 'ISSUE' ? nf(decisions.data?.count ?? 0) : nf(new Set((t.k === 'GO' ? goOds : byTab[t.k]).map(r => r.od)).size)}</span>
+              {/* Điều đếm ĐƠN ĐIỀU ĐƯỢC — OD "Không lên xe" (hàng trả về / chiết khấu) vẫn hiện cuối tab nhưng không cộng vào số; tab mảng kia in số khung chờ bên đó */}
+              <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${active ? 'bg-white/25 text-white' : t.k === 'ISSUE' && (decisions.data?.count ?? 0) > 0 ? 'bg-red-600 text-white' : 'bg-white text-slate-500'}`}>{n}</span>
             </button>
-          ))}
+          ) })}
         </div>
           {editable && goOds.length > 0 && (!hasTrips || poolIds.length > 0) && (
             <Button size="sm" className="sm:ml-auto w-full sm:w-auto shrink-0 h-9 sm:h-7 text-[11px]" disabled={busy} onClick={doGroup}>
@@ -514,10 +562,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       </div>
       {/* ĐỐI CHIẾU CHỐNG THIẾU (03/10 tối): mọi đơn ZSD02 trong cửa sổ phải đứng ở đúng MỘT tab — tổng in ra để lệch là thấy */}
       <ListFooter page={1} pageSize={Math.max(1, rows.length)} total={rows.length} unit="đơn" onPageSize={() => { }} options={[]}
-        right={`Đối chiếu: Điều ${nf(new Set(goOds.map(r => r.od)).size)} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${nf(byTab.DAY.length + byTab.NEVER.length)} · Ngoài app ${nf(byTab.OUTSIDE.length)} · Đã điều ${nf(byTab.DONE.length)}${(stale.data?.count ?? 0) > 0 ? ` · Quá hạn chưa quyết ${nf(stale.data?.count)}` : ''}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
+        right={`Đối chiếu (${SEGMENT_VI[seg]}): Điều ${nf(new Set(goOds.map(r => r.od)).size)}${byTab.HIDDEN.length ? ` · Không liên quan (bạn) ${nf(byTab.HIDDEN.length)}` : ''} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${nf(byTab.DAY.length + byTab.NEVER.length)} · Ngoài app ${nf(byTab.OUTSIDE.length)} · Đã điều ${nf(byTab.DONE.length)}${(stale.data?.count ?? 0) > 0 ? ` · Quá hạn chưa quyết ${nf(stale.data?.count)}` : ''}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
 
       <FloatingActionBar count={selRows.length} unit="đơn đã chọn">
         {(st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE') && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doGo}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{unhold.isPending || unoutside.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
+        {st === 'HIDDEN' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doHide(true)}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{hide.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
+        {st === 'GO' && selRows.some(r => r.ids.length) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doHide(false)} title="Loại khỏi lần điều này CHỈ với bạn — người khác vẫn thấy và ghép được; máy ghép của bạn bỏ qua"><Ban className="h-3.5 w-3.5 mr-1" />Không liên quan</Button>}
+        {st === 'GO' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doTake()} title={`Chuyển đơn sang mảng ${SEGMENT_VI[otherSeg]} (dấu theo kho × OD, giữ qua mọi lần nạp ZSD02)`}>{take.isPending ? 'Đang chuyển…' : `Lấy sang ${SEGMENT_VI[otherSeg]}`}</Button>}
         {st === 'GO' && selRows.some(r => r.stale) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doStaleGo}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Điều lại từ {dmy(plan.plan_date)}</Button>}
         {st === 'GO' && selKin.length > 0 && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doSupplement} title="OD cùng dòng SO với OD cũ ĐÃ ĐI — xác nhận đây là giao thêm (không phải giao lại hàng đã đi) thì rào mới cho đi ngày khác; ghi vào phả hệ DO"><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{sup.isPending ? 'Đang ghi…' : `Xác nhận đơn bổ sung (${selKin.length})`}</Button>}
         {st !== 'DAY' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('DAY')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Không điều ngày này</Button>}

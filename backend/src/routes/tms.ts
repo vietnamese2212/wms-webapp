@@ -118,6 +118,10 @@ router.get('/dispatch/plans/:id/stale',       requirePerm('dispatch', 'view'),  
 // + hai cửa gỡ bậc "Đã xác nhận": gỡ DO khỏi Kế hoạch xuất (có lý do, nhật ký) · đổi số DO trên Số xe. Nút ở Điều vận nhưng chạm sổ
 // Kế hoạch xuất ⇒ requireAnyPerm với quyền của module đó (luật CLAUDE.md: nút ở trang A chạm module B).
 router.get('/dispatch/decisions',             requirePerm('dispatch', 'view'),    validate({ query: dispatch.zDecisionsQuery }),                dispatch.listDecisions)
+// MẢNG Trung chuyển / Bán hàng (03/10 tối): lấy đơn của mảng kia về mảng mình (dấu theo kho × OD) · "Không liên quan" theo từng người
+router.post('/dispatch/segment/take',         requirePerm('dispatch', 'plan'),    validate({ body: dispatch.zSegmentTake }),                    dispatch.takeSegment)
+router.post('/dispatch/plans/:id/hide',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam, body: dispatch.zHide }),          dispatch.hideOds)     // dấu riêng của người xem — không đổi kế hoạch
+router.post('/dispatch/plans/:id/unhide',     requirePerm('dispatch', 'view'),    validate({ params: zIdParam, body: dispatch.zHide }),          dispatch.unhideOds)
 router.post('/dispatch/khvc/remove',          requireAnyPerm(['dispatch', 'confirm'], ['external_khvc', 'delete']), validate({ body: dispatch.zKhvcRemove }),   dispatch.removeFromKhvc)
 router.post('/dispatch/khvc/renumber',        requireAnyPerm(['dispatch', 'confirm'], ['external_khvc', 'edit']),   validate({ body: dispatch.zKhvcRenumber }), dispatch.renumberKhvc)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng

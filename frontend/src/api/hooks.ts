@@ -4540,6 +4540,8 @@ export interface Customer {
   /** 28/09 (không tự ép — config hết): đi xe riêng khi điều vận (mặc định tắt) · số khách tối đa cùng xe (null = không giới hạn, theo kênh) */
   dispatch_separate?: boolean
   max_customers_per_trip?: number | null
+  /** 03/10 tối: khách TRUNG CHUYỂN — đơn của khách vào mảng Trung chuyển trên bàn điều vận (còn lại = Bán hàng) */
+  dispatch_transfer?: boolean
   /** Địa chỉ + phường + vùng từ ZSD02 (22/09) */
   address?: string | null; ward_code?: string | null; region_code?: string | null; region_name?: string | null
   /** 01/10: toạ độ điểm giao — nguồn MANUAL (chấm bản đồ) · GPS (điện thoại tại chỗ) · GOONG (máy định vị); null = chưa định vị */
@@ -4726,7 +4728,7 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'dispatch_vehicles' | 'dispatch_separate' | 'max_customers_per_trip'>>
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'dispatch_vehicles' | 'dispatch_separate' | 'max_customers_per_trip' | 'dispatch_transfer'>>
 /** Thao tác hàng loạt "kiểu đi cho MỘT Loại kho" — gộp vào bảng kiểu đi từng khách (mode null = về kiểu chung). */
 export type CustomerBulkPatch = CustomerPatch
   /** 27/09: dòng xe được vào cho MỘT khoá Loại kho (null = mọi loại) — Thay / Thêm / Bớt / Về theo kênh */
@@ -6128,8 +6130,14 @@ export interface DispatchConfigGaps {
 }
 /** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
 export type DispatchLoadBands = Record<string, { min: number; max: number }>
+/** MẢNG điều vận (03/10 tối): mỗi kho × ngày một nháp cho MỖI mảng — Trung chuyển (khách tick) · Bán hàng (còn lại). */
+export type DispatchSegment = 'TRANSFER' | 'SALES'
+export const SEGMENT_VI: Record<DispatchSegment, string> = { TRANSFER: 'Trung chuyển', SALES: 'Bán hàng' }
 export interface DispatchPlan {
   id: string; warehouse_id: string; plan_date: string; status: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED'
+  segment: DispatchSegment
+  /** OD người ĐANG XEM đã đánh dấu "Không liên quan" trên kế hoạch này (dấu riêng của người đó) */
+  hidden?: string[]
   params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
@@ -6312,6 +6320,24 @@ export function useRenumberKhvcOd() {
     onSuccess: () => invalidateDecisions(qc),
   })
 }
+/** Lấy đơn của mảng kia về mảng mình (03/10 tối): dấu theo kho × OD, đơn rời khung chờ / xe nháp bên kia, vào khung chờ kế hoạch đích đang mở. */
+export function useTakeDispatchSegment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; od_numbers: string[]; segment: DispatchSegment; plan_id?: string }) =>
+      apiClient.post('/tms/dispatch/segment/take', body, { timeout: 120_000 }).then(r => r.data.data as { taken: number; segment: DispatchSegment; moved_from: { plan_id: string; plan_date: string; segment: string; rows: number; trips_removed: number }[]; added_to_plan: number }),
+    onSuccess: () => invalidateDispatch(qc),
+  })
+}
+/** "Không liên quan" theo từng người (03/10 tối): dấu riêng của người xem trên MỘT kế hoạch — người khác không thấy. */
+export function useHideDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_numbers, undo }: { plan_id: string; od_numbers: string[]; undo?: boolean }) =>
+      apiClient.post(`/tms/dispatch/plans/${plan_id}/${undo ? 'unhide' : 'hide'}`, { od_numbers }).then(r => ({ plan_id, ...(r.data.data as { hidden: string[] }) })),
+    onSuccess: r => qc.setQueryData(['dispatch-plan', r.plan_id], (old: DispatchPlan | undefined) => (old ? { ...old, hidden: r.hidden } : old)),
+  })
+}
 /** Dòng xe được vào của MỘT khách — xem/sửa ngay trên bàn ghép xe (chỉ dòng xe; kênh vẫn đổi ở trang Khách hàng). */
 export interface DispatchCustomerVehicles { ship_to_code: string; name: string; channel: string | null; channel_label: string | null; is_active: boolean; dispatch_vehicles: Record<string, string[]>; channel_vehicles: Record<string, string[]> | null }
 export function useDispatchCustomerVehicles(planId: string | null, shipTo: string | null) {
@@ -6378,7 +6404,7 @@ export function useCreateDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
     // force (03/10): nháp của NGƯỜI KHÁC vừa cập nhật ⇒ 409 PLAN_RECENTLY_EDITED, người bấm xác nhận ghi đè rồi gửi lại với force
-    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean; force?: boolean }) =>
+    mutationFn: (body: { warehouse_id: string; plan_date: string; segment?: DispatchSegment; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean; force?: boolean }) =>
       apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
     onSuccess: () => { invalidateDispatch(qc); qc.invalidateQueries({ queryKey: ['warehouses'] }) },
   })

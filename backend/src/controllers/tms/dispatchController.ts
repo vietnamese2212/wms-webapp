@@ -256,6 +256,7 @@ const linesOfDay = <R extends { delivery_date: string | null; flow: string | nul
 type Rev = { at: string; by: string | null } | null
 const POOL_COLS = 'od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, ward_code, region_code, flow, sap_pallets, gross_weight_kg, storage_location, delivery_date, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate, note_delivery'
 const shiftDay = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
+const dmyOf = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`   // ngày lịch (date, không múi giờ) → dd/mm/yyyy cho câu báo
 
 /** OD đang nằm trong bản nháp ĐANG MỞ của kho (trừ `skipPlanId`) — xe chưa bỏ / chưa vào Kế hoạch xuất, hoặc khung chờ. */
 /** OD đang LÊN XE ở một kế hoạch đang mở KHÁC của kho (03/10 tối: khung chờ không giữ chỗ — chỉ xe mới giữ; rào DB
@@ -1406,16 +1407,22 @@ export async function updatePlanParams(req: Request, res: Response) {
 
 /** Tình trạng SỐNG của các OD trong kế hoạch so với ZSD02 hiện tại — cờ "cần xử lý" phát sinh SAU khi lập:
  *  SAP đã thay OD (sửa SO) · SAP đã bỏ OD · đã xuất kho · SAP đã điều cho ĐVVT khác · đã có người đưa vào Kế hoạch xuất. */
-type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED'; info: string | null; replaced_by?: string | null }
+// KIN_SHIPPED (03/10, user chốt (b)): OD mới cùng dòng SO với OD cũ ĐÃ ĐI (phả hệ AFTER_POST chưa giải quyết, OD cũ còn ở Kế hoạch xuất) —
+// rào DB không cho OD mới đi ngày khác tới khi người bấm "Xác nhận đơn bổ sung" (ghi resolved_* vào od_lineage). Cờ CỨNG: chặn Xác nhận.
+type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED'; info: string | null; replaced_by?: string | null }
 /** Bản chụp của OD trên kế hoạch (chữ ký dòng hàng + ghi chú) — để biết SAP đã SỬA cùng OD đó sau khi người xem. */
 type OdSnap = { sig: string | null; note: string | null }
 const snapsOf = (rows: TripOdRow[]) => new Map(rows.map(o => [o.od_number, { sig: o.sap_sig, note: o.note }] as const))
 async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<string, OdSnap> = new Map(), slocs: string[] = [], day: string | null = null): Promise<OdFlag[]> {
   if (!odNos.length) return []
-  const [rows, khvc] = await Promise.all([
+  const [rows, khvc, kin] = await Promise.all([
     fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders').select('od_number, od_item, material_code, qty_base, note_delivery, storage_location, delivery_date, flow, sync_status, replaced_by_od, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate').in('od_number', c).order('od_number')) as Promise<(SigRow & { od_number: string; note_delivery: string | null; storage_location: string | null; delivery_date: string | null; flow: string | null; sync_status: string | null; replaced_by_od: string | null; sap_dispatch_status: string | null; mat_doc: string | null; qty_issued_base: number | string | null; dvvt_raw: string | null; license_plate: string | null })[]>,
     fetchAllByIdChunks(odNos, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<{ do_no: string; group_code: string }[]>,
+    fetchAllByIdChunks(odNos, c => db.from('od_lineage').select('old_od, new_od').eq('kind', 'AFTER_POST').is('resolved_at', null).in('new_od', c).order('new_od')) as Promise<{ old_od: string; new_od: string }[]>,
   ])
+  // OD cũ của cạnh AFTER_POST còn ở Kế hoạch xuất ⇒ rào DB chặn OD mới đi ngày khác (kiểm trên cả họ)
+  const kinOld = uniq(kin.map(e => e.old_od))
+  const kinKhvc = kinOld.length ? (await fetchAllByIdChunks(kinOld, c => db.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; group_code: string; export_date: string | null }[] : []
   const by = new Map<string, typeof rows>()
   for (const r of rows) { const l = by.get(r.od_number) ?? []; l.push(r); by.set(r.od_number, l) }
   const out: OdFlag[] = []
@@ -1429,6 +1436,8 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
     }
     const k = khvc.find(x => x.do_no === od && !ownGroupCodes.includes(x.group_code))
     if (k) { out.push({ od_number: od, kind: 'IN_PLAN', info: `đã có trong Kế hoạch xuất (${k.group_code})` }); continue }
+    const kk = kin.filter(e => e.new_od === od).map(e => kinKhvc.find(x => x.do_no === e.old_od)).find(Boolean)
+    if (kk) { out.push({ od_number: od, kind: 'KIN_SHIPPED', info: `cùng dòng SO với DO ${kk.do_no} đã đi${kk.export_date ? ` ngày ${dmyOf(kk.export_date)}` : ''} (xe ${kk.group_code}) — giao thêm thì bấm "Xác nhận đơn bổ sung", không thì Không điều / Ngoài app` }); continue }
     // CÙNG OD mà SAP sửa (SL / dòng hàng / ghi chú giao hàng) sau khi chụp — kế hoạch đang tính tải + cước theo bản CŨ.
     // Xét TRƯỚC hai cờ tham chiếu bên dưới (02/10, gói 61 [10m] bắt): từ 03/10 SHIPPED / SAP_ASSIGNED không chặn Xác nhận nữa,
     // nên nếu để chúng `continue` trước thì một OD vừa "SAP đã gắn xe" vừa "SAP đã sửa số lượng" lọt qua cổng với tải cũ.
@@ -1605,7 +1614,7 @@ async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr |
   const bad = (await odFlags(subOds, [], snapsOf(subset.flatMap(t => t.ods)), slocsOf(await loadWarehouse(full.warehouse_id)), full.plan_date)).filter(f => f.kind !== 'IN_PLAN' && f.kind !== 'SHIPPED' && f.kind !== 'SAP_ASSIGNED')
   if (bad.length) {
     const odOf = new Map(subset.flatMap(t => t.ods.map(o => [o.od_number, t.group_code] as const)))
-    return { err: [`${bad.length} OD đổi tình trạng ở SAP từ lúc lập nháp — ${bad.slice(0, 5).map(f => `${f.od_number} (${odOf.get(f.od_number) ?? '?'}): ${f.info}`).join('; ')}${bad.length > 5 ? '…' : ''}. Trên bàn ghép xe: "Cập nhật theo SAP" (OD bị sửa) · "Thay bằng OD mới" (OD bị thay) · gỡ OD đã điều / đã xuất — rồi xác nhận lại.`, 409, 'OD_CHANGED_IN_SAP'] }
+    return { err: [`${bad.length} OD đổi tình trạng ở SAP từ lúc lập nháp — ${bad.slice(0, 5).map(f => `${f.od_number} (${odOf.get(f.od_number) ?? '?'}): ${f.info}`).join('; ')}${bad.length > 5 ? '…' : ''}. Trên bàn ghép xe: "Cập nhật theo SAP" (OD bị sửa) · "Thay bằng OD mới" (OD bị thay) · gỡ OD đã điều / đã xuất · tab Xem đơn: "Xác nhận đơn bổ sung" (họ hàng đã đi) — rồi xác nhận lại.`, 409, 'OD_CHANGED_IN_SAP'] }
   }
   // MÃ HÀNG PHẢI CÓ TRONG DANH MỤC — chặn TẠI ĐÂY thay vì để đường derive từ chối sau khi đã ghi.
   // Vì sao (đo 24/09): 5 % dòng OD của SAP trỏ tới mã chưa đồng bộ sang WMS (4 mã: 810000020 ·
@@ -2191,6 +2200,34 @@ async function pullOdInner(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 export const pullOd = withPlanLease(pullOdInner)
+
+// ══ XÁC NHẬN ĐƠN BỔ SUNG (03/10, user chốt (b)): OD mới cùng dòng SO với OD cũ ĐÃ ĐI (cạnh AFTER_POST) bị rào DB chặn đi ngày khác
+// tới khi NGƯỜI xác nhận "đúng là giao thêm" — ghi resolved_* vào od_lineage (ai · lúc nào · SUPPLEMENT), od_family bỏ cạnh đó, cờ
+// KIN_SHIPPED tắt, Xác nhận kế hoạch đi tiếp. Không xoá cạnh: phả hệ vẫn tra được. ══
+export const zConfirmSupplement = z.object({ od_numbers: z.array(zText(1, 50)).min(1).max(300) })
+async function confirmSupplementInner(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zConfirmSupplement>
+    const got = await loadOpenPlan(req, String(req.params.id))
+    if ('err' in got) return sendErr(res, got)
+    const { plan } = got
+    const ods = uniq(b.od_numbers)
+    const bad = await odsOutsidePlant(plan.warehouse_id, ods)
+    if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
+    const t = now()
+    let n = 0
+    for (let i = 0; i < ods.length; i += 300) {
+      const { data, error } = await db.from('od_lineage').update({ resolved_at: t, resolved_by: req.user?.name ?? null, resolution: 'SUPPLEMENT', updated_at: t })
+        .eq('kind', 'AFTER_POST').is('resolved_at', null).in('new_od', ods.slice(i, i + 300)).select('id')
+      if (error) throw error
+      n += data?.length ?? 0
+    }
+    if (!n) return fail(res, 422, 'NOT_KIN', 'Các OD này không có cạnh "họ hàng đã đi" nào đang chờ xác nhận (tải lại trang)')
+    await writeSummary(plan)
+    return ok(res, { ...(await readPlan(plan.id)), supplement: { ods: ods.length, edges: n } })
+  } catch (e) { return failAny(res, e) }
+}
+export const confirmSupplement = withPlanLease(confirmSupplementInner)
 
 // GET /tms/dispatch/plans/:id/stale — đơn QUÁ cửa sổ tồn đọng chưa ai quyết (không rớt im lặng — băng đỏ ở Xem đơn, 03/10 tối)
 export async function getPlanStale(req: Request, res: Response) {

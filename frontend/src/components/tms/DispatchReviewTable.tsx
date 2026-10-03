@@ -22,7 +22,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useDispatchPlanStale, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
+import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useDispatchPlanStale, useConfirmSupplementDispatchOds, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
@@ -85,7 +85,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   const setF = useWmsFilterStore(s => s.setDispatch)
   const st: St = (['GO', 'ELSEWHERE', 'DAY', 'NEVER', 'OUTSIDE', 'DONE'] as const).find(x => x === f.reviewTab) ?? 'GO'
   const hold = useHoldDispatchOds(), unhold = useUnholdDispatchOds(), reopt = useReoptimizeDispatchPlan()
-  const outside = useOutsideDispatchOds(), unoutside = useUnoutsideDispatchOds(), pull = usePullDispatchOd()
+  const outside = useOutsideDispatchOds(), unoutside = useUnoutsideDispatchOds(), pull = usePullDispatchOd(), sup = useConfirmSupplementDispatchOds()
   const [ask, confirmNode] = useConfirmDialog()
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [notesOnly, setNotesOnly] = useState(false)
@@ -97,7 +97,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
   const info = review.data?.ods ?? {}
   const whMeta = useWhTypeMetaMap()
   const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
-  const busy = hold.isPending || unhold.isPending || reopt.isPending || outside.isPending || unoutside.isPending || pull.isPending
+  const busy = hold.isPending || unhold.isPending || reopt.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
 
   const byTab = useMemo(() => {
@@ -265,6 +265,15 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       setSel(new Set())
       toast({ title: `${n} OD → Điều`, description: back === n ? 'Đơn đã về khung chờ — máy ghép khi bấm Ghép xe.' : `${n - back} OD không quay lại (đã được lo ở chỗ khác, ngoài cửa sổ ngày, hoặc không còn trong ZSD02).` })
     } catch (e) { err(e, n ? `Đã chuyển ${n} OD, phần còn lại chưa chuyển được` : 'Không chuyển được trạng thái') }
+  }
+  // "Họ hàng đã đi" (03/10, user chốt (b)): OD cùng dòng SO với OD cũ đã đi — người xác nhận là GIAO THÊM thì rào DB mới cho đi
+  const selKin = selRows.filter(r => flags.get(r.od)?.kind === 'KIN_SHIPPED').map(r => r.od)
+  const doSupplement = async () => {
+    try {
+      const r = await sup.mutateAsync({ plan_id: plan.id, od_numbers: selKin })
+      setSel(new Set())
+      toast({ title: `${r.supplement.ods} OD xác nhận là đơn bổ sung`, description: 'Ghi vào phả hệ DO (ai · lúc nào). Cờ "Họ hàng đã đi" tắt, xác nhận kế hoạch đi tiếp.' })
+    } catch (e) { err(e, 'Không xác nhận được đơn bổ sung') }
   }
   // Đơn quá hạn: "Điều lại từ ngày này" = hoãn tới ngày kế hoạch (tới ngày là đơn quay lại Điều qua cửa sổ hoãn)
   const doStaleGo = async () => {
@@ -483,6 +492,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped }: {
       <FloatingActionBar count={selRows.length} unit="đơn đã chọn">
         {(st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE') && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doGo}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{unhold.isPending || unoutside.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
         {st === 'GO' && selRows.some(r => r.stale) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doStaleGo}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Điều lại từ {dmy(plan.plan_date)}</Button>}
+        {st === 'GO' && selKin.length > 0 && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doSupplement} title="OD cùng dòng SO với OD cũ ĐÃ ĐI — xác nhận đây là giao thêm (không phải giao lại hàng đã đi) thì rào mới cho đi ngày khác; ghi vào phả hệ DO"><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{sup.isPending ? 'Đang ghi…' : `Xác nhận đơn bổ sung (${selKin.length})`}</Button>}
         {st !== 'DAY' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('DAY')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Không điều ngày này</Button>}
         {st === 'DAY' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('DAY')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Đổi ngày điều lại</Button>}
         {st !== 'NEVER' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('NEVER')}><Ban className="h-3.5 w-3.5 mr-1" />Không điều</Button>}

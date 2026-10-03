@@ -6080,7 +6080,7 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
   })
 }
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
-export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED'; info: string | null; replaced_by?: string | null }
+export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED'; info: string | null; replaced_by?: string | null }
 export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 /** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
 // NO_MATERIAL (03/10): OD có mã chưa khai trong Mã hàng — máy không ghép, nằm ở tab Điều dạng "Không lên xe" cho tới khi khai mã
@@ -6259,6 +6259,14 @@ export function usePullDispatchOd() {
   return useMutation({
     mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/pull-od`, { od_number }).then(r => r.data.data as DispatchPlan & { pulled: { od_number: string; from_plan_date: string; from_by: string | null; back_to_pool: number; trips_removed_there: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }) },
+  })
+}
+/** "Xác nhận đơn bổ sung" (03/10, user chốt): OD cùng dòng SO với OD cũ ĐÃ ĐI — người xác nhận là giao thêm ⇒ rào DB thôi chặn, cờ KIN_SHIPPED tắt. */
+export function useConfirmSupplementDispatchOds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/confirm-supplement`, { od_numbers }).then(r => r.data.data as DispatchPlan & { supplement: { ods: number; edges: number } }),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }) },
   })
 }
 /** Đơn QUÁ cửa sổ tồn đọng (14 ngày) chưa ai quyết — băng đỏ ở Xem đơn, không rớt im lặng (03/10 tối). */

@@ -1334,9 +1334,41 @@ try {
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
     const st17 = gdoA ? await api(`/wms/outbound/${gdoA}/start`, 'POST', { license_plate: '29C12345' }) : { s: 0, j: null }
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { sync_status: 'ACTIVE', updated_at: nowIso() })
-    check('17c. CỔNG SAP Ở KHO: chuyến có DO bị SAP bỏ (mọi dòng ZSD02 OBSOLETE) → Bắt đầu chuyến 409 SAP_ISSUE_OPEN nêu DO + nơi xử lý',
-      st17.s === 409 && st17.j?.error?.code === 'SAP_ISSUE_OPEN' && (st17.j?.error?.message ?? '').includes(OD[0]),
+    check('17c. CỔNG SAP Ở KHO: chuyến có DO bị SAP bỏ (mọi dòng ZSD02 OBSOLETE) → Bắt đầu chuyến 409 SAP_ISSUE_OPEN nêu DO + đường gỡ (huỷ chuyến rồi điều lại)',
+      st17.s === 409 && st17.j?.error?.code === 'SAP_ISSUE_OPEN' && (st17.j?.error?.message ?? '').includes(OD[0]) && /Bỏ bắt đầu/.test(st17.j?.error?.message ?? ''),
       `gdo=${gdoA ? 'có' : 'KHÔNG'} http=${st17.s} code=${st17.j?.error?.code} ${(st17.j?.error?.message ?? '').slice(0, 120)}`)
+    // [17c2] (03/10, user chốt (b)) HỌ HÀNG ĐÃ ĐI: OD1 đã ở Kế hoạch xuất DAY (17a); SAP sinh ODSUP cùng dòng SO (cạnh AFTER_POST) giao DAY2
+    // ⇒ nháp DAY2 thấy ODSUP ở khung chờ mang cờ KIN_SHIPPED (cứng — Xác nhận 409), rào DB chặn ODSUP vào Kế hoạch xuất DAY2;
+    // "Xác nhận đơn bổ sung" ⇒ cạnh resolved (ai · SUPPLEMENT), cờ tắt, rào cho qua; OD lạ → 404; không có cạnh → 422 NOT_KIN
+    const ODSUP = 'QA61ODSUP'
+    await restWrite('erp_outbound_orders', 'POST', null, {
+      id: crypto.randomUUID(), od_number: ODSUP, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet, so_number: 'QA61SOSUP', so_item: '10',
+      ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY2, flow: 'SALE',
+      source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
+    })
+    await restWrite('od_lineage', 'POST', null, { id: crypto.randomUUID(), old_od: OD[0], new_od: ODSUP, kind: 'AFTER_POST', so_number: 'QA61SOSUP', so_item: '10', updated_at: nowIso() })
+    const pS = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY2 })
+    const SID = pS.j?.data?.id ?? ''
+    const syS = await api(`/tms/dispatch/plans/${SID}/sync`)
+    const flS = (syS.j?.data?.flags ?? []).find(x => x.od_number === ODSUP)
+    const rS = rowOf(pS.j?.data, ODSUP)
+    const mvS = rS ? await api(`/tms/dispatch/plans/${SID}/reoptimize`, 'POST', { review_all: true }) : { s: 0, j: null }   // máy ghép ODSUP lên xe (có dòng xe/ĐVVT) rồi mới thử Xác nhận
+    const cfS = await api(`/tms/dispatch/plans/${SID}/confirm`, 'POST', {})
+    const eS1 = await railErr('khvc_lines', khRow(ODSUP, 'QA61RAIL_S1', DAY2))
+    const sup404 = await api(`/tms/dispatch/plans/${SID}/confirm-supplement`, 'POST', { od_numbers: ['QA61KHONGCO'] })
+    const sup422 = await api(`/tms/dispatch/plans/${SID}/confirm-supplement`, 'POST', { od_numbers: [OD[1]] })
+    const supOk = await api(`/tms/dispatch/plans/${SID}/confirm-supplement`, 'POST', { od_numbers: [ODSUP] })
+    const edge = (await restAll('od_lineage', `select=resolved_at,resolved_by,resolution&new_od=eq.${ODSUP}`))[0]
+    const syS2 = await api(`/tms/dispatch/plans/${SID}/sync`)
+    const eS2 = await railErr('khvc_lines', khRow(ODSUP, 'QA61RAIL_S2', DAY2))
+    check('17c2. HỌ HÀNG ĐÃ ĐI: OD mới cùng dòng SO với OD đã đi → khung chờ nháp ngày khác, cờ KIN_SHIPPED nêu DO cũ + xe · Xác nhận 409 OD_CHANGED_IN_SAP · rào DB chặn vào KH xuất ngày khác · OD lạ 404 · không cạnh 422 NOT_KIN · "Xác nhận đơn bổ sung" → cạnh resolved SUPPLEMENT có người, cờ tắt, rào cho qua',
+      pS.s === 201 && !!rS && flS?.kind === 'KIN_SHIPPED' && (flS?.info ?? '').includes(OD[0]) && mvS.s === 200
+      && cfS.s === 409 && cfS.j?.error?.code === 'OD_CHANGED_IN_SAP' && /OD_ALREADY_PLANNED/.test(eS1 ?? '')
+      && sup404.s === 404 && sup422.s === 422 && sup422.j?.error?.code === 'NOT_KIN'
+      && supOk.s === 200 && supOk.j?.data?.supplement?.edges === 1 && !!edge?.resolved_at && edge?.resolution === 'SUPPLEMENT' && !!edge?.resolved_by
+      && !(syS2.j?.data?.flags ?? []).some(x => x.od_number === ODSUP) && eS2 === null,
+      `plan=${pS.s} inPool=${!!rS} flag=${JSON.stringify(flS ?? null)?.slice(0, 160)} move=${mvS.s} confirm=${cfS.s}/${cfS.j?.error?.code} rail1=${(eS1 ?? 'KHÔNG CHẶN').slice(0, 60)} 404=${sup404.s} 422=${sup422.s}/${sup422.j?.error?.code} ok=${supOk.s} ${supOk.j?.error?.message ?? ''} edge=${JSON.stringify(edge ?? null)} flagAfter=${(syS2.j?.data?.flags ?? []).some(x => x.od_number === ODSUP)} rail2=${eS2 ? eS2.slice(0, 60) : 'ok'}`)
+    await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODSUP}`).catch(() => {})
     await cleanupTrips()
     // khung chờ TỰ DO, xe thì khoá: nháp 16/03 và nháp 17/03 cùng kho đều thấy OD1 ở khung chờ; ghép ở A ⇒ OD rời khung chờ B
     const pA2 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)

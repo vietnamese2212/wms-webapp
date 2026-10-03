@@ -250,8 +250,11 @@ export async function sapIssueError(gdoId: string, action: string): Promise<stri
   }
   const tk = (tasks ?? []) as { od_number: string | null; detail: string | null }[]
   if (tk.length) issues.push(`${tk.length} việc "Cần xử lý" chưa quyết (${tk[0].od_number ?? '?'}: ${(tk[0].detail ?? '').slice(0, 80)})`)
+  // Đường gỡ (user chốt 03/10 phương án (c) — không "giữ và chạy tiếp"): số lượng đổi → Cần xử lý; DO bị bỏ/thay → chuyến này phải
+  // HUỶ rồi điều lại với DO mới: chuyến chưa bắt đầu → xoá Số xe ở tab Kế hoạch xuất; chuyến đã bắt đầu → xoá các QR đã quét
+  // (hoàn tồn) → Bỏ bắt đầu → xoá Số xe ở Kế hoạch xuất → Điều vận ghép DO mới. Mọi cửa đó KHÔNG bị cổng này chặn.
   const msg = issues.length
-    ? `Chuyến có đơn SAP đã đổi chưa xử lý — ${issues.slice(0, 4).join(' · ')}${issues.length > 4 ? ` … +${issues.length - 4}` : ''}. Xử lý ở Dữ liệu bên ngoài → Cần xử lý (số lượng) hoặc Điều vận → Xem đơn (DO bị thay / bỏ: Đổi số DO · Gỡ khỏi kế hoạch · Giữ và ghi cần sửa bên SAP) rồi mới ${action}.`
+    ? `Chuyến có đơn SAP đã đổi chưa xử lý — ${issues.slice(0, 4).join(' · ')}${issues.length > 4 ? ` … +${issues.length - 4}` : ''}. Số lượng đổi: Dữ liệu bên ngoài → Cần xử lý. DO bị SAP bỏ / thay: huỷ chuyến này rồi điều lại với DO mới — chưa bắt đầu thì xoá Số xe ở tab Kế hoạch xuất; đã bắt đầu thì xoá các QR đã quét (hoàn tồn) → Bỏ bắt đầu → xoá Số xe → Điều vận ghép DO mới. Rồi mới ${action}.`
     : null
   sapIssueCache.set(gdoId, { at: Date.now(), msg })
   return msg

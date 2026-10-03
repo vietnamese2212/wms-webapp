@@ -112,6 +112,7 @@ router.post('/dispatch/plans/:id/unhold',     requirePerm('dispatch', 'plan'),  
 router.post('/dispatch/plans/:id/outside',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zOutside }),       dispatch.outsideOds)
 router.post('/dispatch/plans/:id/unoutside',  requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnoutside }),     dispatch.unoutsideOds)
 router.post('/dispatch/plans/:id/pull-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zPullOd }),        dispatch.pullOd)
+router.post('/dispatch/plans/:id/confirm-supplement', requirePerm('dispatch', 'plan'), validate({ params: zIdParam, body: dispatch.zConfirmSupplement }), dispatch.confirmSupplement)   // OD cùng dòng SO với OD đã đi = giao thêm (03/10, user chốt (b))
 router.get('/dispatch/plans/:id/stale',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanStale)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng
 router.get('/dispatch/plans/:id/customers/:shipTo/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zShipToParam }), dispatch.getCustomerVehicles)

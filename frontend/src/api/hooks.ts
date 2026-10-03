@@ -6143,7 +6143,8 @@ const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.inval
 /** Thả OD xong server trả NGUYÊN kế hoạch ⇒ đặt thẳng vào cache (không chờ tải lại) rồi mới làm mới danh sách/cờ. */
 const putDispatchPlan = (qc: ReturnType<typeof useQueryClient>, p: DispatchPlan) => {
   qc.setQueryData(['dispatch-plan', p.id], (old: DispatchPlan | undefined) => ({ ...(old ?? {}), ...p }))
-  qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] })
+  // không làm mới dispatch-sync sau mỗi lần kéo thả (03/10, quota egress) — cờ SAP / OD mới chỉ đổi khi ZSD02 đổi, có poll + realtime riêng
+  qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] })
 }
 export function useDispatchPlanSync(id: string | null, enabled = true) {
   return useQuery({

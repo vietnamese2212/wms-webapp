@@ -1458,13 +1458,18 @@ export async function planSync(req: Request, res: Response) {
     const liveRows = [...live.flatMap(t => t.ods), ...full.pool]
     const odNos = uniq(liveRows.map(o => o.od_number))
     const wh = await loadWarehouse(full.warehouse_id)
-    const [flags, cand] = await Promise.all([
+    // OD MỚI đếm trong SQL (RPC dispatch_new_ods, 03/10 — quota egress): bản cũ loadCandidates(countOnly) kéo cả cửa sổ 14 ngày
+    // ZSD02 của plant (Ba Vì 9.094 dòng = 4 MB) về backend mỗi 120 s cho MỖI bàn đang mở, chỉ để lọc ra vài số OD.
+    const [flags, freshRaw] = await Promise.all([
       odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh), full.plan_date),
-      wh ? loadCandidates(wh, full.plan_date, { condByCat: new Map(), follow: [], all: [] }, { skipPlanId: full.id, countOnly: true }) : Promise.resolve(null),
+      wh?.sap_plant
+        ? db.rpc('dispatch_new_ods', { p_plant: wh.sap_plant, p_from: shiftDay(full.plan_date, -BACKLOG_DAYS), p_to: full.plan_date, p_day: full.plan_date,
+            p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id } as never).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
+        : Promise.resolve([] as string[]),
     ])
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
     for (const u of (full.unplanned ?? []) as { od_number?: string }[]) if (u?.od_number) inPlan.add(u.od_number)   // máy đã thấy, không đo được tải
-    const fresh = (cand?.include ?? []).filter(od => !inPlan.has(od))
+    const fresh = freshRaw.filter(od => !inPlan.has(od))
     return ok(res, { flags, new_ods: fresh.length, new_od_numbers: fresh.slice(0, 50) })
   } catch (e) { return failAny(res, e) }
 }

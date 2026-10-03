@@ -812,7 +812,9 @@ try {
         `http=${geo.s} n=${gc.length} ships=${gc.map(c => c.ship_to_code).join(',')} wh=${JSON.stringify(geo.j?.data?.warehouse ?? null).slice(0, 80)}`)
       // [12i] (02/10) Bản đồ theo KHÁCH HÀNG: hạng pallet SAP trong kênh của kho × N ngày — RPC trả dòng; days lạ → 400; kho rác → 400
       {
-        const cm = await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=30`)
+        // RPC gom cả plant thật (Ba Vì ~16k dòng ZSD02) — staging NANO lúc bận trả 503 QUERY_TIMEOUT (quá tải, không phải hỏng): thử lại MỘT lần sau 4 s (như [17h])
+        let cm = await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=30`)
+        if (cm.s === 503) { await new Promise(r => setTimeout(r, 4000)); cm = await api(`/tms/dispatch/customers-map?warehouse_id=${WH}&days=30`) }
         const rows = cm.j?.data?.rows ?? []
         const okRank = rows.every(r => typeof r.ship_to_code === 'string' && typeof r.pallets === 'number' && Number.isInteger(r.rank_in_channel) && r.rank_in_channel >= 1 && 'geo_lat' in r)
         // hạng 1 của mỗi kênh có pallet ≥ mọi khách khác cùng kênh

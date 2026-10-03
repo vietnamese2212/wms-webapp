@@ -1536,7 +1536,7 @@ try {
       `tick=${tk3_19.s} S=${pS19.s}/${S?.segment} ${pS19.j?.error?.message ?? ''} T=${pT19.s}/${T?.segment} ${pT19.j?.error?.message ?? ''} S:[${[0, 1, 2].map(i => !!rowOf(S, OD[i])).join(',')}] T:[${[0, 1, 2].map(i => !!rowOf(T, OD[i])).join(',')}]`)
     // 19b — sync Bán hàng không coi OD3 là "OD mới" · lấy OD1 sang Trung chuyển (dấu kho × OD) · nạp OD mới bên Bán hàng không kéo OD1 về
     const sy19 = await api(`/tms/dispatch/plans/${SID19}/sync`)
-    const take1 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[0]], segment: 'TRANSFER', plan_id: TID19 })
+    const take1 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[0]], segment: 'TRANSFER', ...(TID19 ? { plan_id: TID19 } : {}) })
     const S19b = await planOf(SID19), T19b = await planOf(TID19)
     const segRow = (await restAll('dispatch_od_segment', `select=segment,created_by&warehouse_id=eq.${WH}&od_number=eq.${OD[0]}`))[0]
     const rf19 = await api(`/tms/dispatch/plans/${SID19}/refresh-pool`, 'POST', {})
@@ -1560,7 +1560,7 @@ try {
     const gcS19 = (gpS19.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => t.group_code), gcT19 = (gpT19.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => t.group_code)
     const dup19 = gcS19.filter(g => gcT19.includes(g))
     // lấy OD2 đang trên XE NHÁP bên Bán hàng sang Trung chuyển → xe bên đó rỗng tự bỏ, OD2 vào khung chờ Trung chuyển
-    const take2 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[1]], segment: 'TRANSFER', plan_id: TID19 })
+    const take2 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[1]], segment: 'TRANSFER', ...(TID19 ? { plan_id: TID19 } : {}) })
     const S19c = await planOf(SID19), T19c = await planOf(TID19)
     check('19d. Hai mảng ghép riêng → Số xe không trùng giữa hai kế hoạch cùng kho × ngày · lấy OD2 đang trên xe NHÁP Bán hàng sang Trung chuyển → xe rỗng bên Bán hàng tự bỏ, OD2 vào khung chờ Trung chuyển, vết taken_away',
       gpS19.s === 200 && gpT19.s === 200 && gcS19.length >= 1 && gcT19.length >= 1 && dup19.length === 0 && take2.s === 200 && (take2.j?.data?.moved_from ?? [])[0]?.rows === 1 && (take2.j?.data?.moved_from ?? [])[0]?.trips_removed === 1

@@ -1400,7 +1400,9 @@ try {
     // Ngoài app: dấu tay theo số OD · bảng dấu · GET coverage · bỏ dấu ⇒ về khung chờ · theo id dòng · lý do rỗng 400
     const outR = await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { od_numbers: [OD[2]], reason: 'QA61 đã điều tay ngoài app' })
     const outRow = (await restAll('dispatch_od_outside', `select=od_number,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))[0]
-    const covB = wh?.sap_plant ? await api(`/external/do-sap/coverage?plant=${wh.sap_plant}`) : { s: 0, j: null }
+    // coverage đếm cả plant thật (Ba Vì ~16k dòng ZSD02) — staging NANO lúc bận trả 503 QUERY_TIMEOUT (quá tải, không phải hỏng): thử lại MỘT lần sau 4 s
+    let covB = wh?.sap_plant ? await api(`/external/do-sap/coverage?plant=${wh.sap_plant}`) : { s: 0, j: null }
+    if (covB.s === 503 && wh?.sap_plant) { await new Promise(r => setTimeout(r, 4000)); covB = await api(`/external/do-sap/coverage?plant=${wh.sap_plant}`) }
     const unR = await api(`/tms/dispatch/plans/${BID}/unoutside`, 'POST', { od_numbers: [OD[2]] })
     check('17h. Ngoài app: đánh dấu → OD rời khung chờ, excluded OUTSIDE_APP kèm lý do, bảng dấu có dòng · GET /do-sap/coverage 200 · bỏ dấu → về khung chờ',
       outR.s === 200 && !rowOf(outR.j?.data, OD[2]) && (outR.j?.data?.params?.excluded ?? []).some(x => x.od_number === OD[2] && x.kind === 'OUTSIDE_APP') && outRow?.reason === 'QA61 đã điều tay ngoài app'

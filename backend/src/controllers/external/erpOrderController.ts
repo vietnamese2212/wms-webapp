@@ -281,15 +281,24 @@ export async function listDoSap(req: Request, res: Response) {
 // GET /external/do-sap/coverage?plant= — NGÀY TẠO CẦN PHỦ khi đổ ZSD02 (03/10 tối, user: "app biết đơn nào còn pending ⇒ bắt buộc file
 // phải có ngày tạo của chúng"). Đơn chưa đi theo lịch sử app (RPC zsd02_coverage): còn hiệu lực · lên xe được · chưa có chuyến Xuất
 // kho hoàn thành · chưa mang dấu Ngoài app. Trả theo cả ngày tạo OD lẫn ngày tạo SO (SAP lọc theo cột nào thì người đổ file biết).
+// GET coverage là GỢI Ý trên màn upload (không phải cửa gác — cửa gác nằm trong uploadZsd02 và đọc tươi): nhớ 60 s theo plant vì
+// RPC quét cả plant (Ba Vì 16k dòng) và trên staging bận đã 3 lần vượt 8 s trong ngày 03/10; mở hộp thoại hai lần không cần đếm lại.
+const coverageCache = new Map<string, { at: number; data: Record<string, unknown> }>()
 export async function doSapCoverage(req: Request, res: Response) {
   try {
     const plant = String(req.query.plant ?? '').trim()
     if (!plant || plant.length > 20 || !/^[\w-]+$/.test(plant)) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu hoặc sai plant')
     const plants = await allowedPlants(req)
     if (plants && !plantAllowed(plants, plant)) return fail(res, 'Nhà máy (plant) ngoài phạm vi kho được phân quyền', 403)
-    const { data, error } = await supabase.rpc('zsd02_coverage', { p_plant: plant } as never)
-    if (error) throw error   // giữ NGUYÊN đối tượng lỗi: statement timeout lúc máy bận phải thành 503 QUERY_TIMEOUT, không phải 500 (gói 61 [17h] 03/10)
-    const cov = (data ?? {}) as Record<string, unknown>
+    const hit = coverageCache.get(plant)
+    let cov: Record<string, unknown>
+    if (hit && Date.now() - hit.at < 60_000) cov = hit.data
+    else {
+      const { data, error } = await supabase.rpc('zsd02_coverage', { p_plant: plant } as never)
+      if (error) throw error   // giữ NGUYÊN đối tượng lỗi: statement timeout lúc máy bận phải thành 503 QUERY_TIMEOUT, không phải 500 (gói 61 [17h] 03/10)
+      cov = (data ?? {}) as Record<string, unknown>
+      coverageCache.set(plant, { at: Date.now(), data: cov })
+    }
     const byOd = (cov.by_od_created ?? []) as { date: string; ods: number }[]
     const bySo = (cov.by_so_created ?? []) as { date: string; ods: number }[]
     const span = (l: { date: string }[]) => (l.length ? { from: l[0].date, to: l[l.length - 1].date } : null)

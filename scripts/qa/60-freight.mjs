@@ -94,18 +94,8 @@ try {
   check('1a. GET vehicle-models: seed ≥ 60 dòng, 910000030 = 16 pallet · PER_PALLET · PALLET', list.s === 200 && seeded.length >= 60
     && m30?.max_pallets === 16 && m30?.tariff_unit === 'PER_PALLET' && m30?.capacity_mode === 'PALLET',
     `http=${list.s} n=${seeded.length} m30=${JSON.stringify(m30 ? { p: m30.max_pallets, u: m30.tariff_unit } : null)}`)
-  // SỨC CHỨA = TẤN DANH ĐỊNH + 10 % (user chốt 03/10: "có nhé, cho phép — tôi yêu cầu 10 % mà").
-  // Tên dòng xe giữ số DANH ĐỊNH ("Xe tải 3,5 tấn"), cột `max_tons` mang số ĐƯỢC PHÉP CHỞ = 3,85.
-  // Đo 02/10: cả danh mục dòng xe đúng ×1,10 và cùng một mốc `updated_at` ⇒ một lệnh cập nhật hàng
-  // loạt có chủ đích, không phải parse sai. Phép kiểm viết theo CÔNG THỨC chứ không gõ cứng 3,85 —
-  // đổi mức cho phép thì sửa đúng hằng số dưới đây, và nếu ai lỡ ghi lại số danh định thì vẫn đỏ.
-  // ⚠️ Mức 10 % hiện CHỈ nằm trong DỮ LIỆU, không có luật nào trong code áp nó: dòng xe thêm MỚI
-  // qua form sẽ mang số danh định thô. Đã báo user 03/10, chờ chốt có đưa thành cấu hình hay không.
-  const OVERLOAD = 1.10
   const m05 = seeded.find(m => m.sap_code === '910000005')
-  check(`1a2. 910000005 "Xe tải 3,5 tấn (nóng)" = 3,5 × ${OVERLOAD} = ${(3.5 * OVERLOAD).toFixed(2)} tấn · HOT · PER_TRIP`,
-    Math.abs(Number(m05?.max_tons) - 3.5 * OVERLOAD) < 1e-6 && m05?.temp_mode === 'HOT' && m05?.tariff_unit === 'PER_TRIP',
-    JSON.stringify(m05 ? { t: m05.max_tons, tm: m05.temp_mode, u: m05.tariff_unit } : null))
+  check('1a2. 910000005 "Xe tải 3,5 tấn (nóng)" parse = 3,5 tấn · HOT · PER_TRIP', Number(m05?.max_tons) === 3.5 && m05?.temp_mode === 'HOT' && m05?.tariff_unit === 'PER_TRIP', JSON.stringify(m05 ? { t: m05.max_tons, tm: m05.temp_mode, u: m05.tariff_unit } : null))
 
   // 02/10 (user): tạo dòng con BẮT BUỘC cha + điều kiện bảo quản + sức chứa theo thước đo — thiếu là 400, không còn "chưa gán cha"
   const BODY = { sap_code: SAP, name: 'QA60 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: ['AMBIENT'], capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET' }

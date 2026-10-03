@@ -2,6 +2,8 @@
 // so với audit-baseline.json — TĂNG là đỏ, GIẢM thì nhắc hạ baseline (--update-baseline). Không cần server/DB, cần mạng.
 // Vì sao không "0 là xanh": vite/esbuild/react-router chỉ vá ở bản MAJOR (đổi vite 5→8 là việc riêng), còn tar/node-pre-gyp
 // là phụ thuộc LÚC CÀI của bcrypt — nợ có chủ đích ghi trong baseline, code mới thêm thư viện lỗi thì ratchet bắt.
+// 03/10/2026: `braces` GHSA-vfj7-8cjw-p6xm (high, range * — CHƯA có bản vá) qua chokidar 3 — chỉ ts-node-dev (BE dev) và
+// tailwindcss 3 (FE build), không vào bundle chạy thật ⇒ nâng baseline BE high 0→1, FE high 1→2; có bản vá thì hạ lại.
 // usage: node scripts/qa/44-npm-audit.mjs [--update-baseline]
 import { spawnSync } from 'child_process'
 import { readFileSync, writeFileSync } from 'fs'

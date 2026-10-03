@@ -4,7 +4,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { ok, fail } from '../../utils/response'
+import { ok, fail, type PgLikeError } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
@@ -288,14 +288,14 @@ export async function doSapCoverage(req: Request, res: Response) {
     const plants = await allowedPlants(req)
     if (plants && !plantAllowed(plants, plant)) return fail(res, 'Nhà máy (plant) ngoài phạm vi kho được phân quyền', 403)
     const { data, error } = await supabase.rpc('zsd02_coverage', { p_plant: plant } as never)
-    if (error) throw new Error(error.message)
+    if (error) throw error   // giữ NGUYÊN đối tượng lỗi: statement timeout lúc máy bận phải thành 503 QUERY_TIMEOUT, không phải 500 (gói 61 [17h] 03/10)
     const cov = (data ?? {}) as Record<string, unknown>
     const byOd = (cov.by_od_created ?? []) as { date: string; ods: number }[]
     const bySo = (cov.by_so_created ?? []) as { date: string; ods: number }[]
     const span = (l: { date: string }[]) => (l.length ? { from: l[0].date, to: l[l.length - 1].date } : null)
     return ok(res, { plant, mode: await getZsd02CoverageMode(), pending_ods: Number(cov.pending_ods) || 0, sap_posted_ods: Number(cov.sap_posted_ods) || 0, no_created_date: Number(cov.no_created_date) || 0,
       by_od_created: byOd, by_so_created: bySo, od_span: span(byOd), so_span: span(bySo), sap_max_od_created: (cov.sap_max_od_created as string | null) ?? null })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { return e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e)) }
 }
 
 // GET /external/do-sap/facets — giá trị lọc (plant, source, ship_to) — gọn, lấy distinct từ trang đầu lớn

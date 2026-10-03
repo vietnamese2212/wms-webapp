@@ -64,10 +64,10 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // chuyến, nên dòng đơn đổi (chốt date, quét thêm) phải làm mới bảng — không chỉ khi wms_tasks đổi.
   OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods'], ['fill-demand'], ['date-rule-lines'], ['work-inbox'], ['directed-board']],
   OutboundScanEntry:   [['gdo'], ['gdos-paged'], ['outbound-summary'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
-  reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count'], ['work-inbox']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
+  reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count'], ['work-inbox'], ['dispatch-decisions']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
-  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-od']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
+  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-od'], ['dispatch-decisions']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
   vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
   warehouse_vehicle_model: [['vehicle-models']],                 // cấu hình riêng của KHO cho dòng xe (03/10) — cùng danh sách
@@ -81,10 +81,10 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // kéo thả không đổi dữ liệu SAP — hai cửa đó chỉ cần làm mới khi ZSD02 / Kế hoạch xuất / dấu hoãn đổi (erp_outbound_orders, khvc_lines…)
   dispatch_trip_od:      [['dispatch-plan']],
   dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
-  dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-stale'], ['zsd02-coverage']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
-  od_lineage:            [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
+  dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-stale'], ['zsd02-coverage'], ['dispatch-decisions']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
+  od_lineage:            [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-decisions']],  // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
   outbound_events:     [['gdo-events']],
-  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync']],
+  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-decisions']],   // dispatch-review: tiến độ kho ở tab Đã điều (03/10 đợt 2)
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],

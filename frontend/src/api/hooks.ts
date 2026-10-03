@@ -6165,6 +6165,8 @@ export interface DispatchReviewInfo {
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]
   held_before: { until: string; reason: string; by: string | null } | null
+  // 03/10 đợt 2 — tiến độ KHO của OD đã vào Kế hoạch xuất (Số xe · ngày xuất · trạng thái chuyến); null = chưa vào
+  khvc: { group_code: string; export_date: string | null; gdo_status: string | null; gdo_id: string | null; plan_dropped: boolean } | null
 }
 export function useDispatchPlanReview(id: string | null, stamp?: string | null) {
   return useQuery({
@@ -6243,7 +6245,7 @@ export function useOutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/outside`, body).then(r => r.data.data as DispatchPlan & { outside: { ods: number; trips_removed: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
   })
 }
 export function useUnoutsideDispatchOds() {
@@ -6266,7 +6268,7 @@ export function useConfirmSupplementDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/confirm-supplement`, { od_numbers }).then(r => r.data.data as DispatchPlan & { supplement: { ods: number; edges: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }) },
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
   })
 }
 /** Đơn QUÁ cửa sổ tồn đọng (14 ngày) chưa ai quyết — băng đỏ ở Xem đơn, không rớt im lặng (03/10 tối). */
@@ -6275,6 +6277,39 @@ export function useDispatchPlanStale(id: string | null, enabled = true) {
   return useQuery({
     queryKey: ['dispatch-stale', id], enabled: !!id && enabled, staleTime: 60_000,
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/stale`)).data.data as { count: number; rows: DispatchStaleOd[]; before: string | null; backlog_days: number },
+  })
+}
+/** HÀNG CHỜ "CẦN XỬ LÝ" của điều vận (03/10 đợt 2): DO đã vào Kế hoạch xuất mà SAP bỏ (GONE) / thay (REPLACED) · họ hàng của DO đã
+ *  đi (KIN) · SAP đổi số lượng sau khi kho quét (QTY, việc ở Dữ liệu bên ngoài). Tính sống theo KHO, không theo kế hoạch. */
+export interface DispatchDecisionNewOd { od: string; kind: string | null; active: boolean; in_khvc: boolean; outside: boolean; on_vehicle: boolean; delivery_date: string | null; qty_base: number | string | null; same_customer: boolean }
+export interface DispatchDecision {
+  od_number: string; kind: 'GONE' | 'REPLACED' | 'KIN' | 'QTY'; group_code: string; export_date: string | null; gdo_id: string | null; gdo_status: string | null
+  detected_at: string | null; ship_to_code: string | null; ship_to_name: string | null; qty_base: number | string | null; sap_pallets: number | string | null; delivery_date: string | null
+  new_ods: DispatchDecisionNewOd[]; all_free: boolean; same_content: boolean; any_merge: boolean; detail: string | null; task_id: string | null; action: string | null
+}
+export function useDispatchDecisions(warehouseId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-decisions', warehouseId], enabled: !!warehouseId && enabled, staleTime: 60_000, refetchInterval: 120_000,
+    queryFn: async () => (await apiClient.get('/tms/dispatch/decisions', { params: { warehouse_id: warehouseId } })).data.data as { count: number; rows: DispatchDecision[] },
+  })
+}
+const invalidateDecisions = (qc: ReturnType<typeof useQueryClient>) => { for (const k of ['dispatch-decisions', 'dispatch-plans', 'dispatch-plan', 'dispatch-sync', 'dispatch-review', 'khvc', 'gdos-paged', 'gdo']) qc.invalidateQueries({ queryKey: [k] }) }
+/** Gỡ MỘT DO khỏi Số xe trong Kế hoạch xuất (SAP bỏ / thay, hoặc gỡ chủ động có lý do) — chuyến chưa bắt đầu; replan dội xuống chuyến. */
+export function useRemoveKhvcOd() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; od_number: string; group_code: string; reason?: string }) =>
+      apiClient.post('/tms/dispatch/khvc/remove', body, { timeout: 120_000 }).then(r => r.data.data as { removed: number; trip_rows_removed: number; replan_error: string | null }),
+    onSuccess: () => invalidateDecisions(qc),
+  })
+}
+/** Đổi số DO trên Số xe đã vào Kế hoạch xuất (SAP thay 1→1 / tách 1→N cùng xe) — chuyến chưa bắt đầu. */
+export function useRenumberKhvcOd() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; od_number: string; group_code: string; new_ods?: string[] }) =>
+      apiClient.post('/tms/dispatch/khvc/renumber', body, { timeout: 120_000 }).then(r => r.data.data as { from: string; to: string[]; lines: number; replan_error: string | null }),
+    onSuccess: () => invalidateDecisions(qc),
   })
 }
 /** Dòng xe được vào của MỘT khách — xem/sửa ngay trên bàn ghép xe (chỉ dòng xe; kênh vẫn đổi ở trang Khách hàng). */
@@ -6342,7 +6377,8 @@ export function useDispatchPlan(id: string | null) {
 export function useCreateDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean }) =>
+    // force (03/10): nháp của NGƯỜI KHÁC vừa cập nhật ⇒ 409 PLAN_RECENTLY_EDITED, người bấm xác nhận ghi đè rồi gửi lại với force
+    mutationFn: (body: { warehouse_id: string; plan_date: string; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean; force?: boolean }) =>
       apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
     onSuccess: () => { invalidateDispatch(qc); qc.invalidateQueries({ queryKey: ['warehouses'] }) },
   })

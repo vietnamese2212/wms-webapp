@@ -95,6 +95,8 @@ export default function Dispatch() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canPlan = can(perms, 'dispatch', 'plan'), canConfirm = can(perms, 'dispatch', 'confirm'), canExport = can(perms, 'dispatch', 'export')
+  // 03/10 đợt 2: gỡ / đổi số DO trên sổ Kế hoạch xuất từ bàn điều vận — người chốt kế hoạch hoặc người quản sổ KH xuất (BE requireAnyPerm cùng cặp)
+  const canActKhvc = canConfirm || can(perms, 'external_khvc', 'delete')
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
   const day = f.planDate || tomorrowVN()
@@ -180,11 +182,21 @@ export default function Dispatch() {
   const runPlanWith = (d: LoadBandDraft) => {
     if (!f.warehouseId) return
     // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; mở bảng Xem đơn ở tab Điều
-    return create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day, load_bands: d.bands, load_bypass: d.bypass }).then(p => {
+    const body = { warehouse_id: f.warehouseId, plan_date: day, load_bands: d.bands, load_bypass: d.bypass }
+    const done = (p: DispatchPlan) => {
       setBandDlg(false)
       setF({ planId: p.id, tab: 'review', reviewTab: 'GO' })
       toast({ title: `Bước 1 — xem ${p.summary.pool_ods ?? 0} đơn`, description: 'Đơn không đi: chuyển sang "Không điều ngày này" / "Không điều", rồi bấm "Ghép xe … đơn Điều".' })
-    }).catch(e => err(e, 'Không lập được kế hoạch'))
+    }
+    return create.mutateAsync(body).then(done).catch(async e => {
+      // 03/10 (nhiều người một bàn): nháp của NGƯỜI KHÁC vừa cập nhật ⇒ BE 409 PLAN_RECENTLY_EDITED — hỏi lại rồi mới ghi đè (force)
+      const ax = e as AxiosError<{ error?: { code?: string; message?: string } }>
+      if (ax?.response?.status === 409 && ax.response.data?.error?.code === 'PLAN_RECENTLY_EDITED') {
+        if (await ask({ title: 'Nháp này đang có người khác làm', body: ax.response.data.error?.message, confirmLabel: 'Vẫn lập lại (ghi đè)', danger: true }) === null) return
+        return create.mutateAsync({ ...body, force: true }).then(done).catch(e2 => err(e2, 'Không lập được kế hoạch'))
+      }
+      err(e, 'Không lập được kế hoạch')
+    })
   }
   const noTripYet = !!plan && !plan.trips.some(t => tripStatus(t) !== 'DISCARDED' && t.ods.length > 0)
   // chưa có xe nào ⇒ Bàn ghép xe cũng mở bảng Xem đơn (bước 1), không để một bàn trống với khung chờ vài trăm đơn
@@ -555,7 +567,7 @@ export default function Dispatch() {
                 : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ chạy máy ghép.</p>}
             </div>
           ) : showReview ? (
-            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} />
+            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} canAct={canActKhvc} />
           ) : tab === 'board' ? (
             <DispatchBoard plan={plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
           ) : tab === 'map' ? (

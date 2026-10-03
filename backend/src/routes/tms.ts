@@ -114,6 +114,12 @@ router.post('/dispatch/plans/:id/unoutside',  requirePerm('dispatch', 'plan'),  
 router.post('/dispatch/plans/:id/pull-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zPullOd }),        dispatch.pullOd)
 router.post('/dispatch/plans/:id/confirm-supplement', requirePerm('dispatch', 'plan'), validate({ params: zIdParam, body: dispatch.zConfirmSupplement }), dispatch.confirmSupplement)   // OD cùng dòng SO với OD đã đi = giao thêm (03/10, user chốt (b))
 router.get('/dispatch/plans/:id/stale',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanStale)
+// ĐỢT 2 vòng đời OD (03/10): hàng chờ "Cần xử lý" của điều vận (SAP bỏ / thay DO đã vào KH xuất · họ hàng đã đi · SL đổi sau khi kho quét)
+// + hai cửa gỡ bậc "Đã xác nhận": gỡ DO khỏi Kế hoạch xuất (có lý do, nhật ký) · đổi số DO trên Số xe. Nút ở Điều vận nhưng chạm sổ
+// Kế hoạch xuất ⇒ requireAnyPerm với quyền của module đó (luật CLAUDE.md: nút ở trang A chạm module B).
+router.get('/dispatch/decisions',             requirePerm('dispatch', 'view'),    validate({ query: dispatch.zDecisionsQuery }),                dispatch.listDecisions)
+router.post('/dispatch/khvc/remove',          requireAnyPerm(['dispatch', 'confirm'], ['external_khvc', 'delete']), validate({ body: dispatch.zKhvcRemove }),   dispatch.removeFromKhvc)
+router.post('/dispatch/khvc/renumber',        requireAnyPerm(['dispatch', 'confirm'], ['external_khvc', 'edit']),   validate({ body: dispatch.zKhvcRenumber }), dispatch.renumberKhvc)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng
 router.get('/dispatch/plans/:id/customers/:shipTo/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zShipToParam }), dispatch.getCustomerVehicles)
 router.put('/dispatch/plans/:id/customers/:shipTo/vehicles', requireAnyPerm(['dispatch', 'customer_vehicles'], ['customers', 'edit']), validate({ params: dispatch.zShipToParam, body: dispatch.zCustVehicles }), dispatch.setCustomerVehicles)

@@ -1311,6 +1311,9 @@ try {
   {
     await cleanupTrips()
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { mat_doc: null, qty_issued_base: null, sync_status: 'ACTIVE', replaced_by_od: null, updated_at: nowIso() })
+    // [18] hàng chờ "Cần xử lý" của điều vận (đợt 2) — tính theo KHO; chỉ soi dòng của fixture QA61 (kho Ba Vì thật có thể có việc thật)
+    const decUrl = `/tms/dispatch/decisions?warehouse_id=${WH}`
+    const qa61 = d => (d.j?.data?.rows ?? []).filter(r => String(r.od_number).startsWith('QA61') || String(r.group_code ?? '').startsWith(PREFIX))
     const pA = await mkPlan(PLAN_BODY)           // DAY: OD1+OD2 xe 1 (DA) · OD3 xe 2 (HA chờ)
     const A = pA.j?.data
     const cfA = await api(`/tms/dispatch/plans/${A?.id}/confirm`, 'POST', {})
@@ -1349,6 +1352,7 @@ try {
     await restWrite('od_lineage', 'POST', null, { id: crypto.randomUUID(), old_od: OD[0], new_od: ODSUP, kind: 'AFTER_POST', so_number: 'QA61SOSUP', so_item: '10', updated_at: nowIso() })
     const pS = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY2 })
     const SID = pS.j?.data?.id ?? ''
+    const decK = await api(decUrl)   // [17c3] hàng chờ Cần xử lý phải thấy họ hàng đã đi TRƯỚC khi người quyết
     const syS = await api(`/tms/dispatch/plans/${SID}/sync`)
     const flS = (syS.j?.data?.flags ?? []).find(x => x.od_number === ODSUP)
     const rS = rowOf(pS.j?.data, ODSUP)
@@ -1360,7 +1364,12 @@ try {
     const supOk = await api(`/tms/dispatch/plans/${SID}/confirm-supplement`, 'POST', { od_numbers: [ODSUP] })
     const edge = (await restAll('od_lineage', `select=resolved_at,resolved_by,resolution&new_od=eq.${ODSUP}`))[0]
     const syS2 = await api(`/tms/dispatch/plans/${SID}/sync`)
+    const decK2 = await api(decUrl)
     const eS2 = await railErr('khvc_lines', khRow(ODSUP, 'QA61RAIL_S2', DAY2))
+    const kinRow = qa61(decK).find(r => r.kind === 'KIN' && r.od_number === OD[0])
+    check('17c3. Hàng chờ Cần xử lý (đợt 2): họ hàng đã đi ra dòng KIN (DO cũ · Số xe · DO mới cùng dòng SO) trước khi quyết · sau "Xác nhận đơn bổ sung" dòng hết',
+      decK.s === 200 && !!kinRow && kinRow.group_code === gcA && (kinRow.new_ods ?? []).some(n => n.od === ODSUP) && decK2.s === 200 && !qa61(decK2).some(r => r.kind === 'KIN' && r.od_number === OD[0]),
+      `dec=${decK.s} row=${JSON.stringify(kinRow ?? null)?.slice(0, 200)} after=${qa61(decK2).filter(r => r.kind === 'KIN').length}`)
     check('17c2. HỌ HÀNG ĐÃ ĐI: OD mới cùng dòng SO với OD đã đi → khung chờ nháp ngày khác, cờ KIN_SHIPPED nêu DO cũ + xe · Xác nhận 409 OD_CHANGED_IN_SAP · rào DB chặn vào KH xuất ngày khác · OD lạ 404 · không cạnh 422 NOT_KIN · "Xác nhận đơn bổ sung" → cạnh resolved SUPPLEMENT có người, cờ tắt, rào cho qua',
       pS.s === 201 && !!rS && flS?.kind === 'KIN_SHIPPED' && (flS?.info ?? '').includes(OD[0]) && mvS.s === 200
       && cfS.s === 409 && cfS.j?.error?.code === 'OD_CHANGED_IN_SAP' && /OD_ALREADY_PLANNED/.test(eS1 ?? '')
@@ -1423,6 +1432,83 @@ try {
       stl.s === 200 && (stl.j?.data?.rows ?? []).some(r => r.od_number === ODST) && hs.s === 200 && stl2.s === 200 && !(stl2.j?.data?.rows ?? []).some(r => r.od_number === ODST),
       `stale=${stl.s} n=${stl.j?.data?.count} có=${(stl.j?.data?.rows ?? []).some(r => r.od_number === ODST)} hold=${hs.s} ${hs.j?.error?.message ?? ''} sau=${(stl2.j?.data?.rows ?? []).some(r => r.od_number === ODST)}`)
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODST}`).catch(() => {})
+
+    // ── [18] ĐỢT 2 VÒNG ĐỜI OD (03/10): hàng chờ "Cần xử lý" của điều vận (RPC dispatch_decisions) + gỡ / đổi số DO bậc Đã xác nhận
+    // (POST /dispatch/khvc/remove · /renumber) + tiến độ kho ở /review + "Lập lại" đè nháp người khác (409 PLAN_RECENTLY_EDITED) ──
+    await cleanupTrips()
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'ACTIVE', replaced_by_od: null, updated_at: nowIso() })
+    const p18 = await mkPlan(PLAN_BODY)            // DAY: OD1+OD2 xe 1 · OD3 xe 2 (HA không cần phản hồi từ [16])
+    const P18 = p18.j?.data
+    const cf18 = await api(`/tms/dispatch/plans/${P18?.id}/confirm`, 'POST', {})
+    const kh18 = await restAll('khvc_lines', `select=do_no,group_code,export_date,gdo_id&group_code=like.${PREFIX}*`)
+    const gc3 = kh18.find(k => k.do_no === OD[2])?.group_code ?? '', gc1 = kh18.find(k => k.do_no === OD[0])?.group_code ?? ''
+    const gdo1 = kh18.find(k => k.do_no === OD[0])?.gdo_id ?? (gc1 ? (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${gc1}`))[0]?.id : null)
+    const d0 = await api(decUrl)
+    const rv18 = await api(`/tms/dispatch/plans/${P18?.id}/review`)
+    const k2 = rv18.j?.data?.ods?.[OD[1]]?.khvc
+    check('18a. Hàng chờ Cần xử lý: kế hoạch vừa xác nhận khớp ZSD02 → 0 việc QA61 · /review trả TIẾN ĐỘ KHO của OD đã vào KH xuất (Số xe · chuyến Chờ xuất)',
+      cf18.s === 200 && d0.s === 200 && qa61(d0).length === 0 && k2?.group_code === gc1 && k2?.gdo_status === 'PENDING',
+      `confirm=${cf18.s} ${cf18.j?.error?.message ?? ''} dec=${d0.s} n=${qa61(d0).length} khvc=${JSON.stringify(k2 ?? null)}`)
+    // 18b — SAP THAY OD3 bằng QA61ODR3 (cùng khách, cùng SL): dòng REPLACED, chuyến Chờ xuất, DO mới trống ⇒ "Đổi số DO"
+    const ODR3 = 'QA61ODR3'
+    await restWrite('erp_outbound_orders', 'POST', null, { id: crypto.randomUUID(), od_number: ODR3, od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[2] * perPallet, so_number: 'QA61SO3', so_item: '10',
+      ship_to_code: SHIP[2], ship_to_name: 'QA61 NPP 3', ward_code: W2, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[2]}`, { sync_status: 'OBSOLETE', replaced_by_od: ODR3, replaced_at: nowIso(), updated_at: nowIso() })
+    await restWrite('od_lineage', 'POST', null, { id: crypto.randomUUID(), old_od: OD[2], new_od: ODR3, kind: 'REPLACE', so_number: 'QA61SO3', so_item: '10', updated_at: nowIso() })
+    const d1 = await api(decUrl)
+    const r1 = qa61(d1).find(r => r.od_number === OD[2])
+    const rn = await api('/tms/dispatch/khvc/renumber', 'POST', { warehouse_id: WH, od_number: OD[2], group_code: gc3 })
+    const kh2 = await restAll('khvc_lines', `select=do_no,group_code,export_date&group_code=eq.${gc3}`)
+    const edgeR = (await restAll('od_lineage', `select=resolved_at,resolution,resolved_by&old_od=eq.${OD[2]}&new_od=eq.${ODR3}`))[0]
+    const tripOd = await restAll('dispatch_trip_od', `select=od_number&plan_id=eq.${P18?.id}&od_number=eq.${ODR3}`)
+    const d2 = await api(decUrl)
+    check('18b. SAP thay OD3 → QA61ODR3: hàng chờ ra dòng REPLACED (Chờ xuất · DO mới trống · cùng khách cùng SL) · "Đổi số DO" → KH xuất mang số mới cùng Số xe/ngày · cạnh phả hệ resolved RENUMBER có người · dòng OD trên xe đổi theo · hàng chờ hết dòng',
+      r1?.kind === 'REPLACED' && r1?.gdo_status === 'PENDING' && r1?.all_free === true && r1?.same_content === true && (r1?.new_ods ?? [])[0]?.od === ODR3
+      && rn.s === 200 && rn.j?.data?.to?.[0] === ODR3 && kh2.some(k => k.do_no === ODR3 && k.export_date === DAY) && !kh2.some(k => k.do_no === OD[2])
+      && edgeR?.resolution === 'RENUMBER' && !!edgeR?.resolved_by && tripOd.length === 1 && !qa61(d2).some(r => r.od_number === OD[2]),
+      `row=${JSON.stringify(r1 ?? null)?.slice(0, 220)} rn=${rn.s} ${rn.j?.error?.message ?? ''} to=${JSON.stringify(rn.j?.data?.to)} kh=${kh2.map(k => k.do_no).join(',')} edge=${JSON.stringify(edgeR ?? null)} tripOd=${tripOd.length} after=${qa61(d2).length}`)
+    // 18c — SAP BỎ OD1 (xe 1 còn OD2): dòng GONE chưa bắt đầu → "Gỡ khỏi kế hoạch" có lý do → KH xuất còn OD2, chuyến còn sống, nhật ký có lý do
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+    const d3 = await api(decUrl)
+    const r3 = qa61(d3).find(r => r.od_number === OD[0])
+    const rm = await api('/tms/dispatch/khvc/remove', 'POST', { warehouse_id: WH, od_number: OD[0], group_code: gc1, reason: 'QA61 SAP bỏ DO — điều lại' })
+    const kh3 = await restAll('khvc_lines', `select=do_no&group_code=eq.${gc1}`)
+    const g1 = gdo1 ? (await restAll('GroupDeliveryOrder', `select=status,plan_dropped&id=eq.${gdo1}`))[0] : null
+    const ev = await restAll('outbound_events', `select=event_type,detail,do_number&group_code=eq.${gc1}&event_type=eq.PLAN_DO_REMOVED&do_number=eq.${OD[0]}`)
+    const rm404 = await api('/tms/dispatch/khvc/remove', 'POST', { warehouse_id: WH, od_number: OD[0], group_code: gc1 })
+    const d4 = await api(decUrl)
+    check('18c. SAP bỏ OD1: hàng chờ ra dòng GONE · "Gỡ khỏi kế hoạch" (lý do) → KH xuất còn OD2, chuyến bên Xuất còn sống, nhật ký PLAN_DO_REMOVED có lý do · gỡ lần nữa → 404 · hàng chờ hết dòng',
+      r3?.kind === 'GONE' && r3?.gdo_status === 'PENDING' && rm.s === 200 && rm.j?.data?.removed === 1 && !kh3.some(k => k.do_no === OD[0]) && kh3.some(k => k.do_no === OD[1])
+      && g1?.status === 'PENDING' && g1?.plan_dropped !== true && ev.some(e => /QA61 SAP bỏ DO/.test(e.detail ?? '')) && rm404.s === 404 && !qa61(d4).some(r => r.od_number === OD[0]),
+      `row=${r3?.kind}/${r3?.gdo_status} rm=${rm.s} ${rm.j?.error?.message ?? ''} kh=${kh3.map(k => k.do_no).join(',')} gdo=${JSON.stringify(g1)} ev=${ev.length} 404=${rm404.s} after=${qa61(d4).some(r => r.od_number === OD[0])}`)
+    // 18d — KHO ĐANG XUẤT (cột C): chuyến xe 1 IN_PROGRESS, SAP bỏ OD2 ⇒ dòng ghi "đang xuất"; gỡ / đổi số → 409 (đường (c): huỷ rồi điều lại)
+    if (gdo1) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gdo1}`, { status: 'IN_PROGRESS', started_at: nowIso(), updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[1]}`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+    const d5 = await api(decUrl)
+    const r5 = qa61(d5).find(r => r.od_number === OD[1])
+    const rmC = await api('/tms/dispatch/khvc/remove', 'POST', { warehouse_id: WH, od_number: OD[1], group_code: gc1, reason: 'QA61' })
+    const rnC = await api('/tms/dispatch/khvc/renumber', 'POST', { warehouse_id: WH, od_number: OD[1], group_code: gc1, new_ods: [ODR3] })
+    if (gdo1) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gdo1}`, { status: 'PENDING', started_at: null, updated_at: nowIso() })
+    check('18d. Kho ĐANG XUẤT chuyến có DO bị SAP bỏ: hàng chờ ghi trạng thái đang xuất · gỡ → 409 KHVC_LINE_LOCKED nêu đường (c) "Bỏ bắt đầu" · đổi số → 409',
+      r5?.kind === 'GONE' && r5?.gdo_status === 'IN_PROGRESS' && rmC.s === 409 && rmC.j?.error?.code === 'KHVC_LINE_LOCKED' && /Bỏ bắt đầu/.test(rmC.j?.error?.message ?? '') && rnC.s === 409,
+      `row=${r5?.kind}/${r5?.gdo_status} rm=${rmC.s}/${rmC.j?.error?.code} ${(rmC.j?.error?.message ?? '').slice(0, 100)} rn=${rnC.s}/${rnC.j?.error?.code}`)
+    // 18e — SAP đổi SL sau khi kho quét = việc reconcile OPEN ⇒ hàng chờ liệt kê kind QTY kèm task (chỉ dẫn link, không nhân đôi nút)
+    const tkId = crypto.randomUUID()
+    await restWrite('reconcile_tasks', 'POST', null, { id: tkId, gdo_id: gdo1, group_code: gc1, od_number: OD[1], od_item: '10', change_type: 'QTY_DECREASE', zone: 'Z3', action: 'NEEDS_REVIEW', status: 'OPEN', old_ordered: 100, new_ordered: 80, scanned: 90, detail: 'QA61 SAP giảm còn 80 đã quét 90', created_at: nowIso(), updated_at: nowIso() })
+    const d6 = await api(decUrl)
+    const r6 = qa61(d6).find(r => r.kind === 'QTY' && r.task_id === tkId)
+    await restWrite('reconcile_tasks', 'DELETE', `id=eq.${tkId}`).catch(() => {})
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'ACTIVE', replaced_by_od: null, updated_at: nowIso() })
+    check('18e. SAP đổi SL sau khi kho quét (việc reconcile OPEN) → hàng chờ ra dòng QTY nêu task + chi tiết', !!r6 && r6.gdo_status === 'PENDING' && /QA61 SAP giảm/.test(r6.detail ?? ''), `row=${JSON.stringify(r6 ?? null)?.slice(0, 160)}`)
+    // 18f — LẬP LẠI đè nháp NGƯỜI KHÁC vừa cập nhật → 409 PLAN_RECENTLY_EDITED nêu tên; force → 201 (một nháp mỗi kho × ngày — lưới cho nhiều điều vận)
+    const pB2 = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY2 })
+    await restWrite('dispatch_plan', 'PATCH', `id=eq.${pB2.j?.data?.id}`, { created_by: 'QA61 Người khác', updated_at: nowIso() })
+    const again = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY2 })
+    const forced = await api('/tms/dispatch/plan', 'POST', { warehouse_id: WH, plan_date: DAY2, force: true })
+    check('18f. Lập lại đè nháp của NGƯỜI KHÁC vừa cập nhật → 409 PLAN_RECENTLY_EDITED nêu tên · force → 201',
+      pB2.s === 201 && again.s === 409 && again.j?.error?.code === 'PLAN_RECENTLY_EDITED' && /QA61 Người khác/.test(again.j?.error?.message ?? '') && forced.s === 201,
+      `first=${pB2.s} again=${again.s}/${again.j?.error?.code} forced=${forced.s} ${forced.j?.error?.message ?? ''}`)
+    await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODR3}`).catch(() => {})
     await cleanupTrips()
     // trả OD1–3 về OBSOLETE như [16] đã đặt — không thì [16d] ghép 4+3+3 của OD1–3 lẫn 4+3+3 của OD16A–C thành 9+6+5
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })

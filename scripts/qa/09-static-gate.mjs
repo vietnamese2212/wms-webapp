@@ -703,6 +703,16 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       l => /\b503\b/.test(l) && /\b(err|error|e)\d*\??\.message\b/.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
   },
+  // 03/10: `fail(res, String(e))` CHUỖI HOÁ đối tượng lỗi ⇒ mất mã Postgres: rào DB 23505 "OD_ALREADY_PLANNED: …" thành 500,
+  // statement timeout thành 500 thay vì 503 QUERY_TIMEOUT (error_logs 02–03/10: 11 ca ở /external; test app 03/10 bắt).
+  // Luật CLAUDE.md "fail(res, error) với CẢ đối tượng" có từ lâu mà 248 chỗ vẫn chuỗi hoá ⇒ ratchet; chỗ mới dùng failAny(res, e).
+  {
+    key: 'fail_stringified_error',
+    label: '`fail(res, String(e))` chuỗi hoá lỗi — mất mã PG (23505 rào DB → 500 thay vì 409 · statement timeout → 500 thay vì 503); ' +
+           'dùng `failAny(res, e)` (utils/response) để fail() dịch mã',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      l => /\bfail\(res, String\(e\)\)/.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
+  },
   {
     key: 'thung_unit_on_aggregate_pages',
     label: 'nhãn đơn vị "thùng" trên TRANG TỔNG GỘP CROSS-MÃ (Dashboard/Giám sát vận hành/Báo cáo nhập/Slotting) — ' +

@@ -95,7 +95,8 @@ try {
     && m30?.max_pallets === 16 && m30?.tariff_unit === 'PER_PALLET' && m30?.capacity_mode === 'PALLET',
     `http=${list.s} n=${seeded.length} m30=${JSON.stringify(m30 ? { p: m30.max_pallets, u: m30.tariff_unit } : null)}`)
   const m05 = seeded.find(m => m.sap_code === '910000005')
-  check('1a2. 910000005 "Xe tải 3,5 tấn (nóng)" parse = 3,5 tấn · HOT · PER_TRIP', Number(m05?.max_tons) === 3.5 && m05?.temp_mode === 'HOT' && m05?.tariff_unit === 'PER_TRIP', JSON.stringify(m05 ? { t: m05.max_tons, tm: m05.temp_mode, u: m05.tariff_unit } : null))
+  // 3,85 = 3,5 tấn danh định + 10 % cho phép vượt tải (user chốt 03/10: "tôi yêu cầu 10% mà").
+  check('1a2. 910000005 "Xe tải 3,5 tấn (nóng)" = 3,85 tấn (danh định + 10 %) · HOT · PER_TRIP', Number(m05?.max_tons) === 3.85 && m05?.temp_mode === 'HOT' && m05?.tariff_unit === 'PER_TRIP', JSON.stringify(m05 ? { t: m05.max_tons, tm: m05.temp_mode, u: m05.tariff_unit } : null))
 
   // 02/10 (user): tạo dòng con BẮT BUỘC cha + điều kiện bảo quản + sức chứa theo thước đo — thiếu là 400, không còn "chưa gán cha"
   const BODY = { sap_code: SAP, name: 'QA60 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: ['AMBIENT'], capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET' }

@@ -2305,7 +2305,8 @@ export async function removeFromKhvc(req: Request, res: Response) {
     if (!del?.length) return fail(res, 'Dòng vừa bị người khác gỡ (tải lại trang)', 404)
     const actor = actorOf(req)
     const why = b.reason?.trim() || 'SAP đã bỏ / thay DO'
-    await logOutboundEvents([{ group_code: b.group_code, gdo_id: lines[0].gdo_id ?? null, event_type: 'PLAN_DO_REMOVED', source: 'PLAN', actor, do_number: b.od_number,
+    const gdo = (await gdosOfGroups([b.group_code])).get(b.group_code)
+    await logOutboundEvents([{ group_code: b.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_DO_REMOVED', source: 'PLAN', actor, do_number: b.od_number,
       detail: `Điều vận gỡ DO ${b.od_number} khỏi Số xe ${b.group_code} — ${why}` }])
     // bàn điều vận: dòng OD trên xe đã xác nhận mang Số xe này cũng rời đi; xe rỗng thì bỏ (chuyến bên Xuất đã ngừng)
     const tripOds = await tripOdRowsOfGroup(b.group_code, b.od_number)
@@ -2381,7 +2382,8 @@ export async function renumberKhvc(req: Request, res: Response) {
     // bàn điều vận: dòng OD trên xe đã xác nhận đổi số theo (chỉ DO mới thứ nhất — phần tách thêm nằm trong KH xuất, bàn không dựng lại xe đã chốt)
     const tripOds = await tripOdRowsOfGroup(b.group_code, b.od_number)
     if (tripOds.length) { const { error } = await db.from('dispatch_trip_od').update({ od_number: newOds[0], updated_at: t }).in('id', tripOds.map(o => o.id).slice(0, 100)); if (error) throw error }
-    await logOutboundEvents([{ group_code: b.group_code, gdo_id: first.gdo_id ?? null, event_type: 'PLAN_DO_RENUMBERED', source: 'PLAN', actor, do_number: newOds[0],
+    const gdo = (await gdosOfGroups([b.group_code])).get(b.group_code)
+    await logOutboundEvents([{ group_code: b.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_DO_RENUMBERED', source: 'PLAN', actor, do_number: newOds[0],
       old_value: b.od_number, new_value: newOds.join(', '), detail: `Điều vận đổi số DO ${b.od_number} → ${newOds.join(', ')} trên Số xe ${b.group_code} (SAP thay DO)` }])
     let replan_error: string | null = null, replan: Record<string, unknown> | null = null
     try { replan = await replanKhvcGroups(req, [b.group_code]) } catch (e) { replan_error = String(e); console.error('[dispatch khvc renumber] replan:', e) }
@@ -2408,6 +2410,16 @@ export async function getPlanStale(req: Request, res: Response) {
 // ══ BẢNG XEM ĐƠN — thông tin SAP của từng OD (27/09 khuya, user: "thiếu nhiều thông tin quá: SO, người tạo, ghi chú đủ chưa,
 // thùng, loại kho… và cần xem được detail"). Tách khỏi GET kế hoạch: bàn ghép xe gọi kế hoạch sau MỖI lần thả, còn mấy cột
 // này chỉ tab Xem đơn cần — nhồi vào kế hoạch là bắt mọi lần thả kéo thêm vài nghìn dòng ZSD02. ══
+/** Chuyến bên Xuất của từng Số xe — bản còn hiệu lực mới nhất (một Số xe có thể có nhiều bản do replan; CANCELLED xếp sau). */
+type GdoLite = { id: string; group_code: string; status: string; plan_dropped: boolean | null; created_at: string }
+async function gdosOfGroups(gcs: string[]): Promise<Map<string, GdoLite>> {
+  const out = new Map<string, GdoLite>()
+  if (!gcs.length) return out
+  const rows = (await fetchAllByIdChunks(gcs, c => db.from('GroupDeliveryOrder').select('id, group_code, status, plan_dropped, created_at').in('group_code', c).order('id'))) as GdoLite[]
+  const rank = (g: GdoLite) => `${g.status === 'CANCELLED' ? 0 : 1}|${g.created_at}`
+  for (const g of rows) { const cur = out.get(g.group_code); if (!cur || rank(g) > rank(cur)) out.set(g.group_code, g) }
+  return out
+}
 type ReviewInfo = {
   so: string[]; so_types: string[]; created_by: string[]; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null
   sold_to: string | null; route_name: string | null; od_created_at: string | null; flow: string | null
@@ -2458,19 +2470,18 @@ export async function getPlanReview(req: Request, res: Response) {
       fetchAllByIdChunks(ods, c => db.from('dispatch_od_hold').select('od_number, hold_until, reason, created_by').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number')) as Promise<{ od_number: string; hold_until: string | null; reason: string; created_by: string | null }[]>,
     ])
     const oldOds = uniq(olds.map(o => o.od_number))
-    type KhvcLite = { do_no: string; group_code: string; export_date: string | null; gdo_id: string | null }
+    type KhvcLite = { do_no: string; group_code: string; export_date: string | null }
     const [mats, khvc, ownKhvc] = await Promise.all([
       fetchAllByIdChunks(uniq(lines.map(l => l.material_code).filter((x): x is string => !!x)), c => db.from('Material')
         .select('material_code, category, base_unit, entry_unit, units_per_carton').in('material_code', c).order('material_code')) as Promise<{ material_code: string; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }[]>,
       oldOds.length ? fetchAllByIdChunks(oldOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).order('do_no')) as Promise<{ do_no: string; group_code: string }[]> : Promise.resolve([] as { do_no: string; group_code: string }[]),
       // tiến độ kho (đợt 2): OD của kế hoạch này đang ở Kế hoạch xuất nào — một câu cho cả bảng, không tra từng dòng
-      fetchAllByIdChunks(ods, c => db.from('khvc_lines').select('do_no, group_code, export_date, gdo_id').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<KhvcLite[]>,
+      fetchAllByIdChunks(ods, c => db.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<KhvcLite[]>,
     ])
-    const gdoIds = uniq(ownKhvc.map(k => k.gdo_id).filter((x): x is string => !!x))
-    const gdos = gdoIds.length ? (await fetchAllByIdChunks(gdoIds, c => db.from('GroupDeliveryOrder').select('id, status, plan_dropped').in('id', c).order('id'))) as { id: string; status: string; plan_dropped: boolean | null }[] : []
-    const gdoBy = new Map(gdos.map(g => [g.id, g]))
+    // chuyến bên Xuất tra theo SỐ XE — `khvc_lines.gdo_id` không cửa nào ghi (0/63 dòng trên staging), gói 61 [18a] bắt lượt đầu
+    const gdoBy = await gdosOfGroups(uniq(ownKhvc.map(k => k.group_code)))
     const khvcBy = new Map<string, KhvcLite>()
-    for (const k of ownKhvc) if (!khvcBy.has(k.do_no) || (k.gdo_id && !khvcBy.get(k.do_no)!.gdo_id)) khvcBy.set(k.do_no, k)
+    for (const k of ownKhvc) if (!khvcBy.has(k.do_no)) khvcBy.set(k.do_no, k)
     const matBy = new Map(mats.map(m => [m.material_code, m]))
     const gcOf = new Map(khvc.map(k => [k.do_no, k.group_code]))
     const repBy = new Map<string, { od: string; group_code: string | null }[]>()
@@ -2507,8 +2518,8 @@ export async function getPlanReview(req: Request, res: Response) {
         replaces: repBy.get(od) ?? [],
         // hoãn có ngày đã tới ⇒ OD về lại Điều — nói ra lần hoãn trước (user chốt 27/09 khuya)
         held_before: h && h.hold_until && h.hold_until <= plan.plan_date ? { until: h.hold_until, reason: h.reason, by: h.created_by } : null,
-        khvc: (() => { const k = khvcBy.get(od); if (!k) return null; const g = k.gdo_id ? gdoBy.get(k.gdo_id) : undefined
-          return { group_code: k.group_code, export_date: k.export_date, gdo_status: g?.status ?? null, gdo_id: k.gdo_id, plan_dropped: g?.plan_dropped === true } })(),
+        khvc: (() => { const k = khvcBy.get(od); if (!k) return null; const g = gdoBy.get(k.group_code)
+          return { group_code: k.group_code, export_date: k.export_date, gdo_status: g?.status ?? null, gdo_id: g?.id ?? null, plan_dropped: g?.plan_dropped === true } })(),
       }
     }
     return ok(res, { ods: out })

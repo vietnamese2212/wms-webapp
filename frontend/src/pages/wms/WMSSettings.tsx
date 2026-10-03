@@ -507,7 +507,7 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
             </SettingField>
             <SettingField label="Phủ ngày tạo khi nạp ZSD02"
               tip={<>SAP chỉ đổ ZSD02 theo <b>Ngày tạo</b> và không có "ngày sửa cuối", nên DO cũ bị sửa chỉ lọt vào app khi file phủ ngày tạo của nó. Màn nạp liệt kê ngày tạo của mọi đơn <b>chưa đi</b> theo lịch sử app (tab Điều · đang xếp · đã xác nhận · kho đang xuất, trừ đơn đã đánh dấu Ngoài app).<br />
-                <b>Bắt buộc</b>: file thiếu ngày của đơn chưa đi thì không nạp — đổ lại SAP đúng khoảng. <b>Nhắc nhở</b>: vẫn nạp, cảnh báo vàng. Khoảng phải phủ do đơn CŨ NHẤT chưa quyết quyết định: quyết đơn cũ (Không điều · Ngoài app · điều thật) thì khoảng tự ngắn lại.</>}>
+                <b>Bắt buộc</b>: file thiếu ngày của đơn chưa đi thì không nạp — đổ lại SAP đúng khoảng. <b>Nhắc nhở</b>: vẫn nạp, cảnh báo vàng. Khoảng phải phủ do đơn CŨ NHẤT chưa đi quyết định: đơn chỉ rời khoảng khi ĐÃ ĐI (chuyến hoàn thành) hoặc mang dấu Ngoài app — đơn Không điều / đã điều chưa đi vẫn phải phủ.</>}>
               <SingleSelect options={ZSD02_COV_OPTS} value={draftCov}
                 onChange={setDraftCov} searchable={false} triggerClassName="w-full" />
             </SettingField>

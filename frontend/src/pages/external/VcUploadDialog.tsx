@@ -40,7 +40,7 @@ function CoverageNeed({ plant, onSuggest }: { plant: string; onSuggest: (from: s
             <div>Từng ngày tạo có đơn chưa đi: {c.by_od_created.slice(0, 20).map(d => `${dmy(d.date)} (${d.ods})`).join(' · ')}{c.by_od_created.length > 20 ? ' …' : ''}</div>
             {soSpan && <div>Nếu SAP lọc theo <b>Ngày tạo SO</b> thì khoảng là {dmy(soSpan.from)} → {dmy(soSpan.to)}.</div>}
             {c.no_created_date > 0 && <div>{c.no_created_date} đơn không có ngày tạo (nhập tay / VL06O) — không kiểm phủ.</div>}
-            <div className="text-slate-500">Khoảng do đơn CŨ NHẤT chưa quyết quyết định. Quyết đơn cũ ở Điều vận → Xem đơn (Không điều · Ngoài app · điều thật) thì khoảng tự ngắn lại.</div>
+            <div className="text-slate-500">Khoảng do đơn CŨ NHẤT chưa đi quyết định — đơn chỉ rời khoảng khi ĐÃ ĐI (chuyến Xuất kho hoàn thành) hoặc mang dấu Ngoài app; đơn Không điều / đã điều chưa đi vẫn phải phủ.</div>
           </div>} />
         </div>
       )}
@@ -120,8 +120,10 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
   // ZSD02 (03/10 tối): plant của các kho trong phạm vi ⇒ khối "ngày tạo cần phủ" + ô khai khoảng ngày tạo của file
   const { data: whsRaw = [] } = useScopedWarehouses(true)
   const plants = isZs ? [...new Set((whsRaw as { sap_plant?: string | null }[]).map(w => w.sap_plant).filter((p): p is string => !!p))].sort() : []
+  // Để trống = BE lấy đúng min/max ngày tạo OD có trong file. KHÔNG điền sẵn "hôm nay" (review 03/10): khai tới hôm nay cho một file
+  // xuất từ sáng là nói dối về khoảng phủ — phép "file cũ hơn sổ" không bao giờ bật và OD tạo sau giờ xuất file bị coi là SAP đã xoá.
   const [covFrom, setCovFrom] = useState('')
-  const [covTo, setCovTo] = useState(() => todayVN())
+  const [covTo, setCovTo] = useState('')
   const [allowOld, setAllowOld] = useState(false)
   const [confirmGone, setConfirmGone] = useState(false)
   const [lastErrCode, setLastErrCode] = useState<string | null>(null)
@@ -163,6 +165,7 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
     setLastFile(file)
+    setAllowOld(false); setConfirmGone(false)   // xác nhận "file cũ" / "SAP đã xoá" là theo TỪNG file — không mang sang file kế
     runPreflight(file)
   }
 

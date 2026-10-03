@@ -4,7 +4,7 @@ import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
-import { loosePalletRemainder, looseConfigOf, type MatPalletUnits } from './outboundController'
+import { loosePalletRemainder, looseConfigOf, clearSapIssueCache, type MatPalletUnits } from './outboundController'
 
 const now = () => new Date().toISOString()
 
@@ -152,6 +152,9 @@ export async function resolveReconcileTask(req: Request, res: Response) {
       status: 'RESOLVED', resolution, resolved_by: req.user?.name ?? null, resolved_at: now(), updated_at: now(),
     }).eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
+    // cổng SAP ở kho nhớ 30 s theo chuyến — vừa quyết xong thì mở ngay, đừng bắt kho chờ (review 03/10: không ai gọi clear)
+    const gid = (data as { gdo_id?: string | null } | null)?.gdo_id
+    if (gid) clearSapIssueCache(String(gid))
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

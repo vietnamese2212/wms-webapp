@@ -1890,6 +1890,11 @@ async function holdOdsInner(req: Request, res: Response) {
     const rows = ods.map(od => ({ id: idOf.get(od) ?? randomUUID(), warehouse_id: plan.warehouse_id, od_number: od, hold_until: b.until, reason, created_by: actor, updated_at: t }))
     const { error: hErr } = await db.from('dispatch_od_hold').upsert(rows, { onConflict: 'id' })
     if (hErr) throw hErr
+    // một đơn MỘT trạng thái — dấu hoãn thay cho dấu Ngoài app (chiều ngược ở outsideOdsInner; review 03/10: trước chỉ có một chiều)
+    for (let i = 0; i < ods.length; i += 300) {
+      const { error } = await db.from('dispatch_od_outside').delete().eq('warehouse_id', plan.warehouse_id).in('od_number', ods.slice(i, i + 300))
+      if (error) throw error
+    }
     // MỌI phần của OD rời kế hoạch (OD đã bị máy tách thì các phần nằm ở nhiều xe)
     const leaving = all.filter(o => planOds.includes(o.od_number))
     const rowIds = leaving.map(o => o.id)
@@ -2070,8 +2075,11 @@ async function outsideOdsInner(req: Request, res: Response) {
     const rows = ods.map(od => ({ id: idOf.get(od) ?? randomUUID(), warehouse_id: plan.warehouse_id, od_number: od, reason, created_by: actor, updated_at: t }))
     const { error: xErr } = await db.from('dispatch_od_outside').upsert(rows, { onConflict: 'id' })
     if (xErr) throw xErr
-    // dấu Ngoài app thay cho dấu hoãn (một đơn một trạng thái)
-    await db.from('dispatch_od_hold').delete().eq('warehouse_id', plan.warehouse_id).in('od_number', ods.slice(0, 300))
+    // dấu Ngoài app thay cho dấu hoãn (một đơn một trạng thái) — ods tới 600 (ids 300 + od_numbers 300) ⇒ chunk 300, không nuốt lỗi
+    for (let i = 0; i < ods.length; i += 300) {
+      const { error } = await db.from('dispatch_od_hold').delete().eq('warehouse_id', plan.warehouse_id).in('od_number', ods.slice(i, i + 300))
+      if (error) throw error
+    }
     const leaving = all.filter(o => planOds.includes(o.od_number))
     const rowIds = leaving.map(o => o.id)
     for (let i = 0; i < rowIds.length; i += 300) {

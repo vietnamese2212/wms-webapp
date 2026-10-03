@@ -97,6 +97,14 @@ describe('SO sửa ⇒ OD mới — chỉ kết luận "đã thay" khi có bằn
     expect(r.uncertain).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
     expect(r.edges).toEqual([])
   })
+  it('khai khoảng phủ nhưng OD cũ KHÔNG có ngày tạo (dòng nạp trước khi có cột) ⇒ rơi về luật ngày giao, không kẹt uncertain (review 03/10)', () => {
+    const r = findReplacedOds(file, [cand('OLD')], COV)            // ngày giao = DAY, trong khoảng ngày giao của file
+    expect(r.replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'NEW' }])
+    expect(r.uncertain).toEqual([])
+    const r2 = findReplacedOds(file, [cand('OLD', { delivery_date: '2026-09-20' })], COV)   // ngoài khoảng ngày giao ⇒ vẫn uncertain
+    expect(r2.replaced).toEqual([])
+    expect(r2.uncertain).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
+  })
   it('TÁCH 1 → N: một OD cũ vắng, hai OD mới cùng SO Item ⇒ hai cạnh SPLIT; `replaced.by` = OD mới đầu tiên', () => {
     const two = [{ od_number: 'N1', so_number: 'S1', so_item: '10', delivery_date: DAY }, { od_number: 'N2', so_number: 'S1', so_item: '10', delivery_date: DAY }]
     const r = findReplacedOds(two, [c2('OLD', '2026-09-24')], COV)

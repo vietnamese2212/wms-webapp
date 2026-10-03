@@ -146,9 +146,12 @@ export function findReplacedOds(
   for (const r of fileOds) if (r.so_number && r.so_item) { const k = `${r.so_number}__${r.so_item}`; const l = newBySo.get(k) ?? []; if (!l.includes(r.od_number)) l.push(r.od_number); newBySo.set(k, l) }
   const dates = fileOds.map(r => r.delivery_date).filter((x): x is string => !!x).sort()
   const lo = dates[0], hi = dates[dates.length - 1]
+  // OD cũ không có ngày tạo (dòng nạp trước khi có cột — staging 03/10: 14 OD Ba Vì) thì rơi về luật ngày giao, không thì nó
+  // mãi mãi chỉ là `uncertain`: OD cũ giữ ACTIVE, không có cạnh phả hệ ⇒ rào DB mù với họ đó (review 03/10)
+  const byDelivery = (p: ReplaceCandidate) => !!lo && !!p.delivery_date && p.delivery_date >= lo && p.delivery_date <= hi
   const covered = (p: ReplaceCandidate) => coverage
-    ? !!p.od_created_at && p.od_created_at >= coverage.from && p.od_created_at <= coverage.to
-    : !!lo && !!p.delivery_date && p.delivery_date >= lo && p.delivery_date <= hi
+    ? (p.od_created_at ? p.od_created_at >= coverage.from && p.od_created_at <= coverage.to : byDelivery(p))
+    : byDelivery(p)
   const replaced: { od_number: string; od_item: string; by: string }[] = []
   const shipped_conflicts: { od_number: string; by: string; so: string }[] = []
   const uncertain: { od_number: string; by: string; so: string }[] = []

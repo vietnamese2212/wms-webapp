@@ -6130,8 +6130,7 @@ export interface DispatchSummary {
 export interface DispatchConfigGaps {
   no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] }
   /** 02/10: dòng xe chưa khai điểm giao · kênh chưa khai số khách cùng xe · OD của khách không kênh — chưa khai = mỗi khách một xe */
-  /** 04/10: dòng xe chưa khai = không giới hạn ⇒ không còn `models` ở đây */
-  no_drops?: { channels: string[]; no_channel_ods: number }
+  no_drops?: { models: string[]; channels: string[]; no_channel_ods: number }
   /** 03/10: OD có mã KHÔNG có trong Mã hàng — loại khỏi đợt ghép cho tới khi khai */
   no_material?: { ods: number; materials: string[] }
 }

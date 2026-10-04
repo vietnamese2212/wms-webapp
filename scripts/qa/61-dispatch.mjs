@@ -644,22 +644,18 @@ try {
   check('11d. Cửa đổi kiểu đi cũ: route /ods không còn (404) · PATCH xe với load_mode không đổi gì (200, không 5xx)',
     oldMode.s === 404 && oldFlip.s === 200 && !oldFlip.j?.data?.load_mode, `ods=${oldMode.s} trip=${oldFlip.s} mode=${oldFlip.j?.data?.load_mode ?? 'null'}`)
   await cleanupTrips()
-  // 04/10 (user: "điểm giao theo khách hàng mà, không nhớ gì tới dòng xe"): gỡ max_drops ⇒ dòng xe KHÔNG giới hạn ⇒ khách khai 3 quyết ⇒ vẫn chung xe,
-  // config_gaps.no_drops KHÔNG còn nêu dòng xe; khai 1 ⇒ siết ⇒ hai xe; khai lại 3 ⇒ chung xe (trước 04/10: chưa khai = 1)
+  // 02/10 (user: "dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): gỡ max_drops ⇒ dòng xe CHƯA KHAI = 1 ⇒ vẫn hai xe, và
+  // config_gaps.no_drops nêu tên dòng xe; khai lại 3 ⇒ chung xe
   const dNull = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: null })
   const p11e = await mkPlan(PLAN_BODY)
   const gaps11 = p11e.j?.data?.params?.config_gaps?.no_drops
   await cleanupTrips()
-  const dOne11 = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: 1 })
-  const p11eOne = await mkPlan(PLAN_BODY)
-  await cleanupTrips()
   const d3 = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { max_drops: 3 })
   const p11e2 = await mkPlan(PLAN_BODY)
-  check('11e. Gỡ max_drops của dòng xe ⇒ KHÔNG giới hạn: OD1 + OD2 vẫn chung xe (khách khai 3 quyết) + Khai thiếu không nêu dòng xe · khai 1 ⇒ siết ⇒ HAI xe · khai lại 3 ⇒ chung MỘT xe (7/9 pallet)',
-    dNull.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id === tripOfOd(p11e.j?.data, OD[1])?.id && gaps11?.models === undefined
-    && dOne11.s === 200 && p11eOne.s === 201 && !!tripOfOd(p11eOne.j?.data, OD[0]) && tripOfOd(p11eOne.j?.data, OD[0])?.id !== tripOfOd(p11eOne.j?.data, OD[1])?.id
-    && d3.s === 200 && p11e2.s === 201 && tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id,
-    `drops=${dNull.s} http=${p11e.s} same0=${tripOfOd(p11e.j?.data, OD[0])?.id === tripOfOd(p11e.j?.data, OD[1])?.id} gaps=${JSON.stringify(gaps11)} dOne11=${dOne11.s}/${p11eOne.s} sep1=${tripOfOd(p11eOne.j?.data, OD[0])?.id !== tripOfOd(p11eOne.j?.data, OD[1])?.id} re=${d3.s}/${p11e2.s} same=${tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id}`)
+  check('11e. Gỡ max_drops của dòng xe ⇒ CHƯA KHAI = 1: OD1 và OD2 vẫn HAI xe + Khai thiếu nêu tên dòng xe · khai lại 3 ⇒ chung MỘT xe (7/9 pallet)',
+    dNull.s === 200 && p11e.s === 201 && tripOfOd(p11e.j?.data, OD[0])?.id !== tripOfOd(p11e.j?.data, OD[1])?.id && (gaps11?.models ?? []).includes('QA61 Xe 9 Pallet')
+    && d3.s === 200 && p11e2.s === 201 && tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id && !(p11e2.j?.data?.params?.config_gaps?.no_drops?.models ?? []).includes('QA61 Xe 9 Pallet'),
+    `drops=${dNull.s} http=${p11e.s} trips=${(p11e.j?.data?.trips ?? []).map(t => t.ods.map(o => o.od_number).join('+')).join(' | ')} gaps=${JSON.stringify(gaps11)} re=${d3.s}/${p11e2.s} same=${tripOfOd(p11e2.j?.data, OD[0])?.id === tripOfOd(p11e2.j?.data, OD[1])?.id}`)
   const ro11 = await api(`/tms/dispatch/plans/${p11e2.j?.data?.id}/reopen`, 'POST', {})   // p11e đã bị cleanupTrips dọn ở [11e]
   check('11f. Mở lại khi chưa xe nào vào Kế hoạch xuất → 422 NOTHING_TO_REOPEN', ro11.s === 422 && ro11.j?.error?.code === 'NOTHING_TO_REOPEN', `http=${ro11.s} code=${ro11.j?.error?.code}`)
 

@@ -455,7 +455,7 @@ export default function Dispatch() {
                 const nVeh = new Set(noVeh.map(o => o.od_number)).size, nVehCust = new Set(noVeh.map(o => o.ship_to_code ?? o.od_number)).size
                 // 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): chưa khai = máy xếp mỗi khách một xe
                 const nd = g?.no_drops
-                const nDrops = (nd?.channels.length ?? 0) + (nd?.no_channel_ods ?? 0)
+                const nDrops = (nd?.models.length ?? 0) + (nd?.channels.length ?? 0) + (nd?.no_channel_ods ?? 0)
                 // 03/10 (user: "mã chưa có thì phải xử lý trước khi ghép đơn"): OD có mã lạ bị loại khỏi đợt ghép — việc phải làm là khai mã
                 const nMat = g?.no_material?.ods ?? 0
                 if (!nCond && !nCat && !nVeh && !nDrops && !nMat) return null
@@ -476,7 +476,7 @@ export default function Dispatch() {
                       {nDrops > 0 && <div>
                         <b>Chưa khai số điểm giao — máy xếp mỗi khách MỘT xe:</b>
                         <ul className="list-disc pl-4">
-                          {/* 04/10: dòng xe chưa khai điểm giao = không giới hạn — không còn nêu ở đây */}
+                          {!!nd?.models.length && <li>Dòng xe chưa khai "Điểm giao tối đa" (Cài đặt TMS → Mã dòng xe): {nd.models.join(', ')}</li>}
                           {!!nd?.channels.length && <li>Kênh chưa khai "Số khách tối đa cùng xe" (Cấu hình → Khách hàng → Kênh): {nd.channels.join(', ')}</li>}
                           {!!nd?.no_channel_ods && <li>{nf(nd.no_channel_ods)} OD của khách chưa có kênh và chưa khai riêng</li>}
                         </ul>

@@ -20,10 +20,9 @@
  *  7. ~~PALLET / XÁ (25/09)~~ — BỎ 29/09 (user: "dòng xe là đơn vị thấp hơn của loại xe — bỏ loại xe, chọn dòng xe luôn"):
  *     không còn kiểu đi của khách / của xe; họ xe = ĐÚNG danh sách "Dòng xe được vào" (luật 10). Số khách tối đa trên một xe
  *     = nhỏ nhất trong (`max_drops` của DÒNG XE · "số khách tối đa cùng xe" của khách → kênh). 02/10 (user: "bỏ cài đặt WMS đi,
- *     các khách và dòng xe muốn được ghép chuyến phải khai — không khai thì có cảnh báo"): KHÔNG còn số của kho; khách / kênh
+ *     các khách và dòng xe muốn được ghép chuyến phải khai — không khai thì có cảnh báo"): KHÔNG còn số của kho; dòng xe hay khách
  *     CHƯA KHAI = 1 (một khách một xe), controller đưa vào `config_gaps.no_drops` để chip "Khai thiếu" nêu tên. Khách phải đi một
- *     mình = tick "Đi xe riêng" hoặc "Số khách tối đa cùng xe" = 1. 04/10: DÒNG XE chưa khai = KHÔNG giới hạn (`modelDrops`) —
- *     điểm giao là chuyện của khách; dòng xe chỉ khai khi muốn siết.
+ *     mình = tick "Đi xe riêng" hoặc "Số khách tối đa cùng xe" = 1.
  *     03/10 — DÒNG XE THEO KHO: `models` controller truyền vào đã là bản HIỆU LỰC tại kho (services/vehicleModelScope: kho có cấu
  *     hình riêng thì dùng/không + sức chứa + điểm giao theo kho, không thì theo Chung). Engine không biết kho, chỉ thấy danh sách.
  *  8. ~~DÒNG XE DÙNG CHO VIỆC GÌ (25/09, `dispatch_use` TRANSFER)~~ — BỎ 28/09 (user: "dòng xe chọn theo khai báo của khách,
@@ -442,10 +441,7 @@ const binFits = (cands: EngineModel[], b: Bin) => {
   return cands.some(m => servesConditions(m, conds) && fits(m, b.pallets, b.tons) && stops <= modelDrops(m))
 }
 /** Điểm giao tối đa của một dòng xe: khai ở Mã dòng xe; KHÔNG khai = 1 (một khách) — muốn ghép phải khai (02/10). */
-// 04/10 (user: "điểm giao theo khách hàng mà, không nhớ gì tới dòng xe"): dòng xe CHƯA KHAI = KHÔNG giới hạn — số khách trên xe do
-// khách / kênh quyết (chưa khai ở đó mới = 1); dòng xe chỉ khai khi muốn SIẾT (xe pallet một khách). Trước 04/10 chưa khai = 1 làm
-// mọi xe xá / lạnh / cont bóp trần của kênh về 1 (đo Ba Vì 05/10: 431/431 xe một khách dù kênh khai 3–5).
-export const modelDrops = (m: Pick<EngineModel, 'max_drops'>) => m.max_drops ?? Infinity
+export const modelDrops = (m: Pick<EngineModel, 'max_drops'>) => m.max_drops ?? 1
 
 /** Luật 3 (tách): OD vượt xe lớn nhất → cắt theo dòng hàng nguyên (lớn trước), mỗi phần ≤ sức chứa; dòng đơn lẻ vượt → phần riêng `oversize`. */
 export function splitOversize(od: EngineOd, big: EngineModel): Unit[] {

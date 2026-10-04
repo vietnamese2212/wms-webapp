@@ -178,7 +178,7 @@ function ModelForm({ row, parents, conditions, onClose }: { row: VehicleModel | 
           <SingleSelect searchable={false} value={unit} onChange={v => setUnit(v as 'PER_PALLET' | 'PER_TRIP')}
             options={[{ value: 'PER_PALLET', label: 'Theo pallet (làm tròn lên)' }, { value: 'PER_TRIP', label: 'Trọn chuyến' }]} /></div>
         {row && <div className="flex items-center gap-2"><Switch id="vm-active" checked={active} onCheckedChange={setActive} /><Label htmlFor="vm-active" className="text-sm cursor-pointer">Đang hoạt động</Label></div>}
-        <p className="text-[10px] text-slate-500">Điểm giao tối đa trống = không giới hạn — số khách trên xe do khách / kênh quyết (Cấu hình → Khách hàng, bảng Ghép xe). Chỉ khai ở đây khi muốn SIẾT cho dòng xe này (vd xe pallet chỉ một khách = 1). Tắt "Đang hoạt động" ⇒ máy điều vận không xếp hàng lên dòng xe này ở kho chưa cấu hình riêng (cước và lịch sử giữ nguyên).</p>
+        <p className="text-[10px] text-slate-500">Điểm giao tối đa trống = chưa khai = mỗi khách một xe (chip "Khai thiếu" ở Điều vận nêu tên). Số khách tối đa cùng xe khai ở Cấu hình → Khách hàng (kênh / khách). Tắt "Đang hoạt động" ⇒ máy điều vận không xếp hàng lên dòng xe này ở kho chưa cấu hình riêng (cước và lịch sử giữ nguyên).</p>
       </div>
     </FormSheet>
   )
@@ -340,7 +340,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       { label: 'Dòng xe', value: filtering ? `${nf(rows.length)} / ${nf(items.length)}` : nf(items.length) },
       { label: 'Đang dùng ở kho', value: nf(items.filter(m => m.is_active).length), tip: 'Máy điều vận của kho này chỉ xếp lên các dòng xe đang dùng' },
       { label: 'Có ô riêng', value: nf(items.filter(m => m.wh_override).length), tip: 'Dòng xe kho đã chỉnh ít nhất một ô (dùng/không · sức chứa · điểm giao); ô còn lại vẫn theo bản Chung' },
-      { label: 'Siết điểm giao', value: nf(items.filter(m => m.is_active && m.max_drops != null).length), tip: 'Dòng xe đang dùng có khai "Điểm giao tối đa" (trống = không giới hạn, số khách do khách / kênh quyết)' },
+      { label: 'Chưa khai điểm giao', value: nf(items.filter(m => m.is_active && m.max_drops == null).length), danger: items.some(m => m.is_active && m.max_drops == null), tip: 'Đang dùng mà chưa khai điểm giao tối đa = mỗi khách một xe' },
       { label: 'Không dùng', value: nf(items.filter(m => !m.is_active).length) },
     ]
     : [

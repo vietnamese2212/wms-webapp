@@ -159,16 +159,12 @@ describe('28/09 → 02/10 — số khách tối đa cùng xe theo KHÁCH / KÊNH
     const withOne = r.trips.find(t => t.ods.some(o => o.od_number === '1'))!
     expect(withOne.ods).toHaveLength(2)
   })
-  it('dòng xe khai 9 + khách khai 9 ⇒ 5 khách 1 pallet cùng phường lên một xe; 04/10: dòng xe KHÔNG khai = KHÔNG giới hạn (khách quyết); dòng xe khai 1 ⇒ siết', () => {
+  it('dòng xe khai 9 + khách khai 9 ⇒ 5 khách 1 pallet cùng phường lên một xe; dòng xe KHÔNG khai ⇒ mỗi khách một xe', () => {
     const r = runDispatch(input(['1', '2', '3', '4', '5'].map(n => od(n, 'W1', 1))))
     expect(r.trips).toHaveLength(1)
     expect(r.trips[0].ods).toHaveLength(5)
-    // user 04/10: "điểm giao theo khách hàng mà, không nhớ gì tới dòng xe" — chưa khai ở dòng xe không được bóp trần của khách
     const r2 = runDispatch(input(['1', '2', '3'].map(n => od(n, 'W1', 1)), { models: [model({ id: 'M9', max_drops: null })] }))
-    expect(r2.trips).toHaveLength(1)   // đỏ trên bản 02/10 (null = 1)
-    expect(r2.trips[0].ods).toHaveLength(3)
-    const r3 = runDispatch(input(['1', '2', '3'].map(n => od(n, 'W1', 1)), { models: [model({ id: 'M9', max_drops: 1 })] }))
-    expect(r3.trips).toHaveLength(3)   // khai 1 = siết
+    expect(r2.trips).toHaveLength(3)   // đỏ trên bản cũ (null = theo kho / không giới hạn)
   })
 })
 

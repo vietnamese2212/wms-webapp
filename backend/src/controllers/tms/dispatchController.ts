@@ -253,16 +253,14 @@ export type ConfigGaps = {
   no_condition: { category: string; ods: number }[]; no_category: { ods: number; materials: string[] }
   /** 03/10: OD có mã KHÔNG có trong Mã hàng — bị loại khỏi đợt ghép (excluded NO_MATERIAL) cho tới khi khai mã */
   no_material?: { ods: number; materials: string[] }
-  /** 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): dòng xe chưa khai điểm giao · kênh chưa khai số khách cùng xe · OD của khách không kênh */
-  no_drops?: { models: string[]; channels: string[]; no_channel_ods: number }
+  /** 02/10 (user: "khách và dòng xe muốn được ghép phải khai, không khai thì cảnh báo"): kênh chưa khai số khách cùng xe · OD của khách không kênh.
+   *  04/10: dòng xe chưa khai = KHÔNG giới hạn (điểm giao là chuyện của khách) nên không còn là "khai thiếu". */
+  no_drops?: { channels: string[]; no_channel_ods: number }
 }
-/** Chưa khai số điểm giao / số khách cùng xe = máy xếp MỖI khách một xe — phải nói ra, không thì người tưởng máy không biết ghép. */
-function dropGaps(ods: EngineOd[], models: Pick<EngineModel, 'id' | 'name' | 'max_drops' | 'is_active'>[]): NonNullable<ConfigGaps['no_drops']> {
-  const listed = new Set(ods.flatMap(o => o.allowed_models ?? []))
-  const anyOpen = ods.some(o => !o.allowed_models)
-  const noDrops = models.filter(m => m.is_active && m.max_drops == null && (anyOpen || listed.has(m.id))).map(m => m.name).sort()
+/** Chưa khai số khách cùng xe (khách / kênh) = máy xếp MỖI khách một xe — phải nói ra, không thì người tưởng máy không biết ghép. */
+function dropGaps(ods: EngineOd[]): NonNullable<ConfigGaps['no_drops']> {
   const open = ods.filter(o => o.max_customers == null)
-  return { models: noDrops, channels: uniq(open.map(o => o.channel).filter((x): x is string => !!x)).sort(), no_channel_ods: open.filter(o => !o.channel).length }
+  return { channels: uniq(open.map(o => o.channel).filter((x): x is string => !!x)).sort(), no_channel_ods: open.filter(o => !o.channel).length }
 }
 type OdMeta = { delivery_date: string | null; late_days: number; region_code: string | null; region_name: string | null; note: string | null; sig: string }
 /** Chữ ký dòng hàng SAP của một OD (item | mã | SL base) lúc chụp — ZSD02 nạp lại mà chữ ký khác = SAP đã SỬA đơn sau khi người
@@ -733,7 +731,7 @@ export async function createPlan(req: Request, res: Response) {
       id: planId, warehouse_id: wh.id, plan_date: b.plan_date, segment: seg, status: 'DRAFT', engine_version: ENGINE_VERSION,
       params: asJson({
         ...params, pool_ods: ods.length, in_plan: in_plan.length, share_base: share_actual, share_targets: refs.share_targets, carriers: refs.carriers, wh_code: wh.code,
-        backlog_days: BACKLOG_DAYS, late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: { ...gaps, no_drops: dropGaps(ods, refs.models) },
+        backlog_days: BACKLOG_DAYS, late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: { ...gaps, no_drops: dropGaps(ods) },
         // mốc "máy lập" để dải chỉ số nói người sửa đã làm tốt hơn hay tệ hơn đề xuất — đặt ở lần ghép đầu (sau bước Xem đơn)
         baseline: null,
       }),
@@ -1558,7 +1556,7 @@ async function refreshPoolInner(req: Request, res: Response) {
     const prev = (plan.params ?? {}) as Record<string, unknown>
     const inPool = new Set(full.pool.map(o => o.od_number))
     const fresh_ods = uniq([...((prev.fresh_ods ?? []) as string[]).filter(od => inPool.has(od)), ...loadable.map(o => o.od_number)])
-    const params = { ...prev, excluded: cand.excluded, config_gaps: { ...cand.gaps, no_drops: dropGaps(cand.ods, (await loadRefs(plan.warehouse_id, plan.plan_date, [])).models) }, fresh_ods }
+    const params = { ...prev, excluded: cand.excluded, config_gaps: { ...cand.gaps, no_drops: dropGaps(cand.ods) }, fresh_ods }
     const { error } = await db.from('dispatch_plan').update({ params: asJson(params), updated_at: t }).eq('id', plan.id)
     if (error) throw error
     await writeSummary({ ...plan, params: asJson(params) })

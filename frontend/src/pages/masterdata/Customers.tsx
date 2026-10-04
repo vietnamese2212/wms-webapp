@@ -762,11 +762,14 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Ghép xe (điều vận)</label>
           {/* 03/10 tối (user: "Bàu Bàng, Đà Nẵng, Ba Vì là trung chuyển, user tự setting trong khách hàng; STO của NPP đi chung NPP") */}
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="h-4 w-4 accent-sky-600" />
-            Trung chuyển — đơn của khách này vào mảng <b>Trung chuyển</b> trên bàn điều vận
-            {/* luật C47: ô "theo cha" in giá trị đang hiệu lực của kênh ĐANG CHỌN */}
-            {!transfer && <span className="text-[11px] text-slate-400">{channel && channels.find(c => c.value === channel)?.dispatch_transfer ? `(không tick vẫn là Trung chuyển — theo kênh ${chanName})` : `(không tick = Bán hàng${channel ? ` — kênh ${chanName} không phải kênh Trung chuyển` : ''})`}</span>}
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-sky-600" />
+            {/* chữ gói trong MỘT span — để rời trong label flex thì <b> và ghi chú thành ba cột, câu gãy (chụp 04/10) */}
+            <span className="min-w-0">
+              Trung chuyển — đơn của khách này vào mảng <b>Trung chuyển</b> trên bàn điều vận
+              {/* luật C47: ô "theo cha" in giá trị đang hiệu lực của kênh ĐANG CHỌN */}
+              {!transfer && <span className="ml-1 text-[11px] text-slate-400">{channel && channels.find(c => c.value === channel)?.dispatch_transfer ? `(không tick vẫn là Trung chuyển — theo kênh ${chanName})` : `(không tick = Bán hàng${channel ? ` — kênh ${chanName} không phải kênh Trung chuyển` : ''})`}</span>}
+            </span>
           </label>
           <label className="mt-1.5 flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={sep} onChange={e => setSep(e.target.checked)} className="h-4 w-4 accent-sky-600" />
@@ -1311,9 +1314,9 @@ function ChannelForm({ row, cats, models, onClose }: {
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Ghép xe mặc định (điều vận)</label>
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="h-4 w-4 accent-sky-600" />
-            Kênh Trung chuyển — đơn của mọi khách trong kênh vào mảng <b>Trung chuyển</b> trên bàn điều vận
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-sky-600" />
+            <span className="min-w-0">Kênh Trung chuyển — đơn của mọi khách trong kênh vào mảng <b>Trung chuyển</b> trên bàn điều vận</span>
           </label>
           {/* 04/10: một bảng theo Loại kho cho dòng xe + số khách cùng xe (kênh không có bậc trên: trống = không xe nào / = 1) */}
           <div className="mt-2">

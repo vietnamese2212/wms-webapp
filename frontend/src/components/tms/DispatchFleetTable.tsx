@@ -95,9 +95,10 @@ export function DispatchFleetTable({ vehicles, onVehicles, maxCust, onMaxCust, c
     <div className="overflow-hidden rounded-md border border-slate-200">
       <table className="w-full table-fixed text-[11px]">
         <colgroup>
-          <col className="w-[96px] sm:w-[128px]" />
+          {/* 390 px: ô Khách/xe phải đủ chỗ cho placeholder "1 (chưa khai)" (chụp 04/10 bị cắt "1 (chưa kha") */}
+          <col className="w-[80px] sm:w-[128px]" />
           <col />
-          {withMax && <col className="w-[84px] sm:w-[96px]" />}
+          {withMax && <col className="w-[94px] sm:w-[100px]" />}
         </colgroup>
         <thead>
           <tr className="border-b bg-slate-50 text-left text-[9px] font-medium text-slate-500">
@@ -153,7 +154,7 @@ export function DispatchFleetTable({ vehicles, onVehicles, maxCust, onMaxCust, c
                         <Input value={mx} inputMode="numeric" disabled={readOnly} aria-label={`Số khách tối đa cùng xe — ${r.code}`}
                           onChange={e => onMaxCust!({ ...maxCust!, [r.key]: e.target.value })}
                           placeholder={maxFallback(r.key)} title={mx.trim() ? undefined : `Trống = ${maxFallback(r.key)}`}
-                          className={`h-7 w-full px-1.5 text-right text-[11px] placeholder:text-[10px] ${bad ? 'border-red-400 text-red-600' : ''}`} />
+                          className={`h-7 w-full px-1 text-right text-[11px] placeholder:text-[9px] ${bad ? 'border-red-400 text-red-600' : ''}`} />
                       )}
                     </td>
                   )}

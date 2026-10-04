@@ -1121,6 +1121,16 @@ const RULES = [
     count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
       (line) => /^const\s+\w*(TODAY|Today)\w*\s*(:[^=]+)?=\s*new Date\(\)/.test(line), s),
   },
+  // Cửa ghi ĐIỀU VẬN đọc cả kế hoạch (nháp Ba Vì 1.890 đơn) chạy quá 30 s lúc staging bận; axios mặc định 30 s cắt chờ thì máy chủ
+  // VẪN ghi xong mà màn hình báo "không chuyển được" và dừng cả loạt lô (04/10 kiểm UI: hoãn 443 đơn, lô 1 ghi xong, lô 2 không gửi).
+  // Lệnh ghi `/tms/dispatch/plans/…` MỚI phải khai `timeout` (mẫu `{ timeout: 120_000 }`); các lệnh nhẹ cũ nằm trong baseline.
+  {
+    key: 'dispatch_plan_write_default_timeout',
+    label: 'lệnh ghi `/tms/dispatch/plans/…` dùng thời gian chờ mặc định 30 s của axios — cửa đọc cả kế hoạch lúc máy bận chạy lâu hơn, ' +
+           'client cắt chờ trong khi máy chủ vẫn ghi xong ⇒ báo lỗi sai + dừng loạt lô. Khai `{ timeout: 120_000 }` như reoptimize / confirm',
+    count: (s) => countMatches(['frontend/src/api'], ['.ts'],
+      (line) => /apiClient\.(post|patch|put|delete)\(`\/tms\/dispatch\/plans\//.test(line) && !/timeout:/.test(line), s),
+  },
   // Bộ lọc nhiều-chọn: FilterBar coi `selected=[]` là "Tất cả" (chip không active, "Xóa tất cả" đưa về []),
   // còn BE `parseListParam` coi `?x=` RỖNG là "KHÔNG giá trị nào" (hợp đồng gói 07). Gửi thẳng
   // `x: arr.join(',')` là hai đầu hiểu ngược nhau ⇒ bỏ tick hết = bảng TRỐNG với câu "không khớp bộ lọc".

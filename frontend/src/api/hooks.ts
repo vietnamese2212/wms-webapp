@@ -6243,15 +6243,17 @@ export function useUpdateDispatchPlanParams() {
 export function useHoldDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
-    // ids = dòng OD trên kế hoạch (tab Điều) · od_numbers = OD đang hoãn (đổi giữa Không điều ngày này ⇄ Không điều); reason tuỳ chọn
-    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null; back_to_pool?: number } }),
+    // ids = dòng OD trên kế hoạch (tab Điều) · od_numbers = OD đang hoãn (đổi giữa Không điều ngày này ⇄ Không điều); reason tuỳ chọn.
+    // timeout 120 s như mọi cửa ghi đọc cả kế hoạch (04/10 kiểm UI: lô 100 đơn trên nháp 1.890 đơn lúc staging quá tải chạy > 30 s —
+    // axios mặc định 30 s cắt chờ, máy chủ VẪN ghi xong mà màn hình báo "không chuyển được" và dừng cả loạt); hold/unhold/outside/unoutside/pull-od
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null; back_to_pool?: number } }),
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
 export function useUnholdDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
+    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
@@ -6259,14 +6261,14 @@ export function useUnholdDispatchOds() {
 export function useOutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/outside`, body).then(r => r.data.data as DispatchPlan & { outside: { ods: number; trips_removed: number } }),
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/outside`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { outside: { ods: number; trips_removed: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
   })
 }
 export function useUnoutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unoutside`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unoutside: { ods: number; back_to_pool: number } }),
+    mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unoutside`, { od_numbers }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { unoutside: { ods: number; back_to_pool: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
   })
 }
@@ -6274,7 +6276,7 @@ export function useUnoutsideDispatchOds() {
 export function usePullDispatchOd() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/pull-od`, { od_number }).then(r => r.data.data as DispatchPlan & { pulled: { od_number: string; from_plan_date: string; from_by: string | null; back_to_pool: number; trips_removed_there: number } }),
+    mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/pull-od`, { od_number }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { pulled: { od_number: string; from_plan_date: string; from_by: string | null; back_to_pool: number; trips_removed_there: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }) },
   })
 }

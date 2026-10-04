@@ -1020,6 +1020,25 @@ try {
       && mxClr.s === 200 && c2Now?.max_customers_per_trip === null && pM2.s === 201 && tripOfOd(PM2, OD[0]) !== tripOfOd(PM2, OD[1]) && (PM2?.params?.config_gaps?.no_drops?.no_channel_ods ?? 0) >= 1
       && mx3.s === 200 && pM3.s === 201 && tripOfOd(PM3, OD[0]) === tripOfOd(PM3, OD[1]),
       `bad=${mxBad1.s},${mxBad2.s} set=${mx1.s}/${mx1.j?.data?.max_customers_per_trip} plan=${pM.s} ${pM.j?.error?.message ?? ''} t2ods=${tM2?.ods?.length} snap=${rowOf(PM, OD[1])?.max_customers} clr=${mxClr.s} now=${JSON.stringify(c2Now)} plan2=${pM2.s} sep=${tripOfOd(PM2, OD[0]) !== tripOfOd(PM2, OD[1])} gaps=${JSON.stringify(PM2?.params?.config_gaps?.no_drops)} re=${mx3.s}/${pM3.s} same=${tripOfOd(PM3, OD[0]) === tripOfOd(PM3, OD[1])}`)
+    // [13k] 04/10 (user: "khách Trung chuyển mà đi FG01 thì đi một mình, còn FG02 thì ghép 3–4 điểm"): số khách tối đa cùng xe THEO LOẠI KHO —
+    // khách 2 Chung = 3 (vừa khai ở trên) nhưng loại của mã fixture = 1 ⇒ OD2 xe riêng, chụp max_customers=1; khai cho LOẠI KHÁC = 1 ⇒ không
+    // ảnh hưởng (Chung 3 áp) ⇒ chung xe; loại không có trong danh mục / 99 → 400; xoá bảng (null) ⇒ chung xe
+    const otherCat = (await restAll('LookupValue', `select=value&type=eq.warehouse_type&value=neq.${MAT_CAT}&limit=1`))[0]?.value
+    const bc1 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_by_category: { [MAT_CAT]: 1 } })
+    await cleanupTrips()
+    const pK = await mkPlan(PLAN_BODY); const PK = pK.j?.data
+    const bc2 = otherCat ? await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_by_category: { [otherCat]: 1 } }) : { s: 200 }
+    await cleanupTrips()
+    const pK2 = await mkPlan(PLAN_BODY); const PK2 = pK2.j?.data
+    const bcBad1 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_by_category: { QA61NOPE: 1 } })
+    const bcBad2 = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_by_category: { [MAT_CAT]: 99 } })
+    const bcClr = await api(`/masterdata/customers/${c2.id}`, 'PUT', { max_customers_by_category: null })
+    const c2K = (await restAll('Customer', `select=max_customers_per_trip,max_customers_by_category&id=eq.${c2.id}`))[0]
+    check('13k. "Số khách tối đa cùng xe" THEO LOẠI KHO: khách 2 Chung=3 nhưng loại của mã = 1 ⇒ OD2 xe riêng (chụp max_customers=1) · khai 1 cho loại KHÁC ⇒ không ảnh hưởng, chung xe · loại lạ / 99 → 400 · null ⇒ bảng rỗng, Chung 3 giữ',
+      bc1.s === 200 && bc1.j?.data?.max_customers_by_category?.[MAT_CAT] === 1 && pK.s === 201 && tripOfOd(PK, OD[0]) !== tripOfOd(PK, OD[1]) && rowOf(PK, OD[1])?.max_customers === 1
+      && bc2.s === 200 && pK2.s === 201 && !!tripOfOd(PK2, OD[0]) && tripOfOd(PK2, OD[0]) === tripOfOd(PK2, OD[1]) && rowOf(PK2, OD[1])?.max_customers === 3
+      && bcBad1.s === 400 && bcBad2.s === 400 && bcClr.s === 200 && JSON.stringify(c2K?.max_customers_by_category) === '{}' && c2K?.max_customers_per_trip === 3,
+      `cat=${MAT_CAT} set=${bc1.s}/${JSON.stringify(bc1.j?.data?.max_customers_by_category)} plan=${pK.s} sep=${tripOfOd(PK, OD[0]) !== tripOfOd(PK, OD[1])} snap=${rowOf(PK, OD[1])?.max_customers} other=${otherCat}/${bc2.s} plan2=${pK2.s} same=${tripOfOd(PK2, OD[0]) === tripOfOd(PK2, OD[1])} snap2=${rowOf(PK2, OD[1])?.max_customers} bad=${bcBad1.s},${bcBad2.s} clr=${bcClr.s} now=${JSON.stringify(c2K)}`)
   }
 
   // ── [13j] DÒNG XE THEO KHO (03/10 — user: "mỗi kho sẽ có setting khác nhau"; "config riêng rồi thì không lấy theo chung nữa") ──
@@ -1537,15 +1556,17 @@ try {
     const CH19 = 'QA61CH'
     await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH19}`).catch(() => {})
     const chRow = (await restWrite('LookupValue', 'POST', null, { id: crypto.randomUUID(), type: 'customer_channel', value: CH19, meta: { label: 'QA61 kênh trung chuyển' }, sort_order: 999, updated_at: nowIso() }))[0]
-    const chTick = await api(`/masterdata/customer-channels/${chRow?.id}`, 'PUT', { dispatch_transfer: true })
+    // 04/10: kênh cũng khai được "số khách tối đa cùng xe" theo Loại kho (meta.max_customers_by_category) — danh sách kênh trả lại; 99 → 400
+    const chTick = await api(`/masterdata/customer-channels/${chRow?.id}`, 'PUT', { dispatch_transfer: true, max_customers_by_category: { [MAT_CAT]: 4 } })
+    const chBad = await api(`/masterdata/customer-channels/${chRow?.id}`, 'PUT', { max_customers_by_category: { [MAT_CAT]: 99 } })
     const chList = await api('/masterdata/customer-channels')
     await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[1]}`, { channel: CH19 })
     const pS19 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)                                   // Bán hàng (mặc định)
     const pT19 = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, segment: 'TRANSFER' })      // Trung chuyển — kế hoạch RIÊNG cùng kho × ngày
     const S = pS19.j?.data, T = pT19.j?.data
     const SID19 = S?.id ?? '', TID19 = T?.id ?? ''
-    check('19a. Khách tick "Trung chuyển" (OD3) + khách thuộc KÊNH Trung chuyển (OD2) → kế hoạch Bán hàng chỉ OD1 · kế hoạch Trung chuyển (riêng, cùng kho × ngày, cùng mở) có OD2 + OD3 · danh sách kênh trả dispatch_transfer · cột segment ghi đúng',
-      tk3_19.s === 200 && chTick.s === 200 && (chList.j?.data ?? []).some(c => c.value === CH19 && c.dispatch_transfer === true) && pS19.s === 201 && pT19.s === 201 && S?.segment === 'SALES' && T?.segment === 'TRANSFER'
+    check('19a. Khách tick "Trung chuyển" (OD3) + khách thuộc KÊNH Trung chuyển (OD2) → kế hoạch Bán hàng chỉ OD1 · kế hoạch Trung chuyển (riêng, cùng kho × ngày, cùng mở) có OD2 + OD3 · danh sách kênh trả dispatch_transfer + số khách theo Loại kho (99 → 400) · cột segment ghi đúng',
+      tk3_19.s === 200 && chTick.s === 200 && chBad.s === 400 && (chList.j?.data ?? []).some(c => c.value === CH19 && c.dispatch_transfer === true && c.max_customers_by_category?.[MAT_CAT] === 4) && pS19.s === 201 && pT19.s === 201 && S?.segment === 'SALES' && T?.segment === 'TRANSFER'
       && !!rowOf(S, OD[0]) && !rowOf(S, OD[1]) && !rowOf(S, OD[2]) && !!rowOf(T, OD[1]) && !!rowOf(T, OD[2]) && !rowOf(T, OD[0]),
       `tick=${tk3_19.s} kênh=${chTick.s} ${chTick.j?.error?.message ?? ''} S=${pS19.s}/${S?.segment} ${pS19.j?.error?.message ?? ''} T=${pT19.s}/${T?.segment} ${pT19.j?.error?.message ?? ''} S:[${[0, 1, 2].map(i => !!rowOf(S, OD[i])).join(',')}] T:[${[0, 1, 2].map(i => !!rowOf(T, OD[i])).join(',')}]`)
     // 19b — sync Bán hàng không coi OD2/OD3 là "OD mới" · lấy OD1 sang Trung chuyển (dấu kho × OD) · lấy OD2 (mảng theo kênh) về Bán hàng — dấu THẮNG kênh ·

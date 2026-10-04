@@ -8,7 +8,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
 import { useDispatchCustomerVehicles, useSetDispatchCustomerVehicles, useVehicleModels, useWarehouseTypes } from '@/api/hooks'
-import { DispatchVehiclesEditor } from './DispatchVehiclesEditor'
+import { DispatchFleetTable } from './DispatchFleetTable'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được'
 
@@ -42,8 +42,8 @@ export function DispatchCustomerVehiclesSheet({ planId, shipTo, canEdit, onClose
       {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{apiMsg(error)}</div>}
       {data && (
         <div className="space-y-3">
-          <DispatchVehiclesEditor value={value} onChange={v => { if (canEdit) setValue(v) }} cats={cats} models={models}
-            inherit={{ label: data.channel_label ?? '', map: data.channel_vehicles ?? {} }} />
+          <DispatchFleetTable vehicles={value} onVehicles={v => { if (canEdit) setValue(v) }} cats={cats} models={models} readOnly={!canEdit}
+            inherit={{ label: data.channel_label ?? '', vehicles: data.channel_vehicles ?? {} }} />
           <p className="text-[11px] text-slate-500">
             Chỉ sửa dòng xe RIÊNG của khách này. Muốn đổi <b>kênh</b> của khách (kênh còn quyết %Date bên kho) thì sửa ở Cấu hình → Khách hàng.
             Lưu xong, các OD của khách trên kế hoạch đang mở nhận danh sách mới ngay; kế hoạch ngày khác nhận khi lập / tối ưu lại.

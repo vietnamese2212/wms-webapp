@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-03T15:27:02.584Z · 115 bảng/view · 180 hàm · 0 enum
+// Sinh lúc 2026-10-04T02:57:12.279Z · 115 bảng/view · 180 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -122,6 +122,7 @@ export type Database = {
           geo_at: string | null
           geo_by: string | null
           dispatch_transfer: boolean
+          max_customers_by_category: Json
         }
         Insert: {
           id: string
@@ -158,6 +159,7 @@ export type Database = {
           geo_at?: string | null
           geo_by?: string | null
           dispatch_transfer?: boolean
+          max_customers_by_category?: Json
         }
         Update: {
           id?: string
@@ -194,6 +196,7 @@ export type Database = {
           geo_at?: string | null
           geo_by?: string | null
           dispatch_transfer?: boolean
+          max_customers_by_category?: Json
         }
         Relationships: []
       }
@@ -6696,7 +6699,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
         Returns: string
       }
       unaccent_init: {

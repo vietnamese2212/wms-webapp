@@ -36,7 +36,7 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
-  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
+  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
@@ -227,7 +227,8 @@ async function loadShareActual(whId: string, day: string, carriers: EngineCarrie
 // ── POOL LŨY TIẾN: OD ZSD02 của kho — ngày giao đó + tồn đọng — chưa được lo ở đâu (luật: services/dispatchPool) ──────
 type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null; note_delivery: string | null }
 type MatRow = LoadMat & { material_code: string; category: string | null }
-type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; dispatch_vehicles: Record<string, unknown> | null; dispatch_separate: boolean | null; max_customers_per_trip: number | null }
+type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; dispatch_vehicles: Record<string, unknown> | null; dispatch_separate: boolean | null; max_customers_per_trip: number | null; max_customers_by_category: Record<string, unknown> | null }
+const CUST_COLS = 'ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip, max_customers_by_category'
 /** Mảng của từng OD (03/10 tối): dấu "lấy sang" của kho thắng; rồi ô tick "Trung chuyển" của KHÁCH hoặc của KÊNH khách thuộc về
  *  (`LookupValue(customer_channel).meta.dispatch_transfer`, 04/10 — user lập kênh Trung chuyển với 7 khách mà chỉ 5 có ô tick); không có gì = Bán hàng. */
 async function segmentOfOds(whId: string, rows: { od_number: string; ship_to_code: string | null }[]): Promise<Map<string, Segment>> {
@@ -387,22 +388,25 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
     const allBy0 = new Map<string, PoolRow[]>()
     for (const r of mine) { const l = allBy0.get(r.od_number) ?? []; l.push(r); allBy0.set(r.od_number, l) }
     const custs0 = (await fetchAllByIdChunks(uniq(mine.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
-      .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip').in('ship_to_code', c).order('ship_to_code'))) as CustRow[]
+      .select(CUST_COLS).in('ship_to_code', c).order('ship_to_code'))) as CustRow[]
     const custBy0 = new Map(custs0.map(c => [c.ship_to_code, c]))
     return { ods: [], meta: new Map(), excluded: excluded0.map(x => ({ ...x, d: odDetailOf(allBy0.get(x.od_number) ?? [], custBy0) })), include, gaps: noGaps }
   }
   const [custs, chRes] = await Promise.all([
     // khách của MỌI OD (kể cả OD bị bỏ ra) — bảng Xem đơn in tên vùng cho cả dòng Đã điều / Không điều
     fetchAllByIdChunks(uniq(mine.map(r => r.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
-      .select('ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip').in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
+      .select(CUST_COLS).in('ship_to_code', c).order('ship_to_code')) as Promise<CustRow[]>,
     // Luật 10 (27/09): dòng xe được vào mặc định theo KÊNH — danh mục 7 dòng
     db.from('LookupValue').select('value, meta').eq('type', 'customer_channel'),
   ])
   if (chRes.error) throw chRes.error
   const chanRows = (chRes.data ?? []) as { value: string; meta: Record<string, unknown> | null }[]
   const chanVeh = new Map(chanRows.map(r => [r.value, (r.meta?.dispatch_vehicles ?? null) as Record<string, unknown> | null]))
-  // 28/09: số khách tối đa cùng xe mặc định của KÊNH (khách khai riêng thì thắng); không khai = không giới hạn
-  const chanMax = new Map(chanRows.map(r => [r.value, typeof r.meta?.max_customers_per_trip === 'number' ? r.meta.max_customers_per_trip as number : null]))
+  // 28/09: số khách tối đa cùng xe mặc định của KÊNH (khách khai riêng thì thắng); 04/10: thêm bảng theo Loại kho (`meta.max_customers_by_category`)
+  const chanMax = new Map<string, MaxCustomersCfg>(chanRows.map(r => [r.value, {
+    max: typeof r.meta?.max_customers_per_trip === 'number' ? r.meta.max_customers_per_trip as number : null,
+    by_category: (r.meta?.max_customers_by_category ?? null) as Record<string, unknown> | null,
+  }]))
   const custBy = new Map(custs.map(c => [c.ship_to_code, c]))
   const gapCat = new Map<string, Set<string>>()
   const gapNoCat = { ods: new Set<string>(), materials: new Set<string>() }
@@ -434,7 +438,8 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
       // 28/09 (user: "không tự ép gì cả, config hết"): đi xe riêng + số khách tối đa cùng xe đều là CẤU HÌNH (khách → kênh);
       // "khách trỏ kho" chỉ quyết việc NHẬN ở Xuất kho, không còn ép xe riêng ở đây
       separate: cust?.is_active !== false && cust?.dispatch_separate === true,
-      max_customers: cust?.is_active === false ? null : (cust?.max_customers_per_trip ?? (cust?.channel ? chanMax.get(cust.channel) ?? null : null)),
+      // 04/10: theo Loại kho CHÍNH của đơn (khách Trung chuyển: FG01 một mình, FG02 ghép 3–4) — cùng thứ tự bậc với dòng xe được vào
+      max_customers: cust?.is_active === false ? null : resolveMaxCustomers({ max: cust?.max_customers_per_trip, by_category: cust?.max_customers_by_category }, cust?.channel ? chanMax.get(cust.channel) : null, mainCatsOf(lines, follow)),
       flow: first.flow ?? 'UNKNOWN', lines,
       // luật 10 (27/09): dòng xe được vào — Khách × Loại kho → Khách → Kênh × Loại kho → Kênh; không khai = [] = không xe nào (28/09)
       allowed_models: resolveAllowedModels(cust?.dispatch_vehicles, cust?.is_active === false || !cust?.channel ? null : chanVeh.get(cust.channel), mainCatsOf(lines, follow)),

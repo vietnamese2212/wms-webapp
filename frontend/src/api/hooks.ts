@@ -4540,6 +4540,8 @@ export interface Customer {
   /** 28/09 (không tự ép — config hết): đi xe riêng khi điều vận (mặc định tắt) · số khách tối đa cùng xe (null = không giới hạn, theo kênh) */
   dispatch_separate?: boolean
   max_customers_per_trip?: number | null
+  /** 04/10: số khách tối đa cùng xe THEO LOẠI KHO {FG01: 1, FG02: 4} — loại không khai ⇒ số chung ⇒ kênh */
+  max_customers_by_category?: Record<string, number>
   /** 03/10 tối: khách TRUNG CHUYỂN — đơn của khách vào mảng Trung chuyển trên bàn điều vận (còn lại = Bán hàng) */
   dispatch_transfer?: boolean
   /** Địa chỉ + phường + vùng từ ZSD02 (22/09) */
@@ -4690,6 +4692,8 @@ export interface CustomerChannel {
   sap_dist_channel?: string | null
   /** 28/09: số khách tối đa cùng xe mặc định của kênh (khách khai riêng thì thắng); null = không giới hạn */
   max_customers_per_trip?: number | null
+  /** 04/10: số khách tối đa cùng xe của kênh THEO LOẠI KHO {FG01: 1, FG02: 4} */
+  max_customers_by_category?: Record<string, number>
   /** 04/10: kênh Trung chuyển — khách của kênh vào mảng Trung chuyển trên bàn điều vận (khách tick riêng cũng được) */
   dispatch_transfer?: boolean
 }
@@ -4730,7 +4734,7 @@ const invalidateCustomers = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['date-rule-lines'] })
 }
 
-export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'dispatch_vehicles' | 'dispatch_separate' | 'max_customers_per_trip' | 'dispatch_transfer'>>
+export type CustomerPatch = Partial<Pick<Customer, 'ship_to_code' | 'name' | 'channel' | 'warehouse_id' | 'is_active' | 'note' | 'dispatch_vehicles' | 'dispatch_separate' | 'max_customers_per_trip' | 'max_customers_by_category' | 'dispatch_transfer'>>
 /** Thao tác hàng loạt "kiểu đi cho MỘT Loại kho" — gộp vào bảng kiểu đi từng khách (mode null = về kiểu chung). */
 export type CustomerBulkPatch = CustomerPatch
   /** 27/09: dòng xe được vào cho MỘT khoá Loại kho (null = mọi loại) — Thay / Thêm / Bớt / Về theo kênh */
@@ -4811,7 +4815,7 @@ export function useBulkSetDateRule() {
 export function useUpdateCustomerChannel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null; dispatch_transfer?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null; max_customers_by_category?: Record<string, number>; dispatch_transfer?: boolean }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
     onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })

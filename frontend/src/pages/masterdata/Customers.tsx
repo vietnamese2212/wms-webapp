@@ -27,7 +27,8 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { masterRuleLabel } from '@/components/wms/SetDateRuleSheet'
-import { DispatchVehiclesEditor, VehicleModelChecklist, vehicleListText, splitVehicleIds } from '@/components/tms/DispatchVehiclesEditor'
+import { VehicleModelChecklist, vehicleListText, splitVehicleIds } from '@/components/tms/DispatchVehiclesEditor'
+import { DispatchFleetTable, maxCustDraft, maxCustPayload, type MaxCustDraft } from '@/components/tms/DispatchFleetTable'
 import {
   useCustomers, useCustomerChannels, useCustomerSeedCandidates, useSaveCustomer,
   useDeactivateCustomer, useBulkUpdateCustomers, useSeedCustomers, useUpdateCustomerChannel, useCreateCustomerChannel,
@@ -265,7 +266,8 @@ export default function Customers() {
   // 29/09 (user: "theo mức của kênh là bao nhiêu ghi rõ — khỏi phải quay sang bên kênh để xem"): mức + số khách của
   // từng kênh đưa vào form để ô "theo kênh" in GIÁ TRỊ đang hiệu lực, không chỉ chữ "theo kênh".
   const chanRules = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.rules ?? []])), [channels])
-  const chanMax = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.max_customers_per_trip ?? null])), [channels])
+  // 04/10: số khách theo Loại kho của kênh đi cùng ('*' = chung) để bảng ghép xe in placeholder "Kênh: 4" đúng dòng
+  const chanMax = useMemo(() => new Map((channels ?? []).map(c => [c.value, { '*': c.max_customers_per_trip ?? null, ...(c.max_customers_by_category ?? {}) } as Record<string, number | null>])), [channels])
 
   const whName = useMemo(() => new Map((whs ?? []).map(w => [(w as { id: string }).id, (w as { name?: string }).name ?? ''])), [whs])
   const chanLabel = useMemo(() => new Map((channels ?? []).map(c => [c.value, c.label])), [channels])
@@ -640,7 +642,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
   models: VehicleModel[]
   chanVeh: Map<string, Record<string, string[]>>
   chanRules: Map<string, MasterRuleRow[]>
-  chanMax: Map<string, number | null>
+  chanMax: Map<string, Record<string, number | null>>
   saving: boolean
   /** Toạ độ điểm giao (01/10) — cửa ghi RIÊNG (customers.locate), chỉ có khi sửa khách đã tồn tại */
   canLocate: boolean
@@ -659,7 +661,8 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
   // 28/09 (user: "không tự ép gì cả, config hết"): đi xe riêng (mặc định tắt) · số khách tối đa cùng xe (trống = không giới hạn, theo kênh)
   const [sep, setSep] = useState(row?.dispatch_separate === true)
   const [transfer, setTransfer] = useState(row?.dispatch_transfer === true)   // 03/10 tối: mảng Trung chuyển trên bàn điều vận
-  const [maxCust, setMaxCust] = useState(row?.max_customers_per_trip == null ? '' : String(row.max_customers_per_trip))
+  // 04/10: số khách tối đa cùng xe THEO LOẠI KHO ('*' = chung) — một bảng với dòng xe được vào
+  const [maxCust, setMaxCust] = useState<MaxCustDraft>(maxCustDraft(row?.max_customers_per_trip, row?.max_customers_by_category))
   const [note, setNote] = useState(row?.note ?? '')
   const saveRules = useSaveDateRules()
   const [err, setErr] = useState('')
@@ -668,11 +671,11 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
   const chanRuleText = (chanRules.get(channel) ?? []).map(x => `${x.category ? `${x.category} ` : ''}${masterRuleLabel(x.rule)?.text ?? ''}`).join(' · ')
   const ruleInheritNote = !channel ? 'chưa phân kênh nên KHÔNG được cấp tự động'
     : chanRuleText ? `theo kênh ${chanName}: ${chanRuleText}` : `kênh ${chanName} cũng chưa khai mức ⇒ KHÔNG được cấp tự động`
-  const chanMaxN = channel ? chanMax.get(channel) ?? null : null
-  const maxCustPlaceholder = !channel ? 'Không giới hạn (chưa phân kênh)' : chanMaxN ? `Theo kênh ${chanName}: ${chanMaxN}` : `Theo kênh ${chanName}: không giới hạn`
+  const mc = maxCustPayload(maxCust)
 
   const submit = async () => {
     setErr('')
+    if (mc === 'bad') { setErr('Số khách tối đa cùng xe phải là số nguyên 1–50 (ô viền đỏ), hoặc để trống'); return }
     try {
       // Mức nằm ở bảng RIÊNG nên phải ghi bằng lời gọi thứ hai. Ghi HỒ SƠ TRƯỚC: khách mới chưa có
       // id thì không có gì để gắn mức vào.
@@ -681,7 +684,7 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
         name: name.trim(), channel: channel || null,
         warehouse_id: whId || null, is_active: active, note: note.trim() || null,
         dispatch_vehicles: vehicles,
-        dispatch_separate: sep, max_customers_per_trip: maxCust.trim() === '' ? null : (Number(maxCust) || null),
+        dispatch_separate: sep, ...mc,
         dispatch_transfer: transfer,
       })
       const id = row?.id ?? saved?.id
@@ -769,17 +772,14 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
             <input type="checkbox" checked={sep} onChange={e => setSep(e.target.checked)} className="h-4 w-4 accent-sky-600" />
             Đi xe riêng — không ghép khách khác lên cùng xe
           </label>
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs text-slate-600">Số khách tối đa cùng xe</span>
-            <Input value={maxCust} inputMode="numeric" onChange={e => setMaxCust(e.target.value)} placeholder={maxCustPlaceholder} className="h-8 w-56 text-sm text-right" />
+          {/* 04/10 (user: "Dòng xe được vào và Số khách tối đa cùng xe đưa vào dạng table cho dễ nhìn"; "khách Trung chuyển đi FG01 thì
+              một mình, FG02 ghép 3–4 điểm"): một bảng theo Loại kho — dòng Chung + từng Loại kho; ô trống in giá trị đang hiệu lực (C47) */}
+          <div className="mt-2">
+            <DispatchFleetTable vehicles={vehicles} onVehicles={setVehicles} maxCust={maxCust} onMaxCust={setMaxCust}
+              cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models}
+              inherit={{ label: chanName, vehicles: channel ? (chanVeh.get(channel) ?? {}) : {}, maxCust: channel ? chanMax.get(channel) : undefined }} />
           </div>
-          <p className="mt-1 text-[11px] text-slate-400">Trống = theo kênh (giá trị đang hiệu lực in mờ trong ô); kênh cũng trống = không giới hạn. Xe chở nhiều khách lấy số nhỏ nhất trong các khách trên xe. Trỏ kho nhận KHÔNG còn tự ép xe riêng.</p>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe được vào (điều vận)</label>
-          <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models}
-            inherit={{ label: channel ? (channels.find(c => c.value === channel)?.label ?? channel) : '', map: channel ? (chanVeh.get(channel) ?? {}) : {} }} />
-          <p className="mt-1 text-[11px] text-slate-400">Khách đặc biệt (đường nhỏ, cấm tải, xuất khẩu đi container…) khai riêng ở đây; còn lại theo kênh. Máy chỉ xếp khách lên dòng xe được tick — ghép với khách khác thì chỉ dòng xe CẢ HAI được vào. Khách và kênh đều chưa khai ⇒ máy KHÔNG chọn xe cho khách này.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Khai riêng ở đây thắng kênh; trống = theo kênh (giá trị in mờ). Dòng xe: máy chỉ xếp lên dòng xe được tick, ghép khách khác thì chỉ dòng xe CẢ HAI được vào, không ai khai ⇒ KHÔNG chọn xe. Khách/xe: trần số khách trên một xe cho hàng loại đó, xe lấy số nhỏ nhất trong các khách, chưa khai = 1. Trỏ kho nhận KHÔNG tự ép xe riêng.</p>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-4 w-4 accent-sky-600" />
@@ -1139,7 +1139,7 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
 }
 
 // ─── Tab KÊNH ──────────────────────────────────────────────────────────────────────────────────
-type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null; dispatch_transfer?: boolean }
+type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null; max_customers_by_category?: Record<string, number>; dispatch_transfer?: boolean }
 
 function ChannelsTab({ canEdit, canCreate, onEdit, onCreate, models }: {
   canEdit: boolean
@@ -1205,7 +1205,7 @@ function ChannelsTab({ canEdit, canCreate, onEdit, onCreate, models }: {
               <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{nf(c.customers)}</TableCell>
               <TableCell className="px-2 py-1 whitespace-nowrap">
                 {canEdit && (
-                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {}, sap_dist_channel: c.sap_dist_channel ?? null, max_customers_per_trip: c.max_customers_per_trip ?? null, dispatch_transfer: c.dispatch_transfer === true })}
+                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {}, sap_dist_channel: c.sap_dist_channel ?? null, max_customers_per_trip: c.max_customers_per_trip ?? null, max_customers_by_category: c.max_customers_by_category ?? {}, dispatch_transfer: c.dispatch_transfer === true })}
                     className="rounded px-1.5 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" title="Sửa kênh">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -1274,7 +1274,7 @@ function ChannelForm({ row, cats, models, onClose }: {
   const [label, setLabel] = useState(row.label)
   const [sap, setSap] = useState(row.sap_dist_channel ?? '')
   const [vehicles, setVehicles] = useState<Record<string, string[]>>(row.dispatch_vehicles ?? {})
-  const [maxCust, setMaxCust] = useState(row.max_customers_per_trip == null ? '' : String(row.max_customers_per_trip))   // 28/09: trống = không giới hạn
+  const [maxCust, setMaxCust] = useState<MaxCustDraft>(maxCustDraft(row.max_customers_per_trip, row.max_customers_by_category))   // 04/10: theo Loại kho ('*' = chung)
   const [transfer, setTransfer] = useState(row.dispatch_transfer === true)   // 04/10: kênh Trung chuyển (mảng điều vận)
   const [drafts, setDrafts] = useState<RuleDraft[]>(draftsOf(row.rules))
   const [err, setErr] = useState('')
@@ -1288,9 +1288,10 @@ function ChannelForm({ row, cats, models, onClose }: {
         <Button variant="outline" onClick={onClose} disabled={busy}>Huỷ</Button>
         <Button disabled={busy || !label.trim()} onClick={async () => {
           setErr('')
+          const mc = maxCustPayload(maxCust)
+          if (mc === 'bad') { setErr('Số khách tối đa cùng xe phải là số nguyên 1–50 (ô viền đỏ), hoặc để trống'); return }
           try {
-            await save.mutateAsync({ id: row.id, label: label.trim(), dispatch_vehicles: vehicles, sap_dist_channel: sap.trim() || null,
-              max_customers_per_trip: maxCust.trim() === '' ? null : (Number(maxCust) || null), dispatch_transfer: transfer })
+            await save.mutateAsync({ id: row.id, label: label.trim(), dispatch_vehicles: vehicles, sap_dist_channel: sap.trim() || null, ...mc, dispatch_transfer: transfer })
             // Mức đi bằng khoá NGHIỆP VỤ của kênh (`value`), không phải id dòng LookupValue
             await saveRules.mutateAsync({ scope: 'CHANNEL', key: row.value, rules: toPayload(drafts) })
             onClose()
@@ -1309,22 +1310,17 @@ function ChannelForm({ row, cats, models, onClose }: {
           <RuleTable drafts={drafts} onChange={setDrafts} cats={cats ?? []} inheritNote="kênh này không áp gì" />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe mặc định (điều vận)</label>
-          <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models} />
-          <p className="mt-1 text-[11px] text-slate-400">Khách thuộc kênh này mà không khai riêng thì máy chỉ xếp lên các dòng xe tick ở đây (vd NPP không đi container, BHX chỉ xe nhỏ). Để "Chưa khai" ⇒ máy KHÔNG chọn xe cho khách của kênh (trừ khách khai riêng) — muốn mọi xe thì "Chọn dòng xe" → "Chọn tất cả".</p>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Mảng điều vận</label>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Ghép xe mặc định (điều vận)</label>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="h-4 w-4 accent-sky-600" />
             Kênh Trung chuyển — đơn của mọi khách trong kênh vào mảng <b>Trung chuyển</b> trên bàn điều vận
           </label>
-          <p className="mt-1 text-[11px] text-slate-400">Không tick = Bán hàng. Khách lẻ vẫn tick "Trung chuyển" riêng ở hồ sơ khách; người điều vận lấy từng đơn sang mảng kia được trên bàn.</p>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Số khách tối đa cùng xe (điều vận)</label>
-          <Input value={maxCust} inputMode="numeric" onChange={e => setMaxCust(e.target.value)} placeholder="Không giới hạn" className="h-9 w-40 text-right" />
-          <p className="mt-1 text-[11px] text-slate-400">Mặc định cho khách của kênh (khách khai riêng thì thắng). Trống = không giới hạn. Xe chở nhiều khách lấy số nhỏ nhất trong các khách trên xe; trần của kho ở Cài đặt WMS → Kho vẫn áp ngoài.</p>
+          {/* 04/10: một bảng theo Loại kho cho dòng xe + số khách cùng xe (kênh không có bậc trên: trống = không xe nào / = 1) */}
+          <div className="mt-2">
+            <DispatchFleetTable vehicles={vehicles} onVehicles={setVehicles} maxCust={maxCust} onMaxCust={setMaxCust}
+              cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models} />
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Mặc định cho khách của kênh chưa khai riêng. Dòng xe trống ⇒ máy KHÔNG chọn xe cho khách của kênh — muốn mọi xe thì "Khai riêng" → "Chọn tất cả". Khách/xe trống = 1 (mỗi khách một xe); khai theo Loại kho khi cùng khách mà FG01 đi một mình còn FG02 ghép được 3–4 điểm. Không tick Trung chuyển = Bán hàng; khách lẻ vẫn tick riêng ở hồ sơ khách.</p>
         </div>
       </div>
     </FormSheet>

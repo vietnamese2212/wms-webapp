@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
-  mainCatsOf, lineConditions, resolveAllowedModels, mixBlockReason, splitLoad, priceCombo,
+  mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, mixBlockReason, splitLoad, priceCombo,
   type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
@@ -662,6 +662,19 @@ describe('resolveAllowedModels — thứ tự Khách × Loại kho → Khách �
     expect(resolveAllowedModels(cust, chan, ['FG02'])).toEqual(['X1'])   // "*" của KHÁCH đứng trước loại của kênh
     expect(resolveAllowedModels({ FG01: ['P1'] }, chan, ['FG02'])).toEqual(['S1'])
     expect(resolveAllowedModels({}, chan, ['RM01'])).toEqual(['A1', 'A2'])
+  })
+  it('04/10 resolveMaxCustomers — cùng thứ tự: khách×loại → khách chung → kênh×loại → kênh chung; OD nhiều loại ⇒ khắt khe nhất; một loại không ai khai ⇒ null (= 1)', () => {
+    const cust = { max: 3, by_category: { FG01: 1 } }, chan = { max: 5, by_category: { FG02: 4, PM01: 2 } }
+    expect(resolveMaxCustomers(cust, chan, ['FG01'])).toBe(1)              // khách × loại thắng
+    expect(resolveMaxCustomers(cust, chan, ['FG02'])).toBe(3)              // khách CHUNG đứng trước kênh × loại
+    expect(resolveMaxCustomers({ by_category: { FG01: 1 } }, chan, ['FG02'])).toBe(4)   // không chung ⇒ kênh × loại
+    expect(resolveMaxCustomers({}, chan, ['RM01'])).toBe(5)                // kênh chung
+    expect(resolveMaxCustomers({ max: 3 }, chan, ['FG01', 'FG02'])).toBe(3)   // 3 và 3 ⇒ 3; khắt khe nhất
+    expect(resolveMaxCustomers({ by_category: { FG01: 1 } }, { max: 4 }, ['FG01', 'FG02'])).toBe(1)
+    expect(resolveMaxCustomers({ by_category: { FG01: 4 } }, null, ['FG01', 'FG02'])).toBeNull()   // FG02 chưa ai khai ⇒ cả OD chưa khai
+    expect(resolveMaxCustomers({ max: 2 }, null, [])).toBe(2)              // OD không Loại kho chính ⇒ chung
+    expect(resolveMaxCustomers(null, null, ['FG01'])).toBeNull()
+    expect(resolveMaxCustomers({ by_category: { FG01: '2' } }, { max: 0 }, ['FG01'])).toBeNull()   // dữ liệu rác không được tính
   })
   it('28/09 — không bậc nào khai ⇒ [] (khách không khai thì KHÔNG chọn xe); {} rỗng cũng là chưa khai; rỗng tường minh ⇒ []', () => {
     expect(resolveAllowedModels(null, null, ['FG01'])).toEqual([])

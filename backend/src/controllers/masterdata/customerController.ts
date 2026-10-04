@@ -141,6 +141,12 @@ async function parseCustomerBody(body: Record<string, unknown>, isCreate: boolea
     if ('err' in m) return bad(m.err)
     patch.max_customers_per_trip = m.value
   }
+  // 04/10 (user: "khách Trung chuyển đi FG01 thì một mình, FG02 ghép 3–4 điểm"): số khách tối đa cùng xe THEO LOẠI KHO
+  if (body.max_customers_by_category !== undefined) {
+    const m = await parseMaxCustomersByCategory(body.max_customers_by_category)
+    if ('err' in m) return bad(m.err)
+    patch.max_customers_by_category = m.map
+  }
   return { patch }
 }
 /** "Số khách tối đa cùng xe": null/''/0 = không giới hạn; còn lại số nguyên 1…50. */
@@ -149,6 +155,21 @@ export function parseMaxCustomers(v: unknown): { value: number | null } | { err:
   const n = Number(v)
   if (!Number.isInteger(n) || n < 1 || n > 50) return { err: 'Số khách tối đa cùng xe phải là số nguyên 1–50, hoặc để trống = không giới hạn' }
   return { value: n }
+}
+/** 04/10: bảng "Số khách tối đa cùng xe" THEO LOẠI KHO {FG01: 1, FG02: 4} — THAY TRỌN map; khoá phải là Loại kho có thật, giá trị
+ *  qua `parseMaxCustomers` (null/''/0 = bỏ khoá = theo Chung). null = xoá hết. */
+export async function parseMaxCustomersByCategory(raw: unknown): Promise<{ map: Record<string, number> } | { err: string }> {
+  if (raw === null) return { map: {} }
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { err: 'Số khách tối đa cùng xe theo Loại kho phải là bảng {Loại kho: số}' }
+  const cats = await warehouseTypeValues()
+  const map: Record<string, number> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!cats.has(k)) return { err: `Loại kho "${k}" không có trong danh mục Loại kho` }
+    const m = parseMaxCustomers(v)
+    if ('err' in m) return { err: `${k}: ${m.err}` }
+    if (m.value != null) map[k] = m.value
+  }
+  return { map }
 }
 
 // ─── GET /masterdata/customers ────────────────────────────────────────────────────────────────
@@ -422,7 +443,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
     const body = (req.body ?? {}) as { ids?: unknown; filter?: unknown; patch?: unknown }
     const rawPatch = (body.patch ?? {}) as Record<string, unknown>
     // 29/09: `load_mode` / `load_mode_by_category` (Pallet / Xá) không còn là cấu hình — không nằm trong danh sách cho phép
-    const allowed = ['channel', 'warehouse_id', 'is_active', 'dispatch_vehicles', 'dispatch_separate', 'max_customers_per_trip', 'dispatch_transfer']
+    const allowed = ['channel', 'warehouse_id', 'is_active', 'dispatch_vehicles', 'dispatch_separate', 'max_customers_per_trip', 'max_customers_by_category', 'dispatch_transfer']
     const keys = Object.keys(rawPatch)
     if (!keys.length) return fail(res, 400, 'VALIDATION_ERROR', 'Chưa chọn thao tác cần áp')
     const unknownKey = keys.find(k => !allowed.includes(k))
@@ -505,6 +526,7 @@ export async function listCustomerChannels(_req: Request, res: Response) {
         rules: (rulesOf.get(r.value) ?? []).sort(byCategory),
         dispatch_vehicles: (r.meta?.dispatch_vehicles ?? {}) as Record<string, string[]>,   // dòng xe mặc định của kênh theo Loại kho
         max_customers_per_trip: typeof r.meta?.max_customers_per_trip === 'number' ? r.meta.max_customers_per_trip : null,   // 28/09: null = không giới hạn
+        max_customers_by_category: (r.meta?.max_customers_by_category ?? {}) as Record<string, number>,   // 04/10: theo Loại kho {FG01: 1, FG02: 4}
         dispatch_transfer: r.meta?.dispatch_transfer === true,   // 04/10: kênh Trung chuyển — khách của kênh vào mảng Trung chuyển trên bàn điều vận
         sap_dist_channel: typeof r.meta?.sap_dist_channel === 'string' ? r.meta.sap_dist_channel : null,   // 28/09: tự điền khách từ ZSD02
         sort_order: r.sort_order,
@@ -530,8 +552,14 @@ export async function updateCustomerChannel(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kênh')
     if (b.type !== 'customer_channel') return fail(res, 400, 'VALIDATION_ERROR', 'Mục này không phải Kênh khách hàng')
 
-    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown; sap_dist_channel?: unknown; max_customers_per_trip?: unknown; dispatch_transfer?: unknown }
+    const body = (req.body ?? {}) as { label?: unknown; dispatch_vehicles?: unknown; sap_dist_channel?: unknown; max_customers_per_trip?: unknown; max_customers_by_category?: unknown; dispatch_transfer?: unknown }
     const meta: Record<string, unknown> = { ...(b.meta ?? {}) }
+    // 04/10: số khách tối đa cùng xe THEO LOẠI KHO của kênh (THAY TRỌN map; rỗng = xoá khoá)
+    if (body.max_customers_by_category !== undefined) {
+      const m = await parseMaxCustomersByCategory(body.max_customers_by_category)
+      if ('err' in m) return fail(res, 400, 'VALIDATION_ERROR', m.err)
+      if (Object.keys(m.map).length) meta.max_customers_by_category = m.map; else delete meta.max_customers_by_category
+    }
     // 04/10: kênh Trung chuyển (mảng điều vận) — khách của kênh vào mảng Trung chuyển trừ khi bị "lấy sang"; tắt = xoá khoá
     if (body.dispatch_transfer !== undefined) { if (body.dispatch_transfer === true) meta.dispatch_transfer = true; else delete meta.dispatch_transfer }
     // 28/09: số khách tối đa cùng xe của kênh (khách không khai thì theo đây; null = không giới hạn)

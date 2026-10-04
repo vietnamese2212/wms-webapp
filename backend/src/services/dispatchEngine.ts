@@ -278,6 +278,20 @@ export function resolveAllowedModels(cust: Record<string, unknown> | null | unde
   const lists = mainCats.length ? mainCats.map(forCat) : [forCat(null)]
   return lists.reduce((a, l) => a.filter(x => l.includes(x)))
 }
+/** Một bậc khai "số khách tối đa cùng xe": số CHUNG (`Customer.max_customers_per_trip` / `meta.max_customers_per_trip`) + bảng theo
+ *  Loại kho (`max_customers_by_category` {FG01: 1, FG02: 4}). */
+export type MaxCustomersCfg = { max?: number | null; by_category?: Record<string, unknown> | null } | null | undefined
+/** 04/10 (user: "khách Trung chuyển mà đi FG01 thì đi một mình, còn FG02 thì ghép 3–4 điểm"): số khách tối đa cùng xe của OD theo
+ *  Loại kho CHÍNH, cùng thứ tự với `resolveAllowedModels`: khách×loại → khách chung → kênh×loại → kênh chung. OD nhiều Loại kho chính
+ *  ⇒ số KHẮT KHE nhất; một loại không bậc nào khai ⇒ cả OD = null (= CHƯA KHAI = 1 ở `odStopsCap`, chip Khai thiếu nêu kênh).
+ *  OD không Loại kho chính (chỉ hàng đi kèm / chưa khai loại) ⇒ khách chung → kênh chung. */
+export function resolveMaxCustomers(cust: MaxCustomersCfg, chan: MaxCustomersCfg, mainCats: string[]): number | null {
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 1 ? v : null)
+  const forCat = (c: string | null): number | null =>
+    (c ? num(cust?.by_category?.[c]) : null) ?? num(cust?.max) ?? (c ? num(chan?.by_category?.[c]) : null) ?? num(chan?.max)
+  const vals = mainCats.length ? mainCats.map(forCat) : [forCat(null)]
+  return vals.some(v => v == null) ? null : Math.min(...(vals as number[]))
+}
 /** Switch "Ghép Loại kho khác" trên thẻ xe (27/09, user: "TẮT = chặn thả"): trả câu lý do nếu xe (sau khi nhận `moving`) chở hơn
  *  MỘT bộ Loại kho chính; null = cho thả. `allow` = switch của xe, không khai thì của kế hoạch (undefined = cho — kế hoạch cũ).
  *  Một OD tự chứa hai loại chính không tách được vẫn thả được (chỉ MỘT bộ). Dòng không có tải theo loại (kế hoạch cũ) không tính. */

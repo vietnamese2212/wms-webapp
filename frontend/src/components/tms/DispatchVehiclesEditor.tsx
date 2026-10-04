@@ -8,7 +8,6 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import type { VehicleModel } from '@/api/hooks'
-import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 const capText = (m: VehicleModel) =>
@@ -115,89 +114,4 @@ export function VehicleModelChecklist({ models, value, onChange }: { models: Veh
     </div>
   )
 }
-
-/**
- * Bảng "Dòng xe được vào" theo Loại kho cho MỘT khách hoặc MỘT kênh. Mỗi dòng: Mọi Loại kho / từng Loại kho —
- * "Theo kênh" (khách) hoặc "Chưa khai" (kênh) = không khai khoá đó; "Chọn dòng xe" = khai danh sách.
- */
-export function DispatchVehiclesEditor({ value, onChange, cats, models, inherit }: {
-  value: Record<string, string[]>
-  onChange: (next: Record<string, string[]>) => void
-  cats: { value: string; label: string }[]
-  models: VehicleModel[]
-  /** Khách: map của kênh để in "theo kênh: …". Kênh: undefined (không khai = không xe nào). */
-  inherit?: { label: string; map: Record<string, string[]> } | null
-}) {
-  const [editing, setEditing] = useState<string | null>(null)
-  // Loại kho "đi kèm đơn" (POSM — cờ ở Cài đặt WMS → Loại kho): máy chọn xe theo Loại kho CHÍNH của đơn, không hỏi dòng này
-  // (29/09, user: "PM01, RM01, PK01 nếu đi theo đơn thì chọn ở đâu?") ⇒ dòng in ghi chú thay vì ô chọn, khỏi khai vào chỗ máy không đọc
-  const whMeta = useWhTypeMetaMap()
-  const isFollow = (key: string) => key !== '*' && whMeta.get(key)?.dispatch_follow === true
-  const rows = [{ key: '*', label: 'Mọi Loại kho' }, ...cats.map(c => ({ key: c.value, label: c.label !== c.value ? `${c.value} — ${c.label}` : c.value }))]
-  const offWord = inherit !== undefined ? 'Theo kênh' : 'Chưa khai'
-  /** Máy sẽ áp gì cho khoá này nếu KHÔNG khai (để người khai thấy mình đang đè cái gì). Không bậc nào khai ⇒ máy không chọn xe. */
-  const fallback = (key: string): { text: string; none: boolean } => {
-    if (key !== '*' && value['*']) return { text: `theo "Mọi Loại kho": ${vehicleListText(value['*'], models)}`, none: !value['*'].length }
-    if (inherit) {
-      const l = inherit.map[key] ?? inherit.map['*']
-      return l ? { text: `theo kênh ${inherit.label}: ${vehicleListText(l, models)}`, none: !l.length }
-        : { text: inherit.label ? `kênh ${inherit.label} chưa khai — máy KHÔNG chọn xe` : 'chưa phân kênh — máy KHÔNG chọn xe', none: true }
-    }
-    return { text: 'chưa khai — máy KHÔNG chọn xe', none: true }
-  }
-  const set = (key: string, ids: string[] | null) => {
-    const n = { ...value }
-    if (ids === null) delete n[key]; else n[key] = ids
-    onChange(n)
-  }
-  return (
-    <div className="rounded-md border border-slate-200 divide-y">
-      {rows.map(r => {
-        const on = Array.isArray(value[r.key])
-        const fb = on ? null : fallback(r.key)
-        if (isFollow(r.key)) return (
-          <div key={r.key} className="px-2 py-1.5 flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1 text-xs font-medium text-slate-700">{r.label}</span>
-            <span className="rounded border border-dashed border-slate-300 px-2 py-1 text-[11px] text-slate-500"
-              title='Loại kho này bật "Đi kèm đơn khi điều vận" (Cài đặt WMS → Loại kho): đi cùng xe của hàng chính trên đơn, máy không hỏi dòng xe riêng cho nó. Đơn CHỈ có hàng loại này thì theo "Mọi Loại kho".'>
-              Đi kèm đơn — theo xe của hàng chính{on ? <button type="button" className="ml-2 text-sky-700 underline" onClick={() => set(r.key, null)}>bỏ khai riêng</button> : null}
-            </span>
-          </div>
-        )
-        return (
-          <div key={r.key} className="px-2 py-1.5 space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 flex-1 text-xs font-medium text-slate-700">{r.label}</span>
-              <div className="grid grid-cols-2 gap-0.5 rounded border border-slate-200 p-0.5">
-                <button type="button" onClick={() => { set(r.key, null); if (editing === r.key) setEditing(null) }}
-                  className={`rounded px-2 py-1 text-[11px] ${!on ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>{offWord}</button>
-                <button type="button" onClick={() => { if (!on) set(r.key, []); setEditing(r.key) }}
-                  className={`rounded px-2 py-1 text-[11px] ${on ? 'bg-sky-100 text-sky-800 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}>Chọn dòng xe</button>
-              </div>
-            </div>
-            <p className={`text-[11px] ${on ? (value[r.key].length ? 'text-slate-600' : 'text-red-600') : fb?.none ? 'text-amber-700' : 'text-slate-400'}`}>
-              {on
-                ? (value[r.key].length ? `${nf(splitVehicleIds(value[r.key], models).live.length)} dòng xe: ${vehicleListText(value[r.key], models)}` : 'Chưa tick dòng xe nào — máy sẽ không xếp được hàng loại này')
-                : fb?.text}
-              {on && editing !== r.key && <button type="button" className="ml-2 text-sky-700 underline" onClick={() => setEditing(r.key)}>Sửa</button>}
-            </p>
-            {on && editing === r.key && (
-              <div className="space-y-1">
-                <VehicleModelChecklist models={models} value={value[r.key]} onChange={ids => set(r.key, ids)} />
-                {/* 29/09 (user: "sửa xong phải có nút lưu nhỏ để làm tiếp"): thu gọn bảng tick để đi tiếp các ô khác — dữ liệu đã
-                    nằm trong form, ghi thật khi bấm Lưu của form (một form một nút Lưu) */}
-                <div className="flex items-center justify-end gap-2">
-                  <span className="text-[10px] text-slate-400">Ghi khi bấm Lưu của form</span>
-                  <button type="button" onClick={() => setEditing(null)}
-                    className="h-7 rounded border border-sky-600 bg-sky-600 px-2.5 text-[11px] font-medium text-white hover:bg-sky-700">
-                    ✓ Xong{value[r.key].length ? ` (${nf(splitVehicleIds(value[r.key], models).live.length)} dòng xe)` : ''}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
+// 04/10: bảng chọn theo Loại kho chuyển sang `DispatchFleetTable` (gộp với cột Khách/xe); file này giữ cây tick + helper đếm.

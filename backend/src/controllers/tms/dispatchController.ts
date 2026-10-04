@@ -1511,6 +1511,21 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
   return out
 }
 
+/** Đơn người đã KÉO từ kế hoạch này sang kế hoạch khác (`params.pulled_away`) mà còn nằm ở một kế hoạch mở của kho — /sync và Nạp OD
+ *  mới của kế hoạch này KHÔNG coi là "OD mới" (04/10, giả lập hai ngày: kéo 4 đơn từ nháp 05/10 sang 06/10 xong, 05/10 báo chính 4 đơn
+ *  đó là "OD mới", bấm Nạp là kéo ngược về). Bên kia bỏ kế hoạch / đơn rời đó thì đơn lại là việc của mọi bàn. */
+async function pulledAwayHeld(plan: { id: string; warehouse_id: string; params: unknown }): Promise<Set<string>> {
+  const notes = ((plan.params ?? {}) as { pulled_away?: { od_number?: unknown }[] }).pulled_away ?? []
+  const ods = uniq(notes.map(p => p?.od_number).filter((x): x is string => typeof x === 'string'))
+  if (!ods.length) return new Set()
+  const rows = (await fetchAllByIdChunks(ods, c => db.from('dispatch_trip_od').select('od_number, plan_id').in('od_number', c).neq('plan_id', plan.id).order('id'))) as { od_number: string; plan_id: string }[]
+  const planIds = uniq(rows.map(r => r.plan_id))
+  if (!planIds.length) return new Set()
+  const plans = (await fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id').in('id', c).eq('warehouse_id', plan.warehouse_id).in('status', OPEN_PLAN).order('id'))) as { id: string }[]
+  const open = new Set(plans.map(p => p.id))
+  return new Set(rows.filter(r => open.has(r.plan_id)).map(r => r.od_number))
+}
+
 // GET /tms/dispatch/plans/:id/sync — cờ sống của OD trong kế hoạch + số OD MỚI (ZSD02 vừa nạp) chưa có trong kế hoạch
 export async function planSync(req: Request, res: Response) {
   try {
@@ -1524,16 +1539,17 @@ export async function planSync(req: Request, res: Response) {
     const wh = await loadWarehouse(full.warehouse_id)
     // OD MỚI đếm trong SQL (RPC dispatch_new_ods, 03/10 — quota egress): bản cũ loadCandidates(countOnly) kéo cả cửa sổ 14 ngày
     // ZSD02 của plant (Ba Vì 9.094 dòng = 4 MB) về backend mỗi 120 s cho MỖI bàn đang mở, chỉ để lọc ra vài số OD.
-    const [flags, freshRaw] = await Promise.all([
+    const [flags, freshRaw, pulled] = await Promise.all([
       odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh), full.plan_date),
       wh?.sap_plant
         ? db.rpc('dispatch_new_ods', { p_plant: wh.sap_plant, p_from: shiftDay(full.plan_date, -BACKLOG_DAYS), p_to: full.plan_date, p_day: full.plan_date,
             p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id, p_segment: full.segment } as never).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
         : Promise.resolve([] as string[]),
+      pulledAwayHeld(full),
     ])
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
     for (const u of (full.unplanned ?? []) as { od_number?: string }[]) if (u?.od_number) inPlan.add(u.od_number)   // máy đã thấy, không đo được tải
-    const fresh = freshRaw.filter(od => !inPlan.has(od))
+    const fresh = freshRaw.filter(od => !inPlan.has(od) && !pulled.has(od))
     return ok(res, { flags, new_ods: fresh.length, new_od_numbers: fresh.slice(0, 50) })
   } catch (e) { return failAny(res, e) }
 }
@@ -1548,8 +1564,11 @@ async function refreshPoolInner(req: Request, res: Response) {
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const full = (await readPlan(plan.id))!
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
-    const cand = await loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { skipPlanId: plan.id, segment: plan.segment as Segment })
-    const fresh = cand.ods.filter(o => !inPlan.has(o.od_number))
+    const [cand, pulled] = await Promise.all([
+      loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { skipPlanId: plan.id, segment: plan.segment as Segment }),
+      pulledAwayHeld(plan),
+    ])
+    const fresh = cand.ods.filter(o => !inPlan.has(o.od_number) && !pulled.has(o.od_number))
     const loadable = fresh.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length)
     const t = now()
     // OD mới về vào khung chờ = tab Điều (user chốt 28/09: tự vào, gắn nhãn "Mới"). `fresh_ods` = OD về SAU khi lập kế hoạch
@@ -1921,6 +1940,17 @@ const rowDetail = (rs: TripOdRow[]): ExcludedDetail | undefined => {
     pallets: rs.reduce((x, o) => x + (Number(o.pallets) || 0), 0), tons: rs.reduce((x, o) => x + (Number(o.tons) || 0), 0), delivery_date: f.delivery_date, note: f.note }
 }
 
+/** Dấu tay TOÀN KHO (hoãn · Ngoài app) đặt theo số OD lên đơn đang TRÊN XE nháp của kế hoạch khác ⇒ câu 409 (04/10, giả lập hai ngày:
+ *  băng quá hạn của 06/10 cho bấm "Không điều" lên đơn đang trên xe nháp 05/10, chốt 05/10 là đơn "Không điều" vào Kế hoạch xuất).
+ *  Khung chờ nơi khác thì không chặn — trigger `dispatch_od_mark_leave_pools` rút đơn khỏi đó. */
+async function onOtherPlanTruck(plan: PlanRow, ods: string[]): Promise<string | null> {
+  const hit = [...(await openDraftOds(plan.warehouse_id, ods, plan.id)).entries()]
+  if (!hit.length) return null
+  const [od, r] = hit[0]
+  const where = typeof r === 'string' ? r : `xe #${r.seq ?? '?'} của nháp ${dmyOf(r.plan_date)} (${r.created_by ?? '?'})`
+  return `OD ${od}${hit.length > 1 ? ` và ${hit.length - 1} đơn khác` : ''} đang xếp trên ${where} — mở nháp đó để Kéo về đây hoặc chuyển trạng thái ở đó.`
+}
+
 // POST /tms/dispatch/plans/:id/hold — chuyển OD sang "Không điều ngày này" / "Không điều": OD rời kế hoạch (mọi phần), xe bị đụng tính lại.
 // OD đang hoãn (od_numbers) thì chỉ đổi dấu — không nằm trên kế hoạch nên không xe nào phải tính lại.
 async function holdOdsInner(req: Request, res: Response) {
@@ -1929,7 +1959,7 @@ async function holdOdsInner(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    if (b.until && b.until <= plan.plan_date) return fail(res, 400, 'HOLD_DATE_INVALID', `Ngày điều lại phải SAU ngày lập kế hoạch (${plan.plan_date}) — hoặc chọn "Không điều".`)
+    if (b.until && b.until < plan.plan_date) return fail(res, 400, 'HOLD_DATE_INVALID', `Ngày điều lại phải SAU ngày lập kế hoạch (${plan.plan_date}) — hoặc chọn "Không điều".`)
     const full = (await readPlan(plan.id))!
     const all = [...full.trips.flatMap(t => t.ods), ...full.pool]
     const ids = uniq(b.ids ?? [])
@@ -1942,7 +1972,13 @@ async function holdOdsInner(req: Request, res: Response) {
     const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không hoãn OD của xe này ở đây.`)
     const planOds = uniq(picked.map(o => o.od_number))
+    // "Điều lại từ ngày này" (băng quá hạn, 04/10): hẹn ĐÚNG ngày lập chỉ cho đơn KHÔNG nằm trên kế hoạch — đơn đang trên kế hoạch mà
+    // hẹn hôm nay là rời rồi quay lại ngay. Trước 04/10 cửa này đòi ngày SAU ngày lập nên nút đó luôn 400 (giả lập hai ngày bắt).
+    const backToday = b.until === plan.plan_date
+    if (backToday && planOds.length) return fail(res, 400, 'HOLD_DATE_INVALID', `Ngày điều lại phải SAU ngày lập kế hoạch (${plan.plan_date}) — hoặc chọn "Không điều".`)
     const heldOds = odNums.filter(od => !planOds.includes(od))
+    const onTruck = await onOtherPlanTruck(plan, heldOds)
+    if (onTruck) return fail(res, 409, 'OD_ON_OTHER_PLAN', onTruck)
     const ods = [...planOds, ...heldOds]
     const t = now()
     const actor = req.user?.name ?? null
@@ -1974,7 +2010,21 @@ async function holdOdsInner(req: Request, res: Response) {
     const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
     const old = new Map((params.excluded ?? []).map(x => [x.od_number, x]))
     const detail = new Map<string, ExcludedDetail | undefined>(ods.map(od => [od, planOds.includes(od) ? rowDetail(leaving.filter(o => o.od_number === od)) : old.get(od)?.d]))
-    const excluded = [...(params.excluded ?? []).filter(x => !ods.includes(x.od_number)), ...heldExcluded(rows, detail)]
+    // hẹn ĐÚNG hôm nay ⇒ đơn vào khung chờ NGAY (như bỏ hoãn), chỉ đơn thuộc MẢNG của kế hoạch này; đơn mảng kia giữ dấu, bàn bên đó
+    // thấy nó là "OD mới" (dispatch_new_ods nhận đơn hẹn tới ngày lập dù ngày giao quá cửa sổ)
+    let back = 0
+    let added: ExcludedOd[] = heldExcluded(rows, detail)
+    if (backToday) {
+      const wh = await loadWarehouse(plan.warehouse_id)
+      if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+      const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: ods, skipPlanId: plan.id })
+      const segBy = plan.segment ? await segmentOfOds(wh.id, cand.ods) : null
+      const ins = cand.ods.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length && (!segBy || segBy.get(o.od_number) === plan.segment))
+      await insertOdRows(ins.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: actor })))
+      back = ins.length
+      added = cand.excluded.filter(x => x.kind !== 'HELD')
+    }
+    const excluded = [...(params.excluded ?? []).filter(x => !ods.includes(x.od_number)), ...added]
     const p2 = { ...(plan.params as Record<string, unknown>), excluded }
     const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: t }).eq('id', plan.id)
     if (pErr) throw pErr
@@ -1989,7 +2039,7 @@ async function holdOdsInner(req: Request, res: Response) {
       if (error) throw error
     }
     await writeSummary({ ...plan, params: asJson(p2) })
-    return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until, trips_removed: emptied.length } })
+    return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until, trips_removed: emptied.length, back_to_pool: back } })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2136,6 +2186,8 @@ async function outsideOdsInner(req: Request, res: Response) {
     const extra = odNums.filter(od => !planOds.includes(od))
     const bad = await odsOutsidePlant(plan.warehouse_id, extra)
     if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
+    const onTruck = await onOtherPlanTruck(plan, extra)
+    if (onTruck) return fail(res, 409, 'OD_ON_OTHER_PLAN', onTruck)
     const ods = [...planOds, ...extra]
     const t = now(), actor = req.user?.name ?? null
     const reason = b.reason.trim()
@@ -2578,6 +2630,7 @@ type ReviewInfo = {
   license_plate: string | null; sap_pallets: number | null; sap_m3: number | null; qty_issued_base: number | null
   mat_doc: string | null; billing_no: string | null; approval_status: string | null
   last_synced_at: string | null   // 03/10 tối: tuổi dữ liệu SAP của OD — chip "SAP N ngày" khi quá cũ
+  channel: string | null          // 04/10: kênh của khách (Customer.channel) — bộ lọc Kênh của bảng Xem đơn
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]            // SO sửa ⇒ OD này THAY OD cũ (có thể đã điều ở xe khác)
   held_before: { until: string; reason: string; by: string | null } | null   // đã "Không điều ngày này", nay về lại Điều
@@ -2593,10 +2646,10 @@ async function planOdSet(planId: string): Promise<{ plan: PlanRow; ods: string[]
   const un = ((plan.unplanned ?? []) as { od_number?: string }[]).map(u => u?.od_number).filter((x): x is string => !!x)
   return { plan: plan as PlanRow, ods: uniq([...rows.map(r => r.od_number), ...(p.excluded ?? []).map(x => x.od_number), ...un]) }
 }
-type RevLine = { od_number: string; material_code: string | null; qty_base: number | string | null; so_number: string | null; so_type: string | null; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null; sold_to_code: string | null; route_name: string | null; od_created_at: string | null; flow: string | null; created_by: string | null
+type RevLine = { od_number: string; ship_to_code: string | null; material_code: string | null; qty_base: number | string | null; so_number: string | null; so_type: string | null; note_delivery: string | null; note_invoice: string | null; customer_ref: string | null; sold_to_code: string | null; route_name: string | null; od_created_at: string | null; flow: string | null; created_by: string | null
   so_created_at: string | null; sales_district: string | null; dist_channel: string | null; dvvt_raw: string | null; driver_name: string | null; license_plate: string | null
   sap_pallets: number | string | null; sap_m3: number | string | null; qty_issued_base: number | string | null; mat_doc: string | null; billing_no: string | null; approval_status: string | null; last_synced_at: string | null }
-const REVIEW_COLS = 'od_number, material_code, qty_base, so_number, so_type, note_delivery, note_invoice, customer_ref, sold_to_code, route_name, od_created_at, flow, created_by:raw->>created_by, '
+const REVIEW_COLS = 'od_number, ship_to_code, material_code, qty_base, so_number, so_type, note_delivery, note_invoice, customer_ref, sold_to_code, route_name, od_created_at, flow, created_by:raw->>created_by, '
   + 'so_created_at, sales_district, dist_channel, dvvt_raw, driver_name, license_plate, sap_pallets, sap_m3, qty_issued_base, mat_doc, billing_no, approval_status, last_synced_at'
 const sumN = (rs: RevLine[], k: 'sap_pallets' | 'sap_m3' | 'qty_issued_base'): number | null => {
   const vs = rs.map(r => r[k]).filter(v => v != null && v !== '').map(Number).filter(n => Number.isFinite(n))
@@ -2621,13 +2674,16 @@ export async function getPlanReview(req: Request, res: Response) {
     ])
     const oldOds = uniq(olds.map(o => o.od_number))
     type KhvcLite = { do_no: string; group_code: string; export_date: string | null }
-    const [mats, khvc, ownKhvc] = await Promise.all([
+    const [mats, khvc, ownKhvc, custs] = await Promise.all([
       fetchAllByIdChunks(uniq(lines.map(l => l.material_code).filter((x): x is string => !!x)), c => db.from('Material')
         .select('material_code, category, base_unit, entry_unit, units_per_carton').in('material_code', c).order('material_code')) as Promise<{ material_code: string; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }[]>,
       oldOds.length ? fetchAllByIdChunks(oldOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).order('do_no')) as Promise<{ do_no: string; group_code: string }[]> : Promise.resolve([] as { do_no: string; group_code: string }[]),
       // tiến độ kho (đợt 2): OD của kế hoạch này đang ở Kế hoạch xuất nào — một câu cho cả bảng, không tra từng dòng
       fetchAllByIdChunks(ods, c => db.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<KhvcLite[]>,
+      fetchAllByIdChunks(uniq(lines.map(l => l.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
+        .select('ship_to_code, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; channel: string | null }[]>,
     ])
+    const chanOf = new Map(custs.map(c => [c.ship_to_code, c.channel]))
     // chuyến bên Xuất tra theo SỐ XE — `khvc_lines.gdo_id` không cửa nào ghi (0/63 dòng trên staging), gói 61 [18a] bắt lượt đầu
     const gdoBy = await gdosOfGroups(uniq(ownKhvc.map(k => k.group_code)))
     const khvcBy = new Map<string, KhvcLite>()
@@ -2664,6 +2720,7 @@ export async function getPlanReview(req: Request, res: Response) {
         sap_pallets: sumN(rs, 'sap_pallets'), sap_m3: sumN(rs, 'sap_m3'), qty_issued_base: sumN(rs, 'qty_issued_base'),
         mat_doc: joinU(rs, 'mat_doc'), billing_no: joinU(rs, 'billing_no'), approval_status: joinU(rs, 'approval_status'),
         last_synced_at: rs.map(r => r.last_synced_at).filter((x): x is string => !!x).sort().pop() ?? null,
+        channel: (f?.ship_to_code ? chanOf.get(f.ship_to_code) : null) ?? null,
         lines: rs.length, materials: new Set(rs.map(r => r.material_code)).size, qty_conv: Math.round(conv * 1000) / 1000, units: [...units], categories: [...cats].sort(),
         replaces: repBy.get(od) ?? [],
         // hoãn có ngày đã tới ⇒ OD về lại Điều — nói ra lần hoãn trước (user chốt 27/09 khuya)

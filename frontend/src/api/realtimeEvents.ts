@@ -80,7 +80,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau. KHÔNG kéo theo dispatch-sync / dispatch-review (03/10, quota egress):
   // kéo thả không đổi dữ liệu SAP — hai cửa đó chỉ cần làm mới khi ZSD02 / Kế hoạch xuất / dấu hoãn đổi (erp_outbound_orders, khvc_lines…)
   dispatch_trip_od:      [['dispatch-plan']],
-  dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
+  dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-stale']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
   dispatch_od_segment:   [['dispatch-plan'], ['dispatch-plans'], ['dispatch-sync']],   // lấy đơn sang mảng khác (03/10 tối) — bàn mảng kia thấy đơn rời ngay
   dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-stale'], ['zsd02-coverage'], ['dispatch-decisions']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
   od_lineage:            [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-decisions']],  // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn

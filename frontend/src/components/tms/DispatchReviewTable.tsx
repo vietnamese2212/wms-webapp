@@ -22,7 +22,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useDispatchPlanStale, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
+import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useDispatchPlanStale, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
 import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -115,12 +115,15 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const [dlg, setDlg] = useState<null | 'DAY' | 'NEVER' | 'OUTSIDE'>(null)
   const [until, setUntil] = useState('')
   const [reason, setReason] = useState('')
+  // tiến độ chuyển trạng thái theo lô "300/945" (04/10, giả lập hai ngày: dời 945 đơn chạy 10 lô ~17 s mà chỉ hiện "Đang lưu…")
+  const [prog, setProg] = useState<string | null>(null)
   // thông tin SAP từng OD (SO · người tạo · ghi chú · SL quy đổi · Loại kho · OD bị thay · lần Không điều trước) — gọi riêng
   const review = useDispatchPlanReview(plan.id, plan.updated_at)
   const info = review.data?.ods ?? {}
   const whMeta = useWhTypeMetaMap()
   const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
-  const busy = hold.isPending || unhold.isPending || reopt.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending || take.isPending || hide.isPending
+  // `prog` giữ nút khoá cả khoảng hở giữa hai lô (isPending tắt một nhịp giữa hai lần gọi)
+  const busy = !!prog || hold.isPending || unhold.isPending || reopt.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending || take.isPending || hide.isPending
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
 
   const byTab = useMemo(() => {
@@ -226,12 +229,30 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const createdOn = !!(cFrom || cTo || sFrom || sTo) && !!review.data
   const inRange = (d: string | null | undefined, from: string, to: string) => (!from && !to) || (!!d && (!from || d >= from) && (!to || d <= to))
   const inCreated = (od: string) => inRange(info[od]?.od_created_at, cFrom, cTo) && inRange(info[od]?.so_created_at, sFrom, sTo)
+  // NGÀY GIAO · KÊNH · VÙNG (04/10, giả lập hai ngày: muốn dời "một nửa" sang ngày sau phải tick tay từng đơn) — lọc tại chỗ, rồi
+  // "Chọn N đơn đang hiện". Kênh = kênh khách trong Khách hàng (đọc từ thông tin SAP đã nạp — chưa nạp xong thì chưa lọc theo kênh).
+  const dFrom = f.deliveryFrom ?? '', dTo = f.deliveryTo ?? '', fChan = f.channels ?? [], fReg = f.regions ?? []
+  const chanList = useCustomerChannels()
+  const chanLabel = new Map((chanList.data ?? []).map(c => [c.value, c.label]))
+  const NONE = '__none'
+  const chanOf = (od: string) => info[od]?.channel || NONE
+  // lựa chọn = giá trị có trong tab đang xem + giá trị đang chọn (đổi tab không làm chip mất nhãn)
+  const optsOf = (vals: string[], label: (v: string) => string) => uniq(vals).map(v => ({ value: v, label: label(v) })).sort((a, b) => a.label.localeCompare(b.label, 'vi'))
+  const chanOpts = optsOf([...tabRows.map(r => chanOf(r.od)), ...fChan], v => (v === NONE ? 'Chưa có kênh' : chanLabel.get(v) ?? v))
+  const regOpts = optsOf([...tabRows.map(r => r.region || NONE), ...fReg], v => (v === NONE ? 'Chưa có vùng' : v))
+  const chanOn = fChan.length > 0 && !!review.data
   const filterDefs: FilterDef[] = [
+    { key: 'delivery', label: 'Ngày giao', type: 'daterange', from: dFrom, to: dTo, onChange: (from, to) => setF({ deliveryFrom: from, deliveryTo: to }) },
+    { key: 'channel', label: 'Kênh', type: 'multi', options: chanOpts, selected: fChan, onChange: v => setF({ channels: v }) },
+    { key: 'region', label: 'Vùng', type: 'multi', options: regOpts, selected: fReg, onChange: v => setF({ regions: v }) },
     { key: 'created', label: 'Ngày tạo OD', type: 'daterange', from: cFrom, to: cTo, onChange: (from, to) => setF({ createdFrom: from, createdTo: to }) },
     { key: 'soCreated', label: 'Ngày tạo SO', type: 'daterange', from: sFrom, to: sTo, onChange: (from, to) => setF({ soCreatedFrom: from, soCreatedTo: to }) },
   ]
+  const filtersOn = !!(dFrom || dTo || fChan.length || fReg.length) || createdOn
+  const clearFilters = () => setF({ search: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] })
   const isSoft = (od: string) => { const k = flags.get(od)?.kind; return !!k && SOFT_FLAG.has(k) }
   const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!softOnly || isSoft(r.od)) && (!createdOn || inCreated(r.od))
+    && inRange(r.date || null, dFrom, dTo) && (!chanOn || fChan.includes(chanOf(r.od))) && (!fReg.length || fReg.includes(r.region || NONE))
     && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
   const detailRow = detail ? tabRows.find(r => r.key === detail) ?? null : null
   const notesN = tabRows.filter(r => !!r.note).length
@@ -261,14 +282,20 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   }
   // cửa ghi nhận ≤ 300 phần tử — "chọn cả tab" vài trăm đơn thì gửi theo lô (tuần tự: mỗi lượt giữ thuê kế hoạch)
   const lots = <T,>(a: T[]) => Array.from({ length: Math.ceil(a.length / 100) }, (_, i) => a.slice(i * 100, i * 100 + 100))
+  /** chạy từng lô, cập nhật "đã xong / tổng" sau mỗi lô — tiến độ tự tắt khi xong hoặc lỗi */
+  const eachLot = async <T,>(items: T[], fn: (part: T[]) => Promise<void>) => {
+    let done = 0
+    setProg(`0/${nf(items.length)}`)
+    try { for (const part of lots(items)) { await fn(part); done += part.length; setProg(`${nf(done)}/${nf(items.length)}`) } } finally { setProg(null) }
+  }
   const doHold = async () => {
     const u = dlg === 'DAY' ? until : null
     let n = 0
     try {
-      for (const part of lots(selRows)) {
+      await eachLot(selRows, async part => {
         const r = await hold.mutateAsync({ plan_id: plan.id, ids: idsOf(part), od_numbers: odsOf(part), until: u, reason: reason.trim() || undefined })
         n += r.held.ods
-      }
+      })
       setDlg(null); setSel(new Set())
       toast({ title: `${n} OD → ${u ? `Không điều ngày này (điều lại từ ${dmy(u)})` : 'Không điều'}`, description: 'Lần nạp OD mới / lập lại không đưa lại các OD này.' })
     } catch (e) { err(e, n ? `Đã chuyển ${n} OD, phần còn lại chưa chuyển được` : 'Không chuyển được trạng thái') }
@@ -277,10 +304,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     if (!reason.trim()) return
     let n = 0
     try {
-      for (const part of lots(selRows)) {
+      await eachLot(selRows, async part => {
         const r = await outside.mutateAsync({ plan_id: plan.id, ids: idsOf(part), od_numbers: odsOf(part), reason: reason.trim() })
         n += r.outside.ods
-      }
+      })
       setDlg(null); setSel(new Set())
       toast({ title: `${n} OD → Ngoài app`, description: 'Đơn rời tab Điều, không tính vào ngày tạo cần phủ khi nạp ZSD02. Bỏ dấu ở tab Ngoài app → Điều lại.' })
     } catch (e) { err(e, n ? `Đã đánh dấu ${n} OD, phần còn lại chưa được` : 'Không đánh dấu được') }
@@ -288,11 +315,11 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const doGo = async () => {
     let n = 0, back = 0
     try {
-      for (const part of lots(selRows)) {
+      await eachLot(selRows, async part => {
         const held = part.filter(x => x.held).map(x => x.od), out = part.filter(x => x.outside).map(x => x.od)
         if (held.length) { const r = await unhold.mutateAsync({ plan_id: plan.id, od_numbers: held }); n += r.unheld.ods; back += r.unheld.back_to_pool }
         if (out.length) { const r = await unoutside.mutateAsync({ plan_id: plan.id, od_numbers: out }); n += r.unoutside.ods; back += r.unoutside.back_to_pool }
-      }
+      })
       setSel(new Set())
       toast({ title: `${n} OD → Điều`, description: back === n ? 'Đơn đã về khung chờ — máy ghép khi bấm Ghép xe.' : `${n - back} OD không quay lại (đã được lo ở chỗ khác, ngoài cửa sổ ngày, hoặc không còn trong ZSD02).` })
     } catch (e) { err(e, n ? `Đã chuyển ${n} OD, phần còn lại chưa chuyển được` : 'Không chuyển được trạng thái') }
@@ -306,16 +333,18 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       toast({ title: `${r.supplement.ods} OD xác nhận là đơn bổ sung`, description: 'Ghi vào phả hệ DO (ai · lúc nào). Cờ "Họ hàng đã đi" tắt, xác nhận kế hoạch đi tiếp.' })
     } catch (e) { err(e, 'Không xác nhận được đơn bổ sung') }
   }
-  // Đơn quá hạn: "Điều lại từ ngày này" = hoãn tới ngày kế hoạch (tới ngày là đơn quay lại Điều qua cửa sổ hoãn)
+  // Đơn quá hạn: "Điều lại từ ngày này" = hẹn tới ĐÚNG ngày kế hoạch — BE đưa đơn của mảng này vào khung chờ ngay (04/10: trước đó
+  // BE đòi ngày SAU ngày lập nên nút này luôn 400); đơn mảng kia giữ dấu, bàn bên đó thấy là OD mới; kế hoạch các ngày sau cũng nhận
   const doStaleGo = async () => {
     const ods = selRows.filter(r => r.stale).map(r => r.od)
     if (!ods.length) return
+    let n = 0, back = 0
     try {
-      let n = 0
-      for (const part of lots(ods)) { const r = await hold.mutateAsync({ plan_id: plan.id, od_numbers: part, until: plan.plan_date, reason: 'Điều lại từ ngày kế hoạch (đơn quá cửa sổ)' }); n += r.held.ods }
+      await eachLot(ods, async part => { const r = await hold.mutateAsync({ plan_id: plan.id, od_numbers: part, until: plan.plan_date, reason: 'Điều lại từ ngày kế hoạch (đơn quá cửa sổ)' }); n += r.held.ods; back += r.held.back_to_pool ?? 0 })
       setSel(new Set())
-      toast({ title: `${n} OD quá hạn → Điều lại từ ${dmy(plan.plan_date)}`, description: 'Lập lại / nạp OD mới sẽ đưa các đơn này vào Điều.' })
-    } catch (e) { err(e, 'Không chuyển được') }
+      toast({ title: `${n} OD quá hạn → Điều lại từ ${dmy(plan.plan_date)}`,
+        description: back === n ? 'Đơn đã vào tab Điều (khung chờ) — máy ghép khi bấm Ghép xe.' : `${back} đơn vào tab Điều ở đây; ${n - back} đơn thuộc mảng ${SEGMENT_VI[otherSeg]} hoặc đã được lo ở chỗ khác — bàn bên đó sẽ thấy là OD mới.` })
+    } catch (e) { err(e, n ? `Đã chuyển ${n} OD, phần còn lại chưa chuyển được` : 'Không chuyển được') }
   }
   const doPull = async (r: Row) => {
     if (!r.ref) return
@@ -505,8 +534,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v4`} cols={cols}>
           <TableBody>
-            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || softOnly || createdOn
-              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); setF({ search: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
+            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || softOnly || filtersOn
+              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); clearFilters() }}>Xem cả {tabRows.length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : st === 'ELSEWHERE' ? 'Không có đơn nào đang xếp ở nháp khác.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
@@ -577,6 +606,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         right={`Đối chiếu (${SEGMENT_VI[seg]}): Điều ${nf(new Set(goOds.map(r => r.od)).size)}${byTab.HIDDEN.length ? ` · Không liên quan (bạn) ${nf(byTab.HIDDEN.length)}` : ''} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${nf(byTab.DAY.length + byTab.NEVER.length)} · Ngoài app ${nf(byTab.OUTSIDE.length)} · Đã điều ${nf(byTab.DONE.length)}${(stale.data?.count ?? 0) > 0 ? ` · Quá hạn chưa quyết ${nf(stale.data?.count)}` : ''}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
 
       <FloatingActionBar count={selRows.length} unit="đơn đã chọn">
+        {prog && <span className="self-center whitespace-nowrap text-[11px] tabular-nums text-white/80" role="status">Đang chuyển {prog} đơn…</span>}
         {(st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE') && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doGo}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{unhold.isPending || unoutside.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
         {st === 'HIDDEN' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doHide(true)}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{hide.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
         {st === 'GO' && selRows.some(r => r.ids.length) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doHide(false)} title="Loại khỏi lần điều này CHỈ với bạn — người khác vẫn thấy và ghép được; máy ghép của bạn bỏ qua"><Ban className="h-3.5 w-3.5 mr-1" />Không liên quan</Button>}
@@ -591,7 +621,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       </FloatingActionBar>
       </>}
 
-      <Dialog open={!!dlg} onOpenChange={o => { if (!o && !hold.isPending && !outside.isPending) setDlg(null) }}>
+      <Dialog open={!!dlg} onOpenChange={o => { if (!o && !prog && !hold.isPending && !outside.isPending) setDlg(null) }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle className="text-sm">{dlg === 'DAY' ? 'Không điều ngày này' : dlg === 'OUTSIDE' ? 'Ngoài app' : 'Không điều'} — {selRows.length} đơn</DialogTitle></DialogHeader>
           <div className="space-y-2 text-xs">
@@ -607,8 +637,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
             {selRows.some(r => !r.held && !r.outside && !r.stale && r.where.startsWith('Xe')) && <p className="text-[11px] text-amber-700">Có đơn đang nằm trên xe nháp — đơn rời xe, tải + cước của xe tính lại.</p>}
           </div>
           <DialogFooter>
-            <Button size="sm" variant="outline" className="h-8" disabled={hold.isPending || outside.isPending} onClick={() => setDlg(null)}>Huỷ</Button>
-            <Button size="sm" className="h-8" disabled={hold.isPending || outside.isPending || (dlg === 'DAY' && !until) || (dlg === 'OUTSIDE' && !reason.trim())} onClick={dlg === 'OUTSIDE' ? doOutside : doHold}>{hold.isPending || outside.isPending ? 'Đang lưu…' : 'Chuyển'}</Button>
+            <Button size="sm" variant="outline" className="h-8" disabled={!!prog || hold.isPending || outside.isPending} onClick={() => setDlg(null)}>Huỷ</Button>
+            <Button size="sm" className="h-8" disabled={!!prog || hold.isPending || outside.isPending || (dlg === 'DAY' && !until) || (dlg === 'OUTSIDE' && !reason.trim())} onClick={dlg === 'OUTSIDE' ? doOutside : doHold}>{prog ? `Đang lưu ${prog} đơn…` : hold.isPending || outside.isPending ? 'Đang lưu…' : 'Chuyển'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

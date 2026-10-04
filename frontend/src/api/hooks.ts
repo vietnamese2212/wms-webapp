@@ -6176,6 +6176,7 @@ export interface DispatchReviewInfo {
   license_plate: string | null; sap_pallets: number | null; sap_m3: number | null; qty_issued_base: number | null
   mat_doc: string | null; billing_no: string | null; approval_status: string | null
   last_synced_at: string | null   // 03/10 tối: lần ZSD02 cuối chạm OD này — chip "SAP N ngày" khi cũ
+  channel?: string | null         // 04/10: kênh của khách (Customer.channel) — bộ lọc Kênh của bảng Xem đơn
   lines: number; materials: number; qty_conv: number; units: string[]; categories: string[]
   replaces: { od: string; group_code: string | null }[]
   held_before: { until: string; reason: string; by: string | null } | null
@@ -6243,15 +6244,16 @@ export function useHoldDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     // ids = dòng OD trên kế hoạch (tab Điều) · od_numbers = OD đang hoãn (đổi giữa Không điều ngày này ⇄ Không điều); reason tuỳ chọn
-    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null } }),
-    onSuccess: p => putDispatchPlan(qc, p),
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null; back_to_pool?: number } }),
+    // băng "quá hạn chưa quyết" đổi số ngay (04/10: trước chỉ dấu Ngoài app làm mới băng, Không điều thì băng giữ số cũ 60 s)
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }) },
   })
 }
 export function useUnholdDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
-    onSuccess: p => putDispatchPlan(qc, p),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }) },
   })
 }
 // 03/10 tối — dấu tay "Ngoài app" (đơn đã xử lý ngoài bàn này; cờ SAP post / gắn xe chỉ còn là tham chiếu) · bỏ dấu

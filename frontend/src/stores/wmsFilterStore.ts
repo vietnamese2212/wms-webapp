@@ -446,6 +446,11 @@ interface DispatchFilters {
   createdTo: string
   soCreatedFrom: string  // bảng Xem đơn: khoảng Ngày tạo SO (ZSD02 "Thời gian tạo SO")
   soCreatedTo: string
+  // bảng Xem đơn (04/10, giả lập hai ngày: muốn dời "một nửa" sang ngày sau phải tick tay vì không lọc được theo ngày giao / kênh / vùng)
+  deliveryFrom: string
+  deliveryTo: string
+  channels: string[]     // kênh khách (Customer.channel)
+  regions: string[]      // vùng (tên vùng như cột Vùng in)
 }
 interface SoLinesFilters {
   search: string
@@ -690,7 +695,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '' },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

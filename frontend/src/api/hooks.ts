@@ -4690,6 +4690,8 @@ export interface CustomerChannel {
   sap_dist_channel?: string | null
   /** 28/09: số khách tối đa cùng xe mặc định của kênh (khách khai riêng thì thắng); null = không giới hạn */
   max_customers_per_trip?: number | null
+  /** 04/10: kênh Trung chuyển — khách của kênh vào mảng Trung chuyển trên bàn điều vận (khách tick riêng cũng được) */
+  dispatch_transfer?: boolean
 }
 export function useCustomerChannels() {
   return useQuery({
@@ -4809,7 +4811,7 @@ export function useBulkSetDateRule() {
 export function useUpdateCustomerChannel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null; dispatch_transfer?: boolean }) =>
       apiClient.put(`/masterdata/customer-channels/${id}`, body).then(r => r.data.data),
     onSettled: () => { invalidateCustomers(qc); invalidateAfterDateRule(qc) },
   })

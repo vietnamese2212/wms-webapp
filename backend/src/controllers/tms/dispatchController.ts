@@ -228,16 +228,19 @@ async function loadShareActual(whId: string, day: string, carriers: EngineCarrie
 type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null; note_delivery: string | null }
 type MatRow = LoadMat & { material_code: string; category: string | null }
 type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; dispatch_vehicles: Record<string, unknown> | null; dispatch_separate: boolean | null; max_customers_per_trip: number | null }
-/** Mảng của từng OD (03/10 tối): dấu "lấy sang" của kho thắng ô tick "Trung chuyển" của khách; không có gì = Bán hàng. */
+/** Mảng của từng OD (03/10 tối): dấu "lấy sang" của kho thắng; rồi ô tick "Trung chuyển" của KHÁCH hoặc của KÊNH khách thuộc về
+ *  (`LookupValue(customer_channel).meta.dispatch_transfer`, 04/10 — user lập kênh Trung chuyển với 7 khách mà chỉ 5 có ô tick); không có gì = Bán hàng. */
 async function segmentOfOds(whId: string, rows: { od_number: string; ship_to_code: string | null }[]): Promise<Map<string, Segment>> {
   const ods = uniq(rows.map(r => r.od_number))
   const ships = uniq(rows.map(r => r.ship_to_code).filter((x): x is string => !!x))
-  const [ov, custs] = await Promise.all([
+  const [ov, custs, chans] = await Promise.all([
     fetchAllByIdChunks(ods, c => db.from('dispatch_od_segment').select('od_number, segment').eq('warehouse_id', whId).in('od_number', c).order('od_number')) as Promise<{ od_number: string; segment: string }[]>,
-    fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, dispatch_transfer').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; dispatch_transfer: boolean | null }[]>,
+    fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, dispatch_transfer, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; dispatch_transfer: boolean | null; channel: string | null }[]>,
+    db.from('LookupValue').select('value, meta').eq('type', 'customer_channel').limit(200).then(r => { if (r.error) throw r.error; return (r.data ?? []) as { value: string; meta: Record<string, unknown> | null }[] }),
   ])
   const ovBy = new Map(ov.map(o => [o.od_number, o.segment as Segment]))
-  const transfer = new Set(custs.filter(c => c.dispatch_transfer === true).map(c => c.ship_to_code))
+  const chanTransfer = new Set(chans.filter(c => c.meta?.dispatch_transfer === true).map(c => c.value))
+  const transfer = new Set(custs.filter(c => c.dispatch_transfer === true || (c.channel && chanTransfer.has(c.channel))).map(c => c.ship_to_code))
   const out = new Map<string, Segment>()
   for (const r of rows) if (!out.has(r.od_number)) out.set(r.od_number, ovBy.get(r.od_number) ?? (r.ship_to_code && transfer.has(r.ship_to_code) ? 'TRANSFER' : 'SALES'))
   return out

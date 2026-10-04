@@ -109,6 +109,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const [ask, confirmNode] = useConfirmDialog()
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [notesOnly, setNotesOnly] = useState(false)
+  // 04/10 (đo dữ liệu thật Ba Vì: 1.162 đơn tồn đọng SAP đã post + 141 SAP đã gắn xe ngay lúc lập): ngày đầu dùng thật phải lọc được
+  // đúng các đơn mang cờ SAP để "Chọn N đơn đang hiện" → Ngoài app hàng loạt, không ngồi tick 1.162 dòng
+  const [softOnly, setSoftOnly] = useState(false)
   const [dlg, setDlg] = useState<null | 'DAY' | 'NEVER' | 'OUTSIDE'>(null)
   const [until, setUntil] = useState('')
   const [reason, setReason] = useState('')
@@ -227,13 +230,15 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     { key: 'created', label: 'Ngày tạo OD', type: 'daterange', from: cFrom, to: cTo, onChange: (from, to) => setF({ createdFrom: from, createdTo: to }) },
     { key: 'soCreated', label: 'Ngày tạo SO', type: 'daterange', from: sFrom, to: sTo, onChange: (from, to) => setF({ soCreatedFrom: from, soCreatedTo: to }) },
   ]
-  const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!createdOn || inCreated(r.od))
+  const isSoft = (od: string) => { const k = flags.get(od)?.kind; return !!k && SOFT_FLAG.has(k) }
+  const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!softOnly || isSoft(r.od)) && (!createdOn || inCreated(r.od))
     && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
   const detailRow = detail ? tabRows.find(r => r.key === detail) ?? null : null
   const notesN = tabRows.filter(r => !!r.note).length
+  const softN = st === 'GO' ? tabRows.filter(r => r.ids.length && isSoft(r.od)).length : 0
   const pick = rows.filter(r => r.selectable)
   const selRows = tabRows.filter(r => sel.has(r.key))
-  const setTab = (k: St) => { setSel(new Set()); setNotesOnly(false); setF({ reviewTab: k }) }
+  const setTab = (k: St) => { setSel(new Set()); setNotesOnly(false); setSoftOnly(false); setF({ reviewTab: k }) }
   const toggle = (k: string) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
 
   const goOds = byTab.GO.filter(r => r.ids.length)
@@ -459,6 +464,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
               <StickyNote className="h-3.5 w-3.5" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {notesN} OD có ghi chú
             </button>
           )}
+          {softN > 0 && (
+            <button type="button" onClick={() => setSoftOnly(v => !v)} aria-pressed={softOnly}
+              className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] ${softOnly ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'}`}
+              title="Đơn SAP báo ĐÃ POST (Mat Doc) hoặc ĐÃ GẮN XE — chỉ là tham chiếu. Đúng là đã đi thì lọc, bấm 'Chọn N đơn đang hiện' rồi 'Ngoài app' một lần.">
+              {softOnly ? 'Đang xem' : 'Chỉ'} {nf(softN)} đơn SAP đã post / gắn xe
+            </button>
+          )}
           {st === 'GO' && (stale.data?.count ?? 0) > 0 && (
             <button type="button" onClick={() => setShowStale(v => !v)} aria-pressed={showStale}
               className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium ${showStale ? 'bg-red-700 text-white' : 'bg-red-100 text-red-800 hover:bg-red-200'}`}
@@ -493,8 +505,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v4`} cols={cols}>
           <TableBody>
-            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || createdOn
-              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setF({ search: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
+            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || softOnly || createdOn
+              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); setF({ search: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '' }) }}>Xem cả {tabRows.length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : st === 'ELSEWHERE' ? 'Không có đơn nào đang xếp ở nháp khác.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick

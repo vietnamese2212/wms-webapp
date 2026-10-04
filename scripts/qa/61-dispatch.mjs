@@ -96,6 +96,7 @@ async function cleanupTrips() {
   await restWrite('od_lineage', 'DELETE', `old_od=like.QA61*`).catch(() => {})
   await restWrite('khvc_lines', 'DELETE', `group_code=like.QA61RAIL*`).catch(() => {})
   await restWrite('dispatch_od_segment', 'DELETE', `warehouse_id=eq.${WH}&od_number=like.QA61*`).catch(() => {})   // [19] dấu lấy sang mảng
+  await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.QA61CH`).catch(() => {})            // [19] kênh trung chuyển QA
 }
 async function cleanup() {
   await cleanupTrips()
@@ -1529,24 +1530,35 @@ try {
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61OD16*`, { sync_status: 'OBSOLETE', updated_at: nowIso() })   // chỉ còn OD1–3 cho dễ đếm
     const c3_19 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[2]}`))[0]
     const tk3_19 = await api(`/masterdata/customers/${c3_19?.id}`, 'PUT', { dispatch_transfer: true })
+    // 04/10: mảng khai được ở KÊNH (user lập kênh Trung chuyển 7 khách mà chỉ 5 có ô tick) — khách SHIP2 vào kênh QA61CH có meta dispatch_transfer
+    const CH19 = 'QA61CH'
+    await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH19}`).catch(() => {})
+    const chRow = (await restWrite('LookupValue', 'POST', null, { id: crypto.randomUUID(), type: 'customer_channel', value: CH19, meta: { label: 'QA61 kênh trung chuyển' }, sort_order: 999, updated_at: nowIso() }))[0]
+    const chTick = await api(`/masterdata/customer-channels/${chRow?.id}`, 'PUT', { dispatch_transfer: true })
+    const chList = await api('/masterdata/customer-channels')
+    await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[1]}`, { channel: CH19 })
     const pS19 = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)                                   // Bán hàng (mặc định)
     const pT19 = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, segment: 'TRANSFER' })      // Trung chuyển — kế hoạch RIÊNG cùng kho × ngày
     const S = pS19.j?.data, T = pT19.j?.data
     const SID19 = S?.id ?? '', TID19 = T?.id ?? ''
-    check('19a. Khách tick "Trung chuyển" → kế hoạch Bán hàng có OD1, OD2, KHÔNG có OD3 · kế hoạch Trung chuyển (riêng, cùng kho × ngày, cùng mở) chỉ có OD3 · cột segment ghi đúng',
-      tk3_19.s === 200 && pS19.s === 201 && pT19.s === 201 && S?.segment === 'SALES' && T?.segment === 'TRANSFER' && !!rowOf(S, OD[0]) && !!rowOf(S, OD[1]) && !rowOf(S, OD[2]) && !!rowOf(T, OD[2]) && !rowOf(T, OD[0]) && !rowOf(T, OD[1]),
-      `tick=${tk3_19.s} S=${pS19.s}/${S?.segment} ${pS19.j?.error?.message ?? ''} T=${pT19.s}/${T?.segment} ${pT19.j?.error?.message ?? ''} S:[${[0, 1, 2].map(i => !!rowOf(S, OD[i])).join(',')}] T:[${[0, 1, 2].map(i => !!rowOf(T, OD[i])).join(',')}]`)
-    // 19b — sync Bán hàng không coi OD3 là "OD mới" · lấy OD1 sang Trung chuyển (dấu kho × OD) · nạp OD mới bên Bán hàng không kéo OD1 về
+    check('19a. Khách tick "Trung chuyển" (OD3) + khách thuộc KÊNH Trung chuyển (OD2) → kế hoạch Bán hàng chỉ OD1 · kế hoạch Trung chuyển (riêng, cùng kho × ngày, cùng mở) có OD2 + OD3 · danh sách kênh trả dispatch_transfer · cột segment ghi đúng',
+      tk3_19.s === 200 && chTick.s === 200 && (chList.j?.data ?? []).some(c => c.value === CH19 && c.dispatch_transfer === true) && pS19.s === 201 && pT19.s === 201 && S?.segment === 'SALES' && T?.segment === 'TRANSFER'
+      && !!rowOf(S, OD[0]) && !rowOf(S, OD[1]) && !rowOf(S, OD[2]) && !!rowOf(T, OD[1]) && !!rowOf(T, OD[2]) && !rowOf(T, OD[0]),
+      `tick=${tk3_19.s} kênh=${chTick.s} ${chTick.j?.error?.message ?? ''} S=${pS19.s}/${S?.segment} ${pS19.j?.error?.message ?? ''} T=${pT19.s}/${T?.segment} ${pT19.j?.error?.message ?? ''} S:[${[0, 1, 2].map(i => !!rowOf(S, OD[i])).join(',')}] T:[${[0, 1, 2].map(i => !!rowOf(T, OD[i])).join(',')}]`)
+    // 19b — sync Bán hàng không coi OD2/OD3 là "OD mới" · lấy OD1 sang Trung chuyển (dấu kho × OD) · lấy OD2 (mảng theo kênh) về Bán hàng — dấu THẮNG kênh ·
+    // nạp OD mới bên Bán hàng không kéo OD1 về
     const sy19 = await api(`/tms/dispatch/plans/${SID19}/sync`)
     const take1 = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[0]], segment: 'TRANSFER', ...(TID19 ? { plan_id: TID19 } : {}) })
+    const take1b = await api('/tms/dispatch/segment/take', 'POST', { warehouse_id: WH, od_numbers: [OD[1]], segment: 'SALES', ...(SID19 ? { plan_id: SID19 } : {}) })
     const S19b = await planOf(SID19), T19b = await planOf(TID19)
     const segRow = (await restAll('dispatch_od_segment', `select=segment,created_by&warehouse_id=eq.${WH}&od_number=eq.${OD[0]}`))[0]
     const rf19 = await api(`/tms/dispatch/plans/${SID19}/refresh-pool`, 'POST', {})
     const syT = await api(`/tms/dispatch/plans/${TID19}/sync`)
-    check('19b. /sync Bán hàng không đếm OD3 là OD mới · "Lấy sang Trung chuyển" OD1 → rời khung chờ Bán hàng, vào khung chờ Trung chuyển, dấu (kho, OD)=TRANSFER có người · nạp OD mới bên Bán hàng KHÔNG kéo OD1 về · /sync Trung chuyển không báo OD1/OD2 mới',
-      sy19.s === 200 && !(sy19.j?.data?.new_od_numbers ?? []).includes(OD[2]) && take1.s === 200 && take1.j?.data?.added_to_plan === 1 && !rowOf(S19b, OD[0]) && !!rowOf(T19b, OD[0])
-      && segRow?.segment === 'TRANSFER' && !!segRow?.created_by && rf19.s === 200 && !rowOf(rf19.j?.data, OD[0]) && syT.s === 200 && Number(syT.j?.data?.new_ods) === 0,
-      `syncS=${sy19.s} new=${JSON.stringify(sy19.j?.data?.new_od_numbers)} take=${take1.s} ${take1.j?.error?.message ?? ''} added=${take1.j?.data?.added_to_plan} inS=${!!rowOf(S19b, OD[0])} inT=${!!rowOf(T19b, OD[0])} seg=${JSON.stringify(segRow ?? null)} refresh=${rf19.s} back=${!!rowOf(rf19.j?.data, OD[0])} syncT=${syT.s}/${syT.j?.data?.new_ods}`)
+    check('19b. /sync Bán hàng không đếm OD2/OD3 là OD mới · "Lấy sang Trung chuyển" OD1 → rời Bán hàng, vào khung chờ Trung chuyển, dấu (kho, OD)=TRANSFER có người · lấy OD2 về Bán hàng (dấu thắng kênh) · nạp OD mới bên Bán hàng KHÔNG kéo OD1 về · /sync Trung chuyển 0 mới',
+      sy19.s === 200 && !(sy19.j?.data?.new_od_numbers ?? []).some(od => od === OD[1] || od === OD[2]) && take1.s === 200 && take1.j?.data?.added_to_plan === 1 && !rowOf(S19b, OD[0]) && !!rowOf(T19b, OD[0])
+      && take1b.s === 200 && !!rowOf(S19b, OD[1]) && !rowOf(T19b, OD[1])
+      && segRow?.segment === 'TRANSFER' && !!segRow?.created_by && rf19.s === 200 && !rowOf(rf19.j?.data, OD[0]) && !!rowOf(rf19.j?.data, OD[1]) && syT.s === 200 && Number(syT.j?.data?.new_ods) === 0,
+      `syncS=${sy19.s} new=${JSON.stringify(sy19.j?.data?.new_od_numbers)} take=${take1.s} ${take1.j?.error?.message ?? ''} added=${take1.j?.data?.added_to_plan} inS=${!!rowOf(S19b, OD[0])} inT=${!!rowOf(T19b, OD[0])} take2=${take1b.s} ${take1b.j?.error?.message ?? ''} od2inS=${!!rowOf(S19b, OD[1])} seg=${JSON.stringify(segRow ?? null)} refresh=${rf19.s} back=${!!rowOf(rf19.j?.data, OD[0])} syncT=${syT.s}/${syT.j?.data?.new_ods}`)
     // 19c — "Không liên quan" theo NGƯỜI trên kế hoạch Bán hàng: GET kế hoạch trả `hidden` của chính người xem; bỏ dấu → hết
     const hd19 = await api(`/tms/dispatch/plans/${SID19}/hide`, 'POST', { od_numbers: [OD[1]] })
     const gS19 = await api(`/tms/dispatch/plans/${SID19}`)
@@ -1577,6 +1589,8 @@ try {
       gpT19b.s === 200 && cfT19.s === 200 && [0, 1, 2].every(i => kh19.some(k => k.do_no === OD[i])) && take3.s === 200 && (take3.j?.data?.moved_from ?? []).length === 0 && kh19.some(k => k.do_no === OD[2]),
       `gT2=${gpT19b.s} cf=${cfT19.s} ${cfT19.j?.error?.message ?? ''} kh=${kh19.map(k => k.do_no).join(',')} take3=${take3.s} moved=${JSON.stringify(take3.j?.data?.moved_from)}`)
     await restWrite('Customer', 'PATCH', `id=eq.${c3_19?.id}`, { dispatch_transfer: false }).catch(() => {})
+    await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[1]}`, { channel: null }).catch(() => {})
+    await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH19}`).catch(() => {})
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61OD16*`, { sync_status: 'ACTIVE', updated_at: nowIso() })
     await cleanupTrips()
     // trả OD1–3 về OBSOLETE như [16] đã đặt — không thì [16d] ghép 4+3+3 của OD1–3 lẫn 4+3+3 của OD16A–C thành 9+6+5

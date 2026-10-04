@@ -583,7 +583,7 @@ export default function Customers() {
       {form && (
         <CustomerForm
           row={form.row ? (rows.find(r => r.id === form.row!.id) ?? form.row) : null}   // dòng SỐNG: lưu vị trí xong ghim trong form đổi theo
-          channels={(channels ?? []).map(c => ({ value: c.value, label: c.label }))}
+          channels={(channels ?? []).map(c => ({ value: c.value, label: c.label, dispatch_transfer: c.dispatch_transfer === true }))}
           warehouses={(whs ?? []) as { id: string; name: string; code?: string }[]}
           cats={cats}
           models={models}
@@ -634,7 +634,7 @@ export default function Customers() {
 // ─── Form Thêm / Sửa khách hàng ────────────────────────────────────────────────────────────────
 function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRules, chanMax, saving, canLocate, locSaving, onSaveLocation, onClose, onSave }: {
   row: Customer | null
-  channels: { value: string; label: string }[]
+  channels: { value: string; label: string; dispatch_transfer?: boolean }[]
   warehouses: { id: string; name: string; code?: string }[]
   cats: DateRuleCategory[] | undefined
   models: VehicleModel[]
@@ -761,7 +761,9 @@ function CustomerForm({ row, channels, warehouses, cats, models, chanVeh, chanRu
           {/* 03/10 tối (user: "Bàu Bàng, Đà Nẵng, Ba Vì là trung chuyển, user tự setting trong khách hàng; STO của NPP đi chung NPP") */}
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="h-4 w-4 accent-sky-600" />
-            Trung chuyển — đơn của khách này vào mảng <b>Trung chuyển</b> trên bàn điều vận (không tick = Bán hàng)
+            Trung chuyển — đơn của khách này vào mảng <b>Trung chuyển</b> trên bàn điều vận
+            {/* luật C47: ô "theo cha" in giá trị đang hiệu lực của kênh ĐANG CHỌN */}
+            {!transfer && <span className="text-[11px] text-slate-400">{channel && channels.find(c => c.value === channel)?.dispatch_transfer ? `(không tick vẫn là Trung chuyển — theo kênh ${chanName})` : `(không tick = Bán hàng${channel ? ` — kênh ${chanName} không phải kênh Trung chuyển` : ''})`}</span>}
           </label>
           <label className="mt-1.5 flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={sep} onChange={e => setSep(e.target.checked)} className="h-4 w-4 accent-sky-600" />
@@ -1137,7 +1139,7 @@ function SeedDialog({ onClose }: { onClose: () => void }) {
 }
 
 // ─── Tab KÊNH ──────────────────────────────────────────────────────────────────────────────────
-type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null }
+type ChannelEdit = { id: string; value: string; label: string; rules: MasterRuleRow[]; dispatch_vehicles?: Record<string, string[]>; sap_dist_channel?: string | null; max_customers_per_trip?: number | null; dispatch_transfer?: boolean }
 
 function ChannelsTab({ canEdit, canCreate, onEdit, onCreate, models }: {
   canEdit: boolean
@@ -1203,7 +1205,7 @@ function ChannelsTab({ canEdit, canCreate, onEdit, onCreate, models }: {
               <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{nf(c.customers)}</TableCell>
               <TableCell className="px-2 py-1 whitespace-nowrap">
                 {canEdit && (
-                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {}, sap_dist_channel: c.sap_dist_channel ?? null, max_customers_per_trip: c.max_customers_per_trip ?? null })}
+                  <button onClick={() => onEdit({ id: c.id, value: c.value, label: c.label, rules: c.rules ?? [], dispatch_vehicles: c.dispatch_vehicles ?? {}, sap_dist_channel: c.sap_dist_channel ?? null, max_customers_per_trip: c.max_customers_per_trip ?? null, dispatch_transfer: c.dispatch_transfer === true })}
                     className="rounded px-1.5 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" title="Sửa kênh">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -1273,6 +1275,7 @@ function ChannelForm({ row, cats, models, onClose }: {
   const [sap, setSap] = useState(row.sap_dist_channel ?? '')
   const [vehicles, setVehicles] = useState<Record<string, string[]>>(row.dispatch_vehicles ?? {})
   const [maxCust, setMaxCust] = useState(row.max_customers_per_trip == null ? '' : String(row.max_customers_per_trip))   // 28/09: trống = không giới hạn
+  const [transfer, setTransfer] = useState(row.dispatch_transfer === true)   // 04/10: kênh Trung chuyển (mảng điều vận)
   const [drafts, setDrafts] = useState<RuleDraft[]>(draftsOf(row.rules))
   const [err, setErr] = useState('')
   const save = useUpdateCustomerChannel()
@@ -1287,7 +1290,7 @@ function ChannelForm({ row, cats, models, onClose }: {
           setErr('')
           try {
             await save.mutateAsync({ id: row.id, label: label.trim(), dispatch_vehicles: vehicles, sap_dist_channel: sap.trim() || null,
-              max_customers_per_trip: maxCust.trim() === '' ? null : (Number(maxCust) || null) })
+              max_customers_per_trip: maxCust.trim() === '' ? null : (Number(maxCust) || null), dispatch_transfer: transfer })
             // Mức đi bằng khoá NGHIỆP VỤ của kênh (`value`), không phải id dòng LookupValue
             await saveRules.mutateAsync({ scope: 'CHANNEL', key: row.value, rules: toPayload(drafts) })
             onClose()
@@ -1309,6 +1312,14 @@ function ChannelForm({ row, cats, models, onClose }: {
           <label className="mb-1 block text-xs font-medium text-slate-600">Dòng xe mặc định (điều vận)</label>
           <DispatchVehiclesEditor value={vehicles} onChange={setVehicles} cats={(cats ?? []).map(c => ({ value: c.value, label: c.label }))} models={models} />
           <p className="mt-1 text-[11px] text-slate-400">Khách thuộc kênh này mà không khai riêng thì máy chỉ xếp lên các dòng xe tick ở đây (vd NPP không đi container, BHX chỉ xe nhỏ). Để "Chưa khai" ⇒ máy KHÔNG chọn xe cho khách của kênh (trừ khách khai riêng) — muốn mọi xe thì "Chọn dòng xe" → "Chọn tất cả".</p>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Mảng điều vận</label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={transfer} onChange={e => setTransfer(e.target.checked)} className="h-4 w-4 accent-sky-600" />
+            Kênh Trung chuyển — đơn của mọi khách trong kênh vào mảng <b>Trung chuyển</b> trên bàn điều vận
+          </label>
+          <p className="mt-1 text-[11px] text-slate-400">Không tick = Bán hàng. Khách lẻ vẫn tick "Trung chuyển" riêng ở hồ sơ khách; người điều vận lấy từng đơn sang mảng kia được trên bàn.</p>
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Số khách tối đa cùng xe (điều vận)</label>

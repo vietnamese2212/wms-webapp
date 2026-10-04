@@ -65,7 +65,7 @@ Mã hành vi: **ÁP** = tự áp, không hỏi · **ÁP+CỜ** = tự áp, cắm
 | E9 giao từng phần | ÁP như E1, chip "SO Item này đã có DO X đi ngày Y" | – | – | – |
 | E10 đổi ngày giao | ÁP: ngày mới ngoài cửa sổ kế hoạch → rời bàn sang Điều của ngày mới | CXL: nút Dời chuyến/OD sang ngày mới (RPC dời ngày) / Giữ ngày kho | KHOÁ cờ | – |
 | E11 đổi khách / kho | ÁP: trên xe thì gỡ về Điều + cờ (xe có thể sai) | CXL | CXL | KHOÁ |
-| E12 SAP post | Cờ đỏ "SAP đã post, app chưa điều"; Xác nhận hỏi lại; gợi ý nút Ngoài app hàng loạt | Cờ vàng "post trước khi kho xuất" | Bình thường | Bình thường, đối chiếu khớp |
+| E12 SAP post | Cờ VÀNG tham chiếu "SAP đã post" — vẫn là đơn chưa đi, điều bình thường (user 04/10: "đừng quan tâm việc SAP đã post… chưa có trong Đã điều / đã đi = chưa đi"); Ngoài app chỉ khi NGƯỜI biết chắc hàng đã đi tay | Cờ vàng "post trước khi kho xuất" | Bình thường | Bình thường, đối chiếu khớp |
 | E13 SAP gắn xe | Cờ tham chiếu, in biển số SAP cạnh xe app | Cờ vàng nếu khác xe app | Cờ vàng nếu khác | – |
 | E14 tạo lại sau post | DO mới vào Điều với cờ đỏ + rào họ hàng; người chọn Ngoài app hoặc Xác nhận đơn bổ sung | như D | như D | như D |
 | E15 file lùi | Chặn nạp, bắt xác nhận "đúng là muốn nạp file cũ hơn" (không áp E2/E4 từ file cũ) | | | |

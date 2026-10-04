@@ -1250,7 +1250,7 @@ try {
     // Cửa thuê kế hoạch, đo không qua đua: giữ chỗ 2 phút rồi gọi → phải bị chặn; thả ra → phải chạy lại được.
     await restWrite('dispatch_plan', 'PATCH', `id=eq.${kId}`, { busy_until: new Date(Date.now() + 120_000).toISOString(), busy_token: 'qa61-probe' })
     const kBusy = await api(`/tms/dispatch/plans/${kId}/reoptimize`, 'POST', { review_all: true })
-    await restWrite('dispatch_plan', 'PATCH', `id=eq.${kId}`, { busy_until: new Date(Date.now() - 1000).toISOString(), busy_token: null })
+    await restWrite('dispatch_plan', 'PATCH', `id=eq.${kId}`, { busy_until: new Date(Date.now() - 60_000).toISOString(), busy_token: null })
     const kFree = await api(`/tms/dispatch/plans/${kId}/reoptimize`, 'POST', { review_all: true })
     check('15k2. Kế hoạch đang có người thuê → lượt sau 409 PLAN_BUSY; thuê hết hạn → lại làm được (không kẹt vĩnh viễn)',
       kBusy.s === 409 && kBusy.j?.error?.code === 'PLAN_BUSY' && kFree.s === 200,
@@ -1429,9 +1429,12 @@ try {
     // Ngày giao đặt RẤT cũ (2020) vì /stale trả 500 dòng cũ nhất — kho Ba Vì thật có ~3.600 đơn quá hạn, ngày 2027 sẽ bị cắt khỏi trang đầu
     const ODST = 'QA61ODSTALE'
     await restWrite('erp_outbound_orders', 'POST', null, { id: crypto.randomUUID(), od_number: ODST, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet, ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: '2020-01-01', flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso() })
-    const stl = await api(`/tms/dispatch/plans/${BID}/stale`)
+    // /stale gom cả plant thật — staging NANO lúc bận trả 503 QUERY_TIMEOUT (quá tải, không phải hỏng): thử lại MỘT lần sau 4 s (như [17h])
+    let stl = await api(`/tms/dispatch/plans/${BID}/stale`)
+    if (stl.s === 503) { await new Promise(r => setTimeout(r, 4000)); stl = await api(`/tms/dispatch/plans/${BID}/stale`) }
     const hs = await api(`/tms/dispatch/plans/${BID}/hold`, 'POST', { od_numbers: [ODST], until: null, reason: 'QA61 quá hạn — không điều' })
-    const stl2 = await api(`/tms/dispatch/plans/${BID}/stale`)
+    let stl2 = await api(`/tms/dispatch/plans/${BID}/stale`)
+    if (stl2.s === 503) { await new Promise(r => setTimeout(r, 4000)); stl2 = await api(`/tms/dispatch/plans/${BID}/stale`) }
     check('17i. Đơn QUÁ cửa sổ chưa quyết: GET /stale liệt kê · Không điều theo số OD (không có dòng trên kế hoạch) → 200 · rời danh sách quá hạn',
       stl.s === 200 && (stl.j?.data?.rows ?? []).some(r => r.od_number === ODST) && hs.s === 200 && stl2.s === 200 && !(stl2.j?.data?.rows ?? []).some(r => r.od_number === ODST),
       `stale=${stl.s} n=${stl.j?.data?.count} có=${(stl.j?.data?.rows ?? []).some(r => r.od_number === ODST)} hold=${hs.s} ${hs.j?.error?.message ?? ''} sau=${(stl2.j?.data?.rows ?? []).some(r => r.od_number === ODST)}`)

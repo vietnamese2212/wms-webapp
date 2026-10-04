@@ -8,6 +8,7 @@
 //   • ĐÃ ĐIỀU — chỉ xem: xe đã xác nhận / đang chờ ĐVVT · đã có trong Kế hoạch xuất · SAP đã điều · đã xuất kho · nháp ngày khác.
 // Dữ liệu là của CHÍNH kế hoạch (dòng OD) + `params.excluded` (OD bị bỏ ra, có kèm thông tin để in dòng) — không gọi thêm gì.
 import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
 import { CalendarClock, Ban, CheckCircle2, ListChecks, StickyNote, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -100,6 +101,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
   const st: St = (['GO', 'ELSEWHERE', 'DAY', 'NEVER', 'OUTSIDE', 'DONE', 'ISSUE', 'HIDDEN'] as const).find(x => x === f.reviewTab) ?? 'GO'
+  const qc = useQueryClient()
   const hold = useHoldDispatchOds(), unhold = useUnholdDispatchOds(), reopt = useReoptimizeDispatchPlan()
   const outside = useOutsideDispatchOds(), unoutside = useUnoutsideDispatchOds(), pull = usePullDispatchOd(), sup = useConfirmSupplementDispatchOds()
   const removeKhvc = useRemoveKhvcOd()
@@ -282,11 +284,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   }
   // cửa ghi nhận ≤ 300 phần tử — "chọn cả tab" vài trăm đơn thì gửi theo lô (tuần tự: mỗi lượt giữ thuê kế hoạch)
   const lots = <T,>(a: T[]) => Array.from({ length: Math.ceil(a.length / 100) }, (_, i) => a.slice(i * 100, i * 100 + 100))
-  /** chạy từng lô, cập nhật "đã xong / tổng" sau mỗi lô — tiến độ tự tắt khi xong hoặc lỗi */
+  /** chạy từng lô, cập nhật "đã xong / tổng" sau mỗi lô — tiến độ tự tắt khi xong hoặc lỗi. Băng "quá hạn chưa quyết" làm mới MỘT lần
+   *  cuối loạt (04/10: làm mới sau mỗi lô / mỗi sự kiện realtime là dội RPC quét cả plant ~7.200 dòng giữa lúc đang ghi ⇒ 503) */
   const eachLot = async <T,>(items: T[], fn: (part: T[]) => Promise<void>) => {
     let done = 0
     setProg(`0/${nf(items.length)}`)
-    try { for (const part of lots(items)) { await fn(part); done += part.length; setProg(`${nf(done)}/${nf(items.length)}`) } } finally { setProg(null) }
+    try { for (const part of lots(items)) { await fn(part); done += part.length; setProg(`${nf(done)}/${nf(items.length)}`) } }
+    finally { setProg(null); if (done) void qc.invalidateQueries({ queryKey: ['dispatch-stale'] }) }
   }
   const doHold = async () => {
     const u = dlg === 'DAY' ? until : null

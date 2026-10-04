@@ -6245,15 +6245,14 @@ export function useHoldDispatchOds() {
   return useMutation({
     // ids = dòng OD trên kế hoạch (tab Điều) · od_numbers = OD đang hoãn (đổi giữa Không điều ngày này ⇄ Không điều); reason tuỳ chọn
     mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null; back_to_pool?: number } }),
-    // băng "quá hạn chưa quyết" đổi số ngay (04/10: trước chỉ dấu Ngoài app làm mới băng, Không điều thì băng giữ số cũ 60 s)
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }) },
+    onSuccess: p => putDispatchPlan(qc, p),
   })
 }
 export function useUnholdDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }) },
+    onSuccess: p => putDispatchPlan(qc, p),
   })
 }
 // 03/10 tối — dấu tay "Ngoài app" (đơn đã xử lý ngoài bàn này; cờ SAP post / gắn xe chỉ còn là tham chiếu) · bỏ dấu

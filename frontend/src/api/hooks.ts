@@ -6094,7 +6094,8 @@ export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_n
 // NO_MATERIAL (03/10): OD có mã chưa khai trong Mã hàng — máy không ghép, nằm ở tab Điều dạng "Không lên xe" cho tới khi khai mã
 // OUTSIDE_APP (03/10 tối): dấu tay "Ngoài app" — đơn đã xử lý ngoài bàn; `ref` (OTHER_DRAFT): nháp nào · ai · xe số mấy đang xếp đơn
 export interface DispatchOtherDraftRef { plan_id: string; plan_date: string; created_by: string | null; created_at: string; seq: number | null }
-export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED' | 'NO_MATERIAL' | 'OUTSIDE_APP'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail; ref?: DispatchOtherDraftRef }
+export interface DispatchExcluded { od_number: string; kind: 'IN_PLAN' | 'OTHER_DRAFT' | 'SAP_ASSIGNED' | 'SHIPPED' | 'HELD' | 'REDO_DISPATCHED' | 'NO_MATERIAL' | 'OUTSIDE_APP'; info: string | null; until?: string | null; reason?: string; d?: DispatchExcludedDetail; ref?: DispatchOtherDraftRef
+  by?: string | null; at?: string | null }   // /backlog (05/10): ai ghi / sửa dòng Kế hoạch xuất gần nhất · lúc nào
 export interface DispatchTripDetail {
   freight: { total: number | null; base: number | null; billed_pallets: number | null; unit: 'PER_PALLET' | 'PER_TRIP' | null; tariff_id: string | null; ward: string | null; surcharges: { kind: string; per: string; unit_amount: number; qty: number; total: number }[]; reason: string | null }
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number; max_pct?: number }   // max_pct (01/10): trần dải tải — quá mức này mới là "vượt"
@@ -6181,7 +6182,9 @@ export interface DispatchReviewInfo {
   replaces: { od: string; group_code: string | null }[]
   held_before: { until: string; reason: string; by: string | null } | null
   // 03/10 đợt 2 — tiến độ KHO của OD đã vào Kế hoạch xuất (Số xe · ngày xuất · trạng thái chuyến); null = chưa vào
-  khvc: { group_code: string; export_date: string | null; gdo_status: string | null; gdo_id: string | null; plan_dropped: boolean } | null
+  // by / at / source (05/10): người ghi / sửa dòng Kế hoạch xuất gần nhất (xác nhận điều vận · upload · sửa tay)
+  khvc: { group_code: string; export_date: string | null; gdo_status: string | null; gdo_id: string | null; plan_dropped: boolean; by?: string | null; at?: string | null; source?: string | null } | null
+  taken?: { segment: DispatchSegment; by: string | null; at: string | null } | null   // 05/10: người "Lấy sang" mảng kia
 }
 export function useDispatchPlanReview(id: string | null, stamp?: string | null) {
   return useQuery({

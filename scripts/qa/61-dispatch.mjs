@@ -1150,7 +1150,8 @@ try {
       hBad.s === 400 && hNever.s === 200 && mkNever.s === 200 && exN?.kind === 'NEVER' && exN?.hold_until === null && exN?.reason === 'Không điều' && exN?.ship_to_name === 'QA61 NPP 3' && exN?.delivery_date === DAY
       && hNotHeld.s === 404 && hNotHeld.j?.error?.code === 'OD_NOT_FOUND' && hFree.s === 200 && hFreeRow?.hold_until === next
       && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow.length === 1 && holdRow[0]?.hold_until === next
-      && mkDay.s === 200 && exH?.kind === 'DAY' && exH?.hold_until === next && exH?.reason === 'QA NPP hẹn ngày sau' && exH?.ship_to_name === 'QA61 NPP 3',
+      && mkDay.s === 200 && exH?.kind === 'DAY' && exH?.hold_until === next && exH?.reason === 'QA NPP hẹn ngày sau' && exH?.ship_to_name === 'QA61 NPP 3'
+      && !!exN?.marked_by && !!exN?.marked_at && !!exH?.marked_by && !!exH?.marked_at,   // 05/10: tab Chung phải có dấu vết ai đưa vào
       `bad=${hBad.s} never=${hNever.s}/${mkNever.s} ${hNever.j?.error?.message ?? mkNever.j?.error?.message ?? ''} exN=${JSON.stringify(exN)} notFound=${hNotHeld.s}/${hNotHeld.j?.error?.code} free=${hFree.s}/${hFreeRow?.hold_until} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} day=${mkDay.s} ex=${JSON.stringify(exH)}`)
     // 05/10 (user: "bản chất nó bị loại bỏ khỏi kế hoạch"): dấu tay KHÔNG nằm trong kế hoạch — trước đó mỗi kế hoạch về sau mang theo mọi
     // đơn từng đánh dấu (params.excluded HELD / OUTSIDE_APP chỉ tăng). Số đếm ba tab trả cả khi không xin dòng; chi tiết OD mang dấu mở được.
@@ -1657,6 +1658,12 @@ try {
       && take1b.s === 200 && !!rowOf(S19b, OD[1]) && !rowOf(T19b, OD[1])
       && segRow?.segment === 'TRANSFER' && !!segRow?.created_by && rf19.s === 200 && !rowOf(rf19.j?.data, OD[0]) && !!rowOf(rf19.j?.data, OD[1]) && syT.s === 200 && Number(syT.j?.data?.new_ods) === 0,
       `syncS=${sy19.s} new=${JSON.stringify(sy19.j?.data?.new_od_numbers)} take=${take1.s} ${take1.j?.error?.message ?? ''} added=${take1.j?.data?.added_to_plan} inS=${!!rowOf(S19b, OD[0])} inT=${!!rowOf(T19b, OD[0])} take2=${take1b.s} ${take1b.j?.error?.message ?? ''} od2inS=${!!rowOf(S19b, OD[1])} seg=${JSON.stringify(segRow ?? null)} refresh=${rf19.s} back=${!!rowOf(rf19.j?.data, OD[0])} syncT=${syT.s}/${syT.j?.data?.new_ods}`)
+    // 05/10 (user: "tab Chung phải có dấu vết ai là người đưa vào"): /review của bàn Trung chuyển nói ai lấy OD1 sang, lúc nào
+    const rv19 = await api(`/tms/dispatch/plans/${TID19}/review`)
+    const tk19 = rv19.j?.data?.ods?.[OD[0]]?.taken
+    check('19b2. Dấu vết "Lấy sang": /review trả taken = mảng TRANSFER + người lấy (khớp sổ dấu) + lúc nào',
+      rv19.s === 200 && tk19?.segment === 'TRANSFER' && !!tk19?.by && tk19?.by === segRow?.created_by && !!tk19?.at,
+      `review=${rv19.s} taken=${JSON.stringify(tk19 ?? null)} sổ=${segRow?.created_by}`)
     // 19c — "Không liên quan" theo NGƯỜI trên kế hoạch Bán hàng: GET kế hoạch trả `hidden` của chính người xem; bỏ dấu → hết
     const hd19 = await api(`/tms/dispatch/plans/${SID19}/hide`, 'POST', { od_numbers: [OD[1]] })
     const gS19 = await api(`/tms/dispatch/plans/${SID19}`)
@@ -1686,6 +1693,12 @@ try {
     check('19e. Trung chuyển ghép lại + xác nhận → 3 OD vào Kế hoạch xuất · lấy đơn đang ở kế hoạch ĐÃ CHỐT (không còn mở) → chỉ ghi dấu, không đụng Kế hoạch xuất (200, moved_from rỗng)',
       gpT19b.s === 200 && cfT19.s === 200 && [0, 1, 2].every(i => kh19.some(k => k.do_no === OD[i])) && take3.s === 200 && (take3.j?.data?.moved_from ?? []).length === 0 && kh19.some(k => k.do_no === OD[2]),
       `gT2=${gpT19b.s} cf=${cfT19.s} ${cfT19.j?.error?.message ?? ''} kh=${kh19.map(k => k.do_no).join(',')} take3=${take3.s} moved=${JSON.stringify(take3.j?.data?.moved_from)}`)
+    // tab Đã điều: ai đưa đơn vào Kế hoạch xuất (người xác nhận điều vận), lúc nào, bằng cửa nào
+    const rv19e = await api(`/tms/dispatch/plans/${TID19}/review`)
+    const kv19 = rv19e.j?.data?.ods?.[OD[0]]?.khvc
+    check('19e2. Dấu vết "Đã điều": /review trả khvc.by (người xác nhận) + at + source DISPATCH',
+      rv19e.s === 200 && !!kv19?.by && !!kv19?.at && kv19?.source === 'DISPATCH',
+      `review=${rv19e.s} khvc=${JSON.stringify(kv19 ?? null)}`)
     await restWrite('Customer', 'PATCH', `id=eq.${c3_19?.id}`, { dispatch_transfer: false }).catch(() => {})
     await restWrite('Customer', 'PATCH', `ship_to_code=eq.${SHIP[1]}`, { channel: null }).catch(() => {})
     await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH19}`).catch(() => {})

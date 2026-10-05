@@ -2613,7 +2613,10 @@ type ReviewInfo = {
   replaces: { od: string; group_code: string | null }[]            // SO sửa ⇒ OD này THAY OD cũ (có thể đã điều ở xe khác)
   held_before: { until: string; reason: string; by: string | null } | null   // đã "Không điều ngày này", nay về lại Điều
   // 03/10 đợt 2 — TIẾN ĐỘ KHO của OD đã vào Kế hoạch xuất: Số xe · ngày xuất · trạng thái chuyến (chờ / đang xuất / đã đi / ngừng); null = chưa vào
-  khvc: { group_code: string; export_date: string | null; gdo_status: string | null; gdo_id: string | null; plan_dropped: boolean } | null
+  // by / at / source (05/10, user: "phải có dấu vết ai đưa vào tab Chung"): người ghi / sửa dòng Kế hoạch xuất gần nhất (xác nhận điều vận · upload · sửa tay)
+  khvc: { group_code: string; export_date: string | null; gdo_status: string | null; gdo_id: string | null; plan_dropped: boolean; by: string | null; at: string | null; source: string | null } | null
+  // 05/10: đơn người "Lấy sang" mảng kia — mảng đích · ai · lúc nào (dấu theo kho × OD, chung cho mọi người)
+  taken: { segment: string; by: string | null; at: string | null } | null
 }
 async function planOdSet(planId: string): Promise<{ plan: PlanRow; ods: string[] } | null> {
   const { data: plan, error } = await db.from('dispatch_plan').select('*').eq('id', planId).maybeSingle()
@@ -2647,22 +2650,23 @@ export async function getPlanReview(req: Request, res: Response) {
 }
 /** Khối thông tin SAP cho một tập OD — dùng chung GET /review (OD của kế hoạch) và GET /marks (OD mang dấu tay, 05/10). */
 async function reviewInfoOf(plan: PlanRow, ods: string[]): Promise<Record<string, ReviewInfo>> {
-    const [lines, olds, holds] = await Promise.all([
+    const [lines, olds, holds, segs] = await Promise.all([
       fetchAllByIdChunks(ods, c => db.from('erp_outbound_orders')
         .select(REVIEW_COLS)
         .in('od_number', c).neq('sync_status', 'OBSOLETE').order('od_number').order('od_item')) as unknown as Promise<RevLine[]>,
       // OD cũ mà SAP đã thay bằng OD của kế hoạch này (sửa SO)
       fetchAllByIdChunks(ods, c => db.from('erp_outbound_orders').select('od_number, replaced_by_od').in('replaced_by_od', c).order('od_number')) as Promise<{ od_number: string; replaced_by_od: string }[]>,
       fetchAllByIdChunks(ods, c => db.from('dispatch_od_hold').select('od_number, hold_until, reason, created_by').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number')) as Promise<{ od_number: string; hold_until: string | null; reason: string; created_by: string | null }[]>,
+      fetchAllByIdChunks(ods, c => db.from('dispatch_od_segment').select('od_number, segment, created_by, updated_at').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number')) as Promise<{ od_number: string; segment: string; created_by: string | null; updated_at: string | null }[]>,
     ])
     const oldOds = uniq(olds.map(o => o.od_number))
-    type KhvcLite = { do_no: string; group_code: string; export_date: string | null }
+    type KhvcLite = { do_no: string; group_code: string; export_date: string | null; uploaded_by: string | null; updated_at: string | null; source: string | null }
     const [mats, khvc, ownKhvc, custs] = await Promise.all([
       fetchAllByIdChunks(uniq(lines.map(l => l.material_code).filter((x): x is string => !!x)), c => db.from('Material')
         .select('material_code, category, base_unit, entry_unit, units_per_carton').in('material_code', c).order('material_code')) as Promise<{ material_code: string; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }[]>,
       oldOds.length ? fetchAllByIdChunks(oldOds, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).order('do_no')) as Promise<{ do_no: string; group_code: string }[]> : Promise.resolve([] as { do_no: string; group_code: string }[]),
       // tiến độ kho (đợt 2): OD của kế hoạch này đang ở Kế hoạch xuất nào — một câu cho cả bảng, không tra từng dòng
-      fetchAllByIdChunks(ods, c => db.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<KhvcLite[]>,
+      fetchAllByIdChunks(ods, c => db.from('khvc_lines').select('do_no, group_code, export_date, uploaded_by, updated_at, source').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<KhvcLite[]>,
       fetchAllByIdChunks(uniq(lines.map(l => l.ship_to_code).filter((x): x is string => !!x)), c => db.from('Customer')
         .select('ship_to_code, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; channel: string | null }[]>,
     ])
@@ -2676,6 +2680,7 @@ async function reviewInfoOf(plan: PlanRow, ods: string[]): Promise<Record<string
     const repBy = new Map<string, { od: string; group_code: string | null }[]>()
     for (const o of olds) { const l = repBy.get(o.replaced_by_od) ?? []; if (!l.some(x => x.od === o.od_number)) l.push({ od: o.od_number, group_code: gcOf.get(o.od_number) ?? null }); repBy.set(o.replaced_by_od, l) }
     const holdBy = new Map(holds.map(h => [h.od_number, h]))
+    const segBy = new Map(segs.map(s => [s.od_number, s]))
     const byOd = new Map<string, RevLine[]>()
     for (const l of lines) { const a = byOd.get(l.od_number) ?? []; a.push(l); byOd.set(l.od_number, a) }
     const out: Record<string, ReviewInfo> = {}
@@ -2709,7 +2714,9 @@ async function reviewInfoOf(plan: PlanRow, ods: string[]): Promise<Record<string
         // hoãn có ngày đã tới ⇒ OD về lại Điều — nói ra lần hoãn trước (user chốt 27/09 khuya)
         held_before: h && h.hold_until && h.hold_until <= plan.plan_date ? { until: h.hold_until, reason: h.reason, by: h.created_by } : null,
         khvc: (() => { const k = khvcBy.get(od); if (!k) return null; const g = gdoBy.get(k.group_code)
-          return { group_code: k.group_code, export_date: k.export_date, gdo_status: g?.status ?? null, gdo_id: g?.id ?? null, plan_dropped: g?.plan_dropped === true } })(),
+          return { group_code: k.group_code, export_date: k.export_date, gdo_status: g?.status ?? null, gdo_id: g?.id ?? null, plan_dropped: g?.plan_dropped === true,
+            by: k.uploaded_by, at: k.updated_at, source: k.source } })(),
+        taken: (() => { const s = segBy.get(od); return s ? { segment: s.segment, by: s.created_by, at: s.updated_at } : null })(),
       }
     }
     return out
@@ -2765,8 +2772,13 @@ export async function getPlanBacklog(req: Request, res: Response) {
     const hit = cand.excluded.filter(x => kinds.has(x.kind) && x.d?.delivery_date !== plan.plan_date)
     // cửa `onlyOds` không lọc mảng ⇒ lọc ở đây (đơn của mảng kia đứng ở bàn bên đó)
     const segBy = plan.segment ? await segmentOfOds(wh.id, hit.map(x => ({ od_number: x.od_number, ship_to_code: x.d?.ship_to_code ?? null }))) : null
-    const excluded = hit.filter(x => !segBy || segBy.get(x.od_number) === plan.segment)
+    const mine = hit.filter(x => !segBy || segBy.get(x.od_number) === plan.segment)
       .sort((a, b) => (b.d?.delivery_date ?? '').localeCompare(a.d?.delivery_date ?? '') || (a.d?.ship_to_name ?? '').localeCompare(b.d?.ship_to_name ?? '') || a.od_number.localeCompare(b.od_number))
+    // ai đưa vào Kế hoạch xuất · lúc nào (05/10, user: "phải có dấu vết ai đưa vào tab Chung") — dòng ghi / sửa gần nhất
+    const kh = (await fetchAllByIdChunks(mine.map(x => x.od_number), c => db.from('khvc_lines').select('do_no, uploaded_by, updated_at').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no'))) as { do_no: string; uploaded_by: string | null; updated_at: string | null }[]
+    const khBy = new Map<string, { uploaded_by: string | null; updated_at: string | null }>()
+    for (const k of kh) { const cur = khBy.get(k.do_no); if (!cur || (k.updated_at ?? '') > (cur.updated_at ?? '')) khBy.set(k.do_no, k) }
+    const excluded = mine.map(x => ({ ...x, by: khBy.get(x.od_number)?.uploaded_by ?? null, at: khBy.get(x.od_number)?.updated_at ?? null }))
     return ok(res, { excluded, total: excluded.length })
   } catch (e) { return failAny(res, e) }
 }

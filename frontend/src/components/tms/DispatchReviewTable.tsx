@@ -24,12 +24,13 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useDispatchPlanMarks, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef, type DispatchMarkKind } from '@/api/hooks'
+import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useDispatchPlanMarks, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef, type DispatchMarkKind, type DispatchReviewInfo } from '@/api/hooks'
 import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { EDITABLE, tripStatus, FLAG_VI } from './dispatchIssues'
 import { DispatchOdDetailSheet } from './DispatchOdDetailSheet'
 import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
@@ -62,7 +63,11 @@ type Row = {
   noVeh?: boolean   // khách + kênh chưa khai Dòng xe được vào (28/09) — máy không chọn xe
   outside?: boolean   // mang dấu Ngoài app (tab OUTSIDE) — tick để Điều lại
   ref?: DispatchOtherDraftRef   // ELSEWHERE: nháp đang xếp đơn này
+  by?: string; at?: string | null   // tab dấu tay: người đặt / sửa dấu gần nhất · lúc nào (05/10)
 }
+/** Mốc "ai đưa vào" (05/10, user: "tab Chung phải có dấu vết ai đưa vào") — giờ VN, gọn cho ô hẹp */
+const when = (at: string | null | undefined) => (at ? `${formatTimestampDate(at, true)} ${formatTimestampTime(at, false)}` : '')
+const KHVC_SRC_VI: Record<string, string> = { DISPATCH: 'xác nhận điều vận', EXCEL: 'upload Kế hoạch xuất', MANUAL: 'nhập / sửa tay' }
 const noVehOf = (o: { allowed_models?: string[] | null }) => Array.isArray(o.allowed_models) && !o.allowed_models.length
 const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Đang xếp ở nháp khác', SAP_ASSIGNED: 'SAP đã gắn xe', SHIPPED: 'SAP đã post', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'Mã chưa khai trong Mã hàng', OUTSIDE_APP: 'Ngoài app' }
 /** Cờ SAP chỉ THAM CHIẾU (03/10 tối) — vàng, không đỏ: SAP nói đã post / đã gắn xe, app vẫn điều vì chưa ai đánh dấu Ngoài app */
@@ -201,6 +206,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       od: m.od_number, ids: [], cust: m.ship_to_name ?? m.ship_to_code ?? '', ward: m.ward_code ?? '', region: m.region_name ?? m.region_code ?? '',
       pallets: m.pallets == null ? null : Number(m.pallets), tons: m.tons == null ? null : Number(m.tons), date: m.delivery_date ?? '', late: 0, note: m.note ?? '',
       held: m.kind !== 'OUTSIDE', outside: m.kind === 'OUTSIDE', selectable: editable, tone: 'slate', flag: '', until: m.hold_until, reason: m.reason ?? '',
+      by: m.marked_by ?? '', at: m.marked_at,
       where: m.kind === 'DAY' ? `Điều lại từ ${dmy(m.hold_until)}` : m.kind === 'NEVER' ? 'Không điều' : 'Ngoài app',
     })
     const cmp =(a: Row, b: Row) => Number(!a.ids.length && !a.held) - Number(!b.ids.length && !b.held) || a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
@@ -218,6 +224,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     cust: x.d?.ship_to_name ?? x.d?.ship_to_code ?? '', ward: x.d?.ward_code ?? '', region: x.d?.region_name ?? x.d?.region_code ?? '',
     pallets: x.d?.pallets ?? null, tons: x.d?.tons ?? null, date: x.d?.delivery_date ?? '', late: x.d?.delivery_date ? daysLate(x.d.delivery_date) : 0,
     note: x.d?.note ?? '', flag: `Tồn đọng · ${EX_VI[x.kind] ?? x.kind}${x.info ? ` — ${x.info}` : ''}`, until: null, reason: '',
+    by: x.by ?? '', at: x.at ?? null,
   })), [showBacklog, st, backlog.data, plan.plan_date]) // eslint-disable-line react-hooks/exhaustive-deps
   // 05/10: KHÔNG còn băng "quá hạn chưa quyết" — bỏ cửa sổ 14 ngày, đơn cũ chưa đi nằm thẳng ở tab Điều kèm "trễ N ngày" (user chốt:
   // trạng thái chỉ là các tab — Đã đi · chưa đi Trung chuyển / Bán hàng · Không liên quan · Không điều…)
@@ -254,7 +261,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const isSoft = (od: string) => { const k = flags.get(od)?.kind; return !!k && SOFT_FLAG.has(k) }
   const rows = tabRows.filter(r => (!notesOnly || !!r.note) && (!softOnly || isSoft(r.od)) && (!createdOn || inCreated(r.od))
     && inRange(r.date || null, dFrom, dTo) && (!chanOn || fChan.includes(chanOf(r.od))) && (!fReg.length || fReg.includes(r.region || NONE))
-    && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
+    && (!q || [r.od, r.cust, r.ward, r.region, r.where, r.note, r.flag, r.reason, r.by ?? '', ...extra(r.od)].some(v => v.toLowerCase().includes(q))))
   const detailRow = detail ? tabRows.find(r => r.key === detail) ?? null : null
   const notesN = tabRows.filter(r => !!r.note).length
   const softN = st === 'GO' ? tabRows.filter(r => r.ids.length && isSoft(r.od)).length : 0
@@ -401,10 +408,17 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       .catch(e => err(e, 'Không ghép được'))
 
   const selectableTab = editable && st !== 'DONE' && st !== 'ELSEWHERE' && st !== 'ISSUE'
+  // tab CHUNG có người đưa đơn vào bằng tay (05/10, user: "phải có dấu vết ai là người đưa vào Chung để nắm được"): Không điều ngày này ·
+  // Không điều · Ngoài app (dấu tay) · Đã điều (dòng Kế hoạch xuất). "Đang xếp nơi khác" đã in người lập nháp; Không liên quan là dấu riêng.
+  const showBy = st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE' || st === 'DONE'
+  const byOf = (r: Row, i: DispatchReviewInfo | undefined): { who: string; at: string | null | undefined; how: string } =>
+    st === 'DONE' && !r.by ? { who: i?.khvc?.by ?? '', at: i?.khvc?.at, how: KHVC_SRC_VI[i?.khvc?.source ?? ''] ?? i?.khvc?.source ?? '' }
+      : { who: r.by ?? '', at: r.at, how: st === 'DONE' ? 'ghi vào Kế hoạch xuất' : 'đặt / sửa dấu gần nhất' }
   const cols: RtColDef[] = [
     ...(selectableTab ? [{ id: 'sel', label: '', w: 34, align: 'center' as const }] : []),
     { id: 'od', label: 'OD', w: 104 },
     { id: 'where', label: st === 'GO' ? 'Đang ở' : st === 'DONE' ? 'Đã điều ở đâu' : st === 'ELSEWHERE' ? 'Đang xếp ở' : 'Trạng thái', w: st === 'ELSEWHERE' ? 300 : 150 },
+    ...(showBy ? [{ id: 'by', label: 'Ai đưa vào', w: 170 }] : []),
     { id: 'so', label: 'SO / PO SAP', w: 110 },
     { id: 'cust', label: 'Khách', w: 220 },
     { id: 'ward', label: 'Phường', w: 140 },
@@ -449,6 +463,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       ...veh,
       ...i.replaces.map(r => r.group_code ? `Thay OD ${r.od} — OD cũ ĐÃ ĐIỀU ở xe ${r.group_code}` : `Thay OD ${r.od} (SAP sửa SO)`),
       ...(i.held_before && st === 'GO' ? [`Đã không điều tới ${dmy(i.held_before.until)} — ${i.held_before.reason}`] : []),
+      // 05/10: đơn có người "Lấy sang" mảng này (dấu chung theo kho × OD) — ai, lúc nào
+      ...(i.taken && st === 'GO' && i.taken.segment === seg ? [`${i.taken.by ?? '?'} lấy sang ${SEGMENT_VI[i.taken.segment]}${i.taken.at ? ` lúc ${when(i.taken.at)}` : ''}`] : []),
     ].join(' · ')
   }
 
@@ -520,7 +536,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
 
       {st === 'ISSUE' ? <DispatchDecisionQueue warehouseId={plan.warehouse_id} planId={editable ? plan.id : null} canAct={canAct} canPlan={editable} /> : <>
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v4`} cols={cols}>
+        <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v${showBy ? 5 : 4}`} cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{markKind && marks.isError ? <span className="text-red-600">Không tải được danh sách: {apiMsg(marks.error)}</span>
               : markKind && marks.isLoading ? 'Đang tải danh sách…'
@@ -552,6 +568,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                     </span>
                   )}
                 </TableCell>
+                {showBy && (() => { const b = byOf(r, i); return (
+                  <TableCell className={`${TD} truncate`} title={b.who ? `${b.who} · ${when(b.at)}${b.how ? ` — ${b.how}` : ''}` : ''}>
+                    {b.who ? <><span className="font-medium text-slate-700">{b.who}</span>{b.at && <span className="ml-1 text-slate-500 tabular-nums">{when(b.at)}</span>}</> : dash}
+                  </TableCell>) })()}
                 <TableCell className={`${TD} truncate font-mono`} title={i ? [i.so.join(', '), ...i.so_types].filter(Boolean).join(' · ') : ''}>{i?.so.length ? i.so.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={r.cust}>{r.cust || <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={r.ward}>{r.ward || <span className="text-slate-300">—</span>}</TableCell>

@@ -97,7 +97,7 @@ Mỗi dòng: DO cũ · DO mới (họ) · sự kiện · trạng thái app · ch
 
 ## 8. Phép đối chiếu chống thiếu
 
-Chân bảng Xem đơn: `OD lên xe được trong cửa sổ = Điều + Đang xếp + Đã điều (B+C+D) + Không điều + Ngoài app`. Lệch → đỏ. Đơn quá 14 ngày chưa dấu nào nằm ở băng "quá hạn chưa quyết", không biến mất.
+Chân bảng Xem đơn: `OD lên xe được trong cửa sổ = Điều + Đang xếp + Đã điều (B+C+D) + Không điều + Ngoài app`. Lệch → đỏ. (05/10: bỏ cửa sổ 14 ngày — đơn chưa dấu nào ở MỌI ngày giao nằm ở Điều kèm "trễ N ngày"; băng "quá hạn chưa quyết" đã bỏ.)
 
 ## 9. Thứ tự làm — trạng thái 03/10 tối
 

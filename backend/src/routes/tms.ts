@@ -113,7 +113,6 @@ router.post('/dispatch/plans/:id/outside',    requirePerm('dispatch', 'plan'),  
 router.post('/dispatch/plans/:id/unoutside',  requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zUnoutside }),     dispatch.unoutsideOds)
 router.post('/dispatch/plans/:id/pull-od',    requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zPullOd }),        dispatch.pullOd)
 router.post('/dispatch/plans/:id/confirm-supplement', requirePerm('dispatch', 'plan'), validate({ params: zIdParam, body: dispatch.zConfirmSupplement }), dispatch.confirmSupplement)   // OD cùng dòng SO với OD đã đi = giao thêm (03/10, user chốt (b))
-router.get('/dispatch/plans/:id/stale',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanStale)
 // ĐỢT 2 vòng đời OD (03/10): hàng chờ "Cần xử lý" của điều vận (SAP bỏ / thay DO đã vào KH xuất · họ hàng đã đi · SL đổi sau khi kho quét)
 // + hai cửa gỡ bậc "Đã xác nhận": gỡ DO khỏi Kế hoạch xuất (có lý do, nhật ký) · đổi số DO trên Số xe. Nút ở Điều vận nhưng chạm sổ
 // Kế hoạch xuất ⇒ requireAnyPerm với quyền của module đó (luật CLAUDE.md: nút ở trang A chạm module B).

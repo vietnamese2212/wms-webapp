@@ -6189,12 +6189,12 @@ export function useDispatchPlanReview(id: string | null, stamp?: string | null) 
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/review`)).data.data as { ods: Record<string, DispatchReviewInfo> },
   })
 }
-/** Tab Đã điều — "Xem cả đơn tồn đọng đã đi" (30/09): OD trong cửa sổ 14 ngày máy đã loại (đã xuất · SAP đã điều · đã có trong
- *  KH xuất · DO tạo lại), không ghi vào kế hoạch, tải theo yêu cầu. */
+/** Tab Đã điều — "Xem cả đơn tồn đọng đã điều" (30/09): OD ngày giao trước ngày lập máy đã loại (đã có trong KH xuất · DO tạo lại),
+ *  không ghi vào kế hoạch, tải theo yêu cầu. 05/10 bỏ cửa sổ 14 ngày ⇒ server trả 1.000 đơn gần nhất + `total`. */
 export function useDispatchPlanBacklog(id: string | null, enabled: boolean) {
   return useQuery({
     queryKey: ['dispatch-backlog', id], enabled: !!id && enabled, staleTime: 60_000,
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/backlog`)).data.data as { excluded: DispatchExcluded[]; backlog_days: number },
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/backlog`)).data.data as { excluded: DispatchExcluded[]; total: number },
   })
 }
 export interface DispatchOdMaterial { material_code: string; short_name: string | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
@@ -6246,7 +6246,7 @@ export function useHoldDispatchOds() {
     // ids = dòng OD trên kế hoạch (tab Điều) · od_numbers = OD đang hoãn (đổi giữa Không điều ngày này ⇄ Không điều); reason tuỳ chọn.
     // timeout 120 s như mọi cửa ghi đọc cả kế hoạch (04/10 kiểm UI: lô 100 đơn trên nháp 1.890 đơn lúc staging quá tải chạy > 30 s —
     // axios mặc định 30 s cắt chờ, máy chủ VẪN ghi xong mà màn hình báo "không chuyển được" và dừng cả loạt); hold/unhold/outside/unoutside/pull-od
-    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null; back_to_pool?: number } }),
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null } }),
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
@@ -6262,14 +6262,14 @@ export function useOutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/outside`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { outside: { ods: number; trips_removed: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
   })
 }
 export function useUnoutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unoutside`, { od_numbers }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { unoutside: { ods: number; back_to_pool: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-stale'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
   })
 }
 /** Kéo OD đang XẾP trên xe của nháp khác về khung chờ kế hoạch này (gỡ bên kia, có vết ở cả hai kế hoạch). */
@@ -6286,14 +6286,6 @@ export function useConfirmSupplementDispatchOds() {
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/confirm-supplement`, { od_numbers }).then(r => r.data.data as DispatchPlan & { supplement: { ods: number; edges: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
-  })
-}
-/** Đơn QUÁ cửa sổ tồn đọng (14 ngày) chưa ai quyết — băng đỏ ở Xem đơn, không rớt im lặng (03/10 tối). */
-export interface DispatchStaleOd { od_number: string; dd: string | null; odc: string | null; ship_to_code: string | null; ship_to_name: string | null; sap_pallets: number | string | null; sap_posted: boolean }
-export function useDispatchPlanStale(id: string | null, enabled = true) {
-  return useQuery({
-    queryKey: ['dispatch-stale', id], enabled: !!id && enabled, staleTime: 60_000,
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/stale`)).data.data as { count: number; rows: DispatchStaleOd[]; before: string | null; backlog_days: number },
   })
 }
 /** HÀNG CHỜ "CẦN XỬ LÝ" của điều vận (03/10 đợt 2): DO đã vào Kế hoạch xuất mà SAP bỏ (GONE) / thay (REPLACED) · họ hàng của DO đã

@@ -63,8 +63,6 @@ const SAP_SYNC_TRIP: TripStatus[] = [...EDITABLE_TRIP, 'TENDERED']
 const OPEN_PLAN = ['DRAFT', 'TENDERED']
 
 const ENGINE_VERSION = '2026-10-01.1'   // dải tải theo dòng xe cha
-/** OD tồn đọng: ngày giao trước ngày lập tối đa bấy nhiêu ngày (user chốt 25/09 gộp tồn đọng; quá xa là lịch sử, không phải việc). */
-const BACKLOG_DAYS = 14
 const now = () => new Date().toISOString()
 const CHUNK = 500
 const uniq = <T,>(a: T[]) => [...new Set(a)]
@@ -325,20 +323,15 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   const { condByCat } = cfg
   const follow = new Set(cfg.follow)
   const [holds, outside] = await Promise.all([loadHolds(wh.id), loadOutside(wh.id)])
+  // KHÔNG CÒN CỬA SỔ 14 NGÀY (05/10, user chốt: "chỉ có trạng thái Đã đi · chưa đi Trung chuyển / Bán hàng · Không liên quan · Không
+  // điều…"): mọi đơn có ngày giao tới hôm nay mà chưa có trong lịch sử app, không mang dấu tay, là CHƯA ĐI ⇒ vào tab Điều của mảng nó,
+  // kèm số ngày trễ. Cửa sổ cũ (25/09) có từ khi cờ SAP còn tự loại đơn; bỏ cờ SAP (03/10) thì nó chỉ còn che đơn cũ chưa đi —
+  // băng "quá hạn chưa quyết" là miếng vá chồng lên đó, bỏ cùng. Dấu hẹn tới ngày đã qua thì hết hiệu lực như mọi dấu hẹn khác.
   const rows = (opts.onlyOds
     ? await fetchAllByIdChunks(opts.onlyOds, c => db.from('erp_outbound_orders').select(POOL_COLS).in('od_number', c).eq('sync_status', 'ACTIVE').order('od_number').order('od_item'))
     : await fetchAllRowsParallel(() => db.from('erp_outbound_orders').select(POOL_COLS)
-      .eq('plant', wh.sap_plant ?? '').gte('delivery_date', shiftDay(day, -BACKLOG_DAYS)).lte('delivery_date', day)
+      .eq('plant', wh.sap_plant ?? '').lte('delivery_date', day)
       .eq('sync_status', 'ACTIVE').not('od_number', 'is', null).order('od_number').order('od_item'))) as unknown as PoolRow[]
-  // OD HOÃN tới hôm nay mà ngày giao đã quá cửa sổ tồn đọng — vẫn phải quay lại đợt ghép (người đã hẹn ngày này).
-  // Nhưng ngày hẹn cũng chịu cùng cửa sổ 14 ngày (29/09): hẹn 30/09 mà tới 2027 chưa ai điều thì nó là lịch sử như mọi
-  // đơn tồn đọng khác — bản cũ kéo 4 OD hẹn 30/09 vào cả kế hoạch thử nghiệm ngày 16/03/2027 của cùng kho.
-  if (!opts.onlyOds) {
-    const have = new Set(rows.map(r => r.od_number))
-    const floor = shiftDay(day, -BACKLOG_DAYS)
-    const due = [...holds.entries()].filter(([od, h]) => h.until != null && h.until <= day && h.until >= floor && !have.has(od)).map(([od]) => od)
-    if (due.length) rows.push(...((await fetchAllByIdChunks(due, c => db.from('erp_outbound_orders').select(POOL_COLS).in('od_number', c).eq('plant', wh.sap_plant ?? '').eq('sync_status', 'ACTIVE').order('od_number').order('od_item'))) as unknown as PoolRow[]))
-  }
   const mine0 = inSlocs(rows, slocsOf(wh))
   // OD TỒN ĐỌNG chỉ gộp khi LÊN XE được — hàng trả về / chiết khấu của ngày trước không phải việc của hôm nay
   let mine = linesOfDay(mine0, day)
@@ -733,7 +726,7 @@ export async function createPlan(req: Request, res: Response) {
       id: planId, warehouse_id: wh.id, plan_date: b.plan_date, segment: seg, status: 'DRAFT', engine_version: ENGINE_VERSION,
       params: asJson({
         ...params, pool_ods: ods.length, in_plan: in_plan.length, share_base: share_actual, share_targets: refs.share_targets, carriers: refs.carriers, wh_code: wh.code,
-        backlog_days: BACKLOG_DAYS, late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: { ...gaps, no_drops: dropGaps(ods, refs.models) },
+        late_ods: [...meta.values()].filter(m => m.late_days > 0).length, excluded, config_gaps: { ...gaps, no_drops: dropGaps(ods, refs.models) },
         // mốc "máy lập" để dải chỉ số nói người sửa đã làm tốt hơn hay tệ hơn đề xuất — đặt ở lần ghép đầu (sau bước Xem đơn)
         baseline: null,
       }),
@@ -1537,12 +1530,13 @@ export async function planSync(req: Request, res: Response) {
     const liveRows = [...live.flatMap(t => t.ods), ...full.pool]
     const odNos = uniq(liveRows.map(o => o.od_number))
     const wh = await loadWarehouse(full.warehouse_id)
-    // OD MỚI đếm trong SQL (RPC dispatch_new_ods, 03/10 — quota egress): bản cũ loadCandidates(countOnly) kéo cả cửa sổ 14 ngày
+    // OD MỚI đếm trong SQL (RPC dispatch_new_ods, 03/10 — quota egress): bản cũ loadCandidates(countOnly) kéo cả ZSD02
     // ZSD02 của plant (Ba Vì 9.094 dòng = 4 MB) về backend mỗi 120 s cho MỖI bàn đang mở, chỉ để lọc ra vài số OD.
     const [flags, freshRaw, pulled] = await Promise.all([
       odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh), full.plan_date),
       wh?.sap_plant
-        ? db.rpc('dispatch_new_ods', { p_plant: wh.sap_plant, p_from: shiftDay(full.plan_date, -BACKLOG_DAYS), p_to: full.plan_date, p_day: full.plan_date,
+        // p_from null = mọi ngày giao tới ngày lập (05/10: bỏ cửa sổ 14 ngày — cùng luật loadCandidates)
+        ? db.rpc('dispatch_new_ods', { p_plant: wh.sap_plant, p_from: null, p_to: full.plan_date, p_day: full.plan_date,
             p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id, p_segment: full.segment } as never).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
         : Promise.resolve([] as string[]),
       pulledAwayHeld(full),
@@ -1959,7 +1953,7 @@ async function holdOdsInner(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    if (b.until && b.until < plan.plan_date) return fail(res, 400, 'HOLD_DATE_INVALID', `Ngày điều lại phải SAU ngày lập kế hoạch (${plan.plan_date}) — hoặc chọn "Không điều".`)
+    if (b.until && b.until <= plan.plan_date) return fail(res, 400, 'HOLD_DATE_INVALID', `Ngày điều lại phải SAU ngày lập kế hoạch (${plan.plan_date}) — hoặc chọn "Không điều".`)
     const full = (await readPlan(plan.id))!
     const all = [...full.trips.flatMap(t => t.ods), ...full.pool]
     const ids = uniq(b.ids ?? [])
@@ -1972,10 +1966,6 @@ async function holdOdsInner(req: Request, res: Response) {
     const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không hoãn OD của xe này ở đây.`)
     const planOds = uniq(picked.map(o => o.od_number))
-    // "Điều lại từ ngày này" (băng quá hạn, 04/10): hẹn ĐÚNG ngày lập chỉ cho đơn KHÔNG nằm trên kế hoạch — đơn đang trên kế hoạch mà
-    // hẹn hôm nay là rời rồi quay lại ngay. Trước 04/10 cửa này đòi ngày SAU ngày lập nên nút đó luôn 400 (giả lập hai ngày bắt).
-    const backToday = b.until === plan.plan_date
-    if (backToday && planOds.length) return fail(res, 400, 'HOLD_DATE_INVALID', `Ngày điều lại phải SAU ngày lập kế hoạch (${plan.plan_date}) — hoặc chọn "Không điều".`)
     const heldOds = odNums.filter(od => !planOds.includes(od))
     const onTruck = await onOtherPlanTruck(plan, heldOds)
     if (onTruck) return fail(res, 409, 'OD_ON_OTHER_PLAN', onTruck)
@@ -1984,8 +1974,8 @@ async function holdOdsInner(req: Request, res: Response) {
     const actor = req.user?.name ?? null
     const prev = (await fetchAllByIdChunks(ods, c => db.from('dispatch_od_hold').select('id, od_number').eq('warehouse_id', plan.warehouse_id).in('od_number', c).order('od_number'))) as { id: string; od_number: string }[]
     const idOf = new Map(prev.map(p => [p.od_number, p.id]))
-    // od_numbers không đang hoãn: từ 03/10 tối cũng được — đơn QUÁ cửa sổ 14 ngày (băng "quá hạn chưa quyết") không nằm trong kế
-    // hoạch nên không có `ids`; chỉ cần OD thuộc plant của kho này
+    // od_numbers không đang hoãn và không nằm trên kế hoạch này (03/10 tối, cho băng "quá hạn" — băng bỏ 05/10 nhưng cửa API giữ):
+    // chỉ cần OD thuộc plant của kho này
     const notHeld = heldOds.filter(od => !idOf.has(od))
     if (notHeld.length) {
       const bad = await odsOutsidePlant(plan.warehouse_id, notHeld)
@@ -2010,21 +2000,7 @@ async function holdOdsInner(req: Request, res: Response) {
     const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
     const old = new Map((params.excluded ?? []).map(x => [x.od_number, x]))
     const detail = new Map<string, ExcludedDetail | undefined>(ods.map(od => [od, planOds.includes(od) ? rowDetail(leaving.filter(o => o.od_number === od)) : old.get(od)?.d]))
-    // hẹn ĐÚNG hôm nay ⇒ đơn vào khung chờ NGAY (như bỏ hoãn), chỉ đơn thuộc MẢNG của kế hoạch này; đơn mảng kia giữ dấu, bàn bên đó
-    // thấy nó là "OD mới" (dispatch_new_ods nhận đơn hẹn tới ngày lập dù ngày giao quá cửa sổ)
-    let back = 0
-    let added: ExcludedOd[] = heldExcluded(rows, detail)
-    if (backToday) {
-      const wh = await loadWarehouse(plan.warehouse_id)
-      if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-      const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: ods, skipPlanId: plan.id })
-      const segBy = plan.segment ? await segmentOfOds(wh.id, cand.ods) : null
-      const ins = cand.ods.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length && (!segBy || segBy.get(o.od_number) === plan.segment))
-      await insertOdRows(ins.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: actor })))
-      back = ins.length
-      added = cand.excluded.filter(x => x.kind !== 'HELD')
-    }
-    const excluded = [...(params.excluded ?? []).filter(x => !ods.includes(x.od_number)), ...added]
+    const excluded = [...(params.excluded ?? []).filter(x => !ods.includes(x.od_number)), ...heldExcluded(rows, detail)]
     const p2 = { ...(plan.params as Record<string, unknown>), excluded }
     const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: t }).eq('id', plan.id)
     if (pErr) throw pErr
@@ -2039,7 +2015,7 @@ async function holdOdsInner(req: Request, res: Response) {
       if (error) throw error
     }
     await writeSummary({ ...plan, params: asJson(p2) })
-    return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until, trips_removed: emptied.length, back_to_pool: back } })
+    return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until, trips_removed: emptied.length } })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2162,7 +2138,7 @@ async function odsOutsidePlant(whId: string, ods: string[]): Promise<string[]> {
 // thường hàng loạt theo bộ lọc "SAP đã post". Đơn mang dấu rời tab Điều, không tính vào "ngày tạo cần phủ" khi nạp ZSD02. ══
 export const zOutside = z.object({
   ids: z.array(zId).max(300).optional(),                   // dòng OD của kế hoạch (khung chờ / xe còn sửa được)
-  od_numbers: z.array(zText(1, 50)).max(300).optional(),   // OD không nằm trong kế hoạch (quá cửa sổ · đang hoãn) — phải thuộc plant kho
+  od_numbers: z.array(zText(1, 50)).max(300).optional(),   // OD không nằm trong kế hoạch (đang hoãn · ngoài kế hoạch) — phải thuộc plant kho
   reason: zText(1, 500),
 }).refine(v => (v.ids?.length ?? 0) + (v.od_numbers?.length ?? 0) > 0, { message: 'Chọn ít nhất một OD', path: ['ids'] })
 export const zUnoutside = z.object({ od_numbers: z.array(zText(1, 50)).min(1).max(300) })
@@ -2593,22 +2569,6 @@ export async function renumberKhvc(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// GET /tms/dispatch/plans/:id/stale — đơn QUÁ cửa sổ tồn đọng chưa ai quyết (không rớt im lặng — băng đỏ ở Xem đơn, 03/10 tối)
-export async function getPlanStale(req: Request, res: Response) {
-  try {
-    const { data: plan, error } = await db.from('dispatch_plan').select('id, warehouse_id, plan_date').eq('id', String(req.params.id)).maybeSingle()
-    if (error) throw error
-    if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
-    if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const wh = await loadWarehouse(plan.warehouse_id)
-    if (!wh?.sap_plant) return ok(res, { count: 0, rows: [], before: null })
-    const before = shiftDay(plan.plan_date, -BACKLOG_DAYS)
-    const { data, error: rErr } = await db.rpc('dispatch_stale_ods', { p_plant: wh.sap_plant, p_warehouse_id: wh.id, p_before: before } as never)
-    if (rErr) throw rErr
-    return ok(res, { ...(data as unknown as { count: number; rows: unknown[] }), before, backlog_days: BACKLOG_DAYS })
-  } catch (e) { return failAny(res, e) }
-}
-
 // ══ BẢNG XEM ĐƠN — thông tin SAP của từng OD (27/09 khuya, user: "thiếu nhiều thông tin quá: SO, người tạo, ghi chú đủ chưa,
 // thùng, loại kho… và cần xem được detail"). Tách khỏi GET kế hoạch: bàn ghép xe gọi kế hoạch sau MỖI lần thả, còn mấy cột
 // này chỉ tab Xem đơn cần — nhồi vào kế hoạch là bắt mọi lần thả kéo thêm vài nghìn dòng ZSD02. ══
@@ -2733,9 +2693,10 @@ export async function getPlanReview(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// GET /tms/dispatch/plans/:id/backlog — OD TỒN ĐỌNG (trong cửa sổ 14 ngày) mà máy đã loại vì đã đi / SAP đã điều / đã có trong
-// Kế hoạch xuất / DO tạo lại. Không ghi vào params (hơn 2.000 dòng lịch sử ở kho lớn) — tab Đã điều tải theo yêu cầu (user 30/09:
-// "170 đơn đi đâu mất, sao không nằm trong Đã điều").
+// GET /tms/dispatch/plans/:id/backlog — OD ngày giao TRƯỚC ngày lập mà máy đã loại vì đã có trong Kế hoạch xuất / DO tạo lại.
+// Không ghi vào params (lịch sử) — tab Đã điều tải theo yêu cầu (user 30/09: "170 đơn đi đâu mất, sao không nằm trong Đã điều").
+// 05/10 bỏ cửa sổ 14 ngày ⇒ lịch sử tăng mãi: trả 1.000 đơn gần nhất + tổng (dòng ~300 B, trần 4,5 MB của Vercel).
+const BACKLOG_MAX = 1000
 export async function getPlanBacklog(req: Request, res: Response) {
   try {
     const got = await planOdSet(String(req.params.id))
@@ -2748,7 +2709,7 @@ export async function getPlanBacklog(req: Request, res: Response) {
     const kinds = new Set(['SHIPPED', 'SAP_ASSIGNED', 'IN_PLAN', 'REDO_DISPATCHED'])
     const excluded = cand.excluded.filter(x => kinds.has(x.kind) && x.d?.delivery_date !== plan.plan_date)
       .sort((a, b) => (b.d?.delivery_date ?? '').localeCompare(a.d?.delivery_date ?? '') || (a.d?.ship_to_name ?? '').localeCompare(b.d?.ship_to_name ?? '') || a.od_number.localeCompare(b.od_number))
-    return ok(res, { excluded, backlog_days: BACKLOG_DAYS })
+    return ok(res, { excluded: excluded.slice(0, BACKLOG_MAX), total: excluded.length })
   } catch (e) { return failAny(res, e) }
 }
 

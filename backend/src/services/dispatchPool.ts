@@ -7,7 +7,7 @@
  *   (1) chưa nằm trong Kế hoạch xuất (khvc_lines) và chưa LÊN XE ở một bản nháp ĐANG MỞ khác (khung chờ là tự do — 03/10 tối);
  *   (2)(3) — BỎ 03/10 tối: "SAP đã điều phối" và "đã xuất (Mat Doc / SL đã xuất)" không còn loại đơn — chúng là CỜ THAM CHIẾU
  *       trên tab Điều, người quyết bằng dấu tay (Ngoài app · Không điều) hoặc điều thật. Lịch sử của app mới là nguồn sự thật.
- * OD TỒN ĐỌNG (ngày giao TRƯỚC ngày lập, trong `backlogDays` ngày) đủ ba điều kiện thì cũng vào — user chốt gộp — kèm
+ * OD TỒN ĐỌNG (ngày giao TRƯỚC ngày lập — MỌI ngày, 05/10 bỏ cửa sổ 14 ngày) đủ ba điều kiện thì cũng vào — user chốt gộp — kèm
  * `late_days` để màn hình đánh dấu "trễ n ngày". Nhóm bị loại chỉ BÁO với OD đúng ngày lập: OD cũ đã đi/đã điều là
  * lịch sử bình thường, liệt kê ra chỉ làm ngập màn hình — TRỪ OD đang nằm ở bản nháp mở của ngày khác (LUÔN báo, 29/09:
  * đó là việc bị giữ ở chỗ khác, người phải thấy để bỏ nháp kia hoặc kéo về).

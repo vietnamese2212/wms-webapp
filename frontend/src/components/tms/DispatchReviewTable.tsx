@@ -6,7 +6,9 @@
 //   • KHÔNG ĐIỀU NGÀY NÀY — hoãn có ngày (mặc định ngày kế tiếp): tới ngày đó OD tự quay lại Điều.
 //   • KHÔNG ĐIỀU — hoãn không ngày: không vào đợt ghép nào tới khi có người chuyển lại Điều.
 //   • ĐÃ ĐIỀU — chỉ xem: xe đã xác nhận / đang chờ ĐVVT · đã có trong Kế hoạch xuất · SAP đã điều · đã xuất kho · nháp ngày khác.
-// Dữ liệu là của CHÍNH kế hoạch (dòng OD) + `params.excluded` (OD bị bỏ ra, có kèm thông tin để in dòng) — không gọi thêm gì.
+// Dữ liệu là của CHÍNH kế hoạch (dòng OD) + `params.excluded` (OD bị bỏ ra, có kèm thông tin để in dòng). Ba tab DẤU TAY (Không điều
+// ngày này · Không điều · Ngoài app) đọc THẲNG sổ dấu của kho qua GET /marks (05/10 — không chép vào kế hoạch nữa: Ngoài app / Không
+// điều không bao giờ vào Kế hoạch xuất nên mỗi kế hoạch về sau mang theo mọi đơn từng đánh dấu).
 import { useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { CalendarClock, Ban, CheckCircle2, ListChecks, StickyNote, Sparkles } from 'lucide-react'
@@ -22,7 +24,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef } from '@/api/hooks'
+import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useDispatchPlanReview, useDispatchPlanBacklog, useDispatchPlanMarks, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef, type DispatchMarkKind } from '@/api/hooks'
 import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -118,7 +120,11 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const [prog, setProg] = useState<string | null>(null)
   // thông tin SAP từng OD (SO · người tạo · ghi chú · SL quy đổi · Loại kho · OD bị thay · lần Không điều trước) — gọi riêng
   const review = useDispatchPlanReview(plan.id, plan.updated_at)
-  const info = review.data?.ods ?? {}
+  // 05/10: ba tab dấu tay đọc thẳng sổ dấu — số đếm luôn hỏi, dòng (kèm thông tin SAP) chỉ khi đang mở tab đó
+  const markKind: DispatchMarkKind | null = st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE' ? st : null
+  const marks = useDispatchPlanMarks(plan.id, markKind)
+  const markCounts = useDispatchPlanMarks(plan.id, null)
+  const info = { ...(review.data?.ods ?? {}), ...(marks.data?.info ?? {}) }
   const whMeta = useWhTypeMetaMap()
   const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
   // `prog` giữ nút khoá cả khoảng hở giữa hai lô (isPending tắt một nhịp giữa hai lần gọi)
@@ -167,17 +173,14 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       pallets: null, tons: null, date: '', late: 0, note: '', flag: u.reason, until: null, reason: '',
     })
     for (const x of plan.params.excluded ?? []) {
+      // 05/10: dấu tay đọc thẳng sổ dấu (vòng `marks` bên dưới) — dòng HELD / OUTSIDE_APP của kế hoạch lập trước đó là bản chụp cũ, bỏ qua
+      if (x.kind === 'HELD' || x.kind === 'OUTSIDE_APP') continue
       const d = x.d
       const base = {
         od: x.od_number, ids: [], cust: d?.ship_to_name ?? d?.ship_to_code ?? '', ward: d?.ward_code ?? '', region: d?.region_name ?? d?.region_code ?? '',
         pallets: d?.pallets ?? null, tons: d?.tons ?? null, date: d?.delivery_date ?? '', late: 0, note: d?.note ?? '',
       }
-      if (x.kind === 'HELD') {
-        // bản cũ (trước 27/09 tối) không có `until` — đọc lại từ câu "hoãn tới …"
-        const u = x.until !== undefined ? x.until : (x.info?.match(/hoãn tới (\d{4}-\d{2}-\d{2})/)?.[1] ?? null)
-        const tab: St = u ? 'DAY' : 'NEVER'
-        add(tab, `${tab}|${x.od_number}`, { ...base, held: true, selectable: editable, where: u ? `Điều lại từ ${dmy(u)}` : 'Không điều', tone: 'slate', flag: '', until: u, reason: x.reason ?? x.info ?? '' })
-      } else if (x.kind === 'NO_MATERIAL') {
+      if (x.kind === 'NO_MATERIAL') {
         // 03/10: mã chưa khai trong Mã hàng ⇒ máy không ghép — nằm ở Điều để người thấy việc phải làm (khai mã), không chọn được
         if (!agg.has(`GO|${x.od_number}`)) add('GO', `GO|${x.od_number}`, { ...base, held: false, selectable: false, where: 'Không lên xe', tone: 'red', flag: x.info ?? EX_VI.NO_MATERIAL, until: null, reason: '' })
       } else if (x.kind === 'OTHER_DRAFT') {
@@ -185,8 +188,6 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         const r = x.ref
         add('ELSEWHERE', `ELSEWHERE|${x.od_number}`, { ...base, held: false, selectable: false, ref: r,
           where: r ? `Nháp ${dmy(r.plan_date)} · xe #${r.seq ?? '?'} · ${r.created_by ?? '?'}` : (x.info ?? EX_VI.OTHER_DRAFT), tone: 'purple', flag: x.info ?? '', until: null, reason: '' })
-      } else if (x.kind === 'OUTSIDE_APP') {
-        add('OUTSIDE', `OUTSIDE|${x.od_number}`, { ...base, held: false, selectable: editable, outside: true, where: 'Ngoài app', tone: 'slate', flag: '', until: null, reason: x.reason ?? x.info ?? '' })
       } else if (x.kind === 'SHIPPED' || x.kind === 'SAP_ASSIGNED') {
         // bản ghi cũ (params.excluded trước 03/10 tối còn hai loại này) — nay chúng là cờ tham chiếu ở Điều, không phải "đã điều"
         if (!agg.has(`GO|${x.od_number}`)) add('GO', `GO|${x.od_number}`, { ...base, held: false, selectable: false, where: 'Khung chờ (bản cũ)', tone: 'amber', flag: `${EX_VI[x.kind]}${x.info ? ` — ${x.info}` : ''} · Lập lại để nạp đúng`, until: null, reason: '' })
@@ -195,10 +196,17 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         add('DONE', `DONE|${x.od_number}`, { ...base, held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: x.kind === 'REDO_DISPATCHED' ? 'amber' : 'green', flag: x.info ?? '', until: null, reason: '' })
       }
     }
-    const cmp = (a: Row, b: Row) => Number(!a.ids.length && !a.held) - Number(!b.ids.length && !b.held) || a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
+    // tab dấu tay đang mở: dòng đọc thẳng sổ dấu (Không điều ngày này · Không điều = dấu hoãn; Ngoài app = dấu Ngoài app)
+    for (const m of marks.data?.rows ?? []) add(m.kind, `${m.kind}|${m.od_number}`, {
+      od: m.od_number, ids: [], cust: m.ship_to_name ?? m.ship_to_code ?? '', ward: m.ward_code ?? '', region: m.region_name ?? m.region_code ?? '',
+      pallets: m.pallets == null ? null : Number(m.pallets), tons: m.tons == null ? null : Number(m.tons), date: m.delivery_date ?? '', late: 0, note: m.note ?? '',
+      held: m.kind !== 'OUTSIDE', outside: m.kind === 'OUTSIDE', selectable: editable, tone: 'slate', flag: '', until: m.hold_until, reason: m.reason ?? '',
+      where: m.kind === 'DAY' ? `Điều lại từ ${dmy(m.hold_until)}` : m.kind === 'NEVER' ? 'Không điều' : 'Ngoài app',
+    })
+    const cmp =(a: Row, b: Row) => Number(!a.ids.length && !a.held) - Number(!b.ids.length && !b.held) || a.region.localeCompare(b.region) || a.ward.localeCompare(b.ward) || a.cust.localeCompare(b.cust) || a.od.localeCompare(b.od)
     for (const k of Object.keys(out) as St[]) out[k].sort(cmp)
     return out
-  }, [plan, flags, editable, hidden])
+  }, [plan, flags, editable, hidden, marks.data])
 
   // TỒN ĐỌNG ĐÃ ĐI (30/09, user: "170 đơn đi đâu mất, sao không nằm trong Đã điều"): máy loại đúng nhưng không nằm trong kế hoạch
   // (ở kho lớn là hơn 2.000 dòng lịch sử) — tab Đã điều tải theo yêu cầu, hiện kèm ngày giao để người thấy nó đi đâu
@@ -306,7 +314,11 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       toast({ title: `${n} OD → Ngoài app`, description: 'Đơn rời tab Điều, không tính vào ngày tạo cần phủ khi nạp ZSD02. Bỏ dấu ở tab Ngoài app → Điều lại.' })
     } catch (e) { err(e, n ? `Đã đánh dấu ${n} OD, phần còn lại chưa được` : 'Không đánh dấu được') }
   }
+  // mọi lần chuyển trạng thái đều hỏi lại (user 05/10: "chọn multi sau đó action đổi trạng thái — nhớ có xác nhận"); ba cửa có hộp
+  // thoại riêng (Không điều ngày này · Không điều · Ngoài app) thì hộp thoại đó là bước xác nhận
   const doGo = async () => {
+    if (await ask({ title: `Điều lại ${nf(selRows.length)} đơn?`, confirmLabel: 'Điều lại',
+      body: `Bỏ dấu ${st === 'OUTSIDE' ? 'Ngoài app' : st === 'DAY' ? 'Không điều ngày này' : 'Không điều'} — đơn về khung chờ của tab Điều để ghép xe. Đơn đã được lo ở chỗ khác (nháp khác, Kế hoạch xuất) hoặc SAP đã bỏ thì không quay lại.` }) === null) return
     let n = 0, back = 0
     try {
       await eachLot(selRows, async part => {
@@ -321,6 +333,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   // "Họ hàng đã đi" (03/10, user chốt (b)): OD cùng dòng SO với OD cũ đã đi — người xác nhận là GIAO THÊM thì rào DB mới cho đi
   const selKin = selRows.filter(r => flags.get(r.od)?.kind === 'KIN_SHIPPED').map(r => r.od)
   const doSupplement = async () => {
+    if (await ask({ title: `Xác nhận ${nf(selKin.length)} đơn là đơn bổ sung?`, confirmLabel: 'Xác nhận đơn bổ sung',
+      body: 'Các đơn này cùng dòng SO với đơn cũ ĐÃ ĐI. Xác nhận là GIAO THÊM (không phải giao lại hàng đã đi) thì đơn được điều ngày khác; ghi vào phả hệ DO (ai · lúc nào).' }) === null) return
     try {
       const r = await sup.mutateAsync({ plan_id: plan.id, od_numbers: selKin })
       setSel(new Set())
@@ -353,6 +367,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const doHide = async (undo: boolean) => {
     const ods = uniq(selRows.map(r => r.od))
     if (!ods.length) return
+    if (await ask(undo
+      ? { title: `Điều lại ${nf(ods.length)} đơn?`, confirmLabel: 'Điều lại', body: 'Đơn về tab Điều và lại nằm trong đợt ghép của bạn.' }
+      : { title: `Chuyển ${nf(ods.length)} đơn sang Không liên quan?`, confirmLabel: 'Không liên quan', body: 'Chỉ bạn thấy là đã loại — người khác vẫn thấy ở Điều và ghép được; máy ghép của bạn bỏ qua các đơn này.' }) === null) return
     try {
       await hide.mutateAsync({ plan_id: plan.id, od_numbers: ods, undo })
       setSel(new Set())
@@ -445,7 +462,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
           {TABS.map(t => {
             const other = !!t.seg && t.seg !== seg
             const active = st === t.k && !other
-            const n = t.k === 'ISSUE' ? nf(decisions.data?.count ?? 0) : other ? (otherPoolCount == null ? '—' : nf(otherPoolCount)) : nf(new Set((t.k === 'GO' ? goOds : byTab[t.k]).map(r => r.od)).size)
+            const n = t.k === 'ISSUE' ? nf(decisions.data?.count ?? 0) : other ? (otherPoolCount == null ? '—' : nf(otherPoolCount))
+              : t.k === 'DAY' || t.k === 'NEVER' || t.k === 'OUTSIDE' ? (markCounts.data ? nf(markCounts.data.counts[t.k]) : '—')
+              : nf(new Set((t.k === 'GO' ? goOds : byTab[t.k]).map(r => r.od)).size)
             return (
             <button key={`${t.k}|${t.seg ?? ''}`} type="button" title={other ? `${t.tip} Bấm để chuyển sang kế hoạch ${t.label} của ngày này.` : t.tip} aria-pressed={active}
               onClick={() => (other ? onSwitchSegment?.(t.seg!) : setTab(t.k))}
@@ -503,7 +522,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v4`} cols={cols}>
           <TableBody>
-            {!rows.length && <TableEmptyRow colSpan={cols.length}>{q || notesOnly || softOnly || filtersOn
+            {!rows.length && <TableEmptyRow colSpan={cols.length}>{markKind && marks.isError ? <span className="text-red-600">Không tải được danh sách: {apiMsg(marks.error)}</span>
+              : markKind && marks.isLoading ? 'Đang tải danh sách…'
+              : q || notesOnly || softOnly || filtersOn
               ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); clearFilters() }}>Xem cả {tabRows.length} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : st === 'ELSEWHERE' ? 'Không có đơn nào đang xếp ở nháp khác.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
@@ -572,7 +593,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       </div>
       {/* ĐỐI CHIẾU CHỐNG THIẾU (03/10 tối): mọi đơn ZSD02 trong cửa sổ phải đứng ở đúng MỘT tab — tổng in ra để lệch là thấy */}
       <ListFooter page={1} pageSize={Math.max(1, rows.length)} total={rows.length} unit="đơn" onPageSize={() => { }} options={[]}
-        right={`Đối chiếu (${SEGMENT_VI[seg]}): Điều ${nf(new Set(goOds.map(r => r.od)).size)}${byTab.HIDDEN.length ? ` · Không liên quan (bạn) ${nf(byTab.HIDDEN.length)}` : ''} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${nf(byTab.DAY.length + byTab.NEVER.length)} · Ngoài app ${nf(byTab.OUTSIDE.length)} · Đã điều ${nf(byTab.DONE.length)}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
+        right={`Đối chiếu (${SEGMENT_VI[seg]}): Điều ${nf(new Set(goOds.map(r => r.od)).size)}${byTab.HIDDEN.length ? ` · Không liên quan (bạn) ${nf(byTab.HIDDEN.length)}` : ''} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${markCounts.data ? nf(markCounts.data.counts.DAY + markCounts.data.counts.NEVER) : '—'} · Ngoài app ${markCounts.data ? nf(markCounts.data.counts.OUTSIDE) : '—'} · Đã điều ${nf(byTab.DONE.length)}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
 
       <FloatingActionBar count={selRows.length} unit="đơn đã chọn">
         {prog && <span className="self-center whitespace-nowrap text-[11px] tabular-nums text-white/80" role="status">Đang chuyển {prog} đơn…</span>}

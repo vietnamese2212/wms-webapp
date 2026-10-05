@@ -6197,6 +6197,20 @@ export function useDispatchPlanBacklog(id: string | null, enabled: boolean) {
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/backlog`)).data.data as { excluded: DispatchExcluded[]; total: number },
   })
 }
+/** Ba tab DẤU TAY (05/10): Không điều ngày này · Không điều · Ngoài app — đọc thẳng sổ dấu của kho, không chép vào kế hoạch.
+ *  `kind` null = chỉ lấy số đếm ba tab (luôn gọi khi mở bảng); có `kind` = thêm dòng + thông tin SAP của tab đó. */
+export type DispatchMarkKind = 'DAY' | 'NEVER' | 'OUTSIDE'
+export interface DispatchMarkRow {
+  od_number: string; kind: DispatchMarkKind; hold_until: string | null; reason: string | null; marked_by: string | null; marked_at: string | null
+  ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null
+  pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null
+}
+export function useDispatchPlanMarks(id: string | null, kind: DispatchMarkKind | null) {
+  return useQuery({
+    queryKey: ['dispatch-marks', id, kind ?? ''], enabled: !!id, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/marks`, { params: kind ? { kind } : {} })).data.data as { counts: Record<DispatchMarkKind, number>; rows: DispatchMarkRow[]; info: Record<string, DispatchReviewInfo> },
+  })
+}
 export interface DispatchOdMaterial { material_code: string; short_name: string | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
 export function useDispatchPlanOd(id: string | null, od: string | null) {
   return useQuery({
@@ -6247,14 +6261,14 @@ export function useHoldDispatchOds() {
     // timeout 120 s như mọi cửa ghi đọc cả kế hoạch (04/10 kiểm UI: lô 100 đơn trên nháp 1.890 đơn lúc staging quá tải chạy > 30 s —
     // axios mặc định 30 s cắt chờ, máy chủ VẪN ghi xong mà màn hình báo "không chuyển được" và dừng cả loạt); hold/unhold/outside/unoutside/pull-od
     mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; until: string | null; reason?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/hold`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { held: { ods: number; until: string | null } }),
-    onSuccess: p => putDispatchPlan(qc, p),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-marks'] }) },
   })
 }
 export function useUnholdDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unhold`, { od_numbers }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { unheld: { ods: number; back_to_pool: number } }),
-    onSuccess: p => putDispatchPlan(qc, p),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-marks'] }) },
   })
 }
 // 03/10 tối — dấu tay "Ngoài app" (đơn đã xử lý ngoài bàn này; cờ SAP post / gắn xe chỉ còn là tham chiếu) · bỏ dấu
@@ -6262,14 +6276,14 @@ export function useOutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, ...body }: { plan_id: string; ids?: string[]; od_numbers?: string[]; reason: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/outside`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { outside: { ods: number; trips_removed: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-marks'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }); qc.invalidateQueries({ queryKey: ['dispatch-decisions'] }) },
   })
 }
 export function useUnoutsideDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, od_numbers }: { plan_id: string; od_numbers: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/unoutside`, { od_numbers }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { unoutside: { ods: number; back_to_pool: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-marks'] }); qc.invalidateQueries({ queryKey: ['zsd02-coverage'] }) },
   })
 }
 /** Kéo OD đang XẾP trên xe của nháp khác về khung chờ kế hoạch này (gỡ bên kia, có vết ở cả hai kế hoạch). */

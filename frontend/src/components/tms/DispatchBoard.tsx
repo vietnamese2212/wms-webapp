@@ -30,7 +30,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
-  useHoldDispatchOds, useUnholdDispatchOds, useResyncDispatchOd,
+  useHoldDispatchOds, useResyncDispatchOd,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview,
 } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -92,7 +92,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
   const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan()
   const fresh = useMemo(() => new Set(plan.params.fresh_ods ?? []), [plan.params.fresh_ods])
-  const hold = useHoldDispatchOds(), unhold = useUnholdDispatchOds(), resync = useResyncDispatchOd()
+  const hold = useHoldDispatchOds(), resync = useResyncDispatchOd()
   const perms = (useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null) ?? null
   // sửa "Dòng xe được vào" của khách từ bàn (27/09) — quyền riêng của điều vận, hoặc quyền sửa Khách hàng
   const canCustVeh = can(perms, 'dispatch', 'customer_vehicles') || can(perms, 'customers', 'edit')
@@ -292,9 +292,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
       .then(r => { setHoldDlg(false); setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `${r.held.ods} OD → ${holdMode === 'date' ? `Không điều ngày này (điều lại từ ${holdUntil})` : 'Không điều'}`, description: `${ods.slice(0, 4).join(', ')}${ods.length > 4 ? '…' : ''} — xem / chuyển lại ở tab Xem đơn.` }) })
       .catch(e => err(e, 'Không chuyển được trạng thái'))
   }
-  const doUnhold = (od: string) => unhold.mutateAsync({ plan_id: plan.id, od_numbers: [od] })
-    .then(r => toast({ title: `${od} → Điều`, description: r.unheld.back_to_pool ? 'OD đã về khung chờ của kế hoạch này.' : 'OD không quay lại khung chờ (đã được lo ở chỗ khác hoặc không còn trong ZSD02).' }))
-    .catch(e => err(e, 'Không chuyển được trạng thái'))
   // ghép RIÊNG các OD đã chọn ở khung chờ; xe đang có giữ nguyên
   const poolSel = selIds.filter(id => tripOf.get(id) === null)
   const doReoptSel = () => reopt.mutateAsync({ id: plan.id, ids: poolSel })
@@ -312,9 +309,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá theo dải % tải; xe đã khoá giữ nguyên', primary: true, variant: 'default', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
 
   const targets = trips.filter(editableTrip).map(t => ({ value: t.id, label: `#${t.seq} · ${t.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(t.pallets, 1)} pl · ${t.load_pct == null ? '—' : `${nf(t.load_pct, 0)}%`} · ${t.stops} điểm · ${t.wards.slice(0, 2).join(', ')}` }))
-  const excluded = plan.params.excluded ?? []
+  // 05/10: đơn mang dấu tay (Không điều · Ngoài app) không còn chép vào kế hoạch — xem / chuyển ở tab Xem đơn; dòng cũ của kế hoạch lập trước đó bỏ qua
+  const excluded = (plan.params.excluded ?? []).filter(x => x.kind !== 'HELD' && x.kind !== 'OUTSIDE_APP')
   const exBy = excluded.reduce<Record<string, number>>((m, x) => { m[x.kind] = (m[x.kind] ?? 0) + 1; return m }, {})
-  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', HELD: 'không điều', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'mã chưa khai trong Mã hàng', OUTSIDE_APP: 'ngoài app' }
+  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'mã chưa khai trong Mã hàng' }
 
   // (29/09: chip Pallet / Xá của OD bỏ — kiểu đi không còn là cấu hình; dòng xe khách được vào quyết tất cả)
 
@@ -657,8 +655,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
                   </button>
                   {showSide === 'excluded' && <ul className="px-2 pb-1.5 space-y-0.5 max-h-48 overflow-auto">{excluded.map(x => (
                     <li key={x.od_number} className="flex items-start gap-1">
-                      <span className="min-w-0 flex-1 break-words"><span className="font-mono">{x.od_number}</span> — {x.kind === 'HELD' ? (x.info ?? EX_VI.HELD) : <>{EX_VI[x.kind] ?? x.kind}{x.info ? ` (${x.info})` : ''}</>}</span>
-                      {x.kind === 'HELD' && editable && <button type="button" className="shrink-0 text-[10px] font-medium text-sky-700 hover:underline" disabled={unhold.isPending} onClick={() => void doUnhold(x.od_number)}>Chuyển lại Điều</button>}
+                      <span className="min-w-0 flex-1 break-words"><span className="font-mono">{x.od_number}</span> — {EX_VI[x.kind] ?? x.kind}{x.info ? ` (${x.info})` : ''}</span>
                     </li>
                   ))}</ul>}
                 </div>

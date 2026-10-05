@@ -67,7 +67,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count'], ['work-inbox'], ['dispatch-decisions']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
-  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-od'], ['dispatch-decisions']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
+  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks'], ['dispatch-od'], ['dispatch-decisions']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
   vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
   warehouse_vehicle_model: [['vehicle-models']],                 // cấu hình riêng của KHO cho dòng xe (03/10) — cùng danh sách
@@ -80,12 +80,13 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau. KHÔNG kéo theo dispatch-sync / dispatch-review (03/10, quota egress):
   // kéo thả không đổi dữ liệu SAP — hai cửa đó chỉ cần làm mới khi ZSD02 / Kế hoạch xuất / dấu hoãn đổi (erp_outbound_orders, khvc_lines…)
   dispatch_trip_od:      [['dispatch-plan']],
-  dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
-  dispatch_od_segment:   [['dispatch-plan'], ['dispatch-plans'], ['dispatch-sync']],   // lấy đơn sang mảng khác (03/10 tối) — bàn mảng kia thấy đơn rời ngay
-  dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['zsd02-coverage'], ['dispatch-decisions']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
+  // dispatch-marks (05/10): ba tab dấu tay đọc thẳng sổ dấu — người khác đánh dấu / Điều lại thì tab thấy ngay
+  dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
+  dispatch_od_segment:   [['dispatch-plan'], ['dispatch-plans'], ['dispatch-sync'], ['dispatch-marks']],   // lấy đơn sang mảng khác (03/10 tối) — bàn mảng kia thấy đơn rời ngay
+  dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks'], ['zsd02-coverage'], ['dispatch-decisions']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
   od_lineage:            [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-decisions']],  // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
   outbound_events:     [['gdo-events']],
-  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-decisions']],   // dispatch-review: tiến độ kho ở tab Đã điều (03/10 đợt 2)
+  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks'], ['dispatch-decisions']],   // dispatch-review: tiến độ kho ở tab Đã điều (03/10 đợt 2) · dispatch-marks: đơn vào KH xuất rời tab dấu tay
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],

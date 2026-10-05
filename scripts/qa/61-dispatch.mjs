@@ -1132,7 +1132,9 @@ try {
     const hBad = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: DAY, reason: 'QA hẹn' })
     // Bảng Xem đơn (27/09 tối): Điều → "Không điều" (lý do TUỲ CHỌN) → đổi sang "Không điều ngày này" theo SỐ OD (OD đã rời kế hoạch)
     const hNever = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: null })
-    const exN = (hNever.j?.data?.params?.excluded ?? []).find(x => x.od_number === OD[2])
+    // 05/10: tab dấu tay đọc thẳng sổ dấu (GET /marks) — dấu KHÔNG chép vào params.excluded nữa
+    const mkNever = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=NEVER`)
+    const exN = (mkNever.j?.data?.rows ?? []).find(x => x.od_number === OD[2])
     // 03/10 tối: hoãn theo SỐ OD nay nhận cả OD CHƯA hoãn miễn thuộc plant (đơn quá cửa sổ 14 ngày không có `ids`) → 200, rồi bỏ hoãn
     // ngay để các phép sau giữ nguyên trạng thái; OD không có trong ZSD02 của kho → 404 OD_NOT_FOUND
     const hNotHeld = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: ['QA61KHONGCO'], until: next })
@@ -1142,19 +1144,31 @@ try {
     const hOk = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { od_numbers: [OD[2]], until: next, reason: 'QA NPP hẹn ngày sau' })
     PR = hOk.j?.data
     const holdRow = (await restAll('dispatch_od_hold', `select=od_number,hold_until,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))
-    const exH = (PR?.params?.excluded ?? []).find(x => x.od_number === OD[2])
-    check('15b. Chuyển trạng thái: ngày ≤ ngày lập → 400 · Điều→Không điều KHÔNG cần lý do → 200 (until null, kèm tên khách + pallet để bảng in dòng) · hoãn theo số OD không có trong ZSD02 kho → 404 OD_NOT_FOUND · OD CHƯA hoãn theo số OD → 200 ghi sổ (03/10: đơn quá 14 ngày) · Không điều→Không điều ngày này theo số OD → 200, sổ hoãn MỘT dòng mang ngày mới + lý do',
-      hBad.s === 400 && hNever.s === 200 && exN?.kind === 'HELD' && exN?.until === null && exN?.reason === 'Không điều' && exN?.d?.ship_to_name === 'QA61 NPP 3' && Number(exN?.d?.pallets) > 0
+    const mkDay = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY`)
+    const exH = (mkDay.j?.data?.rows ?? []).find(x => x.od_number === OD[2])
+    check('15b. Chuyển trạng thái: ngày ≤ ngày lập → 400 · Điều→Không điều KHÔNG cần lý do → 200 (tab Không điều đọc sổ dấu: until null, kèm tên khách + ngày giao để bảng in dòng) · hoãn theo số OD không có trong ZSD02 kho → 404 OD_NOT_FOUND · OD CHƯA hoãn theo số OD → 200 ghi sổ (03/10: đơn quá 14 ngày) · Không điều→Không điều ngày này theo số OD → 200, sổ hoãn MỘT dòng mang ngày mới + lý do',
+      hBad.s === 400 && hNever.s === 200 && mkNever.s === 200 && exN?.kind === 'NEVER' && exN?.hold_until === null && exN?.reason === 'Không điều' && exN?.ship_to_name === 'QA61 NPP 3' && exN?.delivery_date === DAY
       && hNotHeld.s === 404 && hNotHeld.j?.error?.code === 'OD_NOT_FOUND' && hFree.s === 200 && hFreeRow?.hold_until === next
-      && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow.length === 1 && holdRow[0]?.hold_until === next && exH?.kind === 'HELD' && exH?.until === next && /hoãn tới .*QA NPP hẹn/.test(exH?.info ?? '') && exH?.d?.ship_to_name === 'QA61 NPP 3',
-      `bad=${hBad.s} never=${hNever.s} ${hNever.j?.error?.message ?? ''} exN=${JSON.stringify(exN)} notFound=${hNotHeld.s}/${hNotHeld.j?.error?.code} free=${hFree.s}/${hFreeRow?.hold_until} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} ex=${JSON.stringify(exH)}`)
+      && hOk.s === 200 && !poolOds(PR).includes(OD[2]) && holdRow.length === 1 && holdRow[0]?.hold_until === next
+      && mkDay.s === 200 && exH?.kind === 'DAY' && exH?.hold_until === next && exH?.reason === 'QA NPP hẹn ngày sau' && exH?.ship_to_name === 'QA61 NPP 3',
+      `bad=${hBad.s} never=${hNever.s}/${mkNever.s} ${hNever.j?.error?.message ?? mkNever.j?.error?.message ?? ''} exN=${JSON.stringify(exN)} notFound=${hNotHeld.s}/${hNotHeld.j?.error?.code} free=${hFree.s}/${hFreeRow?.hold_until} ok=${hOk.s} ${hOk.j?.error?.message ?? ''} pool=${poolOds(PR).join(',')} row=${JSON.stringify(holdRow)} day=${mkDay.s} ex=${JSON.stringify(exH)}`)
+    // 05/10 (user: "bản chất nó bị loại bỏ khỏi kế hoạch"): dấu tay KHÔNG nằm trong kế hoạch — trước đó mỗi kế hoạch về sau mang theo mọi
+    // đơn từng đánh dấu (params.excluded HELD / OUTSIDE_APP chỉ tăng). Số đếm ba tab trả cả khi không xin dòng; chi tiết OD mang dấu mở được.
+    const mkCnt = await api(`/tms/dispatch/plans/${pid(PR)}/marks`)
+    const mkBad = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=XYZ`)
+    const odMarked = await api(`/tms/dispatch/plans/${pid(PR)}/ods/${OD[2]}`)
+    check('15b2. Dấu tay KHÔNG chép vào kế hoạch: params.excluded không có HELD · GET /marks không kind → số đếm DAY 1, không dòng · kind lạ → 400 · chi tiết OD mang dấu (không nằm trong kế hoạch) → 200',
+      !(PR?.params?.excluded ?? []).some(x => x.kind === 'HELD' || x.kind === 'OUTSIDE_APP') && mkCnt.s === 200 && mkCnt.j?.data?.counts?.DAY === 1 && (mkCnt.j?.data?.rows ?? []).length === 0
+      && mkBad.s === 400 && odMarked.s === 200 && (odMarked.j?.data?.lines ?? []).length >= 1,
+      `kinds=${JSON.stringify((PR?.params?.excluded ?? []).map(x => x.kind))} cnt=${mkCnt.s}/${JSON.stringify(mkCnt.j?.data?.counts)} rows=${(mkCnt.j?.data?.rows ?? []).length} bad=${mkBad.s} od=${odMarked.s} ${odMarked.j?.error?.code ?? ''}`)
     const syncH = await api(`/tms/dispatch/plans/${pid(PR)}/sync`)
     const pAgain = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     PR = pAgain.j?.data
-    check('15c. Dấu hoãn GIỮ qua lần nạp / lập lại: "OD mới" không đếm OD3 · lập lại không đưa OD3 vào · vẫn liệt kê HELD',
+    const mkAgain = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY`)
+    check('15c. Dấu hoãn GIỮ qua lần nạp / lập lại: "OD mới" không đếm OD3 · lập lại không đưa OD3 vào · kế hoạch mới vẫn liệt kê OD3 ở tab Không điều ngày này (sổ dấu), không chép vào params',
       syncH.s === 200 && !(syncH.j?.data?.new_od_numbers ?? []).includes(OD[2]) && pAgain.s === 201 && !poolOds(PR).includes(OD[2])
-      && (PR?.params?.excluded ?? []).some(x => x.od_number === OD[2] && x.kind === 'HELD'),
-      `sync=${syncH.s} new=${JSON.stringify(syncH.j?.data?.new_od_numbers)} again=${pAgain.s} pool=${poolOds(PR).join(',')}`)
+      && (mkAgain.j?.data?.rows ?? []).some(x => x.od_number === OD[2]) && !(PR?.params?.excluded ?? []).some(x => x.od_number === OD[2]),
+      `sync=${syncH.s} new=${JSON.stringify(syncH.j?.data?.new_od_numbers)} again=${pAgain.s} pool=${poolOds(PR).join(',')} marks=${mkAgain.s}/${(mkAgain.j?.data?.rows ?? []).map(x => x.od_number).join(',')}`)
     const r1 = (PR?.pool ?? []).find(o => o.od_number === OD[0])
     const rs = await api(`/tms/dispatch/plans/${pid(PR)}/reoptimize`, 'POST', { ids: [r1?.id] })
     PR = rs.j?.data
@@ -1167,8 +1181,9 @@ try {
     const r1t = rowNow(PR, OD[0])
     const hT = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r1t?.id], until: next, reason: 'QA rút hết xe' })
     const PH = hT.j?.data
-    check('15d2. Không điều OD duy nhất của một xe → xe đó bị BỎ (held.trips_removed = 1, 0 xe, summary.empty_trips = 0), OD về HELD',
-      hT.s === 200 && hT.j?.data?.held?.trips_removed === 1 && (PH?.trips ?? []).length === 0 && (PH?.summary?.empty_trips ?? 0) === 0 && (PH?.params?.excluded ?? []).some(x => x.od_number === OD[0] && x.kind === 'HELD'),
+    const holdT = (await restAll('dispatch_od_hold', `select=hold_until&warehouse_id=eq.${WH}&od_number=eq.${OD[0]}`))[0]
+    check('15d2. Không điều OD duy nhất của một xe → xe đó bị BỎ (held.trips_removed = 1, 0 xe, summary.empty_trips = 0), OD vào sổ hoãn',
+      hT.s === 200 && hT.j?.data?.held?.trips_removed === 1 && (PH?.trips ?? []).length === 0 && (PH?.summary?.empty_trips ?? 0) === 0 && holdT?.hold_until === next,
       `http=${hT.s} ${hT.j?.error?.message ?? ''} removed=${hT.j?.data?.held?.trips_removed} trips=${(PH?.trips ?? []).length} empty=${PH?.summary?.empty_trips}`)
     // trả về trạng thái sau 15d cho các phép sau: bỏ hoãn OD1 → về khung chờ → ghép riêng OD1 lên xe
     await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[0]] })
@@ -1179,9 +1194,11 @@ try {
     PR = uOk.j?.data
     const uAgain = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })
     const holdLeft = (await restAll('dispatch_od_hold', `select=id&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`)).length
-    check('15e. Bỏ hoãn → OD3 về NGAY khung chờ với mốc ĐÃ XEM (người bỏ hoãn đã quyết), sổ hoãn trống, hết dòng HELD · bỏ hoãn lần hai → 404',
-      uOk.s === 200 && uOk.j?.data?.unheld?.back_to_pool === 1 && poolOds(PR).includes(OD[2]) && !!rowNow(PR, OD[2])?.reviewed_at && holdLeft === 0 && !(PR?.params?.excluded ?? []).some(x => x.kind === 'HELD') && uAgain.s === 404,
-      `ok=${uOk.s} ${uOk.j?.error?.message ?? ''} back=${uOk.j?.data?.unheld?.back_to_pool} pool=${poolOds(PR).join(',')} rev=${rowNow(PR, OD[2])?.reviewed_at} left=${holdLeft} again=${uAgain.s}`)
+    const mkLeft = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY`)
+    check('15e. Bỏ hoãn → OD3 về NGAY khung chờ với mốc ĐÃ XEM (người bỏ hoãn đã quyết), sổ hoãn trống, tab Không điều ngày này hết OD3 · bỏ hoãn lần hai → 404',
+      uOk.s === 200 && uOk.j?.data?.unheld?.back_to_pool === 1 && poolOds(PR).includes(OD[2]) && !!rowNow(PR, OD[2])?.reviewed_at && holdLeft === 0
+      && mkLeft.s === 200 && !(mkLeft.j?.data?.rows ?? []).some(x => x.od_number === OD[2]) && uAgain.s === 404,
+      `ok=${uOk.s} ${uOk.j?.error?.message ?? ''} back=${uOk.j?.data?.unheld?.back_to_pool} pool=${poolOds(PR).join(',')} rev=${rowNow(PR, OD[2])?.reviewed_at} left=${holdLeft} marks=${(mkLeft.j?.data?.rows ?? []).map(x => x.od_number).join(',')} again=${uAgain.s}`)
     // BẢNG XEM ĐƠN (27/09 khuya, user: "thiếu SO, người tạo, ghi chú, thùng, loại kho… cần xem được detail"): thông tin SAP
     // từng OD gọi riêng; "Không điều ngày này" đã tới ngày ⇒ OD về Điều kèm ghi chú lần hoãn trước (giả lập dấu hôm qua hẹn tới hôm nay)
     const hPrev = await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD[1], hold_until: DAY, reason: 'QA61 hẹn hôm nay', created_by: 'QA61', updated_at: nowIso() })
@@ -1464,14 +1481,17 @@ try {
     // Ngoài app: dấu tay theo số OD · bảng dấu · GET coverage · bỏ dấu ⇒ về khung chờ · theo id dòng · lý do rỗng 400
     const outR = await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { od_numbers: [OD[2]], reason: 'QA61 đã điều tay ngoài app' })
     const outRow = (await restAll('dispatch_od_outside', `select=od_number,reason&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`))[0]
+    const mkOut = await api(`/tms/dispatch/plans/${BID}/marks?kind=OUTSIDE`)
+    const exOut = (mkOut.j?.data?.rows ?? []).find(x => x.od_number === OD[2])
     // coverage đếm cả plant thật (Ba Vì ~16k dòng ZSD02) — staging NANO lúc bận trả 503 QUERY_TIMEOUT (quá tải, không phải hỏng): thử lại MỘT lần sau 4 s
     let covB = wh?.sap_plant ? await api(`/external/do-sap/coverage?plant=${wh.sap_plant}`) : { s: 0, j: null }
     if (covB.s === 503 && wh?.sap_plant) { await new Promise(r => setTimeout(r, 4000)); covB = await api(`/external/do-sap/coverage?plant=${wh.sap_plant}`) }
     const unR = await api(`/tms/dispatch/plans/${BID}/unoutside`, 'POST', { od_numbers: [OD[2]] })
-    check('17h. Ngoài app: đánh dấu → OD rời khung chờ, excluded OUTSIDE_APP kèm lý do, bảng dấu có dòng · GET /do-sap/coverage 200 · bỏ dấu → về khung chờ',
-      outR.s === 200 && !rowOf(outR.j?.data, OD[2]) && (outR.j?.data?.params?.excluded ?? []).some(x => x.od_number === OD[2] && x.kind === 'OUTSIDE_APP') && outRow?.reason === 'QA61 đã điều tay ngoài app'
+    check('17h. Ngoài app: đánh dấu → OD rời khung chờ, tab Ngoài app (sổ dấu, GET /marks) có OD kèm lý do, KHÔNG chép vào params.excluded · bảng dấu có dòng · GET /do-sap/coverage 200 · bỏ dấu → về khung chờ',
+      outR.s === 200 && !rowOf(outR.j?.data, OD[2]) && exOut?.kind === 'OUTSIDE' && exOut?.reason === 'QA61 đã điều tay ngoài app' && !(outR.j?.data?.params?.excluded ?? []).some(x => x.od_number === OD[2])
+      && outRow?.reason === 'QA61 đã điều tay ngoài app'
       && covB.s === 200 && Array.isArray(covB.j?.data?.by_od_created) && unR.s === 200 && !!rowOf(unR.j?.data, OD[2]),
-      `out=${outR.s} ${outR.j?.error?.message ?? ''} row=${!!outRow} cov=${covB.s} pending=${covB.j?.data?.pending_ods} un=${unR.s} back=${!!rowOf(unR.j?.data, OD[2])}`)
+      `out=${outR.s} ${outR.j?.error?.message ?? ''} marks=${mkOut.s}/${JSON.stringify(exOut ?? null)?.slice(0, 120)} row=${!!outRow} cov=${covB.s} pending=${covB.j?.data?.pending_ods} un=${unR.s} back=${!!rowOf(unR.j?.data, OD[2])}`)
     const idB = rowOf(unR.j?.data, OD[2])?.id
     const outR2 = idB ? await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { ids: [idB], reason: 'QA61 SAP đã post' }) : { s: 0, j: null }
     const outBad = await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { od_numbers: [OD[1]], reason: '' })

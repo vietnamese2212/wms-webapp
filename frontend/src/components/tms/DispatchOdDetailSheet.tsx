@@ -11,7 +11,7 @@ import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 
-export type OdSummary = { od: string; where: string; tone: 'green' | 'amber' | 'slate' | 'red' | 'blue' | 'purple'; cust: string; ward: string; region: string; date: string; late: number; flag: string; reason: string }
+export type OdSummary = { od: string; where: string; tone: 'green' | 'amber' | 'slate' | 'red' | 'blue' | 'purple'; cust: string; ward: string; region: string; date: string; flag: string; reason: string }
 
 function DRow({ label, value }: { label: string; value: ReactNode }) {
   if (value == null || value === '' || (Array.isArray(value) && !value.length)) return null
@@ -40,7 +40,6 @@ export function DispatchOdDetailSheet({ planId, sum, info, onClose }: { planId: 
             <SheetTitle className="text-sm flex items-center gap-2 flex-wrap">
               <span className="font-mono">OD {sum?.od}</span>
               {sum && <StatusBadge tone={sum.tone}>{sum.where}</StatusBadge>}
-              {(sum?.late ?? 0) > 0 && <span className="rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">trễ {sum?.late} ngày</span>}
             </SheetTitle>
           </SheetHeader>
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">

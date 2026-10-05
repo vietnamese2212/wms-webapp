@@ -55,7 +55,7 @@ export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
     { label: 'Cước / pallet', value: s.freight_per_pallet == null ? '—' : money(s.freight_per_pallet), tip: 'Σ cước ÷ pallet của các xe CÓ cước' },
     { label: 'Non tải', value: <>{nf(s.underload)}{delta(s.underload, b?.underload, n => nf(n))}</>, accent: s.underload > 0 },
     { label: 'Vượt tải', value: nf(s.overload ?? 0), danger: (s.overload ?? 0) > 0, tip: 'Xe vượt sức chứa dòng xe — vẫn xác nhận được, nhưng phải chắc xe chở nổi' },
-    { label: 'Khung chờ', value: `${nf(s.pool_ods ?? 0)} OD`, accent: (s.pool_ods ?? 0) > 0, tip: `${nf(s.pool_pallets ?? 0, 1)} pallet chưa lên xe nào — OD ở khung chờ KHÔNG đi khi Xác nhận${s.late_ods ? ` · ${s.late_ods} OD tồn đọng (ngày giao trước)` : ''}` },
+    { label: 'Khung chờ', value: `${nf(s.pool_ods ?? 0)} OD`, accent: (s.pool_ods ?? 0) > 0, tip: `${nf(s.pool_pallets ?? 0, 1)} pallet chưa lên xe nào — OD ở khung chờ KHÔNG đi khi Xác nhận` },
     ...(plan.status !== 'DRAFT' ? [
       { label: 'Chờ ĐVVT', value: nf(s.tendered ?? 0), accent: (s.tendered ?? 0) > 0, tip: 'Xe đã chào, ĐVVT chưa trả lời — ghi "ĐVVT nhận / từ chối" trong panel xe' },
       { label: 'ĐVVT từ chối', value: nf(s.declined ?? 0), accent: (s.declined ?? 0) > 0, tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"' },

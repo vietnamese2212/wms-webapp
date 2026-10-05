@@ -556,7 +556,7 @@ try {
   check('10o. Đầu vào sai: thay OD chưa bị thay → 422 NOT_REPLACED · ids rỗng → 400 · id kế hoạch rác → 400 · dòng không thuộc kế hoạch → 404',
     rpAgain.s === 422 && rpAgain.j?.error?.code === 'NOT_REPLACED' && mBad.s === 400 && mBad2.s === 400 && mBad3.s === 404,
     `rp=${rpAgain.s}/${rpAgain.j?.error?.code} empty=${mBad.s} junkplan=${mBad2.s} foreign=${mBad3.s}`)
-  // LŨY TIẾN lúc LẬP: OD đã xuất kho tự rời đợt ghép + OD tồn đọng ngày trước gộp vào kèm số ngày trễ
+  // LŨY TIẾN lúc LẬP: OD đã post ở SAP vẫn vào + OD ngày giao trước gộp vào (05/10 khuya: không "trễ n ngày" — ngày giao chỉ hiển thị)
   await cleanupTrips()
   await restWrite('erp_outbound_orders', 'PATCH', `od_number=eq.${OD[0]}`, { mat_doc: 'QA61MATDOC', updated_at: nowIso() })
   const OD6 = 'QA61OD6', LATE = '2027-03-14'
@@ -565,8 +565,8 @@ try {
     ship_to_code: SHIP[1], ship_to_name: 'QA61 NPP 2', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: LATE, flow: 'SALE',
     source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
   })
-  // OD TRẢ VỀ đúng ngày: máy đưa vào "không lên xe" — /sync KHÔNG được đếm nó là "OD mới" (Preview 25/09: báo "12 OD mới"
-  // ngay sau khi vừa lập, đúng 12 OD RETURN của Ba Vì)
+  // OD TRẢ VỀ: không phải việc của xe — /sync KHÔNG được đếm nó là "OD mới" (Preview 25/09: báo "12 OD mới" ngay sau khi vừa lập,
+  // đúng 12 OD RETURN của Ba Vì). 05/10 khuya bỏ ngày giao ⇒ không còn "đúng ngày" để hiện ở "không lên xe": đơn trả về không vào kế hoạch
   const OD7 = 'QA61OD7'
   await restWrite('erp_outbound_orders', 'POST', null, {
     id: crypto.randomUUID(), od_number: OD7, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet,
@@ -576,17 +576,18 @@ try {
   const pl2 = await mkPlan(PLAN_BODY)
   const P2 = pl2.j?.data
   const sy4 = await api(`/tms/dispatch/plans/${P2?.id}/sync`)
-  check('10q. OD trả về (RETURN) nằm ở "không lên xe" và /sync KHÔNG báo nó là OD mới (0 OD mới ngay sau khi lập)',
-    (P2?.unplanned ?? []).some(u => u.od_number === OD7) && sy4.s === 200 && !(sy4.j?.data?.new_od_numbers ?? []).includes(OD7) && sy4.j?.data?.new_ods === 0,
+  check('10q. OD trả về (RETURN) KHÔNG vào kế hoạch (không khung chờ / xe / "không lên xe") và /sync KHÔNG báo nó là OD mới (0 OD mới ngay sau khi lập)',
+    pl2.s === 201 && !rowOf(P2, OD7) && !(P2?.unplanned ?? []).some(u => u.od_number === OD7) && sy4.s === 200 && !(sy4.j?.data?.new_od_numbers ?? []).includes(OD7) && sy4.j?.data?.new_ods === 0,
     `unplanned=${(P2?.unplanned ?? []).map(u => u.od_number).join(',')} sync=${sy4.s} new=${JSON.stringify(sy4.j?.data?.new_od_numbers ?? sy4.j?.error)}`)
   const ex1 = (P2?.params?.excluded ?? []).find(x => x.od_number === OD[0])
   const r6 = rowOf(P2, OD6)
   const fl1 = (sy4.j?.data?.flags ?? []).find(f => f.od_number === OD[0])
   // 03/10 tối (user: "dựa theo SAP sẽ rối loạn — lấy theo lịch sử của app và dấu tay"): OD đã post ở SAP KHÔNG bị loại nữa — vào đợt
   // ghép như thường, /sync cắm cờ SHIPPED làm THAM CHIẾU; người quyết bằng dấu Ngoài app. Bản 25/09 loại nó sang "đã bỏ ra".
-  check('10p. Lập kế hoạch: OD đã post ở SAP VẪN vào (không nằm "đã bỏ ra"), /sync cắm cờ SHIPPED tham chiếu · OD tồn đọng 14/03 lên xe kèm trễ 2 ngày',
-    pl2.s === 201 && !!rowOf(P2, OD[0]) && !ex1 && fl1?.kind === 'SHIPPED' && !!r6?.trip_id && r6?.late_days === 2 && r6?.delivery_date === LATE && P2?.summary?.late_ods === 1,
-    `http=${pl2.s} ${pl2.j?.error?.message ?? ''} od1=${!!rowOf(P2, OD[0])} ex=${JSON.stringify(ex1 ?? null)} flag=${fl1?.kind} late=${JSON.stringify({ t: r6?.trip_id != null, d: r6?.late_days, dd: r6?.delivery_date, n: P2?.summary?.late_ods })}`)
+  // 05/10 khuya: ngày giao SAP chỉ để hiển thị — không "trễ n ngày" (user: "trong đó không có ngày giao đáng tin cậy")
+  check('10p. Lập kế hoạch: OD đã post ở SAP VẪN vào (không nằm "đã bỏ ra"), /sync cắm cờ SHIPPED tham chiếu · OD ngày giao 14/03 lên xe, dòng mang ngày giao SAP để hiển thị',
+    pl2.s === 201 && !!rowOf(P2, OD[0]) && !ex1 && fl1?.kind === 'SHIPPED' && !!r6?.trip_id && r6?.delivery_date === LATE,
+    `http=${pl2.s} ${pl2.j?.error?.message ?? ''} od1=${!!rowOf(P2, OD[0])} ex=${JSON.stringify(ex1 ?? null)} flag=${fl1?.kind} od6=${JSON.stringify({ t: r6?.trip_id != null, dd: r6?.delivery_date })}`)
   // 29/09 (Ba Vì thật: 17 OD "SAP đã sửa" oan): dòng CHIẾT KHẤU (mã 9100000xx) của OD TỒN ĐỌNG không vào bản chụp (không lên xe
   // được) ⇒ /sync cũng phải bỏ nó khi so — dòng đó có sẵn trong ZSD02 từ trước, SAP không sửa gì
   await restWrite('erp_outbound_orders', 'POST', null, {
@@ -627,21 +628,35 @@ try {
   // 05/10 (user chốt: trạng thái chỉ là Đã đi · chưa đi Trung chuyển / Bán hàng · Không liên quan · Không điều…): BỎ cửa sổ 14 ngày —
   // đơn ngày giao 01/02 chưa đi vẫn là việc của bàn; dấu hẹn tới ngày đã qua (20/02, quá 14 ngày) hết hiệu lực ⇒ đơn VÀO kèm số ngày trễ.
   // (29/09–04/10 phép này kiểm ngược lại: hẹn quá 14 ngày là "lịch sử", không vào.)
-  const OLD_DD = '2027-02-01', OD_H1 = 'QA61ODH1', OD_H2 = 'QA61ODH2'
-  for (const [od, ship] of [[OD_H1, SHIP[0]], [OD_H2, SHIP[1]]]) await restWrite('erp_outbound_orders', 'POST', null, {
+  // 05/10 khuya (user: "gỡ luật, dữ liệu trong zsd02 mặc kệ nó, trong đó không có ngày giao đáng tin cậy. USER sẽ là người chọn"):
+  // NGÀY GIAO KHÔNG QUYẾT ĐƠN VÀO / RA — đơn ghi ngày giao SAU ngày lập (Ba Vì thật: 9 STO ghi năm 2040) cũng vào tab Điều; tab Đã điều
+  // của ngày lập = đơn có NGÀY XUẤT (Kế hoạch xuất) = ngày lập, không theo ngày giao SAP. Bản cũ: ODFUT vắng mặt ở mọi tab tới 2040,
+  // ODKX (ngày giao 14/03, xuất 16/03) không hiện ở Đã điều ngày 16/03, ODKY (ngày giao 16/03, xuất 10/03) hiện nhầm ở đó.
+  const OLD_DD = '2027-02-01', OD_H1 = 'QA61ODH1', OD_H2 = 'QA61ODH2', OD_FUT = 'QA61ODFUT', OD_KX = 'QA61ODKX', OD_KY = 'QA61ODKY'
+  for (const [od, ship, dd] of [[OD_H1, SHIP[0], OLD_DD], [OD_H2, SHIP[1], OLD_DD], [OD_FUT, SHIP[0], '2040-10-03'], [OD_KX, SHIP[1], LATE], [OD_KY, SHIP[1], DAY]]) await restWrite('erp_outbound_orders', 'POST', null, {
     id: crypto.randomUUID(), od_number: od, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet,
-    ship_to_code: ship, ship_to_name: 'QA61 NPP', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: OLD_DD, flow: 'SALE',
+    ship_to_code: ship, ship_to_name: 'QA61 NPP', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: dd, flow: 'SALE',
     source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(),
   })
   await cleanupTrips()   // bỏ kế hoạch P2 (OD6/OD7 về sổ) — dấu hoãn QA ghi SAU vì cleanupTrips xoá dấu QA61*
+  await restWrite('khvc_lines', 'POST', null, { id: crypto.randomUUID(), group_code: `${PREFIX}97`, do_no: OD_KX, warehouse_code: QAWH.code, export_date: DAY, source: 'EXCEL', sync_status: 'ACTIVE', updated_at: nowIso() })
+  await restWrite('khvc_lines', 'POST', null, { id: crypto.randomUUID(), group_code: `${PREFIX}96`, do_no: OD_KY, warehouse_code: QAWH.code, export_date: '2027-03-10', source: 'EXCEL', sync_status: 'ACTIVE', updated_at: nowIso() })
   await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD_H1, hold_until: '2027-02-20', reason: 'QA61 hẹn quá 14 ngày', created_by: 'QA61', updated_at: nowIso() })
   await restWrite('dispatch_od_hold', 'POST', null, { id: crypto.randomUUID(), warehouse_id: WH, od_number: OD_H2, hold_until: '2027-03-10', reason: 'QA61 hẹn trong cửa sổ', created_by: 'QA61', updated_at: nowIso() })
   const pl3 = await mkPlan(PLAN_BODY)
   const P3 = pl3.j?.data
-  check('10p3. KHÔNG CÒN CỬA SỔ 14 NGÀY: OD ngày giao 01/02 có dấu hẹn 20/02 (đã qua, quá 14 ngày trước ngày lập) ⇒ VÀO kế hoạch, trễ 43 ngày · hẹn 10/03 ⇒ vào',
-    pl3.s === 201 && !!rowOf(P3, OD_H1) && rowOf(P3, OD_H1)?.late_days === 43 && !!rowOf(P3, OD_H2),
-    `http=${pl3.s} ${pl3.j?.error?.message ?? ''} h1=${!!rowOf(P3, OD_H1)} trễ=${rowOf(P3, OD_H1)?.late_days} h2=${!!rowOf(P3, OD_H2)}`)
-  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${OD_H1},${OD_H2})`).catch(() => {})
+  check('10p3. KHÔNG CÒN CỬA SỔ 14 NGÀY: OD ngày giao 01/02 có dấu hẹn 20/02 (đã qua, quá 14 ngày trước ngày lập) ⇒ VÀO kế hoạch · hẹn 10/03 ⇒ vào',
+    pl3.s === 201 && !!rowOf(P3, OD_H1) && !!rowOf(P3, OD_H2),
+    `http=${pl3.s} ${pl3.j?.error?.message ?? ''} h1=${!!rowOf(P3, OD_H1)} h2=${!!rowOf(P3, OD_H2)}`)
+  const exP3 = P3?.params?.excluded ?? []
+  const blP3 = await api(`/tms/dispatch/plans/${P3?.id}/backlog`)
+  const blOds = (blP3.j?.data?.excluded ?? []).map(x => x.od_number)
+  check('10p6. NGÀY GIAO KHÔNG QUYẾT (05/10 khuya): OD ghi ngày giao 03/10/2040 (sau ngày lập) VÀO tab Điều · Đã điều theo NGÀY XUẤT: OD ngày giao 14/03 xuất 16/03 hiện IN_PLAN ở kế hoạch 16/03, OD ngày giao 16/03 xuất 10/03 KHÔNG hiện mà nằm ở "Xem cả đơn đã điều ngày khác"',
+    pl3.s === 201 && !!rowOf(P3, OD_FUT) && exP3.some(x => x.od_number === OD_KX && x.kind === 'IN_PLAN') && !exP3.some(x => x.od_number === OD_KY) && !rowOf(P3, OD_KY)
+    && blP3.s === 200 && blOds.includes(OD_KY) && !blOds.includes(OD_KX),
+    `fut=${!!rowOf(P3, OD_FUT)} kx=${JSON.stringify(exP3.find(x => x.od_number === OD_KX) ?? null)?.slice(0, 120)} ky=${exP3.some(x => x.od_number === OD_KY)}/${!!rowOf(P3, OD_KY)} backlog=${blP3.s} ${blOds.filter(o => o.startsWith('QA61')).join(',')}`)
+  await restWrite('khvc_lines', 'DELETE', `group_code=in.(${PREFIX}97,${PREFIX}96)`).catch(() => {})
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${OD_H1},${OD_H2},${OD_FUT},${OD_KX},${OD_KY})`).catch(() => {})
 
   // ── [11] SỐ KHÁCH TRÊN MỘT XE THEO DÒNG XE + MỞ LẠI (29/09 — user: "bỏ loại xe, chọn dòng xe luôn") ────────────
   // Không còn kiểu đi Pallet / Xá. "Xe pallet chỉ một khách" = `max_drops = 1` khai ở CHÍNH dòng xe (Cài đặt TMS → Mã dòng xe);
@@ -1505,17 +1520,17 @@ try {
     const outBad = await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { od_numbers: [OD[1]], reason: '' })
     check('17h2. Ngoài app theo dòng kế hoạch (ids) → 200, OD rời khung chờ · lý do rỗng → 400', outR2.s === 200 && !rowOf(outR2.j?.data, OD[2]) && outBad.s === 400, `ids=${outR2.s} ${outR2.j?.error?.message ?? ''} bad=${outBad.s}`)
     // ── [17i] (05/10) BỎ CỬA SỔ 14 NGÀY + băng "quá hạn chưa quyết" (user chốt: trạng thái chỉ là Đã đi · chưa đi Trung chuyển / Bán
-    // hàng · Không liên quan · Không điều…): đơn ngày giao 2020 chưa xử lý là CHƯA ĐI ⇒ /sync báo OD mới, Nạp OD mới đưa vào tab Điều
-    // kèm số ngày trễ. A2 = nháp DAY (OD1 trên xe), B = nháp DAY2. (03–04/10: [17i–17k] kiểm băng quá hạn — băng đã bỏ.)
+    // hàng · Không liên quan · Không điều…): đơn ngày giao 2020 chưa xử lý là CHƯA ĐI ⇒ /sync báo OD mới, Nạp OD mới đưa vào tab Điều.
+    // A2 = nháp DAY (OD1 trên xe), B = nháp DAY2. (03–04/10: [17i–17k] kiểm băng quá hạn — băng đã bỏ.)
     const erpRow = (od, dd) => ({ id: crypto.randomUUID(), od_number: od, od_item: '10', material_code: FIX.MAT_POOL, qty_base: perPallet, ship_to_code: SHIP[0], ship_to_name: 'QA61 NPP 1', ward_code: W1, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: dd, flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso() })
     const ODST = 'QA61ODSTALE', ODST3 = 'QA61ODST3'
     await restWrite('erp_outbound_orders', 'POST', null, erpRow(ODST, '2020-01-01'))
     const syBi = await api(`/tms/dispatch/plans/${BID}/sync`)
     const rfBi = await api(`/tms/dispatch/plans/${BID}/refresh-pool`, 'POST', {})
     const rST = rowOf(rfBi.j?.data, ODST)
-    check('17i. KHÔNG CÒN CỬA SỔ 14 NGÀY: đơn ngày giao 01/01/2020 chưa xử lý → /sync báo OD mới · Nạp OD mới đưa vào khung chờ (tab Điều) kèm số ngày trễ',
-      syBi.s === 200 && (syBi.j?.data?.new_od_numbers ?? []).includes(ODST) && rfBi.s === 200 && !!rST && !rST.trip_id && Number(rST.late_days) > 2000,
-      `sync=${syBi.s} mới=${JSON.stringify(syBi.j?.data?.new_od_numbers ?? [])} nạp=${rfBi.s} ${rfBi.j?.error?.message ?? ''} trongB=${!!rST} trễ=${rST?.late_days}`)
+    check('17i. KHÔNG CÒN CỬA SỔ 14 NGÀY: đơn ngày giao 01/01/2020 chưa xử lý → /sync báo OD mới · Nạp OD mới đưa vào khung chờ (tab Điều)',
+      syBi.s === 200 && (syBi.j?.data?.new_od_numbers ?? []).includes(ODST) && rfBi.s === 200 && !!rST && !rST.trip_id,
+      `sync=${syBi.s} mới=${JSON.stringify(syBi.j?.data?.new_od_numbers ?? [])} nạp=${rfBi.s} ${rfBi.j?.error?.message ?? ''} trongB=${!!rST}`)
     // 17l — dấu tay toàn kho: đơn ở khung chờ nháp khác → rời khung chờ đó (trigger) · đơn TRÊN XE nháp khác → 409, không để lại dấu.
     // ODST3 vào khung chờ nháp DAY (A2) và CHƯA vào B (B không nạp lại sau khi ODST3 có mặt).
     await restWrite('erp_outbound_orders', 'POST', null, erpRow(ODST3, '2020-01-01'))

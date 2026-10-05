@@ -47,7 +47,8 @@ const nextDay = (d: string) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCD
 //   • ELSEWHERE "Đang xếp nơi khác" = đơn đang trên XE của một nháp khác (nháp nào · ai · xe số mấy) — Mở nháp đó / Kéo về đây.
 //   • OUTSIDE "Ngoài app" = dấu tay: đơn đã xử lý ngoài bàn (SAP tự gắn xe · điều tay · trước khi dùng app). Cờ SAP post / gắn xe KHÔNG
 //     còn tự đưa đơn sang Đã điều — chúng là cờ vàng ở tab Điều, người bấm "Ngoài app" (hàng loạt) nếu đúng là đã đi.
-//   • (05/10) KHÔNG có cửa sổ ngày: đơn cũ chưa đi nằm ở Điều kèm "trễ N ngày" — băng "quá N ngày chưa quyết" (03/10) đã bỏ.
+//   • (05/10 khuya) NGÀY GIAO ZSD02 KHÔNG QUYẾT GÌ (user: "trong đó không có ngày giao đáng tin cậy, USER sẽ là người chọn"): đơn
+//     chưa đi ở MỌI ngày giao — trước, đúng hay sau ngày lập — nằm ở Điều; cột Ngày giao chỉ là số SAP để đọc, không "trễ N ngày".
 //   • ISSUE "Cần xử lý" (03/10 đợt 2) = hàng chờ quyết định theo KHO: đơn ĐÃ VÀO Kế hoạch xuất mà SAP bỏ / thay, họ hàng đã đi, SL đổi
 //     sau khi kho quét — bảng riêng (DispatchDecisionQueue), không phải dòng OD của kế hoạch này.
 //   • GO nay là HAI tab theo MẢNG (03/10 tối): "Trung chuyển" | "Bán hàng" — mỗi mảng một kế hoạch riêng cùng kho × ngày; tab của mảng
@@ -59,7 +60,7 @@ type Tone = 'green' | 'amber' | 'slate' | 'red' | 'blue' | 'purple'
 type Row = {
   key: string; od: string; ids: string[]; held: boolean; selectable: boolean
   where: string; tone: Tone; cust: string; ward: string; region: string
-  pallets: number | null; tons: number | null; date: string; late: number; note: string; flag: string; until: string | null; reason: string
+  pallets: number | null; tons: number | null; date: string; note: string; flag: string; until: string | null; reason: string
   fresh?: boolean
   noVeh?: boolean   // khách + kênh chưa khai Dòng xe được vào (28/09) — máy không chọn xe
   outside?: boolean   // mang dấu Ngoài app (tab OUTSIDE) — tick để Điều lại
@@ -168,7 +169,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         od: o.od_number, ids: [o.id], held: false, selectable: draft && editable,
         where: draft ? `Xe #${t.seq}` : `Xe #${t.seq} · ${s === 'CONFIRMED' ? 'đã xác nhận' : 'chờ ĐVVT'}`, tone: draft ? 'blue' : 'green',
         cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
-        pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '', late: o.late_days ?? 0,
+        pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
         note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '',
       })
     }
@@ -176,13 +177,13 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     for (const o of plan.pool ?? []) add('GO', `GO|${o.od_number}`, {
       od: o.od_number, ids: [o.id], held: false, selectable: editable, where: 'Khung chờ', tone: 'amber',
       cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
-      pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '', late: o.late_days ?? 0,
+      pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
       note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number), noVeh: noVehOf(o),
     })
     // OD máy không đo được tải / không lên xe (hàng trả về, chiết khấu…) — nằm ở Điều để người thấy, nhưng không chọn được
     for (const u of plan.unplanned) if (!agg.has(`GO|${u.od_number}`)) add('GO', `GO|${u.od_number}`, {
       od: u.od_number, ids: [], held: false, selectable: false, where: 'Không lên xe', tone: 'red', cust: u.ship_to_code ?? '', ward: '', region: '',
-      pallets: null, tons: null, date: '', late: 0, note: '', flag: u.reason, until: null, reason: '',
+      pallets: null, tons: null, date: '', note: '', flag: u.reason, until: null, reason: '',
     })
     for (const x of plan.params.excluded ?? []) {
       // 05/10: dấu tay đọc thẳng sổ dấu (vòng `marks` bên dưới) — dòng HELD / OUTSIDE_APP của kế hoạch lập trước đó là bản chụp cũ, bỏ qua
@@ -190,7 +191,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       const d = x.d
       const base = {
         od: x.od_number, ids: [], cust: d?.ship_to_name ?? d?.ship_to_code ?? '', ward: d?.ward_code ?? '', region: d?.region_name ?? d?.region_code ?? '',
-        pallets: d?.pallets ?? null, tons: d?.tons ?? null, date: d?.delivery_date ?? '', late: 0, note: d?.note ?? '',
+        pallets: d?.pallets ?? null, tons: d?.tons ?? null, date: d?.delivery_date ?? '', note: d?.note ?? '',
       }
       if (x.kind === 'NO_MATERIAL') {
         // 03/10: mã chưa khai trong Mã hàng ⇒ máy không ghép — nằm ở Điều để người thấy việc phải làm (khai mã), không chọn được
@@ -211,7 +212,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     // tab dấu tay đang mở: dòng đọc thẳng sổ dấu (Không điều ngày này · Không điều = dấu hoãn; Ngoài app = dấu Ngoài app)
     for (const m of marks.data?.rows ?? []) add(m.kind, `${m.kind}|${m.od_number}`, {
       od: m.od_number, ids: [], cust: m.ship_to_name ?? m.ship_to_code ?? '', ward: m.ward_code ?? '', region: m.region_name ?? m.region_code ?? '',
-      pallets: m.pallets == null ? null : Number(m.pallets), tons: m.tons == null ? null : Number(m.tons), date: m.delivery_date ?? '', late: 0, note: m.note ?? '',
+      pallets: m.pallets == null ? null : Number(m.pallets), tons: m.tons == null ? null : Number(m.tons), date: m.delivery_date ?? '', note: m.note ?? '',
       held: m.kind !== 'OUTSIDE', outside: m.kind === 'OUTSIDE', selectable: editable, tone: 'slate', flag: '', until: m.hold_until, reason: m.reason ?? '',
       by: m.marked_by ?? '', at: m.marked_at,
       where: m.kind === 'DAY' ? `Điều lại từ ${dmy(m.hold_until)}` : m.kind === 'NEVER' ? 'Không điều' : 'Ngoài app',
@@ -221,20 +222,19 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     return out
   }, [plan, flags, editable, hidden, marks.data])
 
-  // TỒN ĐỌNG ĐÃ ĐI (30/09, user: "170 đơn đi đâu mất, sao không nằm trong Đã điều"): máy loại đúng nhưng không nằm trong kế hoạch
-  // (ở kho lớn là hơn 2.000 dòng lịch sử) — tab Đã điều tải theo yêu cầu, hiện kèm ngày giao để người thấy nó đi đâu
+  // ĐÃ ĐIỀU NGÀY KHÁC (30/09, user: "170 đơn đi đâu mất, sao không nằm trong Đã điều"): đơn đã có trong Kế hoạch xuất với NGÀY XUẤT
+  // khác ngày lập không nằm trong kế hoạch này (ở kho lớn là hơn 2.000 dòng lịch sử) — tab Đã điều tải theo yêu cầu (05/10 khuya:
+  // chọn theo ngày xuất của app, không theo ngày giao ZSD02)
   const [showBacklog, setShowBacklog] = useState(false)
   const backlog = useDispatchPlanBacklog(plan.id, showBacklog && st === 'DONE')
-  const daysLate = (d: string) => Math.max(0, Math.round((Date.parse(`${plan.plan_date}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000))
   const backlogRows = useMemo<Row[]>(() => (showBacklog && st === 'DONE' ? (backlog.data?.excluded ?? []) : []).map(x => ({
     key: `BL|${x.od_number}`, od: x.od_number, ids: [], held: false, selectable: false, where: EX_VI[x.kind] ?? x.kind, tone: 'slate',
     cust: x.d?.ship_to_name ?? x.d?.ship_to_code ?? '', ward: x.d?.ward_code ?? '', region: x.d?.region_name ?? x.d?.region_code ?? '',
-    pallets: x.d?.pallets ?? null, tons: x.d?.tons ?? null, date: x.d?.delivery_date ?? '', late: x.d?.delivery_date ? daysLate(x.d.delivery_date) : 0,
-    note: x.d?.note ?? '', flag: `Tồn đọng · ${EX_VI[x.kind] ?? x.kind}${x.info ? ` — ${x.info}` : ''}`, until: null, reason: '',
+    pallets: x.d?.pallets ?? null, tons: x.d?.tons ?? null, date: x.d?.delivery_date ?? '',
+    note: x.d?.note ?? '', flag: `Đã điều ngày khác · ${EX_VI[x.kind] ?? x.kind}${x.info ? ` — ${x.info}` : ''}`, until: null, reason: '',
     by: x.by ?? '', at: x.at ?? null,
-  })), [showBacklog, st, backlog.data, plan.plan_date]) // eslint-disable-line react-hooks/exhaustive-deps
-  // 05/10: KHÔNG còn băng "quá hạn chưa quyết" — bỏ cửa sổ 14 ngày, đơn cũ chưa đi nằm thẳng ở tab Điều kèm "trễ N ngày" (user chốt:
-  // trạng thái chỉ là các tab — Đã đi · chưa đi Trung chuyển / Bán hàng · Không liên quan · Không điều…)
+  })), [showBacklog, st, backlog.data])
+  // trạng thái chỉ là các tab (user 05/10) — Đã đi · chưa đi Trung chuyển / Bán hàng · Không liên quan · Không điều…; không băng quá hạn
   const tabRows = [...byTab[st], ...backlogRows]
   const q = f.search.trim().toLowerCase()
   const extra = (od: string) => { const i = info[od]; return i ? [...i.so, ...i.created_by, i.note_invoice ?? '', i.route_name ?? '', ...i.categories] : [] }
@@ -526,10 +526,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
           {st === 'DONE' && (
             <button type="button" onClick={() => setShowBacklog(v => !v)} aria-pressed={showBacklog}
               className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] ${showBacklog ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-              title="Đơn ngày giao TRƯỚC ngày lập đã có trong Kế hoạch xuất (hoặc DO tạo lại thay cho đơn đã điều) — không nằm trong kế hoạch này, tải khi bấm (1.000 đơn gần nhất)">
+              title="Đơn đã có trong Kế hoạch xuất với NGÀY XUẤT khác ngày này (hoặc DO tạo lại thay cho đơn đã điều) — không nằm trong kế hoạch này, tải khi bấm (1.000 đơn gần nhất theo ngày xuất)">
               {showBacklog
-                ? (backlog.isLoading ? 'Đang tải đơn tồn đọng đã điều…' : `Đang xem ${nf(backlogRows.length)}${(backlog.data?.total ?? 0) > backlogRows.length ? ` / ${nf(backlog.data?.total)}` : ''} đơn tồn đọng đã điều · ẩn`)
-                : 'Xem cả đơn tồn đọng đã điều'}
+                ? (backlog.isLoading ? 'Đang tải đơn đã điều ngày khác…' : `Đang xem ${nf(backlogRows.length)}${(backlog.data?.total ?? 0) > backlogRows.length ? ` / ${nf(backlog.data?.total)}` : ''} đơn đã điều ngày khác · ẩn`)
+                : 'Xem cả đơn đã điều ngày khác'}
             </button>
           )}
           {/* tab dấu tay dài hơn trần: nói rõ đang xem phần nào — ô tìm lúc này tra TOÀN BỘ sổ dấu trên server */}
@@ -596,7 +596,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                 <TableCell className={`${TD} text-right tabular-nums`} title={i ? `${i.lines} dòng · ${i.materials} mã — quy về thùng từng mã rồi cộng` : ''}>{i ? nf(i.qty_conv, 1) : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} text-right tabular-nums`}>{nf(r.pallets, 1)}</TableCell>
                 <TableCell className={`${TD} text-right tabular-nums`}>{nf(r.tons, 2)}</TableCell>
-                <TableCell className={TD}>{r.date ? `${dmy(r.date)}/${r.date.slice(2, 4)}` : <span className="text-slate-300">—</span>}{r.late > 0 && <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-800">trễ {r.late}n</span>}</TableCell>
+                <TableCell className={TD}>{r.date ? `${dmy(r.date)}/${r.date.slice(2, 4)}` : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={TD} title={i?.od_created_at ?? ''}>{i?.od_created_at ? `${dmy(i.od_created_at)}/${i.od_created_at.slice(2, 4)}` : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate`} title={i?.created_by.join(', ')}>{i?.created_by.length ? i.created_by.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} truncate ${r.note ? 'text-amber-900' : ''}`} title={[r.note, i?.note_invoice ? `Hoá đơn: ${i.note_invoice}` : ''].filter(Boolean).join('\n')}>
@@ -674,7 +674,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         parents={bandParents} initial={{ bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={reopt.isPending}
         onConfirm={doGroupWith} />
       <DispatchOdDetailSheet planId={plan.id} info={detailRow ? info[detailRow.od] : undefined} onClose={() => setDetail(null)}
-        sum={detailRow ? { od: detailRow.od, where: detailRow.where, tone: detailRow.tone, cust: detailRow.cust, ward: detailRow.ward, region: detailRow.region, date: detailRow.date, late: detailRow.late, flag: detailRow.flag, reason: detailRow.reason } : null} />
+        sum={detailRow ? { od: detailRow.od, where: detailRow.where, tone: detailRow.tone, cust: detailRow.cust, ward: detailRow.ward, region: detailRow.region, date: detailRow.date, flag: detailRow.flag, reason: detailRow.reason } : null} />
       {confirmNode}
     </div>
   )

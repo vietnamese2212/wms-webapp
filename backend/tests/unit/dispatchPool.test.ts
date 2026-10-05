@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, findReplacedOds, daysBetween, holdsToCarry, redoDispatchedOf, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, findReplacedOds, holdsToCarry, redoDispatchedOf, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -10,10 +10,10 @@ const row = (od: string, o: Partial<PoolCandidateRow> = {}): PoolCandidateRow =>
 const none = { inPlan: new Map<string, string>(), otherDraft: new Map<string, string>() }
 
 describe('pool lũy tiến — OD đã được lo thì KHÔNG vào đợt ghép', () => {
-  it('chưa điều · chưa đi · chưa trong kế hoạch ⇒ vào, trễ 0 ngày', () => {
+  it('chưa điều · chưa đi · chưa trong kế hoạch ⇒ vào, chỉ mang ngày giao SAP để hiển thị (không "trễ n ngày")', () => {
     const s = splitPool([row('1')], DAY, none)
     expect([...s.include.keys()]).toEqual(['1'])
-    expect(s.include.get('1')!.late_days).toBe(0)
+    expect(s.include.get('1')).toEqual({ delivery_date: DAY })
     expect(s.excluded).toEqual([])
   })
   // 03/10 tối (user: "dựa theo SAP sẽ rối loạn — SAP có đơn return, đã đi chưa post, đã post chưa đi; lấy theo lịch sử của app và dấu
@@ -39,26 +39,26 @@ describe('pool lũy tiến — OD đã được lo thì KHÔNG vào đợt ghép
     expect(s.excluded).toEqual([{ od_number: '1', kind: 'IN_PLAN', info: 'K_X_250926_3' },
       { od_number: '2', kind: 'OTHER_DRAFT', info: ref.info, ref: { plan_id: 'P', plan_date: '2026-09-24', created_by: 'Lâm', created_at: '2026-10-02T07:03:00Z', seq: 2 } }])
   })
-  it('TỒN ĐỌNG (ngày giao trước) chưa điều chưa đi ⇒ VÀO kèm số ngày trễ (user chốt gộp)', () => {
-    const s = splitPool([row('9', { delivery_date: '2026-09-22' })], DAY, none)
-    expect(s.include.get('9')!.late_days).toBe(3)
+  // 05/10 khuya (user: "gỡ luật, dữ liệu trong zsd02 mặc kệ nó, trong đó không có ngày giao đáng tin cậy. USER sẽ là người chọn")
+  it('NGÀY GIAO KHÔNG QUYẾT: đơn ngày giao trước, đúng hay SAU ngày lập (kể cả gõ nhầm năm 2040) chưa điều chưa đi ⇒ đều VÀO', () => {
+    const s = splitPool([row('9', { delivery_date: '2026-09-22' }), row('8'), row('7', { delivery_date: '2026-09-30' }), row('6', { delivery_date: '2040-10-03' }), row('5', { delivery_date: null })], DAY, none)
+    expect([...s.include.keys()]).toEqual(['5', '6', '7', '8', '9'])
+    expect(s.excluded).toEqual([])
   })
-  it('tồn đọng ĐÃ post / SAP đã điều ⇒ vẫn VÀO kèm số ngày trễ (03/10 tối — lịch sử app mới là sự thật, SAP chỉ tham chiếu)', () => {
+  it('đã post / SAP đã điều ⇒ vẫn VÀO (03/10 tối — lịch sử app mới là sự thật, SAP chỉ tham chiếu)', () => {
     const s = splitPool([row('8', { delivery_date: '2026-09-20', sap_dispatch_status: 'ASSIGNED' }), row('7', { delivery_date: '2026-09-21', mat_doc: 'x' })], DAY, none)
     expect([...s.include.keys()].sort()).toEqual(['7', '8'])
-    expect(s.include.get('8')!.late_days).toBe(5)
   })
   it('tồn đọng đang XẾP ở NHÁP MỞ ngày khác ⇒ loại nhưng LUÔN báo (29/09: 223 OD 25/09 kẹt trong nháp 28/09 bị quên, KH 29/09 tưởng đủ)', () => {
     const s = splitPool([row('5', { delivery_date: '2026-09-21' })], DAY, { ...none, otherDraft: new Map([['5', 'nháp ngày 2026-09-24']]) })
     expect(s.include.size).toBe(0)
     expect(s.excluded).toEqual([{ od_number: '5', kind: 'OTHER_DRAFT', info: 'nháp ngày 2026-09-24' }])
   })
-  it('reportAll (30/09 — cửa "Xem cả đơn tồn đọng đã đi"): tồn đọng ĐÃ Ở Kế hoạch xuất có báo kèm kind + info', () => {
-    const s = splitPool([row('8', { delivery_date: '2026-09-20' })], DAY, { ...none, inPlan: new Map([['8', 'K_X_200926_1']]), reportAll: true })
+  it('ĐÃ Ở Kế hoạch xuất ⇒ LUÔN báo IN_PLAN kèm Số xe, ngày giao nào cũng vậy (bản cũ chỉ báo đơn "đúng ngày lập")', () => {
+    const s = splitPool([row('8', { delivery_date: '2026-09-20' }), row('9', { delivery_date: '2040-10-03' })], DAY, { ...none, inPlan: new Map([['8', 'K_X_200926_1'], ['9', 'K_X_250926_2']]) })
     expect(s.include.size).toBe(0)
-    expect(s.excluded).toEqual([{ od_number: '8', kind: 'IN_PLAN', info: 'K_X_200926_1' }])
+    expect(s.excluded).toEqual([{ od_number: '8', kind: 'IN_PLAN', info: 'K_X_200926_1' }, { od_number: '9', kind: 'IN_PLAN', info: 'K_X_250926_2' }])
   })
-  it('daysBetween theo lịch, không theo giờ', () => { expect(daysBetween('2026-09-30', '2026-10-01')).toBe(1) })
 })
 
 describe('SO sửa ⇒ OD mới — chỉ kết luận "đã thay" khi có bằng chứng trong file', () => {
@@ -159,11 +159,11 @@ describe('HOÃN / KHÔNG ĐIỀU (user 27/09: "đơn key một ngày nhưng đi�
     // until/reason tách riêng để bảng Xem đơn chia hai tab "Không điều ngày này" (có ngày) / "Không điều" (null) mà không đọc chữ
     expect(s.excluded).toEqual([{ od_number: '1', kind: 'HELD', info: 'hoãn tới 2026-09-27 — NPP hẹn', until: '2026-09-27', reason: 'NPP hẹn' }, { od_number: '2', kind: 'HELD', info: 'không điều — NPP hẹn', until: null, reason: 'NPP hẹn' }])
   })
-  it('tới ngày hoãn (hoặc đã qua) ⇒ OD quay lại đợt ghép như OD tồn đọng', () => {
-    const s = splitPool([row('1', { delivery_date: '2026-09-22' })], DAY, held([['1', DAY]]))
-    expect(s.include.get('1')!.late_days).toBe(3)
+  it('tới ngày người hẹn (hoặc đã qua) ⇒ OD quay lại đợt ghép', () => {
+    const s = splitPool([row('1', { delivery_date: '2026-09-22' }), row('2', { delivery_date: '2026-09-30' })], DAY, held([['1', DAY], ['2', '2026-09-24']]))
+    expect([...s.include.keys()]).toEqual(['1', '2'])
   })
-  it('OD tồn đọng đang hoãn vẫn được BÁO (quyết định của người phải thấy để còn bỏ hoãn)', () => {
+  it('OD đang hoãn vẫn được BÁO (quyết định của người phải thấy để còn bỏ hoãn)', () => {
     expect(splitPool([row('1', { delivery_date: '2026-09-20' })], DAY, held([['1', null]])).excluded.map(x => x.kind)).toEqual(['HELD'])
   })
   it('đang Không điều mà SAP đã post / đã điều ⇒ VẪN Không điều (03/10 tối: dấu tay của người thắng cờ SAP; bản 27/09 để SAP thắng)', () => {

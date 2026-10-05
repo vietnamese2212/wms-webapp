@@ -7,13 +7,13 @@
  *   (1) chưa nằm trong Kế hoạch xuất (khvc_lines) và chưa LÊN XE ở một bản nháp ĐANG MỞ khác (khung chờ là tự do — 03/10 tối);
  *   (2)(3) — BỎ 03/10 tối: "SAP đã điều phối" và "đã xuất (Mat Doc / SL đã xuất)" không còn loại đơn — chúng là CỜ THAM CHIẾU
  *       trên tab Điều, người quyết bằng dấu tay (Ngoài app · Không điều) hoặc điều thật. Lịch sử của app mới là nguồn sự thật.
- * OD TỒN ĐỌNG (ngày giao TRƯỚC ngày lập — MỌI ngày, 05/10 bỏ cửa sổ 14 ngày) đủ ba điều kiện thì cũng vào — user chốt gộp — kèm
- * `late_days` để màn hình đánh dấu "trễ n ngày". Nhóm bị loại chỉ BÁO với OD đúng ngày lập: OD cũ đã đi/đã điều là
- * lịch sử bình thường, liệt kê ra chỉ làm ngập màn hình — TRỪ OD đang nằm ở bản nháp mở của ngày khác (LUÔN báo, 29/09:
- * đó là việc bị giữ ở chỗ khác, người phải thấy để bỏ nháp kia hoặc kéo về).
+ * NGÀY GIAO ZSD02 KHÔNG QUYẾT GÌ (05/10 khuya, user: "dữ liệu trong zsd02 mặc kệ nó, trong đó không có ngày giao đáng tin cậy. USER
+ * sẽ là người chọn"): đơn ngày giao nào cũng vào nếu đủ các điều kiện dưới — không "trễ n ngày", không "đơn của hôm nay". Đơn đã có
+ * trong Kế hoạch xuất LUÔN báo (IN_PLAN): cửa nạp chỉ trả những đơn có NGÀY XUẤT = ngày lập (tab Đã điều của ngày đó), các cửa theo
+ * số OD (tối ưu lại · bỏ dấu · lấy sang…) báo để đơn không biến mất không lời. Đơn đang nằm ở bản nháp mở khác LUÔN báo (29/09).
  * (4) HOÃN (27/09, user: "đơn key một ngày nhưng có thể điều ngày khác · đơn note khác — không tự động được"): OD người đã
- *     đánh dấu Hoãn tới ngày SAU ngày lập, hoặc Không điều (không ngày), KHÔNG vào đợt ghép — và LUÔN được báo (kể cả OD tồn
- *     đọng) vì đó là quyết định của người, phải thấy để còn bỏ hoãn. Tới ngày hoãn thì OD quay lại như OD tồn đọng.
+ *     đánh dấu Hoãn tới ngày SAU ngày lập, hoặc Không điều (không ngày), KHÔNG vào đợt ghép — và LUÔN được báo vì đó là quyết
+ *     định của người, phải thấy để còn bỏ hoãn. Tới ngày người hẹn thì OD quay lại đợt ghép.
  * (5) DO TẠO LẠI – ĐÃ ĐIỀU (28/09, user chốt): SAP sửa SO sinh OD mới thay cho một OD ĐÃ nằm trong Kế hoạch xuất (đã lên
  *     xe) ⇒ hàng đó đã được điều dưới số OD cũ; để OD mới ở tab Điều là mời điều hai lần. Vào tab Đã điều, LUÔN báo.
  */
@@ -37,22 +37,20 @@ export interface ExcludedDetail { ship_to_code: string | null; ship_to_name: str
 export interface OtherDraftRef { plan_id: string; plan_date: string; created_by: string | null; created_at: string; seq: number | null }
 export interface ExcludedOd { od_number: string; kind: ExcludeKind; info: string | null; until?: string | null; reason?: string; d?: ExcludedDetail; ref?: OtherDraftRef }
 export interface PoolSplit {
-  include: Map<string, { delivery_date: string | null; late_days: number }>
+  /** ngày giao = số SAP để HIỂN THỊ (cột Ngày giao), máy không dùng để quyết */
+  include: Map<string, { delivery_date: string | null }>
   excluded: ExcludedOd[]
 }
 
-const dayMs = (d: string) => Date.parse(`${d}T00:00:00Z`)
-export const daysBetween = (from: string, to: string) => Math.round((dayMs(to) - dayMs(from)) / 86_400_000)
 /** Dòng SAP đã post (Mat Doc / SL đã xuất) — từ 03/10 tối chỉ là CỜ THAM CHIẾU (odFlags), không còn loại đơn khỏi đợt ghép. */
 export const shippedRow = (r: PoolCandidateRow) => !!(r.mat_doc && String(r.mat_doc).trim()) || Number(r.qty_issued_base ?? 0) > 0
 
 export type OtherDraft = string | ({ info: string } & OtherDraftRef)
 export function splitPool(
+  // `day` = ngày lập — chỉ để so với ngày người hẹn (dấu "Không điều ngày này"), không so với ngày giao SAP
   rows: PoolCandidateRow[], day: string,
-  // `reportAll` (30/09): báo CẢ OD tồn đọng đã điều — cho cửa "Xem cả đơn tồn đọng đã đi" của tab Đã điều (user: "170 đơn
-  // đi đâu mất, sao không nằm trong Đã điều"); lập kế hoạch vẫn để false để params không phình 2.000 dòng lịch sử
   // `outside` (03/10 tối): dấu tay "Ngoài app" của kho — đơn đã được xử lý ngoài bàn này, LUÔN báo (như Không điều) để còn bỏ dấu.
-  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, OtherDraft>; held?: Map<string, { until: string | null; reason: string }>; redo?: Map<string, string>; outside?: Map<string, { reason: string; by: string | null }>; reportAll?: boolean },
+  ctx: { inPlan: Map<string, string>; otherDraft: Map<string, OtherDraft>; held?: Map<string, { until: string | null; reason: string }>; redo?: Map<string, string>; outside?: Map<string, { reason: string; by: string | null }> },
 ): PoolSplit {
   const byOd = new Map<string, PoolCandidateRow[]>()
   for (const r of rows) { const l = byOd.get(r.od_number) ?? []; l.push(r); byOd.set(r.od_number, l) }
@@ -60,11 +58,9 @@ export function splitPool(
   const excluded: ExcludedOd[] = []
   for (const od of [...byOd.keys()].sort()) {
     const rs = byOd.get(od)!
-    // ngày giao của OD = ngày MUỘN nhất trong các dòng (SAP có thể dời một phần) — OD còn dòng đúng ngày lập là OD của hôm nay
+    // ngày giao in ra = ngày MUỘN nhất trong các dòng (SAP có thể dời một phần)
     const dd = rs.map(r => r.delivery_date).filter((x): x is string => !!x).sort().pop() ?? null
-    const today = dd === day
-    const report = (kind: ExcludeKind, info: string | null) => { if (today || ctx.reportAll) excluded.push({ od_number: od, kind, info }) }
-    if (ctx.inPlan.has(od)) { report('IN_PLAN', ctx.inPlan.get(od) ?? null); continue }
+    if (ctx.inPlan.has(od)) { excluded.push({ od_number: od, kind: 'IN_PLAN', info: ctx.inPlan.get(od) ?? null }); continue }
     // 03/10 tối (user: "SAP có nhiều đơn return, trả, đã đi chưa post, đã post chưa đi — dựa theo SAP sẽ rối loạn; lấy theo lịch sử
     // của app và dấu tay của người"): Mat Doc / SAP gắn xe KHÔNG loại đơn nữa — chúng thành cờ vàng trên tab Điều (odFlags), người
     // quyết bằng dấu Ngoài app. Trước đó hai cờ này tự đưa đơn sang "Đã điều" — đơn đã post mà hàng chưa đi là biến mất khỏi bàn.
@@ -83,7 +79,7 @@ export function splitPool(
       else { const { info, ...ref } = od2; excluded.push({ od_number: od, kind: 'OTHER_DRAFT', info, ref }) }
       continue
     }
-    include.set(od, { delivery_date: dd, late_days: dd ? Math.max(0, daysBetween(dd, day)) : 0 })
+    include.set(od, { delivery_date: dd })
   }
   return { include, excluded }
 }

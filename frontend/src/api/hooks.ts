@@ -6072,8 +6072,8 @@ export interface DispatchTripOd {
   id: string; plan_id: string; trip_id: string | null   // trip_id null = OD nằm KHUNG CHỜ (bàn ghép xe, 25/09)
   od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code?: string | null; region_name?: string | null
   pallets: number | string | null; tons: number | string | null; lines: number; part_index: number | null; part_of: number | null; material_codes: string[]
-  conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null; late_days?: number
-  is_transfer?: boolean                 // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
+  conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null   // ngày giao SAP — chỉ hiển thị (05/10 khuya)
+  is_transfer?: boolean                // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — [] = khách + kênh chưa khai (28/09: máy không chọn xe) · null = dòng chụp trước 28/09
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
   reviewed_at?: string | null           // vết ai bấm ghép lúc nào (27/09 tối: đơn mới mặc định ĐIỀU — không còn chặn theo cột này)
@@ -6124,7 +6124,7 @@ export interface DispatchSummary {
   trips: number; ods: number; pallets: number; tons: number; freight_total: number; unpriced: number; underload: number; oversize: number; tendered?: number; declined?: number; confirmed?: number; shares: DispatchShare[]
   // dải chỉ số bàn ghép xe (25/09)
   by_model?: { key: string; sap_code: string | null; name: string; parent: string | null; trips: number; pallets: number }[]
-  avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; unreviewed_ods?: number; pool_pallets?: number; late_ods?: number; empty_trips?: number; locked?: number
+  avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; unreviewed_ods?: number; pool_pallets?: number; empty_trips?: number; locked?: number
   baseline?: { trips: number; freight_total: number; pallets: number; underload: number; unpriced: number } | null
 }
 /** Chỗ khai THIẾU làm máy xếp sai mà không lỗi nào nổ (26/09): Loại kho chưa khai ĐK bảo quản · mã hàng chưa khai Loại kho. */
@@ -6145,7 +6145,7 @@ export interface DispatchPlan {
   segment: DispatchSegment
   /** OD người ĐANG XEM đã đánh dấu "Không liên quan" trên kế hoạch này (dấu riêng của người đó) */
   hidden?: string[]
-  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; late_ods?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean }
+  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -6192,8 +6192,8 @@ export function useDispatchPlanReview(id: string | null, stamp?: string | null) 
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/review`)).data.data as { ods: Record<string, DispatchReviewInfo> },
   })
 }
-/** Tab Đã điều — "Xem cả đơn tồn đọng đã điều" (30/09): OD ngày giao trước ngày lập máy đã loại (đã có trong KH xuất · DO tạo lại),
- *  không ghi vào kế hoạch, tải theo yêu cầu. 05/10 bỏ cửa sổ 14 ngày ⇒ server trả 1.000 đơn gần nhất + `total`. */
+/** Tab Đã điều — "Xem cả đơn đã điều ngày khác" (30/09): OD đã có trong Kế hoạch xuất với NGÀY XUẤT khác ngày lập (hoặc DO tạo lại),
+ *  không ghi vào kế hoạch, tải theo yêu cầu; server trả 1.000 đơn gần nhất theo ngày xuất + `total` (05/10 khuya: không theo ngày giao SAP). */
 export function useDispatchPlanBacklog(id: string | null, enabled: boolean) {
   return useQuery({
     queryKey: ['dispatch-backlog', id], enabled: !!id && enabled, staleTime: 60_000,

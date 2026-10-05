@@ -6201,17 +6201,21 @@ export function useDispatchPlanBacklog(id: string | null, enabled: boolean) {
   })
 }
 /** Ba tab DẤU TAY (05/10): Không điều ngày này · Không điều · Ngoài app — đọc thẳng sổ dấu của kho, không chép vào kế hoạch.
- *  `kind` null = chỉ lấy số đếm ba tab (luôn gọi khi mở bảng); có `kind` = thêm dòng + thông tin SAP của tab đó. */
+ *  `kind` null = chỉ lấy số đếm ba tab (luôn gọi khi mở bảng); có `kind` = dòng + thông tin SAP của tab đó — `limit` dấu GẦN NHẤT,
+ *  `total` = số dấu khớp; `q` tìm trong TOÀN BỘ sổ (dấu tăng theo lịch sử — giả lập 6 ngày: Ngoài app 2.794 đơn = 3,2 MB). */
 export type DispatchMarkKind = 'DAY' | 'NEVER' | 'OUTSIDE'
 export interface DispatchMarkRow {
   od_number: string; kind: DispatchMarkKind; hold_until: string | null; reason: string | null; marked_by: string | null; marked_at: string | null
   ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null
   pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null
 }
-export function useDispatchPlanMarks(id: string | null, kind: DispatchMarkKind | null) {
+export function useDispatchPlanMarks(id: string | null, kind: DispatchMarkKind | null, q = '') {
   return useQuery({
-    queryKey: ['dispatch-marks', id, kind ?? ''], enabled: !!id, staleTime: 30_000,
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/marks`, { params: kind ? { kind } : {} })).data.data as { counts: Record<DispatchMarkKind, number>; rows: DispatchMarkRow[]; info: Record<string, DispatchReviewInfo> },
+    queryKey: ['dispatch-marks', id, kind ?? '', q], enabled: !!id, staleTime: 30_000,
+    // gõ tìm trong CÙNG tab: giữ dòng đang thấy tới khi kết quả về; đổi tab thì không (dòng tab khác không được hiện nhầm)
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === id && prevQuery?.queryKey[2] === (kind ?? '') ? prev : undefined),
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/marks`, { params: { ...(kind ? { kind } : {}), ...(q ? { q } : {}) } })).data.data as {
+      counts: Record<DispatchMarkKind, number> | null; rows: DispatchMarkRow[]; info: Record<string, DispatchReviewInfo>; total: number; limit: number },
   })
 }
 export interface DispatchOdMaterial { material_code: string; short_name: string | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }

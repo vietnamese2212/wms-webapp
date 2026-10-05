@@ -2725,11 +2725,14 @@ async function reviewInfoOf(plan: PlanRow, ods: string[]): Promise<Record<string
 // GET /tms/dispatch/plans/:id/marks — ba tab DẤU TAY của bảng Xem đơn (05/10, user: "bản chất nó bị loại bỏ khỏi kế hoạch"):
 // Không điều ngày này · Không điều · Ngoài app đọc THẲNG sổ dấu của kho (RPC dispatch_marked_ods), không chép vào kế hoạch — trước
 // đó mỗi kế hoạch về sau mang theo mọi đơn từng đánh dấu (Ngoài app / Không điều không bao giờ vào Kế hoạch xuất nên chỉ tăng).
-// Số đếm ba tab luôn trả; dòng + thông tin SAP chỉ trả cho tab `kind` đang mở. Cùng tập dòng ZSD02 với cửa nạp + lọc MẢNG như cửa nạp.
-export const zMarksQuery = z.object({ kind: z.enum(['DAY', 'NEVER', 'OUTSIDE']).optional() })
+// Không `kind` = chỉ số đếm ba tab (một câu đếm trong DB); có `kind` = dòng + thông tin SAP của tab đó. Cùng tập dòng ZSD02 với cửa
+// nạp + lọc MẢNG như cửa nạp — cả hai làm trong DB (20261005e). Dấu tăng theo LỊCH SỬ (giả lập 6 ngày × ~600 đơn: Ngoài app 2.794 đơn
+// = 3,2 MB, số đếm 3–15 s) ⇒ như tab Đã điều: MARKS_MAX dấu GẦN NHẤT + `total`; `q` tìm trong TOÀN BỘ sổ (user duyệt 05/10).
+const MARKS_MAX = 1000
+export const zMarksQuery = z.object({ kind: z.enum(['DAY', 'NEVER', 'OUTSIDE']).optional(), q: zText(1, 100).optional() })
 type MarkRow = { od_number: string; kind: 'DAY' | 'NEVER' | 'OUTSIDE'; hold_until: string | null; reason: string | null; marked_by: string | null; marked_at: string | null
   ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null
-  pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
+  pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null; total: number }
 export async function getPlanMarks(req: Request, res: Response) {
   try {
     const q = req.query as z.infer<typeof zMarksQuery>
@@ -2739,15 +2742,21 @@ export async function getPlanMarks(req: Request, res: Response) {
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     const counts = { DAY: 0, NEVER: 0, OUTSIDE: 0 }
     const wh = await loadWarehouse(plan.warehouse_id)
-    if (!wh?.sap_plant) return ok(res, { counts, rows: [], info: {} })
-    const all = (await fetchAllRowsParallel(() => db.rpc('dispatch_marked_ods', { p_warehouse_id: wh.id, p_plant: wh.sap_plant, p_day: plan.plan_date,
-      p_slocs: slocsOf(wh), p_flows: [...LOADABLE_FLOW] } as never).select('*').order('od_number'))) as unknown as MarkRow[]
-    const segBy = await segmentOfOds(wh.id, all)
-    const mine = all.filter(r => (segBy.get(r.od_number) ?? 'SALES') === (plan.segment ?? 'SALES'))
-    for (const r of mine) counts[r.kind] += 1
-    const rows = q.kind ? mine.filter(r => r.kind === q.kind) : []
+    if (!wh?.sap_plant) return ok(res, { counts: q.kind ? null : counts, rows: [], info: {}, total: 0, limit: MARKS_MAX })
+    const args = { p_warehouse_id: wh.id, p_plant: wh.sap_plant, p_day: plan.plan_date, p_slocs: slocsOf(wh), p_flows: [...LOADABLE_FLOW], p_segment: plan.segment ?? 'SALES' }
+    // kiểu sinh tự động đọc sai tham số của hàm RETURNS TABLE (gen-db-types) ⇒ `as never` như mọi lời gọi hai hàm này
+    if (!q.kind) {
+      const { data, error: cErr } = await db.rpc('dispatch_marked_counts', args as never)
+      if (cErr) throw cErr
+      for (const c of (data ?? []) as unknown as { kind: string; n: number | string }[]) if (c.kind === 'DAY' || c.kind === 'NEVER' || c.kind === 'OUTSIDE') counts[c.kind] = Number(c.n) || 0
+      return ok(res, { counts, rows: [], info: {}, total: 0, limit: MARKS_MAX })
+    }
+    const { data, error: rErr } = await db.rpc('dispatch_marked_ods', { ...args, p_kind: q.kind, p_search: q.q?.trim() || null } as never)
+      .order('marked_at', { ascending: false, nullsFirst: false }).order('od_number').limit(MARKS_MAX)
+    if (rErr) throw rErr
+    const rows = (data ?? []) as unknown as MarkRow[]
     const info = rows.length ? await reviewInfoOf(plan as PlanRow, rows.map(r => r.od_number)) : {}
-    return ok(res, { counts, rows, info })
+    return ok(res, { counts: null, rows, info, total: Number(rows[0]?.total ?? 0), limit: MARKS_MAX })
   } catch (e) { return failAny(res, e) }
 }
 

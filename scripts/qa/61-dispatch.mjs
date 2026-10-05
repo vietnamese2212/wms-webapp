@@ -1158,10 +1158,17 @@ try {
     const mkCnt = await api(`/tms/dispatch/plans/${pid(PR)}/marks`)
     const mkBad = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=XYZ`)
     const odMarked = await api(`/tms/dispatch/plans/${pid(PR)}/ods/${OD[2]}`)
-    check('15b2. Dấu tay KHÔNG chép vào kế hoạch: params.excluded không có HELD · GET /marks không kind → số đếm DAY 1, không dòng · kind lạ → 400 · chi tiết OD mang dấu (không nằm trong kế hoạch) → 200',
+    // 05/10 tối: dấu tăng theo lịch sử ⇒ server trả `limit` dấu gần nhất + `total`; `q` tìm trong TOÀN BỘ sổ dấu (số đếm tính trong DB)
+    const mkQ = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY&q=${encodeURIComponent(OD[2].slice(-4))}`)
+    const mkQNo = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY&q=QA61KHONGKHOP`)
+    const mkQLong = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY&q=${'x'.repeat(101)}`)
+    check('15b2. Dấu tay KHÔNG chép vào kế hoạch: params.excluded không có HELD · GET /marks không kind → số đếm DAY 1, không dòng, limit 1000 · kind lạ → 400 · chi tiết OD mang dấu (không nằm trong kế hoạch) → 200 · tìm q theo đuôi số OD → đúng OD đó, total 1 · q không khớp → 0 dòng, total 0 · q > 100 ký tự → 400',
       !(PR?.params?.excluded ?? []).some(x => x.kind === 'HELD' || x.kind === 'OUTSIDE_APP') && mkCnt.s === 200 && mkCnt.j?.data?.counts?.DAY === 1 && (mkCnt.j?.data?.rows ?? []).length === 0
-      && mkBad.s === 400 && odMarked.s === 200 && (odMarked.j?.data?.lines ?? []).length >= 1,
-      `kinds=${JSON.stringify((PR?.params?.excluded ?? []).map(x => x.kind))} cnt=${mkCnt.s}/${JSON.stringify(mkCnt.j?.data?.counts)} rows=${(mkCnt.j?.data?.rows ?? []).length} bad=${mkBad.s} od=${odMarked.s} ${odMarked.j?.error?.code ?? ''}`)
+      && mkCnt.j?.data?.limit === 1000
+      && mkBad.s === 400 && odMarked.s === 200 && (odMarked.j?.data?.lines ?? []).length >= 1
+      && mkQ.s === 200 && (mkQ.j?.data?.rows ?? []).map(x => x.od_number).join(',') === OD[2] && mkQ.j?.data?.total === 1
+      && mkQNo.s === 200 && (mkQNo.j?.data?.rows ?? []).length === 0 && mkQNo.j?.data?.total === 0 && mkQLong.s === 400,
+      `kinds=${JSON.stringify((PR?.params?.excluded ?? []).map(x => x.kind))} cnt=${mkCnt.s}/${JSON.stringify(mkCnt.j?.data?.counts)} limit=${mkCnt.j?.data?.limit} rows=${(mkCnt.j?.data?.rows ?? []).length} bad=${mkBad.s} od=${odMarked.s} ${odMarked.j?.error?.code ?? ''} q=${mkQ.s}/${(mkQ.j?.data?.rows ?? []).map(x => x.od_number).join(',')}/${mkQ.j?.data?.total} qNo=${mkQNo.s}/${(mkQNo.j?.data?.rows ?? []).length}/${mkQNo.j?.data?.total} qLong=${mkQLong.s}`)
     const syncH = await api(`/tms/dispatch/plans/${pid(PR)}/sync`)
     const pAgain = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     PR = pAgain.j?.data

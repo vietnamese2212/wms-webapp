@@ -28,6 +28,7 @@ import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReopt
 import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -125,10 +126,16 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const [prog, setProg] = useState<string | null>(null)
   // thông tin SAP từng OD (SO · người tạo · ghi chú · SL quy đổi · Loại kho · OD bị thay · lần Không điều trước) — gọi riêng
   const review = useDispatchPlanReview(plan.id, plan.updated_at)
-  // 05/10: ba tab dấu tay đọc thẳng sổ dấu — số đếm luôn hỏi, dòng (kèm thông tin SAP) chỉ khi đang mở tab đó
+  // 05/10: ba tab dấu tay đọc thẳng sổ dấu — số đếm luôn hỏi, dòng (kèm thông tin SAP) chỉ khi đang mở tab đó. Dấu tăng theo LỊCH SỬ
+  // (giả lập 6 ngày: Ngoài app 2.794 đơn = 3,2 MB, vẽ 20,6 s) ⇒ server trả `limit` dấu gần nhất; tab bị cắt thì ô tìm tra TOÀN BỘ sổ
   const markKind: DispatchMarkKind | null = st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE' ? st : null
-  const marks = useDispatchPlanMarks(plan.id, markKind)
   const markCounts = useDispatchPlanMarks(plan.id, null)
+  const mc = markCounts.data?.counts ?? null
+  const markTotal = markKind && mc ? mc[markKind] : 0
+  const marksCut = markTotal > (markCounts.data?.limit ?? Infinity)
+  const searchDeb = useDebouncedValue(f.search.trim(), 300)
+  const markQ = markKind && marksCut ? searchDeb : ''
+  const marks = useDispatchPlanMarks(plan.id, markKind, markQ)
   const info = { ...(review.data?.ods ?? {}), ...(marks.data?.info ?? {}) }
   const whMeta = useWhTypeMetaMap()
   const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
@@ -479,7 +486,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
             const other = !!t.seg && t.seg !== seg
             const active = st === t.k && !other
             const n = t.k === 'ISSUE' ? nf(decisions.data?.count ?? 0) : other ? (otherPoolCount == null ? '—' : nf(otherPoolCount))
-              : t.k === 'DAY' || t.k === 'NEVER' || t.k === 'OUTSIDE' ? (markCounts.data ? nf(markCounts.data.counts[t.k]) : '—')
+              : t.k === 'DAY' || t.k === 'NEVER' || t.k === 'OUTSIDE' ? (mc ? nf(mc[t.k]) : '—')
               : nf(new Set((t.k === 'GO' ? goOds : byTab[t.k]).map(r => r.od)).size)
             return (
             <button key={`${t.k}|${t.seg ?? ''}`} type="button" title={other ? `${t.tip} Bấm để chuyển sang kế hoạch ${t.label} của ngày này.` : t.tip} aria-pressed={active}
@@ -525,6 +532,15 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                 : 'Xem cả đơn tồn đọng đã điều'}
             </button>
           )}
+          {/* tab dấu tay dài hơn trần: nói rõ đang xem phần nào — ô tìm lúc này tra TOÀN BỘ sổ dấu trên server */}
+          {marksCut && (
+            <span className="text-[11px] text-slate-600" role="status"
+              title="Dấu tay tích luỹ theo lịch sử — bảng hiện các đơn đánh dấu GẦN NHẤT; gõ số OD, khách, phường, vùng, ghi chú, lý do hoặc người đánh dấu để tìm trong toàn bộ.">
+              {markQ
+                ? (marks.isFetching ? `Đang tìm trong ${nf(markTotal)} đơn…` : `Tìm trong ${nf(markTotal)} đơn: ${nf(marks.data?.total ?? 0)} khớp${(marks.data?.total ?? 0) > (marks.data?.rows.length ?? 0) ? ` · hiện ${nf(marks.data?.rows.length)} gần nhất` : ''}`)
+                : `Đang xem ${nf(marks.data?.rows.length ?? markCounts.data?.limit)} đơn đánh dấu gần nhất / ${nf(markTotal)} — gõ ô tìm để tra toàn bộ`}
+            </span>
+          )}
           {editable && pick.length > 0 && (
             <button type="button" className="text-[11px] text-sky-700 hover:underline whitespace-nowrap" title="Chỉ tick các đơn ĐANG HIỆN theo tìm kiếm / bộ lọc"
               onClick={() => setSel(pick.every(r => sel.has(r.key)) ? new Set() : new Set(pick.map(r => r.key)))}>
@@ -541,7 +557,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{markKind && marks.isError ? <span className="text-red-600">Không tải được danh sách: {apiMsg(marks.error)}</span>
               : markKind && marks.isLoading ? 'Đang tải danh sách…'
               : q || notesOnly || softOnly || filtersOn
-              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); clearFilters() }}>Xem cả {tabRows.length} đơn</button></>
+              ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); clearFilters() }}>Xem cả {nf(markKind ? markTotal : tabRows.length)} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào để điều cho ngày này.' : st === 'DONE' ? 'Chưa có đơn nào được điều.' : st === 'ELSEWHERE' ? 'Không có đơn nào đang xếp ở nháp khác.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
@@ -613,7 +629,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       </div>
       {/* ĐỐI CHIẾU CHỐNG THIẾU (03/10 tối): mọi đơn ZSD02 trong cửa sổ phải đứng ở đúng MỘT tab — tổng in ra để lệch là thấy */}
       <ListFooter page={1} pageSize={Math.max(1, rows.length)} total={rows.length} unit="đơn" onPageSize={() => { }} options={[]}
-        right={`Đối chiếu (${SEGMENT_VI[seg]}): Điều ${nf(new Set(goOds.map(r => r.od)).size)}${byTab.HIDDEN.length ? ` · Không liên quan (bạn) ${nf(byTab.HIDDEN.length)}` : ''} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${markCounts.data ? nf(markCounts.data.counts.DAY + markCounts.data.counts.NEVER) : '—'} · Ngoài app ${markCounts.data ? nf(markCounts.data.counts.OUTSIDE) : '—'} · Đã điều ${nf(byTab.DONE.length)}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
+        right={`Đối chiếu (${SEGMENT_VI[seg]}): Điều ${nf(new Set(goOds.map(r => r.od)).size)}${byTab.HIDDEN.length ? ` · Không liên quan (bạn) ${nf(byTab.HIDDEN.length)}` : ''} · Đang xếp nơi khác ${nf(byTab.ELSEWHERE.length)} · Không điều ${mc ? nf(mc.DAY + mc.NEVER) : '—'} · Ngoài app ${mc ? nf(mc.OUTSIDE) : '—'} · Đã điều ${nf(byTab.DONE.length)}${(decisions.data?.count ?? 0) > 0 ? ` · Cần xử lý ${nf(decisions.data?.count)}` : ''}${st === 'GO' ? ' — kế hoạch ghép xe chỉ lấy đơn ở tab Điều' : st === 'DONE' ? ' — chuyến chưa bắt đầu gỡ được khỏi Kế hoạch xuất tại cột Đã điều ở đâu' : ' — tick đơn rồi chuyển trạng thái ở thanh dưới'}`} />
 
       <FloatingActionBar count={selRows.length} unit="đơn đã chọn">
         {prog && <span className="self-center whitespace-nowrap text-[11px] tabular-nums text-white/80" role="status">Đang chuyển {prog} đơn…</span>}

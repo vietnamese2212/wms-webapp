@@ -327,11 +327,12 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   // điều…"): mọi đơn có ngày giao tới hôm nay mà chưa có trong lịch sử app, không mang dấu tay, là CHƯA ĐI ⇒ vào tab Điều của mảng nó,
   // kèm số ngày trễ. Cửa sổ cũ (25/09) có từ khi cờ SAP còn tự loại đơn; bỏ cờ SAP (03/10) thì nó chỉ còn che đơn cũ chưa đi —
   // băng "quá hạn chưa quyết" là miếng vá chồng lên đó, bỏ cùng. Dấu hẹn tới ngày đã qua thì hết hiệu lực như mọi dấu hẹn khác.
+  // Không cửa sổ thì lịch sử ZSD02 tăng mãi ⇒ DB bỏ đơn ĐÃ ĐIỀU (có trong Kế hoạch xuất) trước khi trả (RPC dispatch_pool_rows,
+  // 20261005c); đơn có dòng đúng ngày lập vẫn về để báo "Đã có trong KH xuất". Số dòng kéo về = đơn chưa đi thật, không theo lịch sử.
   const rows = (opts.onlyOds
     ? await fetchAllByIdChunks(opts.onlyOds, c => db.from('erp_outbound_orders').select(POOL_COLS).in('od_number', c).eq('sync_status', 'ACTIVE').order('od_number').order('od_item'))
-    : await fetchAllRowsParallel(() => db.from('erp_outbound_orders').select(POOL_COLS)
-      .eq('plant', wh.sap_plant ?? '').lte('delivery_date', day)
-      .eq('sync_status', 'ACTIVE').not('od_number', 'is', null).order('od_number').order('od_item'))) as unknown as PoolRow[]
+    : await fetchAllRowsParallel(() => db.rpc('dispatch_pool_rows', { p_plant: wh.sap_plant ?? '', p_day: day } as never)
+      .select(POOL_COLS).order('od_number').order('od_item'))) as unknown as PoolRow[]
   const mine0 = inSlocs(rows, slocsOf(wh))
   // OD TỒN ĐỌNG chỉ gộp khi LÊN XE được — hàng trả về / chiết khấu của ngày trước không phải việc của hôm nay
   let mine = linesOfDay(mine0, day)
@@ -2695,7 +2696,7 @@ export async function getPlanReview(req: Request, res: Response) {
 
 // GET /tms/dispatch/plans/:id/backlog — OD ngày giao TRƯỚC ngày lập mà máy đã loại vì đã có trong Kế hoạch xuất / DO tạo lại.
 // Không ghi vào params (lịch sử) — tab Đã điều tải theo yêu cầu (user 30/09: "170 đơn đi đâu mất, sao không nằm trong Đã điều").
-// 05/10 bỏ cửa sổ 14 ngày ⇒ lịch sử tăng mãi: trả 1.000 đơn gần nhất + tổng (dòng ~300 B, trần 4,5 MB của Vercel).
+// 05/10 bỏ cửa sổ 14 ngày ⇒ lịch sử tăng mãi: 1.000 đơn đã điều gần nhất (dòng ~300 B, trần 4,5 MB của Vercel).
 const BACKLOG_MAX = 1000
 export async function getPlanBacklog(req: Request, res: Response) {
   try {
@@ -2705,11 +2706,18 @@ export async function getPlanBacklog(req: Request, res: Response) {
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-    const cand = await loadCandidates(wh, plan.plan_date, { condByCat: new Map(), follow: [], all: [] }, { skipPlanId: plan.id, countOnly: true, reportAll: true, segment: plan.segment as Segment })
+    // cửa nạp chung (dispatch_pool_rows) đã bỏ đơn đã điều ⇒ tập lịch sử hỏi riêng: BACKLOG_MAX đơn đã điều gần nhất (20261005c)
+    const { data: hist, error: hErr } = await db.rpc('dispatch_planned_ods', { p_plant: wh.sap_plant ?? '', p_day: plan.plan_date, p_limit: BACKLOG_MAX } as never)
+    if (hErr) throw hErr
+    const ods = (hist ?? []) as unknown as string[]
+    const cand = await loadCandidates(wh, plan.plan_date, { condByCat: new Map(), follow: [], all: [] }, { onlyOds: ods, skipPlanId: plan.id, countOnly: true, reportAll: true })
     const kinds = new Set(['SHIPPED', 'SAP_ASSIGNED', 'IN_PLAN', 'REDO_DISPATCHED'])
-    const excluded = cand.excluded.filter(x => kinds.has(x.kind) && x.d?.delivery_date !== plan.plan_date)
+    const hit = cand.excluded.filter(x => kinds.has(x.kind) && x.d?.delivery_date !== plan.plan_date)
+    // cửa `onlyOds` không lọc mảng ⇒ lọc ở đây (đơn của mảng kia đứng ở bàn bên đó)
+    const segBy = plan.segment ? await segmentOfOds(wh.id, hit.map(x => ({ od_number: x.od_number, ship_to_code: x.d?.ship_to_code ?? null }))) : null
+    const excluded = hit.filter(x => !segBy || segBy.get(x.od_number) === plan.segment)
       .sort((a, b) => (b.d?.delivery_date ?? '').localeCompare(a.d?.delivery_date ?? '') || (a.d?.ship_to_name ?? '').localeCompare(b.d?.ship_to_name ?? '') || a.od_number.localeCompare(b.od_number))
-    return ok(res, { excluded: excluded.slice(0, BACKLOG_MAX), total: excluded.length })
+    return ok(res, { excluded, total: excluded.length })
   } catch (e) { return failAny(res, e) }
 }
 

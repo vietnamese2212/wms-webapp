@@ -1287,13 +1287,14 @@ try {
     const pK = await api('/tms/dispatch/plan', 'POST', PLAN_BODY)
     const kId = pK.j?.data?.id
     const kRes = await Promise.all([0, 1].map(() => api(`/tms/dispatch/plans/${kId}/reoptimize`, 'POST', { review_all: true })))
-    const kRows = await restAll('dispatch_trip_od', `select=od_number,trip_id,part_of&plan_id=eq.${kId}`)
+    // lập hỏng ⇒ kId rỗng ⇒ PostgREST 400 "uuid undefined" làm GÓI CHẾT không nêu lý do (05/10) — báo thành phép đỏ có mã
+    const kRows = kId ? await restAll('dispatch_trip_od', `select=od_number,trip_id,part_of&plan_id=eq.${kId}`) : []
     const kPlaces = new Map()
     for (const r of kRows) { const s = kPlaces.get(r.od_number) ?? new Set(); s.add(r.part_of ? `part:${r.trip_id}` : (r.trip_id ?? 'pool')); kPlaces.set(r.od_number, s) }
     const kDup = [...kPlaces].filter(([od, s]) => s.size > 1 || kRows.filter(r => r.od_number === od && !r.part_of).length > 1)
     check('15k. Hai người cùng "Xác nhận & ghép": mỗi OD đúng MỘT dòng, MỘT chỗ — máy KHÔNG ghép hai lần (lượt kia 409 hay nối đuôi 200 đều được)',
       kRes.some(r => r.s === 200) && kRes.every(r => r.s === 200 || (r.s === 409 && r.j?.error?.code === 'PLAN_BUSY')) && kDup.length === 0 && kPlaces.size > 0,
-      `codes=${kRes.map(r => `${r.s}/${r.j?.error?.code ?? ''}`).join(' ')} OD=${kPlaces.size} dòng=${kRows.length} trùng=${kDup.map(([od]) => od).join(',')}`)
+      `lập=${pK.s} ${pK.j?.error?.code ?? ''} ${(pK.j?.error?.message ?? '').slice(0, 120)} codes=${kRes.map(r => `${r.s}/${r.j?.error?.code ?? ''}`).join(' ')} OD=${kPlaces.size} dòng=${kRows.length} trùng=${kDup.map(([od]) => od).join(',')}`)
 
     // Cửa thuê kế hoạch, đo không qua đua: giữ chỗ 2 phút rồi gọi → phải bị chặn; thả ra → phải chạy lại được.
     await restWrite('dispatch_plan', 'PATCH', `id=eq.${kId}`, { busy_until: new Date(Date.now() + 120_000).toISOString(), busy_token: 'qa61-probe' })

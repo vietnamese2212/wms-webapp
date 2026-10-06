@@ -277,7 +277,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
       cls: 'truncate', title: custs.join(', '),
       node: !t.ods.length && !pv
         ? <span className="text-slate-400">Xe trống — thả OD vào đây{ed ? ', hoặc bỏ xe (✕)' : ''}</span>
-        : <>{preview(<span className="font-medium text-slate-700">{t.stops} điểm</span>, `${pv?.stops} điểm`)}<span className="text-slate-500"> · {custs.join(', ')}</span></>,
+        : <>{preview(<span className="font-medium text-slate-700">{t.stops} điểm</span>, `${pv?.stops} điểm`)}<span className="text-slate-500"> · {new Set(t.ods.map(o => o.od_number)).size} OD · {custs.join(', ')}</span></>,
     },
     ward: { cls: 'truncate', title: t.wards.join(', '), node: t.wards.join(', ') || <span className="text-slate-300">—</span> },
     freight: {

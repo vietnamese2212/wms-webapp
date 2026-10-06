@@ -102,6 +102,7 @@ router.get('/dispatch/plans/:id/review',      requirePerm('dispatch', 'view'),  
 router.get('/dispatch/plans/:id/backlog',     requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanBacklog)   // tồn đọng đã đi / đã điều (14 ngày) — tab Đã điều tải theo yêu cầu
 router.get('/dispatch/plans/:id/ods/:od',     requirePerm('dispatch', 'view'),    validate({ params: dispatch.zPlanOdParam }),                   dispatch.getPlanOd)
 router.get('/dispatch/plans/:id/marks',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam, query: dispatch.zMarksQuery }),  dispatch.getPlanMarks)   // tab Không điều ngày này · Không điều · Ngoài app — đọc thẳng sổ dấu tay (05/10)
+router.get('/dispatch/plans/:id/stamp',       requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.getPlanStamp)   // dấu phiên bản — bàn hỏi trước khi tải lại cả kế hoạch (06/10)
 router.get('/dispatch/plans/:id/sync',        requirePerm('dispatch', 'view'),    validate({ params: zIdParam }),                                dispatch.planSync)
 router.post('/dispatch/plans/:id/move',       requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zMove }),          dispatch.moveOds)
 router.post('/dispatch/plans/:id/preview-move', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zPreview }),       dispatch.previewMove)

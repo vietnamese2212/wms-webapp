@@ -12,6 +12,7 @@ import { apiClient } from './client'
 import { supabaseClient } from '@/lib/supabase'
 import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
+import { applyDispatchDelta, applyDispatchTrip, type DispatchPlanDelta } from '@/utils/dispatchDelta'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule, WorkInbox, DirectedSupervision } from '@/types'
@@ -6152,6 +6153,8 @@ export interface DispatchPlan {
   trips: DispatchTrip[]
   pool?: DispatchTripOd[]
   in_plan?: { od_number: string; group_code: string }[]
+  /** dấu phiên bản (06/10) — bàn nhận tín hiệu realtime thì hỏi dấu, trùng thì không tải lại cả kế hoạch */
+  stamp?: string | null
 }
 export type DispatchPlanListItem = Omit<DispatchPlan, 'trips' | 'params' | 'unplanned'>
 const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] }) }
@@ -6226,11 +6229,19 @@ export function useDispatchPlanOd(id: string | null, od: string | null) {
   })
 }
 export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove'
+/** Khoá chung của các thao tác bàn ghép xe — realtime hoãn hỏi dấu kế hoạch khi chính người này còn đang ghi (06/10). */
+export const DISPATCH_WRITE_KEY = ['dispatch-write'] as const
 export function useMoveDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, ids, to, to_trip_id }: { plan_id: string; ids: string[]; to: DispatchMoveTo; to_trip_id?: string }) =>
-      apiClient.post(`/tms/dispatch/plans/${plan_id}/move`, { ids, to, ...(to_trip_id ? { to_trip_id } : {}) }).then(r => r.data.data as DispatchPlan),
+    mutationKey: DISPATCH_WRITE_KEY,
+    // 06/10 (user: "thao tác ở phần thay đổi"): server trả CÁC XE BỊ ĐỤNG + tổng kết + dấu, không trả cả kế hoạch (709 xe = 3,9 MB);
+    // ghép vào kế hoạch đang giữ. Chưa có kế hoạch trong cache (hiếm) thì tải một lần.
+    mutationFn: async ({ plan_id, ids, to, to_trip_id }: { plan_id: string; ids: string[]; to: DispatchMoveTo; to_trip_id?: string }) => {
+      const d = (await apiClient.post(`/tms/dispatch/plans/${plan_id}/move`, { ids, to, ...(to_trip_id ? { to_trip_id } : {}), delta: true })).data.data as DispatchPlanDelta
+      const old = qc.getQueryData<DispatchPlan>(['dispatch-plan', plan_id])
+      return old ? applyDispatchDelta(old, d) : (await apiClient.get(`/tms/dispatch/plans/${plan_id}`)).data.data as DispatchPlan
+    },
     onSuccess: p => putDispatchPlan(qc, p),
     onError: () => invalidateDispatch(qc),
   })
@@ -6406,9 +6417,25 @@ export function useReopenDispatchPlan() {
     onSuccess: p => { putDispatchPlan(qc, p); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
   })
 }
+/** Phần kế hoạch đi kèm cửa sửa / bỏ MỘT xe (06/10) — tổng kết + mốc + dấu, để vá thẳng vào kế hoạch đang giữ. */
+type DispatchPlanBits = { summary?: DispatchSummary; updated_at?: string; stamp?: string | null }
+/** Vá kế hoạch đang giữ có chứa xe `tripId`; không thấy (cache trống) thì tải lại như cũ. */
+function patchDispatchPlanOf(qc: ReturnType<typeof useQueryClient>, tripId: string, fn: (p: DispatchPlan) => DispatchPlan) {
+  let hit = false
+  for (const [key, p] of qc.getQueriesData<DispatchPlan>({ queryKey: ['dispatch-plan'] })) {
+    if (!p?.trips?.some(t => t.id === tripId)) continue
+    qc.setQueryData(key, fn(p)); hit = true
+  }
+  if (!hit) qc.invalidateQueries({ queryKey: ['dispatch-plan'] })
+  qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] })
+}
 export function useDeleteDispatchTrip() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/trips/${id}`).then(r => r.data.data as { id: string; deleted: boolean }), onSuccess: () => invalidateDispatch(qc) })
+  return useMutation({
+    mutationKey: DISPATCH_WRITE_KEY,
+    mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/trips/${id}`).then(r => r.data.data as { id: string; deleted: boolean; _plan?: DispatchPlanBits }),
+    onSuccess: r => patchDispatchPlanOf(qc, r.id, p => applyDispatchDelta(p, { trips: [], pool_add: [], removed_od_ids: [], removed_trip_ids: [r.id], ...r._plan })),
+  })
 }
 export function useDispatchPlans(p: { warehouse_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
   return useQuery({
@@ -6434,8 +6461,10 @@ export function useCreateDispatchPlan() {
 export function useUpdateDispatchTrip() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; vehicle_model_ids?: string[]; transport_company_id?: string | null; locked?: boolean; allow_mix_categories?: boolean | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip),
-    onSuccess: () => invalidateDispatch(qc),
+    mutationKey: DISPATCH_WRITE_KEY,
+    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; vehicle_model_ids?: string[]; transport_company_id?: string | null; locked?: boolean; allow_mix_categories?: boolean | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip & { _plan?: DispatchPlanBits }),
+    // 06/10: vá đúng xe vừa sửa (+ tổng kết, dấu) vào kế hoạch đang giữ — không tải lại cả kế hoạch
+    onSuccess: ({ _plan, ...trip }) => patchDispatchPlanOf(qc, trip.id, p => applyDispatchTrip(p, trip, _plan)),
   })
 }
 export function useMoveDispatchOd() {

@@ -464,6 +464,28 @@ try {
   check('10b. Kéo OD2 về KHUNG CHỜ → OD2 trip_id null · xe OD1 còn 4 pallet cước 200.000 × 4 · summary pool_ods 1',
     mp.s === 200 && rowOf(B, OD[1])?.trip_id === null && Number(tripOfOd(B, OD[0])?.pallets) === 4 && Number(tripOfOd(B, OD[0])?.detail?.freight?.base) === PRICE_DA * 4 && B?.summary?.pool_ods === 1,
     `http=${mp.s} ${mp.j?.error?.message ?? ''} pool=${B?.summary?.pool_ods} x1=${tripOfOd(B, OD[0])?.pallets}`)
+  // [10b2–10b3] 06/10 (user: "thao tác ở phần thay đổi"): `delta: true` trả CÁC XE BỊ ĐỤNG (đủ dòng OD) + tổng kết + dấu phiên bản thay cả
+  // kế hoạch; phần trả về phải KHỚP bản đọc lại cả kế hoạch, dấu `/stamp` = dấu trả về và đổi sau lần ghi (bàn hỏi dấu trước khi tải lại)
+  {
+    const X1 = tripOfOd(B, OD[0]), od2 = rowOf(B, OD[1])
+    const st0 = await api(`/tms/dispatch/plans/${B.id}/stamp`)
+    const md = await mvB(B, { ids: [od2.id], to: 'trip', to_trip_id: X1.id, delta: true })
+    const st1 = await api(`/tms/dispatch/plans/${B.id}/stamp`)
+    const Bf = await planOf(B.id)
+    const dT = md.j?.data?.trips ?? [], X1f = (Bf?.trips ?? []).find(t => t.id === X1.id)
+    const sameOds = (a, b) => (a ?? []).map(o => o.id).sort().join() === (b ?? []).map(o => o.id).sort().join()
+    const stBad = await api(`/tms/dispatch/plans/${crypto.randomUUID()}/stamp`)
+    check('10b2. Thả có delta → trả ĐÚNG xe bị đụng (đủ dòng OD, pallet = bản đọc lại) · id dòng vừa chuyển · tổng kết = bản đọc lại · dấu /stamp = dấu trả về, khác dấu trước · GET kế hoạch mang dấu · id lạ 404',
+      md.s === 200 && md.j?.data?.delta === true && !md.j?.data?.pool && dT.length === 1 && dT[0].id === X1.id && sameOds(dT[0].ods, X1f?.ods) && Number(dT[0].pallets) === Number(X1f?.pallets)
+      && (md.j?.data?.removed_od_ids ?? []).includes(od2.id) && md.j?.data?.summary?.pool_ods === Bf?.summary?.pool_ods && md.j?.data?.summary?.trips === Bf?.summary?.trips
+      && st0.s === 200 && !!st1.j?.data?.stamp && st1.j?.data?.stamp === md.j?.data?.stamp && st1.j?.data?.stamp !== st0.j?.data?.stamp && Bf?.stamp === st1.j?.data?.stamp && stBad.s === 404,
+      `http=${md.s} ${md.j?.error?.message ?? ''} trips=${dT.map(t => t.id === X1.id).join()} ods=${sameOds(dT[0]?.ods, X1f?.ods)} pal=${dT[0]?.pallets}/${X1f?.pallets} stamp=${st0.j?.data?.stamp?.slice(-12)}→${st1.j?.data?.stamp?.slice(-12)} (trả ${md.j?.data?.stamp?.slice(-12)} · GET ${Bf?.stamp?.slice(-12)}) lạ=${stBad.s}`)
+    const mb = await mvB(Bf, { ids: [od2.id], to: 'pool', delta: true })
+    check('10b3. Delta về KHUNG CHỜ → pool_add mang dòng OD2 (trip_id null) · xe OD1 trả về không còn OD2',
+      mb.s === 200 && (mb.j?.data?.pool_add ?? []).some(o => o.id === od2.id && o.trip_id === null) && (mb.j?.data?.trips ?? []).some(t => t.id === X1.id && !t.ods.some(o => o.id === od2.id)),
+      `http=${mb.s} ${mb.j?.error?.message ?? ''} pool_add=${(mb.j?.data?.pool_add ?? []).map(o => o.od_number).join()}`)
+    B = await planOf(B.id)
+  }
   const X3 = tripOfOd(B, OD[2])
   const pv = await api(`/tms/dispatch/plans/${B.id}/preview-move`, 'POST', { ids: [rowOf(B, OD[1]).id], to_trip_id: X3.id })
   const Bpv = await planOf(B.id)

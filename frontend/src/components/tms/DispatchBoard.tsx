@@ -32,7 +32,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
-  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview,
+  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview,
 } from '@/api/hooks'
 import { DispatchBoardTable, type BoardOps, type BoardDropAttrs } from './DispatchBoardTable'
@@ -336,6 +336,29 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     // nút CHÍNH của cụm — hiện chữ (01/10, user: "nút tối ưu lại là nút nào vậy" — bản cũ chỉ là icon ✦ không chữ)
     actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá theo dải % tải; xe đã khoá giữ nguyên', primary: true, variant: 'default', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
 
+  // CHỌN NHIỀU XE (06/10 — tab "Danh sách xe" gộp vào đây): tick ô dòng xe = chọn trọn xe ⇒ Gán ĐVVT / Đổi dòng xe cho mọi xe được
+  // chọn TRỌN (12/61 xe cùng thiếu ĐVVT thì mở 12 panel là 36 thao tác cho một quyết định duy nhất — lý do có thao tác này từ 24/09)
+  const fullTrips = trips.filter(t => editableTrip(t) && t.ods.length > 0 && t.ods.every(o => sel.has(o.id)))
+  const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: plan.warehouse_id })
+  const { data: companies = [] } = useTransportCompanies(true, 'ĐVVT')
+  const [bulk, setBulk] = useState<null | 'carrier' | 'model'>(null)
+  const [bulkVal, setBulkVal] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const applyBulk = async () => {
+    const ids = fullTrips.map(t => t.id)
+    if (!bulk || !bulkVal || !ids.length) return
+    setBulkBusy(true)
+    const patch = bulk === 'carrier' ? { transport_company_id: bulkVal } : { vehicle_model_id: bulkVal }
+    const rs = await Promise.allSettled(ids.map(id => patchTrip.mutateAsync({ id, ...patch })))
+    setBulkBusy(false)
+    const bad = rs.filter(r => r.status === 'rejected').length
+    setBulk(null); setBulkVal(''); setSel(new Set())
+    toast({
+      title: `Đã đổi ${bulk === 'carrier' ? 'ĐVVT' : 'dòng xe'} cho ${rs.length - bad}/${rs.length} xe`,
+      description: bad ? `${bad} xe không đổi được — mở từng xe để xem lý do.` : 'Cước đã tính lại theo bảng cước hiệu lực.',
+      variant: bad ? 'destructive' : undefined,
+    })
+  }
   const targets = trips.filter(editableTrip).map(t => ({ value: t.id, label: `#${t.seq} · ${t.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(t.pallets, 1)} pl · ${t.load_pct == null ? '—' : `${nf(t.load_pct, 0)}%`} · ${t.stops} điểm · ${t.wards.slice(0, 2).join(', ')}` }))
   // 05/10: đơn mang dấu tay (Không điều · Ngoài app) không còn chép vào kế hoạch — xem / chuyển ở tab Xem đơn; dòng cũ của kế hoạch lập trước đó bỏ qua
   const excluded = (plan.params.excluded ?? []).filter(x => x.kind !== 'HELD' && x.kind !== 'OUTSIDE_APP')
@@ -841,7 +864,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
       </section>
       </>}
 
-      <FloatingActionBar count={selIds.length} unit="OD đã chọn">
+      <FloatingActionBar count={selIds.length} unit={fullTrips.length ? `OD đã chọn · ${fullTrips.length} xe trọn` : 'OD đã chọn'}>
+        {/* chọn TRỌN xe (tick ô dòng xe) ⇒ thao tác của cả xe — trước 06/10 nằm ở tab "Danh sách xe" */}
+        {fullTrips.length > 0 && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy || bulkBusy} onClick={() => { setBulk('carrier'); setBulkVal('') }}>Gán ĐVVT ({fullTrips.length} xe)</Button>}
+        {fullTrips.length > 0 && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy || bulkBusy} onClick={() => { setBulk('model'); setBulkVal('') }}>Đổi dòng xe ({fullTrips.length} xe)</Button>}
         <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setMoveTarget(''); setMoveDlg(true) }}>Chuyển tới xe…</Button>
         {poolSel.length > 0 && poolSel.length === selIds.length && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={reopt.isPending || busy} onClick={() => void doReoptSel()}><Sparkles className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : 'Ghép phần đã chọn'}</Button>}
         {selIds.some(id => tripOf.get(id)) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void run(selIds.filter(id => tripOf.get(id)), 'pool')}>Về khung chờ</Button>}
@@ -863,6 +889,26 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
               const to: DispatchMoveTo = moveTarget === '__new__' ? 'new' : moveTarget === '__pool__' ? 'pool' : 'trip'
               void run(selIds, to, to === 'trip' ? moveTarget : undefined).then(() => setMoveDlg(false))
             }}>{busy ? 'Đang chuyển…' : 'Chuyển'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!bulk} onOpenChange={o => { if (!o && !bulkBusy) { setBulk(null); setBulkVal('') } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">{bulk === 'carrier' ? 'Gán ĐVVT' : 'Đổi dòng xe con'} cho {fullTrips.length} xe</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <SingleSelect
+              options={bulk === 'carrier'
+                ? companies.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))
+                : (modelsRes?.items ?? []).filter(m => m.parent).map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
+              value={bulkVal} onChange={setBulkVal} placeholder={bulk === 'carrier' ? 'Chọn ĐVVT…' : 'Chọn dòng xe con…'} disabled={bulkBusy} />
+            <p className="text-[11px] text-slate-500">
+              Áp cho {fullTrips.length} xe đang chọn trọn ({fullTrips.slice(0, 6).map(t => `#${t.seq}`).join(', ')}{fullTrips.length > 6 ? '…' : ''}). Cước từng xe tính lại theo bảng cước hiệu lực — xe nào không có cước cho tuyến + dòng xe đó sẽ để trống cước kèm lý do.
+              {bulk === 'model' && ' Dòng xe không phục vụ đủ điều kiện bảo quản của hàng trên xe sẽ bị cảnh báo (không chặn).'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="h-8" disabled={bulkBusy} onClick={() => { setBulk(null); setBulkVal('') }}>Huỷ</Button>
+            <Button size="sm" className="h-8" disabled={!bulkVal || bulkBusy} onClick={() => void applyBulk()}>{bulkBusy ? 'Đang áp…' : `Áp cho ${fullTrips.length} xe`}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

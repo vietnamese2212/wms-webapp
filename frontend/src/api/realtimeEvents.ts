@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabaseClient } from '@/lib/supabase'
 import { queryClient } from './queryClient'
+import { apiClient } from './client'
 import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
@@ -75,11 +76,13 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   freight_surcharge:     [['freight-surcharges']],               // phụ phí
   carrier_allocation:    [['freight-allocations']],              // ưu tiên ĐVVT theo khu vực
   carrier_share_target:  [['freight-allocations']],              // tỷ trọng ĐVVT
-  dispatch_plan:         [['dispatch-plans'], ['dispatch-plan']], // kế hoạch ghép chuyến nháp (24/09)
-  dispatch_trip:         [['dispatch-plan']],
+  // kế hoạch ghép chuyến nháp (24/09). ['dispatch-plan'] của ba bảng này KHÔNG tải lại thẳng nữa (06/10) — `scheduleDispatchStampCheck`
+  // hỏi dấu phiên bản từng kế hoạch đang mở, khác dấu mới tải: tiếng vọng thao tác của chính mình / kế hoạch kho khác không tải 3,9 MB
+  dispatch_plan:         [['dispatch-plans']],
+  dispatch_trip:         [],
   // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau. KHÔNG kéo theo dispatch-sync / dispatch-review (03/10, quota egress):
   // kéo thả không đổi dữ liệu SAP — hai cửa đó chỉ cần làm mới khi ZSD02 / Kế hoạch xuất / dấu hoãn đổi (erp_outbound_orders, khvc_lines…)
-  dispatch_trip_od:      [['dispatch-plan']],
+  dispatch_trip_od:      [],
   // dispatch-marks (05/10): ba tab dấu tay đọc thẳng sổ dấu — người khác đánh dấu / Điều lại thì tab thấy ngay
   dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
   dispatch_od_segment:   [['dispatch-plan'], ['dispatch-plans'], ['dispatch-sync'], ['dispatch-marks']],   // lấy đơn sang mảng khác (03/10 tối) — bàn mảng kia thấy đơn rời ngay
@@ -226,9 +229,33 @@ function coalescedInvalidate(key: string[]): void {
   }, COALESCE_MS))
 }
 
+// KẾ HOẠCH ĐIỀU VẬN (06/10): tín hiệu của dispatch_plan / dispatch_trip / dispatch_trip_od chỉ mang {table, op} — trước đây mỗi lần
+// ghi (kể cả của chính người vừa kéo thả) làm MỌI bàn đang mở tải lại CẢ kế hoạch (709 xe = 3,9 MB). Nay gộp burst rồi hỏi DẤU PHIÊN
+// BẢN của từng kế hoạch đang mở (1 request nhỏ): trùng dấu đang giữ thì thôi, khác mới tải lại. Chính người này còn đang ghi (thao tác
+// chưa về) thì hoãn — phần thay đổi về tới sẽ mang dấu mới. Hỏi dấu hỏng ⇒ tải lại (an toàn hơn đứng im).
+const DISPATCH_PLAN_TABLES = new Set(['dispatch_plan', 'dispatch_trip', 'dispatch_trip_od'])
+let dispatchCheckTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleDispatchStampCheck(delay = COALESCE_MS): void {
+  if (dispatchCheckTimer) return
+  dispatchCheckTimer = setTimeout(() => {
+    dispatchCheckTimer = null
+    if (queryClient.isMutating({ mutationKey: ['dispatch-write'] })) { scheduleDispatchStampCheck(); return }
+    for (const q of queryClient.getQueryCache().findAll({ queryKey: ['dispatch-plan'], type: 'active' })) {
+      const id = q.queryKey[1]
+      const held = (q.state.data as { stamp?: string | null } | undefined)?.stamp
+      if (typeof id !== 'string') continue
+      if (!held) { void queryClient.invalidateQueries({ queryKey: q.queryKey }); continue }
+      apiClient.get(`/tms/dispatch/plans/${id}/stamp`)
+        .then(r => { if ((r.data?.data?.stamp ?? null) !== held) void queryClient.invalidateQueries({ queryKey: q.queryKey }) })
+        .catch(() => { void queryClient.invalidateQueries({ queryKey: q.queryKey }) })
+    }
+  }, delay)
+}
+
 function onChange(msg: ChangeMsg): void {
   if (!msg?.table) return
   if (msg.table === 'DeliverySlot') patchSlotCache(msg)
+  if (DISPATCH_PLAN_TABLES.has(msg.table)) scheduleDispatchStampCheck()
 
   // Lịch sử quét: refetch throttle khi có quét xuất/nhặt lẻ thay đổi
   if (msg.table === 'OutboundScanEntry') scheduleScanLogRefresh()

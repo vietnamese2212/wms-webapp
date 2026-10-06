@@ -49,7 +49,7 @@ export const PAGE_TABS: Record<string, MobileTabDef[]> = {
   '/tms/bookings': [{ key: 'main', label: 'Kế hoạch' }, { key: 'transfer', label: 'Chuyển kho' }],
   '/tms/settings': [{ key: 'vehicle-types', label: 'Loại xe' }, { key: 'vehicle-models', label: 'Mã dòng xe' }, { key: 'slot-templates', label: 'Khung giờ' }, { key: 'companies', label: 'ĐVVT / NCC' }, { key: 'vehicles', label: 'Xe' }],
   '/tms/freight': [{ key: 'tariffs', label: 'Bảng cước' }, { key: 'surcharges', label: 'Phụ phí' }, { key: 'allocation', label: 'Phân tuyến ĐVVT' }],
-  '/tms/dispatch': [{ key: 'review', label: 'Xem đơn' }, { key: 'board', label: 'Bàn ghép xe' }, { key: 'map', label: 'Bản đồ' }, { key: 'list', label: 'Danh sách xe' }],
+  '/tms/dispatch': [{ key: 'review', label: 'Xem đơn' }, { key: 'board', label: 'Bàn ghép xe' }, { key: 'map', label: 'Bản đồ' }],   // 'list' (Danh sách xe) gộp vào Bàn ghép xe 06/10
   '/hr/attendance': [{ key: 'me', label: 'Của tôi' }, { key: 'leave', label: 'Nghỉ phép' }, { key: 'team', label: 'Bảng công' }],
   '/hr/assignments': [{ key: 'daily', label: 'Phân công' }, { key: 'layout', label: 'Layout' }, { key: 'rules', label: 'Quy tắc ca' }],
   '/masterdata/customers': [{ key: 'list', label: 'Khách hàng' }, { key: 'channels', label: 'Kênh' }],

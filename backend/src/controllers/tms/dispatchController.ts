@@ -123,8 +123,9 @@ export const zMove = z.object({
   ids: z.array(zId).min(1).max(300),
   to: z.enum(['trip', 'new', 'pool', 'remove']),     // xe có sẵn · xe mới (máy chọn dòng xe/ĐVVT) · khung chờ · bỏ khỏi kế hoạch
   to_trip_id: zId.optional(),
+  delta: zBool.optional(),   // 06/10: trả PHẦN THAY ĐỔI (xe bị đụng + tổng kết + dấu) thay cả kế hoạch
 })
-export const zPreview = z.object({ ids: z.array(zId).min(1).max(300), to_trip_id: zId })
+export const zPreview =z.object({ ids: z.array(zId).min(1).max(300), to_trip_id: zId })
 export const zReplaceOd = z.object({ od_number: zText(1, 50) })
 export const zMoveOd = z.object({
   od_number: zText(1, 50),
@@ -530,8 +531,8 @@ function tripDetail(t: DispatchTrip) {
   }
 }
 type Detail = ReturnType<typeof tripDetail>
-const detailOf = (t: TripRow): Detail => (t.detail ?? {}) as unknown as Detail
-const statusOf = (t: TripRow): TripStatus => (t.status as TripStatus) ?? 'DRAFT'
+const detailOf = (t: Pick<TripRow, 'detail'>): Detail => (t.detail ?? {}) as unknown as Detail
+const statusOf = (t: Pick<TripRow, 'status'>): TripStatus => (t.status as TripStatus) ?? 'DRAFT'
 const carrierRef = (c: EngineCarrier) => ({ id: c.id, code: c.code, name: c.name, tender_required: c.tender_required === true })
 
 async function readPlan(planId: string) {
@@ -547,10 +548,45 @@ async function readPlan(planId: string) {
   for (const o of ods) { if (!o.trip_id) { pool.push(o); continue } const l = odsBy.get(o.trip_id) ?? []; l.push(o); odsBy.set(o.trip_id, l) }
   return { ...(plan as PlanRow), trips: trips.map(t => ({ ...t, ods: odsBy.get(t.id) ?? [] })), pool }
 }
+// ── ĐỌC ĐÚNG PHẦN BỊ ĐỤNG (06/10, user: "đúng là chỉ thao tác ở phần trả") ──────────────────────────────────────────────────────
+// Đo Bàu Bàng 709 xe / 2.457 đơn: một lần thả đọc CẢ kế hoạch 4 lần (kiểm · sau khi ghi · tổng kết · trả về, ~4 MB mỗi lần) rồi gửi
+// 3,9 MB về trình duyệt ⇒ bàn bận 8–21 s. Thao tác nay chỉ đọc các xe bị đụng; tổng kết đọc vài cột nhẹ; trả phần thay đổi + dấu.
+/** Các xe (kèm dòng OD) theo id, trong một kế hoạch. */
+async function readTrips(planId: string, tripIds: string[]): Promise<(TripRow & { ods: TripOdRow[] })[]> {
+  const ids = uniq(tripIds)
+  if (!ids.length) return []
+  const [trips, ods] = await Promise.all([
+    fetchAllByIdChunks(ids, c => db.from('dispatch_trip').select('*').eq('plan_id', planId).in('id', c).order('seq')) as Promise<TripRow[]>,
+    fetchAllByIdChunks(ids, c => db.from('dispatch_trip_od').select('*').eq('plan_id', planId).in('trip_id', c).order('od_number').order('id')) as Promise<TripOdRow[]>,
+  ])
+  const by = new Map<string, TripOdRow[]>()
+  for (const o of ods) { const l = by.get(o.trip_id ?? '') ?? []; l.push(o); by.set(o.trip_id ?? '', l) }
+  return trips.sort((a, b) => a.seq - b.seq).map(t => ({ ...t, ods: by.get(t.id) ?? [] }))
+}
+/** Dòng xe / dòng OD rút gọn — đủ cho tổng kết + tỷ trọng ĐVVT, không kéo `detail` lớn / mảng mã hàng / ghi chú (~0,4 MB thay ~4 MB). */
+type SumTrip = Pick<TripRow, 'id' | 'status' | 'transport_company_id' | 'pallets' | 'tons' | 'load_pct' | 'freight_estimated' | 'underload' | 'oversize' | 'locked' | 'detail'> & { ods: Pick<TripOdRow, 'od_number'>[] }
+type SumPool = Pick<TripOdRow, 'od_number' | 'pallets' | 'reviewed_at'>
+async function readPlanLight(planId: string): Promise<{ trips: SumTrip[]; pool: SumPool[] }> {
+  const [trips, ods] = await Promise.all([
+    fetchAllRowsParallel(() => db.from('dispatch_trip').select('id, status, transport_company_id, pallets, tons, load_pct, freight_estimated, underload, oversize, locked, vm:detail->vehicle_model').eq('plan_id', planId).order('seq')) as Promise<(Omit<SumTrip, 'detail' | 'ods'> & { vm: Json | null })[]>,
+    fetchAllRowsParallel(() => db.from('dispatch_trip_od').select('id, trip_id, od_number, pallets, reviewed_at').eq('plan_id', planId).order('od_number').order('id')) as Promise<(SumPool & { id: string; trip_id: string | null })[]>,
+  ])
+  const by = new Map<string, Pick<TripOdRow, 'od_number'>[]>()
+  const pool: SumPool[] = []
+  for (const o of ods) { if (!o.trip_id) { pool.push(o); continue } const l = by.get(o.trip_id) ?? []; l.push(o); by.set(o.trip_id, l) }
+  return { trips: trips.map(({ vm, ...t }) => ({ ...t, detail: asJson({ vehicle_model: vm }), ods: by.get(t.id) ?? [] })), pool }
+}
+/** Dấu phiên bản của kế hoạch (RPC `dispatch_plan_stamp`) — bàn hỏi dấu khi có tín hiệu realtime, trùng thì không tải lại. */
+async function planStamp(planId: string): Promise<{ warehouse_id: string; stamp: string } | null> {
+  const { data, error } = await db.rpc('dispatch_plan_stamp', { p_plan_id: planId } as never)
+  if (error) throw error
+  const v = data as { warehouse_id?: string; stamp?: string } | null
+  return v?.stamp ? { warehouse_id: String(v.warehouse_id ?? ''), stamp: v.stamp } : null
+}
 
 /** Tổng kết lại từ các chuyến đang có trong nháp (sau khi người sửa) — tỷ trọng = nền kỳ (lúc chạy) + chuyến trong nháp.
  *  Chuyến đã bỏ và XE TRỐNG (người kéo hết OD ra, chưa bỏ xe) không tính. Dải chỉ số của bàn ghép xe đọc thẳng từ đây. */
-function summarizeRows(plan: PlanRow, allTrips: (TripRow & { ods: TripOdRow[] })[], pool: TripOdRow[] = []) {
+function summarizeRows(plan: PlanRow, allTrips: SumTrip[], pool: SumPool[] = []) {
   const trips = allTrips.filter(t => statusOf(t) !== 'DISCARDED' && t.ods.length > 0)
   const params = (plan.params ?? {}) as { share_base?: Record<string, ShareActual>; share_targets?: EngineShareTarget[]; carriers?: EngineCarrier[] }
   const actual: Record<string, ShareActual> = {}
@@ -627,11 +663,14 @@ async function syncPlanStatus(plan: PlanRow, actor: string | null): Promise<stri
   }
   return next
 }
+/** Tổng kết lại + ghi vào kế hoạch — đọc bản RÚT GỌN (06/10); trả tổng kết + mốc để cửa trả "phần thay đổi" mang theo. */
 async function writeSummary(plan: PlanRow) {
-  const full = await readPlan(plan.id)
-  if (!full) return
-  const { error } = await db.from('dispatch_plan').update({ summary: asJson(summarizeRows(plan, full.trips, full.pool)), updated_at: now() }).eq('id', plan.id)
+  const light = await readPlanLight(plan.id)
+  const summary = summarizeRows(plan, light.trips, light.pool)
+  const updated_at = now()
+  const { error } = await db.from('dispatch_plan').update({ summary: asJson(summary), updated_at }).eq('id', plan.id)
   if (error) throw error
+  return { summary, updated_at }
 }
 
 // ── POST /tms/dispatch/plan ────────────────────────────────────────────────────────────────────────────
@@ -863,12 +902,23 @@ export async function getPlan(req: Request, res: Response) {
     const full = await readPlan(String(req.params.id))
     if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const [wh, hidden] = await Promise.all([
+    const [wh, hidden, st] = await Promise.all([
       db.from('Warehouse').select('id, code, name').eq('id', full.warehouse_id).maybeSingle().then(r => r.data ?? null),
       // "Không liên quan" của CHÍNH người đang xem (03/10 tối) — người khác không thấy dấu này
       db.from('dispatch_od_hidden').select('od_number').eq('plan_id', full.id).eq('user_id', userKey(req)).limit(1000).then(r => { if (r.error) throw r.error; return uniq((r.data ?? []).map(x => x.od_number)) }),
+      planStamp(full.id),
     ])
-    return ok(res, { ...full, warehouse: wh, hidden })
+    return ok(res, { ...full, warehouse: wh, hidden, stamp: st?.stamp ?? null })
+  } catch (e) { return failAny(res, e) }
+}
+/** GET /plans/:id/stamp — dấu phiên bản (06/10): bàn nhận tín hiệu realtime của xe / dòng OD thì hỏi dấu trước, trùng thì không tải lại
+ *  cả kế hoạch (tiếng vọng của chính mình · tín hiệu của kế hoạch khác). Một lần gọi RPC, gác phạm vi kho theo kho của kế hoạch. */
+export async function getPlanStamp(req: Request, res: Response) {
+  try {
+    const st = await planStamp(String(req.params.id))
+    if (!st) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, st.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    return ok(res, { stamp: st.stamp })
   } catch (e) { return failAny(res, e) }
 }
 /** Khoá người dùng cho dấu theo-người (id tài khoản; không có thì tên). */
@@ -1017,7 +1067,7 @@ export async function updateTrip(req: Request, res: Response) {
       const { error } = await db.from('dispatch_trip').update({ locked: b.locked, updated_at: now() }).eq('id', trip.id)
       if (error) throw error
       // chỉ khoá / mở khoá ⇒ không đụng cước (khoá không đổi gì trên xe)
-      if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined && b.allow_mix_categories === undefined) { await writeSummary(plan); return ok(res, { ...trip, locked: b.locked }) }
+      if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined && b.allow_mix_categories === undefined) return ok(res, { ...trip, locked: b.locked, _plan: await planAfterWrite(plan) })
     }
     if (b.allow_mix_categories !== undefined) {
       // switch trên thẻ xe — ghi cột rồi tính lại (cảnh báo "xe chở lẫn" đổi theo switch)
@@ -1045,9 +1095,13 @@ export async function updateTrip(req: Request, res: Response) {
       refs.carriers.push(co as EngineCarrier)
     }
     const updated = await repriceTrip(plan, trip, modelId, carrierId, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
-    await writeSummary(plan)
-    return ok(res, updated)
+    return ok(res, { ...updated, _plan: await planAfterWrite(plan) })
   } catch (e) { return failAny(res, e) }
+}
+/** Sau một lần sửa xe: tổng kết lại + dấu phiên bản — trình duyệt vá thẳng xe vào kế hoạch đang giữ, không tải lại cả kế hoạch (06/10). */
+async function planAfterWrite(plan: PlanRow) {
+  const sum = await writeSummary(plan)
+  return { summary: sum.summary, updated_at: sum.updated_at, stamp: (await planStamp(plan.id))?.stamp ?? null }
 }
 
 // ── GET /tms/dispatch/trips/:id/carriers — ĐVVT XẾP HẠNG theo cước cho ĐÚNG xe này ─────────────────────
@@ -1197,15 +1251,15 @@ const withPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => 
   } catch (e) { return failAny(res, e) }
 }
 /** Tính lại (và ghi) các chuyến bị đụng — MỘT lần nạp bảng cước cho hợp các phường. */
-async function repriceMany(plan: PlanRow, trips: PlanTrip[]) {
-  if (!trips.length) return
+async function repriceMany(plan: PlanRow, trips: PlanTrip[]): Promise<PlanTrip[]> {
+  if (!trips.length) return []
   const wh = await loadWarehouse(plan.warehouse_id)
   const wards = uniq(trips.flatMap(t => t.ods.map(o => o.ward_code)).filter((x): x is string => !!x))
   const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels()])
-  await Promise.all(trips.map(t => repriceTrip(plan, t, t.vehicle_model_id, t.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)))
+  return Promise.all(trips.map(t => repriceTrip(plan, t, t.vehicle_model_id, t.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)))
 }
 /** Tỷ trọng HIỆN TẠI của kế hoạch = nền kỳ lúc lập + các xe đang có (để xe mới do máy chọn ĐVVT vẫn nhìn tỷ trọng). */
-function actualNow(plan: PlanRow, trips: PlanTrip[]): Record<string, ShareActual> {
+function actualNow(plan: PlanRow, trips: SumTrip[]): Record<string, ShareActual> {
   const base = ((plan.params ?? {}) as { share_base?: Record<string, ShareActual> }).share_base ?? {}
   const out: Record<string, ShareActual> = {}
   for (const [k, v] of Object.entries(base)) out[k] = { ...v }
@@ -1220,14 +1274,15 @@ function actualNow(plan: PlanRow, trips: PlanTrip[]): Record<string, ShareActual
 // flow 'STO' khi dòng OD mang cờ trung chuyển — chỉ để `isTransferOd` của luật 8 đọc đúng (dòng không còn phân loại SAP gốc)
 const rowAsEngineOd = (o: TripOdRow): EngineOd => ({ od_number: o.od_number, ship_to_code: o.ship_to_code, ship_to_name: o.ship_to_name, ward_code: o.ward_code, region_code: o.region_code ?? null, channel: null, flow: o.is_transfer ? 'STO' : 'SALE', lines: [], allowed_models: o.allowed_models ?? null, separate: o.separate === true, max_customers: o.max_customers ?? null })
 /** Xe còn OD mà CHƯA có dòng xe ⇒ máy chọn (ba bậc, trong danh sách dòng xe khách được vào) trước khi tính lại — sửa trên object, repriceTrip ghi. */
-async function fillMissingVehicles(plan: PlanRow, trips: PlanTrip[], all: PlanTrip[]) {
+// `all` = các xe của kế hoạch cho tỷ trọng ĐVVT — truyền hàm nạp để chỉ đọc khi THẬT có xe thiếu dòng xe (06/10)
+async function fillMissingVehicles(plan: PlanRow, trips: PlanTrip[], all: () => Promise<SumTrip[]>) {
   const need = trips.filter(t => t.ods.length && !t.vehicle_model_id)
   if (!need.length) return
   const wards = uniq(need.flatMap(t => t.ods.map(o => o.ward_code)).filter((x): x is string => !!x))
-  const refs = await loadRefs(plan.warehouse_id, plan.plan_date, wards)
+  const [refs, allTrips] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), all()])
   for (const t of need) {
     const sug = suggestVehicle({ ods: [], ...refs, share_actual: {}, params: engineParams(plan) },
-      t.ods.map(o => ({ od: rowAsEngineOd(o), pallets: numOrNull(o.pallets), tons: numOrNull(o.tons), conditions: o.conditions ?? [] })), actualNow(plan, all))
+      t.ods.map(o => ({ od: rowAsEngineOd(o), pallets: numOrNull(o.pallets), tons: numOrNull(o.tons), conditions: o.conditions ?? [] })), actualNow(plan, allTrips))
     t.vehicle_model_id = sug.model?.id ?? null
     t.extra_vehicle_model_ids = sug.vehicles.slice(1).map(v => v.model.id)
     t.transport_company_id = t.transport_company_id ?? sug.carrier?.id ?? null
@@ -1251,12 +1306,12 @@ export async function moveOds(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    const full = (await readPlan(plan.id))!
-    const all = [...full.trips.flatMap(t => t.ods), ...full.pool]
+    // CHỈ đọc phần bị đụng (06/10): các dòng đang kéo + xe nguồn + xe đích — không đọc cả kế hoạch (709 xe = ~4 MB mỗi lần)
     const ids = uniq(b.ids)
-    const rows = all.filter(o => ids.includes(o.id))
+    const rows = (await fetchAllByIdChunks(ids, c => db.from('dispatch_trip_od').select('*').eq('plan_id', plan.id).in('id', c).order('id'))) as TripOdRow[]
     if (rows.length !== ids.length) return fail(res, 'Có dòng OD không thuộc kế hoạch này (có thể vừa bị người khác chuyển — tải lại trang)', 404)
-    const tripBy = new Map(full.trips.map(t => [t.id, t]))
+    const before = await readTrips(plan.id, [...rows.map(o => o.trip_id).filter((x): x is string => !!x), ...(b.to === 'trip' && b.to_trip_id ? [b.to_trip_id] : [])])
+    const tripBy = new Map(before.map(t => [t.id, t]))
     for (const o of rows) {
       const src = o.trip_id ? tripBy.get(o.trip_id) : null
       if (src && !EDITABLE_TRIP.includes(statusOf(src))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${src.group_code} ${TRIP_STATUS_VI[statusOf(src)]} — không kéo OD ra khỏi xe này ở đây.`)
@@ -1277,7 +1332,7 @@ export async function moveOds(req: Request, res: Response) {
       const wards = uniq(rows.map(o => o.ward_code).filter((x): x is string => !!x))
       const refs = await loadRefs(plan.warehouse_id, plan.plan_date, wards)
       const sug = suggestVehicle({ ods: [], ...refs, share_actual: {}, params: engineParams(plan) },
-        rows.map(o => ({ od: rowAsEngineOd(o), pallets: numOrNull(o.pallets), tons: numOrNull(o.tons), conditions: o.conditions ?? [] })), actualNow(plan, full.trips))
+        rows.map(o => ({ od: rowAsEngineOd(o), pallets: numOrNull(o.pallets), tons: numOrNull(o.tons), conditions: o.conditions ?? [] })), actualNow(plan, (await readPlanLight(plan.id)).trips))
       const seq = await nextSeq(engineParams(plan).code_prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
       targetId = randomUUID()
       const { error } = await db.from('dispatch_trip').insert({
@@ -1300,12 +1355,16 @@ export async function moveOds(req: Request, res: Response) {
     }
     // XE TRỐNG KHÔNG TỰ BIẾN MẤT — để Hoàn tác thả lại được đúng xe cũ; người bỏ bằng nút ✕ trên thẻ xe
     const touched = uniq([...rows.map(o => o.trip_id).filter((x): x is string => !!x), ...(targetId ? [targetId] : [])])
-    const after = (await readPlan(plan.id))!
-    const hit = after.trips.filter(x => touched.includes(x.id))
-    await fillMissingVehicles(plan, hit, after.trips)
-    await repriceMany(plan, hit)
-    await writeSummary(plan)
-    return ok(res, await readPlan(plan.id))
+    const hit = await readTrips(plan.id, touched)
+    await fillMissingVehicles(plan, hit, async () => (await readPlanLight(plan.id)).trips)
+    const repriced = await repriceMany(plan, hit)
+    const sum = await writeSummary(plan)
+    // `delta` (bàn ghép xe từ 06/10): trả PHẦN THAY ĐỔI — các xe bị đụng (đủ dòng OD) · dòng về khung chờ · id các dòng vừa chuyển ·
+    // tổng kết · dấu phiên bản. Không cờ ⇒ cả kế hoạch như trước (gói QA 61 + bản app cũ còn nằm trong bộ nhớ đệm trình duyệt).
+    if (!b.delta) return ok(res, await readPlan(plan.id))
+    const st = await planStamp(plan.id)
+    const pool_add = b.to === 'pool' ? ((await fetchAllByIdChunks(ids, c => db.from('dispatch_trip_od').select('*').eq('plan_id', plan.id).in('id', c).order('id'))) as TripOdRow[]).sort((x, y) => x.od_number.localeCompare(y.od_number)) : []
+    return ok(res, { delta: true, trips: repriced, pool_add, removed_od_ids: ids, summary: sum.summary, updated_at: sum.updated_at, stamp: st?.stamp ?? null, target_trip_id: targetId })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -1316,10 +1375,11 @@ export async function previewMove(req: Request, res: Response) {
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    const full = (await readPlan(plan.id))!
-    const tg = full.trips.find(x => x.id === b.to_trip_id)
+    // mỗi lần rê qua một xe là một lần gọi — chỉ đọc xe đích + các dòng đang kéo (06/10: trước đọc CẢ kế hoạch, 709 xe ⇒ 2–9 s)
+    const [tg] = await readTrips(plan.id, [b.to_trip_id])
     if (!tg) return fail(res, 'Xe đích không thuộc kế hoạch này', 400)
-    const moving = [...full.trips.flatMap(x => x.ods), ...full.pool].filter(o => b.ids.includes(o.id) && o.trip_id !== tg.id)
+    const moving = ((await fetchAllByIdChunks(uniq(b.ids), c => db.from('dispatch_trip_od').select('*').eq('plan_id', plan.id).in('id', c).order('id'))) as TripOdRow[])
+      .filter(o => o.trip_id !== tg.id).sort((x, y) => x.od_number.localeCompare(y.od_number))
     // switch "Ghép Loại kho khác" của xe đang tắt ⇒ rê qua là thấy NGAY xe không nhận, không phải thả rồi mới biết
     const blocked = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tg.ods, moving, engineParams(plan).follow_categories)
     const next = { ...tg, ods: [...tg.ods, ...moving] }
@@ -1344,8 +1404,7 @@ export async function deleteTrip(req: Request, res: Response) {
     if (got.trip.ods.length) return fail(res, 409, 'TRIP_NOT_EMPTY', `Xe ${got.trip.group_code} còn ${uniq(got.trip.ods.map(o => o.od_number)).length} OD — kéo OD sang xe khác hoặc về khung chờ trước khi bỏ xe.`)
     const { error } = await db.from('dispatch_trip').delete().eq('id', got.trip.id)
     if (error) throw error
-    await writeSummary(got.plan)
-    return ok(res, { id: got.trip.id, deleted: true })
+    return ok(res, { id: got.trip.id, deleted: true, _plan: await planAfterWrite(got.plan) })
   } catch (e) { return failAny(res, e) }
 }
 

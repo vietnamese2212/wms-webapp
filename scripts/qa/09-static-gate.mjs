@@ -1131,6 +1131,18 @@ const RULES = [
     count: (s) => countMatches(['frontend/src/api'], ['.ts'],
       (line) => /apiClient\.(post|patch|put|delete)\(`\/tms\/dispatch\/plans\//.test(line) && !/timeout:/.test(line), s),
   },
+  // Lớp C62 (06/10): tín hiệu realtime chỉ mang {table, op}, KHÔNG mang kho ⇒ ánh xạ thẳng một bảng vào khoá NẶNG của bàn điều vận
+  // (cả kế hoạch · sync · Xem đơn · dấu tay · chi tiết OD · hàng chờ) là ghi ở kho nào cũng làm mọi bàn đang mở tải lại. Đo 06/10: gói 61
+  // ở kho QA61 10 phút ⇒ bàn Ba Vì tải lại review 36 · decisions 42 · marks 38 lần, PostgREST kín 10 khe, lập nháp kho kia 503.
+  // Bảng mới là đầu vào của bàn ⇒ thêm vào DISPATCH_INPUT_TABLES (hỏi dấu đầu vào của kho) hoặc DISPATCH_PLAN_TABLES (dấu kế hoạch).
+  // Baseline 1 = reconcile_tasks → dispatch-decisions (hàng chờ đối chiếu không mang kho, rất hiếm ghi).
+  {
+    key: 'dispatch_heavy_key_in_table_map',
+    label: 'bảng trong TABLE_QUERY_MAP tải THẲNG khoá nặng của bàn điều vận (dispatch-plan/sync/review/marks/od/decisions) — tín hiệu không mang kho ' +
+           'nên ghi ở kho nào mọi bàn cũng tải lại. Đưa bảng vào DISPATCH_INPUT_TABLES / DISPATCH_PLAN_TABLES (hỏi dấu trước)',
+    count: (s) => countMatches(['frontend/src/api'], ['.ts'],
+      (line) => /^\s*\w+:\s*\[\[/.test(line) && /'dispatch-(plan|sync|review|marks|od|decisions)'\]/.test(line), s),
+  },
   // Bộ lọc nhiều-chọn: FilterBar coi `selected=[]` là "Tất cả" (chip không active, "Xóa tất cả" đưa về []),
   // còn BE `parseListParam` coi `?x=` RỖNG là "KHÔNG giá trị nào" (hợp đồng gói 07). Gửi thẳng
   // `x: arr.join(',')` là hai đầu hiểu ngược nhau ⇒ bỏ tick hết = bảng TRỐNG với câu "không khớp bộ lọc".

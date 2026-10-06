@@ -921,6 +921,20 @@ export async function getPlanStamp(req: Request, res: Response) {
     return ok(res, { stamp: st.stamp })
   } catch (e) { return failAny(res, e) }
 }
+/** GET /inputs-stamp?warehouse_id= — dấu ĐẦU VÀO của bàn điều vận một kho (06/10, migration 20261006c): ZSD02 của plant · Kế hoạch
+ *  xuất · sổ dấu tay · phả hệ DO. Tín hiệu realtime của các bảng đó không mang kho ⇒ trước đây ghi ở kho nào cũng làm mọi bàn tải lại
+ *  Xem đơn / sync / dấu tay / hàng chờ (đo: gói 61 ở kho QA61 ⇒ bàn Ba Vì tải lại review 36 lần / 10 phút). Bàn hỏi dấu này trước. */
+export const zInputsStampQuery = z.object({ warehouse_id: zId })
+export async function getInputsStamp(req: Request, res: Response) {
+  try {
+    const { warehouse_id } = req.query as z.infer<typeof zInputsStampQuery>
+    if (!whAllowed(req, warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const { data, error } = await db.rpc('dispatch_inputs_stamp', { p_warehouse_id: warehouse_id } as never)
+    if (error) return failAny(res, error)
+    if (!data) return fail(res, 'Không tìm thấy kho', 404)
+    return ok(res, { stamp: String(data) })
+  } catch (e) { return failAny(res, e) }
+}
 /** Khoá người dùng cho dấu theo-người (id tài khoản; không có thì tên). */
 const userKey = (req: Request) => String(req.user?.sub ?? req.user?.name ?? '')
 

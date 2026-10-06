@@ -68,6 +68,7 @@
   "inherit_label_without_value": 2,
   "today_frozen_at_import": 0,
   "dispatch_plan_write_default_timeout": 9,
+  "dispatch_heavy_key_in_table_map": 1,
   "list_param_join_without_empty_guard": 0,
   "bulk_bar_inline_reflows_table": 0,
   "url_param_applied_by_value": 0,

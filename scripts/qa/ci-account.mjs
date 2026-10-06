@@ -78,6 +78,7 @@ const readSavedTag = () => { try { return readFileSync(TAG_FILE, 'utf8').trim() 
 const runTag = (process.env.GITHUB_RUN_ID || process.env.QA_CI_TAG
   || (process.argv[2] === 'cleanup' ? readSavedTag() : '') || String(Date.now())).slice(-10)
 const codeOf = (tag) => `${PREFIX}${tag}`
+const nameOf = (tag) => `CI runner ${tag} (tự xoá sau khi chạy)`
 
 async function provision() {
   await purgeOld()
@@ -95,7 +96,7 @@ async function provision() {
     body: JSON.stringify({
       id: randomUUID(),
       employee_code: code,
-      name: `CI runner ${runTag} (tự xoá sau khi chạy)`,
+      name: nameOf(runTag),
       email,
       password: bcrypt.hashSync(password, 10),
       is_active: true,
@@ -134,6 +135,23 @@ async function cleanup() {
   await rest(`auth_login_events?email=eq.${code.toLowerCase()}@ci.local`, { method: 'DELETE' })
   await purgeOld()
   console.error(`[ci-account] đã xoá tài khoản ${code}`)
+  await purgePlans()
+}
+
+/** Nháp Điều vận tài khoản CI để lại (đo 06/10: 56 nháp ĐÃ BỎ ≈ 51k dòng đơn trên Ba Vì · Bàu Bàng, từ các lượt
+ *  đo / kiểm UI 04–05/10). "Bỏ nháp" không xoá dòng nên mỗi lần tra một OD phải lọc thêm ~11 dòng cũ (`/sync`
+ *  quá 8 s ⇒ 503), và màn của người dùng in "Nháp trước (CI runner …) đã bỏ". Chỉ DRAFT / DISCARDED (không đụng
+ *  nháp đã xác nhận); nháp của lượt CI khác còn trẻ thì để nguyên. Chạy SAU khi đã xoá tài khoản: hỏng ở đây
+ *  không được để tài khoản superadmin sống tiếp. */
+async function purgePlans() {
+  const open = 'status=in.(DRAFT,DISCARDED)'
+  const old = new Date(Date.now() - MAX_AGE_MS).toISOString()
+  try {
+    const mine = await rest(`dispatch_plan?created_by=eq.${encodeURIComponent(nameOf(runTag))}&${open}&select=id`, { method: 'DELETE', headers: { Prefer: 'return=representation' } })
+    const stale = await rest(`dispatch_plan?created_by=like.${encodeURIComponent('CI runner *')}&created_at=lt.${old}&${open}&select=id`, { method: 'DELETE', headers: { Prefer: 'return=representation' } })
+    const n = (mine?.length ?? 0) + (stale?.length ?? 0)
+    if (n) console.error(`[ci-account] đã xoá ${n} nháp Điều vận của tài khoản CI`)
+  } catch (e) { console.error(`[ci-account] không xoá được nháp Điều vận của tài khoản CI — ${String(e).slice(0, 200)}`) }
 }
 
 const mode = process.argv[2]

@@ -486,6 +486,33 @@ try {
       `http=${mb.s} ${mb.j?.error?.message ?? ''} pool_add=${(mb.j?.data?.pool_add ?? []).map(o => o.od_number).join()}`)
     B = await planOf(B.id)
   }
+  // [10b4] 06/10: tín hiệu realtime của ZSD02 / Kế hoạch xuất / sổ dấu tay KHÔNG mang kho ⇒ bàn hỏi DẤU ĐẦU VÀO của kho mình
+  // (GET /inputs-stamp, RPC dispatch_inputs_stamp) trước khi tải lại Xem đơn · sync · dấu tay · hàng chờ. Dấu phải ĐỔI ở MỌI bước nguồn
+  // của kho đổi — không đổi là bàn đứng số cũ mà không ai hay. Bước xoá chỉ làm giảm SỐ dòng (mốc sửa cuối quay về như trước).
+  // Dòng nháp dùng số OD giả, ZSD02 ghi OBSOLETE ⇒ không đơn nào vào khung chờ / tab của kế hoạch đang kiểm.
+  {
+    const NOPE = 'QA61NOPE'
+    const ist = async () => (await api(`/tms/dispatch/inputs-stamp?warehouse_id=${WH}`)).j?.data?.stamp ?? null
+    const s0 = await ist()
+    const eId = crypto.randomUUID(), hId = crypto.randomUUID(), kId = crypto.randomUUID()
+    await restWrite('erp_outbound_orders', 'POST', null, { id: eId, od_number: NOPE, od_item: '10', plant: QAWH.plant, sync_status: 'OBSOLETE', updated_at: nowIso() })
+    const s1 = await ist()
+    await restWrite('dispatch_od_hold', 'POST', null, { id: hId, warehouse_id: WH, od_number: NOPE, hold_until: null, reason: 'QA61 dấu đầu vào', created_by: 'QA61', updated_at: nowIso() })
+    const s2 = await ist()
+    await restWrite('dispatch_od_hold', 'DELETE', `id=eq.${hId}`)
+    const s3 = await ist()
+    await restWrite('khvc_lines', 'POST', null, { id: kId, group_code: `${PREFIX}95`, do_no: NOPE, warehouse_code: QAWH.code, export_date: DAY, source: 'EXCEL', sync_status: 'ACTIVE', updated_at: nowIso() })
+    const s4 = await ist()
+    await restWrite('khvc_lines', 'DELETE', `id=eq.${kId}`).catch(() => {})
+    await restWrite('erp_outbound_orders', 'DELETE', `id=eq.${eId}`).catch(() => {})
+    const s5 = await ist()
+    const seq = [s0, s1, s2, s3, s4, s5]
+    const bad = await api(`/tms/dispatch/inputs-stamp?warehouse_id=${crypto.randomUUID()}`)
+    const miss = await api('/tms/dispatch/inputs-stamp')
+    check('10b4. Dấu đầu vào của kho ĐỔI ở mọi bước: thêm dòng ZSD02 · thêm dấu hoãn · xoá dấu hoãn · thêm dòng KH xuất · xoá cả hai — kho lạ 404 · thiếu kho 400',
+      seq.every(Boolean) && seq.every((s, i) => i === 0 || s !== seq[i - 1]) && bad.s === 404 && miss.s === 400,
+      `dấu=${seq.map(s => s?.replace(/\d{4}-\d\d-\d\d \d\d:\d\d:/g, '') ?? 'null').join(' → ')} lạ=${bad.s} thiếu=${miss.s}`)
+  }
   const X3 = tripOfOd(B, OD[2])
   const pv = await api(`/tms/dispatch/plans/${B.id}/preview-move`, 'POST', { ids: [rowOf(B, OD[1]).id], to_trip_id: X3.id })
   const Bpv = await planOf(B.id)

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-06T04:22:03.022Z · 115 bảng/view · 184 hàm · 0 enum
+// Sinh lúc 2026-10-06T10:21:09.139Z · 115 bảng/view · 185 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -6210,6 +6210,10 @@ export type Database = {
         Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
         Returns: Json
       }
+      dispatch_inputs_stamp: {
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Returns: string
+      }
       dispatch_marked_counts: {
         Args: { p_plant: unknown; p_slocs: unknown; p_segment: unknown; n: unknown; arg10: unknown; arg12?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
         Returns: Record<string, unknown>[]
@@ -6715,7 +6719,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown } | { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
         Returns: string
       }
       unaccent_init: {

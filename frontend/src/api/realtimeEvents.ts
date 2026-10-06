@@ -68,7 +68,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count'], ['work-inbox'], ['dispatch-decisions']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
-  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks'], ['dispatch-od'], ['dispatch-decisions']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5) · bàn ghép xe báo OD mới / OD bị SAP thay
+  // bàn điều vận (sync · Xem đơn · dấu tay · chi tiết OD · hàng chờ) KHÔNG tải thẳng nữa (06/10) — `scheduleDispatchInputsCheck` hỏi dấu đầu vào của kho
+  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5)
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
   vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
   warehouse_vehicle_model: [['vehicle-models']],                 // cấu hình riêng của KHO cho dòng xe (03/10) — cùng danh sách
@@ -83,13 +84,15 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau. KHÔNG kéo theo dispatch-sync / dispatch-review (03/10, quota egress):
   // kéo thả không đổi dữ liệu SAP — hai cửa đó chỉ cần làm mới khi ZSD02 / Kế hoạch xuất / dấu hoãn đổi (erp_outbound_orders, khvc_lines…)
   dispatch_trip_od:      [],
-  // dispatch-marks (05/10): ba tab dấu tay đọc thẳng sổ dấu — người khác đánh dấu / Điều lại thì tab thấy ngay
-  dispatch_od_hold:      [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks']],  // Hoãn / Không điều OD (27/09) — người khác bỏ hoãn thì khung chờ thấy ngay
-  dispatch_od_segment:   [['dispatch-plan'], ['dispatch-plans'], ['dispatch-sync'], ['dispatch-marks']],   // lấy đơn sang mảng khác (03/10 tối) — bàn mảng kia thấy đơn rời ngay
-  dispatch_od_outside:   [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks'], ['zsd02-coverage'], ['dispatch-decisions']],  // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
-  od_lineage:            [['dispatch-plan'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-decisions']],  // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
+  // Sổ dấu tay · mảng · phả hệ DO · Kế hoạch xuất là ĐẦU VÀO của bàn điều vận: người khác đánh dấu / Điều lại / lấy đơn sang mảng kia /
+  // đơn vào KH xuất ⇒ bàn của KHO ĐÓ thấy ngay qua `scheduleDispatchInputsCheck` (06/10 — trước đó tải thẳng ở mọi kho). Đơn rời khung
+  // chờ là ghi dispatch_trip_od (trigger) ⇒ chính kế hoạch đi đường hỏi dấu phiên bản, không cần ['dispatch-plan'] ở đây.
+  dispatch_od_hold:      [],   // Hoãn / Không điều OD (27/09)
+  dispatch_od_segment:   [['dispatch-plans']],   // lấy đơn sang mảng khác (03/10 tối)
+  dispatch_od_outside:   [['zsd02-coverage']],   // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
+  od_lineage:            [],   // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
   outbound_events:     [['gdo-events']],
-  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['dispatch-sync'], ['dispatch-review'], ['dispatch-marks'], ['dispatch-decisions']],   // dispatch-review: tiến độ kho ở tab Đã điều (03/10 đợt 2) · dispatch-marks: đơn vào KH xuất rời tab dấu tay
+  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],
@@ -252,10 +255,46 @@ function scheduleDispatchStampCheck(delay = COALESCE_MS): void {
   }, delay)
 }
 
+// ĐẦU VÀO CỦA BÀN ĐIỀU VẬN (06/10): ZSD02 · Kế hoạch xuất · sổ dấu tay · mảng · phả hệ DO — tín hiệu không mang kho, nên trước đây ghi ở
+// kho NÀO cũng làm MỌI bàn đang mở tải lại sync · Xem đơn · dấu tay · chi tiết OD · hàng chờ. Đo 06/10 (log Vercel 10 phút, gói QA 61 ở
+// kho QA61): một bàn Ba Vì 3.529 đơn đang mở tải lại review 36 · decisions 42 · marks 38 lần ⇒ PostgREST kín 10 khe, lập nháp ở kho kia
+// quá 8 s ⇒ 503. Nay gộp burst rồi hỏi DẤU ĐẦU VÀO của từng kho đang xem (1 câu nhẹ, RPC dispatch_inputs_stamp): trùng dấu đã giữ thì
+// thôi, khác mới tải các khoá nặng của ĐÚNG kho đó. Lần hỏi đầu chưa có dấu để so ⇒ tải (thà thừa một lần còn hơn bỏ sót).
+const DISPATCH_INPUT_TABLES = new Set(['erp_outbound_orders', 'khvc_lines', 'dispatch_od_hold', 'dispatch_od_outside', 'dispatch_od_segment', 'od_lineage'])
+const DISPATCH_INPUT_KEYS = ['dispatch-sync', 'dispatch-review', 'dispatch-marks', 'dispatch-od']   // theo id kế hoạch
+const dispatchInputsHeld = new Map<string, string>()   // kho → dấu đầu vào lúc tải gần nhất
+let dispatchInputsTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleDispatchInputsCheck(): void {
+  if (dispatchInputsTimer) return
+  dispatchInputsTimer = setTimeout(() => {
+    dispatchInputsTimer = null
+    const plansOf = new Map<string, string[]>()   // kho → kế hoạch đang mở của kho đó
+    for (const q of queryClient.getQueryCache().findAll({ queryKey: ['dispatch-plan'], type: 'active' })) {
+      const id = q.queryKey[1], wh = (q.state.data as { warehouse_id?: string } | undefined)?.warehouse_id
+      if (typeof id === 'string' && wh) plansOf.set(wh, [...(plansOf.get(wh) ?? []), id])
+    }
+    for (const q of queryClient.getQueryCache().findAll({ queryKey: ['dispatch-decisions'], type: 'active' })) {
+      const wh = q.queryKey[1]
+      if (typeof wh === 'string' && wh && !plansOf.has(wh)) plansOf.set(wh, [])
+    }
+    for (const [wh, ids] of plansOf) {
+      apiClient.get('/tms/dispatch/inputs-stamp', { params: { warehouse_id: wh } })
+        .then(r => (r.data?.data?.stamp ?? null) as string | null, () => null)
+        .then(s => {
+          if (s && dispatchInputsHeld.get(wh) === s) return
+          if (s) dispatchInputsHeld.set(wh, s)
+          for (const id of ids) for (const k of DISPATCH_INPUT_KEYS) void queryClient.invalidateQueries({ queryKey: [k, id] })
+          void queryClient.invalidateQueries({ queryKey: ['dispatch-decisions', wh] })
+        })
+    }
+  }, COALESCE_MS)
+}
+
 function onChange(msg: ChangeMsg): void {
   if (!msg?.table) return
   if (msg.table === 'DeliverySlot') patchSlotCache(msg)
   if (DISPATCH_PLAN_TABLES.has(msg.table)) scheduleDispatchStampCheck()
+  if (DISPATCH_INPUT_TABLES.has(msg.table)) scheduleDispatchInputsCheck()
 
   // Lịch sử quét: refetch throttle khi có quét xuất/nhặt lẻ thay đổi
   if (msg.table === 'OutboundScanEntry') scheduleScanLogRefresh()

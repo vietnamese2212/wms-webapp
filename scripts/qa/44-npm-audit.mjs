@@ -4,6 +4,9 @@
 // là phụ thuộc LÚC CÀI của bcrypt — nợ có chủ đích ghi trong baseline, code mới thêm thư viện lỗi thì ratchet bắt.
 // 03/10/2026: `braces` GHSA-vfj7-8cjw-p6xm (high, range * — CHƯA có bản vá) qua chokidar 3 — chỉ ts-node-dev (BE dev) và
 // tailwindcss 3 (FE build), không vào bundle chạy thật ⇒ nâng baseline BE high 0→1, FE high 1→2; có bản vá thì hạ lại.
+// 06/10/2026: advisory MỚI trên registry chặn push — `npm audit fix` (không --force) đã vá proxy-addr 2.0.8 (Express, chạy thật),
+// source-map-js 1.2.2, fast-glob. Còn `vitest` GHSA-82fw-gwwq-j7x9 + `tinypool` GHSA-5gmw-xhrv-c9v3 (critical) — CHỈ bộ chạy test BE
+// (devDependency, không vào bundle Vercel), bản vá ở vitest 5 (MAJOR, việc riêng) ⇒ nâng baseline BE critical 1→3 (tar cũ + 2 gói này).
 // usage: node scripts/qa/44-npm-audit.mjs [--update-baseline]
 import { spawnSync } from 'child_process'
 import { readFileSync, writeFileSync } from 'fs'

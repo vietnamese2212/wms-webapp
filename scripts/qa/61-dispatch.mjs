@@ -1576,6 +1576,24 @@ try {
     check('17m. Đơn đã KÉO sang nháp khác (còn ở đó) → nháp gốc /sync không báo OD mới, Nạp OD mới không kéo về',
       unO.s === 200 && !!rowOf(unO.j?.data, OD[2]) && syA.s === 200 && !(syA.j?.data?.new_od_numbers ?? []).includes(OD[2]) && rfA2.s === 200 && !rowOf(rfA2.j?.data, OD[2]),
       `unout=${unO.s} ${unO.j?.error?.message ?? ''} OD3ởB=${!!rowOf(unO.j?.data, OD[2])} syncA=${syA.s} mớiA=${JSON.stringify(syA.j?.data?.new_od_numbers ?? [])} OD3ởA=${!!rowOf(rfA2.j?.data, OD[2])}`)
+    // 17n (06/10) — GHÉP HỎNG GIỮA CHỪNG KHÔNG ĐƯỢC MẤT ĐƠN (Ba Vì 15:28: 503 lúc ghi dòng ⇒ 896 xe rỗng, 3.517 đơn rời kế hoạch — bản ghép
+    // cũ xoá khung chờ TRƯỚC khi ghi dòng mới). Ép hỏng ĐÚNG bước ghi: ODST (khung chờ B) cùng HỌ với OD1 (trên xe A2) qua phả hệ — cửa nạp
+    // chỉ loại đơn TRÙNG SỐ trên xe nháp khác, rào DB `trg_dispatch_od_one_open_vehicle` chặn CẢ HỌ ⇒ máy xếp ODST lên xe, rào chặn lúc ghi.
+    // Phải: 409 · ODST VẪN ở khung chờ B · B không mọc thêm xe nào.
+    {
+      const B5 = await planOf(BID)
+      const rST5 = rowOf(B5, ODST)
+      const tripsB5 = (B5?.trips ?? []).length
+      const linId = crypto.randomUUID()
+      await restWrite('od_lineage', 'POST', null, { id: linId, old_od: OD[0], new_od: ODST, kind: 'REPLACE', so_number: 'QA61SOFAM', so_item: '10', updated_at: nowIso() })
+      const rN = rST5 ? await api(`/tms/dispatch/plans/${BID}/reoptimize`, 'POST', { ids: [rST5.id] }) : { s: 0, j: null }
+      const B6 = await planOf(BID)
+      await restWrite('od_lineage', 'DELETE', `id=eq.${linId}`).catch(() => {})
+      const errTxt = `${rN.j?.error?.code ?? ''} ${rN.j?.error?.message ?? ''}`
+      check('17n. Ghép HỎNG ở bước ghi dòng mới (rào DB chặn đơn cùng họ với đơn trên xe nháp khác) → 409 · đơn VẪN ở khung chờ · KHÔNG đẻ xe rỗng (bản cũ xoá khung chờ trước khi ghi ⇒ mất đơn + xe rỗng)',
+        !!rST5 && rN.s === 409 && /OD_ON_OTHER_PLAN|đang xếp trên xe/.test(errTxt) && !!rowOf(B6, ODST) && !rowOf(B6, ODST)?.trip_id && (B6?.trips ?? []).length === tripsB5,
+        `ODSTởB=${!!rST5} ghép=${rN.s} ${errTxt.slice(0, 110)} · sau: ODSTởKhungChờ=${!!rowOf(B6, ODST) && !rowOf(B6, ODST)?.trip_id} xe ${tripsB5}→${(B6?.trips ?? []).length}`)
+    }
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${[ODST, ODST3].join(',')})`).catch(() => {})
 
     // ── [18] ĐỢT 2 VÒNG ĐỜI OD (03/10): hàng chờ "Cần xử lý" của điều vận (RPC dispatch_decisions) + gỡ / đổi số DO bậc Đã xác nhận

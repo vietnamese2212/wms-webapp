@@ -1457,21 +1457,8 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const startSeq = await nextSeq(engineParams(plan).code_prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
     const result = runDispatch({ ods: cand.ods, ...refs, share_actual: actualNow(plan, keep), condition_labels, params: { ...engineParams(plan), start_seq: startSeq }, geo: await engineGeo(wh.id, cand.ods) })
     const t = now()
-    // OD của xe bị làm lại về khung chờ trước, rồi mới xoá xe — OD máy không xếp được (hoặc đã bị SAP điều/thay) nằm lại khung chờ
     const redoIds = redo.map(x => x.id)
-    for (let i = 0; i < redoIds.length; i += 300) {
-      const { error } = await db.from('dispatch_trip_od').update({ trip_id: null, updated_at: t }).in('trip_id', redoIds.slice(i, i + 300))
-      if (error) throw error
-    }
-    for (let i = 0; i < redoIds.length; i += 300) {
-      const { error } = await db.from('dispatch_trip').delete().in('id', redoIds.slice(i, i + 300))
-      if (error) throw error
-    }
     const placed = uniq(result.trips.flatMap(tr => tr.ods.map(o => o.od_number)))
-    for (let i = 0; i < placed.length; i += 300) {
-      const { error } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null).in('od_number', placed.slice(i, i + 300))
-      if (error) throw error
-    }
     const tripRows = result.trips.map(tr => ({
       id: randomUUID(), plan_id: plan.id, seq: tr.seq, group_code: tr.group_code,
       vehicle_model_id: tr.vehicle_model?.id ?? null, transport_company_id: tr.carrier?.id ?? null,
@@ -1479,11 +1466,40 @@ async function reoptimizePlanInner(req: Request, res: Response) {
       freight_estimated: tr.freight.total, detail: asJson(tripDetail(tr)), manual_edited: false, status: 'DRAFT',
       extra_vehicle_model_ids: tr.vehicles.slice(1).map(v => v.model.id), updated_at: t,
     }))
-    for (let i = 0; i < tripRows.length; i += CHUNK) {
-      const { error } = await db.from('dispatch_trip').insert(tripRows.slice(i, i + CHUNK))
+    // GHI MỚI TRƯỚC, DỌN CŨ SAU (06/10): Ba Vì 15:28 lượt ghép 3.529 đơn bị cắt 503 QUERY_TIMEOUT ở bước ghi dòng OD — bản cũ đã đưa đơn của
+    // xe làm lại về khung chờ, xoá xe, xoá dòng khung chờ của đơn đã xếp TRƯỚC khi ghi dòng mới ⇒ 896 xe rỗng, 3.517 đơn rời kế hoạch.
+    // Nay hỏng ở bước ghi xe / dòng mới ⇒ xoá các xe vừa tạo (CASCADE dòng của chúng), kế hoạch về đúng như trước khi bấm. Cùng một đơn
+    // nằm tạm hai dòng (cũ + mới) trong lúc ghi là chấp nhận được — không ràng buộc duy nhất nào, bước dọn ngay sau đó gỡ dòng cũ.
+    const newTripIds = tripRows.map(r => r.id)
+    try {
+      for (let i = 0; i < tripRows.length; i += CHUNK) {
+        const { error } = await db.from('dispatch_trip').insert(tripRows.slice(i, i + CHUNK))
+        if (error) throw error
+      }
+      await insertOdRows(result.trips.flatMap((tr, i) => tr.ods.map(o => odRow(plan.id, tripRows[i].id, o, cand.meta.get(o.od_number), t, revBy.get(o.od_number) ?? { at: t, by: req.user?.name ?? null }))))
+    } catch (e) {
+      for (let i = 0; i < newTripIds.length; i += 300) {
+        const { error } = await db.from('dispatch_trip').delete().in('id', newTripIds.slice(i, i + 300))
+        if (error) console.error('[dispatch] ghép hỏng — dọn xe vừa tạo hỏng', plan.id, error.message)
+      }
+      throw e
+    }
+    // dọn cũ: OD của xe làm lại mà máy KHÔNG xếp được (hoặc đã bị SAP điều / thay) về khung chờ; xoá xe làm lại (CASCADE dòng đã xếp lại
+    // ở xe mới); xoá dòng khung chờ của đơn đã lên xe mới
+    const placedSet = new Set(placed)
+    const backToPool = redo.flatMap(x => x.ods).filter(o => !placedSet.has(o.od_number)).map(o => o.id)
+    for (let i = 0; i < backToPool.length; i += 300) {
+      const { error } = await db.from('dispatch_trip_od').update({ trip_id: null, updated_at: t }).in('id', backToPool.slice(i, i + 300))
       if (error) throw error
     }
-    await insertOdRows(result.trips.flatMap((tr, i) => tr.ods.map(o => odRow(plan.id, tripRows[i].id, o, cand.meta.get(o.od_number), t, revBy.get(o.od_number) ?? { at: t, by: req.user?.name ?? null }))))
+    for (let i = 0; i < redoIds.length; i += 300) {
+      const { error } = await db.from('dispatch_trip').delete().in('id', redoIds.slice(i, i + 300))
+      if (error) throw error
+    }
+    for (let i = 0; i < placed.length; i += 300) {
+      const { error } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null).in('od_number', placed.slice(i, i + 300))
+      if (error) throw error
+    }
     // kế hoạch chưa có mốc máy lập (bước Xem đơn đi trước) ⇒ lần ghép đầu là mốc để dải chỉ số so người sửa với máy
     const pp = (plan.params ?? {}) as Record<string, unknown>
     if (pp.baseline == null) {

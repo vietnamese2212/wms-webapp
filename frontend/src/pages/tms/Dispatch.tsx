@@ -95,11 +95,14 @@ export default function Dispatch() {
   const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const oldPlansQ = useDispatchPlans({ warehouse_id: f.warehouseId || undefined, date_to: yesterday }, !!f.warehouseId)
   const stalePlans = (oldPlansQ.data?.items ?? []).filter(p => (p.status === 'DRAFT' || p.status === 'TENDERED') && p.plan_date < day)
-  // kế hoạch đang mở: người chọn → bản nháp mới nhất → bản mới nhất bất kỳ
+  // kế hoạch đang mở: người chọn → bản nháp mới nhất → bản mới nhất CHƯA BỎ. 06/10 (user: "bên Trung chuyển không có multi select"):
+  // nháp Trung chuyển đã Bỏ nháp mà trang vẫn lấy làm kế hoạch đang làm — nháp đã bỏ chỉ để xem nên mọi ô tick / nút Ghép xe biến mất.
+  // Nay mảng chỉ còn nháp đã bỏ ⇒ "Chưa có kế hoạch" + Lập kế hoạch; muốn xem lại nháp đã bỏ thì bấm "Xem nháp đã bỏ".
   const planId = useMemo(() => {
     if (f.planId && planList.some(p => p.id === f.planId)) return f.planId
-    return (planList.find(p => p.status === 'DRAFT') ?? planList[0])?.id ?? null
+    return (planList.find(p => p.status === 'DRAFT') ?? planList.find(p => p.status !== 'DISCARDED'))?.id ?? null
   }, [f.planId, planList])
+  const lastDiscarded = planList.find(p => p.status === 'DISCARDED') ?? null
   const planQ = useDispatchPlan(planId)
   const plan = planQ.data ?? null
   // "Không liên quan" của CHÍNH người xem (03/10 tối): bàn ghép xe không thấy các đơn đó ở khung chờ; bảng Xem đơn gom chúng vào tab riêng
@@ -467,6 +470,13 @@ export default function Dispatch() {
             Dùng SWITCH hiện sẵn chứ không phải chip trong menu: cả lựa chọn LẪN số của từng lựa chọn
             phải nhìn thấy mà không bấm gì (cùng lý do user chốt 17/09 cho bảng Việc cần làm). Loại
             vấn đề nào KHÔNG có xe nào thì không hiện — menu đầy lựa chọn ra bảng trắng là vô ích. */}
+        {/* đang XEM nháp đã bỏ (người chủ động mở) — nói rõ là chỉ xem, đường về kế hoạch đang làm một nhát */}
+        {plan?.status === 'DISCARDED' && (
+          <div className="shrink-0 border-b bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
+            Đang xem nháp <b>đã bỏ</b> lúc {formatTimestampDate(plan.updated_at)} — chỉ xem, không chọn / ghép / chuyển được.{' '}
+            <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planId: '' })}>Về kế hoạch đang làm</button>
+          </div>
+        )}
         {plan && !showReview && tab !== 'map' && (
           // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
@@ -515,6 +525,9 @@ export default function Dispatch() {
               <p className="text-sm font-medium text-slate-500">Chưa có kế hoạch <b>{SEGMENT_VI[seg]}</b> cho kho này ngày {formatDate(day)}{otherPlan ? ` — mảng ${SEGMENT_VI[otherSeg]} đã có nháp` : ''}</p>
               {canPlan ? <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={runPlan} disabled={create.isPending}><Play className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang ghép…' : 'Lập kế hoạch'}</Button>
                 : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ chạy máy ghép.</p>}
+              {lastDiscarded && (
+                <p className="text-xs">Nháp trước{lastDiscarded.created_by ? ` (${lastDiscarded.created_by} lập)` : ''} đã bỏ lúc {formatTimestampDate(lastDiscarded.updated_at)} — <button type="button" className="text-sky-700 underline" onClick={() => setF({ planId: lastDiscarded.id })}>Xem nháp đã bỏ</button> (chỉ xem)</p>
+              )}
             </div>
           ) : showReview ? (
             <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} canAct={canActKhvc}

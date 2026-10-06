@@ -18,7 +18,7 @@ import { DispatchBoard } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
 import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from '@/components/tms/DispatchLoadBandDialog'
-import { EDITABLE, tripStatus, ISSUES, TODO_KEYS, ISSUE_ORDER, ISSUE_SHORT, issuesOf, needsWork, type IssueKey } from '@/components/tms/dispatchIssues'
+import { EDITABLE, tripStatus, ISSUES, TODO_KEYS, ISSUE_ORDER, ISSUE_SHORT, issuesOf, needsWork, SOFT_FLAG_KINDS, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
@@ -233,9 +233,9 @@ export default function Dispatch() {
     const over = open.filter(t => t.ods.length && t.oversize).length
     const poolN = plan.summary.pool_ods ?? 0
     // 03/10 tối: cờ "SAP đã post" / "SAP đã gắn xe" chỉ THAM CHIẾU — hỏi lại một lần, không chặn (người không đánh dấu Ngoài app là đã quyết điều)
-    const hard = (od: string) => { const k = flags.get(od)?.kind; return !!k && k !== 'SHIPPED' && k !== 'SAP_ASSIGNED' }
+    const hard = (od: string) => { const k = flags.get(od)?.kind; return !!k && !SOFT_FLAG_KINDS.has(k) }
     const flagged = open.filter(t => t.ods.some(o => hard(o.od_number)))
-    const softOds = new Set(open.flatMap(t => t.ods.map(o => o.od_number)).filter(od => { const k = flags.get(od)?.kind; return k === 'SHIPPED' || k === 'SAP_ASSIGNED' }))
+    const softOds = new Set(open.flatMap(t => t.ods.map(o => o.od_number)).filter(od => { const k = flags.get(od)?.kind; return !!k && SOFT_FLAG_KINDS.has(k) }))
     const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD còn ở KHUNG CHỜ (sẽ KHÔNG đi)` : '',
       softOds.size ? `${softOds.size} OD SAP báo ĐÃ POST / ĐÃ GẮN XE mà vẫn trên xe (đúng là đã đi thì về Xem đơn bấm "Ngoài app" trước)` : '']
       .filter(Boolean).join(' · ')

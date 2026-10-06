@@ -24,7 +24,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip } from './DispatchReviewTable'
-import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI } from './dispatchIssues'
+import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, SOFT_FLAG_KINDS } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const money = (n: number | string | null | undefined) => {
@@ -34,9 +34,8 @@ const money = (n: number | string | null | undefined) => {
 }
 const uniq = <T,>(a: T[]) => [...new Set(a)]
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
-const POOL_W = 460, POOL_MIN = 300
-/** Cờ SAP chỉ THAM CHIẾU (03/10 tối) — vàng như bảng Xem đơn; còn lại đỏ */
-const SOFT_FLAG = new Set<DispatchOdFlag['kind']>(['SHIPPED', 'SAP_ASSIGNED'])
+// 1280 px có menu trái: khung chờ 400 ⇒ bảng xe ~610 px vẫn thấy Xe · Tải · Pallet · Tấn (đo 06/10 — 460 thì mất cột Tấn)
+const POOL_W = 400, POOL_MIN = 300
 
 export type BoardHover = { target: string; data: DispatchMovePreview | null; loading: boolean } | null
 export type BoardDropAttrs = {
@@ -78,8 +77,8 @@ export interface BoardOps {
 // Hai bảng chung MỘT bộ cột (khung chờ bỏ ba cột chỉ xe mới có: Tải · Cước · ĐVVT). Điện thoại: cột đầu hẹp hơn, cột thao tác không
 // ghim (ghim hai mép ở 360 px chỉ còn ~50 px cho phần cuộn) — khoá lưu độ rộng riêng cho từng cỡ.
 const tripCols = (desktop: boolean): RtColDef[] => [
-  { id: 'x', label: 'Xe · OD', w: desktop ? 230 : 170 },
-  { id: 'load', label: 'Tải', w: 124 },
+  { id: 'x', label: 'Xe · OD', w: desktop ? 210 : 170 },
+  { id: 'load', label: 'Tải', w: 104 },
   { id: 'pal', label: 'Pallet', w: 64, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 64, align: 'right' },
   { id: 'cust', label: 'Khách', w: 210 },
@@ -163,7 +162,7 @@ const shareOf = (o: DispatchTripOd, t: DispatchTrip): number | null => {
 /** Ô của một dòng ĐƠN — dùng chung cho khung chờ và đơn dưới xe */
 function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null): Cells {
   const fl = ops.flags.get(o.od_number)
-  const soft = !!fl && SOFT_FLAG.has(fl.kind)
+  const soft = !!fl && SOFT_FLAG_KINDS.has(fl.kind)   // cờ tham chiếu — vàng như bảng Xem đơn; còn lại đỏ
   const can = ops.editable && (!t || ops.editableTrip(t))
   const canSap = ops.editable && (!t || ops.editableTrip(t) || tripStatus(t) === 'TENDERED')
   const noVeh = Array.isArray(o.allowed_models) && !o.allowed_models.length
@@ -184,6 +183,8 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null): Cell
           {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
           {fl && <span className={`rounded px-1 text-[9px] font-medium ${soft ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>{FLAG_VI[fl.kind]}</span>}
+          {/* đơn dưới xe: tên khách ngay ở cột dính — khung chờ mở thì cột Khách nằm ngoài màn (đo 1280 px 06/10) */}
+          {t && <span className="min-w-0 truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}</span>}
         </div>
       ),
     },
@@ -367,11 +368,12 @@ function TripRows({ ops, t, open, onToggle, cols }: { ops: BoardOps; t: Dispatch
   )
 }
 
-/** Kéo gần mép trên / dưới của vùng cuộn thì vùng tự cuộn — xe đích nằm ngoài màn vẫn thả tới được */
+/** Kéo gần mép trên / dưới của vùng cuộn thì vùng tự cuộn — xe đích nằm ngoài màn vẫn thả tới được. Dải mép HẸP + chậm (~5 px mỗi
+ *  nhịp dragover): dải rộng / nhanh thì xe đích nằm sát mép bị cuộn trôi khỏi con trỏ trước khi kịp thả (đo 06/10). */
 function edgeScroll(e: React.DragEvent<HTMLElement>) {
-  const el = e.currentTarget, r = el.getBoundingClientRect(), edge = 56
-  if (e.clientY < r.top + edge) el.scrollTop -= Math.ceil((r.top + edge - e.clientY) / 2)
-  else if (e.clientY > r.bottom - edge) el.scrollTop += Math.ceil((e.clientY - (r.bottom - edge)) / 2)
+  const el = e.currentTarget, r = el.getBoundingClientRect(), edge = 36
+  if (e.clientY < r.top + edge) el.scrollTop -= Math.ceil((r.top + edge - e.clientY) / 6)
+  else if (e.clientY > r.bottom - edge) el.scrollTop += Math.ceil((e.clientY - (r.bottom - edge)) / 6)
 }
 
 export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras }: {
@@ -482,8 +484,10 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
         )}
 
         {/* ── BẢNG XE ── nhóm (vùng | loại xe) → xe → đơn */}
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-auto" onDragOver={ops.canDrag ? edgeScroll : undefined}>
+        {/* điện thoại: bảng xe có chiều cao RIÊNG (trang cuộn tới nó) — flex-1 dưới đầu trang + thanh công cụ nhiều hàng + khung chờ
+            40 % thì còn 0 px, bảng nằm đó mà không thấy, không bấm được (đo 390 px 06/10) */}
+        <section className="flex min-w-0 flex-col lg:min-h-0 lg:flex-1">
+          <div className="h-[75vh] overflow-auto lg:h-auto lg:min-h-0 lg:flex-1" onDragOver={ops.canDrag ? edgeScroll : undefined}>
             <ResizableTable storageKey={`dispatch_board_trips_v1${desktop ? '' : '_m'}`} cols={tcols}>
               <TableBody>
                 {!ops.tripGroups.length && <TableEmptyRow colSpan={tcols.length}>{ops.tripsTotal

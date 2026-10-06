@@ -32,7 +32,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { EDITABLE, tripStatus, FLAG_VI } from './dispatchIssues'
+import { EDITABLE, tripStatus, FLAG_VI, SOFT_FLAG_KINDS } from './dispatchIssues'
 import { DispatchOdDetailSheet } from './DispatchOdDetailSheet'
 import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
 
@@ -72,8 +72,9 @@ const when = (at: string | null | undefined) => (at ? `${formatTimestampDate(at,
 const KHVC_SRC_VI: Record<string, string> = { DISPATCH: 'xác nhận điều vận', EXCEL: 'upload Kế hoạch xuất', MANUAL: 'nhập / sửa tay' }
 const noVehOf = (o: { allowed_models?: string[] | null }) => Array.isArray(o.allowed_models) && !o.allowed_models.length
 const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Đang xếp ở nháp khác', SAP_ASSIGNED: 'SAP đã gắn xe', SHIPPED: 'SAP đã post', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'Mã chưa khai trong Mã hàng', OUTSIDE_APP: 'Ngoài app' }
-/** Cờ SAP chỉ THAM CHIẾU (03/10 tối) — vàng, không đỏ: SAP nói đã post / đã gắn xe, app vẫn điều vì chưa ai đánh dấu Ngoài app */
-const SOFT_FLAG = new Set<DispatchOdFlag['kind']>(['SHIPPED', 'SAP_ASSIGNED'])
+/** Cờ SAP chỉ THAM CHIẾU (03/10 tối) — vàng, không đỏ: SAP nói đã post / đã gắn xe, app vẫn điều vì chưa ai đánh dấu Ngoài app.
+ *  MỘT nguồn với bộ đếm "cần xử lý" + cửa Xác nhận (06/10, C53 lặp: dispatchIssues còn đếm cờ mềm) */
+const SOFT_FLAG = SOFT_FLAG_KINDS
 /** Nhãn OD về ZSD02 SAU khi lập kế hoạch, còn ở khung chờ (user chốt 28/09) — dùng chung bảng Xem đơn + bàn ghép xe. */
 export function NewOdChip() {
   return <span className="rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800" title="OD mới về ZSD02 sau khi lập kế hoạch — tự vào tab Điều, chưa lên xe">Mới</span>

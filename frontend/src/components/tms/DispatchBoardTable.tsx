@@ -12,7 +12,7 @@
 //     khi thả (cùng lời xem trước của bản thẻ) — biết kết quả trước khi thả.
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Lock, Unlock, X, Ban, Truck, StickyNote, RotateCw, Replace } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
@@ -336,21 +336,28 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
   }
 }
 
-/** Dòng xe + các dòng đơn của xe. Mọi dòng của xe là MỘT ô thả (thả lên dòng đơn nào cũng là thả vào xe đó). */
-function TripRows({ ops, t, open, onToggle, cols }: { ops: BoardOps; t: DispatchTrip; open: boolean; onToggle: () => void; cols: RtColDef[] }) {
+/** Dòng xe + các dòng đơn của xe. Mọi dòng của xe là MỘT ô thả (thả lên dòng đơn nào cũng là thả vào xe đó).
+ *  VẼ LẠI CHỈ KHI XE ĐÓ ĐỔI (`sameTripRows`): đo 06/10 Bàu Bàng 709 xe / 3.194 dòng — mỗi lần rê sang xe khác cả bảng vẽ lại, viền
+ *  xe đích hiện sau 567 ms. Dữ liệu vẽ đọc từ props (đổi là vẽ lại); thao tác lúc bấm / kéo đọc `live.current` (bản MỚI NHẤT) — vd kéo
+ *  đơn đã tick phải mang cả các đơn tick ở xe khác dù xe này không vẽ lại. */
+type TripRowsProps = {
+  ops: BoardOps; live: React.MutableRefObject<BoardOps>; t: DispatchTrip; open: boolean; onToggle: (id: string) => void; cols: RtColDef[]
+  hv: BoardHover; hit: boolean; selKey: string; sig: string; flags: Map<string, DispatchOdFlag>
+}
+const sameTripRows = (a: TripRowsProps, b: TripRowsProps) =>
+  a.t === b.t && a.open === b.open && a.hv === b.hv && a.hit === b.hit && a.selKey === b.selKey && a.sig === b.sig && a.cols === b.cols && a.flags === b.flags
+const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv, hit }: TripRowsProps) {
   const ed = ops.editableTrip(t)
-  const hv = ops.hover?.target === t.id && !ops.ownDrop(t.id) ? ops.hover : null
   const drop = ed ? ops.dropProps('trip', t.id, t.id) : {}
   const dragTrip = ops.canDrag && ed && t.ods.length > 0
-  const hit = ops.justHit === t.id
   const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : t.locked ? 'bg-slate-100' : 'bg-slate-50'
   return (
     <>
       <TableRow data-trip-card={t.id} {...drop}
-        draggable={dragTrip} onDragStart={dragTrip ? e => ops.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? ops.endDrag : undefined}
+        draggable={dragTrip} onDragStart={dragTrip ? e => live.current.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? () => live.current.endDrag() : undefined}
         className={`cursor-pointer border-t border-slate-300 ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
-        onClick={() => ops.onOpenTrip(t.id)}>
-        <RowCells cols={cols} cells={tripCells(ops, t, hv, open, onToggle)} bg={bg} />
+        onClick={() => live.current.onOpenTrip(t.id)}>
+        <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id))} bg={bg} />
       </TableRow>
       {open && t.ods.map(o => {
         const dragOk = ops.canDrag && ed
@@ -358,15 +365,15 @@ function TripRows({ ops, t, open, onToggle, cols }: { ops: BoardOps; t: Dispatch
         const rbg = s || hv ? 'bg-sky-50' : ops.q && ops.matches(o) ? 'bg-yellow-50' : 'bg-white'
         return (
           <TableRow key={o.id} {...drop} draggable={dragOk}
-            onDragStart={dragOk ? e => ops.startDrag(e, ops.idsFor(o), true) : undefined} onDragEnd={dragOk ? ops.endDrag : undefined}
-            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => ops.onOpenOd(o)}>
+            onDragStart={dragOk ? e => live.current.startDrag(e, live.current.idsFor(o), true) : undefined} onDragEnd={dragOk ? () => live.current.endDrag() : undefined}
+            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
             <RowCells cols={cols} cells={odCells(ops, o, t)} bg={rbg} />
           </TableRow>
         )
       })}
     </>
   )
-}
+}, sameTripRows)
 
 /** Kéo gần mép trên / dưới của vùng cuộn thì vùng tự cuộn — xe đích nằm ngoài màn vẫn thả tới được. Dải mép HẸP + chậm (~5 px mỗi
  *  nhịp dragover): dải rộng / nhanh thì xe đích nằm sát mép bị cuộn trôi khỏi con trỏ trước khi kịp thả (đo 06/10). */
@@ -382,7 +389,12 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
   const { desktop } = ops
-  const tcols = tripCols(desktop), pcols = poolCols(desktop)
+  const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop), [desktop])
+  // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
+  const live = useRef(ops)
+  live.current = ops
+  // những thứ CHUNG làm đổi cách vẽ mọi dòng xe — đổi là vẽ lại cả bảng
+  const sig = `${ops.editable}|${ops.canDrag}|${ops.busy}|${ops.tripBusy}|${ops.sapBusy}|${ops.canCustVeh}|${ops.q}`
 
   // VÁCH NGĂN: kéo đổi độ rộng khung chờ — giữ cục bộ khi kéo, ghi vào bộ lọc (nhớ theo người) lúc nhả chuột
   const box = useRef<HTMLDivElement>(null)
@@ -411,7 +423,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const [flip, setFlip] = useState<Set<string>>(new Set())
   useEffect(() => { setFlip(new Set()) }, [f.boardOdsHidden, ops.plan.id])
   const tripOpen = (id: string) => !!ops.q || (f.boardOdsHidden ? flip.has(id) : !flip.has(id))
-  const flipTrip = (id: string) => setFlip(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const flipTrip = useCallback((id: string) => setFlip(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n }), [])
 
   const regionLabel = (x: DispatchTrip) => x.ods[0]?.region_name || x.ods[0]?.region_code || 'Chưa có vùng'
   const poolHover = ops.hover?.target === 'pool'
@@ -539,7 +551,9 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                                 }} />
                               </TableRow>
                             )}
-                            <TripRows ops={ops} t={t} open={tripOpen(t.id)} onToggle={() => flipTrip(t.id)} cols={tcols} />
+                            <TripRows ops={ops} live={live} t={t} open={tripOpen(t.id)} onToggle={flipTrip} cols={tcols} flags={ops.flags} sig={sig}
+                              hv={ops.hover?.target === t.id && !ops.ownDrop(t.id) ? ops.hover : null} hit={ops.justHit === t.id}
+                              selKey={ops.sel.size ? t.ods.filter(o => ops.sel.has(o.id)).map(o => o.id).join(',') : ''} />
                           </Fragment>
                         )
                       })}

@@ -441,6 +441,10 @@ interface DispatchFilters {
   kpiOpen: boolean
   boardOpen: string[]    // khoá nhóm dòng xe CHA đang MỞ trên bàn ghép xe
   poolHidden: boolean
+  // 06/10 (user: "ghép đơn dạng thẻ hơi khó nhìn — table kéo thả, đồng bộ từ trên xuống"): 'table' bảng cây xe → đơn (mặc định) · 'cards' thẻ cũ
+  boardView: string
+  boardPoolW: number     // độ rộng khung chờ ở dạng bảng (px, kéo vách ngăn) — 0 = mặc định
+  boardOdsHidden: boolean // dạng bảng: chỉ hiện dòng XE (đơn trên xe thu lại), mở từng xe bằng mũi tên
   search: string         // tìm OD / khách / phường / Số xe trên bàn ghép xe + tab Dữ liệu OD
   createdFrom: string    // bảng Xem đơn: khoảng Ngày tạo OD (ZSD02 "Thời gian tạo OD") — lọc tại chỗ trên dữ liệu đã nạp
   createdTo: string
@@ -695,7 +699,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

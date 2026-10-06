@@ -159,8 +159,27 @@ const shareOf = (o: DispatchTripOd, t: DispatchTrip): number | null => {
   return (used / Number(l.cap)) * 100
 }
 
-/** Ô của một dòng ĐƠN — dùng chung cho khung chờ và đơn dưới xe */
-function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null): Cells {
+/** Vạch mép trái của CẢ khối xe (dòng xe + các dòng đơn của nó): đỏ = vượt tải / ĐVVT từ chối / OD đổi ở SAP · hổ phách = còn việc
+ *  người phải quyết · xám = bình thường. 06/10 (user: "phân biệt rõ hơn giữa các xe, dòng nào là chung 1 xe — đang nhìn hơi rối"):
+ *  trước đó vạch chỉ có ở dòng xe nên các dòng đơn trắng nối liền dòng xe kế tiếp, không biết khối nào của xe nào. */
+const tripRail = (t: DispatchTrip, flags: Map<string, DispatchOdFlag>): string => {
+  const iss = issuesOf(t, { flags })
+  return t.oversize || iss.some(k => k === 'declined' || k === 'sapflag') ? 'bg-red-500' : iss.some(k => TODO_KEYS.has(k)) ? 'bg-amber-400' : 'bg-slate-300'
+}
+/** Nhánh cây ở cột dính của dòng đơn dưới xe: vạch khối + đường dọc nối về mũi tên mở của dòng xe (dừng ở giữa dòng đơn CUỐI) +
+ *  nhánh ngang tới ô tick. Vẽ tuyệt đối trong ô dính (ô dính là khối chứa) nên đường dọc liền qua các dòng. */
+function TreeBranch({ rail, last }: { rail: string; last: boolean }) {
+  return (
+    <>
+      <span className={`absolute inset-y-0 left-0 w-1 ${rail}`} />
+      <span className={`absolute left-[17px] top-0 border-l border-slate-300 ${last ? 'h-1/2' : 'bottom-0'}`} />
+      <span className="absolute left-[17px] top-1/2 w-2 border-t border-slate-300" />
+    </>
+  )
+}
+
+/** Ô của một dòng ĐƠN — dùng chung cho khung chờ và đơn dưới xe (`tree` = đơn dưới xe: vạch khối + nhánh cây) */
+function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?: { rail: string; last: boolean }): Cells {
   const fl = ops.flags.get(o.od_number)
   const soft = !!fl && SOFT_FLAG_KINDS.has(fl.kind)   // cờ tham chiếu — vàng như bảng Xem đơn; còn lại đỏ
   const can = ops.editable && (!t || ops.editableTrip(t))
@@ -176,6 +195,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null): Cell
       title: `${o.od_number}${o.part_of ? ` — phần ${o.part_index}/${o.part_of} (OD bị tách, gom về một xe trước khi xác nhận)` : ''} · bấm dòng để xem chi tiết đơn`,
       node: (
         <div className={`flex min-w-0 items-center gap-1 ${t ? 'pl-5' : ''}`}>
+          {tree && <TreeBranch rail={tree.rail} last={tree.last} />}
           {can
             ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={ops.sel.has(o.id)} onChange={() => ops.toggle(o.id)} onClick={e => e.stopPropagation()} aria-label={`Chọn ${o.od_number}`} />
             : <span className="w-3.5 shrink-0" />}
@@ -232,7 +252,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
   const ids = t.ods.map(o => o.id)
   const nSel = ids.filter(id => ops.sel.has(id)).length
   const iss = ISSUE_ORDER.filter(k => issuesOf(t, { flags: ops.flags }).includes(k))
-  const sev = t.oversize || iss.some(k => k === 'declined' || k === 'sapflag') ? 'bg-red-500' : iss.some(k => TODO_KEYS.has(k)) ? 'bg-amber-400' : 'bg-transparent'
+  const sev = tripRail(t, ops.flags)
   const multi = (t.detail.vehicles?.length ?? 0) > 1
   // khách theo pallet giảm dần — người đọc thấy khách CHÍNH của xe trước
   const byCust = new Map<string, number>()
@@ -251,7 +271,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
       title: `Số xe ${t.group_code}${multi ? ` · ${t.detail.vehicles!.map(v => v.name).join(' + ')}` : ''} — bấm dòng để mở chi tiết xe (đổi dòng xe, xe phụ, chuyển từng OD)${ops.canDrag && ed && ids.length ? ' · kéo dòng xe thả vào xe khác = gộp cả xe' : ''}`,
       node: (
         <div className="flex min-w-0 items-center gap-1">
-          {/* vạch mức khẩn bên mép trái: đỏ = vượt tải / ĐVVT từ chối / OD đổi ở SAP · hổ phách = còn việc người phải quyết */}
+          {/* vạch mép trái của khối xe (chạy tiếp xuống các dòng đơn — `tripRail`) */}
           <span className={`absolute inset-y-0 left-0 w-1 ${sev}`} />
           <button type="button" onClick={e => { e.stopPropagation(); onToggle() }} aria-expanded={open} title={open ? 'Thu các đơn của xe' : 'Mở các đơn của xe'}
             className="shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-200">{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</button>
@@ -350,27 +370,33 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
   const ed = ops.editableTrip(t)
   const drop = ed ? ops.dropProps('trip', t.id, t.id) : {}
   const dragTrip = ops.canDrag && ed && t.ods.length > 0
-  const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : t.locked ? 'bg-slate-100' : 'bg-slate-50'
+  // dòng xe = ĐẦU KHỐI (nền xám đậm hơn đơn trắng); khoá xe nhận biết bằng ổ khoá trên dòng
+  const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : 'bg-slate-100'
+  const rail = tripRail(t, ops.flags)
+  const shown = open ? t.ods : []
   return (
     <>
       <TableRow data-trip-card={t.id} {...drop}
         draggable={dragTrip} onDragStart={dragTrip ? e => live.current.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? () => live.current.endDrag() : undefined}
-        className={`cursor-pointer border-t border-slate-300 ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
+        className={`cursor-pointer border-t border-slate-300 ${bg} hover:bg-slate-200/70 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
         onClick={() => live.current.onOpenTrip(t.id)}>
         <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id))} bg={bg} />
       </TableRow>
-      {open && t.ods.map(o => {
+      {shown.map((o, i) => {
         const dragOk = ops.canDrag && ed
         const s = ops.sel.has(o.id)
         const rbg = s || hv ? 'bg-sky-50' : ops.q && ops.matches(o) ? 'bg-yellow-50' : 'bg-white'
+        const last = i === shown.length - 1
         return (
           <TableRow key={o.id} {...drop} draggable={dragOk}
             onDragStart={dragOk ? e => live.current.startDrag(e, live.current.idsFor(o), true) : undefined} onDragEnd={dragOk ? () => live.current.endDrag() : undefined}
-            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
-            <RowCells cols={cols} cells={odCells(ops, o, t)} bg={rbg} />
+            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${last ? 'border-slate-300' : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
+            <RowCells cols={cols} cells={odCells(ops, o, t, { rail, last })} bg={rbg} />
           </TableRow>
         )
       })}
+      {/* khoảng trống sau khối xe đang mở — xe kế tiếp bắt đầu khối mới (chuẩn nhóm dòng, skill table-format mục 10) */}
+      {shown.length > 0 && <tr aria-hidden="true"><td colSpan={cols.length} className="h-2.5 border-0 bg-white p-0" /></tr>}
     </>
   )
 }, sameTripRows)
@@ -543,8 +569,8 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                         return (
                           <Fragment key={t.id}>
                             {band && (
-                              <TableRow className="bg-slate-100">
-                                <RowCells cols={tcols} bg="bg-slate-100" cells={{
+                              <TableRow className="bg-slate-50">
+                                <RowCells cols={tcols} bg="bg-slate-50" cells={{
                                   x: { node: <span className="pl-5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{regionLabel(t)}</span>, title: regionLabel(t) },
                                   pal: { node: nf(run.reduce((s, x) => s + Number(x.pallets ?? 0), 0), 1) },
                                   cust: { cls: 'text-slate-500', node: `${run.length} xe` },

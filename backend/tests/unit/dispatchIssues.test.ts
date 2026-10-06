@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -39,5 +39,19 @@ describe('dispatchIssues — cờ SAP tham chiếu không thành việc của ng
   })
   it('một đơn cờ tham chiếu + một đơn cờ cứng trên cùng xe ⇒ vẫn cần xử lý', () => {
     expect(needsWork(trip(['A', 'B']), flags({ A: 'SHIPPED', B: 'GONE' }))).toBe(true)
+  })
+})
+
+// 06/10: kế hoạch lớn trả lời chậm (709 xe ~8 s) — người tick tiếp trong lúc chờ; chuyển xong chỉ được bỏ chọn đơn VỪA chuyển
+describe('selectionAfterMove — lựa chọn sau một lần chuyển', () => {
+  it('bỏ đúng các đơn vừa chuyển, giữ ô tick khác (tick trong lúc chờ)', () => {
+    expect([...selectionAfterMove(new Set(['a', 'b', 'x']), ['a', 'b'])]).toEqual(['x'])
+  })
+  it('đơn vừa chuyển không nằm trong lựa chọn (Hoàn tác) ⇒ giữ NGUYÊN lựa chọn người vừa tick', () => {
+    const s = new Set(['x', 'y'])
+    expect(selectionAfterMove(s, ['a'])).toBe(s)
+  })
+  it('chuyển đúng các đơn đã tick ⇒ lựa chọn rỗng như trước', () => {
+    expect(selectionAfterMove(new Set(['a']), ['a']).size).toBe(0)
   })
 })

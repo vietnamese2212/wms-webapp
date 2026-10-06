@@ -38,6 +38,14 @@ export const ISSUE_SHORT: Record<IssueKey, string> = {
   nofreight: 'chưa có cước', under: 'Non tải', warn: 'có cảnh báo',
 }
 export const ISSUE_ORDER: IssueKey[] = ['declined', 'sapflag', 'over', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
+/** Lựa chọn trên bàn ghép xe SAU một lần chuyển: chỉ bỏ các đơn VỪA chuyển — kế hoạch lớn trả lời chậm (709 xe ~8 s), ô người tick
+ *  trong lúc chờ phải còn (06/10: Hoàn tác xong xoá sạch lựa chọn ⇒ lần kéo sau chỉ mang một đơn). Không đổi gì thì trả CHÍNH tập cũ. */
+export const selectionAfterMove = (sel: Set<string>, moved: string[]): Set<string> => {
+  if (!moved.some(id => sel.has(id))) return sel
+  const n = new Set(sel)
+  for (const id of moved) n.delete(id)
+  return n
+}
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi
   REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'SAP đã post', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',

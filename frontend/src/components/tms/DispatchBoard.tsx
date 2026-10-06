@@ -46,7 +46,7 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, type IssueKey } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, selectionAfterMove, type IssueKey } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const money = (n: number | string | null | undefined) => {
@@ -148,15 +148,19 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
       const p = await move.mutateAsync({ plan_id: plan.id, ids, to, to_trip_id })
       const created = to === 'new' ? p.trips.find(t => t.ods.some(o => o.id === ids[0]))?.id : undefined
       if (record) { setUndo(s => [...s.slice(-49), { ids, to, to_trip_id, prev, created }]); setRedo([]) }
-      setSel(new Set())
+      // chỉ bỏ chọn các đơn VỪA chuyển — người tick tiếp trong lúc chờ kế hoạch lớn trả lời thì không được mất các ô đó
+      setSel(s => selectionAfterMove(s, ids))
       setJustHit(to === 'trip' ? to_trip_id ?? null : created ?? null)
       return p
     } catch (e) { err(e, 'Không chuyển được OD'); return null } finally { setBusy(false) }
   }, [move, plan.id, tripOf])
 
+  // Ctrl+Z lúc lần chuyển trước chưa xong (kế hoạch lớn trả lời ~8 s) từng bị bỏ qua IM LẶNG — người tưởng Hoàn tác hỏng
+  const waitPrev = () => toast({ title: 'Đang chờ lần chuyển trước xong', description: 'Bàn cập nhật xong thì bấm lại.' })
   const undo = useCallback(async () => {
     const op = undoStack[undoStack.length - 1]
-    if (!op || busy) return
+    if (busy) { waitPrev(); return }   // kể cả lần chuyển ĐẦU còn đang chạy (chưa vào ngăn hoàn tác)
+    if (!op) return
     setUndo(s => s.slice(0, -1))
     const byPrev = new Map<string | null, string[]>()
     for (const id of op.ids) { if (!rowBy.has(id)) continue; const k = op.prev.get(id) ?? null; byPrev.set(k, [...(byPrev.get(k) ?? []), id]) }
@@ -171,7 +175,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   }, [undoStack, busy, rowBy, plan.trips, run, delTrip])
   const redo = useCallback(async () => {
     const op = redoStack[redoStack.length - 1]
-    if (!op || busy) return
+    if (busy) { waitPrev(); return }   // kể cả lần chuyển ĐẦU còn đang chạy (chưa vào ngăn hoàn tác)
+    if (!op) return
     setRedo(s => s.slice(0, -1))
     const ids = op.ids.filter(id => rowBy.has(id))
     const tgtExists = op.to_trip_id ? plan.trips.some(t => t.id === op.to_trip_id) : true

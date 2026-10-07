@@ -103,7 +103,7 @@ const TABS: { k: St; seg?: DispatchSegment; label: string; tip: string }[] = [
 ]
 
 export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct = false, hidden = new Set<string>(), otherPlanId = null, otherPoolCount = null, onSwitchSegment }: {
-  plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onGrouped: () => void
+  plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onGrouped: (newTripIds: string[]) => void   // xe vừa tạo — bàn mở nhóm của chúng
   canAct?: boolean   // dispatch.confirm hoặc external_khvc.delete — gỡ / đổi số DO trên sổ Kế hoạch xuất (03/10 đợt 2)
   hidden?: Set<string>                 // "Không liên quan" của người xem (03/10 tối)
   otherPlanId?: string | null          // kế hoạch của MẢNG KIA cùng kho × ngày (đích của "Lấy sang"); null = bên kia chưa lập
@@ -421,14 +421,16 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     if (pickIds.length > PICK_MAX) { toast({ variant: 'destructive', title: `Chọn ${nf(pickIds.length)} dòng — tối đa ${nf(PICK_MAX)} mỗi lần`, description: 'Lọc bớt (vùng · kênh · ngày giao) rồi tạo kế hoạch hai lượt.' }); return }
     setBandDlg(true)
   }
-  const doCreateWith = (d: LoadBandDraft) =>
-    reopt.mutateAsync({ id: plan.id, ids: pickIds, load_bands: d.bands, load_bypass: d.bypass })
+  const doCreateWith = (d: LoadBandDraft) => {
+    const before = new Set(plan.trips.map(t => t.id))
+    return reopt.mutateAsync({ id: plan.id, ids: pickIds, load_bands: d.bands, load_bypass: d.bypass })
       .then(r => {
         setBandDlg(false); setSel(new Set())
         toast({ title: `${nf(pickN)} đơn vào kế hoạch ${planDay} — ${r.reoptimized.trips} xe mới`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD chưa xếp được xe — nằm ở khung chờ của kế hoạch (Bàn ghép xe).` : 'Soát xe ở Bàn ghép xe rồi Xác nhận kế hoạch.' })
-        onGrouped()
+        onGrouped(r.trips.filter(t => !before.has(t.id) && t.ods.length).map(t => t.id))
       })
       .catch(e => err(e, 'Không tạo được kế hoạch'))
+  }
   // TRẢ VỀ CHỜ ĐIỀU (07/10) — ngược của Tạo kế hoạch: đơn rời kế hoạch (xe tính lại), nằm lại tab Bán hàng / Trung chuyển để tick lại
   const doUnplan = async () => {
     if (await ask({ title: `Trả ${nf(selRows.length)} đơn về Chờ điều?`, confirmLabel: 'Trả về Chờ điều',

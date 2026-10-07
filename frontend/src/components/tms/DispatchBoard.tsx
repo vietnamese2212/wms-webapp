@@ -75,8 +75,9 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
+export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused }: {
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
+  focusTripIds?: string[]; onFocused?: () => void   // xe vừa tạo ở bảng Xem đơn ("Tạo kế hoạch") — bàn mở nhóm của chúng (07/10)
 }) {
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
@@ -323,7 +324,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   // ghép RIÊNG các OD đã chọn ở khung chờ; xe đang có giữ nguyên
   const poolSel = selIds.filter(id => tripOf.get(id) === null)
   const doReoptSel = () => reopt.mutateAsync({ id: plan.id, ids: poolSel })
-    .then(r => { setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ghép ${poolSel.length} dòng OD thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Các xe đang có giữ nguyên.' }) })
+    .then(r => { const before = new Set(plan.trips.map(t => t.id)); openGroupsOf(r.trips.filter(t => !before.has(t.id))); setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ghép ${poolSel.length} dòng OD thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ.` : 'Các xe đang có giữ nguyên.' }) })
     .catch(e => err(e, 'Không ghép được'))
   const doResync = (od: string) => resync.mutateAsync({ plan_id: plan.id, od_number: od })
     .then(r => toast({ title: `Đã cập nhật ${od} theo SAP`, description: `${nf(r.resynced.pallets_before, 1)} → ${nf(r.resynced.pallets_after, 1)} pallet · ${nf(r.resynced.tons_before, 1)} → ${nf(r.resynced.tons_after, 1)} tấn — tải + cước của xe đã tính lại.` }))
@@ -481,10 +482,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
   const NO_MODEL = '__none__'
   const byVtype = f.boardTripGroup === 'vtype'
   const parentRank = useMemo(() => new Map(vtypes.map((v, i) => [v.name, i])), [vtypes])
+  const tripGroupKey = useCallback((t: DispatchTrip) => byVtype ? (t.detail.vehicle_model?.parent_type_name ?? NO_MODEL) : (t.ods[0]?.region_name || t.ods[0]?.region_code || 'Chưa có vùng'), [byVtype])
   const tripGroups = useMemo(() => {
     const by = new Map<string, DispatchTrip[]>()
-    const keyOf = (t: DispatchTrip) => byVtype ? (t.detail.vehicle_model?.parent_type_name ?? NO_MODEL) : (t.ods[0]?.region_name || t.ods[0]?.region_code || 'Chưa có vùng')
-    for (const t of shownTrips) { const k = keyOf(t); by.set(k, [...(by.get(k) ?? []), t]) }
+    for (const t of shownTrips) { const k = tripGroupKey(t); by.set(k, [...(by.get(k) ?? []), t]) }
     return [...by.entries()].map(([k, ts]) => ({
       k, label: k === NO_MODEL ? 'Chưa chọn dòng xe' : k, trips: ts,
       pallets: ts.reduce((s, t) => s + Number(t.pallets ?? 0), 0), tons: ts.reduce((s, t) => s + Number(t.tons ?? 0), 0),
@@ -493,8 +494,22 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
     })).sort((a, b) => byVtype
       ? (Number(a.k !== NO_MODEL) - Number(b.k !== NO_MODEL)) || ((parentRank.get(a.k) ?? 999) - (parentRank.get(b.k) ?? 999)) || a.label.localeCompare(b.label)
       : a.label.localeCompare(b.label))
-  }, [shownTrips, parentRank, ctx, byVtype])
+  }, [shownTrips, parentRank, ctx, byVtype, tripGroupKey])
   const openSet = new Set(f.boardOpen)
+  // XE MỚI ⇒ MỞ NHÓM CỦA NÓ (07/10, user duyệt đề xuất): nhóm mặc định đóng (25/09 "mở thì mới ra") nên sau "Tạo kế hoạch" mà xe rải
+  // nhiều vùng thì bàn chỉ còn tiêu đề nhóm — người phải tự "Mở hết" mới thấy vừa ghép ra gì. Mở đúng các nhóm có xe mới + cuộn tới xe
+  // đầu tiên. "Tối ưu lại" thì KHÔNG (dựng lại mọi xe — mở hết là bỏ luật đóng mặc định).
+  const openGroupsOf = (ts: DispatchTrip[]) => {
+    const keys = uniqStr(ts.filter(t => t.ods.length).map(tripGroupKey))
+    if (keys.some(k => !openSet.has(k))) setF({ boardOpen: uniqStr([...f.boardOpen, ...keys]) })
+    if (ts[0]) setJustHit(ts[0].id)
+  }
+  useEffect(() => {
+    if (!focusTripIds?.length) return
+    const want = new Set(focusTripIds)
+    openGroupsOf(trips.filter(t => want.has(t.id)))
+    onFocused?.()
+  }, [focusTripIds]) // eslint-disable-line react-hooks/exhaustive-deps
   // đang tìm ⇒ mở hết để thấy kết quả. Lọc Soát: MỞ HẾT MỘT LẦN khi đổi chip nhưng vẫn đóng/mở được (user 30/09: "vào các tab
   // thì không đóng mở được dòng loại xe nữa" — bản cũ khoá nút toggle suốt lúc đang lọc)
   const forceOpen = !!q || tripGroups.length === 1

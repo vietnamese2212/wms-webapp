@@ -163,6 +163,8 @@ export default function Dispatch() {
   const patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
   const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan()
   const [openTripId, setOpenTripId] = useState<string | null>(null)
+  // xe vừa tạo ở Xem đơn ("Tạo kế hoạch") — bàn ghép xe mở nhóm của chúng một lần rồi trả về [] (07/10)
+  const [focusTrips, setFocusTrips] = useState<string[]>([])
   const openTrip = plan?.trips.find(t => t.id === openTripId) ?? null
   const [ask, confirmNode] = useConfirmDialog()
 
@@ -527,7 +529,7 @@ export default function Dispatch() {
               )}
             </div>
           ) : showReview ? (
-            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} canAct={canActKhvc}
+            <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={ids => { setFocusTrips(ids); setF({ tab: 'board' }) }} canAct={canActKhvc}
               hidden={hidden} otherPlanId={otherPlan?.id ?? null} otherPoolCount={otherPlan?.summary ? (otherPlan.summary.unreviewed_ods ?? otherPlan.summary.pool_ods ?? null) : null} onSwitchSegment={s => setF({ segment: s, planId: '', reviewTab: 'GO' })} />
           ) : tab === 'board' && planEmpty ? (
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
@@ -537,7 +539,7 @@ export default function Dispatch() {
               <Button size="sm" variant="outline" className="mt-2 h-8" onClick={() => setF({ tab: 'review', reviewTab: 'GO' })}><ListChecks className="h-3.5 w-3.5 mr-1" /> Mở Xem đơn</Button>
             </div>
           ) : tab === 'board' ? (
-            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
+            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} />
           ) : (
             <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           )}

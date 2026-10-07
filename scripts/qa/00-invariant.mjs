@@ -4,6 +4,7 @@ import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { HAS_DB, BASE, restAll, restRpc, restWrite, chunk, check, finish } from './lib.mjs'
+import { utcMs } from './utcms.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -472,6 +473,16 @@ for (const [table, label] of [
   const dup2 = [...byOd].filter(([, s]) => s.size > 1)
   check('Không OD nào đang lên xe ở HAI kế hoạch điều vận mở (rào trg_dispatch_od_one_open_vehicle)', dup2.length === 0,
     dup2.length ? `${dup2.length} OD, vd ${dup2[0][0]}` : `soi ${byOd.size} OD trên xe của ${pids.length} kế hoạch mở`)
+}
+
+// ── 07/10 — TÀI KHOẢN CI KHÔNG ĐƯỢC SỐNG LAY LẮT VỚI QUYỀN. Đêm 06→07/10 lượt qa-nightly để lại "CI runner 1340793230" là superadmin
+// ~8 giờ: xoá một Employee đã ghi nhiều dòng (khoá ngoại SET NULL + trigger realtime từng dòng) quá 8 s PostgREST ⇒ bước dọn ném lỗi.
+// ci-account.mjs nay THU HỒI (tắt + gỡ superadmin) trước khi xoá; phép này đo lại — tài khoản CI còn quyền mà quá 2 giờ = lưới hỏng.
+{
+  const acc = await restAll('Employee', 'select=employee_code,created_at,is_active,is_superadmin&employee_code=like.QACI*')
+  const live = acc.filter(a => (a.is_active || a.is_superadmin) && Date.now() - utcMs(a.created_at) > 2 * 3600_000)
+  check('Không tài khoản CI (QACI*) nào còn quyền quá 2 giờ — bước dọn phải thu hồi kể cả khi xoá hỏng', live.length === 0,
+    live.length ? live.map(a => `${a.employee_code} tạo ${a.created_at}${a.is_superadmin ? ' · superadmin' : ''}`).join(' · ') : `soi ${acc.length} tài khoản CI`)
 }
 
 finish('INVARIANT', { retryOnFail: true })

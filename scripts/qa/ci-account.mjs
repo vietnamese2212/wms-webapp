@@ -15,7 +15,7 @@
  *
  * usage:
  *   node scripts/qa/ci-account.mjs provision   → in ra 2 dòng `email=…` / `password=…` (stdout)
- *   node scripts/qa/ci-account.mjs cleanup     → xoá tài khoản của lượt này + mọi tài khoản CI cũ
+ *   node scripts/qa/ci-account.mjs cleanup     → thu hồi (tắt + gỡ superadmin) rồi xoá tài khoản của lượt này + mọi tài khoản CI cũ
  */
 import { readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -114,27 +114,51 @@ async function provision() {
   console.log(`tag=${runTag}`)     // gọi tay thì đặt QA_CI_TAG=<tag> cho bước cleanup xoá đúng tài khoản này
 }
 
-/** Xoá tài khoản CI quá hạn — lượt bị huỷ giữa chừng không kịp chạy bước cleanup. */
+// THU HỒI TRƯỚC, XOÁ SAU (07/10). Xoá một Employee kéo theo khoá ngoại trên MỌI dòng tài khoản đã ghi (InventoryEntry.created_by ·
+// ProductionImport.* … SET NULL, mỗi dòng lại chạy trigger realtime) — tài khoản mới tinh xoá 0,4 s, tài khoản của lượt full ghi nhiều
+// thì ~10 s, quá trần 8 s PostgREST ⇒ `rest` ném ⇒ bước dọn bỏ dở và tài khoản SUPERADMIN sống tiếp (đêm 06→07/10: "CI runner
+// 1340793230" ~8 giờ). Khoá ngoại NO ACTION (OutboundScanEntry.scanned_by, FillTask.done_by…) còn CHẶN HẲN lệnh xoá. Một câu UPDATE
+// đúng một dòng thì không bao giờ chậm: tắt + gỡ superadmin trước (đăng nhập và /me chặn tài khoản tắt) — xoá hỏng thì tài khoản đã vô
+// hại, lượt sau xoá tiếp. Gói 00 đo lại: tài khoản CI còn quyền quá 2 giờ = đỏ.
+async function revoke(filter) {
+  await rest(`Employee?${filter}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: false, is_superadmin: false, updated_at: new Date().toISOString() }) })
+}
+/** Xoá hẳn — hỏng (quá 8 s / khoá ngoại chặn) thì CHỈ báo: tài khoản đã thu hồi, lượt sau thử lại. Trả true nếu đã xoá. */
+async function tryDelete(filter, label) {
+  try { await rest(`Employee?${filter}`, { method: 'DELETE' }); return true }
+  catch (e) { console.error(`[ci-account] ${label}: đã THU HỒI quyền, chưa xoá được (lượt sau xoá tiếp) — ${String(e).slice(0, 160)}`); return false }
+}
+
+/** Thu hồi + xoá tài khoản CI quá hạn (lượt bị huỷ giữa chừng không kịp cleanup) và tài khoản ĐÃ THU HỒI (lượt trước xoá hỏng).
+ *  Không bao giờ ném: hỏng ở đây không được làm hỏng bước cấp tài khoản của lượt đang chạy. */
 async function purgeOld() {
-  const rows = await rest(`Employee?employee_code=like.${PREFIX}*&select=id,employee_code,created_at`)
   const mine = codeOf(runTag)
-  const stale = (rows ?? []).filter(r => {
+  let rows = []
+  try { rows = await rest(`Employee?employee_code=like.${PREFIX}*&select=id,employee_code,created_at,is_active`) ?? [] }
+  catch (e) { console.error(`[ci-account] không đọc được danh sách tài khoản CI — ${String(e).slice(0, 160)}`); return }
+  const stale = rows.filter(r => {
     if (r.employee_code === mine) return false        // tài khoản của CHÍNH lượt này — không bao giờ tự xoá
+    if (r.is_active === false) return true            // đã thu hồi = lượt đã xong, xoá lúc nào cũng được
     const age = Date.now() - utcMs(r.created_at)
-    return Number.isFinite(age) && age > MAX_AGE_MS   // đọc không ra mốc ⇒ KHÔNG xoá (thà để lại còn hơn xoá nhầm)
+    return Number.isFinite(age) && age > MAX_AGE_MS   // đọc không ra mốc ⇒ KHÔNG đụng (thà để lại còn hơn xoá nhầm lượt đang chạy)
   })
-  for (const r of stale) await rest(`Employee?id=eq.${r.id}`, { method: 'DELETE' })
-  if (stale.length) console.error(`[ci-account] đã dọn ${stale.length} tài khoản CI quá hạn`)
+  let gone = 0
+  for (const r of stale) {
+    try { if (r.is_active !== false) await revoke(`id=eq.${r.id}`) } catch (e) { console.error(`[ci-account] không thu hồi được ${r.employee_code} — ${String(e).slice(0, 160)}`) }
+    if (await tryDelete(`id=eq.${r.id}`, r.employee_code)) gone++
+  }
+  if (stale.length) console.error(`[ci-account] tài khoản CI cũ: thu hồi ${stale.length}, xoá ${gone}`)
 }
 
 async function cleanup() {
   const code = codeOf(runTag)
-  await rest(`Employee?employee_code=eq.${code}`, { method: 'DELETE' })
+  await revoke(`employee_code=eq.${code}`)            // ném ⇒ bước cleanup đỏ: tài khoản còn quyền thì phải có người thấy
+  await tryDelete(`employee_code=eq.${code}`, code)
   // Vết đăng nhập của tài khoản vừa xoá: giữ lại KHÔNG có ích (tài khoản không còn tồn tại) mà lại
   // làm nhiễu rule cảnh báo bảo mật đếm theo email.
   await rest(`auth_login_events?email=eq.${code.toLowerCase()}@ci.local`, { method: 'DELETE' })
   await purgeOld()
-  console.error(`[ci-account] đã xoá tài khoản ${code}`)
+  console.error(`[ci-account] đã thu hồi tài khoản ${code}`)
   await purgePlans()
 }
 

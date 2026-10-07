@@ -12,7 +12,7 @@
 // 07/10 (user: "đơn không tick ở lại Chờ điều · buộc phải tích · có nút tạo kế hoạch"): tab Bán hàng / Trung chuyển = đơn CHỜ ĐIỀU (khung chờ
 // chưa mốc); tick → "Tạo kế hoạch dd/mm" (lần sau: "Thêm N đơn vào kế hoạch") = đúng các đơn đó vào kế hoạch + máy ghép thành xe mới.
 // Tab "Trong kế hoạch dd/mm" = đơn đã vào (trên xe nháp / khung chờ của kế hoạch), tick → "Trả về Chờ điều". Ranh giới: `inPlanRow`.
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { CalendarClock, Ban, CheckCircle2, StickyNote, Sparkles, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
+import { WindowedRows } from '@/components/shared/WindowedRows'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ListFooter } from '@/components/shared/ListPager'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -142,9 +143,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const searchDeb = useDebouncedValue(f.search.trim(), 300)
   const markQ = markKind && marksCut ? searchDeb : ''
   const marks = useDispatchPlanMarks(plan.id, markKind, markQ)
-  const info = { ...(review.data?.ods ?? {}), ...(marks.data?.info ?? {}) }
+  const info = useMemo(() => ({ ...(review.data?.ods ?? {}), ...(marks.data?.info ?? {}) }), [review.data, marks.data])
   const whMeta = useWhTypeMetaMap()
   const [detail, setDetail] = useState<string | null>(null)   // key dòng đang mở panel chi tiết
+  const scrollRef = useRef<HTMLDivElement>(null)   // khung cuộn của bảng — WindowedRows chỉ vẽ dòng nằm trong đó
   // `prog` giữ nút khoá cả khoảng hở giữa hai lô (isPending tắt một nhịp giữa hai lần gọi)
   const busy = !!prog || hold.isPending || unhold.isPending || reopt.isPending || unplan.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending || take.isPending || hide.isPending
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
@@ -581,7 +583,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       </div>
 
       {st === 'ISSUE' ? <DispatchDecisionQueue warehouseId={plan.warehouse_id} planId={editable ? plan.id : null} canAct={canAct} canPlan={editable} /> : <>
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <ResizableTable key={`${st}|${editable}`} storageKey={`dispatch_review_cols_${st}_v${showBy ? 5 : 4}`} cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{markKind && marks.isError ? <span className="text-red-600">Không tải được danh sách: {apiMsg(marks.error)}</span>
@@ -589,7 +591,9 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
               : q || notesOnly || softOnly || filtersOn
               ? <>Không đơn nào khớp bộ lọc. <button type="button" className="underline text-sky-700" onClick={() => { setNotesOnly(false); setSoftOnly(false); clearFilters() }}>Xem cả {nf(markKind ? markTotal : tabRows.length)} đơn</button></>
               : st === 'GO' ? 'Không còn đơn nào chờ điều.' : st === 'PLAN' ? `Chưa có đơn nào trong kế hoạch ${planDay} — tick đơn ở tab ${SEGMENT_VI[seg]} rồi bấm "Tạo kế hoạch".` : st === 'DONE' ? 'Chưa có đơn nào được điều.' : st === 'ELSEWHERE' ? 'Không có đơn nào đang xếp ở nháp khác.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
-            {rows.map(r => { const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
+            {/* 07/10 (C65, user: "Bán hàng quá nhiều đơn, mọi thao tác đều lag"): chỉ vẽ dòng đang thấy — 3.529 đơn vẽ hết là 207 nghìn phần tử,
+                tick 1 đơn ~1,1 s. Vẫn một danh sách cuộn thấy hết, không chia trang (user 05/10). */}
+            <WindowedRows scrollRef={scrollRef} count={rows.length} colSpan={cols.length} row={idx => { const r = rows[idx]; const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
               <TableRow key={r.key} className={`cursor-pointer hover:bg-slate-50 ${sel.has(r.key) ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r.key)}>
                 {selectableTab && (
@@ -653,7 +657,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                 <TableCell className={`${TD} font-mono truncate`} title={i?.billing_no ?? ''}>{i?.billing_no || dash}</TableCell>
                 <TableCell className={`${TD} truncate`} title={i?.approval_status ?? ''}>{i?.approval_status || dash}</TableCell>
               </TableRow>
-            ) })}
+            ) }} />
           </TableBody>
         </ResizableTable>
       </div>

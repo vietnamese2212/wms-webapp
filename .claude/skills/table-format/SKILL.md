@@ -68,6 +68,7 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 - **Ba thứ PHẢI chuyển xuống server cùng lúc, nếu không sẽ SAI ÂM THẦM** (cùng họ bẫy cắt-1000): (1) **tổng SummaryBand** → API summary; (2) **ô tìm kiếm** → server, kẻo chỉ tìm trong trang đang xem; (3) **sắp xếp** → server, kẻo chỉ sắp trong trang. Thứ tự dòng do SQL quyết định — **không sort lại client**.
 - Nhóm dòng đóng khung (mục 10): sắp theo **khoá nhóm** trong SQL để mỗi nhóm nằm trọn 1 trang; thao tác trên cả nhóm (vd "Sửa nhóm") phải lấy đủ nhóm **từ server**, không lọc trong trang.
 - Chuẩn BE + RPC đi kèm: memory `server-pagination-campaign` (khuôn 3 hàm `*_page` / `*_summary` / `*_facets` cùng một mệnh đề WHERE; **bắt buộc plpgsql + `plan_cache_mode = force_custom_plan`**).
+- **Bảng KHÔNG phân trang mà số dòng tăng theo dữ liệu (người chốt "thấy hết trên một màn", vd Xem đơn Điều vận) ⇒ vẽ thân bảng qua `WindowedRows`** (`@/components/shared/WindowedRows`, lớp C65 07/10): thấy hết ≠ vẽ hết — 3.529 dòng × 35 cột vẽ hết = 207 nghìn phần tử, tick 1 dòng ~1,1 s; qua cửa sổ còn ~38 ms. Khung cuộn `overflow-auto` truyền `scrollRef`; dòng phải CAO ĐỀU (mục 9 — `whitespace-nowrap` / `truncate`). "Chọn tất cả" / đếm / lọc vẫn trên mảng đầy đủ, chỉ phần VẼ bị cắt.
 
 ## 5. SavedViews + Density
 - `SavedViews` (`useSavedViewsStore`): lưu/áp tổ hợp filter đặt tên (localStorage theo module). Truyền `module`, `currentFilters`, `onApply`, `activeId`.

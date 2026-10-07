@@ -6077,7 +6077,9 @@ export interface DispatchTripOd {
   is_transfer?: boolean                // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — [] = khách + kênh chưa khai (28/09: máy không chọn xe) · null = dòng chụp trước 28/09
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
-  reviewed_at?: string | null           // vết ai bấm ghép lúc nào (27/09 tối: đơn mới mặc định ĐIỀU — không còn chặn theo cột này)
+  // 07/10: RANH GIỚI kế hoạch — dòng khung chờ chưa có mốc = CHỜ ĐIỀU (tab Bán hàng / Trung chuyển của Xem đơn); có mốc = thuộc kế hoạch
+  // (khung chờ của bàn ghép xe). Dòng trên xe luôn thuộc kế hoạch. Dùng `inPlanRow` (dispatchIssues), đừng tự đọc cột này rải rác.
+  reviewed_at?: string | null
   reviewed_by?: string | null
 }
 /** ĐVVT xếp hạng theo cước cho MỘT xe (đổi ĐVVT ngay trên thẻ xe, 25/09) — cùng `priceFor` với engine. */
@@ -6228,7 +6230,8 @@ export function useDispatchPlanOd(id: string | null, od: string | null) {
     queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/ods/${encodeURIComponent(od!)}`)).data.data as { od_number: string; lines: DoSapRow[]; materials: DispatchOdMaterial[] },
   })
 }
-export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove'
+// 'pool' = khung chờ CỦA kế hoạch (vẫn thuộc kế hoạch) · 'unplan' (07/10) = trả về Chờ điều (rời kế hoạch, ở lại tab Chờ điều để tick lại)
+export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove' | 'unplan'
 /** Khoá chung của các thao tác bàn ghép xe — realtime hoãn hỏi dấu kế hoạch khi chính người này còn đang ghi (06/10). */
 export const DISPATCH_WRITE_KEY = ['dispatch-write'] as const
 export function useMoveDispatchOds() {
@@ -6252,7 +6255,8 @@ export const previewDispatchMove = (plan_id: string, ids: string[], to_trip_id: 
 export function useReoptimizeDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    // ids = ghép (và xác nhận đã xem) các dòng đã chọn · review_all = bước Xem đơn: xác nhận cả khung chờ rồi ghép
+    // ids = "Tạo kế hoạch" (đơn Chờ điều đã tick vào kế hoạch + ghép) / ghép các dòng đã chọn · không ids = xe chưa khoá + khung chờ
+    // CỦA kế hoạch (07/10 — không kéo đơn Chờ điều) · review_all = cả khung chờ (chỉ còn cho bản cũ)
     // load_bands / load_bypass (01/10) = dải tải theo dòng xe cha cho lượt ghép này (ghi vào kế hoạch + nhớ cho kho)
     mutationFn: (arg: string | { id: string; ids?: string[]; review_all?: boolean; load_bands?: DispatchLoadBands; load_bypass?: boolean }) => {
       const { id, ids, review_all, load_bands, load_bypass } = typeof arg === 'string' ? { id: arg, ids: undefined, review_all: undefined, load_bands: undefined, load_bypass: undefined } : arg
@@ -6453,8 +6457,9 @@ export function useCreateDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
     // force (03/10): nháp của NGƯỜI KHÁC vừa cập nhật ⇒ 409 PLAN_RECENTLY_EDITED, người bấm xác nhận ghi đè rồi gửi lại với force
-    mutationFn: (body: { warehouse_id: string; plan_date: string; segment?: DispatchSegment; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean; force?: boolean }) =>
-      apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan),
+    // reuse (07/10, nút "Xem đơn"): đã có kế hoạch đang mở của kho × ngày × mảng ⇒ server trả lại đúng kế hoạch đó (`reused`), không thay
+    mutationFn: (body: { warehouse_id: string; plan_date: string; segment?: DispatchSegment; max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; load_bands?: DispatchLoadBands; load_bypass?: boolean; force?: boolean; reuse?: boolean }) =>
+      apiClient.post('/tms/dispatch/plan', body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reused?: boolean }),
     onSuccess: () => { invalidateDispatch(qc); qc.invalidateQueries({ queryKey: ['warehouses'] }) },
   })
 }

@@ -8,7 +8,22 @@
 // vẫn thiếu — đếm vào là bộ đếm KHÔNG BAO GIỜ về 0 (đo 24/09), và bộ đếm không về 0 dạy người ta bỏ qua nó.
 // 25/09 thêm "OD đổi ở SAP": OD trên xe bị SAP thay (sửa SO) / bỏ / đã xuất / đã điều cho ĐVVT khác sau khi lập nháp —
 // việc NGƯỜI ĐÓNG ĐƯỢC (thay OD / kéo OD ra), và cửa Xác nhận chặn 409 nếu còn.
-import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag } from '@/api/hooks'
+import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag, DispatchTripOd, DispatchPlan } from '@/api/hooks'
+
+/** RANH GIỚI KẾ HOẠCH (07/10, user: "đơn không tick ở lại Chờ điều"): dòng trên xe, hoặc dòng khung chờ ĐÃ có mốc `reviewed_at`, thuộc
+ *  kế hoạch; dòng khung chờ chưa mốc = CHỜ ĐIỀU — nằm ở tab Bán hàng / Trung chuyển của Xem đơn, bàn ghép xe không vẽ, "Tối ưu lại" không
+ *  đụng. Server cùng luật (reoptimize · move) — sửa luật thì sửa cả hai phía. */
+export const inPlanRow = (o: Pick<DispatchTripOd, 'trip_id' | 'reviewed_at'>) => !!o.trip_id || !!o.reviewed_at
+/** Kế hoạch như BÀN GHÉP XE thấy: khung chờ chỉ còn dòng thuộc kế hoạch (bỏ Chờ điều + đơn người xem "Không liên quan"), số khung chờ
+ *  tính lại theo đúng tập đó — cảnh báo Xác nhận "N OD còn ở khung chờ (sẽ KHÔNG đi)" và dải chỉ số đọc từ đây. */
+export function boardPlanOf(plan: DispatchPlan, hidden: ReadonlySet<string>): DispatchPlan {
+  const pool = (plan.pool ?? []).filter(o => inPlanRow(o) && !hidden.has(o.od_number))
+  return { ...plan, pool, summary: { ...plan.summary, pool_ods: new Set(pool.map(o => o.od_number)).size, pool_pallets: Math.round(pool.reduce((s, o) => s + Number(o.pallets ?? 0), 0) * 10) / 10 } }
+}
+/** Kế hoạch có đang GIỮ đơn nào không (xe có đơn · khung chờ của kế hoạch) — từ tổng kết server. Băng "nháp quá ngày" chỉ nhắc nháp này:
+ *  bấm Xem đơn là có nháp chứa toàn Chờ điều, nháp đó không giữ đơn nào nên không phải việc bị bỏ quên (07/10). */
+export const planHoldsOrders = (s: { trips?: number; pool_ods?: number; unreviewed_ods?: number } | null | undefined) =>
+  (s?.trips ?? 0) > 0 || (s?.pool_ods ?? 0) - (s?.unreviewed_ods ?? 0) > 0
 
 export const EDITABLE: DispatchTripStatus[] = ['DRAFT', 'DECLINED']
 export const tripStatus = (t: DispatchTrip): DispatchTripStatus => t.status ?? 'DRAFT'

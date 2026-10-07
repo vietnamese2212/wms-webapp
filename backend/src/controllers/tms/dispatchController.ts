@@ -104,6 +104,9 @@ export const zPlanBody = z.object({
   review_first: zBool.optional(),
   // 03/10 (nhiều người cùng một bàn): nháp do NGƯỜI KHÁC lập và vừa cập nhật trong 15 phút ⇒ 409 PLAN_RECENTLY_EDITED; force = đã xác nhận ghi đè
   force: zBool.optional(),
+  // 07/10 nút "Xem đơn" (user: "nút là Xem đơn, tức là load lấy các đơn"): đã có kế hoạch đang mở của kho × ngày × mảng ⇒ trả lại
+  // đúng kế hoạch đó, KHÔNG thay — xem đơn không bao giờ xoá xe người khác đang làm
+  reuse: zBool.optional(),
 })
 // PATCH /dispatch/plans/:id/params — đổi dải tải / bypass trên kế hoạch ĐANG MỞ mà không ghép lại: xe nháp tính lại cờ Non tải / vượt
 export const zPlanParams = z.object({ load_bands: zLoadBands.optional(), load_bypass: zBool.optional() }).refine(b => b.load_bands !== undefined || b.load_bypass !== undefined, 'Không có gì để đổi')
@@ -121,7 +124,9 @@ export const zTripPatch = z.object({
 // Bàn ghép xe (25/09): một cửa cho mọi lần thả — id là DÒNG OD của kế hoạch (một OD bị tách có nhiều dòng)
 export const zMove = z.object({
   ids: z.array(zId).min(1).max(300),
-  to: z.enum(['trip', 'new', 'pool', 'remove']),     // xe có sẵn · xe mới (máy chọn dòng xe/ĐVVT) · khung chờ · bỏ khỏi kế hoạch
+  // xe có sẵn · xe mới (máy chọn dòng xe/ĐVVT) · khung chờ của kế hoạch · bỏ khỏi kế hoạch · TRẢ VỀ CHỜ ĐIỀU (07/10: rời kế hoạch, ở lại tab
+  // Chờ điều để tick lại — ngược của "Tạo kế hoạch")
+  to: z.enum(['trip', 'new', 'pool', 'remove', 'unplan']),
   to_trip_id: zId.optional(),
   delta: zBool.optional(),   // 06/10: trả PHẦN THAY ĐỔI (xe bị đụng + tổng kết + dấu) thay cả kế hoạch
 })
@@ -627,7 +632,7 @@ function summarizeRows(plan: PlanRow, allTrips: SumTrip[], pool: SumPool[] = [])
     freight_per_pallet: pricedPallets > 0 ? Math.round(freightTotal / pricedPallets) : null,
     overload: trips.filter(t => Number(t.load_pct) > 100).length,
     pool_ods: uniq(pool.map(o => o.od_number)).length,
-    unreviewed_ods: uniq(pool.filter(o => !o.reviewed_at).map(o => o.od_number)).length,   // bước Xem đơn còn bao nhiêu OD chưa xác nhận
+    unreviewed_ods: uniq(pool.filter(o => !o.reviewed_at).map(o => o.od_number)).length,   // CHỜ ĐIỀU (07/10) — khung chờ của kế hoạch = pool_ods − số này
     pool_pallets: Math.round(pool.reduce((s, o) => s + Number(o.pallets ?? 0), 0) * 10) / 10,
     empty_trips: allTrips.filter(t => statusOf(t) !== 'DISCARDED' && !t.ods.length).length,
     locked: trips.filter(t => t.locked).length,
@@ -705,6 +710,11 @@ export async function createPlan(req: Request, res: Response) {
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     if (!wh.sap_plant) return fail(res, 422, 'PLANT_REQUIRED', `Kho ${wh.name} chưa khai "Plant SAP" (Cài đặt WMS → Kho) — không xác định được pool OD ZSD02 của kho.`)
     const seg: Segment = b.segment ?? 'SALES'
+    if (b.reuse) {
+      const { data: cur, error: cErr } = await db.from('dispatch_plan').select('id').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).in('status', ['DRAFT', 'TENDERED']).order('created_at', { ascending: false }).limit(1)
+      if (cErr) throw cErr
+      if (cur?.length) return ok(res, { ...(await readPlan(cur[0].id)), reused: true })
+    }
     // kế hoạch đang CHỜ ĐVVT phản hồi: OD của các xe chờ chưa nằm trong Kế hoạch xuất nên lập lại sẽ xếp trùng — xử lý xong (nhận / từ chối / bỏ xe chờ) rồi mới lập lại
     const { data: open } = await db.from('dispatch_plan').select('id, status').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).eq('status', 'TENDERED').maybeSingle()
     if (open) return fail(res, 409, 'PLAN_TENDERED_EXISTS', `Kho × ngày này (mảng ${SEGMENT_VI[seg]}) đang có kế hoạch chờ ĐVVT phản hồi — ghi phản hồi (nhận / từ chối) hoặc bỏ các xe chờ trước khi lập lại.`)
@@ -751,6 +761,8 @@ export async function createPlan(req: Request, res: Response) {
     // XEM ĐƠN LÀ BƯỚC BẮT BUỘC (user chốt 27/09 tối: "bước đầu tiên trên bàn làm việc là xem tất cả các đơn open chưa có trong
     // ghép xe — xác nhận xong mới tới điều xe"). Máy chạy ở đây CHỈ để biết OD nào không lên xe được (trả về · không đo được tải…);
     // mọi OD còn lại vào khung chờ CHƯA XEM, không xe nào được dựng. Ghép = reoptimize sau khi người xác nhận đơn.
+    // 07/10 (user: "đơn không tick ở lại Chờ điều"): dòng khung chờ CHƯA có mốc reviewed_at = CHỜ ĐIỀU — chưa thuộc kế hoạch; chỉ đơn
+    // người tick rồi "Tạo kế hoạch" (reoptimize `ids`) mới vào kế hoạch. Ranh giới là mốc đó, không thêm cột.
     const result = runDispatch({ ods, ...refs, share_actual, condition_labels, params, geo: await engineGeo(wh.id, ods) })
     // OD thiếu KHAI BÁO dòng xe (khách/kênh chưa khai — 28/09) vẫn vào khung chờ: khai xong bấm Ghép là máy xếp được; để vào
     // "không lên xe" thì OD kẹt ở đó tới khi lập lại cả kế hoạch
@@ -1363,9 +1375,21 @@ export async function moveOds(req: Request, res: Response) {
     if (b.to === 'remove') {
       const { error } = await db.from('dispatch_trip_od').delete().in('id', ids.slice(0, 300)).eq('plan_id', plan.id)
       if (error) throw error
-    } else {
-      const { error } = await db.from('dispatch_trip_od').update({ trip_id: targetId, updated_at: t }).in('id', ids.slice(0, 300)).eq('plan_id', plan.id)
+    } else if (b.to === 'unplan') {
+      const { error } = await db.from('dispatch_trip_od').update({ trip_id: null, reviewed_at: null, reviewed_by: null, updated_at: t }).in('id', ids.slice(0, 300)).eq('plan_id', plan.id)
       if (error) throw error
+    } else {
+      // kéo vào xe / khung chờ của kế hoạch = đơn THUỘC kế hoạch (07/10): dòng Chờ điều nhận mốc, dòng đã có mốc giữ vết cũ
+      const fresh = new Set(rows.filter(o => !o.reviewed_at).map(o => o.id))
+      const parts: [string[], Tables['dispatch_trip_od']['Update']][] = [
+        [ids.filter(id => fresh.has(id)), { reviewed_at: t, reviewed_by: req.user?.name ?? null }],
+        [ids.filter(id => !fresh.has(id)), {}],
+      ]
+      for (const [part, extra] of parts) {
+        if (!part.length) continue
+        const { error } = await db.from('dispatch_trip_od').update({ ...extra, trip_id: targetId, updated_at: t }).in('id', part.slice(0, 300)).eq('plan_id', plan.id)
+        if (error) throw error
+      }
     }
     // XE TRỐNG KHÔNG TỰ BIẾN MẤT — để Hoàn tác thả lại được đúng xe cũ; người bỏ bằng nút ✕ trên thẻ xe
     const touched = uniq([...rows.map(o => o.trip_id).filter((x): x is string => !!x), ...(targetId ? [targetId] : [])])
@@ -1377,7 +1401,7 @@ export async function moveOds(req: Request, res: Response) {
     // tổng kết · dấu phiên bản. Không cờ ⇒ cả kế hoạch như trước (gói QA 61 + bản app cũ còn nằm trong bộ nhớ đệm trình duyệt).
     if (!b.delta) return ok(res, await readPlan(plan.id))
     const st = await planStamp(plan.id)
-    const pool_add = b.to === 'pool' ? ((await fetchAllByIdChunks(ids, c => db.from('dispatch_trip_od').select('*').eq('plan_id', plan.id).in('id', c).order('id'))) as TripOdRow[]).sort((x, y) => x.od_number.localeCompare(y.od_number)) : []
+    const pool_add = b.to === 'pool' || b.to === 'unplan' ? ((await fetchAllByIdChunks(ids, c => db.from('dispatch_trip_od').select('*').eq('plan_id', plan.id).in('id', c).order('id'))) as TripOdRow[]).sort((x, y) => x.od_number.localeCompare(y.od_number)) : []
     return ok(res, { delta: true, trips: repriced, pool_add, removed_od_ids: ids, summary: sum.summary, updated_at: sum.updated_at, stamp: st?.stamp ?? null, target_trip_id: targetId })
   } catch (e) { return failAny(res, e) }
 }
@@ -1424,11 +1448,13 @@ export async function deleteTrip(req: Request, res: Response) {
 
 // POST /tms/dispatch/plans/:id/reoptimize — chạy lại máy ghép cho khung chờ + các xe CHƯA KHOÁ (xe khoá / đã chào / đã vào KH xuất giữ nguyên)
 // `ids` (27/09): chỉ ghép CÁC DÒNG OD ĐÃ CHỌN ở khung chờ thành xe mới; mọi xe đang có giữ nguyên.
-// Khung chờ = OD trạng thái ĐIỀU (27/09 tối, user: "dữ liệu mới không có trong Đã điều thì mặc định là Điều") — máy ghép MỌI OD
-// ở khung chờ; OD không đi thì người chuyển sang "Không điều ngày này" / "Không điều" ở bảng Xem đơn trước khi bấm.
-// `review_all` giữ cho bundle cũ (nay trùng nghĩa mặc định); mốc reviewed_at chỉ còn là VẾT ai bấm ghép lúc nào.
+// (27/09 tối → 06/10: máy ghép MỌI OD ở khung chờ — đơn không đi phải chuyển "Không điều" trước khi bấm.)
+// 07/10 (user: "đơn không tick ở lại Chờ điều"): khung chờ tách hai — dòng ĐÃ có mốc reviewed_at thuộc kế hoạch, dòng chưa có = CHỜ ĐIỀU.
+// Không cờ ("Tối ưu lại") ⇒ chỉ xe chưa khoá + khung chờ CỦA KẾ HOẠCH, không bao giờ kéo đơn Chờ điều lên xe. `ids` ("Tạo kế hoạch" ở
+// Xem đơn · "Ghép phần đã chọn" trên bàn) ⇒ đúng các dòng đó, đặt mốc = đưa vào kế hoạch. `review_all` = cả khung chờ, chỉ còn cho bundle cũ.
+// `ids` tối đa 5.000: "Chọn tất cả" ở kho Ba Vì ~3.500 đơn/ngày (thân POST, không dính trần URL).
 // `load_bands` / `load_bypass` (01/10): dải tải theo dòng xe cha CHO LƯỢT GHÉP NÀY — ghi vào params kế hoạch (và nhớ cho kho) trước khi máy chạy
-export const zReoptimize = z.object({ ids: z.array(zId).min(1).max(1000).optional(), review_all: zBool.optional(), load_bands: zLoadBands.optional(), load_bypass: zBool.optional() })
+export const zReoptimize = z.object({ ids: z.array(zId).min(1).max(5000).optional(), review_all: zBool.optional(), load_bands: zLoadBands.optional(), load_bypass: zBool.optional() })
 /** Ghi dải tải / bypass vào params của kế hoạch đang mở (+ nhớ dải cho kho). Trả về true khi có gì đổi. */
 async function applyLoadBands(plan: PlanRow, b: { load_bands?: Record<string, LoadBand>; load_bypass?: boolean }, t: string): Promise<boolean> {
   if (b.load_bands === undefined && b.load_bypass === undefined) return false
@@ -1451,7 +1477,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const bandsChanged = await applyLoadBands(plan, b, now())
     const full = (await readPlan(plan.id))!
     let redo = full.trips.filter(t => !t.locked && EDITABLE_TRIP.includes(statusOf(t)))
-    let src = full.pool
+    let src = b.review_all ? full.pool : full.pool.filter(o => o.reviewed_at)
     if (b.ids) {
       const want = new Set(b.ids)
       src = full.pool.filter(o => want.has(o.id))
@@ -1691,11 +1717,12 @@ async function replaceOdInner(req: Request, res: Response) {
     const elsewhere = all.filter(o => o.od_number === newOd && o.trip_id && o.trip_id !== tripId)
     if (elsewhere.length) return fail(res, 409, 'NEW_OD_ON_OTHER_TRIP', `OD mới ${newOd} đang nằm ở xe ${full.trips.find(x => x.id === elsewhere[0].trip_id)?.group_code ?? '?'} — kéo về một xe trước.`)
     const t = now()
-    // người bấm "Thay bằng OD mới" là đã xem OD mới ⇒ đặt mốc đã xem (nó vào thẳng xe của OD cũ)
-    const rev: Rev = { at: t, by: req.user?.name ?? null }
+    // người bấm "Thay bằng OD mới" là đã xem OD mới ⇒ đặt mốc đã xem (nó vào thẳng xe của OD cũ). 07/10: OD cũ còn ở Chờ điều (chưa
+    // thuộc kế hoạch) ⇒ OD mới cũng ở Chờ điều — thay đơn không phải là đưa đơn vào kế hoạch
+    const rev: Rev = tripId || olds.some(o => o.reviewed_at) ? { at: t, by: req.user?.name ?? null } : null
     const poolNew = all.filter(o => o.od_number === newOd && !o.trip_id)
     if (poolNew.length) {
-      const { error } = await db.from('dispatch_trip_od').update({ trip_id: tripId, updated_at: t, ...(poolNew.some(o => !o.reviewed_at) ? { reviewed_at: rev.at, reviewed_by: rev.by } : {}) }).in('id', poolNew.map(o => o.id).slice(0, 300))
+      const { error } = await db.from('dispatch_trip_od').update({ trip_id: tripId, updated_at: t, ...(rev && poolNew.some(o => !o.reviewed_at) ? { reviewed_at: rev.at, reviewed_by: rev.by } : {}) }).in('id', poolNew.map(o => o.id).slice(0, 300))
       if (error) throw error
     } else if (!all.some(o => o.od_number === newOd)) {
       const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: [newOd], skipPlanId: plan.id })
@@ -1743,7 +1770,8 @@ async function resyncOdInner(req: Request, res: Response) {
     const before = { pallets: olds.reduce((s, o) => s + Number(o.pallets ?? 0), 0), tons: olds.reduce((s, o) => s + Number(o.tons ?? 0), 0) }
     const { error } = await db.from('dispatch_trip_od').delete().in('id', olds.map(o => o.id).slice(0, 300)).eq('plan_id', plan.id)
     if (error) throw error
-    const row = odRow(plan.id, tripId, wholeOd(od), cand.meta.get(od.od_number), t, { at: t, by: req.user?.name ?? null })
+    // 07/10: OD đang ở Chờ điều (khung chờ, chưa mốc) chụp lại vẫn ở Chờ điều — cập nhật theo SAP không đưa đơn vào kế hoạch
+    const row = odRow(plan.id, tripId, wholeOd(od), cand.meta.get(od.od_number), t, tripId || olds.some(o => o.reviewed_at) ? { at: t, by: req.user?.name ?? null } : null)
     await insertOdRows([row])
     const touched = uniq(olds.map(o => o.trip_id).filter((x): x is string => !!x))
     const after = (await readPlan(plan.id))!
@@ -2132,8 +2160,8 @@ async function unholdOdsInner(req: Request, res: Response) {
     const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: ods, skipPlanId: plan.id })
     const back = cand.ods.filter(o => !inPlan.has(o.od_number) && LOADABLE_FLOW.has(o.flow) && o.lines.length)
     const t = now()
-    // người bỏ hoãn là đã quyết OD này đi ⇒ về khung chờ với mốc ĐÃ XEM (ghép được ngay)
-    await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: req.user?.name ?? null })))
+    // 07/10: bỏ hoãn = đơn về CHỜ ĐIỀU (không mốc) — người tick rồi "Tạo kế hoạch" mới vào kế hoạch (trước: vào thẳng khung chờ có mốc)
+    await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
     backIn = true
     const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
     const p2 = { ...(plan.params as Record<string, unknown>), excluded: [...(params.excluded ?? []).filter(x => !(x.kind === 'HELD' && ods.includes(x.od_number))), ...cand.excluded] }
@@ -2321,7 +2349,8 @@ async function unoutsideOdsInner(req: Request, res: Response) {
     const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: ods, skipPlanId: plan.id })
     const back = cand.ods.filter(o => !inPlan.has(o.od_number) && LOADABLE_FLOW.has(o.flow) && o.lines.length)
     const t = now()
-    await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: req.user?.name ?? null })))
+    // 07/10: bỏ dấu Ngoài app = đơn về CHỜ ĐIỀU (không mốc), tick + "Tạo kế hoạch" mới vào kế hoạch
+    await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
     backIn = true
     const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
     const p2 = { ...(plan.params as Record<string, unknown>), excluded: [...(params.excluded ?? []).filter(x => !(x.kind === 'OUTSIDE_APP' && ods.includes(x.od_number))), ...cand.excluded] }
@@ -2370,12 +2399,12 @@ async function pullOdInner(req: Request, res: Response) {
       const emptied = after.trips.filter(x => touched.includes(x.id) && !x.ods.length && EDITABLE_TRIP.includes(statusOf(x))).map(x => x.id)
       if (emptied.length) { const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', other.plan_id); if (error) throw error }
       await writeSummary(src)
-      // vào khung chờ kế hoạch này (đã rời xe kia nên không còn là OTHER_DRAFT)
+      // vào CHỜ ĐIỀU của kế hoạch này (đã rời xe kia nên không còn là OTHER_DRAFT; 07/10: không mốc — tick + "Tạo kế hoạch" mới vào kế hoạch)
       const full = (await readPlan(plan.id))!
       const inPlan = new Set([...full.trips.flatMap(x => x.ods), ...full.pool].map(o => o.od_number))
       const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: [b.od_number], skipPlanId: plan.id })
       const back = cand.ods.filter(o => !inPlan.has(o.od_number) && LOADABLE_FLOW.has(o.flow) && o.lines.length)
-      await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: req.user?.name ?? null })))
+      await insertOdRows(back.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
       const params = (plan.params ?? {}) as { excluded?: ExcludedOd[] }
       // vết: ai kéo, lúc nào, từ nháp nào — ghi vào params của CẢ hai kế hoạch (bên kia mở ra thấy "OD X bị kéo sang 03/10 bởi Lâm")
       const pullNote = { od_number: b.od_number, at: t, by: req.user?.name ?? null, from_plan_id: other.plan_id, from_plan_date: other.plan_date, from_by: other.created_by, to_plan_id: plan.id, to_plan_date: plan.plan_date }
@@ -2469,7 +2498,8 @@ export async function takeSegment(req: Request, res: Response) {
       await writeSummary({ ...p, params: asJson(params) })
       moved_from.push({ plan_id: p.id, plan_date: p.plan_date, segment: String(p.segment), rows: mine.length, trips_removed: emptied.length })
     }
-    // 3. vào khung chờ kế hoạch đích (nếu người gửi kế hoạch đang mở của mảng đích, cùng kho)
+    // 3. vào CHỜ ĐIỀU của kế hoạch đích (nếu người gửi kế hoạch đang mở của mảng đích, cùng kho) — không mốc (07/10): người bên kia tick
+    // rồi "Tạo kế hoạch" mới vào kế hoạch của họ
     let added = 0
     if (b.plan_id) {
       const { data: dest, error } = await db.from('dispatch_plan').select('*').eq('id', b.plan_id).maybeSingle()
@@ -2481,7 +2511,7 @@ export async function takeSegment(req: Request, res: Response) {
         if (want.length) {
           const cand = await loadCandidates(wh, dest.plan_date, await planCatCfg(dest as PlanRow), { onlyOds: want, skipPlanId: dest.id })
           const loadable = cand.ods.filter(o => LOADABLE_FLOW.has(o.flow) && o.lines.length)
-          await insertOdRows(loadable.map(o => odRow(dest.id, null, wholeOd(o), cand.meta.get(o.od_number), t, { at: t, by: actor })))
+          await insertOdRows(loadable.map(o => odRow(dest.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
           added = loadable.length
           await writeSummary(dest as PlanRow)
         }

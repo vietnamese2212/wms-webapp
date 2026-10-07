@@ -1194,14 +1194,27 @@ try {
       pR0.s === 201 && (PR?.trips ?? []).length === 0 && JSON.stringify(poolOds(PR)) === JSON.stringify([...OD].sort()) && (PR?.pool ?? []).every(o => !o.part_of)
       && PR?.params?.baseline == null,
       `http=${pR0.s} ${pR0.j?.error?.message ?? ''} trips=${(PR?.trips ?? []).length} pool=${poolOds(PR).join(',')} baseline=${JSON.stringify(PR?.params?.baseline)}`)
+    // 07/10 (user: "đơn không tick ở lại Chờ điều"): khung chờ tách hai theo mốc reviewed_at — dòng có mốc thuộc kế hoạch, chưa mốc = CHỜ
+    // ĐIỀU. Bản trước 07/10 "Tối ưu lại" không cờ ghép CẢ khung chờ (phép cũ khoá đúng điều đó: pool 0 sau lượt ghép) ⇒ phép này đỏ trên bản cũ.
+    const PR0id = pid(PR)
+    const rowAt = (p, od) => [...(p?.trips ?? []).flatMap(t => t.ods), ...(p?.pool ?? [])].find(o => o.od_number === od)
+    const waiting = (p, od) => { const r = rowAt(p, od); return !!r && !r.trip_id && !r.reviewed_at }
     const r1u = (PR?.pool ?? []).find(o => o.od_number === OD[0])
-    const mvU = await api(`/tms/dispatch/plans/${pid(PR)}/move`, 'POST', { ids: [r1u?.id], to: 'new' })
-    const roU = await api(`/tms/dispatch/plans/${pid(PR)}/reoptimize`, 'POST', {})
+    const mvU = await api(`/tms/dispatch/plans/${PR0id}/move`, 'POST', { ids: [r1u?.id], to: 'new' })
+    const roU = await api(`/tms/dispatch/plans/${PR0id}/reoptimize`, 'POST', {})
+    // nút "Xem đơn" khi kế hoạch đang mở: trả lại ĐÚNG kế hoạch đó (không thay — xe OD1 còn nguyên)
+    const reuse = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, reuse: true })
+    const unp = await api(`/tms/dispatch/plans/${PR0id}/move`, 'POST', { ids: [rowAt(roU.j?.data, OD[0])?.id], to: 'unplan' })
+    const roWait = await api(`/tms/dispatch/plans/${PR0id}/reoptimize`, 'POST', {})
     const legacy = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, review_first: false })
     PR = legacy.j?.data
-    check('15a2. Đơn mặc định ĐIỀU: kéo OD1 vào "Xe mới" → 200 · "Tối ưu lại" không cờ → 200 ghép CẢ khung chờ · lập lại (bản cũ gửi review_first=false) → 201 vẫn 0 xe (bước 1 luôn là Xem đơn)',
-      mvU.s === 200 && roU.s === 200 && (roU.j?.data?.pool ?? []).length === 0 && (roU.j?.data?.trips ?? []).length >= 1 && legacy.s === 201 && (PR?.trips ?? []).length === 0,
-      `move=${mvU.s}/${mvU.j?.error?.code ?? ''} reopt=${roU.s} ${(roU.j?.error?.message ?? '').slice(0, 60)} pool=${(roU.j?.data?.pool ?? []).length} legacy=${legacy.s} trips=${(PR?.trips ?? []).length}`)
+    check('15a2. Đơn không tick ở lại CHỜ ĐIỀU: kéo OD1 vào "Xe mới" → 200 (OD1 nhận mốc) · "Tối ưu lại" không cờ → 200 chỉ OD1 trên xe, OD2 + OD3 vẫn khung chờ KHÔNG mốc · Xem đơn (reuse) → 200 đúng kế hoạch đang mở, còn xe · "Trả về Chờ điều" OD1 → 200 về khung chờ không mốc · "Tối ưu lại" khi chỉ còn Chờ điều → 422 NOTHING_TO_OPTIMIZE · lập lại (bản cũ review_first=false) → 201 vẫn 0 xe',
+      mvU.s === 200 && roU.s === 200 && (roU.j?.data?.trips ?? []).filter(t => t.ods.length).length === 1 && !!rowAt(roU.j?.data, OD[0])?.trip_id && !!rowAt(roU.j?.data, OD[0])?.reviewed_at
+      && waiting(roU.j?.data, OD[1]) && waiting(roU.j?.data, OD[2])
+      && reuse.s === 200 && reuse.j?.data?.reused === true && reuse.j?.data?.id === PR0id && (reuse.j?.data?.trips ?? []).some(t => t.ods.length)
+      && unp.s === 200 && waiting(unp.j?.data, OD[0]) && roWait.s === 422 && roWait.j?.error?.code === 'NOTHING_TO_OPTIMIZE'
+      && legacy.s === 201 && (PR?.trips ?? []).length === 0,
+      `move=${mvU.s}/${mvU.j?.error?.code ?? ''} reopt=${roU.s} ${(roU.j?.error?.message ?? '').slice(0, 60)} xe=${(roU.j?.data?.trips ?? []).filter(t => t.ods.length).length} chờ=${[1, 2].map(i => waiting(roU.j?.data, OD[i])).join(',')} reuse=${reuse.s}/${reuse.j?.data?.reused}/${reuse.j?.data?.id === PR0id} unplan=${unp.s}/${waiting(unp.j?.data, OD[0])} ${unp.j?.error?.message ?? ''} reoptChờ=${roWait.s}/${roWait.j?.error?.code ?? ''} legacy=${legacy.s} trips=${(PR?.trips ?? []).length}`)
     const r3 = (PR?.pool ?? []).find(o => o.od_number === OD[2])
     const hBad = await api(`/tms/dispatch/plans/${pid(PR)}/hold`, 'POST', { ids: [r3?.id], until: DAY, reason: 'QA hẹn' })
     // Bảng Xem đơn (27/09 tối): Điều → "Không điều" (lý do TUỲ CHỌN) → đổi sang "Không điều ngày này" theo SỐ OD (OD đã rời kế hoạch)
@@ -1277,8 +1290,8 @@ try {
     const uAgain = await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[2]] })
     const holdLeft = (await restAll('dispatch_od_hold', `select=id&warehouse_id=eq.${WH}&od_number=eq.${OD[2]}`)).length
     const mkLeft = await api(`/tms/dispatch/plans/${pid(PR)}/marks?kind=DAY`)
-    check('15e. Bỏ hoãn → OD3 về NGAY khung chờ với mốc ĐÃ XEM (người bỏ hoãn đã quyết), sổ hoãn trống, tab Không điều ngày này hết OD3 · bỏ hoãn lần hai → 404',
-      uOk.s === 200 && uOk.j?.data?.unheld?.back_to_pool === 1 && poolOds(PR).includes(OD[2]) && !!rowNow(PR, OD[2])?.reviewed_at && holdLeft === 0
+    check('15e. Bỏ hoãn → OD3 về NGAY khung chờ ở CHỜ ĐIỀU (không mốc — 07/10: tick + Tạo kế hoạch mới vào kế hoạch), sổ hoãn trống, tab Không điều ngày này hết OD3 · bỏ hoãn lần hai → 404',
+      uOk.s === 200 && uOk.j?.data?.unheld?.back_to_pool === 1 && poolOds(PR).includes(OD[2]) && !rowNow(PR, OD[2])?.trip_id && !rowNow(PR, OD[2])?.reviewed_at && holdLeft === 0
       && mkLeft.s === 200 && !(mkLeft.j?.data?.rows ?? []).some(x => x.od_number === OD[2]) && uAgain.s === 404,
       `ok=${uOk.s} ${uOk.j?.error?.message ?? ''} back=${uOk.j?.data?.unheld?.back_to_pool} pool=${poolOds(PR).join(',')} rev=${rowNow(PR, OD[2])?.reviewed_at} left=${holdLeft} marks=${(mkLeft.j?.data?.rows ?? []).map(x => x.od_number).join(',')} again=${uAgain.s}`)
     // BẢNG XEM ĐƠN (27/09 khuya, user: "thiếu SO, người tạo, ghi chú, thùng, loại kho… cần xem được detail"): thông tin SAP

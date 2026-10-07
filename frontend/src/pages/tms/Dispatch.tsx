@@ -10,15 +10,18 @@
 // 25/09 (user: "ghép xe cần một giao diện khác, rawdata nằm ở một tab, kéo thả OD cho trực quan" + "chỉ số phải hiện lên khi sửa"):
 // Tab cạnh tiêu đề: Xem đơn · Bàn ghép xe · Bản đồ. 06/10: "Danh sách xe" GỘP vào Bàn ghép xe dạng bảng (dòng xe mang đủ cột; tick
 // dòng xe ⇒ Gán ĐVVT · Đổi dòng xe trên thanh nổi của bàn). Dải chỉ số `DispatchKpiBar` + dải Soát đứng chung trên bàn.
+// 07/10 (user: "Ở tab Xem đơn, nút là Xem đơn, tức là load lấy các đơn. Có nút tạo kế hoạch. Tab bàn ghép xe hiện kế hoạch để xem, sửa"):
+// "Xem đơn" nạp đơn chưa đi vào CHỜ ĐIỀU (không dải tải, không ghép); tick đơn → "Tạo kế hoạch" (bảng Xem đơn) = chỉ đơn đã tick vào
+// kế hoạch; bàn ghép xe chỉ vẽ phần THUỘC kế hoạch (`boardPlanOf`). "Lập lại" BỎ — nút xoá sạch xe dễ nhầm với "Tạo kế hoạch";
+// làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Play, CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp, Map as MapIcon } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp, Map as MapIcon } from 'lucide-react'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
-import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from '@/components/tms/DispatchLoadBandDialog'
-import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, type IssueKey } from '@/components/tms/dispatchIssues'
+import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, planHoldsOrders, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -94,7 +97,9 @@ export default function Dispatch() {
   // băng cảnh báo trên mọi ngày của kho, kèm Mở / Bỏ nháp. Không tự huỷ.
   const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const oldPlansQ = useDispatchPlans({ warehouse_id: f.warehouseId || undefined, date_to: yesterday }, !!f.warehouseId)
-  const stalePlans = (oldPlansQ.data?.items ?? []).filter(p => (p.status === 'DRAFT' || p.status === 'TENDERED') && p.plan_date < day)
+  // 07/10: chỉ nháp còn GIỮ đơn (xe có đơn · khung chờ của kế hoạch) — bấm Xem đơn rồi không tạo kế hoạch thì nháp chỉ chứa Chờ điều,
+  // không giữ đơn nào, không phải việc bị bỏ quên
+  const stalePlans = (oldPlansQ.data?.items ?? []).filter(p => (p.status === 'DRAFT' || p.status === 'TENDERED') && p.plan_date < day && planHoldsOrders(p.summary))
   // kế hoạch đang mở: người chọn → bản nháp mới nhất → bản mới nhất CHƯA BỎ. 06/10 (user: "bên Trung chuyển không có multi select"):
   // nháp Trung chuyển đã Bỏ nháp mà trang vẫn lấy làm kế hoạch đang làm — nháp đã bỏ chỉ để xem nên mọi ô tick / nút Ghép xe biến mất.
   // Nay mảng chỉ còn nháp đã bỏ ⇒ "Chưa có kế hoạch" + Lập kế hoạch; muốn xem lại nháp đã bỏ thì bấm "Xem nháp đã bỏ".
@@ -107,11 +112,8 @@ export default function Dispatch() {
   const plan = planQ.data ?? null
   // "Không liên quan" của CHÍNH người xem (03/10 tối): bàn ghép xe không thấy các đơn đó ở khung chờ; bảng Xem đơn gom chúng vào tab riêng
   const hidden = useMemo(() => new Set(plan?.hidden ?? []), [plan?.hidden])
-  const planView = useMemo(() => {
-    if (!plan || !hidden.size) return plan
-    const pool = (plan.pool ?? []).filter(o => !hidden.has(o.od_number))
-    return { ...plan, pool, summary: { ...plan.summary, pool_ods: new Set(pool.map(o => o.od_number)).size } }
-  }, [plan, hidden])
+  // kế hoạch như bàn ghép xe thấy (07/10): khung chờ chỉ còn đơn THUỘC kế hoạch — đơn Chờ điều ở bảng Xem đơn
+  const planView = useMemo(() => (plan ? boardPlanOf(plan, hidden) : null), [plan, hidden])
   const isDraft = plan?.status === 'DRAFT'
   const isOpen = plan?.status === 'DRAFT' || plan?.status === 'TENDERED'
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
@@ -126,7 +128,7 @@ export default function Dispatch() {
     if (!planId || !isOpen || !canPlan || !freshKey || tried.current === freshKey || refresh.isPending) return
     tried.current = freshKey
     refresh.mutateAsync(planId)
-      .then(r => { if (r.refreshed.added) toast({ title: `${r.refreshed.added} OD mới vào tab Điều`, description: 'Gắn nhãn "Mới" ở Xem đơn và khung chờ — nhãn hết khi OD lên xe.' }) })
+      .then(r => { if (r.refreshed.added) toast({ title: `${r.refreshed.added} OD mới vào Chờ điều`, description: 'Nhãn "Mới" ở tab Bán hàng / Trung chuyển của Xem đơn — tick rồi "Thêm vào kế hoạch" nếu cần đi ngày này.' }) })
       .catch(() => { setTimeout(() => { if (tried.current === freshKey) tried.current = '' }, 15_000) })
   }, [planId, isOpen, canPlan, freshKey, refresh])
   const ictx = useMemo(() => ({ flags }), [flags])
@@ -158,38 +160,23 @@ export default function Dispatch() {
   const [ask, confirmNode] = useConfirmDialog()
 
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
-  // DẢI TẢI theo dòng xe cha (01/10): hộp thoại đứng trước "Lập kế hoạch / Lập lại" — mặc định = dải của kế hoạch đang mở,
-  // không có thì lần chọn gần nhất của kho (Warehouse.dispatch_load_bands), chưa từng chọn thì ngưỡng Non tải của kho–100 %
-  const bandParents = useLoadBandParents(f.warehouseId)
-  const [bandDlg, setBandDlg] = useState(false)
-  const curWh = whs.find(w => w.id === f.warehouseId)
-  const whUnder = curWh?.dispatch_underload_pct == null ? null : Number(curWh.dispatch_underload_pct)
-  const bandInitial: LoadBandDraft = plan && isOpen
-    ? { bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct ?? whUnder), bypass: plan.params.load_bypass === true }
-    : { bands: fullBands(bandParents, curWh?.dispatch_load_bands, whUnder), bypass: false }
-  const runPlan = () => { if (f.warehouseId) setBandDlg(true) }
-  const runPlanWith = (d: LoadBandDraft) => {
+  // XEM ĐƠN (07/10, user: "nút là Xem đơn, tức là load lấy các đơn"): nạp đơn chưa đi của kho × ngày × mảng vào CHỜ ĐIỀU — không hỏi dải
+  // tải (hộp thoại dải đứng trước "Tạo kế hoạch"), không ghép xe nào. Đã có kế hoạch đang mở thì server trả lại đúng kế hoạch đó (`reuse`)
+  // — xem đơn không bao giờ thay nháp người khác đang làm.
+  const loadOrders = () => {
     if (!f.warehouseId) return
-    // Bước 1 luôn là XEM ĐƠN (user chốt 27/09 tối) — lập xong máy CHƯA ghép xe nào; mở bảng Xem đơn ở tab Điều
-    const body = { warehouse_id: f.warehouseId, plan_date: day, segment: seg, load_bands: d.bands, load_bypass: d.bypass }
-    const done = (p: DispatchPlan) => {
-      setBandDlg(false)
+    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day, segment: seg, reuse: true }).then(p => {
       setF({ planId: p.id, tab: 'review', reviewTab: 'GO' })
-      toast({ title: `Bước 1 — xem ${p.summary.pool_ods ?? 0} đơn`, description: 'Đơn không đi: chuyển sang "Không điều ngày này" / "Không điều", rồi bấm "Ghép xe … đơn Điều".' })
-    }
-    return create.mutateAsync(body).then(done).catch(async e => {
-      // 03/10 (nhiều người một bàn): nháp của NGƯỜI KHÁC vừa cập nhật ⇒ BE 409 PLAN_RECENTLY_EDITED — hỏi lại rồi mới ghi đè (force)
-      const ax = e as AxiosError<{ error?: { code?: string; message?: string } }>
-      if (ax?.response?.status === 409 && ax.response.data?.error?.code === 'PLAN_RECENTLY_EDITED') {
-        if (await ask({ title: 'Nháp này đang có người khác làm', body: ax.response.data.error?.message, confirmLabel: 'Vẫn lập lại (ghi đè)', danger: true }) === null) return
-        return create.mutateAsync({ ...body, force: true }).then(done).catch(e2 => err(e2, 'Không lập được kế hoạch'))
-      }
-      err(e, 'Không lập được kế hoạch')
-    })
+      toast({
+        title: p.reused ? `Kế hoạch ${SEGMENT_VI[seg]} ngày ${formatDate(day)} đang mở — đã mở lại` : `${nf(p.summary.unreviewed_ods ?? p.summary.pool_ods ?? 0)} đơn chờ điều`,
+        description: 'Tick đơn cần đi ngày này rồi bấm "Tạo kế hoạch" — đơn không tick ở lại Chờ điều.',
+      })
+    }).catch(e => err(e, 'Không nạp được đơn'))
   }
   const noTripYet = !!plan && !plan.trips.some(t => tripStatus(t) !== 'DISCARDED' && t.ods.length > 0)
-  // chưa có xe nào ⇒ Bàn ghép xe cũng mở bảng Xem đơn (bước 1), không để một bàn trống với khung chờ vài trăm đơn
-  const showReview = !!plan && (tab === 'review' || (tab === 'board' && noTripYet))
+  // kế hoạch chưa giữ đơn nào (chưa xe, khung chờ của kế hoạch trống) — bàn ghép xe nói "vào Xem đơn tick đơn", không vẽ bàn trống
+  const planEmpty = noTripYet && !planView?.pool?.length
+  const showReview = !!plan && tab === 'review'
   const tenderCount = plan ? plan.trips.filter(t => tripStatus(t) === 'DRAFT' && needsTender(t)).length : 0
   const doConfirm = async () => {
     if (!plan) return
@@ -207,12 +194,13 @@ export default function Dispatch() {
     for (const t of open) for (const od of new Set(t.ods.map(o => o.od_number))) odTrips.set(od, [...(odTrips.get(od) ?? []), t.group_code])
     const split = [...odTrips].filter(([, g]) => g.length > 1)
     const over = open.filter(t => t.ods.length && t.oversize).length
-    const poolN = plan.summary.pool_ods ?? 0
+    // chỉ khung chờ CỦA kế hoạch (07/10) — đơn Chờ điều chưa từng vào kế hoạch, không phải "bị bỏ lại"
+    const poolN = planView?.summary.pool_ods ?? 0
     // 03/10 tối: cờ "SAP đã post" / "SAP đã gắn xe" chỉ THAM CHIẾU — hỏi lại một lần, không chặn (người không đánh dấu Ngoài app là đã quyết điều)
     const hard = (od: string) => { const k = flags.get(od)?.kind; return !!k && !SOFT_FLAG_KINDS.has(k) }
     const flagged = open.filter(t => t.ods.some(o => hard(o.od_number)))
     const softOds = new Set(open.flatMap(t => t.ods.map(o => o.od_number)).filter(od => { const k = flags.get(od)?.kind; return !!k && SOFT_FLAG_KINDS.has(k) }))
-    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD còn ở KHUNG CHỜ (sẽ KHÔNG đi)` : '',
+    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD trong kế hoạch còn ở KHUNG CHỜ, chưa lên xe (sẽ KHÔNG đi)` : '',
       softOds.size ? `${softOds.size} OD SAP báo ĐÃ POST / ĐÃ GẮN XE mà vẫn trên xe (đúng là đã đi thì về Xem đơn bấm "Ngoài app" trước)` : '']
       .filter(Boolean).join(' · ')
     // OD đã đổi ở SAP sau khi lập (thay / bỏ / sửa / đã vào KH xuất) ⇒ cửa Xác nhận trả 409 — nói TRƯỚC
@@ -320,15 +308,15 @@ export default function Dispatch() {
     saveWorkbook(wb, `dieu-van-${plan.warehouse?.code ?? ''}-${plan.plan_date}.xlsx`)
   }
 
-  // MỘT nút chính mỗi cụm (skill table-format 17c): đang có nháp thì việc kế tiếp là XÁC NHẬN, "Lập lại"
-  // lùi thành nút phụ; chưa có nháp thì "Lập kế hoạch" là nút chính. Không tô màu riêng (bản 24/09 để
-  // nút xanh lá cạnh nút xanh dương — màn duy nhất của app có hai nút chính hai màu).
-  // kế hoạch vừa "Mở lại" một phần (xe khác vẫn trong Kế hoạch xuất) vẫn Xác nhận được các xe nháp
+  // MỘT nút chính mỗi cụm (skill table-format 17c): đang có nháp thì việc kế tiếp là XÁC NHẬN; chưa có kế hoạch đang mở thì
+  // "Xem đơn" là nút chính. Không tô màu riêng (bản 24/09 để nút xanh lá cạnh nút xanh dương — màn duy nhất của app có hai nút
+  // chính hai màu). Kế hoạch vừa "Mở lại" một phần (xe khác vẫn trong Kế hoạch xuất) vẫn Xác nhận được các xe nháp.
   const confirmIsNext = canConfirm && (isDraft || (plan?.status === 'TENDERED' && plan.trips.some(t => tripStatus(t) === 'DRAFT' && t.ods.length > 0)))
   const actionItems: ActionItem[] = []
-  // bước Xem đơn (27/09 tối): chưa xe nào ⇒ nút Xác nhận kế hoạch KHOÁ kèm lý do, kẻo lẫn với "Xác nhận N đơn & ghép xe"
-  if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: noTripYet ? 'Chưa có xe nào — bước 1: tab Xem đơn, bấm "Ghép xe … đơn Điều"; xác nhận kế hoạch là bước 3' : tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending || noTripYet, busy: confirm.isPending })
-  if (canPlan) actionItems.push({ key: 'plan', icon: Play, label: plan ? 'Lập lại' : 'Lập kế hoạch', tip: plan ? 'Lập lại — chạy lại máy ghép, bản nháp hiện tại (kể cả phần đã sửa tay) bị thay' : 'Máy ghép OD chưa xếp xe của kho × ngày này thành chuyến nháp', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: runPlan, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
+  // chưa xe nào ⇒ nút Xác nhận kế hoạch KHOÁ kèm lý do
+  if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: noTripYet ? 'Chưa có xe nào — tab Xem đơn: tick đơn rồi bấm "Tạo kế hoạch"; soát xe ở Bàn ghép xe rồi mới xác nhận' : tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending || noTripYet, busy: confirm.isPending })
+  // "Xem đơn" chỉ khi CHƯA có kế hoạch đang mở (kế hoạch đang mở thì danh sách đã nằm sẵn ở tab Xem đơn, đơn mới tự vào Chờ điều)
+  if (canPlan && !isOpen) actionItems.push({ key: 'load', icon: ListChecks, label: 'Xem đơn', tip: 'Nạp các đơn chưa đi của kho × ngày × mảng này vào Chờ điều — chưa ghép xe nào; tick đơn rồi bấm "Tạo kế hoạch"', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: loadOrders, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
   if (canConfirm && confirmedN > 0) actionItems.push({ key: 'reopen', icon: RotateCcw, label: 'Mở lại', tip: `Kéo ${confirmedN} xe đã vào Kế hoạch xuất về nháp để sửa trên Bàn ghép xe (chỉ xe mà chuyến chưa bắt đầu)`, onClick: () => void doReopen(), disabled: reopen.isPending, busy: reopen.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
   // 03/10 tối (user: "tôi thậm chí còn không thấy thao tác xoá nó ở đâu cả"): nút Bỏ nháp có CHỮ, không chỉ icon thùng rác
@@ -352,7 +340,7 @@ export default function Dispatch() {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
             {/* Tab CẠNH tiêu đề (khuôn app — skill table-format 22); điện thoại chiếm trọn hàng đầu */}
-            <Tabs value={showReview ? 'review' : tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none">
+            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none">
               <TabsList className="h-8 max-w-full overflow-x-auto">
                 {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
               </TabsList>
@@ -417,7 +405,7 @@ export default function Dispatch() {
                       {/* 28/09 (user: "dòng xe chọn theo khai báo của khách, không khai thì không chọn") */}
                       {nVeh > 0 && <div>
                         <b>{nf(nVeh)} OD của {nf(nVehCust)} khách chưa có dòng xe nào được vào</b> — máy KHÔNG chọn xe cho các OD này, chúng nằm ở khung chờ.
-                        Khai ở Cấu hình → Khách hàng → Dòng xe được vào (khai theo KÊNH cho số đông, khai riêng khách khi cần), rồi bấm Ghép xe / Tối ưu lại.
+                        Khai ở Cấu hình → Khách hàng → Dòng xe được vào (khai theo KÊNH cho số đông, khai riêng khách khi cần), rồi bấm Tạo kế hoạch / Tối ưu lại.
                       </div>}
                       {nDrops > 0 && <div>
                         <b>Chưa khai số điểm giao — máy xếp mỗi khách MỘT xe:</b>
@@ -438,7 +426,7 @@ export default function Dispatch() {
                         <div className="font-mono text-[10px] text-slate-500 break-all">{g!.no_category.materials.slice(0, 12).join(', ')}{g!.no_category.materials.length > 12 ? '…' : ''}</div>
                         Khai ở Cấu hình → Mã hàng.
                       </div>}
-                      <div className="text-slate-500">Khai xong bấm "Lập lại" để máy xếp theo cấu hình mới.</div>
+                      <div className="text-slate-500">Khai xong: đơn đã trong kế hoạch bấm "Tối ưu lại" trên Bàn ghép xe; đơn Chờ điều đọc cấu hình mới lúc "Tạo kế hoạch".</div>
                     </div>} />
                   </span>
                 )
@@ -456,8 +444,8 @@ export default function Dispatch() {
             {stalePlans.slice(0, 3).map(p => (
               <div key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-amber-900">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                <span>Nháp <b>{SEGMENT_VI[p.segment ?? 'SALES']}</b> ngày <b>{formatDate(p.plan_date)}</b>{p.created_by ? ` của ${p.created_by}` : ''} (lập {formatTimestampDate(p.created_at)}) đã quá ngày mà chưa xác nhận — còn {nf(p.summary?.ods ?? 0)} đơn trên xe, {nf(p.summary?.pool_ods ?? 0)} đơn khung chờ.</span>
-                <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planDate: p.plan_date, planId: p.id, segment: p.segment ?? 'SALES', tab: 'review', reviewTab: 'GO' })}>Mở nháp</button>
+                <span>Nháp <b>{SEGMENT_VI[p.segment ?? 'SALES']}</b> ngày <b>{formatDate(p.plan_date)}</b>{p.created_by ? ` của ${p.created_by}` : ''} (lập {formatTimestampDate(p.created_at)}) đã quá ngày mà chưa xác nhận — còn {nf(p.summary?.ods ?? 0)} đơn trên xe, {nf(Math.max(0, (p.summary?.pool_ods ?? 0) - (p.summary?.unreviewed_ods ?? 0)))} đơn khung chờ của kế hoạch.</span>
+                <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planDate: p.plan_date, planId: p.id, segment: p.segment ?? 'SALES', tab: 'board' })}>Mở nháp</button>
                 {canPlan && <button type="button" className="font-medium text-red-700 hover:underline" disabled={discard.isPending}
                   onClick={async () => { if (await ask({ title: `Bỏ nháp ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Bỏ nháp', body: 'Đơn trên xe của nháp này được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).' }) === null) return
                     discard.mutateAsync(p.id).then(r => toast({ title: `Đã bỏ nháp ${formatDate(p.plan_date)} — ${r.discarded_trips} xe` })).catch(e => err(e, 'Không bỏ được nháp')) }}>Bỏ nháp</button>}
@@ -477,7 +465,7 @@ export default function Dispatch() {
             <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planId: '' })}>Về kế hoạch đang làm</button>
           </div>
         )}
-        {plan && !showReview && tab !== 'map' && (
+        {plan && !showReview && !planEmpty && tab !== 'map' && (
           // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
           <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
             <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
@@ -496,7 +484,7 @@ export default function Dispatch() {
             ))}
             {todoN === 0 && <span className="text-[11px] text-green-700 font-medium">✓ Không còn xe nào chờ người quyết{issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}</span>}
             <div className="ml-auto flex items-center gap-2 shrink-0">
-              {sum && <span className="hidden md:inline"><DispatchKpiInline plan={plan} /></span>}
+              {sum && planView && <span className="hidden md:inline"><DispatchKpiInline plan={planView} /></span>}
               {sum && (
                 <button type="button" onClick={() => setF({ kpiOpen: !f.kpiOpen })} aria-expanded={f.kpiOpen}
                   title="Dải chỉ số đầy đủ: OD · pallet · tấn · cước/pallet · Non tải · tỷ trọng ĐVVT · số chuyến theo dòng xe"
@@ -508,7 +496,7 @@ export default function Dispatch() {
           </div>
         )}
 
-        {plan && sum && f.kpiOpen && tab !== 'map' && <DispatchKpiBar plan={plan} />}
+        {planView && sum && f.kpiOpen && tab !== 'map' && <DispatchKpiBar plan={planView} />}
 
         <div className={plan ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
@@ -523,27 +511,32 @@ export default function Dispatch() {
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
               <Waypoints className="h-10 w-10 opacity-30" />
               <p className="text-sm font-medium text-slate-500">Chưa có kế hoạch <b>{SEGMENT_VI[seg]}</b> cho kho này ngày {formatDate(day)}{otherPlan ? ` — mảng ${SEGMENT_VI[otherSeg]} đã có nháp` : ''}</p>
-              {canPlan ? <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={runPlan} disabled={create.isPending}><Play className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang ghép…' : 'Lập kế hoạch'}</Button>
-                : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ chạy máy ghép.</p>}
+              {canPlan ? <>
+                <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={loadOrders} disabled={create.isPending}><ListChecks className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang nạp đơn…' : 'Xem đơn'}</Button>
+                <p className="text-xs">Nạp các đơn chưa đi vào Chờ điều — tick đơn cần đi ngày này rồi bấm "Tạo kế hoạch".</p>
+              </> : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ nạp đơn và tạo kế hoạch.</p>}
               {lastDiscarded && (
                 <p className="text-xs">Nháp trước{lastDiscarded.created_by ? ` (${lastDiscarded.created_by} lập)` : ''} đã bỏ lúc {formatTimestampDate(lastDiscarded.updated_at)} — <button type="button" className="text-sky-700 underline" onClick={() => setF({ planId: lastDiscarded.id })}>Xem nháp đã bỏ</button> (chỉ xem)</p>
               )}
             </div>
           ) : showReview ? (
             <DispatchReviewTable plan={plan} editable={!!isOpen && canPlan} flags={flags} onGrouped={() => setF({ tab: 'board' })} canAct={canActKhvc}
-              hidden={hidden} otherPlanId={otherPlan?.id ?? null} otherPoolCount={otherPlan?.summary?.pool_ods ?? null} onSwitchSegment={s => setF({ segment: s, planId: '', reviewTab: 'GO' })} />
+              hidden={hidden} otherPlanId={otherPlan?.id ?? null} otherPoolCount={otherPlan?.summary ? (otherPlan.summary.unreviewed_ods ?? otherPlan.summary.pool_ods ?? null) : null} onSwitchSegment={s => setF({ segment: s, planId: '', reviewTab: 'GO' })} />
+          ) : tab === 'board' && planEmpty ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
+              <LayoutGrid className="h-10 w-10 opacity-30" />
+              <p className="text-sm font-medium text-slate-500">Kế hoạch <b>{SEGMENT_VI[seg]}</b> ngày {formatDate(plan.plan_date)} chưa có đơn nào</p>
+              <p className="text-xs">Vào Xem đơn, tick các đơn cần đi ngày này rồi bấm "Tạo kế hoạch" — máy ghép thành xe, bàn này hiện để soát / sửa.</p>
+              <Button size="sm" variant="outline" className="mt-2 h-8" onClick={() => setF({ tab: 'review', reviewTab: 'GO' })}><ListChecks className="h-3.5 w-3.5 mr-1" /> Mở Xem đơn</Button>
+            </div>
           ) : tab === 'board' ? (
             <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} />
           ) : (
-            <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
+            <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           )}
         </div>
       </div>
 
-      <DispatchLoadBandDialog open={bandDlg} onClose={() => setBandDlg(false)} title={plan ? 'Lập lại kế hoạch — dải % tải' : 'Lập kế hoạch — dải % tải'}
-        confirmLabel={plan ? 'Lập lại' : 'Lập kế hoạch'} parents={bandParents} initial={bandInitial} busy={create.isPending}
-        intro={plan ? 'Bản nháp hiện tại (kể cả phần đã sửa tay) bị thay. Máy lập theo dải % tải dưới đây.' : 'Máy nạp đơn của kho × ngày này vào bảng Xem đơn; dải % tải dưới đây áp cho lượt ghép.'}
-        onConfirm={runPlanWith} />
       <Sheet open={!!openTrip} onOpenChange={o => !o && setOpenTripId(null)}>
         <SheetContent side="right" className="w-full sm:max-w-lg p-0 flex flex-col">
           {openTrip && plan && (

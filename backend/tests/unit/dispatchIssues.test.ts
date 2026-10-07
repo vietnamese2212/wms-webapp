@@ -4,8 +4,8 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove } from '../../../frontend/src/components/tms/dispatchIssues'
-import type { DispatchTrip, DispatchOdFlag } from '../../../frontend/src/api/hooks'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders } from '../../../frontend/src/components/tms/dispatchIssues'
+import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
   id: 't1', plan_id: 'p1', seq: 1, group_code: 'G1', vehicle_model_id: 'vm', transport_company_id: 'c1',
@@ -53,5 +53,34 @@ describe('selectionAfterMove — lựa chọn sau một lần chuyển', () => {
   })
   it('chuyển đúng các đơn đã tick ⇒ lựa chọn rỗng như trước', () => {
     expect(selectionAfterMove(new Set(['a']), ['a']).size).toBe(0)
+  })
+})
+
+// 07/10 (user: "đơn không tick ở lại Chờ điều"): khung chờ tách hai theo mốc reviewed_at — bàn ghép xe chỉ vẽ phần THUỘC kế hoạch,
+// cảnh báo Xác nhận "N OD còn ở khung chờ" chỉ đếm phần đó, băng "nháp quá ngày" chỉ nhắc nháp còn giữ đơn
+describe('ranh giới kế hoạch — Chờ điều ⇄ trong kế hoạch', () => {
+  const row = (id: string, od: string, trip: string | null, rev: string | null, pallets = 1): DispatchTripOd => ({
+    id, plan_id: 'p1', trip_id: trip, od_number: od, ship_to_code: 'S', ship_to_name: 'S', ward_code: 'W', pallets, tons: 1, lines: 1, part_index: null, part_of: null, material_codes: [], reviewed_at: rev,
+  })
+  it('dòng trên xe luôn thuộc kế hoạch; dòng khung chờ thuộc kế hoạch khi và chỉ khi có mốc', () => {
+    expect(inPlanRow(row('a', 'A', 't1', null))).toBe(true)
+    expect(inPlanRow(row('b', 'B', null, '2026-10-07T01:00:00Z'))).toBe(true)
+    expect(inPlanRow(row('c', 'C', null, null))).toBe(false)
+  })
+  it('bàn ghép xe: khung chờ bỏ đơn Chờ điều + đơn "Không liên quan" của người xem, số khung chờ tính lại theo đúng tập đó', () => {
+    const plan = { trips: [], pool: [row('b', 'B', null, 'x', 2.5), row('c', 'C', null, null, 9), row('d', 'D', null, 'x', 1), row('e', 'E', null, 'x', 4)],
+      summary: { pool_ods: 4, pool_pallets: 16.5, unreviewed_ods: 1 } } as unknown as DispatchPlan
+    const v = boardPlanOf(plan, new Set(['E']))
+    expect(v.pool.map(o => o.od_number)).toEqual(['B', 'D'])
+    expect(v.summary.pool_ods).toBe(2)
+    expect(v.summary.pool_pallets).toBe(3.5)
+    expect(plan.pool).toHaveLength(4)   // không đụng kế hoạch gốc — bảng Xem đơn vẫn cần đủ Chờ điều
+  })
+  it('nháp chỉ chứa Chờ điều (bấm Xem đơn rồi bỏ đó) KHÔNG giữ đơn; có xe hoặc có khung chờ của kế hoạch thì giữ', () => {
+    expect(planHoldsOrders({ trips: 0, pool_ods: 3500, unreviewed_ods: 3500 })).toBe(false)
+    expect(planHoldsOrders({ trips: 1, pool_ods: 3500, unreviewed_ods: 3500 })).toBe(true)
+    expect(planHoldsOrders({ trips: 0, pool_ods: 3500, unreviewed_ods: 3499 })).toBe(true)
+    expect(planHoldsOrders({ trips: 0, pool_ods: 12 })).toBe(true)   // tổng kết cũ thiếu số Chờ điều ⇒ coi như còn giữ (nhắc thừa hơn bỏ sót)
+    expect(planHoldsOrders(null)).toBe(false)
   })
 })

@@ -11,8 +11,8 @@
 //   • Vượt tải CHO THẢ, đánh dấu đỏ (user chốt) — không chặn như máy; Xác nhận nhắc lại.
 //   • Hoàn tác / Làm lại (Ctrl+Z / Ctrl+Y), khoá xe, bỏ xe trống, "Chuyển tới xe…" cho người không kéo được (điện thoại,
 //     hoặc 80 thẻ xe không kéo chính xác nổi).
-//   • BƯỚC 1 = XEM ĐƠN nằm ở BẢNG riêng (DispatchReviewTable, 27/09 tối); chưa có xe nào thì tab này cũng mở bảng đó. Khung chờ
-//     = OD trạng thái ĐIỀU (đơn mới về mặc định là Điều); đơn không đi chuyển sang "Không điều ngày này" / "Không điều".
+//   • BƯỚC 1 = XEM ĐƠN nằm ở BẢNG riêng (DispatchReviewTable, 27/09 tối). 07/10: khung chờ = đơn THUỘC kế hoạch chưa lên xe
+//     (`boardPlanOf` — đơn Chờ điều nằm ở Xem đơn, không vẽ ở đây); "Trả về Chờ điều" = đơn rời kế hoạch, về lại Xem đơn.
 //     SAP sửa OD (SL / dòng hàng / ghi chú) ⇒ cờ "SAP đã sửa" + nút "Cập nhật theo SAP"; Xác nhận kế hoạch bị chặn tới khi xử lý.
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
 // 06/10 (user: "ghép đơn dạng thẻ hơi khó nhìn — table kéo thả, đồng bộ từ trên xuống"): mặc định vẽ DẠNG BẢNG (DispatchBoardTable —
@@ -871,6 +871,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip }: {
         <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setMoveTarget(''); setMoveDlg(true) }}>Chuyển tới xe…</Button>
         {poolSel.length > 0 && poolSel.length === selIds.length && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={reopt.isPending || busy} onClick={() => void doReoptSel()}><Sparkles className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : 'Ghép phần đã chọn'}</Button>}
         {selIds.some(id => tripOf.get(id)) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void run(selIds.filter(id => tripOf.get(id)), 'pool')}>Về khung chờ</Button>}
+        {/* 07/10: rời KẾ HOẠCH (không chỉ rời xe) — đơn về tab Chờ điều của Xem đơn; không vào ngăn Hoàn tác vì bàn không còn thấy đơn đó */}
+        <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} title="Đơn rời kế hoạch, nằm lại tab Chờ điều của Xem đơn để tick lại khi cần"
+          onClick={() => void run(selIds, 'unplan', undefined, false)}><Undo2 className="h-3.5 w-3.5 mr-1" />Trả về Chờ điều</Button>
         {/* "Bỏ khỏi kế hoạch" (tạm, không nằm ở tab nào) đã bỏ 27/09 tối — đơn không đi là "Không điều ngày này" */}
         <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openHold('date')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Không điều ngày này</Button>
         <Button size="sm" variant="outline" className={FLOATING_BTN_DANGER} disabled={busy} onClick={() => openHold('never')}><Ban className="h-3.5 w-3.5 mr-1" />Không điều</Button>

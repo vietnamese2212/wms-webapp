@@ -180,7 +180,9 @@ try {
   // "chở được mọi điều kiện" của fixture cũ (khai rỗng) — mã fixture là hàng THẬT có tồn ở ô khai ĐK riêng của Ba Vì, khai một mức
   // thì [12c] đỏ oan (hàng đòi mức khác, OD CAT2 không ghép được vì không xe nào chở cả hai mức)
   const ALL_CONDS = (await restAll('LookupValue', 'select=value&type=eq.storage_condition')).map(r => r.value)
-  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: ALL_CONDS, capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3 })
+  // allow_multi_vehicle khai RIÊNG ở dòng xe QA (07/10): cha XEPALLET là danh mục thật, user tắt "ghép nhiều xe" cho xe pallet ⇒ không
+  // khai riêng thì [15g] (thẻ 2 xe) đỏ theo cấu hình thật của người dùng
+  const cr = await api('/tms/vehicle-models', 'POST', { sap_code: SAP, name: 'QA61 Xe 9 Pallet', parent_type_id: XEPALLET?.id, storage_conditions: ALL_CONDS, capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3, allow_multi_vehicle: true })
   const vmId = cr.j?.data?.id
   const t1 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: DA.id, vehicle_model_id: vmId, ward_code: W1, price: PRICE_DA, distance_km: 15 })
   const t2 = await api('/tms/freight/tariffs', 'POST', { from_warehouse_id: WH, transport_company_id: HA.id, vehicle_model_id: vmId, ward_code: W2, price: PRICE_HA, distance_km: 30 })
@@ -1383,6 +1385,29 @@ try {
         !!gM && gv.length === 2 && gv.map(v => Number(v.pallets)).join('+') === '9+5' && Number(gM?.freight_detail?.load?.pct) === 77.8 && Number(gM?.freight_estimated) === Number(tM?.freight_estimated ?? two.j?.data?.freight_estimated),
         `gdo=${JSON.stringify({ f: gM?.freight_estimated, veh: gv.map(v => v.pallets), load: gM?.freight_detail?.load?.pct, reason: gM?.freight_detail?.reason })} thẻ=${two.j?.data?.freight_estimated}`)
     } else check('15h. Fixture: OD11 phải có xe ở [15g]', false)
+
+    // [15g2] (07/10, user: "dòng xe pallet, container sẽ không ghép xe, chỉ Xá, SCA" · "khai như các tính năng khác: cha → con → kho" ·
+    // OD quá xe ⇒ "để ở khung chờ"): dòng xe QA KHÔNG được ghép nhiều xe ⇒ OD 14 pallet > xe 9 không thành thẻ 2 xe, không bị tách — nằm
+    // khung chờ kèm params.too_big; kho khai riêng "được ghép" ⇒ danh sách in giá trị hiệu lực theo kho + Tối ưu lại ra lại thẻ 2 xe
+    // (tầng kho thắng tầng dòng xe). Bản cũ: OD11 lên thẻ 2 xe bất kể cấu hình ⇒ phép đỏ.
+    await cleanupTrips()
+    const offM = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { allow_multi_vehicle: false })
+    const pNo = await mkPlan(PLAN_BODY)
+    const tbNo = pNo.j?.data?.params?.too_big?.[OD11]
+    const onTripNo = !!tripOfOd(pNo.j?.data, OD11)
+    const inPoolNo = (pNo.j?.data?.pool ?? []).some(o => o.od_number === OD11 && !o.trip_id)
+    const whOn = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { allow_multi_vehicle: true })
+    const vmAtWh = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
+    const pNoId = pNo.j?.data?.id ?? ''
+    const reM = pNoId ? await api(`/tms/dispatch/plans/${pNoId}/reoptimize`, 'POST', {}) : { s: 0, j: null }
+    const tReM = tripOfOd(reM.j?.data, OD11)
+    check('15g2. Dòng xe KHÔNG ghép nhiều xe ⇒ OD 14 pallet không thành thẻ 2 xe, không tách — ở khung chờ kèm params.too_big (xe · % · trần); kho khai riêng "được ghép" ⇒ danh sách in hiệu lực theo kho, Tối ưu lại ra lại thẻ 2 xe',
+      offM.s === 200 && pNo.s === 201 && !onTripNo && inPoolNo && tbNo?.vehicle === 'QA61 Xe 9 Pallet' && Number(tbNo?.pct) === 155.6 && Number(tbNo?.max) === 100
+      && whOn.s === 200 && vmAtWh?.multi_vehicle === true && (vmAtWh?.wh_fields ?? []).includes('allow_multi_vehicle')
+      && reM.s === 200 && (tReM?.detail?.vehicles ?? []).length === 2,
+      `tắt=${offM.s} lập=${pNo.s} ${pNo.j?.error?.message ?? ''} trênXe=${onTripNo} khungChờ=${inPoolNo} too_big=${JSON.stringify(tbNo)} kho=${whOn.s} ${whOn.j?.error?.message ?? ''} hiệuLực=${vmAtWh?.multi_vehicle} riêng=${JSON.stringify(vmAtWh?.wh_fields)} tốiƯu=${reM.s} ${reM.j?.error?.message ?? ''} xe=${(tReM?.detail?.vehicles ?? []).length}`)
+    await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE').catch(() => {})
+    await api(`/tms/vehicle-models/${vmId}`, 'PUT', { allow_multi_vehicle: true }).catch(() => {})
 
     // HAI NGƯỜI CÙNG BẤM "Xác nhận … đơn & ghép xe" (check-app 27/09 tối: Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai
     // lượt 200). Bước này nay bắt buộc nên ai mở bàn cũng bấm nó ⇒ chỉ MỘT lượt được chạy, lượt kia 409, mỗi OD đúng một chỗ.

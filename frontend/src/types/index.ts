@@ -493,6 +493,8 @@ export interface TmsVehicleType {
   // Xe chở hàng ĐÃ LÊN PALLET (26/08) — quyết định CÁCH VẼ sơ đồ xếp xe: bật = gom hàng lên pallet
   // rồi xếp pallet (sức chứa tính bằng chỗ pallet); tắt = xếp từng thùng như cũ.
   is_pallet_truck?: boolean | null
+  // Điều vận (07/10): được ghép NHIỀU XE trên một thẻ — mặc định cho dòng xe con (con / kho đè được)
+  allow_multi_vehicle?: boolean
   created_at?: string
   updated_at?: string
   created_by?: string | null

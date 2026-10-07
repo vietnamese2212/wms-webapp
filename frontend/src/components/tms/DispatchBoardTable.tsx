@@ -189,10 +189,12 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
   const followOnly = !t && !!o.cat_load && Object.keys(o.cat_load).length > 0 && Object.keys(o.cat_load).every(c => ops.follow.has(c))
   // CẬN DƯỚI BẮT BUỘC (07/10): máy không tạo xe dưới Tối thiểu % — đơn ở khung chờ chờ người quyết (kéo lên xe · Trả về Chờ điều)
   const um = t ? undefined : ops.plan.params.under_min?.[o.od_number]
+  const tb = t ? undefined : ops.plan.params.too_big?.[o.od_number]   // 07/10: lớn hơn xe, loại xe không ghép nhiều xe
   const share = t ? shareOf(o, t) : null
   const warnText = [fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', noVeh ? 'Khách và kênh chưa khai Dòng xe được vào — máy không chọn xe' : '',
     followOnly ? 'Chỉ có hàng đi kèm đơn — chờ đơn chính của khách, hoặc kéo tay lên xe của khách' : '',
-    um ? `Máy không tạo xe: lô ${um.ods} OD trên ${um.vehicle} chỉ ${nf(um.pct, 1)} % < tối thiểu ${um.min} % — kéo lên xe / Xe mới, hoặc tick rồi "Trả về Chờ điều"; muốn máy vẫn tạo: Tối ưu lại, tick "Bỏ qua dải %"` : ''].filter(Boolean).join(' · ')
+    um ? `Máy không tạo xe: lô ${um.ods} OD trên ${um.vehicle} chỉ ${nf(um.pct, 1)} % < tối thiểu ${um.min} % — kéo lên xe / Xe mới, hoặc tick rồi "Trả về Chờ điều"; muốn máy vẫn tạo: Tối ưu lại, tick "Bỏ qua dải %"` : '',
+    tb ? `Máy không tạo xe: đơn lớn hơn ${tb.vehicle} (${nf(tb.pct, 1)} % > trần ${tb.max} %) và loại xe này không ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP` : ''].filter(Boolean).join(' · ')
   return {
     x: {
       title: `${o.od_number}${o.part_of ? ` — phần ${o.part_index}/${o.part_of} (OD bị tách, gom về một xe trước khi xác nhận)` : ''} · bấm dòng để xem chi tiết đơn`,
@@ -232,6 +234,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
           {noVeh && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700">Chưa khai xe</span>}
           {followOnly && <span className="rounded bg-violet-100 px-1 text-[9px] font-medium text-violet-800">Chờ đơn chính</span>}
           {um && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-900">Dưới tối thiểu · {um.vehicle} {nf(um.pct, 1)} %</span>}
+          {tb && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-900">Lớn hơn xe · {tb.vehicle} {nf(tb.pct, 1)} %</span>}
         </span>
       ) : <span className="text-slate-300">—</span>,
     },

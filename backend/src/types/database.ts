@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-06T10:21:09.139Z · 115 bảng/view · 185 hàm · 0 enum
+// Sinh lúc 2026-10-07T13:54:42.813Z · 115 bảng/view · 185 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2378,6 +2378,7 @@ export type Database = {
           box_width_mm: number | null
           box_height_mm: number | null
           is_pallet_truck: boolean
+          allow_multi_vehicle: boolean
         }
         Insert: {
           id: string
@@ -2393,6 +2394,7 @@ export type Database = {
           box_width_mm?: number | null
           box_height_mm?: number | null
           is_pallet_truck?: boolean
+          allow_multi_vehicle?: boolean
         }
         Update: {
           id?: string
@@ -2408,6 +2410,7 @@ export type Database = {
           box_width_mm?: number | null
           box_height_mm?: number | null
           is_pallet_truck?: boolean
+          allow_multi_vehicle?: boolean
         }
         Relationships: []
       }
@@ -5235,6 +5238,7 @@ export type Database = {
           storage_conditions: string[]
           note: string | null
           dispatch_use: string
+          allow_multi_vehicle: boolean | null
         }
         Insert: {
           id: string
@@ -5257,6 +5261,7 @@ export type Database = {
           storage_conditions?: string[]
           note?: string | null
           dispatch_use?: string
+          allow_multi_vehicle?: boolean | null
         }
         Update: {
           id?: string
@@ -5279,6 +5284,7 @@ export type Database = {
           storage_conditions?: string[]
           note?: string | null
           dispatch_use?: string
+          allow_multi_vehicle?: boolean | null
         }
         Relationships: []
       }
@@ -5520,6 +5526,7 @@ export type Database = {
           updated_at: string
           created_by: string | null
           updated_by: string | null
+          allow_multi_vehicle: boolean | null
         }
         Insert: {
           id: string
@@ -5533,6 +5540,7 @@ export type Database = {
           updated_at: string
           created_by?: string | null
           updated_by?: string | null
+          allow_multi_vehicle?: boolean | null
         }
         Update: {
           id?: string
@@ -5546,6 +5554,7 @@ export type Database = {
           updated_at?: string
           created_by?: string | null
           updated_by?: string | null
+          allow_multi_vehicle?: boolean | null
         }
         Relationships: []
       }

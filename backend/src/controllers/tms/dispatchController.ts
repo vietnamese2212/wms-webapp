@@ -37,10 +37,10 @@ import {
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
-  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin,
+  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
-import { applyWarehouseOverrides, loadWarehouseOverrides } from '../../services/vehicleModelScope'
+import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
 import { logOutboundEvents, actorOf } from '../../services/outboundEvents'
@@ -169,8 +169,8 @@ async function rememberLoadBands(whId: string, bands: Record<string, LoadBand>) 
 async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
   // 03/10: dòng xe theo KHO — nạp CẢ danh mục (kể cả Chung tắt: kho có thể bật riêng), đè bản chụp của kho rồi mới lọc is_active
   const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes, overrides] = await Promise.all([
-    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, max_drops, storage_conditions, is_active').order('sap_code'),
-    db.from('VehicleType').select('id, name'),
+    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, max_drops, allow_multi_vehicle, storage_conditions, is_active').order('sap_code'),
+    db.from('VehicleType').select('id, name, allow_multi_vehicle'),
     wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
       .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
       .eq('from_warehouse_id', whId).eq('is_active', true).in('ward_code', c).order('id')) as Promise<EngineTariff[]> : Promise.resolve([] as EngineTariff[]),
@@ -182,9 +182,10 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     loadWarehouseOverrides(whId),
   ])
   for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
-  const vtRows = (vtRes.data ?? []) as { id: string; name: string }[]
+  const vtRows = (vtRes.data ?? []) as { id: string; name: string; allow_multi_vehicle: boolean }[]
   const vtName = new Map(vtRows.map(v => [v.id, v.name]))
-  const vmRaw = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; max_drops: number | null; storage_conditions: string[] | null; is_active: boolean }[])
+  const vtMulti = new Map(vtRows.map(v => [v.id, v.allow_multi_vehicle]))
+  const vmRaw = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; max_drops: number | null; allow_multi_vehicle: boolean | null; storage_conditions: string[] | null; is_active: boolean }[])
     .map(m => ({ ...m, max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons), max_drops: numOrNull(m.max_drops) }))
   const models: EngineModel[] = applyWarehouseOverrides(vmRaw, overrides).filter(m => m.is_active).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
@@ -195,6 +196,8 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     tariff_unit: m.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET',
     max_drops: m.max_drops, is_active: m.is_active,
     serve_conditions: (m.storage_conditions ?? []).filter(Boolean),   // rỗng = chở được mọi điều kiện
+    // 07/10 — ghép nhiều xe trên một thẻ: kho → dòng xe → loại xe cha (applyWarehouseOverrides đã đè kho lên dòng xe)
+    multi_vehicle: multiVehicleOf(m.allow_multi_vehicle, m.parent_type_id ? vtMulti.get(m.parent_type_id) : null),
   }))
   const allocations = ((allocRes.data ?? []) as EngineAllocation[]).map(a => ({ ...a, priority: Number(a.priority) }))
   const shareRows = effectiveAt(((shareRes.data ?? []) as (EngineShareTarget & { effective_from: string; effective_to: string | null; is_active: boolean })[]), day)
@@ -1544,22 +1547,27 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const pp = (plan.params ?? {}) as Record<string, unknown>
     // CẬN DƯỚI BẮT BUỘC (07/10): OD máy không tạo xe vì dưới Tối thiểu % ở lại khung chờ — `params.under_min[od]` = xe máy định dùng · % ·
     // mức · số OD của lô, bàn in chip. Lượt này thay mục của MỌI OD vừa ghép (lên xe rồi thì hết chip); OD ngoài lượt giữ mục cũ.
+    // 07/10 (cùng khuôn): OD lớn hơn xe lớn nhất mà loại xe không được ghép nhiều xe ⇒ `params.too_big[od]` = xe · % tải · trần
     const under = result.unplanned.filter(u => u.code === 'UNDER_MIN' && u.under)
+    const tooBig = result.unplanned.filter(u => u.code === 'TOO_BIG' && u.too_big)
     const odSet = new Set(odNos)
     const prevUnder = (pp.under_min ?? {}) as Record<string, UnderMin>
-    const hadUnder = Object.keys(prevUnder).some(od => odSet.has(od))
+    const prevBig = (pp.too_big ?? {}) as Record<string, TooBig>
+    const hadUnder = Object.keys(prevUnder).some(od => odSet.has(od)), hadBig = Object.keys(prevBig).some(od => odSet.has(od))
+    const keepOthers = <T,>(m: Record<string, T>) => Object.fromEntries(Object.entries(m).filter(([od]) => !odSet.has(od)))
     const params2 = {
       ...pp,
       ...(pp.baseline == null ? { baseline: { trips: result.summary.trips, freight_total: result.summary.freight_total, pallets: result.summary.pallets, underload: result.summary.underload, unpriced: result.summary.unpriced } } : {}),
-      ...(under.length || hadUnder ? { under_min: { ...Object.fromEntries(Object.entries(prevUnder).filter(([od]) => !odSet.has(od))), ...Object.fromEntries(under.map(u => [u.od_number, u.under!])) } } : {}),
+      ...(under.length || hadUnder ? { under_min: { ...keepOthers(prevUnder), ...Object.fromEntries(under.map(u => [u.od_number, u.under!])) } } : {}),
+      ...(tooBig.length || hadBig ? { too_big: { ...keepOthers(prevBig), ...Object.fromEntries(tooBig.map(u => [u.od_number, u.too_big!])) } } : {}),
     }
-    if (pp.baseline == null || under.length || hadUnder) {
+    if (pp.baseline == null || under.length || hadUnder || tooBig.length || hadBig) {
       const { error } = await db.from('dispatch_plan').update({ params: asJson(params2), updated_at: t }).eq('id', plan.id)
       if (error) throw error
       plan.params = asJson(params2)
     }
     await writeSummary(plan)
-    return ok(res, { ...(await readPlan(plan.id)), reoptimized: { trips: result.trips.length, kept: keep.length, left_in_pool: odNos.length - placed.length, under_min: under.length } })
+    return ok(res, { ...(await readPlan(plan.id)), reoptimized: { trips: result.trips.length, kept: keep.length, left_in_pool: odNos.length - placed.length, under_min: under.length, too_big: tooBig.length } })
   } catch (e) { return failAny(res, e) }
 }
 

@@ -854,6 +854,40 @@ describe('07/10 — cận dưới của dải tải là BẮT BUỘC: dưới T�
   })
 })
 
+// 07/10 — GHÉP NHIỀU XE TRÊN MỘT THẺ THEO LOẠI XE (user: "dòng xe pallet, container sẽ không ghép xe, chỉ dòng xe Xá, SCA" · "khai như
+// các tính năng khác: cha → con → kho" · OD lớn hơn xe mà loại xe không được ghép ⇒ "để ở khung chờ"). Kế hoạch Trung chuyển Ba Vì
+// 04/10: 17 thẻ "2 XE cont". `multi_vehicle` = giá trị hiệu lực controller đã resolve.
+describe('07/10 — chỉ dòng xe được ghép nhiều xe mới vào thẻ nhiều xe; OD quá xe không ghép được ⇒ khung chờ TOO_BIG', () => {
+  const NO = (m: EngineModel) => ({ ...m, multi_vehicle: false })
+  it('OD một dòng 10 pallet trên xe 9 (kho cho 2 xe/thẻ): được ghép ⇒ thẻ 2 × M9; KHÔNG được ⇒ 0 xe, khung chờ TOO_BIG (xe · % · trần), không tách', () => {
+    const ok2 = runDispatch(input([od('1', 'W1', 10)], { models: [M9], params: { ...params, max_vehicles: 2 } }))
+    expect(ok2.trips[0].vehicles.map(v => v.model.id)).toEqual(['M9', 'M9'])
+    const no = runDispatch(input([od('1', 'W1', 10)], { models: [NO(M9)], params: { ...params, max_vehicles: 2 } }))
+    expect(no.trips).toHaveLength(0)
+    expect(no.unplanned).toEqual([{ od_number: '1', ship_to_code: 'S1', code: 'TOO_BIG', too_big: { vehicle: 'M9', pct: 111.1, max: 100 }, reason: expect.stringMatching(/Lớn hơn xe lớn nhất được vào: M9 111\.1%/) }])
+  })
+  it('OD nhiều dòng 9 + 1 pallet: loại xe không được ghép ⇒ khung chờ, KHÔNG tách thành hai Số xe như trước (cả khi kho tắt thẻ nhiều xe)', () => {
+    const o = od('1', 'W1', 0, { lines: [line(9, { material_code: 'a' }), line(1, { material_code: 'b' })] })
+    const r = runDispatch(input([o], { models: [NO(M9)] }))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned[0]).toMatchObject({ od_number: '1', code: 'TOO_BIG' })
+    // loại xe được ghép mà kho tắt thẻ nhiều xe ⇒ như cũ: tách theo dòng hàng
+    expect(runDispatch(input([o], { models: [M9] })).trips.map(t => t.ods[0].part?.of)).toEqual([2, 2])
+  })
+  it('tổ hợp rẻ hơn một xe: 13 pallet ⇒ 2 × M9 (1,3 tr) thắng M16 (1,95 tr) khi M9 được ghép; M9 không được ghép ⇒ một xe M16', () => {
+    const P2 = { ...params, max_vehicles: 2 }
+    expect(runDispatch(input([od('1', 'W1', 13)], { params: P2 })).trips[0].vehicles.map(v => v.model.id)).toEqual(['M9', 'M9'])
+    expect(runDispatch(input([od('1', 'W1', 13)], { models: [NO(M9), M16], params: P2 })).trips[0].vehicles.map(v => v.model.id)).toEqual(['M16'])
+  })
+  it('xe lớn nhất không được ghép nhưng xe nhỏ hơn được ⇒ thẻ nhiều xe dựng từ xe được ghép (20 pallet = 3 × M9, không 2 × M16 dù M16 rẻ hơn)', () => {
+    const cheap16 = [tariff('A', 'M9', 'W1', 100_000), tariff('A', 'M16', 'W1', 50_000)]   // bản cũ chọn 2 × M16 (1,0 tr)
+    const r = runDispatch(input([od('1', 'W1', 20)], { models: [M9, NO(M16)], tariffs: cheap16, params: { ...params, max_vehicles: 3 } }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].vehicles.map(v => v.model.id)).toEqual(['M9', 'M9', 'M9'])
+  })
+})
+
 // 01/10 chiều — mã CHƯA KHAI Loại kho là TRUNG TÍNH (user: "#1–#4 ghép sai": An Sơn 0,057 pallet mẫu đi Xe 16 pallet riêng cạnh
 // #3 An Sơn 13,3 pallet cùng phường — bản 01/10 sáng tách cụm '?' riêng khi kho không cho trộn loại).
 describe('01/10 chiều — OD toàn mã chưa khai Loại kho ké chuyến cùng cụm, không tách cụm riêng', () => {

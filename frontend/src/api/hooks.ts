@@ -5737,7 +5737,7 @@ export function useVehicleTypes(onlyActive = false) {
 export function useCreateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean }) =>
+    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean; allow_multi_vehicle?: boolean }) =>
       apiClient.post('/tms/vehicle-types', body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -5756,7 +5756,7 @@ export function useReorderVehicleTypes() {
 export function useUpdateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean; allow_multi_vehicle?: boolean }) =>
       apiClient.put(`/tms/vehicle-types/${id}`, body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -5772,12 +5772,15 @@ export function useDeleteVehicleType() {
 
 // ─── DÒNG XE CON (vehicle_model, mã SAP 9100000xx) — cha = VehicleType (23/09) ───────────────────────
 export type VehicleModelTemp = 'HOT' | 'COLD' | 'MIXED' | 'DRY'
-/** Bốn giá trị KHO được cấu hình riêng cho một dòng xe (03/10) — master data còn lại chỉ ở bản Chung. */
-export interface VehicleModelWhValues { is_active: boolean; max_pallets: number | null; max_tons: number | null; max_drops: number | null }
+/** Các giá trị KHO được cấu hình riêng cho một dòng xe (03/10) — master data còn lại chỉ ở bản Chung. `allow_multi_vehicle` (07/10):
+ *  ghép nhiều xe trên một thẻ — null = theo tầng trên (kho → dòng xe Chung → loại xe cha). */
+export interface VehicleModelWhValues { is_active: boolean; max_pallets: number | null; max_tons: number | null; max_drops: number | null; allow_multi_vehicle: boolean | null }
 export interface VehicleModel extends VehicleModelWhValues {
   id: string; sap_code: string; name: string
   parent_type_id: string | null
-  parent: { code: string; name: string } | null
+  parent: { code: string; name: string; allow_multi_vehicle: boolean } | null
+  /** Ghép nhiều xe — giá trị HIỆU LỰC (kho → dòng xe → cha → mặc định có) */
+  multi_vehicle: boolean
   temp_mode: VehicleModelTemp | null
   storage_conditions: string[]      // điều kiện bảo quản xe chở được; dòng MỚI bắt buộc ≥ 1 (02/10); dòng cũ rỗng = mọi điều kiện
   capacity_mode: 'PALLET' | 'TON'   // một thước đo (02/10): PALLET chỉ so pallet, TON chỉ so tấn; ô kia là ghi chú
@@ -5792,8 +5795,8 @@ export interface VehicleModel extends VehicleModelWhValues {
   wh_fields: VehicleModelWhField[]
   shared: VehicleModelWhValues | null
 }
-export type VehicleModelWhField = 'is_active' | 'max_pallets' | 'max_tons' | 'max_drops'
-export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by' | 'wh_override' | 'wh_fields' | 'shared'>>
+export type VehicleModelWhField = 'is_active' | 'max_pallets' | 'max_tons' | 'max_drops' | 'allow_multi_vehicle'
+export type VehicleModelPatch = Partial<Omit<VehicleModel, 'id' | 'sap_code' | 'parent' | 'multi_vehicle' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by' | 'wh_override' | 'wh_fields' | 'shared'>>
 export function useVehicleModels(params?: { parent_type_id?: string; unassigned?: boolean; is_active?: boolean; warehouse_id?: string }) {
   return useQuery({
     queryKey: ['vehicle-models', params ?? null],
@@ -5813,7 +5816,7 @@ export function useVehicleModels(params?: { parent_type_id?: string; unassigned?
 export function useSetWarehouseVehicleModel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, warehouse_id, ...body }: { id: string; warehouse_id: string; is_active?: boolean | null; max_pallets?: number | null; max_tons?: number | null; max_drops?: number | null }) =>
+    mutationFn: ({ id, warehouse_id, ...body }: { id: string; warehouse_id: string; is_active?: boolean | null; max_pallets?: number | null; max_tons?: number | null; max_drops?: number | null; allow_multi_vehicle?: boolean | null }) =>
       apiClient.put(`/tms/vehicle-models/${id}/warehouses/${warehouse_id}`, body).then(r => r.data.data as VehicleModelWhValues & { id: string; wh_override: boolean; wh_fields: VehicleModelWhField[] }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicle-models'] }),
   })
@@ -6143,6 +6146,8 @@ export interface DispatchConfigGaps {
 export type DispatchLoadBands = Record<string, { min: number; max: number }>
 /** Lô máy không tạo xe vì dưới Tối thiểu % (07/10): xe máy định dùng ("2 × Bộ cont 40" nếu thẻ nhiều xe) · % tải · mức tối thiểu · số OD */
 export interface DispatchUnderMin { vehicle: string; pct: number; min: number; ods: number }
+/** OD lớn hơn xe lớn nhất được vào mà loại xe không được ghép nhiều xe trên một thẻ (07/10) — xe · % tải · trần dải */
+export interface DispatchTooBig { vehicle: string; pct: number; max: number }
 /** MẢNG điều vận (03/10 tối): mỗi kho × ngày một nháp cho MỖI mảng — Trung chuyển (khách tick) · Bán hàng (còn lại). */
 export type DispatchSegment = 'TRANSFER' | 'SALES'
 export const SEGMENT_VI: Record<DispatchSegment, string> = { TRANSFER: 'Trung chuyển', SALES: 'Bán hàng' }
@@ -6153,7 +6158,9 @@ export interface DispatchPlan {
   hidden?: string[]
   params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean
     /** 07/10 cận dưới bắt buộc: OD máy không tạo xe vì dưới Tối thiểu % — xe máy định dùng · % tải · mức tối thiểu · số OD của lô */
-    under_min?: Record<string, DispatchUnderMin> }
+    under_min?: Record<string, DispatchUnderMin>
+    /** 07/10: OD lớn hơn xe lớn nhất được vào mà loại xe KHÔNG được ghép nhiều xe — xe · % tải · trần */
+    too_big?: Record<string, DispatchTooBig> }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -6266,7 +6273,7 @@ export function useReoptimizeDispatchPlan() {
     mutationFn: (arg: string | { id: string; ids?: string[]; review_all?: boolean; load_bands?: DispatchLoadBands; load_bypass?: boolean }) => {
       const { id, ids, review_all, load_bands, load_bypass } = typeof arg === 'string' ? { id: arg, ids: undefined, review_all: undefined, load_bands: undefined, load_bypass: undefined } : arg
       const body = { ...(ids ? { ids } : review_all ? { review_all: true } : {}), ...(load_bands ? { load_bands } : {}), ...(load_bypass !== undefined ? { load_bypass } : {}) }
-      return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number; under_min?: number } })
+      return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number; under_min?: number; too_big?: number } })
     },
     onSuccess: p => putDispatchPlan(qc, p),
   })

@@ -17,7 +17,7 @@ import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { z, zText, zId, zBool } from '../../middlewares/validate'
-import { applyWarehouseOverrides, loadWarehouseOverrides } from '../../services/vehicleModelScope'
+import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf } from '../../services/vehicleModelScope'
 import type { Database } from '../../types/database'
 
 type VehicleModelRow = Database['public']['Tables']['vehicle_model']['Row']
@@ -43,6 +43,8 @@ const vehicleModelBody = {
   max_pallets:        nullable(zPosInt),
   max_tons:           nullable(zPosNum),
   max_drops:          nullable(zPosInt),
+  // 07/10 — ghép nhiều xe trên một thẻ: null = theo loại xe cha
+  allow_multi_vehicle: zBool.nullable(),
   allow_mix_channels: zBool,
   tariff_unit:        z.enum(TARIFF_UNITS),
   is_active:          zBool,
@@ -51,7 +53,7 @@ const vehicleModelBody = {
   dispatch_use:       z.enum(['ALL', 'TRANSFER']),
 }
 export const zVehicleModelCreate = z.object({ sap_code: zText(1, 20), ...vehicleModelBody }).partial({
-  temp_mode: true, max_pallets: true, max_tons: true, max_drops: true,
+  temp_mode: true, max_pallets: true, max_tons: true, max_drops: true, allow_multi_vehicle: true,
   allow_mix_channels: true, tariff_unit: true, is_active: true, sort_order: true, dispatch_use: true,
 })
 export const zVehicleModelUpdate = z.object(vehicleModelBody).partial()
@@ -68,6 +70,7 @@ export const zWarehouseModelBody = z.object({
   max_pallets: nullable(zPosInt),
   max_tons:    nullable(zPosNum),
   max_drops:   nullable(zPosInt),
+  allow_multi_vehicle: zBool.nullable().optional(),
 })
 export const zWarehouseModelParams = z.object({ id: zId, warehouse_id: zId })
 
@@ -103,22 +106,24 @@ function scopeWhIds(req: Request): string[] | null {
 export async function listVehicleModels(req: Request, res: Response) {
   try {
     const { parent_type_id, unassigned, is_active, warehouse_id } = req.query as z.infer<typeof zVehicleModelListQuery>
-    let q = db.from('vehicle_model').select('id, sap_code, name, parent_type_id, temp_mode, storage_conditions, capacity_mode, max_pallets, max_tons, max_drops, allow_mix_channels, tariff_unit, is_active, sort_order, created_at, updated_at, created_by, updated_by, note').order('sort_order').order('sap_code')
+    let q = db.from('vehicle_model').select('id, sap_code, name, parent_type_id, temp_mode, storage_conditions, capacity_mode, max_pallets, max_tons, max_drops, allow_multi_vehicle, allow_mix_channels, tariff_unit, is_active, sort_order, created_at, updated_at, created_by, updated_by, note').order('sort_order').order('sap_code')
     if (parent_type_id) q = q.eq('parent_type_id', parent_type_id)
     if (unassigned === '1') q = q.is('parent_type_id', null)
     // lọc is_active trên giá trị HIỆU LỰC (sau khi đè) — không đẩy xuống SQL khi có kho
     if (is_active !== undefined && !warehouse_id) q = q.eq('is_active', is_active === 'true')
-    const [{ data, error }, parents, overrides] = await Promise.all([q, db.from('VehicleType').select('id, code, name'), warehouse_id ? loadWarehouseOverrides(warehouse_id) : Promise.resolve([])])
+    const [{ data, error }, parents, overrides] = await Promise.all([q, db.from('VehicleType').select('id, code, name, allow_multi_vehicle'), warehouse_id ? loadWarehouseOverrides(warehouse_id) : Promise.resolve([])])
     if (error) return fail(res, error)
-    const pmap = new Map((parents.data ?? []).map(p => [p.id, { code: p.code, name: p.name }]))
+    // cha mang cờ "ghép nhiều xe" để ô "theo loại xe" in được giá trị đang áp (C47) — `multi_vehicle` = giá trị HIỆU LỰC (kho → con → cha)
+    const pmap = new Map((parents.data ?? []).map(p => [p.id, { code: p.code, name: p.name, allow_multi_vehicle: p.allow_multi_vehicle }]))
     const base = (data ?? []).map(r => ({ ...r, max_tons: r.max_tons == null ? null : Number(r.max_tons), parent: r.parent_type_id ? pmap.get(r.parent_type_id) ?? null : null }))
     const scoped = warehouse_id
       ? applyWarehouseOverrides(base, overrides).map(r => {
           const s = base.find(b => b.id === r.id)!
-          return { ...r, shared: { is_active: s.is_active, max_pallets: s.max_pallets, max_tons: s.max_tons, max_drops: s.max_drops } }
+          return { ...r, shared: { is_active: s.is_active, max_pallets: s.max_pallets, max_tons: s.max_tons, max_drops: s.max_drops, allow_multi_vehicle: s.allow_multi_vehicle } }
         })
       : base.map(r => ({ ...r, wh_override: false, wh_fields: [] as string[], shared: null }))
-    const rows = is_active !== undefined && warehouse_id ? scoped.filter(r => r.is_active === (is_active === 'true')) : scoped
+    const withMulti = scoped.map(r => ({ ...r, multi_vehicle: multiVehicleOf(r.allow_multi_vehicle, r.parent?.allow_multi_vehicle) }))
+    const rows = is_active !== undefined && warehouse_id ? withMulti.filter(r => r.is_active === (is_active === 'true')) : withMulti
     return ok(res, {
       items: rows,
       warehouse_id: warehouse_id ?? null,
@@ -143,7 +148,7 @@ export async function createVehicleModel(req: Request, res: Response) {
       parent_type_id: body.parent_type_id, temp_mode: body.temp_mode ?? null,
       storage_conditions: [...new Set(body.storage_conditions)],
       capacity_mode: body.capacity_mode, max_pallets: body.max_pallets ?? null, max_tons: body.max_tons ?? null,
-      max_drops: body.max_drops ?? null, allow_mix_channels: body.allow_mix_channels ?? true,
+      max_drops: body.max_drops ?? null, allow_multi_vehicle: body.allow_multi_vehicle ?? null, allow_mix_channels: body.allow_mix_channels ?? true,
       tariff_unit: body.tariff_unit ?? (body.capacity_mode === 'PALLET' ? 'PER_PALLET' : 'PER_TRIP'),
       is_active: body.is_active ?? true, sort_order: body.sort_order ?? 0, dispatch_use: body.dispatch_use ?? 'ALL',
       created_by: actor, updated_by: actor, updated_at: new Date().toISOString(),
@@ -229,8 +234,8 @@ export async function deleteVehicleModel(req: Request, res: Response) {
 }
 
 // ── DÒNG XE THEO KHO (03/10) ─────────────────────────────────────────────────────────────────────────────────────────────
-// PUT /tms/vehicle-models/:id/warehouses/:warehouse_id — kho chỉnh RIÊNG TỪNG Ô (dùng/không · sức chứa · điểm giao): gửi ô nào ghi ô
-// đó, `null` = ô đó về theo Chung, không gửi = giữ. Các ô NULL vẫn đọc từ Chung (đổi Chung là kho đổi theo). Cả bốn ô NULL ⇒ xoá dòng
+// PUT /tms/vehicle-models/:id/warehouses/:warehouse_id — kho chỉnh RIÊNG TỪNG Ô (dùng/không · sức chứa · điểm giao · ghép nhiều xe 07/10):
+// gửi ô nào ghi ô đó, `null` = ô đó về theo Chung, không gửi = giữ. Các ô NULL vẫn đọc từ Chung (đổi Chung là kho đổi theo). Mọi ô NULL ⇒ xoá dòng
 // (kho theo Chung hoàn toàn). Trả bản HIỆU LỰC tại kho + `wh_fields` (ô đang riêng).
 export async function setWarehouseVehicleModel(req: Request, res: Response) {
   try {
@@ -239,9 +244,9 @@ export async function setWarehouseVehicleModel(req: Request, res: Response) {
     const scope = scopeWhIds(req)
     if (scope && !scope.includes(warehouse_id)) return fail(res, 403, 'FORBIDDEN', 'Kho ngoài phạm vi được gán')
     const [{ data: vm, error: e1 }, { data: wh }, { data: cur, error: e2 }] = await Promise.all([
-      db.from('vehicle_model').select('id, capacity_mode, is_active, max_pallets, max_tons, max_drops').eq('id', id).maybeSingle(),
+      db.from('vehicle_model').select('id, capacity_mode, is_active, max_pallets, max_tons, max_drops, allow_multi_vehicle').eq('id', id).maybeSingle(),
       db.from('Warehouse').select('id').eq('id', warehouse_id).maybeSingle(),
-      db.from('warehouse_vehicle_model').select('id, is_active, max_pallets, max_tons, max_drops').eq('warehouse_id', warehouse_id).eq('vehicle_model_id', id).maybeSingle(),
+      db.from('warehouse_vehicle_model').select('id, is_active, max_pallets, max_tons, max_drops, allow_multi_vehicle').eq('warehouse_id', warehouse_id).eq('vehicle_model_id', id).maybeSingle(),
     ])
     if (e1) return fail(res, e1)
     if (e2) return fail(res, e2)
@@ -254,12 +259,13 @@ export async function setWarehouseVehicleModel(req: Request, res: Response) {
       max_pallets: body.max_pallets === undefined ? numN(cur?.max_pallets) : body.max_pallets,
       max_tons:    body.max_tons    === undefined ? numN(cur?.max_tons) : body.max_tons,
       max_drops:   body.max_drops   === undefined ? numN(cur?.max_drops) : body.max_drops,
+      allow_multi_vehicle: body.allow_multi_vehicle === undefined ? (cur?.allow_multi_vehicle ?? null) : body.allow_multi_vehicle,
     }
     // sức chứa HIỆU LỰC (riêng ?? Chung) phải đủ theo thước đo của Chung
     const capErr = capacityError(vm.capacity_mode, next.max_pallets ?? vm.max_pallets, next.max_tons ?? numN(vm.max_tons))
     if (capErr) return fail(res, 400, 'CAPACITY_REQUIRED', `${capErr} (thước đo là của bản Chung, kho chỉ đổi con số)`)
     const t = new Date().toISOString(), actor = req.user?.name || null
-    const allNull = next.is_active == null && next.max_pallets == null && next.max_tons == null && next.max_drops == null
+    const allNull = next.is_active == null && next.max_pallets == null && next.max_tons == null && next.max_drops == null && next.allow_multi_vehicle == null
     if (allNull) {
       if (cur) { const { error } = await db.from('warehouse_vehicle_model').delete().eq('id', cur.id); if (error) return fail(res, error) }
     } else {
@@ -268,13 +274,13 @@ export async function setWarehouseVehicleModel(req: Request, res: Response) {
         : await db.from('warehouse_vehicle_model').insert({ id: randomUUID(), warehouse_id, vehicle_model_id: id, ...next, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
       if (error) return fail(res, error)
     }
-    const shared = { id: vm.id, is_active: vm.is_active, max_pallets: vm.max_pallets, max_tons: numN(vm.max_tons), max_drops: vm.max_drops }
+    const shared = { id: vm.id, is_active: vm.is_active, max_pallets: vm.max_pallets, max_tons: numN(vm.max_tons), max_drops: vm.max_drops, allow_multi_vehicle: vm.allow_multi_vehicle }
     const [eff] = applyWarehouseOverrides([shared], allNull ? [] : [{ vehicle_model_id: id, ...next }])
-    return ok(res, { ...eff, warehouse_id, shared: { is_active: shared.is_active, max_pallets: shared.max_pallets, max_tons: shared.max_tons, max_drops: shared.max_drops } }, cur || allNull ? 200 : 201)
+    return ok(res, { ...eff, warehouse_id, shared: { is_active: shared.is_active, max_pallets: shared.max_pallets, max_tons: shared.max_tons, max_drops: shared.max_drops, allow_multi_vehicle: shared.allow_multi_vehicle } }, cur || allNull ? 200 : 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
-// DELETE /tms/vehicle-models/:id/warehouses/:warehouse_id — "Về theo chung" CẢ bốn ô: xoá dòng riêng, kho chạy lại theo bản Chung.
+// DELETE /tms/vehicle-models/:id/warehouses/:warehouse_id — "Về theo chung" MỌI ô: xoá dòng riêng, kho chạy lại theo bản Chung.
 export async function clearWarehouseVehicleModel(req: Request, res: Response) {
   try {
     const { id, warehouse_id } = req.params as z.infer<typeof zWarehouseModelParams>

@@ -52,6 +52,8 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   // Là CỜ chứ không đọc tên: danh mục đang có 'XE PALLET (16-17 PALLET)' / 'XE XÁ' nên tên đã ngầm
   // phân biệt, nhưng đổi tên danh mục sẽ làm luồng hỏng ÂM THẦM (ratchet role_by_vietnamese_name).
   const [isPalletTruck, setIsPalletTruck] = useState(vt?.is_pallet_truck ?? false)
+  // Điều vận (07/10, user: "dòng xe pallet, container không ghép xe, chỉ Xá, SCA"): mặc định cho mọi dòng xe con — con / kho đè được
+  const [allowMulti, setAllowMulti] = useState(vt?.allow_multi_vehicle ?? true)
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateVehicleType()
@@ -62,9 +64,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: vt.id, name, is_active: isActive, is_pallet_truck: isPalletTruck }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: vt.id, name, is_active: isActive, is_pallet_truck: isPalletTruck, allow_multi_vehicle: allowMulti }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name, is_pallet_truck: isPalletTruck }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      create({ code, name, is_pallet_truck: isPalletTruck, allow_multi_vehicle: allowMulti }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
 
@@ -92,6 +94,17 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
           <p className="text-[10px] text-slate-500">
             Bật: sơ đồ xếp xe <b>gom hàng lên pallet</b> rồi xếp pallet (sức chứa tính bằng chỗ pallet).
             Tắt: xếp <b>từng thùng</b> như xe xá, và không xếp khối pallet lên xe.
+          </p>
+        </div>
+        <div className="space-y-1 rounded border border-slate-200 bg-slate-50 px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            <Switch id="vt-multi" checked={allowMulti} onCheckedChange={setAllowMulti} />
+            <Label htmlFor="vt-multi" className="text-sm cursor-pointer">Ghép nhiều xe trên một thẻ (điều vận)</Label>
+          </div>
+          <p className="text-[10px] text-slate-500">
+            Bật: máy điều vận được dựng <b>một Số xe gồm nhiều xe</b> thuộc loại này (vd 8 tấn + 2 tấn). Tắt: mỗi thẻ một xe; đơn lớn hơn xe
+            lớn nhất được vào nằm ở <b>khung chờ</b> cho người quyết. Là mặc định cho mọi dòng xe con — từng dòng xe / từng kho đổi riêng
+            được ở tab Mã dòng xe.
           </p>
         </div>
         {isEdit && <div className="flex items-center gap-2">
@@ -797,6 +810,7 @@ export default function TMSSettings() {
                             <StatusBadge tone={vt.is_pallet_truck ? 'green' : 'slate'}>
                               {vt.is_pallet_truck ? 'Xe pallet' : 'Xe thường'}
                             </StatusBadge>
+                            {vt.allow_multi_vehicle === false && <StatusBadge tone="amber" className="ml-1" title="Điều vận: không ghép nhiều xe trên một thẻ (mặc định cho dòng xe con)">Không ghép nhiều xe</StatusBadge>}
                           </TableCell>
                           <TableCell className="px-2 py-1">
                             <StatusBadge tone={vt.is_active ? 'green' : 'slate'}>
@@ -835,6 +849,7 @@ export default function TMSSettings() {
                   <button onClick={() => setDetailVT(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div><span className="text-slate-400">Kiểu xếp xe:</span> <span className="font-medium">{detailVT.is_pallet_truck ? 'Xe pallet — gom hàng lên pallet rồi xếp' : 'Xe thường — xếp từng thùng'}</span></div>
+                <div><span className="text-slate-400">Ghép nhiều xe trên một thẻ:</span> <span className="font-medium">{detailVT.allow_multi_vehicle === false ? 'Không — mỗi thẻ một xe' : 'Có'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailVT.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

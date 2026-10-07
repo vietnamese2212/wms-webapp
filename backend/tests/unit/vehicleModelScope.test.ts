@@ -1,6 +1,6 @@
 // Dòng xe theo KHO (03/10) — RIÊNG THEO TỪNG Ô: ô kho đã chỉnh đè Chung, ô NULL theo Chung; ngưỡng Non tải đọc từ kho.
 import { describe, it, expect } from 'vitest'
-import { applyWarehouseOverrides, underloadPctAt } from '../../src/services/vehicleModelScope'
+import { applyWarehouseOverrides, underloadPctAt, multiVehicleOf } from '../../src/services/vehicleModelScope'
 
 const m = (id: string, o: Partial<{ is_active: boolean; max_pallets: number | null; max_tons: number | null; max_drops: number | null }> = {}) =>
   ({ id, name: id, is_active: true, max_pallets: 16, max_tons: 16, max_drops: 3, ...o })
@@ -28,6 +28,20 @@ describe('applyWarehouseOverrides — riêng theo TỪNG Ô (user 03/10: "đổi
   it('giữ nguyên các trường master khác (tên, thước đo) — kho không được đổi master data', () => {
     const r = applyWarehouseOverrides([{ ...m('A'), capacity_mode: 'PALLET', sap_code: '9' }], [ov('A', { max_pallets: 1, max_drops: 1 })])
     expect(r[0]).toMatchObject({ capacity_mode: 'PALLET', sap_code: '9', name: 'A', max_pallets: 1, max_drops: 1, wh_fields: ['max_pallets', 'max_drops'] })
+  })
+})
+
+// 07/10 — "ghép nhiều xe trên một thẻ" (user: "khai như các tính năng khác — xe cha lấy xuống xe con, theo kho")
+describe('ghép nhiều xe: kho → dòng xe → loại xe cha → mặc định được', () => {
+  it('ô kho riêng thắng dòng xe; ô kho trống theo dòng xe; dòng xe trống theo cha; cả ba trống = được (hành vi trước 07/10)', () => {
+    const r = applyWarehouseOverrides([{ ...m('A'), allow_multi_vehicle: true }, { ...m('B'), allow_multi_vehicle: null }, { ...m('C'), allow_multi_vehicle: false }],
+      [{ ...ov('A', {}), allow_multi_vehicle: false }, { ...ov('C', {}), allow_multi_vehicle: null }])
+    expect(r.map(x => [x.id, x.allow_multi_vehicle, x.wh_fields])).toEqual([['A', false, ['allow_multi_vehicle']], ['B', null, []], ['C', false, []]])
+    expect(multiVehicleOf(r[0].allow_multi_vehicle, true)).toBe(false)    // kho tắt dù cha bật
+    expect(multiVehicleOf(r[1].allow_multi_vehicle, false)).toBe(false)   // dòng xe trống ⇒ theo cha (tắt)
+    expect(multiVehicleOf(true, false)).toBe(true)                        // dòng xe bật riêng dù cha tắt
+    expect(multiVehicleOf(null, null)).toBe(true)
+    expect(multiVehicleOf(undefined, undefined)).toBe(true)
   })
 })
 

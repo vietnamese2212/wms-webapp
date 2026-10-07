@@ -43,6 +43,8 @@
  *     `max_vehicles` > 1 ⇒ mỗi chuyến so thêm các TỔ HỢP 2..N dòng xe (cùng cách đo sức chứa, cùng một ĐVVT, mọi dòng xe đều qua
  *     luật 4/7/8/10) — tổ hợp RẺ HƠN một xe thì chọn tổ hợp. OD lớn hơn mọi xe được vào mà N xe chở vừa ⇒ KHÔNG tách OD, đi một
  *     thẻ nhiều xe (một Số xe). Tổ hợp chỉ tính ở bước chọn xe cuối, không trong vòng gộp Non tải (chi phí tính toán).
+ *     07/10 (user: "dòng xe pallet, container không ghép xe, chỉ Xá, SCA"): chỉ dòng xe `multi_vehicle !== false` (kho → dòng xe →
+ *     loại xe cha) vào tổ hợp; OD lớn hơn xe lớn nhất mà xe đó không được ghép ⇒ khung chờ `TOO_BIG` (không tách OD).
  *  Tie-break chung: cước thấp → ít điểm giao → ổn định (cùng input ra cùng output — mọi tập đều sort trước khi duyệt).
  * Cước dùng chính `computeFreight`/`pickTariff`/`farthestWard` của services/freight.ts — KHÔNG chép luật tính tiền.
  */
@@ -94,6 +96,10 @@ export interface EngineModel {
   parent_type_id?: string | null
   load_min_pct?: number | null
   load_max_pct?: number | null
+  /** 07/10 — được ghép NHIỀU XE trên một thẻ (luật 11): giá trị hiệu lực kho → dòng xe → loại xe cha (controller resolve,
+   *  `multiVehicleOf`). false ⇒ dòng xe này không vào tổ hợp nào; OD lớn hơn xe lớn nhất của nó ở lại khung chờ (`TOO_BIG`).
+   *  undefined = được (hành vi trước 07/10). */
+  multi_vehicle?: boolean
 }
 /** Dải % tải một dòng xe cha: `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (> 100 = dung sai vượt). */
 export interface LoadBand { min: number; max: number }
@@ -194,9 +200,11 @@ export interface DispatchTrip {
 }
 /** `code` = OD vẫn NẰM KHUNG CHỜ (không vào "không lên xe"): NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — khai xong ghép được;
  *  FOLLOW_ONLY = chỉ có hàng đi kèm đơn (POSM) chưa có chuyến chính cùng cụm — đơn chính về là ké theo (30/09);
- *  UNDER_MIN = xe máy định tạo cho lô này dưới "Tối thiểu %" của dải tải (07/10) — `under` = xe đó · % tải · mức tối thiểu · số OD của lô. */
+ *  UNDER_MIN = xe máy định tạo cho lô này dưới "Tối thiểu %" của dải tải (07/10) — `under` = xe đó · % tải · mức tối thiểu · số OD của lô;
+ *  TOO_BIG = OD lớn hơn xe lớn nhất được vào mà loại xe đó KHÔNG được ghép nhiều xe trên một thẻ (07/10) — `too_big` = xe · % tải · trần. */
 export interface UnderMin { vehicle: string; pct: number; min: number; ods: number }
-export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' | 'FOLLOW_ONLY' | 'UNDER_MIN'; under?: UnderMin }
+export interface TooBig { vehicle: string; pct: number; max: number }
+export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' | 'FOLLOW_ONLY' | 'UNDER_MIN' | 'TOO_BIG'; under?: UnderMin; too_big?: TooBig }
 export interface CarrierShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: ShareBasis }
 export interface DispatchResult {
   trips: DispatchTrip[]
@@ -633,7 +641,8 @@ function bestCombo(ctx: Ctx, b: Bin, actual: Record<string, ShareActual>, K: num
   const region = b.units[0]?.od.region_code ?? null
   const pAll = b.units.every(u => u.pallets != null) ? r3(b.pallets) : null
   const tAll = b.units.every(u => u.tons != null) ? r3(b.tons) : null
-  const all = fleetFor(ctx.models, b.units.map(u => u.od)).filter(m => servesConditions(m, conds) && stops <= modelDrops(m))
+  // 07/10: chỉ dòng xe ĐƯỢC ghép nhiều xe trên một thẻ (kho → dòng xe → loại xe cha) vào tổ hợp
+  const all = fleetFor(ctx.models, b.units.map(u => u.od)).filter(m => servesConditions(m, conds) && stops <= modelDrops(m) && m.multi_vehicle !== false)
   const combo = ctx.input.params.combo_conditions ?? []
   const needCombo = combo.filter(c => conds.includes(c)).length >= 2
   const single = combo.length >= 2 && !needCombo ? all.filter(m => !isComboFor(m, combo)) : all
@@ -788,6 +797,13 @@ export function runDispatch(input: EngineInput): DispatchResult {
     const serving = cs.filter(m => servesConditions(m, conds))
     return [...(serving.length ? serving : cs)].sort(bigSort)[0] ?? null
   }
+  /** Xe lớn nhất ĐƯỢC GHÉP NHIỀU XE (07/10) cùng họ — thẻ nhiều xe chỉ dựng từ dòng xe này. */
+  const bigMultiForOd = (od: EngineOd): EngineModel | null => {
+    const cs = candsFor([od])
+    const conds = condsOf(od.lines)
+    const serving = cs.filter(m => servesConditions(m, conds))
+    return [...(serving.length ? serving : cs)].filter(m => m.multi_vehicle !== false).sort(bigSort)[0] ?? null
+  }
   const underPct = (m: EngineModel | null) => underPctOf(m, P.underload_pct)
 
   // ── Lọc + tách đơn vị xếp ──
@@ -812,9 +828,22 @@ export function runDispatch(input: EngineInput): DispatchResult {
       continue
     }
     if (!big) { unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, reason: 'Chưa có dòng xe nào khai sức chứa' }); continue }
-    // Luật 11: OD lớn hơn xe lớn nhất được vào mà N xe (lặp lại xe đó) chở vừa ⇒ giữ NGUYÊN OD, đi thẻ nhiều xe — tách OD ra
-    // hai Số xe là ca Xác nhận chặn (OD_SPLIT_ACROSS_TRIPS) và app không tách DO được
-    if (maxVeh > 1 && !fits(big, s.pallets, s.tons) && fitsOnN(big, maxVeh, s.pallets, s.tons)) { units.push({ ...unitOf(od, od.lines, null), multi: true }); continue }
+    if (!fits(big, s.pallets, s.tons)) {
+      // Luật 11: OD lớn hơn xe lớn nhất được vào mà N xe (lặp lại xe đó) chở vừa ⇒ giữ NGUYÊN OD, đi thẻ nhiều xe — tách OD ra
+      // hai Số xe là ca Xác nhận chặn (OD_SPLIT_ACROSS_TRIPS) và app không tách DO được. 07/10: chỉ dòng xe ĐƯỢC ghép nhiều xe.
+      const bigM = bigMultiForOd(od)
+      if (maxVeh > 1 && bigM && fitsOnN(bigM, maxVeh, s.pallets, s.tons)) { units.push({ ...unitOf(od, od.lines, null), multi: true }); continue }
+      // 07/10 (user: "dòng xe pallet, container sẽ không ghép xe" · chốt "để ở khung chờ"): xe lớn nhất được vào KHÔNG được ghép
+      // nhiều xe ⇒ không thẻ nhiều xe, không tách OD ra nhiều Số xe — OD ở khung chờ cho người quyết (nới trần dải · đổi dòng xe được
+      // vào · bật ghép cho loại xe · tách DO bên SAP)
+      if (big.multi_vehicle === false) {
+        const pct = tripLoad(big, s.pallets, s.tons, P.underload_pct).pct ?? 0
+        const too_big: TooBig = { vehicle: big.name, pct, max: maxPctOf(big) }
+        unplanned.push({ od_number: od.od_number, ship_to_code: od.ship_to_code, code: 'TOO_BIG', too_big,
+          reason: `Lớn hơn xe lớn nhất được vào: ${big.name} ${pct}% > trần ${too_big.max}% — loại xe này không ghép nhiều xe trên một thẻ; nới trần dải, đổi dòng xe được vào, hoặc tách DO bên SAP` })
+        continue
+      }
+    }
     units.push(...splitOversize(od, big))
   }
 
@@ -844,7 +873,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
   }
   const multiTakes = (b: Bin, u: Unit) => {
     if (maxVeh < 2 || !b.units.some(y => y.multi) || !b.units.some(y => custOf(y) === custOf(u))) return false
-    const big = bigForOd(b.units[0].od)
+    const big = bigMultiForOd(b.units[0].od)
     if (!big) return false
     const nb = withUnits(b, [u])
     const after = vehiclesNeeded(big, nb.pallets, nb.tons)

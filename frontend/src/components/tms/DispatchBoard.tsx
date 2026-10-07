@@ -99,6 +99,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan()
   const fresh = useMemo(() => new Set(plan.params.fresh_ods ?? []), [plan.params.fresh_ods])
   const underMin = plan.params.under_min ?? {}   // 07/10: lô máy không tạo xe vì dưới Tối thiểu % (chip trên dòng khung chờ)
+  const tooBig = plan.params.too_big ?? {}       // 07/10: OD lớn hơn xe mà loại xe không được ghép nhiều xe
   const hold = useHoldDispatchOds(), resync = useResyncDispatchOd()
   const perms = (useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null) ?? null
   // sửa "Dòng xe được vào" của khách từ bàn (27/09) — quyền riêng của điều vận, hoặc quyền sửa Khách hàng
@@ -307,7 +308,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const lockedN = trips.filter(t => t.locked).length
   const doReopt = () => setReoptDlg(true)
   const doReoptWith = (d: LoadBandDraft) =>
-    reopt.mutateAsync({ id: plan.id, load_bands: d.bands, load_bypass: d.bypass }).then(r => { setReoptDlg(false); setUndo([]); setRedo([]); toast({ title: `Đã ghép lại thành ${r.reoptimized.trips} xe`, description: `${r.reoptimized.kept} xe giữ nguyên${r.reoptimized.left_in_pool ? ` · ${r.reoptimized.left_in_pool} OD vẫn ở khung chờ (${r.reoptimized.under_min ? `${r.reoptimized.under_min} dưới tải tối thiểu · ` : ''}không xếp được / đã đổi ở SAP)` : ''}` }) })
+    reopt.mutateAsync({ id: plan.id, load_bands: d.bands, load_bypass: d.bypass }).then(r => { setReoptDlg(false); setUndo([]); setRedo([]); toast({ title: `Đã ghép lại thành ${r.reoptimized.trips} xe`, description: `${r.reoptimized.kept} xe giữ nguyên${r.reoptimized.left_in_pool ? ` · ${r.reoptimized.left_in_pool} OD vẫn ở khung chờ (${r.reoptimized.under_min ? `${r.reoptimized.under_min} dưới tải tối thiểu · ` : ''}${r.reoptimized.too_big ? `${r.reoptimized.too_big} lớn hơn xe · ` : ''}không xếp được / đã đổi ở SAP)` : ''}` }) })
       .catch(e => err(e, 'Không tối ưu lại được'))
   const openHold = (mode: 'date' | 'never') => {
     const d = new Date(`${plan.plan_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)
@@ -325,7 +326,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // ghép RIÊNG các OD đã chọn ở khung chờ; xe đang có giữ nguyên
   const poolSel = selIds.filter(id => tripOf.get(id) === null)
   const doReoptSel = () => reopt.mutateAsync({ id: plan.id, ids: poolSel })
-    .then(r => { const before = new Set(plan.trips.map(t => t.id)); openGroupsOf(r.trips.filter(t => !before.has(t.id))); setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ghép ${poolSel.length} dòng OD thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ${r.reoptimized.under_min ? ` (${r.reoptimized.under_min} dưới tải tối thiểu)` : ''}.` : 'Các xe đang có giữ nguyên.' }) })
+    .then(r => { const before = new Set(plan.trips.map(t => t.id)); openGroupsOf(r.trips.filter(t => !before.has(t.id))); setSel(new Set()); setUndo([]); setRedo([]); toast({ title: `Đã ghép ${poolSel.length} dòng OD thành ${r.reoptimized.trips} xe`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD không xếp được — vẫn ở khung chờ${r.reoptimized.under_min || r.reoptimized.too_big ? ` (${[r.reoptimized.under_min ? `${r.reoptimized.under_min} dưới tải tối thiểu` : '', r.reoptimized.too_big ? `${r.reoptimized.too_big} lớn hơn xe` : ''].filter(Boolean).join(' · ')})` : ''}.` : 'Các xe đang có giữ nguyên.' }) })
     .catch(e => err(e, 'Không ghép được'))
   const doResync = (od: string) => resync.mutateAsync({ plan_id: plan.id, od_number: od })
     .then(r => toast({ title: `Đã cập nhật ${od} theo SAP`, description: `${nf(r.resynced.pallets_before, 1)} → ${nf(r.resynced.pallets_after, 1)} pallet · ${nf(r.resynced.tons_before, 1)} → ${nf(r.resynced.tons_after, 1)} tấn — tải + cước của xe đã tính lại.` }))
@@ -413,6 +414,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
                 <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-900"
                   title={`Máy không tạo xe: lô ${u.ods} OD trên ${u.vehicle} chỉ ${nf(u.pct, 1)} % < tối thiểu ${u.min} % của dải tải. Kéo lên xe / Xe mới, hoặc tick rồi "Trả về Chờ điều". Muốn máy vẫn tạo xe: Tối ưu lại, tick "Bỏ qua dải %".`}>
                   Dưới tối thiểu · {u.vehicle} {nf(u.pct, 1)} %
+                </span>) })()}
+              {!o.trip_id && tooBig[o.od_number] && (() => { const b = tooBig[o.od_number]; return (
+                <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-900"
+                  title={`Máy không tạo xe: đơn lớn hơn xe lớn nhất được vào (${b.vehicle} ${nf(b.pct, 1)} % > trần ${b.max} %) và loại xe này không ghép nhiều xe trên một thẻ. Nới trần dải tải, đổi dòng xe được vào của khách, bật "Ghép nhiều xe" cho loại xe (Cài đặt TMS), hoặc tách DO bên SAP; kéo tay lên xe vẫn được.`}>
+                  Lớn hơn xe · {b.vehicle} {nf(b.pct, 1)} %
                 </span>) })()}
             </div>
             {/* dòng xe được vào của KHÁCH — mở/sửa ngay tại bàn (user 27/09); đổi kênh vẫn ở trang Khách hàng */}

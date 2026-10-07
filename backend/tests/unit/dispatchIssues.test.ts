@@ -67,14 +67,14 @@ describe('ranh giới kế hoạch — Chờ điều ⇄ trong kế hoạch', ()
     expect(inPlanRow(row('b', 'B', null, '2026-10-07T01:00:00Z'))).toBe(true)
     expect(inPlanRow(row('c', 'C', null, null))).toBe(false)
   })
-  it('bàn ghép xe: khung chờ bỏ đơn Chờ điều + đơn "Không liên quan" của người xem, số khung chờ tính lại theo đúng tập đó', () => {
-    const plan = { trips: [], pool: [row('b', 'B', null, 'x', 2.5), row('c', 'C', null, null, 9), row('d', 'D', null, 'x', 1), row('e', 'E', null, 'x', 4)],
-      summary: { pool_ods: 4, pool_pallets: 16.5, unreviewed_ods: 1 } } as unknown as DispatchPlan
-    const v = boardPlanOf(plan, new Set(['E']))
+  it('bàn ghép xe: khung chờ bỏ đơn Chờ điều, số khung chờ tính lại theo đúng tập đó', () => {
+    const plan = { trips: [], pool: [row('b', 'B', null, 'x', 2.5), row('c', 'C', null, null, 9), row('d', 'D', null, 'x', 1)],
+      summary: { pool_ods: 3, pool_pallets: 12.5, unreviewed_ods: 1 } } as unknown as DispatchPlan
+    const v = boardPlanOf(plan)
     expect(v.pool.map(o => o.od_number)).toEqual(['B', 'D'])
     expect(v.summary.pool_ods).toBe(2)
     expect(v.summary.pool_pallets).toBe(3.5)
-    expect(plan.pool).toHaveLength(4)   // không đụng kế hoạch gốc — bảng Xem đơn vẫn cần đủ Chờ điều
+    expect(plan.pool).toHaveLength(3)   // không đụng kế hoạch gốc — bảng Xem đơn vẫn cần đủ Chờ điều
   })
   it('nháp chỉ chứa Chờ điều (bấm Xem đơn rồi bỏ đó) KHÔNG giữ đơn; có xe hoặc có khung chờ của kế hoạch thì giữ', () => {
     expect(planHoldsOrders({ trips: 0, pool_ods: 3500, unreviewed_ods: 3500 })).toBe(false)

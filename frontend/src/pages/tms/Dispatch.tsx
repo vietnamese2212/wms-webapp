@@ -110,10 +110,10 @@ export default function Dispatch() {
   const lastDiscarded = planList.find(p => p.status === 'DISCARDED') ?? null
   const planQ = useDispatchPlan(planId)
   const plan = planQ.data ?? null
-  // "Không liên quan" của CHÍNH người xem (03/10 tối): bàn ghép xe không thấy các đơn đó ở khung chờ; bảng Xem đơn gom chúng vào tab riêng
+  // "Không liên quan" của CHÍNH người xem (03/10 tối): bảng Xem đơn gom các đơn Chờ điều đó vào tab riêng
   const hidden = useMemo(() => new Set(plan?.hidden ?? []), [plan?.hidden])
   // kế hoạch như bàn ghép xe thấy (07/10): khung chờ chỉ còn đơn THUỘC kế hoạch — đơn Chờ điều ở bảng Xem đơn
-  const planView = useMemo(() => (plan ? boardPlanOf(plan, hidden) : null), [plan, hidden])
+  const planView = useMemo(() => (plan ? boardPlanOf(plan) : null), [plan])
   const isDraft = plan?.status === 'DRAFT'
   const isOpen = plan?.status === 'DRAFT' || plan?.status === 'TENDERED'
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về

@@ -14,10 +14,11 @@ import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag, DispatchTripOd, 
  *  kế hoạch; dòng khung chờ chưa mốc = CHỜ ĐIỀU — nằm ở tab Bán hàng / Trung chuyển của Xem đơn, bàn ghép xe không vẽ, "Tối ưu lại" không
  *  đụng. Server cùng luật (reoptimize · move) — sửa luật thì sửa cả hai phía. */
 export const inPlanRow = (o: Pick<DispatchTripOd, 'trip_id' | 'reviewed_at'>) => !!o.trip_id || !!o.reviewed_at
-/** Kế hoạch như BÀN GHÉP XE thấy: khung chờ chỉ còn dòng thuộc kế hoạch (bỏ Chờ điều + đơn người xem "Không liên quan"), số khung chờ
- *  tính lại theo đúng tập đó — cảnh báo Xác nhận "N OD còn ở khung chờ (sẽ KHÔNG đi)" và dải chỉ số đọc từ đây. */
-export function boardPlanOf(plan: DispatchPlan, hidden: ReadonlySet<string>): DispatchPlan {
-  const pool = (plan.pool ?? []).filter(o => inPlanRow(o) && !hidden.has(o.od_number))
+/** Kế hoạch như BÀN GHÉP XE thấy: khung chờ chỉ còn dòng thuộc kế hoạch (bỏ Chờ điều), số khung chờ tính lại theo đúng tập đó — cảnh
+ *  báo Xác nhận "N OD còn ở khung chờ (sẽ KHÔNG đi)" và dải chỉ số đọc từ đây. "Không liên quan" (dấu riêng người xem) chỉ áp cho Chờ
+ *  điều — đơn đã vào kế hoạch thì mọi người phải thấy, kẻo cảnh báo Xác nhận đếm thiếu. */
+export function boardPlanOf(plan: DispatchPlan): DispatchPlan {
+  const pool = (plan.pool ?? []).filter(inPlanRow)
   return { ...plan, pool, summary: { ...plan.summary, pool_ods: new Set(pool.map(o => o.od_number)).size, pool_pallets: Math.round(pool.reduce((s, o) => s + Number(o.pallets ?? 0), 0) * 10) / 10 } }
 }
 /** Kế hoạch có đang GIỮ đơn nào không (xe có đơn · khung chờ của kế hoạch) — từ tổng kết server. Băng "nháp quá ngày" chỉ nhắc nháp này:

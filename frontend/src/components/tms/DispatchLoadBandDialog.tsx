@@ -1,10 +1,11 @@
 // DẢI TẢI THEO DÒNG XE CHA (01/10, user: "đưa vào rank theo %, chỉnh sửa ở trên bàn làm việc ngay tại thời điểm Ghép xe hoặc
 // Làm lại — container SCA 60–100 %, xe pallet 16–17 90–105 %; config chọn xong hiện lên trên bàn; có nút tích bỏ qua %").
-//   • min = dưới mức này xe là Non tải (thay ngưỡng kho / dòng xe cho cha đó) · max = máy được xếp tới mức này (105 = cho vượt 5 %).
+//   • min = dưới mức này máy KHÔNG tạo xe — đơn ở lại khung chờ cho người quyết (07/10, user: "bắt buộc"; trước là cờ Non tải) ·
+//     max = máy được xếp tới mức này (105 = cho vượt 5 %). Xe người kéo tay dưới mức vẫn được, mang cờ Non tải.
 //   • Hộp thoại này đứng trước MỌI lần máy chạy (Lập kế hoạch · Lập lại · Ghép xe · Tối ưu lại) và là chỗ khai duy nhất — lần chọn
 //     gần nhất được kho nhớ (Warehouse.dispatch_load_bands) để lần sau mở ra đúng số.
 //   • Chip trên bàn in dải đang áp; bấm chip = đổi ngay trên kế hoạch đang mở (xe nháp tính lại, không ghép lại).
-//   • "Bỏ qua dải %" = xếp theo sức chứa danh định 100 %, không báo Non tải — người bật là người chịu (máy sẽ chọn xe rẻ nhất
+//   • "Bỏ qua dải %" = xếp theo sức chứa danh định 100 %, tạo xe cho mọi đơn, không báo Non tải — người bật là người chịu (máy sẽ chọn xe rẻ nhất
 //     kể cả xe to cho đơn nhỏ, đúng cảnh 77/77 Xe 34 Pallet đo 07/09).
 import { useEffect, useMemo, useState } from 'react'
 import { Gauge } from 'lucide-react'
@@ -96,10 +97,10 @@ export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, int
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-slate-500">Dưới <b>tối thiểu</b> xe báo Non tải · máy được xếp tới <b>tối đa</b> (105 = cho vượt 5 % sức chứa danh định, % tải vẫn in theo danh định). Dải vừa chọn được nhớ làm mặc định cho kho.</p>
+          <p className="text-[11px] text-slate-500">Dưới <b>tối thiểu</b> máy <b>không tạo xe</b> — đơn nằm ở khung chờ (chip "Dưới tối thiểu"), bạn kéo lên xe hoặc Trả về Chờ điều · máy được xếp tới <b>tối đa</b> (105 = cho vượt 5 % sức chứa danh định, % tải vẫn in theo danh định). Dải vừa chọn được nhớ làm mặc định cho kho.</p>
           <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 cursor-pointer">
             <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-amber-600" checked={bypass} disabled={busy} onChange={e => setBypass(e.target.checked)} />
-            <span className="text-amber-900"><b>Bỏ qua dải %</b> — xếp theo sức chứa danh định (100 %), không báo Non tải. Máy sẽ chọn xe rẻ nhất kể cả xe to cho đơn nhỏ.</span>
+            <span className="text-amber-900"><b>Bỏ qua dải %</b> — xếp theo sức chứa danh định (100 %), tạo xe cho mọi đơn kể cả rất ít tải, không báo Non tải. Máy sẽ chọn xe rẻ nhất kể cả xe to cho đơn nhỏ.</span>
           </label>
           {!bypass && parsed.errs.length > 0 && <ul className="list-disc pl-4 text-red-600">{parsed.errs.slice(0, 4).map(e => <li key={e}>{e}</li>)}</ul>}
         </div>

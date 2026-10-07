@@ -1829,9 +1829,14 @@ try {
     check('16c. Dải sai (trần 200 % · tối thiểu > tối đa) → 400, không ghi', bad.s === 400 && bad2.s === 400, `max200=${bad.s} min>max=${bad2.s}`)
     const back = await api(`/tms/dispatch/plans/${p16Id}/reoptimize`, 'POST', { review_all: true, load_bands: { [XEPALLET.id]: { min: 70, max: 100 } } })
     const tBack = (back.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => Number(t.pallets)).sort((a, b) => b - a)
-    check('16d. Tối ưu lại với dải 70–100 % gửi kèm: máy xếp lại thành 2 xe (7 + 3) — dải của lượt ghép thắng dải cũ của kế hoạch',
-      back.s === 200 && tBack.join('+') === '7+3' && bandEq(back.j?.data?.params?.load_bands, 70, 100),
-      `s=${back.s} xe=${tBack.join('+')} bands=${JSON.stringify(back.j?.data?.params?.load_bands)}`)
+    // 07/10 CẬN DƯỚI BẮT BUỘC (user: "đã ràng % cận dưới mà sao lại có xe 5 %"): lô 3 pallet = 33,3 % < 70 KHÔNG thành xe — ở khung chờ
+    // của kế hoạch (có mốc), params.under_min ghi xe máy định dùng + % để bàn in chip; trước 07/10 phép này mong 7 + 3 (xe Non tải)
+    const um = back.j?.data?.params?.under_min ?? {}, umOds = Object.keys(um)
+    const poolIn = (back.j?.data?.pool ?? []).filter(o => !o.trip_id && o.reviewed_at).map(o => o.od_number)
+    check('16d. Tối ưu lại với dải 70–100 % gửi kèm: dải của lượt ghép thắng dải cũ — 7 pallet lên xe; lô 3 pallet (33,3 % < 70) KHÔNG thành xe, ở khung chờ kế hoạch kèm params.under_min',
+      back.s === 200 && tBack.join('+') === '7' && bandEq(back.j?.data?.params?.load_bands, 70, 100) && back.j?.data?.reoptimized?.under_min === 1
+      && umOds.length === 1 && um[umOds[0]]?.pct === 33.3 && um[umOds[0]]?.min === 70 && poolIn.includes(umOds[0]),
+      `s=${back.s} xe=${tBack.join('+')} bands=${JSON.stringify(back.j?.data?.params?.load_bands)} under_min=${JSON.stringify(um)} khungChờKH=${poolIn.join(',')}`)
   } else check('16a. Fixture: cần Loại xe cha XEPALLET', false)
 } finally {
   await cleanup()

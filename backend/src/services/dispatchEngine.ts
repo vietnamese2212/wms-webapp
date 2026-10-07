@@ -14,7 +14,8 @@
  *  4. ĐIỀU KIỆN BẢO QUẢN (24/09): mọi điều kiện của hàng trên chuyến phải nằm trong danh sách dòng xe phục vụ
  *     (`serve_conditions` rỗng = mọi điều kiện). Điều kiện của hàng lấy theo LOẠI KHO (Cài đặt WMS), của xe khai ở
  *     danh mục Mã dòng xe — cả hai đều là DỮ LIỆU, engine không biết "lạnh" hay "thường" nghĩa là gì.
- *  5. Chuyến dưới ngưỡng Non tải → cờ `underload` + gợi ý gộp với chuyến cùng vùng.
+ *  5. Chuyến dưới ngưỡng Non tải → cờ `underload` + gợi ý gộp với chuyến cùng vùng. 07/10: dòng xe cha CÓ dải tải (không Bỏ qua)
+ *     ⇒ còn dưới Tối thiểu % sau mọi lượt gộp thì KHÔNG tạo xe — đơn về khung chờ `UNDER_MIN` (user: "cận dưới bắt buộc").
  *  6. ĐVVT: ưu tiên khu vực của phường xa nhất (WARD trước REGION, theo priority) → ĐVVT đang DƯỚI tỷ trọng kỳ → cước thấp
  *     nhất → mã ĐVVT (ổn định). Tỷ trọng cộng dồn NGAY trong lượt ghép để chuyến sau thấy chuyến trước.
  *  7. ~~PALLET / XÁ (25/09)~~ — BỎ 29/09 (user: "dòng xe là đơn vị thấp hơn của loại xe — bỏ loại xe, chọn dòng xe luôn"):
@@ -192,8 +193,10 @@ export interface DispatchTrip {
   merge_hint: string | null          // gợi ý gộp khi Non tải
 }
 /** `code` = OD vẫn NẰM KHUNG CHỜ (không vào "không lên xe"): NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — khai xong ghép được;
- *  FOLLOW_ONLY = chỉ có hàng đi kèm đơn (POSM) chưa có chuyến chính cùng cụm — đơn chính về là ké theo (30/09). */
-export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' | 'FOLLOW_ONLY' }
+ *  FOLLOW_ONLY = chỉ có hàng đi kèm đơn (POSM) chưa có chuyến chính cùng cụm — đơn chính về là ké theo (30/09);
+ *  UNDER_MIN = xe máy định tạo cho lô này dưới "Tối thiểu %" của dải tải (07/10) — `under` = xe đó · % tải · mức tối thiểu · số OD của lô. */
+export interface UnderMin { vehicle: string; pct: number; min: number; ods: number }
+export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' | 'FOLLOW_ONLY' | 'UNDER_MIN'; under?: UnderMin }
 export interface CarrierShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: ShareBasis }
 export interface DispatchResult {
   trips: DispatchTrip[]
@@ -979,9 +982,21 @@ export function runDispatch(input: EngineInput): DispatchResult {
   let seq = P.start_seq
   for (const b of bins) {
     const a = assignVehicle(ctx, b, actual, underPct, true)
-    if (a.carrier) { const cur = actual[a.carrier.id] ?? { trips: 0, pallets: 0, tons: 0 }; cur.trips += 1; cur.pallets += a.pallets ?? 0; cur.tons += a.tons ?? 0; actual[a.carrier.id] = cur }
     const lm = a.loadModel
     const load = tripLoad(lm, a.pallets, a.tons, P.underload_pct)
+    // CẬN DƯỚI LÀ BẮT BUỘC (07/10, user: "đã ràng % cận trên cận dưới mà sao lại có xe 5 %" → chốt "bắt buộc; đơn vào không hết thì
+    // ngoài xe, người quyết đưa vào xe"): dòng xe cha CÓ dải tải (không tick Bỏ qua) ⇒ máy KHÔNG tạo xe dưới Tối thiểu %; đơn của lô ở
+    // lại khung chờ (`UNDER_MIN`, kèm xe máy định dùng + % tải) — người kéo lên xe / Xe mới, hoặc Trả về Chờ điều. Xe Non tải nay chỉ
+    // còn do người (kéo tay, đổi dải trên bàn). Cha không có trong bảng dải = như trước. Lô chứa PHẦN của OD bị tách giữ nguyên xe:
+    // bỏ một phần là OD nửa trên xe nửa không ở đâu (cửa ghi xoá dòng khung chờ của OD đã lên xe).
+    if (lm?.load_min_pct != null && load.pct != null && load.pct < load.underload_pct && b.units.every(u => !u.part)) {
+      const vehicle = a.vehicles.length > 1 ? `${a.vehicles.length} × ${lm.name}` : lm.name
+      const under: UnderMin = { vehicle, pct: load.pct, min: load.underload_pct, ods: b.units.length }   // không có phần OD ⇒ một đơn vị = một OD
+      for (const u of b.units) unplanned.push({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, code: 'UNDER_MIN', under,
+        reason: `Dưới tải tối thiểu: ${vehicle} ${load.pct}% < ${load.underload_pct}% (lô ${b.units.length} OD) — máy không tạo xe; kéo lên xe / Xe mới, hoặc Trả về Chờ điều` })
+      continue
+    }
+    if (a.carrier) { const cur = actual[a.carrier.id] ?? { trips: 0, pallets: 0, tons: 0 }; cur.trips += 1; cur.pallets += a.pallets ?? 0; cur.tons += a.tons ?? 0; actual[a.carrier.id] = cur }
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key,
       vehicle_model: a.model, vehicles: a.vehicles, carrier: a.carrier,

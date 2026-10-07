@@ -37,7 +37,7 @@ import {
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
-  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo,
+  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { applyWarehouseOverrides, loadWarehouseOverrides } from '../../services/vehicleModelScope'
@@ -1542,14 +1542,24 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     }
     // kế hoạch chưa có mốc máy lập (bước Xem đơn đi trước) ⇒ lần ghép đầu là mốc để dải chỉ số so người sửa với máy
     const pp = (plan.params ?? {}) as Record<string, unknown>
-    if (pp.baseline == null) {
-      const params2 = { ...pp, baseline: { trips: result.summary.trips, freight_total: result.summary.freight_total, pallets: result.summary.pallets, underload: result.summary.underload, unpriced: result.summary.unpriced } }
+    // CẬN DƯỚI BẮT BUỘC (07/10): OD máy không tạo xe vì dưới Tối thiểu % ở lại khung chờ — `params.under_min[od]` = xe máy định dùng · % ·
+    // mức · số OD của lô, bàn in chip. Lượt này thay mục của MỌI OD vừa ghép (lên xe rồi thì hết chip); OD ngoài lượt giữ mục cũ.
+    const under = result.unplanned.filter(u => u.code === 'UNDER_MIN' && u.under)
+    const odSet = new Set(odNos)
+    const prevUnder = (pp.under_min ?? {}) as Record<string, UnderMin>
+    const hadUnder = Object.keys(prevUnder).some(od => odSet.has(od))
+    const params2 = {
+      ...pp,
+      ...(pp.baseline == null ? { baseline: { trips: result.summary.trips, freight_total: result.summary.freight_total, pallets: result.summary.pallets, underload: result.summary.underload, unpriced: result.summary.unpriced } } : {}),
+      ...(under.length || hadUnder ? { under_min: { ...Object.fromEntries(Object.entries(prevUnder).filter(([od]) => !odSet.has(od))), ...Object.fromEntries(under.map(u => [u.od_number, u.under!])) } } : {}),
+    }
+    if (pp.baseline == null || under.length || hadUnder) {
       const { error } = await db.from('dispatch_plan').update({ params: asJson(params2), updated_at: t }).eq('id', plan.id)
       if (error) throw error
       plan.params = asJson(params2)
     }
     await writeSummary(plan)
-    return ok(res, { ...(await readPlan(plan.id)), reoptimized: { trips: result.trips.length, kept: keep.length, left_in_pool: odNos.length - placed.length } })
+    return ok(res, { ...(await readPlan(plan.id)), reoptimized: { trips: result.trips.length, kept: keep.length, left_in_pool: odNos.length - placed.length, under_min: under.length } })
   } catch (e) { return failAny(res, e) }
 }
 

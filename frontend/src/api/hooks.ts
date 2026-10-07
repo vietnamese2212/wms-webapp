@@ -6138,8 +6138,11 @@ export interface DispatchConfigGaps {
   /** 03/10: OD có mã KHÔNG có trong Mã hàng — loại khỏi đợt ghép cho tới khi khai */
   no_material?: { ods: number; materials: string[] }
 }
-/** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
+/** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này máy KHÔNG tạo xe (07/10 — trước là cờ Non tải) · `max` = máy được xếp tới
+ *  mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
 export type DispatchLoadBands = Record<string, { min: number; max: number }>
+/** Lô máy không tạo xe vì dưới Tối thiểu % (07/10): xe máy định dùng ("2 × Bộ cont 40" nếu thẻ nhiều xe) · % tải · mức tối thiểu · số OD */
+export interface DispatchUnderMin { vehicle: string; pct: number; min: number; ods: number }
 /** MẢNG điều vận (03/10 tối): mỗi kho × ngày một nháp cho MỖI mảng — Trung chuyển (khách tick) · Bán hàng (còn lại). */
 export type DispatchSegment = 'TRANSFER' | 'SALES'
 export const SEGMENT_VI: Record<DispatchSegment, string> = { TRANSFER: 'Trung chuyển', SALES: 'Bán hàng' }
@@ -6148,7 +6151,9 @@ export interface DispatchPlan {
   segment: DispatchSegment
   /** OD người ĐANG XEM đã đánh dấu "Không liên quan" trên kế hoạch này (dấu riêng của người đó) */
   hidden?: string[]
-  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean }
+  params: { day?: string; max_drops?: number; allow_mix_channels?: boolean; allow_mix_categories?: boolean; follow_categories?: string[]; underload_pct?: number | null; pool_ods?: number; in_plan?: number; start_seq?: number; max_vehicles?: number; backlog_days?: number; excluded?: DispatchExcluded[]; config_gaps?: DispatchConfigGaps; fresh_ods?: string[]; load_bands?: DispatchLoadBands; load_bypass?: boolean
+    /** 07/10 cận dưới bắt buộc: OD máy không tạo xe vì dưới Tối thiểu % — xe máy định dùng · % tải · mức tối thiểu · số OD của lô */
+    under_min?: Record<string, DispatchUnderMin> }
   summary: DispatchSummary; unplanned: { od_number: string; ship_to_code: string | null; reason: string }[]
   engine_version: string | null; created_by: string | null; confirmed_by: string | null; confirmed_at: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
@@ -6261,7 +6266,7 @@ export function useReoptimizeDispatchPlan() {
     mutationFn: (arg: string | { id: string; ids?: string[]; review_all?: boolean; load_bands?: DispatchLoadBands; load_bypass?: boolean }) => {
       const { id, ids, review_all, load_bands, load_bypass } = typeof arg === 'string' ? { id: arg, ids: undefined, review_all: undefined, load_bands: undefined, load_bypass: undefined } : arg
       const body = { ...(ids ? { ids } : review_all ? { review_all: true } : {}), ...(load_bands ? { load_bands } : {}), ...(load_bypass !== undefined ? { load_bypass } : {}) }
-      return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number } })
+      return apiClient.post(`/tms/dispatch/plans/${id}/reoptimize`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reoptimized: { trips: number; kept: number; left_in_pool: number; under_min?: number } })
     },
     onSuccess: p => putDispatchPlan(qc, p),
   })

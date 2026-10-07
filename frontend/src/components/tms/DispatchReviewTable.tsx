@@ -28,7 +28,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useMoveDispatchOds, useDispatchPlanReview, useDispatchPlanBacklog, useDispatchPlanMarks, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef, type DispatchMarkKind, type DispatchReviewInfo } from '@/api/hooks'
+import { useCustomerChannels, useHoldDispatchOds, useUnholdDispatchOds, useReoptimizeDispatchPlan, useMoveDispatchOds, useDispatchPlanReview, useDispatchPlanBacklog, useDispatchPlanMarks, useOutsideDispatchOds, useUnoutsideDispatchOds, usePullDispatchOd, useConfirmSupplementDispatchOds, useDispatchDecisions, useRemoveKhvcOd, useTakeDispatchSegment, useHideDispatchOds, SEGMENT_VI, type DispatchSegment, type DispatchUnderMin, type DispatchPlan, type DispatchOdFlag, type DispatchOtherDraftRef, type DispatchMarkKind, type DispatchReviewInfo } from '@/api/hooks'
 import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -67,6 +67,7 @@ type Row = {
   pallets: number | null; tons: number | null; date: string; note: string; flag: string; until: string | null; reason: string
   fresh?: boolean
   noVeh?: boolean   // khách + kênh chưa khai Dòng xe được vào (28/09) — máy không chọn xe
+  under?: DispatchUnderMin   // khung chờ của kế hoạch: máy không tạo xe vì dưới Tối thiểu % (07/10)
   outside?: boolean   // mang dấu Ngoài app (tab OUTSIDE) — tick để Điều lại
   ref?: DispatchOtherDraftRef   // ELSEWHERE: nháp đang xếp đơn này
   by?: string; at?: string | null   // tab dấu tay: người đặt / sửa dấu gần nhất · lúc nào (05/10)
@@ -188,6 +189,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
       pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
       note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number), noVeh: noVehOf(o),
+      under: inPlan ? plan.params.under_min?.[o.od_number] : undefined,
     }) }
     // OD máy không đo được tải / không lên xe (hàng trả về, chiết khấu…) — nằm ở Điều để người thấy, nhưng không chọn được
     for (const u of plan.unplanned) if (!agg.has(`GO|${u.od_number}`)) add('GO', `GO|${u.od_number}`, {
@@ -428,7 +430,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     return reopt.mutateAsync({ id: plan.id, ids: pickIds, load_bands: d.bands, load_bypass: d.bypass })
       .then(r => {
         setBandDlg(false); setSel(new Set())
-        toast({ title: `${nf(pickN)} đơn vào kế hoạch ${planDay} — ${r.reoptimized.trips} xe mới`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD chưa xếp được xe — nằm ở khung chờ của kế hoạch (Bàn ghép xe).` : 'Soát xe ở Bàn ghép xe rồi Xác nhận kế hoạch.' })
+        toast({ title: `${nf(pickN)} đơn vào kế hoạch ${planDay} — ${r.reoptimized.trips} xe mới`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD chưa xếp được xe — nằm ở khung chờ của kế hoạch (Bàn ghép xe)${r.reoptimized.under_min ? `, trong đó ${r.reoptimized.under_min} đơn dưới tải tối thiểu: kéo lên xe hoặc Trả về Chờ điều` : ''}.` : 'Soát xe ở Bàn ghép xe rồi Xác nhận kế hoạch.' })
         onGrouped(r.trips.filter(t => !before.has(t.id) && t.ods.length).map(t => t.id))
       })
       .catch(e => err(e, 'Không tạo được kế hoạch'))
@@ -493,9 +495,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const dash = <span className="text-slate-300">—</span>
   // Lưu ý = thứ người xếp phải biết mà không nằm ở cột nào: OD này THAY OD cũ (sửa SO — OD cũ có thể đã điều ở xe khác) ·
   // đơn vừa hết "Không điều ngày này" quay lại
-  const warnOf = (od: string, noVeh?: boolean) => {
+  const warnOf = (od: string, noVeh?: boolean, under?: DispatchUnderMin) => {
     const i = info[od]
-    const veh = noVeh ? ['Khách chưa khai Dòng xe được vào — máy không chọn xe'] : []
+    const veh = [...(noVeh ? ['Khách chưa khai Dòng xe được vào — máy không chọn xe'] : []),
+      ...(under ? [`Dưới tải tối thiểu: ${under.vehicle} ${nf(under.pct, 1)} % < ${under.min} % — máy không tạo xe; kéo lên xe ở Bàn ghép xe hoặc Trả về Chờ điều`] : [])]
     if (!i) return veh.join(' · ')
     return [
       ...veh,
@@ -593,7 +596,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
               : st === 'GO' ? 'Không còn đơn nào chờ điều.' : st === 'PLAN' ? `Chưa có đơn nào trong kế hoạch ${planDay} — tick đơn ở tab ${SEGMENT_VI[seg]} rồi bấm "Tạo kế hoạch".` : st === 'DONE' ? 'Chưa có đơn nào được điều.' : st === 'ELSEWHERE' ? 'Không có đơn nào đang xếp ở nháp khác.' : 'Không có đơn nào ở trạng thái này.'}</TableEmptyRow>}
             {/* 07/10 (C65, user: "Bán hàng quá nhiều đơn, mọi thao tác đều lag"): chỉ vẽ dòng đang thấy — 3.529 đơn vẽ hết là 207 nghìn phần tử,
                 tick 1 đơn ~1,1 s. Vẫn một danh sách cuộn thấy hết, không chia trang (user 05/10). */}
-            <WindowedRows scrollRef={scrollRef} count={rows.length} colSpan={cols.length} row={idx => { const r = rows[idx]; const i = info[r.od]; const warn = warnOf(r.od, r.noVeh); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
+            <WindowedRows scrollRef={scrollRef} count={rows.length} colSpan={cols.length} row={idx => { const r = rows[idx]; const i = info[r.od]; const warn = warnOf(r.od, r.noVeh, r.under); const fl = flags.get(r.od); const soft = !!fl && SOFT_FLAG.has(fl.kind); return (
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
               <TableRow key={r.key} className={`cursor-pointer hover:bg-slate-50 ${sel.has(r.key) ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r.key)}>
                 {selectableTab && (

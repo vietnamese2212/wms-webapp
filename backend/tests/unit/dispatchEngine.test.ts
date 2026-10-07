@@ -635,7 +635,8 @@ describe('luật 10 — dòng xe được vào theo Kênh → Khách × Loại k
     expect(r.trips[0].ods.find(o => o.od_number === '5')?.allowed_models).toBeNull()
   })
   it('hai khách cùng phường không có dòng xe CHUNG ⇒ hai chuyến, không ép khách nào lên xe cấm', () => {
-    const r = runDispatch(input([tonOd('7', 2, { allowed_models: ['T5'] }), tonOd('8', 2, { allowed_models: ['T15'] })], { models: [T5, T15], tariffs: tar }))
+    // OD 8 = 4 tấn (26,7 % xe 15) — 07/10 cận dưới bắt buộc: 2 tấn (13,3 % < tối thiểu 20 của T15) không còn được tạo xe
+    const r = runDispatch(input([tonOd('7', 2, { allowed_models: ['T5'] }), tonOd('8', 4, { allowed_models: ['T15'] })], { models: [T5, T15], tariffs: tar }))
     expect(r.trips).toHaveLength(2)
     expect(r.trips.find(t => t.ods.some(o => o.od_number === '7'))?.vehicle_model?.id).toBe('T5')
     expect(r.trips.find(t => t.ods.some(o => o.od_number === '8'))?.vehicle_model?.id).toBe('T15')
@@ -788,10 +789,10 @@ describe('01/10 — dải tải theo dòng xe cha (load_bands / load_bypass)', (
     expect(r.trips[0].oversize).toBe(false)
     expect(r.trips[0].underload).toBe(false)
   })
-  it('ngưỡng tối thiểu 90 %: xe 7/9 (77,8 %) là Non tải; dải chỉ áp cho cha có trong bảng, cha khác giữ 70', () => {
+  it('ngưỡng tối thiểu 90 %: xe 7/9 (77,8 %) dưới tối thiểu ⇒ KHÔNG tạo xe (07/10 bắt buộc); dải chỉ áp cho cha có trong bảng, cha khác giữ 70', () => {
     const r = runDispatch(input([od('1', 'W1', 7)], { models: [P9], params: { ...params, load_bands: { PT1: { min: 90, max: 100 } } } }))
-    expect(r.trips[0].underload).toBe(true)
-    expect(r.trips[0].load.underload_pct).toBe(90)
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned[0]).toMatchObject({ od_number: '1', code: 'UNDER_MIN', under: { vehicle: 'M9', pct: 77.8, min: 90, ods: 1 } })
     const other = runDispatch(input([od('1', 'W1', 7)], { models: [P9], params: { ...params, load_bands: { PT_KHAC: { min: 90, max: 100 } } } }))
     expect(other.trips[0].underload).toBe(false)
     expect(other.trips[0].load.underload_pct).toBe(70)
@@ -812,6 +813,44 @@ describe('01/10 — dải tải theo dòng xe cha (load_bands / load_bypass)', (
     expect(splitLoad([{ ...P9, load_max_pct: 110 }, { ...P9, load_max_pct: 110 }], 14, null)?.map(x => x.pallets)).toEqual([9, 5])
     expect(splitLoad([{ ...P9, load_max_pct: 110 }, { ...P9, load_max_pct: 110 }], 20, null)).toBeNull()
     expect(tripLoad({ ...P9, load_min_pct: 85, load_max_pct: 105 }, 9.2, null, null)).toMatchObject({ pct: 102.2, underload: false, underload_pct: 85, max_pct: 105 })
+  })
+})
+
+// 07/10 — CẬN DƯỚI BẮT BUỘC (user nhìn bàn Trung chuyển Ba Vì 04/10: "đã ràng % cận trên cận dưới mà sao lại có xe 5 %" — Bộ cont 40
+// chở 1,29 / 28 tấn cho 9 đơn Kho Ba Vì; chốt: "bắt buộc, đơn vào không hết thì ngoài xe, người quyết đưa vào xe"). Trước: Tối thiểu %
+// chỉ là cờ Non tải, máy vẫn tạo xe.
+describe('07/10 — cận dưới của dải tải là BẮT BUỘC: dưới Tối thiểu % máy không tạo xe, đơn ở khung chờ (UNDER_MIN)', () => {
+  const P9 = { ...M9, parent_type_id: 'PT1' }
+  const band = { ...params, load_bands: { PT1: { min: 70, max: 100 } } }
+  it('2/9 pallet (22,2 %) ⇒ 0 xe, OD ở khung chờ mang xe máy định dùng + % tải + mức tối thiểu; 7/9 (77,8 %) vẫn lên xe', () => {
+    const r = runDispatch(input([od('1', 'W1', 2)], { models: [P9], params: band }))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned).toEqual([{ od_number: '1', ship_to_code: 'S1', code: 'UNDER_MIN', under: { vehicle: 'M9', pct: 22.2, min: 70, ods: 1 }, reason: expect.stringMatching(/Dưới tải tối thiểu: M9 22\.2% < 70%/) }])
+    expect(runDispatch(input([od('2', 'W1', 7)], { models: [P9], params: band })).trips).toHaveLength(1)
+  })
+  it('lô nhiều OD: 3 khách 0,5 pallet cùng phường (16,7 %) ⇒ cả 3 OD ở khung chờ, cùng thông tin lô (3 OD)', () => {
+    const r = runDispatch(input(['1', '2', '3'].map(n => od(n, 'W1', 0.5)), { models: [P9], params: band }))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned.map(u => [u.od_number, u.code, u.under?.ods, u.under?.pct])).toEqual([['1', 'UNDER_MIN', 3, 16.7], ['2', 'UNDER_MIN', 3, 16.7], ['3', 'UNDER_MIN', 3, 16.7]])
+  })
+  it('tick "Bỏ qua dải %" ⇒ máy tạo xe như cũ (không Non tải); cha KHÔNG có dải ⇒ như cũ (xe Non tải theo 70)', () => {
+    const by = runDispatch(input([od('1', 'W1', 2)], { models: [P9], params: { ...band, load_bypass: true } }))
+    expect(by.trips).toHaveLength(1)
+    expect(by.unplanned).toHaveLength(0)
+    const none = runDispatch(input([od('1', 'W1', 2)], { models: [P9], params: { ...params, load_bands: { PT_KHAC: { min: 70, max: 100 } } } }))
+    expect(none.trips).toHaveLength(1)
+    expect(none.trips[0].underload).toBe(true)
+  })
+  it('thẻ nhiều xe dưới tối thiểu: OD một dòng 10 pallet trên 2 × xe 9 (55,6 %) ⇒ khung chờ, ghi "2 × M9"', () => {
+    const r = runDispatch(input([od('1', 'W1', 10)], { models: [P9], params: { ...band, max_vehicles: 2 } }))
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned[0].under).toEqual({ vehicle: '2 × M9', pct: 55.6, min: 70, ods: 1 })
+  })
+  it('lô chứa PHẦN của OD bị tách giữ nguyên xe (Non tải) — bỏ một phần là OD nửa trên xe nửa không ở đâu', () => {
+    const o = od('1', 'W1', 0, { lines: [line(9, { material_code: 'a' }), line(1, { material_code: 'b' })] })
+    const r = runDispatch(input([o], { models: [P9], params: band }))
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips.map(t => [t.ods[0].part?.of, t.underload])).toEqual([[2, false], [2, true]])
   })
 })
 
@@ -845,12 +884,13 @@ describe('01/10 chiều — POSM đi theo đơn chính ngay lúc xếp, không b
   const posm = (n: string, p: number) => od(n, 'W1', 0, { ship_to_code: 'MP', lines: [line(p, { category: 'PM01', condition: null })] })
   const main = (n: string, p: number) => od(n, 'W1', p, { ship_to_code: 'MP' })
   const P = { ...params, allow_mix_categories: false, follow_categories: ['PM01'], load_bands: { PT1: { min: 70, max: 105 } } }
-  it('12,4 + 5,2 + POSM 0,6 trên xe 17 (trần 105 = 17,85): KHÔNG nhồi 17,6 rồi bỏ POSM — 2 xe, POSM đi cùng đơn chính lớn, 0 OD kẹt', () => {
+  it('12,4 + 5,2 + POSM 0,6 trên xe 17 (trần 105 = 17,85): KHÔNG nhồi 17,6 rồi bỏ POSM — POSM đi cùng đơn chính lớn, không OD POSM nào kẹt', () => {
     const r = runDispatch(input([main('A', 12.4), main('B', 5.2), posm('P1', 0.313), posm('P2', 0.25), posm('P3', 0.049)], { models: [PT], params: P }))
-    expect(r.unplanned).toHaveLength(0)
-    expect(r.trips).toHaveLength(2)
+    expect(r.trips).toHaveLength(1)
     const big = r.trips.find(t => t.ods.some(o => o.od_number === 'A'))!
     expect(big.ods.map(o => o.od_number).sort()).toEqual(['A', 'P1', 'P2', 'P3'])
+    // 07/10 cận dưới bắt buộc: B 5,2 / 17 = 30,6 % < 70 ⇒ không xe riêng, ở khung chờ cho người quyết (đội xe thật có Xe 6 pallet)
+    expect(r.unplanned).toEqual([expect.objectContaining({ od_number: 'B', code: 'UNDER_MIN' })])
   })
   it('vừa cả cụm thì vẫn MỘT xe: 12 + 4 + POSM 0,6 = 16,6 ≤ 17,85', () => {
     const r = runDispatch(input([main('A', 12), main('B', 4), posm('P1', 0.6)], { models: [PT], params: P }))

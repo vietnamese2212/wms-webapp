@@ -1469,6 +1469,9 @@ try {
       by1.s === 200 && by1.j?.data?.params?.load_bypass === true && tb.length === 1 && tb[0].oversize === true && Number(by1.j?.data?.summary?.oversize) === 1
       && by0.s === 200 && tb0.length === 1 && tb0[0].oversize === false && bandEq(by0.j?.data?.params?.load_bands, 80, 115),
       `bypass=${by1.s} over=${tb[0]?.oversize} sum=${by1.j?.data?.summary?.oversize} · bỏ bypass=${by0.s} over=${tb0[0]?.oversize} bands=${JSON.stringify(by0.j?.data?.params?.load_bands)}`)
+    // [16a] làm kho NHỚ dải 80–115 ⇒ kế hoạch [17]–[19] lập sau (không gửi dải) đọc dải đó — từ 07/10 cận dưới bắt buộc nên OD1+OD2
+    // (7/9 = 77,8 % < 80) và OD3 (33 %) không còn lên xe, 8 phép cần đơn trên xe nháp đỏ oan. Gói chạy với kho KHÔNG có dải mặc định.
+    await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_load_bands: null })
 
   // ── [17] (03/10 tối — user: "double 2 lần cho kế hoạch đi hàng các ngày khác nhau ⇒ hậu quả nghiêm trọng"; "283 đơn bị nháp 30/09 giữ
   // dù chưa lên xe"; "lấy theo lịch sử app + dấu tay"; "sai lệch đơn hàng chưa sửa thì ngăn ở xuất hàng") ──

@@ -395,7 +395,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
         const src = whId && (m.wh_fields ?? []).includes('allow_multi_vehicle') ? 'riêng kho'
           : (whId ? m.shared?.allow_multi_vehicle : m.allow_multi_vehicle) != null ? 'riêng dòng xe' : `theo cha ${m.parent?.name ?? '—'}`
         return <span title={`Điều vận: ${m.multi_vehicle ? 'được' : 'không'} ghép nhiều xe trên một thẻ — ${src}`}>
-          <span className={m.multi_vehicle ? '' : 'font-medium text-amber-700'}>{m.multi_vehicle ? 'Được ghép' : 'Không ghép'}</span><span className="ml-1 text-slate-400">· {src}</span>
+          <span className={m.multi_vehicle ? '' : 'font-medium text-amber-700'}>{m.multi_vehicle ? 'Được ghép' : 'Không ghép'}</span>{' '}<span className="text-slate-400">· {src}</span>
         </span>
       }
       case 'act':    return whId

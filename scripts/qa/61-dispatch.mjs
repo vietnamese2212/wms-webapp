@@ -1403,7 +1403,7 @@ try {
     const tReM = tripOfOd(reM.j?.data, OD11)
     check('15g2. Dòng xe KHÔNG ghép nhiều xe ⇒ OD 14 pallet không thành thẻ 2 xe, không tách — ở khung chờ kèm params.too_big (xe · % · trần); kho khai riêng "được ghép" ⇒ danh sách in hiệu lực theo kho, Tối ưu lại ra lại thẻ 2 xe',
       offM.s === 200 && pNo.s === 201 && !onTripNo && inPoolNo && tbNo?.vehicle === 'QA61 Xe 9 Pallet' && Number(tbNo?.pct) === 155.6 && Number(tbNo?.max) === 100
-      && whOn.s === 200 && vmAtWh?.multi_vehicle === true && (vmAtWh?.wh_fields ?? []).includes('allow_multi_vehicle')
+      && [200, 201].includes(whOn.s) && vmAtWh?.multi_vehicle === true   // 201 = kho chưa có dòng riêng, vừa tạo && (vmAtWh?.wh_fields ?? []).includes('allow_multi_vehicle')
       && reM.s === 200 && (tReM?.detail?.vehicles ?? []).length === 2,
       `tắt=${offM.s} lập=${pNo.s} ${pNo.j?.error?.message ?? ''} trênXe=${onTripNo} khungChờ=${inPoolNo} too_big=${JSON.stringify(tbNo)} kho=${whOn.s} ${whOn.j?.error?.message ?? ''} hiệuLực=${vmAtWh?.multi_vehicle} riêng=${JSON.stringify(vmAtWh?.wh_fields)} tốiƯu=${reM.s} ${reM.j?.error?.message ?? ''} xe=${(tReM?.detail?.vehicles ?? []).length}`)
     await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE').catch(() => {})

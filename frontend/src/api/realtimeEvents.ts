@@ -2,6 +2,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabaseClient } from '@/lib/supabase'
 import { queryClient } from './queryClient'
 import { apiClient } from './client'
+import { stampCheckAction } from '@/utils/dispatchDelta'
 import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
@@ -247,7 +248,10 @@ function scheduleDispatchStampCheck(delay = COALESCE_MS): void {
       const id = q.queryKey[1]
       const held = (q.state.data as { stamp?: string | null } | undefined)?.stamp
       if (typeof id !== 'string') continue
-      if (!held) { void queryClient.invalidateQueries({ queryKey: q.queryKey }); continue }
+      // đang tải ⇒ hỏi lại sau khi về (07/10, C63 — làm mới lúc này bị gộp vào lượt tải có thể đọc giữa lúc server còn ghi)
+      const act = stampCheckAction({ fetching: q.state.fetchStatus === 'fetching', held })
+      if (act === 'wait') { scheduleDispatchStampCheck(); continue }
+      if (act === 'reload') { void queryClient.invalidateQueries({ queryKey: q.queryKey }); continue }
       apiClient.get(`/tms/dispatch/plans/${id}/stamp`)
         .then(r => { if ((r.data?.data?.stamp ?? null) !== held) void queryClient.invalidateQueries({ queryKey: q.queryKey }) })
         .catch(() => { void queryClient.invalidateQueries({ queryKey: q.queryKey }) })

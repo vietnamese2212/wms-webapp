@@ -35,6 +35,14 @@ export function applyDispatchDelta(old: DispatchPlan, d: DispatchPlanDelta): Dis
   }
 }
 
+/** Lượt HỎI DẤU realtime nên làm gì với MỘT kế hoạch đang mở (07/10, lớp C63). Đang tải ⇒ CHỜ rồi hỏi lại: TanStack gộp lần làm mới vào
+ *  lượt tải đang chạy khi query CHƯA có dữ liệu — lượt đó có thể đọc giữa lúc server còn ghi (đo Bàu Bàng: 1.500 / 2.457 đơn, ba lô 500
+ *  đầu) và bản thiếu nằm lì vì không còn tín hiệu nào tới sau. Chưa có dấu ⇒ tải lại; có dấu ⇒ hỏi dấu server. */
+export function stampCheckAction(q: { fetching: boolean; held: string | null | undefined }): 'wait' | 'reload' | 'ask' {
+  if (q.fetching) return 'wait'
+  return q.held ? 'ask' : 'reload'
+}
+
 /** Một XE vừa sửa (khoá · ĐVVT · dòng xe · switch ghép) — thay xe đó, giữ nguyên phần còn lại. */
 export function applyDispatchTrip(old: DispatchPlan, trip: DispatchTrip, plan?: { summary?: DispatchSummary; updated_at?: string; stamp?: string | null }): DispatchPlan {
   return applyDispatchDelta(old, { trips: [trip], pool_add: [], removed_od_ids: [], ...plan })

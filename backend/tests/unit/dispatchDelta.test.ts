@@ -2,7 +2,7 @@
 // Bất biến: sau khi ghép, MỖI dòng OD nằm đúng một chỗ (một xe hoặc khung chờ) và trùng với cái server vừa trả; xe không bị đụng
 // giữ NGUYÊN đối tượng cũ (bàn dạng bảng chỉ vẽ lại xe đổi — memo theo đối tượng xe).
 import { describe, it, expect } from 'vitest'
-import { applyDispatchDelta, applyDispatchTrip } from '../../../frontend/src/utils/dispatchDelta'
+import { applyDispatchDelta, applyDispatchTrip, stampCheckAction } from '../../../frontend/src/utils/dispatchDelta'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const od = (id: string, trip_id: string | null, od_number = id.toUpperCase()): DispatchTripOd =>
@@ -71,5 +71,18 @@ describe('applyDispatchTrip', () => {
     expect(p.trips[0].locked).toBe(true)
     expect(p.trips[1]).toBe(p0.trips[1])
     expect(p.stamp).toBe('s2')
+  })
+})
+
+// 07/10 (C63): Xem đơn ở Bàu Bàng hiện 1.500 / 2.457 đơn — trang tải kế hoạch giữa lúc server còn ghi theo lô; lần làm mới sau đó bị TanStack
+// gộp vào lượt tải đang chạy (query chưa có dữ liệu) và lượt hỏi dấu cũng bắn đúng lúc đó ⇒ bản thiếu nằm lì. Đang tải thì phải CHỜ, hỏi lại sau.
+describe('stampCheckAction — lượt hỏi dấu realtime', () => {
+  it('đang tải ⇒ chờ (dù chưa có dấu hay đã có) — không làm mới lúc này vì sẽ bị gộp vào lượt tải đang chạy', () => {
+    expect(stampCheckAction({ fetching: true, held: undefined })).toBe('wait')
+    expect(stampCheckAction({ fetching: true, held: 'x' })).toBe('wait')
+  })
+  it('không tải, chưa có dấu ⇒ tải lại; có dấu ⇒ hỏi dấu server', () => {
+    expect(stampCheckAction({ fetching: false, held: null })).toBe('reload')
+    expect(stampCheckAction({ fetching: false, held: 'x' })).toBe('ask')
   })
 })

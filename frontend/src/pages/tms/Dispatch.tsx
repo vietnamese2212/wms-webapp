@@ -103,10 +103,17 @@ export default function Dispatch() {
   // kế hoạch đang mở: người chọn → bản nháp mới nhất → bản mới nhất CHƯA BỎ. 06/10 (user: "bên Trung chuyển không có multi select"):
   // nháp Trung chuyển đã Bỏ nháp mà trang vẫn lấy làm kế hoạch đang làm — nháp đã bỏ chỉ để xem nên mọi ô tick / nút Ghép xe biến mất.
   // Nay mảng chỉ còn nháp đã bỏ ⇒ "Chưa có kế hoạch" + Lập kế hoạch; muốn xem lại nháp đã bỏ thì bấm "Xem nháp đã bỏ".
+  // 07/10 (C63): lúc "Xem đơn" đang chạy, server tạo dòng kế hoạch TRƯỚC rồi mới ghi đơn theo lô — realtime đưa nháp mới vào danh sách,
+  // tự chọn nó là tải giữa chừng (Bàu Bàng: 1.500 / 2.457 đơn) và lần làm mới sau đó bị gộp vào lượt tải ấy. Đang nạp ⇒ giữ kế hoạch cũ;
+  // nạp xong `loadOrders` đặt planId.
+  const create = useCreateDispatchPlan()
+  const lastPlanId = useRef<string | null>(null)
   const planId = useMemo(() => {
+    if (create.isPending) return lastPlanId.current
     if (f.planId && planList.some(p => p.id === f.planId)) return f.planId
     return (planList.find(p => p.status === 'DRAFT') ?? planList.find(p => p.status !== 'DISCARDED'))?.id ?? null
-  }, [f.planId, planList])
+  }, [f.planId, planList, create.isPending])
+  useEffect(() => { lastPlanId.current = planId }, [planId])
   const lastDiscarded = planList.find(p => p.status === 'DISCARDED') ?? null
   const planQ = useDispatchPlan(planId)
   const plan = planQ.data ?? null
@@ -153,7 +160,7 @@ export default function Dispatch() {
   const tenderBy = useMemo(() => new Map(companiesRaw.map(c => [c.id, c.tender_required === true])), [companiesRaw])
   const needsTender = (t: DispatchTrip) => t.transport_company_id ? (tenderBy.get(t.transport_company_id) ?? t.detail.carrier?.tender_required === true) : false
 
-  const create = useCreateDispatchPlan(), patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
+  const patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
   const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan()
   const [openTripId, setOpenTripId] = useState<string | null>(null)
   const openTrip = plan?.trips.find(t => t.id === openTripId) ?? null

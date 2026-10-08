@@ -40,11 +40,14 @@ console.log('── GÓI FILL-REPLENISH (v3 gom lệnh theo DATE) ──')
 await login()
 
 const created = { locs: [], entries: [], gdo: null, do: null, items: [], mat2: null }
-// Công tắc mượn của kho thật (cụm 22) — null = chưa đụng tới
+// KHO RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ MƯỢN kho thật của một pallet bất kỳ (thường là Ba Vì) và bật/tắt "tự ra lệnh fill" ·
+// "bắt buộc đúng thứ tự" · công tắc theo Loại kho của nó, trả bản sao lưu ở cuối — lượt bị ngắt là kho thật kẹt giá trị QA. Nay mọi
+// công tắc đo trên kho QA; các biến `saved*` dưới chỉ còn để từng cụm tự trả về giữa chừng, không còn đụng kho thật.
+const WH_CODE = 'QAFILLWH'
 let savedAutoFill = null
 let savedTypeAutoFill
 let savedTypeCode = null
-let savedRotReq = null     // cờ "bắt buộc lấy đúng thứ tự" mượn của kho thật (cụm 25b)
+let savedRotReq = null     // cờ "bắt buộc lấy đúng thứ tự" (cụm 25b)
 async function cleanupOrders(whId) {
   // FillOrder → FillTask → FillTaskScan đều ON DELETE CASCADE; lệnh fixture nhận diện bằng DAY
   if (whId) await restWrite('FillOrder', 'DELETE', `warehouse_id=eq.${whId}&target_date=eq.${DAY}`).catch(() => {})
@@ -52,15 +55,7 @@ async function cleanupOrders(whId) {
 async function cleanup(whId) {
   await cleanupOrders(whId)
   await restWrite('FillOrder', 'DELETE', `order_code=eq.${TAG}-TODAY`).catch(() => {})
-  // Công tắc "tự ra lệnh fill" mượn của kho thật → TRẢ LẠI đúng giá trị cũ (gói 22)
-  if (whId && savedAutoFill !== null)
-    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { auto_fill: savedAutoFill, updated_at: nowIso() }).catch(() => {})
-  // Cờ "bắt buộc lấy đúng thứ tự" mượn ở cụm 25b — trả lại kể cả khi gói ngã giữa chừng
-  if (whId && savedRotReq !== null)
-    await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_required: savedRotReq, updated_at: nowIso() }).catch(() => {})
-  if (whId && savedTypeAutoFill !== undefined && savedTypeCode)
-    await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.${savedTypeCode}`,
-      { auto_fill: savedTypeAutoFill, updated_at: nowIso() }).catch(() => {})
+  // (08/10) không còn trả công tắc cho kho thật — kho QA xoá trọn ở `sweepWarehouse` cuối hàm
   if (created.gdo) await restWrite('wms_tasks', 'DELETE', `gdo_id=eq.${created.gdo}`).catch(() => {})
   for (const id of created.items)   await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${id}`).catch(() => {})
   for (const id of created.items)   await restWrite('OutboundItem', 'DELETE', `id=eq.${id}`).catch(() => {})
@@ -80,6 +75,29 @@ async function cleanup(whId) {
   // HÀNG ĐỢI ĐỐI CHIẾU XOÁ CUỐI CÙNG: chính các bước khôi phục ở trên (trả lại công tắc `auto_fill`,
   // trả ngày chuyến, xoá dòng hàng) đều kích trigger ghi lại (kho, ngày) — dọn trước là dọn hụt.
   if (whId) await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${whId}`).catch(() => {})
+  await sweepWarehouse()
+}
+// Kho QA (kể cả của lượt trước bị ngắt) + mọi thứ còn trỏ vào nó — xoá sau cùng
+async function sweepWarehouse() {
+  for (const w of await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)) {
+    await restWrite('FillOrder', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('wms_tasks', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    for (const g of await restAll('GroupDeliveryOrder', `select=id&warehouse_id=eq.${w.id}`)) {
+      for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)) {
+        for (const it of await restAll('OutboundItem', `select=id&do_id=eq.${d.id}`)) {
+          await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${it.id}`).catch(() => {})
+          await restWrite('OutboundItem', 'DELETE', `id=eq.${it.id}`).catch(() => {})
+        }
+        await restWrite('OutboundDelivery', 'DELETE', `id=eq.${d.id}`).catch(() => {})
+      }
+      await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`).catch(() => {})
+    }
+    await restWrite('StocktakeLog', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
+  }
 }
 // Tàn dư của lần chạy hỏng giữa chừng (fixture phải TỰ HỒI PHỤC)
 for (const o of await restAll('FillOrder', `select=id&target_date=eq.${DAY}`))
@@ -103,22 +121,25 @@ for (const t of ['InventoryEntry', 'Location']) {
 }
 for (const m of await restAll('Material', `select=id&material_code=like.${TAG}-*`))
   await restWrite('Material', 'DELETE', `id=eq.${m.id}`).catch(() => {})
+await sweepWarehouse()
 
 let WH = null
 try {
   // ── Fixture ────────────────────────────────────────────────────────────────
   // Mã fixture phải CÓ Loại kho (category not null) — không thì cụm 17 vô nghĩa (mã chưa khai
   // loại được hạ mọi chỗ theo luật null-inclusive).
-  const catMats = (await restAll('Material', 'select=id&category=not.is.null')).slice(0, 50)
-  const inList = catMats.map(m => m.id).join(',')
-  const anyEntry = (inList
-    ? await restAll('InventoryEntry', `select=warehouse_id,material_id&material_id=in.(${inList})&cartons_remaining=gt.0&limit=1`)
-    : [])[0]
-    ?? (await restAll('InventoryEntry', 'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0'))[0]
-  if (!anyEntry) { check('có dữ liệu tồn để dựng fixture', false, 'kho rỗng'); finish('FILL-REPLENISH') }
-  const whId = anyEntry.warehouse_id
+  const [mat] = await restAll('Material',
+    'select=id,material_code,category,entry_unit,units_per_carton&category=not.is.null&is_active=is.true&is_non_stock=not.is.true&no_qr_tracking=not.is.true&order=material_code&limit=1')
+  if (!mat) { check('có mã hàng mang Loại kho để dựng fixture', false, 'danh mục rỗng'); finish('FILL-REPLENISH') }
+  const [whQa] = await restWrite('Warehouse', 'POST', null, {
+    id: randomUUID(), code: WH_CODE, name: 'QA Fill nhặt lẻ (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR',
+    require_gate_on_start: false, require_weigh_on_start: false, is_active: true, work_mode: 'MANUAL',
+    auto_fill: false, rotation_principle: 'FEFO', rotation_required: false, updated_at: nowIso(),
+  })
+  const whId = whQa.id
   WH = whId
-  const [mat] = await restAll('Material', `select=id,material_code,category,entry_unit,units_per_carton&id=eq.${anyEntry.material_id}`)
+  // Dòng cấu hình Loại kho của mã ở kho QA — cụm 22f đo công tắc "tự ra lệnh fill" theo Loại kho (kho thật có sẵn, kho QA tự khai)
+  await restWrite('warehouse_type_configs', 'POST', null, { id: randomUUID(), warehouse_id: whId, type_code: mat.category, updated_at: nowIso() })
 
   const mkLoc = async (code, maxPallets, pickFace, needStocktake = false, cats = null) => {
     const [row] = await restWrite('Location', 'POST', null, {
@@ -137,6 +158,9 @@ try {
   const locPF   = await mkLoc('PF',    5, true, true, [mat.category])
   const locFull = await mkLoc('FULL',  1, true, false, [mat.category])
   const locBad  = await mkLoc('BAD',  50, true, false, ['__QAKHAC__'])
+  // (08/10) Kho QA riêng không có sẵn ô nhặt lẻ THẬT như Ba Vì: một ô nhặt lẻ ĐÚNG loại, còn trống, không cờ "cần check" để RPC có
+  // đích hợp lệ mà gợi ý (17a) — locPF mang cờ cần check, locFull đầy, locBad khác loại
+  await mkLoc('PF2', 10, true, false, [mat.category])
 
   // NSX lệch nhau để kiểm FEFO + kiểm quét-theo-DATE
   const mkPallet = async (code, qty, locId, prodDaysAgo = 0, reserved = 0) => {
@@ -168,6 +192,9 @@ try {
   const pA = await mkPallet('A', 60, locRsv.id, 500)       // FEFO: cũ nhất
   const pB = await mkPallet('B', 60, locRsv.id, 470)
   const pC = await mkPallet('C', 60, locRsv.id, 440)       // mới nhất (trong bộ fixture)
+  // (08/10) TỒN NỀN: kho thật (Ba Vì) có sẵn tồn cùng mã TRẺ hơn mọi pallet fixture — máy tự ra lệnh cần nó để bù ĐỦ phần thiếu (22c)
+  // khi pA / pC đã hạ xuống ô lẻ. Trẻ nhất nên FEFO không bao giờ chọn nó trước pallet fixture (cụm 2 · 19 giữ nguyên kết luận).
+  await mkPallet('BG', 200, locRsv.id, 300)
 
   // Nhu cầu CỐ ĐỊNH: thiếu kỳ vọng = 145 − 45 (phần ĐÚNG LÔ ở kho lẻ) = 100.
   // (Trước 15/09 công thức phải cộng `realPF` để triệt tiêu tồn thật ở kho lẻ; nay "có" chỉ tính
@@ -969,10 +996,13 @@ try {
   // đầu 16/09 oracle đòi "0 dòng" và đỏ oan đúng chỗ máy làm đúng.
   const vetoDate = target26?.required_date ?? null
   check('26a. Người huỷ tay dòng máy đặt (nhu cầu vẫn còn) → lượt sau máy KHÔNG đặt lại ĐÚNG (mã, NSX) đó, dòng NSX khác giữ nguyên',
+    // (08/10, kho QA riêng) so ĐÚNG TỪNG DÒNG thay vì đếm "trước − 1": veto theo (mã, NSX) cho máy bù phần thiếu bằng NSX KHÁC — số
+    // dòng sau phụ thuộc kho còn lô nào, còn luật thì chỉ là: không dòng nào mang NSX đã bác + mọi dòng NSX khác vẫn nguyên
     born26.length >= 1 && del26.s < 300 && re26.s === 200
-      && after26.length === born26.length - 1 && !after26.some(l => l.required_date === vetoDate)
+      && born26.filter(l => l.id !== target26?.id).every(l => after26.some(a => a.id === l.id))
+      && !after26.some(l => l.required_date === vetoDate)
       && (re26.j?.data?.vetoed ?? []).includes(mat.material_code),
-    `đặt=${born26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} huỷ=${del26.s} sau=${after26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|') || '—'} (kỳ vọng ${born26.length - 1} dòng, không có NSX ${vetoDate}) kq=${JSON.stringify(re26.j?.data ?? re26.j?.error)}`)
+    `đặt=${born26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} huỷ=${del26.s} sau=${after26.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|') || '—'} (kỳ vọng: còn nguyên ${born26.length - 1} dòng NSX khác, không có NSX ${vetoDate}) kq=${JSON.stringify(re26.j?.data ?? re26.j?.error)}`)
   // 26a2 (16/09, user: "tại sao 363 và 022 lại có mặt ở Đề xuất?"): mã người đã bác phải được cửa HTTP đánh dấu
   // (`row.veto` + `vetoed[]` kèm lý do) để màn tách khỏi bảng mặc định — cùng định nghĩa veto với bộ đối chiếu.
   const dmVeto = await demandOf()

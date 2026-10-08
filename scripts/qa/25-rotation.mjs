@@ -26,7 +26,11 @@ await login()
 const nowIso = () => new Date().toISOString()
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const created = { locs: [], entries: [], gdo: null, do: null, items: [] }
-let whId = null, whBackup = null, putBackup = null
+let whId = null
+// KHO RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ MƯỢN một kho thật bất kỳ (`anyEntry.warehouse_id` — thường là Ba Vì), ép nó về THỦ CÔNG
+// + đổi luân chuyển / luật cất suốt lượt đo rồi trả bản sao lưu ở cuối: trong lúc chạy người dùng thật mất chế độ Hướng dẫn, lượt bị
+// ngắt là kho thật kẹt giá trị QA, và lượt sau chụp chính giá trị QA đó làm "gốc". Mã kho bắt đầu `QA` (bất biến 00 [11b] bỏ qua).
+const WH_CODE = 'QAROTWH'
 
 async function cleanup() {
   for (const id of created.items) await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${id}`)
@@ -35,23 +39,41 @@ async function cleanup() {
   if (created.gdo) await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${created.gdo}`)
   for (const id of created.entries) await restWrite('InventoryEntry', 'DELETE', `id=eq.${id}`)
   for (const id of created.locs)    await restWrite('Location', 'DELETE', `id=eq.${id}`)
-  // TRẢ cấu hình kho về nguyên trạng — gói QA không được để lại kho đang bật "bắt buộc"
-  if (whId && whBackup) await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, whBackup)
-  // Luật CẤT trả qua API để backend xoá luôn cache 30s (ghi thẳng PostgREST thì instance đang
-  // chạy vẫn giữ bản "bắt buộc" sau khi gói kết thúc → chặn oan người dùng thật).
-  if (whId && putBackup) await api(`/masterdata/warehouses/${whId}`, 'PUT', putBackup)
+  await sweepWarehouse()
 }
-// Tàn dư lần chạy hỏng giữa chừng → dọn trước (fixture phải TỰ HỒI PHỤC)
+// Kho QA của lượt trước (hỏng giữa chừng) + mọi thứ trong nó → dọn trước (fixture phải TỰ HỒI PHỤC)
+async function sweepWarehouse() {
+  for (const w of await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)) {
+    for (const g of await restAll('GroupDeliveryOrder', `select=id&warehouse_id=eq.${w.id}`)) {
+      for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)) {
+        for (const it of await restAll('OutboundItem', `select=id&do_id=eq.${d.id}`)) {
+          await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${it.id}`).catch(() => {})
+          await restWrite('OutboundItem', 'DELETE', `id=eq.${it.id}`).catch(() => {})
+        }
+        await restWrite('OutboundDelivery', 'DELETE', `id=eq.${d.id}`).catch(() => {})
+      }
+      await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`).catch(() => {})
+    }
+    await restWrite('StocktakeLog', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
+  }
+}
 for (const [t, col] of [['InventoryEntry', 'pallet_code'], ['Location', 'location_code']]) {
   const olds = await restAll(t, `select=id&${col}=like.${TAG}-*`)
   for (const o of olds) await restWrite(t, 'DELETE', `id=eq.${o.id}`)
 }
+await sweepWarehouse()
 
 try {
   // ── Fixture ────────────────────────────────────────────────────────────────
-  const anyEntry = (await restAll('InventoryEntry', 'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0'))[0]
-  if (!anyEntry) { check('có dữ liệu tồn để dựng fixture', false, 'kho rỗng'); finish('ROTATION'); process.exit() }
-  whId = anyEntry.warehouse_id
+  const [whQa] = await restWrite('Warehouse', 'POST', null, {
+    id: randomUUID(), code: WH_CODE, name: 'QA luân chuyển (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR',
+    require_gate_on_start: false, require_weigh_on_start: false, is_active: true, work_mode: 'MANUAL',
+    rotation_principle: 'FEFO', rotation_required: false, updated_at: nowIso(),
+  })
+  whId = whQa.id
 
   // MÃ dùng cho fixture phải KHÔNG CÓ tồn sống nào khác trong kho này.
   // VÌ SAO (bug của chính gói này, đo 21/08): trước đây gói lấy luôn `anyEntry.material_id`, tức MỘT
@@ -74,19 +96,8 @@ try {
       `${cands.length} mã ứng viên đều đang có tồn ở kho ${whId}`)
     finish('ROTATION'); process.exit()
   }
-  const [wh] = await restAll('Warehouse',
-    `select=id,rotation_principle,rotation_required,putaway_enforced,work_mode&id=eq.${whId}`)
-  // work_mode PHẢI nằm trong bản sao lưu: gói ép kho về THỦ CÔNG trong lúc đo (xem setRot),
-  // quên trả lại là để kho dùng chung sai cách làm việc cho mọi gói chạy sau.
-  whBackup = { rotation_principle: wh?.rotation_principle ?? 'FEFO', rotation_required: wh?.rotation_required === true, work_mode: wh?.work_mode ?? 'MANUAL', updated_at: nowIso() }
-  putBackup = { putaway_enforced: wh?.putaway_enforced ?? [] }
-
-  // ⚠️ ÉP kho về THỦ CÔNG trong suốt lượt đo. VÌ SAO (đo 24/09, gói đỏ 4 phép ở CẢ hai lượt chạy):
-  // gói MƯỢN một kho thật bất kỳ (`anyEntry.warehouse_id`); nếu kho đó đang HƯỚNG DẪN thì Bắt đầu
-  // chuyến sinh việc lấy hàng GHIM pallet, và luật 20/09 (`rotationCheckOf.excludeEntryIds`) CỐ Ý
-  // không coi pallet đã ghim cho CHÍNH chuyến là "sai thứ tự" ⇒ best_pallet_code = null ⇒
-  // violation=false ⇒ [8][9][10][15] đỏ OAN trong khi app hoàn toàn đúng thiết kế.
-  // Đây là gói đo LUÂN CHUYỂN, không đo chỉ dẫn công việc — hai luật đó phải tách nhau ra.
+  // Kho QA chạy THỦ CÔNG (24/09: kho HƯỚNG DẪN sinh việc ghim pallet, và luật 20/09 `rotationCheckOf.excludeEntryIds` cố ý không coi
+  // pallet đã ghim cho CHÍNH chuyến là "sai thứ tự" ⇒ [8][9][10][15] đỏ OAN). Gói đo LUÂN CHUYỂN, không đo chỉ dẫn công việc.
   const setRot = (principle, required) =>
     restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { rotation_principle: principle, rotation_required: required, work_mode: 'MANUAL', updated_at: nowIso() })
   // Luật CẤT đi qua API (backend cache 30s cho hot-path quét — ghi thẳng DB thì luật không hiệu lực)

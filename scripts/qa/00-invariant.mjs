@@ -500,6 +500,18 @@ for (const [table, label] of [
   ].filter(([, key]) => !looksFixture(key)).map(([label]) => label)
   check('Bộ kiểm không ghi vào cấu hình THẬT dùng chung (Loại kho · kênh · ĐK bảo quản · ĐVVT · mức date kênh) — fixture phải là của riêng gói (C49)',
     hits.length === 0, hits.length ? hits.join(' · ') : 'sạch')
+  // 08/10 chiều (C49 lặp lần 2): gói 18 / 25 / 26 / 27 / 28 / 29 MƯỢN kho thật (Ba Vì / kho của một pallet bất kỳ) rồi bật / tắt luân
+  // chuyển · luật cất · tự ra lệnh fill · Loại kho của kho · chính sách ship-to — gói 28 còn dọn bằng cách ĐẶT CỨNG 'NONE'. Nay mỗi gói
+  // tự tạo kho `QA*`. Lưới: kho THẬT / dòng Loại kho của kho THẬT có người sửa cuối là tài khoản bộ kiểm sau mốc vá ⇒ đỏ.
+  const ciWh = `updated_by=like.${encodeURIComponent('CI runner*')}&updated_at=gt.2026-10-08T10:00:00Z`
+  const whHits = [
+    ...(await restAll('Warehouse', `select=code&${ciWh}`)).filter(r => !looksFixture(r.code)).map(r => `kho:${r.code}`),
+    ...(await restAll('warehouse_type_configs', `select=type_code,warehouse:Warehouse!warehouse_id(code)&${ciWh}`))
+      .filter(r => !looksFixture(r.warehouse?.code) && !String(r.type_code ?? '').startsWith('QA'))
+      .map(r => `Loại kho ${r.type_code} @ kho ${r.warehouse?.code}`),
+  ]
+  check('Bộ kiểm không đổi cấu hình của KHO THẬT (luân chuyển · luật cất · fill · Loại kho của kho · chính sách ship-to) — gói đo trên kho QA riêng (C49)',
+    whHits.length === 0, whHits.length ? whHits.slice(0, 8).join(' · ') : 'sạch')
 }
 
 finish('INVARIANT', { retryOnFail: true })

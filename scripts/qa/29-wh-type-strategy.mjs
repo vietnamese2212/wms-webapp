@@ -20,9 +20,13 @@ await resolveFixtures()
 
 const nowIso = () => new Date().toISOString()
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const whId = FIX.WH_QR.id
+// KHO RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ đo trên Kho Ba Vì THẬT: đổi luân chuyển / luật cất / Loại kho (thứ tự, cờ vận hành NCC)
+// rồi trả bản sao lưu ở cuối — trong lúc chạy người dùng thật chạy theo cấu hình QA, lượt bị ngắt là Ba Vì kẹt giá trị QA và lượt sau
+// chụp chính giá trị đó làm "gốc". Kho QA tạo qua API (để nhận ĐỦ mọi Loại kho như kho thật), xoá ở cuối; mã `QA*` (bất biến 00 bỏ qua).
+const WH_CODE = 'QAWHTYPEWH'
+let whId = null
 const created = { locs: [], entries: [], gdo: null, do: null, items: [] }
-let whBackup = null, cfgBackup = null
+let cfgBackup = null   // tập Loại kho của kho QA lúc vừa tạo — mốc so [8d], KHÔNG còn là bản sao lưu kho thật
 
 const STRAT_COLS = 'rotation_principle,rotation_required,putaway_priority,putaway_enforced,' +
   'putaway_date_mix,putaway_block_pick_face,putaway_block_qa_hold,' +
@@ -53,20 +57,32 @@ async function sweep() {
   for (const l of await restAll('Location', `select=id&location_code=like.${TAG}-*`)) await restWrite('Location', 'DELETE', `id=eq.${l.id}`)
   // Log in tem của mục [13]
   for (const p of await restAll('PalletLabelPrint', `select=id&qr_code=like.${TAG}-*`)) await restWrite('PalletLabelPrint', 'DELETE', `id=eq.${p.id}`)
+  // Kho QA (kể cả của lượt trước bị ngắt) + mọi thứ còn trỏ vào nó
+  for (const w of await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)) {
+    for (const o of await restAll('ProductionImport', `select=id&warehouse_id=eq.${w.id}`)) {
+      await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${o.id}`).catch(() => {})
+      await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+    }
+    await restWrite('StocktakeLog', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
+  }
 }
 async function cleanup() {
   await sweep()
-  // TRẢ cấu hình kho + tập loại về nguyên trạng — qua API để backend xoá luôn cache 30s
-  // (ghi thẳng DB thì instance đang chạy vẫn giữ bản test và chặn oan người dùng thật).
-  if (whBackup) await api(`/masterdata/warehouses/${whId}`, 'PUT', whBackup)
-  if (cfgBackup) await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: cfgBackup })
 }
 await sweep()
 
 try {
-  // ── Fixture: 2 mã KHÁC LOẠI trong cùng kho ───────────────────────────────
-  const [wh] = await restAll('Warehouse', `select=id,${STRAT_COLS}&id=eq.${whId}`)
-  whBackup = Object.fromEntries(STRAT_COLS.split(',').map(k => [k, wh?.[k] ?? null]))
+  // ── Fixture: kho QA + 2 mã KHÁC LOẠI trong cùng kho ──────────────────────
+  const mkWh = await api('/masterdata/warehouses', 'POST', {
+    code: WH_CODE, name: 'QA Loại kho 2 tầng (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR',
+    require_gate_on_start: false, require_weigh_on_start: false, rotation_principle: 'FEFO', rotation_required: false,
+  })
+  whId = mkWh.j?.data?.id ?? null
+  if (!whId) throw new Error(`Dựng kho QA ${WH_CODE} hỏng: ${mkWh.s} ${mkWh.j?.error?.message ?? ''}`)
   const cfg0 = await api(`/masterdata/warehouses/${whId}/type-configs`)
   cfgBackup = (cfg0.j?.data ?? []).map(r => {
     const o = { type_code: r.type_code, sort_order: r.sort_order ?? null }

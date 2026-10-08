@@ -50,7 +50,8 @@ async function cleanup() {
   // 28/09: khách fixture (mối nối ship-to → kho) + trả chính sách kho nguồn về như cũ
   await restWrite('Customer', 'DELETE', `ship_to_code=like.${TAG}*`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.${FIX.WH_QTY.code}&auto_created=is.true&name=like.${TAG}*`).catch(() => {})
-  await restWrite('Warehouse', 'PATCH', `id=eq.${FIX.WH_QR.id}`, { unlinked_shipto_policy: 'NONE' }).catch(() => {})
+  // [12e] chạy trên KHO QA RIÊNG (08/10, C49 lặp) — bản cũ bật/tắt chính sách của Kho Ba Vì THẬT rồi dọn bằng cách đặt cứng 'NONE'
+  for (const w of await restAll('Warehouse', `select=id&code=eq.${TAG}WH`).catch(() => [])) await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
   // TRẢ cờ hệ thống qua API (xóa luôn cache 30s của instance đang chạy)
   if (dcBackup) await api('/wms/settings/delivery_confirmation', 'PUT', { value: dcBackup })
 }
@@ -329,20 +330,26 @@ try {
     const ST3 = `${TAG}ST3`
     const whQtyName = (await restAll('Warehouse', `select=name&id=eq.${FIX.WH_QTY.id}`))[0]?.name
     await api('/masterdata/customers', 'POST', { ship_to_code: ST3, name: whQtyName })
+    // 08/10 (C49 lặp): kho xuất của [12e] là kho QA RIÊNG — bản cũ bật/tắt chính sách "ship-to trông như kho WMS" của Kho Ba Vì thật,
+    // dọn bằng cách ĐẶT CỨNG 'NONE' ⇒ kho thật đang WARN / BLOCK mất cấu hình sau mỗi lượt (kể cả lượt chạy trọn)
+    const [whQa] = await restWrite('Warehouse', 'POST', null, {
+      id: randomUUID(), code: `${TAG}WH`, name: `${TAG} kho xuất [12e] (bộ kiểm tự dùng)`, warehouse_type: 'CENTRAL', inventory_mode: 'QR',
+      require_gate_on_start: false, require_weigh_on_start: false, is_active: true, updated_at: nowIso(),
+    })
     const [g3] = await restWrite('GroupDeliveryOrder', 'POST', null, {
-      id: randomUUID(), group_code: `${TAG}-GDO3`, warehouse_id: FIX.WH_QR.id, warehouse_type: FIX.MAT_POOL_CAT,
+      id: randomUUID(), group_code: `${TAG}-GDO3`, warehouse_id: whQa.id, warehouse_type: FIX.MAT_POOL_CAT,
       delivery_date: vnDate(), planned_date: vnDate(), status: 'IN_PROGRESS', license_plate: `${TAG}XE03`, started_at: nowIso(),
       shipto_party: ST3, created_at: nowIso(), updated_at: nowIso(),
     })
     const [d3] = await restWrite('OutboundDelivery', 'POST', null, { id: randomUUID(), gdo_id: g3.id, delivery_code: `${TAG}-DO3`, distributor_name: whQtyName, created_at: nowIso(), updated_at: nowIso() })
     await restWrite('OutboundItem', 'POST', null, { id: randomUUID(), do_id: d3.id, material_id: created.mat, material_code_raw: `${TAG}001`, cartons_ordered: QTY, cartons_scanned: QTY, loose_picking: 0, status: 'PENDING', created_at: nowIso(), updated_at: nowIso() })
-    const pb = await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { unlinked_shipto_policy: 'BLOCK' })
+    const pb = await api(`/masterdata/warehouses/${whQa.id}`, 'PUT', { unlinked_shipto_policy: 'BLOCK' })
     const gB = await api(`/wms/outbound/${g3.id}`)
     const cB = await api(`/wms/outbound/${g3.id}`, 'PATCH', { status: 'COMPLETED' })
-    const pw = await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { unlinked_shipto_policy: 'WARN' })
+    const pw = await api(`/masterdata/warehouses/${whQa.id}`, 'PUT', { unlinked_shipto_policy: 'WARN' })
     const gW = await api(`/wms/outbound/${g3.id}`)
     const cW = await api(`/wms/outbound/${g3.id}`, 'PATCH', { status: 'COMPLETED' })
-    const pn = await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { unlinked_shipto_policy: 'NONE' })
+    const pn = await api(`/masterdata/warehouses/${whQa.id}`, 'PUT', { unlinked_shipto_policy: 'NONE' })
     const gN = await api(`/wms/outbound/${g3.id}`)
     check('[12e] Kho xuất BLOCK: GET chuyến có unlinked_hint (tên kho, policy BLOCK) · Hoàn thành 422 SHIPTO_UNLINKED · WARN: hint policy WARN, hoàn thành 200 · NONE: không hint · policy lạ không lưu',
       pb.s === 200 && gB.j?.data?.unlinked_hint?.policy === 'BLOCK' && gB.j?.data?.unlinked_hint?.warehouse_name === whQtyName && gB.j?.data?.dest_warehouse == null

@@ -24,6 +24,19 @@ const nowIso = () => new Date().toISOString()
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const created = { locs: [], entries: [] }
 const allCodes = []
+// KHO RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ dồn / tách trong Kho Ba Vì THẬT và ở khối "luật cất khi dồn / tách" bật luật cất
+// "bắt buộc" của Ba Vì rồi trả bản sao lưu — trong lúc chạy người dùng thật bị chặn cất oan, lượt bị ngắt là Ba Vì kẹt "bắt buộc".
+const WH_CODE = 'QAPOPSWH'
+let WHQ = null
+async function sweepWarehouse() {
+  for (const w of await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)) {
+    await restWrite('PalletOperation', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('StocktakeLog', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
+  }
+}
 
 // Mã V1: đoạn 3 (chu kỳ) mang TAG để nhận diện/dọn; đoạn 5 = seq (nơi split gắn .N)
 const v1 = (seq) => `190826_${FIX.MAT_POOL}_${TAG}_M1_${seq}_B`
@@ -44,15 +57,21 @@ async function cleanup() {
   // Entry: quét theo TAG trong mã (bắt luôn pallet CON do API tạo mà gói không track được id)
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
   for (const id of created.locs) await restWrite('Location', 'DELETE', `id=eq.${id}`).catch(() => {})
+  await sweepWarehouse()
 }
 // Tàn dư lần chạy hỏng giữa chừng → dọn trước (fixture tự hồi phục)
 await restWrite('StocktakeLog', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
 await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
 for (const o of await restAll('Location', `select=id&location_code=like.${TAG}-*`))
   await restWrite('Location', 'DELETE', `id=eq.${o.id}`)
+await sweepWarehouse()
 
 try {
-  // ── Fixture: 1 vị trí SIM ở kho QR + các pallet V1/V2 ─────────────────────
+  // ── Fixture: kho QA (QR) + 1 vị trí SIM + các pallet V1/V2 ─────────────────────
+  WHQ = (await restWrite('Warehouse', 'POST', null, {
+    id: randomUUID(), code: WH_CODE, name: 'QA Dồn / Tách pallet (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR',
+    require_gate_on_start: false, require_weigh_on_start: false, is_active: true, work_mode: 'MANUAL', updated_at: nowIso(),
+  }))[0].id
   const mkLoc = async (whId, code, extra = {}) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: 30,
@@ -73,26 +92,26 @@ try {
     allCodes.push(code)
     return row.id
   }
-  const entryOf = async (code, whId = FIX.WH_QR.id) => (await restAll('InventoryEntry',
+  const entryOf = async (code, whId = WHQ) => (await restAll('InventoryEntry',
     `select=id,pallet_code,parent_pallet_code,location_id,cartons_imported,cartons_remaining,cartons_reserved,status,batch,origin&pallet_code=eq.${encodeURIComponent(code)}&warehouse_id=eq.${whId}`))[0]
   // Tổng tồn của "gia đình" 1 pallet nguồn (nguồn + mọi con .N) — bất biến bảo toàn
   const familySum = async (prefixLike) => {
     const rows = await restAll('InventoryEntry',
-      `select=cartons_remaining&pallet_code=like.${encodeURIComponent(prefixLike)}&warehouse_id=eq.${FIX.WH_QR.id}`)
+      `select=cartons_remaining&pallet_code=like.${encodeURIComponent(prefixLike)}&warehouse_id=eq.${WHQ}`)
     return rows.reduce((s, r) => s + Number(r.cartons_remaining), 0)
   }
 
-  const locA = await mkLoc(FIX.WH_QR.id, 'A')
-  const locB = await mkLoc(FIX.WH_QR.id, 'B')
+  const locA = await mkLoc(WHQ, 'A')
+  const locB = await mkLoc(WHQ, 'B')
   const P1 = v1('901'), P2 = v1('902'), P3 = v1('903')
-  await mkPallet(P1, 100, FIX.WH_QR.id, locA)
-  await mkPallet(P2, 50, FIX.WH_QR.id, locB)
-  await mkPallet(P3, 30, FIX.WH_QR.id, locB)
+  await mkPallet(P1, 100, WHQ, locA)
+  await mkPallet(P2, 50, WHQ, locB)
+  await mkPallet(P3, 30, WHQ, locB)
 
   // ── [1] DỒN: con nhận parent + DỜI về vị trí đích ──────────────────────────
   {
     const r = await api('/wms/pallet-ops/merge', 'POST', {
-      target_pallet_code: P1, child_pallet_codes: [P2, P3], warehouse_id: FIX.WH_QR.id,
+      target_pallet_code: P1, child_pallet_codes: [P2, P3], warehouse_id: WHQ,
     })
     const [e2, e3] = [await entryOf(P2), await entryOf(P3)]
     check('[1] Dồn 2 pallet: parent ghi đúng + con DỜI về vị trí pallet đích',
@@ -105,7 +124,7 @@ try {
   // ── [2] Đích đang là CON của nhóm khác → chặn ─────────────────────────────
   {
     const r = await api('/wms/pallet-ops/merge', 'POST', {
-      target_pallet_code: P2, child_pallet_codes: [P3], warehouse_id: FIX.WH_QR.id,
+      target_pallet_code: P2, child_pallet_codes: [P3], warehouse_id: WHQ,
     })
     check('[2] Dồn vào pallet đang là con → 400 (phải chọn pallet đầu nhóm)',
       r.s === 400, `http=${r.s} msg=${r.j?.error?.message}`)
@@ -134,7 +153,7 @@ try {
   // ── [4] TÁCH V1: `.N` vào đoạn SEQ + bảo toàn tổng ────────────────────────
   {
     const r = await api('/wms/pallet-ops/split', 'POST', {
-      source_pallet_code: P1, children: [{ qty: 30 }], warehouse_id: FIX.WH_QR.id,
+      source_pallet_code: P1, children: [{ qty: 30 }], warehouse_id: WHQ,
     })
     const childCode = r.j?.data?.children?.[0]?.pallet_code
     if (childCode) allCodes.push(childCode)
@@ -153,14 +172,14 @@ try {
   {
     const CU = '2026-05-10'
     const OLD = v1('909')          // 901–908 đã dùng ở các mục khác của gói
-    await mkPallet(OLD, 40, FIX.WH_QR.id, locA, { import_date: CU })
+    await mkPallet(OLD, 40, WHQ, locA, { import_date: CU })
     const r = await api('/wms/pallet-ops/split', 'POST', {
-      source_pallet_code: OLD, children: [{ qty: 15 }], warehouse_id: FIX.WH_QR.id,
+      source_pallet_code: OLD, children: [{ qty: 15 }], warehouse_id: WHQ,
     })
     const childCode = r.j?.data?.children?.[0]?.pallet_code
     if (childCode) allCodes.push(childCode)
     const [child] = childCode ? await restAll('InventoryEntry',
-      `select=import_date,update_date&pallet_code=eq.${encodeURIComponent(childCode)}&warehouse_id=eq.${FIX.WH_QR.id}`) : []
+      `select=import_date,update_date&pallet_code=eq.${encodeURIComponent(childCode)}&warehouse_id=eq.${WHQ}`) : []
     const ngayCon = String(child?.import_date ?? '').slice(0, 10)
     check('[4b] Tách pallet cũ: con GIỮ ngày hàng vào kho của gốc, không đóng dấu hôm nay',
       r.s === 200 && ngayCon === CU,
@@ -171,7 +190,7 @@ try {
   {
     // api() tự gắn qty_semantics — gọi fetch trần qua api() với body mảng? Không: gửi cờ SAI giá trị
     const r = await api('/wms/pallet-ops/split', 'POST', {
-      qty_semantics: 'carton', source_pallet_code: P1, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id,
+      qty_semantics: 'carton', source_pallet_code: P1, children: [{ qty: 5 }], warehouse_id: WHQ,
     })
     check('[5] qty_semantics ≠ base → 409 APP_OUTDATED (không ghi gì)',
       r.s === 409, `http=${r.s} code=${r.j?.error?.code}`)
@@ -193,7 +212,7 @@ try {
     const src = await entryOf(P1)
     await restWrite('InventoryEntry', 'PATCH', `id=eq.${src.id}`, { cartons_reserved: 80, updated_at: nowIso() })
     const r = await api('/wms/pallet-ops/split', 'POST', {
-      source_pallet_code: P1, children: [{ qty: 30 }], warehouse_id: FIX.WH_QR.id,
+      source_pallet_code: P1, children: [{ qty: 30 }], warehouse_id: WHQ,
     })
     await restWrite('InventoryEntry', 'PATCH', `id=eq.${src.id}`, { cartons_reserved: 0, updated_at: nowIso() })
     check('[7] Đang giữ chỗ 80/100 → tách 30 bị chặn (khả dụng chỉ 20 — không cắn vào hàng đã soạn)',
@@ -204,8 +223,8 @@ try {
   // ── [8] ĐUA: 2 người cùng tách 60 từ 100 → đúng 1 thắng, tổng vẫn 100 ──────
   {
     const [ra, rb] = await Promise.all([
-      api('/wms/pallet-ops/split', 'POST', { source_pallet_code: P1, children: [{ qty: 60 }], warehouse_id: FIX.WH_QR.id }),
-      api('/wms/pallet-ops/split', 'POST', { source_pallet_code: P1, children: [{ qty: 60 }], warehouse_id: FIX.WH_QR.id }),
+      api('/wms/pallet-ops/split', 'POST', { source_pallet_code: P1, children: [{ qty: 60 }], warehouse_id: WHQ }),
+      api('/wms/pallet-ops/split', 'POST', { source_pallet_code: P1, children: [{ qty: 60 }], warehouse_id: WHQ }),
     ])
     for (const r of [ra, rb]) for (const c of r.j?.data?.children ?? []) allCodes.push(c.pallet_code)
     const wins = [ra, rb].filter(r => r.s === 200).length
@@ -218,9 +237,9 @@ try {
   // ── [9] TÁCH V2: `.N` vào ĐUÔI MÃ LÔ (đoạn 3), cột batch giữ mã lô GỐC ─────
   {
     const V2SRC = v2('260819A01')
-    await mkPallet(V2SRC, 40, FIX.WH_QR.id, locA, { batch: `${TAG}260819A01`, expiry_date: '2027-02-19' })
+    await mkPallet(V2SRC, 40, WHQ, locA, { batch: `${TAG}260819A01`, expiry_date: '2027-02-19' })
     const r = await api('/wms/pallet-ops/split', 'POST', {
-      source_pallet_code: V2SRC, children: [{ qty: 10 }], warehouse_id: FIX.WH_QR.id,
+      source_pallet_code: V2SRC, children: [{ qty: 10 }], warehouse_id: WHQ,
     })
     const childCode = r.j?.data?.children?.[0]?.pallet_code
     if (childCode) allCodes.push(childCode)
@@ -234,23 +253,23 @@ try {
   // ── [10] Mã trùng 2 KHO: không khai kho → 400; khai kho → chạy ─────────────
   {
     const DUP = v1('904')
-    await mkPallet(DUP, 20, FIX.WH_QR.id, locA)
+    await mkPallet(DUP, 20, WHQ, locA)
     const [qtyLoc] = await restAll('Location', `select=id&warehouse_id=eq.${FIX.WH_QTY.id}&is_active=is.true&limit=1`)
     await mkPallet(DUP, 20, FIX.WH_QTY.id, qtyLoc?.id ?? null)
     const r1 = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: DUP, children: [{ qty: 5 }] })
-    const r2 = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: DUP, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id })
+    const r2 = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: DUP, children: [{ qty: 5 }], warehouse_id: WHQ })
     for (const c of r2.j?.data?.children ?? []) allCodes.push(c.pallet_code)
     check('[10] Mã có ở 2 kho: thiếu warehouse_id → 400 bắt chọn kho; khai kho → tách đúng kho đó',
       r1.s === 400 && r2.s === 200
-      && Number((await entryOf(DUP, FIX.WH_QR.id))?.cartons_remaining) === 15
+      && Number((await entryOf(DUP, WHQ))?.cartons_remaining) === 15
       && Number((await entryOf(DUP, FIX.WH_QTY.id))?.cartons_remaining) === 20,
       `noWh=${r1.s} wh=${r2.s}`)
   }
 
   // ── [11] GỠ NHÓM: dồn lại rồi ungroup → parent sạch ───────────────────────
   {
-    await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: P1, child_pallet_codes: [P2], warehouse_id: FIX.WH_QR.id })
-    const r = await api('/wms/pallet-ops/ungroup', 'POST', { pallet_codes: [P2], warehouse_id: FIX.WH_QR.id })
+    await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: P1, child_pallet_codes: [P2], warehouse_id: WHQ })
+    const r = await api('/wms/pallet-ops/ungroup', 'POST', { pallet_codes: [P2], warehouse_id: WHQ })
     const e2 = await entryOf(P2)
     check('[11] Gỡ nhóm: ungrouped=1 + parent về null',
       r.s === 200 && r.j?.data?.ungrouped === 1 && !e2?.parent_pallet_code,
@@ -261,45 +280,45 @@ try {
   // kiểm cùng kho, không sức chứa — kho bật "bắt buộc" vẫn bị lách qua 2 cửa này. Đích do người
   // chọn = một lần CẤT HÀNG; giữ chỗ pallet nguồn thì miễn (hàng không di chuyển).
   {
-    const [whRow] = await restAll('Warehouse', `select=putaway_enforced&id=eq.${FIX.WH_QR.id}`)
+    const [whRow] = await restAll('Warehouse', `select=putaway_enforced&id=eq.${WHQ}`)
     const putBackup = whRow?.putaway_enforced ?? []
-    const setPut = (enforced) => api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { putaway_enforced: enforced })
+    const setPut = (enforced) => api(`/masterdata/warehouses/${WHQ}`, 'PUT', { putaway_enforced: enforced })
     const waitCfg = () => new Promise(r => setTimeout(r, 31_000))   // cache cấu hình 30s/instance
-    const locNoIn = await mkLoc(FIX.WH_QR.id, 'NOIN', { slot_no_in: true })
-    const locCap  = await mkLoc(FIX.WH_QR.id, 'CAP1', { max_pallets: 1 })
-    const SRC3 = v1('905'); await mkPallet(SRC3, 100, FIX.WH_QR.id, locA)
-    const OCC  = v1('906'); await mkPallet(OCC, 10, FIX.WH_QR.id, locCap)
+    const locNoIn = await mkLoc(WHQ, 'NOIN', { slot_no_in: true })
+    const locCap  = await mkLoc(WHQ, 'CAP1', { max_pallets: 1 })
+    const SRC3 = v1('905'); await mkPallet(SRC3, 100, WHQ, locA)
+    const OCC  = v1('906'); await mkPallet(OCC, 10, WHQ, locCap)
     try {
       await setPut(['NO_IN']); await waitCfg()
-      const a = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 10 }], warehouse_id: FIX.WH_QR.id, location_id: locNoIn })
+      const a = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 10 }], warehouse_id: WHQ, location_id: locNoIn })
       check('[12a] Kho BẮT BUỘC NO_IN: tách sang ô cấm → 422 PUTAWAY_VIOLATION, không sinh con, nguồn nguyên 100',
         a.s === 422 && a.j?.error?.code === 'PUTAWAY_VIOLATION'
         && Number((await entryOf(SRC3))?.cartons_remaining) === 100,
         `http=${a.s} code=${a.j?.error?.code}`)
-      const b = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 10 }], warehouse_id: FIX.WH_QR.id })
+      const b = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 10 }], warehouse_id: WHQ })
       for (const c of b.j?.data?.children ?? []) allCodes.push(c.pallet_code)
       check('[12b] Giữ chỗ pallet nguồn (không truyền vị trí) → tách vẫn chạy, không ngõ cụt', b.s === 200, `http=${b.s}`)
-      const TGN = v1('907'); await mkPallet(TGN, 10, FIX.WH_QR.id, locNoIn)
-      const KID = v1('908'); await mkPallet(KID, 10, FIX.WH_QR.id, locA)
-      const cM = await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: TGN, child_pallet_codes: [KID], warehouse_id: FIX.WH_QR.id })
+      const TGN = v1('907'); await mkPallet(TGN, 10, WHQ, locNoIn)
+      const KID = v1('908'); await mkPallet(KID, 10, WHQ, locA)
+      const cM = await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: TGN, child_pallet_codes: [KID], warehouse_id: WHQ })
       check('[12c] Dồn về pallet đích đang đứng trong ô cấm → 422, pallet con đứng yên',
         cM.s === 422 && cM.j?.error?.code === 'PUTAWAY_VIOLATION' && (await entryOf(KID))?.location_id === locA,
         `http=${cM.s} code=${cM.j?.error?.code}`)
       await setPut([]); await waitCfg()
-      const dM = await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: TGN, child_pallet_codes: [KID], warehouse_id: FIX.WH_QR.id })
+      const dM = await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: TGN, child_pallet_codes: [KID], warehouse_id: WHQ })
       check('[12d] Mức CẢNH BÁO: dồn chạy + response nói ra vi phạm (putaway_warning, không im lặng)',
         dM.s === 200 && /không đưa hàng vào/i.test(dM.j?.data?.putaway_warning ?? ''),
         `http=${dM.s} warn=${dM.j?.data?.putaway_warning ?? 'KHÔNG'}`)
       // Kho QTY không có vị trí sẵn (pool không vị trí) → tự tạo 1 ô ở kho khác để thử guard cùng-kho
       const locOtherWh = await mkLoc(FIX.WH_QTY.id, 'XWH')
-      const eS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: locOtherWh })
+      const eS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: WHQ, location_id: locOtherWh })
       check('[12e] Tách sang vị trí của KHO KHÁC → 400 (trước fix: pallet con "dịch chuyển" sang kho khác)',
         eS.s === 400, `http=${eS.s}`)
-      const fS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: locCap })
+      const fS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: WHQ, location_id: locCap })
       check('[12f] Ô đã kín chỗ → tách vào đó 400 LOCATION_FULL (trước fix: vượt sức chứa âm thầm)',
         fS.s === 400 && fS.j?.error?.code === 'LOCATION_FULL', `http=${fS.s} code=${fS.j?.error?.code}`)
     } finally {
-      await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { putaway_enforced: putBackup })
+      await api(`/masterdata/warehouses/${WHQ}`, 'PUT', { putaway_enforced: putBackup })
     }
   }
 } catch (e) {

@@ -26,7 +26,11 @@ await login()
 const nowIso = () => new Date().toISOString()
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const created = { locs: [], orders: [] }
-let whId = null, whBackup = null
+let whId = null
+// KHO RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ MƯỢN kho thật của một pallet bất kỳ (thường là Ba Vì), bật các luật cất "bắt buộc"
+// suốt lượt đo rồi trả bản sao lưu — trong lúc chạy người dùng thật bị chặn cất oan, lượt bị ngắt là kho thật kẹt "bắt buộc" (bẫy
+// đã dính 15/08, xem chú thích dưới). Mã kho bắt đầu `QA` (bất biến 00 [11b] bỏ qua).
+const WH_CODE = 'QAPUTWH'
 
 // Dọn theo TAG chứ không chỉ theo id đã thu được: lần chạy hỏng giữa chừng (vd đọc sai shape
 // response nên không lấy được id) sẽ để lại phiếu MỒ CÔI — đã dính đúng lần đầu chạy gói này,
@@ -43,6 +47,17 @@ async function sweepByTag() {
   }
   for (const o of await restAll('Location', `select=id&location_code=like.${TAG}-*`))
     await restWrite('Location', 'DELETE', `id=eq.${o.id}`)
+  // Kho QA (kể cả của lượt trước bị ngắt) + mọi thứ còn trỏ vào nó
+  for (const w of await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)) {
+    for (const o of await restAll('ProductionImport', `select=id&warehouse_id=eq.${w.id}`)) {
+      await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${o.id}`).catch(() => {})
+      await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+    }
+    await restWrite('StocktakeLog', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
+  }
 }
 async function cleanup() {
   for (const id of created.orders) {
@@ -51,10 +66,6 @@ async function cleanup() {
   }
   for (const id of created.locs) await restWrite('Location', 'DELETE', `id=eq.${id}`)
   await sweepByTag()
-  // Gói QA KHÔNG được để lại kho đang bật "bắt buộc" — cả app sẽ chặn oan.
-  // Trả qua API để backend xoá luôn cache cấu hình (ghi thẳng DB thì instance đang chạy vẫn giữ
-  // bản "bắt buộc" tới 30s sau khi gói kết thúc).
-  if (whId && whBackup) await api(`/masterdata/warehouses/${whId}`, 'PUT', whBackup)
 }
 // Tàn dư lần chạy trước → dọn TRƯỚC khi dựng fixture (gói phải TỰ HỒI PHỤC)
 await sweepByTag()
@@ -63,25 +74,20 @@ const PUT_COLS = 'putaway_priority,putaway_enforced,putaway_date_mix,' +
   'putaway_block_pick_face,putaway_block_qa_hold,putaway_block_full,putaway_single_ncc'
 
 try {
-  // ── Fixture: kho QR thật + 1 mã có tồn + 2 vị trí QA (1 sạch, 1 gắn cờ cấm) ────────────
-  const anyEntry = (await restAll('InventoryEntry',
-    'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0&status=eq.IN_STOCK'))[0]
-  if (!anyEntry) { check('có dữ liệu tồn để dựng fixture', false, 'kho rỗng'); finish('PUTAWAY'); process.exit() }
-  whId = anyEntry.warehouse_id
-  const [mat] = await restAll('Material', `select=id,material_code,category&id=eq.${anyEntry.material_id}`)
-  const [wh]  = await restAll('Warehouse', `select=id,nmsx_code,${PUT_COLS}&id=eq.${whId}`)
-  // Trả về qua API nên KHÔNG kèm updated_at (backend tự đặt); giữ đúng 8 cờ như trước khi chạy.
-  whBackup = Object.fromEntries(PUT_COLS.split(',').map(k => [k, wh?.[k] ?? null]))
-  // ⚠️ Bẫy đã dính 15/08: một script thăm dò chạy hỏng giữa chừng để lại kho ở trạng thái "bắt
-  // buộc + 1 mã/ô"; gói này chụp đúng trạng thái BẨN đó làm bản gốc rồi khôi phục y nguyên, và
-  // phép kiểm dọn (so với chính bản gốc) vẫn XANH. ⇒ Nói ra ngay từ đầu để người đọc còn phân
-  // biệt "kho thật sự cấu hình vậy" với "tàn dư lần chạy trước".
-  if ((wh?.putaway_enforced ?? []).length || wh?.putaway_priority !== 'CONSOLIDATE'
-      || wh?.putaway_date_mix !== 'ANY' || wh?.putaway_block_pick_face || wh?.putaway_block_qa_hold
-      || wh?.putaway_block_full || wh?.putaway_single_ncc) {
-    console.log(`  ⚠️  kho test đang có cấu hình cất hàng KHÁC mặc định: ${JSON.stringify(whBackup)}`)
-    console.log('      (gói sẽ khôi phục đúng trạng thái này — nếu đây là tàn dư của lần chạy hỏng thì reset trước rồi chạy lại)')
-  }
+  // ── Fixture: kho QA (QR, luật cất MẶC ĐỊNH) + 1 mã mang Loại kho + 2 vị trí QA (1 sạch, 1 gắn cờ cấm) ────────────
+  // (15/08 đã dính bẫy "chụp trạng thái BẨN của kho thật làm bản gốc"; kho QA dựng mới mỗi lượt nên không còn bản gốc nào để chụp sai)
+  const [mat] = await restAll('Material',
+    'select=id,material_code,category&category=not.is.null&is_active=is.true&is_non_stock=not.is.true&no_qr_tracking=not.is.true&cartons_per_pallet=gt.0&order=material_code&limit=1')
+  if (!mat) { check('có mã hàng mang Loại kho để dựng fixture', false, 'danh mục rỗng'); finish('PUTAWAY'); process.exit() }
+  const [wh] = await restWrite('Warehouse', 'POST', null, {
+    id: randomUUID(), code: WH_CODE, name: 'QA quy tắc cất (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR',
+    require_gate_on_start: false, require_weigh_on_start: false, is_active: true, work_mode: 'MANUAL', updated_at: nowIso(),
+  })
+  whId = wh.id
+  check('[0] Kho QA dựng mới chạy luật cất MẶC ĐỊNH (không bắt buộc gì, gom hàng, cho trộn date)',
+    !(wh.putaway_enforced ?? []).length && wh.putaway_priority === 'CONSOLIDATE' && wh.putaway_date_mix === 'ANY'
+      && !wh.putaway_block_pick_face && !wh.putaway_block_qa_hold && !wh.putaway_block_full && !wh.putaway_single_ncc,
+    JSON.stringify(Object.fromEntries(PUT_COLS.split(',').map(k => [k, wh[k] ?? null]))))
 
   // Đổi cấu hình QUA API như người dùng thật, KHÔNG ghi thẳng DB: backend cache cấu hình kho 30s
   // cho đường quét (hot-path) và chỉ xoá cache khi lưu qua form. Ghi thẳng PostgREST thì luật vẫn
@@ -605,9 +611,9 @@ try {
   await cleanup()
   const left = await restAll('Location', `select=id&location_code=like.${TAG}-*`)
   const leftPo = await restAll('ProductionImport', `select=id&notes=like.*${TAG}*`)
-  const [whNow] = await restAll('Warehouse', `select=putaway_enforced&id=eq.${whId}`)
-  check('[dọn] không còn fixture sót (kể cả phiếu mồ côi) + kho trả về nguyên trạng',
-    left.length === 0 && leftPo.length === 0 && JSON.stringify((whNow?.putaway_enforced ?? []).slice().sort()) === JSON.stringify((whBackup?.putaway_enforced ?? []).slice().sort()),
-    `vị trí ${left.length} · phiếu ${leftPo.length}`)
+  const leftWh = await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)
+  check('[dọn] không còn fixture sót (kể cả phiếu mồ côi) + kho QA đã xoá',
+    left.length === 0 && leftPo.length === 0 && leftWh.length === 0,
+    `vị trí ${left.length} · phiếu ${leftPo.length} · kho QA ${leftWh.length}`)
   finish('PUTAWAY')
 }

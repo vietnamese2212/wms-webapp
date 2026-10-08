@@ -3167,7 +3167,7 @@ export async function startGDO(req: Request, res: Response) {
     // (feed Cá nhân + push theo cài đặt "Được giao việc") là đường duy nhất tới người đang ngồi trên xe.
     // Không báo cho chính người bấm Bắt đầu; url mang id chuyến để mỗi chuyến là một thông báo riêng.
     await notifyForkliftDrivers(startDrivers.ids, req.user?.sub ?? null, req.user?.name ?? null,
-      result as { group_code?: string | null; license_plate?: string | null } | null, req.params.id)
+      result as { group_code?: string | null; license_plate?: string | null; warehouse_id?: string | null } | null, req.params.id)
     if (plan && (plan.warning || plan.unset_items > 0)) {
       return ok(res, {
         ...(result as Record<string, unknown>),
@@ -3183,7 +3183,7 @@ export async function startGDO(req: Request, res: Response) {
 /** Chuông cho lái xe nâng vừa được gắn vào chuyến (Bắt đầu / Sửa thông tin xe). Không bao giờ throw. */
 async function notifyForkliftDrivers(
   ids: string[], selfId: string | null, actor: string | null,
-  gdo: { group_code?: string | null; license_plate?: string | null } | null, gdoId: string,
+  gdo: { group_code?: string | null; license_plate?: string | null; warehouse_id?: string | null } | null, gdoId: string,
 ) {
   const targets = ids.filter(id => id && id !== selfId)
   if (!targets.length) return
@@ -3191,7 +3191,8 @@ async function notifyForkliftDrivers(
   await notifyEmployees(targets, 'ASSIGN', 'assign', {
     title: `Chuyến ${code}${gdo?.license_plate ? ` · ${gdo.license_plate}` : ''}`,
     body: `${actor ?? 'Thủ kho'} giao bạn làm xe nâng chuyển cho chuyến này — mở Việc cần làm để xem thứ tự lấy hàng`,
-    url: `/wms/directed?trip=${gdoId}`,
+    // mang KHO (08/10): người có nhiều kho mở chuông khi đang chọn kho khác thì bảng không có chuyến này
+    url: `/wms/directed?tab=MOVE&trip=${gdoId}${gdo?.warehouse_id ? `&wh=${gdo.warehouse_id}` : ''}`,
     tag: `directed-${gdoId}`,
   })
 }
@@ -3351,7 +3352,7 @@ export async function updateTransport(req: Request, res: Response) {
     {
       const oldIds = new Set(utGdoRow.forklift_driver_ids ?? [])
       await notifyForkliftDrivers(utDrivers.ids.filter(id => !oldIds.has(id)), req.user?.sub ?? null, req.user?.name ?? null,
-        { group_code: (gdo as { group_code?: string | null }).group_code ?? null, license_plate: utNewPlate ?? null }, req.params.id)
+        { group_code: (gdo as { group_code?: string | null }).group_code ?? null, license_plate: utNewPlate ?? null, warehouse_id: utGdoRow.warehouse_id }, req.params.id)
     }
     if (utPlateChanged) {
       // Biển đổi → phiếu cân auto của biển CŨ không còn thuộc chuyến này (match tay giữ nguyên)

@@ -1263,6 +1263,24 @@ try {
           ib.s === 200 && Number(ib.j?.data?.auto_replanned) >= 1 && q.length === 0
             && oldF?.status === 'CANCELLED' && oldF?.skip_reason === 'STOCK_CHANGED' && after.length === 1 && after[0].entry_id === pQ5.id,
           `http=${ib.s} auto=${ib.j?.data?.auto_replanned} hàngđợi=${q.length} cũ=${oldF?.status}/${oldF?.skip_reason} mới=${after[0]?.pallet_code}`)
+        // [24h] Link về Việc cần làm phải mang KHO (08/10): người quản nhiều kho xem Hộp việc "mọi kho" bấm dòng
+        // của một kho thì bảng phải mở đúng kho đó — bản cũ chỉ có ?tab=, sang bảng không kho nào
+        const dLinks = ['mine', 'shared', 'waiting'].flatMap(z => ib.j?.data?.[z] ?? [])
+          .filter(x => x.warehouse_id === whId && String(x.link ?? '').startsWith('/wms/directed')).map(x => x.link)
+        check('[24h] Mọi dòng Hộp việc trỏ về Việc cần làm đều mang &wh=<kho của dòng>',
+          dLinks.length >= 1 && dLinks.every(l => l.includes(`wh=${whId}`)), dLinks.slice(0, 3).join(' · ') || 'không có dòng nào')
+      }
+      // [24g] TỰ RA LỆNH FILL cũng chạy khi chỉ mở Hộp việc (08/10, cùng lớp C20): dòng (kho, hôm nay) chờ đối chiếu
+      // đã nằm yên > 20 s ⇒ Hộp việc phải THUÊ kho và lấy dòng đó ra (kho QA tắt tự động nên không đẻ lệnh nào —
+      // phép kiểm chỉ đo đường nối; luật đối chiếu đã có gói 18 [22*] gác)
+      {
+        await restWrite('fill_reconcile_queue', 'POST', null,
+          { warehouse_id: whId, target_date: vnDate(), queued_at: new Date(Date.now() - 60_000).toISOString() }).catch(() => {})
+        const before = (await restAll('fill_reconcile_queue', `select=target_date&warehouse_id=eq.${whId}`)).length
+        const ibF = await api(`/wms/directed/inbox?warehouse_id=${whId}`)
+        const left = (await restAll('fill_reconcile_queue', `select=target_date&warehouse_id=eq.${whId}`)).length
+        check('[24g] Chỉ mở HỘP VIỆC ⇒ hàng đợi đối chiếu fill của kho được lấy ra (không còn chờ ai mở bảng / Fill hàng)',
+          ibF.s === 200 && before >= 1 && left === 0, `http=${ibF.s} hàngđợi ${before}→${left}`)
       }
       // Việc ĐÃ HẠ không bị đụng dù hàng còn tốt hơn nữa về
       if (after.length === 1) {

@@ -317,6 +317,45 @@ function actionsFor(r: DirectedRow, tab: BoardTab, me: string | null, canConfirm
   return { actions, heldByOther }
 }
 
+/**
+ * MÁY VỪA ĐỔI VIỆC DƯỚI TAY NGƯỜI — phải NÓI RA (14/09 sắp lại theo tồn · 15/09 tự ra lệnh fill), nhưng NÓI RA ≠
+ * CHIẾM CHỖ (user 16/09: "đưa thông tin vào tooltip info đi, thấy mấy cảnh báo mất hết cả màn hình") ⇒ một hàng
+ * chip, chi tiết trong ⓘ. Dùng chung cho bảng và Hộp việc (08/10: Hộp việc cũng xả hai hàng đợi của máy).
+ */
+function MachineChips({ replanned, autoFill, className = '' }: {
+  replanned?: number; autoFill?: { created?: number; recalled?: number; order_code?: string | null } | null; className?: string
+}) {
+  const created = autoFill?.created ?? 0, recalled = autoFill?.recalled ?? 0
+  if (!(replanned ?? 0) && !created && !recalled) return null
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 text-[11px] ${className}`}>
+      {(replanned ?? 0) > 0 && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+          Kế hoạch <b>{replanned}</b> chuyến vừa sắp lại
+          <InfoTip className="text-amber-500 hover:text-amber-700"
+            tip={<>Tồn kho vừa đổi nên máy sắp lại các việc <b>chưa ai đụng</b> theo tồn hiện tại. Việc đã hạ /
+              đã đưa ra giữ nguyên, không ai mất phần đang làm dở.</>} />
+        </span>
+      )}
+      {(created || recalled) ? (
+        <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-900">
+          Lệnh fill: {created > 0 && <><b>+{created}</b> dòng</>}
+          {created > 0 && recalled > 0 ? ' · ' : ''}
+          {recalled > 0 && <>thu hồi <b>{recalled}</b></>}
+          <InfoTip className="text-sky-400 hover:text-sky-700" tip={
+            <>
+              <div>Hệ thống tự đối chiếu nhu cầu nhặt lẻ của ngày:
+                {created > 0 && <> vừa ra <b>{created} dòng</b> hạ hàng xuống kho lẻ{autoFill?.order_code ? <> ({autoFill.order_code})</> : null} — chưa giao ai.</>}
+                {recalled > 0 && <> Thu hồi <b>{recalled} dòng</b> không còn cần.</>}
+              </div>
+              <Link to="/wms/fill" onClick={anchorDirected} className="mt-1 inline-block underline font-medium text-sky-700">Mở Fill hàng ›</Link>
+            </>} />
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 // ─── HỘP VIỆC ─────────────────────────────────────────────────────────────────────────────────
 const ZONE_META = {
   MINE:    { title: 'Của tôi',                 hint: 'giao đích danh cho bạn — làm trước',            tone: 'border-sky-300 bg-sky-50/60',     dot: 'bg-sky-500' },
@@ -425,15 +464,8 @@ function InboxPanel({ inbox, loading, showWh, sup }: { inbox: WorkInbox | undefi
   if (loading && !inbox) return <div className="py-6 text-center text-[11px] text-slate-400">Đang tải hộp việc…</div>
   return (
     <div className="p-2 sm:p-3 space-y-3">
-      {/* Hộp việc cũng xả hàng đợi sắp-lại-theo-tồn (08/10) — lượt nào sắp lại thì nói ra như chip của bảng */}
-      {(inbox?.auto_replanned ?? 0) > 0 && (
-        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">
-          Kế hoạch <b>{inbox?.auto_replanned}</b> chuyến vừa sắp lại
-          <InfoTip className="text-amber-500 hover:text-amber-700"
-            tip={<>Tồn kho vừa đổi nên máy sắp lại các việc <b>chưa ai đụng</b> theo tồn hiện tại — số việc dưới đây đã tính
-              theo kế hoạch mới. Việc đã hạ / đã đưa ra giữ nguyên.</>} />
-        </span>
-      )}
+      {/* Hộp việc cũng xả hai hàng đợi của máy (08/10) — lượt nào máy đổi việc thì nói ra như chip của bảng */}
+      <MachineChips replanned={inbox?.auto_replanned} autoFill={inbox?.auto_fill} />
       <InboxZone zone="MINE"    rows={inbox?.mine ?? []}    showWh={showWh} />
       <InboxZone zone="SHARED"  rows={inbox?.shared ?? []}  showWh={showWh} />
       <InboxZone zone="WAITING" rows={inbox?.waiting ?? []} showWh={showWh} />
@@ -486,7 +518,10 @@ export default function DirectedWork() {
   useEffect(() => {
     if (appliedNav.current === navKey) return
     appliedNav.current = navKey
-    const t = sp.get('tab'), trip = sp.get('trip')
+    const t = sp.get('tab'), trip = sp.get('trip'), wh = sp.get('wh')
+    // ?wh= (08/10): dòng Hộp việc "mọi kho" / chuông giao xe nâng mang KHO của việc — không thì người có nhiều
+    // kho sang bảng đang chọn kho khác (hoặc chưa chọn kho) và không thấy việc mình vừa bấm vào
+    if (wh) setF({ warehouseId: wh })
     if (trip) setF({ gdoId: trip })
     if (t && ['INBOX', 'LOWER', 'MOVE', 'SCAN'].includes(t)) setF({ tab: t as Tab })
   }, [navKey, sp, setF])
@@ -929,33 +964,9 @@ export default function DirectedWork() {
             nói ra. Nhưng NÓI RA ≠ CHIẾM CHỖ: hai dải chữ riêng ăn ~48 px của màn 360 và đẩy bảng
             xuống (user 16/09: "đưa thông tin vào tooltip info đi, thấy mấy cảnh báo mất hết cả màn
             hình"). Nay một hàng chip, chi tiết + đường đi tiếp nằm trong ⓘ. */}
-        {((data?.auto_replanned ?? 0) > 0 || data?.auto_fill?.created || data?.auto_fill?.recalled) ? (
-          <div className="shrink-0 border-b bg-white px-3 py-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-            {(data?.auto_replanned ?? 0) > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
-                Kế hoạch <b>{data?.auto_replanned}</b> chuyến vừa sắp lại
-                <InfoTip className="text-amber-500 hover:text-amber-700"
-                  tip={<>Tồn kho vừa đổi nên máy sắp lại các việc <b>chưa ai đụng</b> theo tồn hiện tại. Việc đã hạ /
-                    đã đưa ra giữ nguyên, không ai mất phần đang làm dở.</>} />
-              </span>
-            )}
-            {(data?.auto_fill?.created || data?.auto_fill?.recalled) ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-900">
-                Lệnh fill: {(data.auto_fill.created ?? 0) > 0 && <><b>+{data.auto_fill.created}</b> dòng</>}
-                {(data.auto_fill.created ?? 0) > 0 && (data.auto_fill.recalled ?? 0) > 0 ? ' · ' : ''}
-                {(data.auto_fill.recalled ?? 0) > 0 && <>thu hồi <b>{data.auto_fill.recalled}</b></>}
-                <InfoTip className="text-sky-400 hover:text-sky-700" tip={
-                  <>
-                    <div>Hệ thống tự đối chiếu nhu cầu nhặt lẻ của ngày:
-                      {(data.auto_fill.created ?? 0) > 0 && <> vừa ra <b>{data.auto_fill.created} dòng</b> hạ hàng xuống kho lẻ{data.auto_fill.order_code ? <> ({data.auto_fill.order_code})</> : null} — chưa giao ai.</>}
-                      {(data.auto_fill.recalled ?? 0) > 0 && <> Thu hồi <b>{data.auto_fill.recalled} dòng</b> không còn cần.</>}
-                    </div>
-                    <Link to="/wms/fill" onClick={anchorDirected} className="mt-1 inline-block underline font-medium text-sky-700">Mở Fill hàng ›</Link>
-                  </>} />
-              </span>
-            ) : null}
-          </div>
-        ) : null}
+        <MachineChips replanned={data?.auto_replanned} autoFill={data?.auto_fill}
+          className="shrink-0 border-b bg-white px-3 py-1" />
+
         {focusTrip && (
           <div className="shrink-0 border-b bg-sky-50/70 px-3 py-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <span className="font-mono font-semibold">{tripName(focusTrip)}</span>

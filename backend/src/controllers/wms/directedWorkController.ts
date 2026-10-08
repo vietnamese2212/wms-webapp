@@ -298,10 +298,21 @@ export async function getInbox(req: Request, res: Response) {
     // tới khi ai đó mở bảng. RPC báo kho nào có mục chờ ⇒ hàng đợi rỗng không tốn thêm lượt gọi nào.
     // Tối đa MAX_INBOX_DRAIN kho mỗi lượt: người quản lý nhiều kho không phải chờ sắp lại cả loạt; kho
     // còn lại xả ở lượt poll sau (hoặc khi bảng của kho đó tải).
-    const pendingWhs = ((data as { replan_whs?: string[] } | null)?.replan_whs ?? []).slice(0, MAX_INBOX_DRAIN)
+    const pend = (data ?? {}) as { replan_whs?: string[]; fill_whs?: string[] }
     let replanned = 0
-    for (const w of pendingWhs) replanned += (await drainReplanQueue(w)).replanned
-    if (replanned > 0) {
+    for (const w of (pend.replan_whs ?? []).slice(0, MAX_INBOX_DRAIN)) replanned += (await drainReplanQueue(w)).replanned
+    // TỰ RA LỆNH FILL (08/10) — cùng lớp: bộ đối chiếu chỉ chạy khi mở bảng / Nhặt lẻ / Fill hàng nên người chỉ
+    // mở Hộp việc không thấy lệnh fill mới. `fill_whs` = kho có (kho, ngày) chờ đối chiếu hoặc tới hạn quét an
+    // toàn — cùng `drainFillQueue` (thuê kho ⇒ hai máy cùng poll không đối chiếu hai lần).
+    const autoFill = { created: 0, recalled: 0, order_code: null as string | null }
+    let fillChanged = false
+    for (const w of (pend.fill_whs ?? []).slice(0, MAX_INBOX_DRAIN)) {
+      const r = await autoFillSafe(w)
+      autoFill.created += r.created; autoFill.recalled += r.recalled
+      autoFill.order_code = autoFill.order_code ?? r.order_code
+      if (r.created || r.added || r.reduced || r.closed) fillChanged = true
+    }
+    if (replanned > 0 || fillChanged) {
       ({ data, error } = await readInbox())
       if (error) return fail(res, error)
     }
@@ -315,8 +326,12 @@ export async function getInbox(req: Request, res: Response) {
       }
     }
     const sum = (a: InboxRow[]) => a.reduce((s, r) => s + Number(r.n ?? 0), 0)
-    // auto_replanned: máy vừa đổi việc dưới tay người thì phải nói ra — cùng chip với bảng
-    return ok(res, { ...out, counts: { mine: sum(out.mine), shared: sum(out.shared), waiting: sum(out.waiting) }, auto_replanned: replanned })
+    // auto_replanned / auto_fill: máy vừa đổi việc dưới tay người thì phải nói ra — cùng chip với bảng
+    return ok(res, {
+      ...out, counts: { mine: sum(out.mine), shared: sum(out.shared), waiting: sum(out.waiting) },
+      auto_replanned: replanned,
+      ...(autoFill.created || autoFill.recalled ? { auto_fill: autoFill } : {}),
+    })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

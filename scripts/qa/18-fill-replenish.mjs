@@ -96,6 +96,8 @@ async function sweepWarehouse() {
     await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('Location', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('fill_reconcile_queue', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
+    // dòng trạng thái thuê kho (cột text, không FK) — bỏ sót thì mỗi lượt để lại một dòng mồ côi (đo 08/10: 29 dòng)
+    await restWrite('fill_reconcile_state', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
     await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`).catch(() => {})
   }
 }
@@ -752,6 +754,19 @@ try {
       && lines22.every(l => l.assignee_id === null)
       && ords22.length === 1 && ords22[0].auto_created === true,
     `thiếu=${shortNow} lệnh=${qty22} dòng=${lines22.map(l => String(l.required_date).slice(0, 10) + ':' + l.qty_base).join('|')} gán=${lines22.filter(l => l.assignee_id).length} auto=${ords22[0]?.auto_created}`)
+
+  // 22c2 (08/10). HỘP VIỆC nói CÙNG số với bảng Cần hạ: dòng "Lệnh fill chưa ai nhận" đếm PALLET CÒN PHẢI HẠ
+  // (badge bảng cộng đúng phép này) — bản cũ đếm số DÒNG — và trỏ về bảng Cần hạ của ĐÚNG kho (fill là một loại
+  // việc hạ trên bảng xe nâng từ 16/09), không sang trang Fill hàng. Oracle đọc SAU lời gọi (Hộp việc có thể đối chiếu).
+  {
+    const ib = await api(`/wms/directed/inbox?warehouse_id=${whId}`)
+    const row = (ib.j?.data?.shared ?? []).find(x => x.source === 'FILL_OPEN')
+    const open = await restAll('FillTask', `select=required_pallets,scanned_pallets&warehouse_id=eq.${whId}&status=eq.PENDING&assignee_id=is.null`)
+    const pallets = open.reduce((s, t) => s + Math.max(0, Number(t.required_pallets ?? 0) - Number(t.scanned_pallets ?? 0)), 0)
+    check('22c2. Hộp việc: "Lệnh fill chưa ai nhận" đếm PALLET còn phải hạ (= badge bảng) và trỏ về bảng Cần hạ của kho',
+      ib.s === 200 && !!row && Number(row.n) === pallets && pallets > 0 && row.link === `/wms/directed?tab=LOWER&wh=${whId}`,
+      `http=${ib.s} n=${row?.n} oracle=${pallets} pallet / ${open.length} dòng · link=${row?.link}`)
+  }
 
   // 22d. Chạy lại ⇒ KHÔNG đẻ lệnh thứ hai (phần đang treo đã trừ vào "thiếu"; unique gác nốt)
   const again22 = await runAuto()

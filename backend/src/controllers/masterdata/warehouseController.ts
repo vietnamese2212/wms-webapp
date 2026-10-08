@@ -50,7 +50,7 @@ function applyDispatchBody(body: Record<string, unknown>, target: Record<string,
   // luật 11 (27/09): số dòng xe tối đa máy được ghép trên MỘT thẻ (một Số xe) — 1 = một xe như trước
   if (body.dispatch_max_vehicles_per_trip !== undefined) { const n = Math.trunc(Number(body.dispatch_max_vehicles_per_trip)); target.dispatch_max_vehicles_per_trip = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1 }
   // (08/10) `dispatch_detour_pct` — "đường vòng tối đa %" chuyển sang DÒNG XE (Cài đặt TMS: loại xe cha → dòng xe con → kho), kho không
-  // nhận ô này nữa (user: "config TMS ở kho là không phù hợp")
+  // nhận ô này nữa (user: "config TMS ở kho là không phù hợp"); cột đã DROP (20261008g)
 }
 
 function extractCount(arr: unknown): number {

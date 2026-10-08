@@ -993,6 +993,7 @@ export interface WorkInbox {
   mine: WorkInboxRow[]; shared: WorkInboxRow[]; waiting: WorkInboxRow[]
   counts: { mine: number; shared: number; waiting: number }
   auto_replanned?: number     // số chuyến máy vừa sắp lại theo tồn mới ngay trong lượt tải này (08/10)
+  auto_fill?: { created: number; recalled: number; order_code: string | null }   // máy vừa tự ra / thu hồi lệnh fill (08/10)
 }
 export interface DirectedSupervision {
   live: { gdo_id: string; group_code: string | null; license_plate: string | null; dock_name: string | null; started_at: string | null

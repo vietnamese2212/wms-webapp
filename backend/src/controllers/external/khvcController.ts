@@ -487,6 +487,9 @@ export async function updateKhvc(req: Request, res: Response) {
     const changingDate  = 'export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? '')
     const changingCat   = 'booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? '')
     const changingModel = 'vehicle_model_id' in fields && String(fields.vehicle_model_id ?? '') !== String(cur.vehicle_model_id ?? '')
+    // 08/10 — số điểm giao (điều vận ghi lúc Xác nhận) là thứ tự trên XE CŨ / của DO CŨ: đổi xe hay đổi DO thì bỏ, không mang "Điểm 2"
+    // sang xe đích đang có Điểm 2 của nó (không đo được thì để trống, không đoán)
+    const staleStop = movingVehicle || ('do_no' in fields && String(fields.do_no ?? '') !== String(cur.do_no ?? ''))
     if (changingModel) {
       const vm = await resolveVehicleModel(fields.vehicle_model_id)
       if ('error' in vm) return fail(res, vm.error, vm.status)
@@ -575,7 +578,7 @@ export async function updateKhvc(req: Request, res: Response) {
       vehicleModelSynced = Math.max(0, (synced ?? []).length - 1)
     }
     const { data, error } = await supabase.from('khvc_lines')
-      .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
+      .update({ ...fields, ...(staleStop ? { stop_seq: null } : {}), uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)

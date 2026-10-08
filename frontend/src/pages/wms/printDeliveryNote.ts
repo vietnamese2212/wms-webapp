@@ -17,7 +17,8 @@ const STATUS_LABEL: Record<string, string> = {
 
 /** Trả về false nếu trình duyệt chặn popup (caller hiện lỗi). */
 export function printDeliveryNote(gdo: GDO, printedBy?: string | null): boolean {
-  const dos = gdo.delivery_orders ?? []
+  // 08/10 — chuyến có thứ tự giao (điều vận ghi lúc Xác nhận): DO xếp theo điểm giao, đầu khối in "Điểm n" — như màn chi tiết chuyến
+  const dos = [...(gdo.delivery_orders ?? [])].sort((a, b) => (a.stop_seq ?? Infinity) - (b.stop_seq ?? Infinity))
   const multiDO = dos.length > 1
   const hasLoose = dos.some(d => d.items.some(i => (i.loose_picking ?? 0) > 0))
   const hasNote  = dos.some(d => d.items.some(i => (i.header_text ?? '').trim()))
@@ -29,7 +30,7 @@ export function printDeliveryNote(gdo: GDO, printedBy?: string | null): boolean 
 
   for (const d of dos) {
     if (multiDO) {
-      bodyRows.push(`<tr class="grp"><td colspan="${colSpanLeft + 2 + (hasLoose ? 1 : 0) + (hasNote ? 1 : 0)}">DO ${esc(d.delivery_code)}${d.distributor_name ? ` — ${esc(d.distributor_name)}` : ''}</td></tr>`)
+      bodyRows.push(`<tr class="grp"><td colspan="${colSpanLeft + 2 + (hasLoose ? 1 : 0) + (hasNote ? 1 : 0)}">${d.stop_seq != null ? `Điểm ${d.stop_seq} · ` : ''}DO ${esc(d.delivery_code)}${d.distributor_name ? ` — ${esc(d.distributor_name)}` : ''}</td></tr>`)
     }
     for (const i of d.items) {
       stt++

@@ -1130,7 +1130,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
             {/* 02/10 — điều vận trên bản đồ: gộp xe Non tải KHÁC TỈNH theo đường vòng; trống = tắt (chỉ gộp cùng tỉnh như trước).
                 08/10 — cũng là công tắc của XE TUYẾN liên tỉnh (luật 5b): lô dưới tối thiểu được ghép tuyến / ké xe còn chỗ khác tỉnh */}
             <SettingRow label="Xe tuyến liên tỉnh — đường vòng tối đa (%)"
-              desc="Lô dưới tối thiểu được ghép với lô khác / ké xe còn chỗ KHÁC TỈNH (cùng kênh, cùng Loại kho) khi quãng kho → các điểm giao (gần trước) không dài hơn đi thẳng tới điểm xa nhất quá số % này. Trống = tắt, chỉ ghép trong tỉnh. Cần kho và khách có ghim trên bản đồ."
+              desc="Lô dưới tối thiểu được ghép với lô khác / ké xe còn chỗ, xe Non tải được gộp với nhau — KHÁC TỈNH (cùng kênh, cùng Loại kho) khi quãng kho → các điểm giao (gần trước) không dài hơn đi thẳng tới điểm xa nhất quá số % này. Trống = tắt, chỉ ghép trong tỉnh. Cần kho và khách có ghim trên bản đồ."
               tip={<>Ví dụ 15 %: Phố Nối nằm trên đường đi Hải Phòng nên ghép được; Thái Bình lệch đường thì không. Số khách / điểm giao của xe tuyến theo đúng cấu hình đang khai (Khách hàng · Kênh: số khách tối đa cùng xe; Mã dòng xe: điểm giao tối đa). Cước = phường giá cao nhất của xe + phụ phí rớt điểm. Thứ tự giao in lên Kế hoạch xuất và chuyến Xuất kho. Km lấy từ sổ đã đo (Goong, xe tải); cặp chưa đo máy ước lượng đường chim bay × 1,3 — tab Bản đồ có nút Đo km để thay ước lượng bằng số thật.</>}
               control={<Input id="wh-disp-detour" type="number" min={0} max={100} step={1} className="h-7 w-24 text-xs text-right"
                 value={dispDetour} onChange={e => setDispDetour(e.target.value)} placeholder="Tắt" />} />

@@ -305,6 +305,17 @@ try {
   check('3e. Thứ tự giao: Kế hoạch xuất OD1 = điểm 1, OD2 = điểm 2 · chuyến Xuất kho: đơn NPP 1 = điểm 1, NPP 2 = điểm 2',
     seqOf[OD[0]] === 1 && seqOf[OD[1]] === 2 && delSeq['QA61 NPP 1'] === 1 && delSeq['QA61 NPP 2'] === 2,
     `khvc=${JSON.stringify(seqOf)} chuyến=${JSON.stringify(delSeq)}`)
+  // Chuyển DO sang Số xe khác ở Kế hoạch xuất ⇒ số điểm của xe CŨ không đi theo (xe đích có Điểm 2 của nó) — dòng riêng, không đụng xe 1
+  {
+    const kId = crypto.randomUUID()
+    await restWrite('khvc_lines', 'POST', null, { id: kId, group_code: `${PREFIX}94`, do_no: 'QA61STOPMV', warehouse_code: QAWH.code, export_date: DAY, source: 'EXCEL', sync_status: 'ACTIVE', stop_seq: 2, updated_at: nowIso() })
+    const mvK = await api(`/external/khvc/${kId}`, 'PUT', { group_code: `${PREFIX}93` })
+    const kAfter = (await restAll('khvc_lines', `select=group_code,stop_seq&id=eq.${kId}`))[0]
+    await restWrite('khvc_lines', 'DELETE', `id=eq.${kId}`).catch(() => {})
+    check('3e2. Kế hoạch xuất: chuyển DO sang Số xe khác → bỏ số điểm giao của xe cũ (trống), không mang "Điểm 2" sang xe đích',
+      mvK.s === 200 && kAfter?.group_code === `${PREFIX}93` && kAfter?.stop_seq == null,
+      `http=${mvK.s} ${JSON.stringify(kAfter ?? mvK.j?.error ?? null)}`)
+  }
   P = await planOf(P.id); T1 = tripOfOd(P, OD[0]); T2 = tripOfOd(P, OD[2])
   check('3d. GET plan: xe 1 CONFIRMED có confirmed_at · xe 2 TENDERED có tendered_at · summary tendered 1 / confirmed 1',
     P?.status === 'TENDERED' && T1?.status === 'CONFIRMED' && !!T1?.confirmed_at && T2?.status === 'TENDERED' && !!T2?.tendered_at && P?.summary?.tendered === 1 && P?.summary?.confirmed === 1,

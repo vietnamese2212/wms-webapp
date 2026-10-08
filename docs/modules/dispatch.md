@@ -176,6 +176,8 @@ User chốt 08/10 (sau nghiên cứu + mô phỏng `docs/plans/DISPATCH_CORRIDOR
   - Bàn ghép xe (Bảng: chip "Tuyến" + vùng theo thứ tự + km; đơn mang "Đn"; Thẻ: dòng "Thứ tự").
   - Kế hoạch xuất: cột "Điểm giao".
   - Chi tiết chuyến Xuất kho: khối NPP xếp theo điểm, đầu khối "Điểm n".
+  - Phiếu xuất kho in A4 (`printDeliveryNote`): DO xếp theo điểm, đầu khối "Điểm n · DO …".
+- Sửa tay ở Kế hoạch xuất mà đổi Số xe hoặc đổi số DO (`updateKhvc`) ⇒ `stop_seq` về trống (C70 — số điểm là thứ tự trên xe CŨ). Nạp file Kế hoạch xuất không mang số điểm.
 
 **Hiệu năng** (đo bàn Ba Vì 04/10, 3.526 đơn, một lượt):
 - Luật 5 cũ với đường vòng bật mất 22,6 s, vì mỗi lần gộp lại chọn xe cho mọi bin từ đầu.

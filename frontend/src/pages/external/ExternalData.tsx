@@ -41,6 +41,7 @@ import { VcUploadDialog, type VcUploadMode } from './VcUploadDialog'
 import { SapLineDetailSheet } from './SapLineDetailSheet'
 import { FLOW_VI, DISPATCH_VI, SOURCE_VI, SO_STATUS_VI } from './sapLabels'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
+import { reconcileButtons } from '@/utils/reconcileActions'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
 type TabKey = 'dosap' | 'solines' | 'khvc' | 'reconcile'
@@ -2063,7 +2064,7 @@ const CHANGE_LABEL: Record<string, { label: string; cls: string }> = {
   LINE_REMOVED:     { label: 'SAP bỏ dòng',     cls: 'bg-red-100 text-red-700' },
   MATERIAL_CHANGED: { label: 'SAP đổi mã',      cls: 'bg-red-100 text-red-700' },
   ATTR_CHANGED:     { label: 'Đổi batch/%Date', cls: 'bg-slate-100 text-slate-600' },
-  SHIPTO_CHANGED:   { label: 'Đổi ship-to',     cls: 'bg-amber-100 text-amber-700' },
+  SHIPTO_CHANGED:   { label: 'SAP đổi khách',   cls: 'bg-red-100 text-red-700' },
 }
 const ZONE_LABEL: Record<string, string> = { Z1: 'Chưa BĐ · chưa quét', Z2: 'Đang xuất · chưa quét', Z3: 'ĐÃ QUÉT', Z4: 'Đã đóng (GI)' }
 const ACTION_BADGE: Record<string, { label: string; cls: string }> = {
@@ -2166,7 +2167,7 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
                 const ch = CHANGE_LABEL[r.change_type] ?? { label: r.change_type, cls: 'bg-slate-100 text-slate-600' }
                 const ab = ACTION_BADGE[r.action] ?? { label: r.action, cls: 'bg-slate-100 text-slate-600' }
                 const isOpen = r.status === 'OPEN'
-                const canApply = isOpen && r.action === 'NEEDS_REVIEW' && Number(r.new_ordered) >= Number(r.scanned)
+                const btn = reconcileButtons(r)   // nút nào hiện: một chỗ quyết + test (08/10, đổi mã / đổi khách chỉ "Đã xử lý tay")
                 return (
                   <TableRow key={r.id}>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white`}>{r.group_code || <span className="text-slate-300">—</span>}</TableCell>
@@ -2191,11 +2192,11 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
                     <TableCell className={`px-1 ${cellPad} whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-200`}>
                       {isOpen && canResolve ? (
                         <div className="flex items-center gap-1 flex-wrap">
-                          {canApply && (
+                          {btn.apply && (
                             <button type="button" onClick={() => setResolveTarget({ task: r, resolution: 'apply' })}
                               className="text-[9px] px-1.5 py-1 rounded border border-green-300 text-green-700 hover:bg-green-50 font-semibold !min-h-0">Áp SAP</button>
                           )}
-                          {(r.action === 'BLOCKED' || r.action === 'MATERIAL_CHANGED') && (
+                          {btn.manual && (
                             <button type="button" onClick={() => setResolveTarget({ task: r, resolution: 'manual_done' })}
                               className="text-[9px] px-1.5 py-1 rounded border border-sky-300 text-sky-700 hover:bg-sky-50 font-semibold !min-h-0">Đã xử lý tay</button>
                           )}

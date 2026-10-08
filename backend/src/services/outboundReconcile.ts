@@ -21,7 +21,8 @@ export type ReconcileSummary = { auto: number; review: number; blocked: number; 
 
 type RawLine = { od_number: string; od_item: string; material_code: string | null; qty_base: number | null
   batch: string | null; pct_date_req: number | null; note_delivery: string | null; note_invoice: string | null
-  ship_to_code: string | null; sync_status: string | null }
+  ship_to_code: string | null; ship_to_name: string | null; sync_status: string | null }
+const normShipTo = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase()
 type ItemRow = { id: string; do_id: string; material_id: string | null; material_code_raw: string | null
   cartons_ordered: number; cartons_scanned: number; loose_picking: number
   batch_required: string | null; date_required: number | null; header_text: string | null
@@ -64,8 +65,9 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
 
   // 2) Nạp GDO (trạng thái/scan_completed_at/kho) qua OutboundDelivery
   const doIds = [...new Set(items.map(i => i.do_id))]
-  const { data: dosData } = await supabase.from('OutboundDelivery').select('id, gdo_id').in('id', doIds)
-  const gdoIdByDo = new Map((dosData ?? []).map((d: { id: string; gdo_id: string }) => [d.id, d.gdo_id]))
+  const { data: dosData } = await supabase.from('OutboundDelivery').select('id, gdo_id, ship_to_code, distributor_name').in('id', doIds)
+  type DoRow = { id: string; gdo_id: string; ship_to_code: string | null; distributor_name: string | null }
+  const gdoIdByDo = new Map(((dosData ?? []) as DoRow[]).map(d => [d.id, d.gdo_id]))
   const gdoIds = [...new Set([...gdoIdByDo.values()])]
   const { data: gdosData } = await supabase.from('GroupDeliveryOrder')
     .select('id, status, scan_completed_at, group_code, warehouse_id').in('id', gdoIds)
@@ -76,7 +78,7 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
   const refOds = new Set<string>()
   for (const it of items) for (const r of (it.od_refs ?? [])) { allRefKeys.add(keyOf(r.od_number, r.od_item)); refOds.add(r.od_number) }
   const rawRows = await fetchAllByIdChunks([...refOds], chunk => supabase.from('erp_outbound_orders')
-    .select('od_number, od_item, material_code, qty_base, batch, pct_date_req, note_delivery, note_invoice, ship_to_code, sync_status')
+    .select('od_number, od_item, material_code, qty_base, batch, pct_date_req, note_delivery, note_invoice, ship_to_code, ship_to_name, sync_status')
     .in('od_number', chunk).order('od_number')) as RawLine[]
   const rawByKey = new Map<string, RawLine>()
   for (const r of (rawRows ?? [])) if (r.sync_status !== 'OBSOLETE') rawByKey.set(keyOf(r.od_number, r.od_item), r)
@@ -204,6 +206,67 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
     tasks.push({ ...baseTask, action: 'AUTO_APPLIED', status: 'RESOLVED',
       detail: `Tự áp: ${oldOrdered}→${newOrdered} (base)${anyRemoved ? ' [SAP bỏ dòng OD]' : ''} — chưa quét, an toàn.` })
     sum.auto++
+  }
+
+  // 5) SAP ĐỔI KHÁCH GIAO của DO đã lên chuyến (08/10, user chốt "cờ Cần xử lý + chặn kho"). Trước đó nạp ZSD02 THẤY ship-to đổi
+  // (nằm trong bizHash) và gọi engine này, nhưng engine chỉ so SL / mã / %Date-lô ⇒ bỏ qua im lặng: chuyến vẫn mang khách cũ —
+  // %Date tra theo khách của ĐƠN (C71), phiếu xuất, điểm giao đều sai. KHÔNG tự áp ở vùng nào: đổi khách là quyết định điều vận
+  // (xe · tuyến · điểm giao). Việc OPEN ⇒ cổng SAP ở kho (`sapIssueError`) chặn Bắt đầu / quét / Hoàn thành tới khi người quyết.
+  // Chỉ kết luận khi SAP mang ĐÚNG MỘT ship-to cho các OD của đơn (nhiều giá trị = dữ liệu lẫn, không đoán); đơn chưa có ship-to
+  // (chuyến tạo trước 08/10, không điền được) thì không có mốc để so.
+  {
+    const odsByDo = new Map<string, Set<string>>()
+    const scannedByDo = new Map<string, number>()
+    for (const it of items) {
+      const s = odsByDo.get(it.do_id) ?? new Set<string>()
+      for (const r of it.od_refs ?? []) s.add(r.od_number)
+      odsByDo.set(it.do_id, s)
+      scannedByDo.set(it.do_id, (scannedByDo.get(it.do_id) ?? 0) + Number(it.cartons_scanned ?? 0))
+    }
+    const changedDo: { d: DoRow; od: string; to: string; toName: string | null }[] = []
+    for (const d of (dosData ?? []) as DoRow[]) {
+      const was = normShipTo(d.ship_to_code)
+      if (!was) continue
+      const ods = [...(odsByDo.get(d.id) ?? [])]
+      const live = ((rawRows ?? []) as RawLine[]).filter(r => r.sync_status !== 'OBSOLETE' && ods.includes(r.od_number))
+      const cur = [...new Set(live.map(r => normShipTo(r.ship_to_code)).filter(Boolean))]
+      if (cur.length !== 1 || cur[0] === was) continue
+      changedDo.push({ d, od: ods.find(o => live.some(r => r.od_number === o)) ?? ods[0],
+        to: cur[0], toName: live.find(r => normShipTo(r.ship_to_code) === cur[0])?.ship_to_name ?? null })
+    }
+    // Đã có việc cùng (chuyến, OD, khách MỚI) — đang mở HOẶC người đã quyết "Giữ WMS" — thì không đẻ thêm: nạp lại mà OD đó đổi thứ
+    // khác cũng gọi lại engine, báo lại đúng chuyện người vừa quyết là cãi người. SAP đổi sang khách khác NỮA thì mới là việc mới.
+    const seen = new Set<string>()
+    const gIds = [...new Set(changedDo.map(c => c.d.gdo_id))]
+    if (gIds.length) {
+      const { data } = await supabase.from('reconcile_tasks').select('gdo_id, od_number, detail')
+        .eq('change_type', 'SHIPTO_CHANGED').in('gdo_id', gIds).limit(1000)   // ≤ số DO có ship-to đổi của lượt nạp × số lần đổi — vài chục
+      for (const r of (data ?? []) as { gdo_id: string | null; od_number: string | null; detail: string | null }[]) {
+        const to = /→ (\S+)/.exec(r.detail ?? '')?.[1]   // khách mới nằm ngay sau "→" trong câu engine tự ghi (khuôn `what` bên dưới)
+        if (to) seen.add(`${r.gdo_id}|${r.od_number}|${to}`)
+      }
+    }
+    for (const c of changedDo) {
+      if (seen.has(`${c.d.gdo_id}|${c.od}|${c.to}`)) continue
+      const gdo = gdoById.get(c.d.gdo_id)
+      const closed = !!gdo?.scan_completed_at
+      const scanned = scannedByDo.get(c.d.id) ?? 0
+      const base = {
+        id: randomUUID(), item_id: null, gdo_id: c.d.gdo_id, group_code: gdo?.group_code ?? null,
+        material_code: null, material_name: null, od_number: c.od, od_item: null,
+        change_type: 'SHIPTO_CHANGED', zone: closed ? 'Z4' : scanned > 0 ? 'Z3' : (gdo?.status === 'PENDING' ? 'Z1' : 'Z2'),
+        old_ordered: null, new_ordered: null, scanned, actor: opts.actor, created_at: t, updated_at: t,
+      }
+      const what = `SAP đổi khách giao DO ${c.od}: ${normShipTo(c.d.ship_to_code)}${c.d.distributor_name ? ` ${c.d.distributor_name}` : ''} → ${c.to}${c.toName ? ` ${c.toName}` : ''}`
+      if (closed) {
+        tasks.push({ ...base, action: 'RECONCILE_ONLY', status: 'RESOLVED', detail: `${what} — chuyến đã đóng, chỉ đối soát; báo SAP.` })
+        sum.recon++
+      } else {
+        tasks.push({ ...base, action: 'NEEDS_REVIEW', status: 'OPEN',
+          detail: `${what} — chuyến vẫn ghi khách cũ. Sửa NPP của DO ở Kế hoạch xuất (hoặc gỡ DO rồi điều lại) rồi bấm "Đã xử lý tay"; giữ khách cũ thì "Giữ WMS" + báo SAP.` })
+        sum.review++
+      }
+    }
   }
 
   if (tasks.length) {

@@ -6346,7 +6346,7 @@ export function useConfirmSupplementDispatchOds() {
  *  đi (KIN) · SAP đổi số lượng sau khi kho quét (QTY, việc ở Dữ liệu bên ngoài). Tính sống theo KHO, không theo kế hoạch. */
 export interface DispatchDecisionNewOd { od: string; kind: string | null; active: boolean; in_khvc: boolean; outside: boolean; on_vehicle: boolean; delivery_date: string | null; qty_base: number | string | null; same_customer: boolean }
 export interface DispatchDecision {
-  od_number: string; kind: 'GONE' | 'REPLACED' | 'KIN' | 'QTY'; group_code: string; export_date: string | null; gdo_id: string | null; gdo_status: string | null
+  od_number: string; kind: 'GONE' | 'REPLACED' | 'KIN' | 'QTY' | 'SHIPTO'; group_code: string; export_date: string | null; gdo_id: string | null; gdo_status: string | null
   detected_at: string | null; ship_to_code: string | null; ship_to_name: string | null; qty_base: number | string | null; sap_pallets: number | string | null; delivery_date: string | null
   new_ods: DispatchDecisionNewOd[]; all_free: boolean; same_content: boolean; any_merge: boolean; detail: string | null; task_id: string | null; action: string | null
 }

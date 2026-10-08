@@ -194,3 +194,4 @@ User chốt 08/10 (sau nghiên cứu + mô phỏng `docs/plans/DISPATCH_CORRIDOR
 - `freight.test.ts` `routeTariff`;
 - gói 61 [3e] (thứ tự giao Kế hoạch xuất + chuyến);
 - [16a] `summary.overload` theo trần dải.
+**08/10 — SAP đổi khách giao (lớp C72):** nháp: cờ `CHANGED` ("SAP đã sửa") của `odFlags` so thêm ship-to chụp trên dòng OD với ZSD02 hiện tại (chỉ khi SAP mang đúng một ship-to) ⇒ Xác nhận 409 `OD_CHANGED_IN_SAP` tới khi bấm "Cập nhật theo SAP" (chụp lại — khách mới, xe tính lại tải + cước + thứ tự giao). Đã xác nhận: hàng chờ Cần xử lý (RPC `dispatch_decisions`, migration `20261008i`) có loại `SHIPTO` "SAP đổi khách", xử ở Dữ liệu bên ngoài → Cần xử lý (xem external_do_sap.md).

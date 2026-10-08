@@ -6,6 +6,7 @@
 //   [3] Hai nguồn cùng sổ: VL06O nạp SAU không xoá cột ZSD02-only; upload lại cùng file = NO-OP (không đổi id).
 //   [4] DO flow RETURN/DISCOUNT không được lên Kế hoạch xuất; công tắc `sap_do_source` đóng đúng cửa.
 // Fixture QA59_*: dựng bằng file Excel qua API thật, dọn bằng PostgREST.
+import { randomUUID } from 'crypto'
 import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE, authToken, check, finish, storagePutSigned, storageExists } from './lib.mjs'
 
 const XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default
@@ -17,8 +18,10 @@ const DELIV = new Date(Date.now() + 40 * 86400000).toLocaleDateString('en-CA', {
 const OD_CREATED = new Date(Date.now() + 35 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // "Thời gian tạo OD" — khác DELIV để lọc Ngày tạo OD không ăn theo Ngày giao
 const SO_CREATED = new Date(Date.now() + 33 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // "Thời gian tạo SO" — khác cả OD_CREATED
 const SO1 = 'QA59SO1', SO2 = 'QA59SO2', SO3 = 'QA59SO3', OD1 = 'QA59OD1', OD3 = 'QA59OD3'
-const SHIPTO = 'QA59ST', ROUTE = 'BVQA59', WARD = 'QA59-Test', PLANT = '1102'
+const SHIPTO = 'QA59ST', SHIPTO2 = 'QA59ST2', ROUTE = 'BVQA59', WARD = 'QA59-Test', PLANT = '1102'
 const GC = `${FIX.WH_QR.code}_X_${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}_959`
+// [4d] chuyến dựng thẳng ở kho kiểm thử riêng của gói 61 (bền, không phải kho thật)
+const QA61WH = '6a610000-0000-4000-8000-000000000061', GC_S = 'QA59_SHIPTO_GDO'
 
 await login(); await resolveFixtures()
 const mat = (await restAll('Material', `select=material_code,base_unit,entry_unit,units_per_carton,short_name&material_code=eq.${FIX.MAT_POOL}`))[0]
@@ -71,12 +74,15 @@ const waitFor = async (fn) => { for (let i = 0; i < 9; i++) { const r = await fn
 const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
 
 async function cleanup() {
-  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC}`)) {
+  await restWrite('reconcile_tasks', 'DELETE', `group_code=eq.${GC_S}`).catch(() => {})
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_S})`)) {
     const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
     if (dos.length) { await restWrite('OutboundItem', 'DELETE', `do_id=in.(${dos.map(x => x.id).join(',')})`).catch(() => {}); await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`) }
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
   }
   await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC}`).catch(() => {})
+  await restWrite('reconcile_tasks', 'DELETE', `group_code=eq.${GC}`).catch(() => {})
+  await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIPTO2}&auto_created=is.true`).catch(() => {})
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA59*`)
   await restWrite('erp_so_lines', 'DELETE', `so_number=like.QA59SO*`)
   await restWrite('od_lineage', 'DELETE', `old_od=like.QA59*`).catch(() => {})
@@ -259,6 +265,50 @@ try {
     gone.s === 400 && gone.j?.error?.code === 'UPLOAD_MISSING' && weird.s === 400 && (other.s === 403 || other.s === 400),
     `gone=${gone.s} ${gone.j?.error?.code} weird=${weird.s} other=${other.s}`)
 
+  // ── [4d–4g] (08/10, user chốt "cờ Cần xử lý + chặn kho") SAP ĐỔI KHÁCH GIAO của DO đã lên chuyến ──
+  // Trước bản vá: nạp ZSD02 thấy ship-to đổi (nằm trong bizHash) và gọi engine đối chiếu, nhưng engine chỉ so SL / mã / %Date-lô ⇒ bỏ qua
+  // im lặng; chuyến vẫn đi khách cũ (%Date theo khách của ĐƠN — C71, phiếu xuất, điểm giao).
+  // Chuyến dựng THẲNG ở kho QA61WH (kho kiểm thử riêng — không dựng trên Ba Vì thật, và không phụ thuộc đường dựng chuyến từ Kế hoạch
+  // xuất), DO mang ship-to QA59ST + dòng hàng tham chiếu OD1/10; phần kích hoạt đi ĐÚNG đường thật: nạp ZSD02 → engine đối chiếu.
+  {
+    const mat0 = (await restAll('Material', `select=id,material_code&material_code=eq.${FIX.MAT_POOL}`))[0]
+    const ts = new Date().toISOString()
+    const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
+      id: randomUUID(), group_code: GC_S, warehouse_id: QA61WH, delivery_date: DELIV, planned_date: DELIV, status: 'PENDING', created_at: ts, updated_at: ts,
+    })
+    const [dv] = await restWrite('OutboundDelivery', 'POST', null, {
+      id: randomUUID(), gdo_id: gdo.id, delivery_code: OD1, distributor_name: 'QA59 KHÁCH TEST', ship_to_code: SHIPTO, created_at: ts, updated_at: ts,
+    })
+    const [it] = await restWrite('OutboundItem', 'POST', null, {
+      id: randomUUID(), do_id: dv.id, material_id: mat0.id, material_code_raw: mat0.material_code, cartons_ordered: 10 * factor, cartons_scanned: 0,
+      status: 'PENDING', od_refs: [{ od_number: OD1, od_item: '10', qty_base: 10 * factor }], created_at: ts, updated_at: ts,
+    })
+    const rowsSt2 = ROWS.map((r, i) => (i === 0 ? { ...r, [H.st]: SHIPTO2, [H.stn]: 'QA59 KHÁCH MỚI' } : r))
+    const upSt = await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsSt2)); return r.s === 200 ? r : null })
+    const tasksSt = async () => restAll('reconcile_tasks', `select=id,action,status,gdo_id,detail&group_code=eq.${GC_S}&change_type=eq.SHIPTO_CHANGED`)
+    const tk = await tasksSt()
+    check('4d. SAP đổi khách giao của DO đã lên chuyến → việc "Cần xử lý" SHIPTO_CHANGED · NEEDS_REVIEW · OPEN gắn đúng chuyến, nêu cả hai ship-to',
+      upSt?.s === 200 && tk.length === 1 && tk[0].action === 'NEEDS_REVIEW' && tk[0].status === 'OPEN'
+        && tk[0].gdo_id === gdo.id && String(tk[0].detail ?? '').includes(SHIPTO) && String(tk[0].detail ?? '').includes(SHIPTO2),
+      `up=${upSt?.s ?? 'timeout'} việc=${tk.length} ${tk[0]?.action}/${tk[0]?.status} · ${String(tk[0]?.detail ?? '').slice(0, 120)}`)
+    if (tk.length === 1) {
+      // Kho bị CHẶN (cổng SAP): thử quét một tem không có thật trên chuyến chưa bắt đầu — có cổng thì 409 SAP_ISSUE_OPEN, không cổng thì
+      // bị chặn vì chưa Bắt đầu ⇒ phép thử không ghi gì trong mọi trường hợp
+      const sc = await api(`/wms/outbound/${gdo.id}/items/${it.id}/scan`, 'POST', { qr_code: 'QA59-KHONG-CO', qty_semantics: 'base' })
+      check('4e. Còn việc đổi khách chưa quyết ⇒ kho bị chặn quét (409 SAP_ISSUE_OPEN)', sc?.s === 409 && sc?.j?.error?.code === 'SAP_ISSUE_OPEN',
+        `http=${sc?.s} code=${sc?.j?.error?.code} ${(sc?.j?.error?.message ?? '').slice(0, 100)}`)
+      // Nạp lại có đổi thứ khác trên cùng OD (SL) ⇒ engine chạy lại nhưng KHÔNG đẻ việc đổi khách thứ hai
+      await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsSt2.map((r, i) => (i === 0 ? { ...r, [H.soq]: 12, [H.socar]: 12, [H.odq]: 12, [H.odcar]: 12, [H.base]: 12 * factor } : r)))); return r.s === 200 ? r : null })
+      check('4f. Nạp lại (OD đổi SL) → vẫn đúng MỘT việc đổi khách đang mở', (await tasksSt()).filter(x => x.status === 'OPEN').length === 1,
+        `${(await tasksSt()).length} việc`)
+      // "Áp SAP" không áp thẳng vào chuyến (đổi khách là quyết định điều vận, sửa ở NGUỒN — Kế hoạch xuất); "Giữ WMS" đóng việc
+      const ap = await api(`/wms/outbound/reconcile-tasks/${tk[0].id}/resolve`, 'POST', { resolution: 'apply' })
+      const kp = await api(`/wms/outbound/reconcile-tasks/${tk[0].id}/resolve`, 'POST', { resolution: 'keep' })
+      check('4g. "Áp SAP" → 422 (sửa ở Kế hoạch xuất / gỡ rồi điều lại) · "Giữ WMS" → RESOLVED',
+        ap.s === 422 && kp.s === 200 && kp.j?.data?.status === 'RESOLVED', `apply=${ap.s} ${(ap.j?.error?.message ?? '').slice(0, 80)} · keep=${kp.s}/${kp.j?.data?.status}`)
+    }
+  }
+
   // ── [7] (03/10 tối) KHOẢNG PHỦ NGÀY TẠO · PHẢ HỆ DO · SAP XOÁ TRONG KHOẢNG · CÔNG TẮC BẮT BUỘC ──
   // SAP chỉ đổ ZSD02 theo NGÀY TẠO, không có "ngày sửa cuối" ⇒ app chỉ được kết luận "thay / xoá" cho DO có ngày tạo TRONG khoảng
   // file phủ (khai khi nạp, mặc định = khoảng thật của file). Fixture: mọi OD tạo OD_CREATED (xa tương lai, không đụng đơn thật).
@@ -299,6 +349,8 @@ try {
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0
-    && (await restAll('erp_outbound_orders', `select=id&od_number=in.(${OD1},${OD3})`)).length === 0)
+    && (await restAll('erp_outbound_orders', `select=id&od_number=in.(${OD1},${OD3})`)).length === 0
+    && (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC_S}`)).length === 0
+    && (await restAll('reconcile_tasks', `select=id&group_code=eq.${GC_S}`)).length === 0)
 }
 finish(PACK)

@@ -1611,12 +1611,14 @@ export async function updatePlanParams(req: Request, res: Response) {
 // rào DB không cho OD mới đi ngày khác tới khi người bấm "Xác nhận đơn bổ sung" (ghi resolved_* vào od_lineage). Cờ CỨNG: chặn Xác nhận.
 type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED'; info: string | null; replaced_by?: string | null }
 /** Bản chụp của OD trên kế hoạch (chữ ký dòng hàng + ghi chú) — để biết SAP đã SỬA cùng OD đó sau khi người xem. */
-type OdSnap = { sig: string | null; note: string | null }
-const snapsOf = (rows: TripOdRow[]) => new Map(rows.map(o => [o.od_number, { sig: o.sap_sig, note: o.note }] as const))
+// ship_to (08/10, user chốt "cờ Cần xử lý"): SAP đổi KHÁCH GIAO của cùng OD sau khi chụp ⇒ xe đang chở tới khách cũ
+type OdSnap = { sig: string | null; note: string | null; ship_to?: string | null }
+const snapsOf = (rows: TripOdRow[]) => new Map(rows.map(o => [o.od_number, { sig: o.sap_sig, note: o.note, ship_to: o.ship_to_code }] as const))
+const normShipTo = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase()
 async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<string, OdSnap> = new Map(), slocs: string[] = []): Promise<OdFlag[]> {
   if (!odNos.length) return []
   const [rows, khvc, kin] = await Promise.all([
-    fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders').select('od_number, od_item, material_code, qty_base, note_delivery, storage_location, delivery_date, flow, sync_status, replaced_by_od, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate').in('od_number', c).order('od_number')) as Promise<(SigRow & { od_number: string; note_delivery: string | null; storage_location: string | null; delivery_date: string | null; flow: string | null; sync_status: string | null; replaced_by_od: string | null; sap_dispatch_status: string | null; mat_doc: string | null; qty_issued_base: number | string | null; dvvt_raw: string | null; license_plate: string | null })[]>,
+    fetchAllByIdChunks(odNos, c => db.from('erp_outbound_orders').select('od_number, od_item, material_code, qty_base, note_delivery, storage_location, delivery_date, flow, sync_status, replaced_by_od, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate, ship_to_code').in('od_number', c).order('od_number')) as Promise<(SigRow & { od_number: string; note_delivery: string | null; ship_to_code: string | null; storage_location: string | null; delivery_date: string | null; flow: string | null; sync_status: string | null; replaced_by_od: string | null; sap_dispatch_status: string | null; mat_doc: string | null; qty_issued_base: number | string | null; dvvt_raw: string | null; license_plate: string | null })[]>,
     fetchAllByIdChunks(odNos, c => db.from('khvc_lines').select('do_no, group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('do_no')) as Promise<{ do_no: string; group_code: string }[]>,
     fetchAllByIdChunks(odNos, c => db.from('od_lineage').select('old_od, new_od').eq('kind', 'AFTER_POST').is('resolved_at', null).in('new_od', c).order('new_od')) as Promise<{ old_od: string; new_od: string }[]>,
   ])
@@ -1646,7 +1648,10 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
       const active = inSlocs(live.filter(r => r.sync_status === 'ACTIVE'), slocs)
       const mine = loadableLines(active)   // ĐÚNG tập dòng lúc chụp (loadCandidates): Sloc của kho + chỉ dòng lên xe được
       const qty = odSig(mine) !== snap.sig, cur = noteOf(mine), note = (cur ?? '') !== (snap.note ?? '')
-      if (qty || note) { out.push({ od_number: od, kind: 'CHANGED', info: [qty ? 'SAP đã sửa số lượng / dòng hàng' : null, note ? `ghi chú giao hàng đổi thành «${cur ?? 'trống'}»` : null].filter(Boolean).join(' · ') }); continue }
+      // khách giao: chỉ kết luận khi SAP mang ĐÚNG MỘT ship-to cho OD (nhiều giá trị = dữ liệu lẫn, không đoán)
+      const shipNow = uniq(mine.map(r => normShipTo(r.ship_to_code)).filter(Boolean))
+      const ship = !!normShipTo(snap.ship_to) && shipNow.length === 1 && shipNow[0] !== normShipTo(snap.ship_to)
+      if (qty || note || ship) { out.push({ od_number: od, kind: 'CHANGED', info: [qty ? 'SAP đã sửa số lượng / dòng hàng' : null, note ? `ghi chú giao hàng đổi thành «${cur ?? 'trống'}»` : null, ship ? `SAP đổi khách giao ${normShipTo(snap.ship_to)} → ${shipNow[0]}` : null].filter(Boolean).join(' · ') }); continue }
     }
     const sh = live.find(r => (r.mat_doc && String(r.mat_doc).trim()) || Number(r.qty_issued_base ?? 0) > 0)
     if (sh) { out.push({ od_number: od, kind: 'SHIPPED', info: `đã xuất kho${sh.mat_doc ? ` (${sh.mat_doc})` : ''}` }); continue }

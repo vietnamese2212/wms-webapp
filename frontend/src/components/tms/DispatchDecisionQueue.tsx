@@ -32,7 +32,10 @@ const KIND_VI: Record<DispatchDecision['kind'], { label: string; tone: BadgeTone
   REPLACED: { label: 'SAP thay DO',       tone: 'red',    tip: 'SAP bỏ DO này và sinh DO mới cho cùng dòng SO (sửa SO / tách / gộp) — Kế hoạch xuất còn cầm số cũ.' },
   KIN:      { label: 'Họ hàng đã đi',     tone: 'amber',  tip: 'DO mới cùng dòng SO với DO đã đi (SAP post lại). Giao thêm thì "Xác nhận đơn bổ sung"; hàng đã đi dưới số cũ thì "Ngoài app".' },
   QTY:      { label: 'SAP đổi SL sau khi quét', tone: 'orange', tip: 'Số lượng / dòng hàng đổi sau khi kho đã quét — kho quyết ở Dữ liệu bên ngoài → Cần xử lý (Áp SAP / Giữ WMS / Đã xử lý tay).' },
+  SHIPTO:   { label: 'SAP đổi khách',     tone: 'red',    tip: 'SAP đổi khách giao của DO đã lên chuyến — chuyến vẫn đi khách cũ, kho bị chặn tới khi quyết. Sửa NPP của DO ở Kế hoạch xuất (hoặc gỡ DO rồi điều lại) rồi "Đã xử lý tay"; giữ khách cũ thì "Giữ WMS" + báo SAP.' },
 }
+// Việc đến từ hàng chờ đối chiếu (reconcile_tasks) — quyết ở Dữ liệu bên ngoài → Cần xử lý, không phải trên bàn này
+const fromReconcile = (k: DispatchDecision['kind']) => k === 'QTY' || k === 'SHIPTO'
 /** Trạng thái chuyến bên Xuất kho = cột của ma trận: B chưa bắt đầu · C đang xuất · D đã đi */
 export function gdoStage(status: string | null | undefined): { col: 'B' | 'C' | 'D'; label: string; tone: BadgeTone } {
   if (status === 'COMPLETED') return { col: 'D', label: 'Đã đi', tone: 'blue' }
@@ -115,7 +118,7 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
               return (
                 <TableRow key={key} className="hover:bg-slate-50">
                   <TableCell className={`${TD} font-mono font-semibold sticky left-0 z-10 bg-white`}>{r.od_number}</TableCell>
-                  <TableCell className={TD}><StatusBadge tone={k.tone} title={k.tip}>{k.label}</StatusBadge>{r.kind === 'QTY' && r.detail && <div className="mt-0.5 text-slate-600 whitespace-normal">{r.detail}</div>}</TableCell>
+                  <TableCell className={TD}><StatusBadge tone={k.tone} title={k.tip}>{k.label}</StatusBadge>{fromReconcile(r.kind) && r.detail && <div className="mt-0.5 text-slate-600 whitespace-normal">{r.detail}</div>}</TableCell>
                   <TableCell className={TD}>
                     <div className="font-mono">{r.group_code}</div>
                     <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
@@ -140,8 +143,8 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums whitespace-normal`}>{r.detected_at ? formatDateTime(r.detected_at) : '—'}</TableCell>
                   <TableCell className={`${TD} whitespace-normal`}>
-                    {r.kind === 'QTY' && <Link to="/external?tab=reconcile" className="text-sky-700 hover:underline">Mở Dữ liệu bên ngoài → Cần xử lý</Link>}
-                    {r.kind !== 'QTY' && st.col === 'C' && (
+                    {fromReconcile(r.kind) && <Link to="/external?tab=reconcile" className="text-sky-700 hover:underline">Mở Dữ liệu bên ngoài → Cần xử lý</Link>}
+                    {!fromReconcile(r.kind) && st.col === 'C' && (
                       <span className="text-amber-800">Chuyến đang xuất — không có "giữ và chạy tiếp": {path}.</span>
                     )}
                     {(r.kind === 'GONE' || r.kind === 'REPLACED') && st.col === 'B' && (

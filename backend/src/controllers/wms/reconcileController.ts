@@ -107,6 +107,10 @@ export async function resolveReconcileTask(req: Request, res: Response) {
       // Áp SAP vào đơn WMS — CHỈ khi an toàn (không mất dữ liệu đã quét)
       if (task.change_type === 'MATERIAL_CHANGED')
         return fail(res, 'Đổi mã hàng phải xử tay ở Xuất kho (QR khác) — dùng "Đã xử lý tay" sau khi sửa.', 422)
+      // Đổi KHÁCH GIAO (08/10): chuyến là kết quả dẫn xuất của Kế hoạch xuất — sửa ở NGUỒN (tên NPP của DO, hoặc gỡ DO rồi điều lại);
+      // lần dựng lại chuyến tự lấy khách mới từ ZSD02. Ghi thẳng vào chuyến là lệch khoá NPP mà ghép chuyến / giữ mức %Date đang dùng.
+      if (task.change_type === 'SHIPTO_CHANGED')
+        return fail(res, 'Đổi khách giao phải sửa ở Kế hoạch xuất (NPP của DO) hoặc gỡ DO rồi điều lại — xong bấm "Đã xử lý tay"; giữ khách cũ thì "Giữ WMS" + báo SAP.', 422)
       const newOrdered = Number(task.new_ordered)
       const scanned = Number(task.scanned)
       if (newOrdered < scanned)

@@ -39,6 +39,44 @@ function countMatches(roots, exts, test, sampleOut) {
   return n
 }
 
+// Lệnh ghi lọc theo `x.slice(0, N)` (luật write_in_sliced_cap). Câu lệnh nhiều dòng: lùi qua các dòng nối `.xxx(` để thấy `.update(`
+// / `.delete(` của CHÍNH câu đó; ghi chú `≤N` trên dòng ngay trên hoặc trong câu = người viết đã khai đầu vào bị chặn.
+function countSlicedWriteIn(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line) || !/\.in\('[^']+',.*\.slice\(0,\s*\d+\)/.test(line)) return
+      let st = line, j = i
+      while (j > 0 && /^\s*\./.test(lines[j])) { j--; st = lines[j] + st }
+      if (!/\.(update|delete|upsert)\(/.test(st)) return
+      if (/≤\s*\d+/.test(st) || (j > 0 && /^\s*\/\/.*≤\s*\d+/.test(lines[j - 1]))) return
+      n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
+
+// Link literal tới trang module trong file KHÔNG hỏi quyền chỗ nào (luật page_link_without_perm_guard). File có hỏi quyền (can / canAccess
+// / canSeePath…) coi như đã gác — phép đếm thô, chỉ để code MỚI không đẻ thêm lối tắt mù quyền.
+function countUnguardedPageLinks(sampleOut) {
+  const ROUTE = /(<Link\b[^>]*\bto=["'{`]+\/(wms|tms|hr|masterdata|external)\/|\bto:\s*['"`]\/(wms|tms|hr|masterdata|external)\/)/g
+  const SKIP = /config[\\/]navigation\.ts$|config[\\/]mobileSurface\.ts$|layout[\\/](Sidebar|MobileNav|BottomNav)\.tsx$/
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    if (SKIP.test(f)) continue
+    const src = readFileSync(f, 'utf8')
+    if (/\b(can|canAccess|canAccessAny|canSeePath|useCanSeePath|canSeeNavItem|visibleEntries)\(/.test(src)) continue
+    const lines = src.split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line)) return
+      const k = (line.match(ROUTE) ?? []).length
+      if (k) { n += k; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+    })
+  }
+  return n
+}
+
 // Đếm lời gọi hook DANH MỤC LỚN mà không khai `limit` (= kéo cả danh mục về trình duyệt).
 // Chiến dịch 27/07 dọn Mã hàng nhưng bỏ sót VỊ TRÍ: 15/08 đo lại còn 6 màn nạp trọn vị trí của
 // kho (Bàu Bàng 1.517 = 616KB/lần + BE quét InventoryEntry chunk 300 để tính used_slots).
@@ -802,6 +840,30 @@ const RULES = [
         && !/\.(limit|range|single|maybeSingle)\(/.test(line)
         && !/\.slice\(/.test(line)
         && !/^\s*(\/\/|\*)/.test(line), s),
+  },
+  // `.slice(0, N)` TRÊN LỆNH GHI = CẮT ÂM THẦM (08/10, C7 lặp). Luật trên coi mọi `.slice(` là "đã chặn trần" — đúng cho câu ĐỌC
+  // có đầu vào nhỏ, nhưng `.update(…).in('id', ids.slice(0, 300))` thì bỏ phần còn lại không lời nào: Xác nhận kế hoạch Ba Vì 04/10
+  // (819 xe) ghi Kế hoạch xuất đủ 819 xe mà chỉ 300 xe đổi CONFIRMED. Tập có thể vượt 300 ⇒ chia lô `for (i += 300) … slice(i, i + 300)`;
+  // tập đã chặn ở đầu vào (zod `max(300)`, một OD) ⇒ ghi chú `≤300: <lý do>` ngay trên câu để người đọc sau biết vì sao được cắt.
+  {
+    key: 'write_in_sliced_cap',
+    label: 'lệnh GHI (update/delete/upsert) lọc `.in(cột, x.slice(0, N))` — phần vượt N bị bỏ ÂM THẦM; chia lô, hoặc ghi chú `≤N: lý do` nếu đầu vào đã chặn',
+    count: (s) => countSlicedWriteIn(s),
+  },
+  // LỐI TẮT NGOÀI MENU KHÔNG HỎI QUYỀN (08/10, C66): "Thao tác nhanh" của Dashboard hiện Nhập kho / Xuất kho / Tồn kho cho vai Nhân
+  // viên điều vận — bấm là trang gác đẩy về Dashboard, không một lời. Lối tắt tới trang module phải qua `canSeePath` (cùng luật menu).
+  {
+    key: 'page_link_without_perm_guard',
+    label: 'link literal tới trang module (/wms, /tms, /hr…) trong file không hỏi quyền chỗ nào — người không có quyền thấy nút chết; lọc qua canSeePath',
+    count: (s) => countUnguardedPageLinks(s),
+  },
+  // SỐ TẢI / SỨC CHỨA IN THÔ (08/10, C2): cột Tải của Xuất kho in "16,06/16.5 t" — số dùng đã qua vi-VN, sức chứa `{load.cap}` in thẳng
+  // nên ra dấu chấm thập phân kiểu Anh ngay cạnh dấu phẩy. Số thập phân lên màn phải qua nf / toLocaleString('vi-VN').
+  {
+    key: 'raw_capacity_number_in_ui',
+    label: 'in thẳng `{x.cap}` / `${x.used}` / max_tons / max_pallets ra màn — số thập phân hiện dấu chấm kiểu Anh; bọc nf() / toLocaleString("vi-VN")',
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line) => !/^\s*(\/\/|\*)/.test(line) && /(\$\{|\{)\s*[\w.?!]+\.(cap|used|max_tons|max_pallets)\s*\}/.test(line), s),
   },
   {
     key: 'qa_slot_fixture_on_today',

@@ -2023,7 +2023,7 @@ export default function OutboundDetail() {
           </span>
         )}
         {gdo.load?.pct != null && (
-          <span className="flex items-center gap-1" title={`Tải ${gdo.load.used} / ${gdo.load.cap} ${gdo.load.basis === 'TON' ? 'tấn' : 'pallet'}${gdo.load.underload ? ` — NON TẢI (dưới ${gdo.load.underload_pct} %)` : ''}`}>
+          <span className="flex items-center gap-1" title={`Tải ${Number(gdo.load.used).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} / ${Number(gdo.load.cap).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} ${gdo.load.basis === 'TON' ? 'tấn' : 'pallet'}${gdo.load.underload ? ` — NON TẢI (dưới ${gdo.load.underload_pct} %)` : ''}`}>
             <span className="text-slate-400 shrink-0">Tải</span>
             <span className={`font-semibold tabular-nums ${gdo.load.underload ? 'text-red-600' : 'text-green-700'}`}>{gdo.load.pct.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} %</span>
           </span>

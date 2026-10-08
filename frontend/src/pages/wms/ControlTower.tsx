@@ -22,6 +22,7 @@ import { WarehouseMap3D } from '@/components/wms/WarehouseMap3D'
 import { groupFootprints, zoneColorMap } from '@/utils/warehouseFootprint'
 import { naturalCompare } from '@/utils/warehouseGrid'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
 import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
@@ -128,8 +129,11 @@ function DeptCard({ title, pct, color, big, rows, to }: {
   title: string; pct: number | null; color?: string; big?: string
   rows: { label: string; value: string; cls?: string }[]; to: string
 }) {
-  return (
-    <Link to={to} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 hover:border-slate-300 dark:hover:border-slate-500 transition-colors flex flex-col min-w-0">
+  // không mở được trang khâu đó (thiếu quyền) ⇒ card chỉ để xem số, không thành lối tắt chết (08/10, C66)
+  const open = useCanSeePath()(to)
+  const cls = `rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 ${open ? 'hover:border-slate-300 dark:hover:border-slate-500 transition-colors' : ''} flex flex-col min-w-0`
+  const body = (
+    <>
       <div className="px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 text-center">{title}</div>
       <div className="flex items-center gap-2.5 px-2.5 py-2 flex-1">
         {big != null
@@ -144,12 +148,14 @@ function DeptCard({ title, pct, color, big, rows, to }: {
           ))}
         </div>
       </div>
-    </Link>
+    </>
   )
+  return open ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>
 }
 
 // ─── rail RESOURCES (trái) — nhân sự + xe nâng + tồn bị giữ ───────────────────
 function ResourceRail({ r }: { r: ControlTowerResources }) {
+  const canOpen = useCanSeePath()
   const maxScans = Math.max(1, ...r.top_out.map(t => t.scans))
   const row = (label: string, n: number, sub: string) => (
     <div className="flex items-baseline justify-between gap-2 px-2.5 py-1 text-[10px]">
@@ -205,7 +211,7 @@ function ResourceRail({ r }: { r: ControlTowerResources }) {
           <span className="text-slate-500 dark:text-slate-400">Hạng mục lỗi</span>
           <span className={`text-right tabular-nums font-semibold ${r.forklift.issues > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>{nf.format(r.forklift.issues)}</span>
         </div>
-        <Link to="/wms/forklift" className="block px-2.5 pb-1 text-[9px] text-sky-600 dark:text-sky-400 hover:underline">Mở trang Xe nâng →</Link>
+        {canOpen('/wms/forklift') && <Link to="/wms/forklift" className="block px-2.5 pb-1 text-[9px] text-sky-600 dark:text-sky-400 hover:underline">Mở trang Xe nâng →</Link>}
       </div>
 
       <div className="py-1.5 px-2.5">
@@ -519,7 +525,8 @@ function HourlyBlock({ data }: { data: ControlTowerData }) {
 
 function WeighBlock({ data }: { data: ControlTowerData }) {
   const w = data.weigh
-  const cell = 'flex-1 rounded-md px-3 py-2 bg-slate-200 dark:bg-slate-700/50'
+  const canWeigh = useCanSeePath()('/wms/weigh-tickets')
+  const cell ='flex-1 rounded-md px-3 py-2 bg-slate-200 dark:bg-slate-700/50'
   const label = 'text-[9px] uppercase text-slate-500 dark:text-slate-400'
   const num = 'text-xl font-semibold tabular-nums text-slate-900 dark:text-white'
   return (
@@ -529,9 +536,9 @@ function WeighBlock({ data }: { data: ControlTowerData }) {
         <div className={cell}><div className={label}>Chờ cân lần 2</div><div className={`${num} ${w.pending2 > 0 ? '!text-amber-600 dark:text-amber-400' : ''}`}>{nf.format(w.pending2)}</div></div>
         <div className={cell}><div className={label}>KL hàng (tấn)</div><div className={num}>{nf.format(Math.round(w.net_kg / 100) / 10)}</div></div>
       </div>
-      <p className="px-2.5 pb-2 text-[10px]">
+      {canWeigh && <p className="px-2.5 pb-2 text-[10px]">
         <Link to="/wms/weigh-tickets" className="text-sky-600 dark:text-sky-400 hover:underline">Mở trang Phiếu cân →</Link>
-      </p>
+      </p>}
     </Block>
   )
 }

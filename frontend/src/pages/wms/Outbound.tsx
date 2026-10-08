@@ -191,9 +191,11 @@ function GdoLoad({ load }: { load: GDO['load'] }) {
     return <span className="text-slate-300" title={why}>{used != null ? `${used} ${unit}` : '—'}</span>
   }
   const pctTxt = `${load.pct.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} %`
+  // sức chứa cũng định dạng vi-VN (08/10: ô in "16,06/16.5 t" — hai dấu thập phân trên cùng một ô)
+  const cap = Number(load.cap).toLocaleString('vi-VN', { maximumFractionDigits: 2 })
   return (
-    <span title={`${used} / ${load.cap} ${unit} · ${pctTxt}${load.underload ? ` — NON TẢI (dưới ${load.underload_pct} %)` : ''}${load.incomplete ? ` · ${load.incomplete} dòng thiếu quy cách` : ''}`}>
-      <span className="text-[10px] tabular-nums">{used}/{load.cap} <span className="text-[9px] text-slate-400">{unit}</span></span>
+    <span title={`${used} / ${cap} ${unit} · ${pctTxt}${load.underload ? ` — NON TẢI (dưới ${load.underload_pct} %)` : ''}${load.incomplete ? ` · ${load.incomplete} dòng thiếu quy cách` : ''}`}>
+      <span className="text-[10px] tabular-nums">{used}/{cap} <span className="text-[9px] text-slate-400">{unit}</span></span>
       <span className={`ml-1 text-[9px] px-1 py-0.5 rounded font-semibold tabular-nums ${load.underload ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{pctTxt}</span>
     </span>
   )

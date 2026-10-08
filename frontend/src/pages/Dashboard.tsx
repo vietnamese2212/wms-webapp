@@ -19,6 +19,7 @@ import { DashboardService } from '@/components/wms/DashboardService'
 import { DashboardKpi } from '@/components/wms/DashboardKpi'
 import { DashPanel } from '@/components/wms/DashboardPanel'
 import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, unitLabel } from '@/utils/qtyUnits'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
 
@@ -44,7 +45,9 @@ export default function Dashboard() {
   // Kho đã chọn không còn trong scope (đổi phân quyền) → coi như "Tất cả kho"
   const effWhId = scopedWhs.length > 0 && whId && !scopedWhs.some(w => w.id === whId) ? '' : whId
   const { data: stats, isLoading, isError } = useDashboardStats(effWhId)
-  const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' })
+  // lối tắt chỉ hiện khi người xem mở được trang đích — cùng luật với menu (08/10)
+  const canOpen = useCanSeePath()
+  const today =new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' })
 
   // Gộp theo kho (RPC trả dòng kho×loại) + tổng toàn scope
   const { byWarehouse, totals } = useMemo(() => {
@@ -326,7 +329,7 @@ export default function Dashboard() {
           {/* Bảng tồn theo kho — chỉ thuộc chủ đề TỒN KHO; "Thao tác nhanh" luôn hiện (điều hướng) */}
           <div className={show('stock') ? 'lg:col-span-2' : 'hidden'}>
             <Panel title="Tồn kho theo kho" icon={Warehouse}
-              extra={<Link to="/wms/inventory" className="ml-auto text-[10px] text-sky-600 dark:text-sky-400 hover:underline">Xem chi tiết →</Link>}>
+              extra={canOpen('/wms/inventory') ? <Link to="/wms/inventory" className="ml-auto text-[10px] text-sky-600 dark:text-sky-400 hover:underline">Xem chi tiết →</Link> : undefined}>
               {isLoading ? (
                 <div className="p-4 space-y-2">
                   {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className={`h-9 ${sk}`} />)}
@@ -388,7 +391,7 @@ export default function Dashboard() {
                   { to: '/wms/outbound', icon: PackageMinus, cls: 'text-blue-600 dark:text-blue-400', label: 'Xuất kho' },
                   { to: '/wms/inventory', icon: Package, cls: 'text-slate-600 dark:text-slate-300', label: 'Xem tồn kho' },
                   { to: '/tms/bookings', icon: Truck, cls: 'text-amber-600 dark:text-amber-400', label: 'Kế hoạch vận chuyển' },
-                ].map(({ to, icon: Icon, cls, label }) => (
+                ].filter(q => canOpen(q.to)).map(({ to, icon: Icon, cls, label }) => (
                   <Link key={to} to={to}
                     className="flex items-center gap-2 w-full h-9 px-3 rounded-md border border-slate-300 dark:border-slate-600 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">
                     <Icon className={`h-4 w-4 ${cls}`} />

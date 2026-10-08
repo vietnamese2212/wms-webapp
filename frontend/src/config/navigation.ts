@@ -181,6 +181,13 @@ export function canSeeNavItem(item: NavItem, perms: NavPerms, admin: boolean): b
   if (!item.module) return true
   return admin || canAccess(perms, item.module)
 }
+/** Lối tắt NGOÀI menu (Thao tác nhanh của Dashboard…) trỏ tới một trang menu ⇒ hỏi CÙNG luật với Sidebar. 08/10: vai Nhân viên điều vận
+ *  thấy "Nhập kho / Xuất kho / Xem tồn kho" mà không có quyền — bấm là trang gác đẩy về Dashboard, không một lời. Đường dẫn không có
+ *  trên menu ⇒ false (lối tắt trỏ vào trang không ai khai thì đừng hiện). */
+export function canSeePath(to: string, perms: NavPerms, admin: boolean): boolean {
+  const it = ALL_NAV_ITEMS.find(i => i.to === to)
+  return !!it && canSeeNavItem(it, perms, admin)
+}
 /** Lọc cả cây: nhóm con rỗng thì bỏ hẳn (không để tiêu đề trống trên menu). */
 export function visibleEntries(entries: NavEntry[], perms: NavPerms, admin: boolean): NavEntry[] {
   const out: NavEntry[] = []

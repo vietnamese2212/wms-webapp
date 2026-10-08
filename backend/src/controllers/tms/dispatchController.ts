@@ -1872,8 +1872,12 @@ async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTr
     if (error) throw error
   }
   const gcs = trips.map(x => x.group_code)
-  const { error } = await db.from('dispatch_trip').update({ status: 'CONFIRMED', confirmed_at: t, updated_at: t }).in('id', trips.map(x => x.id).slice(0, 300))
-  if (error) throw error
+  // CHIA LÔ 300, không `.slice(0, 300)` (08/10, C7 lặp): Xác nhận cả kế hoạch Ba Vì 04/10 có 819 xe — dòng Kế hoạch xuất ghi đủ 819
+  // mà chỉ 300 xe đổi CONFIRMED, 519 xe nằm NHÁP (kéo thả được, Xác nhận lại 409, kế hoạch hiện "chờ ĐVVT")
+  for (let i = 0; i < trips.length; i += 300) {
+    const { error } = await db.from('dispatch_trip').update({ status: 'CONFIRMED', confirmed_at: t, updated_at: t }).in('id', trips.slice(i, i + 300).map(x => x.id))
+    if (error) throw error
+  }
   let replan: Record<string, unknown> | null = null, replan_error: string | null = null
   try { replan = await replanKhvcGroups(req, gcs) } catch (e) { replan_error = String(e); console.error('[dispatch confirm] replan:', e) }
   // KHÔNG ĐƯỢC BÁO THÀNH CÔNG KHI CHUYẾN KHÔNG SINH RA. `replanKhvcGroups` không NÉM lỗi khi đường
@@ -1900,8 +1904,10 @@ async function tenderFlags(trips: FullTrip[]): Promise<Map<string, boolean>> {
 async function markTendered(trips: FullTrip[]) {
   if (!trips.length) return
   const t = now()
-  const { error } = await db.from('dispatch_trip').update({ status: 'TENDERED', tendered_at: t, responded_at: null, response_by: null, response_note: null, updated_at: t }).in('id', trips.map(x => x.id).slice(0, 300))
-  if (error) throw error
+  for (let i = 0; i < trips.length; i += 300) {   // chia lô như writeTrips — kế hoạch lớn có hơn 300 xe chờ ĐVVT
+    const { error } = await db.from('dispatch_trip').update({ status: 'TENDERED', tendered_at: t, responded_at: null, response_by: null, response_note: null, updated_at: t }).in('id', trips.slice(i, i + 300).map(x => x.id))
+    if (error) throw error
+  }
 }
 
 // ── POST /tms/dispatch/plans/:id/confirm — xe của ĐVVT không cần phản hồi ghi thẳng; xe còn lại chờ ĐVVT ─────

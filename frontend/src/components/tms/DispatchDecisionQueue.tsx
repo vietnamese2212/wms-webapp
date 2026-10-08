@@ -20,6 +20,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import { useDispatchDecisions, useRemoveKhvcOd, useRenumberKhvcOd, useOutsideDispatchOds, useConfirmSupplementDispatchOds, type DispatchDecision } from '@/api/hooks'
 import { formatDateTime } from '@/utils/formatters'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
@@ -46,7 +47,8 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
   canPlan: boolean   // dispatch.plan — Ngoài app / Xác nhận đơn bổ sung (đi qua kế hoạch đang mở)
 }) {
   const q = useDispatchDecisions(warehouseId)
-  const remove = useRemoveKhvcOd(), renumber = useRenumberKhvcOd(), outside = useOutsideDispatchOds(), sup = useConfirmSupplementDispatchOds()
+  const canOutbound = useCanSeePath()('/wms/outbound')   // vai điều vận thuần không có quyền Xuất kho ⇒ không in "Mở chuyến" chết
+  const remove =useRemoveKhvcOd(), renumber = useRenumberKhvcOd(), outside = useOutsideDispatchOds(), sup = useConfirmSupplementDispatchOds()
   const [ask, confirmNode] = useConfirmDialog()
   const [dlg, setDlg] = useState<DispatchDecision | null>(null)   // hộp "Gỡ khỏi kế hoạch" — lý do
   const [reason, setReason] = useState('')
@@ -117,7 +119,7 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                   <TableCell className={TD}>
                     <div className="font-mono">{r.group_code}</div>
                     <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
-                    {r.gdo_id && <Link to={`/wms/outbound/${r.gdo_id}`} className="ml-1.5 text-sky-700 hover:underline">Mở chuyến</Link>}
+                    {r.gdo_id && canOutbound && <Link to={`/wms/outbound/${r.gdo_id}`} className="ml-1.5 text-sky-700 hover:underline">Mở chuyến</Link>}
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums`}>{dmy(r.export_date)}</TableCell>
                   <TableCell className={`${TD} whitespace-normal`}>{r.ship_to_name ?? r.ship_to_code ?? <span className="text-slate-300">—</span>}{r.sap_pallets != null && Number(r.sap_pallets) > 0 && <span className="ml-1 text-slate-500">· {nf(r.sap_pallets, 1)} pallet</span>}</TableCell>

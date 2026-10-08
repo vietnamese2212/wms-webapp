@@ -262,6 +262,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
 
   // ── Khung chờ ──
   const poolNotes = pool.filter(o => !!o.note).length
+  // 08/10 (đóng vai điều vận: "Tạo kế hoạch" 3 đơn ra 0 xe, chip lý do nằm ở cột Cảnh báo ngoài màn 1280 px): đếm ngay ở đầu khung chờ
+  const poolOds = new Set(pool.map(o => o.od_number))
+  const nUnder = Object.keys(underMin).filter(od => poolOds.has(od)).length
+  const nTooBig = Object.keys(tooBig).filter(od => poolOds.has(od)).length
   const poolShown = pool.filter(o => matches(o, q) && (!notesOnly || !!o.note))
   const groups = useMemo(() => {
     const m = new Map<string, DispatchTripOd[]>()
@@ -689,6 +693,16 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               title="OD có ghi chú giao hàng từ SAP — đọc trước khi ghép (hẹn ngày khác, không nhận Chủ nhật, ghép xe riêng…)">
               <StickyNote className="h-3 w-3" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {poolNotes} OD có ghi chú
             </button>
+          )}
+          {(nUnder > 0 || nTooBig > 0) && (
+            <div className="flex flex-wrap gap-1 text-[10px]">
+              {nUnder > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900"
+                title={'Lô dưới Tối thiểu % của dải tải nên máy KHÔNG tạo xe — kéo lên xe / "Xe mới", tick rồi "Trả về Chờ điều", hoặc Tối ưu lại với "Bỏ qua dải %". Chi tiết từng đơn ở cột Cảnh báo.'}>
+                {nUnder} đơn dưới tối thiểu — máy không tạo xe</span>}
+              {nTooBig > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900"
+                title={'Đơn lớn hơn xe lớn nhất mà loại xe không được ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP. Chi tiết ở cột Cảnh báo.'}>
+                {nTooBig} đơn lớn hơn xe — máy không tạo xe</span>}
+            </div>
           )}
         </div>
   )

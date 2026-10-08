@@ -114,13 +114,25 @@ async function trfCount(gdoId) {
 {
   const T4 = 'RACE4'
   const nowIso = () => new Date().toISOString()
+  // Chuyến của bài này nhận ra qua CẢ biển số lẫn SỐ DO (08/10): biển chỉ được gắn khi Bắt đầu thành công — Bắt đầu hỏng là
+  // chuyến biển rỗng, bộ dọn chỉ tìm theo biển bỏ sót nó, và "R4 dọn sạch" vẫn xanh. Đo staging 08/10: 20 chuyến "RACE4 NPP"
+  // nằm ở Chờ xuất của Ba Vì từ 24/09, một chuyến còn ở Xuất kho HÔM NAY trước mắt thủ kho.
+  const gdos4 = async () => {
+    const ids = new Map()
+    for (const g of await restAll('GroupDeliveryOrder', `select=id,status&license_plate=like.${T4}*`)) ids.set(g.id, g.status)
+    // theo số DO: chỉ chuyến biển RỖNG (Bắt đầu hỏng) — chuyến mang biển khác là kịch bản khác đã dùng lại (SIMQA13B 13/09), không phải của bài này
+    for (const d of await restAll('OutboundDelivery', `select=gdo_id&delivery_code=like.${T4}-*`))
+      if (d.gdo_id && !ids.has(d.gdo_id)) { const [g] = await restAll('GroupDeliveryOrder', `select=id,status&id=eq.${d.gdo_id}&license_plate=is.null`); if (g) ids.set(g.id, g.status) }
+    return [...ids].map(([id, status]) => ({ id, status }))
+  }
   const cleanup4 = async () => {
     // Xoá vết quét TRƯỚC khi gỡ chuyến: "Bỏ bắt đầu" của app chặn khi còn QR đã quét
     // ("Cần xóa hết QR đã quét trước khi gỡ bắt đầu") — đúng luật, nên dọn phải theo thứ tự đó.
     await restWrite('OutboundScanEntry', 'DELETE', `pallet_code=like.*${T4}*`).catch(() => {})
-    for (const g of await restAll('GroupDeliveryOrder', `select=id,status&license_plate=like.${T4}*`))
-      await teardownGdo(g.id, g.status)
+    for (const g of await gdos4()) await teardownGdo(g.id, g.status)
     await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${T4}*`).catch(() => {})
+    await restWrite('WeighTicket', 'DELETE', `station_code=eq.${T4}`).catch(() => {})
+    await restWrite('gate_registrations', 'DELETE', `license_plate=like.${T4}*`).catch(() => {})
     for (const l of await restAll('Location', `select=id&location_code=like.${T4}-*`))
       await restWrite('Location', 'DELETE', `id=eq.${l.id}`).catch(() => {})
   }
@@ -149,8 +161,33 @@ async function trfCount(gdoId) {
   })
   const gid = c4.j?.data?.id
   await api(`/wms/outbound/${gid}/assign`, 'POST', {})
-  // Ba Vì có cửa xuất trên Sơ đồ kho (09/09) → Bắt đầu phải gắn cửa
-  await api(`/wms/outbound/${gid}/start`, 'POST', { license_plate: `${T4}XE1`, dock_location_id: await freeDockFor(FIX.WH_QR.id, `${T4}XE1`) })
+  // Ba Vì gác Bắt đầu bằng đủ điều kiện của kho thật (khuôn gói 46): dòng đã khai quy định date · đăng ký cổng + vào cổng ·
+  // phiếu cân · cửa xuất · lái xe nâng MANG CỜ chức danh (kho chế độ Hướng dẫn). Bản cũ chỉ gửi biển + cửa ⇒ Bắt đầu 422,
+  // ba lượt quét đều bị chặn, và phép "không quét vượt kế hoạch" xanh SUÔNG (0 ≤ 60) từ 24/09 tới 08/10.
+  const plate4 = `${T4}XE1`
+  const det0 = await api(`/wms/outbound/${gid}`)
+  const item0 = (det0.j?.data?.delivery_orders ?? []).flatMap(x => x.items ?? [])[0]
+  if (item0?.id) await api('/wms/outbound/items/date-rule', 'PATCH', { item_ids: [item0.id], rule: { kind: 'FEFO' } })
+  const g4 = await api('/tms/gate-registrations', 'POST', {
+    date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QR.id, license_plate: plate4, direction: 'OUTBOUND', driver_name: `${T4} tài xế`, vehicle_type: 'XEPALLET',
+  })
+  const gate4 = g4.j?.data?.id
+  if (gate4) await api(`/tms/gate-registrations/${gate4}/entry`, 'PATCH', {})
+  await restWrite('WeighTicket', 'POST', null, {
+    id: randomUUID(), station_code: T4, source_id: 600001, ticket_no: `${T4}-1`, weigh_date: FIX.EXEC_DATE,
+    license_plate: plate4, license_plate_norm: plate4, direction: 'OUT', warehouse_id: FIX.WH_QR.id,
+    tare_kg: 8000, tare_at: nowIso(), is_complete: false, created_at: nowIso(), updated_at: nowIso(),
+  })
+  const drvJts = await restAll('JobTitle', 'select=id&is_forklift_driver=is.true')
+  const acc4 = new Set((await restAll('UserWarehouseAccess', `select=employee_id&warehouse_id=eq.${FIX.WH_QR.id}`)).map(a => a.employee_id))
+  const drv4 = (drvJts.length ? await restAll('Employee', `select=id,warehouse_scope&is_active=is.true&job_title_id=in.(${drvJts.map(j => j.id).join(',')})&limit=50`) : [])
+    .find(e => e.warehouse_scope === 'NATIONAL' || acc4.has(e.id))?.id ?? null
+  const st4 = await api(`/wms/outbound/${gid}/start`, 'POST', {
+    license_plate: plate4, gate_registration_id: gate4, dock_location_id: await freeDockFor(FIX.WH_QR.id, plate4), forklift_driver_ids: drv4 ? [drv4] : [],
+  })
+  // Bắt đầu hỏng thì bài đua phía dưới KHÔNG đo gì — phải đỏ ở đây, không được để phép "không vượt" xanh suông
+  check('R4 Bắt đầu chuyến được (không thì 3 lượt quét đều bị chặn, bài đua không đo gì)', st4.s === 200,
+    `http=${st4.s} ${st4.j?.error?.code ?? ''} ${String(st4.j?.error?.message ?? '').slice(0, 140)}`)
   const det = await api(`/wms/outbound/${gid}`)
   const it4 = (det.j?.data?.delivery_orders ?? []).flatMap(x => x.items ?? [])[0]
   const rs4 = await Promise.all(codes.map(code =>
@@ -159,14 +196,14 @@ async function trfCount(gdoId) {
   const [after4] = await restAll('OutboundItem', `select=cartons_ordered,cartons_scanned&id=eq.${it4.id}`)
   const inv4 = await restAll('InventoryEntry', `select=cartons_remaining&pallet_code=like.*${T4}*`)
   const consumed4 = inv4.reduce((s, e) => s + (Q4 - Number(e.cartons_remaining)), 0)
-  check(`R4 ${N4} người quét đồng thời 1 dòng hàng: KHÔNG quét vượt kế hoạch`,
-    Number(after4?.cartons_scanned) <= Number(after4?.cartons_ordered),
+  // Phải có ÍT NHẤT một lượt quét lọt (pallet đủ 1 dòng) — 0 lượt lọt nghĩa là bài không đua gì cả
+  check(`R4 ${N4} người quét đồng thời 1 dòng hàng: KHÔNG quét vượt kế hoạch (và có lượt quét thật)`,
+    Number(after4?.cartons_scanned) > 0 && Number(after4?.cartons_scanned) <= Number(after4?.cartons_ordered),
     `đã quét ${after4?.cartons_scanned}/${after4?.cartons_ordered} · HTTP ${rs4.map(r => r.s).join(',')}`)
   check('R4 tồn bị trừ đúng bằng số đã quét (không xuất thừa khỏi kệ)',
     consumed4 === Number(after4?.cartons_scanned), `trừ ${consumed4} · quét ${after4?.cartons_scanned}`)
   await cleanup4()
-  const left4 = (await restAll('InventoryEntry', `select=id&pallet_code=like.*${T4}*`)).length
-    + (await restAll('GroupDeliveryOrder', `select=id&license_plate=like.${T4}*`)).length
+  const left4 = (await restAll('InventoryEntry', `select=id&pallet_code=like.*${T4}*`)).length + (await gdos4()).length
   check('R4 dọn sạch', left4 === 0, `còn ${left4}`)
 }
 

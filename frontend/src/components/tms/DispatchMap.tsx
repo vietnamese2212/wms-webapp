@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
 import { OSM_TILE, OSM_ATTR, OSM_SUBDOMAINS, VN_CENTER, VN_ZOOM, dotIcon, L } from '@/components/shared/leafletSetup'
 import { formatDate } from '@/utils/formatters'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 import {
   useDispatchPlanGeo, useMeasurePlanGeo, useDispatchCustomersMap, useCustomerChannels, GEO_SOURCE_VI,
   type DispatchPlan, type DispatchTrip, type GeoDist, type CustomersMapDays, type DispatchCustomerRank,
@@ -50,6 +51,7 @@ const chip = (active: boolean) => `rounded-md px-2 h-7 text-[11px] font-medium w
 
 export function DispatchMap({ plan, warehouseId, canPlan, onOpenTrip }: { plan: DispatchPlan; warehouseId: string; canPlan: boolean; onOpenTrip: (id: string) => void }) {
   const [view, setView] = useState<'trips' | 'customers'>('trips')
+  const canCust = useCanSeePath()('/masterdata/customers')   // vai điều vận thuần không mở được Khách hàng ⇒ không in link chết
   const [days, setDays] = useState<CustomersMapDays>(30)
   const [hiddenCh, setHiddenCh] = useState<Set<string>>(new Set())
   const [focus, setFocus] = useState<[number, number] | null>(null)
@@ -220,7 +222,7 @@ export function DispatchMap({ plan, warehouseId, canPlan, onOpenTrip }: { plan: 
               <div className="border-t px-3 py-2">
                 <div className="flex items-center justify-between text-[11px] font-semibold text-amber-800">
                   <span>{missing.length} khách chưa định vị</span>
-                  <Link to="/masterdata/customers" className="text-sky-700 hover:underline font-normal">Khách hàng →</Link>
+                  {canCust && <Link to="/masterdata/customers" className="text-sky-700 hover:underline font-normal">Khách hàng →</Link>}
                 </div>
                 <ul className="mt-1 space-y-0.5 text-[11px] text-slate-600">
                   {missing.slice(0, 50).map(c => (
@@ -283,7 +285,7 @@ export function DispatchMap({ plan, warehouseId, canPlan, onOpenTrip }: { plan: 
               <div className="border-t px-3 py-2 text-[11px]">
                 <div className="flex items-center justify-between font-semibold text-amber-800">
                   <span>{rowsMissing.length} khách có đơn chưa định vị</span>
-                  <Link to="/masterdata/customers" className="text-sky-700 hover:underline font-normal">Khách hàng →</Link>
+                  {canCust && <Link to="/masterdata/customers" className="text-sky-700 hover:underline font-normal">Khách hàng →</Link>}
                 </div>
               </div>
             )}

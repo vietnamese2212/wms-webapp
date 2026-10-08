@@ -24,6 +24,7 @@ import { pctDateCls, type PctBands } from '@/utils/pctDateBands'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
 import { setReturnTo } from '@/lib/returnTo'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 import type { DirectedPallet, DirectedRow, DirectedTrip } from '@/types'
 
 /** Neo "về Việc cần làm" trước khi rời trang — thanh ở Shell + mũi tên trang đích sẽ đưa về đây. */
@@ -117,6 +118,7 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
   const pallets = row.pallets ?? []
   const claim = claimNote(row, me ?? null)
   const [ledger, setLedger] = useState<string | null>(null)   // sổ pallet mở từ danh sách tem
+  const canMoveLog = useCanSeePath()('/wms/move-location')   // trang Chuyển vị trí đòi inventory.move_location
   // Khoá tra sổ chuyển vị trí: một pallet thì tra đúng tem, nhóm nhiều pallet thì tra theo Ô NGUỒN
   // (ô tra được vì sổ lưu cả `location_from_code`) — tra bằng tem đầu danh sách là kể thiếu.
   const moveKey = pallets.length === 1 ? (pallets[0].code ?? null) : (row.from_code ?? null)
@@ -200,12 +202,12 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
                   <span className="text-purple-700">chuyển pallet trong sổ tồn về vị trí nhặt lẻ</span>
                   <span className="text-slate-500"> — bấm nhầm thì bấm “Bỏ dấu ✓”, máy hỏi hàng đã đưa xuống chưa rồi ghi lại về ô cũ.</span>
                 </Row>
-                <Link to={`/wms/move-location?tab=history${moveKey ? `&pallet=${encodeURIComponent(moveKey)}` : ''}`}
+                {canMoveLog && <Link to={`/wms/move-location?tab=history${moveKey ? `&pallet=${encodeURIComponent(moveKey)}` : ''}`}
                   onClick={() => { anchorDirected(); onClose() }}
                   className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline">
                   <ExternalLink className="h-3 w-3" />
                   {pallets.length === 1 ? 'Lịch sử chuyển vị trí của pallet này' : 'Lịch sử chuyển vị trí từ ô này'}
-                </Link>
+                </Link>}
               </>
             )}
             {row.kind === 'PICK' && (

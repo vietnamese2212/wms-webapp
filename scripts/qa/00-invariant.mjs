@@ -497,8 +497,11 @@ for (const [table, label] of [
     ...(await restAll('LookupValue', `select=type,value&type=in.(warehouse_type,customer_channel,storage_condition)&${ci}`)).map(r => [`${r.type}:${r.value}`, r.value]),
     ...(await restAll('TransportCompany', `select=code&${ci}`)).map(r => [`ĐVVT:${r.code}`, r.code]),
     ...(await restAll('date_rule_master', `select=scope_key&scope=eq.CHANNEL&${ci}`)).map(r => [`mức date kênh:${r.scope_key}`, r.scope_key]),
+    // 08/10 tối: dòng xe / loại xe thật (40 dòng xe mang dấu "CI runner" 04/10 — vết cũ trước mốc; mọi gói nay chỉ ghi dòng xe QA)
+    ...(await restAll('vehicle_model', `select=sap_code&${ci}`)).map(r => [`dòng xe:${r.sap_code}`, r.sap_code]),
+    ...(await restAll('VehicleType', `select=code&${ci}`)).map(r => [`loại xe:${r.code}`, r.code]),
   ].filter(([, key]) => !looksFixture(key)).map(([label]) => label)
-  check('Bộ kiểm không ghi vào cấu hình THẬT dùng chung (Loại kho · kênh · ĐK bảo quản · ĐVVT · mức date kênh) — fixture phải là của riêng gói (C49)',
+  check('Bộ kiểm không ghi vào cấu hình THẬT dùng chung (Loại kho · kênh · ĐK bảo quản · ĐVVT · mức date kênh · dòng xe · loại xe) — fixture phải là của riêng gói (C49)',
     hits.length === 0, hits.length ? hits.join(' · ') : 'sạch')
   // 08/10 chiều (C49 lặp lần 2): gói 18 / 25 / 26 / 27 / 28 / 29 MƯỢN kho thật (Ba Vì / kho của một pallet bất kỳ) rồi bật / tắt luân
   // chuyển · luật cất · tự ra lệnh fill · Loại kho của kho · chính sách ship-to — gói 28 còn dọn bằng cách ĐẶT CỨNG 'NONE'. Nay mỗi gói

@@ -15,7 +15,7 @@ import { searchLooksLikeInjection } from '../../utils/search'
 import { isQueryTimeout, QUERY_TIMEOUT_MSG, fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import {
   replanGdoTasks, drainReplanQueue, confirmTasks, claimTasks, MAX_CONFIRM,
-  dateRuleOf, palletMeetsDateRule, type ConfirmStage,
+  dateRuleOf, palletMeetsDateRule, markRowsDateOk, type ConfirmStage, type DateCheckRow,
 } from '../../services/directedTasks'
 import { reorderCrossTripPickup, orderLocationsFromDock, type RoutableRow } from '../../services/directedRoute'
 // Gợi ý "Vị trí lấy" của trang chuyến / nhặt lẻ — đường đi nhặt lẻ xếp thứ tự trên CHÍNH gợi ý này,
@@ -171,6 +171,7 @@ export async function getBoard(req: Request, res: Response) {
       auto_fill?: { created: number; recalled: number; order_code: string | null }
     }
     board.auto_replanned = drained.replanned
+    markRowsDateOk((board.rows ?? []) as unknown as DateCheckRow[])   // 08/10: pallet ghim còn đạt mức date không — thẻ tô theo cờ này
 
     // FILL KHO LẺ = một loại việc hạ, hiện ngay trên bảng xe nâng ĐANG NHÌN (16/09): kho tách xe hạ
     // riêng thì đó là "Cần hạ"; kho không tách thì tab Cần hạ bị ẩn nên phải rơi vào "Cần đưa ra" —

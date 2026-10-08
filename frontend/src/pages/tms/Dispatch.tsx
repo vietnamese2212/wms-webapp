@@ -44,7 +44,7 @@ import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatDate, formatTimestampDate } from '@/utils/formatters'
+import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -263,7 +263,7 @@ export default function Dispatch() {
     const tendered = plan.status === 'TENDERED'
     if (await ask({
       title: tendered ? 'Bỏ các xe CHƯA vào Kế hoạch xuất?' : 'Bỏ bản nháp này?', danger: true, confirmLabel: tendered ? 'Bỏ xe chưa chốt' : 'Bỏ nháp',
-      body: tendered ? 'Gồm xe đang chờ / bị từ chối / nháp. Xe đã vào Kế hoạch xuất giữ nguyên; OD của xe bị bỏ về lại pool.' : 'OD sẽ về lại pool để lập lại.',
+      body: tendered ? 'Gồm xe đang chờ / bị từ chối / nháp. Xe đã vào Kế hoạch xuất giữ nguyên; đơn của xe bị bỏ quay về Chờ điều.' : 'Đơn trên nháp quay về Chờ điều (tab Xem đơn) — tick lại rồi Tạo kế hoạch khi cần.',
     }) === null) return
     discard.mutateAsync(plan.id).then(r => { if (r.status === 'DISCARDED') setF({ planId: '' }); toast({ title: `Đã bỏ ${r.discarded_trips} xe` }) }).catch(e => err(e, 'Không bỏ được nháp'))
   }
@@ -324,12 +324,13 @@ export default function Dispatch() {
   const actionItems: ActionItem[] = []
   // chưa xe nào ⇒ nút Xác nhận kế hoạch KHOÁ kèm lý do
   if (confirmIsNext) actionItems.push({ key: 'confirm', icon: CheckCircle2, label: 'Xác nhận', tip: noTripYet ? 'Chưa có xe nào — tab Xem đơn: tick đơn rồi bấm "Tạo kế hoạch"; soát xe ở Bàn ghép xe rồi mới xác nhận' : tenderCount ? `Ghi các xe vào Kế hoạch xuất; ${tenderCount} xe của ĐVVT "cần phản hồi" sẽ chờ ĐVVT nhận` : 'Ghi các chuyến vào Kế hoạch xuất — chuyến + lệnh VC tự sinh', primary: true, variant: 'default', onClick: doConfirm, disabled: confirm.isPending || noTripYet, busy: confirm.isPending })
-  // "Xem đơn" chỉ khi CHƯA có kế hoạch đang mở (kế hoạch đang mở thì danh sách đã nằm sẵn ở tab Xem đơn, đơn mới tự vào Chờ điều)
-  if (canPlan && !isOpen) actionItems.push({ key: 'load', icon: ListChecks, label: 'Xem đơn', tip: 'Nạp các đơn chưa đi của kho × ngày × mảng này vào Chờ điều — chưa ghép xe nào; tick đơn rồi bấm "Tạo kế hoạch"', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: loadOrders, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
+  // "Xem đơn" chỉ khi CHƯA có kế hoạch đang mở (kế hoạch đang mở thì danh sách đã nằm sẵn ở tab Xem đơn, đơn mới tự vào Chờ điều).
+  // Chưa có kế hoạch nào ⇒ nút giữa màn là lối DUY NHẤT (08/10: hai nút "Xem đơn" giống hệt nhau cùng hiện, cộng tab cùng tên)
+  if (canPlan && !isOpen && !!plan) actionItems.push({ key: 'load', icon: ListChecks, label: 'Xem đơn', tip: 'Nạp các đơn chưa đi của kho × ngày × mảng này vào Chờ điều — chưa ghép xe nào; tick đơn rồi bấm "Tạo kế hoạch"', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: loadOrders, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
   if (canConfirm && confirmedN > 0) actionItems.push({ key: 'reopen', icon: RotateCcw, label: 'Mở lại', tip: `Kéo ${confirmedN} xe đã vào Kế hoạch xuất về nháp để sửa trên Bàn ghép xe (chỉ xe mà chuyến chưa bắt đầu)`, onClick: () => void doReopen(), disabled: reopen.isPending, busy: reopen.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
   // 03/10 tối (user: "tôi thậm chí còn không thấy thao tác xoá nó ở đâu cả"): nút Bỏ nháp có CHỮ, không chỉ icon thùng rác
-  if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — OD về lại pool' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, primary: true, variant: 'outline', className: 'text-red-600 border-red-200 hover:bg-red-50', onClick: doDiscard, disabled: discard.isPending })
+  if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — đơn quay về Chờ điều' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, primary: true, variant: 'outline', className: 'text-red-600 border-red-200 hover:bg-red-50', onClick: doDiscard, disabled: discard.isPending })
 
   const all = plan?.trips ?? []
   const todoN = useMemo(() => all.filter(t => needsWork(t, ictx)).length, [all, ictx])
@@ -368,9 +369,10 @@ export default function Dispatch() {
             </div>
             {/* Điện thoại: ô Kế hoạch CHUNG hàng với nút thao tác (desktop sm:contents → như cũ) */}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+              {/* nhãn "· lập dd-MM-yy hh:mm" (08/10): ngày trần cạnh ô ngày kế hoạch bị đọc nhầm là ngày kế hoạch ("Bản nháp · 08-10-2026" ở nháp 09/10) */}
               {planList.length > 1 && (
                 <div className="flex-1 min-w-[140px] sm:flex-none sm:w-48"><SingleSelect searchable={false} value={planId ?? ''} onChange={v => setF({ planId: v })}
-                  options={planList.map(p => ({ value: p.id, label: `${STATUS_VI[p.status].label} · ${formatTimestampDate(p.created_at)}`, sub: p.created_by ?? undefined }))} placeholder="Kế hoạch" /></div>
+                  options={planList.map(p => ({ value: p.id, label: `${STATUS_VI[p.status].label} · lập ${formatTimestampDate(p.created_at, true)} ${formatTimestampTime(p.created_at, false)}`, sub: p.created_by ?? undefined }))} placeholder="Kế hoạch" /></div>
               )}
               {/* Trạng thái + tham số lập GỌN vào ⓘ (user 25/09 tối: "bàn làm việc rộng rãi nhất có thể") — bản cũ là một
                   hàng meta riêng dưới thanh công cụ */}
@@ -382,7 +384,7 @@ export default function Dispatch() {
                     <div>Lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</div>
                     <div>Số khách cùng xe = nhỏ nhất trong (dòng xe · kênh / khách) — chưa khai = một khách một xe · {plan.params.allow_mix_channels ? 'cho trộn kênh khách' : 'không trộn kênh khách'}</div>
                     <div>{plan.params.allow_mix_categories === false ? 'Không ghép nhiều Loại kho trên một chuyến' : 'Cho ghép nhiều Loại kho trên một chuyến'}{plan.params.follow_categories?.length ? ` · đi kèm đơn: ${plan.params.follow_categories.join(', ')}` : ''}</div>
-                    <div>Pool {nf(plan.params.pool_ods)} OD · {nf(plan.params.in_plan)} OD đã có trong Kế hoạch xuất</div>
+                    <div>Lúc nạp: {nf(plan.params.pool_ods)} đơn chờ điều · {nf(plan.params.in_plan)} đơn đã có trong Kế hoạch xuất</div>
                     <div className="text-slate-500">Tham số theo kho: Cài đặt WMS → Kho → "XUẤT — Điều vận".</div>
                   </div>} />
                 </span>
@@ -521,7 +523,7 @@ export default function Dispatch() {
               <Waypoints className="h-10 w-10 opacity-30" />
               <p className="text-sm font-medium text-slate-500">Chưa có kế hoạch <b>{SEGMENT_VI[seg]}</b> cho kho này ngày {formatDate(day)}{otherPlan ? ` — mảng ${SEGMENT_VI[otherSeg]} đã có nháp` : ''}</p>
               {canPlan ? <>
-                <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={loadOrders} disabled={create.isPending}><ListChecks className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang nạp đơn…' : 'Xem đơn'}</Button>
+                <Button size="sm" className="mt-2 h-8" onClick={loadOrders} disabled={create.isPending}><ListChecks className="h-3.5 w-3.5 mr-1" /> {create.isPending ? 'Đang nạp đơn…' : 'Xem đơn'}</Button>
                 <p className="text-xs">Nạp các đơn chưa đi vào Chờ điều — tick đơn cần đi ngày này rồi bấm "Tạo kế hoạch".</p>
               </> : <p className="text-xs">Bạn chỉ có quyền xem — người có quyền “Lập kế hoạch” sẽ nạp đơn và tạo kế hoạch.</p>}
               {lastDiscarded && (

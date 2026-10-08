@@ -53,6 +53,16 @@ function PermissionRoute({
   return <>{children}</>
 }
 
+/** Đã chuyển tới trang mở đầu trong phiên (tab) này chưa — lần đầu hỏi thì đánh dấu luôn. Không đọc được bộ nhớ phiên ⇒ coi như
+ *  đã chuyển (thà để người dùng tự bấm còn hơn khoá họ khỏi Dashboard). */
+function landingDoneThisSession(): boolean {
+  try {
+    if (sessionStorage.getItem('wms-landing-done')) return true
+    sessionStorage.setItem('wms-landing-done', '1')
+    return false
+  } catch { return true }
+}
+
 // Dashboard gate bằng dashboard.view (19/08) — bến đáp khi BỊ CHẶN là /wms/alerts (trang mở
 // cho mọi user), KHÔNG đá về "/" như PermissionRoute (chính "/" là trang này → vòng lặp).
 function DashboardRoute({ children }: { children: React.ReactNode }) {
@@ -60,8 +70,10 @@ function DashboardRoute({ children }: { children: React.ReactNode }) {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   // Trang mở đầu theo CHỨC DANH (12/09): lái xe nâng vào thẳng Việc cần làm. Chỉ chuyển khi user có
   // quyền vào trang đích — không thì PermissionRoute đá về "/" và hai route ném nhau vô hạn.
+  // CHỈ MỘT LẦN mỗi phiên (08/10): trước đó MỌI lần vào "/" đều bị chuyển đi ⇒ mục "Dashboard" trên menu của lái xe nâng là nút
+  // chết (bấm là quay lại Việc cần làm). Mở app / đăng nhập ⇒ vào trang mở đầu; bấm Dashboard sau đó ⇒ thấy Dashboard.
   const landing = LANDING_PAGES.find(l => l.to === user?.landing_page)
-  if (landing && (isAdmin(user) || canAccess(perms, landing.module))) return <Navigate to={landing.to} replace />
+  if (landing && (isAdmin(user) || canAccess(perms, landing.module)) && !landingDoneThisSession()) return <Navigate to={landing.to} replace />
   const allowed = isAdmin(user) || canAccess(perms, 'dashboard')
   if (!allowed) return <Navigate to="/wms/alerts" replace />
   return <>{children}</>

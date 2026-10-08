@@ -7,6 +7,9 @@ import type { ModuleKey } from '@/config/permissions'
 
 export const LANDING_PAGES: { to: string; label: string; module: ModuleKey }[] = [
   { to: '/wms/directed', label: 'Việc cần làm', module: 'directed_work' },
+  // 08/10 (đóng vai Nhân viên điều vận: đăng nhập rơi vào Dashboard sức chứa kho — không phải việc của họ)
+  { to: '/tms/dispatch', label: 'Điều vận', module: 'dispatch' },
+  { to: '/tms/bookings', label: 'Kế hoạch VC', module: 'tms_plan' },
 ]
 
 export const LANDING_DEFAULT_LABEL = 'Tổng quan (mặc định)'

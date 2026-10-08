@@ -79,11 +79,13 @@ export function WarehouseSingleSelect({
               <div className="max-h-48 overflow-y-auto">
                 {allLabel !== undefined && (
                   <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                    {/* radio như SingleSelect (08/10) — ô vuông đọc thành "chọn nhiều"; bấm lại lựa chọn đang chọn vẫn đóng menu */}
                     <input
-                      type="checkbox"
+                      type="radio"
                       checked={value === ''}
                       onChange={() => { onChange(''); close() }}
-                      className="h-3.5 w-3.5 rounded accent-blue-600"
+                      onClick={() => { if (value === '') close() }}
+                      className="h-3.5 w-3.5 accent-blue-600"
                     />
                     <span className="text-[11px] text-slate-700 flex-1 truncate">{allLabel}</span>
                   </label>
@@ -93,10 +95,11 @@ export function WarehouseSingleSelect({
                 ) : filtered.map(w => (
                   <label key={w.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
                     <input
-                      type="checkbox"
+                      type="radio"
                       checked={w.id === value}
                       onChange={() => { onChange(w.id); close() }}
-                      className="h-3.5 w-3.5 rounded accent-blue-600"
+                      onClick={() => { if (w.id === value) close() }}
+                      className="h-3.5 w-3.5 accent-blue-600"
                     />
                     <span className="text-[11px] text-slate-700 flex-1 truncate">{w.name}</span>
                     {w.code && <span className="text-[10px] text-slate-400 font-mono shrink-0">{w.code}</span>}

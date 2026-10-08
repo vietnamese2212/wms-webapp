@@ -218,6 +218,8 @@ function dateBits(r: DirectedRow) {
   }
 }
 
+// 08/10: việc treo lâu ⇒ pallet ghim lúc lập (đạt mức) có thể đã tụt dưới mức — màu theo yêu cầu của DÒNG, không theo thang chung
+const BELOW_RULE_TIP = 'Pallet được chỉ định đã tụt dưới mức date của dòng đơn (việc treo từ lâu) — cửa quét sẽ chặn. Báo người lập kế hoạch / khai lại quy định date để máy chỉ pallet khác.'
 /** YÊU CẦU date của dòng đơn ĐẶT CẠNH %Date thật của pallet — so bằng mắt, không phải nhớ. */
 function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: boolean }) {
   // Lệnh fill chỉ định theo DATE của lô (không ghim tem) ⇒ đó chính là yêu cầu của dòng, in thẳng.
@@ -237,8 +239,8 @@ function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: bo
         ? <div className={`inline-block rounded px-1 text-[9px] font-medium no-underline ${rule.cls}`}>{rule.text}</div>
         : <div className="text-[9px] text-slate-300 no-underline">chưa khai</div>}
       {measure && (
-        <div className={`text-[10px] font-bold tabular-nums no-underline ${off ? 'text-slate-400' : pctDateCls(tone, bands)}`}>
-          {measure}
+        <div className={`text-[10px] font-bold tabular-nums no-underline ${off ? 'text-slate-400' : r.date_ok === false ? 'text-red-600' : pctDateCls(tone, bands)}`}>
+          {measure}{!off && r.date_ok === false && <span className="ml-1 rounded bg-red-100 px-1 text-[9px] font-semibold text-red-700" title={BELOW_RULE_TIP}>dưới yêu cầu</span>}
         </div>
       )}
       {nsx && <div className={`text-[9px] font-semibold no-underline ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}
@@ -1026,7 +1028,8 @@ export default function DirectedWork() {
                       {rule
                         ? <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${rule.cls}`}>{rule.text}</span>
                         : <span className="text-xs text-slate-400">chưa khai</span>}
-                      {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
+                      {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : r.date_ok === false ? 'text-red-600' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
+                      {!closed && r.date_ok === false && <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" title={BELOW_RULE_TIP}>dưới yêu cầu</span>}
                       {nsx && <div className={`text-xs font-semibold ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}>NSX {nsx}</div>}
                     </>)}
                   </Step>

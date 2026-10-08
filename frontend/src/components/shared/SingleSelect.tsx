@@ -114,12 +114,15 @@ export function SingleSelect({
                 ) : filtered.map(o => (
                   <label key={o.value}
                     className={`flex items-center gap-2 px-3 py-1.5 ${o.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'}`}>
+                    {/* RADIO, không checkbox (08/10): ô vuông đọc thành "chọn nhiều" (Chuyển tới xe… của bàn ghép xe). Bấm lại đúng
+                        lựa chọn đang chọn thì radio KHÔNG phát onChange ⇒ đóng menu ở onClick để hành vi như cũ. */}
                     <input
-                      type="checkbox"
+                      type="radio"
                       checked={o.value === value}
                       disabled={o.disabled}
                       onChange={() => { if (!o.disabled) { onChange(o.value); close() } }}
-                      className="h-3.5 w-3.5 rounded accent-blue-600 shrink-0"
+                      onClick={() => { if (!o.disabled && o.value === value) close() }}
+                      className="h-3.5 w-3.5 accent-blue-600 shrink-0"
                     />
                     {o.node ?? (
                       <>

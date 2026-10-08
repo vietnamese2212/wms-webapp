@@ -689,6 +689,28 @@ export function palletMeetsDateRule(
 }
 
 /**
+ * PALLET ĐÃ GHIM CÒN ĐẠT MỨC DATE CỦA DÒNG ĐƠN KHÔNG (08/10, đóng vai lái xe nâng): việc treo lâu thì pallet ghim lúc lập (đạt
+ * ≥ 90 %) có thể đã tụt xuống 86 % — thẻ tô theo thang %Date CHUNG nên vẫn XANH, người đi hạ đúng pallet đó rồi bị cửa quét chặn.
+ * Đo bằng CHÍNH luật của cửa quét (`palletMeetsDateRule`); bảng Việc cần làm chỉ đọc cờ `date_ok`. Dòng gom nhiều mức (nhiều mã)
+ * thì pallet đạt MỘT mức bất kỳ là đạt — không biết pallet thuộc dòng hàng nào thì không được kết luận "sai".
+ * null = dòng không đòi mức nào / không còn pallet chưa làm.
+ */
+export type DateCheckRow = {
+  pallets?: Array<DateRulePallet & { done?: boolean; skipped?: boolean; mat_shelf_days?: number | null; mat_overrides?: MaterialShelfInfo['supplier_shelf_life_overrides'] }> | null
+  date_rules?: unknown[] | null; date_required?: number | null; date_ok?: boolean | null
+}
+export function markRowsDateOk(rows: DateCheckRow[]): void {
+  for (const r of rows) {
+    const rules = (r.date_rules ?? []).map(x => dateRuleOf({ date_rule: x })).filter((x): x is DateRule => !!x)
+    if (!rules.length) { const one = dateRuleOf({ date_required: r.date_required ?? null }); if (one) rules.push(one) }
+    const open = (r.pallets ?? []).filter(p => !p.done && !p.skipped)
+    r.date_ok = rules.length && open.length
+      ? open.every(p => rules.some(rule => palletMeetsDateRule(p, { shelf_life_days: p.mat_shelf_days ?? null, supplier_shelf_life_overrides: p.mat_overrides ?? null }, rule)))
+      : null
+  }
+}
+
+/**
  * ĐỔI QUY TẮC DATE THÌ VIỆC CHƯA AI ĐỤNG PHẢI BỎ rồi sắp lại. Đo 10/09: đổi ≥30 % → ≥90 % mà kế
  * hoạch KHÔNG đổi — nhu cầu = đặt − đã quét − VIỆC CÒN TREO, việc treo cũ đã ăn hết nhu cầu nên
  * không sinh thêm, còn bản thân chúng vẫn trỏ pallet sai date ⇒ sửa xong y như không sửa.

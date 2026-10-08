@@ -459,6 +459,7 @@ export default function Outbound() {
   }
   const fmtTotal = (v: number) =>
     tooWide ? '—' : v.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
+  const nf1 = (v: number) => v.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
 
   // Phân bổ theo NPP — RPC đã thu hẹp theo mã hàng đang lọc (gõ mã hàng → đi những nhà nào)
   const nppBreakdown = useMemo(() => {
@@ -752,7 +753,8 @@ export default function Outbound() {
               onClick={() => setNppOpen(v => !v)}>
               <Building2 className="h-3.5 w-3.5 text-slate-400" />
               {/* Tổng cross-mã (đủ loại đơn vị) → không gắn "thùng" (từ vựng chốt 26/07, xem QTY_CONVERTED_LABEL) */}
-              <span title={QTY_CONVERTED_TIP}>Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nppTotals.planned.toLocaleString('vi-VN')} · đã xuất {nppTotals.scanned.toLocaleString('vi-VN')} · còn {nppTotals.remaining.toLocaleString('vi-VN')} (SL quy đổi)</span>
+              {/* cùng cách làm tròn với ô "SL (quy đổi)" của băng ngay dưới (08/10: dòng này "KH 1,25", ô tổng "1,3" trên cùng một màn) */}
+              <span title={QTY_CONVERTED_TIP}>Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nf1(nppTotals.planned)} · đã xuất {nf1(nppTotals.scanned)} · còn {nf1(nppTotals.remaining)} (SL quy đổi)</span>
               {filterMaterials.length > 0 && <span className="text-blue-600">· lọc {filterMaterials.length} mã hàng</span>}
               <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${nppOpen ? 'rotate-180' : ''}`} />
             </button>

@@ -23,17 +23,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
-
-const RULE_LABEL: Record<string, string> = {
-  EXPIRY:     'Tồn cận date',
-  GATE_DWELL: 'Xe trong cổng lâu',
-  TRIP_LATE:  'Chuyến trễ / kẹt',
-  WEIGH_DIFF: 'Lệch cân',
-  BE_ERRORS:  'Lỗi hệ thống',
-  PACKING_UNRECEIVED: 'Sổ đóng gói — kho chưa nhận',
-  AUTH_LOCKOUT: 'Bảo mật — nhiều tài khoản bị khoá',
-  ADMIN_NEW_IP: 'Bảo mật — admin đăng nhập IP mới',
-}
+import { ALERT_RULE_LABEL as RULE_LABEL, groupAlerts } from '@/utils/alertGroups'
 const RULE_BADGE: Record<string, string> = {
   AUTH_LOCKOUT: 'bg-red-100 text-red-800',
   ADMIN_NEW_IP: 'bg-red-100 text-red-800',
@@ -250,6 +240,8 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
     setBusy(false); setSel(new Set())
   }
 
+  // GOM theo loại × kho (08/10): 448 dòng "Chuyến trễ" mỗi chuyến một dòng ⇒ dải nhóm bấm-để-lọc; chỉ hiện khi CHƯA lọc theo loại
+  const groups = useMemo(() => (f.rules.length ? [] : groupAlerts(rows)), [rows, f.rules])
   const nCrit = rows.filter(a => a.severity === 'CRITICAL' && !a.resolved_at && !a.ack_at).length
   const nWarn = rows.filter(a => a.severity === 'WARNING' && !a.resolved_at && !a.ack_at).length
   const nAck  = rows.filter(a => a.ack_at && !a.resolved_at).length
@@ -316,10 +308,25 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
           { label: 'Đang hiện / tổng', value: `${rows.length.toLocaleString('vi-VN')} / ${(data?.total ?? rows.length).toLocaleString('vi-VN')}` },
         ]} />
 
+        {groups.length > 1 && (
+          <div className="shrink-0 mx-3 mt-1.5 flex items-center gap-1.5 flex-wrap text-[11px]">
+            <span className="text-slate-400">Theo loại × kho:</span>
+            {groups.map(g => (
+              <button key={g.key} type="button" title={`Chỉ xem "${g.label}"${g.warehouse_name ? ` ở ${g.warehouse_name}` : ''}`}
+                onClick={() => setF({ rules: [g.rule], warehouseId: g.warehouse_id ?? '' })}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-slate-50 ${g.critical ? 'border-red-200 text-red-700' : 'border-slate-200 text-slate-700'}`}>
+                <span className="font-medium">{g.label}</span>
+                {g.warehouse_name && <span className="text-slate-400">· {g.warehouse_name}</span>}
+                <span className="rounded-full bg-slate-100 px-1.5 tabular-nums font-semibold text-slate-700">{g.n.toLocaleString('vi-VN')}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {hiddenOpen > 0 && (
           <div className="shrink-0 mx-3 mt-1.5 flex items-center gap-2 flex-wrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span>Còn <b>{hiddenOpen.toLocaleString('vi-VN')}</b> cảnh báo đang mở nằm <b>ngoài bộ lọc</b> đang áp (kho / loại / mức độ khác) — chuông Header vẫn đếm số này.</span>
+            <span>Còn <b>{hiddenOpen.toLocaleString('vi-VN')}</b> cảnh báo đang mở nằm <b>ngoài bộ lọc</b> đang áp (kho / loại / mức độ khác) — chuông Header vẫn tính các nhóm này.</span>
             <button type="button" onClick={() => setF({ warehouseId: '', rules: [], severity: [], search: '' })}
               className="ml-auto shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100">
               Xóa bộ lọc để xem

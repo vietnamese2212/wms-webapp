@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { cn } from '@/lib/utils'
+import { useUIStore } from '@/stores/uiStore'
 
 /**
  * Thanh thao tác NỔI khi chọn nhiều dòng — cùng kiểu pill tối giữa đáy màn của trang Tồn kho.
@@ -10,13 +12,16 @@ import type { ReactNode } from 'react'
  * để mobile vẫn thấy đủ mọi thao tác.
  */
 export function FloatingActionBar({ count, unit, children }: { count: number; unit: string; children: ReactNode }) {
+  const collapsed = useUIStore(s => s.sidebarCollapsed)
   if (count <= 0) return null
   return (
     // Mobile: neo HAI MÉP (left-2 right-2) — phần tử `fixed` neo `left-1/2` chỉ được cấp nửa bề ngang màn để co
     // giãn nên ở 360 px nó bó thành một cột dọc mỗi nút một hàng (đo 16/09). Từ `sm` mới về pill giữa đáy.
-    <div className="fixed bottom-16 lg:bottom-6 z-50 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-max sm:max-w-[calc(100vw-16px)]
-      bg-slate-800 text-white rounded-2xl sm:rounded-full shadow-2xl px-3 sm:px-4 py-2
-      flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-sm">
+    // Từ `lg` có menu trái (w-60 / thu gọn w-16): canh giữa VÙNG NỘI DUNG, không giữa cửa sổ — bản cũ ở 1280 px đè lên chân
+    // menu trái khi pill dài (Xem đơn điều vận, 08/10).
+    <div className={cn('fixed bottom-16 lg:bottom-6 z-50 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-max sm:max-w-[calc(100vw-16px)]',
+      collapsed ? 'lg:left-[calc(50%+2rem)] lg:max-w-[calc(100vw-4rem-16px)]' : 'lg:left-[calc(50%+7.5rem)] lg:max-w-[calc(100vw-15rem-16px)]',
+      'bg-slate-800 text-white rounded-2xl sm:rounded-full shadow-2xl px-3 sm:px-4 py-2 flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-sm')}>
       <span className="text-slate-300 text-xs font-medium whitespace-nowrap">{count} {unit}</span>
       <div className="hidden sm:block w-px h-4 bg-slate-600" />
       {children}

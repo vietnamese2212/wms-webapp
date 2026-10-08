@@ -898,6 +898,9 @@ export interface DirectedRow {
   pallets: DirectedPallet[]
   date_rules: DateRule[]          // yêu cầu date của (các) dòng đơn trong nhóm — thường đúng 1
   date_required: number | null    // mức % kế thừa từ VL06O khi chưa ai chốt tay
+  // 08/10: pallet ghim (chưa làm) còn đạt mức date của dòng đơn không — BE đo bằng luật của cửa quét; false = đã tụt dưới mức
+  // (việc treo lâu), thẻ phải tô ĐỎ chứ không theo thang %Date chung. null = dòng không đòi mức / không còn pallet chưa làm
+  date_ok?: boolean | null
   customer_name: string | null    // NƠI NHẬN — người lấy hàng phải biết đang phục vụ ai
   do_codes: string | null
   cs_note: string | null          // ghi chú CS nguyên văn (máy không đọc, người đọc)

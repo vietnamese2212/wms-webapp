@@ -1282,6 +1282,12 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                               <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, item.material)}</span>
                             </div>
                           ))}
+                          {/* 08/10 (đóng vai thủ kho): 2 vị trí đầu 220 thùng đứng cạnh nhu cầu 461 thùng bị đọc thành "thiếu hàng" —
+                              nói rõ phần còn lại nằm ở vị trí khác (kính lúp cột Kho liệt kê đủ) */}
+                          {(() => {
+                            const rest = Math.max(0, Number(item.cartons_ordered) - Number(item.cartons_scanned ?? 0)) - sugs.reduce((t, s) => t + Number(s.available ?? 0), 0)
+                            return rest > 0 ? <div className="text-[9px] text-slate-500">+ vị trí khác cho {qtyLabel(rest, item.material)} — xem kính lúp cột Kho</div> : null
+                          })()}
                         </div>
                       )
                     })()}
@@ -1987,6 +1993,13 @@ export default function OutboundDetail() {
   // ĐỂ NGOÀI orderInfoJSX vì khối đó chỉ hiện từ sm trở lên — công nhân dùng ĐIỆN THOẠI/PDA là
   // chính, giấu lý do trên mobile = họ thấy nút mờ mà không biết vì sao (đúng lỗi đã sửa 02/08
   // cho rule cổng/cân, đợt kiểm vòng 2 bắt lại ở đây).
+  // BƯỚC KẾ TIẾP DO AI (08/10, đóng vai thủ kho: chuyến "Chờ xuất" không có nút nào cho mình mà màn không nói đang chờ ai). Chỉ
+  // nói khi người xem KHÔNG tự làm được bước đó; hiện cả điện thoại (cùng chỗ băng bất động, không trong khối chỉ-desktop).
+  const needAssign = !gdo.assigned_at && !(whInvMode !== null && whInvMode !== 'QR')
+  const nextStepHint = gdo.status !== 'PENDING' || inertReason || canQuickExportHere ? null
+    : needAssign && !can(perms, 'outbound', 'assign') ? 'Bước kế tiếp: Giao đơn — người có quyền "Giao đơn" (Xuất kho) bấm trước, rồi mới Bắt đầu được. Bạn chưa có quyền này.'
+      : !needAssign && !gdo.started_at && !can(perms, 'outbound', 'start') ? 'Bước kế tiếp: Bắt đầu — người có quyền "Bắt đầu" (Xuất kho) làm. Bạn chưa có quyền này.'
+        : null
   const inertBannerJSX = inertReason ? (
     <div className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${gdo.plan_dropped ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -2385,6 +2398,7 @@ export default function OutboundDetail() {
             </div>
           )}
           {inertBannerJSX}
+          {nextStepHint && <div className="rounded border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] text-sky-800">{nextStepHint}</div>}
           <div className="hidden sm:block">{orderInfoJSX}</div>
 
           {/* MOBILE: rule cổng/cân + vết duyệt LUÔN hiện (user chốt 02/08) — trước đây nằm trong

@@ -17,6 +17,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { groupAlerts, type AlertGroup } from '@/utils/alertGroups'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 
 const PREF_LABEL: { key: string; label: string; desc: string }[] = [
   { key: 'assign',     label: 'Được giao việc',      desc: 'Giao lệnh fill / giao lại dòng cho bạn · được chọn làm xe nâng chuyển của một chuyến xuất' },
@@ -47,7 +49,8 @@ export function NotificationBell() {
   const alerts = useAlerts({ status: 'open' }, canAlerts)
   const alertRows = canAlerts ? (alerts.data?.rows ?? []) : []
   const markRead = useMarkFeedRead()
-  const prefsQ = useNotifyPrefs(open)
+  // nạp ngay (không chờ mở panel): số trên chuông phải bỏ qua loại người này đã TẮT chuông (08/10)
+  const prefsQ = useNotifyPrefs(!!user)
   const updPrefs = useUpdateNotifyPrefs()
   const push = usePushNotifications()
 
@@ -68,12 +71,23 @@ export function NotificationBell() {
   }, [canAlerts])
 
   const unread = feed.data?.unread ?? 0
-  const badge = unread + (canAlerts ? alertRows.length : 0)
+  // 08/10 (đóng vai thủ kho mới: chuông 99+ vì 448 "Chuyến trễ" mỗi chuyến một dòng): chuông đếm NHÓM loại × kho, bỏ loại người này
+  // đã tắt chuông ở tab Cài đặt (trước đó tắt rồi số vẫn đếm). Danh sách tab Chung vẫn đủ mọi nhóm.
+  const groups = groupAlerts(alertRows)
+  const ringing = groups.filter(g => prefsQ.data?.prefs?.[g.rule] !== false)
+  const badge = unread + (canAlerts ? ringing.length : 0)
+  const setAlertFilter = useWmsFilterStore(s => s.setAlerts)
 
   function openItem(url: string | null, feedId?: string) {
     if (feedId) markRead.mutate([feedId])
     setOpen(false)
     if (url) navigate(url)
+  }
+  /** Nhóm một dòng ⇒ mở thẳng dòng đó; nhóm nhiều dòng ⇒ trang Thông báo lọc sẵn đúng loại × kho */
+  function openGroup(g: AlertGroup) {
+    if (g.n === 1) return openItem(g.first.object_url ?? '/wms/alerts?tab=general')
+    setAlertFilter({ rules: [g.rule], warehouseId: g.warehouse_id ?? '', status: 'open' })
+    openItem('/wms/alerts?tab=general')
   }
 
   return (
@@ -91,7 +105,7 @@ export function NotificationBell() {
       <DropdownMenuContent align="end" sideOffset={6} className="w-[92vw] max-w-sm p-0 overflow-hidden">
         {/* Tabs */}
         <div className="flex items-center border-b bg-slate-50">
-          {([['personal', `Cá nhân${unread ? ` (${unread})` : ''}`], ['general', `Chung${canAlerts && alertRows.length ? ` (${alertRows.length})` : ''}`]] as const).map(([k, label]) => (
+          {([['personal', `Cá nhân${unread ? ` (${unread})` : ''}`], ['general', `Chung${canAlerts && groups.length ? ` (${groups.length})` : ''}`]] as const).map(([k, label]) => (
             <button key={k} type="button" onClick={() => setTab(k)}
               className={`flex-1 px-2 py-2 text-xs font-semibold border-b-2 transition-colors ${tab === k ? 'border-sky-500 text-sky-700 bg-white' : 'border-transparent text-slate-500'}`}>
               {label}
@@ -141,26 +155,31 @@ export function NotificationBell() {
               <p className="text-center py-8 px-4 text-xs text-slate-400">
                 Bạn chưa được cấp quyền xem Cảnh báo vận hành (`alerts.view`) — liên hệ quản trị.
               </p>
-            ) : alertRows.length === 0 ? (
+            ) : groups.length === 0 ? (
               <p className="text-center py-8 text-xs text-slate-400">Không có cảnh báo nào đang mở 🎉</p>
             ) : (
               <>
-                {alertRows.slice(0, 15).map(a => (
-                  <button key={a.id} type="button" onClick={() => openItem(a.object_url ?? '/wms/alerts')}
-                    className="w-full text-left px-3 py-2 border-b border-slate-100 hover:bg-slate-50">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${SEV_DOT[a.severity]}`} />
-                      <span className="text-xs font-semibold text-slate-800 truncate">{a.title}</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                      {a.warehouse_name ?? (a.warehouse_id ? 'Kho ?' : 'Toàn hệ thống')}
-                      {a.detail ? ` · ${a.detail}` : ''}
-                    </p>
-                  </button>
-                ))}
-                <button type="button" onClick={() => openItem('/wms/alerts')}
+                {groups.slice(0, 15).map(g => {
+                  const muted = prefsQ.data?.prefs?.[g.rule] === false
+                  return (
+                    <button key={g.key} type="button" onClick={() => openGroup(g)}
+                      className={`w-full text-left px-3 py-2 border-b border-slate-100 hover:bg-slate-50 ${muted ? 'opacity-60' : ''}`}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${SEV_DOT[g.critical ? 'CRITICAL' : 'WARNING']}`} />
+                        <span className="text-xs font-semibold text-slate-800 truncate">{g.n === 1 ? g.first.title : g.label}</span>
+                        {g.n > 1 && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-1.5 text-[10px] font-semibold tabular-nums text-slate-700">{g.n.toLocaleString('vi-VN')}</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                        {g.warehouse_name ?? (g.warehouse_id ? 'Kho ?' : 'Toàn hệ thống')}
+                        {g.n === 1 ? (g.first.detail ? ` · ${g.first.detail}` : '') : ` · ${g.n.toLocaleString('vi-VN')} mục — bấm để xem đủ`}
+                        {muted ? ' · đã tắt chuông' : ''}
+                      </p>
+                    </button>
+                  )
+                })}
+                <button type="button" onClick={() => openItem('/wms/alerts?tab=general')}
                   className="w-full px-3 py-2 text-[11px] text-sky-600 hover:bg-slate-50 flex items-center justify-center gap-1">
-                  <ExternalLink className="h-3.5 w-3.5" /> Mở trang Cảnh báo{alertRows.length > 15 ? ` (+${alertRows.length - 15})` : ''}
+                  <ExternalLink className="h-3.5 w-3.5" /> Mở trang Cảnh báo{groups.length > 15 ? ` (+${groups.length - 15} nhóm)` : ''}
                 </button>
               </>
             )

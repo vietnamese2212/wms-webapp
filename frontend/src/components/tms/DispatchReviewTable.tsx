@@ -672,6 +672,12 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
 
       <FloatingActionBar count={selRows.length} unit="đơn đã chọn">
         {prog && <span className="self-center whitespace-nowrap text-[11px] tabular-nums text-white/80" role="status">Đang chuyển {prog} đơn…</span>}
+        {/* 08/10 (đóng vai điều vận): việc chính sau khi tick nằm NGAY chỗ tay đang ở — nút trên đầu bảng vẫn giữ (cùng hàm, cùng nhãn) */}
+        {editable && st === 'GO' && pickIds.length > 0 && (
+          <Button size="sm" className="h-8 text-[11px]" disabled={busy} onClick={doCreate}>
+            <Sparkles className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang tạo kế hoạch…' : createLabel}
+          </Button>
+        )}
         {(st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE') && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={doGo}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{unhold.isPending || unoutside.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
         {st === 'HIDDEN' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doHide(true)}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />{hide.isPending ? 'Đang chuyển…' : 'Điều lại'}</Button>}
         {st === 'PLAN' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void doUnplan()} title={`Đơn rời kế hoạch ngày ${planDay}, nằm lại tab ${SEGMENT_VI[seg]} để tick lại khi cần`}><Undo2 className="h-3.5 w-3.5 mr-1" />{unplan.isPending ? 'Đang trả…' : 'Trả về Chờ điều'}</Button>}

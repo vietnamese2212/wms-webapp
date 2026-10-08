@@ -38,6 +38,7 @@ export const useAuthStore = create<AuthState>()(
         disconnectRealtimeEvents() // đóng 2 kênh Broadcast riêng tư (kênh cá nhân gắn với người vừa thoát)
         setRealtimeAuth(null)      // trả kết nối realtime về anon
         void clearOfflineData()   // dọn cache + hàng đợi quét khỏi IndexedDB (máy dùng chung)
+        try { sessionStorage.removeItem('wms-landing-done') } catch { /* không đọc được bộ nhớ phiên — lần sau coi như đã chuyển */ }   // người kế tiếp vẫn vào trang mở đầu của chức danh mình
       },
 
       updateUser: (partial) =>

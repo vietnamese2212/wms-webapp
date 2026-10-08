@@ -1249,15 +1249,30 @@ try {
         b.s === 200 && Number(b.j?.data?.auto_replanned) >= 1 && old?.status === 'CANCELLED' && old?.skip_reason === 'STOCK_CHANGED'
           && after.length === 1 && after[0].entry_id === pQ3.id,
         `http=${b.s} auto=${b.j?.data?.auto_replanned} cũ=${old?.status}/${old?.skip_reason} mới=${after[0]?.pallet_code}`)
+      // [24f] HỘP VIỆC CŨNG XẢ HÀNG ĐỢI (08/10, user: "không ổn cho hộp việc") — CHỈ gọi Hộp việc, không tải
+      // bảng. Trước bản vá hàng đợi đứng nguyên và Hộp việc đếm việc của kế hoạch cũ tới khi ai đó mở bảng.
+      if (after.length === 1) {
+        const idF = after[0].id
+        const pQ5 = await mkPalletQ('RQ5', locQ, 550)          // HSD ngắn hơn RQ3, vẫn ≥ 99 %
+        const ib = await api(`/wms/directed/inbox?warehouse_id=${whId}`)
+        const allF = await tasksOf(tQ.gdo)
+        const oldF = allF.find(t => t.id === idF)
+        after = allF.filter(t => t.status === 'PENDING')
+        q = await restAll('wms_replan_queue', `select=material_id&warehouse_id=eq.${whId}&material_id=eq.${matQ.id}`)
+        check('[24f] Chỉ mở HỘP VIỆC (không tải bảng) ⇒ hàng đợi vẫn được xả + sắp lại: auto_replanned≥1, hàng đợi rỗng, việc cũ STOCK_CHANGED, việc mới ghim RQ5',
+          ib.s === 200 && Number(ib.j?.data?.auto_replanned) >= 1 && q.length === 0
+            && oldF?.status === 'CANCELLED' && oldF?.skip_reason === 'STOCK_CHANGED' && after.length === 1 && after[0].entry_id === pQ5.id,
+          `http=${ib.s} auto=${ib.j?.data?.auto_replanned} hàngđợi=${q.length} cũ=${oldF?.status}/${oldF?.skip_reason} mới=${after[0]?.pallet_code}`)
+      }
       // Việc ĐÃ HẠ không bị đụng dù hàng còn tốt hơn nữa về
       if (after.length === 1) {
-        const id1 = after[0].id
+        const id1 = after[0].id, pin1 = after[0].entry_id
         await api('/wms/directed/tasks/confirm', 'POST', { task_ids: [id1], stage: 'LOWER' })
         await mkPalletQ('RQ4', locQ, 500)
         b = await board('MOVE')
         const kept = (await tasksOf(tQ.gdo)).find(t => t.id === id1)
-        check('[24e] Việc ĐÃ HẠ: hàng tốt hơn về vẫn KHÔNG bị đụng (cùng id, vẫn PENDING, mốc hạ còn, vẫn ghim RQ3)',
-          b.s === 200 && kept?.status === 'PENDING' && !!kept?.lowered_at && kept?.entry_id === pQ3.id,
+        check('[24e] Việc ĐÃ HẠ: hàng tốt hơn về vẫn KHÔNG bị đụng (cùng id, vẫn PENDING, mốc hạ còn, vẫn ghim pallet cũ)',
+          b.s === 200 && kept?.status === 'PENDING' && !!kept?.lowered_at && kept?.entry_id === pin1,
           `http=${b.s} auto=${b.j?.data?.auto_replanned} kept=${kept?.status} hạ=${kept?.lowered_at ? 'còn' : 'MẤT'}`)
       }
     }

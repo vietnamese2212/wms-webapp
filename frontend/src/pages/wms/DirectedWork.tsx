@@ -425,6 +425,15 @@ function InboxPanel({ inbox, loading, showWh, sup }: { inbox: WorkInbox | undefi
   if (loading && !inbox) return <div className="py-6 text-center text-[11px] text-slate-400">Đang tải hộp việc…</div>
   return (
     <div className="p-2 sm:p-3 space-y-3">
+      {/* Hộp việc cũng xả hàng đợi sắp-lại-theo-tồn (08/10) — lượt nào sắp lại thì nói ra như chip của bảng */}
+      {(inbox?.auto_replanned ?? 0) > 0 && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">
+          Kế hoạch <b>{inbox?.auto_replanned}</b> chuyến vừa sắp lại
+          <InfoTip className="text-amber-500 hover:text-amber-700"
+            tip={<>Tồn kho vừa đổi nên máy sắp lại các việc <b>chưa ai đụng</b> theo tồn hiện tại — số việc dưới đây đã tính
+              theo kế hoạch mới. Việc đã hạ / đã đưa ra giữ nguyên.</>} />
+        </span>
+      )}
       <InboxZone zone="MINE"    rows={inbox?.mine ?? []}    showWh={showWh} />
       <InboxZone zone="SHARED"  rows={inbox?.shared ?? []}  showWh={showWh} />
       <InboxZone zone="WAITING" rows={inbox?.waiting ?? []} showWh={showWh} />

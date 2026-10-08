@@ -276,6 +276,7 @@ type InboxRow = {
   warehouse_id: string; wh_name: string | null; title: string; sub: string | null; n: number; link: string
   pm: string; pa: string; wv: boolean; sub_wait: string | null
 }
+const MAX_INBOX_DRAIN = 3
 const userHasPerm = (req: Request, mod: string, action: string): boolean =>
   req.user?.is_superadmin === true || (req.user?.module_permissions?.[mod] ?? []).includes(action)
 
@@ -289,8 +290,21 @@ export async function getInbox(req: Request, res: Response) {
     // Phạm vi kho rỗng ≠ không giới hạn (memory empty-scope-means-unlimited): người chưa được giao kho thấy hộp trống
     if (!whId && myWhs && myWhs.length === 0) return ok(res, { mine: [], shared: [], waiting: [], counts: { mine: 0, shared: 0, waiting: 0 } })
     const ids: string[] | null = whId ? [whId] : myWhs
-    const { data, error } = await supabase.rpc('work_inbox', { p_warehouse_ids: ids, p_employee_id: req.user?.sub ?? '' })
+    const readInbox = () => supabase.rpc('work_inbox', { p_warehouse_ids: ids, p_employee_id: req.user?.sub ?? '' })
+    let { data, error } = await readInbox()
     if (error) return fail(res, error)
+    // TỒN ĐỔI CHỜ SẮP LẠI (08/10, user: "không ổn cho hộp việc") — cùng hàng đợi bảng Việc cần làm xả lúc
+    // tải. Không xả ở đây thì người chỉ mở Hộp việc (và badge "Việc" poll 60 s) đếm việc của kế hoạch cũ
+    // tới khi ai đó mở bảng. RPC báo kho nào có mục chờ ⇒ hàng đợi rỗng không tốn thêm lượt gọi nào.
+    // Tối đa MAX_INBOX_DRAIN kho mỗi lượt: người quản lý nhiều kho không phải chờ sắp lại cả loạt; kho
+    // còn lại xả ở lượt poll sau (hoặc khi bảng của kho đó tải).
+    const pendingWhs = ((data as { replan_whs?: string[] } | null)?.replan_whs ?? []).slice(0, MAX_INBOX_DRAIN)
+    let replanned = 0
+    for (const w of pendingWhs) replanned += (await drainReplanQueue(w)).replanned
+    if (replanned > 0) {
+      ({ data, error } = await readInbox())
+      if (error) return fail(res, error)
+    }
     const rows = ((data as { rows?: InboxRow[] } | null)?.rows ?? [])
     const out = { mine: [] as InboxRow[], shared: [] as InboxRow[], waiting: [] as InboxRow[] }
     for (const r of rows) {
@@ -301,7 +315,8 @@ export async function getInbox(req: Request, res: Response) {
       }
     }
     const sum = (a: InboxRow[]) => a.reduce((s, r) => s + Number(r.n ?? 0), 0)
-    return ok(res, { ...out, counts: { mine: sum(out.mine), shared: sum(out.shared), waiting: sum(out.waiting) } })
+    // auto_replanned: máy vừa đổi việc dưới tay người thì phải nói ra — cùng chip với bảng
+    return ok(res, { ...out, counts: { mine: sum(out.mine), shared: sum(out.shared), waiting: sum(out.waiting) }, auto_replanned: replanned })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 

@@ -19,7 +19,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 
 export interface ConfirmOptions {
   title: string
-  body?: ReactNode
+  /** Dạng hàm `close => …` khi trong thân có nút điều hướng (bấm là đóng hộp, `ask` trả null — như Huỷ) */
+  body?: ReactNode | ((close: () => void) => ReactNode)
   confirmLabel?: string
   /** null = không có nút Huỷ (hộp thoại chỉ để thông báo) */
   cancelLabel?: string | null
@@ -53,7 +54,7 @@ export function useConfirmDialog() {
               <span>{opts.title}</span>
             </DialogTitle>
           </DialogHeader>
-          {opts.body && <div className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">{opts.body}</div>}
+          {opts.body && <div className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">{typeof opts.body === 'function' ? opts.body(() => close(null)) : opts.body}</div>}
           {opts.input && (
             <label className="block space-y-1">
               <span className="text-xs font-medium text-slate-700">{opts.input.label}</span>

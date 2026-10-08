@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import * as XLSX from 'xlsx'
 import { parseSheetByHeader } from '../../src/utils/excelHeader'
-import { parseZsd02, resolveFlow, splitCodeName, bizHash, ZSD02_FIELDS, ZSD02_BIZ, LOADABLE_FLOWS, type Flow, type Zsd02Mat } from '../../src/services/zsd02Parse'
+import { parseZsd02, resolveFlow, splitCodeName, wardCell, bizHash, ZSD02_FIELDS, ZSD02_BIZ, LOADABLE_FLOWS, type Flow, type Zsd02Mat } from '../../src/services/zsd02Parse'
 
 const SAMPLE = resolve(__dirname, '../../../Du lieu mau/Du lieu sap zsd02.xlsx')
 const HAS_SAMPLE = existsSync(SAMPLE)
@@ -90,6 +90,14 @@ describe('zsd02Parse — bất biến dựng tay', () => {
     ], ctx)
     expect(out.od.map(r => [r.od_item, r.qty_issued_base, r.billing_no])).toEqual([['10', 1080, '1C26TAF-00257830'], ['20', 240, null], ['30', 0, null], ['40', null, null]])
   })
+  it('phường SAP ghi chữ giữ chỗ ("None" · "NULL" · "N/A" · "#N/A") = trống — để máy rơi về phường của danh mục Khách hàng (08/10, khách XK 20000019)', () => {
+    expect(['None', ' none ', 'NULL', 'N/A', '#N/A', '', null].map(wardCell)).toEqual([null, null, null, null, null, null, null])
+    expect(wardCell(' H.Phòng-Ngô Quyền ')).toBe('H.Phòng-Ngô Quyền')
+    const base = { so_number: 'S1', item: '10', od_number: 'O1', material: '510000219', plant: '1102', sales_unit: 'Thùng', so_qty: 1, od_qty: 1, od_qty_base: 24, base_unit: 'HOP', delivery_date: 46266, so_type: 'ZOR1-SO Standard', item_category: 'ZTA1-IC Sales Standard' }
+    const out = parseZsd02([{ ...base, ship_to_code: 'X1', ward: 'None' }, { ...base, item: '20', ship_to_code: 'X2', ward: 'Phường A' }], ctx)
+    expect(out.od.map(r => r.ward_code)).toEqual([null, 'Phường A'])
+    expect(out.customers.get('X1')?.ward_code).toBeNull()
+  })
 })
 
 describe.skipIf(!HAS_SAMPLE)('zsd02Parse — file mẫu SAP 01–25/09/2026 (số đo độc lập 22/09)', () => {
@@ -133,9 +141,9 @@ describe.skipIf(!HAS_SAMPLE)('zsd02Parse — file mẫu SAP 01–25/09/2026 (s�
     const l219 = out.od.find(r => r.material_code === '510000219' && Number(r.qty_sales) === 60)
     expect(l219?.gross_weight_kg).toBe(298.2)
     expect(out.stats.unknown_dvvt.every(d => /VÃNG LAI|Vãng Lai/i.test(d))).toBe(true)
-    // tuyến 231 (1-1 mã ↔ tên) · 286 ship-to có phường
+    // tuyến 231 (1-1 mã ↔ tên) · 285 ship-to có phường (08/10: 286 cũ đếm cả ship-to mang phường chữ "None" — wardCell)
     expect(out.routes.size).toBe(231)
-    expect([...out.customers.values()].filter(c => c.ward_code).length).toBe(286)
+    expect([...out.customers.values()].filter(c => c.ward_code).length).toBe(285)
     // biển số giữ NGUYÊN VĂN (ngoại lệ erp_outbound_orders.license_plate)
     expect(out.od.some(r => /[- ]|[a-z]/.test(String(r.license_plate ?? '')))).toBe(true)
   })

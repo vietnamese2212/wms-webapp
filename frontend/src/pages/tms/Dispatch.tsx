@@ -61,6 +61,26 @@ const TRIP_STATUS_VI: Record<DispatchTripStatus, { label: string; tone: Tone }> 
 }
 // Luật "xe cần xử lý" nằm ở components/tms/dispatchIssues (dùng chung với bàn ghép xe — hai góc nhìn phải đếm như nhau)
 
+// Hộp Xác nhận = BẢNG KIỂM (08/10, user: "không muốn văn viết"): mỗi mục một dòng — nhãn · số · "Xem" nhảy tới đúng xe / đơn.
+type CheckRow = { k: string; label: string; value: string; tone: 'ok' | 'info' | 'warn'; go?: () => void }
+function CheckRows({ rows, close }: { rows: CheckRow[]; close: () => void }) {
+  return (
+    <div className="divide-y divide-slate-100 whitespace-normal">
+      {rows.map(r => (
+        <div key={r.k} className="flex items-center gap-2 py-1.5">
+          {r.tone === 'warn' ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+            : <CheckCircle2 className={`h-3.5 w-3.5 shrink-0 ${r.tone === 'ok' ? 'text-green-600' : 'text-sky-600'}`} />}
+          <span className="flex-1 min-w-0 text-slate-700">{r.label}</span>
+          <span className="tabular-nums font-semibold text-slate-800 text-right">{r.value}</span>
+          <span className="w-9 shrink-0 text-right">
+            {r.go && <button type="button" className="py-1 font-medium text-sky-700 hover:underline" onClick={() => { close(); r.go?.() }}>Xem</button>}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function LoadCell({ t }: { t: DispatchTrip }) {
   const l = t.detail.load
   if (l.pct == null) return <span className="text-slate-300" title={t.detail.freight.reason ?? 'Không đo được tải'}>—</span>
@@ -209,39 +229,45 @@ export default function Dispatch() {
     const hard = (od: string) => { const k = flags.get(od)?.kind; return !!k && !SOFT_FLAG_KINDS.has(k) }
     const flagged = open.filter(t => t.ods.some(o => hard(o.od_number)))
     const softOds = new Set(open.flatMap(t => t.ods.map(o => o.od_number)).filter(od => { const k = flags.get(od)?.kind; return !!k && SOFT_FLAG_KINDS.has(k) }))
-    const warn = [noCarrier ? `${noCarrier} xe CHƯA CÓ ĐVVT` : '', noFreight ? `${noFreight} xe CHƯA CÓ CƯỚC` : '', over ? `${over} xe VƯỢT TẢI` : '', poolN ? `${poolN} OD trong kế hoạch còn ở KHUNG CHỜ, chưa lên xe (sẽ KHÔNG đi)` : '',
-      softOds.size ? `${softOds.size} OD SAP báo ĐÃ POST / ĐÃ GẮN XE mà vẫn trên xe (đúng là đã đi thì về Xem đơn bấm "Ngoài app" trước)` : '']
-      .filter(Boolean).join(' · ')
+    const toBoard = (issue: string) => () => setF({ tab: 'board', issue })
     // OD đã đổi ở SAP sau khi lập (thay / bỏ / sửa / đã vào KH xuất) ⇒ cửa Xác nhận trả 409 — nói TRƯỚC
     if (flagged.length) {
       await ask({
-        title: `Chưa xác nhận được: ${flagged.length} xe có OD đã đổi ở SAP`, danger: true, cancelLabel: null,
-        body: flagged.slice(0, 6).map(t => `• #${t.seq} ${t.group_code}: ${t.ods.filter(o => hard(o.od_number)).map(o => `${o.od_number} — ${flags.get(o.od_number)?.info ?? ''}`).join('; ')}`).join('\n') +
-          `\n\nTrên Bàn ghép xe: OD "SAP đã sửa" có nút "Cập nhật theo SAP"; OD "SAP đã thay" có nút "Thay bằng OD mới"; OD SAP đã bỏ / đã vào KH xuất thì kéo về khung chờ hoặc bỏ khỏi kế hoạch.`,
+        title: `Chưa xác nhận được: ${flagged.length} xe có OD đổi ở SAP — sửa trên Bàn ghép xe`, danger: true, cancelLabel: null,
+        body: close => <CheckRows close={close} rows={[
+          ...flagged.slice(0, 8).map(t => ({ k: t.id, tone: 'warn' as const, label: `#${t.seq} ${t.group_code}`,
+            value: t.ods.filter(o => hard(o.od_number)).map(o => `${o.od_number} · ${flags.get(o.od_number)?.info ?? ''}`).join('; ') })),
+          ...(flagged.length > 8 ? [{ k: 'more', tone: 'warn' as const, label: `… và ${flagged.length - 8} xe nữa`, value: '' }] : []),
+          { k: 'go', tone: 'info', label: 'Các xe có OD đổi ở SAP', value: nf(flagged.length), go: toBoard('sapflag') },
+        ]} />,
       })
       return
     }
     if (split.length) {
       await ask({
-        title: `Không xác nhận được: ${split.length} OD đang nằm ở hai xe`, danger: true, cancelLabel: null,
-        body: split.slice(0, 5).map(([od, g]) => `• ${od}: ${g.join(' + ')}`).join('\n') +
-          (split.length > 5 ? `\n… và ${split.length - 5} OD nữa` : '') +
-          `\n\nApp chưa tách một DO ra hai xe. Máy tách vì OD vượt sức chứa xe lớn nhất.\n` +
-          `Cách xử lý: trên Bàn ghép xe kéo phần OD ở xe này thả sang xe kia để gom về MỘT xe ` +
-          `(xe sẽ báo Vượt tải — vẫn xác nhận được), hoặc tách DO ở SAP trước.`,
+        title: `Không xác nhận được: ${split.length} OD nằm ở hai xe — gom mỗi OD về một xe`, danger: true, cancelLabel: null,
+        body: close => <CheckRows close={close} rows={[
+          ...split.slice(0, 8).map(([od, g]) => ({ k: od, tone: 'warn' as const, label: od, value: g.join(' + ') })),
+          ...(split.length > 8 ? [{ k: 'more', tone: 'warn' as const, label: `… và ${split.length - 8} OD nữa`, value: '' }] : []),
+          { k: 'go', tone: 'info', label: 'Bàn ghép xe', value: '', go: toBoard('') },
+        ]} />,
       })
       return
     }
+    const rows: CheckRow[] = ([
+      { k: 'now', tone: 'ok', label: 'Xe vào Kế hoạch xuất ngay', value: nf(n - tenderCount) },
+      { k: 'tender', tone: 'info', label: 'Xe chờ ĐVVT phản hồi', value: nf(tenderCount) },
+      { k: 'nocarrier', tone: 'warn', label: 'Xe chưa có ĐVVT', value: nf(noCarrier), go: toBoard('nocarrier') },
+      { k: 'nofreight', tone: 'warn', label: 'Xe chưa có cước', value: nf(noFreight), go: toBoard('nofreight') },
+      { k: 'over', tone: 'warn', label: 'Xe vượt tải', value: nf(over), go: toBoard('over') },
+      { k: 'pool', tone: 'warn', label: 'Đơn còn ở khung chờ — không đi', value: nf(poolN), go: toBoard('') },
+      { k: 'soft', tone: 'warn', label: 'Đơn SAP báo đã post / đã gắn xe', value: nf(softOds.size), go: () => setF({ tab: 'review' }) },
+    ] satisfies CheckRow[]).filter(r => r.value !== '0')
     const ok = await ask({
       title: `Xác nhận ${n} xe vào Kế hoạch xuất ngày ${formatDate(plan.plan_date)}?`,
       confirmLabel: 'Xác nhận',
-      danger: !!warn,
-      body: [
-        tenderCount
-          ? `${n - tenderCount} xe vào Kế hoạch xuất ngay, ${tenderCount} xe CHỜ ĐVVT phản hồi (ĐVVT có cờ "cần phản hồi").`
-          : 'Sau bước này chuyến + lệnh VC tự sinh, sửa tiếp ở tab Kế hoạch xuất.',
-        warn ? `\n⚠ Còn ${warn} — vẫn ghi được, nhưng phải sửa ở tab Kế hoạch xuất sau. Bấm Huỷ để quay lại xử lý (dải "Soát" ở đầu bảng).` : '',
-      ].filter(Boolean).join('\n'),
+      danger: rows.some(r => r.tone === 'warn'),
+      body: close => <CheckRows rows={rows} close={close} />,
     })
     if (ok === null) return
     confirm.mutateAsync(plan.id).then(r => {

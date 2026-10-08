@@ -40,36 +40,31 @@ const QAWH = { id: '6a610000-0000-4000-8000-000000000061', code: 'QA61WH', name:
       id: crypto.randomUUID(), pallet_code: pc, material_id: matId, warehouse_id: QAWH.id, location_id: loc.id, cartons_imported: base, cartons_remaining: base,
       status: 'IN_STOCK', import_date: '2026-01-01', updated_at: nowI })
   }
-  // [1r] danh sách ĐVVT của xe = ĐVVT có cước ở phường xe đi + ĐVVT phân tuyến / tỷ trọng của KHO. Ở Ba Vì HA có mặt nhờ tỷ trọng thật;
-  // kho QA: phân tuyến HA tới một phường KHÔNG có đơn nào ⇒ HA vào danh sách (không cước W1, có lý do) mà máy ghép không đổi lựa chọn
-  const coHA = (await restAll('TransportCompany', 'select=id&code=eq.HA'))[0]
-  if (coHA && !(await restAll('carrier_allocation', `select=id&from_warehouse_id=eq.${QAWH.id}&transport_company_id=eq.${coHA.id}`)).length)
-    await restWrite('carrier_allocation', 'POST', null, { id: crypto.randomUUID(), from_warehouse_id: QAWH.id, area_kind: 'WARD', area_code: 'QA61-W9', transport_company_id: coHA.id, priority: 9, effective_from: '2026-01-01', note: 'QA61 — đưa HA vào danh sách ĐVVT của kho QA' })
 }
 const WH = QAWH.id
 const PREFIX = `${QAWH.code}_X_160327_`
 const PLAN_BODY = { warehouse_id: WH, plan_date: DAY }
 const DAY2 = '2027-03-17'   // [17] (03/10 tối) kế hoạch ngày THỨ HAI cùng kho — rào "một đơn một ngày", khung chờ tự do, Kéo về đây
-const cos = await restAll('TransportCompany', `select=id,code,name,tender_required&code=in.(DA,HA)`)
-const DA = cos.find(c => c.code === 'DA'), HA = cos.find(c => c.code === 'HA')
-if (!DA || !HA) throw new Error('Fixture: cần ĐVVT DA và HA trong danh mục TransportCompany')
-const HA_FLAG0 = HA.tender_required === true
+// ĐVVT RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ dùng Đông Á / Hải An THẬT và bật/tắt "cần phản hồi" của Hải An 5 lần mỗi lượt: lượt bị
+// ngắt giữa chừng là Hải An kẹt "cần phản hồi" ⇒ mọi xe Hải An của người dùng đứng Chờ ĐVVT. Hai ĐVVT QA tạo qua cửa app trong
+// fixture (sau bước dọn đầu gói), xoá ở cleanup. `DA` = ĐVVT không cần phản hồi, `HA` = ĐVVT bật/tắt cờ.
+const QA_CARRIERS = { DA: 'QA61DA', HA: 'QA61HA' }
+let DA = null, HA = null
+// [7] (08/10, C49 lặp) Loại kho + mã RIÊNG cho phép kiểm điều kiện bảo quản — bản cũ ghi đè `storage_condition` của Loại kho THẬT
+// của mã fixture (FG02) rồi trả lại ở bước dọn; lượt bị ngắt thì lượt sau chụp "trống" làm giá trị gốc ⇒ FG02 mất mức 2–8 °C.
+const CAT7 = 'QA61K7', MAT7 = 'QA61MAT7'
+// [13e] kênh RIÊNG để đo cửa ghi dòng xe của kênh (bản cũ ghi vào kênh ĐẦU danh sách = GT thật)
+const CH13 = 'QA61CH13'
 const XEPALLET = ((await api('/tms/vehicle-types')).j?.data ?? []).find(p => p.code === 'XEPALLET')
 const wh = (await restAll('Warehouse', `select=sap_plant&id=eq.${WH}`))[0]
-const mat = (await restAll('Material', `select=units_per_carton,cartons_per_pallet&material_code=eq.${FIX.MAT_POOL}`))[0]
+const mat = (await restAll('Material', `select=units_per_carton,cartons_per_pallet,base_unit,entry_unit&material_code=eq.${FIX.MAT_POOL}`))[0]
 const perPallet = Number(mat.units_per_carton) * Number(mat.cartons_per_pallet)
 const PAL = [4, 3, 3]           // OD1 4 pallet W1 · OD2 3 pallet W1 · OD3 3 pallet W2 ⇒ xe 1 = OD1+OD2 (7/9) · xe 2 = OD3 (3/9 Non tải, gộp vào xe 1 thì 10 > 9)
 const PRICE_DA = 200_000, PRICE_HA = 250_000
 // [7] Điều kiện bảo quản (24/09): mã QA riêng nên KHÔNG dòng xe thật nào phục vụ ⇒ đo được cả hai chiều
-// (khai cho xe QA ⇒ chọn được; gỡ ⇒ không xe nào phục vụ). Loại kho của mã fixture là DỮ LIỆU DÙNG CHUNG
-// trên staging nên meta gốc phải được ghi nhớ và trả lại trong cleanup — cleanup chạy cả ở ĐẦU gói.
+// (khai cho xe QA ⇒ chọn được; gỡ ⇒ không xe nào phục vụ). Loại kho đo trên là `CAT7` của riêng gói (xem trên).
 const COND = 'QA61C'
 const MAT_CAT = FIX.MAT_POOL_CAT
-let catRow = null, CAT_META0 = null
-if (MAT_CAT) {
-  catRow = (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(MAT_CAT)}`))[0] ?? null
-  CAT_META0 = catRow ? { ...(catRow.meta ?? {}) } : null
-}
 
 // [12] (26/09) Luật 9 + kiểu đi theo Loại kho + ĐK theo vị trí: cần một mã hàng thứ HAI thuộc Loại kho KHÁC (có quy cách
 // pallet), một pallet tồn thật ở kho fixture (ô sẽ khai ĐK riêng) — meta Loại kho 2, cờ kho và ĐK của ô đều là dữ liệu dùng
@@ -128,16 +123,16 @@ async function cleanupTrips() {
 }
 async function cleanup() {
   await cleanupTrips()
-  // Trả Loại kho về meta GỐC trước tiên: để sót `storage_condition` của QA thì mọi kế hoạch điều vận sau đó
-  // không tìm được dòng xe nào phục vụ — hỏng cho cả phiên khác đang dùng staging.
-  if (catRow && CAT_META0) await restWrite('LookupValue', 'PATCH', `id=eq.${catRow.id}`, { meta: CAT_META0 }).catch(() => {})
-  // Loại kho + mã hàng RIÊNG của gói ([12]): mã trước, loại sau (cửa xoá Loại kho đếm mã hàng đang dùng; qua cửa app để dọn cả dòng gán kho)
-  await restWrite('erp_outbound_orders', 'DELETE', `material_code=eq.${MAT2}`).catch(() => {})
-  await restWrite('Material', 'DELETE', `material_code=eq.${MAT2}`).catch(() => {})
-  for (const lk of await restAll('LookupValue', `select=id&type=eq.warehouse_type&value=eq.${CAT2}`)) {
-    const d = await api(`/wms/lookup/${lk.id}`, 'DELETE').catch(() => ({ s: 0 }))
-    if (d.s !== 200) { await restWrite('warehouse_type_configs', 'DELETE', `type_code=eq.${CAT2}`).catch(() => {}); await restWrite('LookupValue', 'DELETE', `id=eq.${lk.id}`).catch(() => {}) }
+  // Loại kho + mã hàng RIÊNG của gói ([7], [12]): mã trước, loại sau (cửa xoá Loại kho đếm mã hàng đang dùng; qua cửa app để dọn cả dòng gán kho)
+  for (const [cat, code] of [[CAT2, MAT2], [CAT7, MAT7]]) {
+    await restWrite('erp_outbound_orders', 'DELETE', `material_code=eq.${code}`).catch(() => {})
+    await restWrite('Material', 'DELETE', `material_code=eq.${code}`).catch(() => {})
+    for (const lk of await restAll('LookupValue', `select=id&type=eq.warehouse_type&value=eq.${cat}`)) {
+      const d = await api(`/wms/lookup/${lk.id}`, 'DELETE').catch(() => ({ s: 0 }))
+      if (d.s !== 200) { await restWrite('warehouse_type_configs', 'DELETE', `type_code=eq.${cat}`).catch(() => {}); await restWrite('LookupValue', 'DELETE', `id=eq.${lk.id}`).catch(() => {}) }
+    }
   }
+  await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH13}`).catch(() => {})
   await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { dispatch_allow_mix_categories: WH_MIX0, dispatch_load_bands: WH_BANDS0 }).catch(() => {})
   if (locRow) await restWrite('Location', 'PATCH', `id=eq.${locRow.id}`, { storage_condition: LOC_COND0 }).catch(() => {})
   if (ieStray) await restWrite('Location', 'PATCH', `id=eq.${ieStray.location_id}`, { storage_condition: STRAY_COND0 }).catch(() => {})
@@ -151,7 +146,15 @@ async function cleanup() {
     await restWrite('freight_tariff', 'DELETE', `vehicle_model_id=in.(${vm.map(v => v.id).join(',')})`).catch(() => {})
     await restWrite('vehicle_model', 'DELETE', `id=in.(${vm.map(v => v.id).join(',')})`).catch(() => {})
   }
-  await restWrite('TransportCompany', 'PATCH', `id=eq.${HA.id}`, { tender_required: HA_FLAG0 }).catch(() => {})
+  // ĐVVT của gói: phân tuyến kho QA (mọi dòng của kho QA là của gói — kể cả dòng trỏ Hải An THẬT của bản cũ) + cước còn sót rồi mới xoá ĐVVT
+  await restWrite('carrier_allocation', 'DELETE', `from_warehouse_id=eq.${WH}`).catch(() => {})
+  const qaCos = await restAll('TransportCompany', `select=id&code=in.(${Object.values(QA_CARRIERS).join(',')})`)
+  if (qaCos.length) {
+    const ids = qaCos.map(c => c.id).join(',')
+    await restWrite('freight_tariff', 'DELETE', `transport_company_id=in.(${ids})`).catch(() => {})
+    await restWrite('carrier_allocation', 'DELETE', `transport_company_id=in.(${ids})`).catch(() => {})
+    await restWrite('TransportCompany', 'DELETE', `id=in.(${ids})`).catch(() => {})
+  }
 }
 await cleanup()
 // Kho fixture (tới 04/10 là Ba Vì THẬT): người dùng chọn dải trên bàn (vd XE PALLET 90–105) là mọi kịch bản cũ của gói đổi kết quả (7/9 thành
@@ -179,6 +182,13 @@ try {
   // 02/10: tạo dòng con BẮT BUỘC cha + điều kiện bảo quản + sức chứa theo thước đo. Xe QA khai MỌI mức trong danh mục = đúng nghĩa
   // "chở được mọi điều kiện" của fixture cũ (khai rỗng) — mã fixture là hàng THẬT có tồn ở ô khai ĐK riêng của Ba Vì, khai một mức
   // thì [12c] đỏ oan (hàng đòi mức khác, OD CAT2 không ghép được vì không xe nào chở cả hai mức)
+  const mkCo = await Promise.all(Object.entries(QA_CARRIERS).map(([k, code]) =>
+    api('/tms/transport-companies', 'POST', { code, name: `QA61 ĐVVT ${k} (bộ kiểm tự dùng)`, type: 'ĐVVT' })))
+  DA = mkCo[0].j?.data ?? null; HA = mkCo[1].j?.data ?? null
+  if (!DA?.id || !HA?.id) throw new Error(`Fixture: không tạo được ĐVVT QA — ${mkCo.map(r => `${r.s} ${r.j?.error?.message ?? ''}`).join(' | ')}`)
+  // [1r] danh sách ĐVVT của xe = ĐVVT có cước ở phường xe đi + ĐVVT phân tuyến / tỷ trọng của KHO: phân tuyến HA tới một phường KHÔNG
+  // có đơn nào ⇒ HA vào danh sách (không cước W1, có lý do) mà máy ghép không đổi lựa chọn
+  await restWrite('carrier_allocation', 'POST', null, { id: crypto.randomUUID(), from_warehouse_id: WH, area_kind: 'WARD', area_code: 'QA61-W9', transport_company_id: HA.id, priority: 9, effective_from: '2026-01-01', note: 'QA61 — đưa HA vào danh sách ĐVVT của kho QA' })
   const ALL_CONDS = (await restAll('LookupValue', 'select=value&type=eq.storage_condition')).map(r => r.value)
   // allow_multi_vehicle khai RIÊNG ở dòng xe QA (07/10): cha XEPALLET là danh mục thật, user tắt "ghép nhiều xe" cho xe pallet ⇒ không
   // khai riêng thì [15g] (thẻ 2 xe) đỏ theo cấu hình thật của người dùng
@@ -218,20 +228,20 @@ try {
     p1.s === 201 && plan?.status === 'DRAFT' && trips.length === 2 && !!x1 && x1 === tripOfOd(plan, OD[1]) && !!x2 && x2 !== x1,
     `http=${p1.s} trips=${trips.length} ${p1.j?.error?.message ?? ''} unplanned=${JSON.stringify(plan?.unplanned ?? [])}`)
   check('1c. Xe 1: dòng xe QA61 · ĐVVT DA (chỉ DA có cước W1) · 7 pallet · 2 điểm giao · tải 77,8 % không Non tải',
-    x1?.detail?.vehicle_model?.sap_code === SAP && x1?.detail?.carrier?.code === 'DA' && Number(x1?.pallets) === 7 && x1?.stops === 2 && Number(x1?.load_pct) === 77.8 && x1?.underload === false,
+    x1?.detail?.vehicle_model?.sap_code === SAP && x1?.detail?.carrier?.code === DA.code && Number(x1?.pallets) === 7 && x1?.stops === 2 && Number(x1?.load_pct) === 77.8 && x1?.underload === false,
     `vm=${x1?.detail?.vehicle_model?.sap_code} co=${x1?.detail?.carrier?.code} pal=${x1?.pallets} stops=${x1?.stops} load=${x1?.load_pct}`)
   check(`1d. Oracle cước xe 1 = ${PRICE_DA.toLocaleString('vi-VN')} × ceil(7) + phụ phí đang có của DA (nếu có)`,
     Number(x1?.detail?.freight?.base) === PRICE_DA * 7 && Number(x1?.freight_estimated) === PRICE_DA * 7 + sur(x1) && x1?.detail?.freight?.ward === W1,
     `base=${x1?.detail?.freight?.base} total=${x1?.freight_estimated} sur=${sur(x1)} ward=${x1?.detail?.freight?.ward}`)
   check('1e. Xe 2: ĐVVT HA · 3 pallet · Non tải 33,3 % · merge_hint nói máy không gộp được; cước HA = 250.000 × 3',
-    x2?.detail?.carrier?.code === 'HA' && Number(x2?.pallets) === 3 && x2?.underload === true && /Non tải/.test(x2?.detail?.merge_hint ?? '') && Number(x2?.detail?.freight?.base) === PRICE_HA * 3,
+    x2?.detail?.carrier?.code === HA.code && Number(x2?.pallets) === 3 && x2?.underload === true && /Non tải/.test(x2?.detail?.merge_hint ?? '') && Number(x2?.detail?.freight?.base) === PRICE_HA * 3,
     `co=${x2?.detail?.carrier?.code} pal=${x2?.pallets} under=${x2?.underload} hint=${x2?.detail?.merge_hint?.slice(0, 60)} base=${x2?.detail?.freight?.base}`)
   check(`1f. Số xe theo quy ước ${PREFIX}<stt>, hai xe STT liền nhau, mọi xe status DRAFT`,
     trips.every(t => t.group_code.startsWith(PREFIX) && t.status === 'DRAFT') && Math.abs(Number(trips[0].group_code.slice(PREFIX.length)) - Number(trips[1].group_code.slice(PREFIX.length))) === 1,
     trips.map(t => `${t.group_code}:${t.status}`).join(' '))
   check('1g. summary: 2 chuyến · 3 OD · 10 pallet · Σ cước = cước xe 1 + xe 2 · shares có DA và HA mỗi bên 1 chuyến',
     plan?.summary?.trips === 2 && plan?.summary?.ods === 3 && Number(plan?.summary?.pallets) === 10 && Number(plan?.summary?.freight_total) === Number(x1?.freight_estimated) + Number(x2?.freight_estimated)
-    && (plan?.summary?.shares ?? []).filter(s => ['DA', 'HA'].includes(s.code) && s.trips >= 1).length === 2,
+    && (plan?.summary?.shares ?? []).filter(s => [DA.code, HA.code].includes(s.code) && s.trips >= 1).length === 2,
     `sum=${JSON.stringify({ t: plan?.summary?.trips, o: plan?.summary?.ods, p: plan?.summary?.pallets, f: plan?.summary?.freight_total })}`)
   const lst = await api(`/tms/dispatch/plans?warehouse_id=${WH}&date_from=${DAY}&date_to=${DAY}`)
   check('1h. GET /dispatch/plans lọc kho + ngày: đúng 1 kế hoạch DRAFT kèm tên kho', lst.s === 200 && (lst.j?.data?.items ?? []).filter(p => p.status === 'DRAFT').length === 1 && !!lst.j?.data?.items?.[0]?.warehouse?.name, `http=${lst.s} n=${lst.j?.data?.items?.length}`)
@@ -247,8 +257,8 @@ try {
   const its = rk.j?.data?.items ?? []
   const rk0 = await api('/tms/dispatch/trips/undefined/carriers')
   check('1r. GET trips/:id/carriers → DA đứng ĐẦU (có cước W1), cước = đúng cước xe đang mang, cờ current; HA không có cước W1 xếp sau có lý do; id rác → 400',
-    rk.s === 200 && its[0]?.code === 'DA' && its[0]?.current === true && Number(its[0]?.freight) === Number(T1?.freight_estimated)
-    && its.some(i => i.code === 'HA' && i.freight == null && !!i.reason) && its.findIndex(i => i.code === 'HA') > 0 && rk0.s === 400,
+    rk.s === 200 && its[0]?.code === DA.code && its[0]?.current === true && Number(its[0]?.freight) === Number(T1?.freight_estimated)
+    && its.some(i => i.code === HA.code && i.freight == null && !!i.reason) && its.findIndex(i => i.code === HA.code) > 0 && rk0.s === 400,
     `http=${rk.s} ${rk.j?.error?.message ?? ''} items=${its.map(i => `${i.code}:${i.freight ?? '∅'}${i.current ? '*' : ''}`).join(' ')} xe=${T1?.freight_estimated} rác=${rk0.s}`)
 
   // ── [2] Người sửa nháp ──
@@ -263,7 +273,7 @@ try {
   P = mv.j?.data
   const T1b = tripOfOd(P, OD[0]), Tnew = tripOfOd(P, OD[1])
   check('2d. Tách OD2 ra xe MỚI → 3 xe; xe 1 còn 4 pallet cước 200.000 × 4; xe mới kế thừa DA, 3 pallet, STT kế tiếp',
-    mv.s === 200 && (P?.trips ?? []).length === 3 && Number(T1b?.pallets) === 4 && Number(T1b?.detail?.freight?.base) === PRICE_DA * 4 && Tnew && Tnew.id !== T1b.id && Tnew.detail?.carrier?.code === 'DA' && Number(Tnew.pallets) === 3 && Tnew.status === 'DRAFT',
+    mv.s === 200 && (P?.trips ?? []).length === 3 && Number(T1b?.pallets) === 4 && Number(T1b?.detail?.freight?.base) === PRICE_DA * 4 && Tnew && Tnew.id !== T1b.id && Tnew.detail?.carrier?.code === DA.code && Number(Tnew.pallets) === 3 && Tnew.status === 'DRAFT',
     `http=${mv.s} trips=${P?.trips?.length} x1=${T1b?.pallets}/${T1b?.detail?.freight?.base} new=${Tnew?.pallets}/${Tnew?.detail?.carrier?.code}`)
   const mvBack = await api(`/tms/dispatch/trips/${Tnew.id}/move-od`, 'POST', { od_number: OD[1], to_trip_id: T1b.id })
   P = mvBack.j?.data
@@ -353,8 +363,20 @@ try {
       okC.s === 200 && okC.j?.data?.updated === 1 && JSON.stringify(mine?.storage_conditions) === JSON.stringify([COND]) && listVm.j?.data?.unconditioned === before,
       `http=${okC.s} conds=${JSON.stringify(mine?.storage_conditions)} unconditioned ${before}→${listVm.j?.data?.unconditioned}`)
 
-    if (catRow) {
-      // Loại kho của mã fixture khai điều kiện ⇒ hàng "đòi" mức đó; chỉ dòng xe QA phục vụ nên nó phải được chọn
+    // Loại kho + mã RIÊNG của khúc này (08/10, C49 lặp — bản cũ ghi vào Loại kho THẬT của mã fixture): 3 OD fixture tạm mang mã
+    // MAT7 (cùng quy cách pallet với mã fixture ⇒ số pallet không đổi) rồi trả về mã fixture ở `finally`
+    const mkCat7 = await api('/wms/lookup', 'POST', { type: 'warehouse_type', value: CAT7, meta: { label: 'QA61 Loại kho [7]', badge_color: 'sky' } })
+    const catRow = (await restAll('LookupValue', `select=id,value,meta&type=eq.warehouse_type&value=eq.${CAT7}`))[0] ?? null
+    const mkMat7 = catRow ? await api('/masterdata/materials', 'POST', { material_code: MAT7, material_description: 'QA61 hàng Loại kho [7]', category: CAT7,
+      base_unit: mat.base_unit, entry_unit: mat.entry_unit, units_per_carton: mat.units_per_carton, cartons_per_pallet: mat.cartons_per_pallet }) : null
+    const mat7 = (await restAll('Material', `select=category&material_code=eq.${MAT7}`))[0]
+    const odIn = `od_number=in.(${OD.join(',')})`
+    if (!catRow || mat7?.category !== CAT7) check('7d. Fixture: Loại kho + mã hàng riêng của [7] dựng được qua cửa app', false,
+      `cat=${mkCat7.s} ${mkCat7.j?.error?.message ?? ''} mat=${mkMat7?.s} ${mkMat7?.j?.error?.message ?? ''}`)
+    else try {
+      await restWrite('erp_outbound_orders', 'PATCH', odIn, { material_code: MAT7, updated_at: nowIso() })
+      const CAT_META0 = { ...(catRow.meta ?? {}) }
+      // Loại kho của mã khai điều kiện ⇒ hàng "đòi" mức đó; chỉ dòng xe QA phục vụ nên nó phải được chọn
       const setCat = await api(`/wms/lookup/${catRow.id}`, 'PUT', { value: catRow.value, meta: { ...CAT_META0, storage_condition: COND } })
       const catNow = (await restAll('LookupValue', `select=meta&id=eq.${catRow.id}`))[0]
       check('7d. Loại kho khai điều kiện bảo quản → 200 và meta giữ CẢ cờ cũ lẫn khoá mới (không đè mất cấu hình đang chạy)',
@@ -388,6 +410,8 @@ try {
       await api('/tms/vehicle-models/assign-conditions', 'PATCH', { ids: [vmId], storage_conditions: ALL_CONDS })
       const delFree = await api(`/wms/lookup/${condRow.id}`, 'DELETE')
       check('7h. Khai rỗng → 400 (ĐK bắt buộc) · gỡ mức QA khỏi hai bên rồi xoá → 200', emptyC.s === 400 && delFree.s === 200, `empty=${emptyC.s} http=${delFree.s} ${delFree.j?.error?.message ?? ''}`)
+    } finally {
+      await restWrite('erp_outbound_orders', 'PATCH', odIn, { material_code: FIX.MAT_POOL, updated_at: nowIso() }).catch(() => {})
     }
   }
 
@@ -535,7 +559,7 @@ try {
   B = mn.j?.data
   const TN = tripOfOd(B, OD[1])
   check('10d. Thả OD2 vào "Xe mới" → xe STT kế tiếp, MÁY chọn dòng xe QA61 + ĐVVT DA (chỉ DA có cước W1) · cước 200.000 × 3',
-    mn.s === 200 && (B?.trips ?? []).length === 3 && TN?.detail?.vehicle_model?.sap_code === SAP && TN?.detail?.carrier?.code === 'DA' && Number(TN?.detail?.freight?.base) === PRICE_DA * 3,
+    mn.s === 200 && (B?.trips ?? []).length === 3 && TN?.detail?.vehicle_model?.sap_code === SAP && TN?.detail?.carrier?.code === DA.code && Number(TN?.detail?.freight?.base) === PRICE_DA * 3,
     `http=${mn.s} ${mn.j?.error?.message ?? ''} vm=${TN?.detail?.vehicle_model?.sap_code} co=${TN?.detail?.carrier?.code} base=${TN?.detail?.freight?.base}`)
   const mt = await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
   B = mt.j?.data
@@ -1021,8 +1045,13 @@ try {
     const c1 = (await restAll('Customer', `select=id&ship_to_code=eq.${SHIP[0]}`))[0]
     const vms = (await api('/tms/vehicle-models')).j?.data?.items ?? []
     const palParents = new Set((await restAll('VehicleType', 'select=id&is_pallet_truck=eq.true')).map(v => v.id))
-    // dòng xe thật đúng họ pallet, đủ chở OD1 (4 pallet) — KHÁC xe QA (xe QA có cước rẻ nên không khai thì máy chọn xe QA)
-    const pick = vms.filter(m => m.is_active && palParents.has(m.parent_type_id) && m.sap_code !== SAP && Number(m.max_pallets) >= 7).sort((x, y) => Number(x.max_pallets) - Number(y.max_pallets))[0]
+    // dòng xe thật đủ chở OD1 (4 pallet) — KHÁC xe QA (xe QA có cước rẻ nên không khai thì máy chọn xe QA) — và CHỞ ĐƯỢC mức bảo quản
+    // của hàng: mã fixture là hàng THẬT (FG02 = 2–8 °C), bản cũ chỉ lấy xe pallet (xe thường) và chỉ xanh vì FG02 đã bị gói này xoá
+    // mất mức lạnh (C49, 08/10). Ưu tiên xe pallet, không có thì xe tấn đủ lớn.
+    const catCond = (await restAll('LookupValue', `select=meta&type=eq.warehouse_type&value=eq.${encodeURIComponent(MAT_CAT)}`))[0]?.meta?.storage_condition ?? null
+    const fitsOd1 = m => (m.capacity_mode === 'TON' ? Number(m.max_tons) >= 5 : Number(m.max_pallets) >= 7)
+    const pick = vms.filter(m => m.is_active && m.parent_type_id && m.sap_code !== SAP && fitsOd1(m) && (!catCond || (m.storage_conditions ?? []).includes(catCond)))
+      .sort((x, y) => Number(palParents.has(y.parent_type_id)) - Number(palParents.has(x.parent_type_id)) || Number(x.max_pallets ?? x.max_tons) - Number(y.max_pallets ?? y.max_tons))[0]
     const other = vms.find(m => m.is_active && m.id !== pick?.id && m.sap_code !== SAP)
     const bad1 = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { KHONGCOLOAI: [pick?.id] } })
     const bad2 = await api(`/masterdata/customers/${c1.id}`, 'PUT', { dispatch_vehicles: { '*': ['khong-co-that'] } })
@@ -1060,9 +1089,12 @@ try {
       bAdd.s === 200 && setEq(m1['*'], [pick?.id, other?.id]) && bRm.s === 200 && setEq(m2['*'], [other?.id]) && bCat.s === 200 && bClr.s === 200
       && !('*' in m3) && setEq(m3[MAT_CAT], [pick?.id]) && bMix.s === 400 && bEmpty.s === 400,
       `add=${bAdd.s} ${JSON.stringify(m1)} rm=${bRm.s} ${JSON.stringify(m2)} cat=${bCat.s} clr=${bClr.s} ${JSON.stringify(m3)} mix=${bMix.s} empty=${bEmpty.s}`)
-    // Kênh: mặc định theo kênh — chỉ đo cửa ghi + đọc lại rồi TRẢ NGAY (kênh là dữ liệu dùng chung của staging); thứ tự áp đo ở test engine
+    // Kênh: mặc định theo kênh — đo cửa ghi + đọc lại trên kênh RIÊNG của gói (08/10, C49 lặp: bản cũ ghi vào kênh ĐẦU danh sách = GT
+    // thật rồi trả ngay; bấm Ghép xe đúng mấy giây đó là bàn của người dùng đọc dòng xe QA). Thứ tự áp đo ở test engine
+    await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH13}`).catch(() => {})
+    await restWrite('LookupValue', 'POST', null, { id: crypto.randomUUID(), type: 'customer_channel', value: CH13, meta: { label: 'QA61 kênh [13e]' }, sort_order: 999, updated_at: nowIso() })
     const chs = (await api('/masterdata/customer-channels')).j?.data ?? []
-    const ch = chs[0]
+    const ch = chs.find(x => x.value === CH13)
     if (ch) {
       const before = ch.dispatch_vehicles ?? {}
       const cBad = await api(`/masterdata/customer-channels/${ch.id}`, 'PUT', { dispatch_vehicles: { '*': ['khong-co-that'] } })
@@ -1073,7 +1105,8 @@ try {
       check(`13e. Kênh ${ch.value}: dòng xe mặc định — id lạ → 400 · lưu → danh sách kênh trả lại đúng · trả về như cũ`,
         cBad.s === 400 && cOk.s === 200 && setEq(chNow?.dispatch_vehicles?.[MAT_CAT], [pick?.id]) && cBack.s === 200 && JSON.stringify(chBack?.dispatch_vehicles ?? {}) === JSON.stringify(before),
         `bad=${cBad.s} ok=${cOk.s} now=${JSON.stringify(chNow?.dispatch_vehicles)} back=${cBack.s}`)
-    } else check('13e. Fixture: cần ít nhất một Kênh khách hàng', false)
+    } else check(`13e. Fixture: kênh QA ${CH13} dựng được và hiện trong danh sách kênh`, false)
+    await restWrite('LookupValue', 'DELETE', `type=eq.customer_channel&value=eq.${CH13}`).catch(() => {})
     // [13f] 28/09 (user: "dòng xe chọn theo khai báo của khách, khách không khai thì không chọn"): khách + kênh chưa khai ⇒ máy
     // KHÔNG chọn xe, OD nằm KHUNG CHỜ (không vào "không lên xe" — kẹt tới khi lập lại); khai xong ghép phần đã chọn ⇒ lên xe
     await cleanupTrips()
@@ -1872,11 +1905,9 @@ try {
     + (await restAll('khvc_lines', `select=id&group_code=like.${PREFIX}*`)).length
     + (await restAll('erp_outbound_orders', `select=id&od_number=like.QA61*`)).length
     + (await restAll('vehicle_model', `select=id&sap_code=like.QA61*`)).length
-  const ha = (await restAll('TransportCompany', `select=tender_required&id=eq.${HA.id}`))[0]
-  const catBack = catRow ? (await restAll('LookupValue', `select=meta&id=eq.${catRow.id}`))[0] : null
-  const condLeft = (await restAll('LookupValue', `select=id&type=eq.storage_condition&value=eq.${COND}`)).length
-  check('9. Dọn sạch fixture QA61 + trả cờ HA và meta Loại kho về như cũ', left === 0 && ha?.tender_required === HA_FLAG0 && condLeft === 0
-    && (!catRow || JSON.stringify(catBack?.meta ?? {}) === JSON.stringify(CAT_META0 ?? {})),
-    `còn ${left} · HA=${ha?.tender_required} (gốc ${HA_FLAG0}) · danh mục QA còn ${condLeft} · loại kho ${JSON.stringify(catBack?.meta ?? null)}`)
+  const coLeft = (await restAll('TransportCompany', `select=code&code=in.(${Object.values(QA_CARRIERS).join(',')})`)).map(c => c.code)
+  const lkLeft = (await restAll('LookupValue', `select=value&value=in.(${[COND, CAT7, CH13].join(',')})`)).map(r => r.value)
+  check('9. Dọn sạch fixture QA61 (kế hoạch · KH xuất · OD · dòng xe · ĐVVT · Loại kho / kênh / ĐK bảo quản của gói)', left === 0 && !coLeft.length && !lkLeft.length,
+    `còn ${left} · ĐVVT QA còn ${coLeft.join(',') || 0} · danh mục QA còn ${lkLeft.join(',') || 0}`)
 }
 finish(PACK)

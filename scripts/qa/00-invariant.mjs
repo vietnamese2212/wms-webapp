@@ -3,7 +3,7 @@
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { HAS_DB, BASE, restAll, restRpc, restWrite, chunk, check, finish } from './lib.mjs'
+import { HAS_DB, BASE, restAll, restRpc, restWrite, chunk, check, finish, looksFixture } from './lib.mjs'
 import { utcMs } from './utcms.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -483,6 +483,23 @@ for (const [table, label] of [
   const live = acc.filter(a => (a.is_active || a.is_superadmin) && Date.now() - utcMs(a.created_at) > 2 * 3600_000)
   check('Không tài khoản CI (QACI*) nào còn quyền quá 2 giờ — bước dọn phải thu hồi kể cả khi xoá hỏng', live.length === 0,
     live.length ? live.map(a => `${a.employee_code} tạo ${a.created_at}${a.is_superadmin ? ' · superadmin' : ''}`).join(' · ') : `soi ${acc.length} tài khoản CI`)
+}
+
+// ── 08/10 — FIXTURE QA KHÔNG ĐƯỢC LÀ CẤU HÌNH THẬT DÙNG CHUNG (C49 LẶP). Gói 61 [7] ghi đè điều kiện bảo quản của Loại kho FG02 THẬT rồi
+// trả lại ở bước dọn — một lượt bị ngắt giữa chừng thì lượt sau chụp "trống" làm giá trị gốc ⇒ FG02 mất mức 2–8 °C người dùng đã khai;
+// gói 61 [13e] + gói 58 sửa kênh GT thật (dòng xe · mức date · nhãn) 50 lần / 3 ngày; gói 61 bật/tắt "cần phản hồi" của ĐVVT Hải An thật.
+// Trả lại ngay cũng không đủ: ai bấm Ghép xe đúng mấy giây đó ra kết quả sai (C49 gốc 29/09). Các gói nay tự tạo Loại kho / kênh / ĐVVT
+// riêng. Lưới: cửa ghi của app đóng dấu `updated_by` = tên người gọi ⇒ bản ghi cấu hình THẬT có người sửa cuối là tài khoản bộ kiểm
+// (`ci-account.mjs`: "CI runner …") sau mốc vá = có gói lại ghi vào dữ liệu thật. Cấu hình người dùng duyệt thì khai bằng tên người khác.
+{
+  const ci = `updated_by=like.${encodeURIComponent('CI runner*')}&updated_at=gt.2026-10-08T05:00:00Z`
+  const hits = [
+    ...(await restAll('LookupValue', `select=type,value&type=in.(warehouse_type,customer_channel,storage_condition)&${ci}`)).map(r => [`${r.type}:${r.value}`, r.value]),
+    ...(await restAll('TransportCompany', `select=code&${ci}`)).map(r => [`ĐVVT:${r.code}`, r.code]),
+    ...(await restAll('date_rule_master', `select=scope_key&scope=eq.CHANNEL&${ci}`)).map(r => [`mức date kênh:${r.scope_key}`, r.scope_key]),
+  ].filter(([, key]) => !looksFixture(key)).map(([label]) => label)
+  check('Bộ kiểm không ghi vào cấu hình THẬT dùng chung (Loại kho · kênh · ĐK bảo quản · ĐVVT · mức date kênh) — fixture phải là của riêng gói (C49)',
+    hits.length === 0, hits.length ? hits.join(' · ') : 'sạch')
 }
 
 finish('INVARIANT', { retryOnFail: true })

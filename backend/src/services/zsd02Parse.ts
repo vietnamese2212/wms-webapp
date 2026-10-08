@@ -178,6 +178,12 @@ export function splitCodeName(v: unknown): { code: string | null; name: string |
   return { code: s.slice(0, i).trim() || null, name: s.slice(i + 1).trim() || null }
 }
 
+/** Ô PHƯỜNG mà SAP ghi chữ giữ chỗ thay cho ô trống ⇒ null. 08/10: khách XK 20000019 mang phường "None" trên mọi dòng ZSD02 —
+ *  dòng ZSD02 thắng danh mục Khách hàng nên phường khai tay không bao giờ được dùng, tra cước theo phường "None" ⇒ 32 xe
+ *  container của kế hoạch Ba Vì 04/10 không ĐVVT, không cước. Trống thì máy rơi về phường của danh mục Khách hàng. */
+const LOC_PLACEHOLDER = /^(none|null|n\/a|#n\/a)$/i
+export const wardCell = (v: unknown): string | null => { const s = cellStr(v); return s && !LOC_PLACEHOLDER.test(s) ? s : null }
+
 /** flow của một dòng: hàng phi tồn (chiết khấu) luôn DISCOUNT; rồi item_category → so_type → UNKNOWN. */
 export function resolveFlow(flowMap: Map<string, Flow>, itemCategoryCode: string | null, soTypeCode: string | null, isNonStock?: boolean | null): Flow {
   if (isNonStock) return 'DISCOUNT'
@@ -242,7 +248,7 @@ export function parseZsd02(rows: Record<string, unknown>[], ctx: Zsd02Ctx): Zsd0
 
     const deliveryDate = parseExcelDate(r.delivery_date)
     const region = splitCodeName(r.region)
-    const ward = cellStr(r.ward), routeCode = cellStr(r.route_code), routeName = cellStr(r.route_name)
+    const ward = wardCell(r.ward), routeCode = cellStr(r.route_code), routeName = cellStr(r.route_name)
     const plant = cellStr(r.plant), sloc = cellStr(r.sloc)
     const shipTo = cellStr(r.ship_to_code), shipToName = cellStr(r.ship_to_name)
     const gwKg = gramsToKg(r.gross_weight)

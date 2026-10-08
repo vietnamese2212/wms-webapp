@@ -973,3 +973,67 @@ describe('02/10 — gộp xe Non tải khác tỉnh theo đường vòng (input.
     expect(runDispatch(input([A, B], { geo: { ...geo, km }, params: { ...params, detour_pct: 60 } })).trips).toHaveLength(1)
   })
 })
+
+// 08/10 — XE TUYẾN (luật 5b). User chốt: "lô nhỏ ghép, được ké xe" · số khách / điểm giao theo ĐÚNG cấu hình đang khai · liên tỉnh khi
+// kho bật đường vòng · "cước của tuyến cao nhất" · in thứ tự giao. Lô dưới tối thiểu KHÔNG được đi riêng (dải bắt buộc 07/10) nên luật 5b
+// không so "không đắt hơn đi riêng". Mô phỏng 21 ngày đơn Ba Vì: docs/plans/DISPATCH_CORRIDOR_2026-10-08.md.
+describe('08/10 — luật 5b: lô dưới tối thiểu ghép tuyến / ké xe còn chỗ', () => {
+  const P9 = { ...M9, parent_type_id: 'PT1' }
+  const band = { ...params, load_bands: { PT1: { min: 70, max: 100 } } }
+  const WH = { lat: 21.1958, lng: 105.3936 }
+  const geo = { wh: WH, points: { SA: { lat: 20.95, lng: 106.05 }, SB: { lat: 20.85, lng: 106.69 }, SC: { lat: 21.40, lng: 105.20 }, SF: { lat: 20.95, lng: 106.05 }, SG: { lat: 20.96, lng: 106.06 } }, km: {} }
+  // W2 ĐẮT hơn W1 — để thấy luật 5 cũ (không đắt hơn đi riêng) từ chối mà 5b vẫn ghép, và cước lấy phường GIÁ CAO NHẤT
+  const T = [tariff('A', 'M9', 'W1', 100_000, 60), tariff('A', 'M9', 'W2', 150_000, 40), tariff('A', 'M9', 'W3', 100_000, 30)]
+  const run = (ods: EngineOd[], p: Partial<typeof band> & { detour_pct?: number | null } = {}) =>
+    runDispatch(input(ods, { models: [P9], tariffs: T, geo, params: { ...band, ...p } }))
+  const A = od('A', 'W1', 3, { region_code: 'HY' }), B = od('B', 'W2', 4, { region_code: 'HP' }), C = od('C', 'W3', 4, { region_code: 'PT' })
+
+  it('hai tỉnh CÙNG HƯỚNG, mỗi lô dưới 70 % (33 % · 44 %): bật đường vòng ⇒ một xe tuyến 7/9 = 77,8 % đi đủ; tắt ⇒ cả hai ở khung chờ', () => {
+    const on = run([A, B], { detour_pct: 15 })
+    expect(on.unplanned).toHaveLength(0)
+    expect(on.trips).toHaveLength(1)
+    expect(on.trips[0].ods.map(o => o.od_number).sort()).toEqual(['A', 'B'])
+    expect(on.trips[0].load.pct).toBe(77.8)
+    const off = run([A, B])
+    expect(off.trips).toHaveLength(0)
+    expect(off.unplanned.map(u => u.code)).toEqual(['UNDER_MIN', 'UNDER_MIN'])
+  })
+  it('thứ tự giao: kho → điểm gần trước (A Hưng Yên rồi B Hải Phòng) · OD mang số điểm · km + % đường vòng', () => {
+    const t = run([A, B], { detour_pct: 15 }).trips[0]
+    expect(t.route?.order).toEqual(['SA', 'SB'])
+    expect(Object.fromEntries(t.ods.map(o => [o.od_number, o.stop_seq]))).toEqual({ A: 1, B: 2 })
+    expect(t.route!.km).toBeGreaterThan(t.route!.direct_km)
+    expect(t.route!.detour_pct).toBeLessThanOrEqual(15)
+  })
+  it('cước xe tuyến = phường GIÁ CAO NHẤT × pallet (W2 150 k > W1 100 k dù W1 xa hơn theo km)', () => {
+    const t = run([A, B], { detour_pct: 15 }).trips[0]
+    expect(t.freight.ward).toBe('W2')
+    expect(t.freight.base).toBe(7 * 150_000)
+  })
+  it('NGƯỢC HƯỚNG (A Hưng Yên · C Phú Thọ) ⇒ không ghép dù đều dưới tối thiểu', () => {
+    const r = run([A, C], { detour_pct: 15 })
+    expect(r.trips).toHaveLength(0)
+    expect(r.unplanned).toHaveLength(2)
+  })
+  it('theo ĐÚNG cấu hình đang khai: khách chỉ cho 1 khách/xe ⇒ không ghép (máy không tự nới trần)', () => {
+    const r = run([{ ...A, max_customers: 1 }, B], { detour_pct: 15 })
+    expect(r.trips).toHaveLength(0)
+    expect(run([A, B], { detour_pct: 15 }).trips).toHaveLength(1)
+    const oneDrop = runDispatch(input([A, B], { models: [{ ...P9, max_drops: 1 }], tariffs: T, geo, params: { ...band, detour_pct: 15 } }))
+    expect(oneDrop.trips).toHaveLength(0)
+  })
+  it('KÉ xe còn chỗ cùng tỉnh, kể cả khi ĐẮT hơn đi riêng: F 7 pallet (77,8 %) + G 1 pallet (11 %, phường đắt) ⇒ một xe 8/9', () => {
+    const F = od('F', 'W1', 7), G = od('G', 'W2', 1)
+    const r = run([F, G])
+    expect(r.unplanned).toHaveLength(0)
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].ods.map(o => o.od_number).sort()).toEqual(['F', 'G'])
+    expect(r.trips[0].freight.base).toBe(8 * 150_000)
+  })
+  it('phường của xe thiếu cước ⇒ cảnh báo nói ra, cước tính theo phường còn lại', () => {
+    const X = od('X', 'W9', 1)
+    const r = run([od('F', 'W1', 7), X])
+    expect(r.trips).toHaveLength(1)
+    expect(r.trips[0].warnings.join(' ')).toMatch(/Chưa có cước phường W9/)
+  })
+})

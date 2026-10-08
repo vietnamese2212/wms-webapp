@@ -641,6 +641,14 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         <div className="px-2 pt-1">{loadBar(t)}</div>
         {/* gợi ý gộp của máy cho xe Non tải (30/09: trước chỉ có ở Danh sách xe, bàn ghép không thấy) */}
         {t.underload && t.detail.merge_hint && <div className="mx-2 mt-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-900 leading-snug break-words">{t.detail.merge_hint}</div>}
+        {/* 08/10 — thứ tự giao của xe nhiều điểm (cùng `detail.route` với dạng Bảng) */}
+        {(t.detail.route?.order.length ?? 0) > 1 && (
+          <div className="px-2 pt-1 text-[10px] leading-snug text-sky-900 break-words" title="Thứ tự giao: kho → điểm gần trước — in lên Kế hoạch xuất / chuyến Xuất kho">
+            <span className="mr-1 rounded bg-sky-700 px-1 text-[9px] font-bold text-white">Thứ tự</span>
+            {t.detail.route!.order.map((s, i) => `${i + 1}. ${t.ods.find(x => x.ship_to_code === s)?.ship_to_name ?? s}`).join(' → ')}
+            <span className="text-slate-400"> · {nf(t.detail.route!.km, 0)} km</span>
+          </div>
+        )}
         {mixSwitch(t)}
         {t.ods.length > 0 && (
           <div className="px-2 pt-0.5 text-[10px] text-slate-600 leading-snug">

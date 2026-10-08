@@ -1077,11 +1077,15 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   )
 
   // Group-by NPP: 1 chuyến nhiều NPP → tách khối theo NPP (in đậm + fill màu). 1 NPP → không cần header.
+  // 08/10 — chuyến có THỨ TỰ GIAO (điều vận ghi lúc Xác nhận): khối NPP xếp theo điểm giao, đầu khối in "Điểm n" — kho xếp hàng
+  // ngược (điểm cuối lên xe trước). Không có thứ tự thì giữ thứ tự cũ.
   const nppGroups = doRecords.map(d => ({
     npp: (d.distributor_name ?? '').trim(),
     delivery_code: d.delivery_code,
+    stop_seq: d.stop_seq ?? null,
     items: d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name })),
   })).filter(g => g.items.length > 0)
+    .sort((a, b) => (a.stop_seq ?? Infinity) - (b.stop_seq ?? Infinity))
   const showGroups = new Set(nppGroups.map(g => g.npp)).size > 1
 
   // Determine which optional columns have data
@@ -1157,6 +1161,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
             ...(showGroups ? [(
               <TableRow key={`npp-${g.npp}`} className="bg-sky-100 hover:bg-sky-100 border-t-2 border-sky-300">
                 <TableCell colSpan={totalCols} className="px-2 py-1.5">
+                  {g.stop_seq != null && <span className="mr-2 rounded bg-sky-700 px-1.5 py-0.5 text-[10px] font-bold text-white">Điểm {g.stop_seq}</span>}
                   <span className="text-[11px] font-bold text-sky-900 uppercase tracking-wide">NPP: {g.npp || '—'}</span>
                   <span className="text-[9px] font-medium text-sky-700 ml-2">
                     {g.items.length} mã hàng · {g.items.reduce((s, i) => s + qtyEntryDecimal(i.cartons_ordered, i.material), 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng

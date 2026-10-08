@@ -1,6 +1,6 @@
 // Cước một chuyến — bất biến theo 4 điều user chốt 23/09 (plan TMS_DISPATCH 6.0/6.3).
 import { describe, it, expect } from 'vitest'
-import { computeFreight, stopFeeQty, billedPallets, pickTariff, farthestWard, loadUtilization, type TariffLike, type SurchargeLike } from '../../src/services/freight'
+import { computeFreight, stopFeeQty, billedPallets, pickTariff, routeTariff, loadUtilization, type TariffLike, type SurchargeLike } from '../../src/services/freight'
 
 describe('tải / Non tải — % tải so sức chứa dòng xe con (đợt 1 mục 15)', () => {
   const pal16 = { capacity_mode: 'PALLET', max_pallets: 16, max_tons: null, underload_pct: 70 }
@@ -89,11 +89,17 @@ describe('hiệu lực + phường xa nhất', () => {
     expect(pickTariff(rows, '2026-10-01')?.id).toBe('future')
     expect(pickTariff([tariff({ is_active: false })], '2026-09-15')).toBeNull()
   })
-  it('farthestWard chọn phường có km lớn nhất; phường không có km xếp sau; hoà theo mã', () => {
-    const km = new Map<string, number | null>([['A', 10], ['B', 45], ['C', null]])
-    expect(farthestWard(['A', 'B', 'C'], km)).toBe('B')
-    expect(farthestWard(['C', 'A'], km)).toBe('A')
-    expect(farthestWard(['Z', 'C'], km)).toBe('C')   // cả hai không km → theo mã
-    expect(farthestWard([], km)).toBeNull()
+  it('routeTariff (08/10 "cước của tuyến cao nhất"): phường GIÁ cao nhất — không phải phường xa nhất; hoà giá ⇒ xa hơn ⇒ mã; phường thiếu cước nói ra', () => {
+    const rows = [
+      tariff({ id: 'near-pricey', ward_code: 'NUI', price: 900, distance_km: 120 }),   // tuyến núi: gần hơn mà đắt hơn
+      tariff({ id: 'far-cheap', ward_code: 'DONG', price: 700, distance_km: 160 }),
+      tariff({ id: 'old', ward_code: 'DONG', price: 9999, distance_km: 160, effective_to: '2026-08-31' }),   // hết hiệu lực — không tính
+    ]
+    expect(routeTariff(rows, ['DONG', 'NUI'], '2026-09-15').tariff?.id).toBe('near-pricey')
+    expect(routeTariff(rows, ['DONG', 'NUI', 'X'], '2026-09-15')).toMatchObject({ missing: ['X'] })
+    const tie = [tariff({ id: 'a', ward_code: 'A', price: 500, distance_km: 10 }), tariff({ id: 'b', ward_code: 'B', price: 500, distance_km: 40 }), tariff({ id: 'c', ward_code: 'C', price: 500, distance_km: 40 })]
+    expect(routeTariff(tie, ['A', 'B', 'C'], '2026-09-15').tariff?.id).toBe('b')   // hoà giá ⇒ xa hơn ⇒ theo mã
+    expect(routeTariff(rows, [], '2026-09-15')).toEqual({ tariff: null, missing: [] })
+    expect(routeTariff(rows, ['X'], '2026-09-15')).toEqual({ tariff: null, missing: ['X'] })
   })
 })

@@ -33,6 +33,8 @@ const money = (n: number | string | null | undefined) => {
   return a >= 1e6 ? `${nf(v / 1e6, 2)} tr` : `${nf(v)} ₫`
 }
 const uniq = <T,>(a: T[]) => [...new Set(a)]
+/** 08/10 — điểm giao thứ mấy của khách trên xe (theo `detail.route`: kho → điểm gần trước); null = xe chưa đo được thứ tự */
+const stopNoOf = (t: DispatchTrip | null, shipTo: string | null) => { const i = t?.detail.route?.order.indexOf(shipTo ?? '') ?? -1; return i >= 0 ? i + 1 : null }
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 // 1280 px có menu trái: khung chờ 400 ⇒ bảng xe ~610 px vẫn thấy Xe · Tải · Pallet · Tấn (đo 06/10 — 460 thì mất cột Tấn)
 const POOL_W = 400, POOL_MIN = 300
@@ -209,6 +211,9 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
           {fl && <span className={`rounded px-1 text-[9px] font-medium ${soft ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>{FLAG_VI[fl.kind]}</span>}
           {/* đơn dưới xe: tên khách ngay ở cột dính — khung chờ mở thì cột Khách nằm ngoài màn (đo 1280 px 06/10) */}
+          {t && (t.detail.route?.order.length ?? 0) > 1 && stopNoOf(t, o.ship_to_code) != null && (
+            <span className="shrink-0 rounded bg-sky-700 px-1 text-[9px] font-bold text-white" title="Điểm giao thứ mấy của xe (kho → điểm gần trước) — in lên Kế hoạch xuất / chuyến Xuất kho">Đ{stopNoOf(t, o.ship_to_code)}</span>
+          )}
           {t && <span className="min-w-0 truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}</span>}
         </div>
       ),
@@ -265,7 +270,13 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
   const byCust = new Map<string, number>()
   for (const o of t.ods) { const k = o.ship_to_name || o.ship_to_code || '—'; byCust.set(k, (byCust.get(k) ?? 0) + Number(o.pallets ?? 0)) }
   const custs = [...byCust.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k]) => k)
-  const regions = uniq(t.ods.map(o => o.region_name || o.region_code || '').filter(Boolean))
+  // 08/10 — vùng theo THỨ TỰ GIAO khi xe đo được tuyến (xe tuyến liên tỉnh: "Hưng Yên → Hải Phòng · 230 km")
+  const route = t.detail.route ?? null
+  const regOfShip = (s: string) => { const o = t.ods.find(x => x.ship_to_code === s); return o?.region_name || o?.region_code || '' }
+  const regions = uniq((route?.order.length ? route.order.map(regOfShip) : t.ods.map(o => o.region_name || o.region_code || '')).filter(Boolean))
+  const routeTip = route && route.order.length > 1
+    ? `Thứ tự giao (kho → điểm gần trước): ${route.order.map((s, i) => `${i + 1}. ${t.ods.find(x => x.ship_to_code === s)?.ship_to_name ?? s}`).join(' → ')} · ${nf(route.km, 0)} km (thẳng tới điểm xa nhất ${nf(route.direct_km, 0)} km, vòng ${nf(route.detour_pct, 1)} %)`
+    : ''
   const notes = t.ods.filter(o => !!o.note)
   const l = t.detail.load
   const fr = t.detail.freight
@@ -332,7 +343,12 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
         </span>
       ) : <span className="text-slate-300">—</span>,
     },
-    region: { cls: 'truncate', title: regions.join(', '), node: regions.join(', ') || <span className="text-slate-300">—</span> },
+    region: {
+      cls: 'truncate', title: routeTip || regions.join(', '),
+      node: regions.length > 1 && route
+        ? <span className="inline-flex items-center gap-1"><span className="rounded bg-sky-700 px-1 text-[9px] font-bold text-white">Tuyến</span>{regions.join(' → ')}<span className="text-slate-400"> · {nf(route.km, 0)} km</span></span>
+        : regions.join(', ') || <span className="text-slate-300">—</span>,
+    },
     note: notes.length
       ? { cls: 'truncate text-amber-900', title: notes.map(o => `${o.od_number}: ${o.note}`).join('\n'), node: <span className="inline-flex items-center gap-1"><StickyNote className="h-3 w-3 shrink-0" />{notes.length} OD có ghi chú{!open ? ' — mở xe để đọc' : ''}</span> }
       : { node: <span className="text-slate-300">—</span> },

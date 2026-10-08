@@ -18,7 +18,7 @@ import { loadOf, sumLoads, type LoadMat, type LoadRef } from '../utils/loadCalc'
 import { normDvvt } from '../utils/sapUnits'
 import { makeDvvtResolver } from './sapFlow'
 import {
-  computeFreight, pickTariff, farthestWard, effectiveAt, loadUtilization,
+  computeFreight, routeTariff, effectiveAt, loadUtilization,
   type TariffLike, type SurchargeLike, type TariffUnit, type SurchargePer, type StopCountMode, type LoadUtil,
 } from './freight'
 import { splitLoad, comboModel, basisOf, bigFirst, type EngineModel } from './dispatchEngine'
@@ -225,11 +225,10 @@ export async function estimateFreightForGdos(gdoIds: string[], opts: { basis?: F
     const unit: TariffUnit = vm.tariff_unit === 'PER_TRIP' ? 'PER_TRIP' : 'PER_PALLET'
     const none: Priced = { total: null, base: null, billed_pallets: null, tariff_id: null, surcharges: [], ward: null, reason: null }
     const mine = tariffs.filter(t => t.from_warehouse_id === p.g.warehouse_id && t.transport_company_id === p.coId && t.vehicle_model_id === vm.id && p.wards.includes(t.ward_code))
-    const eff = effectiveAt(mine, day)
-    const kmByWard = new Map<string, number | null>()
-    for (const t of eff) if (!kmByWard.has(t.ward_code) || (t.distance_km != null && kmByWard.get(t.ward_code) == null)) kmByWard.set(t.ward_code, t.distance_km == null ? null : Number(t.distance_km))
-    const ward = farthestWard(eff.map(t => t.ward_code), kmByWard)
-    const tariff = ward ? pickTariff(eff.filter(t => t.ward_code === ward).map(t => ({ ...t, price: Number(t.price), distance_km: t.distance_km == null ? null : Number(t.distance_km) })), day) : null
+      .map(t => ({ ...t, price: Number(t.price), distance_km: t.distance_km == null ? null : Number(t.distance_km) }))
+    // 08/10: cùng luật với máy ghép — phường GIÁ CAO NHẤT của xe (`routeTariff`)
+    const { tariff } = routeTariff(mine, p.wards, day)
+    const ward = tariff?.ward_code ?? null
     const sur = effectiveAt(surcharges.filter(s => s.from_warehouse_id === p.g.warehouse_id && s.transport_company_id === p.coId && (s.vehicle_model_id == null || s.vehicle_model_id === vm.id)), day)
       .map(s => ({ ...s, amount: Number(s.amount), min_stops: Number(s.min_stops ?? 2) }))
     if (!tariff) return { ...none, reason: `Chưa có bảng cước cho (${vm.name} · phường ${p.wards.join(', ')}) của ĐVVT này tại kho xuất` }

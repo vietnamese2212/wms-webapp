@@ -2,7 +2,15 @@
 
 > User 30/09: "cần tuyến liên tỉnh (Hòa Bình – Sơn La – Điện Biên)". 01/10: "đừng khai bảng hành lang bằng tay — công nghệ cũ, làm trên bản đồ".
 > 08/10: "Tôi rất cần tính năng này — nghiên cứu chủ động và cẩn thận".
-> Trạng thái: **NGHIÊN CỨU + MÔ PHỎNG xong, CHỜ USER CHỐT các câu ở mục 5** trước khi làm.
+> Trạng thái: **ĐÃ LÀM 08/10** theo các điểm user chốt:
+> - (a) lô nhỏ ghép, được ké xe;
+> - (b) số khách / điểm giao theo ĐÚNG cấu hình đang khai, không thêm ô riêng. Mô phỏng thêm S6: với cấu hình hiện tại thì kẹt 1.568. S7: nâng GT lên 3 khách/xe và xe pallet lên 3 điểm thì kẹt 566;
+> - (c) cước = phường giá cao nhất;
+> - (e) in thứ tự giao lên Kế hoạch xuất và chuyến Xuất kho;
+> - (d) km tối đa: chưa làm;
+> - (f) ĐVVT theo tỉnh xa nhất: chưa làm, đang theo luật chọn ĐVVT sẵn có.
+>
+> Chi tiết luật + số đo: `docs/modules/dispatch.md` mục 08/10.
 
 ## 1. Hiện trạng (đọc từ code)
 

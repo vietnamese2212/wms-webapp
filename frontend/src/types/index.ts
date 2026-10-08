@@ -693,6 +693,7 @@ export interface OutboundDelivery {
   distributor_name: string | null
   status:           OutboundStatus
   items:            OutboundItem[]
+  stop_seq?:        number | null   // 08/10 — thứ tự giao trên chuyến (từ điều vận); null = không có
 }
 
 export interface GDOItemBreakdown {

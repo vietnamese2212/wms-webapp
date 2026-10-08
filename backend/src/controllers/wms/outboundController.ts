@@ -3646,13 +3646,14 @@ async function mergePausedGDO(
     const existingDO = existingDOByNpp.get(npp)
     let doId: string
 
+    const stopSeq = stopSeqOf(byNpp.get(npp) ?? [])
     if (existingDO) {
       doId = existingDO.id as string
-      await supabase.from('OutboundDelivery').update({ distributor_name: npp || null, delivery_code: deliveryRefs, updated_at: t }).eq('id', doId)
+      await supabase.from('OutboundDelivery').update({ distributor_name: npp || null, delivery_code: deliveryRefs, stop_seq: stopSeq, updated_at: t }).eq('id', doId)
     } else {
       doId = randomUUID()
       await supabase.from('OutboundDelivery').insert({
-        id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', updated_at: t,
+        id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', stop_seq: stopSeq, updated_at: t,
       })
     }
 
@@ -4264,7 +4265,7 @@ async function processVehicleGroups(
         for (const [npp, nppRows] of byNpp) {
           const doId = randomUUID()
           const deliveryRefs = [...new Set(nppRows.map(r => String(r['Delivery'] ?? '').trim()).filter(Boolean))].join(', ') || null
-          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', updated_at: now() })
+          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', stop_seq: stopSeqOf(nppRows), updated_at: now() })
           for (const row of mergeNppRows(nppRows)) {
             const mat_code      = String(row['Material'] ?? '').trim()
             const material_type = String(row['Material_type'] ?? '').trim() || null
@@ -4812,6 +4813,13 @@ type KhvcPlanRow = {
   group_code: string; do_no: string; npp: string; export_date: unknown
   veh_type: string; dvvt: string; priority: string; cs: string; note: string
   vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng để tính cước/tải (23/09)
+  stop_seq?: number | null           // 08/10 — thứ tự giao của DO trên xe (điều vận ghi lúc Xác nhận)
+}
+/** 08/10 — thứ tự giao của MỘT đơn (NPP) trên chuyến = số điểm NHỎ NHẤT trong các DO của NPP (dòng dội từ Kế hoạch xuất mang
+ *  'Thứ tự giao'; file / nạp tay không có ⇒ null — không đoán). */
+const stopSeqOf = (rows: Record<string, unknown>[]): number | null => {
+  const xs = rows.map(r => Number(r['Thứ tự giao'])).filter(n => Number.isInteger(n) && n > 0)
+  return xs.length ? Math.min(...xs) : null
 }
 // DẤU VÂN TAY KẾ HOẠCH của 1 Số xe — dùng để phát hiện "kế hoạch đã đổi TRONG LÚC đang dội xuống".
 // Hai người cùng sửa 1 xe (hoặc upload đè trong lúc người kia thêm DO): lượt chạy sau đọc kế hoạch
@@ -4895,6 +4903,7 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
         'Ưu tiên': k.priority,
         'CS phụ trách': k.cs,
         'Note': k.note,
+        'Thứ tự giao': k.stop_seq ?? null,   // 08/10 — đơn của chuyến (1 NPP) lấy số nhỏ nhất (`stopSeqOf`)
         'Shipto party': ln.ship_to_code ?? '',
         'HEADER TEXT': header,
         'Batch_Yêu cầu': ln.batch ?? '',
@@ -4923,9 +4932,9 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   const actor = req.user?.name || 'KHVC-EDIT'
   const t = now()
 
-  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null; vehicle_model_id: string | null }
+  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null; vehicle_model_id: string | null; stop_seq: number | null }
   const lines = (await fetchAllByIdChunks(gcs, chunk => supabase.from('khvc_lines')
-    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status, vehicle_model_id')
+    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status, vehicle_model_id, stop_seq')
     .in('group_code', chunk).order('id')) as KLine[])
     .filter(l => (l.sync_status ?? 'ACTIVE') !== 'OBSOLETE')
   const gcWithLines = new Set(lines.map(l => l.group_code))
@@ -5005,7 +5014,7 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
     const khvcRows: KhvcPlanRow[] = lines.filter(l => replanGcs.includes(l.group_code)).map(l => ({
       group_code: l.group_code, do_no: l.do_no, npp: l.npp ?? '', export_date: l.export_date,
       veh_type: l.veh_type ?? '', dvvt: l.dvvt ?? '', priority: l.priority ?? '', cs: l.cs ?? '', note: l.note ?? '',
-      vehicle_model_id: l.vehicle_model_id ?? null,
+      vehicle_model_id: l.vehicle_model_id ?? null, stop_seq: l.stop_seq ?? null,
     }))
     const { byVehicle, missingDos, awaitingByGc } = await buildKhvcByVehicle(khvcRows)
     if (missingDos.size) {

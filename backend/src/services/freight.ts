@@ -2,7 +2,8 @@
  * TÍNH CƯỚC MỘT CHUYẾN — thuần TS, không DB (plan TMS_DISPATCH mục 6.3; user chốt 23/09/2026).
  *
  * Luật:
- *  - Cước tuyến = bảng cước của (kho xuất × ĐVVT × dòng xe CON × phường điểm đến XA NHẤT) hiệu lực tại ngày giao.
+ *  - Cước tuyến = bảng cước của (kho xuất × ĐVVT × dòng xe CON × phường điểm đến GIÁ CAO NHẤT) hiệu lực tại ngày giao
+ *    (08/10 — trước đó là phường XA NHẤT theo km; xem `routeTariff`).
  *  - Xe pallet (`tariff_unit = PER_PALLET`): đơn giá × số pallet LÀM TRÒN LÊN — không có pallet tối thiểu.
  *  - Xe trọn chuyến (`PER_TRIP`): giá chuyến.
  *  - Rớt điểm tính theo THỰC TẾ chuyến: số ship-to phân biệt < `min_stops` (2) ⇒ 0;
@@ -103,19 +104,19 @@ export function pickTariff<T extends TariffLike>(rows: T[], day: string): T | nu
 }
 
 /**
- * Phường tính cước = điểm đến XA NHẤT theo `distance_km` của bảng cước; phường không có km (null) xếp sau
- * phường có km; hoà ⇒ theo mã phường để cùng input ra cùng output.
+ * Dòng cước của MỘT xe đi nhiều phường = phường GIÁ CAO NHẤT (user chốt 08/10, xe tuyến liên tỉnh: "cước của tuyến cao nhất").
+ * Mỗi phường lấy dòng hiệu lực mới nhất (`pickTariff`); hoà giá ⇒ phường xa hơn (`distance_km`) ⇒ theo mã phường (cùng input ra cùng
+ * output). Trước 08/10 lấy phường XA NHẤT theo km — tuyến núi ngắn mà đắt bị tính theo giá thấp hơn. Máy ghép (Điều vận) và ước tính
+ * cước chuyến Xuất kho cùng đi qua hàm này. `missing` = phường của xe KHÔNG có dòng cước hiệu lực nào: số đang tính có thể THẤP hơn
+ * thật (điểm thiếu cước có thể là điểm đắt nhất) — nơi gọi phải nói ra, không im lặng.
  */
-export function farthestWard(wards: string[], kmByWard: Map<string, number | null>): string | null {
-  const uniq = [...new Set(wards.filter(Boolean))]
-  if (!uniq.length) return null
-  return uniq.sort((a, b) => {
-    const ka = kmByWard.get(a), kb = kmByWard.get(b)
-    if (ka != null && kb != null && ka !== kb) return kb - ka
-    if (ka != null && kb == null) return -1
-    if (ka == null && kb != null) return 1
-    return a < b ? -1 : a > b ? 1 : 0
-  })[0]
+export function routeTariff<T extends TariffLike>(rows: T[], wards: string[], day: string): { tariff: T | null; missing: string[] } {
+  const ws = [...new Set(wards.filter(Boolean))].sort()
+  const byWard = new Map<string, T>()
+  for (const w of ws) { const t = pickTariff(rows.filter(r => r.ward_code === w), day); if (t) byWard.set(w, t) }
+  const best = [...byWard.values()].sort((a, b) =>
+    (Number(b.price) - Number(a.price)) || (Number(b.distance_km ?? -1) - Number(a.distance_km ?? -1)) || (a.ward_code < b.ward_code ? -1 : a.ward_code > b.ward_code ? 1 : 0))[0] ?? null
+  return { tariff: best, missing: ws.filter(w => !byWard.has(w)) }
 }
 
 /** Số lần tính phí rớt điểm theo thực tế chuyến. */

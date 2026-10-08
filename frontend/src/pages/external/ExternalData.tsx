@@ -1232,6 +1232,7 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'do_no',     label: 'DO' },
   { id: 'warehouse', label: 'Kho' },
   { id: 'npp',       label: 'NPP' },
+  { id: 'stop',      label: 'Điểm giao' },   // 08/10 — thứ tự giao của DO trên xe (điều vận); kho xếp hàng ngược
   { id: 'bkcat',     label: 'Cửa booking' },
   { id: 'veh_type',  label: 'Loại xe' },
   { id: 'model',     label: 'Dòng xe con' },   // mã SAP 9100000xx — cấp xe, tính cước/tải (23/09)
@@ -1246,7 +1247,7 @@ const KH_COLS: { id: string; label: string }[] = [
 ]
 // PHẢI đủ 1 số cho MỖI cột của KH_COLS (thiếu 1 số → mọi cột từ đó trở đi lệch nhãn, cột cuối
 // rộng `undefined` và totalWidth tính thiếu → kéo giãn cột cuối cho ra NaN). Thêm cột = thêm số.
-const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 130, 90, 70, 70, 95, 90, 110, 80, 110]
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 70, 110, 100, 130, 90, 70, 70, 95, 90, 110, 80, 110]
 
 function TripBadge({ materialized, gdoStatus, gdoDate, exportDate }: { materialized?: boolean; gdoStatus?: string | null; gdoDate?: string | null; exportDate?: string | null }) {
   if (!materialized) {
@@ -1289,7 +1290,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const [showUpload, setShowUpload] = useState(false)                      // nạp KH điều vận (chuyển về đây 02/08)
   const canUploadKhvc = can(perms, 'outbound', 'import') || can(perms, 'external_khvc', 'create')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v3', KH_COL_DEFAULTS)   // v3: thêm cột Dòng xe con (23/09)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v4', KH_COL_DEFAULTS)   // v4: thêm cột Điểm giao (08/10) — v3: Dòng xe con (23/09)
   const { data: facets } = useKhvcFacets()
   // Cần MỘT trong hai khoảng ngày (nạp HOẶC xuất) mới tải — điều vận thường tìm theo NGÀY XE CHẠY
   const hasDate = !!(dateFrom || dateTo || exportFrom || exportTo)
@@ -1477,6 +1478,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.warehouse_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.npp ?? undefined}>{r.npp || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap tabular-nums`}>{r.stop_seq != null ? `Điểm ${r.stop_seq}` : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap font-medium`}>
                       {r.booking_category || <span className="text-amber-600" title="Chưa chốt cửa đặt lịch — nạp lại KH có cột &quot;Loại kho booking&quot; hoặc sửa tại đây">chưa chốt</span>}
                     </TableCell>

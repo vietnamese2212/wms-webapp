@@ -200,9 +200,12 @@ try {
   // 28/09 (user: "dòng xe chọn theo khai báo của khách, không khai thì không chọn") — khách fixture khai MỌI dòng xe đang hoạt
   // động để các kịch bản cũ (viết khi "không khai = mọi xe") giữ nguyên ý; luật "không khai ⇒ không chọn" kiểm riêng ở [13f]
   const ALLV = { '*': (await restAll('vehicle_model', 'select=id&is_active=eq.true')).map(v => v.id) }
+  // 08/10 — THỨ TỰ GIAO cần ghim kho + khách: kho QA ghim cạnh Ba Vì; NPP 1 gần hơn NPP 2 (cùng hướng) ⇒ xe 1 giao NPP 1 rồi NPP 2 ([3e])
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WH}`, { geo_lat: 21.1958, geo_lng: 105.3936, geo_source: 'MANUAL' })
+  const PIN = [{ lat: 21.05, lng: 105.75 }, { lat: 20.95, lng: 106.05 }, { lat: 20.85, lng: 106.69 }]
   for (let i = 0; i < 3; i++) {
     const ward = i < 2 ? W1 : W2
-    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, max_customers_per_trip: 3, updated_at: nowIso() })
+    await restWrite('Customer', 'POST', null, { id: crypto.randomUUID(), ship_to_code: SHIP[i], name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, is_active: true, auto_created: true, dispatch_vehicles: ALLV, max_customers_per_trip: 3, geo_lat: PIN[i].lat, geo_lng: PIN[i].lng, geo_source: 'MANUAL', updated_at: nowIso() })
     await restWrite('erp_outbound_orders', 'POST', null, {
       id: crypto.randomUUID(), od_number: OD[i], od_item: '10', material_code: FIX.MAT_POOL, qty_base: PAL[i] * perPallet,
       ship_to_code: SHIP[i], ship_to_name: `QA61 NPP ${i + 1}`, ward_code: ward, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
@@ -284,7 +287,7 @@ try {
 
   // ── [3] Xác nhận: DA không cần phản hồi ⇒ vào Kế hoạch xuất ngay · HA cần ⇒ CHỜ ──
   const cf = await api(`/tms/dispatch/plans/${P.id}/confirm`, 'POST', {})
-  const kh1 = await restAll('khvc_lines', `select=do_no,dvvt,veh_type,vehicle_model_id,source,booking_category&group_code=eq.${T1.group_code}`)
+  const kh1 = await restAll('khvc_lines', `select=do_no,dvvt,veh_type,vehicle_model_id,source,booking_category,stop_seq&group_code=eq.${T1.group_code}`)
   const kh2 = await restAll('khvc_lines', `select=do_no&group_code=eq.${T2.group_code}`)
   const gdo1 = (await restAll('GroupDeliveryOrder', `select=id,status,vehicle_model_id,dvvt,delivery_date&group_code=eq.${T1.group_code}`))[0]
   check('3a. Confirm → 200: 1 xe vào Kế hoạch xuất (DA) · 1 xe chờ (HA) · kế hoạch TENDERED · tendered_group_codes nêu Số xe HA',
@@ -294,6 +297,14 @@ try {
     kh1.length === 2 && kh1.every(k => k.dvvt === DA.name && k.veh_type === XEPALLET?.name && k.vehicle_model_id === vmId && k.source === 'DISPATCH' && !!k.booking_category) && kh2.length === 0,
     `kh1=${kh1.length} kh2=${kh2.length} ${JSON.stringify(kh1[0] ?? null)}`)
   check('3c. Chuyến bên Xuất kho sinh cho xe 1 (dội từ Kế hoạch xuất) mang vehicle_model_id + ĐVVT + ngày giao', !!gdo1 && gdo1.vehicle_model_id === vmId && gdo1.dvvt === DA.name && gdo1.delivery_date === DAY, `gdo=${JSON.stringify(gdo1 ?? null)} replan_err=${cf.j?.data?.replan_error ?? ''}`)
+  // 08/10 — THỨ TỰ GIAO (user: "in thứ tự giao lên Kế hoạch xuất / chuyến xuất kho"): kho → NPP 1 (gần) → NPP 2; Kế hoạch xuất mang số
+  // điểm của từng DO, chuyến Xuất kho mang số điểm của từng đơn (1 NPP) — dội qua đường Kế hoạch xuất → chuyến
+  const seqOf = Object.fromEntries(kh1.map(k => [k.do_no, k.stop_seq]))
+  const dels1 = gdo1 ? await restAll('OutboundDelivery', `select=distributor_name,stop_seq&gdo_id=eq.${gdo1.id}`) : []
+  const delSeq = Object.fromEntries(dels1.map(d => [d.distributor_name, d.stop_seq]))
+  check('3e. Thứ tự giao: Kế hoạch xuất OD1 = điểm 1, OD2 = điểm 2 · chuyến Xuất kho: đơn NPP 1 = điểm 1, NPP 2 = điểm 2',
+    seqOf[OD[0]] === 1 && seqOf[OD[1]] === 2 && delSeq['QA61 NPP 1'] === 1 && delSeq['QA61 NPP 2'] === 2,
+    `khvc=${JSON.stringify(seqOf)} chuyến=${JSON.stringify(delSeq)}`)
   P = await planOf(P.id); T1 = tripOfOd(P, OD[0]); T2 = tripOfOd(P, OD[2])
   check('3d. GET plan: xe 1 CONFIRMED có confirmed_at · xe 2 TENDERED có tendered_at · summary tendered 1 / confirmed 1',
     P?.status === 'TENDERED' && T1?.status === 'CONFIRMED' && !!T1?.confirmed_at && T2?.status === 'TENDERED' && !!T2?.tendered_at && P?.summary?.tendered === 1 && P?.summary?.confirmed === 1,

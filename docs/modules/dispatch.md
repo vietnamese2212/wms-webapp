@@ -144,3 +144,50 @@ Review theo vai người điều vận 01/10 (memory `dispatch-review-as-dispatc
   - **CẬN DƯỚI CỦA DẢI TẢI LÀ BẮT BUỘC (user 07/10 nhìn bàn Trung chuyển Ba Vì 04/10: "đã ràng % cận trên cận dưới mà sao lại có xe 5 %"; chốt: "bắt buộc — đơn vào không hết thì ngoài xe, user quyết đưa vào xe", rồi chọn "ngoài xe = khung chờ có sẵn").** Trước: Tối thiểu % (01/10) chỉ là cờ Non tải, máy vẫn tạo xe — 7/62 xe Non tải (Bộ cont 40 chở 1,29 / 28 tấn cho 9 đơn Kho Ba Vì; 0,03 pallet cho LOF 20000004…). Nay: dòng xe cha CÓ dải (không tick Bỏ qua) ⇒ sau mọi lượt gộp, lô còn dưới Tối thiểu % KHÔNG thành xe — đơn ở khung chờ của kế hoạch (có mốc) với `UNDER_MIN`; `params.under_min[od]` = xe máy định dùng · % · mức · số OD của lô ⇒ chip vàng "Dưới tối thiểu · <xe> x %" trên dòng khung chờ (thẻ + bảng) và cột Lưu ý tab "Trong kế hoạch". Người kéo lên xe / Xe mới (xe tay dưới mức vẫn được, cờ Non tải) hoặc "Trả về Chờ điều"; tick "Bỏ qua dải %" thì máy tạo xe như cũ. Cha không có trong bảng dải = như cũ. Lô chứa PHẦN của OD bị tách giữ nguyên xe (bỏ một phần là OD nửa trên xe nửa không ở đâu). Toast Tạo kế hoạch / Ghép phần đã chọn / Tối ưu lại nêu số đơn dưới tối thiểu (`reoptimized.under_min`). Đo bằng chạy lại máy ghép chỉ đọc trên kế hoạch thật (dải container 70–105 user vừa đặt): 72 xe ≥ 70 %, 0 Non tải, 24 đơn / 6 lô vụn ở khung chờ. Lưới: test engine 5 ca (đỏ 4/5 trên bản cũ — ca còn lại canh Bỏ qua / cha không dải / phần OD giữ nguyên) + 3 test cũ đổi kỳ vọng · gói 61 [16d] (7 + 3 ⇒ 7 lên xe, 3 pallet ở khung chờ kèm `under_min`).
   - **Thẻ "2 XE cont" (cùng câu hỏi):** không phải lỗi máy — container khô khai 28 tấn, trần dải 100 %, mỗi đơn chuyển kho Đà Nẵng 28,05–28,35 tấn ⇒ "lớn hơn mọi xe" ⇒ đi nguyên trên 2 container (luật 11) rồi container thứ hai nhận đơn khác cùng điểm (17 thẻ, 79 xe). Đo: trần container 102 % ⇒ 0 thẻ nhiều xe, 78 xe, −14,4 tr. User tự chỉnh dải trên bàn (đặt 70–105). Bán hàng cùng khuôn (ghép hết 3.529 đơn: 119 thẻ nhiều xe vì đơn nhỉnh hơn xe 17 pallet).
   - **GHÉP NHIỀU XE TRÊN MỘT THẺ THEO LOẠI XE (user 07/10: "dòng xe pallet, container sẽ không ghép xe, chỉ Xá, SCA" · "khai như các tính năng khác: cha → con → kho" · đơn quá xe ⇒ "để ở khung chờ").** Cấu hình ở Cài đặt TMS (Loại xe + Mã dòng xe, xem `docs/modules/tms_vehicle_types.md`); `loadRefs` resolve kho → dòng xe → cha vào `EngineModel.multi_vehicle`. Máy ghép: `bestCombo` chỉ xét dòng xe được ghép; OD lớn hơn xe lớn nhất được vào ⇒ thẻ nhiều xe dựng từ xe lớn nhất ĐƯỢC ghép (`bigMultiForOd`), không có mà xe lớn nhất không được ghép ⇒ khung chờ `TOO_BIG` (không tách OD — kể cả khi kho tắt thẻ nhiều xe), `params.too_big[od]` = xe · % · trần ⇒ chip "Lớn hơn xe · <xe> x %" (thẻ + bảng + cột Lưu ý tab Trong kế hoạch), toast nêu số. Loại xe được ghép mà kho tắt thẻ nhiều xe ⇒ như cũ (tách theo dòng hàng). Đo chỉ đọc Bán hàng Ba Vì 04/10 (ghép hết 3.529 đơn, dải 70–100): thẻ nhiều xe 110 → 7 (còn lại toàn xe Xá), 111 đơn "Lớn hơn xe" vào khung chờ — CẢ 111 là Xe 17 Pallet ở 101–110 % (106 đơn ≤ 105 %) ⇒ nới trần XE PALLET 105–110 % là lên được một xe. Lưới: test engine 4 ca (đỏ 4/4 bản cũ) · `vehicleModelScope.test.ts` · gói 61 [15g2].
+
+
+## 08/10 — XE TUYẾN liên tỉnh (luật 5b) · cước theo phường GIÁ CAO NHẤT · THỨ TỰ GIAO trên chứng từ
+
+User chốt 08/10 (sau nghiên cứu + mô phỏng `docs/plans/DISPATCH_CORRIDOR_2026-10-08.md`):
+- "lô nhỏ ghép, được ké xe";
+- số khách / điểm giao "theo cấu hình đang khai";
+- "cước của tuyến cao nhất";
+- "in thứ tự giao".
+
+**Luật 5b (`dispatchEngine.runDispatch`, sau luật 5):**
+- **Đối tượng:** lô **sẽ bị loại vì dưới tối thiểu** (dải bắt buộc 07/10). Lô này được ghép với lô khác hoặc **ké** xe còn chỗ (cùng lớp · kênh · Loại kho).
+- **Bỏ phép so "không đắt hơn đi riêng"**: lô này vốn không được đi riêng, so với nó là so với thứ không tồn tại.
+- **Trần:** trần khách / điểm giao là ĐÚNG cấu hình đang khai (`binFits`: khách / kênh × Loại kho, `max_drops` dòng xe). Máy không tự nới.
+- **Vùng:**
+  - Cùng tỉnh thì không đo km.
+  - Khác tỉnh chỉ khi kho khai "Xe tuyến liên tỉnh — đường vòng tối đa %" (`Warehouse.dispatch_detour_pct`, form Kho — cùng ô với gộp Non tải khác tỉnh 02/10). Đường vòng phải qua `detourOk`.
+  - Mỗi lượt Ghép / Tối ưu lại đọc giá trị HIỆN TẠI của ô và ghi vào bản chụp `plan.params`.
+- **Ké xe đang đủ tối thiểu:** chỉ khi sau ghép VẪN đủ. Ghép làm xe đổi sang dòng xe lớn hơn mà tụt dưới tối thiểu là kéo cả xe vào khung chờ (đo bàn Ba Vì 04/10).
+- **Ưu tiên:** đạt tối thiểu → cước tăng ít nhất → xe đích lớn hơn.
+
+**Cước của xe nhiều phường = phường GIÁ CAO NHẤT** (`freight.routeTariff`; trước là phường xa nhất theo km).
+- Máy ghép và ước tính cước chuyến Xuất kho đi CHUNG hàm này.
+- Phường thiếu cước ⇒ cảnh báo "Chưa có cước phường … — cước đang tính theo phường còn lại" (trước đó lặng lẽ lấy phường còn cước).
+
+**Thứ tự giao:**
+- `routeOf` (kho → điểm gần trước, km Goong / ước lượng) ghi vào `dispatch_trip.detail.route`. Nguồn gọi: máy ghép, và `computeTripPatch` khi người sửa xe (`repriceMany` nạp `engineGeo`). Không có toạ độ thì giữ thứ tự cũ nếu tập điểm không đổi.
+- Lúc Xác nhận ⇒ `khvc_lines.stop_seq` của từng DO. Đường dội Kế hoạch xuất → chuyến ⇒ `OutboundDelivery.stop_seq` = số nhỏ nhất của các DO thuộc NPP (`stopSeqOf`). Migration `20261008b_stop_seq`.
+- Màn hình:
+  - Bàn ghép xe (Bảng: chip "Tuyến" + vùng theo thứ tự + km; đơn mang "Đn"; Thẻ: dòng "Thứ tự").
+  - Kế hoạch xuất: cột "Điểm giao".
+  - Chi tiết chuyến Xuất kho: khối NPP xếp theo điểm, đầu khối "Điểm n".
+
+**Hiệu năng** (đo bàn Ba Vì 04/10, 3.526 đơn, một lượt):
+- Luật 5 cũ với đường vòng bật mất 22,6 s, vì mỗi lần gộp lại chọn xe cho mọi bin từ đầu.
+- Nay nhớ kết quả chọn xe theo bin + quét một lượt (`assignMemo` / `evalCache`): 0,85–1,6 s khi tắt đường vòng, 2,3–5,2 s khi bật 20 %, 7,6 s khi bật cấu hình nâng.
+
+**Số đo:**
+- Với cấu hình hiện tại (GT FG01 1 khách/xe, xe pallet 1 điểm), luật 5b gần như không có việc: kẹt 223 → 223 khi tắt đường vòng, 167 khi bật 20 %.
+- Nâng GT lên 3 khách/xe và xe pallet lên 3 điểm: kẹt 119 khi tắt đường vòng, **59** khi bật 20 % (34 xe liên tỉnh).
+- Đổi trần là việc của user ở Khách hàng / Kênh / Mã dòng xe — máy không đổi hộ.
+
+**Lưới:**
+- `dispatchEngine.test.ts` "08/10 — luật 5b" (7 phép, 5 đỏ khi tắt luật);
+- `freight.test.ts` `routeTariff`;
+- gói 61 [3e] (thứ tự giao Kế hoạch xuất + chuyến);
+- [16a] `summary.overload` theo trần dải.

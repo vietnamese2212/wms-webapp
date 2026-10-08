@@ -3658,6 +3658,7 @@ export interface KhvcRow {
   id: string; group_code: string; do_no: string; warehouse_code: string | null
   npp: string | null; veh_type: string | null; dvvt: string | null
   priority: string | null; cs: string | null; note: string | null
+  stop_seq?: number | null           // 08/10 — thứ tự giao của DO trên xe (điều vận ghi lúc Xác nhận)
   booking_category: string | null   // CỬA đặt lịch — 1 Số xe chỉ 1 giá trị (trigger DB gác); chỉ dùng cho khung giờ
   vehicle_model_id?: string | null   // dòng xe CON (mã SAP) — cấp xe, điều vận dùng tính cước/tải (23/09)
   vehicle_model?: { id: string; sap_code: string; name: string } | null   // enrich từ BE list
@@ -6107,6 +6108,8 @@ export interface DispatchTripDetail {
   load: { basis: 'PALLET' | 'TON' | null; used: number | null; cap: number | null; pct: number | null; underload: boolean | null; underload_pct: number; max_pct?: number }   // max_pct (01/10): trần dải tải — quá mức này mới là "vượt"
   categories: string[]; conditions?: string[]; booking_category: string | null; cluster: string
   carrier_reasons: string[]; warnings: string[]; merge_hint: string | null
+  /** 08/10 — thứ tự giao: ship-to theo thứ tự kho → điểm gần trước + km (Goong / ước lượng); null = thiếu ghim */
+  route?: { order: string[]; km: number; direct_km: number; detour_pct: number } | null
   vehicle_model: { id: string; sap_code: string; name: string; parent_type_name: string | null } | null
   /** thẻ nhiều xe (27/09): các xe + phần tải + cước riêng; 1 phần tử = một xe */
   vehicles?: { id: string; sap_code: string; name: string; parent_type_name: string | null; pallets: number | null; tons: number | null; freight: number | null }[]

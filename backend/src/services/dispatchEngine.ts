@@ -46,10 +46,10 @@
  *     07/10 (user: "dòng xe pallet, container không ghép xe, chỉ Xá, SCA"): chỉ dòng xe `multi_vehicle !== false` (kho → dòng xe →
  *     loại xe cha) vào tổ hợp; OD lớn hơn xe lớn nhất mà xe đó không được ghép ⇒ khung chờ `TOO_BIG` (không tách OD).
  *  Tie-break chung: cước thấp → ít điểm giao → ổn định (cùng input ra cùng output — mọi tập đều sort trước khi duyệt).
- * Cước dùng chính `computeFreight`/`pickTariff`/`farthestWard` của services/freight.ts — KHÔNG chép luật tính tiền.
+ * Cước dùng chính `computeFreight`/`routeTariff` của services/freight.ts — KHÔNG chép luật tính tiền.
  */
 import {
-  computeFreight, pickTariff, farthestWard, effectiveAt, loadUtilization, billedPallets,
+  computeFreight, routeTariff, effectiveAt, loadUtilization, billedPallets,
   type TariffLike, type SurchargeLike, type TariffUnit, type SurchargePer, type StopCountMode, type LoadUtil,
 } from './freight'
 import { estimateRoadKm, kmLookup, routeKm, detourOk } from '../utils/geoMath'
@@ -166,12 +166,31 @@ export interface TripOd {
   allowed_models: string[] | null                   // luật 10 — dòng xe khách được vào (chụp lúc lập); null = không giới hạn
   separate: boolean                                 // 28/09 — khách đi xe riêng (cấu hình trên Khách)
   max_customers: number | null                      // 28/09 — số khách tối đa cùng xe của OD (khách → kênh); null = CHƯA KHAI = 1 (02/10)
+  stop_seq?: number | null                          // 08/10 — điểm giao thứ mấy của xe (theo `DispatchTrip.route`); null = không đo được
+}
+/** 08/10 — thứ tự giao của xe (kho → các điểm, gần trước) + km; xe tuyến liên tỉnh in thứ tự này lên Kế hoạch xuất / chuyến Xuất kho.
+ *  Km lấy số đo Goong nếu có, thiếu thì ước lượng chim bay × 1,3; thiếu ghim kho hay một điểm ⇒ không có `route`. */
+export interface TripRoute { order: string[]; km: number; direct_km: number; detour_pct: number }
+/** Km giữa hai khoá ('WH' | ship_to): số đo trong `geo.km` (Goong) thắng, thiếu thì ước lượng chim bay × 1,3 từ ghim; thiếu ghim ⇒ undefined. */
+export const geoDistOf = (geo: EngineGeo | undefined) => (a: string, b: string): number | undefined => {
+  if (!geo) return undefined
+  const hit = kmLookup(geo.km, a, b)
+  if (hit != null) return hit
+  const pa = a === 'WH' ? geo.wh : geo.points[a], pb = b === 'WH' ? geo.wh : geo.points[b]
+  return pa && pb ? estimateRoadKm(pa, pb) : undefined
+}
+/** Thứ tự giao của một xe (kho → các điểm, gần trước) — MỘT hàm cho máy ghép lẫn lúc người sửa xe trên bàn (08/10). */
+export function routeOf(stops: string[], geo: EngineGeo | undefined): TripRoute | null {
+  const rk = geo?.wh && stops.length ? routeKm(stops, geoDistOf(geo)) : null
+  return rk ? { order: rk.order, km: rk.total, direct_km: rk.farthest, detour_pct: rk.farthest > 0 ? Math.round((rk.total / rk.farthest - 1) * 1000) / 10 : 0 } : null
 }
 export interface TripFreight {
   total: number | null; base: number | null; billed_pallets: number | null; unit: TariffUnit | null
   tariff_id: string | null; ward: string | null
   surcharges: { kind: string; per: SurchargePer; unit_amount: number; qty: number; total: number }[]
   reason: string | null
+  /** 08/10 — phường của xe KHÔNG có dòng cước của ĐVVT × dòng xe này: cước đang tính theo các phường còn lại, có thể thấp hơn thật */
+  missing_wards?: string[]
 }
 /** Một xe của thẻ (luật 11): dòng xe + phần tải máy chia cho nó + cước riêng của xe đó. */
 export interface TripVehicle { model: EngineModel; pallets: number | null; tons: number | null; freight: number | null }
@@ -197,6 +216,7 @@ export interface DispatchTrip {
   carrier_reasons: string[]
   warnings: string[]
   merge_hint: string | null          // gợi ý gộp khi Non tải
+  route?: TripRoute | null           // 08/10 — thứ tự giao + km (null = thiếu ghim / km)
 }
 /** `code` = OD vẫn NẰM KHUNG CHỜ (không vào "không lên xe"): NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — khai xong ghép được;
  *  FOLLOW_ONLY = chỉ có hàng đi kèm đơn (POSM) chưa có chuyến chính cùng cụm — đơn chính về là ké theo (30/09);
@@ -512,18 +532,18 @@ export function tripLoad(model: EngineModel | null, pallets: number | null, tons
 interface PriceOpt { carrier: EngineCarrier; freight: TripFreight; reasons: string[] }
 export function priceFor(ctx: Ctx, model: EngineModel, carrierId: string, wards: string[], stops: number, pallets: number | null, tons: number | null): TripFreight {
   const day = ctx.input.params.day
-  const mine = effectiveAt((ctx.tariffsBy.get(tKey(carrierId, model.id)) ?? []).filter(t => wards.includes(t.ward_code)), day)
-  const kmByWard = new Map<string, number | null>()
-  for (const t of mine) if (!kmByWard.has(t.ward_code) || (t.distance_km != null && kmByWard.get(t.ward_code) == null)) kmByWard.set(t.ward_code, t.distance_km == null ? null : Number(t.distance_km))
-  const ward = farthestWard(mine.map(t => t.ward_code), kmByWard)
-  const tariff = ward ? pickTariff(mine.filter(t => t.ward_code === ward).map(t => ({ ...t, price: Number(t.price), distance_km: t.distance_km == null ? null : Number(t.distance_km) })), day) : null
+  const mine = (ctx.tariffsBy.get(tKey(carrierId, model.id)) ?? []).filter(t => wards.includes(t.ward_code))
+    .map(t => ({ ...t, price: Number(t.price), distance_km: t.distance_km == null ? null : Number(t.distance_km) }))
+  // 08/10: xe nhiều phường tính theo phường GIÁ CAO NHẤT (user: "cước của tuyến cao nhất"); phường thiếu cước nói ra ở `missing_wards`
+  const { tariff, missing } = routeTariff(mine, wards, day)
+  const ward = tariff?.ward_code ?? null
   const unit = model.tariff_unit
   if (!tariff) return { total: null, base: null, billed_pallets: null, unit, tariff_id: null, ward: null, surcharges: [], reason: `Chưa có bảng cước (${model.name} · phường ${wards.join(', ') || '?'})` }
   if (unit === 'PER_PALLET' && pallets == null) return { total: null, base: null, billed_pallets: null, unit, tariff_id: null, ward, surcharges: [], reason: 'Không đo được số pallet' }
   const sur = effectiveAt((ctx.surBy.get(carrierId) ?? []).filter(s => s.vehicle_model_id == null || s.vehicle_model_id === model.id), day)
     .map(s => ({ ...s, amount: Number(s.amount), min_stops: Number(s.min_stops ?? 2) }))
   const r = computeFreight({ unit, tariff, surcharges: sur, pallets: pallets ?? 0, tons: tons ?? 0, stops })
-  return { total: r.total, base: r.base, billed_pallets: r.billed_pallets, unit, tariff_id: r.tariff_id, ward, surcharges: r.surcharges, reason: r.reason }
+  return { total: r.total, base: r.base, billed_pallets: r.billed_pallets, unit, tariff_id: r.tariff_id, ward, surcharges: r.surcharges, reason: r.reason, ...(missing.length ? { missing_wards: missing } : {}) }
 }
 /** Luật 11: cước của một THẺ nhiều xe với MỘT ĐVVT = Σ cước từng xe theo phần tải của xe đó (cùng `priceFor`). Một xe thiếu
  *  cước ⇒ cả thẻ không có cước (kèm lý do của xe đó). Một xe ⇒ đúng `priceFor`. Tổ hợp không chở hết ⇒ chia theo tỷ lệ sức
@@ -957,20 +977,18 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const snapshot: Record<string, ShareActual> = {}
   for (const [k, v] of Object.entries(input.share_actual)) snapshot[k] = { ...v }
   const costOf = (b: Bin) => assignVehicle(ctx, b, snapshot, underPct)
-  const isUnder = (b: Bin) => { const a = costOf(b); if (!a.model) return true; const u = loadUtilization({ capacity_mode: a.model.capacity_mode, max_pallets: a.model.max_pallets, max_tons: a.model.max_tons, underload_pct: underPct(a.model) }, a.pallets, a.tons); return u.pct != null && u.pct < underPct(a.model) }
+  // 08/10 — nhớ kết quả chọn xe theo bin (snapshot tỷ trọng cố định trong lúc gộp; `assignVehicle` không đọc khoá bin): bàn Ba Vì 3.526
+  // đơn bật đường vòng mất 22,6 s chỉ riêng luật 5 vì mỗi lần gộp lại chọn xe cho MỌI bin từ đầu
+  const assignMemo = new Map<Bin, ReturnType<typeof costOf>>()
+  const costM = (b: Bin) => { let a = assignMemo.get(b); if (!a) { a = costOf(b); assignMemo.set(b, a) } return a }
+  const isUnder = (b: Bin) => { const a = costM(b); if (!a.model) return true; const u = loadUtilization({ capacity_mode: a.model.capacity_mode, max_pallets: a.model.max_pallets, max_tons: a.model.max_tons, underload_pct: underPct(a.model) }, a.pallets, a.tons); return u.pct != null && u.pct < underPct(a.model) }
   // 02/10 — ĐƯỜNG VÒNG (điều vận trên bản đồ): kho bật `detour_pct` ⇒ hai xe KHÁC TỈNH cũng gộp được khi quãng kho → các điểm giao
   // (gần trước) không dài hơn đường thẳng tới điểm xa nhất quá N %. Km lấy từ `input.geo.km` (số đo Goong / ước lượng controller
   // điền), thiếu thì ước lượng chim bay × 1,3 từ toạ độ; thiếu toạ độ của kho hay một điểm ⇒ KHÔNG gộp (không đoán). Mọi luật khác
   // (lớp, kênh, Loại kho, dòng xe chung, điểm giao, không đắt hơn đi riêng) giữ nguyên — chỉ phần TỈNH của khoá được nới.
   const geo = input.geo
   const detourPct = P.detour_pct != null && Number.isFinite(Number(P.detour_pct)) && Number(P.detour_pct) > 0 && geo?.wh ? Number(P.detour_pct) : null
-  const geoDist = (a: string, b: string): number | undefined => {
-    if (!geo) return undefined
-    const hit = kmLookup(geo.km, a, b)
-    if (hit != null) return hit
-    const pa = a === 'WH' ? geo.wh : geo.points[a], pb = b === 'WH' ? geo.wh : geo.points[b]
-    return pa && pb ? estimateRoadKm(pa, pb) : undefined
-  }
+  const geoDist = geoDistOf(geo)
   const stopsOf = (b: Bin) => uniq(b.units.map(u => u.od.ship_to_code).filter((x): x is string => !!x))
   const regionless = (k: string) => k.split('|').filter((_, i) => i !== 1).join('|')
   const detourMergeOk = (merged: Bin) => detourPct != null && detourOk(routeKm(stopsOf(merged), geoDist), detourPct)
@@ -979,7 +997,8 @@ export function runDispatch(input: EngineInput): DispatchResult {
     changed = false
     const srcs = bins.filter(b => !solo(b) && isUnder(b)).sort((a, b) => (a.pallets - b.pallets) || (a.tons - b.tons) || cmp(a.key, b.key))
     for (const src of srcs) {
-      const cSrc = costOf(src).freight.total
+      if (!bins.includes(src) || !isUnder(src)) continue   // đã gộp vào xe khác / đã nhận thêm đơn hết Non tải (lượt quét một lần, 08/10)
+      const cSrc = costM(src).freight.total
       // chuyến chỉ có hàng đi kèm (POSM) gộp được vào chuyến của Loại kho chính cùng vùng (luật 9)
       // chuyến chỉ POSM ('*') hay chỉ mã chưa khai loại ('?') gộp được vào chuyến bất kỳ loại nào cùng vùng; chuyến '?' cũng nhận
       const sameGroup = (t: Bin) => t.mkey === src.mkey || (!mixCats && baseKey(t.mkey) === baseKey(src.mkey) && (['*', '?'].includes(catPartOf(src.mkey)) || catPartOf(t.mkey) === '?'))
@@ -989,7 +1008,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
         .map(t => ({ t, merged: withUnits(t, src.units), cross: !sameGroup(t) }))
         .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged))
         .filter(x => !x.cross || detourMergeOk(x.merged))
-        .map(x => { const cT = costOf(x.t).freight.total, cM = costOf(x.merged).freight.total; return { ...x, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
+        .map(x => { const aM = costOf(x.merged); const cT = costM(x.t).freight.total, cM = aM.freight.total; return { ...x, aM, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
         .filter(x => x.ok)
         .sort((a, b) => ((a.cM ?? Infinity) - (b.cM ?? Infinity)) || (b.t.pallets - a.t.pallets) || cmp(a.t.key, b.t.key))
       const hit = targets[0]
@@ -997,9 +1016,51 @@ export function runDispatch(input: EngineInput): DispatchResult {
       const nb = hit.merged
       hit.t.units = nb.units; hit.t.pallets = nb.pallets; hit.t.tons = nb.tons
       hit.t.key = `${hit.t.mkey}|${binWards(hit.t).join('+')}`
+      assignMemo.set(hit.t, hit.aM)
       bins.splice(bins.indexOf(src), 1)
       changed = true
-      break
+    }
+  }
+
+  // ── Luật 5b (08/10) — XE TUYẾN: lô SẼ BỊ LOẠI vì dưới tối thiểu (dải tải bắt buộc 07/10) được ghép với lô khác hoặc KÉ xe còn chỗ ──
+  // User chốt 08/10: "lô nhỏ ghép, được ké xe" · số khách / điểm giao theo ĐÚNG cấu hình đang khai (khách/kênh × Loại kho, dòng xe)
+  // · liên tỉnh khi kho bật "đường vòng tối đa %" (không khai bảng hành lang — 01/10) · cước theo phường giá cao nhất (`routeTariff`).
+  // Khác luật 5: KHÔNG so "không đắt hơn đi riêng" — lô dưới tối thiểu vốn không được đi riêng, so với nó là so với thứ không tồn tại
+  // (mô phỏng 21 ngày đơn Ba Vì: phép so đó + trần cấu hình giữ ~30 % pallet mỗi ngày ở khung chờ). Ưu tiên: sau ghép ĐẠT tối thiểu →
+  // cước tăng thêm ít nhất → xe đích lớn hơn. Cùng tỉnh: không đo km (như luật 5); khác tỉnh: phải qua `detourOk`.
+  // Bàn 3.500 đơn ⇒ vài trăm lô: chọn xe (`assignVehicle`) là bước đắt — nhớ kết quả theo bin, chỉ tính lại bin vừa đổi; lọc rẻ
+  // (khoá · trần điểm/tải · km) TRƯỚC, tính cước SAU.
+  type BinEval = { drop: number | null; cost: number }
+  const evalBin = (b: Bin, a: ReturnType<typeof costOf>): BinEval => {
+    const load = tripLoad(a.loadModel, a.pallets, a.tons, P.underload_pct)
+    const drop = !solo(b) && !b.units.some(u => u.part) && a.loadModel?.load_min_pct != null && load.pct != null && load.pct < load.underload_pct ? load.pct : null
+    return { drop, cost: a.freight.total ?? 0 }
+  }
+  const evalCache = new Map<Bin, BinEval>()
+  const evalOf = (b: Bin): BinEval => { let v = evalCache.get(b); if (!v) { v = evalBin(b, costM(b)); evalCache.set(b, v) } return v }
+  // Mỗi lượt đi hết danh sách lô dưới tối thiểu MỘT lần (ghép xong đi tiếp, không quay lại đầu — bản quay lại đo 29 s trên bàn Ba Vì
+  // 3.526 đơn bật đường vòng); lượt sau chỉ chạy khi lượt trước còn ghép được.
+  let moved = true
+  while (moved) {
+    moved = false
+    const srcs = bins.filter(b => evalOf(b).drop != null).sort((a, b) => (a.pallets - b.pallets) || (a.tons - b.tons) || cmp(a.key, b.key))
+    for (const src of srcs) {
+      if (!bins.includes(src) || evalOf(src).drop == null) continue   // đã bị ghép vào lô khác / đã nhận thêm đơn đủ tối thiểu
+      const hit = bins
+        .filter(t => t !== src && !solo(t) && regionless(t.mkey) === regionless(src.mkey) && (t.mkey === src.mkey || detourPct != null))
+        .map(t => ({ t, merged: withUnits(t, src.units), cross: t.mkey !== src.mkey }))
+        .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged) && (!x.cross || detourMergeOk(x.merged)))
+        .map(x => { const aM = costOf(x.merged), m = evalBin(x.merged, aM); return { ...x, aM, m, reach: m.drop == null, add: m.cost - evalOf(x.t).cost } })
+        // KÉ xe đang đủ tối thiểu chỉ khi sau ghép VẪN đủ — ghép làm xe đổi sang dòng xe lớn hơn (danh sách xe được vào / ĐK bảo quản)
+        // mà tụt dưới tối thiểu là kéo cả xe đó vào khung chờ (đo bàn Ba Vì 04/10: thiếu vế này kẹt 227 đơn, không có 5b chỉ 223)
+        .filter(x => x.reach || evalOf(x.t).drop != null)
+        .sort((a, b) => Number(b.reach) - Number(a.reach) || (a.add - b.add) || (b.t.pallets - a.t.pallets) || cmp(a.t.key, b.t.key))[0]
+      if (!hit) continue
+      hit.t.units = hit.merged.units; hit.t.pallets = hit.merged.pallets; hit.t.tons = hit.merged.tons
+      hit.t.key = `${hit.t.mkey}|${binWards(hit.t).join('+')}`
+      evalCache.set(hit.t, hit.m); assignMemo.set(hit.t, hit.aM)
+      bins.splice(bins.indexOf(src), 1)
+      moved = true
     }
   }
 
@@ -1026,13 +1087,19 @@ export function runDispatch(input: EngineInput): DispatchResult {
       continue
     }
     if (a.carrier) { const cur = actual[a.carrier.id] ?? { trips: 0, pallets: 0, tons: 0 }; cur.trips += 1; cur.pallets += a.pallets ?? 0; cur.tons += a.tons ?? 0; actual[a.carrier.id] = cur }
+    // 08/10 — thứ tự giao (kho → các điểm, gần trước) cho MỌI xe đo được; xe tuyến liên tỉnh in thứ tự này lên chứng từ
+    const route = routeOf(stopsOf(b), geo)
+    const stopSeq = new Map((route?.order ?? []).map((s, i) => [s, i + 1]))
+    const missing = a.freight.total != null ? a.freight.missing_wards ?? [] : []
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key,
       vehicle_model: a.model, vehicles: a.vehicles, carrier: a.carrier,
-      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null, separate: u.od.separate === true, max_customers: u.od.max_customers ?? null })),
+      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null, separate: u.od.separate === true, max_customers: u.od.max_customers ?? null, stop_seq: (u.od.ship_to_code && stopSeq.get(u.od.ship_to_code)) || null })),
+      route,
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,
       warnings: [...a.warnings, ...(a.oversize ? ['Một dòng hàng lớn hơn xe lớn nhất — chuyến vượt tải, cần tách tay hoặc thêm dòng xe lớn hơn'] : []),
+        ...(missing.length ? [`Chưa có cước phường ${missing.join(', ')} cho ĐVVT × dòng xe này — cước đang tính theo phường còn lại, có thể thấp hơn thật (Cước vận chuyển → Bảng cước)`] : []),
         ...(() => { const mx = mixCats ? [] : uniq(b.units.filter(u => mainCatsOf(u.od.lines, follow).length > 1).map(u => u.od.od_number)); return mx.length
           ? [`${mx.length} OD chứa nhiều Loại kho (${mainCatsOf(b.units.filter(u => mx.includes(u.od.od_number)).flatMap(u => u.lines), follow).join(' + ')}) — không tách được OD nên đi chung một chuyến dù kho không cho ghép loại · OD:${mx.slice(0, 3).join(', ')}${mx.length > 3 ? '…' : ''}`]
           : [] })()],

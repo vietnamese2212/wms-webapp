@@ -37,7 +37,7 @@ import {
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, priceCombo, comboModel, splitLoad, basisOf,
-  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig,
+  type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf } from '../../services/vehicleModelScope'
@@ -142,7 +142,8 @@ export const zRespond = z.object({
 })
 
 // ── Danh mục / tham chiếu dùng chung cho engine và cho các cửa sửa nháp ───────────────────────────────
-type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' | 'allocations' | 'share_targets'>
+// `geo` (08/10): có thì xe tính lại kèm THỨ TỰ GIAO mới (`routeOf`); không có thì giữ thứ tự cũ khi tập điểm giao không đổi
+type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' | 'allocations' | 'share_targets'> & { geo?: EngineGeo }
 
 async function loadWarehouse(id: string): Promise<WhRow | null> {
   const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands, dispatch_detour_pct').eq('id', id).maybeSingle()
@@ -533,6 +534,7 @@ function tripDetail(t: DispatchTrip) {
   return {
     freight: t.freight, load: t.load, categories: t.categories, conditions: t.conditions, booking_category: t.booking_category, cluster: t.cluster,
     carrier_reasons: t.carrier_reasons, warnings: t.warnings, merge_hint: t.merge_hint,
+    route: t.route ?? null,   // 08/10 — thứ tự giao + km (xe tuyến in lên Kế hoạch xuất / chuyến Xuất kho)
     vehicle_model: t.vehicle_model ? { id: t.vehicle_model.id, sap_code: t.vehicle_model.sap_code, name: t.vehicle_model.name, parent_type_name: t.vehicle_model.parent_type_name } : null,
     vehicles: vehiclesRef(t.vehicles),
     carrier: t.carrier ? { id: t.carrier.id, code: t.carrier.code, name: t.carrier.name, tender_required: t.carrier.tender_required === true } : null,
@@ -686,7 +688,7 @@ async function writeSummary(plan: PlanRow) {
 // ── POST /tms/dispatch/plan ────────────────────────────────────────────────────────────────────────────
 /** Toạ độ + km cho máy ghép (02/10): ghim kho, ghim khách của các OD, km đã đo (GOONG) hoặc ước lượng cho kho→khách và khách↔khách
  *  gần nhau (≤ 80 km chim bay). Kho chưa ghim ⇒ geo.wh null ⇒ engine không gộp khác tỉnh (không đoán). Chỉ đọc DB, không gọi ngoài. */
-async function engineGeo(whId: string, ods: EngineOd[]): Promise<EngineGeo | undefined> {
+async function engineGeo(whId: string, ods: Pick<EngineOd, 'ship_to_code'>[]): Promise<EngineGeo | undefined> {
   const codes = uniq(ods.map(o => o.ship_to_code).filter((x): x is string => !!x))
   if (!codes.length) return undefined
   const [{ data: wh }, custs] = await Promise.all([
@@ -1064,8 +1066,16 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   const mainCats = mainCatsOf(categories.map(c => ({ category: c })), params.follow_categories ?? [])
   if ((trip.allow_mix_categories ?? params.allow_mix_categories) === false && mainCats.length > 1)
     warnings.push(`Xe chở lẫn ${mainCats.join(' + ')} — switch "Ghép Loại kho khác" của xe đang tắt`)
+  // 08/10 — thứ tự giao: có toạ độ thì tính lại theo đúng các điểm đang trên xe; không có thì giữ thứ tự cũ nếu tập điểm KHÔNG đổi
+  // (đổi dòng xe / ĐVVT), còn đổi tập điểm mà không đo được thì bỏ (thứ tự cũ sai còn tệ hơn không có)
+  const stopKeys = uniq(trip.ods.map(o => o.ship_to_code).filter((x): x is string => !!x)).sort()
+  const route = refs.geo ? routeOf(stopKeys, refs.geo)
+    : (prev.route && [...prev.route.order].sort().join('|') === stopKeys.join('|') ? prev.route : null)
+  // cùng câu với máy ghép: phường của xe thiếu cước ⇒ cước đang tính theo phường còn lại, có thể thấp hơn thật
+  if (freight.total != null && freight.missing_wards?.length)
+    warnings.push(`Chưa có cước phường ${freight.missing_wards.join(', ')} cho ĐVVT × dòng xe này — cước đang tính theo phường còn lại, có thể thấp hơn thật (Cước vận chuyển → Bảng cước)`)
   const detail: Detail = {
-    ...prev, freight, load, warnings, merge_hint: null, conditions: conds, categories, booking_category: booking,
+    ...prev, freight, load, warnings, merge_hint: null, conditions: conds, categories, booking_category: booking, route,
     // chỉ chuyển OD (ĐVVT giữ nguyên) thì lý do chọn ĐVVT của máy vẫn đúng; người đổi ĐVVT thì lý do là người
     carrier_reasons: carrier ? (carrier.id === trip.transport_company_id ? prev.carrier_reasons : ['Người điều vận chọn']) : [],
     vehicle_model: model ? { id: model.id, sap_code: model.sap_code, name: model.name, parent_type_name: model.parent_type_name } : null,
@@ -1217,7 +1227,9 @@ export async function moveOd(req: Request, res: Response) {
 
     const wh = await loadWarehouse(plan.warehouse_id)
     const allWards = uniq([...src.ods.map(o => o.ward_code)].filter((x): x is string => !!x))
-    const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, allWards), loadConditionLabels()])
+    const [refs0, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, allWards), loadConditionLabels()])
+    const tgOdsGeo = ((await db.from('dispatch_trip_od').select('ship_to_code').eq('trip_id', targetId)).data ?? []) as { ship_to_code: string | null }[]
+    const refs: Refs = { ...refs0, geo: await engineGeo(plan.warehouse_id, [...src.ods, ...tgOdsGeo]) }
     // nguồn: còn OD thì tính lại, hết OD thì xoá chuyến
     const srcLeft = src.ods.filter(o => o.od_number !== b.od_number)
     if (srcLeft.length) await repriceTrip(plan, { ...src, ods: srcLeft }, src.vehicle_model_id, src.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
@@ -1227,7 +1239,7 @@ export async function moveOd(req: Request, res: Response) {
     if (tgTrip) {
       const tgOds = ((await db.from('dispatch_trip_od').select('*').eq('trip_id', targetId).order('od_number')).data ?? []) as TripOdRow[]
       const tgWards = uniq(tgOds.map(o => o.ward_code).filter((x): x is string => !!x))
-      const refs2 = tgWards.every(w => allWards.includes(w)) ? refs : await loadRefs(plan.warehouse_id, plan.plan_date, uniq([...allWards, ...tgWards]))
+      const refs2: Refs = tgWards.every(w => allWards.includes(w)) ? refs : { ...await loadRefs(plan.warehouse_id, plan.plan_date, uniq([...allWards, ...tgWards])), geo: refs.geo }
       await repriceTrip(plan, { ...tgTrip, ods: tgOds }, tgTrip.vehicle_model_id, tgTrip.transport_company_id, refs2, numOrNull(wh?.dispatch_underload_pct), condLabels)
     }
     await writeSummary(plan)
@@ -1286,7 +1298,9 @@ async function repriceMany(plan: PlanRow, trips: PlanTrip[]): Promise<PlanTrip[]
   if (!trips.length) return []
   const wh = await loadWarehouse(plan.warehouse_id)
   const wards = uniq(trips.flatMap(t => t.ods.map(o => o.ward_code)).filter((x): x is string => !!x))
-  const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels()])
+  // 08/10: kèm toạ độ để xe sửa tay có lại THỨ TỰ GIAO (chỉ ghim của khách trên các xe bị đụng + km đã đo)
+  const [refs0, condLabels, geo] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels(), engineGeo(plan.warehouse_id, trips.flatMap(t => t.ods))])
+  const refs: Refs = { ...refs0, geo }
   return Promise.all(trips.map(t => repriceTrip(plan, t, t.vehicle_model_id, t.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)))
 }
 /** Tỷ trọng HIỆN TẠI của kế hoạch = nền kỳ lúc lập + các xe đang có (để xe mới do máy chọn ĐVVT vẫn nhìn tỷ trọng). */
@@ -1480,6 +1494,16 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const bandsChanged = await applyLoadBands(plan, b, now())
+    // 08/10 — "Xe tuyến liên tỉnh — đường vòng tối đa %" của kho đọc GIÁ TRỊ HIỆN TẠI mỗi lượt ghép (kế hoạch được dùng lại qua Xem đơn,
+    // không còn "Lập lại" — chụp một lần lúc lập thì bật ô ở form Kho không bao giờ tới được kế hoạch đang mở) và ghi lại vào bản chụp
+    // để mọi cửa khác của kế hoạch đọc cùng một giá trị (C49a)
+    const detourNow = numOrNull(wh.dispatch_detour_pct)
+    if (numOrNull((plan.params as { detour_pct?: number | string | null } | null)?.detour_pct ?? null) !== detourNow) {
+      const p2 = { ...(plan.params as Record<string, unknown>), detour_pct: detourNow }
+      const { error: dErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: now() }).eq('id', plan.id)
+      if (dErr) throw dErr
+      plan.params = asJson(p2)
+    }
     const full = (await readPlan(plan.id))!
     let redo = full.trips.filter(t => !t.locked && EDITABLE_TRIP.includes(statusOf(t)))
     let src = b.review_all ? full.pool : full.pool.filter(o => o.reviewed_at)
@@ -1857,10 +1881,13 @@ async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTr
   const t = now()
   const rows = trips.flatMap(tr => {
     const d = detailOf(tr)
+    // 08/10 — thứ tự giao (kho → điểm gần trước) của xe ⇒ số điểm của DO; không đo được thì để trống, không đoán
+    const stopOf = new Map((d.route?.order ?? []).map((s, i) => [s, i + 1]))
     return uniq(tr.ods.map(o => o.od_number)).map(od => {
       const o = tr.ods.find(x => x.od_number === od)!
       return {
         id: randomUUID(), group_code: tr.group_code, do_no: od, warehouse_code: wh.code,
+        stop_seq: (o.ship_to_code && stopOf.get(o.ship_to_code)) || null,
         npp: o.ship_to_name ?? o.ship_to_code ?? null, veh_type: d.vehicle_model?.parent_type_name ?? null, dvvt: d.carrier?.name ?? null,
         export_date: full.plan_date, booking_category: d.booking_category, vehicle_model_id: tr.vehicle_model_id,
         // luật 11: thẻ nhiều xe ⇒ Kế hoạch xuất ghi cả xe phụ để ĐVVT booking đủ xe (chuyến xuất vẫn MỘT biển — user chấp nhận lệch)

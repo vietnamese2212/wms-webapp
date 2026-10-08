@@ -59,6 +59,7 @@ const COLS_SHARED: RtColDef[] = [
   { id: 'unit',   label: 'Tính cước',        w: 150 },
   { id: 'drops',  label: 'Điểm giao tối đa', w: 110 },
   { id: 'multi',  label: 'Nhiều xe / thẻ',   w: 170 },
+  { id: 'detour', label: 'Xe tuyến liên tỉnh', w: 170 },
   { id: 'act',    label: 'Trạng thái',       w: 90 },
   { id: 'upd',    label: 'Sửa',              w: 110 },
   { id: 'ops',    label: '',                 w: 64, stickyRight: true },
@@ -72,6 +73,7 @@ const COLS_WH: RtColDef[] = [
   { id: 'cap',    label: 'Sức chứa tại kho', w: 130 },
   { id: 'drops',  label: 'Điểm giao tối đa', w: 110 },
   { id: 'multi',  label: 'Nhiều xe / thẻ',   w: 170 },
+  { id: 'detour', label: 'Xe tuyến liên tỉnh', w: 170 },
   { id: 'act',    label: 'Dùng ở kho',       w: 90 },
   { id: 'cfg',    label: 'Cấu hình',         w: 170 },
   { id: 'unit',   label: 'Tính cước',        w: 150 },
@@ -108,7 +110,7 @@ function ConditionPicker({ all, value, onChange }: { all: StorageConditionRow[];
 }
 
 /** Form bản CHUNG (master data) — thêm dòng xe chỉ ở đây. */
-function ModelForm({ row, parents, parentMulti, conditions, onClose }: { row: VehicleModel | null; parents: { value: string; label: string }[]; parentMulti: Map<string, boolean>; conditions: StorageConditionRow[]; onClose: () => void }) {
+function ModelForm({ row, parents, parentMulti, parentDetour, conditions, onClose }: { row: VehicleModel | null; parents: { value: string; label: string }[]; parentMulti: Map<string, boolean>; parentDetour: Map<string, number | null>; conditions: StorageConditionRow[]; onClose: () => void }) {
   const create = useCreateVehicleModel(), update = useUpdateVehicleModel()
   const [sap, setSap] = useState(row?.sap_code ?? '')
   const [name, setName] = useState(row?.name ?? '')
@@ -124,6 +126,9 @@ function ModelForm({ row, parents, parentMulti, conditions, onClose }: { row: Ve
   const [multi, setMulti] = useState<'' | 'on' | 'off'>(row?.allow_multi_vehicle == null ? '' : row.allow_multi_vehicle ? 'on' : 'off')
   const parentName = parents.find(p => p.value === parent)?.label ?? ''
   const parentMultiOn = parentMulti.get(parent) !== false
+  // xe tuyến liên tỉnh (08/10): '' = theo loại xe cha ĐANG CHỌN (C47 in giá trị cha), 0 = tắt riêng dòng này
+  const [detour, setDetour] = useState(row?.detour_pct == null ? '' : String(row.detour_pct))
+  const parentDetourPct = parentDetour.get(parent) ?? null
   const [err, setErr] = useState('')
   const pending = create.isPending || update.isPending
   const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s))
@@ -135,6 +140,7 @@ function ModelForm({ row, parents, parentMulti, conditions, onClose }: { row: Ve
       name: name.trim(), parent_type_id: parent, storage_conditions: conds, capacity_mode: capMode,
       max_pallets: numOrNull(pallets), max_tons: numOrNull(tons), max_drops: numOrNull(drops),
       allow_multi_vehicle: multi === '' ? null : multi === 'on',
+      detour_pct: numOrNull(detour),
       tariff_unit: unit, is_active: active,
     }
     try {
@@ -157,7 +163,7 @@ function ModelForm({ row, parents, parentMulti, conditions, onClose }: { row: Ve
   }
   return (
     <FormSheet open onClose={onClose} title={row ? `Sửa dòng xe · ${row.sap_code}` : 'Thêm dòng xe con'}
-      description="Bản CHUNG cho mọi kho: mã SAP, tên, cha, điều kiện bảo quản, thước đo và cách tính cước. Kho chỉ chỉnh riêng dùng/không, sức chứa, điểm giao, ghép nhiều xe (chọn kho ở đầu tab)."
+      description="Bản CHUNG cho mọi kho: mã SAP, tên, cha, điều kiện bảo quản, thước đo và cách tính cước. Kho chỉ chỉnh riêng dùng/không, sức chứa, điểm giao, ghép nhiều xe, xe tuyến (chọn kho ở đầu tab)."
       footer={<>
         {err && <span className="text-[11px] text-red-600 flex-1 truncate">{err}</span>}
         <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>Huỷ</Button>
@@ -186,6 +192,10 @@ function ModelForm({ row, parents, parentMulti, conditions, onClose }: { row: Ve
             options={[{ value: '', label: parent ? `Theo dòng xe cha ${parentName}: ${parentMultiOn ? 'được ghép' : 'không ghép'}` : 'Theo dòng xe cha (chưa chọn cha)' },
               { value: 'on', label: 'Được ghép (riêng dòng xe này)' }, { value: 'off', label: 'Không ghép (riêng dòng xe này)' }]} />
           <p className="text-[10px] text-slate-500 mt-0.5">Được ghép: máy được dựng một Số xe gồm nhiều xe (vd 8 tấn + 2 tấn). Không ghép: mỗi thẻ một xe; đơn lớn hơn xe nằm ở khung chờ cho người quyết. Từng kho đổi riêng được.</p></div>
+        <div><Label className="text-xs">Xe tuyến liên tỉnh — đường vòng tối đa (%)</Label>
+          <Input type="number" min={0} max={100} step={1} value={detour} onChange={e => setDetour(e.target.value)} className="h-9 tabular-nums"
+            placeholder={parent ? `Theo dòng xe cha ${parentName}: ${parentDetourPct != null && parentDetourPct > 0 ? `${parentDetourPct} %` : 'tắt'}` : 'Theo dòng xe cha (chưa chọn cha)'} />
+          <p className="text-[10px] text-slate-500 mt-0.5">Máy được ghép đơn KHÁC TỈNH lên xe dòng này khi quãng kho → các điểm (gần trước) không dài hơn đi thẳng tới điểm xa nhất quá số % này. Trống = theo dòng xe cha · 0 = tắt riêng dòng này. Từng kho đổi riêng được.</p></div>
         <div><Label className="text-xs">Tính cước</Label>
           <SingleSelect searchable={false} value={unit} onChange={v => setUnit(v as 'PER_PALLET' | 'PER_TRIP')}
             options={[{ value: 'PER_PALLET', label: 'Theo pallet (làm tròn lên)' }, { value: 'PER_TRIP', label: 'Trọn chuyến' }]} /></div>
@@ -202,8 +212,12 @@ function ModelForm({ row, parents, parentMulti, conditions, onClose }: { row: Ve
 function WarehouseModelForm({ row, whId, whName, onClose }: { row: VehicleModel; whId: string; whName: string; onClose: () => void }) {
   const set = useSetWarehouseVehicleModel(), clear = useClearWarehouseVehicleModel()
   const [ask, confirmNode] = useConfirmDialog()
-  const shared = row.shared ?? { is_active: row.is_active, max_pallets: row.max_pallets, max_tons: row.max_tons, max_drops: row.max_drops, allow_multi_vehicle: row.allow_multi_vehicle }
+  const shared = row.shared ?? { is_active: row.is_active, max_pallets: row.max_pallets, max_tons: row.max_tons, max_drops: row.max_drops, allow_multi_vehicle: row.allow_multi_vehicle, detour_pct: row.detour_pct }
   const own = new Set<VehicleModelWhField>(row.wh_fields ?? [])
+  // xe tuyến liên tỉnh (08/10): '' = theo Chung — giá trị Chung HIỆU LỰC = ô của dòng xe ?? loại xe cha (C47 in giá trị đang áp)
+  const [detour, setDetour] = useState(own.has('detour_pct') ? String(row.detour_pct ?? '') : '')
+  const sharedDetour = shared.detour_pct ?? row.parent?.detour_pct ?? null
+  const sharedDetourText = `${sharedDetour != null && sharedDetour > 0 ? `≤ ${sharedDetour} %` : 'tắt'}${shared.detour_pct == null ? ` (theo cha ${row.parent?.name ?? '—'})` : ''}`
   // ghép nhiều xe (07/10): '' = theo Chung — giá trị Chung HIỆU LỰC = ô của dòng xe ?? loại xe cha ?? được (C47 in giá trị đang áp)
   const [multi, setMulti] = useState<'' | 'on' | 'off'>(own.has('allow_multi_vehicle') ? (row.allow_multi_vehicle ? 'on' : 'off') : '')
   const sharedMulti = shared.allow_multi_vehicle ?? row.parent?.allow_multi_vehicle ?? true
@@ -227,6 +241,7 @@ function WarehouseModelForm({ row, whId, whName, onClose }: { row: VehicleModel;
         [capField]: cap.trim() ? Number(cap) : null,
         max_drops: drops.trim() ? Number(drops) : null,
         allow_multi_vehicle: multi === '' ? null : multi === 'on',
+        detour_pct: detour.trim() ? Number(detour) : null,
       })
       toast({ title: r.wh_fields.length ? `Đã lưu ${r.wh_fields.length} ô riêng tại ${whName}` : `${row.sap_code} tại ${whName} theo Chung hoàn toàn`, description: `${row.sap_code} · ${row.name}${r.wh_fields.length ? ' — các ô còn lại vẫn theo bản Chung' : ''}` })
       onClose()
@@ -248,7 +263,7 @@ function WarehouseModelForm({ row, whId, whName, onClose }: { row: VehicleModel;
       </>}>
       <div className="space-y-3">
         <div className="text-[11px] text-slate-600 rounded border bg-slate-50 px-2 py-1.5">
-          Bản Chung: {sharedActiveText} · {capText({ ...row, ...shared }) ?? 'chưa khai sức chứa'} · điểm giao {shared.max_drops ?? 'chưa khai (1 khách)'} · {sharedMultiText} · đo bằng {byPallet ? 'pallet' : 'tấn'} · {row.parent?.name ?? 'chưa gán cha'}
+          Bản Chung: {sharedActiveText} · {capText({ ...row, ...shared }) ?? 'chưa khai sức chứa'} · điểm giao {shared.max_drops ?? 'chưa khai (1 khách)'} · {sharedMultiText} · xe tuyến {sharedDetourText} · đo bằng {byPallet ? 'pallet' : 'tấn'} · {row.parent?.name ?? 'chưa gán cha'}
           {row.wh_override ? <span className="ml-1 text-sky-700 font-medium">· kho đang giữ riêng {own.size} ô</span> : <span className="ml-1 text-slate-400">· kho đang theo Chung</span>}
         </div>
         <div><Label className="text-xs">Dùng ở kho này</Label>
@@ -263,6 +278,9 @@ function WarehouseModelForm({ row, whId, whName, onClose }: { row: VehicleModel;
         <div><Label className="text-xs">Ghép nhiều xe trên một thẻ tại kho</Label>
           <SingleSelect searchable={false} value={multi} onChange={v => setMulti(v as '' | 'on' | 'off')}
             options={[{ value: '', label: `Theo chung: ${sharedMultiText}` }, { value: 'on', label: 'Được ghép (riêng kho này)' }, { value: 'off', label: 'Không ghép (riêng kho này)' }]} /></div>
+        <div><Label className="text-xs">Xe tuyến liên tỉnh — đường vòng tối đa (%) tại kho</Label>
+          <Input type="number" min={0} max={100} step={1} value={detour} onChange={e => setDetour(e.target.value)} className="h-9 tabular-nums" placeholder={`Theo chung: ${sharedDetourText}`} />
+          <p className="text-[10px] text-slate-500 mt-0.5">Đơn khác tỉnh được ghép lên xe dòng này ở kho này khi đường vòng không quá số % này. 0 = tắt riêng kho này.</p></div>
         <p className="text-[10px] text-slate-500">Ô để trống = theo bản Chung. Mã SAP, tên, cha, điều kiện bảo quản, thước đo, cách tính cước luôn là của bản Chung — sửa ở chế độ "Chung".</p>
       </div>
       {confirmNode}
@@ -274,6 +292,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
   const { data: parentsRaw = [] } = useVehicleTypes()
   const parents = useMemo(() => parentsRaw.filter(p => p.is_active).map(p => ({ value: p.id, label: p.name })), [parentsRaw])
   const parentMulti = useMemo(() => new Map(parentsRaw.map(p => [p.id, p.allow_multi_vehicle !== false])), [parentsRaw])
+  const parentDetour = useMemo(() => new Map(parentsRaw.map(p => [p.id, p.detour_pct == null ? null : Number(p.detour_pct)])), [parentsRaw])
   const parentOpts = useMemo(() => [{ value: NONE, label: 'Chưa gán cha' }, ...parentsRaw.map(p => ({ value: p.id, label: p.name }))], [parentsRaw])
   const f = useWmsFilterStore(s => s.vehicleModels)
   const setF = useWmsFilterStore(s => s.setVehicleModels)
@@ -398,6 +417,14 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
           <span className={m.multi_vehicle ? '' : 'font-medium text-amber-700'}>{m.multi_vehicle ? 'Được ghép' : 'Không ghép'}</span>{' '}<span className="text-slate-400">· {src}</span>
         </span>
       }
+      // 08/10 — xe tuyến liên tỉnh (đường vòng tối đa %): giá trị HIỆU LỰC + nó đến từ đâu (kho → dòng xe → cha; C47)
+      case 'detour': {
+        const src = whId && (m.wh_fields ?? []).includes('detour_pct') ? 'riêng kho'
+          : (whId ? m.shared?.detour_pct : m.detour_pct) != null ? 'riêng dòng xe' : `theo cha ${m.parent?.name ?? '—'}`
+        return <span title={`Điều vận: ${m.detour_eff != null ? `ghép đơn khác tỉnh khi đường vòng ≤ ${m.detour_eff} %` : 'không ghép đơn khác tỉnh'} — ${src}`}>
+          <span className={m.detour_eff != null ? 'font-medium text-sky-700' : 'text-slate-500'}>{m.detour_eff != null ? `≤ ${m.detour_eff} %` : 'Tắt'}</span>{' '}<span className="text-slate-400">· {src}</span>
+        </span>
+      }
       case 'act':    return whId
         ? <StatusBadge tone={m.is_active ? 'green' : 'slate'}>{m.is_active ? 'Đang dùng' : 'Không dùng'}</StatusBadge>
         : <StatusBadge tone={m.is_active ? 'green' : 'slate'}>{m.is_active ? 'Hoạt động' : 'Tạm dừng'}</StatusBadge>
@@ -406,7 +433,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
         const own = m.wh_fields ?? []
         const sharedTxt = `${capText({ ...m, ...(m.shared ?? {}) }) ?? 'chưa khai'} · ${m.shared?.max_drops ?? 1} điểm · ${m.shared?.is_active ? 'hoạt động' : 'tạm dừng'}`
         if (!own.length) return <span className="text-slate-400" title={`Đang lấy từ bản Chung: ${sharedTxt}`}>{`Theo chung: ${sharedTxt}`}</span>
-        const ownTxt = own.map(k => k === 'is_active' ? 'dùng/không' : k === 'max_drops' ? 'điểm giao' : k === 'allow_multi_vehicle' ? 'ghép nhiều xe' : 'sức chứa').join(', ')
+        const ownTxt = own.map(k => k === 'is_active' ? 'dùng/không' : k === 'max_drops' ? 'điểm giao' : k === 'allow_multi_vehicle' ? 'ghép nhiều xe' : k === 'detour_pct' ? 'xe tuyến' : 'sức chứa').join(', ')
         return <span title={`Riêng: ${ownTxt} · còn lại theo Chung (${sharedTxt})`}><StatusBadge tone="sky">Riêng: {ownTxt}</StatusBadge>{own.length < 4 && <span className="text-slate-400 ml-1">còn lại theo chung</span>}</span>
       }
       case 'upd':    return <div className="leading-tight"><div className="text-slate-600 truncate max-w-[100px]">{m.updated_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(m.updated_at, true)}</div></div>
@@ -433,7 +460,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
       <SummaryBand tiles={tiles} />
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {/* _v6: ResizableTable (03/10, luật C40); hai chế độ hai bộ cột ⇒ hai khoá nhớ độ rộng, key remount khi đổi chế độ */}
-        <ResizableTable key={whId ? 'wh' : 'shared'} storageKey={whId ? 'vehicle_models_cols_v7_wh' : 'vehicle_models_cols_v7'} cols={COLS}>
+        <ResizableTable key={whId ? 'wh' : 'shared'} storageKey={whId ? 'vehicle_models_cols_v8_wh' : 'vehicle_models_cols_v8'} cols={COLS}>
           <TableBody>
             {isLoading && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
             {!isLoading && !rows.length && (
@@ -496,7 +523,7 @@ export function VehicleModelsPanel({ canCreate, canEdit, canDelete }: { canCreat
           </DialogContent>
         </Dialog>
       )}
-      {form && <ModelForm row={form.row} parents={parents} parentMulti={parentMulti} conditions={conditions} onClose={() => setForm(null)} />}
+      {form && <ModelForm row={form.row} parents={parents} parentMulti={parentMulti} parentDetour={parentDetour} conditions={conditions} onClose={() => setForm(null)} />}
       {whForm && whId && <WarehouseModelForm row={whForm} whId={whId} whName={whName} onClose={() => setWhForm(null)} />}
       {confirmNode}
     </>

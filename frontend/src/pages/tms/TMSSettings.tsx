@@ -54,6 +54,8 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   const [isPalletTruck, setIsPalletTruck] = useState(vt?.is_pallet_truck ?? false)
   // Điều vận (07/10, user: "dòng xe pallet, container không ghép xe, chỉ Xá, SCA"): mặc định cho mọi dòng xe con — con / kho đè được
   const [allowMulti, setAllowMulti] = useState(vt?.allow_multi_vehicle ?? true)
+  // Điều vận (08/10, user: "config TMS ở kho là không phù hợp — chuyển sang dòng xe cha"): xe tuyến liên tỉnh — đường vòng tối đa %
+  const [detour, setDetour] = useState(vt?.detour_pct == null ? '' : String(Number(vt.detour_pct)))
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateVehicleType()
@@ -63,10 +65,12 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   function handleSubmit() {
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
+    const dn = detour.trim() === '' ? null : Number(detour.replace(',', '.'))
+    if (dn != null && !(Number.isFinite(dn) && dn >= 0 && dn <= 100)) { setErr('Đường vòng tối đa phải từ 0 đến 100 %, hoặc để trống'); return }
     if (isEdit) {
-      update({ id: vt.id, name, is_active: isActive, is_pallet_truck: isPalletTruck, allow_multi_vehicle: allowMulti }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: vt.id, name, is_active: isActive, is_pallet_truck: isPalletTruck, allow_multi_vehicle: allowMulti, detour_pct: dn }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name, is_pallet_truck: isPalletTruck, allow_multi_vehicle: allowMulti }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      create({ code, name, is_pallet_truck: isPalletTruck, allow_multi_vehicle: allowMulti, detour_pct: dn }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
 
@@ -105,6 +109,18 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
             Bật: máy điều vận được dựng <b>một Số xe gồm nhiều xe</b> thuộc loại này (vd 8 tấn + 2 tấn). Tắt: mỗi thẻ một xe; đơn lớn hơn xe
             lớn nhất được vào nằm ở <b>khung chờ</b> cho người quyết. Là mặc định cho mọi dòng xe con — từng dòng xe / từng kho đổi riêng
             được ở tab Mã dòng xe.
+          </p>
+        </div>
+        <div className="space-y-1 rounded border border-slate-200 bg-slate-50 px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="vt-detour" className="text-sm flex-1">Xe tuyến liên tỉnh — đường vòng tối đa (%)</Label>
+            <Input id="vt-detour" type="number" min={0} max={100} step={1} className="h-7 w-20 text-xs text-right"
+              value={detour} onChange={e => setDetour(e.target.value)} placeholder="Tắt" />
+          </div>
+          <p className="text-[10px] text-slate-500">
+            Máy điều vận được ghép đơn <b>khác tỉnh</b> lên xe loại này khi quãng kho → các điểm (gần trước) không dài hơn đi thẳng tới
+            điểm xa nhất quá số % này. Trống = không ghép khác tỉnh. Là mặc định cho mọi dòng xe con — từng dòng xe / từng kho đổi riêng
+            được ở tab Mã dòng xe (0 = tắt riêng).
           </p>
         </div>
         {isEdit && <div className="flex items-center gap-2">
@@ -811,6 +827,7 @@ export default function TMSSettings() {
                               {vt.is_pallet_truck ? 'Xe pallet' : 'Xe thường'}
                             </StatusBadge>
                             {vt.allow_multi_vehicle === false && <StatusBadge tone="amber" className="ml-1" title="Điều vận: không ghép nhiều xe trên một thẻ (mặc định cho dòng xe con)">Không ghép nhiều xe</StatusBadge>}
+                            {Number(vt.detour_pct) > 0 && <StatusBadge tone="sky" className="ml-1" title="Điều vận: ghép đơn khác tỉnh lên xe loại này khi đường vòng ≤ số % này (mặc định cho dòng xe con)">Xe tuyến ≤ {Number(vt.detour_pct)} %</StatusBadge>}
                           </TableCell>
                           <TableCell className="px-2 py-1">
                             <StatusBadge tone={vt.is_active ? 'green' : 'slate'}>
@@ -850,6 +867,7 @@ export default function TMSSettings() {
                 </div>
                 <div><span className="text-slate-400">Kiểu xếp xe:</span> <span className="font-medium">{detailVT.is_pallet_truck ? 'Xe pallet — gom hàng lên pallet rồi xếp' : 'Xe thường — xếp từng thùng'}</span></div>
                 <div><span className="text-slate-400">Ghép nhiều xe trên một thẻ:</span> <span className="font-medium">{detailVT.allow_multi_vehicle === false ? 'Không — mỗi thẻ một xe' : 'Có'}</span></div>
+                <div><span className="text-slate-400">Xe tuyến liên tỉnh:</span> <span className="font-medium">{Number(detailVT.detour_pct) > 0 ? `đường vòng tối đa ${Number(detailVT.detour_pct)} %` : 'Không ghép khác tỉnh'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailVT.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

@@ -3647,13 +3647,15 @@ async function mergePausedGDO(
     let doId: string
 
     const stopSeq = stopSeqOf(byNpp.get(npp) ?? [])
+    // 08/10 — khách của CHÍNH đơn này (xe nhiều khách); file không mang cột ⇒ khách của xe
+    const doShipto = shiptoOfRows(byNpp.get(npp) ?? []) ?? normShipto(dateCtx?.shipto ?? null)
     if (existingDO) {
       doId = existingDO.id as string
-      await supabase.from('OutboundDelivery').update({ distributor_name: npp || null, delivery_code: deliveryRefs, stop_seq: stopSeq, updated_at: t }).eq('id', doId)
+      await supabase.from('OutboundDelivery').update({ distributor_name: npp || null, delivery_code: deliveryRefs, stop_seq: stopSeq, ship_to_code: doShipto, updated_at: t }).eq('id', doId)
     } else {
       doId = randomUUID()
       await supabase.from('OutboundDelivery').insert({
-        id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', stop_seq: stopSeq, updated_at: t,
+        id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', stop_seq: stopSeq, ship_to_code: doShipto, updated_at: t,
       })
     }
 
@@ -3694,7 +3696,7 @@ async function mergePausedGDO(
       } else {
         const itemId = randomUUID()
         const auto = dateCtx ? resolveDateRule(dateCtx.ctx, {
-          warehouseId: warehouse_id, shipto: dateCtx.shipto,
+          warehouseId: warehouse_id, shipto: doShipto,
           headerText: fields.header_text, dateRequired: fields.date_required,
           category: mu?.category ?? null, shelfLifeDays: mu?.shelf_life_days ?? null,
           existing: null, actor: dateCtx.actor,
@@ -4065,10 +4067,16 @@ async function processVehicleGroups(
       const khoV = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const whId = khoV ? warehouseByKey.get(khoV.toLowerCase()) ?? null : (warehouse_id ?? null)
       if (whId) whSeen.add(whId)
-      const stCol = groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).find(Boolean)
-      const code = normShipto(stCol ?? shiptoByGroupCode.get(gc) ?? null)
-      if (code && !shiptoSeen.has(code))
-        shiptoSeen.set(code, String(groupRows[0]['Tên NPP'] ?? '').trim() || code)
+      // 08/10 — MỌI ship-to của xe (xe nhiều khách): mức %Date của mỗi đơn theo khách của CHÍNH đơn đó, không theo khách đứng tên xe
+      let anyCol = false
+      for (const r of groupRows) {
+        const code = normShipto(String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim() || null)
+        if (!code) continue
+        anyCol = true
+        if (!shiptoSeen.has(code)) shiptoSeen.set(code, String(r['Tên NPP'] ?? '').trim() || code)
+      }
+      const fb = anyCol ? null : normShipto(shiptoByGroupCode.get(gc) ?? null)   // file không mang cột ⇒ ship-to đã gán tay của xe
+      if (fb && !shiptoSeen.has(fb)) shiptoSeen.set(fb, String(groupRows[0]['Tên NPP'] ?? '').trim() || fb)
     }
     if (!isPreflight(req) && shiptoSeen.size) {
       const madeNew = await ensureCustomers([...shiptoSeen].map(([ship_to_code, name]) => ({ ship_to_code, name })), req.user?.name ?? null)
@@ -4265,7 +4273,8 @@ async function processVehicleGroups(
         for (const [npp, nppRows] of byNpp) {
           const doId = randomUUID()
           const deliveryRefs = [...new Set(nppRows.map(r => String(r['Delivery'] ?? '').trim()).filter(Boolean))].join(', ') || null
-          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', stop_seq: stopSeqOf(nppRows), updated_at: now() })
+          const doShipto = shiptoOfRows(nppRows) ?? normShipto(resolvedShipto)
+          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', stop_seq: stopSeqOf(nppRows), ship_to_code: doShipto, updated_at: now() })
           for (const row of mergeNppRows(nppRows)) {
             const mat_code      = String(row['Material'] ?? '').trim()
             const material_type = String(row['Material_type'] ?? '').trim() || null
@@ -4276,7 +4285,7 @@ async function processVehicleGroups(
             // %Date đã chốt TAY sống sót qua lần dội này (keptItemRules) — nó thắng mọi thứ máy tính ra.
             const keptRule      = keptItemRules.get(`${group_code}::${String(npp ?? '').trim()}::${mat_code}`)
             const auto          = keptRule ? null : resolveDateRule(policyCtx, {
-              warehouseId: resolved_warehouse_id, shipto: resolvedShipto,
+              warehouseId: resolved_warehouse_id, shipto: doShipto,
               headerText, dateRequired: dateReq,
               // Loại hàng: ưu tiên cột của file (Material_type), thiếu thì lấy của danh mục
               category: material_type ?? mu?.category ?? null,
@@ -4821,6 +4830,10 @@ const stopSeqOf = (rows: Record<string, unknown>[]): number | null => {
   const xs = rows.map(r => Number(r['Thứ tự giao'])).filter(n => Number.isInteger(n) && n > 0)
   return xs.length ? Math.min(...xs) : null
 }
+/** 08/10 — khách (ship-to) của MỘT đơn (NPP) trên chuyến = cột 'Shipto party' của các dòng thuộc NPP. Xe nhiều khách: mức %Date của
+ *  mỗi đơn theo khách của CHÍNH đơn đó (`OutboundDelivery.ship_to_code`), không theo khách đứng tên xe. File không mang ⇒ null. */
+const shiptoOfRows = (rows: Record<string, unknown>[]): string | null =>
+  rows.map(r => normShipto(String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim() || null)).find((x): x is string => !!x) ?? null
 // DẤU VÂN TAY KẾ HOẠCH của 1 Số xe — dùng để phát hiện "kế hoạch đã đổi TRONG LÚC đang dội xuống".
 // Hai người cùng sửa 1 xe (hoặc upload đè trong lúc người kia thêm DO): lượt chạy sau đọc kế hoạch
 // TRƯỚC khi lượt kia ghi xong ⇒ chuyến dựng theo bản kế hoạch CŨ và đứng im như vậy (đo T2: 2/24 xe
@@ -6794,10 +6807,10 @@ export async function scanItem(req: Request, res: Response) {
     // Quét là SỰ THẬT; kế hoạch chỉ đi theo. KHÔNG chặn gì ở đây (chế độ Hướng dẫn là chỉ đường,
     // không phải rào), và mọi lỗi ở khối này KHÔNG được làm hỏng lượt quét đã ghi xong.
     try {
-      // Pallet TƯƠNG ĐƯƠNG (cùng ô · cùng mã · cùng NSX) với pallet kế hoạch ghim thì cũng là ĐÚNG việc
+      // Pallet TƯƠNG ĐƯƠNG (cùng mã · cùng NSX; 08/10: kể cả KHÁC Ô) với pallet kế hoạch ghim thì cũng là ĐÚNG việc
       // (user 14/09: "43 pallet chung một date thì pallet nào cũng được") — markTaskDoneByScan tự đổi ghim.
       const closed = await markTaskDoneByScan(gdoId, inv.id as string, scanId, req.user?.name ?? null, itemId)
-      // Quét pallet KHÁC Ô / KHÁC DATE so với mọi việc treo: bỏ một việc treo của dòng rồi sắp bù — kế hoạch tự lành
+      // Quét pallet KHÁC DATE so với mọi việc treo: bỏ một việc treo của dòng rồi sắp bù — kế hoạch tự lành
       if (!closed) await skipOnePendingOfItem(gdoId, itemId, 'OTHER_PALLET', req.user?.name ?? null)
       // Pallet này đang là việc của CHUYẾN KHÁC (hai chuyến cùng cần một pallet) → chuyến kia mất
       // pallet, phải biết ngay và được sắp bù

@@ -946,36 +946,43 @@ describe('01/10 chiều — POSM đi theo đơn chính ngay lúc xếp, không b
   })
 })
 
-// 02/10 — ĐIỀU VẬN TRÊN BẢN ĐỒ: gộp xe Non tải KHÁC TỈNH khi đường vòng ≤ N % (Warehouse.dispatch_detour_pct); mặc định tắt.
+// 02/10 — ĐIỀU VẬN TRÊN BẢN ĐỒ: gộp xe Non tải KHÁC TỈNH khi đường vòng ≤ N %; mặc định tắt. 08/10: N thuộc DÒNG XE (kho → dòng xe →
+// loại xe cha, `EngineModel.detour_pct`) — trước đó một ô ở form Kho (`params.detour_pct`, đã bỏ).
 // Kho Ba Vì; A (Hưng Yên) nằm trên đường đi B (Hải Phòng); C (Phú Thọ) ngược hướng. Km không khai ⇒ engine ước lượng chim bay × 1,3.
-describe('02/10 — gộp xe Non tải khác tỉnh theo đường vòng (input.geo + params.detour_pct)', () => {
+describe('02/10 — gộp xe Non tải khác tỉnh theo đường vòng (input.geo + detour_pct của DÒNG XE)', () => {
   const WH = { lat: 21.1958, lng: 105.3936 }
   const geo = { wh: WH, points: { SA: { lat: 20.95, lng: 106.05 }, SB: { lat: 20.85, lng: 106.69 }, SC: { lat: 21.40, lng: 105.20 } }, km: {} }
   const A = od('A', 'W1', 2, { region_code: 'HY' }), B = od('B', 'W2', 2, { region_code: 'HP' }), C = od('C', 'W3', 2, { region_code: 'PT' })
+  const detour = (m9: number | null, m16: number | null = m9) => [{ ...M9, detour_pct: m9 }, { ...M16, detour_pct: m16 }]
   it('tắt (mặc định): ba tỉnh = ba xe dù đều Non tải', () => {
     const r = runDispatch(input([A, B, C], { geo }))
     expect(r.trips).toHaveLength(3)
   })
   it('bật 15 %: A ké xe đi B (cùng đường) ⇒ 2 xe; C ngược hướng vẫn xe riêng', () => {
-    const r = runDispatch(input([A, B, C], { geo, params: { ...params, detour_pct: 15 } }))
+    const r = runDispatch(input([A, B, C], { geo, models: detour(15) }))
     expect(r.trips).toHaveLength(2)
     const ab = r.trips.find(t => t.ods.some(o => o.od_number === 'B'))!
     expect(ab.ods.map(o => o.od_number).sort()).toEqual(['A', 'B'])
     expect(r.trips.find(t => t.ods.some(o => o.od_number === 'C'))!.ods).toHaveLength(1)
   })
   it('bật nhưng thiếu ghim kho hoặc ghim một khách ⇒ không gộp khác tỉnh (không đoán)', () => {
-    expect(runDispatch(input([A, B], { geo: { ...geo, wh: null }, params: { ...params, detour_pct: 15 } })).trips).toHaveLength(2)
-    expect(runDispatch(input([A, B], { geo: { ...geo, points: { SA: geo.points.SA } }, params: { ...params, detour_pct: 15 } })).trips).toHaveLength(2)
+    expect(runDispatch(input([A, B], { geo: { ...geo, wh: null }, models: detour(15) })).trips).toHaveLength(2)
+    expect(runDispatch(input([A, B], { geo: { ...geo, points: { SA: geo.points.SA } }, models: detour(15) })).trips).toHaveLength(2)
   })
   it('km đã đo trong bảng thắng ước lượng: khai B rất xa đường ⇒ không gộp', () => {
     const km = { 'WH|SA': 70, 'WH|SB': 150, 'SA|SB': 160 }   // kho→A→B = 230 so với 150 ⇒ vòng 53 %
-    expect(runDispatch(input([A, B], { geo: { ...geo, km }, params: { ...params, detour_pct: 15 } })).trips).toHaveLength(2)
-    expect(runDispatch(input([A, B], { geo: { ...geo, km }, params: { ...params, detour_pct: 60 } })).trips).toHaveLength(1)
+    expect(runDispatch(input([A, B], { geo: { ...geo, km }, models: detour(15) })).trips).toHaveLength(2)
+    expect(runDispatch(input([A, B], { geo: { ...geo, km }, models: detour(60) })).trips).toHaveLength(1)
+  })
+  it('08/10: % của DÒNG XE SẼ CHỞ chuyến ghép quyết định — A+B (4 pallet) đi xe 9 (rẻ hơn): xe 9 bật ⇒ ghép; chỉ xe 16 bật ⇒ không', () => {
+    expect(runDispatch(input([A, B], { geo, models: detour(15, null) })).trips).toHaveLength(1)
+    expect(runDispatch(input([A, B], { geo, models: detour(null, 15) })).trips).toHaveLength(2)
+    expect(runDispatch(input([A, B], { geo, models: detour(0, 0) })).trips).toHaveLength(2)   // 0 = tắt
   })
 })
 
 // 08/10 — XE TUYẾN (luật 5b). User chốt: "lô nhỏ ghép, được ké xe" · số khách / điểm giao theo ĐÚNG cấu hình đang khai · liên tỉnh khi
-// kho bật đường vòng · "cước của tuyến cao nhất" · in thứ tự giao. Lô dưới tối thiểu KHÔNG được đi riêng (dải bắt buộc 07/10) nên luật 5b
+// dòng xe khai đường vòng (chiều 08/10 chuyển từ kho sang dòng xe) · "cước của tuyến cao nhất" · in thứ tự giao. Lô dưới tối thiểu KHÔNG được đi riêng (dải bắt buộc 07/10) nên luật 5b
 // không so "không đắt hơn đi riêng". Mô phỏng 21 ngày đơn Ba Vì: docs/plans/DISPATCH_CORRIDOR_2026-10-08.md.
 describe('08/10 — luật 5b: lô dưới tối thiểu ghép tuyến / ké xe còn chỗ', () => {
   const P9 = { ...M9, parent_type_id: 'PT1' }
@@ -984,8 +991,9 @@ describe('08/10 — luật 5b: lô dưới tối thiểu ghép tuyến / ké xe 
   const geo = { wh: WH, points: { SA: { lat: 20.95, lng: 106.05 }, SB: { lat: 20.85, lng: 106.69 }, SC: { lat: 21.40, lng: 105.20 }, SF: { lat: 20.95, lng: 106.05 }, SG: { lat: 20.96, lng: 106.06 } }, km: {} }
   // W2 ĐẮT hơn W1 — để thấy luật 5 cũ (không đắt hơn đi riêng) từ chối mà 5b vẫn ghép, và cước lấy phường GIÁ CAO NHẤT
   const T = [tariff('A', 'M9', 'W1', 100_000, 60), tariff('A', 'M9', 'W2', 150_000, 40), tariff('A', 'M9', 'W3', 100_000, 30)]
-  const run = (ods: EngineOd[], p: Partial<typeof band> & { detour_pct?: number | null } = {}) =>
-    runDispatch(input(ods, { models: [P9], tariffs: T, geo, params: { ...band, ...p } }))
+  // `detour_pct` (08/10) là của DÒNG XE, không còn của kho
+  const run = (ods: EngineOd[], { detour_pct, ...p }: Partial<typeof band> & { detour_pct?: number | null } = {}) =>
+    runDispatch(input(ods, { models: [{ ...P9, detour_pct: detour_pct ?? null }], tariffs: T, geo, params: { ...band, ...p } }))
   const A = od('A', 'W1', 3, { region_code: 'HY' }), B = od('B', 'W2', 4, { region_code: 'HP' }), C = od('C', 'W3', 4, { region_code: 'PT' })
 
   it('hai tỉnh CÙNG HƯỚNG, mỗi lô dưới 70 % (33 % · 44 %): bật đường vòng ⇒ một xe tuyến 7/9 = 77,8 % đi đủ; tắt ⇒ cả hai ở khung chờ', () => {
@@ -1019,7 +1027,7 @@ describe('08/10 — luật 5b: lô dưới tối thiểu ghép tuyến / ké xe 
     const r = run([{ ...A, max_customers: 1 }, B], { detour_pct: 15 })
     expect(r.trips).toHaveLength(0)
     expect(run([A, B], { detour_pct: 15 }).trips).toHaveLength(1)
-    const oneDrop = runDispatch(input([A, B], { models: [{ ...P9, max_drops: 1 }], tariffs: T, geo, params: { ...band, detour_pct: 15 } }))
+    const oneDrop = runDispatch(input([A, B], { models: [{ ...P9, max_drops: 1, detour_pct: 15 }], tariffs: T, geo, params: band }))
     expect(oneDrop.trips).toHaveLength(0)
   })
   it('KÉ xe còn chỗ cùng tỉnh, kể cả khi ĐẮT hơn đi riêng: F 7 pallet (77,8 %) + G 1 pallet (11 %, phường đắt) ⇒ một xe 8/9', () => {

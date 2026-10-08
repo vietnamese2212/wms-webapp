@@ -495,6 +495,8 @@ export interface TmsVehicleType {
   is_pallet_truck?: boolean | null
   // Điều vận (07/10): được ghép NHIỀU XE trên một thẻ — mặc định cho dòng xe con (con / kho đè được)
   allow_multi_vehicle?: boolean
+  // Điều vận (08/10): xe tuyến liên tỉnh — đường vòng tối đa %; null = không ghép khác tỉnh; dòng xe con / kho đè được
+  detour_pct?: number | string | null
   created_at?: string
   updated_at?: string
   created_by?: string | null

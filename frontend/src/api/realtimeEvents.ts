@@ -61,6 +61,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // fill-demand: phần "thiếu" của Fill có TRỪ việc LOOSE_FEED đang treo (15/09) — kế hoạch được sắp
   // lại mà bảng này đứng im thì người mở trang Fill thấy số cũ và ra lệnh cho thứ đã có người lo.
   wms_tasks:           [['directed-board'], ['gdo'], ['gdos'], ['work-inbox'], ['directed-supervision'], ['fill-demand']],
+  // 08/10 (user duyệt): tồn của một mã đang có việc treo vừa đổi (QA nhả · hàng mới nhập · chuyển chỗ) ⇒ trigger ghi hàng đợi sắp lại
+  // ⇒ bảng Việc cần làm đang mở tải lại, và chính lượt tải đó xả hàng đợi / sắp lại (migration 20261008c — không bắn khi xả)
+  wms_replan_queue:    [['directed-board']],
   OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],
   // `directed-board` từ 13/09: bảng Việc cần làm nay đọc cả YÊU CẦU DATE và TIẾN ĐỘ DÒNG HÀNG của
   // chuyến, nên dòng đơn đổi (chốt date, quét thêm) phải làm mới bảng — không chỉ khi wms_tasks đổi.

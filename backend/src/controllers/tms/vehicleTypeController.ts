@@ -55,13 +55,24 @@ export async function reorderVehicleTypes(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+/** 08/10 — "xe tuyến liên tỉnh — đường vòng tối đa %" của loại xe cha (chuyển từ form Kho): trống = null = không ghép lô khác tỉnh
+ *  lên xe loại này; 0–100, một chữ số thập phân. Dòng xe con / kho đè được (`detourPctOf`). */
+const DETOUR_ERR = 'Đường vòng tối đa phải là số từ 0 đến 100 (%), hoặc để trống = không ghép khác tỉnh'
+function detourPctIn(v: unknown): { ok: true; v: number | null } | { ok: false } {
+  if (v === null || v === '') return { ok: true, v: null }
+  const n = Number(v)
+  return typeof v !== 'boolean' && Number.isFinite(n) && n >= 0 && n <= 100 ? { ok: true, v: Math.round(n * 10) / 10 } : { ok: false }
+}
+
 export async function createVehicleType(req: Request, res: Response) {
   try {
-    const { code, name, box_length_mm, box_width_mm, box_height_mm, is_pallet_truck, allow_multi_vehicle } = req.body as { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean; allow_multi_vehicle?: boolean }
+    const { code, name, box_length_mm, box_width_mm, box_height_mm, is_pallet_truck, allow_multi_vehicle, detour_pct } = req.body as { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean; allow_multi_vehicle?: boolean; detour_pct?: number | string | null }
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const dims: Record<string, unknown> = {}
     const dimErr = applyBoxDims({ box_length_mm, box_width_mm, box_height_mm }, dims)
     if (dimErr) return fail(res, dimErr, 400)
+    const dp = detour_pct === undefined ? { ok: true as const, v: null } : detourPctIn(detour_pct)
+    if (!dp.ok) return fail(res, 400, 'DETOUR_PCT_INVALID', DETOUR_ERR)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const actor = req.user?.name || null
@@ -74,6 +85,7 @@ export async function createVehicleType(req: Request, res: Response) {
         is_pallet_truck: Boolean(is_pallet_truck),
         // Điều vận (07/10): loại xe được ghép NHIỀU XE trên một thẻ (Số xe) — mặc định có = hành vi trước 07/10; dòng xe con / kho đè được
         allow_multi_vehicle: allow_multi_vehicle !== false,
+        detour_pct: dp.v,
         created_at: now, updated_at: now, created_by: actor, updated_by: actor,
       })
       .select().single()
@@ -85,7 +97,7 @@ export async function createVehicleType(req: Request, res: Response) {
 export async function updateVehicleType(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { code, name, is_active, box_length_mm, box_width_mm, box_height_mm, is_pallet_truck, allow_multi_vehicle } = req.body as { code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean; allow_multi_vehicle?: boolean }
+    const { code, name, is_active, box_length_mm, box_width_mm, box_height_mm, is_pallet_truck, allow_multi_vehicle, detour_pct } = req.body as { code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean; allow_multi_vehicle?: boolean; detour_pct?: number | string | null }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (code      !== undefined) updates.code      = code.toUpperCase().trim()
     if (name      !== undefined) updates.name      = name.trim()
@@ -94,6 +106,11 @@ export async function updateVehicleType(req: Request, res: Response) {
     if (dimErr) return fail(res, dimErr, 400)
     if (is_pallet_truck !== undefined) updates.is_pallet_truck = Boolean(is_pallet_truck)
     if (allow_multi_vehicle !== undefined) updates.allow_multi_vehicle = Boolean(allow_multi_vehicle)
+    if (detour_pct !== undefined) {
+      const dp = detourPctIn(detour_pct)
+      if (!dp.ok) return fail(res, 400, 'DETOUR_PCT_INVALID', DETOUR_ERR)
+      updates.detour_pct = dp.v
+    }
     const { data, error } = await supabase.from('VehicleType')
       .update(updates).eq('id', id).select().maybeSingle()
     if (error) return fail(res, error)

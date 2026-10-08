@@ -100,6 +100,10 @@ export interface EngineModel {
    *  `multiVehicleOf`). false ⇒ dòng xe này không vào tổ hợp nào; OD lớn hơn xe lớn nhất của nó ở lại khung chờ (`TOO_BIG`).
    *  undefined = được (hành vi trước 07/10). */
   multi_vehicle?: boolean
+  /** 08/10 — XE TUYẾN LIÊN TỈNH: đường vòng tối đa % khi ghép lô KHÁC TỈNH lên xe dòng này — giá trị hiệu lực kho → dòng xe → loại xe
+   *  cha (controller resolve, `detourPctOf`; user: "config TMS ở kho là không phù hợp — chuyển sang dòng xe cha, con khác thì theo con").
+   *  null/undefined = xe dòng này không chở chuyến ghép khác tỉnh. Cần `input.geo` có ghim kho + mọi điểm giao. */
+  detour_pct?: number | null
 }
 /** Dải % tải một dòng xe cha: `min` = dưới mức này là Non tải · `max` = máy được xếp tới mức này (> 100 = dung sai vượt). */
 export interface LoadBand { min: number; max: number }
@@ -129,9 +133,7 @@ export interface EngineParams {
    *  dải: xếp theo sức chứa danh định (100 %), không báo Non tải (min 0) — người bật là người chịu. */
   load_bands?: Record<string, LoadBand>
   load_bypass?: boolean
-  /** 02/10 — điều vận trên bản đồ: gộp xe Non tải KHÁC TỈNH khi đường vòng ≤ N % (`Warehouse.dispatch_detour_pct`). null/undefined =
-   *  tắt = chỉ gộp cùng tỉnh như trước. Cần `input.geo` có ghim kho + mọi điểm giao của hai xe. */
-  detour_pct?: number | null
+  // 02/10 `detour_pct` của KHO — BỎ 08/10: % đường vòng nay thuộc DÒNG XE (`EngineModel.detour_pct`)
 }
 /** Toạ độ + km cho máy ghép (02/10). `points` theo ship_to_code; `km` khoá `A|B` (A, B = 'WH' hoặc ship_to) — số đo Goong hay ước
  *  lượng chim bay × 1,3 do controller điền (engine không phân biệt, màn hình mới nói "ước lượng"). Thiếu km ⇒ engine tự ước lượng. */
@@ -982,16 +984,22 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const assignMemo = new Map<Bin, ReturnType<typeof costOf>>()
   const costM = (b: Bin) => { let a = assignMemo.get(b); if (!a) { a = costOf(b); assignMemo.set(b, a) } return a }
   const isUnder = (b: Bin) => { const a = costM(b); if (!a.model) return true; const u = loadUtilization({ capacity_mode: a.model.capacity_mode, max_pallets: a.model.max_pallets, max_tons: a.model.max_tons, underload_pct: underPct(a.model) }, a.pallets, a.tons); return u.pct != null && u.pct < underPct(a.model) }
-  // 02/10 — ĐƯỜNG VÒNG (điều vận trên bản đồ): kho bật `detour_pct` ⇒ hai xe KHÁC TỈNH cũng gộp được khi quãng kho → các điểm giao
-  // (gần trước) không dài hơn đường thẳng tới điểm xa nhất quá N %. Km lấy từ `input.geo.km` (số đo Goong / ước lượng controller
-  // điền), thiếu thì ước lượng chim bay × 1,3 từ toạ độ; thiếu toạ độ của kho hay một điểm ⇒ KHÔNG gộp (không đoán). Mọi luật khác
-  // (lớp, kênh, Loại kho, dòng xe chung, điểm giao, không đắt hơn đi riêng) giữ nguyên — chỉ phần TỈNH của khoá được nới.
+  // 02/10 — ĐƯỜNG VÒNG (điều vận trên bản đồ): hai xe KHÁC TỈNH cũng gộp được khi quãng kho → các điểm giao (gần trước) không dài
+  // hơn đường thẳng tới điểm xa nhất quá N %. 08/10: N là của DÒNG XE SẼ CHỞ chuyến ghép (`EngineModel.detour_pct` — kho → dòng xe →
+  // loại xe cha; user: "config TMS ở kho là không phù hợp"), không còn một số của kho. Lọc rẻ bằng N LỚN NHẤT của các dòng xe TRƯỚC
+  // khi chọn xe, kiểm đúng N của dòng xe đã chọn SAU. Km lấy từ `input.geo.km` (số đo Goong / ước lượng controller điền), thiếu thì
+  // ước lượng chim bay × 1,3 từ toạ độ; thiếu toạ độ của kho hay một điểm ⇒ KHÔNG gộp (không đoán). Mọi luật khác (lớp, kênh, Loại
+  // kho, dòng xe chung, điểm giao, không đắt hơn đi riêng) giữ nguyên — chỉ phần TỈNH của khoá được nới.
   const geo = input.geo
-  const detourPct = P.detour_pct != null && Number.isFinite(Number(P.detour_pct)) && Number(P.detour_pct) > 0 && geo?.wh ? Number(P.detour_pct) : null
+  const pctOfModel = (m: EngineModel | null | undefined): number | null => { const v = Number(m?.detour_pct); return m?.detour_pct != null && Number.isFinite(v) && v > 0 ? v : null }
+  const maxDetour = geo?.wh ? Math.max(0, ...ctx.models.map(m => pctOfModel(m) ?? 0)) : 0
+  const detourOn = maxDetour > 0
   const geoDist = geoDistOf(geo)
   const stopsOf = (b: Bin) => uniq(b.units.map(u => u.od.ship_to_code).filter((x): x is string => !!x))
   const regionless = (k: string) => k.split('|').filter((_, i) => i !== 1).join('|')
-  const detourMergeOk = (merged: Bin) => detourPct != null && detourOk(routeKm(stopsOf(merged), geoDist), detourPct)
+  // tuyến của chuyến ghép thử nếu qua được N lớn nhất (null = chắc chắn không dòng xe nào chở được) — rồi đúng N của xe đã chọn
+  const detourRoute = (merged: Bin) => { const r = routeKm(stopsOf(merged), geoDist); return detourOk(r, maxDetour) ? r : null }
+  const detourFits = (r: ReturnType<typeof routeKm>, a: ReturnType<typeof costOf>) => { const p = pctOfModel(a.model); return p != null && detourOk(r, p) }
   let changed = true
   while (changed) {
     changed = false
@@ -1003,13 +1011,13 @@ export function runDispatch(input: EngineInput): DispatchResult {
       // chuyến chỉ POSM ('*') hay chỉ mã chưa khai loại ('?') gộp được vào chuyến bất kỳ loại nào cùng vùng; chuyến '?' cũng nhận
       const sameGroup = (t: Bin) => t.mkey === src.mkey || (!mixCats && baseKey(t.mkey) === baseKey(src.mkey) && (['*', '?'].includes(catPartOf(src.mkey)) || catPartOf(t.mkey) === '?'))
       // khác tỉnh nhưng cùng lớp · kênh · Loại kho ⇒ ứng viên đường vòng (kiểm km sau khi ghép thử)
-      const crossRegion = (t: Bin) => detourPct != null && t.mkey !== src.mkey && regionless(t.mkey) === regionless(src.mkey)
+      const crossRegion = (t: Bin) => detourOn && t.mkey !== src.mkey && regionless(t.mkey) === regionless(src.mkey)
       const targets = bins.filter(t => t !== src && (sameGroup(t) || crossRegion(t)) && !solo(t))
-        .map(t => ({ t, merged: withUnits(t, src.units), cross: !sameGroup(t) }))
+        .map(t => { const merged = withUnits(t, src.units), cross = !sameGroup(t); return { t, merged, cross, route: cross ? detourRoute(merged) : null } })
         .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged))
-        .filter(x => !x.cross || detourMergeOk(x.merged))
+        .filter(x => !x.cross || x.route != null)
         .map(x => { const aM = costOf(x.merged); const cT = costM(x.t).freight.total, cM = aM.freight.total; return { ...x, aM, cT, cM, ok: cM == null || cT == null || cSrc == null ? true : cM <= cSrc + cT } })
-        .filter(x => x.ok)
+        .filter(x => x.ok && (!x.cross || detourFits(x.route, x.aM)))
         .sort((a, b) => ((a.cM ?? Infinity) - (b.cM ?? Infinity)) || (b.t.pallets - a.t.pallets) || cmp(a.t.key, b.t.key))
       const hit = targets[0]
       if (!hit) continue
@@ -1024,7 +1032,8 @@ export function runDispatch(input: EngineInput): DispatchResult {
 
   // ── Luật 5b (08/10) — XE TUYẾN: lô SẼ BỊ LOẠI vì dưới tối thiểu (dải tải bắt buộc 07/10) được ghép với lô khác hoặc KÉ xe còn chỗ ──
   // User chốt 08/10: "lô nhỏ ghép, được ké xe" · số khách / điểm giao theo ĐÚNG cấu hình đang khai (khách/kênh × Loại kho, dòng xe)
-  // · liên tỉnh khi kho bật "đường vòng tối đa %" (không khai bảng hành lang — 01/10) · cước theo phường giá cao nhất (`routeTariff`).
+  // · liên tỉnh khi dòng xe chở chuyến ghép khai "đường vòng tối đa %" (08/10 chuyển từ kho sang dòng xe; không khai bảng hành lang —
+  // 01/10) · cước theo phường giá cao nhất (`routeTariff`).
   // Khác luật 5: KHÔNG so "không đắt hơn đi riêng" — lô dưới tối thiểu vốn không được đi riêng, so với nó là so với thứ không tồn tại
   // (mô phỏng 21 ngày đơn Ba Vì: phép so đó + trần cấu hình giữ ~30 % pallet mỗi ngày ở khung chờ). Ưu tiên: sau ghép ĐẠT tối thiểu →
   // cước tăng thêm ít nhất → xe đích lớn hơn. Cùng tỉnh: không đo km (như luật 5); khác tỉnh: phải qua `detourOk`.
@@ -1047,10 +1056,11 @@ export function runDispatch(input: EngineInput): DispatchResult {
     for (const src of srcs) {
       if (!bins.includes(src) || evalOf(src).drop == null) continue   // đã bị ghép vào lô khác / đã nhận thêm đơn đủ tối thiểu
       const hit = bins
-        .filter(t => t !== src && !solo(t) && regionless(t.mkey) === regionless(src.mkey) && (t.mkey === src.mkey || detourPct != null))
-        .map(t => ({ t, merged: withUnits(t, src.units), cross: t.mkey !== src.mkey }))
-        .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged) && (!x.cross || detourMergeOk(x.merged)))
+        .filter(t => t !== src && !solo(t) && regionless(t.mkey) === regionless(src.mkey) && (t.mkey === src.mkey || detourOn))
+        .map(t => { const merged = withUnits(t, src.units), cross = t.mkey !== src.mkey; return { t, merged, cross, route: cross ? detourRoute(merged) : null } })
+        .filter(x => binFits(candsFor(x.merged.units.map(u => u.od)), x.merged) && (!x.cross || x.route != null))
         .map(x => { const aM = costOf(x.merged), m = evalBin(x.merged, aM); return { ...x, aM, m, reach: m.drop == null, add: m.cost - evalOf(x.t).cost } })
+        .filter(x => !x.cross || detourFits(x.route, x.aM))
         // KÉ xe đang đủ tối thiểu chỉ khi sau ghép VẪN đủ — ghép làm xe đổi sang dòng xe lớn hơn (danh sách xe được vào / ĐK bảo quản)
         // mà tụt dưới tối thiểu là kéo cả xe đó vào khung chờ (đo bàn Ba Vì 04/10: thiếu vế này kẹt 227 đơn, không có 5b chỉ 223)
         .filter(x => x.reach || evalOf(x.t).drop != null)

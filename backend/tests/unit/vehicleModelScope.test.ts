@@ -1,6 +1,6 @@
 // Dòng xe theo KHO (03/10) — RIÊNG THEO TỪNG Ô: ô kho đã chỉnh đè Chung, ô NULL theo Chung; ngưỡng Non tải đọc từ kho.
 import { describe, it, expect } from 'vitest'
-import { applyWarehouseOverrides, underloadPctAt, multiVehicleOf } from '../../src/services/vehicleModelScope'
+import { applyWarehouseOverrides, underloadPctAt, multiVehicleOf, detourPctOf } from '../../src/services/vehicleModelScope'
 
 const m = (id: string, o: Partial<{ is_active: boolean; max_pallets: number | null; max_tons: number | null; max_drops: number | null }> = {}) =>
   ({ id, name: id, is_active: true, max_pallets: 16, max_tons: 16, max_drops: 3, ...o })
@@ -42,6 +42,22 @@ describe('ghép nhiều xe: kho → dòng xe → loại xe cha → mặc định
     expect(multiVehicleOf(true, false)).toBe(true)                        // dòng xe bật riêng dù cha tắt
     expect(multiVehicleOf(null, null)).toBe(true)
     expect(multiVehicleOf(undefined, undefined)).toBe(true)
+  })
+})
+
+// 08/10 — "xe tuyến liên tỉnh — đường vòng tối đa %" chuyển từ form Kho sang dòng xe (user: "config TMS ở kho là không phù hợp —
+// chuyển sang dòng xe cha; dòng xe con chọn khác thì lấy theo con, tương tự các config khác")
+describe('đường vòng %: kho → dòng xe → loại xe cha → tắt; 0 ở bậc nào là TẮT ở bậc đó', () => {
+  it('ô kho riêng thắng dòng xe; ô kho trống theo dòng xe; dòng xe trống theo cha; cả ba trống = không ghép khác tỉnh', () => {
+    const r = applyWarehouseOverrides([{ ...m('A'), detour_pct: 20 }, { ...m('B'), detour_pct: null }, { ...m('C'), detour_pct: 10 }],
+      [{ ...ov('A', {}), detour_pct: 0 }, { ...ov('C', {}), detour_pct: null }])
+    expect(r.map(x => [x.id, x.detour_pct, x.wh_fields])).toEqual([['A', 0, ['detour_pct']], ['B', null, []], ['C', 10, []]])
+    expect(detourPctOf(r[0].detour_pct, 30)).toBeNull()   // kho tắt (0) dù dòng xe 20 và cha 30
+    expect(detourPctOf(r[1].detour_pct, 15)).toBe(15)      // dòng xe trống ⇒ theo cha
+    expect(detourPctOf(r[2].detour_pct, 30)).toBe(10)      // dòng xe khai riêng thắng cha
+    expect(detourPctOf(0, 30)).toBeNull()                  // dòng xe tắt riêng dù cha bật
+    expect(detourPctOf(null, null)).toBeNull()
+    expect(detourPctOf(undefined, '12.5')).toBe(12.5)      // numeric của Postgres về dạng chuỗi
   })
 })
 

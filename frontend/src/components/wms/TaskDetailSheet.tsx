@@ -238,7 +238,7 @@ export function TaskDetailSheet({ row, tab, trip, bands, canOpenTrip, looseLink,
             {(row.n_equiv ?? 0) > pallets.length && (
               <p className="text-[11px] text-slate-600">
                 Ô này còn <b>{nf(row.n_equiv ?? 0)}</b> pallet cùng mã, cùng NSX — <b>lấy pallet nào trong số đó cũng được</b>, tem dưới đây chỉ là gợi ý.
-                Quét pallet khác cùng NSX vẫn tính là đúng kế hoạch.
+                Quét pallet khác cùng mã cùng NSX — ở ô này hay ô khác — vẫn tính là đúng kế hoạch.
               </p>
             )}
             {(row.cell_ndates ?? 1) > 1 && (

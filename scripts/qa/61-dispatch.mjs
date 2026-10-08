@@ -1464,6 +1464,23 @@ try {
     await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE').catch(() => {})
     await api(`/tms/vehicle-models/${vmId}`, 'PUT', { allow_multi_vehicle: true }).catch(() => {})
 
+    // [15g3] (08/10, user: "config TMS ở kho là không phù hợp — chuyển sang dòng xe cha; dòng xe con chọn khác thì lấy theo con"):
+    // "xe tuyến liên tỉnh — đường vòng tối đa %" theo thang kho → dòng xe → loại xe cha (như 15g2). Chỉ ghi trên dòng xe QA của gói —
+    // loại xe cha là danh mục THẬT, không ghi (C49). Bản trước: dòng xe không nhận ô này (zod bỏ khoá lạ) ⇒ hiệu lực không đổi ⇒ phép đỏ.
+    {
+      const dBad = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { detour_pct: 150 })
+      const dOn = await api(`/tms/vehicle-models/${vmId}`, 'PUT', { detour_pct: 15 })
+      const shared = ((await api('/tms/vehicle-models')).j?.data?.items ?? []).find(m => m.id === vmId)
+      const whOff = await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'PUT', { detour_pct: 0 })
+      const atWh = ((await api(`/tms/vehicle-models?warehouse_id=${WH}`)).j?.data?.items ?? []).find(m => m.id === vmId)
+      check('15g3. Xe tuyến (đường vòng %) theo thang dòng xe: 150 → 400 · dòng xe khai 15 ⇒ hiệu lực 15 · kho khai 0 ⇒ tắt tại kho, ô riêng "detour_pct", bản Chung vẫn 15',
+        dBad.s === 400 && dOn.s === 200 && Number(shared?.detour_eff) === 15 && [200, 201].includes(whOff.s) && atWh?.detour_eff == null
+          && (atWh?.wh_fields ?? []).includes('detour_pct') && Number(atWh?.shared?.detour_pct) === 15,
+        `150=${dBad.s} 15=${dOn.s} chung=${shared?.detour_eff} kho=${whOff.s} ${whOff.j?.error?.message ?? ''} hiệuLựcKho=${atWh?.detour_eff} riêng=${JSON.stringify(atWh?.wh_fields)} chungTạiKho=${atWh?.shared?.detour_pct}`)
+      await api(`/tms/vehicle-models/${vmId}/warehouses/${WH}`, 'DELETE').catch(() => {})
+      await api(`/tms/vehicle-models/${vmId}`, 'PUT', { detour_pct: null }).catch(() => {})
+    }
+
     // HAI NGƯỜI CÙNG BẤM "Xác nhận … đơn & ghép xe" (check-app 27/09 tối: Bàu Bàng 173 OD ⇒ 150 xe, MỌI OD nằm hai xe, cả hai
     // lượt 200). Bước này nay bắt buộc nên ai mở bàn cũng bấm nó ⇒ chỉ MỘT lượt được chạy, lượt kia 409, mỗi OD đúng một chỗ.
     //

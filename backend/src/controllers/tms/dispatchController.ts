@@ -40,7 +40,7 @@ import {
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
-import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf } from '../../services/vehicleModelScope'
+import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
 import { logOutboundEvents, actorOf } from '../../services/outboundEvents'
@@ -53,7 +53,7 @@ type Tables = Database['public']['Tables']
 type PlanRow = Tables['dispatch_plan']['Row']
 type TripRow = Tables['dispatch_trip']['Row']
 type TripOdRow = Tables['dispatch_trip_od']['Row']
-type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown; dispatch_detour_pct: number | string | null }
+type WhRow = { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null; dispatch_allow_mix_channels: boolean; dispatch_allow_mix_categories: boolean; dispatch_underload_pct: number | string | null; dispatch_max_vehicles_per_trip: number; dispatch_load_bands: unknown }
 
 type TripStatus = 'DRAFT' | 'TENDERED' | 'DECLINED' | 'CONFIRMED' | 'DISCARDED'
 const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
@@ -146,7 +146,7 @@ export const zRespond = z.object({
 type Refs = Pick<EngineInput, 'models' | 'carriers' | 'tariffs' | 'surcharges' | 'allocations' | 'share_targets'> & { geo?: EngineGeo }
 
 async function loadWarehouse(id: string): Promise<WhRow | null> {
-  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands, dispatch_detour_pct').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('Warehouse').select('id, code, name, sap_plant, sap_storage_locations, dispatch_allow_mix_channels, dispatch_allow_mix_categories, dispatch_underload_pct, dispatch_max_vehicles_per_trip, dispatch_load_bands').eq('id', id).maybeSingle()
   if (error) throw error
   return (data as WhRow | null) ?? null
 }
@@ -170,8 +170,8 @@ async function rememberLoadBands(whId: string, bands: Record<string, LoadBand>) 
 async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
   // 03/10: dòng xe theo KHO — nạp CẢ danh mục (kể cả Chung tắt: kho có thể bật riêng), đè bản chụp của kho rồi mới lọc is_active
   const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes, overrides] = await Promise.all([
-    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, max_drops, allow_multi_vehicle, storage_conditions, is_active').order('sap_code'),
-    db.from('VehicleType').select('id, name, allow_multi_vehicle'),
+    db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, max_drops, allow_multi_vehicle, detour_pct, storage_conditions, is_active').order('sap_code'),
+    db.from('VehicleType').select('id, name, allow_multi_vehicle, detour_pct'),
     wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
       .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
       .eq('from_warehouse_id', whId).eq('is_active', true).in('ward_code', c).order('id')) as Promise<EngineTariff[]> : Promise.resolve([] as EngineTariff[]),
@@ -183,11 +183,12 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     loadWarehouseOverrides(whId),
   ])
   for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
-  const vtRows = (vtRes.data ?? []) as { id: string; name: string; allow_multi_vehicle: boolean }[]
+  const vtRows = (vtRes.data ?? []) as { id: string; name: string; allow_multi_vehicle: boolean; detour_pct: number | string | null }[]
   const vtName = new Map(vtRows.map(v => [v.id, v.name]))
   const vtMulti = new Map(vtRows.map(v => [v.id, v.allow_multi_vehicle]))
-  const vmRaw = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; max_drops: number | null; allow_multi_vehicle: boolean | null; storage_conditions: string[] | null; is_active: boolean }[])
-    .map(m => ({ ...m, max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons), max_drops: numOrNull(m.max_drops) }))
+  const vtDetour = new Map(vtRows.map(v => [v.id, v.detour_pct]))
+  const vmRaw = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; max_drops: number | null; allow_multi_vehicle: boolean | null; detour_pct: number | string | null; storage_conditions: string[] | null; is_active: boolean }[])
+    .map(m => ({ ...m, max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons), max_drops: numOrNull(m.max_drops), detour_pct: numOrNull(m.detour_pct) }))
   const models: EngineModel[] = applyWarehouseOverrides(vmRaw, overrides).filter(m => m.is_active).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
     parent_type_id: m.parent_type_id ?? null,   // khoá dải tải theo cha (01/10)
@@ -199,6 +200,8 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     serve_conditions: (m.storage_conditions ?? []).filter(Boolean),   // rỗng = chở được mọi điều kiện
     // 07/10 — ghép nhiều xe trên một thẻ: kho → dòng xe → loại xe cha (applyWarehouseOverrides đã đè kho lên dòng xe)
     multi_vehicle: multiVehicleOf(m.allow_multi_vehicle, m.parent_type_id ? vtMulti.get(m.parent_type_id) : null),
+    // 08/10 — xe tuyến liên tỉnh: đường vòng tối đa % theo cùng thang (kho → dòng xe → loại xe cha); trước 08/10 là một ô ở form Kho
+    detour_pct: detourPctOf(m.detour_pct, m.parent_type_id ? vtDetour.get(m.parent_type_id) : null),
   }))
   const allocations = ((allocRes.data ?? []) as EngineAllocation[]).map(a => ({ ...a, priority: Number(a.priority) }))
   const shareRows = effectiveAt(((shareRes.data ?? []) as (EngineShareTarget & { effective_from: string; effective_to: string | null; is_active: boolean })[]), day)
@@ -761,8 +764,6 @@ export async function createPlan(req: Request, res: Response) {
       // dải tải theo dòng xe cha (01/10): gửi lên = dùng + nhớ cho kho; không gửi = lần chọn gần nhất của kho
       load_bands: b.load_bands !== undefined ? loadBandsOf(b.load_bands) : loadBandsOf(wh.dispatch_load_bands),
       load_bypass: b.load_bypass === true,
-      // 02/10: gộp xe Non tải khác tỉnh theo đường vòng (form Kho, nhóm XUẤT — Điều vận); null = tắt
-      detour_pct: numOrNull(wh.dispatch_detour_pct),
     }
     if (b.load_bands !== undefined) await rememberLoadBands(wh.id, params.load_bands)
     // XEM ĐƠN LÀ BƯỚC BẮT BUỘC (user chốt 27/09 tối: "bước đầu tiên trên bàn làm việc là xem tất cả các đơn open chưa có trong
@@ -988,12 +989,12 @@ async function planCatCfg(plan: PlanRow): Promise<CatCfg> {
   return { ...cfg, follow: engineParams(plan).follow_categories ?? cfg.follow }
 }
 function engineParams(plan: PlanRow): EngineInput['params'] {
-  const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean; detour_pct?: number | null }
+  const params = (plan.params ?? {}) as { max_drops?: number; allow_mix_channels?: boolean; underload_pct?: number | null; code_prefix?: string; start_seq?: number; allow_mix_categories?: boolean; follow_categories?: string[]; combo_conditions?: string[]; max_vehicles?: number; load_bands?: unknown; load_bypass?: boolean }
   // kế hoạch lập trước 26/09 không có `allow_mix_categories` ⇒ undefined = cho trộn loại như lúc nó được lập;
   // lập trước 27/09 không có `max_vehicles` ⇒ một xe / thẻ như lúc nó được lập; `pallet_max_stops` của kế hoạch cũ bỏ qua (29/09)
   return { day: plan.plan_date, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1,
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
-    load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true, detour_pct: numOrNull(params.detour_pct) }
+    load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true }
 }
 /** Tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn và các OD ĐANG nằm trên xe — KHÔNG ghi (bàn ghép xe dùng để xem trước khi thả). */
 function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null, condLabels: Record<string, string> = {}) {
@@ -1494,16 +1495,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const bandsChanged = await applyLoadBands(plan, b, now())
-    // 08/10 — "Xe tuyến liên tỉnh — đường vòng tối đa %" của kho đọc GIÁ TRỊ HIỆN TẠI mỗi lượt ghép (kế hoạch được dùng lại qua Xem đơn,
-    // không còn "Lập lại" — chụp một lần lúc lập thì bật ô ở form Kho không bao giờ tới được kế hoạch đang mở) và ghi lại vào bản chụp
-    // để mọi cửa khác của kế hoạch đọc cùng một giá trị (C49a)
-    const detourNow = numOrNull(wh.dispatch_detour_pct)
-    if (numOrNull((plan.params as { detour_pct?: number | string | null } | null)?.detour_pct ?? null) !== detourNow) {
-      const p2 = { ...(plan.params as Record<string, unknown>), detour_pct: detourNow }
-      const { error: dErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: now() }).eq('id', plan.id)
-      if (dErr) throw dErr
-      plan.params = asJson(p2)
-    }
+    // (08/10) "đường vòng tối đa %" nay thuộc DÒNG XE — `loadRefs` đọc giá trị hiện tại mỗi lượt ghép, không chụp vào kế hoạch
     const full = (await readPlan(plan.id))!
     let redo = full.trips.filter(t => !t.locked && EDITABLE_TRIP.includes(statusOf(t)))
     let src = b.review_all ? full.pool : full.pool.filter(o => o.reviewed_at)

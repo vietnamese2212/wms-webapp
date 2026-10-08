@@ -1082,6 +1082,32 @@ try {
     } else check('[22f] Quét pallet khác date', true, `bỏ qua — kế hoạch ghim ${tk2[0]?.pallet_code ?? 'không có việc'}`)
     await api(`/wms/outbound/${tEq.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
     await api(`/wms/outbound/${tEq2.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
+
+    // [22g] 08/10 (user: "vẫn đúng kế hoạch — không chỉ định pallet"): pallet CÙNG DATE ở Ô KHÁC cũng là đúng kế hoạch ⇒ việc XONG,
+    // ghim đổi sang pallet vừa quét, KHÔNG OTHER_PALLET. Trước 08/10 chỉ nhận cùng ô (gói này khoá đúng hành vi cũ ở [22f] chiều khác date).
+    const locEq2 = await mkLoc('KF', '06', 'T1', 14, 14)
+    const pD = await mkPallet('EQ_D', 50, locEq2, dPlus(1), -40)            // cùng NSX + HSD với A/B, KHÁC ô
+    const tEq3 = await mkTrip('TEQ3')
+    const iEq3 = await mkItem(tEq3.do, 50, { date_rule: { kind: 'FEFO', source: 'MANUAL', set_at: nowIso() } })
+    r = await startTrip(tEq3.gdo, { license_plate: '51C22223', dock_location_id: dockA, forklift_driver_ids: drvId ? [drvId] : [] })
+    const pin3 = (await tasksOf(tEq3.gdo)).filter(t => t.status === 'PENDING')[0]
+    const leftAB = await restAll('InventoryEntry', `select=id,pallet_code&id=in.(${pA.id},${pB.id})&cartons_remaining=gt.0`)
+    // pallet cùng date nằm ở ô KHÁC ô của pallet ghim: ghim D (ô KF) thì quét A/B còn tồn (ô KE), ghim A/B thì quét D
+    const alt3 = pin3 && (pin3.entry_id === pD.id ? leftAB[0] : (leftAB.some(p => p.id === pin3.entry_id) ? pD : null))
+    if (alt3) {
+      r = await api(`/wms/outbound/${tEq3.gdo}/items/${iEq3}/scan`, 'POST', {
+        qr_code: alt3.pallet_code, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP',
+      })
+      const after3 = await tasksOf(tEq3.gdo)
+      const done3 = after3.find(t => t.id === pin3.id)
+      const ev3 = await restAll('wms_task_events', `select=note&task_id=eq.${pin3.id}&event=eq.DONE`)
+      check('[22g] Quét pallet CÙNG DATE ở Ô KHÁC → việc XONG (ghim đổi sang pallet vừa quét) · không OTHER_PALLET · sổ ghi "ô khác"',
+        r.s === 200 && done3?.status === 'DONE' && done3?.entry_id === alt3.id
+          && !after3.some(t => t.status === 'SKIPPED' && t.skip_reason === 'OTHER_PALLET') && ev3.some(e => /ô khác/.test(e.note ?? '')),
+        `http=${r.s} ${err(r)} status=${done3?.status} entry=${done3?.entry_id === alt3.id ? 'đã đổi' : done3?.pallet_code} skipped=${after3.filter(t => t.status === 'SKIPPED').map(t => t.skip_reason).join(',')} note=${ev3.map(e => e.note).join(' | ')}`)
+    } else check('[22g] Fixture: kế hoạch ghim một pallet cùng date (A/B/D) để quét pallet ở ô khác', false,
+      `http=${r.s} ${err(r)} ghim=${pin3?.pallet_code ?? 'không có việc'} A/B còn=${leftAB.length}`)
+    await api(`/wms/outbound/${tEq3.gdo}`, 'PATCH', { status: 'CANCELLED' }).catch(() => {})
   }
 
   // ═══ [23] KẾ HOẠCH CŨ SỐNG SÓT · THIẾU MỘT PHẦN · TRANH CHẤP GIỮA CÁC ĐƠN (user hỏi 14/09) ═════

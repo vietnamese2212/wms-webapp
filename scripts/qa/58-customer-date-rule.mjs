@@ -158,6 +158,8 @@ try {
   await mkRaw(`${T}DO_ALL`, SHIP.A, 'TRẢ PALLET')
   await mkRaw(`${T}DO_OFF`, SHIP.A, null)
   await mkRaw(`${T}DO_D`,  SHIP.D, null)
+  await mkRaw(`${T}DO_MA`, SHIP.A, null)                     // [1h] xe NHIỀU KHÁCH: đơn của A …
+  await mkRaw(`${T}DO_MB`, SHIP.B, null)                     // … và đơn của B trên cùng một xe
 
   const today = vnDate()
   // "Loại kho booking" bắt buộc (luật 03/08: 1 Số xe = 1 cửa đặt lịch) — thiếu là 400 ngay từ đây.
@@ -223,6 +225,19 @@ try {
   check('[1g] …và khách lạ được TỰ TẠO vào danh mục với kênh TRỐNG (danh mục tự nuôi, vẫn không đoán %Date)',
     !!newCust && newCust.auto_created === true && newCust.channel === null,
     `auto=${newCust?.auto_created} channel=${newCust?.channel}`)
+
+  // 08/10 (user: "sao % date lại có liên quan tới xe??") — mức thuộc về KHÁCH CỦA ĐƠN: xe chở A (kênh ≥ 60) + B (riêng ≥ 99) thì đơn
+  // của B vẫn ≥ 99. Bản cũ tra khách theo ship-to ĐỨNG TÊN XE (đơn đầu = A) ⇒ đơn của B nhận 60 % của A.
+  await plan(GC('08'), `${T}DO_MA`, `${T} NPPMA`)
+  await plan(GC('08'), `${T}DO_MB`, `${T} NPPMB`)
+  const g08 = await itemsOf(GC('08'))
+  const ma = g08.items.find(i => i.npp === `${T} NPPMA`), mb = g08.items.find(i => i.npp === `${T} NPPMB`)
+  const dos08 = g08.gdo ? await restAll('OutboundDelivery', `select=distributor_name,ship_to_code&gdo_id=eq.${g08.gdo.id}`) : []
+  const st08 = Object.fromEntries(dos08.map(d => [d.distributor_name, d.ship_to_code]))
+  check('[1h] Xe NHIỀU KHÁCH: mỗi đơn theo khách CỦA ĐƠN — A ≥ 60 (kênh) · B ≥ 99 (riêng) · đơn mang ship-to của nó',
+    Number(ruleOf(ma)?.value) === 60 && srcOf(ma) === 'CHANNEL' && Number(ruleOf(mb)?.value) === 99 && srcOf(mb) === 'CUSTOMER'
+      && st08[`${T} NPPMA`] === SHIP.A && st08[`${T} NPPMB`] === SHIP.B,
+    `xe=${g08.gdo?.shipto_party} A=${JSON.stringify(ruleOf(ma))} B=${JSON.stringify(ruleOf(mb))} ship=${JSON.stringify(st08)}`)
 
   // ═══ [2] POLICY ALL / OFF ═════════════════════════════════════════════════════════════════════
   await restWrite('Warehouse', 'PATCH', `id=eq.${wh.id}`, { date_rule_policy: 'ALL', updated_at: nowIso() })

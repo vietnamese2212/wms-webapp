@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-08T07:47:48.623Z · 115 bảng/view · 185 hàm · 0 enum
+// Sinh lúc 2026-10-08T09:47:05.161Z · 115 bảng/view · 185 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -1353,6 +1353,7 @@ export type Database = {
           created_at: string
           updated_at: string
           stop_seq: number | null
+          ship_to_code: string | null
         }
         Insert: {
           id: string
@@ -1363,6 +1364,7 @@ export type Database = {
           created_at?: string
           updated_at: string
           stop_seq?: number | null
+          ship_to_code?: string | null
         }
         Update: {
           id?: string
@@ -1373,6 +1375,7 @@ export type Database = {
           created_at?: string
           updated_at?: string
           stop_seq?: number | null
+          ship_to_code?: string | null
         }
         Relationships: []
       }
@@ -2382,6 +2385,7 @@ export type Database = {
           box_height_mm: number | null
           is_pallet_truck: boolean
           allow_multi_vehicle: boolean
+          detour_pct: number | null
         }
         Insert: {
           id: string
@@ -2398,6 +2402,7 @@ export type Database = {
           box_height_mm?: number | null
           is_pallet_truck?: boolean
           allow_multi_vehicle?: boolean
+          detour_pct?: number | null
         }
         Update: {
           id?: string
@@ -2414,6 +2419,7 @@ export type Database = {
           box_height_mm?: number | null
           is_pallet_truck?: boolean
           allow_multi_vehicle?: boolean
+          detour_pct?: number | null
         }
         Relationships: []
       }
@@ -5245,6 +5251,7 @@ export type Database = {
           note: string | null
           dispatch_use: string
           allow_multi_vehicle: boolean | null
+          detour_pct: number | null
         }
         Insert: {
           id: string
@@ -5268,6 +5275,7 @@ export type Database = {
           note?: string | null
           dispatch_use?: string
           allow_multi_vehicle?: boolean | null
+          detour_pct?: number | null
         }
         Update: {
           id?: string
@@ -5291,6 +5299,7 @@ export type Database = {
           note?: string | null
           dispatch_use?: string
           allow_multi_vehicle?: boolean | null
+          detour_pct?: number | null
         }
         Relationships: []
       }
@@ -5533,6 +5542,7 @@ export type Database = {
           created_by: string | null
           updated_by: string | null
           allow_multi_vehicle: boolean | null
+          detour_pct: number | null
         }
         Insert: {
           id: string
@@ -5547,6 +5557,7 @@ export type Database = {
           created_by?: string | null
           updated_by?: string | null
           allow_multi_vehicle?: boolean | null
+          detour_pct?: number | null
         }
         Update: {
           id?: string
@@ -5561,6 +5572,7 @@ export type Database = {
           created_by?: string | null
           updated_by?: string | null
           allow_multi_vehicle?: boolean | null
+          detour_pct?: number | null
         }
         Relationships: []
       }

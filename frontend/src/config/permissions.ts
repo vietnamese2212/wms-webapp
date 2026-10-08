@@ -317,7 +317,7 @@ export const MODULES = {
     actions: {
       view:    'Xem 3 bảng việc: Cần hạ (xe nâng hạ) · Cần đưa ra (xe nâng chuyển) · Sắp quét (thủ kho)',
       confirm: 'Bấm "✓ Xong" xác nhận đã hạ / đã đưa ra',
-      replan:  'Sắp lại kế hoạch lấy hàng của chuyến (trang chuyến · nút "↻ Sắp lại" cạnh pallet chỉ định tụt date ở Việc cần làm) — kèm xem khối Giám sát',
+      replan:  'Sắp lại kế hoạch lấy hàng của chuyến (trang chuyến · nút "↻ Sắp lại" cạnh ô Date đỏ "dưới yêu cầu" ở Việc cần làm) — kèm xem khối Giám sát',
     },
   },
   fill: {

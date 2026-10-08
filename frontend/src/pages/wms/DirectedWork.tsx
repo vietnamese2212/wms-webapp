@@ -223,7 +223,7 @@ function dateBits(r: DirectedRow) {
 
 // 08/10: việc treo lâu ⇒ pallet ghim lúc lập (đạt mức) có thể đã tụt dưới mức — màu theo yêu cầu của DÒNG, không theo thang chung.
 // User 08/10: "không cần máy tự xử — có cảnh báo + bấm Sắp lại là được; nút ở ngay màn giao việc, theo quyền".
-const BELOW_RULE_TIP = 'Pallet được chỉ định đã tụt dưới mức date của dòng đơn (việc treo từ lâu) — cửa quét sẽ chặn. Bấm "↻ Sắp lại" để máy chỉ pallet khác; không thấy nút thì báo người có quyền "Sắp lại kế hoạch lấy hàng".'
+const BELOW_RULE_TIP = 'Lô date máy giao ở ô này đã tụt dưới mức date của dòng đơn (việc treo từ lâu) — cửa quét sẽ chặn. Bấm "↻ Sắp lại" để máy giao lại theo date còn đạt; không thấy nút thì báo người có quyền "Sắp lại kế hoạch lấy hàng".'
 /** Nút "↻ Sắp lại" cạnh chip đỏ — chỉ dựng khi người xem có quyền `directed_work.replan` (trang truyền `onReplan`) */
 function ReplanBtn({ onReplan, busy, big }: { onReplan: () => void; busy: boolean; big?: boolean }) {
   return (

@@ -633,7 +633,9 @@ function summarizeRows(plan: PlanRow, allTrips: SumTrip[], pool: SumPool[] = [])
     by_model: [...byModel.values()].sort((a, b) => b.trips - a.trips || (a.sap_code ?? '').localeCompare(b.sap_code ?? '')).map(m => ({ ...m, pallets: Math.round(m.pallets * 10) / 10 })),
     avg_load_pct: loads.length ? Math.round((loads.reduce((s, n) => s + n, 0) / loads.length) * 10) / 10 : null,
     freight_per_pallet: pricedPallets > 0 ? Math.round(freightTotal / pricedPallets) : null,
-    overload: trips.filter(t => Number(t.load_pct) > 100).length,
+    // 08/10: "vượt" = quá TRẦN dải tải của dòng xe cha (cờ `oversize`, 01/10) — bản cũ đếm > 100 % nên dải chỉ số báo "17 vượt tải"
+    // (container 101–105 % là dung sai) trong khi Soát · hộp Xác nhận đếm 0
+    overload: trips.filter(t => t.oversize).length,
     pool_ods: uniq(pool.map(o => o.od_number)).length,
     unreviewed_ods: uniq(pool.filter(o => !o.reviewed_at).map(o => o.od_number)).length,   // CHỜ ĐIỀU (07/10) — khung chờ của kế hoạch = pool_ods − số này
     pool_pallets: Math.round(pool.reduce((s, o) => s + Number(o.pallets ?? 0), 0) * 10) / 10,

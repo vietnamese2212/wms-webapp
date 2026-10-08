@@ -1515,10 +1515,12 @@ try {
     let p16Id = P16?.id ?? ''   // máy quét độ phủ (coverage-surface) không đọc được `${P16?.id}` trong đường dẫn — dấu ? cắt chuỗi; [17] dọn rồi dựng lại ⇒ let
     const t16 = (P16?.trips ?? []).filter(t => t.ods?.length)
     const whB = (await restAll('Warehouse', `select=dispatch_load_bands&id=eq.${WH}`))[0]?.dispatch_load_bands
-    check('16a. Lập + ghép với dải XEPALLET 80–115 %: params.load_bands ghi đúng · 3 OD gộp MỘT xe 10/9 = 111,1 % không vượt · kho nhớ dải',
+    // 08/10: dải chỉ số đếm "vượt tải" theo CÙNG luật (quá trần dải) — bản cũ đếm > 100 % nên xe 111,1 % trong dải 80–115 báo 1 vượt
+    check('16a. Lập + ghép với dải XEPALLET 80–115 %: params.load_bands ghi đúng · 3 OD gộp MỘT xe 10/9 = 111,1 % không vượt (cả dải chỉ số: 0 vượt tải) · kho nhớ dải',
       p16.s === 201 && bandEq(P16?.params?.load_bands, 80, 115) && t16.length === 1 && Number(t16[0].load_pct) === 111.1
-      && t16[0].oversize === false && t16[0].underload === false && Number(t16[0].detail?.load?.max_pct) === 115 && bandEq(whB, 80, 115),
-      `s=${p16.s} bands=${JSON.stringify(P16?.params?.load_bands)} xe=${t16.length} tải=${t16.map(t => `${t.load_pct}%/over=${t.oversize}/under=${t.underload}/max=${t.detail?.load?.max_pct}`).join(' ')} kho=${JSON.stringify(whB)}`)
+      && t16[0].oversize === false && t16[0].underload === false && Number(t16[0].detail?.load?.max_pct) === 115 && bandEq(whB, 80, 115)
+      && P16?.summary?.overload === 0,
+      `s=${p16.s} bands=${JSON.stringify(P16?.params?.load_bands)} xe=${t16.length} tải=${t16.map(t => `${t.load_pct}%/over=${t.oversize}/under=${t.underload}/max=${t.detail?.load?.max_pct}`).join(' ')} kho=${JSON.stringify(whB)} chỉ số vượt=${P16?.summary?.overload}`)
     const by1 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bypass: true })
     const tb = (by1.j?.data?.trips ?? []).filter(t => t.ods?.length)
     const by0 = await api(`/tms/dispatch/plans/${p16Id}/params`, 'PATCH', { load_bypass: false })

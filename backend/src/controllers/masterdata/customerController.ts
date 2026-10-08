@@ -11,7 +11,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG, fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeSearch, searchLooksLikeInjection } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
@@ -29,11 +29,23 @@ const MAX_BULK_IDS = 500
  * ngay chứ"). Thu hẹp về các kho ĐANG BẬT áp tự động: mức chỉ có nghĩa ở đó, quét cả 153 kho rồi bỏ
  * qua gần hết là đốt lượt truy vấn. Không kho nào bật ⇒ 0 việc, không gọi gì thêm.
  * KHÔNG BAO GIỜ làm hỏng lượt lưu danh mục — hàm bên trong đã tự bọc lỗi.
+ * 08/10: CHỈ dòng của các ship-to bị đổi mức (`shiptos`) — bản cũ quét mọi dòng đang mở của kho bật cờ rồi bỏ khi quá 2.000 dòng,
+ * nên đổi mức của MỘT khách trên dữ liệu thật là không áp gì (gói 58 [3c] [7r] đỏ "scanned 2000, capped").
  */
-async function autoApplyNow(req: Request) {
+async function autoApplyNow(req: Request, shiptos: string[]) {
   const whs = await warehousesWithPolicyOn()
   if (!whs.length) return { scanned: 0, applied: 0, cleared: 0, kept_manual: 0, updated: 0, trips_replanned: 0, capped: false, note: 'Chưa kho nào bật "Áp %Date tự động" — mức khai ở đây chưa áp cho kho nào.' }
-  return autoApplyAfterConfigChange({ scopeWh: whs, actor: req.user?.name ?? null })
+  return autoApplyAfterConfigChange({ scopeWh: whs, shiptos, actor: req.user?.name ?? null })
+}
+/** Ship-to của các khách thuộc một kênh — đổi mức / cấu hình kênh là đổi mức của đúng các khách này */
+async function shiptosOfChannel(channel: string): Promise<string[]> {
+  const rows = await fetchAllRowsParallel(() => supabase.from('Customer').select('ship_to_code').eq('channel', channel).order('id')) as { ship_to_code: string }[]
+  return rows.map(r => r.ship_to_code)
+}
+/** Ship-to theo danh sách id khách (chunk 300 — id trên URL) */
+async function shiptosOfIds(ids: string[]): Promise<string[]> {
+  const rows = await fetchAllByIdChunks(ids, c => supabase.from('Customer').select('ship_to_code').in('id', c).order('id')) as { ship_to_code: string }[]
+  return rows.map(r => r.ship_to_code)
 }
 
 type CustomerRow = {
@@ -371,7 +383,7 @@ export async function updateCustomer(req: Request, res: Response) {
     })
     // Đổi KÊNH (hoặc ngừng khách) là đổi mức áp cho khách đó ⇒ áp ngay cho đơn đang mở
     const touchedRule = 'channel' in parsed.patch || 'is_active' in parsed.patch
-    return ok(res, { ...row, ...(touchedRule ? { date_rule_applied: await autoApplyNow(req) } : {}) })
+    return ok(res, { ...row, ...(touchedRule ? { date_rule_applied: await autoApplyNow(req, [row.ship_to_code]) } : {}) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -482,12 +494,14 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
     const t = now()
     const by = req.user?.name ?? null
     let updated = 0
+    const shiptos: string[] = []
     for (let i = 0; i < idList.length; i += 300) {
       const { data, error } = await supabase.from('Customer')
         .update({ ...parsed.patch, updated_by: by, updated_at: t })
-        .in('id', idList.slice(i, i + 300)).select('id')
+        .in('id', idList.slice(i, i + 300)).select('id, ship_to_code')
       if (error) return fail(res, error)
       updated += (data ?? []).length
+      shiptos.push(...((data ?? []) as { ship_to_code: string }[]).map(r => r.ship_to_code))
     }
     await logAdmin(req, {
       action: 'CUSTOMER_BULK', target_type: 'Customer',
@@ -495,7 +509,7 @@ export async function bulkUpdateCustomers(req: Request, res: Response) {
       after: { ...parsed.patch, count: updated, by_filter: !hasIds },
     })
     const touchedRule = 'channel' in parsed.patch || 'is_active' in parsed.patch
-    return ok(res, { updated, ...(touchedRule ? { date_rule_applied: await autoApplyNow(req) } : {}) })
+    return ok(res, { updated, ...(touchedRule ? { date_rule_applied: await autoApplyNow(req, shiptos) } : {}) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -596,7 +610,7 @@ export async function updateCustomerChannel(req: Request, res: Response) {
       action: 'CHANNEL_UPDATE', target_type: 'CustomerChannel', target_id: id, target_label: b.value,
       before: { meta: b.meta ?? null }, after: { meta },
     })
-    return ok(res, { ...(data as Record<string, unknown>), date_rule_applied: await autoApplyNow(req) })
+    return ok(res, { ...(data as Record<string, unknown>), date_rule_applied: await autoApplyNow(req, await shiptosOfChannel(b.value)) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -759,7 +773,7 @@ export const replaceDateRules = (scope: MasterScope) => async (req: Request, res
     })
     // ÁP NGAY cho đơn đang mở (user chốt 12/09) — dòng chốt tay vẫn bất khả xâm phạm, mỗi dòng đổi
     // có một sự kiện trong sổ chuyến, và số dòng trả về để màn hình nói ra.
-    const applied = await autoApplyNow(req)
+    const applied = await autoApplyNow(req, scope === 'CUSTOMER' ? await shiptosOfIds([key]) : await shiptosOfChannel(key))
     return ok(res, { rules: [...wanted.values()], date_rule_applied: applied })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
@@ -823,6 +837,6 @@ export async function bulkSetDateRule(req: Request, res: Response) {
       target_label: `${updated} khách hàng · ${rawCat ?? 'mọi loại hàng'}`,
       after: { category: rawCat, rule, count: updated, by_filter: byFilter, cleared: clearing },
     })
-    return ok(res, { updated, cleared: clearing, date_rule_applied: await autoApplyNow(req) })
+    return ok(res, { updated, cleared: clearing, date_rule_applied: await autoApplyNow(req, await shiptosOfIds(idList)) })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }

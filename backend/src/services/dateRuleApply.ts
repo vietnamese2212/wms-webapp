@@ -39,6 +39,9 @@ export interface ApplyMasterOpts {
   warehouseId?: string | null
   scopeWh?: string[] | null           // null = mọi kho (đường hệ thống / người phạm vi toàn quốc)
   categories?: string[] | null
+  /** 08/10: chỉ dòng của các ship-to này (đổi mức của MỘT khách / kênh). Rỗng = không dòng nào; null/undefined = không lọc.
+   *  Bản cũ quét MỌI dòng đang mở của kho bật cờ rồi bỏ khi quá trần ⇒ "đổi mức là áp ngay" chết trên dữ liệu thật. */
+  shiptos?: string[] | null
   actor: string | null
   dryRun?: boolean                    // chỉ đếm, không ghi (pha kiểm-trước của nút áp tay)
   cap?: number
@@ -70,8 +73,10 @@ export async function warehousesWithPolicyOn(): Promise<string[]> {
 
 export async function applyMasterToOpenOrders(o: ApplyMasterOpts): Promise<ApplyMasterOutcome> {
   const cap = o.cap ?? APPLY_MASTER_CAP
-  // Phạm vi RỖNG nghĩa là "không kho nào", KHÔNG phải "mọi kho" (luật empty-scope-means-unlimited)
+  // Phạm vi RỖNG nghĩa là "không kho nào", KHÔNG phải "mọi kho" (luật empty-scope-means-unlimited) — ship-to cũng vậy
   if (o.scopeWh && o.scopeWh.length === 0) return { ...EMPTY }
+  if (o.shiptos && o.shiptos.length === 0) return { ...EMPTY }
+  const shiptos = o.shiptos ? [...new Set(o.shiptos.map(s => s.trim().toUpperCase()).filter(Boolean))] : null
 
   const rows: LineRow[] = []
   for (let page = 0; page < Math.ceil(cap / 1000); page++) {
@@ -82,7 +87,7 @@ export async function applyMasterToOpenOrders(o: ApplyMasterOpts): Promise<Apply
       // SYSTEM cũng vào tập ứng viên: mã vừa được khai hạn dùng thì dòng "không đòi mốc" do máy đặt
       // phải được áp lại theo mức thật của khách, không kẹt mãi ở mức hệ thống.
       p_source: ['CUSTOMER', 'CHANNEL', 'SYSTEM', 'UNSET'],
-      p_mat_categories: null, p_kinds: null,
+      p_mat_categories: null, p_kinds: null, p_shiptos: shiptos,
     })
     if (error) throw new Error(error.message)
     const got = (data ?? {}) as { rows?: LineRow[]; total?: number }
@@ -99,7 +104,7 @@ export async function applyMasterToOpenOrders(o: ApplyMasterOpts): Promise<Apply
       p_from: o.from, p_to: o.to, p_scope_wh: o.scopeWh ?? null, p_warehouse_id: o.warehouseId ?? null,
       p_categories: o.categories && o.categories.length ? o.categories : null,
       p_state: 'ALL', p_search: null, p_limit: 1, p_offset: 0, p_source: ['MANUAL'],
-      p_mat_categories: null, p_kinds: null,
+      p_mat_categories: null, p_kinds: null, p_shiptos: shiptos,
     })
     keptManual = Number(((data ?? {}) as { total?: number }).total ?? 0)
   }
@@ -176,14 +181,14 @@ export async function applyMasterToOpenOrders(o: ApplyMasterOpts): Promise<Apply
  * rồi, áp mức hỏng thì báo số 0 kèm lý do chứ không được làm hỏng lượt lưu.
  */
 export async function autoApplyAfterConfigChange(
-  opts: { warehouseId?: string | null; scopeWh?: string[] | null; actor: string | null },
+  opts: { warehouseId?: string | null; scopeWh?: string[] | null; shiptos?: string[] | null; actor: string | null },
 ): Promise<ApplyMasterOutcome & { note?: string }> {
   try {
     // Ngày VN (+7): cửa sổ tính theo ngày làm việc của kho, không theo UTC
     const d = (n: number) => new Date(Date.now() + 7 * 3_600_000 + n * 86_400_000).toISOString().slice(0, 10)
     const out = await applyMasterToOpenOrders({
       from: d(-AUTO_BACK_DAYS), to: d(AUTO_FWD_DAYS),
-      warehouseId: opts.warehouseId ?? null, scopeWh: opts.scopeWh ?? null,
+      warehouseId: opts.warehouseId ?? null, scopeWh: opts.scopeWh ?? null, shiptos: opts.shiptos ?? null,
       actor: opts.actor, cap: AUTO_APPLY_CAP,
     })
     return out.capped

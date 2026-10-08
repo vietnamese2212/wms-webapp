@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-07T13:54:42.813Z · 115 bảng/view · 185 hàm · 0 enum
+// Sinh lúc 2026-10-08T05:46:27.248Z · 115 bảng/view · 185 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -6536,7 +6536,7 @@ export type Database = {
         Returns: Json
       }
       outbound_date_rule_lines: {
-        Args: { p_to: unknown; p_warehouse_id: unknown; p_state?: unknown; p_limit?: unknown; p_source?: unknown; p_kinds?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown }
+        Args: { p_to: unknown; p_warehouse_id: unknown; p_state?: unknown; p_limit?: unknown; p_source?: unknown; p_kinds?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown }
         Returns: Json
       }
       outbound_gdos_facets: {

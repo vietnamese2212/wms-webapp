@@ -27,7 +27,10 @@ import { SetDateRuleSheet, type DateRuleTarget } from '@/components/wms/SetDateR
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands } from '@/api/hooks'
+import { useDirectedBoard, useConfirmTasks, useClaimTasks, useGDO, useWorkInbox, useDirectedSupervision, usePctBands, useReplanGdo } from '@/api/hooks'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { toast } from '@/components/ui/use-toast'
+import type { AxiosError } from 'axios'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { FillScanOverlay } from './FillScanOverlay'
@@ -218,10 +221,21 @@ function dateBits(r: DirectedRow) {
   }
 }
 
-// 08/10: việc treo lâu ⇒ pallet ghim lúc lập (đạt mức) có thể đã tụt dưới mức — màu theo yêu cầu của DÒNG, không theo thang chung
-const BELOW_RULE_TIP = 'Pallet được chỉ định đã tụt dưới mức date của dòng đơn (việc treo từ lâu) — cửa quét sẽ chặn. Báo người lập kế hoạch / khai lại quy định date để máy chỉ pallet khác.'
+// 08/10: việc treo lâu ⇒ pallet ghim lúc lập (đạt mức) có thể đã tụt dưới mức — màu theo yêu cầu của DÒNG, không theo thang chung.
+// User 08/10: "không cần máy tự xử — có cảnh báo + bấm Sắp lại là được; nút ở ngay màn giao việc, theo quyền".
+const BELOW_RULE_TIP = 'Pallet được chỉ định đã tụt dưới mức date của dòng đơn (việc treo từ lâu) — cửa quét sẽ chặn. Bấm "↻ Sắp lại" để máy chỉ pallet khác; không thấy nút thì báo người có quyền "Sắp lại kế hoạch lấy hàng".'
+/** Nút "↻ Sắp lại" cạnh chip đỏ — chỉ dựng khi người xem có quyền `directed_work.replan` (trang truyền `onReplan`) */
+function ReplanBtn({ onReplan, busy, big }: { onReplan: () => void; busy: boolean; big?: boolean }) {
+  return (
+    <button type="button" disabled={busy} onClick={e => { e.stopPropagation(); onReplan() }}
+      title="Sắp lại kế hoạch lấy hàng của chuyến này: bỏ việc CHƯA AI ĐỤNG rồi chia lại theo %Date và tồn hiện tại (việc đã hạ / đã đưa ra giữ nguyên)"
+      className={`ml-1 inline-flex items-center rounded border border-sky-300 bg-white font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 ${big ? 'h-8 px-2 text-xs' : 'px-1 text-[9px]'}`}>
+      {busy ? 'Đang sắp…' : '↻ Sắp lại'}
+    </button>
+  )
+}
 /** YÊU CẦU date của dòng đơn ĐẶT CẠNH %Date thật của pallet — so bằng mắt, không phải nhớ. */
-function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: boolean }) {
+function DateCell({ r, bands, off, onReplan, replanBusy = false }: { r: DirectedRow; bands: PctBands; off?: boolean; onReplan?: () => void; replanBusy?: boolean }) {
   // Lệnh fill chỉ định theo DATE của lô (không ghim tem) ⇒ đó chính là yêu cầu của dòng, in thẳng.
   // Không có %Date thật để so vì chưa biết sẽ quét pallet nào — cửa quét mới chốt, và nó tự chặn sai date.
   if (r.kind === 'FILL') return (
@@ -241,6 +255,7 @@ function DateCell({ r, bands, off }: { r: DirectedRow; bands: PctBands; off?: bo
       {measure && (
         <div className={`text-[10px] font-bold tabular-nums no-underline ${off ? 'text-slate-400' : r.date_ok === false ? 'text-red-600' : pctDateCls(tone, bands)}`}>
           {measure}{!off && r.date_ok === false && <span className="ml-1 rounded bg-red-100 px-1 text-[9px] font-semibold text-red-700" title={BELOW_RULE_TIP}>dưới yêu cầu</span>}
+          {!off && r.date_ok === false && onReplan && <ReplanBtn onReplan={onReplan} busy={replanBusy} />}
         </div>
       )}
       {nsx && <div className={`text-[9px] font-semibold no-underline ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}
@@ -473,6 +488,23 @@ export default function DirectedWork() {
 
   const confirmTasks = useConfirmTasks()
   const claimTasks = useClaimTasks()
+  // SẮP LẠI NGAY TẠI MÀN GIAO VIỆC (08/10, user: "để nút đó trên màn giao việc, phân quyền — thấy chỉ định đỏ thì nút hiện"): cùng cửa
+  // với nút "↻ Sắp lại kế hoạch" ở trang chuyến (`directed_work.replan`, bỏ việc chưa ai đụng rồi chia lại), chỉ dựng cạnh chip đỏ
+  const replanGdo = useReplanGdo()
+  const [askReplan, replanConfirmNode] = useConfirmDialog()
+  const doReplan = async (r: DirectedRow) => {
+    if (!r.gdo_id) return
+    if (await askReplan({ title: `Sắp lại kế hoạch lấy hàng chuyến ${tripName(r)}?`, confirmLabel: 'Sắp lại',
+      body: 'Việc CHƯA AI ĐỤNG của chuyến bị bỏ rồi chia lại theo %Date và tồn hiện tại — máy chỉ pallet đạt mức. Việc đã hạ / đã đưa ra giữ nguyên.' }) === null) return
+    try {
+      const x = await replanGdo.mutateAsync(r.gdo_id)
+      toast({ title: `Đã sắp lại chuyến ${tripName(r)}`, description: `${x.created} việc mới${x.cancelled ? ` · bỏ ${x.cancelled} việc cũ` : ''}${x.unset_items ? ` · ${x.unset_items} dòng chưa chốt %Date` : ''}${x.warning ? ` · ${x.warning}` : ''}` })
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Sắp lại không được', description: (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định' })
+    }
+  }
+  const replanFor = (r: DirectedRow) => (canReplan && r.gdo_id ? () => void doReplan(r) : undefined)
+  const replanBusyFor = (r: DirectedRow) => replanGdo.isPending && replanGdo.variables === r.gdo_id
   const { data, isLoading } = useDirectedBoard(f.warehouseId, boardTab, {
     // CHẠY CẢ Ở HỘP VIỆC (17/09): badge đếm trên tab "Cần hạ"/"Cần đưa ra" lấy số từ đây, mà Hộp
     // việc lại là tab MỞ ĐẦU — không nạp thì đúng lúc cần thấy số nhất lại không có số nào. Đổi lại
@@ -767,6 +799,7 @@ export default function DirectedWork() {
   const cols = COLS[tab]
   return (
     <div className="flex flex-col h-full sm:p-3">
+      {replanConfirmNode}
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 sm:rounded-t-xl space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -1030,6 +1063,7 @@ export default function DirectedWork() {
                         : <span className="text-xs text-slate-400">chưa khai</span>}
                       {measure && <span className={`ml-1.5 font-bold tabular-nums ${closed ? '' : r.date_ok === false ? 'text-red-600' : pctDateCls(tone, pctBands)}`}>{measure}</span>}
                       {!closed && r.date_ok === false && <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" title={BELOW_RULE_TIP}>dưới yêu cầu</span>}
+                      {!closed && r.date_ok === false && replanFor(r) && <ReplanBtn onReplan={replanFor(r)!} busy={replanBusyFor(r)} big />}
                       {nsx && <div className={`text-xs font-semibold ${(r.cell_ndates ?? 1) > 1 ? 'text-amber-800' : 'text-slate-600'}`}>NSX {nsx}</div>}
                     </>)}
                   </Step>
@@ -1172,7 +1206,7 @@ export default function DirectedWork() {
                         <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
                         {r.waiting_lower && r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                       </TableCell>
-                      <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
+                      <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} onReplan={replanFor(r)} replanBusy={replanBusyFor(r)} /></TableCell>
                       <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>{st.text}</TableCell>
                     </>) : (<>
                       <TableCell className={cell}>
@@ -1218,13 +1252,13 @@ export default function DirectedWork() {
                           )}
                         </TableCell>
                         <TableCell className={`${cell} text-right tabular-nums`}>{r.level_no ?? '—'}</TableCell>
-                        <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
+                        <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} onReplan={replanFor(r)} replanBusy={replanBusyFor(r)} /></TableCell>
                       </>) : (<>
                         <TableCell className={cell}>
                           <span className="font-mono">{r.current_code ?? <span className="text-slate-300">chưa có trên bản vẽ</span>}</span>
                           {r.waiting_lower && r.level_no != null && r.level_no > 1 && !r.stage_done && <span className="text-[9px] text-slate-400"> · tầng {r.level_no}</span>}
                         </TableCell>
-                        <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} /></TableCell>
+                        <TableCell className={cell}><DateCell r={r} bands={pctBands} off={closed} onReplan={replanFor(r)} replanBusy={replanBusyFor(r)} /></TableCell>
                         <TableCell className={`${cell} ${r.stage_done ? '' : st.cls}`}>
                           {st.text}
                           {!r.stage_done && !r.skipped && claimNote(r, me) && (

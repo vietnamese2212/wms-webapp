@@ -375,7 +375,9 @@ if (process.env.QA_TIER === 'full') {
 //     241 triệu chi phí chung toàn công ty) — hai màn hình cùng một kỳ lệch nhau, và người chỉ
 //     quản 1 kho đọc được số cấp CÔNG TY. Bất biến: `warehouse_productivity` lọc theo kho phải
 //     trả ĐÚNG tổng tiền RIÊNG của kho đó (migration 20260827d).
-{
+//     09/10: CHỈ bậc full — RPC `warehouse_productivity` gộp tồn + xuất + công + chi phí cả tháng (đo 2,4 s warm, 94 lần × 3,8 s
+//     = 6 phút CPU trên staging, hầu hết là lượt chạy mỗi push); lớp lỗi là SQL của RPC, đổi theo migration, lưới đêm đủ.
+if (process.env.QA_TIER === 'full') {
   const costs = await restAll('warehouse_costs', 'select=warehouse_id,period,amount')
   if (!costs.length) {
     check('Chi phí CHUNG không lọt vào tổng khi lọc 1 kho', true, 'chưa có dòng chi phí nào để soi')

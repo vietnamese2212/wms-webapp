@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-09T12:10:18.736Z · 115 bảng/view · 186 hàm · 0 enum
+// Sinh lúc 2026-10-09T12:25:31.200Z · 115 bảng/view · 186 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -6115,95 +6115,95 @@ export type Database = {
     }
     Functions: {
       adjust_inventory_atomic: {
-        Args: { p_delta: unknown; p_actor_name: unknown; p_stocktake_by: unknown; p_vn_date: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown }
+        Args: { p_entry_id: string | null; p_delta: number | null; p_note: string | null; p_actor_name: string | null; p_actor_id: string | null; p_stocktake_by: string | null; p_now: string | null; p_vn_date: string | null; p_updated_by: string | null }
         Returns: string
       }
       admin_login_ip_pairs: {
-        Args: { p_memory: unknown; email: unknown; has_old: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown }
+        Args: { p_emails: unknown | null; p_memory: string | null; p_recent: string | null }
         Returns: Record<string, unknown>[]
       }
       alerts_expiry_candidates: {
-        Args: { arg2?: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_days?: number | null }
         Returns: Json
       }
       alerts_packing_unreceived: {
-        Args: { p_window_days?: unknown; n?: unknown }
+        Args: { p_hours?: number | null; p_window_days?: number | null }
         Returns: Record<string, unknown>[]
       }
       auth_throttle: {
-        Args: { p_limits: unknown; p_window_seconds: unknown; p_email: unknown; p_reason: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown }
+        Args: { p_keys: unknown | null; p_limits: unknown | null; p_event: string | null; p_window_seconds: number | null; p_lock_seconds: number | null; p_email: string | null; p_ip: string | null; p_reason: string | null; p_employee_id: string | null }
         Returns: Json
       }
       book_vehicle_slot: {
-        Args: { p_new_slot_id: unknown; p_status: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown }
+        Args: { p_vslot_id: string | null; p_new_slot_id: string | null; p_plate: string | null; p_status: string | null; p_actor: string | null }
         Returns: string
       }
       booking_sequence: {
-        Args: { p_from: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_from: string | null; p_to: string | null }
         Returns: Json
       }
       cache_fetch: {
-        Args: { p_ttl_seconds: unknown; fresh: unknown }
+        Args: { p_key: string | null; p_ttl_seconds: number | null }
         Returns: Record<string, unknown>[]
       }
       cache_key_part: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p_arr: unknown | null }
         Returns: string
       }
       cache_store: {
-        Args: { p_payload: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
+        Args: { p_key: string | null; p_payload: Json | null }
         Returns: undefined
       }
       control_tower_resources: {
-        Args: { p_today?: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_today?: string | null }
         Returns: Json
       }
       control_tower_resources_cached: {
-        Args: { p_today: unknown; arg4: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_today: string | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       control_tower_stats: {
-        Args: { p_categories?: unknown; p_material_codes?: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_today?: string | null; p_material_codes?: unknown | null }
         Returns: Json
       }
       control_tower_stats_cached: {
-        Args: { p_categories: unknown; p_material_codes: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_categories: unknown | null; p_today: string | null; p_material_codes: unknown | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       control_tower_stats_stale: {
-        Args: { p_categories: unknown; p_material_codes: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_categories: unknown | null; p_today: string | null; p_material_codes: unknown | null }
         Returns: Json
       }
       customer_page: {
-        Args: { p_channels?: unknown; p_warehouse_id?: unknown; p_has_rule?: unknown; p_offset?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown }
+        Args: { p_search?: string | null; p_channels?: unknown | null; p_has_channel?: boolean | null; p_warehouse_id?: string | null; p_active?: boolean | null; p_has_rule?: boolean | null; p_limit?: number | null; p_offset?: number | null }
         Returns: Json
       }
       customer_seed_candidates: {
-        Args: { arg2?: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_days?: number | null }
         Returns: Json
       }
       customer_set_dispatch_vehicles: {
-        Args: { p_key: unknown; p_models: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown }
+        Args: { p_ids: unknown | null; p_key: string | null; p_mode: string | null; p_models: unknown | null; p_by: string | null }
         Returns: number
       }
       customer_set_load_mode_cat: {
-        Args: { p_category: unknown; p_by: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_ids: unknown | null; p_category: string | null; p_mode: string | null; p_by: string | null }
         Returns: number
       }
       cycle_count_info: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_warehouse_id: string | null }
         Returns: Json
       }
       dashboard_all: {
-        Args: { p_categories: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_categories: unknown | null; p_today: string | null }
         Returns: Json
       }
       dashboard_all_cached: {
-        Args: { p_categories: unknown; p_ttl_seconds: unknown; arg6: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_categories: unknown | null; p_today: string | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       dashboard_stats: {
-        Args: { p_categories?: unknown; arg4?: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_today?: string | null }
         Returns: Json
       }
       date_rule_categories: {
@@ -6211,67 +6211,67 @@ export type Database = {
         Returns: Json
       }
       date_rule_master_value_ok: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p: Json | null }
         Returns: boolean
       }
       date_rule_valid: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p: Json | null }
         Returns: boolean
       }
       directed_board: {
-        Args: { p_mode: unknown; p_driver_id: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown }
+        Args: { p_warehouse_id: string | null; p_mode: string | null; p_gdo_id?: string | null; p_driver_id?: string | null }
         Returns: Json
       }
       directed_supervision: {
-        Args: { p_days: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { p_warehouse_id: string | null; p_days?: number | null }
         Returns: Json
       }
       dispatch_customer_rank: {
-        Args: { p_from: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Args: { p_plant: string | null; p_from: string | null; p_to: string | null }
         Returns: Json
       }
       dispatch_decisions: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_warehouse_id: string | null }
         Returns: Json
       }
       dispatch_inputs_stamp: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_warehouse_id: string | null }
         Returns: string
       }
       dispatch_marked_counts: {
-        Args: { p_plant: unknown; p_slocs: unknown; p_segment: unknown; n: unknown; arg10: unknown; arg12?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
+        Args: { p_warehouse_id: string | null; p_plant: string | null; p_day: string | null; p_slocs: unknown | null; p_flows: unknown | null; p_segment?: string | null }
         Returns: Record<string, unknown>[]
       }
       dispatch_marked_ods: {
-        Args: { p_plant: unknown; p_slocs: unknown; p_segment: unknown; p_search: unknown; kind: unknown; reason?: unknown; marked_at?: unknown; ship_to_name?: unknown }
+        Args: { p_warehouse_id: string | null; p_plant: string | null; p_day: string | null; p_slocs: unknown | null; p_flows: unknown | null; p_segment?: string | null; p_kind?: string | null; p_search?: string | null }
         Returns: Record<string, unknown>[]
       }
       dispatch_new_ods: {
-        Args: { p_from: unknown; p_day: unknown; p_warehouse_id: unknown; p_segment: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown }
+        Args: { p_plant: string | null; p_from: string | null; p_to: string | null; p_day: string | null; p_slocs: unknown | null; p_warehouse_id: string | null; p_plan_id: string | null; p_segment: string | null }
         Returns: unknown
       }
       dispatch_plan_stamp: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_plan_id: string | null }
         Returns: Json
       }
       dispatch_planned_ods: {
-        Args: { p_day: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Args: { p_plant: string | null; p_day: string | null; p_limit: number | null }
         Returns: unknown
       }
       dispatch_pool_rows: {
-        Args: { p_day: unknown; p_flows: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_plant: string | null; p_day: string | null; p_warehouse_id?: string | null; p_flows?: unknown | null }
         Returns: unknown[]
       }
       dispatch_stock_conditions: {
-        Args: { p_material_codes: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
+        Args: { p_warehouse_id: string | null; p_material_codes: unknown | null }
         Returns: Json
       }
       erp_so_lines_summary: {
-        Args: { p_to: unknown; p_status: unknown; p_q?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown }
+        Args: { p_from: string | null; p_to: string | null; p_plants?: unknown | null; p_status?: unknown | null; p_flows?: unknown | null; p_q?: string | null }
         Returns: Json
       }
       fill_candidates: {
-        Args: { p_warehouse_id: unknown; p_limit: unknown; arg6: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_wh_scope: unknown | null; p_warehouse_id: string | null; p_material_id: string | null; p_limit?: number | null }
         Returns: Json
       }
       fill_close_reason: {
@@ -6279,59 +6279,59 @@ export type Database = {
         Returns: string
       }
       fill_demand: {
-        Args: { p_cat_scope: unknown; p_date: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown }
+        Args: { p_wh_scope: unknown | null; p_cat_scope: unknown | null; p_warehouse_id: string | null; p_date: string | null; p_max_sugg?: number | null }
         Returns: Json
       }
       fill_order_close: {
-        Args: { p_actor: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Args: { p_order_id: string | null; p_actor: string | null; p_now: string | null }
         Returns: Json
       }
       fill_order_ensure: {
-        Args: { p_warehouse_id: unknown; p_type: unknown; p_auto: unknown; p_now: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown }
+        Args: { p_id: string | null; p_warehouse_id: string | null; p_target_date: string | null; p_type: string | null; p_order_code: string | null; p_auto: boolean | null; p_actor: string | null; p_now: string | null }
         Returns: Json
       }
       fill_order_rollup: {
-        Args: { p_now: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown }
+        Args: { p_order_id: string | null; p_now?: string | null }
         Returns: string
       }
       fill_orders_page: {
-        Args: { p_warehouse_id: unknown; p_to: unknown; p_assignee: unknown; p_offset: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown }
+        Args: { p_wh_scope: unknown | null; p_warehouse_id: string | null; p_from: string | null; p_to: string | null; p_status: unknown | null; p_assignee: string | null; p_search: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       fill_reconcile_enqueue: {
-        Args: { p_date: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { p_wh: string | null; p_date: string | null }
         Returns: undefined
       }
       fill_reconcile_lease: {
-        Args: { p_lease_s: unknown; arg4?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { p_wh: string | null; p_lease_s?: number | null }
         Returns: boolean
       }
       fill_reconcile_release: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_wh: string | null }
         Returns: undefined
       }
       fill_reconcile_take: {
-        Args: { p_today: unknown; p_lease_s: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown }
+        Args: { p_wh: string | null; p_today: string | null; p_sweep_s?: number | null; p_lease_s?: number | null; p_quiet_s?: number | null }
         Returns: Json
       }
       fill_report: {
-        Args: { p_warehouse_id: unknown; p_to: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_wh_scope: unknown | null; p_warehouse_id: string | null; p_from: string | null; p_to: string | null }
         Returns: Json
       }
       fill_scan_apply: {
-        Args: { p_entry_id: unknown; p_actor_id: unknown; p_take_over: unknown; p_now: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown }
+        Args: { p_task_id: string | null; p_entry_id: string | null; p_to_location_id: string | null; p_actor_id: string | null; p_actor_name: string | null; p_take_over: boolean | null; p_update_date: string | null; p_now: string | null }
         Returns: Json
       }
       fill_task_reduce: {
-        Args: { p_target_qty: unknown; p_now: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown }
+        Args: { p_task_id: string | null; p_target_qty: number | null; p_reason: string | null; p_now: string | null }
         Returns: Json
       }
       fill_task_topup: {
-        Args: { p_target_date: unknown; p_required_date: unknown; p_add_pallets: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown }
+        Args: { p_warehouse_id: string | null; p_target_date: string | null; p_material_id: string | null; p_required_date: string | null; p_add_qty: number | null; p_add_pallets: number | null; p_now: string | null }
         Returns: Json
       }
       forklift_report: {
-        Args: { p_to: unknown; arg4: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Args: { p_from: string | null; p_to: string | null; p_warehouse_ids?: unknown | null }
         Returns: Json
       }
       function_overloads: {
@@ -6339,163 +6339,163 @@ export type Database = {
         Returns: Record<string, unknown>[]
       }
       gate_leaves_page: {
-        Args: { p_limit: unknown; p_date_to: unknown; p_warehouse_type: unknown; p_company_id: unknown; p_status?: unknown; p_categories?: unknown; p_wt_order?: unknown; p_collapsed_wh?: unknown; p_collapsed_vt?: unknown; p_vt_null?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg34?: unknown; arg36?: unknown; arg38?: unknown; arg40?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown; arg91?: unknown; arg92?: unknown; arg93?: unknown; arg94?: unknown; arg95?: unknown; arg96?: unknown; arg97?: unknown; arg98?: unknown; arg99?: unknown; arg100?: unknown; arg101?: unknown; arg102?: unknown; arg103?: unknown; arg104?: unknown; arg105?: unknown; arg106?: unknown; arg107?: unknown; arg108?: unknown; arg109?: unknown; arg110?: unknown }
+        Args: { p_offset: number | null; p_limit: number | null; p_date_from: string | null; p_date_to: string | null; p_warehouse_id?: string | null; p_warehouse_type?: string | null; p_vehicle_types?: unknown | null; p_company_id?: string | null; p_direction?: string | null; p_status?: string | null; p_scope_wh?: unknown | null; p_categories?: unknown | null; p_wh_order?: unknown | null; p_wt_order?: unknown | null; p_vt_order?: unknown | null; p_collapsed_wh?: unknown | null; p_collapsed_wt?: unknown | null; p_collapsed_vt?: unknown | null; p_wt_null?: string | null; p_vt_null?: string | null }
         Returns: Json
       }
       gate_tree: {
-        Args: { p_date_to: unknown; p_warehouse_type: unknown; p_company_id?: unknown; p_status?: unknown; p_categories?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown }
+        Args: { p_date_from: string | null; p_date_to: string | null; p_warehouse_id?: string | null; p_warehouse_type?: string | null; p_vehicle_types?: unknown | null; p_company_id?: string | null; p_direction?: string | null; p_status?: string | null; p_scope_wh?: unknown | null; p_categories?: unknown | null }
         Returns: Json
       }
       gdo_assign_dock: {
-        Args: { p_dock_id: unknown; p_actor: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown }
+        Args: { p_gdo_id: string | null; p_dock_id: string | null; p_plate: string | null; p_actor: string | null }
         Returns: Json
       }
       gdo_holds_dock: {
-        Args: { p_dock_assigned_at: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown }
+        Args: { p_status: string | null; p_dock_assigned_at: string | null }
         Returns: boolean
       }
       gdo_status_label: {
-        Args: { p_assigned_at: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Args: { p_status: string | null; p_assigned_at: string | null }
         Returns: string
       }
       gdo_weight_estimates: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p_gdo_ids: unknown | null }
         Returns: Json
       }
       get_outbound_scan_log: {
-        Args: { p_to_date?: unknown; p_material_category?: unknown; p_distributor?: unknown; p_pallet_code?: unknown; p_machine_codes?: unknown; p_scanner_name?: unknown; p_limit?: unknown; p_allowed_categories?: unknown; id?: unknown; cartons_scanned?: unknown; best_available_date?: unknown; is_loose_picking?: unknown; loose_confirmed_by_name?: unknown; delivery_date?: unknown; container_number?: unknown; loader_name?: unknown; started_at?: unknown }
+        Args: { p_from_date?: string | null; p_to_date?: string | null; p_warehouse_ids?: string | null; p_material_category?: string | null; p_group_code?: string | null; p_distributor?: string | null; p_delivery_code?: string | null; p_pallet_code?: string | null; p_material?: string | null; p_machine_codes?: string | null; p_cycles?: string | null; p_scanner_name?: string | null; p_nmsx?: string | null; p_limit?: number | null; p_offset?: number | null; p_allowed_categories?: string | null; p_rotation?: string | null }
         Returns: Record<string, unknown>[]
       }
       get_scan_log_facets: {
-        Args: { p_warehouse_ids?: unknown; machines?: unknown; arg6?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Args: { p_material_category?: string | null; p_warehouse_ids?: string | null; p_allowed_categories?: string | null }
         Returns: Record<string, unknown>[]
       }
       gin_extract_query_trgm: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown }
+        Args: { arg1: string | null; arg2: unknown | null; arg3: number | null; arg4: unknown | null; arg5: unknown | null; arg6: unknown | null; arg7: unknown | null }
         Returns: unknown
       }
       gin_extract_value_trgm: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown }
+        Args: { arg1: string | null; arg2: unknown | null }
         Returns: unknown
       }
       gin_trgm_consistent: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown }
+        Args: { arg1: unknown | null; arg2: number | null; arg3: string | null; arg4: number | null; arg5: unknown | null; arg6: unknown | null; arg7: unknown | null; arg8: unknown | null }
         Returns: boolean
       }
       gin_trgm_triconsistent: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown }
+        Args: { arg1: unknown | null; arg2: number | null; arg3: string | null; arg4: number | null; arg5: unknown | null; arg6: unknown | null; arg7: unknown | null }
         Returns: string
       }
       gtrgm_compress: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown }
+        Args: { arg1: unknown | null }
         Returns: unknown
       }
       gtrgm_consistent: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
+        Args: { arg1: unknown | null; arg2: string | null; arg3: number | null; arg4: number | null; arg5: unknown | null }
         Returns: boolean
       }
       gtrgm_decompress: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown }
+        Args: { arg1: unknown | null }
         Returns: unknown
       }
       gtrgm_distance: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
+        Args: { arg1: unknown | null; arg2: string | null; arg3: number | null; arg4: number | null; arg5: unknown | null }
         Returns: number
       }
       gtrgm_in: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown }
+        Args: { arg1: unknown | null }
         Returns: unknown
       }
       gtrgm_options: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown }
+        Args: { arg1: unknown | null }
         Returns: undefined
       }
       gtrgm_out: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { arg1: unknown | null }
         Returns: unknown
       }
       gtrgm_penalty: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown }
+        Args: { arg1: unknown | null; arg2: unknown | null; arg3: unknown | null }
         Returns: unknown
       }
       gtrgm_picksplit: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown }
+        Args: { arg1: unknown | null; arg2: unknown | null }
         Returns: unknown
       }
       gtrgm_same: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { arg1: unknown | null; arg2: unknown | null; arg3: unknown | null }
         Returns: unknown
       }
       gtrgm_union: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown }
+        Args: { arg1: unknown | null; arg2: unknown | null }
         Returns: unknown
       }
       hr_attendance_matrix: {
-        Args: { p_wh: unknown; p_jt_name: unknown; p_from: unknown; p_work_dates: unknown; p_offset: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown }
+        Args: { p_scope_ids: unknown | null; p_wh: string | null; p_dept: string | null; p_jt_name: string | null; p_search: string | null; p_from: string | null; p_to: string | null; p_work_dates: unknown | null; p_status: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       hr_employees_page: {
-        Args: { p_dept: unknown; p_wh: unknown; p_active: unknown; p_status: unknown; p_limit: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown }
+        Args: { p_scope_ids: unknown | null; p_dept: string | null; p_jt_id: string | null; p_wh: string | null; p_search: string | null; p_active: string | null; p_incl_deleted: boolean | null; p_status: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       hr_leaves_page: {
-        Args: { p_warehouse: unknown; p_employee: unknown; p_status: unknown; p_to: unknown; p_limit: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown }
+        Args: { p_scope_emp_ids: unknown | null; p_warehouse: string | null; p_dept: string | null; p_employee: string | null; p_jt_name: string | null; p_status: string | null; p_from: string | null; p_to: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       immutable_unaccent: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { arg1: string | null }
         Returns: string
       }
       inbound_orders_facets: {
-        Args: { p_scope_categories?: unknown; p_status?: unknown; p_date_to?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_category?: string | null; p_status?: string | null; p_date_from?: string | null; p_date_to?: string | null }
         Returns: Json
       }
       inbound_orders_page: {
-        Args: { p_limit: unknown; p_scope_categories: unknown; p_status?: unknown; p_date_to?: unknown; p_cycles?: unknown; p_shift_ids?: unknown; p_importer_ids?: unknown; p_search_mat_ids?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg34?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown; arg91?: unknown; arg92?: unknown; arg93?: unknown; arg94?: unknown; arg95?: unknown; arg96?: unknown }
+        Args: { p_offset: number | null; p_limit: number | null; p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_category?: string | null; p_status?: string | null; p_date_from?: string | null; p_date_to?: string | null; p_material_ids?: unknown | null; p_cycles?: unknown | null; p_machines?: unknown | null; p_shift_ids?: unknown | null; p_source_types?: unknown | null; p_importer_ids?: unknown | null; p_search?: string | null; p_search_mat_ids?: unknown | null; p_search_order_ids?: unknown | null }
         Returns: Json
       }
       inbound_orders_summary: {
-        Args: { p_scope_categories?: unknown; p_status?: unknown; p_date_to?: unknown; p_cycles?: unknown; p_shift_ids?: unknown; p_importer_ids?: unknown; p_search_mat_ids?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_category?: string | null; p_status?: string | null; p_date_from?: string | null; p_date_to?: string | null; p_material_ids?: unknown | null; p_cycles?: unknown | null; p_machines?: unknown | null; p_shift_ids?: unknown | null; p_source_types?: unknown | null; p_importer_ids?: unknown | null; p_search?: string | null; p_search_mat_ids?: unknown | null; p_search_order_ids?: unknown | null }
         Returns: Json
       }
       inventory_band_totals: {
-        Args: { p_status: unknown; p_location_ids: unknown; p_categories: unknown; p_search: unknown; p_search_loc_ids: unknown; p_cycles: unknown; p_nmsx: unknown; p_import_from: unknown; arg18: unknown; arg20: unknown; arg22: unknown; arg24: unknown; arg26: unknown; arg28: unknown; arg30: unknown; arg32: unknown; arg34: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown; arg91?: unknown; arg92?: unknown; arg93?: unknown; arg94?: unknown; arg95?: unknown; arg96?: unknown; arg97?: unknown; arg98?: unknown; arg99?: unknown; arg100?: unknown; arg101?: unknown; arg102?: unknown; arg103?: unknown; arg104?: unknown; arg105?: unknown; arg106?: unknown; arg107?: unknown; arg108?: unknown; arg109?: unknown; arg110?: unknown; arg111?: unknown; arg112?: unknown }
+        Args: { p_ids: unknown | null; p_status: string | null; p_wh_ids: unknown | null; p_location_ids: unknown | null; p_material_ids: unknown | null; p_categories: unknown | null; p_qa_ids: unknown | null; p_search: string | null; p_search_mat_ids: unknown | null; p_search_loc_ids: unknown | null; p_manufacturer: string | null; p_cycles: unknown | null; p_machines: unknown | null; p_nmsx: unknown | null; p_ncc_ids: unknown | null; p_import_from: string | null; p_import_to: string | null }
         Returns: Json
       }
       inventory_facet_values: {
-        Args: { p_categories?: unknown; val?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null }
         Returns: Record<string, unknown>[]
       }
       inventory_summary_page: {
-        Args: { p_status: unknown; p_location_ids: unknown; p_categories: unknown; p_search: unknown; p_search_loc_ids: unknown; p_cycles: unknown; p_nmsx: unknown; p_import_from: unknown; p_offset: unknown; arg20: unknown; arg22: unknown; arg24: unknown; arg26: unknown; arg28: unknown; arg30: unknown; arg32: unknown; arg34: unknown; arg36: unknown; arg38: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown; arg91?: unknown; arg92?: unknown; arg93?: unknown; arg94?: unknown; arg95?: unknown; arg96?: unknown; arg97?: unknown; arg98?: unknown; arg99?: unknown; arg100?: unknown; arg101?: unknown; arg102?: unknown; arg103?: unknown; arg104?: unknown; arg105?: unknown; arg106?: unknown; arg107?: unknown; arg108?: unknown; arg109?: unknown; arg110?: unknown; arg111?: unknown; arg112?: unknown; arg113?: unknown; arg114?: unknown; arg115?: unknown; arg116?: unknown; arg117?: unknown; arg118?: unknown; arg119?: unknown; arg120?: unknown; arg121?: unknown; arg122?: unknown }
+        Args: { p_ids: unknown | null; p_status: string | null; p_wh_ids: unknown | null; p_location_ids: unknown | null; p_material_ids: unknown | null; p_categories: unknown | null; p_qa_ids: unknown | null; p_search: string | null; p_search_mat_ids: unknown | null; p_search_loc_ids: unknown | null; p_manufacturer: string | null; p_cycles: unknown | null; p_machines: unknown | null; p_nmsx: unknown | null; p_ncc_ids: unknown | null; p_import_from: string | null; p_import_to: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       like_esc: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p: string | null }
         Returns: string
       }
       locations_page: {
-        Args: { p_limit: unknown; p_category: unknown; p_tokens?: unknown; p_incl_inactive?: unknown; p_pick_face?: unknown; p_slot_no_in?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown }
+        Args: { p_offset: number | null; p_limit: number | null; p_wh_ids?: unknown | null; p_category?: string | null; p_scope_cats?: unknown | null; p_tokens?: unknown | null; p_flag?: boolean | null; p_incl_inactive?: boolean | null; p_with_rows?: boolean | null; p_pick_face?: boolean | null; p_subs?: unknown | null; p_slot_no_in?: boolean | null; p_slot_no_out?: boolean | null }
         Returns: Json
       }
       locations_summary: {
-        Args: { p_category?: unknown; p_tokens?: unknown; p_pick_face?: unknown; p_slot_no_in?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown }
+        Args: { p_wh_ids?: unknown | null; p_category?: string | null; p_scope_cats?: unknown | null; p_tokens?: unknown | null; p_flag?: boolean | null; p_pick_face?: boolean | null; p_subs?: unknown | null; p_slot_no_in?: boolean | null; p_slot_no_out?: boolean | null }
         Returns: Json
       }
       loose_picking_facets: {
-        Args: { p_cat_scope: unknown; p_from: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown }
+        Args: { p_wh_scope: unknown | null; p_cat_scope: unknown | null; p_warehouse_id: string | null; p_from: string | null; p_to: string | null }
         Returns: Json
       }
       loose_picking_page: {
-        Args: { p_cat_scope: unknown; p_from: unknown; p_wh_types: unknown; p_dvvts: unknown; p_search: unknown; p_limit: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22: unknown; arg24: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown }
+        Args: { p_wh_scope: unknown | null; p_cat_scope: unknown | null; p_warehouse_id: string | null; p_from: string | null; p_to: string | null; p_wh_types: unknown | null; p_export_types: unknown | null; p_dvvts: unknown | null; p_npps: unknown | null; p_search: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       lot_trace: {
-        Args: { p_value: unknown; p_prod_to?: unknown; p_ship_to?: unknown; p_categories?: unknown; p_codes?: unknown; p_machine?: unknown; p_pallet?: unknown; p_batch?: unknown; p_trip?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg34?: unknown; arg36?: unknown; arg38?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown; arg91?: unknown; arg92?: unknown; arg93?: unknown; arg94?: unknown; arg95?: unknown; arg96?: unknown; arg97?: unknown; arg98?: unknown; arg99?: unknown }
+        Args: { p_kind: string | null; p_value?: string | null; p_prod_from?: string | null; p_prod_to?: string | null; p_ship_from?: string | null; p_ship_to?: string | null; p_wh_ids?: unknown | null; p_categories?: unknown | null; p_limit?: number | null; p_codes?: unknown | null; p_cycle?: string | null; p_machine?: string | null; p_nmsx?: string | null; p_pallet?: string | null; p_material?: string | null; p_batch?: string | null; p_npp?: string | null; p_trip?: string | null; p_plate?: string | null }
         Returns: Json
       }
       material_abc: {
-        Args: { p_categories: unknown; material_id?: unknown; short_name?: unknown }
+        Args: { p_warehouse_id: string | null; p_categories?: unknown | null; p_days?: number | null }
         Returns: Record<string, unknown>[]
       }
       material_categories: {
@@ -6503,119 +6503,119 @@ export type Database = {
         Returns: Record<string, unknown>[]
       }
       materials_page: {
-        Args: { p_limit: unknown; p_categories: unknown; p_status?: unknown; p_dq?: unknown; p_legacy_no_sl?: unknown; p_dims?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown }
+        Args: { p_offset: number | null; p_limit: number | null; p_tokens?: unknown | null; p_categories?: unknown | null; p_scope_cats?: unknown | null; p_status?: unknown | null; p_qr?: unknown | null; p_dq?: unknown | null; p_cat_rules?: Json | null; p_legacy_no_sl?: unknown | null; p_legacy_pe?: unknown | null; p_dims?: unknown | null; p_flags?: unknown | null }
         Returns: Json
       }
       materials_summary: {
-        Args: { p_categories?: unknown; p_status?: unknown; p_dq?: unknown; p_legacy_no_sl?: unknown; p_dims?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown }
+        Args: { p_tokens?: unknown | null; p_categories?: unknown | null; p_scope_cats?: unknown | null; p_status?: unknown | null; p_qr?: unknown | null; p_dq?: unknown | null; p_cat_rules?: Json | null; p_legacy_no_sl?: unknown | null; p_legacy_pe?: unknown | null; p_dims?: unknown | null; p_flags?: unknown | null }
         Returns: Json
       }
       move_pallets_to_location: {
-        Args: { p_location_id: unknown; p_update_date: unknown; p_max_materials: unknown; p_putaway_violation: unknown; arg10: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown }
+        Args: { p_ids: unknown | null; p_location_id: string | null; p_updated_by: string | null; p_update_date: string | null; p_now: string | null; p_max_materials?: number | null; p_putaway_checked?: boolean | null; p_putaway_violation?: string | null; p_putaway_override_reason?: string | null }
         Returns: string
       }
       od_family: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_od: string | null }
         Returns: unknown
       }
       omni_location_ids: {
-        Args: { id: unknown; arg6?: unknown }
+        Args: { term: string | null }
         Returns: Record<string, unknown>[]
       }
       omni_material_ids: {
-        Args: { id: unknown; arg6?: unknown }
+        Args: { term: string | null }
         Returns: Record<string, unknown>[]
       }
       omni_narrow_import_material_ids: {
-        Args: { id: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p_ids: unknown | null }
         Returns: Record<string, unknown>[]
       }
       omni_narrow_location_ids: {
-        Args: { id: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p_ids: unknown | null }
         Returns: Record<string, unknown>[]
       }
       omni_narrow_material_ids: {
-        Args: { id: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p_ids: unknown | null }
         Returns: Record<string, unknown>[]
       }
       outbound_adjust_entry: {
-        Args: { p_delta_remaining: unknown; p_now: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown }
+        Args: { p_entry_id: string | null; p_delta_remaining: number | null; p_delta_reserved: number | null; p_now: string | null }
         Returns: Json
       }
       outbound_claim_quota: {
-        Args: { p_want: unknown; p_complete_when_full: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown }
+        Args: { p_item_id: string | null; p_want: number | null; p_ceiling: number | null; p_complete_when_full: boolean | null; p_now: string | null }
         Returns: Json
       }
       outbound_consume_exact: {
-        Args: { p_amount: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown }
+        Args: { p_entry_id: string | null; p_amount: number | null; p_now: string | null }
         Returns: Json
       }
       outbound_date_rule_lines: {
-        Args: { p_to: unknown; p_warehouse_id: unknown; p_state?: unknown; p_limit?: unknown; p_source?: unknown; p_kinds?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown }
+        Args: { p_from: string | null; p_to: string | null; p_scope_wh?: unknown | null; p_warehouse_id?: string | null; p_categories?: unknown | null; p_state?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number | null; p_source?: unknown | null; p_mat_categories?: unknown | null; p_kinds?: unknown | null; p_shiptos?: unknown | null }
         Returns: Json
       }
       outbound_gdos_facets: {
-        Args: { p_scope_categories?: unknown; p_date_to?: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_date_from?: string | null; p_date_to?: string | null }
         Returns: Json
       }
       outbound_gdos_page: {
-        Args: { p_limit: unknown; p_scope_categories: unknown; p_status?: unknown; p_date_from?: unknown; p_export_types?: unknown; p_npps?: unknown; p_status_labels?: unknown; p_search_gdo_ids?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown; arg89?: unknown; arg90?: unknown }
+        Args: { p_offset: number | null; p_limit: number | null; p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_warehouse_types?: unknown | null; p_status?: string | null; p_transfer_status?: string | null; p_date_from?: string | null; p_date_to?: string | null; p_export_types?: unknown | null; p_dvvts?: unknown | null; p_npps?: unknown | null; p_material_codes?: unknown | null; p_status_labels?: unknown | null; p_search?: string | null; p_search_gdo_ids?: unknown | null }
         Returns: Json
       }
       outbound_gdos_summary: {
-        Args: { p_scope_categories?: unknown; p_status?: unknown; p_date_from?: unknown; p_export_types?: unknown; p_npps?: unknown; p_status_labels?: unknown; p_search_gdo_ids?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_warehouse_types?: unknown | null; p_status?: string | null; p_transfer_status?: string | null; p_date_from?: string | null; p_date_to?: string | null; p_export_types?: unknown | null; p_dvvts?: unknown | null; p_npps?: unknown | null; p_material_codes?: unknown | null; p_status_labels?: unknown | null; p_search?: string | null; p_search_gdo_ids?: unknown | null }
         Returns: Json
       }
       outbound_pool_apply: {
-        Args: { p_material_code: unknown; p_mode: unknown; p_item_status: unknown; p_claim_only_pending: unknown; arg10: unknown; arg12: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown }
+        Args: { p_item_id: string | null; p_material_code: string | null; p_warehouse_id: string | null; p_mode: string | null; p_new_qty: number | null; p_item_status: string | null; p_chosen_date?: string | null; p_claim_only_pending?: boolean | null; p_touch_pool?: boolean | null }
         Returns: Json
       }
       outbound_shortage_stats: {
-        Args: { p_date: unknown; demand: unknown }
+        Args: { p_warehouse_id: string | null; p_date: string | null }
         Returns: Record<string, unknown>[]
       }
       packing_logs_recon: {
-        Args: { p_wh?: unknown; p_from?: unknown; p_machine?: unknown; p_search?: unknown; p_page?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown }
+        Args: { p_status?: string | null; p_wh?: string | null; p_scope?: unknown | null; p_from?: string | null; p_to?: string | null; p_machine?: string | null; p_cycle?: string | null; p_search?: string | null; p_received?: string | null; p_page?: number | null; p_size?: number | null }
         Returns: Json
       }
       packing_open_run: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown }
+        Args: { p: Json | null }
         Returns: Json
       }
       packing_runs_received: {
-        Args: { run_id: unknown }
+        Args: { p_run_ids: unknown | null }
         Returns: Record<string, unknown>[]
       }
       pallet_ledger: {
-        Args: { p_warehouse_ids: unknown; arg4?: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Args: { p_pallet_code: string | null; p_warehouse_ids?: unknown | null; p_limit?: number | null }
         Returns: Json
       }
       pallet_op_material_code: {
-        Args: { p_source: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown }
+        Args: { p_target: unknown | null; p_source: unknown | null }
         Returns: string
       }
       pallet_ops_page: {
-        Args: { p_type: unknown; p_search: unknown; p_to: unknown; p_limit: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown }
+        Args: { p_wh: string | null; p_type: string | null; p_category: string | null; p_search: string | null; p_from: string | null; p_to: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       pallet_prints_facets: {
-        Args: { p_cat_scope: unknown; p_to: unknown; arg6: unknown; arg8: unknown; arg10: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown }
+        Args: { p_wh_scope: unknown | null; p_cat_scope: unknown | null; p_from: string | null; p_to: string | null; p_search: string | null }
         Returns: Json
       }
       pallet_prints_page: {
-        Args: { p_cat_scope: unknown; p_to: unknown; p_modes: unknown; p_cycles: unknown; p_printers: unknown; p_limit: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22: unknown; arg24: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown }
+        Args: { p_wh_scope: unknown | null; p_cat_scope: unknown | null; p_from: string | null; p_to: string | null; p_search: string | null; p_modes: unknown | null; p_materials: unknown | null; p_cycles: unknown | null; p_machines: unknown | null; p_printers: unknown | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       putaway_slot_facts: {
-        Args: { p_material_id: unknown; p_with_mats?: unknown; pallets?: unknown; same_material?: unknown }
+        Args: { p_loc_ids: unknown | null; p_material_id?: string | null; p_with_lots?: boolean | null; p_with_mats?: boolean | null }
         Returns: Record<string, unknown>[]
       }
       qa_is_hold: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_qa_status_id: string | null }
         Returns: boolean
       }
       qty_entry_decimal: {
-        Args: { p_entry_unit: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_qty: number | null; p_entry_unit: string | null; p_upc: number | null }
         Returns: number
       }
       realtime_readiness: {
@@ -6623,11 +6623,11 @@ export type Database = {
         Returns: Json
       }
       recount_slot: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_slot_id: string | null }
         Returns: undefined
       }
       rename_warehouse_type: {
-        Args: { p_new: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { p_old: string | null; p_new: string | null }
         Returns: Json
       }
       rest_exposure: {
@@ -6639,15 +6639,15 @@ export type Database = {
         Returns: unknown
       }
       rpc_source: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_name: string | null }
         Returns: string
       }
       scan_insert_pallet: {
-        Args: { p_location_id: unknown; p_max_materials: unknown; arg6: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_entry: Json | null; p_location_id: string | null; p_stack_layer: number | null; p_max_materials?: number | null }
         Returns: string
       }
       search_outbound_scan_log: {
-        Args: { p_warehouse_ids: unknown; p_limit?: unknown; id?: unknown; cartons_scanned?: unknown; best_available_date?: unknown }
+        Args: { p_q: string | null; p_warehouse_ids?: string | null; p_allowed_categories?: string | null; p_limit?: number | null; p_offset?: number | null }
         Returns: Record<string, unknown>[]
       }
       secdef_public_grants: {
@@ -6655,11 +6655,11 @@ export type Database = {
         Returns: Record<string, unknown>[]
       }
       service_level: {
-        Args: { p_to: unknown; p_limit: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_from: string | null; p_to: string | null; p_wh_ids?: unknown | null; p_limit?: number | null }
         Returns: Json
       }
       set_limit: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown }
+        Args: { arg1: number | null }
         Returns: number
       }
       show_limit: {
@@ -6667,103 +6667,103 @@ export type Database = {
         Returns: number
       }
       show_trgm: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { arg1: string | null }
         Returns: unknown
       }
       similarity: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       similarity_dist: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       similarity_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: boolean
       }
       slotting_stats: {
-        Args: { p_categories: unknown; arg4?: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Args: { p_warehouse_id: string | null; p_categories?: unknown | null; p_days?: number | null }
         Returns: Json
       }
       slotting_stats_cached: {
-        Args: { p_categories: unknown; p_ttl_seconds: unknown; arg6: unknown; arg8?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown }
+        Args: { p_warehouse_id: string | null; p_categories: unknown | null; p_days: number | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       stocktake_entries_page: {
-        Args: { p_from: unknown; p_view: unknown; p_limit: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown }
+        Args: { p_loc_ids: unknown | null; p_from: string | null; p_to: string | null; p_view: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       stocktake_log_page: {
-        Args: { p_loc_ids: unknown; p_scope_cats: unknown; p_from: unknown; p_offset: unknown; arg10: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown }
+        Args: { p_wh_ids: unknown | null; p_loc_ids: unknown | null; p_category: string | null; p_scope_cats: unknown | null; p_search: string | null; p_from: string | null; p_to: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       strict_word_similarity: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       strict_word_similarity_commutator_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: boolean
       }
       strict_word_similarity_dist_commutator_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       strict_word_similarity_dist_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       strict_word_similarity_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: boolean
       }
       tms_orders_facets: {
-        Args: { p_date_to: unknown; p_ncc_user: unknown; p_scope_wh?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
+        Args: { p_date_from: string | null; p_date_to: string | null; p_warehouse_id?: string | null; p_ncc_user?: string | null; p_categories?: unknown | null; p_scope_wh?: unknown | null }
         Returns: Json
       }
       tms_orders_page: {
-        Args: { p_limit: unknown; p_date_to: unknown; p_ncc_user: unknown; p_scope_wh: unknown; p_dvvt?: unknown; p_vehicle_types?: unknown; p_unbooked?: unknown; p_search?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg30?: unknown; arg32?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown; arg74?: unknown; arg75?: unknown; arg76?: unknown; arg77?: unknown; arg78?: unknown; arg79?: unknown; arg80?: unknown; arg81?: unknown; arg82?: unknown; arg83?: unknown; arg84?: unknown; arg85?: unknown; arg86?: unknown; arg87?: unknown; arg88?: unknown }
+        Args: { p_offset: number | null; p_limit: number | null; p_date_from: string | null; p_date_to: string | null; p_warehouse_id?: string | null; p_ncc_user?: string | null; p_categories?: unknown | null; p_scope_wh?: unknown | null; p_directions?: unknown | null; p_dvvt?: unknown | null; p_wh_types?: unknown | null; p_vehicle_types?: unknown | null; p_slot_ids?: unknown | null; p_unbooked?: boolean | null; p_with_stt?: boolean | null; p_search?: string | null }
         Returns: Json
       }
       tms_orders_summary: {
-        Args: { p_date_to: unknown; p_ncc_user: unknown; p_scope_wh?: unknown; p_dvvt?: unknown; p_vehicle_types?: unknown; p_unbooked?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg24?: unknown; arg26?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown; arg60?: unknown; arg61?: unknown; arg62?: unknown; arg63?: unknown; arg64?: unknown; arg65?: unknown; arg66?: unknown; arg67?: unknown; arg68?: unknown; arg69?: unknown; arg70?: unknown; arg71?: unknown; arg72?: unknown; arg73?: unknown }
+        Args: { p_date_from: string | null; p_date_to: string | null; p_warehouse_id?: string | null; p_ncc_user?: string | null; p_categories?: unknown | null; p_scope_wh?: unknown | null; p_directions?: unknown | null; p_dvvt?: unknown | null; p_wh_types?: unknown | null; p_vehicle_types?: unknown | null; p_slot_ids?: unknown | null; p_unbooked?: boolean | null; p_search?: string | null }
         Returns: Json
       }
       tms_vehicles_page: {
-        Args: { p_vt_ids: unknown; p_search: unknown; p_limit: unknown; arg8: unknown; arg10: unknown; arg12: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown }
+        Args: { p_ncc_ids: unknown | null; p_vt_ids: unknown | null; p_active: boolean | null; p_search: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       trace_suggest: {
-        Args: { p_search: unknown; arg4?: unknown; arg6?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown }
+        Args: { p_kind: string | null; p_search?: string | null; p_limit?: number | null }
         Returns: Json
       }
       transfer_plan_lines_replace: {
-        Args: { p_rows: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
+        Args: { p_order_id: string | null; p_rows: Json | null }
         Returns: number
       }
       try_book_slot: {
-        Args: { p_delta: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { p_slot_id: string | null; p_delta: number | null }
         Returns: boolean
       }
       unaccent: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown } | { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown }
+        Args: { arg1: unknown | null }
         Returns: unknown
       }
       unaccent_lexize: {
-        Args: { arg2: unknown; arg4: unknown; arg6: unknown; arg8: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown }
+        Args: { arg1: unknown | null; arg2: unknown | null; arg3: unknown | null; arg4: unknown | null }
         Returns: unknown
       }
       warehouse_cost_vouchers: {
-        Args: { p_to: unknown; p_warehouse_id: unknown; p_page?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown }
+        Args: { p_from: string | null; p_to: string | null; p_wh_ids?: unknown | null; p_warehouse_id?: string | null; p_search?: string | null; p_page?: number | null; p_page_size?: number | null }
         Returns: Json
       }
       warehouse_docks_status: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_warehouse_id: string | null }
         Returns: Json
       }
       warehouse_id_uuid_mismatch: {
@@ -6771,35 +6771,35 @@ export type Database = {
         Returns: Record<string, unknown>[]
       }
       warehouse_kpi: {
-        Args: { p_categories?: unknown; p_to?: unknown; p_pct_low?: unknown; p_dead_days?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_from?: string | null; p_to?: string | null; p_std_hours?: number | null; p_pct_low?: number | null; p_slow_days?: number | null; p_dead_days?: number | null; p_skip_snapshot?: boolean | null }
         Returns: Json
       }
       warehouse_kpi_cached: {
-        Args: { p_categories?: unknown; p_to?: unknown; p_pct_low?: unknown; p_dead_days?: unknown; p_skip_snapshot?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_from?: string | null; p_to?: string | null; p_std_hours?: number | null; p_pct_low?: number | null; p_slow_days?: number | null; p_dead_days?: number | null; p_ttl_seconds?: number | null; p_skip_snapshot?: boolean | null }
         Returns: Json
       }
       warehouse_kpi_series: {
-        Args: { p_categories?: unknown; p_from?: unknown; p_std_hours?: unknown; p_slow_days?: unknown; p_ttl_seconds?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown; arg55?: unknown; arg56?: unknown; arg57?: unknown; arg58?: unknown; arg59?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_grain?: string | null; p_from?: string | null; p_to?: string | null; p_std_hours?: number | null; p_pct_low?: number | null; p_slow_days?: number | null; p_dead_days?: number | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       warehouse_kpi_trend: {
-        Args: { p_categories?: unknown; p_end?: unknown; p_pct_low?: unknown; p_dead_days?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg16?: unknown; arg18?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown; arg53?: unknown; arg54?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_months?: number | null; p_end?: string | null; p_std_hours?: number | null; p_pct_low?: number | null; p_slow_days?: number | null; p_dead_days?: number | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       warehouse_map_assign_cells: {
-        Args: { p_items: unknown; arg4: unknown; arg6: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown }
+        Args: { p_warehouse_id: string | null; p_items: Json | null; p_actor: string | null }
         Returns: Json
       }
       warehouse_map_occupancy: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_warehouse_id: string | null }
         Returns: Json
       }
       warehouse_productivity: {
-        Args: { p_categories?: unknown; p_to?: unknown; arg6?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg13?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_from?: string | null; p_to?: string | null; p_std_hours?: number | null }
         Returns: Json
       }
       warehouse_productivity_cached: {
-        Args: { p_categories?: unknown; p_to?: unknown; p_ttl_seconds?: unknown; arg8?: unknown; arg10?: unknown; arg12?: unknown; arg14?: unknown; arg15?: unknown; arg16?: unknown; arg17?: unknown; arg18?: unknown; arg19?: unknown; arg20?: unknown; arg21?: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown }
+        Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_from?: string | null; p_to?: string | null; p_std_hours?: number | null; p_ttl_seconds?: number | null }
         Returns: Json
       }
       warehouse_type_column_coverage: {
@@ -6811,47 +6811,47 @@ export type Database = {
         Returns: Record<string, unknown>[]
       }
       weigh_tickets_page: {
-        Args: { p_null_ok: unknown; p_to: unknown; p_match: unknown; p_plate: unknown; p_limit: unknown; arg12: unknown; arg14: unknown; arg16: unknown; arg18: unknown; arg20: unknown; arg22?: unknown; arg23?: unknown; arg24?: unknown; arg25?: unknown; arg26?: unknown; arg27?: unknown; arg28?: unknown; arg29?: unknown; arg30?: unknown; arg31?: unknown; arg32?: unknown; arg33?: unknown; arg34?: unknown; arg35?: unknown; arg36?: unknown; arg37?: unknown; arg38?: unknown; arg39?: unknown; arg40?: unknown; arg41?: unknown; arg42?: unknown; arg43?: unknown; arg44?: unknown; arg45?: unknown; arg46?: unknown; arg47?: unknown; arg48?: unknown; arg49?: unknown; arg50?: unknown; arg51?: unknown; arg52?: unknown }
+        Args: { p_wh_ids: unknown | null; p_null_ok: boolean | null; p_from: string | null; p_to: string | null; p_direction: string | null; p_match: string | null; p_q: string | null; p_plate: string | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
       word_similarity: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       word_similarity_commutator_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: boolean
       }
       word_similarity_dist_commutator_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       word_similarity_dist_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: number
       }
       word_similarity_op: {
-        Args: { arg2: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown }
+        Args: { arg1: string | null; arg2: string | null }
         Returns: boolean
       }
       work_inbox: {
-        Args: { p_employee_id: unknown; arg4: unknown; arg6?: unknown; arg7?: unknown; arg8?: unknown; arg9?: unknown; arg10?: unknown; arg11?: unknown; arg12?: unknown }
+        Args: { p_warehouse_ids: unknown | null; p_employee_id: string | null }
         Returns: Json
       }
       wt_cats: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_raw: string | null }
         Returns: unknown
       }
       zone_capacity_rows: {
-        Args: { p_categories: unknown; warehouse_id: unknown }
+        Args: { p_wh_ids: unknown | null; p_categories: unknown | null }
         Returns: Record<string, unknown>[]
       }
       zone_used_pallets: {
-        Args: { warehouse_id: unknown }
+        Args: { p_wh_ids: unknown | null }
         Returns: Record<string, unknown>[]
       }
       zsd02_coverage: {
-        Args: { arg2: unknown; arg4?: unknown; arg5?: unknown; arg6?: unknown }
+        Args: { p_plant: string | null }
         Returns: Json
       }
     }

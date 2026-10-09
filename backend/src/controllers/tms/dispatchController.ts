@@ -346,7 +346,7 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
   const rows = (opts.onlyOds
     ? await fetchAllByIdChunks(opts.onlyOds, c => db.from('erp_outbound_orders').select(POOL_COLS).in('od_number', c).eq('sync_status', 'ACTIVE').order('od_number').order('od_item'))
     // p_warehouse_id (05/10, 20261005d): đơn mang dấu tay còn hiệu lực của kho không về — tab dấu đọc thẳng sổ dấu (GET /marks)
-    : await fetchAllRowsParallel(() => db.rpc('dispatch_pool_rows', { p_plant: wh.sap_plant ?? '', p_day: day, p_warehouse_id: wh.id, p_flows: [...LOADABLE_FLOW] } as never)
+    : await fetchAllRowsParallel(() => db.rpc('dispatch_pool_rows', { p_plant: wh.sap_plant ?? '', p_day: day, p_warehouse_id: wh.id, p_flows: [...LOADABLE_FLOW] })
       .select(POOL_COLS).order('od_number').order('od_item'))) as unknown as PoolRow[]
   const mine0 = inSlocs(rows, slocsOf(wh))
   let mine = loadableLines(mine0)
@@ -591,7 +591,7 @@ async function readPlanLight(planId: string): Promise<{ trips: SumTrip[]; pool: 
 }
 /** Dấu phiên bản của kế hoạch (RPC `dispatch_plan_stamp`) — bàn hỏi dấu khi có tín hiệu realtime, trùng thì không tải lại. */
 async function planStamp(planId: string): Promise<{ warehouse_id: string; stamp: string } | null> {
-  const { data, error } = await db.rpc('dispatch_plan_stamp', { p_plan_id: planId } as never)
+  const { data, error } = await db.rpc('dispatch_plan_stamp', { p_plan_id: planId })
   if (error) throw error
   const v = data as { warehouse_id?: string; stamp?: string } | null
   return v?.stamp ? { warehouse_id: String(v.warehouse_id ?? ''), stamp: v.stamp } : null
@@ -888,8 +888,8 @@ export async function getCustomersMap(req: Request, res: Response) {
     if (!wh.sap_plant) return ok(res, { warehouse: { id: wh.id, name: wh.name, sap_plant: null }, from: null, to: null, days, rows: [] })
     const vnDay = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const to = vnDay(Date.now()), from = vnDay(Date.now() - (days - 1) * 86_400_000)
-    // `as never`: bộ sinh kiểu đọc tham số hàm SQL chưa đúng tên (cùng khuôn fill_reconcile_* / erp_so_lines_summary)
-    const { data, error } = await db.rpc('dispatch_customer_rank', { p_plant: wh.sap_plant, p_from: from, p_to: to } as never)
+    // bộ sinh kiểu đã đọc đúng tên tham số hàm SQL từ 09/10 (gen-db-types ::text[]) — không còn ép kiểu
+    const { data, error } = await db.rpc('dispatch_customer_rank', { p_plant: wh.sap_plant, p_from: from, p_to: to })
     if (error) return fail(res, error)
     return ok(res, { warehouse: { id: wh.id, name: wh.name, sap_plant: wh.sap_plant }, from, to, days, rows: (data ?? []) as unknown as CustomerRankRow[] })
   } catch (e) { return failAny(res, e) }
@@ -949,7 +949,7 @@ export async function getInputsStamp(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as z.infer<typeof zInputsStampQuery>
     if (!whAllowed(req, warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const { data, error } = await db.rpc('dispatch_inputs_stamp', { p_warehouse_id: warehouse_id } as never)
+    const { data, error } = await db.rpc('dispatch_inputs_stamp', { p_warehouse_id: warehouse_id })
     if (error) return failAny(res, error)
     if (!data) return fail(res, 'Không tìm thấy kho', 404)
     return ok(res, { stamp: String(data) })
@@ -1694,7 +1694,7 @@ export async function planSync(req: Request, res: Response) {
       wh?.sap_plant
         // ngày giao không quyết (05/10 khuya, 20261005f — cùng luật loadCandidates); p_from / p_to hàm không còn đọc
         ? db.rpc('dispatch_new_ods', { p_plant: wh.sap_plant, p_from: null, p_to: full.plan_date, p_day: full.plan_date,
-            p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id, p_segment: full.segment } as never).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
+            p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id, p_segment: full.segment }).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
         : Promise.resolve([] as string[]),
       pulledAwayHeld(full),
     ])
@@ -2618,7 +2618,7 @@ export async function listDecisions(req: Request, res: Response) {
   try {
     const q = req.query as z.infer<typeof zDecisionsQuery>
     if (!whAllowed(req, q.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const { data, error } = await db.rpc('dispatch_decisions', { p_warehouse_id: q.warehouse_id } as never)
+    const { data, error } = await db.rpc('dispatch_decisions', { p_warehouse_id: q.warehouse_id })
     if (error) throw error
     return ok(res, data as unknown as { count: number; rows: unknown[] })
   } catch (e) { return failAny(res, e) }
@@ -2909,14 +2909,14 @@ export async function getPlanMarks(req: Request, res: Response) {
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh?.sap_plant) return ok(res, { counts: q.kind ? null : counts, rows: [], info: {}, total: 0, limit: MARKS_MAX })
     const args = { p_warehouse_id: wh.id, p_plant: wh.sap_plant, p_day: plan.plan_date, p_slocs: slocsOf(wh), p_flows: [...LOADABLE_FLOW], p_segment: plan.segment ?? 'SALES' }
-    // kiểu sinh tự động đọc sai tham số của hàm RETURNS TABLE (gen-db-types) ⇒ `as never` như mọi lời gọi hai hàm này
+    // kiểu sinh tự động đã đúng từ 09/10 (gen-db-types) — hai hàm này gọi có kiểm kiểu như mọi RPC
     if (!q.kind) {
-      const { data, error: cErr } = await db.rpc('dispatch_marked_counts', args as never)
+      const { data, error: cErr } = await db.rpc('dispatch_marked_counts', args)
       if (cErr) throw cErr
       for (const c of (data ?? []) as unknown as { kind: string; n: number | string }[]) if (c.kind === 'DAY' || c.kind === 'NEVER' || c.kind === 'OUTSIDE') counts[c.kind] = Number(c.n) || 0
       return ok(res, { counts, rows: [], info: {}, total: 0, limit: MARKS_MAX })
     }
-    const { data, error: rErr } = await db.rpc('dispatch_marked_ods', { ...args, p_kind: q.kind, p_search: q.q?.trim() || null } as never)
+    const { data, error: rErr } = await db.rpc('dispatch_marked_ods', { ...args, p_kind: q.kind, p_search: q.q?.trim() || null })
       .order('marked_at', { ascending: false, nullsFirst: false }).order('od_number').limit(MARKS_MAX)
     if (rErr) throw rErr
     const rows = (data ?? []) as unknown as MarkRow[]
@@ -2939,7 +2939,7 @@ export async function getPlanBacklog(req: Request, res: Response) {
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     // cửa nạp chung (dispatch_pool_rows) đã bỏ đơn đã điều ngày khác ⇒ tập lịch sử hỏi riêng: BACKLOG_MAX đơn gần nhất theo ngày xuất (20261005f)
-    const { data: hist, error: hErr } = await db.rpc('dispatch_planned_ods', { p_plant: wh.sap_plant ?? '', p_day: plan.plan_date, p_limit: BACKLOG_MAX } as never)
+    const { data: hist, error: hErr } = await db.rpc('dispatch_planned_ods', { p_plant: wh.sap_plant ?? '', p_day: plan.plan_date, p_limit: BACKLOG_MAX })
     if (hErr) throw hErr
     const ods = (hist ?? []) as unknown as string[]
     const cand = await loadCandidates(wh, plan.plan_date, { condByCat: new Map(), follow: [], all: [] }, { onlyOds: ods, skipPlanId: plan.id, countOnly: true, reportAll: true })

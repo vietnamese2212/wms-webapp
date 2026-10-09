@@ -173,7 +173,7 @@ export async function drainFillQueue(warehouseId: string | null | undefined): Pr
   try {
     const { data } = await db.rpc('fill_reconcile_take', {
       p_wh: warehouseId, p_today: today, p_sweep_s: SWEEP_S, p_lease_s: LEASE_S,
-    } as never)
+    })
     const take = (data ?? {}) as { leased?: boolean; days?: string[] }
     if (!take.leased || !take.days?.length) return agg
     leased = true
@@ -198,7 +198,7 @@ export async function drainFillQueue(warehouseId: string | null | undefined): Pr
   } catch (e) {
     console.error('autoFill:', e instanceof Error ? e.message : String(e))
   } finally {
-    if (leased) await db.rpc('fill_reconcile_release', { p_wh: warehouseId } as never)
+    if (leased) await db.rpc('fill_reconcile_release', { p_wh: warehouseId })
   }
   return agg
 }
@@ -208,11 +208,11 @@ export const autoFillSafe = drainFillQueue
 
 /** Thuê kho cho đường BẤM TAY (cùng ổ khoá với đường tự động). false = kho đang có lượt khác chạy */
 export async function leaseWarehouse(warehouseId: string): Promise<boolean> {
-  const { data } = await db.rpc('fill_reconcile_lease', { p_wh: warehouseId, p_lease_s: LEASE_S } as never)
+  const { data } = await db.rpc('fill_reconcile_lease', { p_wh: warehouseId, p_lease_s: LEASE_S })
   return data === true
 }
 export async function releaseWarehouse(warehouseId: string): Promise<void> {
-  await db.rpc('fill_reconcile_release', { p_wh: warehouseId } as never)
+  await db.rpc('fill_reconcile_release', { p_wh: warehouseId })
 }
 
 // ─── CHIỀU GIẢM — nhu cầu tụt (đơn huỷ · đổi ngày · hàng đã có đủ đúng lô ở ô lẻ) ────────────────
@@ -252,7 +252,7 @@ async function reconcileDown(
       if (Number(l.qty_base) <= floor) continue
       const { data } = await db.rpc('fill_task_reduce', {
         p_task_id: l.id, p_target_qty: floor, p_reason: MACHINE_LOT_REASON, p_now: t,
-      } as never)
+      })
       const out = data as { code?: string; freed?: number } | null
       if (!out || (out.code !== 'REDUCED' && out.code !== 'CANCELLED')) continue
       result.reduced++
@@ -282,7 +282,7 @@ async function reconcileDown(
       const { data } = await db.rpc('fill_task_reduce', {
         p_task_id: l.id, p_target_qty: Number(l.qty_base) - cut,
         p_reason: MACHINE_RECALL_REASON, p_now: t,
-      } as never)
+      })
       const out = data as { code?: string; freed?: number } | null
       if (!out || (out.code !== 'REDUCED' && out.code !== 'CANCELLED')) continue
       excess -= Number(out.freed ?? cut)
@@ -345,7 +345,7 @@ async function reconcileUp(
       const { data: topped } = await db.rpc('fill_task_topup', {
         p_warehouse_id: warehouseId, p_target_date: day, p_material_id: r.material_id,
         p_required_date: reqDate, p_add_qty: qty, p_add_pallets: group.length, p_now: t,
-      } as never)
+      })
       if (topped) {
         const tl = topped as { assignee_id?: string | null; fill_order_id?: string | null }
         result.added++; left -= qty
@@ -437,7 +437,7 @@ async function closeStaleOrders(warehouseId: string): Promise<number> {
   const t = now()
   let n = 0
   for (const id of ids) {
-    const { data: out } = await db.rpc('fill_order_close', { p_order_id: id, p_actor: AUTO_ACTOR, p_now: t } as never)
+    const { data: out } = await db.rpc('fill_order_close', { p_order_id: id, p_actor: AUTO_ACTOR, p_now: t })
     if ((out as { code?: string } | null)?.code === 'CLOSED') n++
   }
   return n

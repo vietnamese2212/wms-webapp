@@ -51,7 +51,7 @@ type CoverageRpc = { pending_ods: number; sap_posted_ods: number; no_created_dat
 export type PlantCoverage = { plant: string; pending_ods: number; required: CoverageDay[]; missing: CoverageDay[]; suggest: { from: string; to: string } | null; sap_max_od_created: string | null }
 const dmyOf = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
 async function coverageOfPlant(plant: string): Promise<CoverageRpc> {
-  const { data, error } = await db.rpc('zsd02_coverage', { p_plant: plant } as never)
+  const { data, error } = await db.rpc('zsd02_coverage', { p_plant: plant })
   if (error) throw error   // giữ đối tượng lỗi để fail() dịch statement timeout → 503 QUERY_TIMEOUT
   return (data ?? { pending_ods: 0, sap_posted_ods: 0, no_created_date: 0, by_od_created: [], by_so_created: [], sap_max_od_created: null }) as unknown as CoverageRpc
 }

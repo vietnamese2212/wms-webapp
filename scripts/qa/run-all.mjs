@@ -115,7 +115,8 @@ console.log(`BẬC: ${TIER}${OFFLINE ? ' (offline)' : ''} — ${steps.length} b�
 const summary = []
 for (const s of steps) {
   console.log(`\n════════ ${s.label} ════════`)
-  const r = spawnSync(s.cmd, s.args, { stdio: 'inherit', cwd: s.cwd, shell: s.shell === true })
+  // QA_TIER: gói tự biết đang ở bậc nào — phép kiểm quét-cả-schema (00 mục 11) chỉ chạy ở full (đêm), không ở mỗi push
+  const r = spawnSync(s.cmd, s.args, { stdio: 'inherit', cwd: s.cwd, shell: s.shell === true, env: { ...process.env, QA_TIER: TIER } })
   summary.push({ label: s.label, ok: r.status === 0 })
   if (r.status !== 0 && s.label.startsWith('00-invariant') && summary.filter(x => x.label.startsWith('00-invariant')).length === 1) {
     console.error('\n⛔ Invariant ĐỎ ngay từ đầu — DB staging đang bẩn, xử lý trước rồi hãy test tiếp.')

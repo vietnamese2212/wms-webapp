@@ -50,6 +50,17 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
     }
   }, [warehouseId, whType, warehouses, whTypes, current?.code, setScope])
 
+  // 09/10 (đóng vai Thủ kho TP — ASSIGNED một kho, là đa số nhân sự): phạm vi chỉ MỘT kho thì "Tất cả kho" không có nghĩa,
+  // mà các trang đòi chọn kho (Kế hoạch VC · Hộp việc · Fill · Khung giờ · Khu vực…) đứng trống "Chọn kho để xem…" tới khi
+  // người dùng tự mở bối cảnh. Tự lấy kho duy nhất làm bối cảnh; quét force=false = chỉ điền kho, không xoá lọc đã nhớ.
+  useEffect(() => {
+    if (warehouseId !== '' || warehouses.length !== 1) return
+    const w = warehouses[0]
+    const next = { warehouseId: w.id, warehouseCode: w.code ?? '', whType }
+    setScope(next)
+    sweepGlobalScope(next, { force: false })
+  }, [warehouseId, warehouses, whType, setScope])
+
   useEffect(() => {
     if (!open) return
     const place = () => {
@@ -179,14 +190,17 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
             <div className="max-h-52 overflow-auto -mx-1">
               {/* Kho đang tích ghim đầu danh sách (mở panel là thấy ngay bối cảnh hiện tại) */}
               {pinnedWh && <WhCheckRow w={pinnedWh} on={pinnedWh.id === warehouseId} onClick={() => apply(pinnedWh.id === warehouseId ? '' : pinnedWh.id, whType)} />}
-              <button
-                type="button"
-                onClick={() => apply('', whType)}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${warehouseId === '' ? 'font-semibold text-sky-700' : ''}`}
-              >
-                <ScopeCheckbox on={warehouseId === ''} />
-                <span className="flex-1 text-left">Tất cả kho</span>
-              </button>
+              {/* Phạm vi một kho: không có "Tất cả" để chọn (bối cảnh luôn là kho đó — xem effect ở trên) */}
+              {warehouses.length !== 1 && (
+                <button
+                  type="button"
+                  onClick={() => apply('', whType)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${warehouseId === '' ? 'font-semibold text-sky-700' : ''}`}
+                >
+                  <ScopeCheckbox on={warehouseId === ''} />
+                  <span className="flex-1 text-left">Tất cả kho</span>
+                </button>
+              )}
               {filteredWhs.map(w => (
                 <WhCheckRow key={w.id} w={w} on={w.id === warehouseId} onClick={() => apply(w.id === warehouseId ? '' : w.id, whType)} />
               ))}

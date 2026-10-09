@@ -294,7 +294,7 @@ export async function doSapCoverage(req: Request, res: Response) {
     let cov: Record<string, unknown>
     if (hit && Date.now() - hit.at < 60_000) cov = hit.data
     else {
-      const { data, error } = await supabase.rpc('zsd02_coverage', { p_plant: plant } as never)
+      const { data, error } = await supabase.rpc('zsd02_coverage', { p_plant: plant })
       if (error) throw error   // giữ NGUYÊN đối tượng lỗi: statement timeout lúc máy bận phải thành 503 QUERY_TIMEOUT, không phải 500 (gói 61 [17h] 03/10)
       cov = (data ?? {}) as Record<string, unknown>
       coverageCache.set(plant, { at: Date.now(), data: cov })

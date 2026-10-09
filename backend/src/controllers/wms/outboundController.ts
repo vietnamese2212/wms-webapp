@@ -2166,7 +2166,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
   // NGÀY (cùng ngày · kho · mã · lệnh) ⇒ chèn hỏng, dòng cũ ở lại, kho nhận thấy SỐ CŨ dù kho xuất đã sửa đơn — 8 dòng
   // error_logs 07–09/10 gắn đuôi _RACE oan. Nay xoá cũ + chèn mới trong MỘT giao dịch (RPC 20261009a): hỏng là lăn về
   // nguyên trạng (dòng cũ còn nguyên — đúng mục đích của thứ tự 29/09 ở trên), không đụng khoá, 2 request còn 1.
-  const { error: linesErr } = await db.rpc('transfer_plan_lines_replace', { p_order_id: orderId, p_rows: lineRows } as never)
+  const { error: linesErr } = await db.rpc('transfer_plan_lines_replace', { p_order_id: orderId, p_rows: lineRows })
   const linesError = linesErr ? `Kế hoạch nhập của lệnh ${orderCode} không ghi được: ${linesErr.message}` : null
   if (linesErr) recordBackgroundFailure(linesError!, 'TRANSFER_PLAN_LINES_FAILED', 'outbound.maybeAutoCreateTransferOrder', linesErr)
 

@@ -57,6 +57,23 @@ function countSlicedWriteIn(sampleOut) {
   return n
 }
 
+// `as never` trên lời gọi `.rpc(` (luật rpc_call_as_never): cùng dòng, hoặc dòng đóng `} as never)` của một `.rpc(` mở ≤ 6 dòng trước.
+function countRpcAsNever(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line)) return
+      let hit = /\.rpc\(/.test(line) && /as never/.test(line)
+      if (!hit && /^\s*\}\s*as never\)/.test(line)) {
+        for (let j = i - 1; j >= Math.max(0, i - 6); j--) { if (/\.rpc\(/.test(lines[j])) { hit = true; break }; if (/\.(from|insert|update|upsert|delete)\(/.test(lines[j])) break }
+      }
+      if (hit) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+    })
+  }
+  return n
+}
+
 // Link literal tới trang module trong file KHÔNG hỏi quyền chỗ nào (luật page_link_without_perm_guard). File có hỏi quyền (can / canAccess
 // / canSeePath…) coi như đã gác — phép đếm thô, chỉ để code MỚI không đẻ thêm lối tắt mù quyền.
 function countUnguardedPageLinks(sampleOut) {
@@ -864,6 +881,14 @@ const RULES = [
     label: 'in thẳng `{x.cap}` / `${x.used}` / max_tons / max_pallets ra màn — số thập phân hiện dấu chấm kiểu Anh; bọc nf() / toLocaleString("vi-VN")',
     count: (s) => countMatches(['frontend/src'], ['.tsx'],
       (line) => !/^\s*(\/\/|\*)/.test(line) && /(\$\{|\{)\s*[\w.?!]+\.(cap|used|max_tons|max_pallets)\s*\}/.test(line), s),
+  },
+  // ÉP `as never` LÊN LỜI GỌI RPC = TẮT LƯỚI KIỂU (09/10, C73): bộ sinh kiểu từng đọc sai tên tham số hàm SQL (driver pg trả name[]
+  // thành CHUỖI) nên 20 lời gọi db.rpc ép `as never` để qua tsc — gọi sai tên tham số rơi vào bản hàm cũ mà không ai biết. Đã chữa bộ
+  // sinh; từ nay lời gọi rpc phải để tsc kiểm, sai kiểu thì sửa bộ sinh / hàm, không ép.
+  {
+    key: 'rpc_call_as_never',
+    label: 'lời gọi `.rpc(…)` ép `as never` — tắt kiểm tên/kiểu tham số RPC; sửa gen-db-types hoặc hàm SQL, không ép kiểu',
+    count: (s) => countRpcAsNever(s),
   },
   {
     key: 'qa_slot_fixture_on_today',

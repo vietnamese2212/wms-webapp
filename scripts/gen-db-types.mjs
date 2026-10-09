@@ -75,8 +75,10 @@ try {
   const fns = (await c.query(`
     select p.proname, pg_get_function_result(p.oid) as result, p.proretset,
            t.typname as rettype, p.proargnames, p.pronargdefaults, p.pronargs,
-           array(select typname from unnest(p.proargtypes) with ordinality u(oid, ord) join pg_type on pg_type.oid = u.oid order by ord) as argtypes,
-           array(select m from unnest(coalesce(p.proargmodes, array_fill('i'::"char", array[p.pronargs]))) m) as argmodes
+           -- ::text[] BẮT BUỘC (09/10): name[] / "char"[] thì driver pg trả CHUỖI "{uuid,jsonb}" chứ không phải mảng ⇒ vòng lặp
+           -- bên dưới chạy theo KÝ TỰ: tên tham số lệch ("p_rows, arg4, arg6?…"), mọi lời gọi db.rpc phải ép "as never" — mất lưới kiểu.
+           array(select typname from unnest(p.proargtypes) with ordinality u(oid, ord) join pg_type on pg_type.oid = u.oid order by ord)::text[] as argtypes,
+           array(select m from unnest(coalesce(p.proargmodes, array_fill('i'::"char", array[p.pronargs]))) m)::text[] as argmodes
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace join pg_type t on t.oid = p.prorettype
     where n.nspname = 'public' and p.prokind = 'f' and t.typname <> 'trigger' and t.typname <> 'event_trigger'
     order by p.proname`)).rows
@@ -133,7 +135,8 @@ try {
         if (mode !== 'i' && mode !== 'b' && mode !== 'v') continue   // bỏ OUT/TABLE args
         const nm = names[i] || `arg${i + 1}`
         const hasDefault = inIdx >= f.pronargs - f.pronargdefaults
-        parts.push(`${q(nm)}${hasDefault ? '?' : ''}: ${tsType(f.argtypes[i], f.argtypes[i], enums)}`)
+        // Tham số SQL nào cũng nhận NULL (hàm tự xử) — code gọi vẫn truyền null cho cột không có (vd ship_to của dòng SO)
+        parts.push(`${q(nm)}${hasDefault ? '?' : ''}: ${tsType(f.argtypes[i], f.argtypes[i], enums)} | null`)
         inIdx++
       }
       return parts.length ? `{ ${parts.join('; ')} }` : 'Record<PropertyKey, never>'

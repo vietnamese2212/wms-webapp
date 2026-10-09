@@ -247,7 +247,11 @@ for (const [table, label] of [
 //     đổi tên xong 294 dòng trỏ vào loại KHÔNG CÒN TỒN TẠI, không lỗi, không cảnh báo.
 //     RPC `warehouse_type_column_coverage` (migration 20260815b) tự quét lại mỗi lần chạy:
 //     thêm cột mới mang Loại kho mà quên cascade = ĐỎ ngay, không chờ ai nhớ.
-{
+//     09/10: CHỈ chạy ở bậc full (đêm) — RPC quét MỌI cột text của MỌI bảng (seq scan cả InventoryEntry /
+//     OutboundScanEntry / erp_outbound_orders): đo pg_stat_statements 95 lần × 38 s trung bình (tối đa 114 s) = 61 phút
+//     CPU, câu nặng nhất cả staging, mà nó chạy ở MỌI push (qa-smoke + bậc fast) để gác một lớp lỗi chỉ đổi theo SCHEMA.
+//     Cột mới sinh sau một ngày là lưới đêm bắt — đủ. Chạy tay: QA_TIER=full node scripts/qa/00-invariant.mjs
+if (process.env.QA_TIER === 'full') {
   const gaps = await restRpc('warehouse_type_column_coverage')
   check('Đổi tên Loại kho phủ ĐỦ mọi cột mang giá trị đó (không cột nào bị bỏ lại)',
     Array.isArray(gaps) && gaps.length === 0,

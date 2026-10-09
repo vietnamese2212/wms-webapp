@@ -45,6 +45,7 @@
   "tms_cargo_cell_ignores_booking_category": 0,
   "unpaginated_in_query": 144,
   "write_in_sliced_cap": 25,
+  "rpc_call_as_never": 0,
   "page_link_without_perm_guard": 4,
   "raw_capacity_number_in_ui": 9,
   "qa_slot_fixture_on_today": 0,

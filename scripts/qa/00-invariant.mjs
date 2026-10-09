@@ -357,6 +357,18 @@ if (process.env.QA_TIER === 'full') {
       : 'RPC warehouse_id_uuid_mismatch chưa apply (migration 20260821j)')
 }
 
+// 14b. CỜ "ĐÃ CÓ TRONG KẾ HOẠCH XUẤT" CỦA DÒNG ZSD02 PHẢI KHỚP khvc_lines (09/10, migration 20261009b).
+//      `erp_outbound_orders.in_khvc` do trigger hai phía giữ; pool điều vận đọc theo cờ (chỉ mục một phần) thay vì NOT EXISTS
+//      quét 16.657 dòng mỗi lần Lập kế hoạch (503 QUERY_TIMEOUT 08–09/10). Cờ lệch = đơn chưa đi biến mất khỏi bàn hoặc đơn đã
+//      đi quay lại bàn — không lỗi nào nổ, chỉ có bất biến này thấy.
+{
+  let n = null
+  try { n = await restRpc('erp_in_khvc_mismatch') } catch { /* chưa apply migration → báo dưới */ }
+  check('Cờ in_khvc của dòng ZSD02 khớp khvc_lines (0 dòng lệch)',
+    Number(n) === 0,
+    n == null ? 'RPC erp_in_khvc_mismatch chưa apply (migration 20261009b)' : `lệch=${n}`)
+}
+
 // 15. CHI PHÍ CHUNG KHÔNG ĐƯỢC CHẢY VÀO Ô TỔNG KHI ĐANG LỌC 1 KHO (chốt 27/08).
 //     Gốc: check-app dựng vai kế toán chỉ được gán Kho Ba Vì thì trang Chi phí kho hiện
 //     1.063.200.000 (sổ CẮT dòng chi phí chung) còn tab Năng suất hiện 1.304.200.000 (cộng TRỌN

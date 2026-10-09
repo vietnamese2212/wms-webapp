@@ -296,6 +296,12 @@ try {
   check('3b. khvc_lines xe 1: 2 dòng (OD1, OD2) · dvvt "Đông Á" · veh_type = tên cha · vehicle_model_id · source DISPATCH · booking_category; xe 2 KHÔNG có dòng nào',
     kh1.length === 2 && kh1.every(k => k.dvvt === DA.name && k.veh_type === XEPALLET?.name && k.vehicle_model_id === vmId && k.source === 'DISPATCH' && !!k.booking_category) && kh2.length === 0,
     `kh1=${kh1.length} kh2=${kh2.length} ${JSON.stringify(kh1[0] ?? null)}`)
+  // 09/10 (20261009b): cờ in_khvc của dòng ZSD02 do trigger giữ — OD lên Kế hoạch xuất ⇒ true, OD còn chờ (xe HA) ⇒ false; pool đọc theo cờ
+  const flag = await restAll('erp_outbound_orders', `select=od_number,in_khvc&od_number=in.(${OD[0]},${OD[1]},${OD[2]})`)
+  const flagOf = (od) => [...new Set(flag.filter(r => r.od_number === od).map(r => r.in_khvc))]
+  check('3b2. Cờ in_khvc (trigger): OD1/OD2 đã vào Kế hoạch xuất = true · OD3 (xe chờ HA) = false',
+    JSON.stringify(flagOf(OD[0])) === '[true]' && JSON.stringify(flagOf(OD[1])) === '[true]' && JSON.stringify(flagOf(OD[2])) === '[false]',
+    `OD1=${flagOf(OD[0])} OD2=${flagOf(OD[1])} OD3=${flagOf(OD[2])}`)
   check('3c. Chuyến bên Xuất kho sinh cho xe 1 (dội từ Kế hoạch xuất) mang vehicle_model_id + ĐVVT + ngày giao', !!gdo1 && gdo1.vehicle_model_id === vmId && gdo1.dvvt === DA.name && gdo1.delivery_date === DAY, `gdo=${JSON.stringify(gdo1 ?? null)} replan_err=${cf.j?.data?.replan_error ?? ''}`)
   // 08/10 — THỨ TỰ GIAO (user: "in thứ tự giao lên Kế hoạch xuất / chuyến xuất kho"): kho → NPP 1 (gần) → NPP 2; Kế hoạch xuất mang số
   // điểm của từng DO, chuyến Xuất kho mang số điểm của từng đơn (1 NPP) — dội qua đường Kế hoạch xuất → chuyến

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-09T12:25:31.200Z · 115 bảng/view · 186 hàm · 0 enum
+// Sinh lúc 2026-10-09T13:52:02.390Z · 115 bảng/view · 188 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3754,6 +3754,7 @@ export type Database = {
           customer_ref: string | null
           replaced_by_od: string | null
           replaced_at: string | null
+          in_khvc: boolean
         }
         Insert: {
           id: string
@@ -3816,6 +3817,7 @@ export type Database = {
           customer_ref?: string | null
           replaced_by_od?: string | null
           replaced_at?: string | null
+          in_khvc?: boolean
         }
         Update: {
           id?: string
@@ -3878,6 +3880,7 @@ export type Database = {
           customer_ref?: string | null
           replaced_by_od?: string | null
           replaced_at?: string | null
+          in_khvc?: boolean
         }
         Relationships: []
       }
@@ -6265,6 +6268,14 @@ export type Database = {
       dispatch_stock_conditions: {
         Args: { p_warehouse_id: string | null; p_material_codes: unknown | null }
         Returns: Json
+      }
+      erp_in_khvc_mismatch: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
+      erp_in_khvc_of: {
+        Args: { p_od: string | null }
+        Returns: boolean
       }
       erp_so_lines_summary: {
         Args: { p_from: string | null; p_to: string | null; p_plants?: unknown | null; p_status?: unknown | null; p_flows?: unknown | null; p_q?: string | null }

@@ -23,7 +23,7 @@ import { db } from '../../lib/supabase'
 import { haversineKm, geoProviderStatus, GeoNotConfigured } from '../../services/geo'
 import { distancesFor, unmeasured, measurePairs, whKey, custKey } from '../../services/geoDistance'
 import { ok, fail, type PgLikeError } from '../../utils/response'
-import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout } from '../../utils/pagination'
 import { utcMs } from '../../utils/dates'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
 import { normDvvt } from '../../utils/sapUnits'
@@ -69,7 +69,10 @@ const uniq = <T,>(a: T[]) => [...new Set(a)]
 const numOrNull = (v: unknown): number | null => { const n = Number(v); return v == null || !Number.isFinite(n) ? null : n }
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json
 /** Ném NGUYÊN đối tượng lỗi PostgREST (giữ code 22P02/23505…) để fail() dịch thành 400/409 — bậc fast 24/09 bắt id rác trên :id ra 500 vì bản cũ ném new Error(message). */
-const failAny = (res: Response, e: unknown) => (e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e), 500))
+// 09/10: câu 503 chung "thu hẹp KHOẢNG NGÀY hoặc chọn 1 Kho" sai với bàn điều vận (đã là một kho × một ngày) — nói đúng việc phải làm
+const failAny = (res: Response, e: unknown) => isQueryTimeout(e)
+  ? fail(res, 503, 'QUERY_TIMEOUT', 'Hệ thống đang bận, chưa đọc xong pool đơn của kho — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).')
+  : (e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e), 500))
 
 // ── Phạm vi kho ────────────────────────────────────────────────────────────────────────────────────────
 function scopeWhIds(req: Request): string[] | null {

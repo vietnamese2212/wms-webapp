@@ -171,7 +171,7 @@ User chốt 08/10 (sau nghiên cứu + mô phỏng `docs/plans/DISPATCH_CORRIDOR
 - Phường thiếu cước ⇒ cảnh báo "Chưa có cước phường … — cước đang tính theo phường còn lại" (trước đó lặng lẽ lấy phường còn cước).
 
 **Thứ tự giao:**
-- `routeOf` (kho → điểm gần trước, km Goong / ước lượng) ghi vào `dispatch_trip.detail.route`. Nguồn gọi: máy ghép, và `computeTripPatch` khi người sửa xe (`repriceMany` nạp `engineGeo`). Không có toạ độ thì giữ thứ tự cũ nếu tập điểm không đổi.
+- `routeOf` (kho → các điểm theo thứ tự NGẮN NHẤT — 09/10 user chốt: ≤ 6 điểm thử hết hoán vị, hơn thì gần trước; `EXACT_ROUTE_MAX_STOPS` ở `utils/geoMath.ts`, test `geo.test.ts`; km Goong / ước lượng) ghi vào `dispatch_trip.detail.route`. Cùng hàm quyết `detourOk` nên máy bớt từ chối oan chuyến ghép khác tỉnh. Nguồn gọi: máy ghép, và `computeTripPatch` khi người sửa xe (`repriceMany` nạp `engineGeo`). Không có toạ độ thì giữ thứ tự cũ nếu tập điểm không đổi.
 - Lúc Xác nhận ⇒ `khvc_lines.stop_seq` của từng DO. Đường dội Kế hoạch xuất → chuyến ⇒ `OutboundDelivery.stop_seq` = số nhỏ nhất của các DO thuộc NPP (`stopSeqOf`). Migration `20261008b_stop_seq`.
 - Màn hình:
   - Bàn ghép xe (Bảng: chip "Tuyến" + vùng theo thứ tự + km; đơn mang "Đn"; Thẻ: dòng "Thứ tự").

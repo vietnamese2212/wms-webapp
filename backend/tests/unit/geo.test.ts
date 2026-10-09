@@ -18,6 +18,22 @@ describe('geo — đường vòng (routeKm / detourOk) cho gộp xe khác tỉnh
     expect(detourOk(r, 15)).toBe(false)
     expect(detourOk(r, 200)).toBe(true)
   })
+  // 09/10 (user chốt "có sửa"): láng giềng gần nhất đi A (3) → B (5) → C (10,77) = 18,77 trong khi B (4) → A (5) → C (7) = 16.
+  // Ở ngưỡng 70 % bản cũ từ chối oan (18,77 > 10 × 1,7 = 17), bản thử hết hoán vị nhận (16 ≤ 17).
+  const km2: Record<string, number> = { 'WH|A': 3, 'WH|B': 4, 'WH|C': 10, 'A|B': 5, 'A|C': 7, 'B|C': 10.77 }
+  const dist2 = (a: string, b: string) => kmLookup(km2, a, b)
+  it('≤ 6 điểm: thứ tự NGẮN NHẤT (thử hết hoán vị), không phải gần-trước — B→A→C = 16 thay vì A→B→C = 18,77', () => {
+    const r = routeKm(['A', 'B', 'C'], dist2)!
+    expect(r).toEqual({ total: 16, farthest: 10, order: ['B', 'A', 'C'] })
+    expect(detourOk(r, 70)).toBe(true)
+  })
+  it('> 6 điểm: về láng giềng gần nhất, vẫn ra đủ điểm và tổng dương; thiếu km giữa hai điểm ⇒ null', () => {
+    const pts = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7']
+    const grid = (a: string, b: string) => (a === b ? 0 : Math.abs((a === 'WH' ? 0 : Number(a.slice(1))) - (b === 'WH' ? 0 : Number(b.slice(1)))))
+    const r = routeKm(pts, grid)!
+    expect(r.order).toEqual(pts); expect(r.total).toBe(7); expect(r.farthest).toBe(7)
+    expect(routeKm(['A', 'B'], (a, b) => (a === 'WH' || b === 'WH' ? 1 : undefined))).toBeNull()
+  })
   it('thiếu km một cặp ⇒ null ⇒ KHÔNG gộp (không đoán); không điểm ⇒ null', () => {
     expect(routeKm(['A', 'X'], dist)).toBeNull()
     expect(detourOk(null, 15)).toBe(false)

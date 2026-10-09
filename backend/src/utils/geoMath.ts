@@ -19,20 +19,44 @@ export function kmLookup(km: Record<string, number>, a: string, b: string): numb
 }
 
 export interface RouteKm { total: number; farthest: number; order: string[] }
+/** Tới cỡ này thử HẾT hoán vị (6! = 720 — một xe hiếm khi quá 6 khách); đông hơn thì láng giềng gần nhất. */
+export const EXACT_ROUTE_MAX_STOPS = 6
 /**
- * Quãng đường kho → các điểm giao theo thứ tự GẦN TRƯỚC (láng giềng gần nhất, không quay về kho) và đường thẳng tới điểm xa nhất.
+ * Quãng đường kho → các điểm giao theo thứ tự NGẮN NHẤT (không quay về kho) và đường thẳng tới điểm xa nhất.
+ * 09/10 (user chốt): ≤ 6 điểm thử hết hoán vị — láng giềng gần nhất từng từ chối oan chuyến ghép tốt (Ba Vì → A gần
+ * 3 km rồi mới B 4 km ngược hướng dài hơn B → A → C); > 6 điểm giữ láng giềng gần nhất.
  * `dist(a, b)` = km giữa hai khoá ('WH' | ship_to). Trả null khi thiếu km của một cặp — không đoán.
  */
 export function routeKm(stops: string[], dist: (a: string, b: string) => number | undefined): RouteKm | null {
-  const left = [...new Set(stops)]
-  if (!left.length) return null
-  let at = 'WH', total = 0, farthest = 0
-  const order: string[] = []
-  for (const s of left) { const d = dist('WH', s); if (d == null) return null; farthest = Math.max(farthest, d) }
-  while (left.length) {
-    let best = -1, bestD = Infinity
-    for (let i = 0; i < left.length; i++) { const d = dist(at, left[i]); if (d == null) return null; if (d < bestD) { bestD = d; best = i } }
-    total += bestD; at = left[best]; order.push(at); left.splice(best, 1)
+  const pts = [...new Set(stops)]
+  if (!pts.length) return null
+  let farthest = 0
+  for (const s of pts) { const d = dist('WH', s); if (d == null) return null; farthest = Math.max(farthest, d) }
+  // bảng km đủ mọi cặp — thiếu một cặp là null (cả hai thuật toán đều cần)
+  const d2 = new Map<string, number>()
+  const nodes = ['WH', ...pts]
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+    const d = dist(nodes[i], nodes[j]); if (d == null) return null
+    d2.set(`${nodes[i]}|${nodes[j]}`, d); d2.set(`${nodes[j]}|${nodes[i]}`, d)
+  }
+  const km = (a: string, b: string) => d2.get(`${a}|${b}`)!
+  let order: string[], total: number
+  if (pts.length <= EXACT_ROUTE_MAX_STOPS) {
+    let best: string[] = [], bestT = Infinity
+    const walk = (at: string, left: string[], path: string[], t: number) => {
+      if (t >= bestT) return
+      if (!left.length) { best = path; bestT = t; return }
+      for (let i = 0; i < left.length; i++) walk(left[i], [...left.slice(0, i), ...left.slice(i + 1)], [...path, left[i]], t + km(at, left[i]))
+    }
+    walk('WH', pts, [], 0)
+    order = best; total = bestT
+  } else {
+    const left = [...pts]; let at = 'WH'; total = 0; order = []
+    while (left.length) {
+      let bi = 0
+      for (let i = 1; i < left.length; i++) if (km(at, left[i]) < km(at, left[bi])) bi = i
+      total += km(at, left[bi]); at = left[bi]; order.push(at); left.splice(bi, 1)
+    }
   }
   return { total: Number(total.toFixed(2)), farthest: Number(farthest.toFixed(2)), order }
 }

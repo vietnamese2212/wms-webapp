@@ -2162,16 +2162,15 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
   // Ghi kế hoạch nhập KHÔNG được nuốt lỗi (29/09, gói 28 [12c]): bản cũ bỏ qua 23505 của khoá (ngày, kho, NCC, mã) ⇒ lệnh
   // chuyển kho thứ hai cùng mã / cùng kho nhận / cùng ngày im lặng KHÔNG có dòng, kho nhận thấy lệnh mà không thấy hàng.
   // Khoá đã nới theo lệnh (20260929b); còn lỗi gì khác thì ghi error_logs + trả `lines_error` cho cửa gọi nói ra.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: linesErr } = await supabase.from('inbound_plan_lines').insert(lineRows)
+  // 09/10 (C5 lặp lần 3, gói 28 [3]): "chèn mới rồi xoá cũ" bằng HAI request đụng chính khoá đó khi hoàn thành lại TRONG
+  // NGÀY (cùng ngày · kho · mã · lệnh) ⇒ chèn hỏng, dòng cũ ở lại, kho nhận thấy SỐ CŨ dù kho xuất đã sửa đơn — 8 dòng
+  // error_logs 07–09/10 gắn đuôi _RACE oan. Nay xoá cũ + chèn mới trong MỘT giao dịch (RPC 20261009a): hỏng là lăn về
+  // nguyên trạng (dòng cũ còn nguyên — đúng mục đích của thứ tự 29/09 ở trên), không đụng khoá, 2 request còn 1.
+  const { error: linesErr } = await db.rpc('transfer_plan_lines_replace', { p_order_id: orderId, p_rows: lineRows } as never)
   const linesError = linesErr ? `Kế hoạch nhập của lệnh ${orderCode} không ghi được: ${linesErr.message}` : null
   if (linesErr) recordBackgroundFailure(linesError!, 'TRANSFER_PLAN_LINES_FAILED', 'outbound.maybeAutoCreateTransferOrder', linesErr)
 
   if (!linesErr) {
-    // Kế hoạch nhập làm lại theo số MỚI (chưa ai nhận — Bỏ HT bị chặn từ RECEIVING trở đi). Dọn dòng CŨ lọc theo
-    // MỐC chứ không theo danh sách id: id đi trên URL, nhiều mã hàng là vượt trần ~300 id của PostgREST.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (existing) await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', orderId).lt('created_at', nowTs)
     // SYNC: đích/mã/hình thức có thể đổi sau khi sửa đơn — cập nhật TẠI CHỖ, giữ booking + lịch sử.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await supabase.from('TmsOrder').update({

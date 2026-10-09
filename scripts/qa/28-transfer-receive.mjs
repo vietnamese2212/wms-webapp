@@ -153,12 +153,31 @@ try {
     const u = await api(`/wms/outbound/${created.gdo}/uncomplete`, 'POST')
     const afterUn = await transferOf()
     const g1 = await gdoRow()
+    // 09/10 (C5 lặp lần 3): kho xuất SỬA SỐ sau khi bỏ hoàn thành rồi hoàn thành lại TRONG NGÀY — bản cũ chèn dòng mới
+    // TRƯỚC khi xoá dòng cũ nên đụng khoá (ngày, kho, NCC, mã, lệnh) ⇒ chèn hỏng, kho nhận giữ SỐ CŨ; [3] chỉ đếm lệnh nên
+    // xanh suông từ 29/09 (8 dòng error_logs _RACE 07–09/10). Nay đo thẳng DÒNG kế hoạch nhập.
+    const QTY2 = QTY + 10
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${created.item}`, { cartons_ordered: QTY2, cartons_scanned: QTY2, updated_at: nowIso() })
     const r = await api(`/wms/outbound/${created.gdo}`, 'PATCH', { status: 'COMPLETED' })
     const afterRe = await transferOf()
+    const linesOf = async (id) => id ? restAll('inbound_plan_lines', `select=planned_boxes&tms_order_id=eq.${id}&status=neq.CANCELLED`) : []
+    const lines2 = await linesOf(afterRe[0]?.id)
     check('[3] Bỏ hoàn thành: lệnh + booking GIỮ NGUYÊN (phương án A); hoàn thành lại → vẫn đúng 1 lệnh (SYNC, không sinh trùng)',
       u.s === 200 && afterUn.length === 1 && g1?.transfer_status === 'IN_TRANSIT'
       && r.s === 200 && afterRe.length === 1,
       `un=${u.s} giữ=${afterUn.length} re=${r.s} sau=${afterRe.length}`)
+    check('[3b] Sửa SL rồi hoàn thành lại TRONG NGÀY ⇒ kế hoạch nhập của lệnh THAY bằng số mới (đúng 1 dòng, planned = SL mới) — không đụng khoá, không giữ số cũ',
+      lines2.length === 1 && Number(lines2[0]?.planned_boxes) === QTY2,
+      `dòng=${lines2.length} planned=${lines2[0]?.planned_boxes ?? '—'} (mong ${QTY2})`)
+    // Trả SL gốc (các phép sau giữ oracle QTY) — đồng bộ lần 3 trong ngày cũng phải đúng
+    const u2 = await api(`/wms/outbound/${created.gdo}/uncomplete`, 'POST')
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${created.item}`, { cartons_ordered: QTY, cartons_scanned: QTY, updated_at: nowIso() })
+    const r2 = await api(`/wms/outbound/${created.gdo}`, 'PATCH', { status: 'COMPLETED' })
+    const after3 = await transferOf()
+    const lines3 = await linesOf(after3[0]?.id)
+    check('[3c] Sửa về SL gốc rồi hoàn thành lần 3 ⇒ vẫn 1 lệnh · 1 dòng · planned = SL gốc (đồng bộ lặp trong ngày)',
+      u2.s === 200 && r2.s === 200 && after3.length === 1 && lines3.length === 1 && Number(lines3[0]?.planned_boxes) === QTY,
+      `un=${u2.s} re=${r2.s} lệnh=${after3.length} dòng=${lines3.length} planned=${lines3[0]?.planned_boxes ?? '—'}`)
   }
 
   const [ord] = await transferOf()

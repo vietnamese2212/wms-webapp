@@ -1721,9 +1721,11 @@ async function pulledAwayHeld(plan: { id: string; warehouse_id: string; params: 
 // GET /tms/dispatch/plans/:id/sync — cờ sống của OD trong kế hoạch + số OD MỚI (ZSD02 vừa nạp) chưa có trong kế hoạch
 export async function planSync(req: Request, res: Response) {
   try {
+    step(res, 'đọc kế hoạch')
     let full = await readPlan(String(req.params.id))
     if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    step(res, 'tự chữa xe ↔ Kế hoạch xuất (RPC dispatch_trip_khvc_heal)')
     // TỰ CHỮA xe ↔ Kế hoạch xuất (11/10, RPC 20261011a): xe nháp mà Số xe đã có dòng Kế hoạch xuất ⇒ CONFIRMED (đua Xác nhận ∥ kéo OD
     // của bản cũ, hoặc bất kỳ đường nào về sau); xe CONFIRMED hết dòng (Số xe bị xoá ở tab Kế hoạch xuất) ⇒ về NHÁP. Bàn hỏi /sync
     // mỗi 120 s và sau mỗi lần đổi đầu vào ⇒ người dùng thấy đúng trạng thái mà không cần ai tay sửa DB.
@@ -1742,6 +1744,8 @@ export async function planSync(req: Request, res: Response) {
     const wh = await loadWarehouse(full.warehouse_id)
     // OD MỚI đếm trong SQL (RPC dispatch_new_ods, 03/10 — quota egress): bản cũ loadCandidates(countOnly) kéo cả ZSD02
     // ZSD02 của plant (Ba Vì 9.094 dòng = 4 MB) về backend mỗi 120 s cho MỖI bàn đang mở, chỉ để lọc ra vài số OD.
+    // Ba câu chạy song song ⇒ 503 ghi tên cả cụm; câu nặng duy nhất đo được là dispatch_new_ods (11/10: 6,8 s trước chỉ mục phủ 20261011b).
+    step(res, 'cờ sống của OD + đếm OD mới (RPC dispatch_new_ods)')
     const [flags, freshRaw, pulled] = await Promise.all([
       odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh)),
       wh?.sap_plant
@@ -2117,12 +2121,15 @@ async function reopenPlanInner(req: Request, res: Response) {
     // MỘT giao dịch (11/10, RPC 20261011a): xoá dòng Kế hoạch xuất + xe về NHÁP. Bản cũ xoá dòng → dội chuyến → đổi trạng thái xe bằng
     // ba request rời: hỏng giữa chừng (một lần 409 trùng khoá khi chạy thử) để lại xe CONFIRMED không còn dòng, chuyến đã ngừng.
     // Dội chuyến (replanKhvcGroups) chạy SAU và lặp lại được; hỏng thì trả replan_error như trước, cửa /sync không còn gì để chữa.
-    let delRows: { group_code: string; do_no: string }[] = []
-    if (open.length) {
-      step(res, 'xoá dòng Kế hoạch xuất + xe về nháp (RPC dispatch_reopen_trips)')
-      const { data: rr, error: rErr } = await db.rpc('dispatch_reopen_trips', { p_trip_ids: open.map(t => t.id) })
+    // RPC theo LÔ 60 xe (11/10: Mở lại 150 xe/lô, lô đầu 503 quá hạn — câu xoá ~460 dòng Kế hoạch xuất lật ~3.400 dòng ZSD02 rộng 1,7 KB
+    // qua trigger cờ in_khvc; trigger nay chạy theo lô (20261011c: 2,1 s → 0,8 s) nhưng cache nguội vẫn có thể chạm trần 8 s của MỘT câu).
+    // Mỗi lô vẫn một giao dịch cho từng xe trong lô; lô sau hỏng thì xe lô trước đã về nháp đúng, bấm lại chỉ còn xe CONFIRMED.
+    const delRows: { group_code: string; do_no: string }[] = []
+    for (let i = 0; i < open.length; i += 60) {
+      step(res, `xoá dòng Kế hoạch xuất + xe về nháp (RPC dispatch_reopen_trips, lô ${Math.floor(i / 60) + 1}/${Math.ceil(open.length / 60)})`)
+      const { data: rr, error: rErr } = await db.rpc('dispatch_reopen_trips', { p_trip_ids: open.slice(i, i + 60).map(t => t.id) })
       if (rErr) throw rErr
-      delRows = ((rr ?? {}) as { lines?: { group_code: string; do_no: string }[] }).lines ?? []
+      delRows.push(...(((rr ?? {}) as { lines?: { group_code: string; do_no: string }[] }).lines ?? []))
     }
     const actor = actorOf(req)
     await logOutboundEvents(delRows.map(l => ({ group_code: l.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor, do_number: l.do_no,
@@ -2149,7 +2156,7 @@ async function discardPlanInner(req: Request, res: Response) {
     const { data: dropped, error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: t }).eq('plan_id', plan.id).neq('status', 'CONFIRMED').select('id')
     if (tErr) throw tErr
     // DỌN DÒNG OD của nháp bị bỏ (11/10): khung chờ (Chờ điều + khung chờ kế hoạch) + dòng của xe vừa bỏ — Ba Vì mỗi nháp mang ~3.500 dòng
-    // Chờ điều, bỏ 6 nháp là 25.850 dòng nằm chết trong dispatch_trip_od (câu đếm đơn mới quét qua). Xe CONFIRMED giữ dòng (lịch sử).
+    // Chờ điều; đo 11/10: 18.694 dòng của 23 nháp đã bỏ nằm chết trong dispatch_trip_od (câu đếm đơn mới quét qua). Xe CONFIRMED giữ dòng (lịch sử).
     const { error: poolErr } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null)
     if (poolErr) throw poolErr
     const droppedIds = (dropped ?? []).map(d => d.id)

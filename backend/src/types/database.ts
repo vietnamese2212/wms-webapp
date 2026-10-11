@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-11T03:24:31.971Z · 115 bảng/view · 191 hàm · 0 enum
+// Sinh lúc 2026-10-11T08:05:00.519Z · 115 bảng/view · 192 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -6637,6 +6637,10 @@ export type Database = {
         Args: { p_qa_status_id: string | null }
         Returns: boolean
       }
+      qa_row_triggers_with_writes: {
+        Args: Record<PropertyKey, never>
+        Returns: unknown
+      }
       qty_entry_decimal: {
         Args: { p_qty: number | null; p_entry_unit: string | null; p_upc: number | null }
         Returns: number
@@ -6770,7 +6774,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

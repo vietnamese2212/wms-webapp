@@ -231,7 +231,25 @@ Lỗi thấy và đã sửa (cùng commit):
   Kế hoạch xuất mà 0/149 chuyến sinh ("File có 10 chuyến xe lỗi", không nêu xe). Nay `tripGuards` chặn 403 `CATEGORY_OUT_OF_SCOPE` nêu xe +
   loại TRƯỚC khi ghi; `derive_message` nêu 3 xe lỗi đầu + lý do.
 - **Bỏ nháp sau khi Mở lại hết ⇒ kế hoạch thành "Chờ ĐVVT" 0 xe** (băng "nháp quá ngày" sống mãi): bỏ nháp không còn xe sống ⇒ DISCARDED;
-  dọn dòng OD của khung chờ + xe bị bỏ (6 nháp bỏ đi = 25.850 dòng nằm chết, câu đếm đơn mới quét qua).
+  dọn dòng OD của khung chờ + xe bị bỏ (đo 11/10: 18.694 dòng của 23 nháp đã bỏ nằm chết trong `dispatch_trip_od`, câu đếm đơn mới quét qua;
+  dọn tay một lần tối 11/10 — 15.263 → 121 dòng).
 - **/sync 503 lặp**: chỉ mục phủ 20261011b (`dispatch_new_ods` 3,77 s → 0,55 s).
-Còn mở: Mở lại lô 150 xe một lần 503 (câu nào quá hạn chưa truy được — 503 không ghi câu); chuyến bị Mở lại nằm lại dạng "ngừng hoạt động"
-(149 chuyến 12/10 Ba Vì sau lượt thử); 49/157 xe một đơn đều là XE ĐẦY (≥ 70 %, đa số 97–100 %: 28 cont xuất khẩu 28–34 pallet, các OD 16–17 pallet) — không phải do cấu hình kênh; chip "Khai thiếu: MT" chỉ nói các dòng Chung/RM01/PK01 của kênh MT còn "1 (chưa khai)".
+49/157 xe một đơn đều là XE ĐẦY (≥ 70 %, đa số 97–100 %: 28 cont xuất khẩu 28–34 pallet, các OD 16–17 pallet) — không phải do cấu hình kênh;
+chip "Khai thiếu: MT" chỉ nói các dòng Chung/RM01/PK01 của kênh MT còn "1 (chưa khai)". Chuyến bị Mở lại nằm lại dạng "ngừng hoạt động" là
+luật 03/08 (giữ để tra cứu), lượt thử đã dọn tay.
+
+## 11/10 tối — "Mở lại" 150 xe 503 quá hạn: truy ra câu nào, và 503 nay nêu TÊN BƯỚC (lớp C79)
+
+503 `QUERY_TIMEOUT` chỉ nói "quá hạn", `pg_stat_statements` không ghi câu bị huỷ ⇒ truy bằng cách đo lại từng câu của cửa Mở lại trên dữ
+liệu thật (BEGIN … EXPLAIN ANALYZE … ROLLBACK, 150 Số xe × ~3 OD = 460 dòng Kế hoạch xuất). Thủ phạm: trigger `trg_khvc_sync_erp_in_khvc`
+(cờ `in_khvc`, 20261009b) chạy TỪNG DÒNG — xoá 460 dòng (đúng câu trong RPC `dispatch_reopen_trips`) = 460 câu `UPDATE erp_outbound_orders`
++ 460 lần `realtime.send` = 2,1 s ấm; ghi 460 dòng lúc Xác nhận = 2,7 s. Cache nguội + I/O NANO là chạm trần 8 s của MỘT câu. Bằng chứng
+phụ: `pg_stat_statements` ghi RPC Mở lại tối đa 4,6 s (15 lần, trung bình 1,7 s) trong các lần KHÔNG bị huỷ; 819 chuyến 04/10 đều
+`plan_dropped` và 0 dòng Kế hoạch xuất ⇒ lô 503 đã lùi trọn (RPC một giao dịch), không để lại nửa trạng thái.
+Sửa: (1) migration 20261011c — trigger theo LÔ (FOR EACH STATEMENT + bảng chuyển tiếp, một `UPDATE … FROM unnest(ods)`): xoá 786 ms ·
+ghi 1.810 ms · đổi sync_status 22 ms · đổi DO 18 ms, `erp_in_khvc_mismatch` = 0 sau mỗi đường; phần còn lại là chi phí thật lật ~3.400
+dòng ZSD02 rộng 1,7 KB (7 dòng/OD) + 9 chỉ mục. (2) RPC Mở lại chia lô 60 xe (mỗi lô vẫn một giao dịch cho từng xe). (3) `step(res, …)`
+ở Xác nhận / Mở lại / /sync: 503 ghi `error_logs` mã `QUERY_TIMEOUT_STEP` kèm tên bước và câu báo người dùng có "(dừng ở bước: …)".
+(4) gói 00 mục 14d (`qa_row_triggers_with_writes`, 20261011d): trigger từng dòng ghi bảng khác mọc thêm ngoài danh sách đã khai là đỏ.
+Về /sync 503 (12:05–12:14): ba câu chạy song song, câu duy nhất từng đo gần trần là `dispatch_new_ods` (`pg_stat_statements` tối đa
+6,8 s trước chỉ mục phủ 20261011b; sau: 0,55 s); 503 nay cũng ghi tên bước.

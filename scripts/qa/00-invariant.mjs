@@ -381,6 +381,29 @@ if (process.env.QA_TIER === 'full') {
     n == null ? 'RPC dispatch_trip_khvc_mismatch chưa apply (migration 20261011a)' : `lệch=${n}`)
 }
 
+// 14d. TRIGGER TỪNG DÒNG GHI BẢNG KHÁC KHÔNG ĐƯỢC MỌC THÊM (11/10, lớp C79, migration 20261011d): trigger FOR EACH ROW mà hàm có
+//      UPDATE / INSERT / DELETE bảng khác hoặc realtime.send ⇒ một câu N dòng hoá N câu con + N lần phát realtime. Đo 11/10: xoá 460
+//      dòng Kế hoạch xuất (Mở lại 150 xe) = 2,1 s chỉ vì trigger cờ in_khvc chạy từng dòng — lô đầu 503 quá hạn. Bản theo lô (bảng
+//      chuyển tiếp) 0,8 s. Trigger mới thuộc dạng này ⇒ cân nhắc bản theo lô, hoặc khai vào danh sách dưới KÈM lý do.
+{
+  const KNOWN = [
+    'DeliverySlot :: trg_wms_notify',             // realtime từng dòng CÓ CHỦ Ý: payload mang booked_count của đúng khung giờ
+    'InventoryEntry :: trg_wms_replan_enqueue',   // hàng đợi sắp lại (upsert một dòng/kho-ngày, rẻ) — chưa đo thành vấn đề
+    'OutboundItem :: trg_outbound_qty_reduced',   // sổ "cắt kế hoạch" — chỉ nổ khi cartons_ordered GIẢM, không phải ghi lô
+    'ProductionImport :: trg_wms_notify',         // realtime từng dòng có chủ ý (row_id)
+    'dispatch_od_hold :: trg_dispatch_od_hold_leave_pools',
+    'dispatch_od_outside :: trg_dispatch_od_outside_leave_pools',   // dấu tay: vài dòng một lần
+    'user_notifications :: trg_wms_notify',       // realtime theo người nhận (topic riêng) — bắt buộc từng dòng
+  ]
+  let rows = null
+  try { rows = await restRpc('qa_row_triggers_with_writes') } catch { /* chưa apply migration → báo dưới */ }
+  const extra = Array.isArray(rows) ? rows.filter(r => !KNOWN.includes(r)) : []
+  check('Không trigger TỪNG DÒNG ghi bảng khác nào mới (ngoài danh sách đã khai)',
+    Array.isArray(rows) && extra.length === 0,
+    Array.isArray(rows) ? (extra.length ? `MỚI: ${extra.join(' · ')} — chuyển sang FOR EACH STATEMENT + bảng chuyển tiếp (mẫu 20261011c) hoặc khai KNOWN kèm lý do` : `${rows.length} trigger đã khai`)
+      : 'RPC qa_row_triggers_with_writes chưa apply (migration 20261011d)')
+}
+
 // 15. CHI PHÍ CHUNG KHÔNG ĐƯỢC CHẢY VÀO Ô TỔNG KHI ĐANG LỌC 1 KHO (chốt 27/08).
 //     Gốc: check-app dựng vai kế toán chỉ được gán Kho Ba Vì thì trang Chi phí kho hiện
 //     1.063.200.000 (sổ CẮT dòng chi phí chung) còn tab Năng suất hiện 1.304.200.000 (cộng TRỌN

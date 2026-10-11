@@ -196,3 +196,26 @@ User chốt 08/10 (sau nghiên cứu + mô phỏng `docs/plans/DISPATCH_CORRIDOR
 - gói 61 [3e] (thứ tự giao Kế hoạch xuất + chuyến);
 - [16a] `summary.overload` theo trần dải.
 **08/10 — SAP đổi khách giao (lớp C72):** nháp: cờ `CHANGED` ("SAP đã sửa") của `odFlags` so thêm ship-to chụp trên dòng OD với ZSD02 hiện tại (chỉ khi SAP mang đúng một ship-to) ⇒ Xác nhận 409 `OD_CHANGED_IN_SAP` tới khi bấm "Cập nhật theo SAP" (chụp lại — khách mới, xe tính lại tải + cước + thứ tự giao). Đã xác nhận: hàng chờ Cần xử lý (RPC `dispatch_decisions`, migration `20261008i`) có loại `SHIPTO` "SAP đổi khách", xử ở Dữ liệu bên ngoài → Cần xử lý (xem external_do_sap.md).
+
+## 11/10 — MỌI cửa ghi của kế hoạch THUÊ kế hoạch · xe ↔ Kế hoạch xuất tự chữa · xe trống bị bỏ lúc Xác nhận (lớp C77)
+
+Chạy thử 11/10 trên kho QA61WH (memory `dispatch-probe-2026-10-11`, probe `probe_1110*.mjs`): "Xác nhận" và "kéo OD" bắn cùng lúc ⇒ cả hai
+200, bàn nói OD ở xe 2 còn `khvc_lines` + chuyến Xuất kho nói xe 1 (3/3 lần ở trễ 0 ms); trễ 250 ms thì xe về NHÁP dù Kế hoạch xuất
+đã có dòng vì `computeTripPatch` chép lại `status` đọc trước khi Xác nhận. Thuê kế hoạch (27/09) mới chỉ bọc cửa dựng lại dòng OD.
+
+- **Thuê kế hoạch cho MỌI cửa ghi** (`leasedRun`): `/plans/:id/*` (confirm · reopen · discard · move · params · reoptimize · refresh-pool ·
+  replace-od · resync-od · hold · outside · pull-od · confirm-supplement) qua `withPlanLease`; `/trips/:id/*` (settle · respond · PATCH ·
+  DELETE · move-od) qua `withTripPlanLease` (tra `plan_id` của xe rồi thuê). Người sau 409 `PLAN_BUSY`; bàn tự tải lại ở "Tạo kế hoạch".
+  **Thêm cửa ghi mới cho kế hoạch ⇒ hỏi "đã qua withPlanLease / withTripPlanLease chưa?"**
+- `computeTripPatch` KHÔNG ghi `status`; DECLINED → DRAFT bằng UPDATE có điều kiện trong `repriceTrip`.
+- **Rào DB** `trg_dispatch_od_trip_frozen` (20261011a): đổi `trip_id` của dòng OD khi xe nguồn / đích đã CONFIRMED ⇒ `TRIP_NOT_EDITABLE`
+  (xe TENDERED vẫn cho — "Thay bằng OD mới" / "Cập nhật theo SAP" làm trên xe chờ). Không phụ thuộc đường code.
+- **Mở lại trong MỘT giao dịch** (RPC `dispatch_reopen_trips`): xoá dòng Kế hoạch xuất + xe về NHÁP; dội chuyến chạy sau, lặp lại được.
+- **Tự chữa ở `GET /sync`** (RPC `dispatch_trip_khvc_heal`): xe nháp mà Số xe có dòng Kế hoạch xuất ⇒ CONFIRMED; xe CONFIRMED hết dòng
+  (Số xe bị xoá ở tab Kế hoạch xuất) ⇒ NHÁP; trả `healed` ⇒ FE tải lại kế hoạch. Bất biến gói 00 mục 14c (`dispatch_trip_khvc_mismatch`).
+- **Xe trống bị bỏ lúc Xác nhận** (`discarded_empty`): bàn giữ xe hết OD để Hoàn tác, nhưng để lại tới Xác nhận thì kế hoạch thành "Chờ ĐVVT"
+  với 0 xe chờ. Hộp thoại Xác nhận nêu "Xe trống sẽ bị bỏ".
+- **23505 không mang tiền tố rào ở cửa điều vận ghi `error_logs`** (409 `UNIQUE_VIOLATION` kèm `details`): chạy thử gặp một lần ở Mở lại cũ,
+  không truy được vì 409 không ghi.
+- FE: "Tạo kế hoạch" gặp `NOT_IN_POOL` / `PLAN_BUSY` ⇒ tải lại bảng + nói đơn nào vừa đổi, không bắt F5.
+- Gói 61 [20a] đua Xác nhận ∥ kéo (đỏ trên bản cũ: cả hai 200, bàn lệch) · [20b] rào DB · [20c] xe trống.

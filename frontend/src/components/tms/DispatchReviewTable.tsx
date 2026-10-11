@@ -13,6 +13,7 @@
 // chưa mốc); tick → "Tạo kế hoạch dd/mm" (lần sau: "Thêm N đơn vào kế hoạch") = đúng các đơn đó vào kế hoạch + máy ghép thành xe mới.
 // Tab "Trong kế hoạch dd/mm" = đơn đã vào (trên xe nháp / khung chờ của kế hoạch), tick → "Trả về Chờ điều". Ranh giới: `inPlanRow`.
 import { useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
 import { CalendarClock, Ban, CheckCircle2, StickyNote, Sparkles, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -152,6 +153,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   // `prog` giữ nút khoá cả khoảng hở giữa hai lô (isPending tắt một nhịp giữa hai lần gọi)
   const busy = !!prog || hold.isPending || unhold.isPending || reopt.isPending || unplan.isPending || outside.isPending || unoutside.isPending || pull.isPending || sup.isPending || take.isPending || hide.isPending
   const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
+  const qc = useQueryClient()
 
   const byTab = useMemo(() => {
     const out: Record<St, Row[]> = { GO: [], PLAN: [], ELSEWHERE: [], DAY: [], NEVER: [], OUTSIDE: [], DONE: [], ISSUE: [], HIDDEN: [] }
@@ -434,7 +436,19 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         toast({ title: `${nf(pickN)} đơn vào kế hoạch ${planDay} — ${r.reoptimized.trips} xe mới`, description: r.reoptimized.left_in_pool ? `${r.reoptimized.left_in_pool} OD chưa xếp được xe — nằm ở khung chờ của kế hoạch (Bàn ghép xe)${r.reoptimized.under_min || r.reoptimized.too_big ? `, trong đó ${[r.reoptimized.under_min ? `${r.reoptimized.under_min} dưới tải tối thiểu` : '', r.reoptimized.too_big ? `${r.reoptimized.too_big} lớn hơn xe (loại xe không ghép nhiều xe)` : ''].filter(Boolean).join(' · ')}: kéo lên xe hoặc Trả về Chờ điều` : ''}.` : 'Soát xe ở Bàn ghép xe rồi Xác nhận kế hoạch.' })
         onGrouped(r.trips.filter(t => !before.has(t.id) && t.ods.length).map(t => t.id))
       })
-      .catch(e => err(e, 'Không tạo được kế hoạch'))
+      .catch(e => {
+        // 11/10: danh sách Chờ điều vừa đổi (người khác đưa đơn vào kế hoạch) hoặc kế hoạch đang bị người khác ghi — tự tải lại bảng,
+        // không bắt người dùng F5 rồi tự đoán đơn nào đã đi
+        const code = (e as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code
+        if (code === 'NOT_IN_POOL' || code === 'PLAN_BUSY') {
+          setBandDlg(false); setSel(new Set())
+          qc.invalidateQueries({ queryKey: ['dispatch-plan', plan.id] }); qc.invalidateQueries({ queryKey: ['dispatch-review', plan.id] })
+          toast({ variant: 'destructive', title: code === 'PLAN_BUSY' ? 'Kế hoạch đang được người khác cập nhật' : 'Danh sách Chờ điều vừa đổi',
+            description: code === 'PLAN_BUSY' ? 'Đợi vài giây — bảng đã tải lại, tick lại rồi bấm Tạo kế hoạch.' : 'Có đơn vừa được người khác đưa vào kế hoạch — bảng đã tải lại, tick lại rồi bấm Tạo kế hoạch.' })
+          return
+        }
+        err(e, 'Không tạo được kế hoạch')
+      })
   }
   // TRẢ VỀ CHỜ ĐIỀU (07/10) — ngược của Tạo kế hoạch: đơn rời kế hoạch (xe tính lại), nằm lại tab Bán hàng / Trung chuyển để tick lại
   const doUnplan = async () => {

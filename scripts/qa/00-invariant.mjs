@@ -369,6 +369,18 @@ if (process.env.QA_TIER === 'full') {
     n == null ? 'RPC erp_in_khvc_mismatch chưa apply (migration 20261009b)' : `lệch=${n}`)
 }
 
+// 14c. XE TRÊN BÀN ĐIỀU VẬN PHẢI KHỚP KẾ HOẠCH XUẤT (11/10, migration 20261011a): xe CONFIRMED thì Số xe có dòng khvc_lines còn
+//      hiệu lực, xe DRAFT thì không. Chạy thử 11/10: Xác nhận ∥ kéo OD (hai cửa chưa cùng thuê kế hoạch) để lại xe NHÁP mà Kế hoạch
+//      xuất đã có dòng (hàm tính lại xe ghi đè trạng thái cũ) — bàn nói một đằng, kho xếp một nẻo. Cửa /sync nay tự chữa theo đúng
+//      thước này; bất biến đếm phần còn sót ngoài mọi bàn đang mở.
+{
+  let n = null
+  try { n = await restRpc('dispatch_trip_khvc_mismatch', { p_plan_id: null }) } catch { /* chưa apply migration → báo dưới */ }
+  check('Xe điều vận khớp Kế hoạch xuất (CONFIRMED ⇔ có dòng khvc_lines; 0 xe lệch)',
+    Number(n) === 0,
+    n == null ? 'RPC dispatch_trip_khvc_mismatch chưa apply (migration 20261011a)' : `lệch=${n}`)
+}
+
 // 15. CHI PHÍ CHUNG KHÔNG ĐƯỢC CHẢY VÀO Ô TỔNG KHI ĐANG LỌC 1 KHO (chốt 27/08).
 //     Gốc: check-app dựng vai kế toán chỉ được gán Kho Ba Vì thì trang Chi phí kho hiện
 //     1.063.200.000 (sổ CẮT dòng chi phí chung) còn tab Năng suất hiện 1.304.200.000 (cộng TRỌN

@@ -254,9 +254,12 @@ export default function Dispatch() {
       })
       return
     }
+    // xe trống (hết OD sau kéo thả, giữ để Hoàn tác) bị bỏ lúc xác nhận — nói trước, kẻo kế hoạch thành "Chờ ĐVVT" với 0 xe chờ (11/10)
+    const emptyN = open.filter(t => !t.ods.length).length
     const rows: CheckRow[] = ([
       { k: 'now', tone: 'ok', label: 'Xe vào Kế hoạch xuất ngay', value: nf(n - tenderCount) },
       { k: 'tender', tone: 'info', label: 'Xe chờ ĐVVT phản hồi', value: nf(tenderCount) },
+      { k: 'empty', tone: 'info', label: 'Xe trống sẽ bị bỏ', value: nf(emptyN) },
       { k: 'nocarrier', tone: 'warn', label: 'Xe chưa có ĐVVT', value: nf(noCarrier), go: toBoard('nocarrier') },
       { k: 'nofreight', tone: 'warn', label: 'Xe chưa có cước', value: nf(noFreight), go: toBoard('nofreight') },
       { k: 'over', tone: 'warn', label: 'Xe vượt tải', value: nf(over), go: toBoard('over') },

@@ -1946,6 +1946,64 @@ try {
       && umOds.length === 1 && um[umOds[0]]?.pct === 33.3 && um[umOds[0]]?.min === 70 && poolIn.includes(umOds[0]),
       `s=${back.s} xe=${tBack.join('+')} bands=${JSON.stringify(back.j?.data?.params?.load_bands)} under_min=${JSON.stringify(um)} khungChờKH=${poolIn.join(',')}`)
   } else check('16a. Fixture: cần Loại xe cha XEPALLET', false)
+
+  // ── [20] (11/10 — chạy thử QA61WH) ĐUA "Xác nhận" ∥ "kéo OD": hai cửa ghi cùng kế hoạch mà không cùng thuê ⇒ cả hai 200, bàn nói OD2
+  //     ở xe 2 còn Kế hoạch xuất + chuyến Xuất kho nói xe 1 (3/3 lần); trễ 250 ms thì xe về NHÁP dù Kế hoạch xuất đã có dòng (hàm tính
+  //     lại xe chép trạng thái cũ). Nay: Xác nhận / kéo / sửa xe đều thuê kế hoạch (người sau 409 PLAN_BUSY) + rào DB cấm đổi xe của
+  //     OD khi xe đã CONFIRMED + computeTripPatch không ghi status. Phép đo: trạng thái SAU đua phải KHỚP — không xem ai thắng. ──
+  {
+    await cleanupTrips()
+    // chỉ OD1–3 trong pool ([16] để OD16A–C ACTIVE và OD1–3 OBSOLETE — đảo lại cho đúng fixture 4/3/3 ⇒ 2 xe)
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61OD16*`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'ACTIVE', updated_at: nowIso() })
+    const p20 = await mkPlan(PLAN_BODY)
+    const P20 = p20.j?.data
+    // kéo OD2 ra XE MỚI (không phụ thuộc máy ghép ra 1 hay 2 xe — cuối gói kho QA đang cho thẻ nhiều xe nên 10 pallet đi một thẻ 2 xe)
+    const od2 = (P20?.trips ?? []).flatMap(t => t.ods).find(o => o.od_number === OD[1])
+    if (p20.s === 201 && od2) {
+      const [cf20, mv20] = await Promise.all([
+        api(`/tms/dispatch/plans/${P20.id}/confirm`, 'POST', {}),
+        api(`/tms/dispatch/plans/${P20.id}/move`, 'POST', { ids: [od2.id], to: 'new', delta: true }),
+      ])
+      let after = await planOf(P20.id)
+      const kh20 = await restAll('khvc_lines', `select=group_code,do_no&group_code=like.${PREFIX}*&sync_status=neq.OBSOLETE`)
+      const board = new Map((after?.trips ?? []).flatMap(t => t.ods.map(o => [o.od_number, { gc: t.group_code, st: t.status }])))
+      // mọi dòng Kế hoạch xuất phải trỏ đúng xe trên bàn và xe đó đã CONFIRMED; không xe DRAFT nào có dòng Kế hoạch xuất
+      const lineOk = kh20.every(k => board.get(k.do_no)?.gc === k.group_code && board.get(k.do_no)?.st === 'CONFIRMED')
+      const draftWithLines = (after?.trips ?? []).filter(t => t.status === 'DRAFT' && kh20.some(k => k.group_code === t.group_code)).map(t => t.group_code)
+      const okCodes = ['PLAN_BUSY', 'TRIP_NOT_EDITABLE']
+      const codeOk = r => r.s === 200 || (r.s === 409 && okCodes.includes(r.j?.error?.code))
+      check('20a. Xác nhận ∥ kéo OD2 (A→B) cùng lúc: người thua nhận 409 PLAN_BUSY / TRIP_NOT_EDITABLE; sau đua bàn KHỚP Kế hoạch xuất, không xe nháp nào có dòng KH xuất',
+        codeOk(cf20) && codeOk(mv20) && (cf20.s !== 200 || kh20.length > 0) && lineOk && !draftWithLines.length,
+        `confirm=${cf20.s} ${cf20.j?.error?.code ?? ''} · move=${mv20.s} ${mv20.j?.error?.code ?? ''} · KHxuất=${kh20.map(k => `${k.do_no}→${k.group_code.slice(PREFIX.length)}`).join(',')} · bàn=${[...board].map(([od, v]) => `${od}→${v.gc.slice(PREFIX.length)}(${v.st})`).join(',')} · nháp có dòng=${draftWithLines.join(',') || 0}`)
+      // rào DB độc lập đường code: đổi xe của dòng OD trên xe đã CONFIRMED thẳng qua PostgREST phải bị từ chối
+      if (!(after?.trips ?? []).some(t => t.status === 'CONFIRMED')) { await api(`/tms/dispatch/plans/${P20.id}/confirm`, 'POST', {}); after = await planOf(P20.id) }   // kéo thắng đua ⇒ xác nhận lại để có xe CONFIRMED
+      const rowC = (after?.trips ?? []).find(t => t.status === 'CONFIRMED')?.ods?.[0]
+      const rail = rowC ? await restWrite('dispatch_trip_od', 'PATCH', `id=eq.${rowC.id}`, { trip_id: null }).then(() => 'ghi được', e => String(e)) : 'không có xe CONFIRMED'
+      check('20b. Rào DB trg_dispatch_od_trip_frozen: đổi trip_id của dòng OD trên xe CONFIRMED (ghi thẳng PostgREST) → từ chối TRIP_NOT_EDITABLE',
+        /TRIP_NOT_EDITABLE/.test(rail), rail.slice(0, 160))
+    } else check('20a. Fixture đua: lập kế hoạch có OD2 trên xe', false, `http=${p20.s} ${p20.j?.error?.message ?? ''} trips=${P20?.trips?.length}`)
+    // [20c] XE TRỐNG lúc Xác nhận (11/10): kéo OD1 ra xe mới rồi kéo trả lại ⇒ xe mới trống (giữ để Hoàn tác); Xác nhận phải BỎ xe trống,
+    //       kế hoạch không được thành "Chờ ĐVVT" với 0 xe chờ
+    await cleanupTrips()
+    const p20c = await mkPlan(PLAN_BODY)
+    const Pc = p20c.j?.data
+    const tA = tripOfOd(Pc, OD[0]), od1 = tA?.ods?.find(o => o.od_number === OD[0])
+    if (p20c.s === 201 && tA && od1) {
+      const mvN = await api(`/tms/dispatch/plans/${Pc.id}/move`, 'POST', { ids: [od1.id], to: 'new', delta: true })
+      const back = await api(`/tms/dispatch/plans/${Pc.id}/move`, 'POST', { ids: [od1.id], to: 'trip', to_trip_id: tA.id, delta: true })
+      const mid = await planOf(Pc.id)
+      const emptyBefore = (mid?.trips ?? []).filter(t => !t.ods.length).length
+      const cfc = await api(`/tms/dispatch/plans/${Pc.id}/confirm`, 'POST', {})
+      const fin = await planOf(Pc.id)
+      const emptyAfter = (fin?.trips ?? []).filter(t => !t.ods.length && t.status !== 'DISCARDED').length
+      check('20c. Xe trống còn lại sau kéo thả → Xác nhận bỏ nó (discarded_empty = 1), không còn xe trống, kế hoạch không "Chờ ĐVVT" với 0 xe chờ',
+        mvN.s === 200 && back.s === 200 && emptyBefore === 1 && cfc.s === 200 && cfc.j?.data?.discarded_empty === 1 && emptyAfter === 0
+        && (fin?.status !== 'TENDERED' || (fin?.summary?.tendered ?? 0) > 0),
+        `new=${mvN.s} back=${back.s} trốngTrước=${emptyBefore} confirm=${cfc.s} discarded_empty=${cfc.j?.data?.discarded_empty} trốngSau=${emptyAfter} plan=${fin?.status} tendered=${fin?.summary?.tendered}`)
+    } else check('20c. Fixture xe trống: lập kế hoạch', false, `http=${p20c.s}`)
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+  }
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

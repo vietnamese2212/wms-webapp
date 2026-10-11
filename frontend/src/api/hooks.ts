@@ -6185,9 +6185,15 @@ const putDispatchPlan = (qc: ReturnType<typeof useQueryClient>, p: DispatchPlan)
   qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] })
 }
 export function useDispatchPlanSync(id: string | null, enabled = true) {
+  const qc = useQueryClient()
   return useQuery({
     queryKey: ['dispatch-sync', id], enabled: !!id && enabled, staleTime: 30_000, refetchInterval: 120_000,
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${id}/sync`)).data.data as { flags: DispatchOdFlag[]; new_ods: number; new_od_numbers?: string[] },
+    queryFn: async () => {
+      const d = (await apiClient.get(`/tms/dispatch/plans/${id}/sync`)).data.data as { flags: DispatchOdFlag[]; new_ods: number; new_od_numbers?: string[]; healed?: { to_confirmed: number; to_draft: number } }
+      // 11/10: server vừa chữa xe lệch Kế hoạch xuất (xe nháp có dòng ⇒ Đã vào KH; xe đã vào KH hết dòng ⇒ nháp) ⇒ bàn tải lại kế hoạch
+      if (d.healed && (d.healed.to_confirmed || d.healed.to_draft)) { qc.invalidateQueries({ queryKey: ['dispatch-plan', id] }); qc.invalidateQueries({ queryKey: ['dispatch-plans'] }) }
+      return d
+    },
   })
 }
 /** Bảng Xem đơn (27/09 khuya): thông tin SAP của từng OD trong kế hoạch — SO, người tạo, ghi chú, SL quy đổi, Loại kho,
@@ -6501,7 +6507,7 @@ export function useMoveDispatchOd() {
 export function useConfirmDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; lines: number; group_codes: string[]; replan: Record<string, unknown> | null; replan_error: string | null; derive_failed: boolean; derive_message: string | null }),
+    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; discarded_empty: number; lines: number; group_codes: string[]; replan: Record<string, unknown> | null; replan_error: string | null; derive_failed: boolean; derive_message: string | null }),
     onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
   })
 }

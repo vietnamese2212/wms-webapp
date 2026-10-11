@@ -22,7 +22,7 @@ import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
 import { haversineKm, geoProviderStatus, GeoNotConfigured } from '../../services/geo'
 import { distancesFor, unmeasured, measurePairs, whKey, custKey } from '../../services/geoDistance'
-import { ok, fail, type PgLikeError } from '../../utils/response'
+import { ok, fail, raisedUserError, recordServerError, type PgLikeError } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout } from '../../utils/pagination'
 import { utcMs } from '../../utils/dates'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
@@ -70,9 +70,18 @@ const numOrNull = (v: unknown): number | null => { const n = Number(v); return v
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json
 /** Ném NGUYÊN đối tượng lỗi PostgREST (giữ code 22P02/23505…) để fail() dịch thành 400/409 — bậc fast 24/09 bắt id rác trên :id ra 500 vì bản cũ ném new Error(message). */
 // 09/10: câu 503 chung "thu hẹp KHOẢNG NGÀY hoặc chọn 1 Kho" sai với bàn điều vận (đã là một kho × một ngày) — nói đúng việc phải làm
-const failAny = (res: Response, e: unknown) => isQueryTimeout(e)
-  ? fail(res, 503, 'QUERY_TIMEOUT', 'Hệ thống đang bận, chưa đọc xong pool đơn của kho — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).')
-  : (e && typeof e === 'object' ? fail(res, e as PgLikeError) : fail(res, String(e), 500))
+const failAny = (res: Response, e: unknown) => {
+  if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', 'Hệ thống đang bận, chưa đọc xong pool đơn của kho — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).')
+  if (e && typeof e === 'object') {
+    // 11/10: cửa điều vận KHÔNG có khoá nào do người nhập ⇒ 23505 không mang tiền tố rào (OD_ALREADY_PLANNED…) là LỖI CODE, không phải
+    // "kiểm tra lại mã/tên đang nhập". Vẫn trả 409 cho người dùng, nhưng ghi error_logs kèm `details` (tên ràng buộc + khoá) để truy được —
+    // chạy thử 11/10 gặp một lần ở "Mở lại", không có dấu vết nào vì 409 không được ghi.
+    const pe = e as PgLikeError & { details?: string }
+    if (pe.code === '23505' && !raisedUserError(pe)) recordServerError('be', `Trùng khoá ngoài ý muốn ở điều vận: ${pe.details ?? pe.message ?? ''}`, 409, 'UNIQUE_VIOLATION', String((res.req as Request | undefined)?.originalUrl ?? 'tms/dispatch'))
+    return fail(res, pe)
+  }
+  return fail(res, String(e), 500)
+}
 
 // ── Phạm vi kho ────────────────────────────────────────────────────────────────────────────────────────
 function scopeWhIds(req: Request): string[] | null {
@@ -1086,23 +1095,32 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
     vehicles: vehiclesRef(vehicles),
     carrier: carrier ? carrierRef(carrier) : null,
   }
-  // chuyến ĐVVT đã từ chối mà người sửa lại ⇒ về nháp để chốt lại; ghi chú từ chối giữ nguyên trên dòng làm vết
+  // KHÔNG ghi `status` ở đây (11/10): bản cũ chép lại trạng thái đọc lúc vào ⇒ kéo OD đua với Xác nhận đè CONFIRMED về DRAFT
+  // (xe nháp mà Kế hoạch xuất đã có dòng — đo 11/10 trên QA61WH). Trạng thái chỉ đổi bằng câu UPDATE có điều kiện ở repriceTrip.
   return {
     vehicle_model_id: model?.id ?? null, extra_vehicle_model_ids: extras.map(m => m.id), transport_company_id: carrier?.id ?? null,
     stops, wards, pallets: sum.pallets, tons: sum.tons, load_pct: load.pct, underload: load.pct != null && load.pct < load.underload_pct,
     oversize: load.pct != null && load.pct > maxPct, freight_estimated: freight.total, detail: asJson(detail), manual_edited: true,
-    status: (statusOf(trip) === 'DECLINED' ? 'DRAFT' : statusOf(trip)) as TripStatus, updated_at: now(),
+    updated_at: now(),
   }
 }
 async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null, condLabels: Record<string, string> = {}) {
   const patch = computeTripPatch(plan, trip, modelId, carrierId, refs, whUnderloadPct, condLabels)
   const { error } = await db.from('dispatch_trip').update(patch).eq('id', trip.id)
   if (error) throw error
-  return { ...trip, ...patch }
+  // chuyến ĐVVT đã từ chối mà người sửa lại ⇒ về nháp để chốt lại (ghi chú từ chối giữ trên dòng làm vết) — UPDATE có điều kiện,
+  // không chép trạng thái đã đọc (xem computeTripPatch)
+  let status: TripStatus = statusOf(trip)
+  if (status === 'DECLINED') {
+    const { data, error: sErr } = await db.from('dispatch_trip').update({ status: 'DRAFT', updated_at: patch.updated_at }).eq('id', trip.id).eq('status', 'DECLINED').select('id')
+    if (sErr) throw sErr
+    if (data?.length) status = 'DRAFT'
+  }
+  return { ...trip, ...patch, status }
 }
 
 // ── PATCH /tms/dispatch/trips/:id ──────────────────────────────────────────────────────────────────────
-export async function updateTrip(req: Request, res: Response) {
+async function updateTripInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zTripPatch>
     const got = await loadDraftTrip(req, String(req.params.id))
@@ -1195,7 +1213,7 @@ export async function tripCarriers(req: Request, res: Response) {
 }
 
 // ── POST /tms/dispatch/trips/:id/move-od ───────────────────────────────────────────────────────────────
-export async function moveOd(req: Request, res: Response) {
+async function moveOdInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zMoveOd>
     const got = await loadDraftTrip(req, String(req.params.id))
@@ -1278,14 +1296,16 @@ async function releasePlan(planId: string, token: string) {
   const { error } = await db.from('dispatch_plan').update({ busy_until: null, busy_token: null }).eq('id', planId).eq('busy_token', token)
   if (error) console.error('[dispatch] nhả thuê kế hoạch hỏng', planId, error.message)   // hết hạn 90 s thì tự nhả
 }
-/** Bọc một cửa `/plans/:id/...` bằng thuê kế hoạch. Không thuê được mà kế hoạch không tồn tại ⇒ để cửa tự trả 404 / 403 như cũ. */
-const withPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => async (req: Request, res: Response) => {
+/** Chạy một cửa ghi dưới thuê kế hoạch `planId`. Không thuê được mà kế hoạch không tồn tại ⇒ để cửa tự trả 404 / 403 như cũ.
+ *  11/10 (chạy thử QA61WH): MỌI cửa ghi của kế hoạch đi qua đây — kể cả Xác nhận / chốt xe / Mở lại / kéo OD / sửa xe / bỏ xe. Bản cũ
+ *  chỉ bọc cửa dựng lại dòng OD ⇒ "Xác nhận" ∥ "kéo OD" cùng 200: bàn nói OD ở xe 2, Kế hoạch xuất + chuyến Xuất kho nói xe 1 (3/3 lần). */
+async function leasedRun(req: Request, res: Response, planId: string, h: (req: Request, res: Response) => Promise<unknown>) {
   try {
-    const id = String(req.params.id)
+    const id = planId
     const token = await leasePlan(id)
     if (!token) {
       const { data } = await db.from('dispatch_plan').select('id').eq('id', id).maybeSingle()
-      if (data) return fail(res, 409, 'PLAN_BUSY', 'Kế hoạch đang được người khác cập nhật (ghép / nạp OD / thay OD) — đợi vài giây, tải lại trang rồi làm tiếp.')
+      if (data) return fail(res, 409, 'PLAN_BUSY', 'Kế hoạch đang được người khác cập nhật (ghép / kéo OD / xác nhận / nạp OD) — đợi vài giây rồi làm tiếp; bàn tự tải lại.')
       return h(req, res)
     }
     // NHẢ TRƯỚC KHI TRẢ LỜI: nhả trong finally là nhả SAU khi phản hồi đã đi — người bấm tiếp ngay (thay OD rồi cập nhật OD khác)
@@ -1295,6 +1315,17 @@ const withPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => 
     const send = res.json.bind(res)
     res.json = ((body: unknown) => { void release().finally(() => send(body)); return res }) as typeof res.json
     try { return await h(req, res) } finally { await release() }
+  } catch (e) { return failAny(res, e) }
+}
+/** Cửa `/plans/:id/...` — thuê theo id kế hoạch trên đường dẫn. */
+const withPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => leasedRun(req, res, String(req.params.id), h)
+/** Cửa `/trips/:id/...` — tra kế hoạch của xe rồi thuê; xe không tồn tại / id rác ⇒ để cửa tự trả 404 / 400 như cũ. */
+const withTripPlanLease = (h: (req: Request, res: Response) => Promise<unknown>) => async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await db.from('dispatch_trip').select('plan_id').eq('id', String(req.params.id)).maybeSingle()
+    if (error) throw error
+    if (!data?.plan_id) return h(req, res)
+    return leasedRun(req, res, data.plan_id, h)
   } catch (e) { return failAny(res, e) }
 }
 /** Tính lại (và ghi) các chuyến bị đụng — MỘT lần nạp bảng cước cho hợp các phường. */
@@ -1349,7 +1380,7 @@ async function markReviewed(rows: TripOdRow[], actor: string | null, t: string):
 }
 
 // POST /tms/dispatch/plans/:id/move — thả OD (một hay nhiều dòng) vào xe · xe mới · khung chờ · bỏ khỏi kế hoạch
-export async function moveOds(req: Request, res: Response) {
+async function moveOdsInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zMove>
     const got = await loadOpenPlan(req, String(req.params.id))
@@ -1458,7 +1489,7 @@ export async function previewMove(req: Request, res: Response) {
 }
 
 // DELETE /tms/dispatch/trips/:id — bỏ một XE TRỐNG khỏi nháp (xe còn OD thì phải kéo OD ra trước)
-export async function deleteTrip(req: Request, res: Response) {
+async function deleteTripInner(req: Request, res: Response) {
   try {
     const got = await loadDraftTrip(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
@@ -1594,7 +1625,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
 
 // ── PATCH /tms/dispatch/plans/:id/params — dải tải / bypass đổi NGAY TRÊN BÀN (01/10, user: "config chọn xong hiện lên bàn") ────
 // Không ghép lại: mọi xe nháp tính lại % tải · Non tải · vượt theo dải mới (cùng `computeTripPatch` của mọi cửa sửa tay).
-export async function updatePlanParams(req: Request, res: Response) {
+async function updatePlanParamsInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zPlanParams>
     const got = await loadOpenPlan(req, String(req.params.id))
@@ -1682,10 +1713,21 @@ async function pulledAwayHeld(plan: { id: string; warehouse_id: string; params: 
 // GET /tms/dispatch/plans/:id/sync — cờ sống của OD trong kế hoạch + số OD MỚI (ZSD02 vừa nạp) chưa có trong kế hoạch
 export async function planSync(req: Request, res: Response) {
   try {
-    const full = await readPlan(String(req.params.id))
+    let full = await readPlan(String(req.params.id))
     if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    if (!OPEN_PLAN.includes(full.status)) return ok(res, { flags: [], new_ods: 0 })
+    // TỰ CHỮA xe ↔ Kế hoạch xuất (11/10, RPC 20261011a): xe nháp mà Số xe đã có dòng Kế hoạch xuất ⇒ CONFIRMED (đua Xác nhận ∥ kéo OD
+    // của bản cũ, hoặc bất kỳ đường nào về sau); xe CONFIRMED hết dòng (Số xe bị xoá ở tab Kế hoạch xuất) ⇒ về NHÁP. Bàn hỏi /sync
+    // mỗi 120 s và sau mỗi lần đổi đầu vào ⇒ người dùng thấy đúng trạng thái mà không cần ai tay sửa DB.
+    const { data: healRaw, error: hErr } = await db.rpc('dispatch_trip_khvc_heal', { p_plan_id: full.id })
+    if (hErr) throw hErr
+    const healed = (healRaw ?? { to_confirmed: 0, to_draft: 0 }) as { to_confirmed: number; to_draft: number }
+    if (full.status !== 'DISCARDED' && (healed.to_confirmed || healed.to_draft)) {
+      await syncPlanStatus(full as PlanRow, null)
+      await writeSummary(full as PlanRow)
+      full = (await readPlan(full.id)) ?? full
+    }
+    if (!OPEN_PLAN.includes(full.status)) return ok(res, { flags: [], new_ods: 0, healed })
     const live = full.trips.filter(t => EDITABLE_TRIP.includes(statusOf(t)) || statusOf(t) === 'TENDERED')
     const liveRows = [...live.flatMap(t => t.ods), ...full.pool]
     const odNos = uniq(liveRows.map(o => o.od_number))
@@ -1704,7 +1746,7 @@ export async function planSync(req: Request, res: Response) {
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
     for (const u of (full.unplanned ?? []) as { od_number?: string }[]) if (u?.od_number) inPlan.add(u.od_number)   // máy đã thấy, không đo được tải
     const fresh = freshRaw.filter(od => !inPlan.has(od) && !pulled.has(od))
-    return ok(res, { flags, new_ods: fresh.length, new_od_numbers: fresh.slice(0, 50) })
+    return ok(res, { flags, new_ods: fresh.length, new_od_numbers: fresh.slice(0, 50), healed })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -1940,7 +1982,7 @@ async function markTendered(trips: FullTrip[]) {
 }
 
 // ── POST /tms/dispatch/plans/:id/confirm — xe của ĐVVT không cần phản hồi ghi thẳng; xe còn lại chờ ĐVVT ─────
-export async function confirmPlan(req: Request, res: Response) {
+async function confirmPlanInner(req: Request, res: Response) {
   try {
     const full = await readPlan(String(req.params.id))
     if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
@@ -1953,6 +1995,13 @@ export async function confirmPlan(req: Request, res: Response) {
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const g = await tripGuards(full, trips)
     if (g) return sendErr(res, g)
+    // XE TRỐNG bị bỏ lúc xác nhận (11/10): bàn cố ý giữ xe hết OD để Hoàn tác, nhưng xác nhận xong mà còn xe nháp trống thì kế hoạch
+    // thành "Chờ ĐVVT phản hồi" với 0 xe chờ (syncPlanStatus thấy xe DRAFT cạnh xe CONFIRMED) — đo 11/10 trên QA61WH.
+    const empties = full.trips.filter(t => !t.ods.length && statusOf(t) === 'DRAFT')
+    for (let i = 0; i < empties.length; i += 300) {
+      const { error } = await db.from('dispatch_trip').delete().in('id', empties.slice(i, i + 300).map(t => t.id))
+      if (error) throw error
+    }
 
     const flags = await tenderFlags(trips)
     const direct = trips.filter(t => !t.transport_company_id || !flags.get(t.transport_company_id))
@@ -1961,12 +2010,12 @@ export async function confirmPlan(req: Request, res: Response) {
     const w = direct.length ? await writeTrips(req, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
-    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
+    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), discarded_empty: empties.length, lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
   } catch (e) { return failAny(res, e) }
 }
 
 // ── POST /tms/dispatch/trips/:id/settle — chốt MỘT xe (kế hoạch đang chờ ĐVVT: xe nháp / xe bị từ chối đã sửa ĐVVT) ─
-export async function settleTrip(req: Request, res: Response) {
+async function settleTripInner(req: Request, res: Response) {
   try {
     const got = await loadTrip(req, String(req.params.id), { editable: true })
     if ('err' in got) return sendErr(res, got)
@@ -1989,7 +2038,7 @@ export async function settleTrip(req: Request, res: Response) {
 }
 
 // ── POST /tms/dispatch/trips/:id/respond — ghi câu trả lời của ĐVVT cho xe đang chờ (đợt A: điều vận ghi thay) ───
-export async function respondTrip(req: Request, res: Response) {
+async function respondTripInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zRespond>
     const got = await loadTrip(req, String(req.params.id), { allow: ['TENDERED'] })
@@ -2024,7 +2073,7 @@ export async function respondTrip(req: Request, res: Response) {
 // xuất / đã hoàn thành / đang giữ hàng nhặt lẻ thì KHÔNG gỡ) ⇒ chuyến NGỪNG HOẠT ĐỘNG + lệnh VC nhả khung giờ (đường
 // dội sẵn có, giữ id) ⇒ xe về NHÁP. Xác nhận lại ⇒ cùng Số xe sống lại; khung giờ phải đặt lại.
 export const zReopen = z.object({ trip_ids: z.array(zId).min(1).max(300).optional() })
-export async function reopenPlan(req: Request, res: Response) {
+async function reopenPlanInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zReopen>
     const full = await readPlan(String(req.params.id))
@@ -2039,21 +2088,20 @@ export async function reopenPlan(req: Request, res: Response) {
     const blockedGc = new Map(blocked.map(x => [x.group_code, x.reason]))
     const open = want.filter(t => !blockedGc.has(t.group_code))
     const openGc = open.map(t => t.group_code)
-    const delRows = lines.filter(l => openGc.includes(l.group_code))
-    for (let i = 0; i < delRows.length; i += 300) {
-      const { error } = await db.from('khvc_lines').delete().in('id', delRows.slice(i, i + 300).map(l => l.id))
-      if (error) throw error
+    // MỘT giao dịch (11/10, RPC 20261011a): xoá dòng Kế hoạch xuất + xe về NHÁP. Bản cũ xoá dòng → dội chuyến → đổi trạng thái xe bằng
+    // ba request rời: hỏng giữa chừng (một lần 409 trùng khoá khi chạy thử) để lại xe CONFIRMED không còn dòng, chuyến đã ngừng.
+    // Dội chuyến (replanKhvcGroups) chạy SAU và lặp lại được; hỏng thì trả replan_error như trước, cửa /sync không còn gì để chữa.
+    let delRows: { group_code: string; do_no: string }[] = []
+    if (open.length) {
+      const { data: rr, error: rErr } = await db.rpc('dispatch_reopen_trips', { p_trip_ids: open.map(t => t.id) })
+      if (rErr) throw rErr
+      delRows = ((rr ?? {}) as { lines?: { group_code: string; do_no: string }[] }).lines ?? []
     }
     const actor = actorOf(req)
     await logOutboundEvents(delRows.map(l => ({ group_code: l.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor, do_number: l.do_no,
       detail: `Mở lại kế hoạch điều vận — gỡ DO ${l.do_no} khỏi Số xe ${l.group_code} để sửa trên bàn ghép xe` })))
     let replan_error: string | null = null
     if (openGc.length) { try { await replanKhvcGroups(req, openGc) } catch (e) { replan_error = String(e); console.error('[dispatch reopen] replan:', e) } }
-    const t = now()
-    for (let i = 0; i < open.length; i += 300) {
-      const { error } = await db.from('dispatch_trip').update({ status: 'DRAFT', confirmed_at: null, updated_at: t }).in('id', open.slice(i, i + 300).map(x => x.id))
-      if (error) throw error
-    }
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
     return ok(res, { ...(await readPlan(full.id)), reopened: { trips: open.length, group_codes: openGc, blocked: want.filter(t => blockedGc.has(t.group_code)).map(t => ({ group_code: t.group_code, reason: blockedGc.get(t.group_code)! })), plan_status: status, replan_error } })
@@ -2061,7 +2109,7 @@ export async function reopenPlan(req: Request, res: Response) {
 }
 
 // ── DELETE /tms/dispatch/plans/:id — bỏ bản nháp; kế hoạch đang chờ ĐVVT ⇒ bỏ các xe CHƯA vào Kế hoạch xuất ─────
-export async function discardPlan(req: Request, res: Response) {
+async function discardPlanInner(req: Request, res: Response) {
   try {
     const { data: plan, error: pErr } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
     if (pErr) throw pErr   // id rác (22P02) → 400 qua fail(), không phải "không tìm thấy"
@@ -2298,6 +2346,17 @@ export async function setCustomerVehicles(req: Request, res: Response) {
 export { pickBookingCategory }
 
 export const reoptimizePlan = withPlanLease(reoptimizePlanInner)
+// 11/10 — cửa chốt / sửa tay cũng thuê kế hoạch (đua Xác nhận ∥ kéo OD làm bàn ≠ Kế hoạch xuất; chi tiết ở leasedRun)
+export const confirmPlan = withPlanLease(confirmPlanInner)
+export const reopenPlan = withPlanLease(reopenPlanInner)
+export const discardPlan = withPlanLease(discardPlanInner)
+export const moveOds = withPlanLease(moveOdsInner)
+export const updatePlanParams = withPlanLease(updatePlanParamsInner)
+export const settleTrip = withTripPlanLease(settleTripInner)
+export const respondTrip = withTripPlanLease(respondTripInner)
+export const updateTrip = withTripPlanLease(updateTripInner)
+export const deleteTrip = withTripPlanLease(deleteTripInner)
+export const moveOd = withTripPlanLease(moveOdInner)
 export const refreshPool = withPlanLease(refreshPoolInner)
 export const replaceOd = withPlanLease(replaceOdInner)
 export const resyncOd = withPlanLease(resyncOdInner)

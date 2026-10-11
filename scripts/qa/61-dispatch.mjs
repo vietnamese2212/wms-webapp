@@ -2002,6 +2002,17 @@ try {
         && (fin?.status !== 'TENDERED' || (fin?.summary?.tendered ?? 0) > 0),
         `new=${mvN.s} back=${back.s} trốngTrước=${emptyBefore} confirm=${cfc.s} discarded_empty=${cfc.j?.data?.discarded_empty} trốngSau=${emptyAfter} plan=${fin?.status} tendered=${fin?.summary?.tendered}`)
     } else check('20c. Fixture xe trống: lập kế hoạch', false, `http=${p20c.s}`)
+    // [20d] (11/10) Mở lại HẾT rồi Bỏ nháp ⇒ kế hoạch ĐÃ BỎ (bản cũ: syncPlanStatus thấy xe DISCARDED là xếp "Chờ ĐVVT" với 0 xe ⇒ băng "nháp quá
+    //       ngày" sống mãi), và dòng OD của nháp bị bỏ (khung chờ + xe bỏ) được dọn — xe CONFIRMED giữ dòng
+    if (Pc?.id) {
+      const roD = await api(`/tms/dispatch/plans/${Pc.id}/reopen`, 'POST', {})
+      const dcD = await api(`/tms/dispatch/plans/${Pc.id}`, 'DELETE')
+      const pD = (await restAll('dispatch_plan', `select=status&id=eq.${Pc.id}`))[0]
+      const rowsD = (await restAll('dispatch_trip_od', `select=id&plan_id=eq.${Pc.id}`)).length
+      check('20d. Mở lại hết → Bỏ nháp: kế hoạch DISCARDED (không phải "Chờ ĐVVT" 0 xe), dòng OD của nháp bị bỏ dọn hết',
+        roD.s === 200 && dcD.s === 200 && dcD.j?.data?.status === 'DISCARDED' && pD?.status === 'DISCARDED' && rowsD === 0,
+        `reopen=${roD.s} discard=${dcD.s} status=${dcD.j?.data?.status}/${pD?.status} rows=${rowsD}`)
+    }
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
   }
 } finally {

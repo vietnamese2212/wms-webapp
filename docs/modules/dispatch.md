@@ -219,3 +219,19 @@ Chạy thử 11/10 trên kho QA61WH (memory `dispatch-probe-2026-10-11`, probe `
   không truy được vì 409 không ghi.
 - FE: "Tạo kế hoạch" gặp `NOT_IN_POOL` / `PLAN_BUSY` ⇒ tải lại bảng + nói đơn nào vừa đổi, không bắt F5.
 - Gói 61 [20a] đua Xác nhận ∥ kéo (đỏ trên bản cũ: cả hai 200, bàn lệch) · [20b] rào DB · [20c] xe trống.
+
+## 11/10 chiều — lập kế hoạch 513 đơn Ba Vì bằng vai Nhân viên điều vận (đi qua màn hình)
+
+Số đo (Preview, 1440 px): mở trang 2–3 s (14–27 s khi đã có nháp 149 xe + 3.071 dòng Chờ điều) · Xem đơn 25 s (3.529 đơn) · Tạo kế hoạch 513 đơn
+→ 149 xe 22 s (3.529 đơn → 819 xe 61–71 s) · Tối ưu lại ~2 s · Xác nhận 149 xe 14 s · Mở lại 149 xe 11 s · Bỏ nháp 10 s · Mở lại theo lô
+150 xe 11–17 s (1/4 lô 503) · lô 60 xe 4–12 s. Chi tiết: memory `dispatch-probe-2026-10-11`.
+
+Lỗi thấy và đã sửa (cùng commit):
+- **Phạm vi Loại hàng chặn CẢ GÓI ở đường dội xuống**: vai chỉ được giao FG01/PM01 lập 149 xe trong đó 10 xe lạnh FG02 ⇒ Xác nhận ghi 458 dòng
+  Kế hoạch xuất mà 0/149 chuyến sinh ("File có 10 chuyến xe lỗi", không nêu xe). Nay `tripGuards` chặn 403 `CATEGORY_OUT_OF_SCOPE` nêu xe +
+  loại TRƯỚC khi ghi; `derive_message` nêu 3 xe lỗi đầu + lý do.
+- **Bỏ nháp sau khi Mở lại hết ⇒ kế hoạch thành "Chờ ĐVVT" 0 xe** (băng "nháp quá ngày" sống mãi): bỏ nháp không còn xe sống ⇒ DISCARDED;
+  dọn dòng OD của khung chờ + xe bị bỏ (6 nháp bỏ đi = 25.850 dòng nằm chết, câu đếm đơn mới quét qua).
+- **/sync 503 lặp**: chỉ mục phủ 20261011b (`dispatch_new_ods` 3,77 s → 0,55 s).
+Còn mở: Mở lại lô 150 xe một lần 503 (câu nào quá hạn chưa truy được — 503 không ghi câu); chuyến bị Mở lại nằm lại dạng "ngừng hoạt động"
+(149 chuyến 12/10 Ba Vì sau lượt thử); 45/149 xe một khách vì kênh MT chưa khai số khách tối đa.

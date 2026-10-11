@@ -23,6 +23,7 @@ import { db } from '../../lib/supabase'
 import { haversineKm, geoProviderStatus, GeoNotConfigured } from '../../services/geo'
 import { distancesFor, unmeasured, measurePairs, whKey, custKey } from '../../services/geoDistance'
 import { ok, fail, raisedUserError, recordServerError, type PgLikeError } from '../../utils/response'
+import { categoryAllowed } from '../../utils/categoryScope'
 import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout } from '../../utils/pagination'
 import { utcMs } from '../../utils/dates'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
@@ -71,7 +72,7 @@ const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Js
 /** Ném NGUYÊN đối tượng lỗi PostgREST (giữ code 22P02/23505…) để fail() dịch thành 400/409 — bậc fast 24/09 bắt id rác trên :id ra 500 vì bản cũ ném new Error(message). */
 // 09/10: câu 503 chung "thu hẹp KHOẢNG NGÀY hoặc chọn 1 Kho" sai với bàn điều vận (đã là một kho × một ngày) — nói đúng việc phải làm
 const failAny = (res: Response, e: unknown) => {
-  if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', 'Hệ thống đang bận, chưa đọc xong pool đơn của kho — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).')
+  if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', 'Hệ thống đang bận, chưa làm xong thao tác này trên kế hoạch của kho — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).')
   if (e && typeof e === 'object') {
     // 11/10: cửa điều vận KHÔNG có khoá nào do người nhập ⇒ 23505 không mang tiền tố rào (OD_ALREADY_PLANNED…) là LỖI CODE, không phải
     // "kiểm tra lại mã/tên đang nhập". Vẫn trả 409 cho người dùng, nhưng ghi error_logs kèm `details` (tên ràng buộc + khoá) để truy được —
@@ -1873,7 +1874,15 @@ type FullTrip = FullPlan['trips'][number]
 
 /** Gác trước khi ghi: (a) một OD một xe (soi trên CẢ kế hoạch, kể cả xe chưa chốt) · (b) có cửa đặt lịch · (c) OD chưa bị ai
  *  đưa vào Kế hoạch xuất trong lúc nháp nằm chờ · (d) Số xe chưa bị dùng. Trả lỗi hoặc null. */
-async function tripGuards(full: FullPlan, subset: FullTrip[]): Promise<TripErr | null> {
+async function tripGuards(req: Request, full: FullPlan, subset: FullTrip[]): Promise<TripErr | null> {
+  // PHẠM VI LOẠI HÀNG của người bấm (11/10, chạy thử 513 đơn Ba Vì bằng vai chỉ được giao FG01/PM01): đường dội xuống (`processVehicleGroups`)
+  // từ chối "Loại kho ngoài phạm vi của bạn" cho TỪNG loại trên xe và từ chối CẢ GÓI ⇒ 458 dòng Kế hoạch xuất đã ghi mà 0/149 chuyến sinh,
+  // toast chỉ nói "10 chuyến xe lỗi" không nêu xe nào. Chặn TẠI ĐÂY, nêu đích danh xe + loại, trước khi ghi gì.
+  const outScope = subset.map(t => ({ t, cats: (detailOf(t).categories ?? []).filter(c => !categoryAllowed(req, c)) })).filter(x => x.cats.length)
+  if (outScope.length) {
+    const cats = uniq(outScope.flatMap(x => x.cats))
+    return { err: [`${outScope.length} xe chở Loại kho ngoài phạm vi được giao của bạn (${cats.join(', ')}): ${outScope.slice(0, 5).map(x => x.t.group_code).join(', ')}${outScope.length > 5 ? '…' : ''} — kéo các OD loại đó ra khỏi xe / Trả về Chờ điều, hoặc nhờ người được giao loại này xác nhận.`, 403, 'CATEGORY_OUT_OF_SCOPE'] }
+  }
   const live = full.trips.filter(t => statusOf(t) !== 'DISCARDED' && t.ods.length)
   const tripsByOd = new Map<string, string[]>()
   for (const t of live) for (const od of uniq(t.ods.map(o => o.od_number))) { const l = tripsByOd.get(od) ?? []; l.push(t.group_code); tripsByOd.set(od, l) }
@@ -1956,10 +1965,12 @@ async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTr
   // nên API trả 200 kèm `replan_error: null` trong khi thực tế 0/50 chuyến được tạo (đo 24/09).
   // Đây là lớp C5 "trả 200 im lặng". Gác `tripGuards` ở trên chặn ca thường gặp (mã hàng lạ);
   // chỗ này bắt MỌI lý do từ chối còn lại để màn hình còn nói được.
-  const derive = (replan as { derive?: { success?: boolean; error?: { message?: string } } } | null)?.derive
+  const derive = (replan as { derive?: { success?: boolean; error?: { message?: string }; validation_errors?: { group_code: string; errors: string[] }[] } } | null)?.derive
   const derive_failed = !!derive && derive.success === false
+  // nêu ĐÍCH DANH xe + lý do đầu (11/10): "File có 10 chuyến xe lỗi" mà không nói xe nào là người dùng không sửa được
+  const ve = derive?.validation_errors ?? []
   const derive_message = derive_failed
-    ? String(derive.error?.message ?? 'đường sinh chuyến từ chối kế hoạch')
+    ? `${String(derive.error?.message ?? 'đường sinh chuyến từ chối kế hoạch')}${ve.length ? ` — ${ve.slice(0, 3).map(v => `${v.group_code}: ${v.errors[0]}`).join(' · ')}${ve.length > 3 ? ` … +${ve.length - 3} xe` : ''}` : ''}`
     : null
   if (derive_failed) console.error('[dispatch confirm] derive từ chối:', JSON.stringify(derive).slice(0, 500))
   return { lines: rows.length, group_codes: gcs, replan, replan_error, derive_failed, derive_message }
@@ -1993,7 +2004,7 @@ async function confirmPlanInner(req: Request, res: Response) {
     if (!trips.length) return fail(res, 422, 'PLAN_EMPTY', 'Kế hoạch không có chuyến nào để xác nhận')
     const wh = await loadWarehouse(full.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-    const g = await tripGuards(full, trips)
+    const g = await tripGuards(req, full, trips)
     if (g) return sendErr(res, g)
     // XE TRỐNG bị bỏ lúc xác nhận (11/10): bàn cố ý giữ xe hết OD để Hoàn tác, nhưng xác nhận xong mà còn xe nháp trống thì kế hoạch
     // thành "Chờ ĐVVT phản hồi" với 0 xe chờ (syncPlanStatus thấy xe DRAFT cạnh xe CONFIRMED) — đo 11/10 trên QA61WH.
@@ -2025,7 +2036,7 @@ async function settleTripInner(req: Request, res: Response) {
     if (!trip.ods.length) return fail(res, 422, 'TRIP_EMPTY', 'Xe không còn OD nào')
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-    const g = await tripGuards(full, [trip])
+    const g = await tripGuards(req, full, [trip])
     if (g) return sendErr(res, g)
     const flags = await tenderFlags([trip])
     const needs = !!trip.transport_company_id && flags.get(trip.transport_company_id) === true
@@ -2057,7 +2068,7 @@ async function respondTripInner(req: Request, res: Response) {
     const trip = full.trips.find(x => x.id === got.trip.id)!
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
-    const g = await tripGuards(full, [trip])
+    const g = await tripGuards(req, full, [trip])
     if (g) return sendErr(res, g)
     const { error } = await db.from('dispatch_trip').update({ responded_at: t, response_by: actor, response_note: b.note?.trim() || null, updated_at: t }).eq('id', trip.id)
     if (error) throw error
@@ -2119,8 +2130,21 @@ async function discardPlanInner(req: Request, res: Response) {
     const t = now()
     const { data: dropped, error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: t }).eq('plan_id', plan.id).neq('status', 'CONFIRMED').select('id')
     if (tErr) throw tErr
+    // DỌN DÒNG OD của nháp bị bỏ (11/10): khung chờ (Chờ điều + khung chờ kế hoạch) + dòng của xe vừa bỏ — Ba Vì mỗi nháp mang ~3.500 dòng
+    // Chờ điều, bỏ 6 nháp là 25.850 dòng nằm chết trong dispatch_trip_od (câu đếm đơn mới quét qua). Xe CONFIRMED giữ dòng (lịch sử).
+    const { error: poolErr } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null)
+    if (poolErr) throw poolErr
+    const droppedIds = (dropped ?? []).map(d => d.id)
+    for (let i = 0; i < droppedIds.length; i += 300) {
+      const { error } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).in('trip_id', droppedIds.slice(i, i + 300))
+      if (error) throw error
+    }
     let status: string
-    if (plan.status === 'DRAFT') {
+    const { count: liveN, error: cErr } = await db.from('dispatch_trip').select('id', { count: 'exact', head: true }).eq('plan_id', plan.id).neq('status', 'DISCARDED')
+    if (cErr) throw cErr
+    // không còn xe nào sống (nháp, hoặc kế hoạch đã Mở lại hết rồi bỏ) ⇒ ĐÃ BỎ — bản cũ `syncPlanStatus` thấy "có xe DISCARDED" là xếp
+    // TENDERED ⇒ băng "nháp quá ngày chưa xác nhận — còn 0 đơn trên xe" sống mãi trên bàn (đo 11/10 với nháp 04/10)
+    if (plan.status === 'DRAFT' || !liveN) {
       const { error } = await db.from('dispatch_plan').update({ status: 'DISCARDED', updated_at: t }).eq('id', plan.id)
       if (error) throw error
       status = 'DISCARDED'

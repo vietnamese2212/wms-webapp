@@ -71,8 +71,15 @@ const numOrNull = (v: unknown): number | null => { const n = Number(v); return v
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json
 /** Ném NGUYÊN đối tượng lỗi PostgREST (giữ code 22P02/23505…) để fail() dịch thành 400/409 — bậc fast 24/09 bắt id rác trên :id ra 500 vì bản cũ ném new Error(message). */
 // 09/10: câu 503 chung "thu hẹp KHOẢNG NGÀY hoặc chọn 1 Kho" sai với bàn điều vận (đã là một kho × một ngày) — nói đúng việc phải làm
+/** Tên BƯỚC đang chạy của một cửa nặng (Xác nhận · Mở lại · ghép · /sync) — 503 QUERY_TIMEOUT chỉ nói "quá hạn", không nói câu nào;
+ *  11/10 Mở lại lô 150 xe quá hạn một lần mà không truy được. failAny ghi error_logs kèm bước cuối cùng đã đặt. */
+const step = (res: Response, s: string) => { res.locals.step = s }
 const failAny = (res: Response, e: unknown) => {
-  if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', 'Hệ thống đang bận, chưa làm xong thao tác này trên kế hoạch của kho — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).')
+  if (isQueryTimeout(e)) {
+    const st = (res.locals as { step?: string } | undefined)?.step
+    if (st) recordServerError('be', `QUERY_TIMEOUT ở bước: ${st}`, 503, 'QUERY_TIMEOUT_STEP', String((res.req as Request | undefined)?.originalUrl ?? 'tms/dispatch'))
+    return fail(res, 503, 'QUERY_TIMEOUT', `Hệ thống đang bận, chưa làm xong thao tác này trên kế hoạch của kho${st ? ` (dừng ở bước: ${st})` : ''} — chờ một phút rồi bấm lại (không cần đổi ngày hay kho).`)
+  }
   if (e && typeof e === 'object') {
     // 11/10: cửa điều vận KHÔNG có khoá nào do người nhập ⇒ 23505 không mang tiền tố rào (OD_ALREADY_PLANNED…) là LỖI CODE, không phải
     // "kiểm tra lại mã/tên đang nhập". Vẫn trả 409 cho người dùng, nhưng ghi error_logs kèm `details` (tên ràng buộc + khoá) để truy được —
@@ -1928,8 +1935,9 @@ async function tripGuards(req: Request, full: FullPlan, subset: FullTrip[]): Pro
 }
 
 /** Ghi khvc_lines cho các chuyến đã qua gác → trip CONFIRMED → dội xuống chuyến/lệnh VC như upload tay. */
-async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTrip[]) {
+async function writeTrips(req: Request, res: Response, full: FullPlan, wh: WhRow, trips: FullTrip[]) {
   const t = now()
+  step(res, 'ghi dòng Kế hoạch xuất (khvc_lines)')
   const rows = trips.flatMap(tr => {
     const d = detailOf(tr)
     // 08/10 — thứ tự giao (kho → điểm gần trước) của xe ⇒ số điểm của DO; không đo được thì để trống, không đoán
@@ -1954,11 +1962,13 @@ async function writeTrips(req: Request, full: FullPlan, wh: WhRow, trips: FullTr
   const gcs = trips.map(x => x.group_code)
   // CHIA LÔ 300, không `.slice(0, 300)` (08/10, C7 lặp): Xác nhận cả kế hoạch Ba Vì 04/10 có 819 xe — dòng Kế hoạch xuất ghi đủ 819
   // mà chỉ 300 xe đổi CONFIRMED, 519 xe nằm NHÁP (kéo thả được, Xác nhận lại 409, kế hoạch hiện "chờ ĐVVT")
+  step(res, 'đổi xe sang CONFIRMED')
   for (let i = 0; i < trips.length; i += 300) {
     const { error } = await db.from('dispatch_trip').update({ status: 'CONFIRMED', confirmed_at: t, updated_at: t }).in('id', trips.slice(i, i + 300).map(x => x.id))
     if (error) throw error
   }
   let replan: Record<string, unknown> | null = null, replan_error: string | null = null
+  step(res, 'dội chuyến Xuất kho + lệnh VC (replanKhvcGroups)')
   try { replan = await replanKhvcGroups(req, gcs) } catch (e) { replan_error = String(e); console.error('[dispatch confirm] replan:', e) }
   // KHÔNG ĐƯỢC BÁO THÀNH CÔNG KHI CHUYẾN KHÔNG SINH RA. `replanKhvcGroups` không NÉM lỗi khi đường
   // derive từ chối — nó trả về một object lồng `{derive:{success:false,…}}` mà trước nay không ai đọc,
@@ -2004,8 +2014,10 @@ async function confirmPlanInner(req: Request, res: Response) {
     if (!trips.length) return fail(res, 422, 'PLAN_EMPTY', 'Kế hoạch không có chuyến nào để xác nhận')
     const wh = await loadWarehouse(full.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    step(res, 'gác trước khi ghi (OD đổi ở SAP · mã hàng · Số xe đã dùng)')
     const g = await tripGuards(req, full, trips)
     if (g) return sendErr(res, g)
+    step(res, 'bỏ xe trống')
     // XE TRỐNG bị bỏ lúc xác nhận (11/10): bàn cố ý giữ xe hết OD để Hoàn tác, nhưng xác nhận xong mà còn xe nháp trống thì kế hoạch
     // thành "Chờ ĐVVT phản hồi" với 0 xe chờ (syncPlanStatus thấy xe DRAFT cạnh xe CONFIRMED) — đo 11/10 trên QA61WH.
     const empties = full.trips.filter(t => !t.ods.length && statusOf(t) === 'DRAFT')
@@ -2017,8 +2029,9 @@ async function confirmPlanInner(req: Request, res: Response) {
     const flags = await tenderFlags(trips)
     const direct = trips.filter(t => !t.transport_company_id || !flags.get(t.transport_company_id))
     const tender = trips.filter(t => t.transport_company_id && flags.get(t.transport_company_id))
+    step(res, 'đánh dấu xe chờ ĐVVT')
     await markTendered(tender)
-    const w = direct.length ? await writeTrips(req, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
+    const w = direct.length ? await writeTrips(req, res, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
     return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), discarded_empty: empties.length, lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
@@ -2041,7 +2054,7 @@ async function settleTripInner(req: Request, res: Response) {
     const flags = await tenderFlags([trip])
     const needs = !!trip.transport_company_id && flags.get(trip.transport_company_id) === true
     let w: Awaited<ReturnType<typeof writeTrips>> | null = null
-    if (needs) await markTendered([trip]); else w = await writeTrips(req, full, wh, [trip])
+    if (needs) await markTendered([trip]); else w = await writeTrips(req, res, full, wh, [trip])
     const status = await syncPlanStatus(plan, req.user?.name ?? null)
     await writeSummary(plan)
     return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null, derive_failed: w?.derive_failed ?? false, derive_message: w?.derive_message ?? null })
@@ -2072,7 +2085,7 @@ async function respondTripInner(req: Request, res: Response) {
     if (g) return sendErr(res, g)
     const { error } = await db.from('dispatch_trip').update({ responded_at: t, response_by: actor, response_note: b.note?.trim() || null, updated_at: t }).eq('id', trip.id)
     if (error) throw error
-    const w = await writeTrips(req, full, wh, [trip])
+    const w = await writeTrips(req, res, full, wh, [trip])
     const status = await syncPlanStatus(plan, actor)
     await writeSummary(plan)
     return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: 'CONFIRMED', plan_status: status, lines: w.lines, replan: w.replan, replan_error: w.replan_error })
@@ -2094,7 +2107,9 @@ async function reopenPlanInner(req: Request, res: Response) {
     const want = full.trips.filter(t => statusOf(t) === 'CONFIRMED' && (!b.trip_ids || b.trip_ids.includes(t.id)))
     if (!want.length) return fail(res, 422, 'NOTHING_TO_REOPEN', 'Không có xe nào đã vào Kế hoạch xuất để mở lại')
     const gcs = want.map(t => t.group_code)
+    step(res, 'đọc dòng Kế hoạch xuất của các xe')
     const lines = (await fetchAllByIdChunks(gcs, c => db.from('khvc_lines').select('id, group_code, do_no').in('group_code', c).neq('sync_status', 'OBSOLETE').order('id'))) as { id: string; group_code: string; do_no: string }[]
+    step(res, 'phân loại xe (chuyến đang xuất / giữ hàng nhặt lẻ)')
     const { blocked } = await classifyKhvcDelete(lines.map(l => ({ id: l.id, group_code: l.group_code })))
     const blockedGc = new Map(blocked.map(x => [x.group_code, x.reason]))
     const open = want.filter(t => !blockedGc.has(t.group_code))
@@ -2104,6 +2119,7 @@ async function reopenPlanInner(req: Request, res: Response) {
     // Dội chuyến (replanKhvcGroups) chạy SAU và lặp lại được; hỏng thì trả replan_error như trước, cửa /sync không còn gì để chữa.
     let delRows: { group_code: string; do_no: string }[] = []
     if (open.length) {
+      step(res, 'xoá dòng Kế hoạch xuất + xe về nháp (RPC dispatch_reopen_trips)')
       const { data: rr, error: rErr } = await db.rpc('dispatch_reopen_trips', { p_trip_ids: open.map(t => t.id) })
       if (rErr) throw rErr
       delRows = ((rr ?? {}) as { lines?: { group_code: string; do_no: string }[] }).lines ?? []
@@ -2112,7 +2128,9 @@ async function reopenPlanInner(req: Request, res: Response) {
     await logOutboundEvents(delRows.map(l => ({ group_code: l.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor, do_number: l.do_no,
       detail: `Mở lại kế hoạch điều vận — gỡ DO ${l.do_no} khỏi Số xe ${l.group_code} để sửa trên bàn ghép xe` })))
     let replan_error: string | null = null
+    step(res, 'dội chuyến Xuất kho (ngừng chuyến + nhả khung giờ)')
     if (openGc.length) { try { await replanKhvcGroups(req, openGc) } catch (e) { replan_error = String(e); console.error('[dispatch reopen] replan:', e) } }
+    step(res, 'trạng thái + tổng kết kế hoạch')
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
     return ok(res, { ...(await readPlan(full.id)), reopened: { trips: open.length, group_codes: openGc, blocked: want.filter(t => blockedGc.has(t.group_code)).map(t => ({ group_code: t.group_code, reason: blockedGc.get(t.group_code)! })), plan_status: status, replan_error } })

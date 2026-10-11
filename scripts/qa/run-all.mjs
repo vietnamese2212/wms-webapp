@@ -8,8 +8,19 @@
 // Exit 0 = XANH. Exit 1 = có FAIL. Gói tải 05-rush · 06-readload nằm NGOÀI cả 3 bậc (chạy tay ngoài giờ).
 // usage: node scripts/qa/run-all.mjs [--tier fast|full] [--offline] [--scale [N]]
 import { spawnSync } from 'child_process'
+import { existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+
+// ĐỎ THÌ PHẢI NÊU TÊN BƯỚC (11/10/2026). Vòng tổng kết dưới đây trước nay chỉ in text thường: gói nào
+// kết thúc bằng finish()/tally() thì TỰ in ::error, còn bước CÂM (`npm test` của vitest, 6 gói chưa
+// chuyển sang finish()) đỏ thì cả email lẫn trang lượt chạy chỉ có đúng một dòng "Process completed
+// with exit code 1" — mà tải log thì phải có quyền admin repo. Đo thật: 13 lượt qa-nightly liên tiếp
+// (24/09 → 11/10) đỏ với **0 chú thích**, không ai biết bước nào hỏng. Đây là lớp "chuông kêu mà không
+// biết chỗ nào" — cùng họ với cổng kêu oan, và dự án đã cấm.
+const GH = process.env.GITHUB_ACTIONS === 'true'
+const ghEsc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+const ghProp = (s) => ghEsc(s).replace(/:/g, '%3A').replace(/,/g, '%2C')
 
 const DIR = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(DIR, '..', '..')
@@ -23,7 +34,18 @@ const scaleN = argv[argv.indexOf('--scale') + 1]
 // Bước = file gói QA (chạy bằng node) hoặc lệnh riêng { label, cmd, args, cwd }
 const qa = (file, ...args) => ({ label: `${file} ${args.join(' ')}`.trim(), cmd: process.execPath, args: [join(DIR, file), ...args], cwd: ROOT })
 const offline = (step) => ({ ...step, offline: true })
-const UNIT = offline({ label: 'backend: npm test (unit + mirror BE⇄FE, không cần DB)', cmd: process.platform === 'win32' ? 'npm.cmd' : 'npm', args: ['test', '--silent'], cwd: join(ROOT, 'backend'), shell: true })
+// `needs`: thư mục BẮT BUỘC phải có trước khi chạy bước — thiếu thì báo ĐÚNG LÝ DO thay vì để công cụ
+// bên dưới chết câm. Bậc mirror import THẲNG `frontend/src` (plate.mirror → frontend/src/utils/formatters.ts
+// → `date-fns`, một gói chỉ khai ở frontend/package.json) nên nó cần node_modules của FRONTEND, không phải
+// của backend. GỐC RỄ của 13 lượt qa-nightly đỏ liên tiếp: workflow đêm chỉ `cd backend && npm ci`, vitest
+// không nạp được `date-fns` ⇒ "1 failed | 36 passed" ⇒ thoát 1 mà KHÔNG in ::error nào. Tái hiện 11/10
+// bằng cách chạy bộ test trên cây nguồn không có frontend/node_modules: đỏ y hệt.
+const UNIT = offline({
+  label: 'backend: npm test (unit + mirror BE⇄FE, không cần DB)',
+  cmd: process.platform === 'win32' ? 'npm.cmd' : 'npm', args: ['test', '--silent'], cwd: join(ROOT, 'backend'), shell: true,
+  needs: join(ROOT, 'frontend', 'node_modules'),
+  needsWhy: 'phép kiểm mirror import thẳng frontend/src (kéo theo date-fns của frontend) — chạy `cd frontend && npm ci` trước, kể cả khi chỉ định kiểm backend',
+})
 const COVERAGE = offline(qa('coverage-surface.mjs', '--ratchet'))
 const STATIC = offline(qa('09-static-gate.mjs'))
 const AUDIT = offline(qa('44-npm-audit.mjs'))
@@ -115,6 +137,11 @@ console.log(`BẬC: ${TIER}${OFFLINE ? ' (offline)' : ''} — ${steps.length} b�
 const summary = []
 for (const s of steps) {
   console.log(`\n════════ ${s.label} ════════`)
+  if (s.needs && !existsSync(s.needs)) {
+    console.error(`❌ THIẾU ${s.needs}\n   ${s.needsWhy}`)
+    summary.push({ label: s.label, ok: false, note: `thiếu ${s.needs}` })
+    continue
+  }
   // QA_TIER: gói tự biết đang ở bậc nào — phép kiểm quét-cả-schema (00 mục 11) chỉ chạy ở full (đêm), không ở mỗi push
   const r = spawnSync(s.cmd, s.args, { stdio: 'inherit', cwd: s.cwd, shell: s.shell === true, env: { ...process.env, QA_TIER: TIER } })
   summary.push({ label: s.label, ok: r.status === 0 })
@@ -125,8 +152,17 @@ for (const s of steps) {
 }
 
 console.log('\n══════════ TỔNG KẾT ══════════')
-for (const s of summary) console.log(`  ${s.ok ? '✅' : '❌'} ${s.label}`)
-const fails = summary.filter(s => !s.ok).length
+for (const s of summary) console.log(`  ${s.ok ? '✅' : '❌'} ${s.label}${s.note ? ` — ${s.note}` : ''}`)
+const bad = summary.filter(s => !s.ok)
+const fails = bad.length
+// MỘT chú thích duy nhất, liệt kê ĐỦ tên bước đỏ. Cố ý không in mỗi bước một ::error: GitHub chỉ giữ
+// ~10 chú thích mỗi mức cho MỖI BƯỚC workflow, mà cả bộ kiểm nằm trong đúng một bước — in nhiều sẽ
+// ĐẨY VĂNG chú thích của chính các gói (gói nào có finish()/tally() đã tự nêu phép kiểm nào hỏng,
+// thứ đó quý hơn). Một dòng này chỉ cần trả lời "bước nào", phần "hỏng cái gì" để gói tự nói.
+if (fails && GH) {
+  const list = bad.map(s => s.label.replace(/\.mjs\b/, '')).join(' · ').slice(0, 900)
+  console.log(`::error title=${ghProp(`QA bậc ${TIER}: ${fails} bước ĐỎ`)}::${ghEsc(`${list} — tìm khối "════════ <tên bước>" trong log để xem chi tiết`)}`)
+}
 // ⚠️ Chế độ --offline CHỈ chạy vài bước không cần DB (cổng tĩnh · audit · npm test · độ phủ).
 // Trước 11/09 nó vẫn in "đủ điều kiện merge main" y như bậc full chạy đủ 60 bước — cùng lớp lỗi
 // với /api/health luôn trả "ok": đèn xanh nói nhiều hơn những gì nó thật sự đo được.

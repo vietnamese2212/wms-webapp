@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { HAS_DB, BASE, restAll, restRpc, restWrite, chunk, check, finish, looksFixture } from './lib.mjs'
-import { utcMs } from './utcms.mjs'
+import { utcMs, CI_ACCOUNT_STALE_MS } from './utcms.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -495,11 +495,13 @@ if (process.env.QA_TIER === 'full') {
 
 // ── 07/10 — TÀI KHOẢN CI KHÔNG ĐƯỢC SỐNG LAY LẮT VỚI QUYỀN. Đêm 06→07/10 lượt qa-nightly để lại "CI runner 1340793230" là superadmin
 // ~8 giờ: xoá một Employee đã ghi nhiều dòng (khoá ngoại SET NULL + trigger realtime từng dòng) quá 8 s PostgREST ⇒ bước dọn ném lỗi.
-// ci-account.mjs nay THU HỒI (tắt + gỡ superadmin) trước khi xoá; phép này đo lại — tài khoản CI còn quyền mà quá 2 giờ = lưới hỏng.
+// ci-account.mjs nay THU HỒI (tắt + gỡ superadmin) trước khi xoá; phép này đo lại — tài khoản CI còn quyền mà quá hạn = lưới hỏng.
+// Mốc lấy từ `utcms.mjs` (CI_ACCOUNT_STALE_MS) — CÙNG con số mà ci-account.mjs dùng làm hạn dọn, để hai phía không bao giờ lệch:
+// ngưỡng báo động thấp hơn hạn dọn thì phép này đỏ oan với tài khoản của một lượt đêm ĐANG CHẠY (job đêm trần 150 phút).
 {
   const acc = await restAll('Employee', 'select=employee_code,created_at,is_active,is_superadmin&employee_code=like.QACI*')
-  const live = acc.filter(a => (a.is_active || a.is_superadmin) && Date.now() - utcMs(a.created_at) > 2 * 3600_000)
-  check('Không tài khoản CI (QACI*) nào còn quyền quá 2 giờ — bước dọn phải thu hồi kể cả khi xoá hỏng', live.length === 0,
+  const live = acc.filter(a => (a.is_active || a.is_superadmin) && Date.now() - utcMs(a.created_at) > CI_ACCOUNT_STALE_MS)
+  check(`Không tài khoản CI (QACI*) nào còn quyền quá ${CI_ACCOUNT_STALE_MS / 3600_000} giờ — bước dọn phải thu hồi kể cả khi xoá hỏng`, live.length === 0,
     live.length ? live.map(a => `${a.employee_code} tạo ${a.created_at}${a.is_superadmin ? ' · superadmin' : ''}`).join(' · ') : `soi ${acc.length} tài khoản CI`)
 }
 

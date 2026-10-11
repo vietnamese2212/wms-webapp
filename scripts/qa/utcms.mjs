@@ -20,6 +20,20 @@
  * Bản song sinh phía backend: `utcMs` trong `backend/src/utils/dates.ts`.
  * Ratchet `naive_db_timestamp_parse` (baseline 0) chặn quay lại `new Date(<cột thời gian>)`.
  */
+/**
+ * TÀI KHOẢN CI SỐNG QUÁ MỐC NÀY = RÁC của một lượt bị ngắt giữa chừng (được thu hồi + xoá).
+ * MỘT nguồn cho CẢ HAI phía, để hai con số không bao giờ lệch nhau: `ci-account.mjs` dùng nó làm
+ * hạn dọn, `00-invariant.mjs` dùng nó làm ngưỡng báo động "còn quyền lay lắt".
+ *
+ * VÌ SAO 3 GIỜ chứ không phải 2 (sửa 11/10/2026): mốc này PHẢI lớn hơn trần thời gian của job đêm
+ * (`qa-nightly.yml` timeout-minutes: 150 = 2,5 giờ), nếu không thì một lượt đêm chạy dài sẽ bị chính
+ * lưới dọn của một lượt KHÁC xoá tài khoản giữa chừng — `ci.yml` (nhóm `qa-smoke-dev`) chạy song song
+ * được với `qa-nightly` (nhóm `qa-staging`), và bước cấp tài khoản của nó gọi `purgeOld()`. Hậu quả đã
+ * đo 07/10: tài khoản chết giữa lượt ⇒ 10 gói liền `401`, rồi `auth_throttle` khoá ⇒ 9 gói tiếp `429`.
+ * Hạ con số này xuống dưới trần job = dựng lại đúng cái bẫy đó.
+ */
+export const CI_ACCOUNT_STALE_MS = 3 * 3600_000
+
 export const utcMs = (v) => {
   const s = typeof v === 'string' ? v : v instanceof Date ? v.toISOString() : ''
   if (!s) return NaN

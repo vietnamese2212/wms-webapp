@@ -25,10 +25,10 @@ import bcrypt from 'bcryptjs'
 // Mốc DB → UTC. Tài khoản CI bị đọc SAI TUỔI chính là thứ làm CI đỏ 25–26/09 — xem utcms.mjs.
 // Cố ý KHÔNG import lib.mjs: file đó gắn bộ bắt lỗi toàn cục + có process.exit ở cuối, mà bước
 // cấp tài khoản phải để workflow bắt lỗi bằng `||`.
-import { utcMs } from './utcms.mjs'
+import { utcMs, CI_ACCOUNT_STALE_MS } from './utcms.mjs'
 
 const PREFIX = 'QACI'            // employee_code bắt đầu bằng đây = tài khoản do CI cấp
-const MAX_AGE_MS = 2 * 60 * 60 * 1000   // tài khoản CI sống quá 2 giờ = rác của lượt bị huỷ giữa chừng
+const MAX_AGE_MS = CI_ACCOUNT_STALE_MS  // rác của lượt bị huỷ giữa chừng — mốc chung với gói 00, xem utcms.mjs
 
 // ── Kết nối PostgREST bằng khoá dịch vụ (bước trước trong workflow đã ghi backend/.env) ──
 function env() {
@@ -73,7 +73,17 @@ function newPassword() {
 // vừa dùng nằm lại tới khi quá hạn 2 giờ (đo 27/09: 8 tài khoản như vậy còn sống cùng lúc — trước
 // đây chúng bị chính lỗi múi giờ xoá hộ nên không ai thấy). Ghi số hiệu ra file tạm của HỆ ĐIỀU
 // HÀNH (không đụng repo) để mọi người gọi đều được thu hồi đúng, không cần nhớ khai gì.
-const TAG_FILE = join(tmpdir(), 'wms-qa-ci-account-tag')
+//
+// 11/10: ô nhớ GẮN VÀO TIẾN TRÌNH CHA, không còn MỘT ô dùng chung cho cả máy. Một ô chung = hai lượt
+// QA chạy cùng lúc trên một máy xoá tài khoản của nhau: lượt sau `provision` ghi đè số hiệu, lượt nào
+// gọi `cleanup` mà không khai `QA_CI_TAG` thì đọc trúng số hiệu của lượt KIA rồi xoá đúng tài khoản
+// đang dùng. Đo thật 07/10: tài khoản chết giữa chừng ⇒ 10 gói liền `401 sai mật khẩu`, rồi chính van
+// chống dò mật khẩu của app (`auth_throttle`, 10 lần sai/15') khoá lại ⇒ 9 gói tiếp `429 ACCOUNT_LOCKED`
+// — MỘT lần xoá đẻ ra 20 bước đỏ. `provision` và `cleanup` của cùng một lượt luôn do CÙNG một shell/script
+// gọi nên chung `ppid`; hai lượt song song là hai shell ⇒ hai ô khác nhau, không thấy nhau. Cha khác nhau
+// (gọi tay hai cửa sổ) thì `cleanup` không đọc ra số hiệu nào — hướng hỏng AN TOÀN: tài khoản nằm lại cho
+// lưới dọn quá hạn, KHÔNG xoá nhầm của lượt đang chạy. Muốn chắc chắn thì khai `QA_CI_TAG` (provision in ra).
+const TAG_FILE = join(tmpdir(), `wms-qa-ci-account-tag-${process.ppid}`)
 const readSavedTag = () => { try { return readFileSync(TAG_FILE, 'utf8').trim() } catch { return '' } }
 const runTag = (process.env.GITHUB_RUN_ID || process.env.QA_CI_TAG
   || (process.argv[2] === 'cleanup' ? readSavedTag() : '') || String(Date.now())).slice(-10)

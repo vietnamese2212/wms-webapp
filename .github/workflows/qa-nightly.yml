@@ -24,8 +24,19 @@ jobs:
         with: { ref: dev }
       - uses: actions/setup-node@v5
         with: { node-version: 22 }   # supabase-js cần WebSocket native (Node ≥ 22)
-      - name: Cài dependency backend (unit test + audit ratchet cần node_modules)
-        run: cd backend && npm ci --no-audit --no-fund
+      # BE **VÀ** FE. Bậc `npm test` chạy cả tests/mirror, mà các file đó import THẲNG frontend/src
+      # (plate.mirror → frontend/src/utils/formatters.ts → `date-fns`, gói chỉ khai ở frontend/package.json)
+      # ⇒ thiếu node_modules của frontend là vitest ĐỎ "Cannot find package 'date-fns'". Đo 11/10/2026: đây
+      # chính là thứ làm 13 lượt đêm liên tiếp đỏ từ 24/09 — và đỏ CÂM, vì vitest không in ::error nào nên
+      # email chỉ có "Process completed with exit code 1". `ci.yml` cài cả hai nên không bao giờ lộ ở đó.
+      # Nay `run-all.mjs` còn kiểm trước khi chạy bước: thiếu thư mục này là báo đúng lý do, không chết câm.
+      - name: Cài dependency (BE + FE — unit/mirror test + audit ratchet cần node_modules)
+        # `wait` TRẦN luôn trả 0 (POSIX) ⇒ `npm ci` hỏng vẫn lọt qua bước, đúng lớp lỗi đang sửa.
+        # Chờ theo TỪNG số hiệu tiến trình để lấy đúng mã thoát của nó.
+        run: |
+          (cd backend && npm ci --no-audit --no-fund) & be=$!
+          (cd frontend && npm ci --no-audit --no-fund) & fe=$!
+          wait $be && wait $fe
       - name: Dựng env cho bộ QA (từ secret — thiếu thì dừng có hướng dẫn)
         run: |
           if [ -z "${{ secrets.QA_DATABASE_URL }}" ]; then

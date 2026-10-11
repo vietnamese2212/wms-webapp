@@ -234,4 +234,4 @@ Lỗi thấy và đã sửa (cùng commit):
   dọn dòng OD của khung chờ + xe bị bỏ (6 nháp bỏ đi = 25.850 dòng nằm chết, câu đếm đơn mới quét qua).
 - **/sync 503 lặp**: chỉ mục phủ 20261011b (`dispatch_new_ods` 3,77 s → 0,55 s).
 Còn mở: Mở lại lô 150 xe một lần 503 (câu nào quá hạn chưa truy được — 503 không ghi câu); chuyến bị Mở lại nằm lại dạng "ngừng hoạt động"
-(149 chuyến 12/10 Ba Vì sau lượt thử); 45/149 xe một khách vì kênh MT chưa khai số khách tối đa.
+(149 chuyến 12/10 Ba Vì sau lượt thử); 49/157 xe một đơn đều là XE ĐẦY (≥ 70 %, đa số 97–100 %: 28 cont xuất khẩu 28–34 pallet, các OD 16–17 pallet) — không phải do cấu hình kênh; chip "Khai thiếu: MT" chỉ nói các dòng Chung/RM01/PK01 của kênh MT còn "1 (chưa khai)".

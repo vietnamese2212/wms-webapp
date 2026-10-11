@@ -1306,6 +1306,15 @@ const RULES = [
       l => /<Route path=/.test(l) && /element=\{/.test(l)
         && !/(PermissionRoute|ExternalRoute|DashboardRoute|<Login|Navigate)/.test(l), s),
   },
+  // Cửa CÔNG KHAI (khai trong app.ts, trước verifyToken) mà chạm DB phải có van theo IP (11/10, user duyệt TODO 12/09):
+  // health · telemetry/digest · telemetry/client-error từng mở không van — ai gõ dồn là máy chủ bận theo. Cửa mới không
+  // bọc `publicLimiter` ⇒ tăng số ⇒ CI đỏ. /api/version chỉ trả SHA, không chạm DB — miễn.
+  {
+    key: 'public_route_without_rate_limit',
+    label: 'route công khai trong app.ts (app.get/post /api/…) không bọc publicLimiter — cửa không đăng nhập mà chạm DB phải có van theo IP',
+    count: (s) => countMatches(['backend/src/app.ts'], ['.ts'],
+      l => /^app\.(get|post|put|patch|delete)\('\/api\//.test(l) && !/Limiter/.test(l) && !/'\/api\/version'/.test(l), s),
+  },
   // Tập mã camera đọc được khai MỘT CHỖ (utils/scanEngine). Khai literal ở màn quét mới = màn đó
   // lệch với luồng thật (21/08: cả app từng chỉ khai QR nên mã vạch 1D bị bỏ qua ÂM THẦM).
   {

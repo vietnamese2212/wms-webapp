@@ -83,6 +83,7 @@
   "first_of_list_sent_as_singular": 0,
   "component_defined_inside_component": 0,
   "catalogue_full_load": 0,
+  "public_route_without_rate_limit": 0,
   "assumed_carton_used_directly": 0,
   "scan_icon_not_unified": 0,
   "location_picker_without_scan": 0,

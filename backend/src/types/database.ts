@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-11T08:05:00.519Z · 115 bảng/view · 192 hàm · 0 enum
+// Sinh lúc 2026-10-11T11:27:46.258Z · 115 bảng/view · 194 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -868,6 +868,7 @@ export type Database = {
           putaway_checked: boolean
           putaway_violation: string | null
           putaway_override_reason: string | null
+          expiry_calc: string | null
         }
         Insert: {
           id: string
@@ -909,6 +910,7 @@ export type Database = {
           putaway_checked?: boolean
           putaway_violation?: string | null
           putaway_override_reason?: string | null
+          expiry_calc?: string | null
         }
         Update: {
           id?: string
@@ -950,6 +952,7 @@ export type Database = {
           putaway_checked?: boolean
           putaway_violation?: string | null
           putaway_override_reason?: string | null
+          expiry_calc?: string | null
         }
         Relationships: []
       }
@@ -6485,6 +6488,14 @@ export type Database = {
         Args: { p_ids: unknown | null; p_status: string | null; p_wh_ids: unknown | null; p_location_ids: unknown | null; p_material_ids: unknown | null; p_categories: unknown | null; p_qa_ids: unknown | null; p_search: string | null; p_search_mat_ids: unknown | null; p_search_loc_ids: unknown | null; p_manufacturer: string | null; p_cycles: unknown | null; p_machines: unknown | null; p_nmsx: unknown | null; p_ncc_ids: unknown | null; p_import_from: string | null; p_import_to: string | null }
         Returns: Json
       }
+      inventory_expiry_calc: {
+        Args: { p_expiry: string | null; p_prod: string | null; p_entry_shelf: number | null; p_mat_shelf: number | null; p_overrides: Json | null; p_ncc: string | null }
+        Returns: string
+      }
+      inventory_expiry_mismatch: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
       inventory_facet_values: {
         Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null }
         Returns: Record<string, unknown>[]
@@ -6774,7 +6785,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {

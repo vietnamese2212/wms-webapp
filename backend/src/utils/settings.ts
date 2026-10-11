@@ -78,8 +78,9 @@ export const getInboundEditWindowDays = () =>
 // Đã loại trừ query là nguyên nhân (chạy ẤM chỉ 64ms; thử index giả định không nhanh hơn) — chậm là
 // do XẾP HÀNG ở pool ~10 khe của PostgREST. Cách duy nhất có tác dụng: đừng chạy tổng hợp nặng
 // trong MỌI request, mà dùng lại kết quả trong `n` giây.
-// Mặc định 300 (5 phút — user chốt 21/08). Đặt 0 = TẮT cache, tính sống mỗi lần như trước.
-export const DASHBOARD_CACHE_SECONDS_DEFAULT = 300
+// Mặc định 300 (5 phút — user chốt 21/08) → 1800 (30 phút, user duyệt 11/10: 30 lần mở trong 35 giờ là 30 lần tính lại,
+// trung bình 2,4 s, có lần 17,5 s — số tổng toàn công ty không cần mới từng phút). Đặt 0 = TẮT cache, tính sống mỗi lần như trước.
+export const DASHBOARD_CACHE_SECONDS_DEFAULT = 1800
 export const parseDashboardCacheSeconds = (raw: unknown) => int(raw, 0, 3600)
 export const getDashboardCacheSeconds = () =>
   readSetting('dashboard_cache_seconds', DASHBOARD_CACHE_SECONDS_DEFAULT, parseDashboardCacheSeconds)

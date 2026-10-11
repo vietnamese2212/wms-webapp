@@ -404,6 +404,17 @@ if (process.env.QA_TIER === 'full') {
       : 'RPC qa_row_triggers_with_writes chưa apply (migration 20261011d)')
 }
 
+// 14e. HSD TÍNH SẴN TRÊN PALLET PHẢI KHỚP CÔNG THỨC (11/10, migration 20261011e): `InventoryEntry.expiry_calc` do trigger giữ
+//      (pallet đổi NSX / HSD / shelf-life / mã / NCC; Material đổi shelf-life hoặc ngoại lệ NCC) nuôi vòng quét "Tồn cận date"
+//      (trước: đọc hết 19.589 pallet mỗi 10 phút, 29 lần quá hạn 04–07/10). Cột lệch = pallet cận date biến mất khỏi cảnh báo.
+{
+  let n = null
+  try { n = await restRpc('inventory_expiry_mismatch') } catch { /* chưa apply migration → báo dưới */ }
+  check('HSD tính sẵn của pallet khớp công thức shelf-life (0 pallet lệch)',
+    Number(n) === 0,
+    n == null ? 'RPC inventory_expiry_mismatch chưa apply (migration 20261011e)' : `lệch=${n}`)
+}
+
 // 15. CHI PHÍ CHUNG KHÔNG ĐƯỢC CHẢY VÀO Ô TỔNG KHI ĐANG LỌC 1 KHO (chốt 27/08).
 //     Gốc: check-app dựng vai kế toán chỉ được gán Kho Ba Vì thì trang Chi phí kho hiện
 //     1.063.200.000 (sổ CẮT dòng chi phí chung) còn tab Năng suất hiện 1.304.200.000 (cộng TRỌN

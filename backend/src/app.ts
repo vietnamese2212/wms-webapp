@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import dotenv from 'dotenv'
+import rateLimit from 'express-rate-limit'
 import authRouter from './routes/auth'
 import masterdataRouter from './routes/masterdata'
 import wmsRouter from './routes/wms'
@@ -54,9 +55,16 @@ app.get('/api/version', (_req, res) => {
 // ── Tai mắt production (29/07) — 2 route PUBLIC có chủ đích ──
 // FE báo lỗi JS chưa đăng nhập cũng phải ghi được; digest chỉ trả SỐ ĐẾM (không nội dung).
 // Chống lạm dụng: cap 3 lỗi/phút/instance (serverless mỗi lambda 1 quầy — đủ chặn spam vô ý).
+// VAN THEO IP (11/10, user duyệt — TODO 12/09): ba cửa không cần đăng nhập mà chạm DB (digest 3 câu đếm · health 1 câu ·
+// client-error 1 lần ghi) — ai gõ liên tục là máy chủ bận theo. Đếm theo instance như loginLimiter (lớp chính của /auth nằm ở
+// DB, ở đây chỉ cần chặn gõ dồn); người dùng thật gọi digest 1 lần/giờ (job keepalive) và health vài lần/phút (hạ tầng thăm dò).
+const publicLimiter = rateLimit({
+  windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Gọi quá dồn — chờ một phút rồi thử lại.' } },
+})
 let feErrBudget = 3
 setInterval(() => { feErrBudget = 3 }, 60_000).unref?.()
-app.post('/api/telemetry/client-error', (req, res) => {
+app.post('/api/telemetry/client-error', publicLimiter, (req, res) => {
   const { message, url, ua } = (req.body ?? {}) as { message?: unknown; url?: unknown; ua?: unknown }
   if (typeof message === 'string' && message.trim() && feErrBudget > 0) {
     feErrBudget--
@@ -66,7 +74,7 @@ app.post('/api/telemetry/client-error', (req, res) => {
   }
   res.json({ success: true })   // luôn 200 — telemetry không bao giờ làm FE bận tâm
 })
-app.get('/api/telemetry/digest', async (_req, res) => {
+app.get('/api/telemetry/digest', publicLimiter, async (_req, res) => {
   try {
     const since = new Date(Date.now() - 24 * 3600_000).toISOString()
     // 503 = quá tải / chưa sẵn sàng — tình huống ĐÃ LƯỜNG TRƯỚC (xem `isSoftStatus` trong
@@ -94,7 +102,7 @@ app.get('/api/telemetry/digest', async (_req, res) => {
 // cạn quỹ Disk IO, không nhận nổi một kết nối nào suốt nhiều giờ, mà /api/health vẫn 200 "ok" ⇒
 // tôi đọc nhầm thành "đã hồi phục". Chuông báo luôn nói khoẻ thì không phải chuông.
 // Không trả message thô của DB ra ngoài (cùng luật che 5xx) — chỉ đủ để biết ốm ở tầng nào.
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', publicLimiter, async (_req, res) => {
   try {
     const { error } = await supabase.from('Warehouse').select('id').limit(1)
     if (error) return res.status(503).json({ status: 'degraded', db: 'unreachable' })

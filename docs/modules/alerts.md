@@ -21,4 +21,15 @@
 
 ## Actions
 
-view=xem + **nhận push cảnh báo mới theo kho được gán**, **ack**=đánh dấu "đã biết"/bỏ đánh dấu (ẩn khỏi list mặc định — cảnh báo tự đóng, không có nút resolve tay) 
+view=xem + **nhận push cảnh báo mới theo kho được gán**, **ack**=đánh dấu "đã biết"/bỏ đánh dấu (ẩn khỏi list mặc định — cảnh báo tự đóng, không có nút resolve tay)
+
+## 11/10 — "Tồn cận date" đọc HSD TÍNH SẴN trên pallet (migration 20261011e)
+
+Vòng quét `alerts_expiry_candidates` (alertScanner mỗi 10') trước đọc MỌI pallet sống (19.589, 3.534 block) rồi mới lọc NSX + shelf-life của
+mã / NCC ⇒ trung bình 1,6 s, cache nguội quá hạn 29 lần 04–07/10 (`ALERT_RULE_FAILED_OVERLOAD`). Nay cột `InventoryEntry.expiry_calc`
+(= `effectiveExpiryMs` của `utils/shelfLife.ts`, so 19.586 pallet: 0 lệch) do trigger giữ — pallet đổi NSX / HSD / shelf-life / mã / NCC
+(BEFORE ROW, chỉ gán NEW) và Material đổi shelf-life hoặc ngoại lệ NCC (trigger THEO CÂU tính lại pallet của mã đó) — + chỉ mục một phần
+trên pallet còn hàng. Vòng quét lọc `expiry_calc <= hôm nay + 120` (2.053/19.586 pallet) rồi `computePctDate` vẫn tính %Date như cũ.
+Cột CHỈ nuôi cửa lọc; %Date hiển thị ở mọi màn vẫn đi `computePctDate`. Bất biến gói 00 mục 14e `inventory_expiry_mismatch()` = 0.
+Thêm nguồn shelf-life mới (vd theo kho) ⇒ sửa `inventory_expiry_calc` (SQL) CÙNG `resolveShelfLife` (TS + FE mirror), và chạy lại
+`eq_expiry.mjs` (so TS ↔ SQL trên mọi pallet; chú ý so ngày bằng CÙNG đồng hồ với lúc parse — máy VN lệch 7 giờ). 

@@ -22,4 +22,12 @@ Trang `/` Tổng quan hệ thống (19/08 — trước mở cho mọi user; migr
 
 ## Actions
 
-view, **kpi_target**=đặt mục tiêu G/Y/R tab KPI, **kpi_note**=sửa DIỄN GIẢI KPI (câu ý nghĩa trong nút ⓘ) 
+view, **kpi_target**=đặt mục tiêu G/Y/R tab KPI, **kpi_note**=sửa DIỄN GIẢI KPI (câu ý nghĩa trong nút ⓘ)
+
+## 11/10 — cache 5 phút → 30 phút, trang chủ in "Số liệu lúc hh:mm" (migration 20261011g)
+
+Đo 35 giờ staging: `dashboard_all_cached` 30 lần gọi ⇒ gần như lần nào cũng tính lại (TTL 300 s ngắn hơn khoảng cách hai lần mở), trung
+bình 2,4 s, có lần 17,5 s (max của hàm là 30 s). User duyệt 11/10: số tổng toàn công ty không cần mới từng phút ⇒
+`DASHBOARD_CACHE_SECONDS_DEFAULT` = 1800, staging `SystemSetting.dashboard_cache_seconds` = 1800 (production đổi tay ở Cài đặt WMS › Hệ
+thống). Để cache dài không lừa người xem, RPC ghép `computed_at` vào payload (cả nhánh cache lẫn tính) và header trang chủ in
+"· Số liệu lúc hh:mm" — cùng khuôn Giám sát vận hành. Tab Năng suất vẫn có lời gọi riêng theo khoảng ngày (không qua cache này). 

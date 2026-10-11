@@ -2208,6 +2208,8 @@ export function useTransactions(limit?: number) {
 
 // ─── Dashboard tổng quan (data thật) ─────────────────────────
 export type DashboardStats = {
+  // Số liệu tính lúc nào (RPC dashboard_all_cached, 20261011g) — cache 30 phút nên trang chủ phải nói tuổi số liệu
+  computed_at?: string
   inventory: Array<{
     warehouse_id: string; warehouse_name: string; inventory_mode: string | null
     category: string; pallets: number; cartons: number; materials: number

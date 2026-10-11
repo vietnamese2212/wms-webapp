@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardStats, type DashboardStats } from '@/api/hooks'
+import { formatTimestampTime } from '@/utils/formatters'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -130,6 +131,8 @@ export default function Dashboard() {
           </span>
           <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-slate-500 border-l border-slate-200 dark:border-slate-700 pl-2">Facility Overview</span>
           <span className="text-[11px] text-slate-500 dark:text-slate-400">{today}</span>
+          {/* số liệu tổng công ty nhớ 30 phút (11/10) — nói tuổi số liệu như Giám sát vận hành, không để người xem tưởng là sống */}
+          {stats?.computed_at && <span className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">· Số liệu lúc {formatTimestampTime(stats.computed_at)}</span>}
           <span className="flex-1" />
           <WarehouseSingleSelect
             warehouses={scopedWhs as { id: string; code?: string; name: string }[]}

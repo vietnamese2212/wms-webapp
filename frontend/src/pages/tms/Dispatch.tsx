@@ -436,7 +436,7 @@ export default function Dispatch() {
               )}
               {/* Trạng thái + tham số lập GỌN vào ⓘ (user 25/09 tối: "bàn làm việc rộng rãi nhất có thể") — bản cũ là một
                   hàng meta riêng dưới thanh công cụ */}
-              {plan && s && (
+              {plan && s && planTab && (
                 <span className="inline-flex items-center gap-1 shrink-0">
                   <StatusBadge tone={s.tone}>{s.label}</StatusBadge>
                   <InfoTip tip={<div className="space-y-0.5 text-xs">

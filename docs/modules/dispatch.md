@@ -274,3 +274,11 @@ Memory `dispatch-daytest-2026-10-12`. Không lỗi kỹ thuật; năm chỗ ngư
   `dispatchIssues` (chip đỏ, đếm vào "Cần xử lý", chip lọc Soát); hộp Xác nhận nêu xe trước khi BE 403 `CATEGORY_OUT_OF_SCOPE` (C78).
   Test đơn vị `dispatchIssues.test.ts`.
 - Mục 6 (chức danh điều vận thiếu `dispatch.export` / `external_khvc`) user tự cấp ở Quản lý người dùng — không nhắc lại.
+
+**Test kỹ lại 12/10 chiều (user: "test kỹ lại"; oracle = API tính lại độc lập, ba vai dv / chỉ-xem / giám sát, 1280 · 768 · 360):** 34/35 phép
+qua, phép đỏ duy nhất là lỗi của chính bộ kiểm (đếm chip trên bảng Xem đơn vẽ cửa sổ `WindowedRows` — cuộn rồi đếm lại ra đúng 7/7). Số đo:
+`GET /plans?status=OPEN` 3,1 KB / ~0,45 s so với 41,9 KB (27 kế hoạch) của lời gọi băng vàng cũ; Gom lô 21 đơn ~5 s; Tối ưu lại với #1 #2
+khoá ⇒ STT 1..10, không trùng `group_code` trên tiền tố. Hai chỗ sửa thêm: (1) `GET /tms/vehicle-types` mở đọc cho `dispatch.view` — vai chỉ
+có quyền xem điều vận nhận 403 câm ×4 mỗi lần mở bàn (nhóm "Loại xe" · hộp dải tải); (2) cửa `refresh-pool` nêu TÊN BƯỚC khi 503 (gặp một
+lần trên nháp 3.529 đơn Chờ điều lúc gói 61 đang chạy). Nhãn tab "Nháp N" đếm CẢ nháp chỉ chứa Chờ điều ("chưa giữ đơn" in mờ) — đó là
+nháp mở thật, user quyết có muốn đếm riêng không.

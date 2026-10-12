@@ -28,6 +28,8 @@ const requireTmsView = requireAnyPerm(
 // Danh mục Loại xe còn nuôi ô "Loại xe" của form Đăng ký cổng — vai chỉ có gate_registration (bảo vệ)
 // từng nhận 403 ở cả hai cửa đọc nên form hiện ô Loại xe RỖNG (đo 21/09 bằng token vai thật). Chỉ mở
 // hai cửa ĐỌC danh mục, không mở cửa ghi.
+// 12/10: bàn điều vận đọc Loại xe (nhóm "Loại xe" · hộp dải tải) — vai CHỈ có dispatch.view nhận 403 câm ×4 mỗi lần mở bàn (đo bằng
+// chức danh QA chỉ xem); cùng lý do cửa đọc dòng xe bên dưới đã mở cho dispatch.view.
 const requireTmsOrGateView = requireAnyPerm(
   ['tms_plan', 'view'],
   ['tms_vehicle_types', 'view'],
@@ -35,6 +37,7 @@ const requireTmsOrGateView = requireAnyPerm(
   ['tms_companies', 'view'],
   ['tms_vehicles', 'view'],
   ['gate_registration', 'view'],
+  ['dispatch', 'view'],
 )
 
 // VehicleType (Loại xe)

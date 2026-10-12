@@ -1786,8 +1786,11 @@ async function refreshPoolInner(req: Request, res: Response) {
     const { plan } = got
     const wh = await loadWarehouse(plan.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    // 12/10: cửa này tự chạy khi /sync báo OD mới; thử trên nháp 3.529 đơn Chờ điều gặp 503 quá hạn — nêu TÊN BƯỚC như Xác nhận / Mở lại (C79)
+    step(res, 'đọc kế hoạch')
     const full = (await readPlan(plan.id))!
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
+    step(res, 'nạp đơn chưa đi từ ZSD02 (loadCandidates) + dấu đã kéo đi')
     const [cand, pulled] = await Promise.all([
       loadCandidates(wh, plan.plan_date, await getDispatchCategoryConfig(), { skipPlanId: plan.id, segment: plan.segment as Segment }),
       pulledAwayHeld(plan),
@@ -1797,14 +1800,18 @@ async function refreshPoolInner(req: Request, res: Response) {
     const t = now()
     // OD mới về vào khung chờ = tab Điều (user chốt 28/09: tự vào, gắn nhãn "Mới"). `fresh_ods` = OD về SAU khi lập kế hoạch
     // mà còn nằm khung chờ — nhãn tự hết khi OD lên xe; OD đã rời khung chờ thì lần nạp sau bỏ khỏi danh sách.
+    step(res, `ghi ${loadable.length} dòng OD mới vào khung chờ`)
     await insertOdRows(loadable.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
     const prev = (plan.params ?? {}) as Record<string, unknown>
     const inPool = new Set(full.pool.map(o => o.od_number))
     const fresh_ods = uniq([...((prev.fresh_ods ?? []) as string[]).filter(od => inPool.has(od)), ...loadable.map(o => o.od_number)])
+    step(res, 'ghi tham số kế hoạch (excluded · config_gaps · fresh_ods)')
     const params = { ...prev, excluded: cand.excluded, config_gaps: { ...cand.gaps, no_drops: dropGaps(cand.ods, (await loadRefs(plan.warehouse_id, plan.plan_date, [])).models) }, fresh_ods }
     const { error } = await db.from('dispatch_plan').update({ params: asJson(params), updated_at: t }).eq('id', plan.id)
     if (error) throw error
+    step(res, 'tổng kết kế hoạch')
     await writeSummary({ ...plan, params: asJson(params) })
+    step(res, 'đọc lại kế hoạch để trả về')
     return ok(res, { ...(await readPlan(plan.id)), refreshed: { added: loadable.length, skipped_not_loadable: fresh.length - loadable.length } })
   } catch (e) { return failAny(res, e) }
 }

@@ -132,7 +132,8 @@ export const zPlanBody = z.object({
 export const zPlanParams = z.object({ load_bands: zLoadBands.optional(), load_bypass: zBool.optional() }).refine(b => b.load_bands !== undefined || b.load_bypass !== undefined, 'Không có gì để đổi')
 export const zListQuery = z.object({
   warehouse_id: zId.optional(), date_from: zDay.optional(), date_to: zDay.optional(),
-  status: z.enum(['DRAFT', 'TENDERED', 'CONFIRMED', 'DISCARDED']).optional(),
+  // OPEN (12/10, tab "Nháp"): nháp còn mở = DRAFT + TENDERED của kho, MỌI ngày — một lời gọi thay băng "nháp quá ngày"
+  status: z.enum(['DRAFT', 'TENDERED', 'CONFIRMED', 'DISCARDED', 'OPEN']).optional(),
 }).passthrough()
 export const zTripPatch = z.object({
   vehicle_model_id: zId.nullable().optional(),          // MỘT xe — bỏ các xe phụ của thẻ
@@ -540,14 +541,27 @@ async function loadConditionLabels(): Promise<Record<string, string>> {
 
 /** STT kế tiếp = max STT đã có trong Kế hoạch xuất của kho×ngày VÀ trên xe nháp của MỌI kế hoạch còn sống cùng kho×ngày + 1
  *  (03/10 tối: hai mảng Trung chuyển / Bán hàng là hai kế hoạch cùng tiền tố Số xe — đếm riêng từng kế hoạch là trùng Số xe khi xác nhận). */
-async function nextSeq(prefix: string): Promise<number> {
+async function takenSeqs(prefix: string, excludeTripIds: string[] = []): Promise<Set<number>> {
   const [kh, tr] = await Promise.all([
     fetchAllRowsParallel(() => db.from('khvc_lines').select('group_code').like('group_code', `${prefix}%`).order('group_code')) as Promise<{ group_code: string }[]>,
-    fetchAllRowsParallel(() => db.from('dispatch_trip').select('group_code').like('group_code', `${prefix}%`).neq('status', 'DISCARDED').order('group_code')) as Promise<{ group_code: string }[]>,
+    fetchAllRowsParallel(() => db.from('dispatch_trip').select('id, group_code').like('group_code', `${prefix}%`).neq('status', 'DISCARDED').order('group_code')) as Promise<{ id: string; group_code: string }[]>,
   ])
-  let max = 0
-  for (const r of [...kh, ...tr]) { const n = Number(r.group_code.slice(prefix.length)); if (Number.isFinite(n) && n > max) max = n }
-  return max + 1
+  const ex = new Set(excludeTripIds)
+  const taken = new Set<number>()
+  for (const r of [...kh, ...tr.filter(t => !ex.has(t.id))]) { const n = Number(r.group_code.slice(prefix.length)); if (Number.isFinite(n) && n > 0) taken.add(n) }
+  return taken
+}
+async function nextSeq(prefix: string): Promise<number> {
+  return Math.max(0, ...await takenSeqs(prefix)) + 1
+}
+/** SỐ XE LIỀN MẠCH cho lượt ghép lại (12/10, đóng vai 12/10: khoá #1 #2 rồi Tối ưu lại ⇒ xe mới #11…#18, #3–#10 biến mất): các STT
+ *  còn trống sau khi bỏ số của xe sắp làm lại (`excludeTripIds`) + STT nối tiếp. Xe khoá / đã chốt / Kế hoạch xuất / mảng kia giữ số. */
+async function seqPlan(prefix: string, excludeTripIds: string[], need: number): Promise<{ free_seqs: number[]; start_seq: number }> {
+  const taken = await takenSeqs(prefix, excludeTripIds)
+  const max = Math.max(0, ...taken)
+  const free: number[] = []
+  for (let n = 1; n < max && free.length < need; n++) if (!taken.has(n)) free.push(n)
+  return { free_seqs: free, start_seq: max + 1 }
 }
 
 // ── Ghi / đọc bản nháp ─────────────────────────────────────────────────────────────────────────────────
@@ -835,7 +849,8 @@ export async function listPlans(req: Request, res: Response) {
     }
     if (q.date_from) query = query.gte('plan_date', q.date_from)
     if (q.date_to) query = query.lte('plan_date', q.date_to)
-    if (q.status) query = query.eq('status', q.status)
+    if (q.status === 'OPEN') query = query.in('status', ['DRAFT', 'TENDERED'])
+    else if (q.status) query = query.eq('status', q.status)
     const { data, error } = await query
     if (error) return fail(res, error)
     const whIds = uniq((data ?? []).map(p => p.warehouse_id))
@@ -1557,8 +1572,9 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     const cand = await loadCandidates(wh, plan.plan_date, await planCatCfg(plan), { onlyOds: odNos, skipPlanId: plan.id })
     const wards = uniq(cand.ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const [refs, condition_labels] = await Promise.all([loadRefs(wh.id, plan.plan_date, wards), loadConditionLabels()])
-    const startSeq = await nextSeq(engineParams(plan).code_prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
-    const result = runDispatch({ ods: cand.ods, ...refs, share_actual: actualNow(plan, keep), condition_labels, params: { ...engineParams(plan), start_seq: startSeq }, geo: await engineGeo(wh.id, cand.ods) })
+    // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối); xe sắp làm lại nhả số ⇒ xe mới lấp chỗ trống, liền mạch sau xe giữ nguyên (12/10)
+    const seqs = await seqPlan(engineParams(plan).code_prefix, redo.map(t => t.id), odNos.length)
+    const result = runDispatch({ ods: cand.ods, ...refs, share_actual: actualNow(plan, keep), condition_labels, params: { ...engineParams(plan), ...seqs }, geo: await engineGeo(wh.id, cand.ods) })
     const t = now()
     const redoIds = redo.map(x => x.id)
     const placed = uniq(result.trips.flatMap(tr => tr.ods.map(o => o.od_number)))

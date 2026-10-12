@@ -248,6 +248,10 @@ try {
     `sum=${JSON.stringify({ t: plan?.summary?.trips, o: plan?.summary?.ods, p: plan?.summary?.pallets, f: plan?.summary?.freight_total })}`)
   const lst = await api(`/tms/dispatch/plans?warehouse_id=${WH}&date_from=${DAY}&date_to=${DAY}`)
   check('1h. GET /dispatch/plans lọc kho + ngày: đúng 1 kế hoạch DRAFT kèm tên kho', lst.s === 200 && (lst.j?.data?.items ?? []).filter(p => p.status === 'DRAFT').length === 1 && !!lst.j?.data?.items?.[0]?.warehouse?.name, `http=${lst.s} n=${lst.j?.data?.items?.length}`)
+  // 12/10 tab "Nháp": status=OPEN = DRAFT + TENDERED của kho, mọi ngày (thay băng "nháp quá ngày")
+  const lstO = await api(`/tms/dispatch/plans?warehouse_id=${WH}&status=OPEN`)
+  check('1h2. GET /dispatch/plans?status=OPEN: chỉ DRAFT / TENDERED, có nháp vừa lập', lstO.s === 200 && (lstO.j?.data?.items ?? []).every(p => p.status === 'DRAFT' || p.status === 'TENDERED') && (lstO.j?.data?.items ?? []).some(p => p.id === plan?.id),
+    `http=${lstO.s} n=${lstO.j?.data?.items?.length} st=${[...new Set((lstO.j?.data?.items ?? []).map(p => p.status))].join(',')}`)
   const p1b = await mkPlan(PLAN_BODY)
   const lst2 = await api(`/tms/dispatch/plans?warehouse_id=${WH}&date_from=${DAY}&date_to=${DAY}&status=DRAFT`)
   check('1i. Lập lại → nháp cũ bị THAY (vẫn đúng 1 DRAFT, id mới)', p1b.s === 201 && p1b.j?.data?.id !== plan?.id && (lst2.j?.data?.items ?? []).length === 1 && lst2.j?.data?.items?.[0]?.id === p1b.j?.data?.id, `http=${p1b.s} n=${lst2.j?.data?.items?.length}`)
@@ -617,6 +621,23 @@ try {
   check('10i. Mở khoá → Tối ưu lại → máy ghép lại như lần đầu: OD1+OD2 một xe · OD3 xe khác · khung chờ rỗng',
     ro2.s === 200 && (B?.trips ?? []).length === 2 && tripOfOd(B, OD[0])?.id === tripOfOd(B, OD[1])?.id && tripOfOd(B, OD[2])?.id !== tripOfOd(B, OD[0])?.id && (B?.pool ?? []).length === 0,
     `http=${ro2.s} ${ro2.j?.error?.message ?? ''} trips=${B?.trips?.length} pool=${B?.pool?.length}`)
+  // 12/10 (đóng vai 12/10: khoá #1 #2 rồi Tối ưu lại ⇒ xe mới #11…#18): xe làm lại nhả số, xe mới lấp chỗ trống ⇒ STT của kế hoạch
+  // liền mạch 1..n (xe khoá giữ số). Bản cũ (max + 1) ở đây ra #1 #2 → sau lượt ghép #3 #4 ⇒ đỏ.
+  {
+    const lkA = tripOfOd(B, OD[2])
+    await api(`/tms/dispatch/trips/${lkA.id}`, 'PATCH', { locked: true })
+    const ro3 = await api(`/tms/dispatch/plans/${B.id}/reoptimize`, 'POST', {})
+    B = ro3.j?.data ?? B
+    const fresh = (B?.trips ?? []).find(t => t.id !== lkA.id)
+    // số bị chiếm trên CẢ tiền tố (mọi nháp sống cùng kho × ngày + Kế hoạch xuất) trừ chính xe mới ⇒ xe mới phải là số trống NHỎ NHẤT
+    const used = new Set([...(await restAll('dispatch_trip', `select=id,group_code&group_code=like.${PREFIX}*&status=neq.DISCARDED`)).filter(t => t.id !== fresh?.id),
+      ...await restAll('khvc_lines', `select=group_code&group_code=like.${PREFIX}*`)].map(r => Number(r.group_code.slice(PREFIX.length))))
+    let want = 1; while (used.has(want)) want++
+    check('10i2. Khoá một xe rồi Tối ưu lại ⇒ xe mới lấy STT TRỐNG NHỎ NHẤT (xe khoá giữ số; không nhảy lên max+1)',
+      ro3.s === 200 && (B?.trips ?? []).length === 2 && !!fresh && fresh.seq === want && tripOfOd(B, OD[2])?.id === lkA.id && tripOfOd(B, OD[2])?.seq === lkA.seq,
+      `http=${ro3.s} mới=#${fresh?.seq} mong=#${want} khoá=#${lkA.seq}→#${tripOfOd(B, OD[2])?.seq}`)
+    await api(`/tms/dispatch/trips/${lkA.id}`, 'PATCH', { locked: false })
+  }
   const rr = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'remove' })
   const sy = await api(`/tms/dispatch/plans/${B.id}/sync`)
   check('10j. Bỏ OD3 khỏi kế hoạch → không còn ở xe/khung chờ; /sync báo OD3 là OD MỚI chưa có trong kế hoạch (vẫn chưa điều)',

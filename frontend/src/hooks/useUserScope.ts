@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useAuthStore } from '@/stores/authStore'
 import { useWarehouses, useWarehouseTypes } from '@/api/hooks'
+import { isAdmin } from '@/config/permissions'
 
 /**
  * Scope người dùng: Loại hàng/Loại kho (allowed_categories) + Kho (warehouse_ids).
@@ -35,6 +36,17 @@ export function useScopedWhTypes() {
     return scoped.length > 0 ? scoped : all
   }, [all, user?.warehouse_scope, user?.allowed_categories])
   return { ...query, data }
+}
+
+/** Loại kho user được giao dạng Set — null = KHÔNG giới hạn (superadmin / NATIONAL / chưa cấu hình). MIRROR luật `scopeCategoriesOf`
+ *  của BE (12/10): bàn điều vận báo "ngoài phạm vi" SỚM bằng đúng luật cửa Xác nhận 403 `CATEGORY_OUT_OF_SCOPE`. */
+export function useScopeCatSet(): Set<string> | null {
+  const user = useAuthStore(s => s.user)
+  return useMemo(() => {
+    if (!user || isAdmin(user) || user.warehouse_scope === 'NATIONAL') return null
+    const allowed = expandLegacyCats(user.allowed_categories ?? [])
+    return allowed.length ? new Set(allowed) : null
+  }, [user])
 }
 
 /** Kho user được truy cập. NATIONAL hoặc chưa gán kho → toàn bộ. */

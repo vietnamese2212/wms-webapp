@@ -37,7 +37,8 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { EDITABLE, tripStatus, FLAG_VI, SOFT_FLAG_KINDS, inPlanRow } from './dispatchIssues'
+import { EDITABLE, tripStatus, FLAG_VI, SOFT_FLAG_KINDS, inPlanRow, outOfScopeCats } from './dispatchIssues'
+import { useScopeCatSet } from '@/hooks/useUserScope'
 import { DispatchOdDetailSheet } from './DispatchOdDetailSheet'
 import { DispatchLoadBandDialog, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
 
@@ -73,6 +74,7 @@ type Row = {
   outside?: boolean   // mang dấu Ngoài app (tab OUTSIDE) — tick để Điều lại
   ref?: DispatchOtherDraftRef   // ELSEWHERE: nháp đang xếp đơn này
   by?: string; at?: string | null   // tab dấu tay: người đặt / sửa dấu gần nhất · lúc nào (05/10)
+  cats?: string[]   // Loại kho của đơn (từ `cat_load` dòng OD trên kế hoạch) — báo "ngoài phạm vi của bạn" sớm (12/10)
 }
 /** Mốc "ai đưa vào" (05/10, user: "tab Chung phải có dấu vết ai đưa vào") — giờ VN, gọn cho ô hẹp */
 const when = (at: string | null | undefined) => (at ? `${formatTimestampDate(at, true)} ${formatTimestampTime(at, false)}` : '')
@@ -182,7 +184,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         where: draft ? `Xe #${t.seq}` : `Xe #${t.seq} · ${s === 'CONFIRMED' ? 'đã xác nhận' : 'chờ ĐVVT'}`, tone: draft ? 'blue' : 'green',
         cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
         pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
-        note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '',
+        note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', cats: Object.keys(o.cat_load ?? {}),
       })
     }
     const fresh = new Set(plan.params.fresh_ods ?? [])
@@ -193,6 +195,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
       note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number), noVeh: noVehOf(o),
       under: inPlan ? plan.params.under_min?.[o.od_number] : undefined, tooBig: inPlan ? plan.params.too_big?.[o.od_number] : undefined,
+      cats: Object.keys(o.cat_load ?? {}),
     }) }
     // OD máy không đo được tải / không lên xe (hàng trả về, chiết khấu…) — nằm ở Điều để người thấy, nhưng không chọn được
     for (const u of plan.unplanned) if (!agg.has(`GO|${u.od_number}`)) add('GO', `GO|${u.od_number}`, {
@@ -286,7 +289,11 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   const detailRow = detail ? tabRows.find(r => r.key === detail) ?? null : null
   const notesN = tabRows.filter(r => !!r.note).length
   const softN = st === 'GO' || st === 'PLAN' ? tabRows.filter(r => r.ids.length && isSoft(r.od)).length : 0
-  const pick = rows.filter(r => r.selectable)
+  // NGOÀI PHẠM VI (12/10, đóng vai 12/10: vai được giao FG01 vẫn được máy ghép đơn FG02, tới Xác nhận mới 403): đơn có Loại kho ngoài phạm
+  // vi người xem vẫn HIỆN (không giấu), chip đỏ ở Lưu ý, và "Chọn N đơn đang hiện" KHÔNG tick chúng — tick tay vẫn được
+  const scope = useScopeCatSet()
+  const outOf = (r: Row) => outOfScopeCats(r.cats, scope)
+  const pick = rows.filter(r => r.selectable && !outOf(r).length)
   const selRows = tabRows.filter(r => sel.has(r.key))
   const setTab = (k: St) => { setSel(new Set()); setNotesOnly(false); setSoftOnly(false); setF({ reviewTab: k }) }
   const toggle = (k: string) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
@@ -655,7 +662,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                 <TableCell className={`${TD} truncate ${r.note ? 'text-amber-900' : ''}`} title={[r.note, i?.note_invoice ? `Hoá đơn: ${i.note_invoice}` : ''].filter(Boolean).join('\n')}>
                   {r.note || <span className="text-slate-300">—</span>}{i?.note_invoice && <span className="ml-1 text-slate-500">· HĐ: {i.note_invoice}</span>}
                 </TableCell>
-                <TableCell className={`${TD} truncate ${r.noVeh || i?.replaces.some(x => x.group_code) ? 'text-red-600 font-medium' : 'text-amber-800'}`} title={warn}>{warn || <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} truncate ${r.noVeh || i?.replaces.some(x => x.group_code) ? 'text-red-600 font-medium' : 'text-amber-800'}`} title={[outOf(r).length ? `Ngoài phạm vi Loại kho bạn được giao (${outOf(r).join(', ')}) — Xác nhận sẽ bị chặn nếu đơn này lên xe; "Chọn N đơn đang hiện" không tick đơn này` : '', warn].filter(Boolean).join(' · ')}>
+                  {outOf(r).length > 0 && <span className="mr-1 rounded bg-red-100 px-1 text-[9px] font-semibold text-red-700">Ngoài phạm vi của bạn · {outOf(r).join('+')}</span>}
+                  {warn || (outOf(r).length ? null : <span className="text-slate-300">—</span>)}
+                </TableCell>
                 <TableCell className={`${TD} truncate ${r.flag && (st === 'GO' || st === 'PLAN') ? (soft ? 'text-amber-800' : 'text-red-600') : 'text-slate-500'}`} title={st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE' ? r.reason : r.flag}>
                   {(st === 'DAY' || st === 'NEVER' || st === 'OUTSIDE' ? r.reason : r.flag) || <span className="text-slate-300">—</span>}
                 </TableCell>

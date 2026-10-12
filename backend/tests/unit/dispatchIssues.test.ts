@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -39,6 +39,28 @@ describe('dispatchIssues — cờ SAP tham chiếu không thành việc của ng
   })
   it('một đơn cờ tham chiếu + một đơn cờ cứng trên cùng xe ⇒ vẫn cần xử lý', () => {
     expect(needsWork(trip(['A', 'B']), flags({ A: 'SHIPPED', B: 'GONE' }))).toBe(true)
+  })
+})
+
+// 12/10 (đóng vai 12/10: vai chỉ được giao FG01 vẫn được máy ghép OD FG02, "Cần xử lý" = 0, tới Xác nhận mới 403 nêu xe): báo SỚM
+// bằng ĐÚNG luật cửa Xác nhận (C78) — từng Loại kho trên xe phải được giao; không giới hạn (null) thì không bao giờ báo
+describe('dispatchIssues — Loại kho ngoài phạm vi được giao (scope)', () => {
+  const withCats = (cats: string[]) => { const t = trip(['A']); t.detail.categories = cats; return t }
+  it('scope null (superadmin / NATIONAL / chưa cấu hình) ⇒ không báo', () => {
+    expect(outOfScopeCats(['FG02'], null)).toEqual([])
+    expect(issuesOf(withCats(['FG02']), { flags: new Map(), scope: null })).not.toContain('scope')
+    expect(issuesOf(withCats(['FG02']), { flags: new Map() })).not.toContain('scope')
+  })
+  it('xe chở loại ngoài phạm vi ⇒ "scope", là việc cần xử lý; nêu đúng loại ngoài phạm vi (giao ≥1 KHÔNG đủ — cửa Xác nhận xét từng loại)', () => {
+    const c = { flags: new Map(), scope: new Set(['FG01', 'PM01']) }
+    expect(outOfScopeCats(['FG01', 'FG02'], c.scope)).toEqual(['FG02'])
+    expect(issuesOf(withCats(['FG01', 'FG02']), c)).toContain('scope')
+    expect(needsWork(withCats(['FG02']), c)).toBe(true)
+  })
+  it('xe chỉ chở loại được giao, hoặc chưa biết loại ⇒ không báo', () => {
+    const c = { flags: new Map(), scope: new Set(['FG01', 'PM01']) }
+    expect(issuesOf(withCats(['FG01', 'PM01']), c)).not.toContain('scope')
+    expect(issuesOf(withCats([]), c)).not.toContain('scope')
   })
 })
 

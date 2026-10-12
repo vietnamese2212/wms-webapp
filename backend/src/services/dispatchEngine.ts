@@ -120,6 +120,9 @@ export interface EngineParams {
   underload_pct: number | null      // ngưỡng Non tải của kho; null = theo dòng xe
   code_prefix: string               // '<MãKho>_X_<ddmmyy>_' — đúng quy ước group_code hiện tại
   start_seq: number                 // STT bắt đầu (tránh trùng Số xe đã có trong Kế hoạch xuất ngày đó)
+  /** 12/10 — SỐ XE LIỀN MẠCH: các STT còn TRỐNG (xe khoá / đã chốt / Kế hoạch xuất / mảng kia giữ số của chúng) để xe ghép lại
+   *  lấp vào trước; hết danh sách mới nối tiếp từ `start_seq`. Không truyền = như cũ (nối tiếp từ start_seq). */
+  free_seqs?: number[]
   /** Luật 9 (26/09): cho ghép nhiều Loại kho trên một chuyến. undefined = cho (hành vi trước 26/09 — dữ liệu/test cũ);
    *  controller luôn truyền giá trị của kho (mặc định false). */
   allow_mix_categories?: boolean
@@ -1079,7 +1082,11 @@ export function runDispatch(input: EngineInput): DispatchResult {
   const actual: Record<string, ShareActual> = {}
   for (const [k, v] of Object.entries(input.share_actual)) actual[k] = { ...v }
   const trips: DispatchTrip[] = []
-  let seq = P.start_seq
+  // STT: lấp các số còn trống trước (12/10 — sau "Tối ưu lại" xe khoá giữ #1 #2 thì xe mới là #3…, không nhảy lên #11), hết thì nối tiếp
+  const free = P.free_seqs ?? []
+  let seqIdx = 0
+  const seqOf = () => { const i = seqIdx++; return i < free.length ? free[i] : P.start_seq + (i - free.length) }
+  let seq = seqOf()
   for (const b of bins) {
     const a = assignVehicle(ctx, b, actual, underPct, true)
     const lm = a.loadModel
@@ -1115,7 +1122,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
           : [] })()],
       merge_hint: null,
     })
-    seq++
+    seq = seqOf()
   }
   // Gợi ý gộp cho chuyến Non tải còn lại (máy đã không gộp được vì vượt điểm giao / vượt xe / đắt hơn đi riêng)
   const mkeyOfTrip = (t: DispatchTrip) => t.cluster.split('|').slice(0, -1).join('|')

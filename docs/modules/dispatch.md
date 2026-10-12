@@ -253,3 +253,24 @@ dòng ZSD02 rộng 1,7 KB (7 dòng/OD) + 9 chỉ mục. (2) RPC Mở lại chia 
 (4) gói 00 mục 14d (`qa_row_triggers_with_writes`, 20261011d): trigger từng dòng ghi bảng khác mọc thêm ngoài danh sách đã khai là đỏ.
 Về /sync 503 (12:05–12:14): ba câu chạy song song, câu duy nhất từng đo gần trần là `dispatch_new_ods` (`pg_stat_statements` tối đa
 6,8 s trước chỉ mục phủ 20261011b; sau: 0,55 s); 503 nay cũng ghi tên bước.
+
+## 12/10 — cải tiến sau một ngày đóng vai Nhân viên điều vận (Cao Bằng 48 đơn → 10 xe; user chốt 5 mục, mục 6 quyền user tự cấp)
+
+Memory `dispatch-daytest-2026-10-12`. Không lỗi kỹ thuật; năm chỗ người điều vận phải đi vòng, nay:
+- **Tab "Nháp"** (cạnh Xem đơn · Bàn ghép xe · Bản đồ, `DispatchDraftsTable`): bảng mọi nháp CÒN MỞ của kho (DRAFT + TENDERED, mọi ngày,
+  cả hai mảng) — ngày giao · mảng · trạng thái (quá ngày ⚠) · xe · đơn trên xe · khung chờ · người lập · lập lúc; "Mở bàn" đặt ngày + mảng
+  rồi sang Bàn ghép xe, "Bỏ nháp" cùng cửa DELETE. Số nháp mở in trên nhãn tab. `GET /dispatch/plans?status=OPEN` (một lời gọi).
+  **Băng vàng "nháp quá ngày" (03/10) BỎ** — nó chỉ nhắc 3 nháp đầu và đè lên mọi bàn. Nháp chỉ chứa Chờ điều in mờ "chưa giữ đơn" (07/10).
+  **Bàn ghép xe giữ nguyên là bàn** (user: "5 vẫn là bàn — còn 7 là tab nháp"): ô ngày / kho / mảng ở đầu trang là bộ lọc.
+- **"Xe mới" ngay trên thanh nổi** của bàn (trước ẩn trong ô chọn của "Chuyển tới xe…"). **Lô "dưới tối thiểu" liệt kê từng nhóm**
+  ("Nơi Phùng · 21 đơn · 4,5 pl → Xe 16 Pallet 28 %") kèm nút **"Gom"** = các đơn của lô vào MỘT xe mới (`move {to:'new'}`); luật
+  "máy không tự tạo xe dưới tối thiểu" (07/10) không đổi — người bấm mới tạo.
+- **Số xe liền mạch sau "Tối ưu lại"**: xe sắp làm lại nhả số, xe mới lấp chỗ trống rồi mới nối tiếp (`seqPlan` → engine `free_seqs`);
+  xe khoá / đã chốt / Kế hoạch xuất / mảng kia giữ số. Trước: khoá #1 #2 rồi Tối ưu lại ⇒ #11…#18, #3–#10 biến mất (STT = max + 1).
+  `dispatch_trip.group_code` không có ràng buộc duy nhất nên vẫn "ghi mới trước, dọn cũ sau" (06/10). Test engine + gói 61 [10i2].
+- **Dòng phụ "ĐVVT · cước" dưới tên xe** trong cột dính của bàn dạng bảng — ở 1280 px khung chờ mở thì cột Cước · ĐVVT nằm ngoài màn.
+- **Phạm vi Loại kho báo SỚM** (`outOfScopeCats`, `useScopeCatSet` MIRROR `scopeCategoriesOf` của BE): Xem đơn chip đỏ "Ngoài phạm vi của
+  bạn · FG02" ở Lưu ý và **"Chọn N đơn đang hiện" không tick** các đơn đó (tick tay vẫn được, không giấu đơn); bàn: vấn đề `scope` trong
+  `dispatchIssues` (chip đỏ, đếm vào "Cần xử lý", chip lọc Soát); hộp Xác nhận nêu xe trước khi BE 403 `CATEGORY_OUT_OF_SCOPE` (C78).
+  Test đơn vị `dispatchIssues.test.ts`.
+- Mục 6 (chức danh điều vận thiếu `dispatch.export` / `external_khvc`) user tự cấp ở Quản lý người dùng — không nhắc lại.

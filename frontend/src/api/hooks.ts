@@ -6467,7 +6467,8 @@ export function useDeleteDispatchTrip() {
     onSuccess: r => patchDispatchPlanOf(qc, r.id, p => applyDispatchDelta(p, { trips: [], pool_add: [], removed_od_ids: [], removed_trip_ids: [r.id], ...r._plan })),
   })
 }
-export function useDispatchPlans(p: { warehouse_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
+/** `status: 'OPEN'` (12/10, tab Nháp) = DRAFT + TENDERED của kho, mọi ngày. */
+export function useDispatchPlans(p: { warehouse_id?: string; date_from?: string; date_to?: string; status?: 'DRAFT' | 'TENDERED' | 'CONFIRMED' | 'DISCARDED' | 'OPEN' }, enabled = true) {
   return useQuery({
     queryKey: ['dispatch-plans', p], enabled, staleTime: 30_000,
     queryFn: async () => (await apiClient.get('/tms/dispatch/plans', { params: freightParams(p) })).data.data as { items: DispatchPlanListItem[] },

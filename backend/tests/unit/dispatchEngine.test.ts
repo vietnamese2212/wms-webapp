@@ -135,6 +135,12 @@ describe('runDispatch — xếp lớn trước theo cụm, hạ xe rẻ nhất, 
     const r = runDispatch(input([od('1', 'W1', 8), od('2', 'W2', 8)], { params: { ...params, start_seq: 5 } }))
     expect(r.trips.map(t => t.group_code)).toEqual(['K_X_250926_5', 'K_X_250926_6'])
   })
+  // 12/10 (đóng vai 12/10: khoá #1 #2 rồi Tối ưu lại ⇒ xe mới #11…#18, #3–#10 biến mất): số trống lấp trước, hết mới nối tiếp
+  it('Số xe LIỀN MẠCH: lấp các STT còn trống (free_seqs) trước, hết thì nối tiếp từ start_seq', () => {
+    const r = runDispatch(input([od('1', 'W1', 8), od('2', 'W2', 8), od('3', 'W3', 8)], { params: { ...params, start_seq: 11, free_seqs: [3, 7] } }))
+    expect(r.trips.map(t => t.seq)).toEqual([3, 7, 11])
+    expect(r.trips.map(t => t.group_code)).toEqual(['K_X_250926_3', 'K_X_250926_7', 'K_X_250926_11'])
+  })
 })
 
 describe('luật 2 — không trộn kênh / kho nội bộ đi riêng', () => {

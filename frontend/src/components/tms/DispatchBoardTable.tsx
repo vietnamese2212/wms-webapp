@@ -24,7 +24,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip } from './DispatchReviewTable'
-import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, SOFT_FLAG_KINDS } from './dispatchIssues'
+import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, type IssueCtx } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const money = (n: number | string | null | undefined) => {
@@ -52,7 +52,7 @@ export interface BoardPoolGroup { k: string; rows: DispatchTripOd[]; pallets: nu
 /** Mọi thứ bảng cần từ DispatchBoard — cửa ghi / trạng thái kéo thả / bộ lọc là MỘT với bản thẻ. */
 export interface BoardOps {
   plan: DispatchPlan; editable: boolean; canDrag: boolean; desktop: boolean; q: string
-  flags: Map<string, DispatchOdFlag>; fresh: Set<string>; follow: Set<string>
+  flags: Map<string, DispatchOdFlag>; ctx: IssueCtx; fresh: Set<string>; follow: Set<string>
   sel: Set<string>; toggle: (id: string) => void; toggleMany: (ids: string[]) => void
   editableTrip: (t: DispatchTrip) => boolean
   matches: (o: DispatchTripOd) => boolean
@@ -164,9 +164,9 @@ const shareOf = (o: DispatchTripOd, t: DispatchTrip): number | null => {
 /** Vạch mép trái của CẢ khối xe (dòng xe + các dòng đơn của nó): đỏ = vượt tải / ĐVVT từ chối / OD đổi ở SAP · hổ phách = còn việc
  *  người phải quyết · xám = bình thường. 06/10 (user: "phân biệt rõ hơn giữa các xe, dòng nào là chung 1 xe — đang nhìn hơi rối"):
  *  trước đó vạch chỉ có ở dòng xe nên các dòng đơn trắng nối liền dòng xe kế tiếp, không biết khối nào của xe nào. */
-const tripRail = (t: DispatchTrip, flags: Map<string, DispatchOdFlag>): string => {
-  const iss = issuesOf(t, { flags })
-  return t.oversize || iss.some(k => k === 'declined' || k === 'sapflag') ? 'bg-red-500' : iss.some(k => TODO_KEYS.has(k)) ? 'bg-amber-400' : 'bg-slate-300'
+const tripRail = (t: DispatchTrip, ctx: IssueCtx): string => {
+  const iss = issuesOf(t, ctx)
+  return t.oversize || iss.some(k => RED_ISSUES.has(k)) ? 'bg-red-500' : iss.some(k => TODO_KEYS.has(k)) ? 'bg-amber-400' : 'bg-slate-300'
 }
 /** Nhánh cây ở cột dính của dòng đơn dưới xe: vạch khối + đường dọc nối về mũi tên mở của dòng xe (dừng ở giữa dòng đơn CUỐI) +
  *  nhánh ngang tới ô tick. Vẽ tuyệt đối trong ô dính (ô dính là khối chứa) nên đường dọc liền qua các dòng. */
@@ -263,8 +263,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
   const pv = hv?.data ?? null
   const ids = t.ods.map(o => o.id)
   const nSel = ids.filter(id => ops.sel.has(id)).length
-  const iss = ISSUE_ORDER.filter(k => issuesOf(t, { flags: ops.flags }).includes(k))
-  const sev = tripRail(t, ops.flags)
+  const iss = ISSUE_ORDER.filter(k => issuesOf(t, ops.ctx).includes(k))
+  const sev = tripRail(t, ops.ctx)
   const multi = (t.detail.vehicles?.length ?? 0) > 1
   // khách theo pallet giảm dần — người đọc thấy khách CHÍNH của xe trước
   const byCust = new Map<string, number>()
@@ -288,23 +288,34 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
     x: {
       title: `Số xe ${t.group_code}${multi ? ` · ${t.detail.vehicles!.map(v => v.name).join(' + ')}` : ''} — bấm dòng để mở chi tiết xe (đổi dòng xe, xe phụ, chuyển từng OD)${ops.canDrag && ed && ids.length ? ' · kéo dòng xe thả vào xe khác = gộp cả xe' : ''}`,
       node: (
-        <div className="flex min-w-0 items-center gap-1">
-          {/* vạch mép trái của khối xe (chạy tiếp xuống các dòng đơn — `tripRail`) */}
-          <span className={`absolute inset-y-0 left-0 w-1 ${sev}`} />
-          <button type="button" onClick={e => { e.stopPropagation(); onToggle() }} aria-expanded={open} title={open ? 'Thu các đơn của xe' : 'Mở các đơn của xe'}
-            className="shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-200">{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</button>
-          {ed && ids.length > 0
-            ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={nSel === ids.length} ref={el => { if (el) el.indeterminate = nSel > 0 && nSel < ids.length }}
-                onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn mọi đơn của xe #${t.seq}`} />
-            : <span className="w-3.5 shrink-0" />}
-          <span className="font-mono text-[11px] font-bold text-slate-800">#{t.seq}</span>
-          <span className="min-w-0 truncate text-[11px] font-semibold text-slate-800">
-            {multi
-              ? <><span className="mr-1 rounded bg-sky-600 px-1 text-[9px] font-bold text-white">{t.detail.vehicles!.length} XE</span>{t.detail.vehicles!.map(v => v.name).join(' + ')}</>
-              : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
-          </span>
-          {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-          {t.locked && <span title="Đang khoá — Tối ưu lại không đụng vào xe này"><Lock className="h-3 w-3 shrink-0 text-slate-500" /></span>}
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1">
+            {/* vạch mép trái của khối xe (chạy tiếp xuống các dòng đơn — `tripRail`) */}
+            <span className={`absolute inset-y-0 left-0 w-1 ${sev}`} />
+            <button type="button" onClick={e => { e.stopPropagation(); onToggle() }} aria-expanded={open} title={open ? 'Thu các đơn của xe' : 'Mở các đơn của xe'}
+              className="shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-200">{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</button>
+            {ed && ids.length > 0
+              ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={nSel === ids.length} ref={el => { if (el) el.indeterminate = nSel > 0 && nSel < ids.length }}
+                  onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn mọi đơn của xe #${t.seq}`} />
+              : <span className="w-3.5 shrink-0" />}
+            <span className="font-mono text-[11px] font-bold text-slate-800">#{t.seq}</span>
+            <span className="min-w-0 truncate text-[11px] font-semibold text-slate-800">
+              {multi
+                ? <><span className="mr-1 rounded bg-sky-600 px-1 text-[9px] font-bold text-white">{t.detail.vehicles!.length} XE</span>{t.detail.vehicles!.map(v => v.name).join(' + ')}</>
+                : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
+            </span>
+            {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
+            {t.locked && <span title="Đang khoá — Tối ưu lại không đụng vào xe này"><Lock className="h-3 w-3 shrink-0 text-slate-500" /></span>}
+          </div>
+          {/* DÒNG PHỤ "ĐVVT · cước" ngay dưới tên xe trong cột dính (12/10, đóng vai 12/10: ở 1280 px khung chờ mở thì cột Cước · ĐVVT nằm
+              ngoài màn, phải cuộn ngang mới biết xe thiếu gì) — cột Cước / ĐVVT vẫn giữ để sửa */}
+          {t.ods.length > 0 && (
+            <div className="truncate pl-10 text-[9px] leading-tight text-slate-500" title={`${t.detail.carrier?.name ?? 'Chưa có ĐVVT'} · ${t.freight_estimated == null ? (fr.reason ?? 'chưa có cước') : money(t.freight_estimated)}`}>
+              <span className={t.detail.carrier ? '' : 'text-amber-700'}>{t.detail.carrier?.name ?? 'chưa có ĐVVT'}</span>
+              <span className="text-slate-300"> · </span>
+              <span className={`tabular-nums ${t.freight_estimated == null ? 'text-amber-700' : 'font-medium text-slate-600'}`}>{t.freight_estimated == null ? 'chưa có cước' : money(t.freight_estimated)}</span>
+            </div>
+          )}
         </div>
       ),
     },
@@ -358,7 +369,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
         : pv?.warnings[0] ? <span className="text-amber-700">⚠ {pv.warnings[0]}</span>
         : iss.length || t.detail.merge_hint || t.detail.warnings.length ? (
           <span className="inline-flex items-center gap-1">
-            {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${k === 'declined' || k === 'over' || k === 'sapflag' ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'border border-slate-200 bg-white text-slate-500'}`}>{ISSUE_SHORT[k]}</span>)}
+            {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${RED_ISSUES.has(k) ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'border border-slate-200 bg-white text-slate-500'}`}>{ISSUE_SHORT[k]}</span>)}
             {/* gợi ý gộp của máy cho xe Non tải / cảnh báo đầu tiên — đủ câu ở tooltip + panel xe */}
             <span className={t.detail.warnings.length ? 'text-red-600' : 'text-amber-800'}>{t.detail.warnings[0] ?? (t.underload ? t.detail.merge_hint : '') ?? ''}</span>
           </span>
@@ -395,7 +406,7 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
   const dragTrip = ops.canDrag && ed && t.ods.length > 0
   // dòng xe = ĐẦU KHỐI (nền xám đậm hơn đơn trắng); khoá xe nhận biết bằng ổ khoá trên dòng
   const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : 'bg-slate-100'
-  const rail = tripRail(t, ops.flags)
+  const rail = tripRail(t, ops.ctx)
   const shown = open ? t.ods : []
   return (
     <>

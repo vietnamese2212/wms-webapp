@@ -46,7 +46,8 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, FLAG_VI, selectionAfterMove, type IssueKey } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, type IssueKey, type IssueCtx } from './dispatchIssues'
+import { useScopeCatSet } from '@/hooks/useUserScope'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const money = (n: number | string | null | undefined) => {
@@ -88,7 +89,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const { data: vtypes = [] } = useVehicleTypes()
   const whMeta = useWhTypeMetaMap()
   const q = f.search.trim().toLowerCase()
-  const ctx = useMemo(() => ({ flags }), [flags])
+  // phạm vi Loại kho của người xem (12/10): xe chở loại ngoài phạm vi = chip đỏ + "Cần xử lý" — cùng luật cửa Xác nhận 403 (C78)
+  const scope = useScopeCatSet()
+  const ctx = useMemo<IssueCtx>(() => ({ flags, scope }), [flags, scope])
   const pool = useMemo(() => plan.pool ?? [], [plan.pool])
   const trips = plan.trips.filter(t => tripStatus(t) !== 'DISCARDED')
   const tripOf = useMemo(() => new Map([...plan.trips.flatMap(t => t.ods.map(o => [o.id, t.id] as const)), ...pool.map(o => [o.id, null] as const)]), [plan.trips, pool])
@@ -266,6 +269,24 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const poolOds = new Set(pool.map(o => o.od_number))
   const nUnder = Object.keys(underMin).filter(od => poolOds.has(od)).length
   const nTooBig = Object.keys(tooBig).filter(od => poolOds.has(od)).length
+  // LÔ DƯỚI TỐI THIỂU theo từng nhóm (12/10, đóng vai 12/10: Cao Bằng 23/48 đơn kẹt khung chờ, đường gom tay là tick nhóm → "Chuyển tới
+  // xe…" → chọn "Xe mới" ẩn trong ô chọn): mỗi lô máy định xếp = một dòng "khách/phường · n đơn · pallet → xe máy định dùng x %" kèm nút
+  // "Gom" = đúng các dòng đó vào MỘT xe mới (máy chọn dòng xe + ĐVVT). Luật "máy không tự tạo xe dưới tối thiểu" không đổi — người quyết.
+  const underGroups = useMemo(() => {
+    const by = new Map<string, { rows: DispatchTripOd[]; um: NonNullable<DispatchPlan['params']['under_min']>[string] }>()
+    for (const o of pool) {
+      const um = underMin[o.od_number]
+      if (!um) continue
+      const k = `${o.ward_code ?? ''}|${um.vehicle}|${um.pct}|${um.ods}`
+      const g = by.get(k) ?? { rows: [], um }
+      g.rows.push(o); by.set(k, g)
+    }
+    return [...by.values()].map(g => {
+      const custs = uniqStr(g.rows.map(o => o.ship_to_name || o.ship_to_code || '—'))
+      return { ...g, label: custs.length === 1 ? custs[0] : `${g.rows[0].ward_code ?? 'Chưa có phường'} · ${custs.length} khách`,
+        ods: new Set(g.rows.map(o => o.od_number)).size, pallets: g.rows.reduce((s, o) => s + Number(o.pallets ?? 0), 0) }
+    }).sort((a, b) => b.pallets - a.pallets)
+  }, [pool, underMin])
   const poolShown = pool.filter(o => matches(o, q) && (!notesOnly || !!o.note))
   const groups = useMemo(() => {
     const m = new Map<string, DispatchTripOd[]>()
@@ -594,7 +615,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             </span>
             {iss.length > 0 && (
               <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
-                {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${k === 'declined' || k === 'over' || k === 'sapflag' ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-500 border border-slate-200'}`}>{ISSUE_SHORT[k]}</span>)}
+                {iss.map(k => <span key={k} className={`rounded px-1 text-[9px] font-medium ${RED_ISSUES.has(k) ? 'bg-red-100 text-red-700' : TODO_KEYS.has(k) ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-500 border border-slate-200'}`}>{ISSUE_SHORT[k]}</span>)}
               </span>
             )}
           </button>
@@ -704,9 +725,22 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           )}
           {(nUnder > 0 || nTooBig > 0) && (
             <div className="flex flex-wrap gap-1 text-[10px]">
-              {nUnder > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900"
-                title={'Lô dưới Tối thiểu % của dải tải nên máy KHÔNG tạo xe — kéo lên xe / "Xe mới", tick rồi "Trả về Chờ điều", hoặc Tối ưu lại với "Bỏ qua dải %". Chi tiết từng đơn ở cột Cảnh báo.'}>
-                {nUnder} đơn dưới tối thiểu — máy không tạo xe</span>}
+              {nUnder > 0 && (
+                <div className="w-full rounded bg-amber-50 px-1.5 py-0.5 text-amber-900"
+                  title={'Lô dưới Tối thiểu % của dải tải nên máy KHÔNG tạo xe — "Gom" = các đơn của lô vào một xe mới (máy chọn dòng xe + ĐVVT); hoặc kéo lên xe, tick rồi "Trả về Chờ điều", hoặc Tối ưu lại với "Bỏ qua dải %".'}>
+                  <div className="font-medium">{nUnder} đơn dưới tối thiểu — máy không tạo xe{underGroups.length > 1 ? ` · ${underGroups.length} lô` : ''}</div>
+                  {underGroups.slice(0, 6).map(g => (
+                    <div key={g.label + g.um.vehicle} className="flex items-center gap-1.5 leading-snug">
+                      <span className="min-w-0 flex-1 truncate" title={`${g.label}: ${g.ods} đơn · ${nf(g.pallets, 1)} pallet → ${g.um.vehicle} ${nf(g.um.pct, 1)} % (tối thiểu ${g.um.min} %)`}>
+                        <b>{g.label}</b> · {g.ods} đơn · {nf(g.pallets, 1)} pl → {g.um.vehicle} <span className="tabular-nums">{nf(g.um.pct, 0)} %</span>
+                      </span>
+                      {editable && <button type="button" className="shrink-0 rounded border border-amber-300 bg-white px-1.5 py-0 font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50" disabled={busy}
+                        title="Gom các đơn của lô này vào MỘT xe mới — máy chọn dòng xe + ĐVVT; xe sẽ báo Non tải nếu dưới ngưỡng" onClick={() => void run(g.rows.map(o => o.id), 'new')}>Gom</button>}
+                    </div>
+                  ))}
+                  {underGroups.length > 6 && <div className="text-amber-800">… và {underGroups.length - 6} lô nữa — chi tiết ở cột Lưu ý</div>}
+                </div>
+              )}
               {nTooBig > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900"
                 title={'Đơn lớn hơn xe lớn nhất mà loại xe không được ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP. Chi tiết ở cột Cảnh báo.'}>
                 {nTooBig} đơn lớn hơn xe — máy không tạo xe</span>}
@@ -806,7 +840,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
       region: o.region_name ?? o.region_code ?? '', date: o.delivery_date ?? '', flag: fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', reason: '' }
   }
   const ops: BoardOps = {
-    plan, editable, canDrag, desktop, q, flags, fresh, follow, sel, toggle, toggleMany, editableTrip,
+    plan, editable, canDrag, desktop, q, flags, ctx, fresh, follow, sel, toggle, toggleMany, editableTrip,
     matches: o => matches(o, q), idsFor, startDrag, endDrag: onDragEnd, dropProps,
     ownDrop: tid => dragIds.current.length > 0 && dragIds.current.every(id => tripOf.get(id) === tid),
     hover, justHit, busy,
@@ -918,6 +952,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         {/* chọn TRỌN xe (tick ô dòng xe) ⇒ thao tác của cả xe — trước 06/10 nằm ở tab "Danh sách xe" */}
         {fullTrips.length > 0 && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy || bulkBusy} onClick={() => { setBulk('carrier'); setBulkVal('') }}>Gán ĐVVT ({fullTrips.length} xe)</Button>}
         {fullTrips.length > 0 && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy || bulkBusy} onClick={() => { setBulk('model'); setBulkVal('') }}>Đổi dòng xe ({fullTrips.length} xe)</Button>}
+        {/* 12/10 (đóng vai 12/10): "Xe mới" ngay trên thanh — trước đó ẩn trong ô chọn của "Chuyển tới xe…"; máy chọn dòng xe + ĐVVT */}
+        <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} title="Các đơn đã chọn vào MỘT xe mới — máy chọn dòng xe + ĐVVT theo luật ghép" onClick={() => void run(selIds, 'new')}><Plus className="h-3.5 w-3.5 mr-1" />Xe mới</Button>
         <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => { setMoveTarget(''); setMoveDlg(true) }}>Chuyển tới xe…</Button>
         {poolSel.length > 0 && poolSel.length === selIds.length && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={reopt.isPending || busy} onClick={() => void doReoptSel()}><Sparkles className="h-3.5 w-3.5 mr-1" />{reopt.isPending ? 'Đang ghép…' : 'Ghép phần đã chọn'}</Button>}
         {selIds.some(id => tripOf.get(id)) && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => void run(selIds.filter(id => tripOf.get(id)), 'pool')}>Về khung chờ</Button>}

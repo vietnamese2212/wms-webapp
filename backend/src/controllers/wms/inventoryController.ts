@@ -97,7 +97,7 @@ async function guardEntryRead(req: Request, res: Response, id: string): Promise<
   const { data, error } = await supabase.from('InventoryEntry')
     .select('warehouse_id, location:Location!location_id(warehouse_id), material:Material(category)')
     .eq('id', id).maybeSingle()
-  if (error) { fail(res, 500, 'DB_ERROR', error.message); return false }
+  if (error) { fail(res, error); return false }
   if (!data) return true
   type LocWh = { warehouse_id: string | null }
   const row = data as unknown as { warehouse_id: string | null; location: LocWh | LocWh[] | null; material: { category: string | null } | { category: string | null }[] | null }
@@ -557,7 +557,7 @@ export async function listInventory(req: Request, res: Response) {
       let rows: any[] = []
       if (pageIds.length) {
         const { data, error } = await supabase.from('InventoryEntry').select(mainSelect).in('id', pageIds)
-        if (error) return fail(res, 500, 'DB_ERROR', error.message)
+        if (error) return fail(res, error)
         // `.in()` không giữ thứ tự → sắp lại theo pageIds (đã đúng import_date desc, id asc)
         const pos = new Map(pageIds.map((id, i) => [id, i]))
         rows = ((data ?? []) as any[]).sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
@@ -641,7 +641,7 @@ export async function listInventory(req: Request, res: Response) {
     // BỎ SÓT trong đợt đó: đo 06/09 còn 6 dòng `statement timeout` trả 500 "Lỗi hệ thống" —
     // vừa không chỉ được cách xử, vừa làm cảnh báo "lỗi BE 24h" kêu oan.
     if (isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
-    return fail(res, 500, 'DB_ERROR', error.message)
+    return fail(res, error)
   }
 
   // Lỗi band KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
@@ -706,7 +706,7 @@ export async function summaryInventory(req: Request, res: Response) {
     p_limit:          r.limitNum,
   })
   if (error && isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
 
   type RpcGroup = MaterialShelfInfo & {
     warehouse_id: string | null; warehouse_name: string; material_id: string
@@ -916,7 +916,7 @@ export async function adjustInventory(req: Request, res: Response) {
       .eq('id', id)
       .eq('cartons_remaining', cartonsBeforeAdjust)   // CAS: chỉ ghi nếu tồn VẪN bằng số vừa đọc
       .select(ENTRY_SELECT)
-    if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
+    if (updateErr) return fail(res, updateErr)
 
     if (updated?.length) {
       // Audit log — KHÔNG nuốt lỗi (mất vết audit âm thầm là tệ). cartons_before/after khớp thật.
@@ -949,7 +949,7 @@ export async function listAdjustmentLog(req: Request, res: Response) {
     .eq('entry_id', id)
     .order('adjusted_at', { ascending: false })
 
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   res.json({ success: true, data })
 }
 
@@ -1132,7 +1132,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   // lớp bảo vệ. Cùng cách xử như slottingController.scanMove.
   if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
     return fail(res, 503, 'NOT_READY', 'Chưa apply RPC move_pallets_to_location')
-  return fail(res, 500, 'DB_ERROR', rpcErr.message)
+  return fail(res, rpcErr)
 }
 
 export async function bulkTransferMaterial(req: Request, res: Response) {
@@ -1185,7 +1185,7 @@ export async function stocktakeCheck(req: Request, res: Response) {
     .limit(1)
     .maybeSingle()
 
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   if (!data) return fail(res, 404, 'NOT_FOUND', (await wrongFormatHint(palletCode)) ?? `Không tìm thấy pallet "${palletCode}" trong tồn kho`)
   // Scope: không cho tra cứu pallet ngoài phạm vi kho của user
   if (!(await guardEntriesScope(req, res, [(data as unknown as { id: string }).id]))) return
@@ -1204,7 +1204,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
       location:Location!location_id(location_code, warehouse_id, categories)`)
     .eq('id', id).maybeSingle()
 
-  if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
+  if (fetchErr) return fail(res, fetchErr)
   if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
   if (!(await guardEntriesScope(req, res, [id]))) return
 
@@ -1248,7 +1248,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
   }
 
   const { error } = await supabase.from('InventoryEntry').update(patch).eq('id', id)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
 
   // Nhật ký kiểm kê (append-only): 1 dòng mỗi lần kiểm → xem lại quá khứ vô thời hạn.
   // Snapshot đủ trường để độc lập dòng tồn sống. Lỗi ghi log KHÔNG làm hỏng lượt kiểm (đã lưu xong).
@@ -1326,7 +1326,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
       if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
       if (stCats) vQ = vQ.or(categoriesOrScopeFilter('categories', stCats))
       const { data: valid, error: vErr } = await vQ
-      if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
+      if (vErr) return fail(res, vErr)
       validIds.push(...((valid ?? []) as { id: string }[]).map(l => l.id))
     }
     resolvedLocationIds = validIds
@@ -1389,7 +1389,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     p_offset:  (pageNum - 1) * pageSize,
     p_limit:   pageSize,
   })
-  if (pageErr) return fail(res, 500, 'DB_ERROR', pageErr.message)
+  if (pageErr) return fail(res, pageErr)
   const pd = (pageData ?? {}) as { ids?: string[]; total?: number; st_total?: number; checked?: number; flagged?: number }
   const pageIds = pd.ids ?? []
   const total   = pd.st_total ?? 0
@@ -1487,7 +1487,7 @@ export async function stocktakeLog(req: Request, res: Response) {
     p_offset:     (pageNum - 1) * pageSize,
     p_limit:      pageSize,
   })
-  if (rpcErr) return fail(res, 500, 'DB_ERROR', rpcErr.message)
+  if (rpcErr) return fail(res, rpcErr)
   const pd = (pageData ?? {}) as { ids?: string[]; total?: number; counted?: number; flagged?: number }
   const pageIds = pd.ids ?? []
 
@@ -1557,7 +1557,7 @@ export async function moveLog(req: Request, res: Response) {
     .range((pageNum - 1) * pageSize, pageNum * pageSize - 1)
   if (error) {
     if (isRangeNotSatisfiable(error)) return ok(res, { rows: [], total: count ?? 0, page: pageNum, page_size: pageSize, date_from: dfrom, date_to: dto })
-    return fail(res, 500, 'DB_ERROR', error.message)
+    return fail(res, error)
   }
   return ok(res, { rows: data ?? [], total: count ?? 0, page: pageNum, page_size: pageSize, date_from: dfrom, date_to: dto })
 }
@@ -1605,7 +1605,7 @@ export async function unflagEntry(req: Request, res: Response) {
   const { error } = await supabase.from('InventoryEntry')
     .update({ stocktake_flagged: false, stocktake_flag_note: null, updated_at: now })
     .eq('id', req.params.id)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   return ok(res, { ok: true })
 }
 

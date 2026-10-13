@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { maskServerMessage } from '../../utils/response'
+import { fail } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
@@ -34,9 +34,6 @@ import { logPalletMoves } from '../../services/palletMoveLog'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
-}
-function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 
 const now = () => new Date().toISOString()
@@ -380,7 +377,7 @@ export async function getFillDemand(req: Request, res: Response) {
     if (error) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (fill hàng)')
       if (isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
-      return fail(res, 500, 'DB_ERROR', error.message)
+      return fail(res, error)
     }
     const out = await withLotCheck(data as FillDemandPayload, warehouse_id, date || vnToday())
     // MÃ CHƯA CHỐT %DATE KHÔNG PHẢI MÃ THIẾU (user chốt 16/09: "chưa chốt thì không cần đưa yêu cầu — đầy đủ
@@ -453,7 +450,7 @@ export async function getFillCandidates(req: Request, res: Response) {
     })
     if (error) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260805b (fill hàng)')
-      return fail(res, 500, 'DB_ERROR', error.message)
+      return fail(res, error)
     }
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
@@ -489,7 +486,7 @@ export async function listFillOrders(req: Request, res: Response) {
     })
     if (error) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260805d (lệnh fill gom)')
-      return fail(res, 500, 'DB_ERROR', error.message)
+      return fail(res, error)
     }
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
@@ -1114,7 +1111,7 @@ export async function scanFill(req: Request, res: Response) {
     })
     if (rpcErr) {
       if (rpcErr.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260805d (lệnh fill gom)')
-      return fail(res, 500, 'DB_ERROR', rpcErr.message)
+      return fail(res, rpcErr)
     }
     const r = (applied ?? {}) as { code?: string; task?: Record<string, unknown>; scanned_qty?: number; order_status?: string }
     switch (r.code) {
@@ -1171,7 +1168,7 @@ export async function getFillReport(req: Request, res: Response) {
     })
     if (error) {
       if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (fill hàng)')
-      return fail(res, 500, 'DB_ERROR', error.message)
+      return fail(res, error)
     }
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }

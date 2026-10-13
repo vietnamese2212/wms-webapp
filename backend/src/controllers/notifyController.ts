@@ -5,15 +5,12 @@
 import { Request, Response } from 'express'
 // 11/09: file đầu tiên dùng client CÓ KIỂU `db` (tên bảng/cột/INSERT thiếu cột bắt buộc → lỗi tsc)
 import { db } from '../lib/supabase'
-import { maskServerMessage } from '../utils/response'
+import { fail } from '../utils/response'
 import { getVapid, sendPushToEmployees, upsertSubscription, PREF_KEYS } from '../services/pushService'
 import { getRetentionDays } from '../utils/settings'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
-}
-function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -38,7 +35,7 @@ export async function subscribe(req: Request, res: Response) {
   if (!keys?.p256dh || !keys?.auth) return fail(res, 400, 'BAD_KEYS', 'Thiếu khóa mã hóa của subscription')
   const ua = (req.headers['user-agent'] ?? '').toString().slice(0, 300) || null
   const { error } = await upsertSubscription(me, endpoint, keys.p256dh, keys.auth, ua)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   return ok(res, { subscribed: true })
 }
 
@@ -50,7 +47,7 @@ export async function unsubscribe(req: Request, res: Response) {
   if (!endpoint) return fail(res, 400, 'BAD_ENDPOINT', 'Thiếu endpoint')
   const { error } = await db.from('push_subscriptions')
     .delete().eq('endpoint', endpoint).eq('employee_id', me)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   return ok(res, { unsubscribed: true })
 }
 
@@ -88,7 +85,7 @@ export async function getFeed(req: Request, res: Response) {
     db.from('user_notifications')
       .select('id', { count: 'exact', head: true }).eq('employee_id', me).is('read_at', null),
   ])
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   return ok(res, { rows: data ?? [], unread: unreadR.count ?? 0 })
 }
 
@@ -102,7 +99,7 @@ export async function markFeedRead(req: Request, res: Response) {
     .update({ read_at: t, updated_at: t }).eq('employee_id', me).is('read_at', null)
   if (Array.isArray(ids) && ids.length) q = q.in('id', ids.slice(0, 300))
   const { error } = await q
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   return ok(res, { read: true })
 }
 
@@ -115,7 +112,7 @@ export async function getPrefs(req: Request, res: Response) {
   if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
   const { data, error } = await db.from('notification_prefs')
     .select('prefs').eq('employee_id', me).maybeSingle()
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   const stored = (data?.prefs ?? {}) as Record<string, boolean>
   const prefs: Record<string, boolean> = {}
   for (const k of PREF_KEYS) prefs[k] = stored[k] !== false
@@ -142,7 +139,7 @@ export async function updatePrefs(req: Request, res: Response) {
   const { error } = ex
     ? await db.from('notification_prefs').update({ prefs: merged, updated_at: t }).eq('employee_id', me)
     : await db.from('notification_prefs').insert({ employee_id: me, prefs: merged, created_at: t, updated_at: t })
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   return ok(res, { prefs: merged })
 }
 

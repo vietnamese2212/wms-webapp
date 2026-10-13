@@ -769,6 +769,15 @@ const RULES = [
       l => /\bfail\(res, String\(e\)\)/.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
   },
   {
+    key: 'fail_db_error_message',
+    // 13/10 (C54 lặp dạng chị em): lượt QA đêm gặp statement timeout ở /inventory/stocktake-entries ⇒ 500 DB_ERROR thay vì 503 — 41 chỗ
+    // `fail(res, 500, 'DB_ERROR', err.message)` không qua được `fail_stringified_error`. Hàm `fail` cục bộ 4 đối số trong controller
+    // (không ghi error_logs, không dịch mã) cũng là cùng lớp.
+    label: '`fail(res, 500, \'DB_ERROR\', err.message)` / hàm `fail` cục bộ trong controller — mất mã PG (timeout → 500 thay vì 503, rào DB → 500 thay vì 409); gọi `fail(res, err)` của utils/response',
+    count: (s) => countMatches(['backend/src/controllers'], ['.ts'],
+      l => (/\bfail\(res, 500, 'DB_ERROR', \w+\.message\)/.test(l) || /^function fail\(res: Response, status: number/.test(l)) && !/^\s*(\/\/|\*)/.test(l), s),
+  },
+  {
     key: 'thung_unit_on_aggregate_pages',
     label: 'nhãn đơn vị "thùng" trên TRANG TỔNG GỘP CROSS-MÃ (Dashboard/Giám sát vận hành/Báo cáo nhập/Slotting) — ' +
            'ô & cột ở đây cộng cả mã KG/cái nên KHÔNG được gọi là "thùng" (bug 29/07: khối "Hàng nhập theo mã" ' +

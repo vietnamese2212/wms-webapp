@@ -8,7 +8,7 @@
 // → dùng quyền stocktake.view, KHÔNG cần permission mới.
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
-import { maskServerMessage } from '../../utils/response'
+import { fail } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
@@ -16,9 +16,6 @@ import { getCycleCountCfg } from '../../utils/settings'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
-}
-function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 
 // Chu kỳ kiểm theo hạng + cửa sổ phân hạng = cờ `cycle_count` (mặc định A7/B30/C90, cửa sổ 30

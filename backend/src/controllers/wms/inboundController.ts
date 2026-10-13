@@ -1384,7 +1384,7 @@ export async function scanQR(req: Request, res: Response) {
           update_date:       vnDate(),
           updated_by:        resolveActorId(req, employee_id),
         }).eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
-        if (uErr) return fail(res, 500, 'DB_ERROR', uErr.message)
+        if (uErr) return fail(res, uErr)
         if (upd?.length) {
           // Audit log — KHÔNG nuốt lỗi âm thầm. cartons_before/after khớp thật (sau CAS).
           const { error: logErr } = await supabase.from('InventoryAdjustmentLog' as any).insert({
@@ -1593,7 +1593,7 @@ export async function scanQR(req: Request, res: Response) {
       // slottingController.scanMove.
       if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
         return fail(res, 503, 'NOT_READY', 'Chưa apply RPC scan_insert_pallet')
-      return fail(res, 500, 'DB_ERROR', rpcErr.message)
+      return fail(res, rpcErr)
     }
 
     // Persist vị trí "hiện tại" của phiếu = vị trí vừa quét + ghi lịch sử khi đổi (quyền scan)

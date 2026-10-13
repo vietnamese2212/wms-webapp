@@ -1,7 +1,7 @@
 // TRUNG TÂM CẢNH BÁO — API list + ack (Đợt 2 roadmap 06/08). Quét nằm ở services/alertScanner.
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
-import { maskServerMessage, pgUserError } from '../../utils/response'
+import { fail, pgUserError } from '../../utils/response'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
@@ -9,9 +9,6 @@ import { runAlertScan, ALERT_RULES } from '../../services/alertScanner'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
-}
-function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 const now = () => new Date().toISOString()
 
@@ -48,7 +45,7 @@ export async function listAlerts(req: Request, res: Response) {
     // Trần cứng có chủ đích: cảnh báo đang mở là danh sách VIỆC, quá 1000 dòng nghĩa là hệ thống
     // đang cháy — hiển thị 1000 nặng nhất kèm total để user biết còn nữa.
     const { data, error, count } = await q.order('severity').order('last_seen', { ascending: false }).limit(1000)
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    if (error) return fail(res, error)
 
     // Cắt scope: kho được gán (null-inclusive — cảnh báo toàn hệ thống ai cũng thấy)
     // + Loại hàng (null-inclusive theo chuẩn categoryScope)

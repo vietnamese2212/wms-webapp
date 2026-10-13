@@ -91,7 +91,7 @@ async function listVehiclesPaged(req: Request, res: Response) {
     .range(offset, offset + pageSize - 1)
   if (error) {
     if (isRangeNotSatisfiable(error)) return ok(res, { items: [], ...meta })
-    return fail(res, 500, 'DB_ERROR', error.message)
+    return fail(res, error)
   }
   const rows = (data ?? []) as unknown as Record<string, unknown>[]
   return ok(res, { items: await withRelations(rows), ...meta })

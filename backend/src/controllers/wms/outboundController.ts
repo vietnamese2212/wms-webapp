@@ -7616,7 +7616,7 @@ export async function getScanLog(req: Request, res: Response) {
   // gì đó (thu hẹp khoảng ngày / chọn 1 kho), thay vì 500 "Lỗi hệ thống" — mà 500 rác còn làm rule
   // cảnh báo "lỗi BE 24h" kêu oan (đo 29/08: 35 dòng error_logs của riêng màn này trong 3 giờ).
   if (error && isQueryTimeout(error)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
 
   const first = (data as any[])?.[0]
   const total = first?.total_count ?? 0
@@ -7697,7 +7697,7 @@ export async function getScanLogFacets(req: Request, res: Response) {
     delete facetParams.p_allowed_categories
     ;({ data, error } = await supabase.rpc('get_scan_log_facets', facetParams))
   }
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return fail(res, error)
   const row = (data as any[])?.[0] ?? {}
   return ok(res, { machines: row.machines ?? [], cycles: row.cycles ?? [] })
 }

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { maskServerMessage } from '../../utils/response'
+import { fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
@@ -25,10 +25,6 @@ import { getMonitorCacheSeconds } from '../../utils/settings'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
-}
-function fail(res: Response, status: number, code: string, message: string) {
-  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 function chunk<T>(arr: T[], n: number): T[][] {
   const out: T[][] = []
@@ -757,7 +753,7 @@ export async function createPlan(req: Request, res: Response) {
       note: note?.trim() || null, window_days: window_days ?? null, n_lines: lines.length,
       created_by: actor, updated_by: actor, updated_at: now,
     })
-    if (planErr) return fail(res, 500, 'DB_ERROR', planErr.message)
+    if (planErr) return fail(res, planErr)
 
     const rows = lines.map(l => ({
       id: randomUUID(), plan_id: planId,
@@ -862,7 +858,7 @@ export async function listPlans(req: Request, res: Response) {
       query = query.in('warehouse_id', allowed)
     }
     const { data: plans, error } = await query
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    if (error) return fail(res, error)
 
     // Tiến độ sống chỉ tính cho plan ACTIVE (ít) — plan đã đóng hiển thị n_lines tĩnh
     const active = (plans ?? []).filter(p => p.status === 'ACTIVE')
@@ -954,7 +950,7 @@ export async function updatePlan(req: Request, res: Response) {
     if (status === 'COMPLETED' || status === 'CANCELLED') { patch.completed_at = now; patch.completed_by = actor }
     else { patch.completed_at = null; patch.completed_by = null }
     const { error } = await supabase.from('SlottingPlan').update(patch).eq('id', plan.id)
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    if (error) return fail(res, error)
     return ok(res, { id: plan.id, status })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
@@ -984,7 +980,7 @@ export async function updateZoneConfig(req: Request, res: Response) {
     }
     const { data, error } = await supabase.from('WarehouseZone').update(patch).eq('id', zone.id)
       .select('id, code, name, categories, pick_rank, flow_type').single()
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    if (error) return fail(res, error)
     // Chiến thuật cất hàng "Theo ABC" đọc hạng nhặt khu qua cache 5 phút → đổi xong phải xoá ngay,
     // không thì sửa hạng khu mà gợi ý cất hàng vẫn chỉ vào khu cũ.
     invalidatePutawayZones(String(zone.warehouse_id ?? ''))
@@ -1053,7 +1049,7 @@ export async function scanMovePlanPallet(req: Request, res: Response) {
     if (rpcErr) {
       if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
         return fail(res, 503, 'NOT_READY', 'Chưa apply RPC move_pallets_to_location')
-      return fail(res, 500, 'DB_ERROR', rpcErr.message)
+      return fail(res, rpcErr)
     }
     const parts = String(result ?? '').split('|')
     if (parts[0] === 'NOT_FOUND') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí đích')
@@ -1100,7 +1096,7 @@ export async function deletePlan(req: Request, res: Response) {
     if (!plan) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kế hoạch')
     if (!guardWarehouse(req, res, plan.warehouse_id)) return
     const { error } = await supabase.from('SlottingPlan').delete().eq('id', plan.id)
-    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    if (error) return fail(res, error)
     return ok(res, { id: plan.id })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

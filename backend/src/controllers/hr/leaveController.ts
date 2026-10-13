@@ -196,7 +196,7 @@ async function listLeavesPaged(req: Request, res: Response) {
     p_limit:     pageSize,
   })
   // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp khoảng ngày
-  if (error) return isQueryTimeout(error) ? fail(res, 400, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG) : fail(res, 500, 'DB_ERROR', error.message)
+  if (error) return isQueryTimeout(error) ? fail(res, 400, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG) : fail(res, error)
   const p = (data ?? {}) as { ids?: string[]; rows?: unknown[]; total?: number; pending?: number; approved?: number; rejected?: number }
   const ids = p.ids ?? []
   const meta = {

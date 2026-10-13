@@ -365,3 +365,10 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   `Promise.all`. Đo lại (`test_1310j.mjs`): **0,7–0,8 s** (một lần 2,3 s do lambda nguội); phản hồi mang `derived {gdo, tms}`. Đua hai lượt
   cùng xe / hai xe cùng kế hoạch ⇒ lượt sau 409 `PLAN_BUSY` (thuê kế hoạch), ba sổ khớp; khung giờ của lệnh VC không bị đụng; Mở lại rồi Xác
   nhận lại giữ ĐVVT + dòng xe đã đổi; `error_logs` 0 dòng 5xx. Derive đầy đủ vẫn ở Xác nhận / Mở lại / cửa Kế hoạch xuất.
+- **13/10 tối — "test tiếp" (vòng nữa, `02b4107d`):** tìm thêm một chỗ lệch luật FE ↔ BE: panel xe đã chốt mở ô chọn cho mọi người có quyền
+  Lập kế hoạch trong khi BE đòi Xác nhận hoặc sửa Kế hoạch xuất ⇒ vai chỉ lập nháp thấy ô chọn rồi 403 (C66) — nay FE gate cùng điều kiện.
+  Xanh thêm: mảng **Trung chuyển** (khách 20000013 / 20000017 có dòng xe; 30000907 kênh KHAC tự lấy nên 0 xe là đúng) chốt + đổi ĐVVT
+  ba sổ khớp 0,7 s; Bỏ xe đã chốt 409; file Excel TRỘN xe bàn + xe tay mới ⇒ cả file bị chặn, xe tay mới không được tạo (all-or-nothing
+  như gác cửa / khung giờ), file chỉ xe tay vẫn nạp (source EXCEL); Xem đơn → Đã điều sau khi đổi ghi `by` = người đổi; GET Kế hoạch xuất
+  trang 200 có enrich 0,95 s; UI: vai chỉ lập nháp thấy panel chỉ chữ; Xuất Excel bàn sau khi đổi in ĐVVT mới; 360 px editor có băng + nút,
+  không tràn (`test_1310l/l2/m/n3.mjs`).

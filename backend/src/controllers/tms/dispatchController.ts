@@ -954,14 +954,18 @@ export async function measurePlanGeo(req: Request, res: Response) {
 }
 export async function getPlan(req: Request, res: Response) {
   try {
+    // DẤU PHIÊN BẢN chụp TRƯỚC khi đọc nội dung (13/10, đo realtime hai phiên): một cửa ghi dài (Mở lại = RPC xe về nháp → dội chuyến →
+    // trạng thái kế hoạch) đang chạy giữa chừng thì bàn kia đọc được xe ĐÃ về nháp nhưng kế hoạch CHƯA đổi trạng thái; dấu chụp SAU
+    // (bản cũ) lại mang mốc ghi cuối ⇒ mọi lượt hỏi dấu về sau đều "trùng", bàn đứng ở "Đã xác nhận" không nút Xác nhận tới lượt
+    // /sync 120 s. Dấu chụp trước thì chỉ có thể CŨ hơn nội dung — lượt hỏi dấu kế tiếp thấy khác và tải lại.
+    const st = await planStamp(String(req.params.id))
     const full = await readPlan(String(req.params.id))
     if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const [wh, hidden, st] = await Promise.all([
+    const [wh, hidden] = await Promise.all([
       db.from('Warehouse').select('id, code, name').eq('id', full.warehouse_id).maybeSingle().then(r => r.data ?? null),
       // "Không liên quan" của CHÍNH người đang xem (03/10 tối) — người khác không thấy dấu này
       db.from('dispatch_od_hidden').select('od_number').eq('plan_id', full.id).eq('user_id', userKey(req)).limit(1000).then(r => { if (r.error) throw r.error; return uniq((r.data ?? []).map(x => x.od_number)) }),
-      planStamp(full.id),
     ])
     return ok(res, { ...full, warehouse: wh, hidden, stamp: st?.stamp ?? null })
   } catch (e) { return failAny(res, e) }

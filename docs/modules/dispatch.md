@@ -282,3 +282,23 @@ khoá ⇒ STT 1..10, không trùng `group_code` trên tiền tố. Hai chỗ s�
 có quyền xem điều vận nhận 403 câm ×4 mỗi lần mở bàn (nhóm "Loại xe" · hộp dải tải); (2) cửa `refresh-pool` nêu TÊN BƯỚC khi 503 (gặp một
 lần trên nháp 3.529 đơn Chờ điều lúc gói 61 đang chạy). Nhãn tab "Nháp N" đếm CẢ nháp chỉ chứa Chờ điều ("chưa giữ đơn" in mờ) — đó là
 nháp mở thật, user quyết có muốn đếm riêng không.
+
+## 13/10 — test kỹ vòng 2: các đường chưa đi (Xác nhận → Kế hoạch xuất → Mở lại · ĐVVT chờ · dấu tay · Trung chuyển · realtime hai phiên)
+
+Vai Nhân viên điều vận (giới hạn FG01/PM01/PK01/RM01) + Giám sát, Ba Vì, nháp 14/10 Cao Bằng 48 đơn → 10 xe; oracle = DB/API tính lại độc lập
+(scratchpad `test_1310a*.mjs` API, `test_1310u*.mjs` + `test_1310r*.mjs` Playwright 1280 · 390). Xanh: dấu tay 4 cửa (Không điều · Không điều ngày
+này · Ngoài app · Không liên quan — đếm sổ dấu, sổ DB, một đơn MỘT trạng thái, Điều lại về Chờ điều không tự lên xe, dấu riêng theo người); bỏ xe
+trống (xe còn đơn 409); dòng xe khách từ bàn (chụp lại `allowed_models`, trả lại khai cũ); Xác nhận ⇒ `khvc_lines` = Σ OD, ĐVVT / dòng xe / ngày
+xuất đúng, 9 chuyến Xuất kho + 9 lệnh VC PENDING, Xem đơn Đã điều "Xe #N · đã xác nhận", tab Kế hoạch xuất lọc Ngày xuất ra đủ 18 dòng; Mở lại 2
+xe ⇒ dòng gỡ + `PLAN_DO_REMOVED`, kéo OD A→B rồi Xác nhận lại ⇒ cùng Số xe sống lại, chuyến không nhân đôi; ĐVVT cần phản hồi ⇒ Xác nhận chào 3
+xe (hộp nêu "Xe chờ ĐVVT phản hồi 3"), panel: từ chối (lý do + người ghi) → đổi ĐVVT về nháp → Chốt xe này; ĐVVT nhận ⇒ vào Kế hoạch xuất;
+kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập mới 409 `PLAN_TENDERED_EXISTS`; Trung chuyển: khung chờ đúng tập (khách tick
++ KÊNH `TRUNG_CHUYEN` + lấy sang), Lấy sang / lấy về hai chiều; tab Nháp không đếm kế hoạch đã xác nhận; 390 px không tràn, "Mở lại" trong ⋮.
+- **Sửa: `GET /plans/:id` chụp dấu phiên bản TRƯỚC khi đọc nội dung** (lớp C63 lặp phía server) — đo realtime hai phiên: dv "Mở lại" một xe,
+  bàn gs tải lại giữa lúc cửa đó đang chạy (xe đã về nháp, trạng thái kế hoạch chưa đổi) nhưng dấu chụp sau nên mang mốc mới ⇒ các lượt hỏi
+  dấu sau "trùng", bàn đứng "Đã xác nhận" không nút Xác nhận tới /sync 120 s. Lượt đo khác: 7 s là thấy đủ.
+- **Quan sát (không đổi luật):** (1) kế hoạch ĐÃ XÁC NHẬN còn 22 đơn "dưới tối thiểu" ở khung chờ có mốc — Xem đơn in "Trong kế hoạch 14/10 22",
+  không tick / không Trả về Chờ điều được (409 `PLAN_NOT_DRAFT`); lập ngày 15/10 thì 22/22 về Chờ điều bình thường (không mất đơn). Muốn trả về
+  ngay trong ngày phải "Mở lại" một xe. (2) Mảng Trung chuyển Ba Vì ghép 0 xe vì kênh `TRUNG_CHUYEN` / `KHAC` chưa khai dòng xe + số khách
+  cùng xe — bàn báo đúng (chip Khai thiếu ⓘ + "Chưa khai xe" trên dòng), là cấu hình chờ user. (3) Staging quá tải lúc hai phiên Playwright +
+  nền (alertScanner · Hộp việc · /sync 503 QUERY_TIMEOUT, lập nháp 15/10 49 s) — môi trường, không phải luật.

@@ -922,7 +922,7 @@ export default function Outbound() {
             </div>
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
               <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>Chỉ đổi được ngày của chuyến <b>upload kiểu cũ</b> hoặc <b>tạo tay</b>. Chuyến sinh từ <b>SAP</b> có ổ khóa ở cột Ngày — đổi ngày tại tab <b>Kế hoạch xuất</b> (Dữ liệu bên ngoài), chuyến tự cập nhật theo.</span>
+              <span>Chỉ đổi được ngày của chuyến <b>upload kiểu cũ</b> hoặc <b>tạo tay</b>. Chuyến sinh từ <b>SAP</b> có ổ khóa ở cột Ngày — đổi ngày tại tab <b>Kế hoạch xuất</b> (Dữ liệu bên ngoài), xe do <b>bàn ghép xe</b> ghi thì "Mở lại" ở bàn; chuyến tự cập nhật theo.</span>
             </div>
             {moveOk && (
               <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-center gap-2">
@@ -1134,7 +1134,7 @@ function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = tru
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {gdo.vehicle_model
           ? <span className="text-[10px] truncate block" title={`${gdo.vehicle_model.sap_code} · ${gdo.vehicle_model.name}`}>{gdo.vehicle_model.name}</span>
-          : <span className="text-slate-300" title="Chưa chọn dòng xe con — chọn ở tab Kế hoạch xuất (Dữ liệu bên ngoài)">—</span>}
+          : <span className="text-slate-300" title="Chưa chọn dòng xe con — chọn ở bàn ghép xe (Điều vận) hoặc tab Kế hoạch xuất (Dữ liệu bên ngoài)">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap"><GdoLoad load={gdo.load} /></TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap"><GdoFreight gdo={gdo} /></TableCell>
@@ -1735,7 +1735,7 @@ function GDOFormBody({
       {sapLocked && (
         <div className="shrink-0 flex items-start gap-1.5 bg-sky-50 border-b border-sky-200 px-4 py-1.5 text-[11px] text-sky-800">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-          <span>Đơn sinh từ <b>SAP</b> — Số lượng/dòng hàng sửa ở tab <b>DO SAP</b>; Ngày/Kho/NPP/Loại xe sửa ở tab <b>Kế hoạch xuất</b> (menu Dữ liệu bên ngoài), chuyến tự cập nhật theo. Batch/%Date/CS vẫn sửa tại đây.</span>
+          <span>Đơn sinh từ <b>SAP</b> — Số lượng/dòng hàng sửa ở tab <b>DO SAP</b>; Ngày/Kho/NPP/Loại xe sửa ở tab <b>Kế hoạch xuất</b> (menu Dữ liệu bên ngoài) — xe do <b>bàn ghép xe</b> ghi thì ĐVVT/dòng xe đổi ngay trên bàn, ngày/đơn thì "Mở lại" ở bàn; chuyến tự cập nhật theo. Batch/%Date/CS vẫn sửa tại đây.</span>
         </div>
       )}
 

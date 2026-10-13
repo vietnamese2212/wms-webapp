@@ -372,3 +372,18 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   như gác cửa / khung giờ), file chỉ xe tay vẫn nạp (source EXCEL); Xem đơn → Đã điều sau khi đổi ghi `by` = người đổi; GET Kế hoạch xuất
   trang 200 có enrich 0,95 s; UI: vai chỉ lập nháp thấy panel chỉ chữ; Xuất Excel bàn sau khi đổi in ĐVVT mới; 360 px editor có băng + nút,
   không tràn (`test_1310l/l2/m/n3.mjs`).
+- **13/10 tối — "tìm kỹ, đảm bảo không còn lỗi" (`385b8a1b` · `06205592` · `68645eca`, `test_1310o.mjs` 10 phép + gói 61 [3f8][3f9]):** đi khuôn
+  "hai cửa cùng một sổ khác luật" ngược chiều — đường cũ (Mở lại → `replanKhvcGroups` → `tmsPlanSync`) so với đường ghi thẳng: ba sổ cùng
+  trường (GDO `dvvt`·`vehicle_model_id`; lệnh VC `ncc_id`·`vehicle_type`; khung giờ / biển không đụng ở cả hai đường) ⇒ không lệch. Ba lỗi
+  thật: (1) sự kiện `PLAN_VEHICLE_MODEL_CHANGED` ghi `old/new` = **uuid** dòng xe ⇒ hộp "Thông tin chuyến" in "uuid → uuid" (nay tên); (2) ba
+  cửa DẪN XUẤT từ chối sửa xe do bàn ghi — sửa chuyến Xuất kho (`SAP_PLAN_LOCKED` cho ĐVVT · NPP · Loại xe · Ngày), sửa / xoá lệnh VC
+  (`TMS_PLAN_DERIVED`) — vẫn chỉ "sửa ở tab Kế hoạch xuất" trong khi tab đó cũng khoá dòng (409) ⇒ người dùng đi hai vòng; nay
+  `services/khvcOwner.khvcSourceHint(groupCode)` (một câu đếm, chỉ trên đường lỗi) chỉ về **Bàn ghép xe** khi Số xe có dòng DISPATCH còn hiệu
+  lực; ba câu gợi ý tĩnh ở Xuất kho nêu cả hai nơi (FE không biết nguồn từng dòng); (3) đổi CHỈ xe phụ (thẻ nhiều xe) trên xe đã chốt không
+  ra sự kiện — nhánh `vehicle_model_ids` ghi đè `trip.extra_vehicle_model_ids` TRƯỚC khi so (gói 61 [3f9] bắt khi chạy lần đầu). Xanh thêm:
+  bỏ ĐVVT (null) trên xe đã chốt ⇒ ba sổ cùng trống (Xác nhận vốn cho xe không ĐVVT, nhất quán); xe của kế hoạch ĐÃ BỎ 409 `PLAN_NOT_DRAFT`;
+  chuyến PAUSED vẫn nhận (derive cũng merge PAUSED), IN_PROGRESS 409 `GDO_STATUS_LOCKED` ba sổ giữ nguyên; `error_logs` 0 dòng 5xx từ code
+  mới (các 503 09:18–09:48 là QUERY_TIMEOUT quá tải staging lúc chạy gói). Không lỗi: staging 5/5 chức danh có `external_khvc.edit` đều có
+  `dispatch.plan+confirm` (route chỉ gác `dispatch.plan`, điều kiện `external_khvc.edit` trong PATCH chỉ chạm được khi có `plan`). Chưa kiểm:
+  phạm vi kho 403 của PATCH (vai QA chỉ gắn Ba Vì, `whAllowed` dùng chung mọi cửa — gói 61 C78 gác). Bẫy bộ kiểm: `PUT /wms/outbound/:id` đòi
+  `qty_semantics:'base'` (409 `APP_OUTDATED`); danh sách dòng xe trả `parent` (object), không `parent_type_name`.

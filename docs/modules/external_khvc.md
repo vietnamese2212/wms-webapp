@@ -35,3 +35,5 @@ ghi xuyên mọi dòng của Số xe rồi `replanKhvcGroups`); thêm bớt DO h
 như cũ. KHÔNG cờ cấu hình — khoá theo nguồn từng dòng. FE: chip nguồn "Bàn ghép xe", editor khoá ô + băng "do bàn ghép xe ghi" + nút "Sửa ở bàn ghép xe"
 (`GET /external/khvc` enrich `dispatch {trip_id, plan_id, warehouse_id, segment, plan_date}`; gate `useCanSeePath`). Dọn 13/10: 68 dòng MANUAL seed
 tháng 9 ⇒ 6 xoá qua `bulk-delete`, 62 bị chặn (chuyến đã hoàn thành / đang xuất) giữ nguyên. Chi tiết + lưới: [`dispatch`](dispatch.md) mục 13/10 tối.
+Cửa dẫn xuất (sửa chuyến Xuất kho · sửa / xoá lệnh VC) từ chối xe do bàn ghi thì chỉ đường về **bàn ghép xe**, không về tab này đang khoá —
+`services/khvcOwner.khvcSourceHint` (13/10 tối, gói 61 [3f8]).

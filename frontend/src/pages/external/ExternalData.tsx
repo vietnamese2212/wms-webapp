@@ -1730,7 +1730,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
 
   function addLine() {
-    const g = groups[0]
+    const g = groups.find(x => !lockedGroups.has(x)) ?? groups[0]   // 13/10: xe do bàn ghi không nhận DO mới — mặc định xe tay đầu tiên
     const base = rows.find(r => r.group_code === g)
     setAdded(prev => [...prev, {
       key: crypto.randomUUID(), group_code: g, do_no: '',
@@ -2063,7 +2063,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
           </table>
         </div>
       )}
-      {canCreate && !isLoading && !incomplete && !lockedGroups.has(groups[0]) && (
+      {canCreate && !isLoading && !incomplete && groups.some(x => !lockedGroups.has(x)) && (
         <button type="button" onClick={addLine}
           className="mt-2 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400">
           <Plus className="h-3 w-3" /> Thêm DO vào xe {multi ? '(chọn Số xe trong dòng)' : groups[0]}

@@ -281,7 +281,7 @@ export default function Dispatch() {
       { k: 'nocarrier', tone: 'warn', label: 'Xe chưa có ĐVVT', value: nf(noCarrier), go: toBoard('nocarrier') },
       { k: 'nofreight', tone: 'warn', label: 'Xe chưa có cước', value: nf(noFreight), go: toBoard('nofreight') },
       { k: 'over', tone: 'warn', label: 'Xe vượt tải', value: nf(over), go: toBoard('over') },
-      { k: 'pool', tone: 'warn', label: 'Đơn còn ở khung chờ — không đi', value: nf(poolN), go: toBoard('') },
+      { k: 'pool', tone: 'warn', label: 'Đơn còn ở khung chờ — về Chờ điều', value: nf(poolN), go: toBoard('') },
       { k: 'soft', tone: 'warn', label: 'Đơn SAP báo đã post / đã gắn xe', value: nf(softOds.size), go: () => setF({ tab: 'review' }) },
     ] satisfies CheckRow[]).filter(r => r.value !== '0')
     const ok = await ask({

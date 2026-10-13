@@ -2033,6 +2033,17 @@ async function markTendered(trips: FullTrip[]) {
   }
 }
 
+/** Xác nhận xong thì ĐƠN CÒN Ở KHUNG CHỜ (có mốc "trong kế hoạch" mà không lên xe — thường là lô dưới tối thiểu) VỀ CHỜ ĐIỀU ngay
+ *  (13/10, user: "trả về luôn chứ"). Trước: chúng đứng "Trong kế hoạch dd/mm" trên kế hoạch đã xác nhận, không tick / không trả về
+ *  được (409 PLAN_NOT_DRAFT) tới khi lập ngày khác. Chỉ bỏ MỐC — dòng vẫn thuộc kế hoạch (Chờ điều của ngày đó), tick lại là
+ *  "Tạo kế hoạch" được. Gọi sau Xác nhận cả kế hoạch và sau khi xe cuối cùng chốt lẻ (kế hoạch thành CONFIRMED). */
+async function releasePoolToWait(planId: string): Promise<number> {
+  const { data, error } = await db.from('dispatch_trip_od').update({ reviewed_at: null, reviewed_by: null, updated_at: now() })
+    .eq('plan_id', planId).is('trip_id', null).not('reviewed_at', 'is', null).select('id')
+  if (error) throw error
+  return (data ?? []).length
+}
+
 // ── POST /tms/dispatch/plans/:id/confirm — xe của ĐVVT không cần phản hồi ghi thẳng; xe còn lại chờ ĐVVT ─────
 async function confirmPlanInner(req: Request, res: Response) {
   try {
@@ -2064,8 +2075,10 @@ async function confirmPlanInner(req: Request, res: Response) {
     await markTendered(tender)
     const w = direct.length ? await writeTrips(req, res, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
+    step(res, 'đơn còn ở khung chờ về Chờ điều')
+    const returned_to_wait = await releasePoolToWait(full.id)
     await writeSummary(full as PlanRow)
-    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), discarded_empty: empties.length, lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
+    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), discarded_empty: empties.length, returned_to_wait, lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2087,6 +2100,7 @@ async function settleTripInner(req: Request, res: Response) {
     let w: Awaited<ReturnType<typeof writeTrips>> | null = null
     if (needs) await markTendered([trip]); else w = await writeTrips(req, res, full, wh, [trip])
     const status = await syncPlanStatus(plan, req.user?.name ?? null)
+    if (status === 'CONFIRMED') await releasePoolToWait(plan.id)   // xe cuối cùng chốt ⇒ đơn còn ở khung chờ về Chờ điều (13/10)
     await writeSummary(plan)
     return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null, derive_failed: w?.derive_failed ?? false, derive_message: w?.derive_message ?? null })
   } catch (e) { return failAny(res, e) }
@@ -2118,6 +2132,7 @@ async function respondTripInner(req: Request, res: Response) {
     if (error) throw error
     const w = await writeTrips(req, res, full, wh, [trip])
     const status = await syncPlanStatus(plan, actor)
+    if (status === 'CONFIRMED') await releasePoolToWait(plan.id)   // xe chờ cuối cùng được nhận ⇒ đơn còn ở khung chờ về Chờ điều (13/10)
     await writeSummary(plan)
     return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: 'CONFIRMED', plan_status: status, lines: w.lines, replan: w.replan, replan_error: w.replan_error })
   } catch (e) { return failAny(res, e) }

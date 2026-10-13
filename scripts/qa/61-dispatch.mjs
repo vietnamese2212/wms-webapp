@@ -290,7 +290,16 @@ try {
   T1 = tripOfOd(P, OD[0]); T2 = tripOfOd(P, OD[2])
 
   // ── [3] Xác nhận: DA không cần phản hồi ⇒ vào Kế hoạch xuất ngay · HA cần ⇒ CHỜ ──
+  // 13/10 (user: "trả về luôn chứ"): đơn còn ở KHUNG CHỜ có mốc "trong kế hoạch" lúc Xác nhận phải VỀ CHỜ ĐIỀU (bỏ mốc) — dựng một dòng
+  // khung chờ có mốc từ bản chụp của OD1 (số OD giả, không trùng OD thật của kho QA)
+  const seedRow = (await restAll('dispatch_trip_od', `select=*&plan_id=eq.${P.id}&od_number=eq.${OD[0]}&limit=1`))[0]
+  const waitId = crypto.randomUUID()
+  if (seedRow) await restWrite('dispatch_trip_od', 'POST', null, { ...seedRow, id: waitId, trip_id: null, od_number: 'QA61WAIT1', reviewed_at: nowIso(), reviewed_by: 'QA61', created_at: nowIso(), updated_at: nowIso() }).catch(e => console.log('   [3] không dựng được dòng khung chờ có mốc:', String(e).slice(0, 120)))
   const cf = await api(`/tms/dispatch/plans/${P.id}/confirm`, 'POST', {})
+  const waitAfter = (await restAll('dispatch_trip_od', `select=reviewed_at,trip_id&id=eq.${waitId}`))[0]
+  check('3a0. Xác nhận ⇒ đơn còn ở khung chờ có mốc VỀ CHỜ ĐIỀU (reviewed_at null, vẫn ở khung chờ) · phản hồi returned_to_wait = 1',
+    !!seedRow && !!waitAfter && waitAfter.reviewed_at === null && waitAfter.trip_id === null && cf.j?.data?.returned_to_wait === 1,
+    `seed=${!!seedRow} sau=${JSON.stringify(waitAfter ?? null)} returned_to_wait=${cf.j?.data?.returned_to_wait}`)
   const kh1 = await restAll('khvc_lines', `select=do_no,dvvt,veh_type,vehicle_model_id,source,booking_category,stop_seq&group_code=eq.${T1.group_code}`)
   const kh2 = await restAll('khvc_lines', `select=do_no&group_code=eq.${T2.group_code}`)
   const gdo1 = (await restAll('GroupDeliveryOrder', `select=id,status,vehicle_model_id,dvvt,delivery_date&group_code=eq.${T1.group_code}`))[0]

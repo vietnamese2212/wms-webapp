@@ -302,3 +302,11 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   ngay trong ngày phải "Mở lại" một xe. (2) Mảng Trung chuyển Ba Vì ghép 0 xe vì kênh `TRUNG_CHUYEN` / `KHAC` chưa khai dòng xe + số khách
   cùng xe — bàn báo đúng (chip Khai thiếu ⓘ + "Chưa khai xe" trên dòng), là cấu hình chờ user. (3) Staging quá tải lúc hai phiên Playwright +
   nền (alertScanner · Hộp việc · /sync 503 QUERY_TIMEOUT, lập nháp 15/10 49 s) — môi trường, không phải luật.
+- **13/10 trưa (user chốt hai điểm trên):** (1) "trả về luôn chứ" ⇒ **Xác nhận xong, đơn còn ở khung chờ có mốc VỀ CHỜ ĐIỀU ngay**
+  (`releasePoolToWait`: bỏ mốc, dòng vẫn thuộc kế hoạch; gọi sau Xác nhận cả kế hoạch và khi xe cuối chốt lẻ / ĐVVT nhận làm kế hoạch
+  thành CONFIRMED); hộp Xác nhận đổi chữ "Đơn còn ở khung chờ — về Chờ điều"; phản hồi `returned_to_wait`; gói 61 [3a0]. (2) "có hết rồi
+  chứ nhỉ, kiểm tra lại": soi DB — kênh `TRUNG_CHUYEN` ĐÃ khai đủ dòng xe (FG01 3 dòng · FG02 1 dòng · chung 5) và số khách (FG01 1 ·
+  FG02 5). Sáu đơn tôi thử là của ship-to 30000907 "Kho Ba Vì" **kênh KHAC** tick Trung chuyển — KHAC là "tự lấy, không khai dòng xe"
+  (user 08/10) nên 0 xe là đúng. Chip Khai thiếu nêu `TRUNG_CHUYEN` vì 11 đơn mang Loại kho chính PK01 / PM01 / RM01 (ship-to 20000004 ·
+  20000017) mà kênh chỉ khai số khách cho FG01 / FG02 và chưa khai số chung — khai thêm "Số khách tối đa cùng xe" chung cho kênh là hết chip.
+  Kết luận "kênh Trung chuyển chưa khai dòng xe" trong báo cáo sáng là SAI, đã đính chính.

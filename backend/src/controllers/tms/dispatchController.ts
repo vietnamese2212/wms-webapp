@@ -1149,7 +1149,7 @@ async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, 
 // ── PATCH /tms/dispatch/trips/:id ──────────────────────────────────────────────────────────────────────
 // 13/10 (user chốt "sửa trên bàn, không sửa trên Kế hoạch xuất"): xe ĐÃ CHỐT vẫn đổi ĐVVT / dòng xe NGAY TRÊN BÀN, không "Mở lại" —
 // ghi xe → ghi thẳng dòng Kế hoạch xuất của Số xe (dvvt · veh_type · vehicle_model_id · xe phụ) → dội chuyến Xuất kho + lệnh VC
-// (replanKhvcGroups) → cước tính lại. Khoá / chở lẫn / kéo OD vào ra / dời ngày vẫn phải "Mở lại". Chuyến bên Xuất đang xuất / đã
+// (ghi thẳng hai trường dẫn xuất — xem chú thích "làm lại cho tôi ưu" bên dưới; derive đầy đủ chỉ ở Xác nhận) → cước tính lại. Khoá / chở lẫn / kéo OD vào ra / dời ngày vẫn phải "Mở lại". Chuyến bên Xuất đang xuất / đã
 // hoàn thành ⇒ 409 (xe + ngày là sự thật vận hành). Tab Kế hoạch xuất khoá dòng DISPATCH (khvcController) nên đây là cửa duy nhất.
 async function updateTripInner(req: Request, res: Response) {
   try {
@@ -1167,8 +1167,6 @@ async function updateTripInner(req: Request, res: Response) {
         return fail(res, 403, 'FORBIDDEN', 'Xe đã vào Kế hoạch xuất — cần quyền "Xác nhận" của Điều vận hoặc quyền sửa Kế hoạch xuất để đổi ĐVVT / dòng xe')
       if (b.locked !== undefined || b.allow_mix_categories !== undefined) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${trip.group_code} đã vào Kế hoạch xuất — ở đây chỉ đổi ĐVVT / dòng xe; khoá, chở lẫn, thêm bớt OD thì "Mở lại" xe.`)
       if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined) return fail(res, 'Không có gì để đổi', 400)
-      const gdo = (await gdosOfGroups([trip.group_code])).get(trip.group_code)
-      if (gdo && (gdo.status === 'IN_PROGRESS' || gdo.status === 'COMPLETED')) return fail(res, 409, 'GDO_STATUS_LOCKED', `Chuyến bên Xuất của xe ${trip.group_code} ${gdo.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT HÀNG'} — không đổi ĐVVT / dòng xe nữa.`)
     }
     if (b.locked !== undefined) {
       const { error } = await db.from('dispatch_trip').update({ locked: b.locked, updated_at: now() }).eq('id', trip.id)
@@ -1182,9 +1180,11 @@ async function updateTripInner(req: Request, res: Response) {
       if (error) throw error
       trip.allow_mix_categories = b.allow_mix_categories
     }
-    const wh = await loadWarehouse(plan.warehouse_id)
     const wards = uniq(trip.ods.map(o => o.ward_code).filter((x): x is string => !!x))
-    const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels()])
+    // một lượt chờ cho mọi thứ đọc (kho · bảng cước · nhãn ĐK · chuyến bên Xuất của xe đã chốt) — trước đây nối tiếp 3 lượt
+    const [wh, refs, condLabels, gdo] = await Promise.all([loadWarehouse(plan.warehouse_id), loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels(),
+      confirmed ? gdosOfGroups([trip.group_code]).then(m => m.get(trip.group_code)) : Promise.resolve(undefined)])
+    if (gdo && (gdo.status === 'IN_PROGRESS' || gdo.status === 'COMPLETED')) return fail(res, 409, 'GDO_STATUS_LOCKED', `Chuyến bên Xuất của xe ${trip.group_code} ${gdo.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT HÀNG'} — không đổi ĐVVT / dòng xe nữa.`)
     let modelId = b.vehicle_model_id === undefined ? trip.vehicle_model_id : b.vehicle_model_id
     let carrierId = b.transport_company_id === undefined ? trip.transport_company_id : b.transport_company_id
     // chọn MỘT dòng xe ⇒ thẻ về một xe; chọn danh sách ⇒ thẻ nhiều xe (người quyết tổ hợp, máy chia tải + tính cước từng xe)
@@ -1203,28 +1203,38 @@ async function updateTripInner(req: Request, res: Response) {
     }
     const updated = await repriceTrip(plan, trip, modelId, carrierId, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
     if (!confirmed) return ok(res, { ...updated, _plan: await planAfterWrite(plan) })
-    // xe đã chốt: ghi xuyên xuống Kế hoạch xuất (cùng cột writeTrips ghi lúc Xác nhận) rồi dội chuyến / lệnh VC
+    // xe đã chốt: ghi xuyên xuống Kế hoạch xuất (cùng cột writeTrips ghi lúc Xác nhận) + hai trường dẫn xuất ở chuyến / lệnh VC
     const d = detailOf(updated)
     const t = now(), actor = actorOf(req)
-    step(res, 'ghi dòng Kế hoạch xuất theo xe đã chốt')
-    const { data: kl, error: kErr } = await db.from('khvc_lines')
-      .update({ dvvt: d.carrier?.name ?? null, veh_type: d.vehicle_model?.parent_type_name ?? null, vehicle_model_id: updated.vehicle_model_id,
-        extra_vehicle_model_ids: updated.vehicle_model_id ? (updated.extra_vehicle_model_ids ?? []) : [], uploaded_by: actor, updated_at: t })
-      .eq('group_code', trip.group_code).neq('sync_status', 'OBSOLETE').select('id')
-    if (kErr) throw kErr
     const d0 = detailOf(trip)
     const evs: OutboundEventInput[] = []
     if ((d0.carrier?.id ?? null) !== (d.carrier?.id ?? null))
-      evs.push({ group_code: trip.group_code, event_type: 'PLAN_DVVT_CHANGED', source: 'PLAN', actor, old_value: d0.carrier?.name ?? null, new_value: d.carrier?.name ?? null,
+      evs.push({ group_code: trip.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_DVVT_CHANGED', source: 'PLAN', actor, old_value: d0.carrier?.name ?? null, new_value: d.carrier?.name ?? null,
         detail: `Bàn ghép xe đổi ĐVVT xe đã chốt: ${d0.carrier?.name ?? '—'} → ${d.carrier?.name ?? '—'}` })
     if (trip.vehicle_model_id !== updated.vehicle_model_id || JSON.stringify(trip.extra_vehicle_model_ids ?? []) !== JSON.stringify(updated.extra_vehicle_model_ids ?? []))
-      evs.push({ group_code: trip.group_code, event_type: 'PLAN_VEHICLE_MODEL_CHANGED', source: 'PLAN', actor, old_value: trip.vehicle_model_id, new_value: updated.vehicle_model_id,
+      evs.push({ group_code: trip.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_VEHICLE_MODEL_CHANGED', source: 'PLAN', actor, old_value: trip.vehicle_model_id, new_value: updated.vehicle_model_id,
         detail: `Bàn ghép xe đổi dòng xe xe đã chốt: ${d0.vehicle_model?.name ?? '—'} → ${d.vehicle_model?.name ?? '—'}${(updated.extra_vehicle_model_ids ?? []).length ? ` (+${(updated.extra_vehicle_model_ids ?? []).length} xe phụ)` : ''}` })
-    if (evs.length) await logOutboundEvents(evs)
-    step(res, 'dội chuyến Xuất kho + lệnh VC (replanKhvcGroups)')
-    let replan_error: string | null = null
-    try { await replanKhvcGroups(req, [trip.group_code]) } catch (e) { replan_error = String(e); console.error('[dispatch trip confirmed edit] replan:', e) }
-    return ok(res, { ...updated, khvc_lines: (kl ?? []).length, replan_error, _plan: await planAfterWrite(plan) })
+    step(res, 'ghi Kế hoạch xuất · chuyến Xuất kho · lệnh VC theo xe đã chốt')
+    // 13/10 tối (user: "làm lại cho tôi ưu"): KHÔNG dội cả đường derive (`replanKhvcGroups` đọc lại VL06O, dựng lại DO / dòng hàng, đồng bộ
+    // lệnh VC qua ~8 truy vấn + RPC — đo 7–8 s mỗi lần đổi ĐVVT). Đơn và số liệu của xe KHÔNG đổi, chỉ hai trường dẫn xuất đổi ⇒ ghi
+    // thẳng chúng ở ba sổ trong MỘT lượt chờ: Kế hoạch xuất (dvvt · veh_type · dòng xe · xe phụ) · chuyến Xuất kho (dvvt · vehicle_model_id,
+    // chỉ chuyến còn mở — đang xuất / đã xong đã chặn ở trên) · lệnh VC (ncc_id · vehicle_type, lệnh còn hiệu lực). Kết quả y như derive
+    // (gói 61 [3f2], test_1310h H2–H4 so cả ba sổ).
+    const live = 'plan_dropped.is.null,plan_dropped.eq.false'
+    const [kl, gd, tm] = await Promise.all([
+      db.from('khvc_lines').update({ dvvt: d.carrier?.name ?? null, veh_type: d.vehicle_model?.parent_type_name ?? null, vehicle_model_id: updated.vehicle_model_id,
+        extra_vehicle_model_ids: updated.vehicle_model_id ? (updated.extra_vehicle_model_ids ?? []) : [], uploaded_by: actor, updated_at: t })
+        .eq('group_code', trip.group_code).neq('sync_status', 'OBSOLETE').select('id'),
+      db.from('GroupDeliveryOrder').update({ dvvt: d.carrier?.name ?? null, vehicle_model_id: updated.vehicle_model_id, updated_by: actor, updated_at: t })
+        .eq('group_code', trip.group_code).in('status', ['PENDING', 'PAUSED']).or(live).select('id'),
+      db.from('TmsOrder').update({ ncc_id: updated.transport_company_id, vehicle_type: d.vehicle_model?.parent_type_name ?? null, updated_by: actor, updated_at: t })
+        .eq('order_code', trip.group_code).or(live).select('id'),
+      evs.length ? logOutboundEvents(evs) : Promise.resolve(),
+    ])
+    if (kl.error) throw kl.error
+    if (gd.error) throw gd.error
+    if (tm.error) throw tm.error
+    return ok(res, { ...updated, khvc_lines: (kl.data ?? []).length, derived: { gdo: (gd.data ?? []).length, tms: (tm.data ?? []).length }, _plan: await planAfterWrite(plan) })
   } catch (e) { return failAny(res, e) }
 }
 /** Sau một lần sửa xe: tổng kết lại + dấu phiên bản — trình duyệt vá thẳng xe vào kế hoạch đang giữ, không tải lại cả kế hoạch (06/10). */

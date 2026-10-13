@@ -3669,6 +3669,8 @@ export interface KhvcRow {
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO
   materialized?: boolean; gdo_status?: string | null; do_ready?: boolean   // enrich từ BE list
+  // 13/10: dòng do bàn ghép xe ghi (source DISPATCH) → xe · kế hoạch đang cầm Số xe; tab Kế hoạch xuất khoá dòng này, "Sửa ở bàn ghép xe"
+  dispatch?: { trip_id: string; plan_id: string; warehouse_id: string; segment: string; plan_date: string } | null
   gdo_date?: string | null   // ngày chuyến bên Xuất (enrich) — ≠ export_date ⇒ lệch ngày (chuyến bị chuyển ngày)
 }
 export function useKhvcLines(params: Record<string, string | number | undefined>, enabled = true) {

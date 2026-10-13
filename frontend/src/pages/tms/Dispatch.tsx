@@ -15,6 +15,7 @@
 // kế hoạch; bàn ghép xe chỉ vẽ phần THUỘC kế hoạch (`boardPlanOf`). "Lập lại" BỎ — nút xoá sạch xe dễ nhầm với "Tạo kế hoạch";
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp, Map as MapIcon, FileText } from 'lucide-react'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { DispatchDraftsTable } from '@/components/tms/DispatchDraftsTable'
@@ -52,6 +53,7 @@ const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' 
 const vnd = (n: number | string | null | undefined) => (n == null ? '—' : `${Number(n).toLocaleString('vi-VN')} ₫`)
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
 const tomorrowVN = () => new Date(Date.now() + 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // hàm, không hằng — màn mở qua đêm
 type Tone = 'amber' | 'green' | 'slate' | 'blue' | 'red'
 const STATUS_VI: Record<DispatchPlan['status'], { label: string; tone: Tone }> = {
   DRAFT: { label: 'Bản nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT phản hồi', tone: 'blue' }, CONFIRMED: { label: 'Đã xác nhận', tone: 'green' }, DISCARDED: { label: 'Đã bỏ', tone: 'slate' },
@@ -192,6 +194,17 @@ export default function Dispatch() {
   const [focusTrips, setFocusTrips] = useState<string[]>([])
   const openTrip = plan?.trips.find(t => t.id === openTripId) ?? null
   const [ask, confirmNode] = useConfirmDialog()
+  // 13/10: "Sửa ở bàn ghép xe" từ tab Kế hoạch xuất — bộ lọc đã đặt (kho · ngày · mảng · kế hoạch), còn Số xe đi qua state điều hướng;
+  // kế hoạch tải xong thì mở panel xe đó một lần rồi xoá state (tải lại trang không mở lại)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const openGroupCode = (location.state as { openGroupCode?: string } | null)?.openGroupCode ?? null
+  useEffect(() => {
+    if (!openGroupCode || !plan) return
+    const tr = plan.trips.find(t => t.group_code === openGroupCode && tripStatus(t) !== 'DISCARDED')
+    if (tr) { setOpenTripId(tr.id); setFocusTrips([tr.id]) }
+    navigate(location.pathname, { replace: true, state: null })
+  }, [openGroupCode, plan, navigate, location.pathname])
 
   const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
   // XEM ĐƠN (07/10, user: "nút là Xem đơn, tức là load lấy các đơn"): nạp đơn chưa đi của kho × ngày × mảng vào CHỜ ĐIỀU — không hỏi dải
@@ -282,6 +295,8 @@ export default function Dispatch() {
       { k: 'nofreight', tone: 'warn', label: 'Xe chưa có cước', value: nf(noFreight), go: toBoard('nofreight') },
       { k: 'over', tone: 'warn', label: 'Xe vượt tải', value: nf(over), go: toBoard('over') },
       { k: 'pool', tone: 'warn', label: 'Đơn còn ở khung chờ — về Chờ điều', value: nf(poolN), go: toBoard('') },
+      // 13/10 (vòng 3 test): kế hoạch ngày đã qua xác nhận được không ai hỏi — cảnh báo, KHÔNG chặn (hôm qua chưa kịp chốt vẫn phải ghi)
+      ...(plan.plan_date < todayVN() ? [{ k: 'past', tone: 'warn' as const, label: 'Ngày kế hoạch đã qua — chuyến Xuất kho sẽ mang ngày này', value: formatDate(plan.plan_date) }] : []),
       { k: 'soft', tone: 'warn', label: 'Đơn SAP báo đã post / đã gắn xe', value: nf(softOds.size), go: () => setF({ tab: 'review' }) },
     ] satisfies CheckRow[]).filter(r => r.value !== '0')
     const ok = await ask({
@@ -601,6 +616,8 @@ export default function Dispatch() {
         <SheetContent side="right" className="w-full sm:max-w-lg p-0 flex flex-col">
           {openTrip && plan && (
             <TripPane trip={openTrip} plan={plan} editable={!!isOpen && canPlan && EDITABLE.includes(tripStatus(openTrip))} canConfirm={canConfirm} needsTender={needsTender(openTrip)} condBy={condBy}
+              // 13/10 (user: "sửa trên bàn, không sửa trên Kế hoạch xuất"): xe ĐÃ CHỐT vẫn đổi ĐVVT / dòng xe tại đây — ghi thẳng xuống Kế hoạch xuất · chuyến · lệnh VC
+              editableVehicle={canPlan && tripStatus(openTrip) === 'CONFIRMED' && plan.status !== 'DISCARDED'}
               models={models.map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
               companies={companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))}
               onModel={v => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_id: v || null }).catch(e => err(e, 'Không đổi được dòng xe'))}
@@ -621,8 +638,8 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return <div className="flex gap-2 text-xs py-1 border-b border-slate-100 last:border-0"><span className="w-32 shrink-0 text-slate-400">{k}</span><span className="min-w-0 font-medium text-slate-700 break-words">{v}</span></div>
 }
 
-function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, models, companies, onModel, onModels, onCarrier, onMove, onSettle, onRespond, busy }: {
-  trip: DispatchTrip; plan: DispatchPlan; editable: boolean; canConfirm: boolean; needsTender: boolean
+function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsTender, condBy, models, companies, onModel, onModels, onCarrier, onMove, onSettle, onRespond, busy }: {
+  trip: DispatchTrip; plan: DispatchPlan; editable: boolean; editableVehicle: boolean; canConfirm: boolean; needsTender: boolean
   condBy: Map<string, StorageConditionRow>
   models: { value: string; label: string; sub?: string }[]; companies: { value: string; label: string; sub?: string }[]
   onModel: (v: string) => void; onModels: (ids: string[]) => void; onCarrier: (v: string) => void; onMove: (od: string, toTripId: string) => void
@@ -638,6 +655,7 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, mo
   const canRespond = canConfirm && planOpen && st === 'TENDERED'
   const others = plan.trips.filter(o => o.id !== t.id && EDITABLE.includes(tripStatus(o))).map(o => ({ value: o.id, label: `${o.group_code} · ${o.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(o.pallets, 1)} pl · ${o.stops} điểm` }))
   const odNos = [...new Set(t.ods.map(o => o.od_number))]
+  const vehEdit = editable || editableVehicle   // dòng xe · xe phụ · ĐVVT sửa được (nháp, hoặc xe đã chốt — 13/10)
   return (
     <>
       <SheetHeader className="px-4 py-3 border-b bg-slate-50 shrink-0">
@@ -654,7 +672,7 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, mo
           <div className={`rounded-md border p-2.5 space-y-2 text-xs ${st === 'DECLINED' ? 'border-red-200 bg-red-50' : st === 'TENDERED' ? 'border-sky-200 bg-sky-50' : st === 'CONFIRMED' ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
             {st === 'TENDERED' && <p>Đã chào cho <b>{d.carrier?.name ?? 'ĐVVT'}</b>{t.tendered_at ? ` lúc ${formatTimestampDate(t.tendered_at)}` : ''} — chờ ĐVVT nhận / từ chối. Gọi hoặc Zalo cho ĐVVT rồi ghi lại câu trả lời ở đây.</p>}
             {st === 'DECLINED' && <p><b>{d.carrier?.name ?? 'ĐVVT'}</b> từ chối{t.responded_at ? ` lúc ${formatTimestampDate(t.responded_at)}` : ''}{t.response_by ? ` (ghi bởi ${t.response_by})` : ''}{t.response_note ? `: “${t.response_note}”` : '.'} Đổi ĐVVT bên dưới rồi bấm <b>Chốt xe này</b>.</p>}
-            {st === 'CONFIRMED' && <p>Đã vào Kế hoạch xuất{t.confirmed_at ? ` lúc ${formatTimestampDate(t.confirmed_at)}` : ''}{t.response_note ? ` · ghi chú ĐVVT: “${t.response_note}”` : ''}. Sửa tiếp ở tab Kế hoạch xuất.</p>}
+            {st === 'CONFIRMED' && <p>Đã vào Kế hoạch xuất{t.confirmed_at ? ` lúc ${formatTimestampDate(t.confirmed_at)}` : ''}{t.response_note ? ` · ghi chú ĐVVT: “${t.response_note}”` : ''}.{editableVehicle ? ' Đổi ĐVVT / dòng xe ngay bên dưới — ghi thẳng xuống Kế hoạch xuất, chuyến Xuất kho và lệnh VC. Thêm bớt OD hay dời ngày: "Mở lại".' : ''}</p>}
             {st === 'DRAFT' && canSettle && <p>Xe còn nháp trong kế hoạch đã xác nhận một phần{needsTender ? ` — ĐVVT ${d.carrier?.name ?? ''} cần phản hồi, chốt sẽ chuyển sang chờ.` : ' — chốt là vào Kế hoạch xuất ngay.'}</p>}
             <div className="flex flex-wrap gap-1.5">
               {canRespond && <>
@@ -670,23 +688,23 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, mo
           <div className="space-y-2">
             <div>
               <div className="text-[10px] text-slate-400 mb-0.5">Dòng xe con (mã SAP)</div>
-              {editable ? <SingleSelect options={models} value={t.vehicle_model_id ?? ''} onChange={onModel} placeholder="Chọn dòng xe con…" disabled={busy} />
+              {vehEdit ? <SingleSelect options={models} value={t.vehicle_model_id ?? ''} onChange={onModel} placeholder="Chọn dòng xe con…" disabled={busy} />
                 : <div className="text-xs font-medium">{d.vehicle_model ? `${d.vehicle_model.sap_code} · ${d.vehicle_model.name}` : '—'}</div>}
             </div>
             {/* THẺ NHIỀU XE (luật 11, 27/09): xe phụ cùng Số xe — máy chia tải xe lớn trước, cước = Σ từng xe cùng ĐVVT */}
-            {(extras.length > 0 || (editable && t.vehicle_model_id)) && (
+            {(extras.length > 0 || (vehEdit && t.vehicle_model_id)) && (
               <div className="rounded border border-slate-200 p-2 space-y-1.5">
                 <div className="text-[10px] text-slate-400 flex items-center gap-1">Xe phụ trên thẻ ({extras.length})
                   <InfoTip tip="Một Số xe có thể đi nhiều xe (vd 8 tấn + 2 tấn thay cho 15 tấn). Máy tự so tổ hợp khi lập; ở đây người thêm / bớt tay. Bước Xuất kho vẫn là MỘT chuyến một biển số — Kế hoạch xuất ghi đủ các xe để ĐVVT booking." /></div>
                 {extras.map((id, i) => (
                   <div key={`${id}-${i}`} className="flex items-center gap-1">
-                    <div className="min-w-0 flex-1">{editable
+                    <div className="min-w-0 flex-1">{vehEdit
                       ? <SingleSelect options={models} value={id} onChange={v => onModels([t.vehicle_model_id!, ...extras.map((x, j) => (j === i ? v : x)).filter(Boolean)])} disabled={busy} />
                       : <div className="text-xs">{models.find(m => m.value === id)?.label ?? id}</div>}</div>
-                    {editable && <Button size="sm" variant="outline" className="h-8 px-2" disabled={busy} title="Bỏ xe này khỏi thẻ" onClick={() => onModels([t.vehicle_model_id!, ...extras.filter((_, j) => j !== i)])}>✕</Button>}
+                    {vehEdit && <Button size="sm" variant="outline" className="h-8 px-2" disabled={busy} title="Bỏ xe này khỏi thẻ" onClick={() => onModels([t.vehicle_model_id!, ...extras.filter((_, j) => j !== i)])}>✕</Button>}
                   </div>
                 ))}
-                {editable && extras.length < 4 && (
+                {vehEdit && extras.length < 4 && (
                   <div className="w-full"><SingleSelect options={models} value="" placeholder="＋ Thêm xe vào thẻ…" disabled={busy} onChange={v => { if (v) onModels([t.vehicle_model_id!, ...extras, v]) }} /></div>
                 )}
                 {(d.vehicles?.length ?? 0) > 1 && d.vehicles!.map((v, i) => (
@@ -696,9 +714,9 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, mo
             )}
             <div>
               <div className="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">ĐVVT {d.carrier_reasons.length > 0 && <InfoTip tip={<ul className="list-disc pl-4 space-y-0.5">{d.carrier_reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>} />}</div>
-              {editable ? <SingleSelect options={companies} value={t.transport_company_id ?? ''} onChange={onCarrier} placeholder="Chọn ĐVVT…" disabled={busy} />
+              {vehEdit ? <SingleSelect options={companies} value={t.transport_company_id ?? ''} onChange={onCarrier} placeholder="Chọn ĐVVT…" disabled={busy} />
                 : <div className="text-xs font-medium">{d.carrier ? `${d.carrier.code} · ${d.carrier.name}` : '—'}</div>}
-              {d.carrier && <p className="text-[10px] text-slate-500 mt-0.5">{needsTender ? <><Send className="inline h-3 w-3 mr-0.5 text-sky-600" />ĐVVT này <b>cần phản hồi</b> — sau Xác nhận xe chờ ĐVVT nhận.</> : 'ĐVVT không cần phản hồi — Xác nhận là vào Kế hoạch xuất ngay; đổi ĐVVT sau đó ở tab Kế hoạch xuất.'}</p>}
+              {d.carrier && st !== 'CONFIRMED' && <p className="text-[10px] text-slate-500 mt-0.5">{needsTender ? <><Send className="inline h-3 w-3 mr-0.5 text-sky-600" />ĐVVT này <b>cần phản hồi</b> — sau Xác nhận xe chờ ĐVVT nhận.</> : 'ĐVVT không cần phản hồi — Xác nhận là vào Kế hoạch xuất ngay; sau đó vẫn đổi ĐVVT được ngay tại đây.'}</p>}
             </div>
             <Row k="Cước dự tính" v={t.freight_estimated != null ? <span className="tabular-nums font-semibold">{vnd(t.freight_estimated)}</span> : <span className="text-amber-700">{d.freight.reason ?? 'Chưa có cước'}</span>} />
             {d.freight.base != null && <Row k="Cước tuyến" v={<>{vnd(d.freight.base)}{d.freight.unit === 'PER_PALLET' && d.freight.billed_pallets != null ? <span className="text-slate-500 font-normal"> · {d.freight.billed_pallets} pallet (làm tròn lên)</span> : <span className="text-slate-500 font-normal"> · trọn chuyến</span>}</>} />}
@@ -736,7 +754,7 @@ function TripPane({ trip: t, plan, editable, canConfirm, needsTender, condBy, mo
             })}
           </div>
         </div>
-        {!editable && <p className="text-[11px] text-slate-400">{planOpen && !EDITABLE.includes(st) ? `Xe ${sv.label.toLowerCase()} — không sửa dòng xe / ĐVVT / OD ở đây nữa.` : `Kế hoạch ${STATUS_VI[plan.status].label.toLowerCase()} — chỉ xem. Sửa tiếp (nếu đã xác nhận) ở tab Kế hoạch xuất.`}</p>}
+        {!editable && <p className="text-[11px] text-slate-400">{editableVehicle ? 'Xe đã chốt — ĐVVT / dòng xe đổi ngay tại đây; thêm bớt OD hay dời ngày thì "Mở lại" xe.' : planOpen && !EDITABLE.includes(st) ? `Xe ${sv.label.toLowerCase()} — không sửa dòng xe / ĐVVT / OD ở đây nữa.` : `Kế hoạch ${STATUS_VI[plan.status].label.toLowerCase()} — chỉ xem.`}</p>}
       </div>
     </>
   )

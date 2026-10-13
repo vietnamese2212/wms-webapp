@@ -319,3 +319,29 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   Mở lại trả `blocked` nêu lý do, xe giữ CONFIRMED · kế hoạch ngày ĐÃ QUA (12/10) lập + Xác nhận được, không cảnh báo (quan sát, user quyết) ·
   Xuất Excel (gs): 15 dòng = Σ OD, 17 cột, ĐVVT · Dòng xe · Pallet · Cước khớp bàn — **bẫy bộ kiểm**: app ưu tiên `showSaveFilePicker`, headless
   phải tắt API đó mới có download · 390 px: Xem đơn tick ⇒ nút "Tạo kế hoạch 15/10 (N đơn)" nằm trên bảng, Tạo ⇒ sang bàn, không tràn, 0 lỗi.
+
+## 13/10 tối — ĐẠI PHẪU Kế hoạch xuất: bàn ghép xe là CỬA GHI DUY NHẤT cho kho dùng bàn (user chốt)
+
+- **Vì sao:** sổ `khvc_lines` có HAI chủ (upload Excel / sửa tay từ 08/2026 và bàn ghép xe từ 23/09). Vòng 3 đo được: đổi ĐVVT ở tab Kế hoạch
+  xuất thì bàn vẫn in ĐVVT lúc xác nhận — hai cửa cùng một sổ khác luật. User 13/10: "bàn ghép xe thay thế kế hoạch xuất upload từ excel —
+  cần đại phẫu" rồi chốt 4 điểm: (1) Excel GIỮ cho kho chưa dùng bàn; (2) kho dùng bàn **sửa trên bàn, không sửa ở Kế hoạch xuất**, không cần
+  cờ cấu hình; (3) khung giờ vẫn ở Kế hoạch VC (nơi ĐVVT làm việc), đi từ bàn xuống qua lệnh VC; (4) dọn 68 dòng MANUAL seed tháng 9.
+- **Cắt ở QUYỀN SỞ HỮU theo NGUỒN TỪNG DÒNG, không cờ:** dòng `source='DISPATCH'` (bàn ghi lúc Xác nhận) ⇒ tab Kế hoạch xuất **khoá cả 5 cửa**
+  (`PUT /external/khvc/:id` · `bulk-date` · `DELETE` · `bulk-delete` · `POST` thêm DO vào xe do bàn ghi) trả **409 `KHVC_LINE_FROM_DISPATCH`**
+  (bulk trả `blocked` per-xe / per-dòng, xe Excel cùng lượt vẫn làm). Kho dùng bàn tự nhiên chỉ có dòng loại này. Cửa của chính điều vận
+  (`khvc/remove` · `renumber` · Mở lại) không đi qua gác này. FE: chip nguồn "Bàn ghép xe", editor khoá ô + ẩn nút xoá / thêm DO, băng
+  "Số xe này do bàn ghép xe ghi" + nút **"Sửa ở bàn ghép xe"** (gate `useCanSeePath('/tms/dispatch')` — C66) ⇒ đặt bộ lọc kho · ngày · mảng ·
+  kế hoạch (`GET /external/khvc` enrich `dispatch {trip_id, plan_id, warehouse_id, segment, plan_date}`) rồi mở panel xe qua `location.state`.
+- **Xe ĐÃ CHỐT đổi ĐVVT / dòng xe / xe phụ NGAY TRÊN BÀN, không Mở lại:** `PATCH /tms/dispatch/trips/:id` nay nhận xe CONFIRMED (kế hoạch
+  TENDERED / CONFIRMED): chỉ `transport_company_id` · `vehicle_model_id(s)` (khoá / chở lẫn ⇒ 409 `TRIP_NOT_EDITABLE`; chuyến bên Xuất đang xuất /
+  đã hoàn thành ⇒ 409 `GDO_STATUS_LOCKED`) → `repriceTrip` (cước) → **ghi xuyên mọi dòng `khvc_lines` của Số xe** (dvvt · veh_type ·
+  vehicle_model_id · extra_vehicle_model_ids, cùng cột `writeTrips`) → sự kiện `PLAN_DVVT_CHANGED` / `PLAN_VEHICLE_MODEL_CHANGED` →
+  `replanKhvcGroups` (chuyến Xuất kho đổi dvvt / dòng xe, lệnh VC đồng bộ ĐVVT). Panel xe: ô Dòng xe · Xe phụ · ĐVVT mở cho xe đã chốt
+  (`editableVehicle`), ô chuyển OD vẫn khoá. ĐVVT "cần phản hồi" chọn ở bước này KHÔNG quay về chờ — người đổi trên xe đã chốt là đã chốt với
+  ĐVVT. Kéo OD vào / ra, dời ngày: vẫn Mở lại → Trả về Chờ điều → lập ngày khác (bulk-date ở tab Kế hoạch xuất khoá với dòng DISPATCH).
+- **Hộp Xác nhận cảnh báo ngày kế hoạch đã qua** (không chặn — hôm qua chưa kịp chốt vẫn phải ghi): dòng "Ngày kế hoạch đã qua — chuyến
+  Xuất kho sẽ mang ngày này"; `todayVN()` là hàm (màn mở qua đêm).
+- **Dọn 68 dòng MANUAL staging qua cửa app** (`bulk-delete`): 6 dòng xoá (5 xe 07/09 PENDING ⇒ chuyến `plan_dropped`), **62 bị chặn** — 61 xe
+  chuyến ĐÃ HOÀN THÀNH + 1 ĐANG XUẤT (seed SIMDAY 01–20/09, chứng từ của chuyến đã xuất, luật 03/08) — để nguyên, user quyết.
+- **Lưới:** gói 61 [3f] (khoá / move-od xe chốt vẫn 409) · **[3f2–3f5]** (đổi ĐVVT xe đã chốt ⇒ 200 + khvc_lines + chuyến đổi theo; 5 cửa tab Kế
+  hoạch xuất 409 / blocked; GET mang `dispatch`) — đỏ 4/4 trên bản cũ trước khi vá.

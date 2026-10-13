@@ -342,11 +342,42 @@ try {
   const cf2 = await api(`/tms/dispatch/plans/${P.id}/confirm`, 'POST', {})
   check('3e. Confirm lần hai → 409 PLAN_NOT_DRAFT', cf2.s === 409 && cf2.j?.error?.code === 'PLAN_NOT_DRAFT', `http=${cf2.s} code=${cf2.j?.error?.code}`)
   const e1 = await api(`/tms/dispatch/trips/${T2.id}`, 'PATCH', { transport_company_id: DA.id })
-  const e2 = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { transport_company_id: HA.id })
+  const e2 = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { locked: true })
   const e3 = await api(`/tms/dispatch/trips/${T2.id}/move-od`, 'POST', { od_number: OD[2], to_trip_id: T1.id })
-  check('3f. Xe CHỜ và xe ĐÃ VÀO KH xuất không sửa được: PATCH → 409 TRIP_NOT_EDITABLE ×2, move-od vào xe đã chốt → 409',
+  check('3f. Xe CHỜ không sửa được (PATCH → 409 TRIP_NOT_EDITABLE); xe ĐÃ VÀO KH xuất: khoá → 409, move-od vào xe đã chốt → 409',
     e1.s === 409 && e1.j?.error?.code === 'TRIP_NOT_EDITABLE' && e2.s === 409 && e2.j?.error?.code === 'TRIP_NOT_EDITABLE' && e3.s === 409,
     `e1=${e1.s}/${e1.j?.error?.code} e2=${e2.s}/${e2.j?.error?.code} e3=${e3.s}/${e3.j?.error?.code}`)
+  // 13/10 ĐẠI PHẪU Kế hoạch xuất (user chốt "sửa trên bàn, không sửa trên Kế hoạch xuất"): xe ĐÃ CHỐT đổi ĐVVT ngay trên bàn ⇒ ghi
+  // thẳng dòng Kế hoạch xuất (dvvt) + chuyến Xuất kho (dvvt) — không "Mở lại"; đổi lại DA để các mục sau không lệch
+  {
+    const sw = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { transport_company_id: HA.id })
+    const khSw = await restAll('khvc_lines', `select=dvvt,source&group_code=eq.${T1.group_code}`)
+    const gdoSw = (await restAll('GroupDeliveryOrder', `select=dvvt,status&group_code=eq.${T1.group_code}`))[0]
+    check('3f2. Xe ĐÃ CHỐT đổi ĐVVT trên bàn → 200, xe vẫn CONFIRMED · mọi dòng Kế hoạch xuất của xe mang ĐVVT mới (source giữ DISPATCH) · chuyến Xuất kho mang ĐVVT mới',
+      sw.s === 200 && sw.j?.data?.status === 'CONFIRMED' && sw.j?.data?.transport_company_id === HA.id && khSw.length === 2 && khSw.every(k => k.dvvt === HA.name && k.source === 'DISPATCH') && gdoSw?.dvvt === HA.name,
+      `http=${sw.s} ${sw.j?.error?.code ?? ''} st=${sw.j?.data?.status} kh=${JSON.stringify(khSw)} gdo=${JSON.stringify(gdoSw ?? null)} replan_err=${sw.j?.data?.replan_error ?? ''}`)
+    const back = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { transport_company_id: DA.id })
+    const khBack = await restAll('khvc_lines', `select=id,dvvt,booking_category&group_code=eq.${T1.group_code}`)
+    check('3f3. Đổi lại ĐVVT cũ → 200, dòng Kế hoạch xuất theo', back.s === 200 && khBack.every(k => k.dvvt === DA.name), `http=${back.s} kh=${khBack.map(k => k.dvvt).join(',')}`)
+    // tab Kế hoạch xuất KHOÁ dòng do bàn ghi (source DISPATCH) ở CẢ 5 cửa — không cờ cấu hình, khoá theo nguồn từng dòng
+    const kId = khBack[0]?.id
+    const kPut = await api(`/external/khvc/${kId}`, 'PUT', { dvvt: 'QA61 sửa tay' })
+    const kDate = await api('/external/khvc/bulk-date', 'POST', { ids: [kId], export_date: DAY2 })
+    const kDel = await api(`/external/khvc/${kId}`, 'DELETE')
+    const kBulk = await api('/external/khvc/bulk-delete', 'POST', { ids: [kId] })
+    const kAdd = await api('/external/khvc', 'POST', { group_code: T1.group_code, do_no: 'QA61ADD', npp: 'QA61 NPP 1', export_date: DAY, veh_type: XEPALLET?.name, dvvt: DA.name, booking_category: khBack[0]?.booking_category ?? null })
+    const khStill = await restAll('khvc_lines', `select=id,dvvt,export_date&group_code=eq.${T1.group_code}`)
+    check('3f4. Tab Kế hoạch xuất: dòng do bàn ghi ⇒ sửa 409 KHVC_LINE_FROM_DISPATCH · đổi ngày bị chặn per-xe (0 xe đổi) · xoá 409 · xoá hàng loạt 0 xoá + 1 chặn · thêm DO vào xe 409; dòng không đổi',
+      kPut.s === 409 && kPut.j?.error?.code === 'KHVC_LINE_FROM_DISPATCH' && kDate.s === 200 && kDate.j?.data?.updated_groups === 0 && kDate.j?.data?.blocked?.[0]?.group_code === T1.group_code
+        && kDel.s === 409 && kDel.j?.error?.code === 'KHVC_LINE_FROM_DISPATCH' && kBulk.s === 200 && kBulk.j?.data?.deleted === 0 && kBulk.j?.data?.blocked_count === 1
+        && kAdd.s === 409 && kAdd.j?.error?.code === 'KHVC_LINE_FROM_DISPATCH' && khStill.length === 2 && khStill.every(k => k.dvvt === DA.name && k.export_date === DAY),
+      `put=${kPut.s}/${kPut.j?.error?.code} date=${kDate.s}/${kDate.j?.data?.updated_groups}/${kDate.j?.data?.blocked?.length} del=${kDel.s}/${kDel.j?.error?.code} bulk=${kBulk.s}/${kBulk.j?.data?.deleted}/${kBulk.j?.data?.blocked_count} add=${kAdd.s}/${kAdd.j?.error?.code} còn=${khStill.length}`)
+    const kList = await api(`/external/khvc?group_code_eq=${T1.group_code}&page_size=10`)
+    const kRow = (kList.j?.data?.items ?? [])[0]
+    check('3f5. GET Kế hoạch xuất: dòng do bàn ghi mang `dispatch` (xe · kế hoạch · kho · ngày · mảng) để nút "Sửa ở bàn ghép xe" nhảy đúng chỗ',
+      kList.s === 200 && kRow?.dispatch?.trip_id === T1.id && kRow?.dispatch?.plan_id === P.id && kRow?.dispatch?.warehouse_id === WH && kRow?.dispatch?.plan_date === DAY,
+      `http=${kList.s} dispatch=${JSON.stringify(kRow?.dispatch ?? null)}`)
+  }
   const again = await mkPlan(PLAN_BODY)
   check('3g. Lập lại khi kế hoạch đang chờ ĐVVT → 409 PLAN_TENDERED_EXISTS (OD xe chờ chưa vào KH xuất, lập lại là xếp trùng)', again.s === 409 && again.j?.error?.code === 'PLAN_TENDERED_EXISTS', `http=${again.s} code=${again.j?.error?.code}`)
   const r0 = await api(`/tms/dispatch/trips/${T1.id}/respond`, 'POST', { accept: true })
@@ -462,7 +493,7 @@ try {
   const p5 = await mkPlan(PLAN_BODY)
   const cf5 = await api(`/tms/dispatch/plans/${p5.j?.data?.id}/confirm`, 'POST', {})
   const P5 = await planOf(p5.j?.data?.id)
-  check('5a. Cờ HA tắt: Confirm → 2 xe vào Kế hoạch xuất ngay, 0 xe chờ, kế hoạch CONFIRMED (điều vận muốn đổi thì sửa tay ở Kế hoạch xuất)',
+  check('5a. Cờ HA tắt: Confirm → 2 xe vào Kế hoạch xuất ngay, 0 xe chờ, kế hoạch CONFIRMED (điều vận muốn đổi ĐVVT thì đổi ngay trên bàn — 13/10)',
     cf5.s === 200 && cf5.j?.data?.trips === 2 && cf5.j?.data?.tendered === 0 && cf5.j?.data?.status === 'CONFIRMED' && P5?.status === 'CONFIRMED' && (P5?.trips ?? []).every(t => t.status === 'CONFIRMED'),
     `http=${cf5.s} ${JSON.stringify(cf5.j?.data ?? cf5.j?.error)}`)
   const kh5 = await restAll('khvc_lines', `select=do_no&group_code=like.${PREFIX}*`)

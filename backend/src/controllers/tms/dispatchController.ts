@@ -44,7 +44,7 @@ import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
-import { logOutboundEvents, actorOf } from '../../services/outboundEvents'
+import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { logAdmin } from '../../services/adminAudit'
 import { parseDispatchVehicles } from '../masterdata/customerController'
 import type { Database, Json } from '../../types/database'
@@ -1003,14 +1003,14 @@ const sendErr = (res: Response, e: TripErr) => (e.err[2] ? fail(res, e.err[1], e
 const TRIP_STATUS_VI: Record<TripStatus, string> = { DRAFT: 'nháp', TENDERED: 'đang chờ ĐVVT phản hồi', DECLINED: 'ĐVVT đã từ chối', CONFIRMED: 'đã vào Kế hoạch xuất', DISCARDED: 'đã bỏ' }
 
 /** Chuyến + kế hoạch của nó, gác phạm vi kho. `editable` = kế hoạch còn mở (DRAFT/TENDERED) và chuyến DRAFT/DECLINED. */
-async function loadTrip(req: Request, tripId: string, opts: { editable?: boolean; allow?: TripStatus[] } = {}): Promise<{ plan: PlanRow; trip: TripRow & { ods: TripOdRow[] } } | TripErr> {
+async function loadTrip(req: Request, tripId: string, opts: { editable?: boolean; allow?: TripStatus[]; planAllow?: string[] } = {}): Promise<{ plan: PlanRow; trip: TripRow & { ods: TripOdRow[] } } | TripErr> {
   const { data: trip, error } = await db.from('dispatch_trip').select('*').eq('id', tripId).maybeSingle()
   if (error) throw error
   if (!trip) return { err: ['Không tìm thấy chuyến nháp', 404] }
   const { data: plan } = await db.from('dispatch_plan').select('*').eq('id', trip.plan_id).maybeSingle()
   if (!plan) return { err: ['Không tìm thấy kế hoạch', 404] }
   if (!whAllowed(req, plan.warehouse_id)) return { err: ['Kho này ngoài phạm vi được giao', 403] }
-  if (!OPEN_PLAN.includes(plan.status)) return { err: ['Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp', 409, 'PLAN_NOT_DRAFT'] }
+  if (!(opts.planAllow ?? OPEN_PLAN).includes(plan.status)) return { err: ['Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp', 409, 'PLAN_NOT_DRAFT'] }
   const st = statusOf(trip as TripRow)
   const allow = opts.allow ?? (opts.editable ? EDITABLE_TRIP : null)
   if (allow && !allow.includes(st)) return { err: [`Xe ${trip.group_code} ${TRIP_STATUS_VI[st]} — không sửa được ở bước này`, 409, 'TRIP_NOT_EDITABLE'] }
@@ -1147,12 +1147,24 @@ async function repriceTrip(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, 
 }
 
 // ── PATCH /tms/dispatch/trips/:id ──────────────────────────────────────────────────────────────────────
+// 13/10 (user chốt "sửa trên bàn, không sửa trên Kế hoạch xuất"): xe ĐÃ CHỐT vẫn đổi ĐVVT / dòng xe NGAY TRÊN BÀN, không "Mở lại" —
+// ghi xe → ghi thẳng dòng Kế hoạch xuất của Số xe (dvvt · veh_type · vehicle_model_id · xe phụ) → dội chuyến Xuất kho + lệnh VC
+// (replanKhvcGroups) → cước tính lại. Khoá / chở lẫn / kéo OD vào ra / dời ngày vẫn phải "Mở lại". Chuyến bên Xuất đang xuất / đã
+// hoàn thành ⇒ 409 (xe + ngày là sự thật vận hành). Tab Kế hoạch xuất khoá dòng DISPATCH (khvcController) nên đây là cửa duy nhất.
 async function updateTripInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zTripPatch>
-    const got = await loadDraftTrip(req, String(req.params.id))
+    const got = await loadTrip(req, String(req.params.id), { allow: [...EDITABLE_TRIP, 'CONFIRMED'], planAllow: [...OPEN_PLAN, 'CONFIRMED'] })
     if ('err' in got) return sendErr(res, got)
     const { plan, trip } = got
+    const confirmed = statusOf(trip) === 'CONFIRMED'
+    if (!confirmed && !OPEN_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp')
+    if (confirmed) {
+      if (b.locked !== undefined || b.allow_mix_categories !== undefined) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${trip.group_code} đã vào Kế hoạch xuất — ở đây chỉ đổi ĐVVT / dòng xe; khoá, chở lẫn, thêm bớt OD thì "Mở lại" xe.`)
+      if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined) return fail(res, 'Không có gì để đổi', 400)
+      const gdo = (await gdosOfGroups([trip.group_code])).get(trip.group_code)
+      if (gdo && (gdo.status === 'IN_PROGRESS' || gdo.status === 'COMPLETED')) return fail(res, 409, 'GDO_STATUS_LOCKED', `Chuyến bên Xuất của xe ${trip.group_code} ${gdo.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT HÀNG'} — không đổi ĐVVT / dòng xe nữa.`)
+    }
     if (b.locked !== undefined) {
       const { error } = await db.from('dispatch_trip').update({ locked: b.locked, updated_at: now() }).eq('id', trip.id)
       if (error) throw error
@@ -1185,7 +1197,29 @@ async function updateTripInner(req: Request, res: Response) {
       refs.carriers.push(co as EngineCarrier)
     }
     const updated = await repriceTrip(plan, trip, modelId, carrierId, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
-    return ok(res, { ...updated, _plan: await planAfterWrite(plan) })
+    if (!confirmed) return ok(res, { ...updated, _plan: await planAfterWrite(plan) })
+    // xe đã chốt: ghi xuyên xuống Kế hoạch xuất (cùng cột writeTrips ghi lúc Xác nhận) rồi dội chuyến / lệnh VC
+    const d = detailOf(updated)
+    const t = now(), actor = actorOf(req)
+    step(res, 'ghi dòng Kế hoạch xuất theo xe đã chốt')
+    const { data: kl, error: kErr } = await db.from('khvc_lines')
+      .update({ dvvt: d.carrier?.name ?? null, veh_type: d.vehicle_model?.parent_type_name ?? null, vehicle_model_id: updated.vehicle_model_id,
+        extra_vehicle_model_ids: updated.vehicle_model_id ? (updated.extra_vehicle_model_ids ?? []) : [], uploaded_by: actor, updated_at: t })
+      .eq('group_code', trip.group_code).neq('sync_status', 'OBSOLETE').select('id')
+    if (kErr) throw kErr
+    const d0 = detailOf(trip)
+    const evs: OutboundEventInput[] = []
+    if ((d0.carrier?.id ?? null) !== (d.carrier?.id ?? null))
+      evs.push({ group_code: trip.group_code, event_type: 'PLAN_DVVT_CHANGED', source: 'PLAN', actor, old_value: d0.carrier?.name ?? null, new_value: d.carrier?.name ?? null,
+        detail: `Bàn ghép xe đổi ĐVVT xe đã chốt: ${d0.carrier?.name ?? '—'} → ${d.carrier?.name ?? '—'}` })
+    if (trip.vehicle_model_id !== updated.vehicle_model_id || JSON.stringify(trip.extra_vehicle_model_ids ?? []) !== JSON.stringify(updated.extra_vehicle_model_ids ?? []))
+      evs.push({ group_code: trip.group_code, event_type: 'PLAN_VEHICLE_MODEL_CHANGED', source: 'PLAN', actor, old_value: trip.vehicle_model_id, new_value: updated.vehicle_model_id,
+        detail: `Bàn ghép xe đổi dòng xe xe đã chốt: ${d0.vehicle_model?.name ?? '—'} → ${d.vehicle_model?.name ?? '—'}${(updated.extra_vehicle_model_ids ?? []).length ? ` (+${(updated.extra_vehicle_model_ids ?? []).length} xe phụ)` : ''}` })
+    if (evs.length) await logOutboundEvents(evs)
+    step(res, 'dội chuyến Xuất kho + lệnh VC (replanKhvcGroups)')
+    let replan_error: string | null = null
+    try { await replanKhvcGroups(req, [trip.group_code]) } catch (e) { replan_error = String(e); console.error('[dispatch trip confirmed edit] replan:', e) }
+    return ok(res, { ...updated, khvc_lines: (kl ?? []).length, replan_error, _plan: await planAfterWrite(plan) })
   } catch (e) { return failAny(res, e) }
 }
 /** Sau một lần sửa xe: tổng kết lại + dấu phiên bản — trình duyệt vá thẳng xe vào kế hoạch đang giữ, không tải lại cả kế hoạch (06/10). */

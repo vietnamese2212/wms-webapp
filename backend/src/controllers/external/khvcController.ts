@@ -146,6 +146,16 @@ const STR_FIELDS = [
   'priority', 'cs', 'note', 'source', 'sync_status', 'booking_category',
 ] as const
 
+// ── 13/10 — ĐẠI PHẪU Kế hoạch xuất (user chốt): kho dùng BÀN GHÉP XE thì bàn là cửa ghi DUY NHẤT của sổ này ─────────────────
+// Dòng `source='DISPATCH'` (bàn ghi lúc Xác nhận) KHÔNG sửa / đổi ngày / xoá / thêm DO ở tab Kế hoạch xuất: ĐVVT · dòng xe đổi
+// ngay trên bàn (xe đã chốt vẫn đổi, PATCH /tms/dispatch/trips/:id ghi thẳng xuống đây); thêm / bớt DO hay dời ngày thì "Mở lại"
+// xe trên bàn. Vì sao: tới 13/10 sổ này có HAI chủ — đổi ĐVVT ở đây thì bàn vẫn in ĐVVT lúc xác nhận (hai cửa cùng một sổ khác
+// luật). Dòng EXCEL / MANUAL (kho chưa dùng bàn) sửa như cũ. KHÔNG cờ cấu hình — khoá theo NGUỒN TỪNG DÒNG, kho dùng bàn tự
+// nhiên chỉ có dòng loại này. Cửa của chính điều vận (khvc/remove · renumber · Mở lại) không đi qua đây.
+const FROM_DISPATCH_CODE = 'KHVC_LINE_FROM_DISPATCH'
+const fromDispatchMsg = (gc: string) =>
+  `Số xe ${gc} do bàn ghép xe ghi — đổi ĐVVT / dòng xe ngay trên bàn (Điều vận → Bàn ghép xe → bấm xe); thêm / bớt DO hay dời ngày thì "Mở lại" xe trên bàn.`
+
 // ── LOẠI KHO BOOKING (cửa đặt lịch) — luật khoá cứng user chốt 03/08 ─────────────────────────
 // 1 Số xe CHỈ 1 giá trị. Trigger DB `khvc_booking_category_uniform` là lá chắn cuối; ở đây gác sớm
 // để trả lỗi tiếng Việt rõ ràng + ÉP theo xe (thêm dòng vào xe đã có cửa thì theo cửa đó, y hệt
@@ -351,9 +361,24 @@ export async function listKhvc(req: Request, res: Response) {
       const { data: vms } = await supabase.from('vehicle_model').select('id, sap_code, name').in('id', vmIds.slice(0, 300))
       for (const m of (vms ?? []) as { id: string; sap_code: string; name: string }[]) vmById.set(m.id, m)
     }
+    // (d) dòng do bàn ghép xe ghi (13/10) → xe · kế hoạch đang cầm Số xe, để nút "Sửa ở bàn ghép xe" nhảy đúng kho · ngày · mảng · xe
+    //     (≤300: gcs ≤ page_size 200). Xe của kế hoạch chưa bỏ, ưu tiên xe đã chốt.
+    const dGcs = gcs.filter(gc => items.some(i => i.group_code === gc && i.source === 'DISPATCH'))
+    const dispatchByGc = new Map<string, { trip_id: string; plan_id: string; warehouse_id: string; segment: string; plan_date: string }>()
+    if (dGcs.length) {
+      const tRows = await fetchAllByIdChunks(dGcs, c => supabase.from('dispatch_trip').select('id, plan_id, group_code, status').in('group_code', c).neq('status', 'DISCARDED').order('id')) as { id: string; plan_id: string; group_code: string; status: string }[]
+      const planIds = [...new Set(tRows.map(t => t.plan_id))]
+      const plans = planIds.length ? await fetchAllByIdChunks(planIds, c => supabase.from('dispatch_plan').select('id, warehouse_id, segment, plan_date, status').in('id', c).neq('status', 'DISCARDED').order('id')) as { id: string; warehouse_id: string; segment: string | null; plan_date: string }[] : []
+      const planById = new Map(plans.map(p => [p.id, p]))
+      for (const t of tRows.sort((a, b) => Number(b.status === 'CONFIRMED') - Number(a.status === 'CONFIRMED'))) {
+        const p = planById.get(t.plan_id)
+        if (p && !dispatchByGc.has(t.group_code)) dispatchByGc.set(t.group_code, { trip_id: t.id, plan_id: p.id, warehouse_id: p.warehouse_id, segment: p.segment ?? 'SALES', plan_date: p.plan_date })
+      }
+    }
     for (const i of items) {
       const gc = String(i.group_code ?? '')
       const g = gdoByGc.get(gc)
+      i.dispatch = i.source === 'DISPATCH' ? (dispatchByGc.get(gc) ?? null) : null
       i.materialized = gdoByGc.has(gc)
       i.gdo_status = g?.status ?? null
       i.gdo_date = g?.delivery_date ?? null   // ngày chuyến bên Xuất — FE so với export_date để báo lệch
@@ -388,6 +413,10 @@ export async function createKhvc(req: Request, res: Response) {
     const { data: dup } = await supabase.from('khvc_lines').select('id')
       .eq('group_code', fields.group_code).eq('do_no', fields.do_no).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
+    // thêm DO vào xe do bàn ghi = sửa xe đã chốt ⇒ bàn ("Mở lại")
+    const { data: sibDispatch } = await supabase.from('khvc_lines').select('id')
+      .eq('group_code', fields.group_code).eq('source', 'DISPATCH').neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
+    if (sibDispatch) return fail(res, 409, FROM_DISPATCH_CODE, fromDispatchMsg(String(fields.group_code)))
     // DO KHÔNG LÊN XE (ZSD02 22/09): trả pallet/trả hàng là chiều NHẬP, chiết khấu không có hàng, mã chưa phân loại chưa biết —
     // VL06O không có thông tin này nên trước đây không chặn được. Dòng flow NULL (VL06O) vẫn qua.
     const badFlow = await notLoadableDos([String(fields.do_no)])
@@ -476,8 +505,9 @@ export async function updateKhvc(req: Request, res: Response) {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
     // Group_code CŨ cần cho replan (đổi Số xe = chuyến cũ mất 1 dòng + chuyến mới thêm 1 dòng — dội CẢ HAI)
-    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date, booking_category, vehicle_model_id').eq('id', req.params.id).maybeSingle()
+    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date, booking_category, vehicle_model_id, source').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
+    if (cur.source === 'DISPATCH') return fail(res, 409, FROM_DISPATCH_CODE, fromDispatchMsg(String(cur.group_code ?? '')))
     // Scope kho: gác CẢ dòng đang sửa (kho cũ) lẫn Số xe mới (kho đích nếu đổi xe)
     const scopeErr = await khvcScopeError(req, [String(cur.group_code ?? ''), String(fields.group_code ?? '')])
     if (scopeErr) return fail(res, scopeErr, 403)
@@ -634,8 +664,9 @@ export async function updateKhvc(req: Request, res: Response) {
 // DELETE /external/khvc/:id (?check=1 = chỉ kiểm, không xóa)
 export async function deleteKhvc(req: Request, res: Response) {
   try {
-    const { data: row } = await supabase.from('khvc_lines').select('group_code').eq('id', req.params.id).maybeSingle()
+    const { data: row } = await supabase.from('khvc_lines').select('group_code, source').eq('id', req.params.id).maybeSingle()
     if (!row) return fail(res, 'Không tìm thấy dòng', 404)
+    if (row.source === 'DISPATCH') return fail(res, 409, FROM_DISPATCH_CODE, fromDispatchMsg(String(row.group_code)))
     const delScopeErr = await khvcScopeError(req, [String(row.group_code)])
     if (delScopeErr) return fail(res, delScopeErr, 403)
     const dr: KDelRow = { id: req.params.id, group_code: String(row.group_code) }
@@ -665,15 +696,18 @@ export async function bulkDateKhvc(req: Request, res: Response) {
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
     if (!export_date || !/^\d{4}-\d{2}-\d{2}$/.test(export_date)) return fail(res, 'Ngày xuất không hợp lệ (YYYY-MM-DD)', 400)
     const gcSet = new Set<string>()
+    const fromDispatch = new Set<string>()   // xe do bàn ghi ⇒ dời ngày trên bàn ("Mở lại" → Chờ điều → lập ngày khác)
     for (let i = 0; i < ids.length; i += 300) {
-      const { data } = await supabase.from('khvc_lines').select('group_code').in('id', ids.slice(i, i + 300))
-      for (const r of ((data ?? []) as { group_code: string | null }[])) if (r.group_code) gcSet.add(String(r.group_code))
+      const { data } = await supabase.from('khvc_lines').select('group_code, source').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as { group_code: string | null; source: string | null }[])) if (r.group_code) { gcSet.add(String(r.group_code)); if (r.source === 'DISPATCH') fromDispatch.add(String(r.group_code)) }
     }
-    const groupCodes = [...gcSet]
-    if (!groupCodes.length) return fail(res, 'Không tìm thấy dòng', 404)
-    const scopeErr = await khvcScopeError(req, groupCodes)
+    const allCodes = [...gcSet]
+    if (!allCodes.length) return fail(res, 'Không tìm thấy dòng', 404)
+    const scopeErr = await khvcScopeError(req, allCodes)
     if (scopeErr) return fail(res, scopeErr, 403)
-    const locked = await dateLockedGroups(groupCodes, export_date)
+    const groupCodes = allCodes.filter(g => !fromDispatch.has(g))
+    const locked = new Map<string, string>([...fromDispatch].map(g => [g, fromDispatchMsg(g)]))
+    for (const [g, why] of await dateLockedGroups(groupCodes, export_date)) locked.set(g, why)
     // Xe đang GIỮ khung giờ của ngày cũ cũng bị chặn per-xe (không tự nhả hộ) — cùng ngữ nghĩa với
     // gác đổi CỬA, và khôi phục luật vốn có bên TMS ("lệnh đang giữ booking thì không đổi ngày"):
     // lệnh tự sinh bị 422 TMS_PLAN_DERIVED ở cửa TMS nên cửa này là cửa DUY NHẤT, thiếu gác = mất luật.
@@ -699,13 +733,18 @@ export async function bulkDeleteKhvc(req: Request, res: Response) {
     const ids = (req.body as { ids?: string[] })?.ids ?? []
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
     const rows: KDelRow[] = []
+    const dispatchRows: (KDelRow & { reason: string })[] = []   // dòng do bàn ghi ⇒ gỡ DO trên bàn ("Mở lại" / Gỡ khỏi kế hoạch)
     for (let i = 0; i < ids.length; i += 300) {
-      const { data } = await supabase.from('khvc_lines').select('id, group_code').in('id', ids.slice(i, i + 300))
-      for (const r of ((data ?? []) as KDelRow[])) rows.push({ id: r.id, group_code: String(r.group_code) })
+      const { data } = await supabase.from('khvc_lines').select('id, group_code, source').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as (KDelRow & { source: string | null })[])) {
+        if (r.source === 'DISPATCH') dispatchRows.push({ id: r.id, group_code: String(r.group_code), reason: fromDispatchMsg(String(r.group_code)) })
+        else rows.push({ id: r.id, group_code: String(r.group_code) })
+      }
     }
-    const bulkScopeErr = await khvcScopeError(req, rows.map(r => r.group_code))
+    const bulkScopeErr = await khvcScopeError(req, [...rows, ...dispatchRows].map(r => r.group_code))
     if (bulkScopeErr) return fail(res, bulkScopeErr, 403)
-    const { deletable, blocked } = await classifyKhvcDelete(rows)
+    const cls = await classifyKhvcDelete(rows)
+    const deletable = cls.deletable, blocked = [...dispatchRows, ...cls.blocked]
     const blockedOut = blocked.map(b => ({ group_code: b.group_code, reason: b.reason }))
     if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })
     const delIds = deletable.map(d => d.id)

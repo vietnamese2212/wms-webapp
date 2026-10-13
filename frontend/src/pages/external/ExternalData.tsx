@@ -2,8 +2,10 @@
 // Tab "DO SAP" = bảng erp_outbound_orders (CRUD tay + multi-select + filter + search + phân trang server-side).
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, Upload, CalendarDays } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, Upload, CalendarDays, LayoutGrid } from 'lucide-react'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
@@ -142,9 +144,11 @@ function SourceBadge({ source }: { source: string | null }) {
   const v = (source ?? '').toUpperCase()
   const cls = v === 'SAP' || v === 'ZSD02' ? 'bg-sky-100 text-sky-700'
     : v === 'MANUAL' ? 'bg-amber-100 text-amber-700'
+    : v === 'DISPATCH' ? 'bg-indigo-100 text-indigo-700'
     : 'bg-slate-100 text-slate-600'
   // Nhãn: mã nguồn 'EXCEL' là VL06O từ thời chỉ có một file — in tên báo cáo để đứng cạnh ZSD02 không gây hiểu nhầm
-  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={source ?? undefined}>{SOURCE_VI[v] ?? source ?? '—'}</span>
+  // 13/10: dòng do bàn ghép xe ghi KHÔNG sửa ở tab này — sửa trên bàn (tiêu đề chip nói thẳng)
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={v === 'DISPATCH' ? 'Do bàn ghép xe ghi — đổi ĐVVT / dòng xe trên bàn; thêm bớt DO hay dời ngày thì "Mở lại" xe' : source ?? undefined}>{SOURCE_VI[v] ?? source ?? '—'}</span>
 }
 
 function StatusBadge({ used, syncStatus }: { used: boolean | undefined; syncStatus: string | null | undefined }) {
@@ -1582,7 +1586,7 @@ function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: s
           <div className="space-y-3">
             <p className="text-xs text-slate-500">
               Đổi Ngày xuất cho <b>CẢ XE</b> đã tick (mọi DO của xe — 1 xe chạy 1 ngày), chuyến bên Xuất tự cập nhật theo.
-              Xe có chuyến <b>đang xuất / đã hoàn thành</b> sẽ bị chặn.
+              Xe có chuyến <b>đang xuất / đã hoàn thành</b> sẽ bị chặn. Xe do <b>bàn ghép xe</b> ghi cũng bị chặn — dời ngày trên bàn (&quot;Mở lại&quot; xe → Chờ điều → lập ngày khác).
             </p>
             <div className="max-h-24 overflow-auto rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-mono text-slate-600">
               {groups.join(' · ')}
@@ -1682,6 +1686,21 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
     })
   }, [rows])
 
+  // 13/10 — dòng do BÀN GHÉP XE ghi (source DISPATCH) KHOÁ ở đây (BE 409 KHVC_LINE_FROM_DISPATCH): ĐVVT / dòng xe đổi ngay trên bàn
+  // (xe đã chốt vẫn đổi), thêm bớt DO hay dời ngày thì "Mở lại" xe. Nút nhảy sang bàn đúng kho · ngày · mảng · xe — gate cùng luật
+  // menu (C66, `useCanSeePath`). Dòng VL06O / tay (kho chưa dùng bàn) sửa như cũ.
+  const lockedIds = useMemo(() => new Set(rows.filter(r => r.source === 'DISPATCH').map(r => r.id)), [rows])
+  const lockedGroups = useMemo(() => new Set(rows.filter(r => r.source === 'DISPATCH').map(r => r.group_code)), [rows])
+  const lockedRef = rows.find(r => r.source === 'DISPATCH' && r.dispatch)
+  const navigate = useNavigate()
+  const canBoard = useCanSeePath()('/tms/dispatch')
+  const setDispatch = useWmsFilterStore(s => s.setDispatch)
+  const goBoard = () => {
+    const d = lockedRef?.dispatch
+    if (!d) return
+    setDispatch({ warehouseId: d.warehouse_id, planDate: d.plan_date, planId: d.plan_id, segment: d.segment === 'TRANSFER' ? 'TRANSFER' : 'SALES', tab: 'board' })
+    navigate('/tms/dispatch', { state: { openGroupCode: lockedRef?.group_code } })
+  }
   const remaining = rows.filter(r => !removed.has(r.id))
   const isRowChanged = (r: KhvcRow) => {
     const d = draft[r.id]
@@ -1881,6 +1900,16 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
           ⚠ Số xe này ĐÃ SINH CHUYẾN ở Xuất kho — xóa kế hoạch KHÔNG xóa chuyến; muốn hủy chuyến hãy xóa ở trang Xuất kho.
         </div>
       )}
+      {lockedGroups.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+          <span className="min-w-0 flex-1">
+            <b>{multi ? `${lockedGroups.size} Số xe` : 'Số xe này'} do bàn ghép xe ghi</b> — ĐVVT / dòng xe đổi ngay trên bàn (xe đã chốt vẫn đổi được); thêm bớt DO hay dời ngày thì &quot;Mở lại&quot; xe trên bàn. Các dòng đó khoá ở đây.
+          </span>
+          {canBoard && lockedRef?.dispatch && (
+            <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={goBoard}><LayoutGrid className="h-3.5 w-3.5 mr-1" /> Sửa ở bàn ghép xe</Button>
+          )}
+        </div>
+      )}
       {/* CỬA ĐẶT LỊCH = thuộc tính CẤP XE (1 xe vật lý đậu 1 cửa) ⇒ đặt NGOÀI bảng, 1 ô cho cả xe.
           Mỗi dòng DO một ô sẽ mời gọi khai lệch nhau — đúng cái rule này cấm. Chỉ hiện khi sửa MỘT
           Số xe; sửa nhiều xe cùng lúc thì mở từng xe (mỗi xe có cửa riêng). */}
@@ -1892,7 +1921,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
               options={whTypeOpts}
               value={bookingCat}
               placeholder="Chọn cửa…"
-              disabled={!canEdit}
+              disabled={!canEdit || lockedGroups.size > 0}
               onChange={v => {
                 setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, booking_category: v }])))
                 setAdded(prev => prev.map(l => ({ ...l, booking_category: v })))
@@ -1912,14 +1941,14 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
               options={vehicleModelOpts}
               value={vehicleModelId}
               placeholder="Chưa chọn — chuyến không có cước/tải"
-              disabled={!canEdit}
+              disabled={!canEdit || lockedGroups.size > 0}
               onChange={v => {
                 setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, vehicle_model_id: v }])))
                 setAdded(prev => prev.map(l => ({ ...l, vehicle_model_id: v })))
               }}
             />
           </div>
-          {vehicleModelId && canEdit && (
+          {vehicleModelId && canEdit && lockedGroups.size === 0 && (
             <button type="button" className="text-[10px] text-slate-500 hover:text-red-600 hover:underline !min-h-0 !min-w-0"
               onClick={() => {
                 setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, vehicle_model_id: '' }])))
@@ -1957,18 +1986,19 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
               {rows.map((r, idx) => {
                 const d = draft[r.id] ?? khvcDraftOf(r)
                 const isRemoved = removed.has(r.id)
+                const isLocked = lockedIds.has(r.id)
                 const isChanged = !isRemoved && isRowChanged(r)
                 const groupStart = multi && idx > 0 && rows[idx - 1].group_code !== r.group_code
                 return (
-                  <tr key={r.id} className={`border-t ${groupStart ? 'border-slate-300' : 'border-slate-100'} ${isRemoved ? 'bg-red-50/70' : isChanged ? 'bg-amber-50/60' : ''}`}>
+                  <tr key={r.id} className={`border-t ${groupStart ? 'border-slate-300' : 'border-slate-100'} ${isRemoved ? 'bg-red-50/70' : isChanged ? 'bg-amber-50/60' : isLocked ? 'bg-indigo-50/40' : ''}`}>
                     <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
-                    <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}</td>
+                    <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}{isLocked && <span className="ml-1 font-sans text-[9px] font-normal text-indigo-600" title="Do bàn ghép xe ghi — sửa trên bàn">🔒 bàn</span>}</td>
                     <td className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : 'font-semibold'}`}>{r.do_no}</td>
                     {/* 8 field theo đúng thứ tự cột — dán block Excel vào ô bất kỳ điền sang phải + xuống dưới */}
                     {KHVC_ROW_FIELDS.map((fld, fi) => (
                       <td key={fld} className="px-1 py-1">
                         <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
-                          disabled={isRemoved || !canEdit || incomplete}
+                          disabled={isRemoved || !canEdit || incomplete || isLocked}
                           value={d[fld]} onChange={e => setCell(r.id, fld, e.target.value)}
                           onPaste={e => handlePasteAt(idx, fi, e)} />
                       </td>
@@ -1979,7 +2009,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                           onClick={() => setRemoved(prev => { const nn = new Set(prev); nn.delete(r.id); return nn })}>
                           Hoàn tác
                         </button>
-                      ) : canDelete && !incomplete && (
+                      ) : canDelete && !incomplete && !isLocked && (
                         <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
                           title="Xóa DO khỏi xe (áp khi Lưu)" onClick={() => setRemoved(prev => new Set(prev).add(r.id))}>
                           <Trash2 className="h-3 w-3" />
@@ -2005,7 +2035,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                           dvvt: s(base?.dvvt), cs: s(base?.cs), export_date: s(base?.export_date),
                         })
                       }}>
-                      {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                      {groups.filter(g => !lockedGroups.has(g)).map(g => <option key={g} value={g}>{g}</option>)}
                     </select>
                   </td>
                   <td className="px-1 py-1">
@@ -2033,7 +2063,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
           </table>
         </div>
       )}
-      {canCreate && !isLoading && !incomplete && (
+      {canCreate && !isLoading && !incomplete && !lockedGroups.has(groups[0]) && (
         <button type="button" onClick={addLine}
           className="mt-2 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400">
           <Plus className="h-3 w-3" /> Thêm DO vào xe {multi ? '(chọn Số xe trong dòng)' : groups[0]}

@@ -27,3 +27,11 @@ _Không có dòng riêng trong bảng cũ — luật của Kế hoạch xuất n
 ## Actions
 
 view, create, edit, delete
+
+**13/10 — ĐẠI PHẪU: kho dùng bàn ghép xe thì BÀN là cửa ghi duy nhất của sổ này (user chốt).** Dòng `source='DISPATCH'` (bàn ghi lúc Xác nhận)
+**khoá ở tab này cả 5 cửa** — sửa (`PUT`) · đổi ngày hàng loạt · xoá · xoá hàng loạt · thêm DO vào Số xe do bàn ghi — trả 409 `KHVC_LINE_FROM_DISPATCH`
+(bulk trả `blocked` per-xe, xe Excel / tay cùng lượt vẫn làm). ĐVVT / dòng xe / xe phụ đổi NGAY TRÊN BÀN kể cả xe đã chốt (`PATCH /tms/dispatch/trips/:id`
+ghi xuyên mọi dòng của Số xe rồi `replanKhvcGroups`); thêm bớt DO hay dời ngày thì "Mở lại" xe trên bàn. Dòng EXCEL / MANUAL (kho chưa dùng bàn) sửa
+như cũ. KHÔNG cờ cấu hình — khoá theo nguồn từng dòng. FE: chip nguồn "Bàn ghép xe", editor khoá ô + băng "do bàn ghép xe ghi" + nút "Sửa ở bàn ghép xe"
+(`GET /external/khvc` enrich `dispatch {trip_id, plan_id, warehouse_id, segment, plan_date}`; gate `useCanSeePath`). Dọn 13/10: 68 dòng MANUAL seed
+tháng 9 ⇒ 6 xoá qua `bulk-delete`, 62 bị chặn (chuyến đã hoàn thành / đang xuất) giữ nguyên. Chi tiết + lưới: [`dispatch`](dispatch.md) mục 13/10 tối.

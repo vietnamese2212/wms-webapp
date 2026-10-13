@@ -17,7 +17,7 @@ export const DISPATCH_VI: Record<string, { label: string; tone: BadgeTone }> = {
   UNASSIGNED: { label: 'Chưa gắn xe', tone: 'amber' },
 }
 // Mã nguồn 'EXCEL' là VL06O từ thời chỉ có một file — in tên báo cáo để đứng cạnh ZSD02 không gây hiểu nhầm
-export const SOURCE_VI: Record<string, string> = { EXCEL: 'VL06O', ZSD02: 'ZSD02', MANUAL: 'Tay', SAP: 'SAP API' }
+export const SOURCE_VI: Record<string, string> = { EXCEL: 'VL06O', ZSD02: 'ZSD02', MANUAL: 'Tay', SAP: 'SAP API', DISPATCH: 'Bàn ghép xe' }
 export const SO_STATUS_VI: Record<string, { label: string; tone: BadgeTone }> = {
   OPEN:      { label: 'Chưa có OD', tone: 'amber' },
   HAS_OD:    { label: 'Đã có OD',   tone: 'green' },

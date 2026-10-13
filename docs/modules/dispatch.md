@@ -345,3 +345,16 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   chuyến ĐÃ HOÀN THÀNH + 1 ĐANG XUẤT (seed SIMDAY 01–20/09, chứng từ của chuyến đã xuất, luật 03/08) — để nguyên, user quyết.
 - **Lưới:** gói 61 [3f] (khoá / move-od xe chốt vẫn 409) · **[3f2–3f5]** (đổi ĐVVT xe đã chốt ⇒ 200 + khvc_lines + chuyến đổi theo; 5 cửa tab Kế
   hoạch xuất 409 / blocked; GET mang `dispatch`) — đỏ 4/4 trên bản cũ trước khi vá.
+- **13/10 tối — test kỹ đại phẫu (user: "test kỹ thay đổi này")**, `test_1310h.mjs` (API 17 phép) + `test_1310i/i2.mjs` (UI) + gói 61: tìm được
+  **ba cửa còn lách qua khoá "bàn ghi"** và một lỗi UI, đã vá (`487a3f9f` · `c6920a15`): (1) **nạp file Excel** upsert theo Số xe + DO đè dòng
+  DISPATCH và đổi source thành EXCEL — cửa thứ 7, nay kiểm-trước báo "Số xe … do bàn ghép xe ghi", nạp thật 400 có `validation_errors`;
+  (2) **PUT đổi `group_code`** của dòng tay sang Số xe do bàn ghi = thêm DO vào xe đã chốt ⇒ 409; (3) **quyền**: route PATCH trip chỉ gác
+  `dispatch.plan` ⇒ vai chỉ lập nháp đổi được xe ĐÃ CHỐT (= sửa Kế hoạch xuất đã xác nhận) ⇒ nay đòi `dispatch.confirm` hoặc
+  `external_khvc.edit` (403); (4) editor "Sửa N Số xe" trộn xe bàn + xe tay mất nút "Thêm DO vào xe" khi xe bàn đứng đầu danh sách.
+  Đã xanh: đổi ĐVVT / dòng xe / xe phụ ⇒ khvc · chuyến · lệnh VC (ncc_id) · sự kiện (không trùng khi PATCH lại) · cước; khoá / chở lẫn /
+  rỗng / id rác / tách OD 409·400; chuyến đang xuất 409; ĐVVT "cần phản hồi" trên xe chốt vẫn CONFIRMED; `/sync` healed 0; bảng xếp hạng
+  ĐVVT đọc được; tab Kế hoạch xuất: PUT 409, đổi ngày / xoá hàng loạt TRỘN xe tay ⇒ xe tay làm, xe bàn `blocked`; Gỡ khỏi kế hoạch và Mở lại
+  (cửa của bàn) vẫn chạy; nháp đã bỏ 409. UI: panel xe chốt (ĐVVT · dòng xe · xe phụ · không ô chuyển OD) · realtime phiên gs thấy ĐVVT mới
+  ngay · 390 px mở được ô chọn, không tràn · editor trộn khoá đúng dòng · hộp Đổi ngày nêu xe bàn bị chặn + lý do · hộp Xác nhận cảnh báo ngày
+  đã qua. **Bẫy bộ kiểm:** `label hasText: 'DA'` chọn nhầm "CDA · Cont Đông Á" — neo nhãn `^MÃ · `; `<option>` đọc bằng `textContent`,
+  `innerText` trả rỗng.

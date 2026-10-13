@@ -5258,8 +5258,8 @@ export async function uploadKhvc(req: Request, res: Response) {
     const khActor = req.user?.name || null
     const khGcs = [...new Set(khvcRows.map(k => k.group_code))]
     const priorKh = await fetchAllByIdChunks(khGcs, chunk => supabase.from('khvc_lines')
-      .select('id, group_code, do_no, booking_category, sync_status').in('group_code', chunk)
-      .order('id')) as { id: string; group_code: string; do_no: string; booking_category: string | null; sync_status: string | null }[]
+      .select('id, group_code, do_no, booking_category, sync_status, source').in('group_code', chunk)
+      .order('id')) as { id: string; group_code: string; do_no: string; booking_category: string | null; sync_status: string | null; source: string | null }[]
     const khIdByKey = new Map((priorKh ?? []).map(k => [`${k.group_code}__${k.do_no}`, k.id]))
 
     {
@@ -5336,6 +5336,14 @@ export async function uploadKhvc(req: Request, res: Response) {
           }
         }
       }
+      // ⭐ 13/10 ĐẠI PHẪU Kế hoạch xuất (user chốt): Số xe do BÀN GHÉP XE ghi (dòng source DISPATCH) thì bàn là cửa ghi duy nhất —
+      // file nạp đè (upsert theo Số xe + DO, đổi source thành EXCEL) là cửa thứ 7 lách qua gác 409 của 5 cửa tab Kế hoạch xuất.
+      // Chặn cả xe, báo theo khuôn "Số xe — vấn đề"; Excel chỉ cho kho chưa dùng bàn.
+      {
+        const fromBoard = new Set((priorKh ?? []).filter(p => p.source === 'DISPATCH' && p.sync_status !== 'OBSOLETE').map(p => p.group_code))
+        for (const gc of allGcs) if (fromBoard.has(gc))
+          addErr(gc, 'Số xe do bàn ghép xe ghi — không nạp đè bằng file; đổi ĐVVT / dòng xe trên bàn, thêm bớt DO hay dời ngày thì "Mở lại" xe trên bàn')
+      }
       // ⭐ DO KHÔNG LÊN XE (ZSD02 22/09): flow RETURN (trả pallet/trả hàng = chiều nhập) · DISCOUNT (không có hàng) ·
       // UNKNOWN (mã SAP chưa phân loại). VL06O không mang cột này nên trước đây file điều vận có DO trả về vẫn sinh chuyến.
       {
@@ -5359,7 +5367,7 @@ export async function uploadKhvc(req: Request, res: Response) {
           error: { code: 'BOOKING_CATEGORY_INVALID',
             message: thieuHet
               ? `File thiếu cột "Loại kho booking" — không upload`
-              : `File có ${perGc.size} Số xe khai sai "Loại kho booking" — không upload` },
+              : `File có ${perGc.size} Số xe không nạp được (cửa đặt lịch · khung giờ đang giữ · DO không lên xe · xe do bàn ghép xe ghi) — xem bảng lỗi, không upload` },
           validation_errors: [...perGc].map(([group_code, errs]) => ({ group_code, errors: errs })),
         })
       }

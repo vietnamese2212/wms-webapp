@@ -7,7 +7,7 @@
 //       Kế hoạch xuất ngay (khvc_lines + chuyến sinh), xe của ĐVVT CẦN phản hồi đứng CHỜ; xe chờ/đã chốt không sửa được;
 //       từ chối ⇒ đổi ĐVVT ⇒ chốt lẻ xe ⇒ kế hoạch CONFIRMED. Kế hoạch đang chờ không cho lập lại.
 // Fixture QA61_*: dựng qua API thật + PostgREST, ngày giao 2027-03-16 (xa để không đụng OD thật), dọn hết ở finally.
-import { login, api, restAll, restWrite, resolveFixtures, FIX, check, finish } from './lib.mjs'
+import { login, api, restAll, restWrite, resolveFixtures, FIX, check, finish, BASE, authToken } from './lib.mjs'
 
 const PACK = '61-dispatch'
 const DAY = '2027-03-16'
@@ -372,6 +372,33 @@ try {
         && kDel.s === 409 && kDel.j?.error?.code === 'KHVC_LINE_FROM_DISPATCH' && kBulk.s === 200 && kBulk.j?.data?.deleted === 0 && kBulk.j?.data?.blocked_count === 1
         && kAdd.s === 409 && kAdd.j?.error?.code === 'KHVC_LINE_FROM_DISPATCH' && khStill.length === 2 && khStill.every(k => k.dvvt === DA.name && k.export_date === DAY),
       `put=${kPut.s}/${kPut.j?.error?.code} date=${kDate.s}/${kDate.j?.data?.updated_groups}/${kDate.j?.data?.blocked?.length} del=${kDel.s}/${kDel.j?.error?.code} bulk=${kBulk.s}/${kBulk.j?.data?.deleted}/${kBulk.j?.data?.blocked_count} add=${kAdd.s}/${kAdd.j?.error?.code} còn=${khStill.length}`)
+    // cửa 6: chuyển DO của xe KHÁC (dòng tay) sang xe do bàn ghi = thêm DO vào xe đã chốt ⇒ 409; cửa 7: nạp file Excel đè Số xe do bàn ghi ⇒ file bị chặn
+    const mvId = crypto.randomUUID()
+    await restWrite('khvc_lines', 'POST', null, { id: mvId, group_code: `${PREFIX}95`, do_no: 'QA61MOVEIN', warehouse_code: QAWH.code, export_date: DAY, source: 'MANUAL', sync_status: 'ACTIVE', booking_category: khBack[0]?.booking_category ?? null, updated_at: nowIso() })
+    const kMove = await api(`/external/khvc/${mvId}`, 'PUT', { group_code: T1.group_code })
+    const kMoveAfter = (await restAll('khvc_lines', `select=group_code&id=eq.${mvId}`))[0]
+    await restWrite('khvc_lines', 'DELETE', `id=eq.${mvId}`).catch(() => {})
+    check('3f6. Chuyển DO từ xe tay sang Số xe do bàn ghi (PUT group_code) → 409 KHVC_LINE_FROM_DISPATCH, dòng ở nguyên xe cũ',
+      kMove.s === 409 && kMove.j?.error?.code === 'KHVC_LINE_FROM_DISPATCH' && kMoveAfter?.group_code === `${PREFIX}95`, `http=${kMove.s}/${kMove.j?.error?.code} gc=${kMoveAfter?.group_code}`)
+    let XLSX = null
+    try { XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default ?? await import('../../backend/node_modules/xlsx/xlsx.mjs') } catch { /* thiếu dependency backend */ }
+    if (XLSX) {
+      const tok = authToken()
+      const upload = async (rows, preflight) => {
+        const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'KHVC')
+        const fd = new FormData(); fd.append('file', new Blob([XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })]), 'khvc.xlsx')
+        const r = await fetch(`${BASE}/api/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd })
+        let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
+        return { s: r.status, j }
+      }
+      const fileRow = { 'Số xe': T1.group_code, 'DO': OD[0], 'Tên NPP': 'QA61 NPP 1', 'Ngày xuất': DAY, 'Loại xe': XEPALLET?.name ?? '', 'DVVT': HA.name, 'Loại kho booking': khBack[0]?.booking_category ?? '' }
+      const pre = await upload([fileRow], true)
+      const real = await upload([fileRow], false)
+      const khUp = await restAll('khvc_lines', `select=dvvt,source&group_code=eq.${T1.group_code}`)
+      check('3f7. Nạp file Excel mang Số xe do bàn ghi: kiểm-trước báo "Số xe … do bàn ghép xe ghi", nạp thật → 400 có validation_errors, dòng KH xuất KHÔNG bị đè (dvvt · source giữ)',
+        pre.s === 200 && (pre.j?.data?.errors ?? []).some(e => /do bàn ghép xe ghi/.test(e)) && real.s === 400 && (real.j?.validation_errors ?? []).some(v => v.group_code === T1.group_code) && khUp.every(k => k.dvvt === DA.name && k.source === 'DISPATCH'),
+        `pre=${pre.s} errs=${JSON.stringify(pre.j?.data?.errors ?? []).slice(0, 160)} real=${real.s}/${real.j?.error?.code} kh=${JSON.stringify(khUp)}`)
+    }
     const kList = await api(`/external/khvc?group_code_eq=${T1.group_code}&page_size=10`)
     const kRow = (kList.j?.data?.items ?? [])[0]
     check('3f5. GET Kế hoạch xuất: dòng do bàn ghi mang `dispatch` (xe · kế hoạch · kho · ngày · mảng) để nút "Sửa ở bàn ghép xe" nhảy đúng chỗ',

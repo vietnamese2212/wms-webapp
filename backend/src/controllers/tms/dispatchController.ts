@@ -1160,6 +1160,11 @@ async function updateTripInner(req: Request, res: Response) {
     const confirmed = statusOf(trip) === 'CONFIRMED'
     if (!confirmed && !OPEN_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp')
     if (confirmed) {
+      // sửa xe ĐÃ CHỐT = sửa Kế hoạch xuất đã xác nhận ⇒ đòi quyền chốt (dispatch.confirm) hoặc quyền sửa sổ Kế hoạch xuất
+      // (external_khvc.edit) — route chỉ gác dispatch.plan (đủ cho nháp), không để người chỉ lập nháp đổi xe đã chốt
+      const perms = req.user?.module_permissions ?? {}
+      if (!(req.user?.is_superadmin === true || perms.dispatch?.includes('confirm') || perms.external_khvc?.includes('edit')))
+        return fail(res, 403, 'FORBIDDEN', 'Xe đã vào Kế hoạch xuất — cần quyền "Xác nhận" của Điều vận hoặc quyền sửa Kế hoạch xuất để đổi ĐVVT / dòng xe')
       if (b.locked !== undefined || b.allow_mix_categories !== undefined) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${trip.group_code} đã vào Kế hoạch xuất — ở đây chỉ đổi ĐVVT / dòng xe; khoá, chở lẫn, thêm bớt OD thì "Mở lại" xe.`)
       if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined) return fail(res, 'Không có gì để đổi', 400)
       const gdo = (await gdosOfGroups([trip.group_code])).get(trip.group_code)

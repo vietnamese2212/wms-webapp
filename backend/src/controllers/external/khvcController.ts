@@ -520,6 +520,11 @@ export async function updateKhvc(req: Request, res: Response) {
     // 08/10 — số điểm giao (điều vận ghi lúc Xác nhận) là thứ tự trên XE CŨ / của DO CŨ: đổi xe hay đổi DO thì bỏ, không mang "Điểm 2"
     // sang xe đích đang có Điểm 2 của nó (không đo được thì để trống, không đoán)
     const staleStop = movingVehicle || ('do_no' in fields && String(fields.do_no ?? '') !== String(cur.do_no ?? ''))
+    if (movingVehicle) {   // chuyển DO sang xe do bàn ghi = thêm DO vào xe đã chốt ⇒ bàn ("Mở lại")
+      const { data: tgDispatch } = await supabase.from('khvc_lines').select('id')
+        .eq('group_code', String(fields.group_code ?? '')).eq('source', 'DISPATCH').neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
+      if (tgDispatch) return fail(res, 409, FROM_DISPATCH_CODE, fromDispatchMsg(String(fields.group_code ?? '')))
+    }
     if (changingModel) {
       const vm = await resolveVehicleModel(fields.vehicle_model_id)
       if ('error' in vm) return fail(res, vm.error, vm.status)

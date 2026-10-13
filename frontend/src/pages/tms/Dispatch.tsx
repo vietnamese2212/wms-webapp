@@ -617,7 +617,8 @@ export default function Dispatch() {
           {openTrip && plan && (
             <TripPane trip={openTrip} plan={plan} editable={!!isOpen && canPlan && EDITABLE.includes(tripStatus(openTrip))} canConfirm={canConfirm} needsTender={needsTender(openTrip)} condBy={condBy}
               // 13/10 (user: "sửa trên bàn, không sửa trên Kế hoạch xuất"): xe ĐÃ CHỐT vẫn đổi ĐVVT / dòng xe tại đây — ghi thẳng xuống Kế hoạch xuất · chuyến · lệnh VC
-              editableVehicle={canPlan && tripStatus(openTrip) === 'CONFIRMED' && plan.status !== 'DISCARDED'}
+              // cùng luật với BE: sửa xe đã chốt = sửa Kế hoạch xuất đã xác nhận ⇒ cần Xác nhận hoặc quyền sửa Kế hoạch xuất (C66: không in ô chọn rồi 403)
+              editableVehicle={canPlan && (canConfirm || can(perms, 'external_khvc', 'edit')) && tripStatus(openTrip) === 'CONFIRMED' && plan.status !== 'DISCARDED'}
               models={models.map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
               companies={companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))}
               onModel={v => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_id: v || null }).catch(e => err(e, 'Không đổi được dòng xe'))}

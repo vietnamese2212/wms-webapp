@@ -352,13 +352,36 @@ try {
   {
     const sw = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { transport_company_id: HA.id })
     const khSw = await restAll('khvc_lines', `select=dvvt,source&group_code=eq.${T1.group_code}`)
-    const gdoSw = (await restAll('GroupDeliveryOrder', `select=dvvt,status&group_code=eq.${T1.group_code}`))[0]
+    const gdoSw = (await restAll('GroupDeliveryOrder', `select=id,dvvt,status&group_code=eq.${T1.group_code}`))[0]
     check('3f2. Xe ĐÃ CHỐT đổi ĐVVT trên bàn → 200, xe vẫn CONFIRMED · mọi dòng Kế hoạch xuất của xe mang ĐVVT mới (source giữ DISPATCH) · chuyến Xuất kho mang ĐVVT mới',
       sw.s === 200 && sw.j?.data?.status === 'CONFIRMED' && sw.j?.data?.transport_company_id === HA.id && khSw.length === 2 && khSw.every(k => k.dvvt === HA.name && k.source === 'DISPATCH') && gdoSw?.dvvt === HA.name,
       `http=${sw.s} ${sw.j?.error?.code ?? ''} st=${sw.j?.data?.status} kh=${JSON.stringify(khSw)} gdo=${JSON.stringify(gdoSw ?? null)} replan_err=${sw.j?.data?.replan_error ?? ''}`)
     const back = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { transport_company_id: DA.id })
     const khBack = await restAll('khvc_lines', `select=id,dvvt,booking_category&group_code=eq.${T1.group_code}`)
     check('3f3. Đổi lại ĐVVT cũ → 200, dòng Kế hoạch xuất theo', back.s === 200 && khBack.every(k => k.dvvt === DA.name), `http=${back.s} kh=${khBack.map(k => k.dvvt).join(',')}`)
+    // 13/10 tối ("tìm kỹ"): hai cửa DẪN XUẤT — sửa chuyến Xuất kho (PUT dvvt) · sửa / xoá lệnh VC — từ chối xe do bàn ghi và CHỈ ĐƯỜNG VỀ BÀN
+    // (services/khvcOwner): bảo "sửa ở tab Kế hoạch xuất" khi tab đó cũng khoá dòng là bắt người dùng đi hai vòng
+    {
+      const tmsRow = (await restAll('TmsOrder', `select=id&order_code=eq.${T1.group_code}`))[0]
+      const gPut = gdoSw?.id ? await api(`/wms/outbound/${gdoSw.id}`, 'PUT', { dvvt: HA.name, qty_semantics: 'base' }) : { s: -1, j: null }
+      const oPat = tmsRow ? await api(`/tms/orders/${tmsRow.id}`, 'PATCH', { ncc_id: HA.id }) : { s: -1, j: null }
+      const oDel = tmsRow ? await api(`/tms/orders/${tmsRow.id}`, 'DELETE') : { s: -1, j: null }
+      const toBoard = (r) => /Bàn ghép xe/.test(r.j?.error?.message ?? '')
+      const khAfter = await restAll('khvc_lines', `select=dvvt&group_code=eq.${T1.group_code}`)
+      check('3f8. Cửa dẫn xuất: sửa chuyến Xuất kho (dvvt) → 422 SAP_PLAN_LOCKED · sửa lệnh VC (ncc_id) → 422 TMS_PLAN_DERIVED · xoá lệnh VC → 422 — cả ba câu chỉ đường về "Bàn ghép xe" (không về tab đang khoá); dòng KH xuất không đổi',
+        gPut.s === 422 && gPut.j?.error?.code === 'SAP_PLAN_LOCKED' && toBoard(gPut) && oPat.s === 422 && oPat.j?.error?.code === 'TMS_PLAN_DERIVED' && toBoard(oPat) && oDel.s === 422 && toBoard(oDel) && khAfter.every(k => k.dvvt === DA.name),
+        `gdo=${gPut.s}/${gPut.j?.error?.code} "${String(gPut.j?.error?.message ?? '').slice(0, 90)}" · tms=${oPat.s}/${oPat.j?.error?.code} · del=${oDel.s}/${oDel.j?.error?.code} · kh=${khAfter.map(k => k.dvvt).join(',')}`)
+      // sự kiện của chuyến ghi old → new bằng TÊN (hộp "Thông tin chuyến" in thẳng hai giá trị) — bản đầu ghi uuid dòng xe
+      const vm0 = T1.vehicle_model_id
+      const two = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { vehicle_model_ids: [vmId, vmId] })
+      const one = await api(`/tms/dispatch/trips/${T1.id}`, 'PATCH', { vehicle_model_id: vm0 })
+      const evs = gdoSw?.id ? ((await api(`/wms/outbound/${gdoSw.id}/events`)).j?.data?.items ?? []) : []
+      const evM = evs.find(e => e.event_type === 'PLAN_VEHICLE_MODEL_CHANGED'), evD = evs.find(e => e.event_type === 'PLAN_DVVT_CHANGED')
+      const isUuid = (s) => /^[0-9a-f-]{36}$/i.test(String(s ?? ''))
+      check('3f9. Sự kiện xe đã chốt: PLAN_DVVT_CHANGED old/new = tên hai ĐVVT · PLAN_VEHICLE_MODEL_CHANGED old/new = TÊN dòng xe (không uuid)',
+        two.s === 200 && one.s === 200 && !!evD && [evD.old_value, evD.new_value].sort().join('|') === [DA.name, HA.name].sort().join('|') && !!evM && !isUuid(evM.old_value) && !isUuid(evM.new_value) && !!evM.new_value,
+        `two=${two.s} one=${one.s} evD=${evD ? `${evD.old_value} → ${evD.new_value}` : 'none'} evM=${evM ? `${evM.old_value} → ${evM.new_value}` : 'none'}`)
+    }
     // tab Kế hoạch xuất KHOÁ dòng do bàn ghi (source DISPATCH) ở CẢ 5 cửa — không cờ cấu hình, khoá theo nguồn từng dòng
     const kId = khBack[0]?.id
     const kPut = await api(`/external/khvc/${kId}`, 'PUT', { dvvt: 'QA61 sửa tay' })

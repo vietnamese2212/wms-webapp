@@ -1212,7 +1212,8 @@ async function updateTripInner(req: Request, res: Response) {
       evs.push({ group_code: trip.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_DVVT_CHANGED', source: 'PLAN', actor, old_value: d0.carrier?.name ?? null, new_value: d.carrier?.name ?? null,
         detail: `Bàn ghép xe đổi ĐVVT xe đã chốt: ${d0.carrier?.name ?? '—'} → ${d.carrier?.name ?? '—'}` })
     if (trip.vehicle_model_id !== updated.vehicle_model_id || JSON.stringify(trip.extra_vehicle_model_ids ?? []) !== JSON.stringify(updated.extra_vehicle_model_ids ?? []))
-      evs.push({ group_code: trip.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_VEHICLE_MODEL_CHANGED', source: 'PLAN', actor, old_value: trip.vehicle_model_id, new_value: updated.vehicle_model_id,
+      // old/new = TÊN dòng xe (hộp "Thông tin chuyến" in thẳng hai giá trị này dưới câu detail — uuid thì người đọc không hiểu)
+      evs.push({ group_code: trip.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_VEHICLE_MODEL_CHANGED', source: 'PLAN', actor, old_value: d0.vehicle_model?.name ?? null, new_value: d.vehicle_model?.name ?? null,
         detail: `Bàn ghép xe đổi dòng xe xe đã chốt: ${d0.vehicle_model?.name ?? '—'} → ${d.vehicle_model?.name ?? '—'}${(updated.extra_vehicle_model_ids ?? []).length ? ` (+${(updated.extra_vehicle_model_ids ?? []).length} xe phụ)` : ''}` })
     step(res, 'ghi Kế hoạch xuất · chuyến Xuất kho · lệnh VC theo xe đã chốt')
     // 13/10 tối (user: "làm lại cho tôi ưu"): KHÔNG dội cả đường derive (`replanKhvcGroups` đọc lại VL06O, dựng lại DO / dòng hàng, đồng bộ

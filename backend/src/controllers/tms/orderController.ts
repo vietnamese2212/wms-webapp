@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { vnDayOf } from '../../utils/dates'
 import { effectiveNoQr } from '../../lib/inventoryMode'
+import { khvcSourceHint } from '../../services/khvcOwner'
 import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
 import { uuidList, isUuid } from '../../utils/ids'
@@ -680,7 +681,7 @@ export async function updateOrder(req: Request, res: Response) {
       ].filter(([, v]) => v !== undefined).map(([k]) => k as string)
       if (derivedTouched.length)
         return fail(res, 422, 'TMS_PLAN_DERIVED',
-          `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(existing as { order_code?: string }).order_code}) — không sửa ${derivedTouched.join('/')} tại đây. Sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài), lệnh sẽ tự cập nhật theo.`)
+          `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(existing as { order_code?: string }).order_code}) — không sửa ${derivedTouched.join('/')} tại đây, sửa ở ${await khvcSourceHint((existing as { order_code?: string }).order_code)}; lệnh sẽ tự cập nhật theo.`)
     }
 
     // Scope-write: lệnh phải thuộc kho trong phạm vi; nếu chuyển sang kho mới thì kho đó cũng phải trong phạm vi.
@@ -1808,7 +1809,7 @@ export async function deleteOrder(req: Request, res: Response) {
     // thì cho xóa để dọn bảng.
     if ((order as { origin?: string | null }).origin === 'KHVC' && !(order as { plan_dropped?: boolean }).plan_dropped)
       return fail(res, 422, 'TMS_PLAN_DERIVED',
-        `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(order as { order_code?: string }).order_code}) — xóa ở đây sẽ được tạo lại. Bỏ Số xe khỏi tab "Kế hoạch xuất" thì lệnh tự ngừng hiệu lực và nhả khung giờ.`)
+        `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(order as { order_code?: string }).order_code}) — xóa ở đây sẽ được tạo lại. Bỏ Số xe ở ${await khvcSourceHint((order as { order_code?: string }).order_code)} thì lệnh tự ngừng hiệu lực và nhả khung giờ.`)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: slots } = await supabase.from('TmsVehicleSlot')

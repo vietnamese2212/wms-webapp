@@ -25,6 +25,7 @@ import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../ut
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
+import { khvcSourceHint } from '../../services/khvcOwner'
 import { logPalletMoves } from '../../services/palletMoveLog'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
@@ -2328,7 +2329,7 @@ export async function updateGDO(req: Request, res: Response) {
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select(`status, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type, started_at, ${INERT_COLS}`).eq('id', req.params.id).single()
+      .select(`status, group_code, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type, started_at, ${INERT_COLS}`).eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
     // Chuyến bất động: không sửa đơn (thêm dòng hàng tay vào chuyến chưa có kế hoạch = lệch đối soát)
@@ -2345,11 +2346,11 @@ export async function updateGDO(req: Request, res: Response) {
     //   SL/dòng hàng → tab DO SAP (VL06O) · ngày/kho/NPP/ĐVVT/loại xe → tab Kế hoạch xuất.
     // Chỉ so GIÁ TRỊ ĐỔI (FE gửi kèm giá trị hiện tại là bình thường, không chặn oan).
     // Chuyến EXCEL/MANUAL/LEGACY (kho không làm SAP) giữ nguyên sửa tự do.
-    const gdoCur = gdo as { status: string; shipto_party?: string | null; warehouse_id?: string | null; origin?: string | null; delivery_date?: string | null; dvvt?: string | null; warehouse_type?: string | null }
+    const gdoCur = gdo as { status: string; group_code?: string | null; shipto_party?: string | null; warehouse_id?: string | null; origin?: string | null; delivery_date?: string | null; dvvt?: string | null; warehouse_type?: string | null }
     if (gdoCur.origin === 'SAP') {
-      const KHVC_HINT = 'sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài) — chuyến tự cập nhật theo'
-      const sapTripLock = (label: string) =>
-        fail(res, 422, 'SAP_PLAN_LOCKED', `Chuyến sinh từ SAP — không đổi ${label} tại đây, ${KHVC_HINT}.`)
+      // 13/10: Số xe do BÀN GHÉP XE ghi thì tab Kế hoạch xuất cũng khoá ⇒ chỉ đường về bàn (khvcSourceHint, chỉ tra trên đường lỗi)
+      const sapTripLock = async (label: string) =>
+        fail(res, 422, 'SAP_PLAN_LOCKED', `Chuyến sinh từ SAP — không đổi ${label} tại đây, sửa ở ${await khvcSourceHint(gdoCur.group_code)} — chuyến tự cập nhật theo.`)
       const norm = (v: unknown) => String(v ?? '').trim()
       if (delivery_date !== undefined && norm(delivery_date) !== norm(gdoCur.delivery_date)) return sapTripLock('Ngày xuất')
       if (warehouse_id !== undefined && norm(warehouse_id) !== norm(gdoCur.warehouse_id)) return sapTripLock('Kho')
@@ -2387,7 +2388,7 @@ export async function updateGDO(req: Request, res: Response) {
       const d0 = doList[0] as { distributor_name?: string | null; delivery_code?: string | null }
       const norm = (v: unknown) => String(v ?? '').trim()
       if (customer_name !== undefined && norm(customer_name) !== norm(d0.distributor_name))
-        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+        return fail(res, 422, 'SAP_PLAN_LOCKED', `Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở ${await khvcSourceHint(gdoCur.group_code)}.`)
       if ('delivery_code' in req.body && delivery_code !== undefined && norm(delivery_code) !== norm(d0.delivery_code))
         return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Số DO tại đây, sửa ở tab DO SAP (Dữ liệu bên ngoài).')
     }
@@ -2426,7 +2427,7 @@ export async function updateGDO(req: Request, res: Response) {
         const laxEt = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
         const curEt = existingItems.find(i => i.export_type)?.export_type ?? ''
         if (laxEt(export_type) !== laxEt(curEt))
-          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+          return fail(res, 422, 'SAP_PLAN_LOCKED', `Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở ${await khvcSourceHint(gdoCur.group_code)}.`)
       }
 
       if (isMultiDO) {
@@ -2690,7 +2691,7 @@ export async function patchGDO(req: Request, res: Response) {
     // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
     if (delivery_date) {
       const { data: current } = await supabase.from('GroupDeliveryOrder')
-        .select('status, origin, delivery_date, started_at').eq('id', req.params.id).single()
+        .select('status, group_code, origin, delivery_date, started_at').eq('id', req.params.id).single()
       if (current?.status === 'PAUSED')
         return fail(res, 'Chuyến đang tạm dừng — chỉ được đổi trạng thái, không sửa dữ liệu', 400)
       const pushErr = futureShiftError(current as GdoDateShift | null, delivery_date)
@@ -2701,7 +2702,7 @@ export async function patchGDO(req: Request, res: Response) {
       // mọi dòng của xe + dội xuống chuyến).
       if ((current as { origin?: string | null } | null)?.origin === 'SAP'
           && String(delivery_date) !== String((current as { delivery_date?: string | null } | null)?.delivery_date ?? ''))
-        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Ngày xuất tại đây. Sửa Ngày xuất ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài) — mọi dòng của xe tự đồng bộ và chuyến cập nhật theo.')
+        return fail(res, 422, 'SAP_PLAN_LOCKED', `Chuyến sinh từ SAP — không đổi Ngày xuất tại đây, sửa ở ${await khvcSourceHint((current as { group_code?: string | null } | null)?.group_code)} — mọi dòng của xe tự đồng bộ và chuyến cập nhật theo.`)
     }
 
     // MÁY TRẠNG THÁI (bug 01/08 — PATCH status tự do lách startGDO): PATCH chỉ được 3 bước

@@ -1234,7 +1234,7 @@ async function planAfterWrite(plan: PlanRow) {
 // (+ nền kỳ lúc lập) để người chọn thấy ĐVVT đó đang đứng ở đâu so với mục tiêu nếu KHÔNG tính xe này.
 export async function tripCarriers(req: Request, res: Response) {
   try {
-    const got = await loadTrip(req, String(req.params.id))
+    const got = await loadTrip(req, String(req.params.id), { planAllow: [...OPEN_PLAN, 'CONFIRMED'] })   // 13/10: xe đã chốt vẫn đổi ĐVVT ⇒ bảng xếp hạng đọc được
     if ('err' in got) return sendErr(res, got)
     const { plan, trip } = got
     const wards = uniq(trip.ods.map(o => o.ward_code).filter((x): x is string => !!x))

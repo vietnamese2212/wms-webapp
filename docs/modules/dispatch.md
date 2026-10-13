@@ -358,3 +358,10 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   ngay · 390 px mở được ô chọn, không tràn · editor trộn khoá đúng dòng · hộp Đổi ngày nêu xe bàn bị chặn + lý do · hộp Xác nhận cảnh báo ngày
   đã qua. **Bẫy bộ kiểm:** `label hasText: 'DA'` chọn nhầm "CDA · Cont Đông Á" — neo nhãn `^MÃ · `; `<option>` đọc bằng `textContent`,
   `innerText` trả rỗng.
+- **13/10 tối — "làm lại cho tôi ưu" (`0fb9cecf`):** đổi ĐVVT / dòng xe trên xe đã chốt đo **7–8 s** vì đi `replanKhvcGroups` (đọc lại VL06O, dựng
+  lại DO / dòng hàng, `syncTmsPlanFromKhvc` ~8 truy vấn + RPC cân) trong khi đơn và số liệu KHÔNG đổi. Nay ghi THẲNG hai trường dẫn xuất ở ba
+  sổ trong một lượt chờ (Kế hoạch xuất dvvt · veh_type · dòng xe · xe phụ; chuyến Xuất kho dvvt · vehicle_model_id — chỉ PENDING / PAUSED,
+  còn trong kế hoạch; lệnh VC ncc_id · vehicle_type — còn hiệu lực) + gom các lần đọc (kho · bảng cước · nhãn ĐK · chuyến) vào một
+  `Promise.all`. Đo lại (`test_1310j.mjs`): **0,7–0,8 s** (một lần 2,3 s do lambda nguội); phản hồi mang `derived {gdo, tms}`. Đua hai lượt
+  cùng xe / hai xe cùng kế hoạch ⇒ lượt sau 409 `PLAN_BUSY` (thuê kế hoạch), ba sổ khớp; khung giờ của lệnh VC không bị đụng; Mở lại rồi Xác
+  nhận lại giữ ĐVVT + dòng xe đã đổi; `error_logs` 0 dòng 5xx. Derive đầy đủ vẫn ở Xác nhận / Mở lại / cửa Kế hoạch xuất.

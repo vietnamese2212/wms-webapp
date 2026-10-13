@@ -310,3 +310,12 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   (user 08/10) nên 0 xe là đúng. Chip Khai thiếu nêu `TRUNG_CHUYEN` vì 11 đơn mang Loại kho chính PK01 / PM01 / RM01 (ship-to 20000004 ·
   20000017) mà kênh chỉ khai số khách cho FG01 / FG02 và chưa khai số chung — khai thêm "Số khách tối đa cùng xe" chung cho kênh là hết chip.
   Kết luận "kênh Trung chuyển chưa khai dòng xe" trong báo cáo sáng là SAI, đã đính chính.
+- **13/10 chiều — vòng 3 (user: "tiếp tục test, báo cáo rồi tôi test tay")**, `test_1310c/d/e/f.mjs`, 24 phép xanh: Đang xếp nơi khác (lập 13/10 ·
+  15/10 khi đơn trên xe nháp 14/10 ⇒ `excluded OTHER_DRAFT` nêu nháp · xe · người; tab "Đang xếp nơi khác N"; **Kéo về đây** ⇒ Chờ điều bên này,
+  xe bên kia tính lại, màn cập nhật ~5 s) · hoãn tới 15/10 (14/10 đếm "Không điều ngày này", lập 15/10 đơn về Chờ điều kèm `held_before`) ·
+  dải tải cha 99–100 % ⇒ xe cùng cha < 99 % thành Non tải, trả dải cũ · thẻ hai xe (tải % = pallet / Σ sức chứa, cước cộng) · Xác nhận 13/10
+  (`returned_to_wait` 2) · **liên thông sau Xác nhận**: đổi ĐVVT một dòng ở Kế hoạch xuất ⇒ bàn vẫn in ĐVVT lúc xác nhận (hai sổ, user biết);
+  xoá hết dòng một Số xe ở Kế hoạch xuất ⇒ `/sync` tự chữa xe về NHÁP, kế hoạch TENDERED; chuyến Xuất kho ĐANG XUẤT (giả lập trạng thái) ⇒
+  Mở lại trả `blocked` nêu lý do, xe giữ CONFIRMED · kế hoạch ngày ĐÃ QUA (12/10) lập + Xác nhận được, không cảnh báo (quan sát, user quyết) ·
+  Xuất Excel (gs): 15 dòng = Σ OD, 17 cột, ĐVVT · Dòng xe · Pallet · Cước khớp bàn — **bẫy bộ kiểm**: app ưu tiên `showSaveFilePicker`, headless
+  phải tắt API đó mới có download · 390 px: Xem đơn tick ⇒ nút "Tạo kế hoạch 15/10 (N đơn)" nằm trên bảng, Tạo ⇒ sang bàn, không tràn, 0 lỗi.

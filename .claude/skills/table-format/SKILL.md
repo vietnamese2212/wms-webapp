@@ -186,6 +186,14 @@ Nút thao tác nhanh trong cell (vd QR "Thêm pallet", icon nhỏ): **icon `h-3.
 ## 19. Responsive bắt buộc — test PC + Tablet + Phone
 Popover/sheet không tràn màn 360px; toolbar co giãn (search `flex-1`, nhãn phụ `hidden sm:inline`).
 
+## 19b. Máy tính ≥ 1280: CÙNG MỘT BỐ CỤC ở mọi cỡ màn (user chốt 14/10, lớp C81 — "yêu cầu của toàn app")
+Màn 24" và màn 1280 phải thấy cùng các hàng, cùng thứ tự; chỉ bề rộng phần co giãn khác nhau.
+- Hàng đầu trang / thanh công cụ / hàng chip lọc / chân bảng có `flex-wrap` ⇒ PHẢI kèm `xl:flex-nowrap`. Phần tử nào ở hàng nào là do CODE đặt (tách hàng bằng `<div>` riêng), không để bề rộng màn quyết.
+- Màn rộng: phần `flex-1` (ô tìm, dải chỉ số) rộng ra. Màn hẹp: chọn MỘT phần được co (`min-w-0` + `truncate` + `title` đủ chữ); con số không bao giờ cắt. Hết chỗ co ⇒ cuộn ngang có mép mờ (`useEdgeFade`, ẩn thanh cuộn, lăn chuột dọc = cuộn ngang). Hàng chứa popover `absolute` (FilterBar) KHÔNG được cuộn — chỉ co.
+- Thông tin dài theo dữ liệu (tỷ trọng, danh sách theo loại) ⇒ MỘT ô bấm mở chi tiết (`DropdownMenu` nội dung bảng), không trải ngang bắt cuộn.
+- Dưới 1280 vẫn wrap như cũ (máy tính bảng / điện thoại — mục 19 + luật hàng nút CLAUDE.md).
+- **Đo trước khi báo xong:** `PLAYWRIGHT_DIR=… node scripts/qa/ui-layout-sync.mjs <đường-dẫn>` — 1280 / 1536 / 1920 phải cùng số hàng + cùng đỉnh bảng. Bộ đo chỉ thấy trạng thái mặc định; màn có trạng thái sâu (chọn kho, mở kế hoạch, có lọc) thì tự đo thêm ở đúng trạng thái đó.
+
 ## 20. Hiến pháp UI 24/08 — đồng bộ + mobile density (user chốt, áp khi tạo/sửa BẤT KỲ trang nào)
 - **Badge trạng thái = `StatusBadge`** (`components/shared/StatusBadge.tsx`) — tone theo NGỮ NGHĨA: green=hoạt động/OK · blue=hoàn thành · amber=đang chạy/dở · red=chặn/tạm dừng/lỗi · slate=chờ/trung tính · purple=phân loại đặc thù. KHÔNG tự chế `bg-*-100 text-*-700`, KHÔNG Badge nền đặc kiểu button cho trạng thái, KHÔNG trộn outline/filled tùy hứng.
 - **SummaryBand**: component tự lo mobile lưới 3 cột — nhãn tile phải ĐỌC ĐƯỢC ĐẦY ĐỦ trên 390px (hết cảnh "SL (QUY Đ…"). Đặt nhãn ngắn từ đầu, có `tip` giải nghĩa.

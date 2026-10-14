@@ -412,3 +412,17 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   (lăn chuột dọc cũng cuộn, thanh cuộn ẩn) + mép còn nội dung khuất mờ dần (khuôn `TabsList` 12/09). BỎ: nút "Chỉ số" bật / tắt, bản gọn 4
   con số `DispatchKpiInline` (chỉ hiện từ 2xl), cờ `kpiOpen`, prop `right` của `DispatchBoard`. `SummaryBand` thêm biến thể `inline` (một
   hàng ở mọi cỡ, không lưới điện thoại, bo góc, cùng màu / cỡ chữ). Chụp `ui1410/K1_1580 · K2_1280 · K3_390` (`shot_1410b.mjs`).
+- **14/10 tối, vòng 2 — ĐẦU TRANG HAI HÀNG CỐ ĐỊNH + Ô CHI TIẾT ĐVVT + CHẶN VƯỢT SỐ KHÁCH:** (a) user, màn 24": "hiển thị khác — phải đồng bộ
+  với các loại màn hình trên máy tính, đó là yêu cầu của toàn app" (luật CLAUDE.md C81). Bản trên là MỘT hàng `flex-wrap` ⇒ 24" dồn cụm nút +
+  dải lên hàng 1, dải còn ~300 px. Nay từ 1280: hàng 1 = tiêu đề · tab · Kho (phần duy nhất được co, tới 140 px) · Ngày · Mảng; hàng 2 =
+  chọn kế hoạch · trạng thái · Khai thiếu · nút · dải chỉ số `flex-1`; `xl:flex-nowrap` cả hai. Ô số của dải CHIA ĐỀU bề rộng, chật thì
+  chỉ nhãn cắt "…". Thanh công cụ của bàn và chân bảng cũng một hàng từ 1280 (thanh công cụ chật thì cuộn có mép mờ `useEdgeFade`,
+  chân bảng cắt ghi chú). (b) "tỷ trọng ĐVVT thì bấm vào để xem (dạng detail), cuộn như thế này không hợp lý": tỷ trọng + số xe theo
+  dòng xe gom vào MỘT ô cuối "ĐVVT · Dòng xe" (giá trị "n dưới MT" hổ phách khi có ĐVVT dưới mục tiêu) — bấm mở bảng chi tiết
+  (`DropdownMenu`). (c) "sao vẫn kéo được đơn vào xe #1 xe pallet chỉ 1 khách" → "nếu vượt thì chặn luôn và có popup": máy ghép vốn tôn
+  trọng hai trần (dòng xe `max_drops` · số khách tối đa cùng xe của khách / kênh) nhưng kéo tay chỉ ghi cảnh báo xám (nhóm "Có cảnh báo",
+  không vào Cần xử lý) — C80. Nay `dropsBlockReason` (dispatchEngine, test đơn vị 7 ca) chặn ở 4 cửa: kéo thả vào xe · xe mới · chuyển từng
+  OD (panel xe) · đổi dòng xe sang xe nhận ít khách hơn ⇒ 409 `DROPS_EXCEEDED`; xem trước khi rê báo "⛔ Xe không nhận"; FE lỗi luật
+  (`DROPS_EXCEEDED` · `CATEGORY_MIX_BLOCKED`) ⇒ HỘP THOẠI thay toast; đổi dòng xe hàng loạt nêu từng xe bị chặn. Chỉ chặn lần thả THÊM
+  khách mới — xe đã vượt từ trước vẫn nhận đơn của khách đang có, kéo ra luôn được; xe như thế là việc ĐỎ "Vượt số khách" trong Cần xử lý
+  (nháp Ba Vì 02/10 của user: xe #1 Xe 16 Pallet chở Hoàng Long + Phương Anh, kéo lúc 17:28 trước khi có luật — để user tự gỡ). Gói 61 [13l].

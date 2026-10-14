@@ -386,6 +386,9 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   allowMixCategories?: boolean | null; allowMixChannels: boolean; follow: string[]
   channelOf?: (shipTo: string | null) => string | null; condLabel?: (c: string) => string
   maxVehicles?: number; modelOnly?: boolean
+  /** KẾ HOẠCH không trộn Loại kho ⇒ đơn CHỈ hàng đi kèm (POSM) theo xe của đơn chính, bỏ danh sách dòng xe riêng — cùng `followOnlyOd`
+   *  của máy ghép và cảnh báo của `computeTripPatch`. Kho cho trộn thì đơn POSM cũng phải đúng danh sách của khách. */
+  posmFollows?: boolean
 }): RuleBlock[] {
   const out: RuleBlock[] = []
   const all = [...staying, ...moving]
@@ -425,7 +428,7 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   }
   const asked = o.modelOnly ? all : moving
   // hàng chỉ "đi kèm đơn" (POSM) theo xe của đơn chính — không mang điều kiện / danh sách dòng xe riêng (cùng luật `followOnlyOd`)
-  const posmOnly = (r: RuleRow) => { const ks = Object.keys((r.cat_load ?? {}) as Record<string, unknown>); return ks.length > 0 && !mainCatsOf(ks.map(c => ({ category: c })), o.follow).length }
+  const posmOnly = (r: RuleRow) => { const ks = Object.keys((r.cat_load ?? {}) as Record<string, unknown>); return o.posmFollows === true && ks.length > 0 && !mainCatsOf(ks.map(c => ({ category: c })), o.follow).length }
   for (const m of models) {
     const conds = uniq(asked.flatMap(r => r.conditions ?? []).filter(Boolean)).sort(cmp)
     if (conds.length && !servesConditions(m, conds))

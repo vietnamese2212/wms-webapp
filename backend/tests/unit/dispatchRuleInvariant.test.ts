@@ -80,7 +80,7 @@ describe('bất biến — xe máy ghép (không tự nhận sai luật) luôn q
         const rows: RuleRow[] = t.ods.map(o => ({ ...o }))
         const blocks = manualRuleBlocks(fleet, [], rows, {
           allowMixCategories: input.params.allow_mix_categories, allowMixChannels: input.params.allow_mix_channels, follow: input.params.follow_categories ?? [],
-          channelOf: s => (s ? chan.get(s) ?? null : null), maxVehicles: input.params.max_vehicles,
+          channelOf: s => (s ? chan.get(s) ?? null : null), maxVehicles: input.params.max_vehicles, posmFollows: input.params.allow_mix_categories === false,
         })
         checked++
         if (blocks.length) fails.push(`seed ${seed} xe ${t.group_code} [${fleet.map(m => m.id).join('+')}] ${t.ods.length} OD: ${blocks.map(b => `${b.code}: ${b.message}`).join(' | ')}`)
@@ -105,7 +105,7 @@ describe('bất biến — xe máy ghép (không tự nhận sai luật) luôn q
         const fleet = [sug.model, ...sug.vehicles.slice(1).map(v => v.model)].map(m => banded.find(x => x.id === m.id)!)
         const rows: RuleRow[] = ods.map(od => ({ od_number: od.od_number, ship_to_code: od.ship_to_code, ship_to_name: od.ship_to_name, max_customers: od.max_customers,
           separate: od.separate, allowed_models: od.allowed_models, ...sumLines(od.lines), conditions: condsOf(od.lines), cat_load: catLoadOf(od.lines) }))
-        const blocks = manualRuleBlocks(fleet, [], rows, { allowMixCategories: true, allowMixChannels: true, follow: input.params.follow_categories ?? [] }).filter(b => XE.has(b.code))
+        const blocks = manualRuleBlocks(fleet, [], rows, { allowMixCategories: true, allowMixChannels: true, follow: input.params.follow_categories ?? [], posmFollows: input.params.allow_mix_categories === false }).filter(b => XE.has(b.code))
         checked++
         if (blocks.length) fails.push(`seed ${seed} khách ${ods[0].ship_to_code} [${fleet.map(m => m.id).join('+')}]: ${blocks.map(b => `${b.code}: ${b.message}`).join(' | ')}`)
       }

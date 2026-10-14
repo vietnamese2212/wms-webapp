@@ -782,7 +782,12 @@ describe('manualRuleBlocks — MỌI luật ghép xe ở cửa làm tay (user 14
   it('khách KHAI danh sách dòng xe mà không có xe này ⇒ VEHICLE_NOT_ALLOWED; CHƯA KHAI (rỗng) và đơn chỉ POSM thì không chặn', () => {
     expect(codes(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: ['XT'] })], opt))).toEqual(['VEHICLE_NOT_ALLOWED'])
     expect(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: [] })], opt)).toEqual([])
-    expect(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: ['XT'], cat_load: { PM01: 1 } })], opt)).toEqual([])
+    expect(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: ['XT'], cat_load: { PM01: 1 } })], { ...opt, posmFollows: true })).toEqual([])
+  })
+  it('đơn CHỈ hàng đi kèm (POSM): kế hoạch KHÔNG trộn Loại kho ⇒ theo xe đơn chính (bỏ danh sách); kho CHO trộn ⇒ phải đúng danh sách như máy ghép (followOnlyOd)', () => {
+    const posm = r('B', 'K2', { allowed_models: ['XT'], cat_load: { PM01: 1 } })
+    expect(manualRuleBlocks([xe], [], [posm], { ...opt, posmFollows: true })).toEqual([])
+    expect(codes(manualRuleBlocks([xe], [], [posm], { ...opt, posmFollows: false }))).toEqual(['VEHICLE_NOT_ALLOWED'])
   })
   it('switch Loại kho tắt + số khách: cùng các luật đã có, mã đứng đúng thứ tự ưu tiên', () => {
     const b = manualRuleBlocks([model({ id: 'X1', max_drops: 1 })], [r('A', 'K1')], [r('B', 'K2', { cat_load: { FG02: 1 } })], { ...opt, allowMixCategories: false })

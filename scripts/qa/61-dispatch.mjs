@@ -2148,6 +2148,133 @@ try {
     }
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
   }
+
+  // ── [21] (14/10 tối — user: "test kỹ phần thay đổi này") LUẬT GHÉP XE Ở MỌI CỬA LÀM TAY + CỬA XÁC NHẬN: từng luật × từng cửa (kéo vào xe ·
+  //     Xe mới · chuyển từng OD · đổi dòng xe / tổ hợp xe · Xác nhận), cả ca PHẢI CHẶN lẫn ca PHẢI CHO (khách chưa khai dòng xe · khách chưa có
+  //     kênh · Non tải · kéo đơn RA khỏi xe đang sai) + hai người cùng kéo vào một xe. Xe dựng TAY từ khung chờ (mỗi OD một xe qua ô Xe mới) —
+  //     không phụ thuộc máy ghép ra mấy xe. Đã phủ chỗ khác: [10g] tải khi kéo · [11c][13l] số khách · [13c] dòng xe được vào khi đổi xe ·
+  //     [14c] switch Loại kho · [15h] thẻ nhiều xe. Đi xe riêng / số khách / dòng xe được vào là BẢN CHỤP lúc lập ⇒ khai TRƯỚC khi lập. ──
+  {
+    await cleanupTrips()
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=like.QA61OD16*`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'ACTIVE', updated_at: nowIso() })
+    const vio = (r, code) => r?.s === 409 && r?.j?.error?.code === code
+    const em = r => `${r?.s}/${r?.j?.error?.code ?? ''}`
+    const cus = await Promise.all(SHIP.map(async s => (await restAll('Customer', `select=id&ship_to_code=eq.${s}`))[0]))
+    // dòng xe QA phụ (xoá cuối mục; cleanup dọn `QA61*`): X05 khách KHÔNG được vào · X06 không chở mức bảo quản của hàng (đặt sau khi biết
+    // mức của dòng OD) · X07 chỉ 1 điểm · X08 không ghép nhiều xe · X04 chỉ 5 pallet
+    const mkVm = (code, o = {}) => api('/tms/vehicle-models', 'POST', { sap_code: code, name: `QA61 ${code}`, parent_type_id: XEPALLET?.id, storage_conditions: ALL_CONDS, capacity_mode: 'PALLET', max_pallets: 9, tariff_unit: 'PER_PALLET', max_drops: 3, allow_multi_vehicle: true, ...o })
+    const vr = await Promise.all([mkVm('QA61X05'), mkVm('QA61X06'), mkVm('QA61X07', { max_drops: 1 }), mkVm('QA61X08', { allow_multi_vehicle: false }), mkVm('QA61X04', { max_pallets: 5 })])
+    const [X5, X6, X7, X8, X4] = vr.map(r => r.j?.data?.id)
+    check('21. Fixture: 5 dòng xe QA phụ (khách không được vào · sai mức bảo quản · 1 điểm · không ghép nhiều xe · 5 pallet) → 201', vr.every(r => r.s === 201), vr.map(r => `${r.s} ${r.j?.error?.message ?? ''}`).join(' | '))
+    const ALLV2 = { '*': [...ALLV['*'], X6, X7, X8, X4].filter(Boolean) }   // mọi xe trừ X05
+    const setCust = (i, o = {}) => restWrite('Customer', 'PATCH', `id=eq.${cus[i].id}`, { dispatch_vehicles: ALLV2, dispatch_separate: false, max_customers_per_trip: 3, max_customers_by_category: {}, channel: null, updated_at: nowIso(), ...o })
+    // lập KHÔNG ghép (mọi OD ở khung chờ) rồi mỗi OD một xe qua ô Xe mới ⇒ A = OD1 (4 pl, W1) · B = OD2 (3 pl, W1) · C = OD3 (3 pl, W2)
+    const build = async () => {
+      const c = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, allow_mix_channels: false })
+      const id = c.j?.data?.id
+      let pl = c.j?.data
+      const rows = OD.map(od => rowOf(pl, od))
+      for (const r of rows) if (r) pl = (await api(`/tms/dispatch/plans/${id}/move`, 'POST', { ids: [r.id], to: 'new' })).j?.data ?? pl
+      const A = tripOfOd(pl, OD[0]), B = tripOfOd(pl, OD[1]), C = tripOfOd(pl, OD[2])
+      const ok = c.s === 201 && rows.every(Boolean) && !!A && !!B && !!C && new Set([A.id, B.id, C.id]).size === 3
+      const mv = (ids, to, tid) => api(`/tms/dispatch/plans/${id}/move`, 'POST', { ids, to, ...(tid ? { to_trip_id: tid } : {}) })
+      const pv = (ids, tid) => api(`/tms/dispatch/plans/${id}/preview-move`, 'POST', { ids, to_trip_id: tid })
+      return { ok, s: c.s, id, pl, A, B, C, q: rows, mv, pv }
+    }
+    const tripOfRow = async rowId => (await restAll('dispatch_trip_od', `select=trip_id&id=eq.${rowId}`))[0]?.trip_id
+
+    // ── 21a–21d: đi xe riêng · trộn kênh · nhiều luật một lần · cửa Xác nhận + kéo đơn RA khỏi xe đang sai ──
+    await Promise.all([setCust(0, { channel: 'QA61CHA' }), setCust(1, { dispatch_separate: true }), setCust(2, { channel: 'QA61CHB' })])
+    const s1 = await build()
+    if (s1.ok) {
+      const { A, B, q: [r1, r2, r3], mv, pv } = s1
+      const pvS = await pv([r1.id], B.id), mvS = await mv([r1.id], 'trip', B.id)
+      const oneS = await api(`/tms/dispatch/trips/${A.id}/move-od`, 'POST', { od_number: OD[0], to_trip_id: B.id })
+      const revS = await mv([r2.id], 'trip', A.id), newS = await mv([r1.id, r2.id], 'new')
+      const stay = [await tripOfRow(r1.id), await tripOfRow(r2.id)]
+      check('21a. ĐI XE RIÊNG: kéo khách thường lên xe khách đi riêng · kéo khách đi riêng lên xe khách khác · cả hai ra Xe mới · chuyển từng OD ⇒ 409 SEPARATE_CUSTOMER ở cả 4 · xem trước báo không nhận · OD ở nguyên xe',
+        /xe riêng/.test(pvS.j?.data?.blocked ?? '') && vio(mvS, 'SEPARATE_CUSTOMER') && vio(oneS, 'SEPARATE_CUSTOMER') && vio(revS, 'SEPARATE_CUSTOMER')
+        && vio(newS, 'SEPARATE_CUSTOMER') && /^Xe mới/.test(newS.j?.error?.message ?? '') && stay[0] === A.id && stay[1] === B.id,
+        `xem=${String(pvS.j?.data?.blocked ?? '').slice(0, 50)} kéo=${em(mvS)} từngOD=${em(oneS)} ngược=${em(revS)} xeMới=${em(newS)} ở=${stay.map(x => x?.slice(0, 6)).join(',')}`)
+      const pvC = await pv([r3.id], A.id), mvC = await mv([r3.id], 'trip', A.id), newC = await mv([r1.id, r3.id], 'new')
+      check('21b. TRỘN KÊNH (kho không cho): kéo đơn kênh B lên xe kênh A · hai kênh ra Xe mới ⇒ 409 CHANNEL_MIX_BLOCKED · xem trước nêu "kênh"',
+        /kênh/.test(pvC.j?.data?.blocked ?? '') && vio(mvC, 'CHANNEL_MIX_BLOCKED') && vio(newC, 'CHANNEL_MIX_BLOCKED') && (await tripOfRow(r3.id)) === s1.C.id,
+        `xem=${String(pvC.j?.data?.blocked ?? '').slice(0, 60)} kéo=${em(mvC)} xeMới=${em(newC)}`)
+      const two = await mv([r2.id, r3.id], 'trip', A.id)
+      const m2 = two.j?.error?.message ?? ''
+      check('21c. Phạm BA luật một lần (đi xe riêng + trộn kênh + 10/9 pallet) ⇒ 409 mã ưu tiên SEPARATE_CUSTOMER, câu liệt kê mỗi luật một dòng "• "',
+        vio(two, 'SEPARATE_CUSTOMER') && (m2.match(/\n• /g) ?? []).length === 3 && /xe riêng/.test(m2) && /kênh/.test(m2) && /tải/.test(m2), `${em(two)} ${m2.slice(0, 200)}`)
+      // xe sai luật TỪ TRƯỚC (ghi thẳng, như xe kéo trước 14/10): Xác nhận chặn nêu đích danh xe, không ghi gì · kéo đơn RA được · gỡ xong Xác nhận qua
+      await restWrite('dispatch_trip_od', 'PATCH', `id=eq.${r3.id}`, { trip_id: A.id, updated_at: nowIso() })
+      const cf1 = await api(`/tms/dispatch/plans/${s1.id}/confirm`, 'POST', {})
+      const kh1 = (await restAll('khvc_lines', `select=id&group_code=like.${PREFIX}*`)).length
+      const out = await mv([r3.id], 'new')
+      const cf2 = await api(`/tms/dispatch/plans/${s1.id}/confirm`, 'POST', {})
+      const m1 = cf1.j?.error?.message ?? ''
+      check('21d. Xe sai luật từ trước ⇒ Xác nhận 409 TRIP_RULE_VIOLATION nêu đích danh xe + luật, KHÔNG ghi Kế hoạch xuất · kéo đơn RA khỏi xe sai → 200 · gỡ xong Xác nhận → 200',
+        vio(cf1, 'TRIP_RULE_VIOLATION') && m1.includes(A.group_code) && /kênh/.test(m1) && kh1 === 0 && out.s === 200 && cf2.s === 200,
+        `xn1=${em(cf1)} ${m1.slice(0, 140)} · KHxuất=${kh1} · kéo ra=${em(out)} · xn2=${em(cf2)} ${(cf2.j?.error?.message ?? '').slice(0, 100)}`)
+    } else check('21a. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s1.s} A=${s1.A?.id} B=${s1.B?.id} C=${s1.C?.id}`)
+
+    // ── 21e–21j: ca PHẢI CHO · chuyển từng OD · đổi dòng xe / tổ hợp xe · xe đang mang dòng xe sai · Non tải · đua ──
+    await cleanupTrips()
+    await Promise.all([setCust(0, { channel: 'QA61CHA' }), setCust(1), setCust(2, { dispatch_vehicles: {} })])   // khách 3: CHƯA khai dòng xe, CHƯA có kênh
+    const s2 = await build()
+    if (s2.ok) {
+      const { A, B, q: [q1, q2, q3], mv, pv } = s2
+      const in3 = await mv([q3.id], 'trip', A.id)
+      check('21e. PHẢI CHO: đơn của khách CHƯA KHAI dòng xe + CHƯA có kênh lên xe kênh A (vừa tải, 2 khách ≤ 3) → 200',
+        in3.s === 200 && (await tripOfRow(q3.id)) === A.id, `${em(in3)} ${(in3.j?.error?.message ?? '').slice(0, 120)}`)
+      const one = await api(`/tms/dispatch/trips/${B.id}/move-od`, 'POST', { od_number: OD[1], to_trip_id: A.id })
+      check('21f. CHUYỂN TỪNG OD (panel xe) cùng luật tải: thêm OD2 vào xe đang chở OD1 + OD3 (cả ba > 9 pallet) ⇒ 409 LOAD_EXCEEDED, OD2 ở nguyên xe',
+        vio(one, 'LOAD_EXCEEDED') && (await tripOfRow(q2.id)) === B.id, `${em(one)} ${(one.j?.error?.message ?? '').slice(0, 100)}`)
+      // ĐỔI DÒNG XE / TỔ HỢP XE trên xe A (OD1 + OD3: 2 khách, ≤ 9 pallet, > 5 pallet). X06 = một mức bảo quản KHÔNG có trong mức của OD1
+      const conds1 = q1.conditions ?? []
+      const c6 = ALL_CONDS.filter(c => !conds1.includes(c)).slice(0, 1)
+      const put6 = conds1.length && c6.length ? await api(`/tms/vehicle-models/${X6}`, 'PUT', { storage_conditions: c6 }) : null
+      const vm0 = A.vehicle_model_id
+      const pt = b => api(`/tms/dispatch/trips/${A.id}`, 'PATCH', b)
+      const p7 = await pt({ vehicle_model_id: X7 }), p4 = await pt({ vehicle_model_id: X4 }), p5 = await pt({ vehicle_model_id: X5 })
+      const p6 = put6?.s === 200 ? await pt({ vehicle_model_id: X6 }) : null
+      const p8 = await pt({ vehicle_model_ids: [vmId, X8] })
+      const maxV = Number(s2.pl?.params?.max_vehicles ?? 1)
+      const pMax = maxV < 5 ? await pt({ vehicle_model_ids: Array(maxV + 1).fill(vmId) }) : null
+      const aNow = (await restAll('dispatch_trip', `select=vehicle_model_id,extra_vehicle_model_ids&id=eq.${A.id}`))[0]
+      const pOk = maxV >= 2 ? await pt({ vehicle_model_ids: [vmId, vmId] }) : { s: 200 }
+      const pBack = await pt({ vehicle_model_id: vmId })
+      check('21g. ĐỔI DÒNG XE sai luật ⇒ 409 đúng mã — 1 điểm: DROPS_EXCEEDED · 5 pallet: LOAD_EXCEEDED · khách không được vào: VEHICLE_NOT_ALLOWED (nêu khách, bỏ qua khách chưa khai) · sai mức bảo quản: CONDITION_MISMATCH · xe không ghép được / quá số xe của kho: MULTI_VEHICLE_BLOCKED · xe giữ nguyên; tổ hợp đúng luật → 200',
+        vio(p7, 'DROPS_EXCEEDED') && vio(p4, 'LOAD_EXCEEDED') && vio(p5, 'VEHICLE_NOT_ALLOWED') && /QA61 NPP 1/.test(p5.j?.error?.message ?? '') && !/QA61 NPP 3/.test(p5.j?.error?.message ?? '')
+        && (p6 == null || vio(p6, 'CONDITION_MISMATCH')) && vio(p8, 'MULTI_VEHICLE_BLOCKED') && /không được ghép nhiều xe/.test(p8.j?.error?.message ?? '')
+        && (pMax == null || (vio(pMax, 'MULTI_VEHICLE_BLOCKED') && /tối đa/.test(pMax.j?.error?.message ?? '')))
+        && aNow?.vehicle_model_id === vm0 && !(aNow?.extra_vehicle_model_ids ?? []).length && pOk.s === 200 && pBack.s === 200,
+        `1điểm=${em(p7)} 5pl=${em(p4)} khôngVào=${em(p5)} mức=${p6 ? em(p6) : `bỏ (OD1 mức ${JSON.stringify(conds1)})`} ghép=${em(p8)} quáXe(${maxV})=${pMax ? em(pMax) : '—'} giữXe=${aNow?.vehicle_model_id === vm0} tổHợpĐúng=${em(pOk)} về=${em(pBack)}`)
+      // KÉO lên xe đang mang dòng xe sai (ghi thẳng — như xe cũ / cấu hình đổi sau lúc lập)
+      await restWrite('dispatch_trip', 'PATCH', `id=eq.${B.id}`, { vehicle_model_id: X5, updated_at: nowIso() })
+      const pvN = await pv([q1.id], B.id), mvN = await mv([q1.id], 'trip', B.id)
+      let mvK = null
+      if (p6) { await restWrite('dispatch_trip', 'PATCH', `id=eq.${B.id}`, { vehicle_model_id: X6, updated_at: nowIso() }); mvK = await mv([q1.id], 'trip', B.id) }
+      await restWrite('dispatch_trip', 'PATCH', `id=eq.${B.id}`, { vehicle_model_id: vmId, updated_at: nowIso() })
+      check('21h. KÉO lên xe mang dòng xe khách không được vào / không chở được mức bảo quản ⇒ 409 VEHICLE_NOT_ALLOWED / CONDITION_MISMATCH · xem trước báo không nhận · OD ở nguyên xe',
+        /không được vào/.test(pvN.j?.data?.blocked ?? '') && vio(mvN, 'VEHICLE_NOT_ALLOWED') && (mvK == null || vio(mvK, 'CONDITION_MISMATCH')) && (await tripOfRow(q1.id)) === A.id,
+        `xem=${String(pvN.j?.data?.blocked ?? '').slice(0, 60)} khôngVào=${em(mvN)} mức=${mvK ? em(mvK) : '—'}`)
+      const outU = await mv([q3.id], 'new')   // xe A còn mỗi OD1 — dưới ngưỡng Non tải 70 % của kho QA
+      const aU = (await restAll('dispatch_trip', `select=underload,load_pct&id=eq.${A.id}`))[0]
+      check('21i. PHẢI CHO: kéo đơn ra để xe còn lại NON TẢI → 200, xe mang cờ Non tải (Gom lô dưới tối thiểu do người quyết — không chặn)',
+        outU.s === 200 && aU?.underload === true, `${em(outU)} xe A ${aU?.load_pct}% non tải=${aU?.underload}`)
+      // ĐUA: xe A = OD1; hai người cùng kéo OD2 và OD3 vào A — mỗi đơn một mình vừa, cả ba > 9 pallet (21f)
+      const [ra, rb] = await Promise.all([mv([q2.id], 'trip', A.id), mv([q3.id], 'trip', A.id)])
+      const fin = (await restAll('dispatch_trip_od', `select=pallets&trip_id=eq.${A.id}`)).reduce((s, o) => s + Number(o.pallets ?? 0), 0)
+      const lose = [ra, rb].find(r => r.s !== 200)
+      check('21j. ĐUA: hai người cùng kéo hai đơn vào một xe (một mình vừa, cùng nhau quá 9 pallet) ⇒ đúng MỘT 200, người sau 409 PLAN_BUSY / LOAD_EXCEEDED · xe ≤ 9 pallet',
+        [ra, rb].filter(r => r.s === 200).length === 1 && lose?.s === 409 && ['PLAN_BUSY', 'LOAD_EXCEEDED'].includes(lose?.j?.error?.code) && fin <= 9 + 1e-9,
+        `a=${em(ra)} b=${em(rb)} xe A=${fin} pallet`)
+    } else check('21e. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s2.s} A=${s2.A?.id} B=${s2.B?.id} C=${s2.C?.id}`)
+    await cleanupTrips()
+    await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))
+    await restWrite('vehicle_model', 'DELETE', `sap_code=in.(QA61X05,QA61X06,QA61X07,QA61X08,QA61X04)`).catch(() => {})
+    await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })
+  }
 } finally {
   await cleanup()
   const left = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}`)).length

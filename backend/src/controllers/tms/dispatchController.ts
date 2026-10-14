@@ -1063,6 +1063,7 @@ async function ruleBlocksFor(plan: PlanRow, trip: RuleTrip, staying: TripOdRow[]
   return manualRuleBlocks(fleet, staying, moving, {
     allowMixCategories: trip.allow_mix_categories ?? P.allow_mix_categories, allowMixChannels: P.allow_mix_channels, follow: P.follow_categories ?? [],
     channelOf: s => (s ? chBy.get(s) ?? null : null), condLabel: c => condLabels[c] ?? c, maxVehicles: P.max_vehicles, modelOnly: opts.modelOnly,
+    posmFollows: P.allow_mix_categories === false,
   })
 }
 /** 409 với mã của luật ưu tiên nhất; nhiều luật thì liệt kê từng dòng (FE hiện HỘP THOẠI, không toast). */

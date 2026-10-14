@@ -442,3 +442,18 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   lối tắt lọc. Lưới: test đơn vị 10 ca + gói 61 [10g] [13c] [14c] [15h] viết lại (bản cũ khoá hành vi "cho làm rồi cảnh báo"),
   [14b] nới thẻ 2 xe (dữ liệu thử vô tình quá tải). Nháp Ba Vì 02/10
   của user lúc deploy: 0 xe sai luật (xe #1 user đã tự gỡ khách thứ hai).
+- **14/10 tối, vòng 4 — TEST KỸ luật chặn (user: "test kỹ phần thay đổi này"):** (a) **bất biến máy ⇄ cửa** `tests/unit/dispatchRuleInvariant`
+  (3.000 kịch bản ngẫu nhiên, hạt giống cố định): mọi xe máy ghép (không tự nhận sai luật) và dòng xe máy gợi ý cho ô Xe mới phải qua
+  `manualRuleBlocks` y như cửa Xác nhận — lượt đầu ĐỎ: `comboModel` lấy trần dải của XE ĐẦU cho cả thẻ, máy lại lấp từng xe tới trần CỦA NÓ ⇒
+  thẻ trộn hai dòng xe cha khác dải (100 % + 110 %) tải 100,6–104,4 % bị chặn oan ở Xác nhận / Xe mới. Vá (`a419aae9`): trần cả thẻ = trần
+  từng xe bình quân theo sức chứa (làm tròn LÊN một chữ số như % tải). (b) đơn CHỈ hàng đi kèm (POSM): máy ghép + cảnh báo xe (chip "Sai quy
+  định") chỉ bỏ danh sách dòng xe riêng khi KẾ HOẠCH không trộn Loại kho, cửa làm tay bỏ ở MỌI kế hoạch ⇒ kho cho trộn thì FE chặn Xác nhận mà
+  server cho — nay cùng một điều kiện (`posmFollows`). (c) gói 61 **[21]** phủ phần còn trống của ma trận luật × cửa: đi xe riêng (kéo vào ·
+  kéo ngược · Xe mới · chuyển từng OD) · trộn kênh · ba luật một lần (câu "• " từng dòng) · xe sai từ trước ⇒ Xác nhận 409 nêu xe, không ghi
+  Kế hoạch xuất, kéo đơn RA được, gỡ xong Xác nhận qua · khách chưa khai dòng xe + chưa có kênh ⇒ CHO · chuyển từng OD vượt tải · đổi dòng xe
+  sai từng luật (1 điểm · 5 pallet · khách không được vào · sai mức bảo quản · xe không ghép nhiều xe · quá số xe kho) · kéo lên xe đang mang
+  dòng xe sai · Non tải ⇒ CHO · hai người cùng kéo vào một xe ⇒ đúng một 200. (d) giao diện trên nháp thật Ba Vì 02/10 (không ghi gì — lệnh
+  kéo chỉ tới server khi xem trước báo "không nhận"): rê qua hiện "⛔ Xe không nhận", thả / panel xe ⇒ hộp thoại câu server, đổi dòng xe +
+  Xác nhận ⇒ hộp thoại, chip "Sai quy định" + Xác nhận dừng sớm không gửi lệnh. **Còn để ngỏ (chưa làm):** xe sai luật ĐI XE RIÊNG / TRỘN KÊNH
+  có từ trước KHÔNG có câu cảnh báo xe ⇒ không lên chip "Sai quy định" (Xác nhận vẫn chặn, hộp thoại nêu xe); kênh đọc SỐNG ở Khách hàng còn
+  các luật khác đọc bản chụp lúc lập ⇒ đổi kênh khách sau khi lập có thể chặn Xác nhận xe máy đã xếp.

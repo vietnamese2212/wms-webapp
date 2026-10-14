@@ -67,9 +67,9 @@ const RULE_TITLE: Record<string, string> = {
 }
 export const RULE_BLOCK_CODES = new Set(Object.keys(RULE_TITLE))
 export const apiCode = (e: unknown) => (e as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code ?? null
-/** Hộp thoại "sai quy định": tiêu đề theo luật, thân là câu BE (nhiều luật thì mỗi dòng một luật). */
+/** Hộp thoại "sai quy định": tiêu đề theo luật (phạm NHIỀU luật — BE liệt kê "• …" — thì tiêu đề chung), thân là câu BE. */
 export const ruleDialog = (e: unknown) => ({
-  title: RULE_TITLE[apiCode(e) ?? ''] ?? 'Sai quy định ghép xe', cancelLabel: null,
+  title: apiCode(e) !== 'TRIP_RULE_VIOLATION' && /\n• /.test(apiMsg(e)) ? 'Sai quy định ghép xe — không thực hiện' : RULE_TITLE[apiCode(e) ?? ''] ?? 'Sai quy định ghép xe', cancelLabel: null,
   body: <div className="whitespace-pre-line text-sm">{apiMsg(e)}</div>,
 })
 const DRAG_MIME = 'application/x-dispatch-ods'

@@ -392,3 +392,15 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   lượt cùng kho đua thuê kế hoạch; mảng kia hỏng chỉ báo. Dùng chung `create` thì `isPending` lượt hai làm `planId` rơi về null (màn
   "Chưa có kế hoạch" chớp — họ C63). Tab mảng kia ở Xem đơn in số đơn chờ từ `otherPlan.summary`. Giải thích tab cho user: chỉ "Không
   liên quan" là dấu RIÊNG người xem; dấu tay (Không điều · Không điều ngày này · Ngoài app) là sổ của kho; nháp là bản CHUNG kho × ngày × mảng.
+- **14/10 — GỌN THANH CÔNG CỤ BÀN (user: "bố cục lộn xộn, không gian đọc hẹp — thu gọn action / filter lên trên, icon + tooltip; đổi
+  Bảng/Thẻ mà công tắc chạy đi chỗ khác"; `1f2242ee` · `9c8b6161` · `df8e7625`):** chrome trước bảng 5–6 hàng → 3 (tiêu đề + tab · mảng
+  + trạng thái + cụm nút · thanh công cụ bàn). Dải Soát (Tất cả · Cần xử lý · chip vấn đề) và nút Chỉ số không còn hàng riêng — vào thanh
+  công cụ của bàn qua prop `soat` / `right` của `DispatchBoard` (logic vẫn ở `Dispatch.tsx`); câu "không còn xe chờ người quyết" vào
+  tooltip chip Cần xử lý (xanh lá khi 0). Thứ tự hàng CỐ ĐỊNH: công tắc Bảng | Thẻ (icon) ĐẦU hàng · tìm (≤ 220 px) · Soát · Nhóm (MỘT
+  nút xoay Vùng ⇄ Loại xe) · chip dải % (≤ 150 px, đủ ở 2xl) · sắp xếp · Mở hết · Chỉ dòng xe (LUÔN có mặt, mờ ở dạng Thẻ) · ô thả Xe mới
+  (icon) · [phải] chỉ số inline (chỉ 2xl) · Chỉ số · Hoàn tác · Làm lại · Tối ưu lại. Gốc lỗi "công tắc chạy chỗ khác": dạng Thẻ đặt thanh
+  công cụ TRONG cột phải (cạnh khung chờ) còn dạng Bảng đặt trên cả hai ⇒ đổi dạng là công tắc dịch một bề rộng khung chờ (đo 296 → 596 px);
+  nay dạng Thẻ cũng đặt thanh trên cả hai (296 → 296). Cụm nút đầu trang: chỉ Xác nhận có chữ, Mở lại · Excel · Bỏ nháp = icon + tooltip
+  (03/10 từng để chữ Bỏ nháp vì user không thấy — nay cụm gọn một hàng, icon đỏ đứng cố định cuối). Điện thoại: thanh công cụ MỘT hàng
+  cuộn ngang; 390 không tràn. Đo 1280 có sidebar: một hàng khi vai đủ phạm vi (chip "Ngoài phạm vi" của vai bị giới hạn làm cụm phải rớt).
+  Chụp `ui1410/B1_1280_bang · B2_1280_the · B3_390` (`shot_1410.mjs`).

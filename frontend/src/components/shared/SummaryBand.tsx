@@ -15,27 +15,18 @@ export interface BandTile {
   tip?: string       // giải thích ý nghĩa con số khi nhãn ngắn dễ hiểu sai (vd "thùng quy đổi")
 }
 
-/** Chữ thô của một giá trị ô (chuỗi / số / phần tử lồng) — chỉ để ước bề rộng khi chia hàng `inline`. */
-const textOf = (n: React.ReactNode): string =>
-  typeof n === 'string' || typeof n === 'number' ? String(n)
-    : Array.isArray(n) ? n.map(textOf).join('')
-    : React.isValidElement(n) ? textOf((n.props as { children?: React.ReactNode }).children) : ''
-
 export function SummaryBand({ tiles, className, compact, inline }: { tiles: BandTile[]; className?: string; compact?: boolean; inline?: boolean }) {
   // INLINE (14/10, bàn ghép xe): dải đứng CHUNG HÀNG với cụm nút đầu trang — một hàng ở MỌI cỡ màn (không lưới điện thoại), bo góc.
-  // Máy tính: các ô CHIA ĐỀU bề rộng được cấp (màn 24" ô rộng, 1280 ô hẹp) — cùng một bố cục ở mọi màn (user 14/10: "màn 24 inch hiển
-  // thị khác, phải đồng bộ với các loại màn hình"); chật thì chỉ NHÃN bị cắt "…" (rê chuột xem đủ), CON SỐ không bao giờ cắt — nhãn
-  // `sm:w-0 sm:min-w-full` không góp bề rộng tối thiểu của ô, nên ô co tới đúng bề rộng con số. Điện thoại: ô rộng theo nhãn, khung ngoài
-  // cuộn ngang. ⓘ chỉ trên màn cảm ứng (dưới sm) — máy tính rê chuột đọc `title`.
+  // Mỗi ô rộng ĐÚNG theo nhãn / con số của nó (`flex-auto`), phần thừa chia đều — màn 24" ô rộng ra, 1280 có sidebar vừa khít, KHÔNG chữ
+  // nào bị cắt (user 14/10: "màn 24 inch hiển thị khác, phải đồng bộ với các loại màn hình"). Hết chỗ thật (hàng còn ô chọn kế hoạch +
+  // Khai thiếu ở 1280, điện thoại) thì khung NGOÀI cuộn ngang có mép mờ (`useEdgeFade`) — không cắt nhãn / số. (Thử 14/10: chia đều ⇒ 4
+  // nhãn bị cắt ở 1280; chia theo số ký tự ⇒ còn 2 — ước bề rộng chữ không chính xác.) ⓘ chỉ dưới sm — máy tính rê chuột đọc `title`.
   if (inline) return (
     <div className={`flex divide-x divide-white/15 bg-sky-800 text-white rounded-md ${className ?? ''}`}>
       {tiles.map((t, i) => (
-        // chia bề rộng THEO ĐỘ DÀI CHỮ của ô (nhãn 9 px hay con số 12 px, cái nào dài hơn) — không chia đều: đo 1280 chia đều thì "Vượt
-        // tải" / "Khung chờ" / "OD trên xe" bị cắt trong khi ô "Tấn" thừa chỗ, chia theo nhãn thì ô Σ cước (số kèm Δ) giành chỗ của "Chuyến"
-        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} style={{ flexGrow: Math.max(3, t.label.length, Math.ceil(textOf(t.value).length * 1.35)), flexBasis: 0 }}
-          className="flex flex-col justify-between text-center px-1 py-0.5">
-          <div className="sm:w-0 sm:min-w-full text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
-            <span className="min-w-0 truncate">{t.label}</span>
+        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} className="flex-auto flex flex-col justify-between text-center px-1.5 py-0.5">
+          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
+            <span>{t.label}</span>
             {t.tip && (
               <span className="sm:hidden shrink-0 [&_button]:text-sky-200/70 [&_button:hover]:text-white [&_svg]:h-3 [&_svg]:w-3" onClick={e => e.stopPropagation()}>
                 <InfoTip tip={t.tip} />

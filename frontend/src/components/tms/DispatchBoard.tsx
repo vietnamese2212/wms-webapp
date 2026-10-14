@@ -57,10 +57,21 @@ const money = (n: number | string | null | undefined) => {
   return a >= 1e6 ? `${nf(v / 1e6, 2)} tr` : `${nf(v)} ₫`
 }
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
-/** Lần thả bị LUẬT chặn (vượt số khách cùng xe · chở lẫn Loại kho khi switch tắt) — hiện HỘP THOẠI, không toast góc màn (14/10, user:
- *  "nếu vượt thì chặn luôn và có popup"). Lỗi khác (mạng, quyền…) vẫn toast. */
-export const RULE_BLOCK_CODES = new Set(['DROPS_EXCEEDED', 'CATEGORY_MIX_BLOCKED'])
+/** Thao tác bị LUẬT GHÉP XE chặn — hiện HỘP THOẠI, không toast góc màn (14/10, user: "nếu vượt thì chặn luôn và có popup" → "làm sai
+ *  rule cần hiện popup và ngăn chặn, không chỉ số khách"). Mã do BE `manualRuleBlocks` / cửa Xác nhận trả; lỗi khác (mạng, quyền…) vẫn toast. */
+const RULE_TITLE: Record<string, string> = {
+  DROPS_EXCEEDED: 'Xe không nhận thêm khách', CATEGORY_MIX_BLOCKED: 'Xe không nhận Loại kho này', LOAD_EXCEEDED: 'Xe sẽ vượt tải',
+  SEPARATE_CUSTOMER: 'Khách đi xe riêng', CHANNEL_MIX_BLOCKED: 'Kho không cho trộn kênh khách', CONDITION_MISMATCH: 'Xe không chở được điều kiện bảo quản',
+  VEHICLE_NOT_ALLOWED: 'Khách không được vào dòng xe này', MULTI_VEHICLE_BLOCKED: 'Không ghép được nhiều xe trên thẻ',
+  TRIP_RULE_VIOLATION: 'Chưa xác nhận được — có xe sai quy định ghép xe',
+}
+export const RULE_BLOCK_CODES = new Set(Object.keys(RULE_TITLE))
 export const apiCode = (e: unknown) => (e as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code ?? null
+/** Hộp thoại "sai quy định": tiêu đề theo luật, thân là câu BE (nhiều luật thì mỗi dòng một luật). */
+export const ruleDialog = (e: unknown) => ({
+  title: RULE_TITLE[apiCode(e) ?? ''] ?? 'Sai quy định ghép xe', cancelLabel: null,
+  body: <div className="whitespace-pre-line text-sm">{apiMsg(e)}</div>,
+})
 const DRAG_MIME = 'application/x-dispatch-ods'
 const uniqStr = (a: string[]) => [...new Set(a)]
 type Op = { ids: string[]; to: DispatchMoveTo; to_trip_id?: string; prev: Map<string, string | null>; created?: string }
@@ -152,7 +163,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   useEffect(() => { setSel(p => { const n = new Set([...p].filter(id => rowBy.has(id))); return n.size === p.size ? p : n }) }, [rowBy])
 
   const err = (e: unknown, title: string) => RULE_BLOCK_CODES.has(apiCode(e) ?? '')
-    ? void ask({ title: apiCode(e) === 'DROPS_EXCEEDED' ? 'Xe không nhận thêm khách' : 'Xe không nhận Loại kho này', body: apiMsg(e), cancelLabel: null })
+    ? void ask(ruleDialog(e))
     : toast({ variant: 'destructive', title, description: apiMsg(e) })
 
   // ── MỘT cửa ghi cho mọi lần thả / chuyển (kể cả Hoàn tác) ──
@@ -316,7 +327,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const shownTrips = useMemo(() => {
     let l = trips.filter(t => !q || t.group_code.toLowerCase().includes(q) || t.ods.some(o => matches(o, q)))
     if (f.issue === 'todo') l = l.filter(t => needsWork(t, ctx))
-    else if (f.issue) l = l.filter(t => issuesOf(t, ctx).includes(f.issue as IssueKey))
+    // khoá lọc không còn (14/10: "drops" gộp vào "rule") ⇒ bỏ lọc, không để bàn trắng mà không chip nào sáng
+    else if (f.issue && (ISSUE_ORDER as string[]).includes(f.issue)) l = l.filter(t => issuesOf(t, ctx).includes(f.issue as IssueKey))
     // SẮP LẠI SAU MỖI LẦN THẢ (user 25/09: "kéo thả xong thì không sort nữa") — sort ổn định, hoà thì theo số xe
     const regionOf = (t: DispatchTrip) => `${t.ods[0]?.region_code ?? '~'}|${t.wards[0] ?? '~'}|${mainCustOf(t)}`
     const by: Record<string, (a: DispatchTrip, b: DispatchTrip) => number> = {
@@ -393,8 +405,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     setBulk(null); setBulkVal(''); setSel(new Set())
     // xe bị luật chặn (dòng xe mới nhận ít khách hơn số khách đang trên xe — 14/10): nêu từng xe ngay trong hộp thoại, mở xe ra cũng không thấy lý do
     const ruled = rs.flatMap(r => r.status === 'rejected' && RULE_BLOCK_CODES.has(apiCode(r.reason) ?? '') ? [apiMsg(r.reason)] : [])
-    if (ruled.length) void ask({ title: `${ruled.length} xe không đổi được dòng xe`, cancelLabel: null,
-      body: <ul className="list-disc pl-4 space-y-1 text-xs">{ruled.slice(0, 8).map((m, i) => <li key={i}>{m}</li>)}{ruled.length > 8 && <li>… và {ruled.length - 8} xe nữa</li>}</ul> })
+    if (ruled.length) void ask({ title: `${ruled.length} xe không đổi được ${bulk === 'carrier' ? 'ĐVVT' : 'dòng xe'} — sai quy định ghép xe`, cancelLabel: null,
+      body: <ul className="list-disc pl-4 space-y-1 text-xs whitespace-pre-line">{ruled.slice(0, 8).map((m, i) => <li key={i}>{m}</li>)}{ruled.length > 8 && <li>… và {ruled.length - 8} xe nữa</li>}</ul> })
     toast({
       title: `Đã đổi ${bulk === 'carrier' ? 'ĐVVT' : 'dòng xe'} cho ${rs.length - bad}/${rs.length} xe`,
       description: bad ? `${bad} xe không đổi được — mở từng xe để xem lý do.` : 'Cước đã tính lại theo bảng cước hiệu lực.',

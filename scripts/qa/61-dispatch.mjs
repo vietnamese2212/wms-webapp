@@ -693,19 +693,23 @@ try {
   const de = await api(`/tms/dispatch/trips/${TN.id}`, 'DELETE')
   check('10f. Bỏ xe còn OD → 409 TRIP_NOT_EMPTY · bỏ xe trống → 200', dne.s === 409 && dne.j?.error?.code === 'TRIP_NOT_EMPTY' && de.s === 200, `nonempty=${dne.s}/${dne.j?.error?.code} empty=${de.s}`)
   B = await planOf(B.id)
+  const X3g = tripOfOd(B, OD[2])
   const mo = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
-  B = mo.j?.data
+  B = await planOf(B.id)
   const TO = tripOfOd(B, OD[0])
-  check('10g. Thả làm xe VƯỢT TẢI → CHO THẢ (user chốt): 10/9 pallet 111,1 % · oversize · cảnh báo "Vượt sức chứa" · summary overload 1',
-    mo.s === 200 && Number(TO?.pallets) === 10 && Number(TO?.load_pct) === 111.1 && TO?.oversize === true && /Vượt sức chứa/.test((TO?.detail?.warnings ?? []).join(' ')) && B?.summary?.overload === 1,
-    `http=${mo.s} pal=${TO?.pallets} load=${TO?.load_pct} over=${TO?.oversize} warn=${(TO?.detail?.warnings ?? []).join('|').slice(0, 80)}`)
-  // xe OD3 cũ giờ trống — bỏ đi để "Tối ưu lại" chỉ còn đúng một xe khoá
+  // 14/10 (user: "làm sai rule cần hiện popup và ngăn chặn — không chỉ số khách") — bản 25/09 ở đây KHOÁ hành vi cũ "cho thả, đánh dấu đỏ"
+  check('10g. Thả làm xe VƯỢT TẢI (10/9 pallet > trần) → CHẶN 409 LOAD_EXCEEDED nêu % + trần · OD3 ở nguyên xe · xe OD1 vẫn 7 pallet',
+    mo.s === 409 && mo.j?.error?.code === 'LOAD_EXCEEDED' && /quá trần/.test(mo.j?.error?.message ?? '') && tripOfOd(B, OD[2])?.id === X3g?.id && Number(TO?.pallets) === 7,
+    `http=${mo.s} ${mo.j?.error?.code ?? ''} ${(mo.j?.error?.message ?? '').slice(0, 100)} od3Xe=${tripOfOd(B, OD[2])?.id === X3g?.id} x1=${TO?.pallets}`)
   for (const t of (B?.trips ?? []).filter(x => !x.ods.length)) await api(`/tms/dispatch/trips/${t.id}`, 'DELETE')
+  // khoá CẢ HAI xe (OD1+OD2 · OD3) ⇒ mọi OD đều trên xe khoá
   const lk = await api(`/tms/dispatch/trips/${TO.id}`, 'PATCH', { locked: true })
+  const lk3 = await api(`/tms/dispatch/trips/${X3g.id}`, 'PATCH', { locked: true })
   const ro = await api(`/tms/dispatch/plans/${B.id}/reoptimize`, 'POST', {})
   check('10h. Khoá xe → "Tối ưu lại" khi mọi OD đều trên xe khoá → 422 NOTHING_TO_OPTIMIZE (xe khoá không bị đụng)',
-    lk.s === 200 && lk.j?.data?.locked === true && ro.s === 422 && ro.j?.error?.code === 'NOTHING_TO_OPTIMIZE', `lock=${lk.s} reopt=${ro.s}/${ro.j?.error?.code}`)
+    lk.s === 200 && lk.j?.data?.locked === true && lk3.s === 200 && ro.s === 422 && ro.j?.error?.code === 'NOTHING_TO_OPTIMIZE', `lock=${lk.s}/${lk3.s} reopt=${ro.s}/${ro.j?.error?.code}`)
   await api(`/tms/dispatch/trips/${TO.id}`, 'PATCH', { locked: false })
+  await api(`/tms/dispatch/trips/${X3g.id}`, 'PATCH', { locked: false })
   const ro2 = await api(`/tms/dispatch/plans/${B.id}/reoptimize`, 'POST', {})
   B = ro2.j?.data
   check('10i. Mở khoá → Tối ưu lại → máy ghép lại như lần đầu: OD1+OD2 một xe · OD3 xe khác · khung chờ rỗng',
@@ -1206,13 +1210,14 @@ try {
     check('13b. Khách chỉ được vào MỘT dòng xe ⇒ OD lên đúng dòng xe đó (không lên xe QA rẻ hơn) · dòng OD chụp danh sách',
       pV.s === 201 && tV?.vehicle_model_id === pick?.id && JSON.stringify(rowOf(PV, OD[0])?.allowed_models) === JSON.stringify([pick?.id]),
       `http=${pV.s} ${pV.j?.error?.message ?? ''} vm=${tV?.detail?.vehicle_model?.name} snap=${JSON.stringify(rowOf(PV, OD[0])?.allowed_models)}`)
-    // Người tự đổi xe của khách sang dòng xe không được vào (xe QA) ⇒ không chặn (nháp) nhưng xe cảnh báo nêu khách
+    // Người tự đổi xe của khách sang dòng xe không được vào (xe QA) ⇒ CHẶN (14/10, user: "làm sai rule cần popup và ngăn chặn" — bản
+    // 28/09 cho đổi rồi cảnh báo). Xe QA có thể còn không chở được mức lạnh của hàng ⇒ mã đầu có thể là CONDITION_MISMATCH, câu vẫn phải nêu khách
     if (tV) {
       const ch = await api(`/tms/dispatch/trips/${tV.id}`, 'PATCH', { vehicle_model_id: vmId })
       const qNow = (await planOf(PV.id))?.trips?.find(t => t.id === tV.id)
-      check('13c. Người đổi xe của khách sang dòng xe không được vào ⇒ cho đổi, xe cảnh báo "không được vào dòng xe"',
-        ch.s === 200 && qNow?.vehicle_model_id === vmId && /không được vào dòng xe/.test((qNow?.detail?.warnings ?? []).join(' ')),
-        `http=${ch.s} ${ch.j?.error?.message ?? ''} warn=${(qNow?.detail?.warnings ?? []).join(' | ').slice(0, 160)}`)
+      check('13c. Người đổi xe của khách sang dòng xe không được vào ⇒ CHẶN 409 nêu "không được vào dòng xe" · xe giữ dòng xe cũ',
+        ch.s === 409 && ['VEHICLE_NOT_ALLOWED', 'CONDITION_MISMATCH'].includes(ch.j?.error?.code) && /không được vào dòng xe/.test(ch.j?.error?.message ?? '') && qNow?.vehicle_model_id === pick?.id,
+        `http=${ch.s} ${ch.j?.error?.code ?? ''} ${(ch.j?.error?.message ?? '').slice(0, 160)} vm=${qNow?.detail?.vehicle_model?.name}`)
     } else check('13c. Fixture: OD1 phải có xe ở [13b]', false)
     // Hàng loạt: Thêm / Bớt / Về theo kênh gộp vào map từng khách, không đè khoá khác
     const bAdd = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c1.id], patch: { dispatch_vehicles: { category: null, mode: 'ADD', vehicle_model_ids: [other?.id] } } })
@@ -1551,10 +1556,11 @@ try {
       const one = await api(`/tms/dispatch/trips/${tM.id}`, 'PATCH', { vehicle_model_id: vmId })
       const two = await api(`/tms/dispatch/trips/${tM.id}`, 'PATCH', { vehicle_model_ids: [vmId, vmId] })
       const badIds = await api(`/tms/dispatch/trips/${tM.id}`, 'PATCH', { vehicle_model_ids: [vmId, 'd4c5d4c5-0000-4000-8000-000000000000'] })
-      check('15h. Người chọn MỘT xe → thẻ về một xe, cảnh báo vượt sức chứa · chọn 2 xe → lại chia 9 + 5 · dòng xe không có thật → 400',
-        one.s === 200 && (one.j?.data?.extra_vehicle_model_ids ?? []).length === 0 && /Vượt sức chứa/.test((one.j?.data?.detail?.warnings ?? []).join(' '))
+      // 14/10 (user: "làm sai rule cần popup và ngăn chặn"): về MỘT xe 9 pallet cho 14 pallet = vượt trần ⇒ CHẶN (bản 27/09 cho về rồi cảnh báo)
+      check('15h. Người chọn MỘT xe làm thẻ vượt tải → CHẶN 409 LOAD_EXCEEDED, thẻ giữ 2 xe · chọn 2 xe → chia 9 + 5 · dòng xe không có thật → 400',
+        one.s === 409 && one.j?.error?.code === 'LOAD_EXCEEDED'
         && two.s === 200 && JSON.stringify(two.j?.data?.extra_vehicle_model_ids) === JSON.stringify([vmId]) && Number(two.j?.data?.load_pct) === 77.8 && badIds.s === 400,
-        `one=${one.s} extra=${JSON.stringify(one.j?.data?.extra_vehicle_model_ids)} two=${two.s} load=${two.j?.data?.load_pct} bad=${badIds.s}`)
+        `one=${one.s} ${one.j?.error?.code ?? ''} ${(one.j?.error?.message ?? '').slice(0, 90)} two=${two.s} load=${two.j?.data?.load_pct} bad=${badIds.s}`)
       const cf = await api(`/tms/dispatch/plans/${PM.id}/confirm`, 'POST', {})
       const kl = await restAll('khvc_lines', `select=do_no,vehicle_model_id,extra_vehicle_model_ids&group_code=eq.${tM.group_code}`)
       const klist = await api(`/external/khvc?do_no=${OD11}`)

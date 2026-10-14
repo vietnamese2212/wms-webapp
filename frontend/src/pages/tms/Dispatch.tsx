@@ -21,10 +21,10 @@ import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangl
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { DispatchDraftsTable } from '@/components/tms/DispatchDraftsTable'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { DispatchBoard, RULE_BLOCK_CODES, apiCode } from '@/components/tms/DispatchBoard'
+import { DispatchBoard, RULE_BLOCK_CODES, apiCode, ruleDialog } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
-import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, type IssueKey } from '@/components/tms/dispatchIssues'
+import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, ruleWarnings, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -210,9 +210,9 @@ export default function Dispatch() {
     navigate(location.pathname, { replace: true, state: null })
   }, [openGroupCode, plan, navigate, location.pathname])
 
-  // lần chuyển / đổi dòng xe bị LUẬT chặn (vượt số khách · chở lẫn Loại kho) ⇒ hộp thoại như trên bàn (14/10); lỗi khác vẫn toast
+  // lần chuyển / đổi dòng xe / Xác nhận bị LUẬT GHÉP XE chặn ⇒ hộp thoại như trên bàn (14/10); lỗi khác vẫn toast
   const err = (e: unknown, title: string) => RULE_BLOCK_CODES.has(apiCode(e) ?? '')
-    ? void ask({ title: apiCode(e) === 'DROPS_EXCEEDED' ? 'Xe không nhận thêm khách' : 'Xe không nhận Loại kho này', body: apiMsg(e), cancelLabel: null })
+    ? void ask(ruleDialog(e))
     : toast({ variant: 'destructive', title, description: apiMsg(e) })
   // XEM ĐƠN (07/10, user: "nút là Xem đơn, tức là load lấy các đơn"): nạp đơn chưa đi của kho × ngày × mảng vào CHỜ ĐIỀU — không hỏi dải
   // tải (hộp thoại dải đứng trước "Tạo kế hoạch"), không ghép xe nào. Đã có kế hoạch đang mở thì server trả lại đúng kế hoạch đó (`reuse`)
@@ -253,7 +253,9 @@ export default function Dispatch() {
     const odTrips = new Map<string, string[]>()
     for (const t of open) for (const od of new Set(t.ods.map(o => o.od_number))) odTrips.set(od, [...(odTrips.get(od) ?? []), t.group_code])
     const split = [...odTrips].filter(([, g]) => g.length > 1)
-    const over = open.filter(t => t.ods.length && t.oversize).length
+    // 14/10 (user: "làm sai rule cần hiện popup và ngăn chặn"): xe vượt tải / sai luật ghép xe ⇒ cửa Xác nhận trả 409 TRIP_RULE_VIOLATION
+    // (bản 25/09 chỉ là một dòng cảnh báo "Xe vượt tải" trong hộp thoại rồi vẫn cho chốt) — nói TRƯỚC, đưa tới đúng xe
+    const ruled = open.filter(t => t.ods.length && (t.oversize || ruleWarnings(t).length > 0))
     // chỉ khung chờ CỦA kế hoạch (07/10) — đơn Chờ điều chưa từng vào kế hoạch, không phải "bị bỏ lại"
     const poolN = planView?.summary.pool_ods ?? 0
     // 03/10 tối: cờ "SAP đã post" / "SAP đã gắn xe" chỉ THAM CHIẾU — hỏi lại một lần, không chặn (người không đánh dấu Ngoài app là đã quyết điều)
@@ -287,6 +289,18 @@ export default function Dispatch() {
       })
       return
     }
+    if (ruled.length) {
+      await ask({
+        title: `Chưa xác nhận được: ${ruled.length} xe sai quy định ghép xe — sửa trên Bàn ghép xe`, danger: true, cancelLabel: null,
+        body: close => <CheckRows close={close} rows={[
+          ...ruled.slice(0, 8).map(t => ({ k: t.id, tone: 'warn' as const, label: `#${t.seq} ${t.group_code}`,
+            value: [t.oversize ? `vượt tải ${nf(t.load_pct)}%` : '', ...ruleWarnings(t)].filter(Boolean).join(' · ') })),
+          ...(ruled.length > 8 ? [{ k: 'more', tone: 'warn' as const, label: `… và ${ruled.length - 8} xe nữa`, value: '' }] : []),
+          { k: 'go', tone: 'info', label: 'Lọc các xe này trên Bàn ghép xe', value: nf(ruled.length), go: toBoard(ruled.some(t => ruleWarnings(t).length > 0) ? 'rule' : 'over') },
+        ]} />,
+      })
+      return
+    }
     if (split.length) {
       await ask({
         title: `Không xác nhận được: ${split.length} OD nằm ở hai xe — gom mỗi OD về một xe`, danger: true, cancelLabel: null,
@@ -306,7 +320,6 @@ export default function Dispatch() {
       { k: 'empty', tone: 'info', label: 'Xe trống sẽ bị bỏ', value: nf(emptyN) },
       { k: 'nocarrier', tone: 'warn', label: 'Xe chưa có ĐVVT', value: nf(noCarrier), go: toBoard('nocarrier') },
       { k: 'nofreight', tone: 'warn', label: 'Xe chưa có cước', value: nf(noFreight), go: toBoard('nofreight') },
-      { k: 'over', tone: 'warn', label: 'Xe vượt tải', value: nf(over), go: toBoard('over') },
       { k: 'pool', tone: 'warn', label: 'Đơn còn ở khung chờ — về Chờ điều', value: nf(poolN), go: toBoard('') },
       // 13/10 (vòng 3 test): kế hoạch ngày đã qua xác nhận được không ai hỏi — cảnh báo, KHÔNG chặn (hôm qua chưa kịp chốt vẫn phải ghi)
       ...(plan.plan_date < todayVN() ? [{ k: 'past', tone: 'warn' as const, label: 'Ngày kế hoạch đã qua — chuyến Xuất kho sẽ mang ngày này', value: formatDate(plan.plan_date) }] : []),
@@ -439,7 +452,7 @@ export default function Dispatch() {
       {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
          { k: 'todo', label: 'Cần xử lý', n: todoN, tip: todoN === 0
            ? `Không còn xe nào chờ người quyết${issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}`
-           : 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / vượt số khách / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
+           : 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / sai quy định ghép xe / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
          ...ISSUES.filter(i => issueN[i.key] > 0).map(i => ({ k: i.key as string, label: i.label, n: issueN[i.key], tip: i.tip })),
         ]).map(o => (
         <button key={o.k || 'all'} type="button" title={o.tip} onClick={() => setF({ issue: o.k })} aria-pressed={f.issue === o.k}

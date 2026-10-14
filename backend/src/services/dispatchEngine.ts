@@ -363,6 +363,86 @@ export function dropsBlockReason(model: { name: string; max_drops: number | null
     ? `Xe sẽ chở ${after} khách — ${why}. Thả vào xe khác hoặc ô Xe mới.`
     : `Các OD đang chọn thuộc ${after} khách — ${why}. Thả từng khách vào một xe.`
 }
+
+/** Dòng OD như cửa làm tay thấy (cột của `dispatch_trip_od`). */
+export type RuleRow = StopRow & {
+  ship_to_name?: string | null; separate?: boolean | null; allowed_models?: string[] | null; conditions?: string[] | null
+  pallets?: number | string | null; tons?: number | string | null; cat_load?: unknown
+}
+export type RuleBlockCode = 'MULTI_VEHICLE_BLOCKED' | 'CATEGORY_MIX_BLOCKED' | 'DROPS_EXCEEDED' | 'SEPARATE_CUSTOMER' | 'CHANNEL_MIX_BLOCKED'
+  | 'CONDITION_MISMATCH' | 'VEHICLE_NOT_ALLOWED' | 'LOAD_EXCEEDED'
+export interface RuleBlock { code: RuleBlockCode; message: string }
+/** LUẬT GHÉP XE Ở CỬA LÀM TAY (14/10, user: "việc làm sai rule cần hiện popup và ngăn chặn — không chỉ số khách tối đa mà còn những cái
+ *  khác nữa"): MỘT hàm cho mọi cửa người làm tay (kéo thả vào xe · xe mới · chuyển từng OD · đổi dòng xe · Xác nhận) — đúng các luật máy
+ *  ghép tuân thủ khi lập xe: luật 11 thẻ nhiều xe · luật 9 không trộn Loại kho (switch) · số khách cùng xe · luật 1 đi xe riêng · không trộn
+ *  kênh khách (cờ kho) · luật 4 điều kiện bảo quản · luật 10 dòng xe khách được vào · luật 3 sức chứa (trần dải tải). Trả MỌI luật bị phạm
+ *  (rỗng = cho làm), thứ tự trên là thứ tự ưu tiên của mã lỗi.
+ *  `fleet` = xe chính + xe phụ ĐÃ gắn dải tải của kế hoạch (`withLoadBands`). `staying` = OD đang trên xe; `moving` = OD người đưa lên.
+ *  Chỉ chặn cái LẦN NÀY gây ra: khách / kênh mới, điều kiện / danh sách dòng xe của OD đưa lên, tải SAU khi nhận — xe vượt từ trước vẫn
+ *  kéo ra được. `modelOnly` (đổi dòng xe): chỉ hỏi luật phụ thuộc XE (thẻ nhiều xe · số điểm của dòng xe · điều kiện · dòng xe được vào ·
+ *  sức chứa) trên MỌI OD của xe. KHÔNG chặn: Non tải (người được Gom lô dưới tối thiểu — 12/10) · khách CHƯA KHAI dòng xe được vào
+ *  (kênh KHAC tự lấy — user 08/10) · OD chưa biết kênh. */
+export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], moving: RuleRow[], o: {
+  allowMixCategories?: boolean | null; allowMixChannels: boolean; follow: string[]
+  channelOf?: (shipTo: string | null) => string | null; condLabel?: (c: string) => string
+  maxVehicles?: number; modelOnly?: boolean
+}): RuleBlock[] {
+  const out: RuleBlock[] = []
+  const all = [...staying, ...moving]
+  const keyOf = (r: RuleRow) => r.ship_to_code ?? r.od_number
+  const who = (r: RuleRow) => r.ship_to_name || r.ship_to_code || r.od_number
+  const few = (xs: string[]) => `${xs.slice(0, 3).join(', ')}${xs.length > 3 ? '…' : ''}`
+  const m0 = fleet[0] ?? null
+  const models = fleet.filter((m, i) => fleet.findIndex(x => x.id === m.id) === i)
+  // luật 11 — chỉ khi người ĐỔI tổ hợp xe (xe đang có không bị hỏi lại)
+  if (o.modelOnly && fleet.length > 1) {
+    const no = models.filter(m => m.multi_vehicle === false)
+    if (no.length) out.push({ code: 'MULTI_VEHICLE_BLOCKED', message: `Dòng xe ${few(no.map(m => m.name))} không được ghép nhiều xe trên một thẻ (Cài đặt TMS → Mã dòng xe / Loại xe → Ghép nhiều xe).` })
+    if (o.maxVehicles && fleet.length > o.maxVehicles) out.push({ code: 'MULTI_VEHICLE_BLOCKED', message: `Thẻ ${fleet.length} xe — kho chỉ cho tối đa ${o.maxVehicles} xe một thẻ (Cài đặt WMS → Kho → XUẤT — Điều vận).` })
+  }
+  if (!o.modelOnly) {
+    const mix = mixBlockReason(o.allowMixCategories, staying, moving, o.follow)
+    if (mix) out.push({ code: 'CATEGORY_MIX_BLOCKED', message: mix })
+    const drops = dropsBlockReason(m0, staying, moving)
+    if (drops) out.push({ code: 'DROPS_EXCEEDED', message: drops })
+    // luật 1: khách bật "Đi xe riêng" không chung xe với khách nào khác
+    const before = new Set(staying.map(keyOf)).size, after = new Set(all.map(keyOf)).size
+    if (after > 1 && after > before) {
+      const sep = uniq(all.filter(r => r.separate === true).map(who))
+      if (sep.length) out.push({ code: 'SEPARATE_CUSTOMER', message: `Khách ${few(sep)} đi xe riêng (Khách hàng → Đi xe riêng) — không ghép khách khác cùng xe.` })
+    }
+    // kho không cho trộn kênh khách — OD chưa biết kênh không tính
+    if (!o.allowMixChannels && o.channelOf) {
+      const chs = (rs: RuleRow[]) => new Set(rs.map(r => o.channelOf!(r.ship_to_code)).filter((c): c is string => !!c))
+      const cb = chs(staying), ca = chs(all)
+      if (ca.size > 1 && ca.size > cb.size) out.push({ code: 'CHANNEL_MIX_BLOCKED', message: cb.size
+        ? `Xe đang chở kênh ${[...cb].sort(cmp).join(', ')} — đơn đưa lên là kênh ${[...ca].filter(c => !cb.has(c)).sort(cmp).join(', ')}; kho không cho trộn kênh khách trên một xe (Cài đặt WMS → Kho → XUẤT — Điều vận).`
+        : `Các OD đang chọn thuộc nhiều kênh (${[...ca].sort(cmp).join(', ')}) — kho không cho trộn kênh khách trên một xe.` })
+    }
+  } else if (m0) {
+    const stops = new Set(all.map(keyOf)).size
+    if (stops > modelDrops(m0)) out.push({ code: 'DROPS_EXCEEDED', message: `Xe đang chở ${stops} khách — dòng xe ${m0.name} chỉ nhận ${modelDrops(m0)} khách (Cài đặt TMS → Mã dòng xe → Điểm giao tối đa). Chọn dòng xe nhận đủ số khách, hoặc kéo bớt khách sang xe khác.` })
+  }
+  const asked = o.modelOnly ? all : moving
+  // hàng chỉ "đi kèm đơn" (POSM) theo xe của đơn chính — không mang điều kiện / danh sách dòng xe riêng (cùng luật `followOnlyOd`)
+  const posmOnly = (r: RuleRow) => { const ks = Object.keys((r.cat_load ?? {}) as Record<string, unknown>); return ks.length > 0 && !mainCatsOf(ks.map(c => ({ category: c })), o.follow).length }
+  for (const m of models) {
+    const conds = uniq(asked.flatMap(r => r.conditions ?? []).filter(Boolean)).sort(cmp)
+    if (conds.length && !servesConditions(m, conds))
+      out.push({ code: 'CONDITION_MISMATCH', message: `Dòng xe ${m.name} không chở được điều kiện bảo quản ${conds.map(c => o.condLabel?.(c) ?? c).join(' + ')} của đơn${o.modelOnly ? ' trên xe' : ' đưa lên'}.` })
+    const outList = asked.filter(r => Array.isArray(r.allowed_models) && r.allowed_models.length > 0 && !r.allowed_models.includes(m.id) && !posmOnly(r))
+    if (outList.length) out.push({ code: 'VEHICLE_NOT_ALLOWED', message: `Khách ${few(uniq(outList.map(who)))} không được vào dòng xe ${m.name} (Khách hàng → Dòng xe được vào).` })
+  }
+  // luật 3: tải SAU thao tác không quá trần dải tải (01/10: trần của dòng xe cha, vd 105 %) — chỉ khi lần này THÊM tải hoặc đổi xe
+  if (m0 && asked.length) {
+    const sumOf = (k: 'pallets' | 'tons') => all.some(r => r[k] == null || r[k] === '') ? null : r3(all.reduce((s, r) => s + Number(r[k]), 0))
+    const lm = fleet.length > 1 ? comboModel(fleet) : m0
+    const ld = tripLoad(lm, sumOf('pallets'), sumOf('tons'), null)
+    const max = ld.max_pct ?? 100
+    if (ld.pct != null && ld.pct > max) out.push({ code: 'LOAD_EXCEEDED', message: `Xe sẽ tải ${ld.pct}% — quá trần ${max}% của ${fleet.length > 1 ? `${fleet.length} xe trên thẻ cộng lại` : `dòng xe ${m0.name}`}. ${o.modelOnly ? 'Chọn dòng xe lớn hơn hoặc kéo bớt OD.' : 'Thả vào xe khác / ô Xe mới, hoặc đổi xe lớn hơn trước.'}` })
+  }
+  return out
+}
 /** ĐK bảo quản của MỘT dòng hàng (26/09): hàng nằm ở ô KHAI RIÊNG ĐK thì mang ĐK của ô đó; ô không khai (null) và mã không
  *  có tồn ở ô khai riêng ⇒ theo Loại kho. `stock` = các ĐK của những ô đang chứa mã này (null = ô theo loại kho). */
 export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined, follow = false): string[] {

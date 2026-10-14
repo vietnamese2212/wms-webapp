@@ -3,8 +3,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
-  mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, mixBlockReason, dropsBlockReason, splitLoad, priceCombo,
-  type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
+  mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, mixBlockReason, dropsBlockReason, manualRuleBlocks, splitLoad, priceCombo,
+  type RuleRow, type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
 const model = (o: Partial<EngineModel> & { id: string }): EngineModel => ({
@@ -744,6 +744,59 @@ describe('dropsBlockReason — kéo tay vượt số khách cùng xe ⇒ CHẶN 
   })
   it('OD không mã ship-to đếm theo số OD', () => {
     expect(dropsBlockReason(xe16, [od('A', null)], [od('B', null)])).toMatch(/2 khách/)
+  })
+})
+describe('manualRuleBlocks — MỌI luật ghép xe ở cửa làm tay (user 14/10: "làm sai rule cần popup và ngăn chặn — không chỉ số khách")', () => {
+  // xe 9 pallet, trần 105 %, 9 điểm, chở lạnh (2-8); hàng mặc định không điều kiện, khách cho mọi dòng xe
+  const xe = model({ id: 'X9', name: 'Xe 9 Pallet', load_max_pct: 105, serve_conditions: ['COLD'] })
+  const xeThuong = model({ id: 'XT', name: 'Xe thường', serve_conditions: ['AMB'] })
+  const r = (od_number: string, ship: string, o: Partial<RuleRow> = {}): RuleRow => ({ od_number, ship_to_code: ship, ship_to_name: `KH ${ship}`, max_customers: 9, pallets: 2, tons: 1, separate: false, allowed_models: null, conditions: [], cat_load: { FG01: 2 }, ...o })
+  const opt = { allowMixCategories: true, allowMixChannels: true, follow: ['PM01'] }
+  const codes = (bs: { code: string }[]) => bs.map(b => b.code)
+  it('đơn hợp lệ ⇒ không chặn gì', () => {
+    expect(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2')], opt)).toEqual([])
+  })
+  it('tải SAU khi nhận vượt trần dải (105 %) ⇒ LOAD_EXCEEDED; vừa đúng trần thì cho', () => {
+    expect(codes(manualRuleBlocks([xe], [r('A', 'K1', { pallets: 6 })], [r('B', 'K2', { pallets: 4 })], opt))).toEqual(['LOAD_EXCEEDED'])
+    expect(manualRuleBlocks([xe], [r('A', 'K1', { pallets: 6 })], [r('B', 'K2', { pallets: 3.4 })], opt)).toEqual([])
+  })
+  it('tải chưa đo được (pallet null) ⇒ không đoán, không chặn', () => {
+    expect(manualRuleBlocks([xe], [r('A', 'K1', { pallets: null })], [r('B', 'K2', { pallets: 9 })], opt)).toEqual([])
+  })
+  it('khách "đi xe riêng" ⇒ SEPARATE_CUSTOMER ở cả hai chiều; thêm đơn cùng khách thì cho', () => {
+    expect(codes(manualRuleBlocks([xe], [r('A', 'K1', { separate: true })], [r('B', 'K2')], opt))).toEqual(['SEPARATE_CUSTOMER'])
+    expect(codes(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2', { separate: true })], opt))).toEqual(['SEPARATE_CUSTOMER'])
+    expect(manualRuleBlocks([xe], [r('A', 'K1', { separate: true })], [r('B', 'K1', { separate: true })], opt)).toEqual([])
+  })
+  it('kho không cho trộn kênh ⇒ CHANNEL_MIX_BLOCKED; khách chưa biết kênh không tính', () => {
+    const ch: Record<string, string | null> = { K1: 'GT', K2: 'MT', K3: null }
+    const o2 = { ...opt, allowMixChannels: false, channelOf: (s: string | null) => (s ? ch[s] ?? null : null) }
+    expect(codes(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2')], o2))).toEqual(['CHANNEL_MIX_BLOCKED'])
+    expect(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K3')], o2)).toEqual([])
+    expect(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2')], opt)).toEqual([])
+  })
+  it('xe không chở được điều kiện bảo quản của đơn đưa lên ⇒ CONDITION_MISMATCH, câu dùng nhãn điều kiện', () => {
+    const b = manualRuleBlocks([xeThuong], [r('A', 'K1')], [r('B', 'K2', { conditions: ['COLD'] })], { ...opt, condLabel: c => (c === 'COLD' ? 'Lạnh 2–8 °C' : c) })
+    expect(codes(b)).toEqual(['CONDITION_MISMATCH']); expect(b[0].message).toMatch(/Xe thường không chở được điều kiện bảo quản Lạnh 2–8 °C/)
+  })
+  it('khách KHAI danh sách dòng xe mà không có xe này ⇒ VEHICLE_NOT_ALLOWED; CHƯA KHAI (rỗng) và đơn chỉ POSM thì không chặn', () => {
+    expect(codes(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: ['XT'] })], opt))).toEqual(['VEHICLE_NOT_ALLOWED'])
+    expect(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: [] })], opt)).toEqual([])
+    expect(manualRuleBlocks([xe], [], [r('B', 'K2', { allowed_models: ['XT'], cat_load: { PM01: 1 } })], opt)).toEqual([])
+  })
+  it('switch Loại kho tắt + số khách: cùng các luật đã có, mã đứng đúng thứ tự ưu tiên', () => {
+    const b = manualRuleBlocks([model({ id: 'X1', max_drops: 1 })], [r('A', 'K1')], [r('B', 'K2', { cat_load: { FG02: 1 } })], { ...opt, allowMixCategories: false })
+    expect(codes(b)).toEqual(['CATEGORY_MIX_BLOCKED', 'DROPS_EXCEEDED'])
+  })
+  it('xe vượt từ trước vẫn KÉO RA được (cửa làm tay chỉ hỏi phần lần này đưa lên)', () => {
+    expect(manualRuleBlocks([xe], [r('A', 'K1', { pallets: 20, separate: true }), r('B', 'K2')], [], opt)).toEqual([])
+  })
+  it('đổi dòng xe (modelOnly): hỏi MỌI đơn trên xe với xe mới — số điểm · điều kiện · tải · ghép nhiều xe; không hỏi kênh / đi xe riêng', () => {
+    const rows = [r('A', 'K1', { pallets: 6, conditions: ['COLD'] }), r('B', 'K2', { pallets: 4, separate: true })]
+    const b = manualRuleBlocks([model({ id: 'X1', name: 'Xe 1 điểm', max_drops: 1, serve_conditions: ['AMB'] })], [], rows, { ...opt, modelOnly: true })
+    expect(codes(b)).toEqual(['DROPS_EXCEEDED', 'CONDITION_MISMATCH', 'LOAD_EXCEEDED'])
+    const multi = manualRuleBlocks([xe, model({ id: 'NM', multi_vehicle: false }), xe, xe], [], [r('A', 'K1')], { ...opt, modelOnly: true, maxVehicles: 3 })
+    expect(codes(multi)).toEqual(['MULTI_VEHICLE_BLOCKED', 'MULTI_VEHICLE_BLOCKED'])
   })
 })
 

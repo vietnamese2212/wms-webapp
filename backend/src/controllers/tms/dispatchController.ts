@@ -37,11 +37,11 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
-  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, dropsBlockReason, priceCombo, comboModel, splitLoad, basisOf,
+  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, manualRuleBlocks, type RuleBlock, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
-import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf, modelDropsAt } from '../../services/vehicleModelScope'
+import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
@@ -188,29 +188,22 @@ async function rememberLoadBands(whId: string, bands: Record<string, LoadBand>) 
   if (error) throw error
 }
 
-async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
-  // 03/10: dòng xe theo KHO — nạp CẢ danh mục (kể cả Chung tắt: kho có thể bật riêng), đè bản chụp của kho rồi mới lọc is_active
-  const [vmRes, vtRes, tariffs, surcharges, allocRes, shareRes, overrides] = await Promise.all([
+/** Dòng xe ĐANG DÙNG của một kho (03/10: nạp CẢ danh mục — kể cả Chung tắt vì kho có thể bật riêng — đè bản chụp của kho rồi mới lọc
+ *  is_active). Tách khỏi `loadRefs` 14/10: cửa kéo thả hỏi luật ghép xe TRƯỚC khi ghi chỉ cần dòng xe, không cần bảng cước / phân tuyến. */
+async function loadModels(whId: string): Promise<EngineModel[]> {
+  const [vmRes, vtRes, overrides] = await Promise.all([
     db.from('vehicle_model').select('id, sap_code, name, parent_type_id, capacity_mode, max_pallets, max_tons, tariff_unit, max_drops, allow_multi_vehicle, detour_pct, storage_conditions, is_active').order('sap_code'),
     db.from('VehicleType').select('id, name, allow_multi_vehicle, detour_pct'),
-    wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
-      .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
-      .eq('from_warehouse_id', whId).eq('is_active', true).in('ward_code', c).order('id')) as Promise<EngineTariff[]> : Promise.resolve([] as EngineTariff[]),
-    fetchAllRowsParallel(() => db.from('freight_surcharge')
-      .select('id, transport_company_id, vehicle_model_id, kind, amount, per, count_mode, min_stops, effective_from, effective_to, is_active')
-      .eq('from_warehouse_id', whId).eq('is_active', true).order('id')) as Promise<EngineSurcharge[]>,
-    db.from('carrier_allocation').select('area_kind, area_code, transport_company_id, priority, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
-    db.from('carrier_share_target').select('transport_company_id, share_pct, basis, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
     loadWarehouseOverrides(whId),
   ])
-  for (const r of [vmRes, vtRes, allocRes, shareRes]) if (r.error) throw r.error
+  for (const r of [vmRes, vtRes]) if (r.error) throw r.error
   const vtRows = (vtRes.data ?? []) as { id: string; name: string; allow_multi_vehicle: boolean; detour_pct: number | string | null }[]
   const vtName = new Map(vtRows.map(v => [v.id, v.name]))
   const vtMulti = new Map(vtRows.map(v => [v.id, v.allow_multi_vehicle]))
   const vtDetour = new Map(vtRows.map(v => [v.id, v.detour_pct]))
   const vmRaw = ((vmRes.data ?? []) as { id: string; sap_code: string; name: string; parent_type_id: string | null; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; tariff_unit: string | null; max_drops: number | null; allow_multi_vehicle: boolean | null; detour_pct: number | string | null; storage_conditions: string[] | null; is_active: boolean }[])
     .map(m => ({ ...m, max_pallets: numOrNull(m.max_pallets), max_tons: numOrNull(m.max_tons), max_drops: numOrNull(m.max_drops), detour_pct: numOrNull(m.detour_pct) }))
-  const models: EngineModel[] = applyWarehouseOverrides(vmRaw, overrides).filter(m => m.is_active).map(m => ({
+  return applyWarehouseOverrides(vmRaw, overrides).filter(m => m.is_active).map(m => ({
     id: m.id, sap_code: m.sap_code, name: m.name,
     parent_type_id: m.parent_type_id ?? null,   // khoá dải tải theo cha (01/10)
     parent_type_name: m.parent_type_id ? (vtName.get(m.parent_type_id) ?? null) : null,
@@ -224,6 +217,21 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
     // 08/10 — xe tuyến liên tỉnh: đường vòng tối đa % theo cùng thang (kho → dòng xe → loại xe cha); trước 08/10 là một ô ở form Kho
     detour_pct: detourPctOf(m.detour_pct, m.parent_type_id ? vtDetour.get(m.parent_type_id) : null),
   }))
+}
+
+async function loadRefs(whId: string, day: string, wards: string[]): Promise<Refs> {
+  const [models, tariffs, surcharges, allocRes, shareRes] = await Promise.all([
+    loadModels(whId),
+    wards.length ? fetchAllByIdChunks(wards, c => db.from('freight_tariff')
+      .select('id, transport_company_id, vehicle_model_id, ward_code, price, distance_km, effective_from, effective_to, is_active')
+      .eq('from_warehouse_id', whId).eq('is_active', true).in('ward_code', c).order('id')) as Promise<EngineTariff[]> : Promise.resolve([] as EngineTariff[]),
+    fetchAllRowsParallel(() => db.from('freight_surcharge')
+      .select('id, transport_company_id, vehicle_model_id, kind, amount, per, count_mode, min_stops, effective_from, effective_to, is_active')
+      .eq('from_warehouse_id', whId).eq('is_active', true).order('id')) as Promise<EngineSurcharge[]>,
+    db.from('carrier_allocation').select('area_kind, area_code, transport_company_id, priority, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
+    db.from('carrier_share_target').select('transport_company_id, share_pct, basis, effective_from, effective_to, is_active').eq('from_warehouse_id', whId).eq('is_active', true),
+  ])
+  for (const r of [allocRes, shareRes]) if (r.error) throw r.error
   const allocations = ((allocRes.data ?? []) as EngineAllocation[]).map(a => ({ ...a, priority: Number(a.priority) }))
   const shareRows = effectiveAt(((shareRes.data ?? []) as (EngineShareTarget & { effective_from: string; effective_to: string | null; is_active: boolean })[]), day)
   const share_targets: EngineShareTarget[] = shareRows.map(s => ({ transport_company_id: s.transport_company_id, share_pct: Number(s.share_pct), basis: (['TRIPS', 'PALLETS', 'TONS'].includes(String(s.basis)) ? s.basis : 'TRIPS') as ShareBasis }))
@@ -1035,6 +1043,31 @@ function engineParams(plan: PlanRow): EngineInput['params'] {
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
     load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true }
 }
+type RuleTrip = { vehicle_model_id: string | null; extra_vehicle_model_ids?: string[] | null; allow_mix_categories?: boolean | null }
+/** LUẬT GHÉP XE cho xe đích SAU một thao tác tay (14/10, user: "làm sai rule cần hiện popup và ngăn chặn — không chỉ số khách") —
+ *  nạp dòng xe của kho (+ dải tải của kế hoạch), nhãn điều kiện bảo quản và kênh khách (khi kho không cho trộn kênh) rồi hỏi
+ *  `manualRuleBlocks`. MỌI cửa làm tay + cửa Xác nhận đi qua đây — không cửa nào tự kiểm lẻ một luật (C80: cửa kéo tay từng khác luật máy). */
+async function ruleBlocksFor(plan: PlanRow, trip: RuleTrip, staying: TripOdRow[], moving: TripOdRow[], opts: { modelOnly?: boolean; models?: EngineModel[]; condLabels?: Record<string, string>; channels?: Map<string, string | null> } = {}): Promise<RuleBlock[]> {
+  const P = engineParams(plan)
+  const needCh = !opts.modelOnly && !P.allow_mix_channels && !opts.channels
+  const ships = needCh ? uniq([...staying, ...moving].map(r => r.ship_to_code).filter((x): x is string => !!x)) : []
+  const [models, condLabels, chanRows] = await Promise.all([
+    opts.models ?? loadModels(plan.warehouse_id),
+    opts.condLabels ?? loadConditionLabels(),
+    ships.length ? fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; channel: string | null }[]> : Promise.resolve([]),
+  ])
+  const chBy = opts.channels ?? new Map(chanRows.map(c => [c.ship_to_code, c.channel]))
+  const banded = withLoadBands(models, P)
+  const main = trip.vehicle_model_id ? banded.find(m => m.id === trip.vehicle_model_id) ?? null : null
+  const fleet = main ? [main, ...(trip.extra_vehicle_model_ids ?? []).map(id => banded.find(m => m.id === id)).filter((m): m is EngineModel => !!m)] : []
+  return manualRuleBlocks(fleet, staying, moving, {
+    allowMixCategories: trip.allow_mix_categories ?? P.allow_mix_categories, allowMixChannels: P.allow_mix_channels, follow: P.follow_categories ?? [],
+    channelOf: s => (s ? chBy.get(s) ?? null : null), condLabel: c => condLabels[c] ?? c, maxVehicles: P.max_vehicles, modelOnly: opts.modelOnly,
+  })
+}
+/** 409 với mã của luật ưu tiên nhất; nhiều luật thì liệt kê từng dòng (FE hiện HỘP THOẠI, không toast). */
+const ruleFail = (res: Response, prefix: string, blocks: RuleBlock[]) =>
+  fail(res, 409, blocks[0].code, blocks.length === 1 ? `${prefix}${blocks[0].message}` : `${prefix}\n${blocks.map(b => `• ${b.message}`).join('\n')}`)
 /** Tính lại MỘT chuyến theo dòng xe/ĐVVT đang chọn và các OD ĐANG nằm trên xe — KHÔNG ghi (bàn ghép xe dùng để xem trước khi thả). */
 function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, modelId: string | null, carrierId: string | null, refs: Refs, whUnderloadPct: number | null, condLabels: Record<string, string> = {}) {
   const params = engineParams(plan)
@@ -1070,7 +1103,8 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   } else { const pc = priceCombo(ctx, fleet, carrier.id, wards, stops, sum.pallets, sum.tons); freight = pc.freight; vehicles = pc.parts }
   const load = tripLoad(loadModel, sum.pallets, sum.tons, whUnderloadPct ?? params.underload_pct ?? null)
   const maxPct = load.max_pct ?? 100
-  // Vượt tải KHÔNG chặn (user chốt 25/09: "cho thả, đánh dấu đỏ") — xe vượt là việc Cần xử lý + hộp thoại Xác nhận nhắc lại.
+  // Hàm này chỉ TÍNH + ghi cảnh báo. Chặn sai luật nằm ở cửa thao tác (`ruleBlocksFor`, 14/10 — user: "làm sai rule cần popup và ngăn
+  // chặn"; thay chốt 25/09 "vượt tải cho thả, đánh dấu đỏ") và cửa Xác nhận (`tripGuards`); xe vượt từ trước vẫn mang cảnh báo này.
   // 01/10: "vượt" = quá TRẦN DẢI TẢI của dòng xe cha (vd 105 %), không phải quá 100 % — trong dải là máy được xếp, người cũng vậy.
   if (model && load.pct != null && load.pct > maxPct) warnings.push(fleet.length > 1 ? `Vượt sức chứa ${fleet.length} xe cộng lại (${load.pct}% > trần ${maxPct}%) — thêm xe hoặc tách OD` : `Vượt sức chứa dòng xe ${model.name} (${load.pct}% > trần ${maxPct}%)`)
   if (fleet.length > 1 && uniq(fleet.map(basisOf)).length > 1)
@@ -1170,6 +1204,12 @@ async function updateTripInner(req: Request, res: Response) {
       if (b.locked !== undefined || b.allow_mix_categories !== undefined) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${trip.group_code} đã vào Kế hoạch xuất — ở đây chỉ đổi ĐVVT / dòng xe; khoá, chở lẫn, thêm bớt OD thì "Mở lại" xe.`)
       if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined) return fail(res, 'Không có gì để đổi', 400)
     }
+    // TẮT "Ghép Loại kho khác" trên xe ĐANG chở lẫn ⇒ CHẶN (14/10 — trước đó cho tắt rồi xe mang cảnh báo "chở lẫn — switch tắt")
+    if (b.allow_mix_categories === false && trip.ods.length) {
+      const follow = engineParams(plan).follow_categories ?? []
+      const cats = mainCatsOf(uniq(trip.ods.flatMap(o => Object.keys((o.cat_load ?? {}) as Record<string, unknown>))).map(c => ({ category: c })), follow)
+      if (mixBlockReason(false, [], trip.ods, follow)) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', `Xe ${trip.group_code} đang chở lẫn ${cats.join(' + ')} — kéo các OD khác loại ra khỏi xe trước khi tắt "Ghép Loại kho khác".`)
+    }
     if (b.locked !== undefined) {
       const { error } = await db.from('dispatch_trip').update({ locked: b.locked, updated_at: now() }).eq('id', trip.id)
       if (error) throw error
@@ -1197,11 +1237,12 @@ async function updateTripInner(req: Request, res: Response) {
       trip.extra_vehicle_model_ids = b.vehicle_model_ids.slice(1)
     } else if (b.vehicle_model_id !== undefined) trip.extra_vehicle_model_ids = []
     if (modelId && !refs.models.some(m => m.id === modelId)) return fail(res, 400, 'VEHICLE_MODEL_INVALID', 'Dòng xe con không tồn tại, đang ngừng dùng hoặc chưa gán dòng xe cha')
-    // ĐỔI sang dòng xe nhận ít khách hơn số khách đang trên xe ⇒ CHẶN (14/10 — cùng luật vượt số khách của cửa kéo thả)
-    if (modelId && modelId !== trip.vehicle_model_id && trip.ods.length) {
-      const nm = refs.models.find(m => m.id === modelId)!
-      const stops = uniq(trip.ods.map(o => o.ship_to_code ?? o.od_number)).length
-      if (stops > modelDrops(nm)) return fail(res, 409, 'DROPS_EXCEEDED', `Xe ${trip.group_code} đang chở ${stops} khách — dòng xe ${nm.name} chỉ nhận ${modelDrops(nm)} khách (Cài đặt TMS → Mã dòng xe → Điểm giao tối đa). Chọn dòng xe nhận đủ số khách, hoặc kéo bớt khách sang xe khác.`)
+    // ĐỔI dòng xe / tổ hợp xe sang thứ SAI LUẬT với hàng đang trên xe ⇒ CHẶN (14/10): số điểm của dòng xe · điều kiện bảo quản · dòng xe
+    // khách được vào · sức chứa (trần dải tải) · ghép nhiều xe — cùng hàm với cửa kéo thả. Chỉ hỏi khi xe THẬT đổi (đổi ĐVVT thì không).
+    const fleetChanged = modelId !== trip.vehicle_model_id || JSON.stringify(extras0) !== JSON.stringify(trip.extra_vehicle_model_ids ?? [])
+    if (modelId && fleetChanged && trip.ods.length) {
+      const blocks = await ruleBlocksFor(plan, { vehicle_model_id: modelId, extra_vehicle_model_ids: trip.extra_vehicle_model_ids }, [], trip.ods, { modelOnly: true, models: refs.models, condLabels })
+      if (blocks.length) return ruleFail(res, `Xe ${trip.group_code}: `, blocks)
     }
     if (carrierId && !refs.carriers.some(c => c.id === carrierId)) {
       // ĐVVT chưa có cước/phân tuyến ở kho này vẫn cho chọn (cước = null có lý do) — nhưng phải là ĐVVT thật
@@ -1309,17 +1350,15 @@ async function moveOdInner(req: Request, res: Response) {
     const t = now()
     let targetId = b.to_trip_id ?? null
     if (targetId) {
-      const tg = (await db.from('dispatch_trip').select('id, plan_id, status, group_code, allow_mix_categories, vehicle_model_id').eq('id', targetId).maybeSingle()).data
+      const tg = (await db.from('dispatch_trip').select('id, plan_id, status, group_code, allow_mix_categories, vehicle_model_id, extra_vehicle_model_ids').eq('id', targetId).maybeSingle()).data
       if (!tg || tg.plan_id !== plan.id) return fail(res, 'Chuyến đích không thuộc cùng kế hoạch', 400)
       if (tg.id === src.id) return fail(res, 'Chuyến đích trùng chuyến nguồn', 400)
       const tgSt = (tg.status as TripStatus) ?? 'DRAFT'
       if (!EDITABLE_TRIP.includes(tgSt)) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe đích ${tg.group_code} ${TRIP_STATUS_VI[tgSt]} — không nhận thêm OD ở đây; đổi ở tab Kế hoạch xuất.`)
-      const tgOds0 = ((await db.from('dispatch_trip_od').select('cat_load, od_number, ship_to_code, max_customers').eq('trip_id', tg.id)).data ?? []) as { cat_load: unknown; od_number: string; ship_to_code: string | null; max_customers: number | null }[]
-      const mix = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tgOds0, moving, engineParams(plan).follow_categories)
-      if (mix) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', `Xe ${tg.group_code}: ${mix}`)
-      // vượt số khách cùng xe ⇒ CHẶN (14/10) — cùng luật cửa kéo thả của bàn (`moveOdsInner`)
-      const drops = dropsBlockReason(tg.vehicle_model_id ? await modelDropsAt(plan.warehouse_id, tg.vehicle_model_id) : null, tgOds0, moving)
-      if (drops) return fail(res, 409, 'DROPS_EXCEEDED', `Xe ${tg.group_code}: ${drops}`)
+      const tgOds0 = ((await db.from('dispatch_trip_od').select('*').eq('trip_id', tg.id).order('od_number')).data ?? []) as TripOdRow[]
+      // MỌI luật ghép xe (14/10) — cùng hàm với cửa kéo thả của bàn (`moveOdsInner`) và cửa Xác nhận
+      const blocks = await ruleBlocksFor(plan, tg, tgOds0, moving)
+      if (blocks.length) return ruleFail(res, `Xe ${tg.group_code}: `, blocks)
     } else {
       // tách ra chuyến MỚI: STT kế tiếp trong nháp, kế thừa dòng xe/ĐVVT của chuyến nguồn
       const params = (plan.params ?? {}) as { code_prefix?: string }
@@ -1490,23 +1529,20 @@ async function moveOdsInner(req: Request, res: Response) {
       const tg = b.to_trip_id ? tripBy.get(b.to_trip_id) : undefined
       if (!tg) return fail(res, 'Xe đích không thuộc kế hoạch này', 400)
       if (!EDITABLE_TRIP.includes(statusOf(tg))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe đích ${tg.group_code} ${TRIP_STATUS_VI[statusOf(tg)]} — không nhận thêm OD ở đây; đổi ở tab Kế hoạch xuất.`)
-      const mix = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tg.ods.filter(o => !ids.includes(o.id)), rows, engineParams(plan).follow_categories)
-      if (mix) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', `Xe ${tg.group_code}: ${mix}`)
-      // VƯỢT SỐ KHÁCH CÙNG XE ⇒ CHẶN (14/10, user: "nếu vượt thì chặn luôn và có popup") — trước đó chỉ cảnh báo xám, không vào Cần xử lý
-      const drops = dropsBlockReason(tg.vehicle_model_id ? await modelDropsAt(plan.warehouse_id, tg.vehicle_model_id) : null, tg.ods.filter(o => !ids.includes(o.id)), rows)
-      if (drops) return fail(res, 409, 'DROPS_EXCEEDED', `Xe ${tg.group_code}: ${drops}`)
+      // SAI LUẬT GHÉP XE ⇒ CHẶN + hộp thoại (14/10, user: "nếu vượt thì chặn luôn và có popup" → "không chỉ số khách mà còn những cái
+      // khác nữa") — trước đó chỉ trộn Loại kho bị chặn, còn lại (số khách · tải · điều kiện · dòng xe được vào…) chỉ cảnh báo xám
+      const blocks = await ruleBlocksFor(plan, tg, tg.ods.filter(o => !ids.includes(o.id)), rows)
+      if (blocks.length) return ruleFail(res, `Xe ${tg.group_code}: `, blocks)
       targetId = tg.id
     } else if (b.to === 'new') {
-      const mix = mixBlockReason(engineParams(plan).allow_mix_categories, [], rows, engineParams(plan).follow_categories)
-      if (mix) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', mix)
       // xe mới: máy chọn dòng xe + ĐVVT theo đúng ba bậc của lượt ghép (người vẫn đổi được)
       const wards = uniq(rows.map(o => o.ward_code).filter((x): x is string => !!x))
       const refs = await loadRefs(plan.warehouse_id, plan.plan_date, wards)
       const sug = suggestVehicle({ ods: [], ...refs, share_actual: {}, params: engineParams(plan) },
         rows.map(o => ({ od: rowAsEngineOd(o), pallets: numOrNull(o.pallets), tons: numOrNull(o.tons), conditions: o.conditions ?? [] })), actualNow(plan, (await readPlanLight(plan.id)).trips))
-      // xe mới cũng không được vượt số khách (14/10): máy đã chọn dòng xe nhận đủ điểm nếu có — không có thì trần theo khách / kênh
-      const drops = dropsBlockReason(sug.model, [], rows)
-      if (drops) return fail(res, 409, 'DROPS_EXCEEDED', `Xe mới: ${drops}`)
+      // xe mới cũng qua đủ luật ghép xe (14/10) — với dòng xe máy vừa chọn (không chọn được thì chỉ các luật không phụ thuộc xe)
+      const blocks = await ruleBlocksFor(plan, { vehicle_model_id: sug.model?.id ?? null, extra_vehicle_model_ids: sug.vehicles.slice(1).map(v => v.model.id) }, [], rows, { models: refs.models })
+      if (blocks.length) return ruleFail(res, 'Xe mới: ', blocks)
       const seq = await nextSeq(engineParams(plan).code_prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
       targetId = randomUUID()
       const { error } = await db.from('dispatch_trip').insert({
@@ -1570,9 +1606,10 @@ export async function previewMove(req: Request, res: Response) {
     const wh = await loadWarehouse(plan.warehouse_id)
     const wards = uniq(next.ods.map(o => o.ward_code).filter((x): x is string => !!x))
     const [refs, condLabels] = await Promise.all([loadRefs(plan.warehouse_id, plan.plan_date, wards), loadConditionLabels()])
-    // switch "Ghép Loại kho khác" của xe đang tắt / xe sẽ vượt số khách (14/10) ⇒ rê qua là thấy NGAY xe không nhận, không phải thả rồi mới biết
-    const blocked = mixBlockReason(tg.allow_mix_categories ?? engineParams(plan).allow_mix_categories, tg.ods, moving, engineParams(plan).follow_categories)
-      ?? dropsBlockReason(tg.vehicle_model_id ? refs.models.find(m => m.id === tg.vehicle_model_id) ?? null : null, tg.ods, moving)
+    // xe sẽ sai luật ghép xe (switch Loại kho · số khách · tải · điều kiện · dòng xe được vào · đi xe riêng · kênh — 14/10) ⇒ rê qua là
+    // thấy NGAY xe không nhận và vì sao, không phải thả rồi mới biết; cùng hàm cửa thả dùng
+    const rb = await ruleBlocksFor(plan, tg, tg.ods, moving, { models: refs.models, condLabels })
+    const blocked = rb.length ? rb.map(b => b.message).join(' · ') : null
     const p = computeTripPatch(plan, next, tg.vehicle_model_id, tg.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
     const d = p.detail as unknown as Detail
     return ok(res, {
@@ -1988,6 +2025,24 @@ async function tripGuards(req: Request, full: FullPlan, subset: FullTrip[]): Pro
   if (outScope.length) {
     const cats = uniq(outScope.flatMap(x => x.cats))
     return { err: [`${outScope.length} xe chở Loại kho ngoài phạm vi được giao của bạn (${cats.join(', ')}): ${outScope.slice(0, 5).map(x => x.t.group_code).join(', ')}${outScope.length > 5 ? '…' : ''} — kéo các OD loại đó ra khỏi xe / Trả về Chờ điều, hoặc nhờ người được giao loại này xác nhận.`, 403, 'CATEGORY_OUT_OF_SCOPE'] }
+  }
+  // LUẬT GHÉP XE ở cửa chốt (14/10, user: "làm sai rule cần hiện popup và ngăn chặn") — CÙNG hàm với cửa kéo thả: xe sai luật (vượt tải ·
+  // vượt số khách · đi xe riêng · trộn kênh / Loại kho · điều kiện bảo quản · dòng xe khách được vào) không vào Kế hoạch xuất. Xe vượt từ
+  // trước khi có luật, hay cấu hình khách / dòng xe đổi sau lúc lập, đều dừng ở đây, nêu đích danh xe + luật. Trước 14/10 vượt tải và vượt
+  // số khách vẫn chốt được (chỉ hộp thoại nhắc).
+  const loaded = subset.filter(t => t.ods.length)
+  if (loaded.length) {
+    const P = engineParams(full)
+    const ships = P.allow_mix_channels ? [] : uniq(loaded.flatMap(t => t.ods.map(o => o.ship_to_code)).filter((x): x is string => !!x))
+    const [models, condLabels, chanRows] = await Promise.all([loadModels(full.warehouse_id), loadConditionLabels(),
+      ships.length ? fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; channel: string | null }[]> : Promise.resolve([])])
+    const channels = new Map(chanRows.map(c => [c.ship_to_code, c.channel]))
+    const bad: { t: FullTrip; blocks: RuleBlock[] }[] = []
+    for (const t of loaded) {
+      const blocks = await ruleBlocksFor(full, t, [], t.ods, { models, condLabels, channels })
+      if (blocks.length) bad.push({ t, blocks })
+    }
+    if (bad.length) return { err: [`${bad.length} xe sai quy định ghép xe — chưa vào Kế hoạch xuất được:\n${bad.slice(0, 6).map(x => `• Xe #${x.t.seq} ${x.t.group_code}: ${x.blocks.map(b => b.message).join(' ')}`).join('\n')}${bad.length > 6 ? `\n• … và ${bad.length - 6} xe nữa` : ''}\nSửa trên Bàn ghép xe (chip "Sai quy định" / "Vượt tải") rồi xác nhận lại.`, 409, 'TRIP_RULE_VIOLATION'] }
   }
   const live = full.trips.filter(t => statusOf(t) !== 'DISCARDED' && t.ods.length)
   const tripsByOd = new Map<string, string[]>()

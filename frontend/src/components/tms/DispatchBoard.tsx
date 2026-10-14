@@ -791,7 +791,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
                 className={`inline-flex items-center justify-center rounded w-8 h-8 sm:w-7 sm:h-6 ${viewKey === k ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}><Icon className="h-3.5 w-3.5" /></button>
             ))}
           </div>
-          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px] max-w-xs" />
+          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px] max-w-[220px]" />
           {soat}
           {/* NHÓM xe: một nút xoay Vùng (xe cùng khách nằm cạnh nhau) ⇄ Loại xe */}
           <button type="button" className={TB} onClick={() => setF({ boardTripGroup: grp === 'region' ? 'vtype' : 'region', boardOpen: [] })} aria-label="Nhóm xe"
@@ -822,9 +822,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           </button>
           {/* ô thả "xe mới" là một dải nhỏ trên thanh công cụ, không chiếm một ô / một dòng của bàn */}
           {canDrag && (
-            <div {...dropProps('new', 'new')} title="Thả OD vào đây — máy chọn dòng xe + ĐVVT theo luật ghép"
-              className={`inline-flex items-center gap-1 rounded-md border-2 border-dashed px-2 h-7 text-[11px] font-medium whitespace-nowrap shrink-0 ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-500'}`}>
-              <Plus className="h-3.5 w-3.5" /> Xe mới
+            <div {...dropProps('new', 'new')} title="XE MỚI — thả OD vào đây, máy chọn dòng xe + ĐVVT theo luật ghép" aria-label="Xe mới"
+              className={`inline-flex items-center justify-center rounded-md border-2 border-dashed h-7 w-9 shrink-0 ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-500'}`}>
+              <Plus className="h-3.5 w-3.5" />
             </div>
           )}
           {shownTrips.length !== trips.length && <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>}

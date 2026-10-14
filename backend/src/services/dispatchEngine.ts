@@ -518,7 +518,12 @@ export function comboModel(models: EngineModel[]): EngineModel {
   const [m0] = models
   if (models.length === 1) return m0
   const sum = (k: 'max_pallets' | 'max_tons') => (models.every(m => numOr(m[k], 0) > 0) ? r3(models.reduce((s, m) => s + numOr(m[k], 0), 0)) : null)
-  return { ...m0, capacity_mode: basisOf(m0), max_pallets: basisOf(m0) === 'PALLET' ? sum('max_pallets') : null, max_tons: sum('max_tons') }
+  // Trần dải của CẢ thẻ = trần từng xe bình quân theo sức chứa (Σ sức chứa × trần / Σ sức chứa) — đúng mốc máy xếp (`splitLoad` lấp từng
+  // xe tới trần CỦA NÓ). Lấy trần xe đầu thì thẻ trộn hai dòng xe cha khác dải (100 % + 110 %) báo vượt — từ 14/10 còn bị CHẶN ở Xác nhận —
+  // dù máy vừa xếp đúng (bất biến tests/unit/dispatchRuleInvariant). Làm tròn LÊN một chữ số như % tải để không báo oan.
+  const w = models.map(m => numOr(basisOf(m0) === 'PALLET' ? m.max_pallets : m.max_tons, 0)), W = w.reduce((s, x) => s + x, 0)
+  const load_max_pct = W > 0 ? Math.ceil(models.reduce((s, m, i) => s + w[i] * maxPctOf(m), 0) / W * 10 - 1e-9) / 10 : maxPctOf(m0)
+  return { ...m0, capacity_mode: basisOf(m0), max_pallets: basisOf(m0) === 'PALLET' ? sum('max_pallets') : null, max_tons: sum('max_tons'), load_max_pct }
 }
 /** OD trung chuyển = SAP phân loại STO / INTERNAL (28/09: KHÔNG còn suy từ "khách trỏ kho" — trỏ kho chỉ quyết việc NHẬN) — chỉ còn là cờ trên dòng
  *  OD (`dispatch_trip_od.is_transfer`), không quyết dòng xe nữa (luật 8 bỏ 28/09). */

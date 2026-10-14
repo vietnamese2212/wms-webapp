@@ -15,6 +15,12 @@ export interface BandTile {
   tip?: string       // giải thích ý nghĩa con số khi nhãn ngắn dễ hiểu sai (vd "thùng quy đổi")
 }
 
+/** Chữ thô của một giá trị ô (chuỗi / số / phần tử lồng) — chỉ để ước bề rộng khi chia hàng `inline`. */
+const textOf = (n: React.ReactNode): string =>
+  typeof n === 'string' || typeof n === 'number' ? String(n)
+    : Array.isArray(n) ? n.map(textOf).join('')
+    : React.isValidElement(n) ? textOf((n.props as { children?: React.ReactNode }).children) : ''
+
 export function SummaryBand({ tiles, className, compact, inline }: { tiles: BandTile[]; className?: string; compact?: boolean; inline?: boolean }) {
   // INLINE (14/10, bàn ghép xe): dải đứng CHUNG HÀNG với cụm nút đầu trang — một hàng ở MỌI cỡ màn (không lưới điện thoại), bo góc.
   // Máy tính: các ô CHIA ĐỀU bề rộng được cấp (màn 24" ô rộng, 1280 ô hẹp) — cùng một bố cục ở mọi màn (user 14/10: "màn 24 inch hiển
@@ -24,10 +30,10 @@ export function SummaryBand({ tiles, className, compact, inline }: { tiles: Band
   if (inline) return (
     <div className={`flex divide-x divide-white/15 bg-sky-800 text-white rounded-md ${className ?? ''}`}>
       {tiles.map((t, i) => (
-        // chia bề rộng THEO ĐỘ DÀI NHÃN (không chia đều): đo 1280 chia đều thì "Vượt tải" / "Khung chờ" / "OD trên xe" bị cắt trong khi ô
-        // "Tấn" thừa chỗ — theo độ dài nhãn thì 1280 có sidebar đọc đủ cả 10 nhãn; con số rộng (Σ cước kèm Δ) tự giữ bề rộng tối thiểu
-        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} style={{ flexGrow: Math.max(3, t.label.length), flexBasis: 0 }}
-          className="flex flex-col justify-between text-center px-1.5 py-0.5">
+        // chia bề rộng THEO ĐỘ DÀI CHỮ của ô (nhãn 9 px hay con số 12 px, cái nào dài hơn) — không chia đều: đo 1280 chia đều thì "Vượt
+        // tải" / "Khung chờ" / "OD trên xe" bị cắt trong khi ô "Tấn" thừa chỗ, chia theo nhãn thì ô Σ cước (số kèm Δ) giành chỗ của "Chuyến"
+        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} style={{ flexGrow: Math.max(3, t.label.length, Math.ceil(textOf(t.value).length * 1.35)), flexBasis: 0 }}
+          className="flex flex-col justify-between text-center px-1 py-0.5">
           <div className="sm:w-0 sm:min-w-full text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
             <span className="min-w-0 truncate">{t.label}</span>
             {t.tip && (

@@ -37,7 +37,7 @@ export function DispatchKpiBar({ plan, className }: { plan: DispatchPlan; classN
     { label: 'Tấn', value: nf(s.tons, 1), tip: 'Tổng tải trọng hàng trên các xe (tấn) — xe xá đo % tải theo tấn' },
     { label: 'Tải TB', value: s.avg_load_pct == null ? '—' : `${nf(s.avg_load_pct, 1)}%`, tip: 'Trung bình % tải các xe có dòng xe' },
     { label: 'Σ cước', value: <>{money(s.freight_total)}{delta(s.freight_total, b?.freight_total, n => money(n))}</>, tip: `${nf(s.freight_total)} ₫${s.unpriced ? ` · ${s.unpriced} xe chưa có cước (không cộng vào)` : ''}${b ? ` · máy lập ${nf(b.freight_total)} ₫` : ''}` },
-    { label: 'Cước / pallet', value: s.freight_per_pallet == null ? '—' : money(s.freight_per_pallet), tip: 'Σ cước ÷ pallet của các xe CÓ cước' },
+    { label: 'Cước/pallet', value: s.freight_per_pallet == null ? '—' : money(s.freight_per_pallet), tip: 'Σ cước ÷ pallet của các xe CÓ cước' },
     { label: 'Non tải', value: <>{nf(s.underload)}{delta(s.underload, b?.underload, n => nf(n))}</>, accent: s.underload > 0 },
     { label: 'Vượt tải', value: nf(s.overload ?? 0), danger: (s.overload ?? 0) > 0, tip: 'Xe vượt sức chứa dòng xe — vẫn xác nhận được, nhưng phải chắc xe chở nổi' },
     { label: 'Khung chờ', value: `${nf(s.pool_ods ?? 0)} OD`, accent: (s.pool_ods ?? 0) > 0, tip: `${nf(s.pool_pallets ?? 0, 1)} pallet chưa lên xe nào — OD ở khung chờ KHÔNG đi khi Xác nhận` },

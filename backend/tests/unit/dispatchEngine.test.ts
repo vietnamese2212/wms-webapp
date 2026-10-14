@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
-  mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, mixBlockReason, splitLoad, priceCombo,
+  mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, mixBlockReason, dropsBlockReason, splitLoad, priceCombo,
   type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
@@ -712,6 +712,38 @@ describe('mixBlockReason — switch "Ghép Loại kho khác" trên thẻ xe (use
   })
   it('tắt: chọn nhiều OD khác loại thả vào xe trống ⇒ chặn', () => {
     expect(mixBlockReason(false, [], [f1, f2])).toMatch(/nhiều Loại kho \(FG01, FG02\)/)
+  })
+})
+describe('dropsBlockReason — kéo tay vượt số khách cùng xe ⇒ CHẶN (user 14/10: "nếu vượt thì chặn luôn và có popup")', () => {
+  // ca thật 14/10: Xe 16 Pallet (max_drops 1) chở Hoàng Long, người kéo đơn Phương Anh lên — trước đó chỉ cảnh báo xám
+  const xe16 = { name: 'Xe 16 Pallet', max_drops: 1 }, xe4diem = { name: 'Xe tải 4 điểm', max_drops: 4 }
+  const od = (od_number: string, ship: string | null, max_customers: number | null = 9) => ({ od_number, ship_to_code: ship, max_customers })
+  const hl1 = od('3000564867', '30000156'), hl2 = od('3300009454', '30000156'), pa = od('3000564139', '30000246')
+  it('xe 1 khách nhận khách thứ hai ⇒ chặn, câu nêu dòng xe + chỗ khai', () => {
+    expect(dropsBlockReason(xe16, [hl1], [pa])).toMatch(/Xe sẽ chở 2 khách — dòng xe Xe 16 Pallet chỉ nhận 1 khách.*Điểm giao tối đa/)
+  })
+  it('thêm đơn của khách ĐÃ có trên xe ⇒ cho thả (không thêm khách)', () => {
+    expect(dropsBlockReason(xe16, [hl1], [hl2])).toBeNull()
+  })
+  it('xe đã vượt từ trước vẫn nhận đơn của khách đang có; thêm khách mới thì chặn', () => {
+    expect(dropsBlockReason(xe16, [hl1, pa], [hl2])).toBeNull()
+    expect(dropsBlockReason(xe16, [hl1, pa], [od('X', '3009')])).toMatch(/Xe sẽ chở 3 khách/)
+  })
+  it('dòng xe nhận đủ điểm nhưng khách / kênh khắt khe hơn ⇒ chặn theo khách, câu chỉ sang Khách hàng', () => {
+    expect(dropsBlockReason(xe4diem, [od('A', 'K1', 1)], [od('B', 'K2')])).toMatch(/khách \/ kênh của đơn trên xe chỉ cho 1 khách.*Số khách tối đa cùng xe/)
+    expect(dropsBlockReason(xe4diem, [od('A', 'K1', 3)], [od('B', 'K2', 3)])).toBeNull()
+  })
+  it('dòng xe CHƯA KHAI điểm giao = 1; xe chưa có dòng xe ⇒ chỉ trần theo khách', () => {
+    expect(dropsBlockReason({ name: 'Xe mới khai', max_drops: null }, [hl1], [pa])).toMatch(/chỉ nhận 1 khách/)
+    expect(dropsBlockReason(null, [hl1], [pa])).toBeNull()
+    expect(dropsBlockReason(null, [od('A', 'K1', null)], [pa])).toMatch(/chỉ cho 1 khách/)
+  })
+  it('xe mới: chọn đơn của nhiều khách vượt trần ⇒ chặn với câu "thả từng khách"', () => {
+    expect(dropsBlockReason(xe16, [], [hl1, pa])).toMatch(/Các OD đang chọn thuộc 2 khách.*Thả từng khách vào một xe/)
+    expect(dropsBlockReason(xe16, [], [hl1, hl2])).toBeNull()
+  })
+  it('OD không mã ship-to đếm theo số OD', () => {
+    expect(dropsBlockReason(xe16, [od('A', null)], [od('B', null)])).toMatch(/2 khách/)
   })
 })
 

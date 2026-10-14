@@ -1283,6 +1283,18 @@ try {
     await cleanupTrips()
     const pM = await mkPlan(PLAN_BODY); const PM = pM.j?.data
     const tM2 = tripOfOd(PM, OD[1])
+    // [13l] 14/10 (user: "nếu vượt thì chặn luôn và có popup" — kéo tay khách thứ hai lên Xe 16 Pallet 1 khách từng chỉ ra cảnh báo xám):
+    // kéo OD1 (khách 1) lên xe một mình của OD2 (khách 2 tối đa 1 khách / xe) ⇒ xem trước báo "không nhận" · thả → 409 DROPS_EXCEEDED ·
+    // OD1 ở nguyên xe cũ; cửa cũ "chuyển từng OD" (panel xe) cùng luật
+    const r1M = rowOf(PM, OD[0]), t1M = tripOfOd(PM, OD[0])
+    const pvD = tM2 && r1M ? await api(`/tms/dispatch/plans/${PM.id}/preview-move`, 'POST', { ids: [r1M.id], to_trip_id: tM2.id }) : null
+    const mvD = tM2 && r1M ? await api(`/tms/dispatch/plans/${PM.id}/move`, 'POST', { ids: [r1M.id], to: 'trip', to_trip_id: tM2.id }) : null
+    const mv1D = tM2 && t1M ? await api(`/tms/dispatch/trips/${t1M.id}/move-od`, 'POST', { od_number: OD[0], to_trip_id: tM2.id }) : null
+    const stillD = r1M ? (await restAll('dispatch_trip_od', `select=trip_id&id=eq.${r1M.id}`))[0] : null
+    check('13l. Kéo tay khách thứ hai lên xe "tối đa 1 khách" ⇒ xem trước báo không nhận · thả → 409 DROPS_EXCEEDED (cả cửa chuyển từng OD) · OD ở nguyên xe cũ',
+      !!t1M && pvD?.s === 200 && /khách/.test(pvD?.j?.data?.blocked ?? '') && mvD?.s === 409 && mvD?.j?.error?.code === 'DROPS_EXCEEDED'
+      && mv1D?.s === 409 && mv1D?.j?.error?.code === 'DROPS_EXCEEDED' && stillD?.trip_id === t1M?.id,
+      `t1=${t1M?.id?.slice(0, 6)} t2=${tM2?.id?.slice(0, 6)} pv=${pvD?.s} blocked=${String(pvD?.j?.data?.blocked ?? '').slice(0, 60)} mv=${mvD?.s} ${mvD?.j?.error?.code} mv1=${mv1D?.s} ${mv1D?.j?.error?.code} still=${stillD?.trip_id?.slice(0, 6)}`)
     // 02/10: hàng loạt về null = CHƯA KHAI = 1 (không còn "không giới hạn") ⇒ vẫn xe riêng + Khai thiếu đếm OD của khách không kênh; khai lại 3 ⇒ chung xe
     const mxClr = await api('/masterdata/customers/bulk', 'PATCH', { ids: [c2.id], patch: { max_customers_per_trip: null } })
     const c2Now = (await restAll('Customer', `select=max_customers_per_trip,dispatch_separate&id=eq.${c2.id}`))[0]

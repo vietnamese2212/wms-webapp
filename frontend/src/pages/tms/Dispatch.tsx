@@ -21,7 +21,7 @@ import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangl
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { DispatchDraftsTable } from '@/components/tms/DispatchDraftsTable'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { DispatchBoard } from '@/components/tms/DispatchBoard'
+import { DispatchBoard, RULE_BLOCK_CODES, apiCode } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
 import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, type IssueKey } from '@/components/tms/dispatchIssues'
@@ -210,7 +210,10 @@ export default function Dispatch() {
     navigate(location.pathname, { replace: true, state: null })
   }, [openGroupCode, plan, navigate, location.pathname])
 
-  const err =(e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
+  // lần chuyển / đổi dòng xe bị LUẬT chặn (vượt số khách · chở lẫn Loại kho) ⇒ hộp thoại như trên bàn (14/10); lỗi khác vẫn toast
+  const err = (e: unknown, title: string) => RULE_BLOCK_CODES.has(apiCode(e) ?? '')
+    ? void ask({ title: apiCode(e) === 'DROPS_EXCEEDED' ? 'Xe không nhận thêm khách' : 'Xe không nhận Loại kho này', body: apiMsg(e), cancelLabel: null })
+    : toast({ variant: 'destructive', title, description: apiMsg(e) })
   // XEM ĐƠN (07/10, user: "nút là Xem đơn, tức là load lấy các đơn"): nạp đơn chưa đi của kho × ngày × mảng vào CHỜ ĐIỀU — không hỏi dải
   // tải (hộp thoại dải đứng trước "Tạo kế hoạch"), không ghép xe nào. Đã có kế hoạch đang mở thì server trả lại đúng kế hoạch đó (`reuse`)
   // — xem đơn không bao giờ thay nháp người khác đang làm.
@@ -436,7 +439,7 @@ export default function Dispatch() {
       {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
          { k: 'todo', label: 'Cần xử lý', n: todoN, tip: todoN === 0
            ? `Không còn xe nào chờ người quyết${issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}`
-           : 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
+           : 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / vượt số khách / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
          ...ISSUES.filter(i => issueN[i.key] > 0).map(i => ({ k: i.key as string, label: i.label, n: issueN[i.key], tip: i.tip })),
         ]).map(o => (
         <button key={o.k || 'all'} type="button" title={o.tip} onClick={() => setF({ issue: o.k })} aria-pressed={f.issue === o.k}
@@ -455,11 +458,16 @@ export default function Dispatch() {
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+        {/* ĐẦU TRANG = HAI HÀNG CỐ ĐỊNH trên máy tính (14/10 tối, user: "màn 24 inch hiển thị khác — phải đồng bộ với các loại màn hình
+            trên máy tính, đó là yêu cầu của toàn app"): bản trước là MỘT hàng flex-wrap, phần tử nào vừa thì đứng hàng 1 ⇒ màn 24" dồn cả
+            cụm Xác nhận + dải chỉ số lên hàng 1 (dải còn ~300 px, cắt mất nửa), màn 1580 thì xuống hàng 2. Nay từ xl (1280) trở lên:
+            hàng 1 = tiêu đề · tab · Kho · Ngày · Mảng; hàng 2 = kế hoạch · trạng thái · Khai thiếu · nút · dải chỉ số (flex-1) — KHÔNG xuống
+            dòng ở bất kỳ màn nào ≥ 1280 (`xl:flex-nowrap`), màn rộng thì dải rộng ra. Dưới 1280 (máy tính bảng / điện thoại) vẫn wrap. */}
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 shrink-0 sm:rounded-t-xl">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
+          <div className="flex items-center gap-2 flex-wrap xl:flex-nowrap">
+            <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5 shrink-0"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
             {/* Tab CẠNH tiêu đề (khuôn app — skill table-format 22); điện thoại chiếm trọn hàng đầu */}
-            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none">
+            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none shrink-0">
               <TabsList className="h-8 max-w-full overflow-x-auto">
                 {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
               </TabsList>
@@ -467,7 +475,8 @@ export default function Dispatch() {
             </Tabs>
             {/* Kho + Ngày CHUNG một hàng trên điện thoại (bản cũ Kho chiếm trọn một hàng riêng) */}
             {/* min-w: không có thì flex-1 co ô Kho về ~20 px khi hàng còn chỗ cho ô ngày (đo 390 px, 25/09) */}
-            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-48"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
+            {/* ≥ 1280: hàng 1 không xuống dòng ⇒ ô Kho là phần DUY NHẤT được co (tới 140 px) khi màn hẹp + sidebar mở */}
+            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-48 xl:shrink xl:min-w-[140px]"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
             <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[140px] text-xs shrink-0" title="Ngày giao (ngày xe chạy)" />
             {/* MẢNG (03/10 tối): hai kế hoạch riêng cùng kho × ngày — switch nhỏ, nhớ theo người; ở Xem đơn còn có tab Trung chuyển | Bán hàng */}
             <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" title="Mảng điều vận — mỗi mảng một kế hoạch riêng cùng kho × ngày. Khách tick 'Trung chuyển' ở Khách hàng thì đơn vào Trung chuyển, còn lại Bán hàng; lấy đơn sang mảng mình ở tab Xem đơn.">
@@ -476,8 +485,10 @@ export default function Dispatch() {
                   className={`rounded px-2 h-8 sm:h-6 text-[11px] font-medium ${seg === s ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{SEGMENT_VI[s]}</button>
               ))}
             </div>
-            {/* Điện thoại: ô Kế hoạch CHUNG hàng với nút thao tác (desktop sm:contents → như cũ) */}
-            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+          </div>
+          {/* HÀNG 2 — kế hoạch đang xem: chọn kế hoạch · trạng thái · Khai thiếu · nút · dải chỉ số (chỉ ở Bàn ghép xe) */}
+          {((planTab && !!plan) || planList.length > 1) && (
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap xl:flex-nowrap min-w-0">
               {/* nhãn "· lập dd-MM-yy hh:mm" (08/10): ngày trần cạnh ô ngày kế hoạch bị đọc nhầm là ngày kế hoạch ("Bản nháp · 08-10-2026" ở nháp 09/10) */}
               {planList.length > 1 && (
                 <div className="flex-1 min-w-[140px] sm:flex-none sm:w-48"><SingleSelect searchable={false} value={planId ?? ''} onChange={v => setF({ planId: v })}
@@ -553,13 +564,13 @@ export default function Dispatch() {
               })()}
               {/* Tab Bản đồ chỉ để XEM (user 02/10: "action không liên quan tới tab bản đồ thì bỏ") — Xác nhận / Lập lại / Excel / Bỏ nháp,
                   chip Khai thiếu, dải Soát và dải Chỉ số đều thuộc bàn ghép xe; ở đây chỉ còn Kho · Ngày · Kế hoạch · trạng thái */}
-              {planTab && <ActionCluster items={actionItems} mobileInline />}
+              {planTab && <ActionCluster items={actionItems} mobileInline className="shrink-0" />}
+              {/* DẢI CHỈ SỐ (14/10, user: "phần trên còn dư rất nhiều chỗ — để Dải chỉ số hiện lên, không ẩn nữa"): phần tử CUỐI của hàng 2,
+                  ≥ 1280 flex-1 ⇒ lấp hết phần còn lại sau cụm nút ở MỌI màn; dưới 1280 một dòng riêng. Chỉ ở Bàn ghép xe — nơi người sửa
+                  kế hoạch và cần thấy số đổi theo từng lần thả. */}
+              {tab === 'board' && planView && sum && !planEmpty && <DispatchKpiBar plan={planView} className="w-full xl:w-auto xl:flex-1" />}
             </div>
-            {/* DẢI CHỈ SỐ (14/10, user: "phần trên còn dư rất nhiều chỗ — để Dải chỉ số hiện lên, không ẩn nữa"): phần tử CUỐI của hàng
-                đầu trang, flex-1 ⇒ lấp khoảng trống sau cụm Xác nhận (ở 1580 px là ~1.300 px bỏ không); chỗ còn lại dưới 360 px thì tự
-                xuống hàng riêng. Chỉ ở Bàn ghép xe — nơi người sửa kế hoạch và cần thấy số đổi theo từng lần thả. Điện thoại: một hàng cuộn ngang. */}
-            {tab === 'board' && planView && sum && !planEmpty && <DispatchKpiBar plan={planView} className="w-full sm:w-auto sm:flex-1 sm:min-w-[360px]" />}
-          </div>
+          )}
         </div>
 
         {/* băng "nháp quá ngày" (03/10) bỏ 12/10 — nháp còn mở của kho nằm ở tab Nháp (số trên nhãn tab, quá ngày có ⚠) */}

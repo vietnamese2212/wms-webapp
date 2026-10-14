@@ -80,6 +80,19 @@ export async function loadWarehouseOverrides(whId: string): Promise<WhModelOverr
   return rows.map(ovOf)
 }
 
+/** Tên + "điểm giao tối đa" hiệu lực của MỘT dòng xe tại kho (ô kho ?? Chung) — cửa kéo thả của bàn ghép xe hỏi trước khi ghi
+ *  (luật vượt số khách 14/10) mà không phải nạp cả danh mục + bảng cước như `loadRefs`. null = dòng xe không còn. */
+export async function modelDropsAt(whId: string, modelId: string): Promise<{ name: string; max_drops: number | null } | null> {
+  const [m, ov] = await Promise.all([
+    db.from('vehicle_model').select('name, max_drops').eq('id', modelId).maybeSingle(),
+    db.from('warehouse_vehicle_model').select('max_drops').eq('warehouse_id', whId).eq('vehicle_model_id', modelId).maybeSingle(),
+  ])
+  if (m.error) throw m.error
+  if (ov.error) throw ov.error
+  if (!m.data) return null
+  return { name: m.data.name, max_drops: numOrNull(ov.data?.max_drops) ?? numOrNull(m.data.max_drops) }
+}
+
 /** Dòng cấu hình riêng của NHIỀU kho, gom theo kho (cước ước tính của chuyến Xuất kho: mỗi chuyến một kho). */
 export async function loadWarehouseOverridesMany(whIds: string[]): Promise<Map<string, WhModelOverride[]>> {
   const out = new Map<string, WhModelOverride[]>()

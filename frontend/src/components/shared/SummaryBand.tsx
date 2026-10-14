@@ -16,16 +16,19 @@ export interface BandTile {
 }
 
 export function SummaryBand({ tiles, className, compact, inline }: { tiles: BandTile[]; className?: string; compact?: boolean; inline?: boolean }) {
-  // INLINE (14/10, bàn ghép xe): dải đứng CHUNG HÀNG với cụm nút đầu trang — một hàng ở MỌI cỡ màn (không lưới điện thoại),
-  // khối bo góc co theo nội dung; khung bên ngoài lo việc cuộn ngang. Cùng màu / cỡ chữ với dải full-width.
+  // INLINE (14/10, bàn ghép xe): dải đứng CHUNG HÀNG với cụm nút đầu trang — một hàng ở MỌI cỡ màn (không lưới điện thoại), bo góc.
+  // Máy tính: các ô CHIA ĐỀU bề rộng được cấp (màn 24" ô rộng, 1280 ô hẹp) — cùng một bố cục ở mọi màn (user 14/10: "màn 24 inch hiển
+  // thị khác, phải đồng bộ với các loại màn hình"); chật thì chỉ NHÃN bị cắt "…" (rê chuột xem đủ), CON SỐ không bao giờ cắt — nhãn
+  // `sm:w-0 sm:min-w-full` không góp bề rộng tối thiểu của ô, nên ô co tới đúng bề rộng con số. Điện thoại: ô rộng theo nhãn, khung ngoài
+  // cuộn ngang. ⓘ chỉ trên màn cảm ứng (dưới sm) — máy tính rê chuột đọc `title`.
   if (inline) return (
-    <div className={`flex divide-x divide-white/15 bg-sky-800 text-white rounded-md shrink-0 ${className ?? ''}`}>
+    <div className={`flex divide-x divide-white/15 bg-sky-800 text-white rounded-md ${className ?? ''}`}>
       {tiles.map((t, i) => (
-        <div key={i} title={t.tip ?? t.label} className="shrink-0 min-w-[64px] flex flex-col justify-between text-center px-2.5 py-0.5">
-          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
-            {t.label}
+        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} className="flex-1 flex flex-col justify-between text-center px-2 py-0.5">
+          <div className="sm:w-0 sm:min-w-full text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
+            <span className="min-w-0 truncate">{t.label}</span>
             {t.tip && (
-              <span className="shrink-0 [&_button]:text-sky-200/70 [&_button:hover]:text-white [&_svg]:h-3 [&_svg]:w-3" onClick={e => e.stopPropagation()}>
+              <span className="sm:hidden shrink-0 [&_button]:text-sky-200/70 [&_button:hover]:text-white [&_svg]:h-3 [&_svg]:w-3" onClick={e => e.stopPropagation()}>
                 <InfoTip tip={t.tip} />
               </span>
             )}

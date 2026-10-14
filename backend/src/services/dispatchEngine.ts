@@ -342,6 +342,27 @@ export function mixBlockReason(allow: boolean | null | undefined, staying: { cat
     ? `Xe đang chở ${on.join(', ')} — OD thả vào là ${mv.filter(k => !on.includes(k)).join(', ') || mv.join(', ')}. Bật "Ghép Loại kho khác" trên thẻ xe để cho ghép.`
     : `Các OD đang chọn gồm nhiều Loại kho (${mv.join(', ')}) — bật "Ghép Loại kho khác" trên thẻ xe, hoặc thả từng loại vào một xe.`
 }
+type StopRow = { od_number: string; ship_to_code: string | null; max_customers?: number | null }
+/** VƯỢT SỐ KHÁCH CÙNG XE (14/10, user: "nếu vượt thì chặn luôn và có popup" — trước đó kéo tay khách thứ hai lên Xe 16 Pallet 1 khách
+ *  chỉ ra cảnh báo xám, không vào "Cần xử lý"): cùng HAI trần máy ghép dùng ở `binFits` — dòng xe `max_drops` (chưa khai = 1) và
+ *  "số khách tối đa cùng xe" khắt khe nhất của các OD trên xe (`odStopsCap`). Trả câu lý do khi xe SAU lần thả chở nhiều khách hơn trần;
+ *  null = cho thả. Chỉ chặn lần thả THÊM KHÁCH MỚI: xe đã vượt từ trước vẫn nhận thêm đơn của khách đang có trên xe, kéo ra luôn được.
+ *  `model` null (xe chưa có dòng xe) ⇒ chỉ trần theo khách / kênh. */
+export function dropsBlockReason(model: { name: string; max_drops: number | null } | null, staying: StopRow[], moving: StopRow[]): string | null {
+  const keyOf = (o: StopRow) => o.ship_to_code ?? o.od_number
+  const before = new Set(staying.map(keyOf)).size
+  const after = new Set([...staying, ...moving].map(keyOf)).size
+  if (after <= before) return null
+  const capOds = odStopsCap([...staying, ...moving])
+  const capModel = model ? modelDrops(model) : Infinity
+  if (after <= Math.min(capOds, capModel)) return null
+  const why = capModel <= capOds
+    ? `dòng xe ${model!.name} chỉ nhận ${capModel} khách (Cài đặt TMS → Mã dòng xe → Điểm giao tối đa)`
+    : `khách / kênh của đơn trên xe chỉ cho ${capOds} khách cùng xe (Khách hàng → Số khách tối đa cùng xe)`
+  return before
+    ? `Xe sẽ chở ${after} khách — ${why}. Thả vào xe khác hoặc ô Xe mới.`
+    : `Các OD đang chọn thuộc ${after} khách — ${why}. Thả từng khách vào một xe.`
+}
 /** ĐK bảo quản của MỘT dòng hàng (26/09): hàng nằm ở ô KHAI RIÊNG ĐK thì mang ĐK của ô đó; ô không khai (null) và mã không
  *  có tồn ở ô khai riêng ⇒ theo Loại kho. `stock` = các ĐK của những ô đang chứa mã này (null = ô theo loại kho). */
 export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined, follow = false): string[] {

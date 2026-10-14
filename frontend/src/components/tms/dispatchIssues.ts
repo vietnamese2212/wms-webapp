@@ -28,7 +28,10 @@ export const planHoldsOrders = (s: { trips?: number; pool_ods?: number; unreview
 
 export const EDITABLE: DispatchTripStatus[] = ['DRAFT', 'DECLINED']
 export const tripStatus = (t: DispatchTrip): DispatchTripStatus => t.status ?? 'DRAFT'
-export type IssueKey = 'declined' | 'sapflag' | 'scope' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'under' | 'warn'
+export type IssueKey = 'declined' | 'sapflag' | 'scope' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'drops' | 'under' | 'warn'
+/** Câu cảnh báo server ghi khi xe chở nhiều khách hơn trần (`computeTripPatch`, BE) — 14/10 kéo thả vượt đã bị CHẶN, xe còn mang câu này
+ *  là xe vượt từ trước (kế hoạch cũ / lập trước luật) ⇒ việc Cần xử lý, tô đỏ. Sửa câu ở BE thì sửa tiền tố này. */
+export const DROPS_WARNING_PREFIX = 'Vượt số khách cùng xe'
 /** `scope` (12/10): Loại kho người xem được giao — null = không giới hạn (superadmin / NATIONAL / chưa cấu hình), MIRROR `scopeCategoriesOf`
  *  của BE. Xe chở loại ngoài phạm vi thì Xác nhận bị 403 `CATEGORY_OUT_OF_SCOPE` (C78) — báo SỚM trên bàn, đừng để bấm rồi mới biết. */
 export type IssueCtx = { flags: Map<string, DispatchOdFlag>; scope?: Set<string> | null }
@@ -46,6 +49,7 @@ export const ISSUES: { key: IssueKey; label: string; tip: string; todo: boolean;
   { key: 'nomodel',   label: 'Chưa có dòng xe', todo: true, tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => t.ods.length > 0 && !t.vehicle_model_id },
   { key: 'nocarrier', label: 'Chưa có ĐVVT',   todo: true,  tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => t.ods.length > 0 && !t.transport_company_id },
   { key: 'over',      label: 'Vượt tải',       todo: true,  tip: 'Xe vượt sức chứa dòng xe — kéo bớt OD sang xe khác, đổi xe lớn hơn, hoặc giữ nếu chắc xe chở nổi', test: t => t.oversize },
+  { key: 'drops',     label: 'Vượt số khách',  todo: true,  tip: 'Xe chở nhiều khách hơn dòng xe / khách / kênh cho phép — kéo bớt khách sang xe khác. Kéo thả mới đã bị chặn; xe này vượt từ trước', test: t => t.detail.warnings.some(w => w.startsWith(DROPS_WARNING_PREFIX)) },
   { key: 'under',     label: 'Non tải',        todo: true,  tip: 'Dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết', test: t => t.underload },
   { key: 'nofreight', label: 'Chưa có cước',   todo: false, tip: 'Thường vì bảng cước chưa có tuyến + dòng xe này — xác nhận vẫn được, chuyến sẽ không có cước dự tính', test: t => t.ods.length > 0 && t.freight_estimated == null },
   { key: 'warn',      label: 'Có cảnh báo',    todo: false, tip: 'Máy ghi lại chỗ nó không tự xử được — đọc Ghi chú máy',          test: t => t.detail.warnings.length > 0 },
@@ -56,12 +60,12 @@ export const issuesOf = (t: DispatchTrip, c: IssueCtx): IssueKey[] =>
 export const needsWork = (t: DispatchTrip, c: IssueCtx) => issuesOf(t, c).some(k => TODO_KEYS.has(k))
 // Nhãn NGẮN, xếp theo mức KHẨN — in ngay dưới Số xe (bảng) / trên thẻ xe (bàn ghép)
 export const ISSUE_SHORT: Record<IssueKey, string> = {
-  declined: 'ĐVVT từ chối', sapflag: 'OD đổi ở SAP', scope: 'ngoài phạm vi của bạn', over: 'vượt tải', nomodel: 'chưa có dòng xe', nocarrier: 'chưa có ĐVVT',
+  declined: 'ĐVVT từ chối', sapflag: 'OD đổi ở SAP', scope: 'ngoài phạm vi của bạn', over: 'vượt tải', drops: 'vượt số khách', nomodel: 'chưa có dòng xe', nocarrier: 'chưa có ĐVVT',
   nofreight: 'chưa có cước', under: 'Non tải', warn: 'có cảnh báo',
 }
-export const ISSUE_ORDER: IssueKey[] = ['declined', 'sapflag', 'scope', 'over', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
+export const ISSUE_ORDER: IssueKey[] = ['declined', 'sapflag', 'scope', 'over', 'drops', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
 /** Vấn đề tô ĐỎ (chặn Xác nhận / xe không đi được) — còn lại hổ phách (việc) hoặc xám (tin) */
-export const RED_ISSUES = new Set<IssueKey>(['declined', 'over', 'sapflag', 'scope'])
+export const RED_ISSUES = new Set<IssueKey>(['declined', 'over', 'drops', 'sapflag', 'scope'])
 /** Lựa chọn trên bàn ghép xe SAU một lần chuyển: chỉ bỏ các đơn VỪA chuyển — kế hoạch lớn trả lời chậm (709 xe ~8 s), ô người tick
  *  trong lúc chờ phải còn (06/10: Hoàn tác xong xoá sạch lựa chọn ⇒ lần kéo sau chỉ mang một đơn). Không đổi gì thì trả CHÍNH tập cũ. */
 export const selectionAfterMove = (sel: Set<string>, moved: string[]): Set<string> => {

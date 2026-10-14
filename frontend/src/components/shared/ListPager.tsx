@@ -67,7 +67,9 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
     // `right` từng là `shrink-0` còn phần ĐẾM `min-w-0` ⇒ ở 360 px một ghi chú dài (Slotting: "xếp hạng
     // theo lượt nhặt 30 ngày…") bóp phần đếm còn ~20 px và bẻ "1–132 / 132 mã" thành NĂM dòng dọc,
     // footer cao 111 px. Nay: phần đếm KHÔNG co (`whitespace-nowrap`), ghi chú tự xuống dòng khi chật.
-    <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 sm:rounded-b-xl">
+    // ≥ 1280 MỘT dòng ở mọi màn (14/10, user: "đồng bộ với các loại màn hình trên máy tính"): ghi chú dài (bàn ghép xe) từng rớt dòng hai ở
+    // 1280 mà một dòng ở 24" ⇒ chân bảng cao thấp theo màn; nay từ xl ghi chú CO và cắt "…" (rê chuột xem đủ), phần đếm vẫn không co.
+    <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex flex-wrap xl:flex-nowrap items-center justify-between gap-x-3 gap-y-0.5 sm:rounded-b-xl">
       <span className="whitespace-nowrap">
         {total > 0
           ? `${lo.toLocaleString('vi-VN')}–${hi.toLocaleString('vi-VN')} / ${total.toLocaleString('vi-VN')} ${unit}`
@@ -85,7 +87,7 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
           </select>
         </label>}
       </span>
-      {right && <span className="text-slate-400 min-w-0 flex-1 truncate text-right sm:flex-none sm:shrink-0">{right}</span>}
+      {right && <span title={typeof right === 'string' ? right : undefined} className="text-slate-400 min-w-0 flex-1 truncate text-right sm:flex-none sm:shrink-0 xl:shrink">{right}</span>}
     </div>
   )
 }

@@ -131,10 +131,14 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
   const inactiveDefs = defs.filter(d => !isActive(d) && !d.pinned)
 
   // Desktop/tablet: chip bar inline. Mobile dùng <FilterSheetButton/> riêng (đặt cùng hàng action).
+  // MỘT HÀNG ở mọi màn máy tính ≥ 1280 (14/10, user: "màn 24 inch hiển thị khác — phải đồng bộ với các loại màn hình trên máy tính,
+  // đó là yêu cầu của toàn app"; đo Tối ưu vị trí: 6 chip lọc = 2 hàng ở 1280/1536, 1 hàng ở 1920 ⇒ bảng dưới nhảy 32 px theo màn).
+  // Chật thì CHIP CO, chỉ phần GIÁ TRỊ bị cắt "…" (rê chuột đọc đủ); nhãn lọc, "+ Thêm lọc", "Xóa tất cả" giữ nguyên. Không cuộn ngang:
+  // popover của chip là `absolute`, khung cuộn sẽ cắt mất nó. Dưới 1280 (máy tính bảng) vẫn xuống dòng.
   return (
-    <div ref={barRef} className={`hidden sm:flex items-center gap-1.5 flex-wrap ${className ?? ''}`}>
+    <div ref={barRef} className={`hidden sm:flex items-center gap-1.5 flex-wrap xl:flex-nowrap min-w-0 ${className ?? ''}`}>
       {/* "+ Thêm lọc" */}
-      <div className="relative" ref={addRef}>
+      <div className="relative shrink-0" ref={addRef}>
         <button
           type="button"
           onClick={() => { setAddOpen(v => !v); setOpenKey(null) }}
@@ -176,7 +180,7 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
           onClick={() => { activeDefs.forEach(clearDef); setOpenKey(null) }}
           // Là NÚT thì phải trông như nút: chữ nhạt không viền trước đây đọc ra như dòng ghi chú,
           // vùng bấm cũng hẹp hơn các chip đứng cạnh (user 27/08: "xóa lọc hơi khó bấm").
-          className="h-7 px-2 inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50/60 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition-colors"
+          className="h-7 px-2 shrink-0 whitespace-nowrap inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50/60 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition-colors"
         >
           <X className="h-3.5 w-3.5" /> Xóa tất cả
         </button>
@@ -281,12 +285,13 @@ function FilterChip({ def, open, onToggle, onClose }: {
     }
   }, [open])
   return (
-    <div className="relative" ref={wrapRef}>
-      <div className={`h-7 inline-flex items-center rounded-full border text-xs transition-colors ${
+    // min-w-0 + max-w-full: thanh lọc một hàng (≥ 1280) chật thì chip CO, giá trị cắt "…" — `title` mang đủ chữ
+    <div className="relative min-w-0" ref={wrapRef}>
+      <div className={`h-7 max-w-full inline-flex items-center rounded-full border text-xs transition-colors ${
         active ? 'border-blue-300 bg-blue-50' : 'border-slate-300 bg-white'
       }`}>
-        <button type="button" onClick={onToggle} className="h-full pl-2.5 pr-1.5 inline-flex items-center gap-1">
-          <span className="text-slate-500">{def.label}</span>
+        <button type="button" onClick={onToggle} title={active ? `${def.label}: ${chipValue(def)}` : def.label} className="h-full min-w-0 pl-2.5 pr-1.5 inline-flex items-center gap-1">
+          <span className="text-slate-500 shrink-0 whitespace-nowrap">{def.label}</span>
           {/* 03/10: lọc đơn có `allLabel` (vd "Chung") in nhãn đó khi trống — chip ghim không đứng trần một chữ nhãn */}
           {active ? <span className="font-medium text-slate-800 max-w-[160px] truncate">{chipValue(def)}</span>
             : def.type === 'single' && def.allLabel ? <span className="font-medium text-slate-800 max-w-[160px] truncate">{def.allLabel}</span> : null}

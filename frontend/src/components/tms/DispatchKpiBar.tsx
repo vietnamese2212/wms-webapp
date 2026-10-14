@@ -2,14 +2,16 @@
 // lên — tỷ lệ các vận tải, số tiền, số chuyến, số chuyến các loại xe"). Đọc thẳng `plan.summary` mà server tính lại sau
 // MỖI lần thả OD / đổi xe / đổi ĐVVT, nên ba tab của trang Điều vận cùng một con số.
 // Ô số = SummaryBand (Chuyến · OD · Pallet · Tải TB · Σ cước · cước/pallet · Non tải · Vượt tải · Khung chờ), mỗi ô có Δ so
-// với lúc MÁY lập để người sửa biết mình làm tốt hơn hay tệ hơn đề xuất; sau đó tỷ trọng từng ĐVVT so với mục tiêu (thanh +
-// vạch mục tiêu) và số chuyến theo dòng xe.
-// 14/10 (user, ảnh bàn 1580 px: "phần trên còn dư rất nhiều chỗ — để Dải chỉ số hiện lên, không ẩn nữa"): dải là MỘT hàng đứng
-// cạnh cụm Xác nhận ở đầu trang và LUÔN hiện — bỏ nút "Chỉ số" bật / tắt và bản gọn 4 con số (bản 25/09 tối giấu dải đầy đủ sau
-// nút để bàn rộng; nay dải nằm trong khoảng trống sẵn có của hàng nút nên không lấy thêm hàng nào). Tràn thì cuộn ngang (lăn
-// chuột cũng cuộn) và mép còn nội dung khuất MỜ DẦN — cùng khuôn dải tab (12/09: cuộn được mà không ai biết thì cũng như không).
-import { useCallback, useEffect, useRef, useState } from 'react'
+// với lúc MÁY lập để người sửa biết mình làm tốt hơn hay tệ hơn đề xuất.
+// 14/10 (user, ảnh bàn 1580 px: "phần trên còn dư rất nhiều chỗ — để Dải chỉ số hiện lên, không ẩn nữa"): dải LUÔN hiện, đứng cạnh cụm
+// Xác nhận ở hàng hai của đầu trang (bỏ nút "Chỉ số" bật / tắt và bản gọn 4 con số).
+// 14/10 tối (user, màn 24": "hiển thị khác — phải đồng bộ với các loại màn hình"; "tỷ trọng ĐVVT thì bấm vào để xem (dạng detail),
+// cuộn như thế này không hợp lý"): các ô CHIA ĐỀU bề rộng hàng — màn nào cũng thấy đủ mọi ô, màn rộng thì ô rộng; tỷ trọng ĐVVT + số
+// xe theo dòng xe (kho thật ~27 dòng xe) không còn trải ngang phải cuộn — gom vào MỘT ô cuối "ĐVVT · Dòng xe", bấm mở bảng chi tiết.
+import { ChevronDown } from 'lucide-react'
+import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent } from '@/components/ui/dropdown-menu'
 import type { DispatchPlan } from '@/api/hooks'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -47,71 +49,80 @@ export function DispatchKpiBar({ plan, className }: { plan: DispatchPlan; classN
   ]
   const byModel = s.by_model ?? []
   const shares = s.shares ?? []
+  const under = shares.filter(sh => sh.target_pct != null && (sh.pct ?? 0) < sh.target_pct).length
 
-  // mép mờ khi còn nội dung khuất (như TabsList): đo lại khi khung đổi cỡ, khi cuộn, và khi số liệu đổi (bề rộng nội dung đổi
-  // mà khung flex-1 thì không — ResizeObserver không thấy)
-  const ref = useRef<HTMLDivElement>(null)
-  const [edge, setEdge] = useState<'none' | 'left' | 'right' | 'both'>('none')
-  const sync = useCallback(() => {
-    const el = ref.current
-    if (!el) return
-    const hidden = el.scrollWidth - el.clientWidth
-    if (hidden <= 2) { setEdge('none'); return }
-    const l = el.scrollLeft > 2, r = el.scrollLeft < hidden - 2
-    setEdge(l && r ? 'both' : l ? 'left' : 'right')
-  }, [])
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const ro = new ResizeObserver(sync)
-    ro.observe(el)
-    el.addEventListener('scroll', sync, { passive: true })
-    return () => { ro.disconnect(); el.removeEventListener('scroll', sync) }
-  }, [sync])
-  useEffect(sync, [s, sync])
-  const mask = edge === 'none' ? null
-    : edge === 'both' ? 'linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)'
-    : edge === 'left' ? 'linear-gradient(to right, transparent 0, #000 24px)'
-    : 'linear-gradient(to right, #000 calc(100% - 24px), transparent 100%)'
+  // Khung ô số chỉ cuộn khi con số của mọi ô cộng lại vẫn rộng hơn hàng (điện thoại; máy tính hẹp mà hàng còn ô chọn kế hoạch) —
+  // mép còn nội dung khuất MỜ DẦN, lăn chuột dọc = cuộn ngang (`useEdgeFade`)
+  const fade = useEdgeFade(s)
 
   return (
-    <div ref={ref} aria-label="Chỉ số kế hoạch" style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
-      // chuột không có lăn ngang: lăn dọc trên dải = cuộn ngang (thanh cuộn ẩn để dải gọn một hàng)
-      onWheel={e => { const el = e.currentTarget; if (el.scrollWidth > el.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY }}
-      className={`flex items-center gap-x-4 min-w-0 overflow-x-auto no-scrollbar text-[11px] text-slate-600 [&>*]:shrink-0 ${className ?? ''}`}>
-      <SummaryBand tiles={tiles} inline />
-      {/* tỷ trọng đứng TRƯỚC (ít, luôn thấy), dòng xe sau — kho thật có ~27 dòng xe trong một kế hoạch (Ba Vì 25/09) */}
-      {shares.length > 0 && (
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          <span className="text-[10px] uppercase tracking-wide text-slate-400">Tỷ trọng ĐVVT (tháng)</span>
-          {shares.map(sh => {
-            const pct = sh.pct ?? 0
-            const under = sh.target_pct != null && pct < sh.target_pct
-            const over = sh.target_pct != null && pct > sh.target_pct + 5
-            return (
-              <span key={sh.transport_company_id} className="inline-flex items-center gap-1 whitespace-nowrap"
-                title={`${sh.name}: ${sh.trips} chuyến · ${nf(sh.pallets, 1)} pallet trong tháng (kể cả chuyến đã chạy + kế hoạch này)${sh.target_pct != null ? ` · mục tiêu ${sh.target_pct}% theo ${sh.basis === 'TRIPS' ? 'số chuyến' : sh.basis === 'PALLETS' ? 'pallet' : 'tấn'}` : ' · chưa khai mục tiêu'}`}>
-                <b className="font-mono">{sh.code}</b>
-                <span className="relative inline-block h-2 w-16 rounded-full bg-slate-200 overflow-hidden">
-                  <span className={`absolute inset-y-0 left-0 ${under ? 'bg-amber-500' : over ? 'bg-sky-700' : 'bg-green-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
-                  {sh.target_pct != null && <span className="absolute inset-y-0 w-0.5 bg-slate-800" style={{ left: `${Math.min(100, sh.target_pct)}%` }} />}
-                </span>
-                <span className={`tabular-nums ${under ? 'text-amber-700 font-semibold' : ''}`}>{sh.pct == null ? '—' : `${nf(sh.pct, 1)}%`}{sh.target_pct != null && <span className="text-slate-400">/{sh.target_pct}</span>}</span>
+    <div aria-label="Chỉ số kế hoạch" className={`flex items-stretch min-w-0 ${className ?? ''}`}>
+      <div ref={fade.ref} style={fade.style} onWheel={fade.onWheel} className="flex-1 min-w-0 overflow-x-auto no-scrollbar rounded-l-md">
+        <SummaryBand tiles={tiles} inline className="min-w-full w-max rounded-r-none" />
+      </div>
+      {(shares.length > 0 || byModel.length > 0) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" title="Tỷ trọng từng ĐVVT so với mục tiêu tháng + số xe theo từng dòng xe — bấm để xem"
+              className="shrink-0 rounded-r-md border-l border-white/15 bg-sky-800 px-2 py-0.5 text-center text-white hover:bg-sky-700 data-[state=open]:bg-sky-700 flex flex-col justify-between">
+              <span className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight whitespace-nowrap inline-flex items-center justify-center gap-0.5">
+                ĐVVT · Dòng xe <ChevronDown className="h-3 w-3" />
               </span>
-            )
-          })}
-        </div>
-      )}
-      {byModel.length > 0 && (
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <span className="text-[10px] uppercase tracking-wide text-slate-400">Dòng xe</span>
-          {byModel.map(m => (
-            <span key={m.key} className={`inline-flex items-center gap-1 rounded bg-white border px-1.5 py-0.5 whitespace-nowrap ${m.key === '—' ? 'border-red-200 text-red-700' : 'border-slate-200'}`}
-              title={`${m.sap_code ?? ''} ${m.name}${m.parent ? ` · cha ${m.parent}` : ''} · ${nf(m.pallets, 1)} pallet`}>
-              <span className="truncate max-w-[140px]">{m.name}</span><b className="tabular-nums">×{m.trips}</b>
-            </span>
-          ))}
-        </div>
+              <span className={`text-xs font-semibold leading-tight tabular-nums whitespace-nowrap ${under ? 'text-amber-300' : ''}`}>
+                {under ? `${under} dưới MT` : `${shares.length} ĐVVT`} · {byModel.length} dòng
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-[min(92vw,440px)] max-h-[70vh] overflow-y-auto p-3 space-y-3 text-[11px] text-slate-700">
+            {shares.length > 0 && (
+              <section>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Tỷ trọng ĐVVT trong tháng</div>
+                <table className="w-full">
+                  <tbody>
+                    {shares.map(sh => {
+                      const pct = sh.pct ?? 0
+                      const low = sh.target_pct != null && pct < sh.target_pct
+                      const over = sh.target_pct != null && pct > sh.target_pct + 5
+                      return (
+                        <tr key={sh.transport_company_id} className="border-b border-slate-100 last:border-0">
+                          <td className="py-1 pr-2 whitespace-nowrap"><b className="font-mono">{sh.code}</b> <span className="text-slate-500 truncate">{sh.name}</span></td>
+                          <td className="py-1 pr-2 w-24">
+                            <span className="relative block h-2 w-24 rounded-full bg-slate-200 overflow-hidden">
+                              <span className={`absolute inset-y-0 left-0 ${low ? 'bg-amber-500' : over ? 'bg-sky-700' : 'bg-green-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                              {sh.target_pct != null && <span className="absolute inset-y-0 w-0.5 bg-slate-800" style={{ left: `${Math.min(100, sh.target_pct)}%` }} />}
+                            </span>
+                          </td>
+                          <td className={`py-1 text-right whitespace-nowrap tabular-nums ${low ? 'text-amber-700 font-semibold' : ''}`}>
+                            {sh.pct == null ? '—' : `${nf(sh.pct, 1)}%`}<span className="text-slate-400"> / {sh.target_pct == null ? 'chưa khai' : `MT ${sh.target_pct}%`}</span>
+                          </td>
+                          <td className="py-1 pl-2 text-right whitespace-nowrap tabular-nums text-slate-500" title={`theo ${sh.basis === 'TRIPS' ? 'số chuyến' : sh.basis === 'PALLETS' ? 'pallet' : 'tấn'} — kể cả chuyến đã chạy trong tháng + kế hoạch này`}>
+                            {nf(sh.trips)} xe · {nf(sh.pallets, 1)} pl
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </section>
+            )}
+            {byModel.length > 0 && (
+              <section>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Số xe theo dòng xe (kế hoạch này)</div>
+                <table className="w-full">
+                  <tbody>
+                    {byModel.map(m => (
+                      <tr key={m.key} className={`border-b border-slate-100 last:border-0 ${m.key === '—' ? 'text-red-700' : ''}`}>
+                        <td className="py-1 pr-2" title={`${m.sap_code ?? ''} ${m.name}${m.parent ? ` · cha ${m.parent}` : ''}`}>{m.name}{m.parent && <span className="text-slate-400"> · {m.parent}</span>}</td>
+                        <td className="py-1 pr-2 text-right whitespace-nowrap tabular-nums font-semibold">{m.trips} xe</td>
+                        <td className="py-1 text-right whitespace-nowrap tabular-nums text-slate-500">{nf(m.pallets, 1)} pl</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </div>
   )

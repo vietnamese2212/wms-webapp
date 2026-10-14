@@ -29,6 +29,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
@@ -56,6 +57,10 @@ const money = (n: number | string | null | undefined) => {
   return a >= 1e6 ? `${nf(v / 1e6, 2)} tr` : `${nf(v)} ₫`
 }
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
+/** Lần thả bị LUẬT chặn (vượt số khách cùng xe · chở lẫn Loại kho khi switch tắt) — hiện HỘP THOẠI, không toast góc màn (14/10, user:
+ *  "nếu vượt thì chặn luôn và có popup"). Lỗi khác (mạng, quyền…) vẫn toast. */
+export const RULE_BLOCK_CODES = new Set(['DROPS_EXCEEDED', 'CATEGORY_MIX_BLOCKED'])
+export const apiCode = (e: unknown) => (e as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code ?? null
 const DRAG_MIME = 'application/x-dispatch-ods'
 const uniqStr = (a: string[]) => [...new Set(a)]
 type Op = { ids: string[]; to: DispatchMoveTo; to_trip_id?: string; prev: Map<string, string | null>; created?: string }
@@ -129,6 +134,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const hoverRef = useRef<string | null>(null)
   // xe VỪA nhận OD — bàn sắp lại sau mỗi lần thả nên xe đó có thể đổi chỗ: tô viền + cuộn tới để không mất dấu
   const [justHit, setJustHit] = useState<string | null>(null)
+  // thanh công cụ một hàng (≥ 1280) — mép mờ khi chip Soát / dải % làm hàng dài hơn màn (`soat` đổi ⇒ đo lại)
+  const tbFade = useEdgeFade(soat)
   useEffect(() => {
     if (!justHit) return
     document.querySelector(`[data-trip-card="${justHit}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
@@ -144,7 +151,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // dòng đã chọn mà không còn (người khác vừa chuyển / bỏ) thì bỏ khỏi lựa chọn
   useEffect(() => { setSel(p => { const n = new Set([...p].filter(id => rowBy.has(id))); return n.size === p.size ? p : n }) }, [rowBy])
 
-  const err = (e: unknown, title: string) => toast({ variant: 'destructive', title, description: apiMsg(e) })
+  const err = (e: unknown, title: string) => RULE_BLOCK_CODES.has(apiCode(e) ?? '')
+    ? void ask({ title: apiCode(e) === 'DROPS_EXCEEDED' ? 'Xe không nhận thêm khách' : 'Xe không nhận Loại kho này', body: apiMsg(e), cancelLabel: null })
+    : toast({ variant: 'destructive', title, description: apiMsg(e) })
 
   // ── MỘT cửa ghi cho mọi lần thả / chuyển (kể cả Hoàn tác) ──
   const run = useCallback(async (ids: string[], to: DispatchMoveTo, to_trip_id?: string, record = true) => {
@@ -382,6 +391,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     setBulkBusy(false)
     const bad = rs.filter(r => r.status === 'rejected').length
     setBulk(null); setBulkVal(''); setSel(new Set())
+    // xe bị luật chặn (dòng xe mới nhận ít khách hơn số khách đang trên xe — 14/10): nêu từng xe ngay trong hộp thoại, mở xe ra cũng không thấy lý do
+    const ruled = rs.flatMap(r => r.status === 'rejected' && RULE_BLOCK_CODES.has(apiCode(r.reason) ?? '') ? [apiMsg(r.reason)] : [])
+    if (ruled.length) void ask({ title: `${ruled.length} xe không đổi được dòng xe`, cancelLabel: null,
+      body: <ul className="list-disc pl-4 space-y-1 text-xs">{ruled.slice(0, 8).map((m, i) => <li key={i}>{m}</li>)}{ruled.length > 8 && <li>… và {ruled.length - 8} xe nữa</li>}</ul> })
     toast({
       title: `Đã đổi ${bulk === 'carrier' ? 'ĐVVT' : 'dòng xe'} cho ${rs.length - bad}/${rs.length} xe`,
       description: bad ? `${bad} xe không đổi được — mở từng xe để xem lý do.` : 'Cước đã tính lại theo bảng cước hiệu lực.',
@@ -782,8 +795,12 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // công tắc Bảng | Thẻ đứng ĐẦU (bản cũ nằm cuối, "Chỉ dòng xe" ẩn / hiện theo dạng làm nó nhảy chỗ); nút phụ chỉ icon + tooltip
   // (Nhóm · Mở hết · Chỉ dòng xe); dải Soát của trang (`soat`) vào cùng hàng, cụm Tối ưu lại ghim mép phải.
   const TB = 'inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 aria-pressed:bg-slate-800 aria-pressed:text-white'
+  // ≥ 1280: MỘT hàng ở mọi màn (14/10 tối, user: "màn 24 inch hiển thị khác — đồng bộ với các loại màn hình trên máy tính"): bản trước
+  // `sm:flex-wrap` ⇒ 24" một hàng, 1280 hai hàng (và số dòng còn đổi theo số chip Soát của dữ liệu). Nay không xuống dòng; chật thì
+  // cuộn ngang, mép còn nội dung khuất mờ dần + lăn chuột cuộn (`useEdgeFade`). Dưới 1280 (máy tính bảng) vẫn xuống dòng; điện thoại cuộn.
   const toolbar = (
-        <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1.5 shrink-0 overflow-x-auto sm:overflow-visible sm:flex-wrap [&>*]:shrink-0">
+        <div ref={tbFade.ref} style={tbFade.style} onWheel={tbFade.onWheel}
+          className="px-3 py-1.5 border-b bg-white flex items-center gap-1.5 shrink-0 overflow-x-auto no-scrollbar sm:overflow-visible sm:flex-wrap xl:flex-nowrap xl:overflow-x-auto [&>*]:shrink-0">
           {/* DẠNG BÀN (06/10): Bảng (mặc định) | Thẻ — nhớ theo người; vị trí cố định đầu hàng. Điện thoại: MỘT hàng cuộn ngang (skill 22.8) */}
           <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5">
             {([['table', 'Bảng', Table2, 'Dạng BẢNG — khung chờ | bảng xe → đơn, cột thẳng hàng'], ['cards', 'Thẻ', LayoutGrid, 'Dạng THẺ — lưới thẻ xe']] as const).map(([k, l, Icon, tip]) => (

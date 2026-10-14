@@ -413,8 +413,9 @@ export default function Dispatch() {
   if (canPlan && !isOpen && !!plan) actionItems.push({ key: 'load', icon: ListChecks, label: 'Xem đơn', tip: 'Nạp các đơn chưa đi của kho × ngày × mảng này vào Chờ điều — chưa ghép xe nào; tick đơn rồi bấm "Tạo kế hoạch"', primary: !confirmIsNext, variant: confirmIsNext ? undefined : 'default', onClick: loadOrders, disabled: !f.warehouseId || create.isPending, busy: create.isPending })
   if (canConfirm && confirmedN > 0) actionItems.push({ key: 'reopen', icon: RotateCcw, label: 'Mở lại', tip: `Kéo ${confirmedN} xe đã vào Kế hoạch xuất về nháp để sửa trên Bàn ghép xe (chỉ xe mà chuyến chưa bắt đầu)`, onClick: () => void doReopen(), disabled: reopen.isPending, busy: reopen.isPending })
   if (canExport && plan) actionItems.push({ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất kế hoạch theo cột file KH điều vận', onClick: doExport, mobileHidden: true })
-  // 03/10 tối (user: "tôi thậm chí còn không thấy thao tác xoá nó ở đâu cả"): nút Bỏ nháp có CHỮ, không chỉ icon thùng rác
-  if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — đơn quay về Chờ điều' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, primary: true, variant: 'outline', className: 'text-red-600 border-red-200 hover:bg-red-50', onClick: doDiscard, disabled: discard.isPending })
+  // 14/10 (user: "thu gọn action lên trên, icon với tooltip, ưu tiên không gian"): chỉ nút chính có chữ; Bỏ nháp = icon đỏ + tooltip
+  // (03/10 từng để chữ vì user không thấy nút xoá — nay cụm nút gọn một hàng, icon thùng rác đỏ đứng cố định cuối cụm)
+  if (canPlan && isOpen) actionItems.push({ key: 'discard', icon: Trash2, label: isDraft ? 'Bỏ nháp' : 'Bỏ xe chưa chốt', tip: isDraft ? 'Bỏ bản nháp — đơn quay về Chờ điều' : 'Bỏ các xe chưa vào Kế hoạch xuất (chờ / từ chối / nháp) — xe đã vào giữ nguyên', danger: true, variant: 'outline', className: 'text-red-600 border-red-200 hover:bg-red-50', onClick: doDiscard, disabled: discard.isPending })
 
   const all = plan?.trips ?? []
   const todoN = useMemo(() => all.filter(t => needsWork(t, ictx)).length, [all, ictx])
@@ -426,6 +427,39 @@ export default function Dispatch() {
   }, [all, ictx])
   const sum = plan?.summary
   const s = plan ? STATUS_VI[plan.status] : null
+  // 14/10 (user: "bố cục lộn xộn, không gian đọc hẹp — thu gọn action / filter lên trên, icon + tooltip"): dải Soát + chỉ số không còn
+  // là một hàng riêng — đưa vào thanh công cụ của bàn (DispatchBoard nhận qua `soat` / `right`), chrome trước bảng từ 5 hàng còn 2.
+  // Lựa chọn + số của từng lựa chọn vẫn NHÌN THẤY không cần bấm (user chốt 17/09); câu "không còn xe chờ người quyết" vào tooltip.
+  const soatNode = plan ? (
+    <div className="flex items-center gap-1 shrink-0" role="group" aria-label="Soát xe">
+      {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
+         { k: 'todo', label: 'Cần xử lý', n: todoN, tip: todoN === 0
+           ? `Không còn xe nào chờ người quyết${issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}`
+           : 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
+         ...ISSUES.filter(i => issueN[i.key] > 0).map(i => ({ k: i.key as string, label: i.label, n: issueN[i.key], tip: i.tip })),
+        ]).map(o => (
+        <button key={o.k || 'all'} type="button" title={o.tip} onClick={() => setF({ issue: o.k })} aria-pressed={f.issue === o.k}
+          className={`flex items-center gap-1 rounded-md px-1.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
+            f.issue === o.k ? 'bg-slate-800 text-white'
+            : o.k === 'todo' && o.n > 0 ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+            : o.k === 'todo' ? 'bg-green-50 text-green-700 hover:bg-green-100'
+            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+          {o.label}
+          <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${f.issue === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
+        </button>
+      ))}
+    </div>
+  ) : null
+  const kpiNode = sum && planView ? (
+    <>
+      <span className="hidden xl:inline"><DispatchKpiInline plan={planView} /></span>
+      <button type="button" onClick={() => setF({ kpiOpen: !f.kpiOpen })} aria-expanded={f.kpiOpen} aria-label="Chỉ số"
+        title="Dải chỉ số đầy đủ: OD · pallet · tấn · cước/pallet · Non tải · tỷ trọng ĐVVT · số chuyến theo dòng xe"
+        className={`inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 ${f.kpiOpen ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>
+        <BarChart3 className="h-3.5 w-3.5" />
+      </button>
+    </>
+  ) : null
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -442,7 +476,7 @@ export default function Dispatch() {
             </Tabs>
             {/* Kho + Ngày CHUNG một hàng trên điện thoại (bản cũ Kho chiếm trọn một hàng riêng) */}
             {/* min-w: không có thì flex-1 co ô Kho về ~20 px khi hàng còn chỗ cho ô ngày (đo 390 px, 25/09) */}
-            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-56"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
+            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-48"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
             <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[140px] text-xs shrink-0" title="Ngày giao (ngày xe chạy)" />
             {/* MẢNG (03/10 tối): hai kế hoạch riêng cùng kho × ngày — switch nhỏ, nhớ theo người; ở Xem đơn còn có tab Trung chuyển | Bán hàng */}
             <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" title="Mảng điều vận — mỗi mảng một kế hoạch riêng cùng kho × ngày. Khách tick 'Trung chuyển' ở Khách hàng thì đơn vào Trung chuyển, còn lại Bán hàng; lấy đơn sang mảng mình ở tab Xem đơn.">
@@ -545,38 +579,8 @@ export default function Dispatch() {
             <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planId: '' })}>Về kế hoạch đang làm</button>
           </div>
         )}
-        {plan && !showReview && !planEmpty && planTab && (
-          // Điện thoại: MỘT hàng cuộn ngang (bản cũ wrap thành 3 hàng, đẩy dòng xe đầu tiên xuống ~640 px)
-          <div className="shrink-0 border-b bg-white px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap [&>*]:shrink-0">
-            <span className="hidden sm:inline text-[10px] uppercase tracking-wide text-slate-400 shrink-0">Soát</span>
-            {([{ k: '', label: 'Tất cả', n: all.length, tip: 'Mọi xe trong kế hoạch' },
-               { k: 'todo', label: 'Cần xử lý', n: todoN, tip: 'Xe người CÒN ĐÓNG ĐƯỢC (thiếu ĐVVT / dòng xe / vượt tải / Non tải / bị từ chối). "Chưa có cước" không tính vào đây vì thường là bảng cước chưa có tuyến đó — xem riêng bằng chip bên cạnh.' },
-               ...ISSUES.filter(i => issueN[i.key] > 0).map(i => ({ k: i.key as string, label: i.label, n: issueN[i.key], tip: i.tip })),
-              ]).map(o => (
-              <button key={o.k || 'all'} type="button" title={o.tip} onClick={() => setF({ issue: o.k })}
-                className={`flex items-center gap-1.5 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${
-                  f.issue === o.k ? 'bg-slate-800 text-white'
-                  : o.k === 'todo' && o.n > 0 ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                {o.label}
-                <span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${f.issue === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(o.n)}</span>
-              </button>
-            ))}
-            {todoN === 0 && <span className="text-[11px] text-green-700 font-medium">✓ Không còn xe nào chờ người quyết{issueN.nofreight ? ` — còn ${issueN.nofreight} xe chưa có cước (bảng cước thiếu tuyến, không sửa ở đây được)` : ''}</span>}
-            <div className="ml-auto flex items-center gap-2 shrink-0">
-              {sum && planView && <span className="hidden md:inline"><DispatchKpiInline plan={planView} /></span>}
-              {sum && (
-                <button type="button" onClick={() => setF({ kpiOpen: !f.kpiOpen })} aria-expanded={f.kpiOpen}
-                  title="Dải chỉ số đầy đủ: OD · pallet · tấn · cước/pallet · Non tải · tỷ trọng ĐVVT · số chuyến theo dòng xe"
-                  className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium ${f.kpiOpen ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>
-                  <BarChart3 className="h-3.5 w-3.5" /> Chỉ số {f.kpiOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {planView && sum && f.kpiOpen && planTab && <DispatchKpiBar plan={planView} />}
+        {/* dải Soát + Chỉ số (bản 03/10 là một hàng riêng) nay nằm TRONG thanh công cụ của bàn — xem `soatNode` / `kpiNode` (14/10) */}
+        {planView && sum && f.kpiOpen && planTab && !showReview && !planEmpty && <DispatchKpiBar plan={planView} />}
 
         <div className={plan || tab === 'drafts' ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
@@ -614,7 +618,7 @@ export default function Dispatch() {
               <Button size="sm" variant="outline" className="mt-2 h-8" onClick={() => setF({ tab: 'review', reviewTab: 'GO' })}><ListChecks className="h-3.5 w-3.5 mr-1" /> Mở Xem đơn</Button>
             </div>
           ) : tab === 'board' ? (
-            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} />
+            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} soat={soatNode} right={kpiNode} />
           ) : (
             <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           )}

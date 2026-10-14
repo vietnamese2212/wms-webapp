@@ -17,9 +17,9 @@
 // ⚠ Kéo thả chỉ bật từ lg (chuột). Điện thoại: tick OD → thanh nổi "Chuyển tới xe…" — cùng một cửa ghi.
 // 06/10 (user: "ghép đơn dạng thẻ hơi khó nhìn — table kéo thả, đồng bộ từ trên xuống"): mặc định vẽ DẠNG BẢNG (DispatchBoardTable —
 // khung chờ | bảng cây xe → đơn); công tắc Bảng | Thẻ trên thanh công cụ giữ bản thẻ để so. Mọi cửa ghi / hoàn tác / hộp thoại ở ĐÂY, dùng chung.
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -76,9 +76,10 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused }: {
+export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat, right }: {
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
   focusTripIds?: string[]; onFocused?: () => void   // xe vừa tạo ở bảng Xem đơn ("Tạo kế hoạch") — bàn mở nhóm của chúng (07/10)
+  soat?: ReactNode; right?: ReactNode   // 14/10: dải Soát (chip Tất cả · Cần xử lý…) + chỉ số của trang nằm TRONG thanh công cụ này
 }) {
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
@@ -776,20 +777,30 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             </div>
   )
   const viewKey = tableView ? 'table' : 'cards'
+  const grp = f.boardTripGroup || 'region'
+  // 14/10 (user: "bố cục lộn xộn, không gian đọc hẹp; đổi Bảng/Thẻ mà công tắc chạy đi chỗ khác"): MỘT hàng công cụ, thứ tự CỐ ĐỊNH —
+  // công tắc Bảng | Thẻ đứng ĐẦU (bản cũ nằm cuối, "Chỉ dòng xe" ẩn / hiện theo dạng làm nó nhảy chỗ); nút phụ chỉ icon + tooltip
+  // (Nhóm · Mở hết · Chỉ dòng xe · Chỉ số); dải Soát của trang (`soat`) và chỉ số (`right`) vào cùng hàng, cụm Tối ưu lại ghim mép phải.
+  const TB = 'inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 aria-pressed:bg-slate-800 aria-pressed:text-white'
   const toolbar = (
-        <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 flex-wrap shrink-0">
-          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px]" />
-          {/* NHÓM xe: Vùng (mặc định — xe cùng khách nằm cạnh nhau) | Loại xe */}
-          <div className="flex items-center gap-1 text-[10px] shrink-0" title="Nhóm xe theo vùng (xe cùng khách nằm cạnh nhau) hay theo loại xe">
-            <span className="text-slate-400">Nhóm</span>
-            {([['region', 'Vùng'], ['vtype', 'Loại xe']] as const).map(([k, l]) => (
-              <button key={k} type="button" onClick={() => setF({ boardTripGroup: k, boardOpen: [] })}
-                className={`rounded px-1.5 py-0.5 ${(f.boardTripGroup || 'region') === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{l}</button>
+        <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1.5 flex-wrap shrink-0">
+          {/* DẠNG BÀN (06/10): Bảng (mặc định) | Thẻ — nhớ theo người; vị trí cố định đầu hàng */}
+          <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5">
+            {([['table', 'Bảng', Table2, 'Dạng BẢNG — khung chờ | bảng xe → đơn, cột thẳng hàng'], ['cards', 'Thẻ', LayoutGrid, 'Dạng THẺ — lưới thẻ xe']] as const).map(([k, l, Icon, tip]) => (
+              <button key={k} type="button" aria-pressed={viewKey === k} aria-label={l} title={tip} onClick={() => setF({ boardView: k })}
+                className={`inline-flex items-center justify-center rounded w-8 h-8 sm:w-7 sm:h-6 ${viewKey === k ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}><Icon className="h-3.5 w-3.5" /></button>
             ))}
           </div>
+          <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm Số xe, OD, khách, phường…" className="flex-1 min-w-[140px] max-w-xs" />
+          {soat}
+          {/* NHÓM xe: một nút xoay Vùng (xe cùng khách nằm cạnh nhau) ⇄ Loại xe */}
+          <button type="button" className={TB} onClick={() => setF({ boardTripGroup: grp === 'region' ? 'vtype' : 'region', boardOpen: [] })} aria-label="Nhóm xe"
+            title={grp === 'region' ? 'Đang nhóm xe theo VÙNG (xe cùng khách nằm cạnh nhau) — bấm để nhóm theo loại xe' : 'Đang nhóm xe theo LOẠI XE — bấm để nhóm theo vùng'}>
+            {grp === 'region' ? <MapPin className="h-3.5 w-3.5" /> : <Truck className="h-3.5 w-3.5" />}
+          </button>
           {/* DẢI % TẢI đang áp (01/10, user: "config chọn xong hiện lên trên bàn") — bấm để đổi ngay trên kế hoạch */}
           <DispatchLoadBandChip plan={plan} editable={editable} />
-          <div className="w-36 shrink-0" title="Sắp xếp xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
+          <div className="w-32 shrink-0" title="Sắp xếp xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
                 { value: 'region', label: 'Phường → khách' },
@@ -799,36 +810,28 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
                 { value: 'seq', label: 'Số xe' },
               ]} />
           </div>
-          {tripGroups.length > 1 && !forceOpen && (
-            <button type="button" className="inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] text-slate-600 bg-slate-100 hover:bg-slate-200 whitespace-nowrap"
-              onClick={() => setF({ boardOpen: allOpen ? [] : tripGroups.map(g => g.k) })}>
-              {allOpen ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}{allOpen ? 'Thu hết' : 'Mở hết'}
-            </button>
-          )}
-          {/* dạng bảng: thu các dòng đơn dưới xe — một dòng mỗi xe để soát nhanh; mở từng xe bằng mũi tên */}
-          {tableView && (
-            <button type="button" onClick={() => setF({ boardOdsHidden: !f.boardOdsHidden })} aria-pressed={f.boardOdsHidden}
-              title={f.boardOdsHidden ? 'Đang chỉ hiện dòng xe — bấm để hiện các đơn dưới mỗi xe' : 'Thu các đơn dưới xe — chỉ còn một dòng mỗi xe để soát nhanh; mở từng xe bằng mũi tên'}
-              className="inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] text-slate-600 bg-slate-100 hover:bg-slate-200 whitespace-nowrap">
-              {f.boardOdsHidden ? <ListTree className="h-3.5 w-3.5" /> : <ListCollapse className="h-3.5 w-3.5" />}{f.boardOdsHidden ? 'Hiện đơn trên xe' : 'Chỉ dòng xe'}
-            </button>
-          )}
+          <button type="button" className={TB} disabled={tripGroups.length <= 1 || forceOpen} aria-label={allOpen ? 'Thu hết' : 'Mở hết'}
+            title={tripGroups.length <= 1 ? 'Chỉ có một nhóm xe' : allOpen ? 'Thu hết các nhóm xe' : 'Mở hết các nhóm xe'}
+            onClick={() => setF({ boardOpen: allOpen ? [] : tripGroups.map(g => g.k) })}>
+            {allOpen ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
+          </button>
+          {/* dạng bảng: thu các dòng đơn dưới xe — một dòng mỗi xe để soát nhanh. LUÔN có mặt (mờ ở dạng Thẻ) để hàng không đổi bề rộng */}
+          <button type="button" className={TB} disabled={!tableView} onClick={() => setF({ boardOdsHidden: !f.boardOdsHidden })} aria-pressed={tableView && f.boardOdsHidden} aria-label="Chỉ dòng xe"
+            title={!tableView ? 'Chỉ có ở dạng Bảng' : f.boardOdsHidden ? 'Đang chỉ hiện dòng xe — bấm để hiện các đơn dưới mỗi xe' : 'Thu các đơn dưới xe — chỉ còn một dòng mỗi xe để soát nhanh; mở từng xe bằng mũi tên'}>
+            {f.boardOdsHidden && tableView ? <ListTree className="h-3.5 w-3.5" /> : <ListCollapse className="h-3.5 w-3.5" />}
+          </button>
           {/* ô thả "xe mới" là một dải nhỏ trên thanh công cụ, không chiếm một ô / một dòng của bàn */}
           {canDrag && (
             <div {...dropProps('new', 'new')} title="Thả OD vào đây — máy chọn dòng xe + ĐVVT theo luật ghép"
-              className={`inline-flex items-center gap-1 rounded-md border-2 border-dashed px-2 h-7 text-[11px] font-medium whitespace-nowrap ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-500'}`}>
+              className={`inline-flex items-center gap-1 rounded-md border-2 border-dashed px-2 h-7 text-[11px] font-medium whitespace-nowrap shrink-0 ${hover?.target === 'new' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 text-slate-500'}`}>
               <Plus className="h-3.5 w-3.5" /> Xe mới
             </div>
           )}
           {shownTrips.length !== trips.length && <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>}
-          {/* DẠNG BÀN (06/10): Bảng (mặc định) | Thẻ — nhớ theo người */}
-          <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" title="Cách vẽ bàn ghép xe — Bảng: khung chờ | bảng xe → đơn, cột thẳng hàng; Thẻ: lưới thẻ xe như trước">
-            {([['table', 'Bảng', Table2], ['cards', 'Thẻ', LayoutGrid]] as const).map(([k, l, Icon]) => (
-              <button key={k} type="button" aria-pressed={viewKey === k} onClick={() => setF({ boardView: k })}
-                className={`inline-flex items-center gap-1 rounded px-2 h-8 sm:h-6 text-[11px] font-medium ${viewKey === k ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}><Icon className="h-3.5 w-3.5" />{l}</button>
-            ))}
+          <div className="ml-auto flex items-center gap-1.5 shrink-0">
+            {right}
+            <ActionCluster items={actions} mobileInline />
           </div>
-          <ActionCluster items={actions} mobileInline />
         </div>
   )
   // trạng thái hiện tại của đơn đang mở panel (kéo thả xong có thể đã đổi xe)

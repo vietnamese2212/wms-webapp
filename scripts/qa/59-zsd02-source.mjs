@@ -89,13 +89,14 @@ async function cleanup() {
   await restWrite('sap_route', 'DELETE', `route_code=eq.${ROUTE}`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIPTO}&auto_created=is.true`).catch(() => {})
   await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
-  // 03/10 tối: trả công tắc phủ ngày tạo về mặc định Bắt buộc (user chốt)
-  await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REQUIRE' })
+  // 14/10: trả công tắc phủ ngày tạo về mặc định Nhắc nhở (user chốt 14/10 — ZSD02 nạp nhiều lần / ngày, file không phủ hết); trước đó
+  // cleanup trả REQUIRE ⇒ lượt đêm sẽ lật công tắc của người dùng trên staging
+  await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REMIND' })
 }
 await cleanup()
 await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
-// Fixture tạo OD ở ngày xa tương lai ⇒ KHÔNG phủ ngày tạo của đơn chưa đi thật trên staging ⇒ mặc định Bắt buộc sẽ 422. Gói chạy ở chế
-// độ Nhắc nhở (cảnh báo, vẫn nạp); riêng [7d] bật lại Bắt buộc để đo đúng hành vi chặn. Cleanup trả về REQUIRE.
+// Fixture tạo OD ở ngày xa tương lai ⇒ KHÔNG phủ ngày tạo của đơn chưa đi thật trên staging ⇒ chế độ Bắt buộc sẽ 422. Gói chạy ở chế
+// độ Nhắc nhở (mặc định từ 14/10; cảnh báo, vẫn nạp); riêng [7d] bật Bắt buộc để đo đúng hành vi chặn. Cleanup trả về REMIND.
 await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REMIND' })
 await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS)); return r.s === 200 && r.j?.data?.errors_total === 0 ? r : null })
 

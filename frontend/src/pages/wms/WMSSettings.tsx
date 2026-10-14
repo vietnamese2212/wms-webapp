@@ -313,7 +313,7 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   const covRow   = settings.find(s => s.key === 'zsd02_coverage_mode')
   const srvMsf   = parseMobileSurface(msfRow?.value)
   const srvSapSrc = sapSrcRow?.value === 'ZSD02' || sapSrcRow?.value === 'VL06O' ? sapSrcRow.value : 'BOTH'
-  const srvCov   = covRow?.value === 'REMIND' ? 'REMIND' : 'REQUIRE'
+  const srvCov   = covRow?.value === 'REQUIRE' ? 'REQUIRE' : 'REMIND'   // mặc định REMIND (14/10) — khớp ZSD02_COVERAGE_MODE_DEFAULT bên BE
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'

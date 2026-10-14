@@ -1035,17 +1035,20 @@ try {
         pv.s === 200 && !!pv.j?.data?.blocked && mvNo.s === 409 && mvNo.j?.error?.code === 'CATEGORY_MIX_BLOCKED' && /Ghép Loại kho khác/.test(mvNo.j?.error?.message ?? '') && still?.id === tB.id,
         `pv=${pv.s} blocked=${String(pv.j?.data?.blocked ?? '').slice(0, 60)} mv=${mvNo.s} ${mvNo.j?.error?.code} still=${still?.group_code}`)
       const on = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { allow_mix_categories: true })
+      // 14/10: luật TẢI nay cũng chặn (10/9 pallet một xe = 111 %) — nới xe thành thẻ 2 xe để chỉ còn đúng luật đang kiểm (switch Loại kho)
+      const big = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { vehicle_model_ids: [tA.vehicle_model_id, tA.vehicle_model_id] })
       const mvOk = await api(`/tms/dispatch/plans/${PX.id}/move`, 'POST', { ids: [r8x.id], to: 'trip', to_trip_id: tA.id })
       const tAnow = (await planOf(PX.id))?.trips?.find(t => t.id === tA.id)
       check('14b. Bật switch trên thẻ xe → 200 · thả lại → 200, xe chở cả hai loại, KHÔNG cảnh báo chở lẫn',
-        on.s === 200 && tAnow?.allow_mix_categories === true && mvOk.s === 200 && (tAnow?.ods ?? []).some(o => o.od_number === OD8) && !/chở lẫn/.test((tAnow?.detail?.warnings ?? []).join(' ')),
-        `on=${on.s} col=${tAnow?.allow_mix_categories} mv=${mvOk.s} ${mvOk.j?.error?.message ?? ''} warn=${(tAnow?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
+        on.s === 200 && big.s === 200 && tAnow?.allow_mix_categories === true && mvOk.s === 200 && (tAnow?.ods ?? []).some(o => o.od_number === OD8) && !/chở lẫn/.test((tAnow?.detail?.warnings ?? []).join(' ')),
+        `on=${on.s} big=${big.s} ${big.j?.error?.message ?? ''} col=${tAnow?.allow_mix_categories} mv=${mvOk.s} ${mvOk.j?.error?.message ?? ''} warn=${(tAnow?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
       const off = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { allow_mix_categories: false })
       const tOff = (await planOf(PX.id))?.trips?.find(t => t.id === tA.id)
       const bad = await api(`/tms/dispatch/trips/${tA.id}`, 'PATCH', { allow_mix_categories: 'yes' })
-      check('14c. Tắt lại khi xe ĐANG chở lẫn ⇒ không đẩy OD ra, xe cảnh báo "switch … đang tắt" · giá trị không phải boolean → 400',
-        off.s === 200 && tOff?.allow_mix_categories === false && (tOff?.ods ?? []).some(o => o.od_number === OD8) && /đang tắt/.test((tOff?.detail?.warnings ?? []).join(' ')) && bad.s === 400,
-        `off=${off.s} warn=${(tOff?.detail?.warnings ?? []).join(' | ').slice(0, 120)} bad=${bad.s}`)
+      // 14/10 (user: "làm sai rule cần popup và ngăn chặn"): tắt switch trên xe ĐANG chở lẫn = tự tạo xe sai luật ⇒ CHẶN (bản 27/09 cho tắt rồi cảnh báo)
+      check('14c. Tắt lại khi xe ĐANG chở lẫn ⇒ CHẶN 409 CATEGORY_MIX_BLOCKED bảo kéo OD khác loại ra trước · switch giữ BẬT, OD ở nguyên · giá trị không phải boolean → 400',
+        off.s === 409 && off.j?.error?.code === 'CATEGORY_MIX_BLOCKED' && /kéo các OD khác loại ra/.test(off.j?.error?.message ?? '') && tOff?.allow_mix_categories === true && (tOff?.ods ?? []).some(o => o.od_number === OD8) && bad.s === 400,
+        `off=${off.s} ${off.j?.error?.code ?? ''} ${(off.j?.error?.message ?? '').slice(0, 100)} col=${tOff?.allow_mix_categories} bad=${bad.s}`)
     }
 
     // ⚠ Đặt SAU phần kiểu đi: meta Loại kho được nhớ 30 s mỗi instance (getWhTypeMetaMap) — bật "đi kèm" cho loại 2 trước

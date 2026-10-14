@@ -426,3 +426,19 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   (`DROPS_EXCEEDED` · `CATEGORY_MIX_BLOCKED`) ⇒ HỘP THOẠI thay toast; đổi dòng xe hàng loạt nêu từng xe bị chặn. Chỉ chặn lần thả THÊM
   khách mới — xe đã vượt từ trước vẫn nhận đơn của khách đang có, kéo ra luôn được; xe như thế là việc ĐỎ "Vượt số khách" trong Cần xử lý
   (nháp Ba Vì 02/10 của user: xe #1 Xe 16 Pallet chở Hoàng Long + Phương Anh, kéo lúc 17:28 trước khi có luật — để user tự gỡ). Gói 61 [13l].
+- **14/10 tối, vòng 3 — MỌI LUẬT GHÉP XE CHẶN + HỘP THOẠI (user: "việc làm sai rule cần hiện popup và ngăn chặn — không chỉ số lượng khách
+  tối đa mà còn những cái khác nữa"; `f6a7b241`):** `dispatchEngine.manualRuleBlocks` = MỘT hàm cho mọi cửa người làm tay, đúng các luật máy
+  ghép tuân thủ khi lập xe, thứ tự ưu tiên mã lỗi: thẻ nhiều xe (`MULTI_VEHICLE_BLOCKED`: dòng xe không cho ghép nhiều xe · quá số xe / thẻ
+  của kho) · trộn Loại kho khi switch tắt (`CATEGORY_MIX_BLOCKED`) · số khách (`DROPS_EXCEEDED`) · đi xe riêng (`SEPARATE_CUSTOMER`) · trộn
+  kênh khách khi kho không cho (`CHANNEL_MIX_BLOCKED` — Ba Vì + Bàu Bàng đều không cho) · điều kiện bảo quản (`CONDITION_MISMATCH`) · dòng xe
+  khách được vào (`VEHICLE_NOT_ALLOWED`) · tải sau thao tác > trần dải (`LOAD_EXCEEDED` — thay chốt 25/09 "vượt tải cho thả, đánh dấu đỏ").
+  Chỉ chặn cái LẦN NÀY gây ra (khách / kênh mới, điều kiện / danh sách của OD đưa lên, tải sau khi nhận) ⇒ xe vượt từ trước vẫn kéo ra được.
+  KHÔNG chặn: Non tải (Gom lô dưới tối thiểu 12/10) · khách CHƯA KHAI dòng xe được vào (KHAC tự lấy 08/10) · OD chưa biết kênh. Cửa:
+  `moveOds` (vào xe · xe mới với dòng xe máy chọn) · `moveOd` (panel xe) · `preview-move` (rê qua thấy đủ lý do) · PATCH xe khi ĐỔI dòng
+  xe / tổ hợp (`modelOnly`: chỉ luật phụ thuộc xe, trên MỌI OD của xe) · tắt switch Loại kho trên xe đang chở lẫn · cửa Xác nhận / chốt xe /
+  ĐVVT nhận (`tripGuards` ⇒ 409 `TRIP_RULE_VIOLATION` nêu đích danh xe + luật). `loadModels` tách khỏi `loadRefs` (kéo thả nạp 3 câu, không 7).
+  FE: mọi mã trên ⇒ HỘP THOẠI (`ruleDialog`, tiêu đề theo luật); Cần xử lý có việc đỏ "Sai quy định" (đọc câu cảnh báo xe: vượt số khách ·
+  không phục vụ điều kiện · không được vào dòng xe · chở lẫn) cạnh "Vượt tải"; hộp thoại Xác nhận dừng sớm ở xe vượt tải / sai quy định kèm
+  lối tắt lọc. Lưới: test đơn vị 10 ca + gói 61 [10g] [13c] [14c] [15h] viết lại (bản cũ khoá hành vi "cho làm rồi cảnh báo"),
+  [14b] nới thẻ 2 xe (dữ liệu thử vô tình quá tải). Nháp Ba Vì 02/10
+  của user lúc deploy: 0 xe sai luật (xe #1 user đã tự gỡ khách thứ hai).

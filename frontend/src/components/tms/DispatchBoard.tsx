@@ -76,10 +76,10 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat, right }: {
+export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat }: {
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
   focusTripIds?: string[]; onFocused?: () => void   // xe vừa tạo ở bảng Xem đơn ("Tạo kế hoạch") — bàn mở nhóm của chúng (07/10)
-  soat?: ReactNode; right?: ReactNode   // 14/10: dải Soát (chip Tất cả · Cần xử lý…) + chỉ số của trang nằm TRONG thanh công cụ này
+  soat?: ReactNode   // 14/10: dải Soát (chip Tất cả · Cần xử lý…) của trang nằm TRONG thanh công cụ này; dải chỉ số ở hàng đầu trang
 }) {
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
@@ -780,7 +780,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const grp = f.boardTripGroup || 'region'
   // 14/10 (user: "bố cục lộn xộn, không gian đọc hẹp; đổi Bảng/Thẻ mà công tắc chạy đi chỗ khác"): MỘT hàng công cụ, thứ tự CỐ ĐỊNH —
   // công tắc Bảng | Thẻ đứng ĐẦU (bản cũ nằm cuối, "Chỉ dòng xe" ẩn / hiện theo dạng làm nó nhảy chỗ); nút phụ chỉ icon + tooltip
-  // (Nhóm · Mở hết · Chỉ dòng xe · Chỉ số); dải Soát của trang (`soat`) và chỉ số (`right`) vào cùng hàng, cụm Tối ưu lại ghim mép phải.
+  // (Nhóm · Mở hết · Chỉ dòng xe); dải Soát của trang (`soat`) vào cùng hàng, cụm Tối ưu lại ghim mép phải.
   const TB = 'inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 aria-pressed:bg-slate-800 aria-pressed:text-white'
   const toolbar = (
         <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1.5 shrink-0 overflow-x-auto sm:overflow-visible sm:flex-wrap [&>*]:shrink-0">
@@ -829,7 +829,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           )}
           {shownTrips.length !== trips.length && <span className="text-[11px] text-slate-500 whitespace-nowrap">{shownTrips.length}/{trips.length} xe</span>}
           <div className="ml-auto flex items-center gap-1.5 shrink-0">
-            {right}
             <ActionCluster items={actions} mobileInline />
           </div>
         </div>

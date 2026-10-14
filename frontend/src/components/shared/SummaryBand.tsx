@@ -15,7 +15,28 @@ export interface BandTile {
   tip?: string       // giải thích ý nghĩa con số khi nhãn ngắn dễ hiểu sai (vd "thùng quy đổi")
 }
 
-export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; className?: string; compact?: boolean }) {
+export function SummaryBand({ tiles, className, compact, inline }: { tiles: BandTile[]; className?: string; compact?: boolean; inline?: boolean }) {
+  // INLINE (14/10, bàn ghép xe): dải đứng CHUNG HÀNG với cụm nút đầu trang — một hàng ở MỌI cỡ màn (không lưới điện thoại),
+  // khối bo góc co theo nội dung; khung bên ngoài lo việc cuộn ngang. Cùng màu / cỡ chữ với dải full-width.
+  if (inline) return (
+    <div className={`flex divide-x divide-white/15 bg-sky-800 text-white rounded-md shrink-0 ${className ?? ''}`}>
+      {tiles.map((t, i) => (
+        <div key={i} title={t.tip ?? t.label} className="shrink-0 min-w-[64px] flex flex-col justify-between text-center px-2.5 py-0.5">
+          <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
+            {t.label}
+            {t.tip && (
+              <span className="shrink-0 [&_button]:text-sky-200/70 [&_button:hover]:text-white [&_svg]:h-3 [&_svg]:w-3" onClick={e => e.stopPropagation()}>
+                <InfoTip tip={t.tip} />
+              </span>
+            )}
+          </div>
+          <div className={`text-xs font-semibold leading-tight tabular-nums whitespace-nowrap ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
+            {t.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
   // Mobile (đợt UI 24/08): LƯỚI kín hàng theo SỐ Ô — 1 ô = full, 2/4 ô = 2 cột, còn lại 3 cột —
   // mọi ô hiện đủ, KHÔNG cuộn ngang, KHÔNG ô trống, hết cảnh nhãn cắt cụt "SL (QUY Đ…".
   // Desktop giữ flex 1 hàng chia vạch như cũ.

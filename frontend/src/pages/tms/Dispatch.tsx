@@ -9,19 +9,20 @@
 // từ chối ⇒ đổi ĐVVT rồi "Chốt xe này". ĐVVT không cần phản hồi ⇒ vào Kế hoạch xuất ngay, đổi tay ở tab Kế hoạch xuất.
 // 25/09 (user: "ghép xe cần một giao diện khác, rawdata nằm ở một tab, kéo thả OD cho trực quan" + "chỉ số phải hiện lên khi sửa"):
 // Tab cạnh tiêu đề: Xem đơn · Bàn ghép xe · Bản đồ. 06/10: "Danh sách xe" GỘP vào Bàn ghép xe dạng bảng (dòng xe mang đủ cột; tick
-// dòng xe ⇒ Gán ĐVVT · Đổi dòng xe trên thanh nổi của bàn). Dải chỉ số `DispatchKpiBar` + dải Soát đứng chung trên bàn.
+// dòng xe ⇒ Gán ĐVVT · Đổi dòng xe trên thanh nổi của bàn). Dải Soát nằm trong thanh công cụ của bàn; dải chỉ số `DispatchKpiBar`
+// đứng cạnh cụm Xác nhận ở đầu trang, luôn hiện (14/10).
 // 07/10 (user: "Ở tab Xem đơn, nút là Xem đơn, tức là load lấy các đơn. Có nút tạo kế hoạch. Tab bàn ghép xe hiện kế hoạch để xem, sửa"):
 // "Xem đơn" nạp đơn chưa đi vào CHỜ ĐIỀU (không dải tải, không ghép); tick đơn → "Tạo kế hoạch" (bảng Xem đơn) = chỉ đơn đã tick vào
 // kế hoạch; bàn ghép xe chỉ vẽ phần THUỘC kế hoạch (`boardPlanOf`). "Lập lại" BỎ — nút xoá sạch xe dễ nhầm với "Tạo kế hoạch";
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, BarChart3, ChevronDown, ChevronUp, Map as MapIcon, FileText } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText } from 'lucide-react'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { DispatchDraftsTable } from '@/components/tms/DispatchDraftsTable'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard } from '@/components/tms/DispatchBoard'
-import { DispatchKpiBar, DispatchKpiInline } from '@/components/tms/DispatchKpiBar'
+import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
 import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
@@ -427,8 +428,8 @@ export default function Dispatch() {
   }, [all, ictx])
   const sum = plan?.summary
   const s = plan ? STATUS_VI[plan.status] : null
-  // 14/10 (user: "bố cục lộn xộn, không gian đọc hẹp — thu gọn action / filter lên trên, icon + tooltip"): dải Soát + chỉ số không còn
-  // là một hàng riêng — đưa vào thanh công cụ của bàn (DispatchBoard nhận qua `soat` / `right`), chrome trước bảng từ 5 hàng còn 2.
+  // 14/10 (user: "bố cục lộn xộn, không gian đọc hẹp — thu gọn action / filter lên trên, icon + tooltip"): dải Soát không còn là một
+  // hàng riêng — đưa vào thanh công cụ của bàn (DispatchBoard nhận qua `soat`), chrome trước bảng từ 5 hàng còn 2.
   // Lựa chọn + số của từng lựa chọn vẫn NHÌN THẤY không cần bấm (user chốt 17/09); câu "không còn xe chờ người quyết" vào tooltip.
   const soatNode = plan ? (
     <div className="flex items-center gap-1 shrink-0" role="group" aria-label="Soát xe">
@@ -449,16 +450,6 @@ export default function Dispatch() {
         </button>
       ))}
     </div>
-  ) : null
-  const kpiNode = sum && planView ? (
-    <>
-      <span className="hidden 2xl:inline"><DispatchKpiInline plan={planView} /></span>
-      <button type="button" onClick={() => setF({ kpiOpen: !f.kpiOpen })} aria-expanded={f.kpiOpen} aria-label="Chỉ số"
-        title="Dải chỉ số đầy đủ: OD · pallet · tấn · cước/pallet · Non tải · tỷ trọng ĐVVT · số chuyến theo dòng xe"
-        className={`inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 ${f.kpiOpen ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>
-        <BarChart3 className="h-3.5 w-3.5" />
-      </button>
-    </>
   ) : null
 
   return (
@@ -564,6 +555,10 @@ export default function Dispatch() {
                   chip Khai thiếu, dải Soát và dải Chỉ số đều thuộc bàn ghép xe; ở đây chỉ còn Kho · Ngày · Kế hoạch · trạng thái */}
               {planTab && <ActionCluster items={actionItems} mobileInline />}
             </div>
+            {/* DẢI CHỈ SỐ (14/10, user: "phần trên còn dư rất nhiều chỗ — để Dải chỉ số hiện lên, không ẩn nữa"): phần tử CUỐI của hàng
+                đầu trang, flex-1 ⇒ lấp khoảng trống sau cụm Xác nhận (ở 1580 px là ~1.300 px bỏ không); chỗ còn lại dưới 360 px thì tự
+                xuống hàng riêng. Chỉ ở Bàn ghép xe — nơi người sửa kế hoạch và cần thấy số đổi theo từng lần thả. Điện thoại: một hàng cuộn ngang. */}
+            {tab === 'board' && planView && sum && !planEmpty && <DispatchKpiBar plan={planView} className="w-full sm:w-auto sm:flex-1 sm:min-w-[360px]" />}
           </div>
         </div>
 
@@ -579,8 +574,7 @@ export default function Dispatch() {
             <button type="button" className="font-medium text-sky-700 hover:underline" onClick={() => setF({ planId: '' })}>Về kế hoạch đang làm</button>
           </div>
         )}
-        {/* dải Soát + Chỉ số (bản 03/10 là một hàng riêng) nay nằm TRONG thanh công cụ của bàn — xem `soatNode` / `kpiNode` (14/10) */}
-        {planView && sum && f.kpiOpen && planTab && !showReview && !planEmpty && <DispatchKpiBar plan={planView} />}
+        {/* dải Soát (bản 03/10 là một hàng riêng) nay nằm TRONG thanh công cụ của bàn — `soatNode`; dải chỉ số ở hàng đầu trang (14/10) */}
 
         <div className={plan || tab === 'drafts' ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
@@ -618,7 +612,7 @@ export default function Dispatch() {
               <Button size="sm" variant="outline" className="mt-2 h-8" onClick={() => setF({ tab: 'review', reviewTab: 'GO' })}><ListChecks className="h-3.5 w-3.5 mr-1" /> Mở Xem đơn</Button>
             </div>
           ) : tab === 'board' ? (
-            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} soat={soatNode} right={kpiNode} />
+            <DispatchBoard plan={planView ?? plan} editable={!!isOpen && canPlan} flags={flags} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} soat={soatNode} />
           ) : (
             <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           )}

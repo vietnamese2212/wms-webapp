@@ -437,8 +437,8 @@ interface DispatchFilters {
   boardGroup: string     // khung chờ gom theo 'ward' (phường) | 'region' (vùng) | 'customer' (khách)
   boardSort: string      // thẻ xe sắp theo 'region' (vùng → phường → khách) | 'todo' (cần xử lý trước) | 'load' (tải thấp trước) | 'freight' (cước cao trước) | 'seq' — sắp lại SAU MỖI LẦN THẢ (user 25/09)
   boardTripGroup: string // thẻ xe NHÓM theo 'region' (vùng — mặc định 30/09: xe cùng khách phải đứng cạnh nhau, nhóm theo loại xe tách chúng ra) | 'vtype' (dòng xe cha)
-  // Bàn làm việc rộng rãi (user 25/09 tối): chỉ số chi tiết giấu sau nút · nhóm xe theo dòng xe CHA đóng mặc định · khung chờ thu gọn được
-  kpiOpen: boolean
+  // Bàn làm việc rộng rãi (user 25/09 tối): nhóm xe theo dòng xe CHA đóng mặc định · khung chờ thu gọn được
+  // (cờ `kpiOpen` — dải chỉ số giấu sau nút — bỏ 14/10: user muốn dải luôn hiện, nay nằm ở hàng đầu trang)
   boardOpen: string[]    // khoá nhóm dòng xe CHA đang MỞ trên bàn ghép xe
   poolHidden: boolean
   // 06/10 (user: "ghép đơn dạng thẻ hơi khó nhìn — table kéo thả, đồng bộ từ trên xuống"): 'table' bảng cây xe → đơn (mặc định) · 'cards' thẻ cũ
@@ -699,7 +699,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', kpiOpen: false, boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
+    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

@@ -1,9 +1,14 @@
 // DẢI CHỈ SỐ SỐNG của kế hoạch điều vận (user chốt 25/09: "quá trình chỉnh sửa kế hoạch thì các chỉ số cần phải hiện
 // lên — tỷ lệ các vận tải, số tiền, số chuyến, số chuyến các loại xe"). Đọc thẳng `plan.summary` mà server tính lại sau
 // MỖI lần thả OD / đổi xe / đổi ĐVVT, nên ba tab của trang Điều vận cùng một con số.
-// Hàng 1 = SummaryBand chuẩn app (Chuyến · OD · Pallet · Tải TB · Σ cước · cước/pallet · Non tải · Vượt tải · Khung chờ),
-// mỗi ô có Δ so với lúc MÁY lập để người sửa biết mình làm tốt hơn hay tệ hơn đề xuất.
-// Hàng 2 = số chuyến theo dòng xe + tỷ trọng từng ĐVVT so với mục tiêu (thanh + vạch mục tiêu).
+// Ô số = SummaryBand (Chuyến · OD · Pallet · Tải TB · Σ cước · cước/pallet · Non tải · Vượt tải · Khung chờ), mỗi ô có Δ so
+// với lúc MÁY lập để người sửa biết mình làm tốt hơn hay tệ hơn đề xuất; sau đó tỷ trọng từng ĐVVT so với mục tiêu (thanh +
+// vạch mục tiêu) và số chuyến theo dòng xe.
+// 14/10 (user, ảnh bàn 1580 px: "phần trên còn dư rất nhiều chỗ — để Dải chỉ số hiện lên, không ẩn nữa"): dải là MỘT hàng đứng
+// cạnh cụm Xác nhận ở đầu trang và LUÔN hiện — bỏ nút "Chỉ số" bật / tắt và bản gọn 4 con số (bản 25/09 tối giấu dải đầy đủ sau
+// nút để bàn rộng; nay dải nằm trong khoảng trống sẵn có của hàng nút nên không lấy thêm hàng nào). Tràn thì cuộn ngang (lăn
+// chuột cũng cuộn) và mép còn nội dung khuất MỜ DẦN — cùng khuôn dải tab (12/09: cuộn được mà không ai biết thì cũng như không).
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
 import type { DispatchPlan } from '@/api/hooks'
 
@@ -20,29 +25,7 @@ const delta = (now: number, base: number | undefined, unit: (n: number) => strin
   return <span className={`ml-1 text-[10px] font-medium ${good ? 'text-green-300' : 'text-amber-200'}`}>{d > 0 ? '+' : '−'}{unit(Math.abs(d))}</span>
 }
 
-/** BẢN GỌN (user 25/09 tối: "các thông số nếu không quá cần thiết giấu trong nút info — bàn làm việc rộng rãi nhất có
- *  thể"): 4 con số người điều vận nhìn liên tục (xe · tải TB · Σ cước · khung chờ) + cờ đỏ khi có xe vượt tải, đứng chung
- *  hàng với dải Soát. Dải đầy đủ (SummaryBand + tỷ trọng ĐVVT + dòng xe) mở bằng nút "Chỉ số". */
-export function DispatchKpiInline({ plan }: { plan: DispatchPlan }) {
-  const s = plan.summary
-  const b = s.baseline ?? null
-  const over = s.overload ?? 0
-  const under = s.shares?.filter(sh => sh.target_pct != null && (sh.pct ?? 0) < sh.target_pct).length ?? 0
-  return (
-    <span className="inline-flex items-center gap-2 whitespace-nowrap text-[11px] text-slate-600 tabular-nums">
-      <span title={b ? `Máy lập ${nf(b.trips)} xe` : undefined}><b className="text-slate-800">{nf(s.trips)}</b> xe{b && s.trips !== b.trips && <span className={s.trips < b.trips ? 'text-green-700' : 'text-amber-700'}> ({s.trips > b.trips ? '+' : '−'}{nf(Math.abs(s.trips - b.trips))})</span>}</span>
-      <span className="text-slate-300">·</span>
-      <span title="Trung bình % tải các xe có dòng xe">tải <b className="text-slate-800">{s.avg_load_pct == null ? '—' : `${nf(s.avg_load_pct, 0)}%`}</b></span>
-      <span className="text-slate-300">·</span>
-      <span title={`${nf(s.freight_total)} ₫${s.unpriced ? ` · ${s.unpriced} xe chưa có cước` : ''}${b ? ` · máy lập ${nf(b.freight_total)} ₫` : ''}`}>Σ <b className="text-slate-800">{money(s.freight_total)}</b></span>
-      {(s.pool_ods ?? 0) > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700" title="OD ở khung chờ KHÔNG đi khi Xác nhận">chờ {nf(s.pool_ods ?? 0)} OD</span></>}
-      {over > 0 && <><span className="text-slate-300">·</span><span className="text-red-600 font-semibold">{over} vượt tải</span></>}
-      {under > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700" title="ĐVVT đang dưới mục tiêu tỷ trọng tháng — mở Chỉ số để xem">{under} ĐVVT dưới tỷ trọng</span></>}
-    </span>
-  )
-}
-
-export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
+export function DispatchKpiBar({ plan, className }: { plan: DispatchPlan; className?: string }) {
   const s = plan.summary
   const b = s.baseline ?? null
   const tiles: BandTile[] = [
@@ -64,45 +47,70 @@ export function DispatchKpiBar({ plan }: { plan: DispatchPlan }) {
   ]
   const byModel = s.by_model ?? []
   const shares = s.shares ?? []
+
+  // mép mờ khi còn nội dung khuất (như TabsList): đo lại khi khung đổi cỡ, khi cuộn, và khi số liệu đổi (bề rộng nội dung đổi
+  // mà khung flex-1 thì không — ResizeObserver không thấy)
+  const ref = useRef<HTMLDivElement>(null)
+  const [edge, setEdge] = useState<'none' | 'left' | 'right' | 'both'>('none')
+  const sync = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    const hidden = el.scrollWidth - el.clientWidth
+    if (hidden <= 2) { setEdge('none'); return }
+    const l = el.scrollLeft > 2, r = el.scrollLeft < hidden - 2
+    setEdge(l && r ? 'both' : l ? 'left' : 'right')
+  }, [])
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    el.addEventListener('scroll', sync, { passive: true })
+    return () => { ro.disconnect(); el.removeEventListener('scroll', sync) }
+  }, [sync])
+  useEffect(sync, [s, sync])
+  const mask = edge === 'none' ? null
+    : edge === 'both' ? 'linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)'
+    : edge === 'left' ? 'linear-gradient(to right, transparent 0, #000 24px)'
+    : 'linear-gradient(to right, #000 calc(100% - 24px), transparent 100%)'
+
   return (
-    <div className="shrink-0">
-      <SummaryBand tiles={tiles} />
-      {(byModel.length > 0 || shares.length > 0) && (
-        // MỘT hàng cuộn ngang: kho thật có ~27 dòng xe trong một kế hoạch (Ba Vì 25/09) — trải ra 3 hàng là đẩy bàn ghép xe
-        // xuống nửa dưới màn 1280 px (đo y≈385) và chiếm cả màn điện thoại. Tỷ trọng đứng TRƯỚC (ít, luôn thấy), dòng xe sau.
-        <div className="border-b bg-sky-50/60 px-3 py-1 flex items-center gap-x-4 overflow-x-auto no-scrollbar text-[11px] text-slate-600 [&>*]:shrink-0">
-          {shares.length > 0 && (
-            <div className="flex items-center gap-2 whitespace-nowrap">
-              <span className="text-[10px] uppercase tracking-wide text-slate-400">Tỷ trọng ĐVVT (tháng)</span>
-              {shares.map(sh => {
-                const pct = sh.pct ?? 0
-                const under = sh.target_pct != null && pct < sh.target_pct
-                const over = sh.target_pct != null && pct > sh.target_pct + 5
-                return (
-                  <span key={sh.transport_company_id} className="inline-flex items-center gap-1 whitespace-nowrap"
-                    title={`${sh.name}: ${sh.trips} chuyến · ${nf(sh.pallets, 1)} pallet trong tháng (kể cả chuyến đã chạy + kế hoạch này)${sh.target_pct != null ? ` · mục tiêu ${sh.target_pct}% theo ${sh.basis === 'TRIPS' ? 'số chuyến' : sh.basis === 'PALLETS' ? 'pallet' : 'tấn'}` : ' · chưa khai mục tiêu'}`}>
-                    <b className="font-mono">{sh.code}</b>
-                    <span className="relative inline-block h-2 w-16 rounded-full bg-slate-200 overflow-hidden">
-                      <span className={`absolute inset-y-0 left-0 ${under ? 'bg-amber-500' : over ? 'bg-sky-700' : 'bg-green-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
-                      {sh.target_pct != null && <span className="absolute inset-y-0 w-0.5 bg-slate-800" style={{ left: `${Math.min(100, sh.target_pct)}%` }} />}
-                    </span>
-                    <span className={`tabular-nums ${under ? 'text-amber-700 font-semibold' : ''}`}>{sh.pct == null ? '—' : `${nf(sh.pct, 1)}%`}{sh.target_pct != null && <span className="text-slate-400">/{sh.target_pct}</span>}</span>
-                  </span>
-                )
-              })}
-            </div>
-          )}
-          {byModel.length > 0 && (
-            <div className="flex items-center gap-1.5 whitespace-nowrap">
-              <span className="text-[10px] uppercase tracking-wide text-slate-400">Dòng xe</span>
-              {byModel.map(m => (
-                <span key={m.key} className={`inline-flex items-center gap-1 rounded bg-white border px-1.5 py-0.5 whitespace-nowrap ${m.key === '—' ? 'border-red-200 text-red-700' : 'border-slate-200'}`}
-                  title={`${m.sap_code ?? ''} ${m.name}${m.parent ? ` · cha ${m.parent}` : ''} · ${nf(m.pallets, 1)} pallet`}>
-                  <span className="truncate max-w-[140px]">{m.name}</span><b className="tabular-nums">×{m.trips}</b>
+    <div ref={ref} aria-label="Chỉ số kế hoạch" style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+      // chuột không có lăn ngang: lăn dọc trên dải = cuộn ngang (thanh cuộn ẩn để dải gọn một hàng)
+      onWheel={e => { const el = e.currentTarget; if (el.scrollWidth > el.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY }}
+      className={`flex items-center gap-x-4 min-w-0 overflow-x-auto no-scrollbar text-[11px] text-slate-600 [&>*]:shrink-0 ${className ?? ''}`}>
+      <SummaryBand tiles={tiles} inline />
+      {/* tỷ trọng đứng TRƯỚC (ít, luôn thấy), dòng xe sau — kho thật có ~27 dòng xe trong một kế hoạch (Ba Vì 25/09) */}
+      {shares.length > 0 && (
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">Tỷ trọng ĐVVT (tháng)</span>
+          {shares.map(sh => {
+            const pct = sh.pct ?? 0
+            const under = sh.target_pct != null && pct < sh.target_pct
+            const over = sh.target_pct != null && pct > sh.target_pct + 5
+            return (
+              <span key={sh.transport_company_id} className="inline-flex items-center gap-1 whitespace-nowrap"
+                title={`${sh.name}: ${sh.trips} chuyến · ${nf(sh.pallets, 1)} pallet trong tháng (kể cả chuyến đã chạy + kế hoạch này)${sh.target_pct != null ? ` · mục tiêu ${sh.target_pct}% theo ${sh.basis === 'TRIPS' ? 'số chuyến' : sh.basis === 'PALLETS' ? 'pallet' : 'tấn'}` : ' · chưa khai mục tiêu'}`}>
+                <b className="font-mono">{sh.code}</b>
+                <span className="relative inline-block h-2 w-16 rounded-full bg-slate-200 overflow-hidden">
+                  <span className={`absolute inset-y-0 left-0 ${under ? 'bg-amber-500' : over ? 'bg-sky-700' : 'bg-green-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                  {sh.target_pct != null && <span className="absolute inset-y-0 w-0.5 bg-slate-800" style={{ left: `${Math.min(100, sh.target_pct)}%` }} />}
                 </span>
-              ))}
-            </div>
-          )}
+                <span className={`tabular-nums ${under ? 'text-amber-700 font-semibold' : ''}`}>{sh.pct == null ? '—' : `${nf(sh.pct, 1)}%`}{sh.target_pct != null && <span className="text-slate-400">/{sh.target_pct}</span>}</span>
+              </span>
+            )
+          })}
+        </div>
+      )}
+      {byModel.length > 0 && (
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">Dòng xe</span>
+          {byModel.map(m => (
+            <span key={m.key} className={`inline-flex items-center gap-1 rounded bg-white border px-1.5 py-0.5 whitespace-nowrap ${m.key === '—' ? 'border-red-200 text-red-700' : 'border-slate-200'}`}
+              title={`${m.sap_code ?? ''} ${m.name}${m.parent ? ` · cha ${m.parent}` : ''} · ${nf(m.pallets, 1)} pallet`}>
+              <span className="truncate max-w-[140px]">{m.name}</span><b className="tabular-nums">×{m.trips}</b>
+            </span>
+          ))}
         </div>
       )}
     </div>

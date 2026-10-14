@@ -127,6 +127,9 @@ export default function Dispatch() {
   // tự chọn nó là tải giữa chừng (Bàu Bàng: 1.500 / 2.457 đơn) và lần làm mới sau đó bị gộp vào lượt tải ấy. Đang nạp ⇒ giữ kế hoạch cũ;
   // nạp xong `loadOrders` đặt planId.
   const create = useCreateDispatchPlan()
+  // 14/10 (user: "bấm Xem đơn là Trung chuyển và Bán hàng cùng load"): mảng kia nạp bằng mutation RIÊNG — dùng chung `create` thì
+  // `create.isPending` của lượt hai làm `planId` rơi về lastPlanId (null lúc danh sách chưa kịp có nháp mới) ⇒ màn "Chưa có kế hoạch" chớp
+  const createOther = useCreateDispatchPlan()
   const lastPlanId = useRef<string | null>(null)
   const planId = useMemo(() => {
     if (create.isPending) return lastPlanId.current
@@ -212,12 +215,18 @@ export default function Dispatch() {
   // — xem đơn không bao giờ thay nháp người khác đang làm.
   const loadOrders = () => {
     if (!f.warehouseId) return
-    create.mutateAsync({ warehouse_id: f.warehouseId, plan_date: day, segment: seg, reuse: true }).then(p => {
+    const wh = f.warehouseId
+    create.mutateAsync({ warehouse_id: wh, plan_date: day, segment: seg, reuse: true }).then(p => {
       setF({ planId: p.id, tab: 'review', reviewTab: 'GO' })
       toast({
         title: p.reused ? `Kế hoạch ${SEGMENT_VI[seg]} ngày ${formatDate(day)} đang mở — đã mở lại` : `${nf(p.summary.unreviewed_ods ?? p.summary.pool_ods ?? 0)} đơn chờ điều`,
         description: 'Tick đơn cần đi ngày này rồi bấm "Tạo kế hoạch" — đơn không tick ở lại Chờ điều.',
       })
+      // 14/10: nạp luôn MẢNG KIA (Trung chuyển ⇄ Bán hàng) cùng ngày — reuse: đã có nháp thì trả lại, không thay; nối tiếp (không song
+      // song) vì hai lượt nạp cùng kho đua thuê kế hoạch; mảng kia hỏng chỉ báo, không làm hỏng mảng đang xem
+      return createOther.mutateAsync({ warehouse_id: wh, plan_date: day, segment: otherSeg, reuse: true })
+        .then(o => { if (!o.reused) toast({ title: `${SEGMENT_VI[otherSeg]}: ${nf(o.summary.unreviewed_ods ?? o.summary.pool_ods ?? 0)} đơn chờ điều`, description: `Đã nạp sẵn — tab ${SEGMENT_VI[otherSeg]} trong Xem đơn.` }) })
+        .catch(e => err(e, `Không nạp được mảng ${SEGMENT_VI[otherSeg]}`))
     }).catch(e => err(e, 'Không nạp được đơn'))
   }
   const noTripYet = !!plan && !plan.trips.some(t => tripStatus(t) !== 'DISCARDED' && t.ods.length > 0)

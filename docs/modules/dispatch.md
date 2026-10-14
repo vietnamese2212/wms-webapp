@@ -387,3 +387,8 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   `dispatch.plan+confirm` (route chỉ gác `dispatch.plan`, điều kiện `external_khvc.edit` trong PATCH chỉ chạm được khi có `plan`). Chưa kiểm:
   phạm vi kho 403 của PATCH (vai QA chỉ gắn Ba Vì, `whAllowed` dùng chung mọi cửa — gói 61 C78 gác). Bẫy bộ kiểm: `PUT /wms/outbound/:id` đòi
   `qty_semantics:'base'` (409 `APP_OUTDATED`); danh sách dòng xe trả `parent` (object), không `parent_type_name`.
+- **14/10 (user test tay sau khi xoá ZSD02 / VL06O cũ):** "Xem đơn" nạp CẢ HAI MẢNG cùng ngày (user: "không phải vào 2 tab để xem") —
+  mảng đang chọn trước (đặt `planId`), rồi mảng kia qua mutation riêng `createOther` với `reuse` (đã có nháp thì trả lại); nối tiếp vì hai
+  lượt cùng kho đua thuê kế hoạch; mảng kia hỏng chỉ báo. Dùng chung `create` thì `isPending` lượt hai làm `planId` rơi về null (màn
+  "Chưa có kế hoạch" chớp — họ C63). Tab mảng kia ở Xem đơn in số đơn chờ từ `otherPlan.summary`. Giải thích tab cho user: chỉ "Không
+  liên quan" là dấu RIÊNG người xem; dấu tay (Không điều · Không điều ngày này · Ngoài app) là sổ của kho; nháp là bản CHUNG kho × ngày × mảng.

@@ -903,10 +903,11 @@ try {
     `drops=${d1.s} http=${p11.s} ${p11.j?.error?.message ?? ''} trips=${(P11?.trips ?? []).map(t => [...new Set(t.ods.map(o => o.ship_to_code))].join('+')).join(' ')}`)
   const X11 = tripOfOd(P11, OD[0])
   const mv11 = await api(`/tms/dispatch/plans/${P11.id}/move`, 'POST', { ids: [rowOf(P11, OD[1]).id], to: 'trip', to_trip_id: X11.id })
-  const X11b = mv11.j?.data?.trips?.find(t => t.id === X11.id)
-  check('11c. Người kéo khách thứ hai lên xe có dòng xe max_drops = 1 ⇒ cho thả nhưng xe cảnh báo "Vượt số khách cùng xe (2 > 1)"',
-    mv11.s === 200 && X11b?.ods?.length === 2 && /Vượt số khách cùng xe \(2 > 1\)/.test((X11b?.detail?.warnings ?? []).join(' ')),
-    `http=${mv11.s} ${mv11.j?.error?.message ?? ''} warn=${(X11b?.detail?.warnings ?? []).join(' | ').slice(0, 140)}`)
+  const X11b = tripOfOd(await planOf(P11.id), OD[1])
+  // 14/10 (user: "nếu vượt thì chặn luôn và có popup") — trước đó [11c] khoá hành vi CŨ "cho thả, chỉ cảnh báo xám" (C80)
+  check('11c. Người kéo khách thứ hai lên xe có dòng xe max_drops = 1 ⇒ CHẶN 409 DROPS_EXCEEDED nêu dòng xe + chỗ khai · OD2 ở nguyên xe của nó',
+    mv11.s === 409 && mv11.j?.error?.code === 'DROPS_EXCEEDED' && /chỉ nhận 1 khách.*Điểm giao tối đa/.test(mv11.j?.error?.message ?? '') && !!X11b && X11b.id !== X11.id,
+    `http=${mv11.s} ${mv11.j?.error?.code ?? ''} ${(mv11.j?.error?.message ?? '').slice(0, 120)} od2Xe=${X11b?.id?.slice(0, 6)} x11=${X11.id.slice(0, 6)}`)
   const oldMode = await api(`/tms/dispatch/plans/${P11.id}/ods`, 'PATCH', { ids: [rowOf(P11, OD[0]).id], load_mode: 'LOOSE' })
   const oldFlip = await api(`/tms/dispatch/trips/${X11.id}`, 'PATCH', { load_mode: 'LOOSE' })
   check('11d. Cửa đổi kiểu đi cũ: route /ods không còn (404) · PATCH xe với load_mode không đổi gì (200, không 5xx)',

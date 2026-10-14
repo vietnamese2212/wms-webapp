@@ -24,7 +24,10 @@ export function SummaryBand({ tiles, className, compact, inline }: { tiles: Band
   if (inline) return (
     <div className={`flex divide-x divide-white/15 bg-sky-800 text-white rounded-md ${className ?? ''}`}>
       {tiles.map((t, i) => (
-        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} className="flex-1 flex flex-col justify-between text-center px-2 py-0.5">
+        // chia bề rộng THEO ĐỘ DÀI NHÃN (không chia đều): đo 1280 chia đều thì "Vượt tải" / "Khung chờ" / "OD trên xe" bị cắt trong khi ô
+        // "Tấn" thừa chỗ — theo độ dài nhãn thì 1280 có sidebar đọc đủ cả 10 nhãn; con số rộng (Σ cước kèm Δ) tự giữ bề rộng tối thiểu
+        <div key={i} title={t.tip ? `${t.label} — ${t.tip}` : t.label} style={{ flexGrow: Math.max(3, t.label.length), flexBasis: 0 }}
+          className="flex flex-col justify-between text-center px-1.5 py-0.5">
           <div className="sm:w-0 sm:min-w-full text-[9px] font-medium uppercase tracking-wider text-sky-200/90 leading-tight flex items-center justify-center gap-0.5 whitespace-nowrap">
             <span className="min-w-0 truncate">{t.label}</span>
             {t.tip && (

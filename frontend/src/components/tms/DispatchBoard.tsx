@@ -783,8 +783,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // (Nhóm · Mở hết · Chỉ dòng xe · Chỉ số); dải Soát của trang (`soat`) và chỉ số (`right`) vào cùng hàng, cụm Tối ưu lại ghim mép phải.
   const TB = 'inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 aria-pressed:bg-slate-800 aria-pressed:text-white'
   const toolbar = (
-        <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1.5 flex-wrap shrink-0">
-          {/* DẠNG BÀN (06/10): Bảng (mặc định) | Thẻ — nhớ theo người; vị trí cố định đầu hàng */}
+        <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1.5 shrink-0 overflow-x-auto sm:overflow-visible sm:flex-wrap [&>*]:shrink-0">
+          {/* DẠNG BÀN (06/10): Bảng (mặc định) | Thẻ — nhớ theo người; vị trí cố định đầu hàng. Điện thoại: MỘT hàng cuộn ngang (skill 22.8) */}
           <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5">
             {([['table', 'Bảng', Table2, 'Dạng BẢNG — khung chờ | bảng xe → đơn, cột thẳng hàng'], ['cards', 'Thẻ', LayoutGrid, 'Dạng THẺ — lưới thẻ xe']] as const).map(([k, l, Icon, tip]) => (
               <button key={k} type="button" aria-pressed={viewKey === k} aria-label={l} title={tip} onClick={() => setF({ boardView: k })}
@@ -800,7 +800,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           </button>
           {/* DẢI % TẢI đang áp (01/10, user: "config chọn xong hiện lên trên bàn") — bấm để đổi ngay trên kế hoạch */}
           <DispatchLoadBandChip plan={plan} editable={editable} />
-          <div className="w-32 shrink-0" title="Sắp xếp xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
+          <div className="w-28 shrink-0" title="Sắp xếp xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
                 { value: 'region', label: 'Phường → khách' },
@@ -866,8 +866,12 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   }
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-0 h-full">
+    <div className={tableView ? 'flex flex-col lg:flex-row min-h-0 h-full' : 'flex flex-col min-h-0 h-full'}>
       {tableView ? <DispatchBoardTable ops={ops} toolbar={toolbar} rail={poolRail ? railNode : null} poolHeader={poolHeader} poolExtras={poolExtras || null} /> : <>
+      {/* 14/10: thanh công cụ nằm TRÊN cả khung chờ lẫn lưới thẻ — cùng chỗ với dạng Bảng (bản cũ đặt trong cột phải ⇒ đổi dạng là
+          công tắc Bảng | Thẻ nhảy sang phải một bề rộng khung chờ) */}
+      {toolbar}
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0">
       {/* ── KHUNG CHỜ ── */}
       {poolRail ? railNode : (
       <aside data-dispatch-pool {...dropProps('pool', 'pool')}
@@ -900,7 +904,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
       {/* ── LƯỚI THẺ XE — nhóm theo DÒNG XE CHA, đóng mặc định (user 25/09 tối: "sắp xếp group theo thứ tự CHA, mở thì
           mới ra — mục tiêu để tập trung xem khi cần"); trong nhóm là các dòng xe CON ── */}
       <section className="flex-1 min-w-0 min-h-0 flex flex-col">
-        {toolbar}
         <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-24 lg:pb-3 space-y-2">
           {tripGroups.map(g => {
             const open = forceOpen || openSet.has(g.k)
@@ -949,6 +952,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           )}
         </div>
       </section>
+      </div>
       </>}
 
       <FloatingActionBar count={selIds.length} unit={fullTrips.length ? `OD đã chọn · ${fullTrips.length} xe trọn` : 'OD đã chọn'}>

@@ -123,7 +123,7 @@ export function DispatchLoadBandChip({ plan, editable }: { plan: DispatchPlan; e
     <>
       <button type="button" onClick={() => editable && setOpen(true)} disabled={!editable}
         title={editable ? `Dải % tải đang áp: ${text} — bấm để đổi (xe nháp tính lại Non tải / vượt theo dải mới)` : `Dải % tải đang áp: ${text}`}
-        className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] max-w-[320px] ${plan.params.load_bypass ? 'bg-amber-100 text-amber-900' : 'bg-sky-50 text-sky-800'} ${editable ? 'hover:bg-sky-100' : ''}`}>
+        className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] shrink-0 max-w-[150px] 2xl:max-w-[320px] ${plan.params.load_bypass ? 'bg-amber-100 text-amber-900' : 'bg-sky-50 text-sky-800'} ${editable ? 'hover:bg-sky-100' : ''}`}>
         <Gauge className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{text}</span>
       </button>
       <DispatchLoadBandDialog open={open} onClose={() => setOpen(false)} title="Dải % tải theo dòng xe cha" confirmLabel="Áp cho kế hoạch này"

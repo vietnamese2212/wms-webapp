@@ -452,7 +452,7 @@ export default function Dispatch() {
   ) : null
   const kpiNode = sum && planView ? (
     <>
-      <span className="hidden xl:inline"><DispatchKpiInline plan={planView} /></span>
+      <span className="hidden 2xl:inline"><DispatchKpiInline plan={planView} /></span>
       <button type="button" onClick={() => setF({ kpiOpen: !f.kpiOpen })} aria-expanded={f.kpiOpen} aria-label="Chỉ số"
         title="Dải chỉ số đầy đủ: OD · pallet · tấn · cước/pallet · Non tải · tỷ trọng ĐVVT · số chuyến theo dòng xe"
         className={`inline-flex items-center justify-center rounded-md h-9 w-9 sm:h-7 sm:w-7 shrink-0 ${f.kpiOpen ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>

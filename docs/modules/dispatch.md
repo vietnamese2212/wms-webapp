@@ -463,4 +463,7 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   (`rowRuleWarnings`, ngữ cảnh `IssueCtx.mixChannels` = `params.allow_mix_channels`) ⇒ xe sai từ trước cũng lên chip ngay, không đợi ai sửa
   xe. Lưới: mirror `backend/tests/mirror/dispatchRuleChip` (chip FE ⇄ `manualRuleBlocks` cửa Xác nhận, đỏ khi làm hỏng FE). (c) câu chặn ở cửa
   Xác nhận (`whole`) nói về XE ("Xe chở 2 khách…", "Xe chở lẫn kênh GT + MT…", "Xe đang tải…"), không còn "Các OD đang chọn…" / "đơn đưa
-  lên" / "sẽ tải". Gói 61 [21k]: đổi kênh sau khi lập ⇒ kéo vẫn CHO; Tối ưu lại ⇒ dòng mang kênh mới, hai khách tách hai xe.
+  lên" / "sẽ tải". Gói 61 [21k]: đổi kênh sau khi lập ⇒ kéo vẫn CHO; Tối ưu lại ⇒ dòng mang kênh mới, hai khách tách hai xe. Lượt đầu
+  [21k] ĐỎ đúng chỗ: Tối ưu lại chỉ chụp lại dòng của đơn LÊN XE — đơn ở lại khung chờ (dưới Tối thiểu % · chưa khai dòng xe) giữ cấu hình cũ, kéo
+  tay lên xe sẽ hỏi luật theo cấu hình cũ. Nay Tối ưu lại sửa TẠI CHỖ (giữ id dòng) kênh · đi xe riêng · số khách · dòng xe được vào của mọi
+  đơn nó nạp mà không xếp được, chỉ dòng thật đổi.

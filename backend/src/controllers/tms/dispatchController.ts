@@ -1723,6 +1723,24 @@ async function reoptimizePlanInner(req: Request, res: Response) {
       const { error } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null).in('od_number', placed.slice(i, i + 300))
       if (error) throw error
     }
+    // Đơn lượt này KHÔNG xếp được (về / ở lại khung chờ) cũng lấy lại BẢN CHỤP cấu hình khách từ lần nạp vừa rồi (15/10 — kênh · đi xe riêng ·
+    // số khách · dòng xe được vào): "Tối ưu lại" = áp cấu hình mới cho MỌI đơn nó đụng, không thì kéo tay đơn đó lên xe sẽ hỏi luật theo cấu hình
+    // cũ (gói 61 [21k]). Sửa TẠI CHỖ (giữ id dòng — ô người đang tick ở khung chờ còn nguyên), chỉ dòng có cấu hình thật đổi, gom theo giá trị
+    // (mỗi bộ cấu hình một câu, chia lô 300). Đơn không còn trong lần nạp (SAP bỏ / thay) giữ dòng cũ cùng cờ của nó.
+    type Snap = Pick<TripOdRow, 'channel' | 'separate' | 'max_customers' | 'allowed_models'>
+    const fresh = new Map<string, Snap>(cand.ods.filter(o => !placedSet.has(o.od_number)).map(o => [o.od_number,
+      { channel: o.channel ?? null, separate: o.separate === true, max_customers: o.max_customers ?? null, allowed_models: o.allowed_models ?? null }]))
+    const groups = new Map<string, { patch: Snap; ids: string[] }>()
+    for (const r of [...redo.flatMap(x => x.ods), ...src]) {
+      const f = fresh.get(r.od_number)
+      if (!f || (r.channel === f.channel && r.separate === f.separate && r.max_customers === f.max_customers && JSON.stringify(r.allowed_models) === JSON.stringify(f.allowed_models))) continue
+      const k = JSON.stringify(f), g = groups.get(k) ?? { patch: f, ids: [] }
+      g.ids.push(r.id); groups.set(k, g)
+    }
+    for (const g of groups.values()) for (let i = 0; i < g.ids.length; i += 300) {
+      const { error } = await db.from('dispatch_trip_od').update({ ...g.patch, updated_at: t }).in('id', g.ids.slice(i, i + 300))
+      if (error) throw error
+    }
     // kế hoạch chưa có mốc máy lập (bước Xem đơn đi trước) ⇒ lần ghép đầu là mốc để dải chỉ số so người sửa với máy
     const pp = (plan.params ?? {}) as Record<string, unknown>
     // CẬN DƯỚI BẮT BUỘC (07/10): OD máy không tạo xe vì dưới Tối thiểu % ở lại khung chờ — `params.under_min[od]` = xe máy định dùng · % ·

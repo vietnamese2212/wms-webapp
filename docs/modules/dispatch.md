@@ -538,8 +538,8 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
     Cùng tối (user: "đơn PM01 rule là đi theo chính khách hàng mà sao lại thể hiện là đơn ghép?"): đơn CHỈ hàng "đi kèm đơn" (PM01, khi kế
     hoạch không trộn Loại kho) chỉ thuộc xe đang chở CHÍNH khách đó — đúng mô tả cờ "Đi kèm đơn khi điều vận" ("đi cùng xe với hàng chính
     của khách"); bản trước nối đơn PM01 của An Sơn với xe #4 chở 4 khách khác cùng vùng. `routeKind` / `routeOff` kiểm trước mọi luật.
-    ⚠ Máy ghép (ké chuyến cùng PHƯỜNG khi không có chuyến của khách, 30/09) và cửa kéo tay vẫn cho đơn chỉ hàng đi kèm lên xe khách khác —
-    `fits` của fit-check vẫn theo cửa thả, `kind` = 'off'; siết hai cửa đó chờ user chốt.
+    Máy ghép (ké chuyến cùng PHƯỜNG khi không có chuyến của khách, 30/09) và cửa kéo tay vẫn cho đơn chỉ hàng đi kèm lên xe khách khác —
+    **user chốt 15/10: KHÔNG siết** (chỉ nhận diện theo chính khách là đủ; đừng đề xuất lại). `fits` của fit-check theo cửa thả, `kind` = 'off'.
 - **KHOÁ XE hỏi trước + xe khoá tô TÍM cả khối** (user 15/10 tối: "khoá xe để lần sau tối ưu — phải confirm trước khi khoá, và xe đã khoá
   tốt nhất cả xe nên có màu khác để nổi bật lên"): bấm ổ khoá ⇒ hộp thoại "Khoá xe #n?" (dòng xe · số OD · pallet · lần Tối ưu lại sau giữ
   nguyên xe, tay vẫn sửa được); mở khoá bấm là mở. Dạng Bảng: dòng xe `violet-100` + nhãn "Khoá", dòng đơn `violet-50`, khung tím, vạch trái

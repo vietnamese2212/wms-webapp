@@ -426,15 +426,18 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
   const ed = ops.editableTrip(t)
   const drop = ed ? ops.dropProps('trip', t.id, t.id) : {}
   const dragTrip = ops.canDrag && ed && t.ods.length > 0
-  // dòng xe = ĐẦU KHỐI (nền xám đậm hơn đơn trắng); khoá xe nhận biết bằng ổ khoá trên dòng
-  const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : 'bg-slate-100'
+  // KHỐI XE = THẺ TRẮNG trên RÃNH XÁM (15/10, user: "không rõ được đâu là bắt đầu của 1 xe, phân biệt với xe khác"): dòng xe nền gần
+  // trắng + các dòng đơn trắng, viền trên / dưới slate-300, vạch trái; khoảng trống sau khối + dải tên vùng = slate-100 (màu nền app).
+  // Bản cũ tô xám DÒNG XE còn đơn + khoảng trống trắng ⇒ đơn của xe trước liền vào khoảng trống, không thấy chỗ hết một xe (đo bằng ảnh
+  // trên nháp Ba Vì 02/10: tô nhạt cả cụm kiểu slate-50 gần như không khác bản cũ). Khoá xe nhận biết bằng ổ khoá trên dòng.
+  const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : 'bg-slate-50'
   const rail = tripRail(t, ops.ctx)
   const shown = open ? t.ods : []
   return (
     <>
       <TableRow data-trip-card={t.id} {...drop}
         draggable={dragTrip} onDragStart={dragTrip ? e => live.current.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? () => live.current.endDrag() : undefined}
-        className={`cursor-pointer border-t border-slate-300 ${bg} hover:bg-slate-200/70 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
+        className={`cursor-pointer border-t border-slate-300 ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
         onClick={() => live.current.onOpenTrip(t.id)}>
         <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id))} bg={bg} />
       </TableRow>
@@ -451,8 +454,8 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
           </TableRow>
         )
       })}
-      {/* khoảng trống sau khối xe đang mở — xe kế tiếp bắt đầu khối mới (chuẩn nhóm dòng, skill table-format mục 10) */}
-      {shown.length > 0 && <tr aria-hidden="true"><td colSpan={cols.length} className="h-2.5 border-0 bg-white p-0" /></tr>}
+      {/* RÃNH sau khối xe đang mở — xe kế tiếp bắt đầu thẻ mới (skill table-format mục 10, bảng cây: thẻ trắng trên rãnh xám) */}
+      {shown.length > 0 && <tr aria-hidden="true"><td colSpan={cols.length} className="h-2.5 border-0 bg-slate-100 p-0" /></tr>}
     </>
   )
 }, sameTripRows)
@@ -637,9 +640,9 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                         return (
                           <Fragment key={t.id}>
                             {band && (
-                              <TableRow className="bg-slate-50">
-                                <RowCells cols={tcols} bg="bg-slate-50" cells={{
-                                  x: { node: <span className="pl-5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{regionLabel(t)}</span>, title: regionLabel(t) },
+                              <TableRow className="bg-slate-100">
+                                <RowCells cols={tcols} bg="bg-slate-100" cells={{
+                                  x: { node: <span className="pl-5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">{regionLabel(t)}</span>, title: regionLabel(t) },
                                   pal: { node: nf(run.reduce((s, x) => s + Number(x.pallets ?? 0), 0), 1) },
                                   cust: { cls: 'text-slate-500', node: `${run.length} xe` },
                                 }} />

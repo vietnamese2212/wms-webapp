@@ -507,6 +507,11 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
   trống; có xe khác giữ thì số kế tiếp) · dòng xe · ĐVVT (kho còn dùng — không thì máy chọn như Xe mới) · khoá; qua đủ luật ghép xe như mọi
   cửa tay. Bước Hoàn tác cũ hơn trỏ id xe cũ ⇒ bàn nối id cũ → id mới. ✕ "Bỏ xe trống" + "Xe trống sẽ bị bỏ" lúc Xác nhận giữ cho xe trống
   sót từ trước. Gói 61 [10e] viết lại (bản cũ khoá hành vi giữ xe trống) · [10e2] dựng lại · [10f] / [20c] dùng xe trống ghi thẳng.
+- **Bảng xe: mỗi xe là một THẺ TRẮNG trên RÃNH XÁM** (user: "bố cục kế hoạch nhìn vẫn hơi rối, không rõ được đâu là bắt đầu của 1 xe,
+  phân biệt với xe khác"). Bản cũ tô xám dòng xe, đơn trắng, khoảng trống sau khối trắng ⇒ đơn của xe trước liền vào khoảng trống. Nay dòng
+  xe `slate-50` + đơn trắng (viền trên / dưới, vạch trái như cũ), khoảng trống sau khối + dải tên vùng `slate-100`, dòng nhóm loại xe /
+  vùng `slate-200` — ba tầng nhóm · vùng · xe tách bằng màu, không thêm chiều cao. Chọn bằng ảnh trên nháp Ba Vì (tô thử tại trình duyệt 4
+  kiểu: tô nhạt cả cụm gần như không khác bản cũ; rãnh `slate-200` làm dải vùng trùng màu dòng nhóm). Luật chung vào skill `table-format` mục 10.
 - **Còn mở (C77):** `POST /dispatch/segment/take` ("lấy đơn sang mảng mình") xoá dòng / xe trống ở kế hoạch mảng kia + chèn dòng vào kế
   hoạch đích mà KHÔNG thuê các kế hoạch đó — đua được với Xác nhận của mảng kia. Chưa vá (ngoài phạm vi lượt này) — đề xuất thuê mọi kế
   hoạch đụng tới (thứ tự id) + phép kiểm tĩnh "mọi route ghi `/dispatch` đi qua `withPlanLease` / `withTripPlanLease` trừ danh sách có lý do".

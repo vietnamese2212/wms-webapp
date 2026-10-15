@@ -360,9 +360,13 @@ export function dropsBlockReason(model: { name: string; max_drops: number | null
   const capOds = odStopsCap([...staying, ...moving])
   const capModel = model ? modelDrops(model) : Infinity
   if (after <= Math.min(capOds, capModel)) return null
+  // trần khắt khe đến từ ĐƠN ĐƯA LÊN (15/10 tối — ký hiệu xe cùng tuyến in câu này: xe đang chở 4 khách mà câu nói "đơn trên xe chỉ cho 2
+  // khách" là người soát đi tìm sai chỗ) ⇒ nói đúng phía
   const why = capModel <= capOds
     ? `dòng xe ${model!.name} chỉ nhận ${capModel} khách (Cài đặt TMS → Mã dòng xe → Điểm giao tối đa)`
-    : `khách / kênh của đơn trên xe chỉ cho ${capOds} khách cùng xe (Khách hàng → Số khách tối đa cùng xe)`
+    : before && odStopsCap(moving) < odStopsCap(staying)
+      ? `khách / kênh của đơn đưa lên chỉ cho đi chung tối đa ${capOds} khách (Khách hàng → Số khách tối đa cùng xe)`
+      : `khách / kênh của đơn trên xe chỉ cho ${capOds} khách cùng xe (Khách hàng → Số khách tối đa cùng xe)`
   return before
     ? `Xe sẽ chở ${after} khách — ${why}. Thả vào xe khác hoặc ô Xe mới.`
     : whole ? `Xe chở ${after} khách — ${why}. Kéo bớt khách sang xe khác.`

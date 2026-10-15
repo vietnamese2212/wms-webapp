@@ -369,7 +369,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
                 : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
             </span>
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" />Khoá</span>}
+            {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" /><span className="hidden sm:inline">Khoá</span></span>}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
             {rtag && <TripRouteBadge tag={rtag} odLabel={ops.odLabel} />}
           </div>

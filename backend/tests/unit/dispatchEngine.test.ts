@@ -733,6 +733,11 @@ describe('dropsBlockReason — kéo tay vượt số khách cùng xe ⇒ CHẶN 
     expect(dropsBlockReason(xe4diem, [od('A', 'K1', 1)], [od('B', 'K2')])).toMatch(/khách \/ kênh của đơn trên xe chỉ cho 1 khách.*Số khách tối đa cùng xe/)
     expect(dropsBlockReason(xe4diem, [od('A', 'K1', 3)], [od('B', 'K2', 3)])).toBeNull()
   })
+  it('trần khắt khe đến từ ĐƠN ĐƯA LÊN ⇒ câu nói đúng phía (15/10 tối: xe 4 khách mà câu "đơn trên xe chỉ cho 2 khách")', () => {
+    const on = [od('A', 'K1', 5), od('B', 'K2', 5), od('C', 'K3', 5), od('D', 'K4', 5)]
+    expect(dropsBlockReason(xe4diem, on, [od('E', 'K5', 2)])).toMatch(/Xe sẽ chở 5 khách — khách \/ kênh của đơn đưa lên chỉ cho đi chung tối đa 2 khách/)
+    expect(dropsBlockReason(xe4diem, [od('A', 'K1', 1)], [od('B', 'K2', 1)])).toMatch(/của đơn trên xe chỉ cho 1 khách/)   // hai phía bằng nhau ⇒ nói theo xe
+  })
   it('dòng xe CHƯA KHAI điểm giao = 1; xe chưa có dòng xe ⇒ chỉ trần theo khách', () => {
     expect(dropsBlockReason({ name: 'Xe mới khai', max_drops: null }, [hl1], [pa])).toMatch(/chỉ nhận 1 khách/)
     expect(dropsBlockReason(null, [hl1], [pa])).toBeNull()

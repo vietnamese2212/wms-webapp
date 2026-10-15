@@ -20,7 +20,7 @@
 // khung chờ | bảng cây xe → đơn); công tắc Bảng | Thẻ trên thanh công cụ giữ bản thẻ để so. Mọi cửa ghi / hoàn tác / hộp thoại ở ĐÂY, dùng chung.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin, Route } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -34,10 +34,10 @@ import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
-  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf,
+  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf, useDispatchFitCheck,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchTripRestore,
 } from '@/api/hooks'
-import { DispatchBoardTable, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
+import { DispatchBoardTable, RouteChip, TripRouteBadge, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
 import { DispatchOdDetailSheet, type OdSummary } from './DispatchOdDetailSheet'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -48,7 +48,7 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, type IssueKey, type IssueCtx } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, routeMatches, fitPairs, routeTags, type IssueKey, type IssueCtx } from './dispatchIssues'
 import { useScopeCatSet } from '@/hooks/useUserScope'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -116,6 +116,10 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const trips = plan.trips.filter(t => tripStatus(t) !== 'DISCARDED')
   const tripOf = useMemo(() => new Map([...plan.trips.flatMap(t => t.ods.map(o => [o.id, t.id] as const)), ...pool.map(o => [o.id, null] as const)]), [plan.trips, pool])
   const rowBy = useMemo(() => new Map([...plan.trips.flatMap(t => t.ods), ...pool].map(o => [o.id, o])), [plan.trips, pool])
+  const tripById = useMemo(() => new Map(plan.trips.map(t => [t.id, t])), [plan.trips])
+  // câu rê chuột của ký hiệu xe cùng tuyến / nhãn tiếp nhận (15/10)
+  const tripLabel = (id: string) => tripById.get(id)?.detail.vehicle_model?.name ?? ''
+  const odLabel = (id: string) => { const o = rowBy.get(id); return o ? `${o.od_number} · ${o.ship_to_name ?? o.ship_to_code ?? ''} · ${nf(o.pallets, 1)} pl` : id }
   const editableTrip = (t: DispatchTrip) => editable && EDITABLE.includes(tripStatus(t))
 
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
@@ -136,6 +140,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const [holdUntil, setHoldUntil] = useState('')
   const [holdReason, setHoldReason] = useState('')
   const [notesOnly, setNotesOnly] = useState(false)
+  // XE CÙNG TUYẾN (15/10): khung chờ chỉ còn đơn có xe đi cùng tuyến; '' = mọi đơn đó · 'fit' = có xe còn nhận · 'full' = xe cùng tuyến đã đầy
+  const [routeOnly, setRouteOnly] = useState(false)
+  const [routeSub, setRouteSub] = useState<'' | 'fit' | 'full'>('')
   const [ask, confirmNode] = useConfirmDialog()
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [undoStack, setUndo] = useState<Op[]>([])
@@ -297,7 +304,23 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // cột ngoài màn 1280 px) đếm ở đầu khung chờ; 12/10 thêm khối vàng mỗi lô một dòng + "Gom"; 15/10 (user: "khối vàng và bảng diễn giải gần
   // giống nhau — gom lại dạng table") LÔ là một cách GOM của chính bảng khung chờ: dòng lô = % xe máy định + "Xe mới", số lô in trên nút "Lô"
   const lotCount = useMemo(() => poolLotGroups(pool, underMin, tooBig).filter(g => g.lot).length, [pool, underMin, tooBig])
-  const poolShown = pool.filter(o => matches(o, q) && (!notesOnly || !!o.note))
+  // XE CÙNG TUYẾN (15/10, user: "đánh dấu + lọc đơn đang có route của nó đi mà chưa lên được xe; bên bàn có ký hiệu tiếp nhận") — ký hiệu
+  // ⇢#xe luôn có (tính tại trình duyệt); bật lọc mới hỏi server ĐỦ luật ghép xe "xe nào còn nhận" (một lời gọi, hỏi lại khi dấu kế hoạch đổi)
+  const rMatch = useMemo(() => routeMatches(pool, plan.trips.filter(t => tripStatus(t) !== 'DISCARDED')), [pool, plan.trips])
+  const routeIds = useMemo(() => pool.filter(o => rMatch.has(o.id)).map(o => o.id), [pool, rMatch])
+  const pairs = useMemo(() => fitPairs(rMatch, routeIds), [rMatch, routeIds])
+  const fit = useDispatchFitCheck(plan.id, pairs, routeOnly, `${plan.updated_at}|${plan.stamp ?? ''}`)
+  const routeRows = useMemo(() => routeTags(rMatch, routeOnly ? fit.data : undefined, []).rows, [rMatch, routeOnly, fit.data])
+  const routeFit = [...routeRows.values()].filter(r => r.fit === true).length
+  const routeFull = [...routeRows.values()].filter(r => r.fit === false).length
+  const poolShown = useMemo(() => pool.filter(o => {
+    if (!matches(o, q) || (notesOnly && !o.note)) return false
+    if (!routeOnly) return true
+    const r = routeRows.get(o.id)
+    return !!r && (routeSub === 'fit' ? r.fit === true : routeSub === 'full' ? r.fit === false : true)
+  }), [pool, q, notesOnly, routeOnly, routeSub, routeRows])
+  // nhãn tiếp nhận của xe: chỉ đơn ĐANG LỌC ở khung chờ — đối tượng giữ nguyên tới khi dữ liệu đổi (dòng xe không vẽ lại thừa)
+  const tripTags = useMemo(() => routeOnly && fit.data ? routeTags(rMatch, fit.data, poolShown.map(o => o.id)).trips : null, [routeOnly, fit.data, rMatch, poolShown])
   const groups = useMemo<BoardPoolGroup[]>(() => {
     if (f.boardGroup === 'lot') return poolLotGroups(poolShown, underMin, tooBig)
     const m = new Map<string, DispatchTripOd[]>()
@@ -435,6 +458,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 flex-wrap">
             <span className="font-mono font-semibold">{o.od_number}</span>
+            {/* đơn khung chờ có xe đi cùng tuyến (15/10) — cùng ký hiệu dạng Bảng */}
+            {!o.trip_id && routeRows.has(o.id) && <RouteChip info={routeRows.get(o.id)!} label={tripLabel} />}
             {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
             {!o.trip_id && fresh.has(o.od_number) && <NewOdChip />}
             {fl && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title={fl.info ?? undefined}>{FLAG_VI[fl.kind]}</span>}
@@ -635,6 +660,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             )}
           </button>
           <div className="flex items-center gap-0.5 shrink-0">
+            {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) — cùng nhãn dạng Bảng */}
+            {tripTags?.has(t.id) && <TripRouteBadge tag={tripTags.get(t.id)!} odLabel={odLabel} />}
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
             {ed && (
               <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
@@ -731,12 +758,33 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               </button>
             )}
           </div>
-          {poolNotes > 0 && (
-            <button type="button" onClick={() => setNotesOnly(v => !v)} aria-pressed={notesOnly}
-              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${notesOnly ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'}`}
-              title="OD có ghi chú giao hàng từ SAP — đọc trước khi ghép (hẹn ngày khác, không nhận Chủ nhật, ghép xe riêng…)">
-              <StickyNote className="h-3 w-3" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {poolNotes} OD có ghi chú
-            </button>
+          {(poolNotes > 0 || routeIds.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1 text-[10px]">
+              {poolNotes > 0 && (
+                <button type="button" onClick={() => setNotesOnly(v => !v)} aria-pressed={notesOnly}
+                  className={`inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 ${notesOnly ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'}`}
+                  title="OD có ghi chú giao hàng từ SAP — đọc trước khi ghép (hẹn ngày khác, không nhận Chủ nhật, ghép xe riêng…)">
+                  <StickyNote className="h-3 w-3" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {poolNotes} OD có ghi chú
+                </button>
+              )}
+              {/* XE CÙNG TUYẾN (15/10): đơn có xe đang đi cùng tuyến mà chưa lên xe — bật ⇒ khung chờ chỉ còn các đơn đó, server hỏi luật ghép
+                  xe cho từng cặp (đơn, xe cùng tuyến) ⇒ tách "Xe còn nhận" / "Xe đã đầy"; bảng xe gắn nhãn "＋ nhận n đơn" / "đầy" */}
+              {routeIds.length > 0 && (
+                <button type="button" onClick={() => { setRouteOnly(v => !v); setRouteSub('') }} aria-pressed={routeOnly}
+                  className={`inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 ${routeOnly ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-900 hover:bg-sky-100'}`}
+                  title={'Đơn ở khung chờ mà ĐÃ CÓ xe đi cùng tuyến (cùng khách › cùng phường › cùng vùng) — vd đơn dư của xe 17 pallet, đơn tuyến Bắc Ninh khi xe đã đầy.\nBật: khung chờ chỉ còn các đơn này; máy hỏi luật ghép xe (như khi kéo thả) xem xe cùng tuyến nào CÒN NHẬN — nhãn xanh "＋ nhận" trên bàn; xe không nhận được ghi "đầy".'}>
+                  <Route className="h-3 w-3" /> {routeOnly ? 'Đang xem' : 'Có xe cùng tuyến ·'} {routeIds.length} OD{routeOnly ? ' có xe cùng tuyến' : ''}
+                </button>
+              )}
+              {routeOnly && fit.isFetching && <span className="whitespace-nowrap text-slate-500">Đang hỏi luật ghép xe…</span>}
+              {routeOnly && fit.isError && <span className="text-red-600">Không hỏi được xe còn nhận — {apiMsg(fit.error)}</span>}
+              {routeOnly && fit.data && !fit.isFetching && (([['fit', `✓ Xe còn nhận · ${routeFit}`, 'Có ít nhất một xe cùng tuyến NHẬN được đơn (đủ luật ghép xe) — kéo lên xe có nhãn xanh', 'bg-green-600 text-white', 'bg-green-50 text-green-800 hover:bg-green-100'],
+                ['full', `⚠ Xe cùng tuyến đã đầy · ${routeFull}`, 'Mọi xe cùng tuyến đều KHÔNG nhận được (đầy / sai luật) — rê chuột ký hiệu ⇢ trên đơn để xem lý do từng xe', 'bg-amber-600 text-white', 'bg-amber-50 text-amber-900 hover:bg-amber-100']] as const)
+                .map(([k, l, tip, on, off]) => (
+                  <button key={k} type="button" aria-pressed={routeSub === k} onClick={() => setRouteSub(s => s === k ? '' : k)} title={tip}
+                    className={`whitespace-nowrap rounded px-1.5 py-0.5 ${routeSub === k ? on : off}`}>{l}</button>
+                )))}
+            </div>
           )}
         </div>
   )
@@ -851,6 +899,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     tripsShown: shownTrips.length, tripsTotal: trips.length, clearFilter: () => setF({ issue: '', search: '' }),
     onOpenTrip, onOpenOd: setOdDetail,
     openRowVehicles: setVehRow, canCustVeh,
+    routeOf: id => routeRows.get(id) ?? null, tripRoute: id => tripTags?.get(id) ?? null, tripLabel, odLabel,
     resync: od => { void doResync(od) }, replace: od => { void doReplace(od) }, sapBusy: resync.isPending || replace.isPending,
     toggleLock: t => { void patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá')) },
     removeTrip: t => { void delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe')) },

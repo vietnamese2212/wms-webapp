@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked, undoSteps, liveTripId } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked, undoSteps, liveTripId, routeMatches, fitPairs, routeTags } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -75,6 +75,53 @@ describe('selectionAfterMove — lựa chọn sau một lần chuyển', () => {
   })
   it('chuyển đúng các đơn đã tick ⇒ lựa chọn rỗng như trước', () => {
     expect(selectionAfterMove(new Set(['a']), ['a']).size).toBe(0)
+  })
+})
+
+// 15/10 (user: "khung chờ đánh dấu + lọc đơn có route của nó đi mà chưa lên được xe; bên bàn có ký hiệu tiếp nhận"; chốt cùng tuyến = CÙNG
+// VÙNG): xe cùng khách › cùng phường › cùng vùng — xe tuyến liên tỉnh đi qua vùng cũng tính, xe trống không tính
+describe('routeMatches / fitPairs / routeTags — xe cùng tuyến của đơn khung chờ', () => {
+  const od = (ship: string | null, ward: string | null, region: string | null) => ({ ship_to_code: ship, ward_code: ward, region_code: region })
+  const trips = [
+    { id: 'T1', seq: 1, load_pct: 101, ods: [od('K1', 'BN-DaMai', 'BN')] },             // cùng khách với đơn a
+    { id: 'T2', seq: 2, load_pct: 60, ods: [od('K9', 'BN-DaMai', 'BN')] },              // cùng phường
+    { id: 'T3', seq: 3, load_pct: 80, ods: [od('K8', 'BN-Chu', 'BN')] },                // cùng vùng, tải 80
+    { id: 'T4', seq: 4, load_pct: 50, ods: [od('K7', 'HY-PhoHien', 'HY'), od('K6', 'HP-KienAn', 'HP')] },   // xe tuyến HY → HP
+    { id: 'T5', seq: 5, load_pct: null, ods: [] },                                       // xe trống
+  ]
+  const pool = [
+    { id: 'a', ...od('K1', 'BN-DaMai', 'BN') }, { id: 'b', ...od('K2', 'BN-VoCuong', 'BN') },
+    { id: 'c', ...od('K3', 'HP-HongBang', 'HP') }, { id: 'd', ...od('K4', 'DB-ThanhNua', 'DB') }, { id: 'e', ...od(null, null, null) },
+  ]
+  it('mức gần trước (khách › phường › vùng), cùng mức thì xe tải thấp (còn chỗ) trước; xe tuyến liên tỉnh tính cho vùng nó đi qua; không xe ⇒ không có trong map', () => {
+    const m = routeMatches(pool, trips)
+    expect(m.get('a')).toEqual([{ trip_id: 'T1', seq: 1, level: 'customer' }, { trip_id: 'T2', seq: 2, level: 'ward' }, { trip_id: 'T3', seq: 3, level: 'region' }])
+    expect(m.get('b')).toEqual([{ trip_id: 'T2', seq: 2, level: 'region' }, { trip_id: 'T3', seq: 3, level: 'region' }, { trip_id: 'T1', seq: 1, level: 'region' }])
+    expect(m.get('c')).toEqual([{ trip_id: 'T4', seq: 4, level: 'region' }])
+    expect(m.has('d')).toBe(false)
+    expect(m.has('e')).toBe(false)
+    expect([...m.values()].flat().some(x => x.trip_id === 'T5')).toBe(false)
+  })
+  it('cặp gửi server: tối đa n xe mỗi đơn (xe gần trước), cả lượt có trần', () => {
+    const m = routeMatches(pool, trips)
+    expect(fitPairs(m, ['a', 'b', 'd'], 2)).toEqual([{ row_id: 'a', trip_id: 'T1' }, { row_id: 'a', trip_id: 'T2' }, { row_id: 'b', trip_id: 'T2' }, { row_id: 'b', trip_id: 'T3' }])
+    expect(fitPairs(m, ['a', 'b'], 40, 3)).toHaveLength(3)
+  })
+  it('kết quả luật: đơn "nhận được" khi CÓ xe nhận, "đầy" khi mọi xe đã hỏi đều không, chưa hỏi = null; nhãn xe chỉ tính đơn đang lọc', () => {
+    const m = routeMatches(pool, trips)
+    expect(routeTags(m, undefined, ['a']).rows.get('a')?.fit).toBeNull()
+    const res = [
+      { row_id: 'a', trip_id: 'T1', fits: false, reason: 'Xe sẽ vượt trần tải' }, { row_id: 'a', trip_id: 'T2', fits: true, reason: null },
+      { row_id: 'b', trip_id: 'T2', fits: false, reason: 'Khách K9 đi xe riêng' }, { row_id: 'b', trip_id: 'T3', fits: false, reason: 'Xe sẽ vượt trần tải' },
+    ]
+    const g = routeTags(m, res, ['a', 'b'])
+    expect(g.rows.get('a')?.fit).toBe(true)
+    expect(g.rows.get('b')?.fit).toBe(false)
+    expect(g.rows.get('c')?.fit).toBeNull()   // có xe cùng tuyến nhưng chưa hỏi (ngoài trần)
+    expect(g.trips.get('T2')).toEqual({ fit: ['a'], full: null })
+    expect(g.trips.get('T1')).toEqual({ fit: [], full: 'Xe sẽ vượt trần tải' })
+    expect(g.trips.get('T3')).toEqual({ fit: [], full: 'Xe sẽ vượt trần tải' })
+    expect(routeTags(m, res, ['b']).trips.get('T2')).toEqual({ fit: [], full: 'Khách K9 đi xe riêng' })   // chỉ đơn đang lọc
   })
 })
 

@@ -8,7 +8,7 @@
 // vẫn thiếu — đếm vào là bộ đếm KHÔNG BAO GIỜ về 0 (đo 24/09), và bộ đếm không về 0 dạy người ta bỏ qua nó.
 // 25/09 thêm "OD đổi ở SAP": OD trên xe bị SAP thay (sửa SO) / bỏ / đã xuất / đã điều cho ĐVVT khác sau khi lập nháp —
 // việc NGƯỜI ĐÓNG ĐƯỢC (thay OD / kéo OD ra), và cửa Xác nhận chặn 409 nếu còn.
-import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag, DispatchTripOd, DispatchPlan, DispatchUnderMin, DispatchTooBig } from '@/api/hooks'
+import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag, DispatchTripOd, DispatchPlan, DispatchUnderMin, DispatchTooBig, DispatchFitResult } from '@/api/hooks'
 
 /** RANH GIỚI KẾ HOẠCH (07/10, user: "đơn không tick ở lại Chờ điều"): dòng trên xe, hoặc dòng khung chờ ĐÃ có mốc `reviewed_at`, thuộc
  *  kế hoạch; dòng khung chờ chưa mốc = CHỜ ĐIỀU — nằm ở tab Bán hàng / Trung chuyển của Xem đơn, bàn ghép xe không vẽ, "Tối ưu lại" không
@@ -150,6 +150,76 @@ export const lotTip = (l: PoolLot) => l.kind === 'under'
 export const rowVehiclesTicked = (current: string[] | null, config: string[], models: { id: string }[]): string[] => {
   const k = new Set(models.map(m => m.id))
   return (current ?? config).filter(id => k.has(id))
+}
+
+// ══ XE CÙNG TUYẾN (15/10, user: "khung chờ đánh dấu + lọc được đơn đang có route của nó đi mà chưa lên được xe — vd đơn dư của xe 17
+// pallet, đơn tuyến Bắc Ninh mà xe đã quá tải; bên bàn có ký hiệu tiếp nhận"). Chốt: cùng tuyến = CÙNG VÙNG (tỉnh) · "nhận được" = ĐỦ luật
+// ghép xe (server `fit-check`, cùng hàm cửa kéo thả) · bảng xe giữ mọi xe, gắn nhãn. ══
+export type RouteLevel = 'customer' | 'ward' | 'region'
+export const ROUTE_LEVEL_VI: Record<RouteLevel, string> = { customer: 'cùng khách', ward: 'cùng phường', region: 'cùng vùng' }
+export interface RouteMatch { trip_id: string; seq: number; level: RouteLevel }
+type RouteRow = Pick<DispatchTripOd, 'id' | 'ship_to_code' | 'ward_code' | 'region_code'>
+type RouteTrip = Pick<DispatchTrip, 'id' | 'seq' | 'load_pct'> & { ods: Pick<DispatchTripOd, 'ship_to_code' | 'ward_code' | 'region_code'>[] }
+/** Xe cùng tuyến của từng đơn khung chờ: xe có đơn cùng KHÁCH › cùng PHƯỜNG › cùng VÙNG (vùng của xe = vùng của MỌI đơn trên xe ⇒ xe tuyến
+ *  liên tỉnh đi qua tỉnh đó cũng tính). Xe trống không tính (không có đơn để biết tuyến). Mỗi đơn: mức gần trước, rồi xe tải thấp (còn chỗ)
+ *  trước, rồi số xe. Đơn không có xe nào cùng tuyến thì không có trong map. */
+export function routeMatches(pool: RouteRow[], trips: RouteTrip[]): Map<string, RouteMatch[]> {
+  const byKey = (pick: (o: RouteTrip['ods'][number]) => string | null | undefined) => {
+    const m = new Map<string, RouteTrip[]>()
+    for (const t of trips) for (const o of t.ods) {
+      const v = pick(o)
+      if (!v) continue
+      const l = m.get(v) ?? []
+      if (!l.includes(t)) l.push(t)
+      m.set(v, l)
+    }
+    return m
+  }
+  const cust = byKey(o => o.ship_to_code), ward = byKey(o => o.ward_code), reg = byKey(o => o.region_code)
+  const rank: Record<RouteLevel, number> = { customer: 0, ward: 1, region: 2 }
+  const out = new Map<string, RouteMatch[]>()
+  for (const r of pool) {
+    const seen = new Map<string, RouteMatch & { load: number }>()
+    const add = (l: RouteTrip[] | undefined, level: RouteLevel) => {
+      for (const t of l ?? []) if (!seen.has(t.id)) seen.set(t.id, { trip_id: t.id, seq: t.seq, level, load: t.load_pct == null ? 1e9 : Number(t.load_pct) })
+    }
+    if (r.ship_to_code) add(cust.get(r.ship_to_code), 'customer')
+    if (r.ward_code) add(ward.get(r.ward_code), 'ward')
+    if (r.region_code) add(reg.get(r.region_code), 'region')
+    if (seen.size) out.set(r.id, [...seen.values()].sort((a, b) => rank[a.level] - rank[b.level] || a.load - b.load || a.seq - b.seq)
+      .map(m => ({ trip_id: m.trip_id, seq: m.seq, level: m.level })))
+  }
+  return out
+}
+/** Cặp (đơn, xe) gửi server hỏi luật ghép xe — tối đa `perRow` xe mỗi đơn (mức gần + còn chỗ trước), cả lượt ≤ `max` (trần của cửa). */
+export function fitPairs(matches: Map<string, RouteMatch[]>, rowIds: string[], perRow = 40, max = 5000): { row_id: string; trip_id: string }[] {
+  const out: { row_id: string; trip_id: string }[] = []
+  for (const id of rowIds) for (const m of (matches.get(id) ?? []).slice(0, perRow)) { if (out.length >= max) return out; out.push({ row_id: id, trip_id: m.trip_id }) }
+  return out
+}
+export type FitResult = DispatchFitResult
+/** Đơn khung chờ: xe cùng tuyến + kết quả hỏi luật. `fit` = có xe NHẬN được (true) · mọi xe đã hỏi đều không nhận (false) · chưa hỏi (null). */
+export interface PoolRoute { matches: RouteMatch[]; fit: boolean | null; results: Map<string, FitResult> }
+/** Xe trên bàn khi đang lọc: các đơn (đang lọc) xe NHẬN được; không nhận đơn nào thì `full` = lý do đầu tiên. */
+export interface TripRouteTag { fit: string[]; full: string | null }
+export function routeTags(matches: Map<string, RouteMatch[]>, results: FitResult[] | undefined, shownRowIds: string[]): { rows: Map<string, PoolRoute>; trips: Map<string, TripRouteTag> } {
+  const byRow = new Map<string, Map<string, FitResult>>()
+  for (const r of results ?? []) { const m = byRow.get(r.row_id) ?? new Map<string, FitResult>(); m.set(r.trip_id, r); byRow.set(r.row_id, m) }
+  const rows = new Map<string, PoolRoute>()
+  for (const [id, ms] of matches) {
+    const res = byRow.get(id) ?? new Map<string, FitResult>()
+    const asked = [...res.values()]
+    rows.set(id, { matches: ms, results: res, fit: !results || !asked.length ? null : asked.some(x => x.fits) })
+  }
+  const trips = new Map<string, TripRouteTag>()
+  for (const id of shownRowIds) for (const r of byRow.get(id)?.values() ?? []) {
+    const t = trips.get(r.trip_id) ?? { fit: [], full: null }
+    if (r.fits) t.fit.push(id)
+    else t.full = t.full ?? r.reason
+    trips.set(r.trip_id, t)
+  }
+  for (const t of trips.values()) if (t.fit.length) t.full = null
+  return { rows, trips }
 }
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi

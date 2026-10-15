@@ -1637,6 +1637,39 @@ export async function previewMove(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
+// POST /tms/dispatch/plans/:id/fit-check — XE CÒN NHẬN ĐƯỢC ĐƠN KHÔNG (15/10, user: "khung chờ đánh dấu + lọc đơn đang có xe cùng tuyến mà
+// chưa lên được; bên bàn có ký hiệu tiếp nhận"; chốt "nhận được" = ĐỦ luật ghép xe). Mỗi cặp (dòng OD, xe) hỏi ĐÚNG hàm của cửa kéo thả
+// (`ruleBlocksFor`) ⇒ nhãn xanh trên bàn thì thả chắc chắn qua. Bàn tự chọn cặp (xe cùng tuyến của đơn khung chờ — `routeMatches` ở
+// dispatchIssues); cửa này KHÔNG có khái niệm tuyến và KHÔNG ghi gì. Một lời gọi cho cả khung chờ (thân POST, không dính trần URL).
+export const zFitCheck = z.object({ pairs: z.array(z.object({ row_id: zId, trip_id: zId })).min(1).max(5000) })
+export async function fitCheck(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zFitCheck>
+    const { data: plan, error } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
+    if (error) throw error
+    if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const rowIds = uniq(b.pairs.map(p => p.row_id)), tripIds = uniq(b.pairs.map(p => p.trip_id))
+    const [rows, trips, models, condLabels] = await Promise.all([
+      fetchAllByIdChunks(rowIds, c => db.from('dispatch_trip_od').select('*').eq('plan_id', plan.id).in('id', c).order('id')) as Promise<TripOdRow[]>,
+      readTrips(plan.id, tripIds), loadModels(plan.warehouse_id), loadConditionLabels(),
+    ])
+    const rowBy = new Map(rows.map(r => [r.id, r])), tripBy = new Map(trips.map(t => [t.id, t]))
+    const open = OPEN_PLAN.includes(plan.status)
+    const results: { row_id: string; trip_id: string; fits: boolean; reason: string | null }[] = []
+    for (const p of b.pairs) {
+      const r = rowBy.get(p.row_id), t = tripBy.get(p.trip_id)
+      if (!r || !t) { results.push({ ...p, fits: false, reason: 'Đơn / xe không còn trên kế hoạch — bàn vừa đổi, tải lại' }); continue }
+      const st = statusOf(t)
+      if (!open || !EDITABLE_TRIP.includes(st)) { results.push({ ...p, fits: false, reason: `Xe #${t.seq} ${TRIP_STATUS_VI[st]} — không nhận thêm đơn ở bàn` }); continue }
+      if (r.trip_id === t.id) { results.push({ ...p, fits: true, reason: null }); continue }
+      const blocks = await ruleBlocksFor(plan, t, t.ods, [r], { models, condLabels })
+      results.push({ ...p, fits: !blocks.length, reason: blocks.length ? blocks.map(x => x.message).join(' · ') : null })
+    }
+    return ok(res, { results })
+  } catch (e) { return failAny(res, e) }
+}
+
 // DELETE /tms/dispatch/trips/:id — bỏ một XE TRỐNG khỏi nháp (xe còn OD thì phải kéo OD ra trước)
 async function deleteTripInner(req: Request, res: Response) {
   try {

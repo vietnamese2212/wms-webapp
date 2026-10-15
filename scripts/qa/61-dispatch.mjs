@@ -720,6 +720,23 @@ try {
   check('10f. Bỏ xe còn OD → 409 TRIP_NOT_EMPTY · bỏ xe trống sót từ trước → 200 · xe đã bị bỏ → 404', dne.s === 409 && dne.j?.error?.code === 'TRIP_NOT_EMPTY' && de.s === 200 && dg.s === 404,
     `nonempty=${dne.s}/${dne.j?.error?.code} empty=${de.s} gone=${dg.s}`)
   B = await planOf(B.id)
+  // [10f2] (15/10, "xe cùng tuyến còn nhận đơn không" — nhãn tiếp nhận trên bàn) `fit-check` hỏi ĐÚNG hàm luật của cửa thả cho từng cặp
+  //        (dòng OD, xe), không ghi gì: kết luận phải TRÙNG lời xem trước của cửa thả (`preview-move.blocked`) trên cùng cặp; OD3 → xe OD1+OD2
+  //        (7 + 3 = 10/9 pallet) không nhận, lý do vượt trần · xe lạ ⇒ không nhận + lý do · thân rỗng 400
+  {
+    const X1f = tripOfOd(B, OD[0]), X3f = tripOfOd(B, OD[2])
+    const pairs = [{ row_id: rowOf(B, OD[2]).id, trip_id: X1f.id }, { row_id: rowOf(B, OD[0]).id, trip_id: X3f.id }, { row_id: rowOf(B, OD[1]).id, trip_id: crypto.randomUUID() }]
+    const fc = await api(`/tms/dispatch/plans/${B.id}/fit-check`, 'POST', { pairs })
+    const pvA = await api(`/tms/dispatch/plans/${B.id}/preview-move`, 'POST', { ids: [pairs[0].row_id], to_trip_id: X1f.id })
+    const pvB = await api(`/tms/dispatch/plans/${B.id}/preview-move`, 'POST', { ids: [pairs[1].row_id], to_trip_id: X3f.id })
+    const fcBad = await api(`/tms/dispatch/plans/${B.id}/fit-check`, 'POST', { pairs: [] })
+    const B2 = await planOf(B.id)
+    const r = fc.j?.data?.results ?? []
+    check('10f2. Xe còn nhận đơn (fit-check, chỉ đọc) TRÙNG lời xem trước của cửa thả trên cùng cặp · OD3 → xe OD1+OD2 (10/9 pallet) không nhận, lý do vượt trần · xe lạ ⇒ không nhận + lý do · thân rỗng 400 · kế hoạch không đổi',
+      fc.s === 200 && r.length === 3 && r[0].fits === false && /trần/.test(r[0].reason ?? '') && r[0].fits === (pvA.j?.data?.blocked == null)
+      && r[1].fits === (pvB.j?.data?.blocked == null) && pvB.s === 200 && r[2].fits === false && !!r[2].reason && fcBad.s === 400 && B2?.updated_at === B?.updated_at,
+      `http=${fc.s} ${fc.j?.error?.message ?? ''} ${JSON.stringify(r.map(x => [x.fits, (x.reason ?? '').slice(0, 60)]))} · xem trước A=${pvA.j?.data?.blocked ? 'chặn' : 'qua'} B=${pvB.j?.data?.blocked ? 'chặn' : 'qua'} · rỗng=${fcBad.s} · đổi=${B2?.updated_at !== B?.updated_at}`)
+  }
   const X3g = tripOfOd(B, OD[2])
   const mo = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
   B = await planOf(B.id)

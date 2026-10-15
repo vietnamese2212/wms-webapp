@@ -515,6 +515,18 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
   Cùng chiều, user: "vẫn chưa đủ phân biệt xe trước xe sau — thêm border, tô màu số thứ tự xe" ⇒ KHUNG THẺ: viền đầu xe 2 px `slate-600`,
   viền cuối xe (đơn cuối / dòng xe khi thu) + mép phải `slate-400`, vạch trái mặc định `slate-400` (đỏ / hổ phách giữ nguyên); SỐ XE nền
   `sky-700` chữ trắng ở cả dạng Bảng lẫn Thẻ. Chọn từ 3 kiểu tô thử trên nháp Ba Vì (chỉ viền đầu · khung cả thẻ số xanh · khung số nền tối).
+- **XE CÙNG TUYẾN ở khung chờ + nhãn TIẾP NHẬN trên bàn** (user: "đánh dấu + lọc được đơn đang có route của nó đi mà chưa lên được xe — vd
+  đơn dư của xe 17 pallet, đơn tuyến Bắc Ninh mà xe đã quá tải; bên bàn có symbol tiếp nhận"; chọn cả ba phương án đề xuất):
+  - **Cùng tuyến = cùng VÙNG (tỉnh)**; ký hiệu ghi mức gần: cùng khách › cùng phường › cùng vùng; xe tuyến liên tỉnh tính cho mọi vùng nó đi
+    qua; xe trống không tính. Hàm thuần `routeMatches` (dispatchIssues, test đơn vị — đỏ trên bản "chỉ cùng phường").
+  - Đơn khung chờ có ký hiệu **⇢#xe** ngay sau số OD (bảng + thẻ; rê chuột = từng xe + mức gần + lý do). Chip đầu khung chờ **"Có xe cùng
+    tuyến · n OD"**: bật ⇒ khung chờ chỉ còn các đơn đó và bàn hỏi server **`POST /tms/dispatch/plans/:id/fit-check`** (quyền `dispatch.view`,
+    chỉ đọc, ≤ 5.000 cặp, tối đa 40 xe mỗi đơn — gần + còn chỗ trước) — mỗi cặp (dòng OD, xe) qua ĐÚNG `ruleBlocksFor` của cửa kéo thả ⇒
+    tách chip **"✓ Xe còn nhận"** / **"⚠ Xe cùng tuyến đã đầy"**; ký hiệu ⇢ xanh / hổ phách. Cửa không có khái niệm tuyến (bàn chọn cặp).
+  - Bảng xe giữ mọi xe; xe cùng tuyến với đơn ĐANG LỌC có nhãn **"＋ nhận n đơn"** (xanh, rê chuột = đơn nào) hoặc **"đầy"** (xám, lý do).
+    Hỏi lại khi dấu kế hoạch đổi (thả / kéo xong); tắt lọc thì không gọi server.
+  - Nháp Ba Vì 02/10: 24/33 đơn khung chờ có xe cùng tuyến (9 cùng phường). Gói 61 [10f2]: kết luận fit-check TRÙNG `preview-move.blocked`
+    trên cùng cặp, OD3 → xe 10/9 pallet không nhận (vượt trần), xe lạ không nhận, thân rỗng 400, kế hoạch không đổi.
 - **Còn mở (C77):** `POST /dispatch/segment/take` ("lấy đơn sang mảng mình") xoá dòng / xe trống ở kế hoạch mảng kia + chèn dòng vào kế
   hoạch đích mà KHÔNG thuê các kế hoạch đó — đua được với Xác nhận của mảng kia. Chưa vá (ngoài phạm vi lượt này) — đề xuất thuê mọi kế
   hoạch đụng tới (thứ tự id) + phép kiểm tĩnh "mọi route ghi `/dispatch` đi qua `withPlanLease` / `withTripPlanLease` trừ danh sách có lý do".

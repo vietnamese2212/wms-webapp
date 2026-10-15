@@ -13,7 +13,7 @@
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace } from 'lucide-react'
+import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -24,7 +24,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip } from './DispatchReviewTable'
-import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, lotTip, type IssueCtx, type PoolLot } from './dispatchIssues'
+import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, lotTip, ROUTE_LEVEL_VI, type IssueCtx, type PoolLot, type PoolRoute, type TripRouteTag } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const money = (n: number | string | null | undefined) => {
@@ -72,6 +72,10 @@ export interface BoardOps {
   onOpenTrip: (id: string) => void; onOpenOd: (o: DispatchTripOd) => void
   /** icon xe tải trên dòng đơn — dòng xe khách được vào, NGOẠI LỆ chỉ cho xe của dòng đó (15/10) */
   openRowVehicles: (rowId: string) => void; canCustVeh: boolean
+  /** XE CÙNG TUYẾN (15/10): ký hiệu ⇢#xe của đơn khung chờ (màu theo "xe còn nhận" khi bật lọc) · nhãn "＋ nhận n đơn" / "đầy" của xe khi
+   *  bật lọc (null = không lọc / xe không cùng tuyến với đơn đang lọc) · tên xe / đơn cho câu rê chuột */
+  routeOf: (rowId: string) => PoolRoute | null; tripRoute: (tripId: string) => TripRouteTag | null
+  tripLabel: (tripId: string) => string; odLabel: (rowId: string) => string
   resync: (od: string) => void; replace: (od: string) => void; sapBusy: boolean
   toggleLock: (t: DispatchTrip) => void; removeTrip: (t: DispatchTrip) => void
   mixOn: (t: DispatchTrip) => boolean; setMix: (t: DispatchTrip, on: boolean) => void
@@ -202,6 +206,38 @@ function TreeBranch({ rail, last }: { rail: string; last: boolean }) {
   )
 }
 
+/** XE CÙNG TUYẾN của một đơn khung chờ (15/10) — "⇢#13 +2": xe gần nhất (cùng khách › phường › vùng); bật lọc thì xanh = có xe NHẬN được
+ *  (số in là xe nhận được đầu tiên), hổ phách = xe cùng tuyến đều không nhận; rê chuột: từng xe + lý do của luật ghép xe. Bảng + Thẻ dùng chung. */
+export function RouteChip({ info, label }: { info: PoolRoute; label: (tripId: string) => string }) {
+  const m = info.matches
+  const best = m.find(x => info.results.get(x.trip_id)?.fits) ?? m[0]
+  const tone = info.fit === true ? 'bg-green-100 text-green-800' : info.fit === false ? 'bg-amber-100 text-amber-900' : 'bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-200'
+  const head = info.fit === true ? 'Có xe cùng tuyến CÒN NHẬN được đơn này — kéo lên xe có nhãn "＋ nhận" trên bàn'
+    : info.fit === false ? 'Xe cùng tuyến đều KHÔNG nhận được đơn này (đầy / sai luật ghép xe) — cần xe mới, đổi xe lớn hơn hoặc dời bớt đơn'
+    : 'Có xe đang đi cùng tuyến — bật lọc "Có xe cùng tuyến" ở đầu khung chờ để hỏi xe nào còn nhận'
+  const lines = m.slice(0, 8).map(x => {
+    const r = info.results.get(x.trip_id)
+    return `#${x.seq} ${label(x.trip_id)} — ${ROUTE_LEVEL_VI[x.level]}${r ? (r.fits ? ' · NHẬN được' : ` · không nhận: ${r.reason ?? ''}`) : ''}`
+  })
+  const tip = [head, ...lines, m.length > 8 ? `… và ${m.length - 8} xe nữa` : ''].filter(Boolean).join('\n')
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-[9px] font-medium ${tone}`} title={tip}>
+      <Route className="h-2.5 w-2.5" />#{best.seq}{m.length > 1 ? <span className="opacity-70">+{m.length - 1}</span> : null}
+    </span>
+  )
+}
+/** Nhãn TIẾP NHẬN của xe khi bật lọc "Có xe cùng tuyến" (15/10): xanh "＋ nhận n đơn" = xe nhận được n đơn đang lọc (đủ luật ghép xe) ·
+ *  xám "đầy" = xe cùng tuyến không nhận đơn nào đang lọc (rê chuột: lý do). */
+export function TripRouteBadge({ tag, odLabel }: { tag: TripRouteTag; odLabel: (rowId: string) => string }) {
+  if (tag.fit.length) return (
+    <span className="shrink-0 rounded bg-green-600 px-1 text-[9px] font-bold text-white"
+      title={`Xe cùng tuyến CÒN NHẬN được ${tag.fit.length} đơn đang lọc ở khung chờ (đủ luật ghép xe) — kéo thả lên xe này:\n${tag.fit.slice(0, 10).map(odLabel).join('\n')}${tag.fit.length > 10 ? `\n… và ${tag.fit.length - 10} đơn nữa` : ''}`}>
+      ＋ nhận {tag.fit.length} đơn
+    </span>
+  )
+  return <span className="shrink-0 rounded bg-slate-200 px-1 text-[9px] font-medium text-slate-600" title={`Xe cùng tuyến KHÔNG nhận thêm đơn đang lọc — ${tag.full ?? 'sai luật ghép xe'}`}>đầy</span>
+}
+
 /** Ô của một dòng ĐƠN — dùng chung cho khung chờ và đơn dưới xe (`tree` = đơn dưới xe: vạch khối + nhánh cây) */
 function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?: { rail: string; last: boolean }): Cells {
   const fl = ops.flags.get(o.od_number)
@@ -214,6 +250,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
   // CẬN DƯỚI BẮT BUỘC (07/10): máy không tạo xe dưới Tối thiểu % — đơn ở khung chờ chờ người quyết (kéo lên xe · Trả về Chờ điều)
   const um = t ? undefined : ops.plan.params.under_min?.[o.od_number]
   const tb = t ? undefined : ops.plan.params.too_big?.[o.od_number]   // 07/10: lớn hơn xe, loại xe không ghép nhiều xe
+  const route = t ? null : ops.routeOf(o.id)
   const share = t ? shareOf(o, t) : null
   const warnText = [fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', noVeh ? 'Khách và kênh chưa khai Dòng xe được vào — máy không chọn xe' : '',
     followOnly ? 'Chỉ có hàng đi kèm đơn — chờ đơn chính của khách, hoặc kéo tay lên xe của khách' : '',
@@ -229,6 +266,8 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
             ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={ops.sel.has(o.id)} onChange={() => ops.toggle(o.id)} onClick={e => e.stopPropagation()} aria-label={`Chọn ${o.od_number}`} />
             : <span className="w-3.5 shrink-0" />}
           <span className="font-mono font-semibold">{o.od_number}</span>
+          {/* đơn khung chờ có xe đi cùng tuyến (15/10) — đứng ngay sau số OD: khung chờ hẹp thì cột Lưu ý nằm ngoài màn */}
+          {!t && route && <RouteChip info={route} label={ops.tripLabel} />}
           {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
           {fl && <span className={`rounded px-1 text-[9px] font-medium ${soft ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>{FLAG_VI[fl.kind]}</span>}
@@ -280,7 +319,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
 }
 
 /** Ô của một dòng XE — đang rê đơn qua xe thì các ô số in kết quả SAU khi thả */
-function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean, onToggle: () => void): Cells {
+function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean, onToggle: () => void, rtag: TripRouteTag | null): Cells {
   const st = tripStatus(t)
   const ed = ops.editableTrip(t)
   const pv = hv?.data ?? null
@@ -330,6 +369,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
             </span>
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
             {t.locked && <span title="Đang khoá — Tối ưu lại không đụng vào xe này"><Lock className="h-3 w-3 shrink-0 text-slate-500" /></span>}
+            {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
+            {rtag && <TripRouteBadge tag={rtag} odLabel={ops.odLabel} />}
           </div>
           {/* DÒNG PHỤ "ĐVVT · cước" ngay dưới tên xe trong cột dính (12/10, đóng vai 12/10: ở 1280 px khung chờ mở thì cột Cước · ĐVVT nằm
               ngoài màn, phải cuộn ngang mới biết xe thiếu gì) — cột Cước / ĐVVT vẫn giữ để sửa */}
@@ -419,11 +460,11 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
  *  đơn đã tick phải mang cả các đơn tick ở xe khác dù xe này không vẽ lại. */
 type TripRowsProps = {
   ops: BoardOps; live: React.MutableRefObject<BoardOps>; t: DispatchTrip; open: boolean; onToggle: (id: string) => void; cols: RtColDef[]
-  hv: BoardHover; hit: boolean; selKey: string; sig: string; flags: Map<string, DispatchOdFlag>
+  hv: BoardHover; hit: boolean; selKey: string; sig: string; flags: Map<string, DispatchOdFlag>; route: TripRouteTag | null
 }
 const sameTripRows = (a: TripRowsProps, b: TripRowsProps) =>
-  a.t === b.t && a.open === b.open && a.hv === b.hv && a.hit === b.hit && a.selKey === b.selKey && a.sig === b.sig && a.cols === b.cols && a.flags === b.flags
-const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv, hit }: TripRowsProps) {
+  a.t === b.t && a.open === b.open && a.hv === b.hv && a.hit === b.hit && a.selKey === b.selKey && a.sig === b.sig && a.cols === b.cols && a.flags === b.flags && a.route === b.route
+const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv, hit, route }: TripRowsProps) {
   const ed = ops.editableTrip(t)
   const drop = ed ? ops.dropProps('trip', t.id, t.id) : {}
   const dragTrip = ops.canDrag && ed && t.ods.length > 0
@@ -444,7 +485,7 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
         draggable={dragTrip} onDragStart={dragTrip ? e => live.current.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? () => live.current.endDrag() : undefined}
         className={`cursor-pointer [&_td]:border-t-2 [&_td]:!border-t-slate-600 ${edgeR} ${shown.length ? '' : endB} ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
         onClick={() => live.current.onOpenTrip(t.id)}>
-        <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id))} bg={bg} />
+        <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id), route)} bg={bg} />
       </TableRow>
       {shown.map((o, i) => {
         const dragOk = ops.canDrag && ed
@@ -655,7 +696,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                             )}
                             <TripRows ops={ops} live={live} t={t} open={tripOpen(t.id)} onToggle={flipTrip} cols={tcols} flags={ops.flags} sig={sig}
                               hv={ops.hover?.target === t.id && !ops.ownDrop(t.id) ? ops.hover : null} hit={ops.justHit === t.id}
-                              selKey={ops.sel.size ? t.ods.filter(o => ops.sel.has(o.id)).map(o => o.id).join(',') : ''} />
+                              selKey={ops.sel.size ? t.ods.filter(o => ops.sel.has(o.id)).map(o => o.id).join(',') : ''} route={ops.tripRoute(t.id)} />
                           </Fragment>
                         )
                       })}

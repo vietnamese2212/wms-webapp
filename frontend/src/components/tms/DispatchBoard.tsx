@@ -620,7 +620,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               onChange={() => toggleMany(t.ods.map(o => o.id))} aria-label={`Chọn mọi đơn của xe #${t.seq}`} title="Chọn mọi đơn của xe — thanh nổi: Không điều · Chuyển tới xe · Gán ĐVVT · Đổi dòng xe" />
           ) })()}
           <button type="button" className="min-w-0 flex-1 text-left leading-snug hover:text-sky-700" onClick={() => onOpenTrip(t.id)} title={`Số xe ${t.group_code} — mở chi tiết xe: đổi dòng xe, chuyển từng OD`}>
-            <span className="font-mono text-xs font-bold text-slate-800">#{t.seq}</span>
+            {/* số xe tô nền như dạng Bảng (15/10, user: "tô màu số thứ tự xe") */}
+            <span className="rounded bg-sky-700 px-1.5 font-mono text-xs font-bold text-white">#{t.seq}</span>
             <span className="mx-1 text-slate-400">·</span>
             <span className="text-[11px] font-semibold text-slate-800 break-words">
               {(t.detail.vehicles?.length ?? 0) > 1

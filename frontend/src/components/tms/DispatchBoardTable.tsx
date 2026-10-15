@@ -188,7 +188,7 @@ const shareOf = (o: DispatchTripOd, t: DispatchTrip): number | null => {
  *  trước đó vạch chỉ có ở dòng xe nên các dòng đơn trắng nối liền dòng xe kế tiếp, không biết khối nào của xe nào. */
 const tripRail = (t: DispatchTrip, ctx: IssueCtx): string => {
   const iss = issuesOf(t, ctx)
-  return t.oversize || iss.some(k => RED_ISSUES.has(k)) ? 'bg-red-500' : iss.some(k => TODO_KEYS.has(k)) ? 'bg-amber-400' : 'bg-slate-300'
+  return t.oversize || iss.some(k => RED_ISSUES.has(k)) ? 'bg-red-500' : iss.some(k => TODO_KEYS.has(k)) ? 'bg-amber-400' : 'bg-slate-400'
 }
 /** Nhánh cây ở cột dính của dòng đơn dưới xe: vạch khối + đường dọc nối về mũi tên mở của dòng xe (dừng ở giữa dòng đơn CUỐI) +
  *  nhánh ngang tới ô tick. Vẽ tuyệt đối trong ô dính (ô dính là khối chứa) nên đường dọc liền qua các dòng. */
@@ -321,7 +321,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
               ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={nSel === ids.length} ref={el => { if (el) el.indeterminate = nSel > 0 && nSel < ids.length }}
                   onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn mọi đơn của xe #${t.seq}`} />
               : <span className="w-3.5 shrink-0" />}
-            <span className="font-mono text-[11px] font-bold text-slate-800">#{t.seq}</span>
+            {/* SỐ XE tô nền (15/10, user: "tô màu số thứ tự xe") — mốc mắt của đầu mỗi xe */}
+            <span className="shrink-0 rounded bg-sky-700 px-1.5 font-mono text-[11px] font-bold text-white">#{t.seq}</span>
             <span className="min-w-0 truncate text-[11px] font-semibold text-slate-800">
               {multi
                 ? <><span className="mr-1 rounded bg-sky-600 px-1 text-[9px] font-bold text-white">{t.detail.vehicles!.length} XE</span>{t.detail.vehicles!.map(v => v.name).join(' + ')}</>
@@ -433,11 +434,15 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
   const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : 'bg-slate-50'
   const rail = tripRail(t, ops.ctx)
   const shown = open ? t.ods : []
+  // KHUNG THẺ XE (15/10 chiều, user: "vẫn chưa đủ phân biệt xe trước xe sau — thêm border"): viền ĐẦU xe 2 px đậm · viền CUỐI xe (dòng
+  // đơn cuối, hoặc chính dòng xe khi thu) + mép phải slate-400 · vạch trái `tripRail` — thấy cả chỗ bắt đầu lẫn chỗ hết một xe
+  const edgeR = '[&_td:last-child]:border-r [&_td:last-child]:!border-r-slate-400'
+  const endB = '[&_td]:border-b [&_td]:!border-b-slate-400'
   return (
     <>
       <TableRow data-trip-card={t.id} {...drop}
         draggable={dragTrip} onDragStart={dragTrip ? e => live.current.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? () => live.current.endDrag() : undefined}
-        className={`cursor-pointer border-t border-slate-300 ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
+        className={`cursor-pointer [&_td]:border-t-2 [&_td]:!border-t-slate-600 ${edgeR} ${shown.length ? '' : endB} ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
         onClick={() => live.current.onOpenTrip(t.id)}>
         <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id))} bg={bg} />
       </TableRow>
@@ -449,7 +454,7 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
         return (
           <TableRow key={o.id} {...drop} draggable={dragOk}
             onDragStart={dragOk ? e => live.current.startDrag(e, live.current.idsFor(o), true) : undefined} onDragEnd={dragOk ? () => live.current.endDrag() : undefined}
-            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${last ? 'border-slate-300' : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
+            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
             <RowCells cols={cols} cells={odCells(ops, o, t, { rail, last })} bg={rbg} />
           </TableRow>
         )

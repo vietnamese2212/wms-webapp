@@ -512,6 +512,9 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
   xe `slate-50` + đơn trắng (viền trên / dưới, vạch trái như cũ), khoảng trống sau khối + dải tên vùng `slate-100`, dòng nhóm loại xe /
   vùng `slate-200` — ba tầng nhóm · vùng · xe tách bằng màu, không thêm chiều cao. Chọn bằng ảnh trên nháp Ba Vì (tô thử tại trình duyệt 4
   kiểu: tô nhạt cả cụm gần như không khác bản cũ; rãnh `slate-200` làm dải vùng trùng màu dòng nhóm). Luật chung vào skill `table-format` mục 10.
+  Cùng chiều, user: "vẫn chưa đủ phân biệt xe trước xe sau — thêm border, tô màu số thứ tự xe" ⇒ KHUNG THẺ: viền đầu xe 2 px `slate-600`,
+  viền cuối xe (đơn cuối / dòng xe khi thu) + mép phải `slate-400`, vạch trái mặc định `slate-400` (đỏ / hổ phách giữ nguyên); SỐ XE nền
+  `sky-700` chữ trắng ở cả dạng Bảng lẫn Thẻ. Chọn từ 3 kiểu tô thử trên nháp Ba Vì (chỉ viền đầu · khung cả thẻ số xanh · khung số nền tối).
 - **Còn mở (C77):** `POST /dispatch/segment/take` ("lấy đơn sang mảng mình") xoá dòng / xe trống ở kế hoạch mảng kia + chèn dòng vào kế
   hoạch đích mà KHÔNG thuê các kế hoạch đó — đua được với Xác nhận của mảng kia. Chưa vá (ngoài phạm vi lượt này) — đề xuất thuê mọi kế
   hoạch đụng tới (thứ tự id) + phép kiểm tĩnh "mọi route ghi `/dispatch` đi qua `withPlanLease` / `withTripPlanLease` trừ danh sách có lý do".

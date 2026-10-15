@@ -440,7 +440,7 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   }
   const asked = o.modelOnly ? all : moving
   // hàng chỉ "đi kèm đơn" (POSM) theo xe của đơn chính — không mang điều kiện / danh sách dòng xe riêng (cùng luật `followOnlyOd`)
-  const posmOnly = (r: RuleRow) => { const ks = Object.keys((r.cat_load ?? {}) as Record<string, unknown>); return o.posmFollows === true && ks.length > 0 && !mainCatsOf(ks.map(c => ({ category: c })), o.follow).length }
+  const posmOnly = (r: RuleRow) => o.posmFollows === true && followOnlyRow(r, o.follow)
   for (const m of models) {
     const conds = uniq(asked.flatMap(r => r.conditions ?? []).filter(Boolean)).sort(cmp)
     if (conds.length && !servesConditions(m, conds))
@@ -462,15 +462,26 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
 /** XE CÙNG TUYẾN — cặp (đơn khung chờ, xe) đọc theo luật ghép xe (15/10 tối, user: "nhận diện cũng phải theo rule — xe pallet 1 khách thì
  *  đơn khách khác liên quan gì; phải đi theo config"): 'fit' = xe nhận được · 'full' = chỉ vướng SỨC CHỨA (tải quá trần dải; đã đủ số khách
  *  khi cấu hình cho từ 2 khách — kéo bớt là nhận) · 'off' = CẤU HÌNH không cho đơn lên xe này (dòng xe được vào · điều kiện bảo quản · đi xe
- *  riêng · kênh · Loại kho · xe / khách chỉ MỘT khách) — không phải xe của đơn, bàn không đánh dấu. Mã luật MỚI phải xếp loại ở `ROUTE_CODE`
+ *  riêng · kênh · Loại kho · xe / khách chỉ MỘT khách · đơn chỉ hàng "đi kèm đơn" lên xe không chở chính khách đó) — không phải xe của đơn,
+ *  bàn không đánh dấu. Mã luật MỚI phải xếp loại ở `ROUTE_CODE`
  *  (thiếu = lỗi biên dịch). Bản trình duyệt `routeOff` (dispatchIssues) — `backend/tests/mirror/dispatchRouteOff.mirror.test.ts` gác. */
 export type RouteKind = 'fit' | 'full' | 'off'
 const ROUTE_CODE: Record<RuleBlockCode, 'full' | 'off' | 'drops'> = {
   MULTI_VEHICLE_BLOCKED: 'off', CATEGORY_MIX_BLOCKED: 'off', SEPARATE_CUSTOMER: 'off', CHANNEL_MIX_BLOCKED: 'off',
   CONDITION_MISMATCH: 'off', VEHICLE_NOT_ALLOWED: 'off', DROPS_EXCEEDED: 'drops', LOAD_EXCEEDED: 'full',
 }
-/** `main` = dòng xe chính của xe (trần điểm giao `max_drops`, như `dropsBlockReason`); `blocks` = `manualRuleBlocks` của đúng cặp đó. */
-export function routeKind(main: Pick<EngineModel, 'max_drops'> | null, staying: RuleRow[], moving: RuleRow[], blocks: RuleBlock[]): RouteKind {
+/** Dòng OD CHỈ có hàng Loại kho "đi kèm đơn" (POSM — Cài đặt WMS → Loại kho → "Đi kèm đơn khi điều vận"); dòng chưa có tải theo loại thì không. */
+export const followOnlyRow = (r: Pick<RuleRow, 'cat_load'>, follow: string[]): boolean => {
+  const ks = Object.keys((r.cat_load ?? {}) as Record<string, unknown>)
+  return ks.length > 0 && !mainCatsOf(ks.map(c => ({ category: c })), follow).length
+}
+/** `main` = dòng xe chính của xe (trần điểm giao `max_drops`, như `dropsBlockReason`); `blocks` = `manualRuleBlocks` của đúng cặp đó.
+ *  `posmFollows` = kế hoạch KHÔNG trộn Loại kho (như `manualRuleBlocks`): đơn CHỈ hàng "đi kèm đơn" đi cùng xe với hàng chính CỦA CHÍNH
+ *  KHÁCH (mô tả của cờ) ⇒ xe không chở khách đó là 'off' (15/10 tối, user: "đơn PM01 rule là đi theo chính khách hàng mà sao lại thể hiện
+ *  là đơn ghép?" — ký hiệu nối đơn chỉ PM01 của An Sơn với xe #4 chở 4 khách khác cùng vùng). */
+export function routeKind(main: Pick<EngineModel, 'max_drops'> | null, staying: RuleRow[], moving: RuleRow[], blocks: RuleBlock[], o: { posmFollows?: boolean; follow?: string[] } = {}): RouteKind {
+  const custOf = (r: RuleRow) => r.ship_to_code ?? r.od_number
+  if (o.posmFollows && moving.length && moving.every(r => followOnlyRow(r, o.follow ?? [])) && !moving.some(r => staying.some(s => custOf(s) === custOf(r)))) return 'off'
   if (!blocks.length) return 'fit'
   const cap = Math.min(odStopsCap([...staying, ...moving]), main ? modelDrops(main) : Infinity)
   return blocks.every(b => ROUTE_CODE[b.code] === 'full' || (ROUTE_CODE[b.code] === 'drops' && cap >= 2)) ? 'full' : 'off'

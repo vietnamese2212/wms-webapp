@@ -1658,6 +1658,7 @@ export async function fitCheck(req: Request, res: Response) {
     ])
     const rowBy = new Map(rows.map(r => [r.id, r])), tripBy = new Map(trips.map(t => [t.id, t]))
     const open = OPEN_PLAN.includes(plan.status)
+    const P = engineParams(plan), follow = P.follow_categories ?? []
     const results: { row_id: string; trip_id: string; fits: boolean; kind: RouteKind; reason: string | null }[] = []
     for (const p of b.pairs) {
       const r = rowBy.get(p.row_id), t = tripBy.get(p.trip_id)
@@ -1667,7 +1668,11 @@ export async function fitCheck(req: Request, res: Response) {
       if (r.trip_id === t.id) { results.push({ ...p, fits: true, kind: 'fit', reason: null }); continue }
       const blocks = await ruleBlocksFor(plan, t, t.ods, [r], { models, condLabels })
       const main = t.vehicle_model_id ? models.find(m => m.id === t.vehicle_model_id) ?? null : null
-      results.push({ ...p, fits: !blocks.length, kind: routeKind(main, t.ods, [r], blocks), reason: blocks.length ? blocks.map(x => x.message).join(' · ') : null })
+      const kind = routeKind(main, t.ods, [r], blocks, { posmFollows: P.allow_mix_categories === false, follow })
+      // `fits` = lời của cửa kéo thả (giữ nguyên); đơn chỉ hàng đi kèm lên xe khách khác thì cửa thả vẫn cho nhưng không phải xe của đơn
+      const reason = blocks.length ? blocks.map(x => x.message).join(' · ')
+        : kind === 'off' ? `Đơn chỉ có hàng đi kèm đơn (${Object.keys((r.cat_load ?? {}) as Record<string, unknown>).join(', ')}) — đi cùng xe với hàng chính của chính khách; xe #${t.seq} không chở khách này` : null
+      results.push({ ...p, fits: !blocks.length, kind, reason })
     }
     return ok(res, { results })
   } catch (e) { return failAny(res, e) }

@@ -176,6 +176,14 @@ describe('routeOff — xe cùng tuyến theo cấu hình luật ghép xe', () =>
     expect(routeOff(od('6', 'B', { cats: ['FG02'] }), t, c)).toBe(false)
     expect(routeOff(od('6', 'B', { cats: ['FG02'] }), trip('XA5', [od('1', 'A')], false), c)).toBe(true)
   })
+  it('đơn CHỈ hàng đi kèm (PM01 / POSM, kế hoạch không trộn Loại kho) chỉ thuộc xe chở CHÍNH khách đó (user: "PM01 đi theo chính khách hàng — sao lại thể hiện là đơn ghép?")', () => {
+    const noMix = { ...c, mixCategories: false }
+    const t = trip('XA5', [od('1', 'A')])
+    expect(routeOff(od('2', 'B', { cats: ['POSM'], conds: [] }), t, noMix)).toBe(true)
+    expect(routeOff(od('3', 'A', { cats: ['POSM'], conds: [] }), t, noMix)).toBe(false)
+    expect(routeOff(od('4', 'B', { cats: ['FG01', 'POSM'] }), t, noMix)).toBe(false)   // có hàng chính ⇒ luật thường
+    expect(routeOff(od('2', 'B', { cats: ['POSM'], conds: [] }), t, c)).toBe(false)    // kế hoạch cho trộn Loại kho ⇒ như đơn thường
+  })
   it('routeMatches chỉ giữ cặp được `keep` cho', () => {
     const pool = [{ id: 'p', ward_code: 'W', region_code: 'R', ...od('9', 'B') }]
     const ts = [{ id: 'T1', seq: 1, load_pct: 100, ...trip('P17', [{ ...od('1', 'A'), ward_code: 'W', region_code: 'R' }]) },

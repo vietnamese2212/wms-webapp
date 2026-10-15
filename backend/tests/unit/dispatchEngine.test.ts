@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest'
 import {
   runDispatch, fits, splitOversize, classKey, mergeKey, clusterKey, pickBookingCategory, codePrefixOf, tripLoad, sumLines, buildCtx, priceFor,
   mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, mixBlockReason, dropsBlockReason, manualRuleBlocks, splitLoad, priceCombo,
-  type RuleRow, type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
+  routeKind, type RuleRow, type EngineInput, type EngineModel, type EngineOd, type EngineCarrier, type EngineTariff, type EngineLine,
 } from '../../src/services/dispatchEngine'
 
 const model = (o: Partial<EngineModel> & { id: string }): EngineModel => ({
@@ -712,6 +712,25 @@ describe('mixBlockReason — switch "Ghép Loại kho khác" trên thẻ xe (use
   })
   it('tắt: chọn nhiều OD khác loại thả vào xe trống ⇒ chặn', () => {
     expect(mixBlockReason(false, [], [f1, f2])).toMatch(/nhiều Loại kho \(FG01, FG02\)/)
+  })
+})
+// 15/10 tối — XE CÙNG TUYẾN theo cấu hình: cặp (đơn khung chờ, xe) là fit / full (chỉ vướng sức chứa) / off (cấu hình không cho — bàn không
+// đánh dấu). Bản trình duyệt `routeOff` đối chiếu ở tests/mirror/dispatchRouteOff.mirror.test.ts
+describe('routeKind — xe cùng tuyến theo cấu hình luật ghép xe', () => {
+  const fg = (n: string, ship: string): RuleRow => ({ od_number: n, ship_to_code: ship, max_customers: 4, cat_load: { FG01: 3 } })
+  const pm = (n: string, ship: string): RuleRow => ({ od_number: n, ship_to_code: ship, max_customers: 4, cat_load: { PM01: 0.1 } })
+  const blk = (code: 'LOAD_EXCEEDED' | 'DROPS_EXCEEDED' | 'SEPARATE_CUSTOMER') => ({ code, message: '' })
+  it('đơn CHỈ hàng đi kèm (PM01) lên xe không chở chính khách ⇒ off dù cửa kéo thả cho (user: "PM01 đi theo chính khách hàng"); xe chở khách đó ⇒ fit; kế hoạch cho trộn Loại kho ⇒ như đơn thường', () => {
+    const o = { posmFollows: true, follow: ['PM01'] }
+    expect(routeKind({ max_drops: 4 }, [fg('1', 'K1')], [pm('2', 'K2')], [], o)).toBe('off')
+    expect(routeKind({ max_drops: 4 }, [fg('1', 'K2')], [pm('2', 'K2')], [], o)).toBe('fit')
+    expect(routeKind({ max_drops: 4 }, [fg('1', 'K1')], [pm('2', 'K2')], [], { posmFollows: false, follow: ['PM01'] })).toBe('fit')
+  })
+  it('chỉ vướng tải ⇒ full · vướng số khách khi trần ≥ 2 ⇒ full, trần 1 ⇒ off · thêm một luật cấu hình ⇒ off', () => {
+    expect(routeKind({ max_drops: 4 }, [fg('1', 'K1')], [fg('2', 'K1')], [blk('LOAD_EXCEEDED')])).toBe('full')
+    expect(routeKind({ max_drops: 2 }, [fg('1', 'K1'), fg('2', 'K2')], [fg('3', 'K3')], [blk('DROPS_EXCEEDED')])).toBe('full')
+    expect(routeKind({ max_drops: 1 }, [fg('1', 'K1')], [fg('2', 'K2')], [blk('DROPS_EXCEEDED')])).toBe('off')
+    expect(routeKind({ max_drops: 4 }, [fg('1', 'K1')], [fg('2', 'K2')], [blk('LOAD_EXCEEDED'), blk('SEPARATE_CUSTOMER')])).toBe('off')
   })
 })
 describe('dropsBlockReason — kéo tay vượt số khách cùng xe ⇒ CHẶN (user 14/10: "nếu vượt thì chặn luôn và có popup")', () => {

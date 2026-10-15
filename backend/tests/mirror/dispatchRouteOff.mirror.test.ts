@@ -1,6 +1,7 @@
 // MIRROR nhận diện XE CÙNG TUYẾN (FE `routeOff` — trình duyệt bỏ xe mà CẤU HÌNH không cho đơn lên, không gọi server) ⇄ luật ghép xe của
 // cửa fit-check (BE `manualRuleBlocks` + `routeKind` = 'off'). Lệch nhau = khung chờ đánh dấu xe mà cấu hình không cho đơn lên (user 15/10
-// tối: "xe pallet 1 khách thì đơn khách khác liên quan gì — phải đi theo config") hoặc giấu xe thật ra cấu hình cho (chỉ đầy).
+// tối: "xe pallet 1 khách thì đơn khách khác liên quan gì — phải đi theo config"; "đơn PM01 đi theo chính khách hàng") hoặc giấu xe thật ra
+// cấu hình cho (chỉ đầy). Dòng ngẫu nhiên có cả đơn CHỈ hàng đi kèm (POSM) — cùng / khác khách của xe.
 import { describe, it, expect } from 'vitest'
 import { manualRuleBlocks, routeKind, type RuleRow, type EngineModel } from '../../src/services/dispatchEngine'
 import { routeOff } from '../../../frontend/src/components/tms/dispatchIssues'
@@ -37,7 +38,7 @@ describe(`xe cùng tuyến FE routeOff ⇄ BE routeKind 'off' (seed ${SEED})`, (
       const main = trip.vehicle_model_id ? models.find(m => m.id === trip.vehicle_model_id) ?? null : null
       const fleet = main ? [main, ...trip.extra_vehicle_model_ids.map(id => models.find(m => m.id === id)).filter((m): m is EngineModel => !!m)] : []
       const blocks = manualRuleBlocks(fleet, staying, [moving], { allowMixCategories: trip.allow_mix_categories ?? mixCategories, allowMixChannels: mixChannels, follow, maxVehicles: 1, posmFollows: mixCategories === false })
-      const be = routeKind(main, staying, [moving], blocks) === 'off'
+      const be = routeKind(main, staying, [moving], blocks, { posmFollows: mixCategories === false, follow }) === 'off'
       const fe = routeOff(moving, { ...trip, ods: staying }, { models: new Map(models.map(m => [m.id, { id: m.id, max_drops: m.max_drops, storage_conditions: m.serve_conditions ?? [] }])), mixChannels, mixCategories, follow })
       expect(fe, JSON.stringify({ blocks: blocks.map(b => b.code), trip, main: main && [main.max_drops, main.serve_conditions], staying, moving, mixChannels, mixCategories })).toBe(be)
     }

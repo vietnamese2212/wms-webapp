@@ -173,11 +173,17 @@ const mainCatKey = (load: RuleOd['cat_load'], follow: string[]) => [...new Set(O
 /** Đơn khung chờ `r` KHÔNG thuộc xe `t` THEO CẤU HÌNH, bỏ qua sức chứa — MIRROR các luật "cấu hình" của `manualRuleBlocks` qua `routeKind`
  *  (BE, 'off'; `backend/tests/mirror/dispatchRouteOff.mirror.test.ts`): xe / khách chỉ MỘT khách (dòng xe "Điểm giao tối đa" 1 — xe pallet,
  *  container — hoặc "Số khách tối đa cùng xe" 1 của khách / kênh) mà đơn là khách khác · đi xe riêng · trộn kênh khi kho không cho · trộn
- *  Loại kho khi switch xe tắt · dòng xe không chở được điều kiện bảo quản · khách không được vào dòng xe. Tải quá trần, hay đã đủ số khách
+ *  Loại kho khi switch xe tắt · dòng xe không chở được điều kiện bảo quản · khách không được vào dòng xe · đơn CHỈ hàng "đi kèm đơn" (PM01)
+ *  lên xe không chở chính khách đó. Tải quá trần, hay đã đủ số khách
  *  khi cấu hình cho từ 2 khách, KHÔNG ở đây — đó là xe ĐẦY (server `fit-check` trả 'full'). */
 export function routeOff(r: RuleOd, t: RuleTrip, c: RouteRuleCtx): boolean {
   const all = [...t.ods, r]
   const key = (o: RuleOd) => o.ship_to_code ?? o.od_number
+  // đơn CHỈ hàng "đi kèm đơn" (PM01 / POSM, kế hoạch không trộn Loại kho): đi cùng xe với hàng chính CỦA CHÍNH KHÁCH (Cài đặt WMS → Loại kho
+  // → "Đi kèm đơn khi điều vận") ⇒ chỉ xe đang chở khách đó (15/10 tối, user: "đơn PM01 rule là đi theo chính khách hàng mà sao lại thể hiện
+  // là đơn ghép?")
+  const posmOnly = c.mixCategories === false && Object.keys(r.cat_load ?? {}).length > 0 && !mainCatKey(r.cat_load, c.follow)
+  if (posmOnly && !t.ods.some(o => key(o) === key(r))) return true
   const before = new Set(t.ods.map(key)).size, after = new Set(all.map(key)).size
   const main = t.vehicle_model_id ? c.models.get(t.vehicle_model_id) ?? null : null
   const fleet = main ? [...new Map([main, ...(t.extra_vehicle_model_ids ?? []).map(id => c.models.get(id))].filter((m): m is NonNullable<typeof m> => !!m).map(m => [m.id, m])).values()] : []
@@ -193,7 +199,6 @@ export function routeOff(r: RuleOd, t: RuleTrip, c: RouteRuleCtx): boolean {
     if (ca.size > 1 && ca.size > chs(t.ods).size) return true
   }
   const conds = [...new Set((r.conditions ?? []).filter(Boolean))]
-  const posmOnly = c.mixCategories === false && Object.keys(r.cat_load ?? {}).length > 0 && !mainCatKey(r.cat_load, c.follow)
   for (const m of fleet) {
     const sv = (m.storage_conditions ?? []).filter(Boolean)
     if (conds.length && sv.length && !conds.every(x => sv.includes(x))) return true
